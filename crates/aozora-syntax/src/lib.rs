@@ -26,6 +26,9 @@
 use miette::Diagnostic;
 use thiserror::Error;
 
+mod extension;
+pub use extension::{AozoraExtension, BlockCtx, BlockMatch, ContainerKind, InlineCtx, InlineMatch};
+
 /// Byte-range span into the original source document.
 ///
 /// `u32` (rather than `usize`) caps the addressable source at 4 GiB, which is
