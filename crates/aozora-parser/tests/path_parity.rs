@@ -54,11 +54,6 @@ enum ExpectedGap {
     /// and forward-reference bouten / 縦中横 whose target substring
     /// does not actually appear in the preceding text.
     ClassifierValidationMissing,
-    /// Lexer unconditionally treats a bracket annotation as a block leaf
-    /// (wrapping with `\n<sentinel>\n`). When the annotation sits mid-
-    /// paragraph, this splits the paragraph into two. The adapter keeps
-    /// the annotation inline, preserving the paragraph shape.
-    BlockLeafAtInlinePosition,
     /// Lexer emits a more-specific `AozoraNode` variant (`Gaiji`,
     /// `Kaeriten`) where the adapter folds it into the generic
     /// `Annotation`. Both are semantically defensible; fix is to either
@@ -169,18 +164,35 @@ const CORPUS: &[Case] = &[
         gap: None,
     },
     // -------------------------------------------------------------------
-    // Block-leaf annotations at inline position. Adapter preserves
-    // inline context; lexer currently splits the paragraph.
+    // Block-leaf annotations at inline position. Adapter embeds the
+    // block `<div>` *inside* the surrounding `<p>`, producing invalid
+    // HTML (block-in-inline). Lexer correctly splits the paragraph
+    // around the block-leaf sentinel, producing well-formed HTML.
     // -------------------------------------------------------------------
     Case {
         label: "page_break_inline_position",
         input: "前［＃改ページ］後",
-        gap: Some(ExpectedGap::BlockLeafAtInlinePosition),
+        gap: Some(ExpectedGap::LexerImprovesAdapter),
     },
     Case {
         label: "section_break_inline_position",
         input: "前［＃改丁］後",
-        gap: Some(ExpectedGap::BlockLeafAtInlinePosition),
+        gap: Some(ExpectedGap::LexerImprovesAdapter),
+    },
+    Case {
+        label: "page_break_at_document_start",
+        input: "［＃改ページ］後",
+        gap: Some(ExpectedGap::LexerImprovesAdapter),
+    },
+    Case {
+        label: "page_break_at_document_end",
+        input: "前［＃改ページ］",
+        gap: Some(ExpectedGap::LexerImprovesAdapter),
+    },
+    Case {
+        label: "multiple_page_breaks_in_paragraph",
+        input: "A［＃改ページ］B［＃改ページ］C",
+        gap: Some(ExpectedGap::LexerImprovesAdapter),
     },
     // -------------------------------------------------------------------
     // Block-leaf annotations on their own line — both paths emit a
@@ -406,7 +418,6 @@ fn print_parity_status() {
             (false, None) => "REGRESSION",
             (false, Some(gap)) => match gap {
                 ExpectedGap::ClassifierValidationMissing => "gap:validation",
-                ExpectedGap::BlockLeafAtInlinePosition => "gap:inline-block",
                 ExpectedGap::SemanticUplift => "gap:uplift",
                 ExpectedGap::PairedContainerUnimpl => "gap:paired-container",
                 ExpectedGap::LexerImprovesAdapter => "lexer-better",

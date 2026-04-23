@@ -18,13 +18,16 @@
 //! | kind                | sentinel char               | wrap policy            |
 //! |---------------------|-----------------------------|------------------------|
 //! | inline Aozora       | [`INLINE_SENTINEL`] U+E001  | bare — no wrapping     |
-//! | block-leaf Aozora   | [`BLOCK_LEAF_SENTINEL`] U+E002 | `\n<sentinel>\n` |
-//! | paired-container open  | [`BLOCK_OPEN_SENTINEL`] U+E003 | `\n<sentinel>\n` |
-//! | paired-container close | [`BLOCK_CLOSE_SENTINEL`] U+E004 | `\n<sentinel>\n` |
+//! | block-leaf Aozora   | [`BLOCK_LEAF_SENTINEL`] U+E002 | `\n\n<sentinel>\n\n` |
+//! | paired-container open  | [`BLOCK_OPEN_SENTINEL`] U+E003 | `\n\n<sentinel>\n\n` |
+//! | paired-container close | [`BLOCK_CLOSE_SENTINEL`] U+E004 | `\n\n<sentinel>\n\n` |
 //!
-//! Block sentinels are wrapped with leading and trailing `\n` so
-//! comrak treats them as standalone single-character paragraphs;
-//! multiple consecutive newlines collapse harmlessly per the
+//! Block sentinels are padded with **blank lines** (`\n\n`) rather
+//! than single newlines so comrak treats each sentinel as a standalone
+//! paragraph. A single `\n` only folds into a soft break within the
+//! surrounding paragraph — `post_process::splice_block_leaf` would
+//! then fail to detect the single-sentinel-paragraph pattern.
+//! Multiple consecutive blank lines collapse harmlessly per the
 //! CommonMark spec.
 //!
 //! ## Staging
@@ -146,26 +149,32 @@ impl<'s> Normalizer<'s> {
     }
 
     fn emit_block_leaf(&mut self, node: AozoraNode) {
-        self.out.push('\n');
+        // Pad with **blank** lines (`\n\n`) so comrak treats the
+        // sentinel character as a standalone paragraph rather than
+        // soft-joining it with adjacent inline text. A single `\n`
+        // lets comrak fold `前\nS\n後` into one paragraph with soft
+        // breaks, which post_process then cannot promote because the
+        // paragraph contains more than just the sentinel.
+        self.out.push_str("\n\n");
         let pos = self.current_pos();
         self.out.push(BLOCK_LEAF_SENTINEL);
-        self.out.push('\n');
+        self.out.push_str("\n\n");
         self.registry.block_leaf.push((pos, node));
     }
 
     fn emit_block_open(&mut self, container: ContainerKind) {
-        self.out.push('\n');
+        self.out.push_str("\n\n");
         let pos = self.current_pos();
         self.out.push(BLOCK_OPEN_SENTINEL);
-        self.out.push('\n');
+        self.out.push_str("\n\n");
         self.registry.block_open.push((pos, container));
     }
 
     fn emit_block_close(&mut self, container: ContainerKind) {
-        self.out.push('\n');
+        self.out.push_str("\n\n");
         let pos = self.current_pos();
         self.out.push(BLOCK_CLOSE_SENTINEL);
-        self.out.push('\n');
+        self.out.push_str("\n\n");
         self.registry.block_close.push((pos, container));
     }
 
@@ -242,7 +251,11 @@ mod tests {
     fn page_break_becomes_block_leaf_sentinel_on_own_line() {
         let src = "前\n［＃改ページ］\n後";
         let out = run(src);
-        assert_eq!(out.normalized, "前\n\n\u{E002}\n\n後");
+        // Each block sentinel is padded with blank lines (`\n\n`) so
+        // comrak treats it as a standalone paragraph. Adjacent source
+        // newlines stack with the padding — harmless because comrak
+        // collapses repeated blank lines.
+        assert_eq!(out.normalized, "前\n\n\n\u{E002}\n\n\n後");
         assert_eq!(out.registry.block_leaf.len(), 1);
         let (pos, ref node) = out.registry.block_leaf[0];
         assert!(matches!(node, AozoraNode::PageBreak));
@@ -256,17 +269,17 @@ mod tests {
     #[test]
     fn page_break_in_raw_text_without_surrounding_newlines_still_isolates() {
         let out = run("前［＃改ページ］後");
-        // Driver injects "\n" around the block sentinel so comrak
-        // treats it as a standalone paragraph.
-        assert_eq!(out.normalized, "前\n\u{E002}\n後");
+        // Driver injects blank lines (`\n\n`) around the block sentinel
+        // so comrak treats it as a standalone paragraph separate from
+        // the preceding/trailing inline text.
+        assert_eq!(out.normalized, "前\n\n\u{E002}\n\n後");
     }
 
     #[test]
     fn block_open_and_close_emit_own_sentinel_lines() {
         let out = run("［＃ここから字下げ］本文［＃ここで字下げ終わり］");
-        // Expected: \n\u{E003}\n本文\n\u{E004}\n — leading \n is from
-        // the prefix-wrap (the pending plain is empty before).
-        assert_eq!(out.normalized, "\n\u{E003}\n本文\n\u{E004}\n");
+        // Expected: blank-line padding around each paired sentinel.
+        assert_eq!(out.normalized, "\n\n\u{E003}\n\n本文\n\n\u{E004}\n\n");
         assert_eq!(out.registry.block_open.len(), 1);
         assert_eq!(out.registry.block_close.len(), 1);
         assert!(matches!(
