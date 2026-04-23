@@ -141,7 +141,13 @@ bench *ARGS:
 # stated goal (ADR-0006 §coverage) is 100% on production code. The
 # floor ratchets upward in follow-up commits that close specific
 # gaps; see task tracker.
-_COV_FLOOR := "94"
+#
+# Ratchet history:
+# - 94 (M0): initial gate landing with the parse pipeline wired up.
+# - 95 (G3): F-series fills in recogniser branches + G1 adds full
+#   gaiji resolve coverage; measured regions total 95.36%. Headroom
+#   to 96 awaits closing the remaining html.rs / diagnostic.rs gaps.
+_COV_FLOOR := "95"
 _COV_IGNORE := "(upstream/comrak|target/|/main\\.rs$|xtask/)"
 
 coverage:

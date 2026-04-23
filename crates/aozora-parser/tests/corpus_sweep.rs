@@ -10,13 +10,13 @@
 //!   Failures here are hard: the sweep fails with a diagnostic listing the
 //!   offending corpus labels. `parse` and `render_to_string` are wrapped in
 //!   `panic::catch_unwind` to recover across iterations.
-//! - **I2 — no unconsumed `［＃` markers.** After rendering to HTML and
-//!   stripping the `afm-annotation` wrapper spans, no bare `［＃` should
-//!   remain. Violations are *reported-but-not-enforced* in this commit:
-//!   the recogniser set is still growing (M1 Phase D is about to add the
-//!   paired-container hook) and legitimate unknown annotations are
-//!   currently wrapped in `afm-annotation` rather than lost. We'll flip
-//!   the enforcement on once the recogniser list stabilises.
+//! - **I2 — no unconsumed `［＃` markers (HARD GATE).** After rendering
+//!   to HTML and stripping the `afm-annotation` wrapper spans, no bare
+//!   `［＃` may remain. Post-F5 (paired container wrap) + G1 (gaiji
+//!   table) the recogniser set is comprehensive enough to make this
+//!   an enforcement line. An `AFM_CORPUS_LEAK_BUDGET` env var can
+//!   override the budget to a non-zero int for staging a sweep over a
+//!   dirty corpus before promoting the fix back into the classifier.
 //! - **I5 — SJIS decode stable.** Every `.txt` file in a Aozora-format
 //!   corpus should be valid Shift_JIS. Decode failures are logged and
 //!   counted but don't abort the sweep (a corpus may legitimately contain
@@ -27,6 +27,7 @@
 //! html5ever-based validator.
 
 use core::fmt;
+use std::env;
 use std::panic::{self, AssertUnwindSafe};
 
 use afm_corpus::{CorpusError, from_env};
@@ -124,7 +125,38 @@ fn corpus_sweep_i1_no_panic_i2_report_i5_report() {
         stats.panic_samples,
     );
 
-    // I2 and I5 are report-only for this commit; see module docs.
+    // I2 — hard gate as of G3. `AFM_CORPUS_LEAK_BUDGET` allows a
+    // non-zero budget while preparing a classifier fix, so sweep runs
+    // over an unclean corpus don't block unrelated work.
+    let budget = leak_budget_from_env();
+    assert!(
+        stats.leaked_markers <= budget,
+        "I2: {} corpus item(s) leaked ［＃ markers outside the afm-annotation wrapper \
+         (budget = {budget}; first {}: {:?})",
+        stats.leaked_markers,
+        stats.leaked_marker_samples.len(),
+        stats.leaked_marker_samples,
+    );
+
+    // I5 is still a report — corpora may legitimately contain non-SJIS
+    // files (READMEs, bundled metadata); promoting to hard-gate would
+    // force every sweep configuration to curate input shape first.
+}
+
+/// Read `AFM_CORPUS_LEAK_BUDGET` and return the allowed number of
+/// leaked ［＃ markers. Defaults to `0` (strict). Malformed values
+/// produce a warning and fall back to `0` so a typo does not
+/// silently paper over a real regression.
+fn leak_budget_from_env() -> usize {
+    env::var("AFM_CORPUS_LEAK_BUDGET").map_or(0, |s| {
+        s.trim().parse::<usize>().unwrap_or_else(|_| {
+            eprintln!(
+                "corpus sweep: AFM_CORPUS_LEAK_BUDGET={s:?} is not a non-negative integer — \
+                 defaulting to 0 (strict)."
+            );
+            0
+        })
+    })
 }
 
 const MAX_SAMPLES: usize = 10;
