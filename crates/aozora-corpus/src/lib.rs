@@ -26,9 +26,23 @@
 
 #![forbid(unsafe_code)]
 
+use std::env;
+use std::path::PathBuf;
+
 mod error;
+mod filesystem;
+mod in_memory;
+mod vendored;
 
 pub use error::CorpusError;
+pub use filesystem::FilesystemCorpus;
+pub use in_memory::InMemoryCorpus;
+pub use vendored::VendoredCorpus;
+
+/// Environment variable name consulted by [`from_env`]. Exposed so
+/// tests and documentation can reference the exact string rather than
+/// re-declaring it.
+pub const ENV_CORPUS_ROOT: &str = "AFM_CORPUS_ROOT";
 
 /// A single candidate text for sweep invariants to check.
 ///
@@ -84,26 +98,40 @@ pub trait CorpusSource: Send + Sync {
 
 /// Construct the default corpus source from the process environment.
 ///
-/// Reads `AFM_CORPUS_ROOT`. If set and points at an existing directory,
-/// returns a filesystem-backed source rooted there. Otherwise returns
-/// [`None`]; sweep tests treat that as "no corpus available, skip".
+/// Reads [`ENV_CORPUS_ROOT`]. If set and points at an existing
+/// directory, returns a [`FilesystemCorpus`] rooted there. Otherwise
+/// returns [`None`]; sweep tests treat that as "no corpus available,
+/// skip".
 ///
 /// Availability of a source does not imply any particular content is
 /// present. Callers must not assume the corpus contains any specific
-/// work — they may only stream what is found and check invariants.
-///
-/// The concrete source implementations arrive in a follow-up commit
-/// (M2-S2); in the meantime this always returns [`None`] so downstream
-/// sweep harnesses written against the trait contract will runtime-skip
-/// gracefully.
+/// work — they may only stream what is found and check invariants. If
+/// the variable is set to a path that exists but is not a directory,
+/// this returns [`None`] rather than propagating a construction error:
+/// "misconfigured" and "absent" are the same signal to the sweep
+/// harness, which should skip in either case.
 #[must_use]
 pub fn from_env() -> Option<Box<dyn CorpusSource>> {
-    None
+    from_path(env::var_os(ENV_CORPUS_ROOT)?)
+}
+
+/// Path-oriented counterpart of [`from_env`]. Factored out so the
+/// policy — "non-directory → None" — can be unit-tested without
+/// mutating process-wide environment variables (which in edition 2024
+/// requires an `unsafe` block, and this crate is `#![forbid(unsafe_code)]`).
+fn from_path(raw: impl Into<PathBuf>) -> Option<Box<dyn CorpusSource>> {
+    let path = raw.into();
+    if !path.is_dir() {
+        return None;
+    }
+    let concrete = FilesystemCorpus::new(path).ok()?;
+    Some(Box::new(concrete))
 }
 
 #[cfg(test)]
 mod tests {
     use core::fmt;
+    use std::fs;
 
     use super::*;
 
@@ -129,9 +157,27 @@ mod tests {
     }
 
     #[test]
-    fn from_env_returns_none_for_unconfigured_stub() {
-        // The M2-S1 stub unconditionally returns None regardless of env state.
-        // M2-S2 replaces this with an AFM_CORPUS_ROOT-aware implementation.
-        assert!(from_env().is_none());
+    fn env_constant_matches_documented_name() {
+        assert_eq!(ENV_CORPUS_ROOT, "AFM_CORPUS_ROOT");
+    }
+
+    #[test]
+    fn from_path_rejects_nonexistent_path() {
+        assert!(from_path("/absolutely/not/a/real/path").is_none());
+    }
+
+    #[test]
+    fn from_path_rejects_file_path() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let file = dir.path().join("not-a-dir.txt");
+        fs::write(&file, b"").expect("write file");
+        assert!(from_path(&file).is_none());
+    }
+
+    #[test]
+    fn from_path_accepts_valid_directory() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let source = from_path(dir.path()).expect("valid dir yields source");
+        assert!(source.provenance().starts_with("filesystem:"));
     }
 }

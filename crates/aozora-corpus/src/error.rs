@@ -24,6 +24,14 @@ pub enum CorpusError {
         #[source]
         source: io::Error,
     },
+
+    /// Constructor was given a path that does not exist or is not a
+    /// directory. Construction is rejected eagerly rather than deferring
+    /// to iteration time so the error surfaces where the mistake was
+    /// made (the caller's configuration code, not deep inside a sweep
+    /// loop).
+    #[error("corpus root is not a directory: {path}")]
+    RootNotDirectory { path: PathBuf },
 }
 
 #[cfg(test)]
@@ -57,5 +65,27 @@ mod tests {
             source.to_string().to_lowercase().contains("permission"),
             "source should be the io::Error: {source}"
         );
+    }
+
+    #[test]
+    fn root_not_directory_display_includes_path() {
+        let err = CorpusError::RootNotDirectory {
+            path: PathBuf::from("/does/not/exist"),
+        };
+        let display = format!("{err}");
+        assert!(
+            display.contains("/does/not/exist"),
+            "display should mention the offending path: {display}"
+        );
+    }
+
+    #[test]
+    fn root_not_directory_has_no_source_chain() {
+        let err = CorpusError::RootNotDirectory {
+            path: PathBuf::from("/irrelevant"),
+        };
+        // Structural variant — the offending path is self-contained, there's
+        // no underlying cause to forward.
+        assert!(err.source().is_none());
     }
 }
