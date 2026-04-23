@@ -91,7 +91,7 @@ fn gfm_0_29_extension_pass() {
         let tag = ex.extension.as_deref().expect("filtered");
         let opts = options_for(tag);
         let arena = Arena::new();
-        let root = parse(&arena, &ex.markdown, &opts);
+        let root = parse(&arena, &ex.markdown, &opts).root;
         let actual = render_root_to_string(root, &opts);
         if actual != ex.html {
             failures.push(format!(

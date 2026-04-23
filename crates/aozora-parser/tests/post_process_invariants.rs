@@ -64,7 +64,7 @@ fn collect_text<'a>(root: &'a AstNode<'a>) -> String {
 fn parse_one(input: &str) -> (Vec<AozoraNode>, String) {
     let arena = Arena::new();
     let opts = Options::afm_default();
-    let root = parse(&arena, input, &opts);
+    let root = parse(&arena, input, &opts).root;
     (collect_aozora(root), collect_text(root))
 }
 

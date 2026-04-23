@@ -5,7 +5,8 @@
 //! points:
 //!
 //! - [`parse`] — run the parser over a UTF-8 source into a comrak arena,
-//!   returning the root node.
+//!   returning a [`ParseResult`] carrying the root node plus any lexer
+//!   diagnostics.
 //! - [`html::render_to_string`] — render the parsed tree to HTML.
 //! - [`Options`] — configuration; defaults enable the Aozora render hook.
 //!
@@ -24,11 +25,13 @@ pub mod html;
 #[doc(hidden)]
 pub mod test_support;
 
+use afm_lexer::Diagnostic;
 use comrak::Arena;
 use comrak::nodes::AstNode;
 
 pub mod post_process;
 
+pub use afm_lexer::Diagnostic as LexerDiagnostic;
 pub use comrak::{Arena as ComrakArena, Options as ComrakOptions};
 
 /// Parse-time options.
@@ -85,6 +88,29 @@ impl Options<'_> {
     }
 }
 
+/// Output of [`parse`]: the AST root plus every diagnostic the lexer
+/// emitted for the input.
+///
+/// The lifetime `'a` is the arena lifetime — `root` is a reference
+/// into the typed-arena allocator the caller provided. Dropping the
+/// arena invalidates the result, so callers must keep both alive
+/// for the same scope (just as comrak's own `parse_document` output
+/// requires).
+///
+/// `diagnostics` is always present; it is `Vec::new()` when the
+/// lexer found nothing to complain about. Consumers that want a
+/// pass/fail decision (the CLI's `--strict` flag, Language-Server
+/// integrations, corpus sweeps) can inspect `diagnostics.is_empty()`
+/// without having to rerun the lexer.
+#[derive(Debug)]
+pub struct ParseResult<'a> {
+    /// Root of the parsed document tree. Alive for the arena lifetime.
+    pub root: &'a AstNode<'a>,
+    /// Non-fatal observations from the lexer (unclosed opens, stray
+    /// triggers, PUA collisions, …). Empty on the happy path.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 /// Parse a UTF-8 source buffer into a comrak AST with Aozora annotations
 /// recognised.
 ///
@@ -94,29 +120,38 @@ impl Options<'_> {
 ///    decomposition (ADR-0004), tokenise + pair + classify + normalise
 ///    every Aozora construct into a PUA sentinel (`U+E001..U+E004`)
 ///    plus a `PlaceholderRegistry` that maps each sentinel back to its
-///    `AozoraNode` / `ContainerKind`.
+///    `AozoraNode` / `ContainerKind`. Diagnostics from this pass are
+///    forwarded into [`ParseResult::diagnostics`] verbatim.
 /// 2. `comrak::parse_document` on the normalised text — comrak sees
 ///    only plain CommonMark+GFM. All Aozora parse hooks were removed
 ///    from the fork in D1; the render-side `fn` pointer on
 ///    `Options::extension::render_aozora` (D2) is the last remaining
 ///    comrak/afm seam.
 /// 3. [`post_process::splice_inline`] / [`post_process::splice_block_leaf`]
-///    — walk the resulting AST, replace sentinels with real
-///    `NodeValue::Aozora(...)` nodes from the registry.
+///    / [`post_process::splice_paired_container`] — walk the resulting
+///    AST, replace sentinels with real `NodeValue::Aozora(...)` nodes
+///    from the registry and wrap paired-container pairs into a
+///    `Container` block (F5).
 ///
 /// When the Aozora render hook is not enabled on `options`, this is a
-/// straight `comrak::parse_document` passthrough — CommonMark / GFM only.
-#[must_use]
-pub fn parse<'a>(arena: &'a Arena<'a>, input: &str, options: &Options<'_>) -> &'a AstNode<'a> {
+/// straight `comrak::parse_document` passthrough — CommonMark / GFM
+/// only — and [`ParseResult::diagnostics`] is empty.
+pub fn parse<'a>(arena: &'a Arena<'a>, input: &str, options: &Options<'_>) -> ParseResult<'a> {
     if options.comrak.extension.render_aozora.is_some() {
         let lex_out = afm_lexer::lex(input);
         let root = comrak::parse_document(arena, &lex_out.normalized, &options.comrak);
         post_process::splice_inline(arena, root, &lex_out.registry);
         post_process::splice_block_leaf(arena, root, &lex_out.registry);
         post_process::splice_paired_container(arena, root, &lex_out.registry);
-        root
+        ParseResult {
+            root,
+            diagnostics: lex_out.diagnostics,
+        }
     } else {
-        comrak::parse_document(arena, input, &options.comrak)
+        ParseResult {
+            root: comrak::parse_document(arena, input, &options.comrak),
+            diagnostics: Vec::new(),
+        }
     }
 }
 
@@ -132,8 +167,11 @@ mod tests {
     fn parses_plain_paragraph_tree_shape() {
         let arena = Arena::new();
         let opts = Options::afm_default();
-        let root = parse(&arena, "Hello, world.", &opts);
-        let paragraph = root.first_child().expect("document has a first child");
+        let result = parse(&arena, "Hello, world.", &opts);
+        let paragraph = result
+            .root
+            .first_child()
+            .expect("document has a first child");
         assert_eq!(paragraph.data.borrow().value.xml_node_name(), "paragraph");
     }
 
@@ -221,9 +259,13 @@ mod tests {
     fn commonmark_only_mode_does_not_recognise_ruby() {
         let arena = Arena::new();
         let opts = Options::commonmark_only();
-        let root = parse(&arena, "｜青梅《おうめ》へ", &opts);
+        let result = parse(&arena, "｜青梅《おうめ》へ", &opts);
+        assert!(
+            result.diagnostics.is_empty(),
+            "commonmark-only pass-through must not emit lexer diagnostics"
+        );
         let mut found = Vec::<AozoraNode>::new();
-        test_support::collect_aozora_recursive(root, &mut found);
+        test_support::collect_aozora_recursive(result.root, &mut found);
         assert_eq!(
             found.len(),
             0,

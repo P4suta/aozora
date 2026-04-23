@@ -81,7 +81,7 @@ proptest! {
         let input = format!("｜{base}《{reading}》");
         let arena = Arena::new();
         let opts = Options::afm_default();
-        let root = parse(&arena, &input, &opts);
+        let root = parse(&arena, &input, &opts).root;
         let ruby = first_ruby(root).expect("explicit form must parse to a Ruby node");
         prop_assert_eq!(ruby.base.as_plain(), Some(base.as_str()));
         prop_assert_eq!(ruby.reading.as_plain(), Some(reading.as_str()));
@@ -106,7 +106,7 @@ proptest! {
         );
         let arena = Arena::new();
         let opts = Options::afm_default();
-        let root = parse(&arena, &input, &opts);
+        let root = parse(&arena, &input, &opts).root;
         let ruby = first_ruby(root).expect("ruby must parse");
         // Base stays Plain (explicit base is always a single Text event).
         prop_assert_eq!(ruby.base.as_plain(), Some(base.as_str()));
@@ -140,7 +140,7 @@ fn ruby_reading_with_mama_annotation_lifts_to_segments() {
     let input = "｜日本《にほん［＃ママ］》";
     let arena = Arena::new();
     let opts = Options::afm_default();
-    let root = parse(&arena, input, &opts);
+    let root = parse(&arena, input, &opts).root;
     let ruby = first_ruby(root).expect("ruby must parse");
     let Content::Segments(ref segs) = ruby.reading else {
         panic!("expected Segments, got {:?}", ruby.reading);

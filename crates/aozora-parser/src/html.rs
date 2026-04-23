@@ -18,8 +18,8 @@ use crate::Options;
 pub fn render_to_string(input: &str) -> String {
     let arena = comrak::Arena::new();
     let options = Options::afm_default();
-    let root = crate::parse(&arena, input, &options);
-    render_root_to_string(root, &options)
+    let result = crate::parse(&arena, input, &options);
+    render_root_to_string(result.root, &options)
 }
 
 /// Serialise a previously-parsed root to HTML. Panics are funnelled to an empty

@@ -43,7 +43,7 @@ fn tier_a_no_panic_and_no_unconsumed_square_brackets() {
 fn tier_a_ruby_recognition_floor() {
     let arena = comrak::Arena::new();
     let options = afm_parser::Options::afm_default();
-    let root = afm_parser::parse(&arena, FIXTURE, &options);
+    let root = afm_parser::parse(&arena, FIXTURE, &options).root;
 
     let mut counts = AozoraCounts::default();
     count_aozora(root, &mut counts);

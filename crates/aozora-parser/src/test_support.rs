@@ -33,9 +33,9 @@ use crate::{Options, parse};
 pub fn collect_aozora(input: &str) -> Vec<afm_syntax::AozoraNode> {
     let arena = Arena::new();
     let opts = Options::afm_default();
-    let root = parse(&arena, input, &opts);
+    let result = parse(&arena, input, &opts);
     let mut out = Vec::new();
-    collect_aozora_recursive(root, &mut out);
+    collect_aozora_recursive(result.root, &mut out);
     out
 }
 

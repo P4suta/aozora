@@ -45,7 +45,7 @@ fn commonmark_0_31_2_full_pass() {
 
     for ex in &examples {
         let arena = Arena::new();
-        let root = parse(&arena, &ex.markdown, &opts);
+        let root = parse(&arena, &ex.markdown, &opts).root;
         let actual = render_root_to_string(root, &opts);
         if actual != ex.html {
             failures.push(format!(
