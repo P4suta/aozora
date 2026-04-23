@@ -33,12 +33,10 @@
 //!
 //! ## Staged build-out
 //!
-//! C4a (this commit) ships only the scaffolding: every un-classified
-//! run is emitted as [`SpanKind::Plain`] and every `\n` as
-//! [`SpanKind::Newline`]. Subsequent commits bolt in concrete
-//! recognizers on top of the same driver:
+//! Recognizers land incrementally on top of the same driver:
 //!
-//! * C4b — ruby (explicit `｜base《reading》` and implicit-kanji).
+//! * ✅ C4a — scaffolding (Plain + Newline only).
+//! * ✅ C4b — ruby (explicit `｜base《reading》` and implicit-kanji).
 //! * C4c — bracket-annotation keyword dispatch (leaf blocks, bouten
 //!   keyword table).
 //! * C4d — inline: forward-ref bouten, tcy, gaiji, kaeriten.
@@ -48,14 +46,13 @@
 //! Each recognizer is a narrow function that inspects a
 //! `&[PairEvent]` slice (often one pair's `body_events`) plus the
 //! sanitized source. The driver loop stays the same — only the
-//! `recognize` step grows.
+//! `try_recognize` dispatch grows.
 
-use afm_syntax::{AozoraNode, Span};
+use afm_syntax::{AozoraNode, Content, Ruby, Span};
 
 use crate::diagnostic::Diagnostic;
-#[cfg(test)]
-use crate::phase2_pair::PairKind;
-use crate::phase2_pair::{PairEvent, PairOutput};
+use crate::phase2_pair::{PairEvent, PairKind, PairOutput};
+use crate::token::TriggerKind;
 
 /// Output of Phase 3. `spans` tiles the sanitized source contiguously
 /// (see the span-coverage invariant in the module docs).
@@ -98,9 +95,16 @@ pub enum SpanKind {
 /// `source` — see the module-level span-coverage invariant.
 #[must_use]
 pub fn classify(pair_output: &PairOutput, source: &str) -> ClassifyOutput {
+    let events = &pair_output.events;
     let mut driver = Driver::new(source);
-    for ev in &pair_output.events {
-        driver.accept(ev);
+    let mut i = 0;
+    while i < events.len() {
+        if let Some(consumed) = driver.try_recognize(events, i) {
+            i += consumed;
+        } else {
+            driver.accept(&events[i]);
+            i += 1;
+        }
     }
     driver.finish(pair_output.diagnostics.clone())
 }
@@ -109,27 +113,64 @@ pub fn classify(pair_output: &PairOutput, source: &str) -> ClassifyOutput {
 ///
 /// `pending_plain_start` is `Some(start_byte)` when the driver is in
 /// the middle of accumulating a Plain span; `None` when the last span
-/// emitted was a Newline (or nothing yet). Flushing the pending plain
-/// span is the only place Plain spans are produced.
+/// emitted was a Newline or a classified Aozora span (or nothing yet).
+/// Flushing the pending plain span is the only place Plain spans are
+/// produced.
 struct Driver<'s> {
     source_len: u32,
+    source: &'s str,
     spans: Vec<ClassifiedSpan>,
     pending_plain_start: Option<u32>,
-    /// Held as a safety net for future recognizer additions — some
-    /// classifiers will want the sanitized source to slice body text
-    /// out. Plain-only C4a does not read it yet but the scaffold puts
-    /// the plumbing in place.
-    _source: &'s str,
 }
 
 impl<'s> Driver<'s> {
     fn new(source: &'s str) -> Self {
         Self {
             source_len: u32::try_from(source.len()).expect("sanitize asserts fit in u32"),
+            source,
             spans: Vec::new(),
             pending_plain_start: None,
-            _source: source,
         }
+    }
+
+    /// Attempt to recognize an Aozora construct at `i`. Returns
+    /// `Some(consumed_event_count)` on a match (with the corresponding
+    /// Aozora span emitted and pending plain truncated); `None` leaves
+    /// the event for the fallback `accept` path.
+    fn try_recognize(&mut self, events: &[PairEvent], i: usize) -> Option<usize> {
+        let PairEvent::PairOpen {
+            kind: PairKind::Ruby,
+            close_idx,
+            ..
+        } = events[i]
+        else {
+            return None;
+        };
+        self.try_ruby(events, i, close_idx)
+    }
+
+    fn try_ruby(
+        &mut self,
+        events: &[PairEvent],
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<usize> {
+        let m = recognize_ruby(events, self.source, open_idx, close_idx)?;
+        // Truncate any in-progress plain run to end exactly where the
+        // ruby takes over. If `pending_plain_start >= consume_start`
+        // the pending span is empty and dropped — common for explicit
+        // ruby right after a newline.
+        self.flush_plain_up_to(m.consume_start);
+        self.spans.push(ClassifiedSpan {
+            kind: SpanKind::Aozora(AozoraNode::Ruby(Ruby {
+                base: Content::from(m.base),
+                reading: Content::from(m.reading),
+                delim_explicit: m.explicit,
+            })),
+            source_span: Span::new(m.consume_start, m.consume_end),
+        });
+        self.pending_plain_start = None;
+        Some(close_idx - open_idx + 1)
     }
 
     fn accept(&mut self, event: &PairEvent) {
@@ -145,13 +186,12 @@ impl<'s> Driver<'s> {
             return;
         }
 
-        // Un-classified in C4a: merge into the pending plain run.
-        // Every non-Newline PairEvent carries a span. The end is
-        // implicitly tracked by the *next* event's start or the
-        // end-of-stream finish pass — the 1:1 token↔event invariant
-        // from Phase 2, combined with Phase 1's contiguous byte
-        // coverage, means sequential event spans meet end-to-start
-        // with no gaps.
+        // Un-classified: merge into the pending plain run. Every
+        // non-Newline PairEvent carries a span. The end is implicitly
+        // tracked by the next event's start or the end-of-stream
+        // finish pass — the 1:1 token↔event invariant from Phase 2,
+        // combined with Phase 1's contiguous byte coverage, means
+        // sequential event spans meet end-to-start with no gaps.
         let span = event.span().expect("non-Newline event has a span");
         if self.pending_plain_start.is_none() {
             self.pending_plain_start = Some(span.start);
@@ -181,6 +221,140 @@ impl<'s> Driver<'s> {
             diagnostics,
         }
     }
+}
+
+/// Intermediate result of [`recognize_ruby`]. Strings are borrowed
+/// from the sanitized source; the driver owns them into the final
+/// `Content` values.
+struct RubyMatch<'s> {
+    base: &'s str,
+    reading: &'s str,
+    explicit: bool,
+    consume_start: u32,
+    consume_end: u32,
+}
+
+/// Try to recognize a Ruby span at `events[open_idx]`.
+///
+/// Two shapes per the Aozora annotation manual
+/// (<https://www.aozora.gr.jp/annotation/ruby.html>):
+///
+/// * **Explicit** — `｜X《Y》`. A [`TriggerKind::Bar`] `Solo` two
+///   events before the [`PairKind::Ruby`] open marks the full base.
+///   Any Text, not just kanji, may be the base.
+/// * **Implicit** — `…X《Y》` where the preceding Text event ends in
+///   a run of ideographs. The base is the trailing kanji run of that
+///   Text; any non-kanji prefix remains plain.
+///
+/// Returns `None` if neither shape applies (empty reading, no
+/// preceding Text, no kanji for implicit).
+fn recognize_ruby<'s>(
+    events: &[PairEvent],
+    source: &'s str,
+    open_idx: usize,
+    close_idx: usize,
+) -> Option<RubyMatch<'s>> {
+    let PairEvent::PairOpen {
+        span: open_span, ..
+    } = events[open_idx]
+    else {
+        return None;
+    };
+    let PairEvent::PairClose {
+        span: close_span, ..
+    } = events[close_idx]
+    else {
+        return None;
+    };
+    let reading = &source[open_span.end as usize..close_span.start as usize];
+    if reading.is_empty() {
+        return None;
+    }
+    if open_idx == 0 {
+        return None;
+    }
+    let PairEvent::Text {
+        range: prev_range, ..
+    } = events[open_idx - 1]
+    else {
+        return None;
+    };
+    let prev_text = &source[prev_range.start as usize..prev_range.end as usize];
+
+    // Explicit form: Solo(Bar) two events before the open, with the
+    // Text between them acting as the base.
+    if open_idx >= 2
+        && let PairEvent::Solo {
+            kind: TriggerKind::Bar,
+            span: bar_span,
+        } = events[open_idx - 2]
+    {
+        if prev_text.is_empty() {
+            return None;
+        }
+        return Some(RubyMatch {
+            base: prev_text,
+            reading,
+            explicit: true,
+            consume_start: bar_span.start,
+            consume_end: close_span.end,
+        });
+    }
+
+    // Implicit form: trailing-kanji run of the preceding Text.
+    let kanji_offset = trailing_kanji_start(prev_text);
+    if kanji_offset == prev_text.len() {
+        return None;
+    }
+    let consume_start =
+        prev_range.start + u32::try_from(kanji_offset).expect("kanji offset fits in u32");
+    Some(RubyMatch {
+        base: &prev_text[kanji_offset..],
+        reading,
+        explicit: false,
+        consume_start,
+        consume_end: close_span.end,
+    })
+}
+
+/// Byte offset where the trailing kanji run in `text` begins.
+///
+/// Walks chars right-to-left, keeping track of the earliest byte
+/// offset reached while every char is a ruby-base char. Returns
+/// `text.len()` if the final char is not a ruby-base char (→ no
+/// implicit base available).
+fn trailing_kanji_start(text: &str) -> usize {
+    let mut start = text.len();
+    for (idx, ch) in text.char_indices().rev() {
+        if is_ruby_base_char(ch) {
+            start = idx;
+        } else {
+            break;
+        }
+    }
+    start
+}
+
+/// Characters eligible as an implicit-ruby base.
+///
+/// Mirrors `afm-parser::aozora::ruby::is_ruby_base_char` so the
+/// corpus behavior stays consistent across the E2 cutover. Covers:
+///
+/// * CJK Unified Ideographs (main block + Extension A)
+/// * CJK Compatibility Ideographs
+/// * CJK Unified Ideographs Extension B..F (supplementary plane)
+/// * `々` (U+3005) ideographic iteration mark — usually kanji-like
+/// * `〆` (U+3006) ideographic closing mark — sometimes used as kanji
+const fn is_ruby_base_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{3400}'..='\u{4DBF}'
+        | '\u{4E00}'..='\u{9FFF}'
+        | '\u{F900}'..='\u{FAFF}'
+        | '\u{20000}'..='\u{2FFFF}'
+        | '々'
+        | '〆'
+    )
 }
 
 #[cfg(test)]
@@ -247,17 +421,91 @@ mod tests {
     }
 
     #[test]
-    fn triggers_are_folded_into_plain_for_c4a_scaffold() {
-        // With no recognizers yet, an Aozora-like snippet is still
-        // classified as Plain. The invariants (contiguous cover) must
-        // still hold.
-        let out = run("｜漢字《かんじ》");
-        // Classification: one contiguous Plain span (no newlines).
+    fn explicit_ruby_produces_single_aozora_span() {
+        let src = "｜青梅《おうめ》";
+        let out = run(src);
         assert_eq!(out.spans.len(), 1);
+        let SpanKind::Aozora(AozoraNode::Ruby(ref ruby)) = out.spans[0].kind else {
+            panic!("expected Aozora(Ruby) span, got {:?}", out.spans[0].kind);
+        };
+        assert_eq!(ruby.base.as_plain(), Some("青梅"));
+        assert_eq!(ruby.reading.as_plain(), Some("おうめ"));
+        assert!(ruby.delim_explicit);
+        assert_eq!(out.spans[0].source_span.end as usize, src.len());
+    }
+
+    #[test]
+    fn implicit_ruby_consumes_trailing_kanji_only() {
+        // "あいう" (kana) + "漢字" (kanji) + ruby → base is "漢字",
+        // leading kana stays Plain.
+        let src = "あいう漢字《かんじ》";
+        let out = run(src);
+        assert_eq!(out.spans.len(), 2);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
-        assert_eq!(
-            out.spans[0].source_span.end as usize,
-            "｜漢字《かんじ》".len()
+        let SpanKind::Aozora(AozoraNode::Ruby(ref ruby)) = out.spans[1].kind else {
+            panic!("expected Aozora(Ruby) span, got {:?}", out.spans[1].kind);
+        };
+        assert_eq!(ruby.base.as_plain(), Some("漢字"));
+        assert_eq!(ruby.reading.as_plain(), Some("かんじ"));
+        assert!(!ruby.delim_explicit);
+        // Plain covers "あいう"; ruby covers "漢字《かんじ》".
+        assert_eq!(out.spans[0].source_span.slice(src), "あいう");
+    }
+
+    #[test]
+    fn implicit_ruby_without_leading_kanji_leaves_ruby_unrecognized() {
+        // No kanji before 《 → ruby can't bind. Ruby remains plain.
+        let src = "あいう《かんじ》";
+        let out = run(src);
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
+            "expected no Aozora spans, got {:?}",
+            out.spans
+        );
+    }
+
+    #[test]
+    fn explicit_ruby_with_empty_reading_is_not_recognized() {
+        let src = "｜漢字《》";
+        let out = run(src);
+        // Empty reading fails recognition; whole source stays plain.
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
+            "expected no Aozora spans, got {:?}",
+            out.spans
+        );
+    }
+
+    #[test]
+    fn ruby_after_newline_keeps_newline_as_its_own_span() {
+        let src = "line1\n｜漢《かん》";
+        let out = run(src);
+        // Plain("line1"), Newline, Aozora(Ruby)
+        assert_eq!(out.spans.len(), 3);
+        assert_eq!(out.spans[0].kind, SpanKind::Plain);
+        assert_eq!(out.spans[1].kind, SpanKind::Newline);
+        assert!(matches!(
+            out.spans[2].kind,
+            SpanKind::Aozora(AozoraNode::Ruby(_))
+        ));
+    }
+
+    #[test]
+    fn implicit_ruby_after_non_text_event_is_not_recognized() {
+        // A close-bracket between `」` and `《` means the preceding
+        // event is PairClose, not Text. Implicit ruby can't bind.
+        let src = "「台詞」《かんじ》";
+        let out = run(src);
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
+            "expected no Aozora spans, got {:?}",
+            out.spans
         );
     }
 
