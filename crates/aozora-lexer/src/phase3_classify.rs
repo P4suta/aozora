@@ -51,8 +51,9 @@
 use core::ops::Range;
 
 use afm_syntax::{
-    AlignEnd, Annotation, AnnotationKind, AozoraNode, Bouten, BoutenKind, ContainerKind, Content,
-    Gaiji, Indent, Kaeriten, Ruby, Sashie, SectionKind, Segment, Span, TateChuYoko,
+    AlignEnd, Annotation, AnnotationKind, AozoraNode, Bouten, BoutenKind, BoutenPosition,
+    ContainerKind, Content, Gaiji, Indent, Kaeriten, Ruby, Sashie, SectionKind, Segment, Span,
+    TateChuYoko,
 };
 
 use crate::diagnostic::Diagnostic;
@@ -917,21 +918,65 @@ fn classify_forward_bouten(
     open_idx: usize,
     close_idx: usize,
 ) -> Option<AozoraNode> {
-    let (target, suffix) = extract_forward_quote_target(events, source, open_idx, close_idx)?;
-    let suffix = suffix.strip_prefix("に")?;
-    let kind = bouten_kind_from_suffix(suffix)?;
-    // A forward-reference bouten only makes sense when its target
-    // literal actually appears in the preceding text. Otherwise it has
-    // no referent and we fall through to the generic Annotation path
-    // so the reader sees the raw `［＃…］` rather than a mysterious
-    // styling applied to nothing.
-    if !forward_target_is_preceded(events, source, open_idx, target) {
+    let extracted = extract_forward_quote_targets(events, source, open_idx, close_idx)?;
+    // Shape 1: `に<kind>` — default right-side placement.
+    // Shape 2: `の左に<kind>` — left-side placement (position flipped).
+    let (position, kind_suffix) = if let Some(rest) = extracted.suffix.strip_prefix("に") {
+        (BoutenPosition::Right, rest)
+    } else if let Some(rest) = extracted.suffix.strip_prefix("の左に") {
+        (BoutenPosition::Left, rest)
+    } else {
         return None;
+    };
+    let kind = bouten_kind_from_suffix(kind_suffix)?;
+    // A forward-reference bouten only makes sense when every named
+    // target actually appears in the preceding text. Otherwise it
+    // has no referent and we fall through to the Annotation{Unknown}
+    // catch-all so the reader sees the raw `［＃…］` rather than a
+    // mysterious styling applied to nothing. Each target is checked
+    // independently so a partially-valid multi-quote bracket (rare
+    // but present in corpora) still fails cleanly.
+    for target in &extracted.targets {
+        if !forward_target_is_preceded(events, source, open_idx, target) {
+            return None;
+        }
     }
     Some(AozoraNode::Bouten(Bouten {
         kind,
-        target: Content::from(target),
+        target: build_bouten_target(&extracted.targets),
+        position,
     }))
+}
+
+/// Fold a list of forward-bouten target strings into a single
+/// [`Content`]. A one-element list takes the `Content::from(&str)`
+/// fast path (the overwhelmingly common case); multi-target lists
+/// build a `Segments` run where inter-target separators are modelled
+/// as `Segment::Text("、")` so the renderer emits
+/// `<em>A、B</em>` in document order.
+///
+/// Using `、` as the glue is a deliberate, lossy choice: the raw
+/// source shape `「A」「B」` does not have an explicit separator, but
+/// inserting one in the rendered output makes the targets readable
+/// without requiring a dedicated `Segment::Separator` variant (which
+/// would ripple through every renderer / serializer). Callers that
+/// need the per-target list can walk `Content::iter` and filter on
+/// `SegmentRef::Text`.
+fn build_bouten_target(targets: &[&str]) -> Content {
+    match targets {
+        [] => Content::default(),
+        [only] => Content::from(*only),
+        many => {
+            let mut segs: Vec<Segment> = Vec::with_capacity(many.len() * 2 - 1);
+            for (i, t) in many.iter().enumerate() {
+                if i > 0 {
+                    segs.push(Segment::Text("、".into()));
+                }
+                segs.push(Segment::Text((*t).into()));
+            }
+            Content::from_segments(segs)
+        }
+    }
 }
 
 /// Classify a `［＃「target」は縦中横］` forward-reference
@@ -941,23 +986,29 @@ fn classify_forward_bouten(
 /// suffix uses the particle `は` and the keyword `縦中横`. Paired
 /// form (`［＃縦中横］…［＃縦中横終わり］`) is a C4e / C4d concern
 /// and is not matched here.
+///
+/// Multi-quote `［＃「A」「B」は縦中横］` bodies are not standard Aozora
+/// spec; we accept the first target's text and ignore the rest for
+/// robustness rather than failing, so the bracket still consumes via
+/// [`classify_forward_tcy`] instead of leaking to `Annotation{Unknown}`.
 fn classify_forward_tcy(
     events: &[PairEvent],
     source: &str,
     open_idx: usize,
     close_idx: usize,
 ) -> Option<AozoraNode> {
-    let (target, suffix) = extract_forward_quote_target(events, source, open_idx, close_idx)?;
-    if suffix != "は縦中横" {
+    let extracted = extract_forward_quote_targets(events, source, open_idx, close_idx)?;
+    if extracted.suffix != "は縦中横" {
         return None;
     }
+    let first = extracted.targets.first()?;
     // Same rationale as `classify_forward_bouten` — the styling has no
     // meaning without a preceding target literal.
-    if !forward_target_is_preceded(events, source, open_idx, target) {
+    if !forward_target_is_preceded(events, source, open_idx, first) {
         return None;
     }
     Some(AozoraNode::TateChuYoko(TateChuYoko {
-        text: Content::from(target),
+        text: Content::from(*first),
     }))
 }
 
@@ -981,48 +1032,34 @@ fn forward_target_is_preceded(
     preceding.contains(target)
 }
 
-/// Shared helper for the `［＃「X」<particle><keyword>］` shape.
+/// Result of walking the `［＃「…」「…」…<particle><keyword>］`
+/// shape. `targets` holds each non-empty quote body in document order
+/// (length `>= 1` when `Some(_)` is returned) and `suffix` is the
+/// trimmed source between the last quote's `」` and the bracket's `］`,
+/// ready for particle + keyword matching.
+struct ForwardQuoteExtract<'s> {
+    targets: Vec<&'s str>,
+    suffix: &'s str,
+}
+
+/// Shared helper for the `［＃「X」…<particle><keyword>］` shape.
 ///
-/// Returns `(target, suffix)` where:
-/// * `target` is the raw source bytes strictly inside the `「…」`
-///   quote pair that lives immediately after the `＃`.
-/// * `suffix` is the trimmed source bytes between the closing `」`
-///   and the bracket's `］`. Callers then match on the particle +
-///   keyword.
+/// Walks consecutive quote pairs immediately after the `＃` and
+/// stops when the next event is *not* another `PairOpen(Quote)`.
+/// Returns the collected target list together with the trimmed
+/// suffix so callers can match on the particle + keyword portion.
 ///
 /// Returns `None` if any shape assumption fails: no adjacent quote
-/// pair, empty target, or quote crossing out of the bracket.
-fn extract_forward_quote_target<'s>(
+/// pair, first quote empty, or the initial quote crossing out of the
+/// bracket. Subsequent empty quote bodies are silently skipped
+/// (defensive against `「」` placeholders in real corpora) rather
+/// than aborting the recognition.
+fn extract_forward_quote_targets<'s>(
     events: &[PairEvent],
     source: &'s str,
     open_idx: usize,
     close_idx: usize,
-) -> Option<(&'s str, &'s str)> {
-    let quote_open_idx = open_idx + 2;
-    let &PairEvent::PairOpen {
-        kind: PairKind::Quote,
-        span: quote_open_span,
-        close_idx: quote_close_idx,
-    } = events.get(quote_open_idx)?
-    else {
-        return None;
-    };
-    // The quote must close *before* the bracket — a cross-boundary
-    // close would mean the quote is not nested inside the bracket.
-    if quote_close_idx >= close_idx {
-        return None;
-    }
-    let &PairEvent::PairClose {
-        span: quote_close_span,
-        ..
-    } = events.get(quote_close_idx)?
-    else {
-        return None;
-    };
-    let target = &source[quote_open_span.end as usize..quote_close_span.start as usize];
-    if target.is_empty() {
-        return None;
-    }
+) -> Option<ForwardQuoteExtract<'s>> {
     let &PairEvent::PairClose {
         span: bracket_close_span,
         ..
@@ -1030,8 +1067,44 @@ fn extract_forward_quote_target<'s>(
     else {
         return None;
     };
-    let suffix = source[quote_close_span.end as usize..bracket_close_span.start as usize].trim();
-    Some((target, suffix))
+
+    let mut targets: Vec<&'s str> = Vec::new();
+    let mut cursor = open_idx + 2; // skip `［` and `＃`
+    let mut last_quote_end: u32 = 0;
+
+    while let Some(&PairEvent::PairOpen {
+        kind: PairKind::Quote,
+        span: quote_open_span,
+        close_idx: quote_close_idx,
+    }) = events.get(cursor)
+    {
+        // The quote must close *before* the bracket — a cross-boundary
+        // close would mean the quote is not nested inside the bracket.
+        if quote_close_idx >= close_idx {
+            return None;
+        }
+        let Some(&PairEvent::PairClose {
+            span: quote_close_span,
+            ..
+        }) = events.get(quote_close_idx)
+        else {
+            return None;
+        };
+        // Empty quotes are tolerated in-position but not added to the
+        // target list — they carry no semantic content.
+        let body = &source[quote_open_span.end as usize..quote_close_span.start as usize];
+        if !body.is_empty() {
+            targets.push(body);
+        }
+        last_quote_end = quote_close_span.end;
+        cursor = quote_close_idx + 1;
+    }
+
+    if targets.is_empty() {
+        return None;
+    }
+    let suffix = source[last_quote_end as usize..bracket_close_span.start as usize].trim();
+    Some(ForwardQuoteExtract { targets, suffix })
 }
 
 /// Classify a paired-container opener annotation.
@@ -1147,19 +1220,30 @@ fn classify_sashie(body: &str) -> Option<AozoraNode> {
 
 /// Map the trailing keyword (after `に`) to a [`BoutenKind`].
 ///
-/// Covers the seven shapes catalogued at
-/// <https://www.aozora.gr.jp/annotation/bouten.html>. Unknown
-/// suffixes return `None`, letting the annotation fall through to
-/// Plain (or to a more specific classifier in a later commit).
+/// Covers the eleven bouten kinds catalogued at
+/// <https://www.aozora.gr.jp/annotation/bouten.html> plus the common
+/// emphasis-page variants (`白ゴマ` / `ばつ` / `白三角` / `二重傍線`).
+/// Unknown suffixes return `None`, letting the annotation fall through
+/// to the `Annotation{Unknown}` catch-all.
+///
+/// The dispatch is a straight `match` rather than a PHF table: 11
+/// entries, each a short literal, lookup cost is dominated by hash
+/// overhead either way. The exhaustive test in
+/// `bouten_kind_from_suffix_recognises_all_spec_keywords` catches
+/// typos before they silence recognition.
 fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
     Some(match s {
         "傍点" => BoutenKind::Goma,
+        "白ゴマ傍点" => BoutenKind::WhiteSesame,
         "丸傍点" => BoutenKind::Circle,
         "白丸傍点" => BoutenKind::WhiteCircle,
         "二重丸傍点" => BoutenKind::DoubleCircle,
         "蛇の目傍点" => BoutenKind::Janome,
+        "ばつ傍点" => BoutenKind::Cross,
+        "白三角傍点" => BoutenKind::WhiteTriangle,
         "波線" => BoutenKind::WavyLine,
         "傍線" => BoutenKind::UnderLine,
+        "二重傍線" => BoutenKind::DoubleUnderLine,
         _ => return None,
     })
 }
@@ -1811,27 +1895,151 @@ mod tests {
     }
 
     #[test]
-    fn forward_bouten_all_seven_kinds() {
+    fn forward_bouten_all_eleven_kinds() {
+        // F2 expansion: 7 legacy kinds + 4 newly-recognised kinds
+        // (白ゴマ / ばつ / 白三角 / 二重傍線). Each suffix must promote
+        // the bracket into a Bouten node rather than fall through to
+        // `Annotation{Unknown}`, lowering the sweep leak rate.
         let cases = [
             ("傍点", BoutenKind::Goma),
+            ("白ゴマ傍点", BoutenKind::WhiteSesame),
             ("丸傍点", BoutenKind::Circle),
             ("白丸傍点", BoutenKind::WhiteCircle),
             ("二重丸傍点", BoutenKind::DoubleCircle),
             ("蛇の目傍点", BoutenKind::Janome),
+            ("ばつ傍点", BoutenKind::Cross),
+            ("白三角傍点", BoutenKind::WhiteTriangle),
             ("波線", BoutenKind::WavyLine),
             ("傍線", BoutenKind::UnderLine),
+            ("二重傍線", BoutenKind::DoubleUnderLine),
         ];
         for (suffix, expected_kind) in cases {
             let src = format!("t［＃「t」に{suffix}］");
             let out = run(&src);
-            let Some(kind) = out.spans.iter().find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b.kind),
+            let Some(b) = out.spans.iter().find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
                 _ => None,
             }) else {
                 panic!("no Bouten span for suffix {suffix:?}");
             };
-            assert_eq!(kind, expected_kind, "suffix {suffix:?}");
+            assert_eq!(b.kind, expected_kind, "suffix {suffix:?}");
+            // All default `に` shapes produce right-side position.
+            assert_eq!(b.position, BoutenPosition::Right, "suffix {suffix:?}");
         }
+    }
+
+    #[test]
+    fn forward_bouten_left_side_flips_position() {
+        // `の左に傍点` sets BoutenPosition::Left. The same forward-
+        // reference validation (target appears in preceding text) still
+        // applies so we prepend a matching target.
+        let out = run("X［＃「X」の左に傍点］");
+        let b = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+                _ => None,
+            })
+            .expect("Bouten expected");
+        assert_eq!(b.kind, BoutenKind::Goma);
+        assert_eq!(b.position, BoutenPosition::Left);
+        assert_eq!(b.target.as_plain(), Some("X"));
+    }
+
+    #[test]
+    fn forward_bouten_left_side_pairs_with_every_kind() {
+        // 左 + every kind must work (same suffix grammar).
+        let cases = [
+            ("傍点", BoutenKind::Goma),
+            ("白ゴマ傍点", BoutenKind::WhiteSesame),
+            ("丸傍点", BoutenKind::Circle),
+            ("二重傍線", BoutenKind::DoubleUnderLine),
+            ("傍線", BoutenKind::UnderLine),
+        ];
+        for (suffix, expected_kind) in cases {
+            let src = format!("t［＃「t」の左に{suffix}］");
+            let out = run(&src);
+            let Some(b) = out.spans.iter().find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+                _ => None,
+            }) else {
+                panic!("no Bouten span for left-side suffix {suffix:?}");
+            };
+            assert_eq!(b.kind, expected_kind);
+            assert_eq!(b.position, BoutenPosition::Left);
+        }
+    }
+
+    #[test]
+    fn forward_bouten_multi_quote_concatenates_targets() {
+        // `［＃「A」「B」に傍点］` walks consecutive PairOpen(Quote)
+        // events after the `＃` and folds their bodies into a single
+        // Bouten target joined with `、`. Both A and B must appear in
+        // the preceding text for the classifier to promote — this
+        // keeps the forward-reference semantic intact.
+        let out = run("AとB［＃「A」「B」に傍点］");
+        let b = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+                _ => None,
+            })
+            .expect("multi-quote Bouten expected");
+        assert_eq!(b.kind, BoutenKind::Goma);
+        // Targets collapse to `A、B` through `Content::from_segments`
+        // (all-Text segments → `Plain`).
+        assert_eq!(b.target.as_plain(), Some("A、B"));
+    }
+
+    #[test]
+    fn forward_bouten_multi_quote_without_all_targets_preceded_falls_through() {
+        // Only "A" appears before the bracket; "B" does not. The
+        // classifier refuses to promote — the bracket is consumed as
+        // `Annotation{Unknown}` by the catch-all instead, preserving
+        // Tier-A without inventing a bouten target.
+        let out = run("A［＃「A」「B」に傍点］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Bouten(_)))),
+            "Bouten must not promote when any target is unreferenced"
+        );
+    }
+
+    #[test]
+    fn forward_bouten_empty_inner_quotes_are_skipped() {
+        // `「」` placeholders in the middle of a multi-quote body do
+        // not contribute to the target list. This guards against
+        // corpus stragglers like `［＃「A」「」「B」に傍点］`.
+        let out = run("AB［＃「A」「」「B」に傍点］");
+        let b = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+                _ => None,
+            })
+            .expect("Bouten expected");
+        assert_eq!(b.target.as_plain(), Some("A、B"));
+    }
+
+    #[test]
+    fn forward_bouten_position_slug_and_segments_render_together() {
+        // Regression: the position modifier must be propagated even
+        // when the target is a Segments (multi-quote) value.
+        let out = run("AB［＃「A」「B」の左に傍点］");
+        let b = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+                _ => None,
+            })
+            .expect("Bouten expected");
+        assert_eq!(b.position, BoutenPosition::Left);
+        assert_eq!(b.target.as_plain(), Some("A、B"));
     }
 
     #[test]

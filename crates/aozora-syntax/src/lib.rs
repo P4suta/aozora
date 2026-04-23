@@ -393,15 +393,29 @@ pub struct Bouten {
     /// editorial annotations without information loss; the HTML renderer
     /// emits `<em class="afm-bouten-{kind}">target</em>` iterating
     /// segments.
+    ///
+    /// For multi-target shapes like `［＃「A」「B」に傍点］` the lexer
+    /// folds all consecutive quote bodies into [`Content::Segments`]
+    /// with inter-quote separators represented as [`Segment::Text`]
+    /// punctuation. Callers that need the individual target list can
+    /// iterate segments and filter on `SegmentRef::Text`.
     pub target: Content,
+    /// Which side of the base text the marks appear on. Defaults to
+    /// [`BoutenPosition::Right`] (the standard vertical-writing side);
+    /// `［＃「X」の左に傍点］` etc. set this to [`BoutenPosition::Left`].
+    /// Rendered as an `afm-bouten-left` / `afm-bouten-right` modifier
+    /// class so the CSS theme can style each side independently.
+    pub position: BoutenPosition,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum BoutenKind {
-    /// 白ゴマ (default, `［＃「X」に傍点］`)
+    /// ゴマ (black sesame, default shape of `［＃「X」に傍点］`)
     Goma,
+    /// 白ゴマ (white sesame, `［＃「X」に白ゴマ傍点］`)
+    WhiteSesame,
     /// 丸 (`［＃「X」に丸傍点］`)
     Circle,
     /// 白丸
@@ -410,10 +424,31 @@ pub enum BoutenKind {
     DoubleCircle,
     /// 蛇の目
     Janome,
+    /// ばつ (cross mark, `［＃「X」にばつ傍点］`)
+    Cross,
+    /// 白三角 (`［＃「X」に白三角傍点］`)
+    WhiteTriangle,
     /// 波線 (`［＃「X」に波線］`)
     WavyLine,
     /// 傍線
     UnderLine,
+    /// 二重傍線 (`［＃「X」に二重傍線］`)
+    DoubleUnderLine,
+}
+
+/// Which side of the vertical-writing base text the bouten marks sit on.
+///
+/// The default is the right side (the standard Japanese print
+/// convention); `の左に` in the annotation body flips this to the left
+/// side, typically used in parallel editions or to disambiguate two
+/// layered readings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum BoutenPosition {
+    #[default]
+    Right,
+    Left,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -574,8 +609,20 @@ mod tests {
         let b = Bouten {
             kind: BoutenKind::Goma,
             target: "可哀想".into(),
+            position: BoutenPosition::Right,
         };
         assert_eq!(b.target.as_plain(), Some("可哀想"));
+        assert_eq!(b.position, BoutenPosition::default());
+    }
+
+    #[test]
+    fn bouten_position_defaults_to_right() {
+        // Default side is the vertical-writing right (standard print).
+        // `BoutenPosition::default()` is the canonical constructor; any
+        // regression that flips the default would silently flip every
+        // plain `［＃「X」に傍点］` in rendered corpora to the wrong
+        // side, so we pin it.
+        assert_eq!(BoutenPosition::default(), BoutenPosition::Right);
     }
 
     #[test]
@@ -765,6 +812,7 @@ mod tests {
             AozoraNode::Bouten(Bouten {
                 kind: BoutenKind::Goma,
                 target: "".into(),
+                position: BoutenPosition::Right,
             }),
             AozoraNode::TateChuYoko(TateChuYoko { text: "".into() }),
             AozoraNode::Gaiji(Gaiji {

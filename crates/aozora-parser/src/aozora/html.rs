@@ -65,16 +65,20 @@ fn render_ruby(r: &Ruby, writer: &mut dyn Write) -> fmt::Result {
 }
 
 /// Forward-reference bouten renders as a semantic `<em>` wrapping the
-/// annotated literal, with a per-kind class for CSS styling. The preceding
-/// plain occurrence of the literal remains in the surrounding text stream;
-/// visual deduplication (hiding the plain copy so the bouten-marked run
-/// takes its place) is a stylesheet concern — see
-/// `crates/afm-book/theme/afm-horizontal.css` for the CSS class contract.
+/// annotated literal, with a per-kind class for CSS styling and a
+/// per-position modifier (`afm-bouten-right` / `afm-bouten-left`) so
+/// the stylesheet can place the marks on either side of the base
+/// text. The preceding plain occurrence of the literal remains in the
+/// surrounding text stream; visual deduplication (hiding the plain
+/// copy so the bouten-marked run takes its place) is a stylesheet
+/// concern — see `crates/afm-book/theme/afm-horizontal.css` for the
+/// CSS class contract.
 fn render_bouten(b: &Bouten, writer: &mut dyn Write) -> fmt::Result {
     write!(
         writer,
-        r#"<em class="afm-bouten afm-bouten-{slug}">"#,
-        slug = bouten::kind_slug(b.kind),
+        r#"<em class="afm-bouten afm-bouten-{kind} afm-bouten-{pos}">"#,
+        kind = bouten::kind_slug(b.kind),
+        pos = bouten::position_slug(b.position),
     )?;
     render_content(&b.target, writer)?;
     writer.write_str("</em>")
@@ -185,7 +189,8 @@ fn escape_text(text: &str, writer: &mut dyn Write) -> fmt::Result {
 mod tests {
     use super::*;
     use afm_syntax::{
-        AlignEnd, Annotation, AnnotationKind, Bouten, BoutenKind, Indent, Ruby, TateChuYoko,
+        AlignEnd, Annotation, AnnotationKind, Bouten, BoutenKind, BoutenPosition, Indent, Ruby,
+        TateChuYoko,
     };
 
     fn render_to_string(node: &AozoraNode) -> String {
@@ -311,10 +316,11 @@ mod tests {
         let n = AozoraNode::Bouten(Bouten {
             kind: BoutenKind::Goma,
             target: "可哀想".into(),
+            position: BoutenPosition::Right,
         });
         assert_eq!(
             render_to_string(&n),
-            r#"<em class="afm-bouten afm-bouten-goma">可哀想</em>"#
+            r#"<em class="afm-bouten afm-bouten-goma afm-bouten-right">可哀想</em>"#
         );
     }
 
@@ -323,10 +329,27 @@ mod tests {
         let n = AozoraNode::Bouten(Bouten {
             kind: BoutenKind::WavyLine,
             target: "a<b&c".into(),
+            position: BoutenPosition::Right,
         });
         assert_eq!(
             render_to_string(&n),
-            r#"<em class="afm-bouten afm-bouten-wavy-line">a&lt;b&amp;c</em>"#
+            r#"<em class="afm-bouten afm-bouten-wavy-line afm-bouten-right">a&lt;b&amp;c</em>"#
+        );
+    }
+
+    #[test]
+    fn bouten_left_position_emits_left_modifier() {
+        // `［＃「X」の左に傍点］` shape: the marks render on the
+        // left-hand side, distinguishable via the afm-bouten-left
+        // modifier class so the CSS theme can style each side.
+        let n = AozoraNode::Bouten(Bouten {
+            kind: BoutenKind::Goma,
+            target: "左".into(),
+            position: BoutenPosition::Left,
+        });
+        assert_eq!(
+            render_to_string(&n),
+            r#"<em class="afm-bouten afm-bouten-goma afm-bouten-left">左</em>"#
         );
     }
 
@@ -363,18 +386,24 @@ mod tests {
         // class contract breaks here, before reaching the stylesheet tests.
         for (kind, want_slug) in [
             (BoutenKind::Goma, "goma"),
+            (BoutenKind::WhiteSesame, "white-sesame"),
             (BoutenKind::Circle, "circle"),
             (BoutenKind::WhiteCircle, "white-circle"),
             (BoutenKind::DoubleCircle, "double-circle"),
             (BoutenKind::Janome, "janome"),
+            (BoutenKind::Cross, "cross"),
+            (BoutenKind::WhiteTriangle, "white-triangle"),
             (BoutenKind::WavyLine, "wavy-line"),
             (BoutenKind::UnderLine, "under-line"),
+            (BoutenKind::DoubleUnderLine, "double-under-line"),
         ] {
             let html = render_to_string(&AozoraNode::Bouten(Bouten {
                 kind,
                 target: "x".into(),
+                position: BoutenPosition::Right,
             }));
-            let expected = format!(r#"<em class="afm-bouten afm-bouten-{want_slug}">x</em>"#);
+            let expected =
+                format!(r#"<em class="afm-bouten afm-bouten-{want_slug} afm-bouten-right">x</em>"#);
             assert_eq!(html, expected, "kind={kind:?}");
         }
     }

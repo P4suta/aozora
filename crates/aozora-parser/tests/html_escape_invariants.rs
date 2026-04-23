@@ -108,9 +108,11 @@ fn forward_bouten_target_escape_targets_are_escaped() {
         "expected afm-bouten wrapper in {html:?}"
     );
     // Inside <em class="afm-bouten ..."> the target appears once,
-    // escaped.
+    // escaped. Post-F2 the class list includes a position modifier
+    // (`afm-bouten-right` by default); the target bytes must still
+    // escape.
     assert!(
-        html.contains(r#"<em class="afm-bouten afm-bouten-goma">&amp;&lt;</em>"#),
+        html.contains(r#"<em class="afm-bouten afm-bouten-goma afm-bouten-right">&amp;&lt;</em>"#),
         "bouten target must escape inside its em tag, got {html:?}"
     );
     assert!(!contains_raw_script_tag(&html));
