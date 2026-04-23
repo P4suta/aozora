@@ -49,8 +49,8 @@
 //! `try_recognize` dispatch grows.
 
 use afm_syntax::{
-    AlignEnd, AozoraNode, Bouten, BoutenKind, Content, Gaiji, Indent, Kaeriten, Ruby, Sashie,
-    SectionKind, Span, TateChuYoko,
+    AlignEnd, AozoraNode, Bouten, BoutenKind, ContainerKind, Content, Gaiji, Indent, Kaeriten,
+    Ruby, Sashie, SectionKind, Span, TateChuYoko,
 };
 
 use crate::diagnostic::Diagnostic;
@@ -74,19 +74,44 @@ pub struct ClassifiedSpan {
 
 /// Classification of a [`ClassifiedSpan`].
 ///
-/// The enum is intentionally small: Phase 4 only needs to distinguish
-/// "emit verbatim", "replace with sentinel and record in registry",
-/// and "keep as line boundary".
+/// Phase 4 maps the variants to PUA sentinels as follows:
+///
+/// | variant        | sentinel              | `post_process` role |
+/// |----------------|-----------------------|-------------------|
+/// | `Plain`        | verbatim source bytes | — |
+/// | `Newline`      | verbatim `\n`         | — |
+/// | `Aozora(n)`    | `E001` if inline, `E002` if block-leaf | splice Aozora node into comrak AST |
+/// | `BlockOpen`    | `E003`                | pair with matching `BlockClose` |
+/// | `BlockClose`   | `E004`                | close nearest unclosed `BlockOpen` |
+///
+/// The `BlockOpen` / `BlockClose` split exists because paired
+/// containers (`ここから字下げ` … `ここで字下げ終わり`) span arbitrary
+/// content between the two markers. The lexer emits both markers as
+/// independent spans and lets `post_process` walk the AST to wrap
+/// sibling nodes in the container — see ADR-0008.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SpanKind {
     /// Source bytes that carry no Aozora construct. Emitted verbatim
     /// by Phase 4.
     Plain,
-    /// Classified Aozora construct. Phase 4 replaces the source span
-    /// with a PUA sentinel and records the node in the placeholder
-    /// registry keyed at the sentinel's normalized position.
+    /// Classified Aozora construct (inline span or block-leaf line).
+    /// Phase 4 replaces the source span with an `E001` (inline) or
+    /// `E002` (block-leaf) sentinel and records the node in the
+    /// placeholder registry keyed at the sentinel's normalized
+    /// position.
     Aozora(AozoraNode),
+    /// Paired-container opener — `［＃ここから字下げ］`, `［＃罫囲み］`,
+    /// etc. Phase 4 emits an `E003` sentinel line; `post_process`
+    /// matches it to the corresponding `BlockClose` via a balanced
+    /// stack walk of the comrak AST.
+    BlockOpen(ContainerKind),
+    /// Paired-container closer — `［＃ここで字下げ終わり］`,
+    /// `［＃罫囲み終わり］`, etc. Phase 4 emits an `E004` sentinel
+    /// line; the carried `ContainerKind` is a hint used by
+    /// `post_process` to diagnose `［＃罫囲み終わり］` closing an
+    /// `Indent` opener (kind mismatch).
+    BlockClose(ContainerKind),
     /// A `\n` in the sanitized text. Retained as its own span kind
     /// because block-level recognizers need line boundaries.
     Newline,
@@ -192,8 +217,13 @@ impl<'s> Driver<'s> {
     ) -> Option<usize> {
         let m = recognize_annotation(events, self.source, open_idx, close_idx)?;
         self.flush_plain_up_to(m.consume_start);
+        let kind = match m.emit {
+            EmitKind::Aozora(node) => SpanKind::Aozora(node),
+            EmitKind::BlockOpen(container) => SpanKind::BlockOpen(container),
+            EmitKind::BlockClose(container) => SpanKind::BlockClose(container),
+        };
         self.spans.push(ClassifiedSpan {
-            kind: SpanKind::Aozora(m.node),
+            kind,
             source_span: Span::new(m.consume_start, m.consume_end),
         });
         self.pending_plain_start = None;
@@ -491,14 +521,22 @@ fn trailing_kanji_start(text: &str) -> usize {
     start
 }
 
-/// Intermediate result of [`recognize_annotation`]. Owns the final
-/// [`AozoraNode`] because annotation variants have heterogeneous
-/// lifetime/content shapes — some borrow nothing, some will borrow in
-/// future commits — so a single enum-free struct is simpler.
+/// Intermediate result of [`recognize_annotation`]. The `emit`
+/// variant decides which [`SpanKind`] the driver pushes.
 struct AnnotationMatch {
-    node: AozoraNode,
+    emit: EmitKind,
     consume_start: u32,
     consume_end: u32,
+}
+
+/// What to emit for a matched annotation.
+enum EmitKind {
+    /// Inline or block-leaf — becomes [`SpanKind::Aozora`].
+    Aozora(AozoraNode),
+    /// Paired-container opener — becomes [`SpanKind::BlockOpen`].
+    BlockOpen(ContainerKind),
+    /// Paired-container closer — becomes [`SpanKind::BlockClose`].
+    BlockClose(ContainerKind),
 }
 
 /// Try to recognize a `［＃keyword…］` annotation at
@@ -549,15 +587,20 @@ fn recognize_annotation(
     // such whitespace but the corpus contains stragglers.
     let body = source[hash_end as usize..close_span.start as usize].trim();
 
-    let node = classify_fixed_keyword(body)
-        .or_else(|| classify_kaeriten(body))
-        .or_else(|| classify_indent_or_align(body))
-        .or_else(|| classify_sashie(body))
-        .or_else(|| classify_forward_bouten(events, source, open_idx, close_idx))
-        .or_else(|| classify_forward_tcy(events, source, open_idx, close_idx))?;
+    let emit = classify_fixed_keyword(body)
+        .map(EmitKind::Aozora)
+        .or_else(|| classify_kaeriten(body).map(EmitKind::Aozora))
+        .or_else(|| classify_indent_or_align(body).map(EmitKind::Aozora))
+        .or_else(|| classify_sashie(body).map(EmitKind::Aozora))
+        .or_else(|| {
+            classify_forward_bouten(events, source, open_idx, close_idx).map(EmitKind::Aozora)
+        })
+        .or_else(|| classify_forward_tcy(events, source, open_idx, close_idx).map(EmitKind::Aozora))
+        .or_else(|| classify_container_open(body))
+        .or_else(|| classify_container_close(body))?;
 
     Some(AnnotationMatch {
-        node,
+        emit,
         consume_start: open_span.start,
         consume_end: close_span.end,
     })
@@ -708,6 +751,75 @@ fn extract_forward_quote_target<'s>(
     };
     let suffix = source[quote_close_span.end as usize..bracket_close_span.start as usize].trim();
     Some((target, suffix))
+}
+
+/// Classify a paired-container opener annotation.
+///
+/// Accepted shapes:
+///
+/// * `ここから字下げ`      → `Indent { amount: 1 }` (default)
+/// * `ここからN字下げ`     → `Indent { amount: N }` (N is ASCII or 全角)
+/// * `ここから地付き`       → `AlignEnd { offset: 0 }`
+/// * `ここから地からN字上げ` → `AlignEnd { offset: N }`
+/// * `罫囲み`               → `Keigakomi`
+/// * `割り注`               → `Warichu`
+///
+/// Returns `None` for closers or unknown bodies; those go to
+/// [`classify_container_close`] or fall through to Plain.
+fn classify_container_open(body: &str) -> Option<EmitKind> {
+    if let Some(rest) = body.strip_prefix("ここから") {
+        if rest == "字下げ" {
+            return Some(EmitKind::BlockOpen(ContainerKind::Indent { amount: 1 }));
+        }
+        if rest == "地付き" {
+            return Some(EmitKind::BlockOpen(ContainerKind::AlignEnd { offset: 0 }));
+        }
+        if let Some(inner) = rest.strip_prefix("地から")
+            && let Some((n, tail)) = parse_decimal_u8_prefix(inner)
+            && tail == "字上げ"
+        {
+            return Some(EmitKind::BlockOpen(ContainerKind::AlignEnd { offset: n }));
+        }
+        if let Some((n, tail)) = parse_decimal_u8_prefix(rest)
+            && tail == "字下げ"
+        {
+            return Some(EmitKind::BlockOpen(ContainerKind::Indent { amount: n }));
+        }
+        return None;
+    }
+    match body {
+        "罫囲み" => Some(EmitKind::BlockOpen(ContainerKind::Keigakomi)),
+        "割り注" => Some(EmitKind::BlockOpen(ContainerKind::Warichu)),
+        _ => None,
+    }
+}
+
+/// Classify a paired-container closer annotation.
+///
+/// Accepted shapes (corresponding to the opener list above):
+///
+/// * `ここで字下げ終わり` → `Indent { amount: 0 }` (amount is a placeholder)
+/// * `ここで地付き終わり` → `AlignEnd { offset: 0 }`
+/// * `罫囲み終わり`         → `Keigakomi`
+/// * `割り注終わり`         → `Warichu`
+///
+/// The carried [`ContainerKind`] only conveys the *variant* — the
+/// numeric field (`amount` / `offset`) is a placeholder because the
+/// closer does not restate it. `post_process` compares open and close
+/// by variant, not by field value.
+fn classify_container_close(body: &str) -> Option<EmitKind> {
+    let rest = body.strip_suffix("終わり")?;
+    if rest == "ここで字下げ" {
+        return Some(EmitKind::BlockClose(ContainerKind::Indent { amount: 0 }));
+    }
+    if rest == "ここで地付き" {
+        return Some(EmitKind::BlockClose(ContainerKind::AlignEnd { offset: 0 }));
+    }
+    match rest {
+        "罫囲み" => Some(EmitKind::BlockClose(ContainerKind::Keigakomi)),
+        "割り注" => Some(EmitKind::BlockClose(ContainerKind::Warichu)),
+        _ => None,
+    }
 }
 
 /// Classify a `［＃<mark>］` kaeriten (Chinese-reading order mark).
@@ -1435,6 +1547,104 @@ mod tests {
             !out.spans
                 .iter()
                 .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Kaeriten(_)))),
+        );
+    }
+
+    #[test]
+    fn container_open_indent_default_amount_one() {
+        let out = run("［＃ここから字下げ］");
+        assert_eq!(out.spans.len(), 1);
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::Indent { amount: 1 })
+        ));
+    }
+
+    #[test]
+    fn container_open_indent_with_amount() {
+        let out = run("［＃ここから３字下げ］");
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::Indent { amount: 3 })
+        ));
+    }
+
+    #[test]
+    fn container_close_indent_matches_open_by_variant() {
+        let out = run("［＃ここから字下げ］本文［＃ここで字下げ終わり］");
+        // Spans: BlockOpen(Indent{1}), Plain("本文"), BlockClose(Indent{0})
+        assert_eq!(out.spans.len(), 3);
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::Indent { .. })
+        ));
+        assert_eq!(out.spans[1].kind, SpanKind::Plain);
+        assert!(matches!(
+            out.spans[2].kind,
+            SpanKind::BlockClose(ContainerKind::Indent { .. })
+        ));
+    }
+
+    #[test]
+    fn container_open_chitsuki_and_chi_kara_n() {
+        let out = run("［＃ここから地付き］");
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::AlignEnd { offset: 0 })
+        ));
+        let out2 = run("［＃ここから地から2字上げ］");
+        assert!(matches!(
+            out2.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::AlignEnd { offset: 2 })
+        ));
+    }
+
+    #[test]
+    fn container_open_close_keigakomi() {
+        let out = run("［＃罫囲み］内部［＃罫囲み終わり］");
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::Keigakomi)
+        ));
+        assert!(matches!(
+            out.spans[2].kind,
+            SpanKind::BlockClose(ContainerKind::Keigakomi)
+        ));
+    }
+
+    #[test]
+    fn container_open_close_warichu() {
+        let out = run("［＃割り注］内部［＃割り注終わり］");
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::Warichu)
+        ));
+        assert!(matches!(
+            out.spans[2].kind,
+            SpanKind::BlockClose(ContainerKind::Warichu)
+        ));
+    }
+
+    #[test]
+    fn container_close_without_matching_open_still_emits_close() {
+        // Phase 3 does not pair opens with closes — that's `post_process`.
+        // A bare `［＃罫囲み終わり］` is still classified.
+        let out = run("［＃罫囲み終わり］");
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockClose(ContainerKind::Keigakomi)
+        ));
+    }
+
+    #[test]
+    fn container_unknown_here_from_keyword_falls_through() {
+        let out = run("［＃ここから未知］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::BlockOpen(_) | SpanKind::BlockClose(_))),
+            "expected no block container spans, got {:?}",
+            out.spans
         );
     }
 
