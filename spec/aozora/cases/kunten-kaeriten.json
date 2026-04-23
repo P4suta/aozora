@@ -1,0 +1,47 @@
+[
+  {
+    "name": "kaeriten_canonical_ichi",
+    "markdown": "学而時習之［＃一］\n",
+    "html": "<p>学而時習之<sup class=\"afm-kaeriten\">一</sup></p>\n"
+  },
+  {
+    "name": "kaeriten_canonical_re",
+    "markdown": "有朋自遠方来［＃レ］\n",
+    "html": "<p>有朋自遠方来<sup class=\"afm-kaeriten\">レ</sup></p>\n"
+  },
+  {
+    "name": "kaeriten_compound_ichi_re",
+    "markdown": "学而時習之［＃一レ］\n",
+    "html": "<p>学而時習之<sup class=\"afm-kaeriten\">一レ</sup></p>\n"
+  },
+  {
+    "name": "kaeriten_compound_jou_re",
+    "markdown": "上焉者［＃上レ］\n",
+    "html": "<p>上焉者<sup class=\"afm-kaeriten\">上レ</sup></p>\n"
+  },
+  {
+    "name": "kaeriten_okurigana_single_katakana",
+    "markdown": "行［＃（カ）］ん\n",
+    "html": "<p>行<sup class=\"afm-kaeriten\">（カ）</sup>ん</p>\n"
+  },
+  {
+    "name": "kaeriten_okurigana_multi_char",
+    "markdown": "行［＃（シクシテ）］ん\n",
+    "html": "<p>行<sup class=\"afm-kaeriten\">（シクシテ）</sup>ん</p>\n"
+  },
+  {
+    "name": "kaeriten_okurigana_kanji_payload",
+    "markdown": "時習［＃（弖）］\n",
+    "html": "<p>時習<sup class=\"afm-kaeriten\">（弖）</sup></p>\n"
+  },
+  {
+    "name": "kaeriten_parenthesised_long_body_falls_back_to_annotation",
+    "markdown": "［＃（これは長すぎてokuriganaではない）］\n",
+    "html": "<p><span class=\"afm-annotation\" hidden>［＃（これは長すぎてokuriganaではない）］</span></p>\n"
+  },
+  {
+    "name": "kaeriten_parenthesised_ascii_body_falls_back_to_annotation",
+    "markdown": "［＃（abc）］\n",
+    "html": "<p><span class=\"afm-annotation\" hidden>［＃（abc）］</span></p>\n"
+  }
+]

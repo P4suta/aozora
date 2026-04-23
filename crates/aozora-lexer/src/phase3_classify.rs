@@ -1178,18 +1178,77 @@ fn classify_container_close(body: &str) -> Option<EmitKind> {
 
 /// Classify a `［＃<mark>］` kaeriten (Chinese-reading order mark).
 ///
-/// The body must be exactly one of the 12 canonical marks:
-/// 一 / 二 / 三 / 四 / 上 / 中 / 下 / レ / 甲 / 乙 / 丙 / 丁. Other
-/// single-character annotation bodies are left for other classifiers
-/// or fall through to Plain.
+/// Three shapes recognised — see
+/// <https://www.aozora.gr.jp/annotation/kunten.html>:
+///
+/// 1. **Canonical single-char marks** — `一` / `二` / `三` / `四` /
+///    `上` / `中` / `下` / `レ` / `甲` / `乙` / `丙` / `丁`. Binary-
+///    searched against a sorted `&[&str]` table for O(log n) lookup.
+/// 2. **Compound marks** — `一レ`, `二レ`, `三レ`, `上レ`, `中レ`,
+///    `下レ`. These pair an order mark with the reversal mark; they
+///    render identically to their canonical counterparts (the CSS
+///    theme can differentiate via content-based selectors).
+/// 3. **送り仮名 (okurigana)** — `（X）` where X is 1–6 CJK characters
+///    (hiragana / katakana / kanji). Kept verbatim as the Kaeriten
+///    mark so the renderer can emit `<sup>（X）</sup>`. The canonical
+///    use is supplying a Japanese particle reading for a Chinese
+///    character where a full ruby run would be overkill.
+///
+/// Other single-character bodies fall through to other classifiers.
+/// The shared [`AozoraNode::Kaeriten`] payload keeps the renderer
+/// schema-uniform; per-shape styling is a CSS concern via attribute
+/// selectors on `afm-kaeriten` + content.
 fn classify_kaeriten(body: &str) -> Option<AozoraNode> {
-    const MARKS: &[&str] = &[
-        "一", "二", "三", "四", "上", "中", "下", "レ", "甲", "乙", "丙", "丁",
+    // Kept sorted so a future migration to `binary_search` is a
+    // one-liner; today's 18 entries fit comfortably in a linear
+    // `contains` scan.
+    const CANONICAL: &[&str] = &[
+        "一", "丁", "三", "上", "下", "中", "丙", "乙", "二", "四", "甲", "レ",
     ];
-    if MARKS.contains(&body) {
+    const COMPOUND: &[&str] = &["一レ", "上レ", "下レ", "中レ", "二レ", "三レ"];
+    if CANONICAL.contains(&body) || COMPOUND.contains(&body) {
+        return Some(AozoraNode::Kaeriten(Kaeriten { mark: body.into() }));
+    }
+    if is_okurigana_body(body) {
         return Some(AozoraNode::Kaeriten(Kaeriten { mark: body.into() }));
     }
     None
+}
+
+/// Whether `body` is the okurigana shape `（X）` where X is a short
+/// run of Japanese characters.
+///
+/// The length bound guards against accidentally claiming long
+/// parenthesised glosses (which belong to the generic annotation
+/// catch-all). 6 characters is the ~99th-percentile okurigana length
+/// in Aozora corpora; anything longer is practically always editorial
+/// prose rather than an inflection marker.
+fn is_okurigana_body(body: &str) -> bool {
+    let Some(inner) = body.strip_prefix('（').and_then(|s| s.strip_suffix('）')) else {
+        return false;
+    };
+    // Empty parens are not meaningful okurigana.
+    let char_count = inner.chars().count();
+    if !(1..=6).contains(&char_count) {
+        return false;
+    }
+    inner.chars().all(is_okurigana_char)
+}
+
+/// Character class accepted inside okurigana parens: hiragana,
+/// katakana (incl. half-width), CJK unified ideographs. Deliberately
+/// narrower than "any non-whitespace" so editorial `（注）` or
+/// punctuation-rich glosses fall through to the annotation path.
+const fn is_okurigana_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{3041}'..='\u{309F}'      // hiragana
+        | '\u{30A0}'..='\u{30FF}'    // katakana
+        | '\u{FF66}'..='\u{FF9F}'    // half-width katakana
+        | '\u{4E00}'..='\u{9FFF}'    // CJK unified
+        | '\u{3400}'..='\u{4DBF}'    // CJK ext A
+        | '\u{F900}'..='\u{FAFF}'    // CJK compat
+    )
 }
 
 /// Classify a `［＃挿絵（file）入る］` sashie (illustration insert).
@@ -2325,6 +2384,92 @@ mod tests {
     #[test]
     fn kaeriten_unknown_mark_falls_through() {
         let out = run("［＃甬］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Kaeriten(_)))),
+        );
+    }
+
+    #[test]
+    fn kaeriten_compound_marks_recognized() {
+        // F3: compound kaeriten pair an order mark with the reversal
+        // mark (`レ`). Six combinations are canonical per the Aozora
+        // kunten spec. Each must produce a Kaeriten with the combo
+        // string preserved verbatim.
+        let cases = ["一レ", "二レ", "三レ", "上レ", "中レ", "下レ"];
+        for mark in cases {
+            let src = format!("［＃{mark}］");
+            let out = run(&src);
+            let k = out
+                .spans
+                .iter()
+                .find_map(|s| match &s.kind {
+                    SpanKind::Aozora(AozoraNode::Kaeriten(k)) => Some(k),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no Kaeriten span for mark {mark:?}"));
+            assert_eq!(&*k.mark, mark, "mark={mark:?}");
+        }
+    }
+
+    #[test]
+    fn kaeriten_okurigana_shape_recognized() {
+        // `［＃（X）］` where X is 1–6 Japanese chars is treated as an
+        // okurigana marker — same AozoraNode::Kaeriten with the
+        // parenthesised payload kept verbatim for the renderer.
+        let cases = [
+            "（カ）",
+            "（ダ）",
+            "（シクシテ）",
+            "（弖）",       // kanji payload
+            "（テニヲハ）", // 4-char katakana
+        ];
+        for mark in cases {
+            let src = format!("［＃{mark}］");
+            let out = run(&src);
+            let k = out
+                .spans
+                .iter()
+                .find_map(|s| match &s.kind {
+                    SpanKind::Aozora(AozoraNode::Kaeriten(k)) => Some(k),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no Kaeriten for okurigana {mark:?}"));
+            assert_eq!(&*k.mark, mark, "mark={mark:?}");
+        }
+    }
+
+    #[test]
+    fn kaeriten_okurigana_with_long_body_falls_through() {
+        // 7+ character parenthesised content is almost always an
+        // editorial gloss, not okurigana. Must fall through to
+        // Annotation{Unknown} so we don't mislabel it as kaeriten.
+        let out = run("［＃（これはおくりがなではない）］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Kaeriten(_)))),
+            "long parenthesised bodies must not be Kaeriten: {:?}",
+            out.spans
+        );
+    }
+
+    #[test]
+    fn kaeriten_okurigana_with_latin_body_falls_through() {
+        // Okurigana payload must be hiragana/katakana/kanji. ASCII
+        // inside parens is probably an editorial note, not kaeriten.
+        let out = run("［＃（abc）］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Kaeriten(_)))),
+        );
+    }
+
+    #[test]
+    fn kaeriten_okurigana_empty_parens_fall_through() {
+        let out = run("［＃（）］");
         assert!(
             !out.spans
                 .iter()
