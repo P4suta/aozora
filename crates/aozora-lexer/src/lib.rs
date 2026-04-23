@@ -69,8 +69,9 @@ pub const BLOCK_OPEN_SENTINEL: char = '\u{E003}';
 /// Private-Use-Area character reserved as the paired-container close line sentinel.
 pub const BLOCK_CLOSE_SENTINEL: char = '\u{E004}';
 
-// Phase-implementation modules land in commits C1-C7.
-// mod phase0_sanitize;
+pub mod diagnostic;
+mod phase0_sanitize;
+// Phase-implementation modules land in subsequent commits C2-C7.
 // mod phase1_events;
 // mod phase2_pair;
 // mod phase3_classify;
@@ -80,7 +81,9 @@ pub const BLOCK_CLOSE_SENTINEL: char = '\u{E004}';
 // pub mod token;
 // pub mod source_map;
 // pub mod registry;
-// pub mod diagnostic;
+
+pub use diagnostic::Diagnostic;
+pub use phase0_sanitize::{SanitizeOutput, sanitize};
 
 /// Placeholder output shape.
 ///
