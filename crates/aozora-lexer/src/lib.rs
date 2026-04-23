@@ -75,12 +75,11 @@ mod phase1_events;
 pub mod phase2_pair;
 pub mod phase3_classify;
 pub mod phase4_normalize;
+mod phase5_registry;
 pub mod token;
-// Phase-implementation modules land in subsequent commits C6-C7.
-// mod phase5_registry;
+// Phase-implementation modules land in subsequent commits C7.
 // mod phase6_validate;
 // pub mod source_map;
-// pub mod registry;
 
 pub use diagnostic::Diagnostic;
 pub use phase0_sanitize::{SanitizeOutput, sanitize};
