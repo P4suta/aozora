@@ -146,11 +146,10 @@ mod tests {
         let input = "plain\u{E001}text";
         let out = sanitize(input);
         assert_eq!(out.diagnostics.len(), 1);
-        match &out.diagnostics[0] {
-            Diagnostic::SourceContainsPua { codepoint, .. } => {
-                assert_eq!(*codepoint, '\u{E001}');
-            }
-        }
+        let Diagnostic::SourceContainsPua { codepoint, .. } = &out.diagnostics[0] else {
+            panic!("expected SourceContainsPua, got {:?}", out.diagnostics[0]);
+        };
+        assert_eq!(*codepoint, '\u{E001}');
     }
 
     #[test]
@@ -173,7 +172,9 @@ mod tests {
     fn pua_diagnostic_span_points_at_sentinel_position() {
         let input = "ab\u{E002}cd";
         let out = sanitize(input);
-        let Diagnostic::SourceContainsPua { span, .. } = &out.diagnostics[0];
+        let Diagnostic::SourceContainsPua { span, .. } = &out.diagnostics[0] else {
+            panic!("expected SourceContainsPua, got {:?}", out.diagnostics[0]);
+        };
         // 'a','b' each 1 byte; U+E002 is 3 bytes in UTF-8.
         assert_eq!(span.start, 2);
         assert_eq!(span.end, 5);

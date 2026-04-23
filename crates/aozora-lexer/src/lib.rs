@@ -72,9 +72,9 @@ pub const BLOCK_CLOSE_SENTINEL: char = '\u{E004}';
 pub mod diagnostic;
 mod phase0_sanitize;
 mod phase1_events;
+pub mod phase2_pair;
 pub mod token;
-// Phase-implementation modules land in subsequent commits C3-C7.
-// mod phase2_pair;
+// Phase-implementation modules land in subsequent commits C4-C7.
 // mod phase3_classify;
 // mod phase4_normalize;
 // mod phase5_registry;
@@ -85,6 +85,7 @@ pub mod token;
 pub use diagnostic::Diagnostic;
 pub use phase0_sanitize::{SanitizeOutput, sanitize};
 pub use phase1_events::tokenize;
+pub use phase2_pair::{PairEvent, PairKind, PairOutput, pair};
 pub use token::{Token, TriggerKind};
 
 /// Placeholder output shape.
