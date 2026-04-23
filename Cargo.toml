@@ -56,6 +56,20 @@ ambiguous_negative_literals = "warn" # `-1.pow(2)` precedence traps
 # Warn on edition-drift so we catch idioms deprecated by the next edition early.
 rust_2024_compatibility = { level = "warn", priority = -1 }
 
+[workspace.lints.rustdoc]
+# Docs are a shipped surface: broken intra-doc links are a defect, not a
+# smell. Keep this one `deny`.
+broken_intra_doc_links       = "deny"
+# Everything else warns so drift shows up in CI without breaking the build
+# while docs get fleshed out.
+private_intra_doc_links      = "warn"
+invalid_codeblock_attributes = "warn"
+invalid_html_tags            = "warn"
+invalid_rust_codeblocks      = "warn"
+bare_urls                    = "warn"
+redundant_explicit_links     = "warn"
+unescaped_backticks          = "warn"
+
 [workspace.lints.clippy]
 # Opt-in to all three lint groups that mainstream Rust libraries ship with.
 # `priority = -1` lets specific carve-outs below override individual lints.
