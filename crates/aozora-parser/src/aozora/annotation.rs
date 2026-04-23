@@ -12,9 +12,10 @@
 //!    Unrecognised bodies degrade to [`AnnotationKind::Unknown`] so the
 //!    Tier-A invariant (no bare `［＃` leaks) survives for any future corpus.
 
-use afm_syntax::{Annotation, AnnotationKind, AozoraNode, Bouten, SectionKind};
+use afm_syntax::{Annotation, AnnotationKind, AozoraNode, Bouten, SectionKind, TateChuYoko};
 
 use crate::aozora::bouten as bouten_mod;
+use crate::aozora::tcy as tcy_mod;
 
 /// Context passed to [`scan_bracket`].
 ///
@@ -26,21 +27,21 @@ use crate::aozora::bouten as bouten_mod;
 pub(crate) struct BracketCtx<'a> {
     /// Slice starting at the candidate `［`. The scanner only looks inside
     /// this slice; the caller is responsible for its bounds.
-    pub head: &'a str,
+    pub(crate) head: &'a str,
     /// Text the inline parser has already committed on the current line —
     /// used by forward-reference classifiers (e.g. bouten) to check that
     /// the annotation's target literal is actually present before
     /// promoting.
-    pub preceding: &'a str,
+    pub(crate) preceding: &'a str,
 }
 
 /// Result of a successful `［＃...］` scan.
 pub(crate) struct BracketMatch {
     /// The constructed AST node (classified per `classify`).
-    pub node: AozoraNode,
+    pub(crate) node: AozoraNode,
     /// Total bytes consumed from the start of the input slice (includes the
     /// leading `［`, `＃`, the interior, and the closing `］`).
-    pub consumed: usize,
+    pub(crate) consumed: usize,
 }
 
 /// Try to parse a `［＃...］` span at the head of `cx.head`. Returns `None` if:
@@ -60,6 +61,17 @@ pub(crate) fn scan_bracket(cx: BracketCtx<'_>) -> Option<BracketMatch> {
     let close_relative = rest.find('］')?;
     let body = &rest[..close_relative];
     let total = body_start + close_relative + '］'.len_utf8();
+
+    // Paired 縦中横 has to be tried before the leaf classifier — a lone
+    // `［＃縦中横］` is the *open* marker, and we need to consume past the
+    // matching close. If the close isn't found in range we fall through to
+    // the regular classifier, which emits Annotation{Unknown}.
+    if body == "縦中横"
+        && let Some(paired) = tcy_mod::try_parse_paired(cx.head, total)
+    {
+        return Some(paired);
+    }
+
     let raw = &cx.head[..total];
     let node = classify(body, raw, &cx);
     Some(BracketMatch {
@@ -84,12 +96,14 @@ fn classify(body: &str, raw: &str, cx: &BracketCtx<'_>) -> AozoraNode {
         "改丁" => AozoraNode::SectionBreak(SectionKind::Choho),
         "改段" => AozoraNode::SectionBreak(SectionKind::Dan),
         "改見開き" => AozoraNode::SectionBreak(SectionKind::Spread),
-        _ => try_forward_ref_bouten(body, cx).unwrap_or_else(|| {
-            AozoraNode::Annotation(Annotation {
-                raw: raw.into(),
-                kind: AnnotationKind::Unknown,
-            })
-        }),
+        _ => try_forward_ref_bouten(body, cx)
+            .or_else(|| try_forward_ref_tcy(body, cx))
+            .unwrap_or_else(|| {
+                AozoraNode::Annotation(Annotation {
+                    raw: raw.into(),
+                    kind: AnnotationKind::Unknown,
+                })
+            }),
     }
 }
 
@@ -107,6 +121,20 @@ fn try_forward_ref_bouten(body: &str, cx: &BracketCtx<'_>) -> Option<AozoraNode>
     Some(AozoraNode::Bouten(Bouten {
         kind: frb.kind,
         target: frb.target.into(),
+    }))
+}
+
+/// Attempt to promote `body` to a [`TateChuYoko`] via the forward-reference
+/// parser (`「X」は縦中横`). Same contract as bouten: the target literal must
+/// also appear in the preceding run. On `None`, fall back to
+/// `Annotation{Unknown}`.
+fn try_forward_ref_tcy(body: &str, cx: &BracketCtx<'_>) -> Option<AozoraNode> {
+    let target = tcy_mod::parse_forward_ref(body)?;
+    if !cx.preceding.contains(target) {
+        return None;
+    }
+    Some(AozoraNode::TateChuYoko(TateChuYoko {
+        text: target.into(),
     }))
 }
 

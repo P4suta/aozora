@@ -30,6 +30,7 @@ fn all_cases() -> Vec<(&'static str, Vec<Case>)> {
     const LAYOUT_PAGE_BREAK: &str =
         include_str!("../../../spec/aozora/cases/layout-page-break.json");
     const EMPHASIS_BOUTEN: &str = include_str!("../../../spec/aozora/cases/emphasis-bouten.json");
+    const ETC_TCY: &str = include_str!("../../../spec/aozora/cases/etc-tate-chu-yoko.json");
     vec![
         (
             "layout-page-break.json",
@@ -38,6 +39,10 @@ fn all_cases() -> Vec<(&'static str, Vec<Case>)> {
         (
             "emphasis-bouten.json",
             serde_json::from_str(EMPHASIS_BOUTEN).expect("emphasis-bouten.json parses"),
+        ),
+        (
+            "etc-tate-chu-yoko.json",
+            serde_json::from_str(ETC_TCY).expect("etc-tate-chu-yoko.json parses"),
         ),
     ]
 }

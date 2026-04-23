@@ -1,0 +1,27 @@
+[
+  {
+    "name": "forward_ref_digits",
+    "markdown": "Ｂ29［＃「29」は縦中横］の編隊\n",
+    "html": "<p>Ｂ29<span class=\"afm-tcy\">29</span>の編隊</p>\n"
+  },
+  {
+    "name": "forward_ref_kanji",
+    "markdown": "左眼［＃「左眼」は縦中横］\n",
+    "html": "<p>左眼<span class=\"afm-tcy\">左眼</span></p>\n"
+  },
+  {
+    "name": "forward_ref_without_preceding_falls_back",
+    "markdown": "［＃「29」は縦中横］後\n",
+    "html": "<p><span class=\"afm-annotation\" hidden>［＃「29」は縦中横］</span>後</p>\n"
+  },
+  {
+    "name": "paired_consumes_open_and_close",
+    "markdown": "前［＃縦中横］20［＃縦中横終わり］後\n",
+    "html": "<p>前<span class=\"afm-tcy\">20</span>後</p>\n"
+  },
+  {
+    "name": "paired_without_close_falls_back_to_annotation",
+    "markdown": "［＃縦中横］20 続き\n",
+    "html": "<p><span class=\"afm-annotation\" hidden>［＃縦中横］</span>20 続き</p>\n"
+  }
+]
