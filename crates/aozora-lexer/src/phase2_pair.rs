@@ -134,6 +134,75 @@ pub struct PairOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+impl PairEvent {
+    /// Source byte-range span of this event, or `None` for
+    /// [`PairEvent::Newline`] (which has only a single position, not a
+    /// range).
+    ///
+    /// Exists so Phase 3 can walk an event stream uniformly without a
+    /// hand-written match for every variant each time it needs a span.
+    #[must_use]
+    pub const fn span(&self) -> Option<Span> {
+        Some(match *self {
+            Self::Text { range } => range,
+            Self::Solo { span, .. }
+            | Self::PairOpen { span, .. }
+            | Self::PairClose { span, .. }
+            | Self::Unclosed { span, .. }
+            | Self::Unmatched { span, .. } => span,
+            Self::Newline { .. } => return None,
+        })
+    }
+}
+
+impl PairOutput {
+    /// Slice of events strictly inside the pair whose open event is at
+    /// `open_idx`, or `None` if `open_idx` does not point at a matched
+    /// [`PairEvent::PairOpen`].
+    ///
+    /// Phase 3 uses this to iterate a bracket body's contents without
+    /// re-walking the full stream. The returned slice excludes both
+    /// the `PairOpen` and `PairClose` events themselves.
+    #[must_use]
+    pub fn body_events(&self, open_idx: usize) -> Option<&[PairEvent]> {
+        let &PairEvent::PairOpen { close_idx, .. } = self.events.get(open_idx)? else {
+            return None;
+        };
+        // An unclosed open is rewritten to `PairEvent::Unclosed` before
+        // `pair()` returns, so any surviving `PairOpen` is guaranteed
+        // to have a valid `close_idx`. The bounds check below is a
+        // cheap defense against a caller passing an `open_idx` drawn
+        // from a stale or hand-constructed output.
+        if close_idx <= open_idx || close_idx >= self.events.len() {
+            return None;
+        }
+        Some(&self.events[open_idx + 1..close_idx])
+    }
+
+    /// Byte span strictly between the open's end and the close's start
+    /// — the *contents* of the pair in the source, excluding the
+    /// delimiters themselves. `None` if `open_idx` does not point at a
+    /// matched [`PairEvent::PairOpen`].
+    #[must_use]
+    pub fn body_byte_span(&self, open_idx: usize) -> Option<Span> {
+        let &PairEvent::PairOpen {
+            span: open_span,
+            close_idx,
+            ..
+        } = self.events.get(open_idx)?
+        else {
+            return None;
+        };
+        let &PairEvent::PairClose {
+            span: close_span, ..
+        } = self.events.get(close_idx)?
+        else {
+            return None;
+        };
+        Some(Span::new(open_span.end, close_span.start))
+    }
+}
+
 /// Mutable state carried through the pairing loop.
 ///
 /// Bundling `events`, `stack`, and `diagnostics` together keeps the
@@ -271,6 +340,8 @@ const fn close_kind_of(kind: TriggerKind) -> Option<PairKind> {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
     use crate::phase1_events::tokenize;
 
@@ -553,5 +624,236 @@ mod tests {
         let toks = tokenize(src);
         let out = pair(&toks);
         assert_eq!(out.events.len(), toks.len());
+    }
+
+    #[test]
+    fn span_accessor_returns_range_for_text_and_trigger_events() {
+        let out = run("a｜b《c》");
+        for ev in &out.events {
+            match ev {
+                PairEvent::Newline { .. } => {
+                    assert!(ev.span().is_none(), "Newline must have no span");
+                }
+                _ => {
+                    assert!(ev.span().is_some(), "non-Newline event must carry a span");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn span_accessor_returns_none_for_newline() {
+        let out = run("\n");
+        assert_eq!(out.events.len(), 1);
+        assert!(out.events[0].span().is_none());
+    }
+
+    #[test]
+    fn body_events_covers_contents_strictly_between_open_and_close() {
+        let out = run("［＃「青空」］");
+        // Events (indices): 0 ［, 1 ＃, 2 「, 3 "青空", 4 」, 5 ］.
+        let body = out.body_events(0).expect("body events for matched ［");
+        // Body should be indices 1..5 (Solo#, PairOpenQuote, Text, PairCloseQuote).
+        assert_eq!(body.len(), 4);
+        assert!(matches!(body[0], PairEvent::Solo { .. }));
+        assert!(matches!(
+            body[1],
+            PairEvent::PairOpen {
+                kind: PairKind::Quote,
+                ..
+            }
+        ));
+        assert!(matches!(body[2], PairEvent::Text { .. }));
+        assert!(matches!(
+            body[3],
+            PairEvent::PairClose {
+                kind: PairKind::Quote,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn body_events_empty_pair_returns_empty_slice() {
+        let out = run("《》");
+        let body = out.body_events(0).expect("body events for empty pair");
+        assert!(body.is_empty());
+    }
+
+    #[test]
+    fn body_events_returns_none_for_non_pair_open_index() {
+        let out = run("text");
+        // Index 0 is a Text event, not a PairOpen.
+        assert!(out.body_events(0).is_none());
+    }
+
+    #[test]
+    fn body_events_returns_none_for_unclosed_open() {
+        let out = run("［unclosed");
+        // The ［ at idx 0 was rewritten to PairEvent::Unclosed — not a
+        // PairOpen, so body_events returns None.
+        assert!(out.body_events(0).is_none());
+    }
+
+    #[test]
+    fn body_events_returns_none_for_out_of_range_index() {
+        let out = run("text");
+        assert!(out.body_events(9999).is_none());
+    }
+
+    #[test]
+    fn body_byte_span_is_the_range_between_open_and_close_delimiters() {
+        let src = "［ab］";
+        // Byte layout: ［(0..3) a(3..4) b(4..5) ］(5..8).
+        let out = run(src);
+        let span = out.body_byte_span(0).expect("body span for matched ［");
+        assert_eq!(span, Span::new(3, 5));
+        // Sanity: slicing the original source by this span yields the
+        // body text.
+        assert_eq!(span.slice(src), "ab");
+    }
+
+    #[test]
+    fn body_byte_span_returns_none_for_unclosed_open() {
+        let out = run("［unclosed");
+        assert!(out.body_byte_span(0).is_none());
+    }
+
+    #[test]
+    fn body_byte_span_returns_none_for_non_open_index() {
+        let out = run("text");
+        assert!(out.body_byte_span(0).is_none());
+    }
+
+    #[test]
+    fn no_sentinel_close_idx_escapes_from_pair_output() {
+        // Every PairOpen surviving the tail pass must have a real
+        // close_idx; usize::MAX must never leak.
+        let inputs = [
+            "plain",
+            "［＃a］",
+            "［＃外［＃内］終］",
+            "《《《x》》",
+            "［unclosed",
+            "stray］",
+        ];
+        for src in inputs {
+            let out = run(src);
+            for ev in &out.events {
+                if let PairEvent::PairOpen { close_idx, .. } = *ev {
+                    assert_ne!(close_idx, usize::MAX, "sentinel leaked for {src:?}");
+                    assert!(close_idx < out.events.len(), "out-of-range for {src:?}");
+                }
+            }
+        }
+    }
+
+    proptest! {
+        /// Output is a pure function of input — running the same token
+        /// stream twice must produce identical event sequences.
+        #[test]
+        fn proptest_pair_is_deterministic(src in source_strategy()) {
+            let toks = tokenize(&src);
+            let a = pair(&toks);
+            let b = pair(&toks);
+            prop_assert_eq!(a.events, b.events);
+        }
+
+        /// 1:1 correspondence: Phase 2 never drops or splits a Phase 1
+        /// token.
+        #[test]
+        fn proptest_event_count_matches_token_count(src in source_strategy()) {
+            let toks = tokenize(&src);
+            let out = pair(&toks);
+            prop_assert_eq!(out.events.len(), toks.len());
+        }
+
+        /// No PairOpen survives with the `usize::MAX` placeholder — it
+        /// is either cross-linked to a real PairClose or rewritten to
+        /// PairEvent::Unclosed.
+        #[test]
+        fn proptest_no_sentinel_close_idx(src in source_strategy()) {
+            let out = pair(&tokenize(&src));
+            for ev in &out.events {
+                if let PairEvent::PairOpen { close_idx, .. } = *ev {
+                    prop_assert_ne!(close_idx, usize::MAX);
+                    prop_assert!(close_idx < out.events.len());
+                }
+            }
+        }
+
+        /// Cross-link consistency: for every matched PairOpen at index
+        /// `i` with close_idx `c`, events[c] is a PairClose with
+        /// matching kind and open_idx back to `i`.
+        #[test]
+        fn proptest_cross_links_are_consistent(src in source_strategy()) {
+            let out = pair(&tokenize(&src));
+            for (i, ev) in out.events.iter().enumerate() {
+                let &PairEvent::PairOpen { kind, close_idx, .. } = ev else {
+                    continue;
+                };
+                let close = &out.events[close_idx];
+                let &PairEvent::PairClose { kind: c_kind, open_idx, .. } = close else {
+                    prop_assert!(
+                        false,
+                        "close_idx {close_idx} at open {i} did not point at a PairClose"
+                    );
+                    unreachable!();
+                };
+                prop_assert_eq!(c_kind, kind);
+                prop_assert_eq!(open_idx, i);
+            }
+        }
+
+        /// body_byte_span for every matched pair is inside the span
+        /// running from the open's start to the close's end, and is a
+        /// valid substring of the source (sliceable without panic).
+        #[test]
+        fn proptest_body_spans_slice_source_safely(src in source_strategy()) {
+            let out = pair(&tokenize(&src));
+            for (i, ev) in out.events.iter().enumerate() {
+                let &PairEvent::PairOpen { span: open, close_idx, .. } = ev else {
+                    continue;
+                };
+                let body = out.body_byte_span(i).expect("matched pair must have body span");
+                let PairEvent::PairClose { span: close, .. } = out.events[close_idx] else {
+                    unreachable!("close_idx must point at PairClose by the cross-link test");
+                };
+                prop_assert!(open.end <= body.start);
+                prop_assert!(body.end <= close.start);
+                // Must round-trip as a valid UTF-8 substring of the
+                // source (i.e. span aligns to char boundaries).
+                prop_assert!(
+                    src.get(body.start as usize..body.end as usize).is_some(),
+                    "body span {body:?} is not a valid str slice of {src:?}"
+                );
+            }
+        }
+    }
+
+    fn source_strategy() -> impl Strategy<Value = String> {
+        // Healthy mix of plain text, every trigger, and newlines. Cap
+        // the character count so shrinking stays fast.
+        prop::collection::vec(
+            prop_oneof![
+                Just('a'),
+                Just('あ'),
+                Just('漢'),
+                Just('｜'),
+                Just('《'),
+                Just('》'),
+                Just('［'),
+                Just('］'),
+                Just('＃'),
+                Just('※'),
+                Just('〔'),
+                Just('〕'),
+                Just('「'),
+                Just('」'),
+                Just('\n'),
+            ],
+            0..40,
+        )
+        .prop_map(|chars| chars.into_iter().collect())
     }
 }
