@@ -442,6 +442,174 @@ mod tests {
         );
     }
 
+    // -------------------------------------------------------------
+    // Cov-Ratchet — coverage of render arms not touched by the
+    // integration tests directly.
+    // -------------------------------------------------------------
+
+    #[test]
+    fn section_break_renders_each_kind_with_stable_slug() {
+        use afm_syntax::SectionKind;
+        for (kind, slug) in [
+            (SectionKind::Choho, "choho"),
+            (SectionKind::Dan, "dan"),
+            (SectionKind::Spread, "spread"),
+        ] {
+            let html = render_to_string(&AozoraNode::SectionBreak(kind));
+            let expected =
+                format!(r#"<div class="afm-section-break afm-section-break-{slug}"></div>"#);
+            assert_eq!(html, expected, "kind={kind:?}");
+        }
+    }
+
+    #[test]
+    fn tcy_renders_text_inside_afm_tcy_span() {
+        let n = AozoraNode::TateChuYoko(TateChuYoko { text: "25".into() });
+        assert_eq!(render_to_string(&n), r#"<span class="afm-tcy">25</span>"#);
+    }
+
+    #[test]
+    fn tcy_escapes_structural_characters_in_text() {
+        let n = AozoraNode::TateChuYoko(TateChuYoko { text: "<&>".into() });
+        assert_eq!(
+            render_to_string(&n),
+            r#"<span class="afm-tcy">&lt;&amp;&gt;</span>"#
+        );
+    }
+
+    #[test]
+    fn gaiji_with_resolved_ucs_emits_single_char() {
+        use afm_syntax::Gaiji;
+        let n = AozoraNode::Gaiji(Gaiji {
+            description: "placeholder".into(),
+            ucs: Some('榁'),
+            mencode: Some("第3水準1-85-54".into()),
+        });
+        assert_eq!(render_to_string(&n), r#"<span class="afm-gaiji">榁</span>"#);
+    }
+
+    #[test]
+    fn gaiji_without_ucs_falls_back_to_description_escaped() {
+        use afm_syntax::Gaiji;
+        let n = AozoraNode::Gaiji(Gaiji {
+            description: "a<b>".into(),
+            ucs: None,
+            mencode: None,
+        });
+        assert_eq!(
+            render_to_string(&n),
+            r#"<span class="afm-gaiji">a&lt;b&gt;</span>"#
+        );
+    }
+
+    #[test]
+    fn double_ruby_plain_content_wraps_academic_brackets() {
+        use afm_syntax::DoubleRuby;
+        let n = AozoraNode::DoubleRuby(DoubleRuby {
+            content: "emphasis".into(),
+        });
+        assert_eq!(
+            render_to_string(&n),
+            r#"<span class="afm-double-ruby">≪emphasis≫</span>"#
+        );
+    }
+
+    #[test]
+    fn double_ruby_escapes_structural_characters() {
+        use afm_syntax::DoubleRuby;
+        let n = AozoraNode::DoubleRuby(DoubleRuby {
+            content: "a<b&c".into(),
+        });
+        assert_eq!(
+            render_to_string(&n),
+            r#"<span class="afm-double-ruby">≪a&lt;b&amp;c≫</span>"#
+        );
+    }
+
+    #[test]
+    fn container_variants_emit_distinct_class_tokens_on_enter() {
+        // render() dispatches to render_container which emits the
+        // opening tag on enter and `</div>` on exit. The comrak
+        // walker normally drives enter→children→exit; the unit
+        // test covers just the two states to pin the class contract.
+        use afm_syntax::{Container, ContainerKind};
+        let indent = AozoraNode::Container(Container {
+            kind: ContainerKind::Indent { amount: 2 },
+        });
+        let mut open = String::new();
+        render(&indent, true, &mut open).unwrap();
+        let mut close = String::new();
+        render(&indent, false, &mut close).unwrap();
+        assert!(
+            open.contains("afm-container-indent afm-container-indent-2"),
+            "indent open: {open:?}"
+        );
+        assert!(open.contains(r#"data-amount="2""#), "indent open: {open:?}");
+        assert_eq!(close, "</div>");
+
+        // AlignEnd with non-zero offset.
+        let align = AozoraNode::Container(Container {
+            kind: ContainerKind::AlignEnd { offset: 3 },
+        });
+        let mut open = String::new();
+        render(&align, true, &mut open).unwrap();
+        assert!(
+            open.contains("afm-container-align-end") && open.contains(r#"data-offset="3""#),
+            "align-end open: {open:?}"
+        );
+
+        // Keigakomi / Warichu — class-only, no data attributes.
+        for (kind, slug) in [
+            (ContainerKind::Keigakomi, "afm-container-keigakomi"),
+            (ContainerKind::Warichu, "afm-container-warichu"),
+        ] {
+            let node = AozoraNode::Container(Container { kind });
+            let mut open = String::new();
+            render(&node, true, &mut open).unwrap();
+            assert!(open.contains(slug), "{slug} open: {open:?}");
+        }
+    }
+
+    #[test]
+    fn inline_nodes_skip_emission_on_the_exit_pass() {
+        // Non-container nodes must emit nothing on the exit pass —
+        // `entering == false` short-circuits. Comrak's tree walker
+        // still calls render() for exit events; any extra bytes
+        // would corrupt the containing block.
+        let n = AozoraNode::PageBreak;
+        let mut buf = String::new();
+        render(&n, false, &mut buf).unwrap();
+        assert!(
+            buf.is_empty(),
+            "PageBreak must emit nothing on exit, got {buf:?}"
+        );
+
+        let ruby = AozoraNode::Ruby(Ruby {
+            base: "x".into(),
+            reading: "y".into(),
+            delim_explicit: false,
+        });
+        let mut buf = String::new();
+        render(&ruby, false, &mut buf).unwrap();
+        assert!(
+            buf.is_empty(),
+            "Ruby must emit nothing on exit, got {buf:?}"
+        );
+    }
+
+    #[test]
+    fn render_to_string_helper_uses_enter_only_pass() {
+        // The test-only `render_to_string` wraps `render(node, true,
+        // &mut out)` to keep the unit tests terse. Pin the helper
+        // here so a future change to the signature is caught
+        // explicitly.
+        let n = AozoraNode::PageBreak;
+        assert_eq!(
+            render_to_string(&n),
+            r#"<div class="afm-page-break"></div>"#
+        );
+    }
+
     #[test]
     fn bouten_kind_slugs_are_stable_across_variants() {
         // Brittle on purpose — if a BoutenKind variant is renamed, the CSS

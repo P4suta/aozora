@@ -153,9 +153,18 @@ fn check_registry_slice<T>(
 ) {
     for window in slice.windows(2) {
         if window[0].0 >= window[1].0 {
+            // Build the span with the earlier position as `start` so
+            // `Span::new` stays well-formed (start <= end). Callers of
+            // the diagnostic care about *both* positions, not their
+            // order: the miette snippet only highlights the invalid
+            // pair's textual range.
+            let (lo, hi) = if window[0].0 <= window[1].0 {
+                (window[0].0, window[1].0)
+            } else {
+                (window[1].0, window[0].0)
+            };
             diagnostics.push(Diagnostic::registry_out_of_order(afm_syntax::Span::new(
-                window[0].0,
-                window[1].0,
+                lo, hi,
             )));
         }
     }
@@ -265,6 +274,108 @@ mod tests {
             out.diagnostics
                 .iter()
                 .any(|d| matches!(d, Diagnostic::UnmatchedClose { .. })),
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Cov-Ratchet — synthetic registries exercising V2 / V3 paths
+    // that are unreachable from the lex() → normalize() pipeline
+    // because the upstream phases are well-behaved. Tests construct
+    // deliberately malformed NormalizeOutput values and feed them
+    // into validate() directly to cover the diagnostic-emission arms.
+    // ---------------------------------------------------------------
+
+    use afm_syntax::{AozoraNode, Ruby};
+
+    /// Construct a minimal [`NormalizeOutput`] that satisfies V1 (no
+    /// residual `［＃`) but can be tweaked per-test to trigger V2/V3
+    /// violations.
+    fn synthetic_output(normalized: &str, inline: Vec<(u32, AozoraNode)>) -> NormalizeOutput {
+        NormalizeOutput {
+            normalized: normalized.to_owned(),
+            registry: PlaceholderRegistry {
+                inline,
+                ..PlaceholderRegistry::default()
+            },
+            diagnostics: Vec::new(),
+        }
+    }
+
+    fn ruby_node() -> AozoraNode {
+        AozoraNode::Ruby(Ruby {
+            base: "x".into(),
+            reading: "y".into(),
+            delim_explicit: false,
+        })
+    }
+
+    #[test]
+    fn v3_registry_out_of_order_emits_diagnostic() {
+        // Two inline entries whose byte positions go backwards (5
+        // after 10). validate() must emit RegistryOutOfOrder and
+        // leave the rest of the stream intact.
+        let norm = "a\u{E001}bc\u{E001}d";
+        // Real positions: first sentinel at 1, second at 4. Swap
+        // them to create the out-of-order violation.
+        let out = validate(synthetic_output(
+            norm,
+            vec![(4, ruby_node()), (1, ruby_node())],
+        ));
+        assert!(
+            out.diagnostics
+                .iter()
+                .any(|d| matches!(d, Diagnostic::RegistryOutOfOrder { .. })),
+            "RegistryOutOfOrder must fire for descending positions: {:?}",
+            out.diagnostics
+        );
+    }
+
+    #[test]
+    fn v3_registry_position_mismatch_emits_diagnostic() {
+        // Claim an inline sentinel sits at byte 0 of normalized, but
+        // byte 0 is actually `a` (not U+E001). validate() must emit
+        // RegistryPositionMismatch with the expected codepoint.
+        let norm = "abc";
+        let out = validate(synthetic_output(norm, vec![(0, ruby_node())]));
+        let mismatch = out
+            .diagnostics
+            .iter()
+            .find(|d| matches!(d, Diagnostic::RegistryPositionMismatch { .. }));
+        assert!(
+            mismatch.is_some(),
+            "RegistryPositionMismatch must fire: {:?}",
+            out.diagnostics
+        );
+        if let Some(Diagnostic::RegistryPositionMismatch { expected, .. }) = mismatch {
+            assert_eq!(
+                *expected, INLINE_SENTINEL,
+                "mismatch must name the inline sentinel as expected"
+            );
+        }
+    }
+
+    #[test]
+    fn v3_registry_position_off_end_emits_mismatch() {
+        // A registry position past the normalized-string length is
+        // treated as a position mismatch (the codepoint-at-position
+        // lookup returns None). Guards against drift between
+        // `block_close.push` and the output string length.
+        let norm = "short";
+        let output = NormalizeOutput {
+            normalized: norm.to_owned(),
+            registry: PlaceholderRegistry {
+                block_close: vec![(99, afm_syntax::ContainerKind::Keigakomi)],
+                ..PlaceholderRegistry::default()
+            },
+            diagnostics: Vec::new(),
+        };
+        let out = validate(output);
+        assert!(
+            out.diagnostics
+                .iter()
+                .any(|d| matches!(d, Diagnostic::RegistryPositionMismatch { .. })),
+            "out-of-bounds registry position must report mismatch: {:?}",
+            out.diagnostics
         );
     }
 }

@@ -145,9 +145,13 @@ bench *ARGS:
 # Ratchet history:
 # - 94 (M0): initial gate landing with the parse pipeline wired up.
 # - 95 (G3): F-series fills in recogniser branches + G1 adds full
-#   gaiji resolve coverage; measured regions total 95.36%. Headroom
-#   to 96 awaits closing the remaining html.rs / diagnostic.rs gaps.
-_COV_FLOOR := "95"
+#   gaiji resolve coverage; measured regions total 95.36%.
+# - 96 (Cov-Ratchet): diagnostic.rs V1/V2/V3 constructor tests +
+#   phase6_validate.rs synthetic-registry tests + html.rs
+#   section/container/double-ruby unit tests; measured 96.07%.
+#   Remaining gaps are mostly non-exhaustive `_` arms on
+#   `#[non_exhaustive]` enums (structurally unreachable in-crate).
+_COV_FLOOR := "96"
 _COV_IGNORE := "(upstream/comrak|target/|/main\\.rs$|xtask/)"
 
 coverage:

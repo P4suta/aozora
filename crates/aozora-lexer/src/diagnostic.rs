@@ -326,4 +326,89 @@ mod tests {
         let diag = Diagnostic::unmatched_close(Span::new(0, 3), PairKind::Quote);
         assert!(format!("{diag}").contains("Quote"));
     }
+
+    // ---------------------------------------------------------------
+    // Phase 6 diagnostic constructors — cover the V1/V2/V3 shapes so
+    // the `#[must_use]` builders and their miette SourceSpan wrapping
+    // are exercised by the unit layer (Cov-Ratchet).
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn residual_annotation_marker_round_trips_span() {
+        let diag = Diagnostic::residual_annotation_marker(Span::new(4, 6));
+        let Diagnostic::ResidualAnnotationMarker { span, .. } = diag else {
+            panic!("expected ResidualAnnotationMarker, got {diag:?}");
+        };
+        assert_eq!(span, Span::new(4, 6));
+    }
+
+    #[test]
+    fn residual_annotation_marker_display_mentions_marker() {
+        let diag = Diagnostic::residual_annotation_marker(Span::new(0, 2));
+        assert!(format!("{diag}").contains("［＃"));
+    }
+
+    #[test]
+    fn unregistered_sentinel_round_trips_span_and_codepoint() {
+        let diag = Diagnostic::unregistered_sentinel(Span::new(1, 4), '\u{E003}');
+        let Diagnostic::UnregisteredSentinel {
+            codepoint, span, ..
+        } = diag
+        else {
+            panic!("expected UnregisteredSentinel, got {diag:?}");
+        };
+        assert_eq!(codepoint, '\u{E003}');
+        assert_eq!(span, Span::new(1, 4));
+    }
+
+    #[test]
+    fn unregistered_sentinel_display_mentions_codepoint() {
+        let diag = Diagnostic::unregistered_sentinel(Span::new(0, 3), '\u{E004}');
+        let rendered = format!("{diag}");
+        assert!(
+            rendered.contains("E004")
+                || rendered.contains("\\u{e004}")
+                || rendered.contains('\u{E004}')
+        );
+    }
+
+    #[test]
+    fn registry_out_of_order_round_trips_span() {
+        let diag = Diagnostic::registry_out_of_order(Span::new(10, 20));
+        let Diagnostic::RegistryOutOfOrder { span, .. } = diag else {
+            panic!("expected RegistryOutOfOrder, got {diag:?}");
+        };
+        assert_eq!(span, Span::new(10, 20));
+    }
+
+    #[test]
+    fn registry_out_of_order_display_is_descriptive() {
+        let diag = Diagnostic::registry_out_of_order(Span::new(0, 5));
+        let rendered = format!("{diag}");
+        assert!(
+            rendered.contains("sort") || rendered.contains("order"),
+            "registry out-of-order diagnostic must describe the shape, got {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn registry_position_mismatch_round_trips_span_and_expected() {
+        let diag = Diagnostic::registry_position_mismatch(Span::new(2, 5), '\u{E001}');
+        let Diagnostic::RegistryPositionMismatch { expected, span, .. } = diag else {
+            panic!("expected RegistryPositionMismatch, got {diag:?}");
+        };
+        assert_eq!(expected, '\u{E001}');
+        assert_eq!(span, Span::new(2, 5));
+    }
+
+    #[test]
+    fn registry_position_mismatch_display_mentions_expected_codepoint() {
+        let diag = Diagnostic::registry_position_mismatch(Span::new(0, 1), '\u{E002}');
+        let rendered = format!("{diag}");
+        assert!(
+            rendered.contains("E002")
+                || rendered.contains("\\u{e002}")
+                || rendered.contains('\u{E002}')
+        );
+    }
 }
