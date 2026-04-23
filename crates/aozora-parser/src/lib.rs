@@ -129,8 +129,8 @@ mod tests {
         let AozoraNode::Ruby(r) = &nodes[0] else {
             panic!("expected Ruby, got {:?}", nodes[0]);
         };
-        assert_eq!(&*r.base, "青梅");
-        assert_eq!(&*r.reading, "おうめ");
+        assert_eq!(r.base.as_plain().expect("plain"), "青梅");
+        assert_eq!(r.reading.as_plain().expect("plain"), "おうめ");
         assert!(r.delim_explicit);
     }
 
@@ -141,8 +141,8 @@ mod tests {
         let AozoraNode::Ruby(r) = &nodes[0] else {
             panic!("expected Ruby, got {:?}", nodes[0]);
         };
-        assert_eq!(&*r.base, "日本");
-        assert_eq!(&*r.reading, "にほん");
+        assert_eq!(r.base.as_plain().expect("plain"), "日本");
+        assert_eq!(r.reading.as_plain().expect("plain"), "にほん");
         assert!(!r.delim_explicit);
     }
 

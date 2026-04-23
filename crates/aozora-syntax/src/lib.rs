@@ -365,8 +365,17 @@ impl<'a> Iterator for ContentIter<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Ruby {
-    pub base: Box<str>,
-    pub reading: Box<str>,
+    /// Base text (the kanji run before the reading delimiter).
+    /// [`Content`] lets the base carry embedded Aozora constructs — a
+    /// gaiji marker as the kanji, or a 返り点 interleaved between
+    /// characters. The common case (plain kanji text) lands on
+    /// [`Content::Plain`].
+    pub base: Content,
+    /// Reading text (inside `《...》`). Same rationale as `base` —
+    /// real corpora contain rubies whose reading holds an embedded
+    /// gaiji marker or a `［＃ママ］` editorial note, which the pre-
+    /// `Content` schema truncated at the `《...》` boundary.
+    pub reading: Content,
     /// `true` when the base was delimited by `｜`, `false` when inferred from the
     /// trailing kanji run before `《》`.
     pub delim_explicit: bool,
@@ -380,10 +389,11 @@ pub struct Bouten {
     /// (`［＃「X」に傍点］`) this is the run named between `「…」` in the
     /// annotation body; for paired bouten (`［＃傍点］…［＃傍点終わり］`, a
     /// later phase) it will be the children captured between the markers.
-    /// Storing the literal directly — rather than a source [`Span`] — lets
-    /// the HTML renderer emit `<em class="afm-bouten-{kind}">target</em>`
-    /// without threading source access through the extension seam.
-    pub target: Box<str>,
+    /// [`Content`] lets the target carry nested gaiji markers or
+    /// editorial annotations without information loss; the HTML renderer
+    /// emits `<em class="afm-bouten-{kind}">target</em>` iterating
+    /// segments.
+    pub target: Content,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -409,7 +419,11 @@ pub enum BoutenKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TateChuYoko {
-    pub text: Box<str>,
+    /// Horizontally-composed text (typically 2–3 ASCII digits). Modelled as
+    /// [`Content`] for schema-uniformity with other body-bearing nodes;
+    /// real corpora rarely put gaiji or annotations here, so the
+    /// [`Content::Plain`] fast path dominates.
+    pub text: Content,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -439,8 +453,12 @@ pub struct AlignEnd {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Warichu {
-    pub upper: Box<str>,
-    pub lower: Box<str>,
+    /// Upper half of the split annotation. [`Content`] carries segments
+    /// so an embedded gaiji or nested annotation inside a warichu
+    /// stays structured.
+    pub upper: Content,
+    /// Lower half of the split annotation.
+    pub lower: Content,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -473,14 +491,20 @@ pub enum AozoraHeadingKind {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AozoraHeading {
     pub kind: AozoraHeadingKind,
-    pub text: Box<str>,
+    /// Heading text. [`Content`] keeps embedded ruby / gaiji / annotations
+    /// structured through to the renderer.
+    pub text: Content,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Sashie {
+    /// File path / URL of the illustration. Remains `Box<str>` since a
+    /// filename cannot meaningfully carry nested Aozora constructs.
     pub file: Box<str>,
-    pub caption: Option<Box<str>>,
+    /// Optional caption. [`Content`] lets the caption hold ruby,
+    /// bouten targets, or annotations.
+    pub caption: Option<Content>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -540,8 +564,8 @@ mod tests {
             reading: "おうめ".into(),
             delim_explicit: true,
         };
-        assert_eq!(&*r.base, "青梅");
-        assert_eq!(&*r.reading, "おうめ");
+        assert_eq!(r.base.as_plain(), Some("青梅"));
+        assert_eq!(r.reading.as_plain(), Some("おうめ"));
         assert!(r.delim_explicit);
     }
 
@@ -551,7 +575,7 @@ mod tests {
             kind: BoutenKind::Goma,
             target: "可哀想".into(),
         };
-        assert_eq!(&*b.target, "可哀想");
+        assert_eq!(b.target.as_plain(), Some("可哀想"));
     }
 
     #[test]

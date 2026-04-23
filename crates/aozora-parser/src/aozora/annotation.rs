@@ -217,7 +217,7 @@ mod tests {
             panic!("expected Bouten, got {:?}", m.node);
         };
         assert_eq!(b.kind, BoutenKind::Goma);
-        assert_eq!(&*b.target, "可哀想");
+        assert_eq!(b.target.as_plain().expect("plain"), "可哀想");
     }
 
     #[test]
@@ -242,7 +242,11 @@ mod tests {
                 panic!("keyword={keyword}: expected Bouten, got {:?}", m.node);
             };
             assert_eq!(b.kind, want, "keyword={keyword}");
-            assert_eq!(&*b.target, "X", "keyword={keyword}");
+            assert_eq!(
+                b.target.as_plain().expect("plain"),
+                "X",
+                "keyword={keyword}"
+            );
         }
     }
 

@@ -9,7 +9,10 @@
 
 use core::fmt::{self, Write};
 
-use afm_syntax::{AlignEnd, AozoraNode, Bouten, Indent, Ruby, SectionKind};
+use afm_syntax::{
+    AlignEnd, Annotation, AozoraNode, Bouten, Content, Gaiji, Indent, Kaeriten, Ruby, SectionKind,
+    SegmentRef,
+};
 
 use crate::aozora::bouten;
 
@@ -26,19 +29,10 @@ pub fn render(node: &AozoraNode, writer: &mut dyn Write) -> fmt::Result {
         AozoraNode::Bouten(b) => render_bouten(b, writer),
         AozoraNode::TateChuYoko(t) => {
             writer.write_str(r#"<span class="afm-tcy">"#)?;
-            escape_text(&t.text, writer)?;
+            render_content(&t.text, writer)?;
             writer.write_str("</span>")
         }
-        AozoraNode::Gaiji(g) => {
-            writer.write_str(r#"<span class="afm-gaiji">"#)?;
-            if let Some(c) = g.ucs {
-                let mut buf = [0u8; 4];
-                writer.write_str(c.encode_utf8(&mut buf))?;
-            } else {
-                escape_text(&g.description, writer)?;
-            }
-            writer.write_str("</span>")
-        }
+        AozoraNode::Gaiji(g) => render_gaiji(g, writer),
         AozoraNode::Indent(i) => render_indent(*i, writer),
         AozoraNode::AlignEnd(a) => render_align_end(*a, writer),
         AozoraNode::PageBreak => writer.write_str(r#"<div class="afm-page-break"></div>"#),
@@ -54,15 +48,8 @@ pub fn render(node: &AozoraNode, writer: &mut dyn Write) -> fmt::Result {
                 r#"<div class="afm-section-break afm-section-break-{slug}"></div>"#,
             )
         }
-        AozoraNode::Annotation(a) => {
-            // Round-trip preservation: visible-but-unstyled by default, carrying
-            // the raw annotation text as accessible content. Rendered verbatim
-            // inside an HTML comment so CommonMark/GFM-only readers don't see it,
-            // and as a span for accessibility on the visible path.
-            writer.write_str(r#"<span class="afm-annotation" hidden>"#)?;
-            escape_text(&a.raw, writer)?;
-            writer.write_str("</span>")
-        }
+        AozoraNode::Annotation(a) => render_annotation(a, writer),
+        AozoraNode::Kaeriten(k) => render_kaeriten(k, writer),
         // Block / container kinds — ruby, bouten, etc. may gain distinct markup
         // in M1; for M0 we emit a class-carrying wrapper so presence is visible.
         _ => fallback(node, writer),
@@ -71,9 +58,9 @@ pub fn render(node: &AozoraNode, writer: &mut dyn Write) -> fmt::Result {
 
 fn render_ruby(r: &Ruby, writer: &mut dyn Write) -> fmt::Result {
     writer.write_str("<ruby>")?;
-    escape_text(&r.base, writer)?;
+    render_content(&r.base, writer)?;
     writer.write_str("<rp>(</rp><rt>")?;
-    escape_text(&r.reading, writer)?;
+    render_content(&r.reading, writer)?;
     writer.write_str("</rt><rp>)</rp></ruby>")
 }
 
@@ -89,8 +76,62 @@ fn render_bouten(b: &Bouten, writer: &mut dyn Write) -> fmt::Result {
         r#"<em class="afm-bouten afm-bouten-{slug}">"#,
         slug = bouten::kind_slug(b.kind),
     )?;
-    escape_text(&b.target, writer)?;
+    render_content(&b.target, writer)?;
     writer.write_str("</em>")
+}
+
+/// Render a [`Content`] by walking its segments in order. Plain content
+/// follows the fast path (a single `escape_text` call via the iterator's
+/// synthesised [`SegmentRef::Text`]); `Segments` dispatch per element.
+///
+/// Nested gaiji / annotations render with their outer wrapper markup —
+/// `<rt>` accommodates child span elements per HTML5 content model,
+/// so emitting `<span class="afm-gaiji">X</span>` inside a ruby
+/// reading is well-formed. Same for `<em class="afm-bouten-*">`.
+fn render_content(content: &Content, writer: &mut dyn Write) -> fmt::Result {
+    for seg in content {
+        match seg {
+            SegmentRef::Text(t) => escape_text(t, writer)?,
+            SegmentRef::Gaiji(g) => render_gaiji(g, writer)?,
+            SegmentRef::Annotation(a) => render_annotation(a, writer)?,
+            // `SegmentRef` is `#[non_exhaustive]` to allow future variants
+            // (e.g. embedded bouten, ruby-in-ruby). Emit nothing for now;
+            // once such a variant lands, this arm should be replaced with
+            // a dedicated renderer.
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn render_gaiji(g: &Gaiji, writer: &mut dyn Write) -> fmt::Result {
+    writer.write_str(r#"<span class="afm-gaiji">"#)?;
+    if let Some(c) = g.ucs {
+        let mut buf = [0u8; 4];
+        writer.write_str(c.encode_utf8(&mut buf))?;
+    } else {
+        escape_text(&g.description, writer)?;
+    }
+    writer.write_str("</span>")
+}
+
+fn render_annotation(a: &Annotation, writer: &mut dyn Write) -> fmt::Result {
+    // Round-trip preservation: visible-but-unstyled by default, carrying
+    // the raw annotation text as accessible content, kept inside a
+    // hidden span so CommonMark/GFM-only readers don't see it but
+    // accessibility tools do.
+    writer.write_str(r#"<span class="afm-annotation" hidden>"#)?;
+    escape_text(&a.raw, writer)?;
+    writer.write_str("</span>")
+}
+
+fn render_kaeriten(k: &Kaeriten, writer: &mut dyn Write) -> fmt::Result {
+    // 返り点 as a small side-marker. `<sup>` is the natural semantic
+    // vehicle for a superscript-like reading mark; the CSS theme can
+    // tune size / position per writing mode.
+    writer.write_str(r#"<sup class="afm-kaeriten">"#)?;
+    escape_text(&k.mark, writer)?;
+    writer.write_str("</sup>")
 }
 
 /// Leaf `{N}字下げ` — emits an empty marker `<span>` with a per-amount
@@ -182,6 +223,67 @@ mod tests {
     fn tcy_wraps_in_afm_tcy_span() {
         let n = AozoraNode::TateChuYoko(TateChuYoko { text: "20".into() });
         assert_eq!(render_to_string(&n), r#"<span class="afm-tcy">20</span>"#);
+    }
+
+    #[test]
+    fn ruby_reading_with_embedded_gaiji_renders_segmented() {
+        use afm_syntax::{Content, Gaiji, Segment};
+        let reading = Content::from_segments(vec![
+            Segment::Text("く".into()),
+            Segment::Gaiji(Gaiji {
+                description: "二の字点".into(),
+                ucs: Some('〻'),
+                mencode: Some("1-2-22".into()),
+            }),
+        ]);
+        let n = AozoraNode::Ruby(Ruby {
+            base: "縊".into(),
+            reading,
+            delim_explicit: false,
+        });
+        let out = render_to_string(&n);
+        // No bare ［＃ should leak; gaiji should be wrapped in afm-gaiji
+        assert!(!out.contains("［＃"));
+        assert!(out.contains(r#"<span class="afm-gaiji">〻</span>"#));
+        assert!(out.contains("<rt>く<span"));
+    }
+
+    #[test]
+    fn ruby_base_with_kun_yomi_via_annotation_segment_stays_in_content() {
+        use crate::test_support::strip_annotation_wrappers;
+        use afm_syntax::{Annotation, AnnotationKind, Content, Segment};
+        // Classical kun-yomi mark embedded between kanji characters —
+        // handled as an Annotation segment here (the dedicated Kaeriten
+        // variant is an independent node, not a segment kind per B1).
+        let ruby_base = Content::from_segments(vec![
+            Segment::Text("言".into()),
+            Segment::Annotation(Annotation {
+                raw: "［＃二］".into(),
+                kind: AnnotationKind::Unknown,
+            }),
+            Segment::Text("向和".into()),
+        ]);
+        let n = AozoraNode::Ruby(Ruby {
+            base: ruby_base,
+            reading: "コトムケヤハス".into(),
+            delim_explicit: false,
+        });
+        let out = render_to_string(&n);
+        // Annotation segment wraps in hidden span, so stripping wrappers
+        // leaves no bare ［＃ marker.
+        let stripped = strip_annotation_wrappers(&out);
+        assert!(!stripped.contains("［＃"));
+        assert!(out.contains("afm-annotation"));
+    }
+
+    #[test]
+    fn kaeriten_renders_as_superscript_afm_kaeriten() {
+        use afm_syntax::Kaeriten;
+        let n = AozoraNode::Kaeriten(Kaeriten { mark: "レ".into() });
+        assert_eq!(
+            render_to_string(&n),
+            r#"<sup class="afm-kaeriten">レ</sup>"#
+        );
     }
 
     #[test]

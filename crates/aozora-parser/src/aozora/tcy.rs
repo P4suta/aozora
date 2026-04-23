@@ -110,7 +110,7 @@ mod tests {
         let AozoraNode::TateChuYoko(t) = &m.node else {
             panic!("expected TateChuYoko, got {:?}", m.node);
         };
-        assert_eq!(&*t.text, "20");
+        assert_eq!(t.text.as_plain().expect("plain"), "20");
         assert_eq!(m.consumed, "［＃縦中横］20［＃縦中横終わり］".len());
     }
 

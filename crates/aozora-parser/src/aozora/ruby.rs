@@ -122,8 +122,8 @@ mod tests {
     #[test]
     fn explicit_form_captures_base_and_reading() {
         let (ruby, consumed) = parse("青梅《おうめ》あとの文章", true, "").expect("parse");
-        assert_eq!(&*ruby.base, "青梅");
-        assert_eq!(&*ruby.reading, "おうめ");
+        assert_eq!(ruby.base.as_plain().expect("plain"), "青梅");
+        assert_eq!(ruby.reading.as_plain().expect("plain"), "おうめ");
         assert!(ruby.delim_explicit);
         assert_eq!(consumed, "青梅《おうめ》".len());
     }
@@ -141,8 +141,8 @@ mod tests {
     #[test]
     fn implicit_form_uses_trailing_kanji_run() {
         let (ruby, _) = parse("《にほん》です", false, "彼は日本").expect("parse");
-        assert_eq!(&*ruby.base, "日本");
-        assert_eq!(&*ruby.reading, "にほん");
+        assert_eq!(ruby.base.as_plain().expect("plain"), "日本");
+        assert_eq!(ruby.reading.as_plain().expect("plain"), "にほん");
         assert!(!ruby.delim_explicit);
     }
 
