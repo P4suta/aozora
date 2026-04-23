@@ -70,6 +70,40 @@ spec-golden-56656:
 corpus *ARGS:
     {{_dev}} cargo run --package xtask --quiet -- corpus-test {{ARGS}}
 
+# Property-based sweep over whatever directory `AFM_CORPUS_ROOT` points at.
+# Bind-mounts the corpus dir into the container at a stable path so the
+# test binary reads it from the same location regardless of the host path.
+# Runtime-skips with an informational message if the env var is unset —
+# this is *not* a failure, just an indication that no corpus is configured.
+#
+# Usage:
+#   export AFM_CORPUS_ROOT=$HOME/aozora-corpus
+#   just corpus-sweep
+#
+# Invariants checked (report/enforcement split documented in the test
+# itself at crates/afm-parser/tests/corpus_sweep.rs):
+#   I1 — no panic on any input (hard).
+#   I2 — no unconsumed ［＃ markers (report-only, M1 D pending).
+#   I5 — SJIS decode stable (report-only).
+corpus-sweep:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AFM_CORPUS_ROOT:-}" ]]; then
+        echo "AFM_CORPUS_ROOT is not set; sweep has nothing to walk."
+        echo "Set it to a directory of aozora-format .txt files, e.g.:"
+        echo "  export AFM_CORPUS_ROOT=\$HOME/aozora-corpus"
+        echo "Then re-run 'just corpus-sweep'."
+        exit 0
+    fi
+    if [[ ! -d "$AFM_CORPUS_ROOT" ]]; then
+        echo "AFM_CORPUS_ROOT=$AFM_CORPUS_ROOT is not a directory." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AFM_CORPUS_ROOT":/corpus:ro \
+        -e AFM_CORPUS_ROOT=/corpus \
+        dev cargo nextest run --package afm-parser --test corpus_sweep --no-capture
+
 # Fuzz smoke (60s per harness) — runs the registered cargo-fuzz harnesses
 fuzz *ARGS:
     {{_dev}} bash -c 'cd crates/afm-parser && cargo +nightly fuzz run {{ARGS}}'
