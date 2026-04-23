@@ -48,7 +48,7 @@
 //! sanitized source. The driver loop stays the same — only the
 //! `try_recognize` dispatch grows.
 
-use afm_syntax::{AozoraNode, Content, Ruby, SectionKind, Span};
+use afm_syntax::{AlignEnd, AozoraNode, Content, Indent, Ruby, SectionKind, Span};
 
 use crate::diagnostic::Diagnostic;
 use crate::phase2_pair::{PairEvent, PairKind, PairOutput};
@@ -411,19 +411,88 @@ fn recognize_annotation(
     // such whitespace but the corpus contains stragglers.
     let body = source[hash_end as usize..close_span.start as usize].trim();
 
-    let node = match body {
-        "改ページ" => AozoraNode::PageBreak,
-        "改丁" => AozoraNode::SectionBreak(SectionKind::Choho),
-        "改段" => AozoraNode::SectionBreak(SectionKind::Dan),
-        "改見開き" => AozoraNode::SectionBreak(SectionKind::Spread),
-        _ => return None,
-    };
+    let node = classify_annotation_body(body)?;
 
     Some(AnnotationMatch {
         node,
         consume_start: open_span.start,
         consume_end: close_span.end,
     })
+}
+
+/// Dispatch an annotation body to its [`AozoraNode`].
+///
+/// Unknown bodies return `None` and fall through to Plain. New
+/// recognizers register by adding a branch here or a classifier
+/// helper below.
+fn classify_annotation_body(body: &str) -> Option<AozoraNode> {
+    classify_fixed_keyword(body).or_else(|| classify_indent_or_align(body))
+}
+
+/// Fixed-string annotation keywords — no parameters, no body
+/// variations. Each entry corresponds to a single constant
+/// [`AozoraNode`].
+fn classify_fixed_keyword(body: &str) -> Option<AozoraNode> {
+    Some(match body {
+        "改ページ" => AozoraNode::PageBreak,
+        "改丁" => AozoraNode::SectionBreak(SectionKind::Choho),
+        "改段" => AozoraNode::SectionBreak(SectionKind::Dan),
+        "改見開き" => AozoraNode::SectionBreak(SectionKind::Spread),
+        "地付き" => AozoraNode::AlignEnd(AlignEnd { offset: 0 }),
+        _ => return None,
+    })
+}
+
+/// Parameterized indent / end-alignment annotations:
+///
+/// * `N字下げ`       → `Indent { amount: N }`
+/// * `地からN字上げ` → `AlignEnd { offset: N }`
+///
+/// The `N` prefix accepts ASCII digits (`0-9`) and full-width digits
+/// (`０-９`); both conventions appear in Aozora corpora. 漢数字 is not
+/// accepted here (rare for indent amounts, and ambiguous to parse
+/// without a full reader). Invalid or unsupported shapes return
+/// `None` so the body flows to the next recognizer or to Plain.
+fn classify_indent_or_align(body: &str) -> Option<AozoraNode> {
+    if let Some(rest) = body.strip_prefix("地から")
+        && let Some((n, tail)) = parse_decimal_u8_prefix(rest)
+        && tail == "字上げ"
+    {
+        return Some(AozoraNode::AlignEnd(AlignEnd { offset: n }));
+    }
+    let (n, tail) = parse_decimal_u8_prefix(body)?;
+    if tail == "字下げ" {
+        return Some(AozoraNode::Indent(Indent { amount: n }));
+    }
+    None
+}
+
+/// Parse a leading run of ASCII / full-width decimal digits into a
+/// [`u8`] and return the remainder slice.
+///
+/// Returns `None` if the leading char is not a digit, or if the value
+/// overflows `u8` (> 255). `saturating_mul` / `saturating_add` during
+/// accumulation keep the `u32` intermediate bounded, but the final
+/// `try_from` enforces the `u8` range — a body like `300字下げ` fails
+/// cleanly rather than wrapping to 44.
+fn parse_decimal_u8_prefix(s: &str) -> Option<(u8, &str)> {
+    let mut value: u32 = 0;
+    let mut consumed = 0;
+    for (idx, ch) in s.char_indices() {
+        let digit = match ch {
+            '0'..='9' => Some(u32::from(ch) - u32::from('0')),
+            '０'..='９' => Some(u32::from(ch) - u32::from('０')),
+            _ => None,
+        };
+        let Some(d) = digit else { break };
+        value = value.saturating_mul(10).saturating_add(d);
+        consumed = idx + ch.len_utf8();
+    }
+    if consumed == 0 {
+        return None;
+    }
+    let value_u8 = u8::try_from(value).ok()?;
+    Some((value_u8, &s[consumed..]))
 }
 
 /// Characters eligible as an implicit-ruby base.
@@ -694,6 +763,69 @@ mod tests {
             !out.spans
                 .iter()
                 .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
+        );
+    }
+
+    #[test]
+    fn indent_with_full_width_digit() {
+        let out = run("［＃２字下げ］");
+        assert_eq!(out.spans.len(), 1);
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::Aozora(AozoraNode::Indent(Indent { amount: 2 }))
+        ));
+    }
+
+    #[test]
+    fn indent_with_ascii_digit() {
+        let out = run("［＃10字下げ］");
+        assert_eq!(out.spans.len(), 1);
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::Aozora(AozoraNode::Indent(Indent { amount: 10 }))
+        ));
+    }
+
+    #[test]
+    fn indent_overflow_falls_through_to_plain() {
+        // 300 > 255, doesn't fit in u8. No annotation recognized.
+        let out = run("［＃300字下げ］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
+        );
+    }
+
+    #[test]
+    fn chitsuki_zero_offset_recognized() {
+        let out = run("［＃地付き］");
+        assert_eq!(out.spans.len(), 1);
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::Aozora(AozoraNode::AlignEnd(AlignEnd { offset: 0 }))
+        ));
+    }
+
+    #[test]
+    fn chi_kara_n_ji_age_recognized() {
+        let out = run("［＃地から３字上げ］");
+        assert_eq!(out.spans.len(), 1);
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::Aozora(AozoraNode::AlignEnd(AlignEnd { offset: 3 }))
+        ));
+    }
+
+    #[test]
+    fn indent_without_digits_falls_through() {
+        // "ここから字下げ" is a paired-container opener, not a leaf.
+        // C4c2 must not grab it — C4e will.
+        let out = run("［＃ここから字下げ］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Indent(_)))),
         );
     }
 
