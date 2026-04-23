@@ -43,9 +43,10 @@ afm-parser   = { version = "0.1.0", path = "crates/afm-parser" }
 afm-encoding = { version = "0.1.0", path = "crates/afm-encoding" }
 
 # comrak vendored fork (path, not crates.io).
-# Path is relative to the workspace root. Resolved once task #5 drops comrak 0.52.0
-# into `upstream/comrak/`.
-comrak = { path = "upstream/comrak" }
+# Path is relative to the workspace root. `default-features = false` drops the
+# comrak CLI (`cli` / `syntect` / `bon`) which we don't consume; afm-cli is our
+# own binary, not comrak's.
+comrak = { path = "upstream/comrak", default-features = false }
 
 # Error handling — versions verified against crates.io 2026-04-23
 thiserror = "2.0.18"
@@ -72,9 +73,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 clap = { version = "4.6.1", features = ["derive", "wrap_help", "env", "color", "cargo"] }
 
 # Testing
-insta     = { version = "1.47", features = ["yaml", "json", "filters"] }
-proptest  = "1.11"
-criterion = { version = "0.8", features = ["html_reports"] }
+insta             = { version = "1.47", features = ["yaml", "json", "filters"] }
+proptest          = "1.11"
+criterion         = { version = "0.8", features = ["html_reports"] }
+pretty_assertions = "1.4.1"
 
 [profile.release]
 lto           = "thin"

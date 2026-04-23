@@ -16,16 +16,16 @@ workspace = true
 
 [dependencies]
 afm-syntax = { workspace = true }
-# comrak is a path dep on upstream/comrak; wired in once the vendor lands (task #5).
-# comrak = { workspace = true }
+comrak     = { workspace = true }
 unicode-segmentation = { workspace = true }
 miette               = { workspace = true }
 thiserror            = { workspace = true }
 tracing              = { workspace = true }
 
 [dev-dependencies]
-insta     = { workspace = true }
-proptest  = { workspace = true }
+insta             = { workspace = true }
+proptest          = { workspace = true }
+pretty_assertions = { workspace = true }
 
 [features]
 default = ["html"]
