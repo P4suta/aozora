@@ -5,9 +5,11 @@
 //! dispatches inline / block / render callbacks to module-level functions under
 //! `crate::aozora`.
 
+use core::fmt;
+
 use afm_syntax::{AozoraExtension, AozoraNode, BlockCtx, BlockMatch, InlineCtx, InlineMatch};
 
-use crate::aozora::annotation::BracketCtx;
+use crate::aozora::{self, annotation::BracketCtx};
 
 /// Zero-state adapter. Construct once per parse session (or reuse globally) and
 /// register via `Options::default().extension.aozora = Some(Arc::new(AfmAdapter));`.
@@ -33,12 +35,8 @@ impl AozoraExtension for AfmAdapter {
         BlockMatch::NotOurs
     }
 
-    fn render_html(
-        &self,
-        node: &AozoraNode,
-        writer: &mut dyn core::fmt::Write,
-    ) -> core::fmt::Result {
-        crate::aozora::html::render(node, writer)
+    fn render_html(&self, node: &AozoraNode, writer: &mut dyn fmt::Write) -> fmt::Result {
+        aozora::html::render(node, writer)
     }
 }
 
@@ -74,14 +72,14 @@ fn classify_inline_head(head: &str) -> InlineTrigger {
 fn parse_bar_ruby(head: &str) -> Option<InlineMatch> {
     let bar_len = '｜'.len_utf8();
     let rest = head.get(bar_len..)?;
-    let (ruby, inner) = crate::aozora::ruby::parse(rest, true, "")?;
+    let (ruby, inner) = aozora::ruby::parse(rest, true, "")?;
     InlineMatch::new(AozoraNode::Ruby(ruby), bar_len + inner)
 }
 
 /// `《<reading>》` with the base recovered from `preceding` — pure delegation.
 /// Implicit form requires a trailing kanji run in `preceding`; otherwise decline.
 fn parse_implicit_ruby(head: &str, preceding: &str) -> Option<InlineMatch> {
-    let (ruby, consumed) = crate::aozora::ruby::parse(head, false, preceding)?;
+    let (ruby, consumed) = aozora::ruby::parse(head, false, preceding)?;
     InlineMatch::new(AozoraNode::Ruby(ruby), consumed)
 }
 
@@ -95,7 +93,7 @@ fn parse_implicit_ruby(head: &str, preceding: &str) -> Option<InlineMatch> {
 /// only the adapter-side glue that converts a successful scan into an
 /// [`InlineMatch`].
 fn parse_bracket_annotation<'a>(head: &'a str, preceding: &'a str) -> Option<InlineMatch> {
-    let m = crate::aozora::annotation::scan_bracket(BracketCtx { head, preceding })?;
+    let m = aozora::annotation::scan_bracket(BracketCtx { head, preceding })?;
     InlineMatch::new(m.node, m.consumed)
 }
 
@@ -114,6 +112,7 @@ fn parse_reference_mark<'a>(head: &'a str, preceding: &'a str) -> Option<InlineM
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support;
 
     fn adapter() -> AfmAdapter {
         AfmAdapter
@@ -201,7 +200,7 @@ mod tests {
         // End-to-end through the full pipeline. With the target literal in
         // the preceding run, C3 must promote the annotation to Bouten and
         // drop the Annotation wrapper entirely.
-        let nodes = crate::test_support::collect_aozora("可哀想［＃「可哀想」に傍点］という気");
+        let nodes = test_support::collect_aozora("可哀想［＃「可哀想」に傍点］という気");
         let bouten_count = nodes
             .iter()
             .filter(|n| matches!(n, AozoraNode::Bouten(_)))

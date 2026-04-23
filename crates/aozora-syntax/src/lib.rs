@@ -61,9 +61,18 @@ impl Span {
 
     /// Slice the source buffer by this span. Assumes `self` was produced by the
     /// parser and therefore sits on UTF-8 boundaries.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` does not align to UTF-8 char boundaries in `source`.
+    /// Parser-produced spans always do; a panic here signals a bug upstream.
     #[must_use]
     pub fn slice(self, source: &str) -> &str {
-        &source[self.start as usize..self.end as usize]
+        let start = self.start as usize;
+        let end = self.end as usize;
+        source
+            .get(start..end)
+            .expect("span must align to UTF-8 char boundaries in source")
     }
 }
 

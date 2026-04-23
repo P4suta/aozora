@@ -124,7 +124,7 @@ fn gfm_extension_tags_are_exhaustive() {
         "tagfilter",
     ]
     .iter()
-    .map(|s| (*s).to_string())
+    .map(|s| (*s).to_owned())
     .collect();
     assert_eq!(
         tags, known,

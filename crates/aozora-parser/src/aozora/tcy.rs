@@ -34,11 +34,7 @@ pub(crate) fn parse_forward_ref(body: &str) -> Option<&str> {
         return None;
     }
     let after_close = &after_open[close + '」'.len_utf8()..];
-    if after_close == "は縦中横" {
-        Some(target)
-    } else {
-        None
-    }
+    (after_close == "は縦中横").then_some(target)
 }
 
 /// Maximum bytes between a `［＃縦中横］` open marker and its matching close.

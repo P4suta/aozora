@@ -16,7 +16,7 @@
 #![doc(hidden)]
 
 use comrak::Arena;
-use comrak::nodes::AstNode;
+use comrak::nodes::{AstNode, NodeValue};
 
 use crate::{Options, parse};
 
@@ -42,7 +42,7 @@ pub fn collect_aozora(input: &str) -> Vec<afm_syntax::AozoraNode> {
 /// Recursive traversal helper usable by tests that already hold an [`AstNode`]
 /// (e.g. when testing parse modes that bypass the default arena).
 pub fn collect_aozora_recursive<'a>(node: &'a AstNode<'a>, out: &mut Vec<afm_syntax::AozoraNode>) {
-    if let comrak::nodes::NodeValue::Aozora(ref boxed) = node.data.borrow().value {
+    if let NodeValue::Aozora(ref boxed) = node.data.borrow().value {
         out.push((**boxed).clone());
     }
     for child in node.children() {

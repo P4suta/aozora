@@ -25,6 +25,7 @@ mod adapter;
 #[doc(hidden)]
 pub mod test_support;
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use comrak::Arena;
@@ -96,10 +97,10 @@ impl Options<'_> {
 /// spans is Unicode-normalised before comrak sees it (see ADR-0004).
 #[must_use]
 pub fn parse<'a>(arena: &'a Arena<'a>, input: &str, options: &Options<'_>) -> &'a AstNode<'a> {
-    let source: std::borrow::Cow<'_, str> = if options.comrak.extension.aozora.is_some() {
+    let source: Cow<'_, str> = if options.comrak.extension.aozora.is_some() {
         preparse::apply_preparse(input)
     } else {
-        std::borrow::Cow::Borrowed(input)
+        Cow::Borrowed(input)
     };
     comrak::parse_document(arena, &source, &options.comrak)
 }

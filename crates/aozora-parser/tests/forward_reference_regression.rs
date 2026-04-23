@@ -5,6 +5,7 @@
 //! so a regression surfaces immediately instead of only when the full novel is
 //! exercised.
 
+use afm_parser::html::render_to_string;
 use afm_parser::test_support::assert_no_bare;
 
 #[test]
@@ -16,7 +17,7 @@ fn forward_reference_bouten_source_span_is_consumed() {
     // html.rs tests — this regression suite only pins the span-consumption
     // contract.
     let src = "可哀想［＃「可哀想」に傍点］という気";
-    let html = afm_parser::html::render_to_string(src);
+    let html = render_to_string(src);
     assert_no_bare(&html, "［＃");
 }
 
@@ -28,7 +29,7 @@ fn forward_reference_bouten_survives_long_paragraph_context() {
     // matched 「, the scanner would stop inside an unrelated opening-quote span
     // and the subsequent ［＃ would never get classified.
     let src = "「そう、妹さんの心の中に可哀想［＃「可哀想」に傍点］という気が起こる";
-    let html = afm_parser::html::render_to_string(src);
+    let html = render_to_string(src);
     assert_no_bare(&html, "［＃");
 }
 
@@ -37,6 +38,6 @@ fn curly_quote_followed_by_bracket_annotation() {
     // Minimal repro: the 「X」 quote form appears in many contexts; the adapter
     // must not confuse 「 with a trigger character.
     let src = "「X」［＃「Y」に傍点］";
-    let html = afm_parser::html::render_to_string(src);
+    let html = render_to_string(src);
     assert_no_bare(&html, "［＃");
 }

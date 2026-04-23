@@ -13,6 +13,7 @@
 //! Fixtures live under `spec/aozora/cases/` (distinct from
 //! `spec/aozora/fixtures/` which holds full-work golden texts like 『罪と罰』).
 
+use afm_parser::html::render_to_string;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -61,7 +62,7 @@ fn aozora_notation_fixtures() {
     for (file, cases) in all_cases() {
         for case in &cases {
             total += 1;
-            let actual = afm_parser::html::render_to_string(&case.markdown);
+            let actual = render_to_string(&case.markdown);
             if actual != case.html {
                 failures.push(format!(
                     "{file}::{name}\n  markdown: {md:?}\n  expected: {exp:?}\n  actual:   {act:?}",

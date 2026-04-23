@@ -1,6 +1,7 @@
 //! Property-based tests for the ruby parser. Targets round-trip invariants and the
 //! `｜`-required boundary rule from `https://www.aozora.gr.jp/annotation/ruby.html`.
 
+use afm_parser::aozora::ruby;
 use proptest::prelude::*;
 
 fn kanji_strategy(max_len: usize) -> impl Strategy<Value = String> {
@@ -29,7 +30,7 @@ proptest! {
         // The parser lives on the comrak fork path; for M0 we exercise the standalone
         // helper directly to lock in the invariant.
         let (ruby, consumed) =
-            afm_parser::aozora::ruby::parse(&input, true, "")
+            ruby::parse(&input, true, "")
                 .expect("explicit form must parse");
         prop_assert_eq!(&*ruby.base, base.as_str());
         prop_assert_eq!(&*ruby.reading, reading.as_str());

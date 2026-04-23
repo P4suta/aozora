@@ -232,10 +232,11 @@ pub fn decompose_fragment(fragment: &str) -> Cow<'_, str> {
         } else {
             // Advance one UTF-8 scalar value. Every index we land on is a
             // valid char boundary because we only stride by `pat_len` (2 or 3
-            // ASCII bytes) or by `ch.len_utf8()`. Defensive fallback: if the
-            // remainder is somehow empty (shouldn't happen under the while
-            // bound), break to avoid spinning.
-            let Some(ch) = fragment[i..].chars().next() else {
+            // ASCII bytes) or by `ch.len_utf8()`. `.get(i..)` both avoids
+            // `clippy::string_slice` and defends against the stride
+            // invariant breaking: a misaligned index yields `None`, which
+            // breaks the loop cleanly.
+            let Some(ch) = fragment.get(i..).and_then(|s| s.chars().next()) else {
                 break;
             };
             out.push(ch);

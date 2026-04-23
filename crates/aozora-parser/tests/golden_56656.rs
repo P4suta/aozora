@@ -8,14 +8,17 @@
 //!    node) — no bare annotation markers leak into the rendered HTML.
 //! 3. Every `｜…《…》` explicit-ruby span is recognised.
 
+use afm_parser::html::render_to_string;
 use afm_parser::test_support::{assert_no_bare, strip_annotation_wrappers};
+use afm_syntax::AozoraNode;
+use comrak::nodes::{AstNode, NodeValue};
 
 const FIXTURE: &str = include_str!("../../../spec/aozora/fixtures/56656/input.utf8.txt");
 
 /// Tier A acceptance — the sole gate for M0 Spike completion.
 #[test]
 fn tier_a_no_panic_and_no_unconsumed_square_brackets() {
-    let html = afm_parser::html::render_to_string(FIXTURE);
+    let html = render_to_string(FIXTURE);
 
     // Any bare ［＃ (outside an afm-annotation wrapper) panics with a
     // diagnostic snippet formatted by the shared helper.
@@ -73,14 +76,14 @@ struct AozoraCounts {
     section_breaks: usize,
 }
 
-fn count_aozora<'a>(node: &'a comrak::nodes::AstNode<'a>, counts: &mut AozoraCounts) {
-    if let comrak::nodes::NodeValue::Aozora(ref boxed) = node.data.borrow().value {
+fn count_aozora<'a>(node: &'a AstNode<'a>, counts: &mut AozoraCounts) {
+    if let NodeValue::Aozora(ref boxed) = node.data.borrow().value {
         match **boxed {
-            afm_syntax::AozoraNode::Ruby(_) => counts.rubies += 1,
-            afm_syntax::AozoraNode::Annotation(_) => counts.annotations += 1,
-            afm_syntax::AozoraNode::Bouten(_) => counts.boutens += 1,
-            afm_syntax::AozoraNode::PageBreak => counts.page_breaks += 1,
-            afm_syntax::AozoraNode::SectionBreak(_) => counts.section_breaks += 1,
+            AozoraNode::Ruby(_) => counts.rubies += 1,
+            AozoraNode::Annotation(_) => counts.annotations += 1,
+            AozoraNode::Bouten(_) => counts.boutens += 1,
+            AozoraNode::PageBreak => counts.page_breaks += 1,
+            AozoraNode::SectionBreak(_) => counts.section_breaks += 1,
             _ => {}
         }
     }

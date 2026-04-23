@@ -88,6 +88,47 @@ unnecessary_safety_comment = "warn"
 unnecessary_safety_doc     = "warn"
 missing_assert_message     = "warn"
 
+# Restriction group — hand-picked lints from clippy::restriction that
+# catch concrete bug-source patterns the plain pedantic/nursery groups
+# don't cover. The full restriction group is deliberately NOT enabled —
+# it contains mutually contradictory lints; each entry here is a
+# considered decision.
+#
+# `print_stdout` / `print_stderr` are NOT in this list because Cargo does
+# not allow combining `[lints] workspace = true` with per-crate
+# `[lints.clippy]` overrides (rust-lang/cargo#12697). We enforce the
+# "no stray println! in lib crates" rule via the strict-code grep gate
+# instead (`just strict-code`), which naturally scopes by path and
+# satisfies the feedback_no_warning_suppression rule structurally.
+str_to_string                    = "warn"  # prefer `.into()` / `String::from`
+# `string_to_string` was removed from clippy in favour of `implicit_clone`;
+# the latter is already on via `pedantic`.
+# `string_slice` was considered and rejected: parser hot paths maintain
+# char-boundary invariants on indices by construction. Forcing `.get()` +
+# `unwrap_or` at every site would both obscure intent and double code size
+# in the tightest loops. Fuzz-testing and integration tests are the right
+# tool for validating these invariants, not a lint.
+absolute_paths                   = "warn"  # prefer `use`-imported names
+allow_attributes_without_reason  = "warn"  # belt-and-braces against strict-code gate
+empty_structs_with_brackets      = "warn"
+if_then_some_else_none           = "warn"  # prefer `.then_some` / `.then`
+let_underscore_must_use          = "warn"  # ignoring `#[must_use]` via `let _ =`
+mixed_read_write_in_expression   = "warn"
+rest_pat_in_fully_bound_structs  = "warn"
+same_name_method                 = "warn"
+semicolon_outside_block          = "warn"
+try_err                          = "warn"  # prefer `?` over `Err(x)?`
+unneeded_field_pattern           = "warn"
+verbose_file_reads               = "warn"  # prefer `fs::read` / `fs::read_to_string`
+format_push_string               = "warn"  # prefer `write!` / collect
+unnecessary_self_imports         = "warn"
+assertions_on_result_states      = "warn"  # prefer `.unwrap_err()` / explicit shape
+filetype_is_file                 = "warn"
+rc_buffer                        = "warn"  # `Rc<String>` → `Rc<str>`, etc.
+rc_mutex                         = "warn"  # `Rc<Mutex<_>>` is a smell — threaded vs refcounted mix-up
+lossy_float_literal              = "warn"
+suspicious_xor_used_as_pow       = "warn"  # `2 ^ 10` is 8, not 1024
+
 # Justified carve-outs. Keep this list short and documented.
 module_name_repetitions = "allow" # `afm_syntax::syntax_error` is clearer than fighting this
 multiple_crate_versions = "allow" # transitive dep collisions are not our problem

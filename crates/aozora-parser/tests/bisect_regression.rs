@@ -1,11 +1,12 @@
 //! Binary-search which slice of the fixture triggers the Tier A leak.
 
+use afm_parser::html::render_to_string;
 use afm_parser::test_support::strip_annotation_wrappers;
 
 const FIXTURE: &str = include_str!("../../../spec/aozora/fixtures/56656/input.utf8.txt");
 
 fn count_leaks(input: &str) -> usize {
-    let html = afm_parser::html::render_to_string(input);
+    let html = render_to_string(input);
     strip_annotation_wrappers(&html).matches("［＃").count()
 }
 

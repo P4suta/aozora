@@ -16,6 +16,7 @@
 //! Implementations must be `Send + Sync + RefUnwindSafe`: comrak may run parsing
 //! under `catch_unwind` and share the extension across threads via `Arc`.
 
+use core::fmt;
 use core::num::NonZeroUsize;
 use std::panic::RefUnwindSafe;
 
@@ -181,15 +182,11 @@ pub trait AozoraExtension: Send + Sync + RefUnwindSafe {
     /// # Errors
     ///
     /// Propagates formatter write errors.
-    fn render_html(
-        &self,
-        node: &AozoraNode,
-        writer: &mut dyn core::fmt::Write,
-    ) -> core::fmt::Result;
+    fn render_html(&self, node: &AozoraNode, writer: &mut dyn fmt::Write) -> fmt::Result;
 }
 
-impl std::fmt::Debug for dyn AozoraExtension + '_ {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for dyn AozoraExtension + '_ {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("<dyn AozoraExtension>")
     }
 }

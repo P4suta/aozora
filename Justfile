@@ -181,6 +181,21 @@ strict-code:
         failed=1
     fi
 
+    # ---- println! / eprintln! in library crates ----------------------------
+    # Library crates should emit observability via `tracing`, not raw print.
+    # CLI crates (afm-cli, xtask) are expected to print, so they are scoped
+    # out. This complements clippy::print_stdout / clippy::print_stderr,
+    # which cannot be selectively enabled per-crate while still inheriting
+    # [workspace.lints] (rust-lang/cargo#12697).
+    lib_files=(crates/afm-syntax/**/*.rs crates/afm-parser/**/*.rs crates/afm-encoding/**/*.rs)
+    print_hits=$(grep -nE '(^|[^[:alnum:]_])e?print(ln)?!\s*\(' "${lib_files[@]}" 2>/dev/null \
+        | grep -vE '/(tests|benches)/' || true)
+    if [[ -n "$print_hits" ]]; then
+        echo '==> forbidden: println! / eprintln! in library crates (use tracing instead)' >&2
+        echo "$print_hits" >&2
+        failed=1
+    fi
+
     if [[ $failed -ne 0 ]]; then
         echo "" >&2
         echo "strict-code check failed. Refactor the offending sites; do not silence." >&2

@@ -16,6 +16,8 @@
 
 use std::borrow::Cow;
 
+use afm_syntax::accent::decompose_fragment;
+
 const OPEN: char = '〔';
 const CLOSE: char = '〕';
 
@@ -55,7 +57,7 @@ fn rewrite(input: &str) -> String {
         let close_abs = after_open + close_rel;
         out.push(OPEN);
         let body = &input[after_open..close_abs];
-        out.push_str(&afm_syntax::accent::decompose_fragment(body));
+        out.push_str(&decompose_fragment(body));
         out.push(CLOSE);
         cursor = close_abs + CLOSE.len_utf8();
     }

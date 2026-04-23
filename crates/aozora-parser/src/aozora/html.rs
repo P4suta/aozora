@@ -7,7 +7,7 @@
 //!
 //! Public entry point: [`render`].
 
-use core::fmt::Write;
+use core::fmt::{self, Write};
 
 use afm_syntax::{AlignEnd, AozoraNode, Bouten, Indent, Ruby, SectionKind};
 
@@ -20,7 +20,7 @@ use crate::aozora::bouten;
 /// # Errors
 ///
 /// Propagates formatter write errors.
-pub fn render(node: &AozoraNode, writer: &mut dyn Write) -> core::fmt::Result {
+pub fn render(node: &AozoraNode, writer: &mut dyn Write) -> fmt::Result {
     match node {
         AozoraNode::Ruby(r) => render_ruby(r, writer),
         AozoraNode::Bouten(b) => render_bouten(b, writer),
@@ -69,7 +69,7 @@ pub fn render(node: &AozoraNode, writer: &mut dyn Write) -> core::fmt::Result {
     }
 }
 
-fn render_ruby(r: &Ruby, writer: &mut dyn Write) -> core::fmt::Result {
+fn render_ruby(r: &Ruby, writer: &mut dyn Write) -> fmt::Result {
     writer.write_str("<ruby>")?;
     escape_text(&r.base, writer)?;
     writer.write_str("<rp>(</rp><rt>")?;
@@ -83,7 +83,7 @@ fn render_ruby(r: &Ruby, writer: &mut dyn Write) -> core::fmt::Result {
 /// visual deduplication (hiding the plain copy so the bouten-marked run
 /// takes its place) is a stylesheet concern — see
 /// `crates/afm-book/theme/afm-horizontal.css` for the CSS class contract.
-fn render_bouten(b: &Bouten, writer: &mut dyn Write) -> core::fmt::Result {
+fn render_bouten(b: &Bouten, writer: &mut dyn Write) -> fmt::Result {
     write!(
         writer,
         r#"<em class="afm-bouten afm-bouten-{slug}">"#,
@@ -98,7 +98,7 @@ fn render_bouten(b: &Bouten, writer: &mut dyn Write) -> core::fmt::Result {
 /// stylesheet uses sibling selectors to apply the indent. Rendering as
 /// `<span>` (not `<div>`) keeps the markup valid inside `<p>`, which is
 /// where comrak places the inline-hook result.
-fn render_indent(i: Indent, writer: &mut dyn Write) -> core::fmt::Result {
+fn render_indent(i: Indent, writer: &mut dyn Write) -> fmt::Result {
     write!(
         writer,
         r#"<span class="afm-indent afm-indent-{n}" data-amount="{n}"></span>"#,
@@ -109,7 +109,7 @@ fn render_indent(i: Indent, writer: &mut dyn Write) -> core::fmt::Result {
 /// Leaf `地付き` (offset 0) / `地からN字上げ` (offset N). Same shape as
 /// [`render_indent`]: an empty marker span that the stylesheet turns into
 /// a right-aligned block.
-fn render_align_end(a: AlignEnd, writer: &mut dyn Write) -> core::fmt::Result {
+fn render_align_end(a: AlignEnd, writer: &mut dyn Write) -> fmt::Result {
     if a.offset == 0 {
         writer.write_str(r#"<span class="afm-align-end" data-offset="0"></span>"#)
     } else {
@@ -121,12 +121,12 @@ fn render_align_end(a: AlignEnd, writer: &mut dyn Write) -> core::fmt::Result {
     }
 }
 
-fn fallback(node: &AozoraNode, writer: &mut dyn Write) -> core::fmt::Result {
+fn fallback(node: &AozoraNode, writer: &mut dyn Write) -> fmt::Result {
     write!(writer, "<!-- {} -->", node.xml_node_name())
 }
 
 /// Minimal HTML5 text escape for the five structural characters.
-fn escape_text(text: &str, writer: &mut dyn Write) -> core::fmt::Result {
+fn escape_text(text: &str, writer: &mut dyn Write) -> fmt::Result {
     for ch in text.chars() {
         match ch {
             '&' => writer.write_str("&amp;")?,

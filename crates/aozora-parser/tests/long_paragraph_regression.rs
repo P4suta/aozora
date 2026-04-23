@@ -1,6 +1,9 @@
 //! Reproduce the Tier A leak on an isolated long paragraph so we don't need
 //! 2 MB of context to debug each iteration.
 
+use afm_parser::html::render_to_string;
+use afm_parser::test_support::assert_no_bare;
+
 const FIXTURE: &str = include_str!("../../../spec/aozora/fixtures/56656/input.utf8.txt");
 
 #[test]
@@ -17,8 +20,8 @@ fn long_paragraph_consumes_all_bracket_annotations() {
         line.len()
     );
 
-    let html = afm_parser::html::render_to_string(line);
+    let html = render_to_string(line);
     // Delegates the strip + context-formatting to the shared helper so any
     // leak panics with a diagnostic snippet ready for use.
-    afm_parser::test_support::assert_no_bare(&html, "［＃");
+    assert_no_bare(&html, "［＃");
 }
