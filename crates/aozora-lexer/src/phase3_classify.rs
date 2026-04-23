@@ -48,7 +48,9 @@
 //! sanitized source. The driver loop stays the same — only the
 //! `try_recognize` dispatch grows.
 
-use afm_syntax::{AlignEnd, AozoraNode, Content, Indent, Ruby, SectionKind, Span};
+use afm_syntax::{
+    AlignEnd, AozoraNode, Bouten, BoutenKind, Content, Indent, Ruby, SectionKind, Span,
+};
 
 use crate::diagnostic::Diagnostic;
 use crate::phase2_pair::{PairEvent, PairKind, PairOutput};
@@ -411,22 +413,15 @@ fn recognize_annotation(
     // such whitespace but the corpus contains stragglers.
     let body = source[hash_end as usize..close_span.start as usize].trim();
 
-    let node = classify_annotation_body(body)?;
+    let node = classify_fixed_keyword(body)
+        .or_else(|| classify_indent_or_align(body))
+        .or_else(|| classify_forward_bouten(events, source, open_idx, close_idx))?;
 
     Some(AnnotationMatch {
         node,
         consume_start: open_span.start,
         consume_end: close_span.end,
     })
-}
-
-/// Dispatch an annotation body to its [`AozoraNode`].
-///
-/// Unknown bodies return `None` and fall through to Plain. New
-/// recognizers register by adding a branch here or a classifier
-/// helper below.
-fn classify_annotation_body(body: &str) -> Option<AozoraNode> {
-    classify_fixed_keyword(body).or_else(|| classify_indent_or_align(body))
 }
 
 /// Fixed-string annotation keywords — no parameters, no body
@@ -465,6 +460,93 @@ fn classify_indent_or_align(body: &str) -> Option<AozoraNode> {
         return Some(AozoraNode::Indent(Indent { amount: n }));
     }
     None
+}
+
+/// Classify a `［＃「target」に<bouten-kind>］` forward-reference
+/// bouten annotation.
+///
+/// Uses the event-stream layout to find the target quote pair,
+/// avoiding the string-find-first-`」` pitfall when the target text
+/// itself contains nested `「…」`. Phase 2 has already balanced the
+/// quotes so the target's extent is unambiguous.
+///
+/// Expected event layout for a valid forward bouten:
+///
+/// ```text
+/// open_idx         PairOpen(Bracket)
+/// open_idx + 1     Solo(Hash)                [already verified]
+/// open_idx + 2     PairOpen(Quote, close=Q)
+/// …                body events               [usually just Text]
+/// Q                PairClose(Quote)
+/// Q+1..close_idx   suffix events             [usually Text("に…")]
+/// close_idx        PairClose(Bracket)
+/// ```
+fn classify_forward_bouten(
+    events: &[PairEvent],
+    source: &str,
+    open_idx: usize,
+    close_idx: usize,
+) -> Option<AozoraNode> {
+    let quote_open_idx = open_idx + 2;
+    let &PairEvent::PairOpen {
+        kind: PairKind::Quote,
+        span: quote_open_span,
+        close_idx: quote_close_idx,
+    } = events.get(quote_open_idx)?
+    else {
+        return None;
+    };
+    // The quote must close *before* the bracket — a cross-boundary
+    // close would mean the quote is not nested inside the bracket.
+    if quote_close_idx >= close_idx {
+        return None;
+    }
+    let &PairEvent::PairClose {
+        span: quote_close_span,
+        ..
+    } = events.get(quote_close_idx)?
+    else {
+        return None;
+    };
+    let target = &source[quote_open_span.end as usize..quote_close_span.start as usize];
+    if target.is_empty() {
+        return None;
+    }
+
+    let &PairEvent::PairClose {
+        span: bracket_close_span,
+        ..
+    } = events.get(close_idx)?
+    else {
+        return None;
+    };
+    let suffix = source[quote_close_span.end as usize..bracket_close_span.start as usize].trim();
+    let suffix = suffix.strip_prefix("に")?;
+    let kind = bouten_kind_from_suffix(suffix)?;
+
+    Some(AozoraNode::Bouten(Bouten {
+        kind,
+        target: Content::from(target),
+    }))
+}
+
+/// Map the trailing keyword (after `に`) to a [`BoutenKind`].
+///
+/// Covers the seven shapes catalogued at
+/// <https://www.aozora.gr.jp/annotation/bouten.html>. Unknown
+/// suffixes return `None`, letting the annotation fall through to
+/// Plain (or to a more specific classifier in a later commit).
+fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
+    Some(match s {
+        "傍点" => BoutenKind::Goma,
+        "丸傍点" => BoutenKind::Circle,
+        "白丸傍点" => BoutenKind::WhiteCircle,
+        "二重丸傍点" => BoutenKind::DoubleCircle,
+        "蛇の目傍点" => BoutenKind::Janome,
+        "波線" => BoutenKind::WavyLine,
+        "傍線" => BoutenKind::UnderLine,
+        _ => return None,
+    })
 }
 
 /// Parse a leading run of ASCII / full-width decimal digits into a
@@ -827,6 +909,107 @@ mod tests {
                 .iter()
                 .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Indent(_)))),
         );
+    }
+
+    #[test]
+    fn forward_bouten_goma_recognized() {
+        let out = run("前置き［＃「青空」に傍点］後ろ");
+        let bouten = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+                _ => None,
+            })
+            .expect("expected a Bouten span");
+        assert_eq!(bouten.kind, BoutenKind::Goma);
+        assert_eq!(bouten.target.as_plain(), Some("青空"));
+    }
+
+    #[test]
+    fn forward_bouten_circle_recognized() {
+        let out = run("［＃「X」に丸傍点］");
+        let bouten = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+                _ => None,
+            })
+            .expect("expected a Bouten span");
+        assert_eq!(bouten.kind, BoutenKind::Circle);
+        assert_eq!(bouten.target.as_plain(), Some("X"));
+    }
+
+    #[test]
+    fn forward_bouten_all_seven_kinds() {
+        let cases = [
+            ("傍点", BoutenKind::Goma),
+            ("丸傍点", BoutenKind::Circle),
+            ("白丸傍点", BoutenKind::WhiteCircle),
+            ("二重丸傍点", BoutenKind::DoubleCircle),
+            ("蛇の目傍点", BoutenKind::Janome),
+            ("波線", BoutenKind::WavyLine),
+            ("傍線", BoutenKind::UnderLine),
+        ];
+        for (suffix, expected_kind) in cases {
+            let src = format!("［＃「t」に{suffix}］");
+            let out = run(&src);
+            let Some(kind) = out.spans.iter().find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b.kind),
+                _ => None,
+            }) else {
+                panic!("no Bouten span for suffix {suffix:?}");
+            };
+            assert_eq!(kind, expected_kind, "suffix {suffix:?}");
+        }
+    }
+
+    #[test]
+    fn forward_bouten_empty_target_falls_through() {
+        let out = run("［＃「」に傍点］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Bouten(_)))),
+        );
+    }
+
+    #[test]
+    fn forward_bouten_unknown_suffix_falls_through() {
+        let out = run("［＃「X」に未知］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Bouten(_)))),
+        );
+    }
+
+    #[test]
+    fn forward_bouten_missing_ni_particle_falls_through() {
+        let out = run("［＃「X」傍点］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Bouten(_)))),
+        );
+    }
+
+    #[test]
+    fn forward_bouten_with_nested_quote_in_target_uses_outer_quote() {
+        // Phase 2 balances 「「」」 correctly. The target is the full
+        // outer-quote contents including the inner 「inner」 — not
+        // truncated at the first 」.
+        let out = run("［＃「A「inner」B」に傍点］");
+        let bouten = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+                _ => None,
+            })
+            .expect("expected a Bouten span");
+        assert_eq!(bouten.target.as_plain(), Some("A「inner」B"));
     }
 
     #[test]
