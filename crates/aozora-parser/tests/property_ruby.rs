@@ -31,8 +31,8 @@ proptest! {
         let (ruby, consumed) =
             afm_parser::aozora::ruby::parse(&input, true, "")
                 .expect("explicit form must parse");
-        prop_assert_eq!(ruby.base, base);
-        prop_assert_eq!(ruby.reading, reading);
+        prop_assert_eq!(&*ruby.base, base.as_str());
+        prop_assert_eq!(&*ruby.reading, reading.as_str());
         prop_assert!(ruby.delim_explicit);
         prop_assert_eq!(consumed, input.len());
     }

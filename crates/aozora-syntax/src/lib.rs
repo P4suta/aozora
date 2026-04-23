@@ -2,29 +2,64 @@
 //!
 //! Keeping the AST in its own crate (with no parser dep) lets downstream tools consume
 //! afm's structured output without pulling in the full `CommonMark` engine.
+//!
+//! # Invariants
+//!
+//! - Every [`Span`] refers to byte offsets in the original UTF-8 source buffer. The
+//!   offsets are guaranteed to fall on UTF-8 character boundaries; callers can slice
+//!   the input with them safely.
+//! - Every owned string field uses [`Box<str>`] rather than [`String`]: after parsing,
+//!   nodes are immutable, so the capacity field of `String` is dead weight. A
+//!   56 kB-annotated work like 『罪と罰』 saves roughly 2 k × 8 B = 16 kB per parse.
+//! - Every public enum is `#[non_exhaustive]`. Adding a variant is not a breaking
+//!   change; downstream match arms learned the `_` catch-all at compile time.
+//!
+//! # Classifier methods
+//!
+//! [`AozoraNode::is_block`], [`AozoraNode::contains_inlines`] and
+//! [`AozoraNode::xml_node_name`] exist so comrak's fork can delegate the
+//! single-line `NodeValue::Aozora(_)` arm to an AST-level classifier without knowing
+//! the shape of individual variants.
 
 #![forbid(unsafe_code)]
-
-use std::ops::Range;
 
 use miette::Diagnostic;
 use thiserror::Error;
 
 /// Byte-range span into the original source document.
 ///
-/// Stored as a raw byte range rather than a `(line, column)` pair so tokens can carry
-/// spans cheaply through the parser and be resolved to line/column only when formatting
-/// diagnostics.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// `u32` (rather than `usize`) caps the addressable source at 4 GiB, which is
+/// roughly 4 000× the largest plausible Aozora Bunko work — and halves span size on
+/// 64-bit targets, which compounds across the thousands of nodes a long novel
+/// produces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Span {
-    pub range: Range<usize>,
+    pub start: u32,
+    pub end: u32,
 }
 
 impl Span {
     #[must_use]
-    pub const fn new(start: usize, end: usize) -> Self {
-        Self { range: start..end }
+    pub const fn new(start: u32, end: u32) -> Self {
+        Self { start, end }
+    }
+
+    #[must_use]
+    pub const fn len(self) -> u32 {
+        self.end - self.start
+    }
+
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.start == self.end
+    }
+
+    /// Slice the source buffer by this span. Assumes `self` was produced by the
+    /// parser and therefore sits on UTF-8 boundaries.
+    #[must_use]
+    pub fn slice(self, source: &str) -> &str {
+        &source[self.start as usize..self.end as usize]
     }
 }
 
@@ -78,11 +113,70 @@ pub enum AozoraNode {
     Annotation(Annotation),
 }
 
+impl AozoraNode {
+    /// Whether this node occupies a block (paragraph-level) position in the tree.
+    ///
+    /// Inline-only variants (`Ruby`, `Bouten`, `TateChuYoko`, `Gaiji`) return `false`.
+    /// Block variants (`Indent`, `AlignEnd`, `Warichu`, `Keigakomi`, `PageBreak`,
+    /// `SectionBreak`, `AozoraHeading`, `Sashie`) return `true`.
+    /// `Annotation` is inline — it stands in for a span of text that the parser
+    /// couldn't classify.
+    #[must_use]
+    pub const fn is_block(&self) -> bool {
+        matches!(
+            self,
+            Self::Indent(_)
+                | Self::AlignEnd(_)
+                | Self::Warichu(_)
+                | Self::Keigakomi(_)
+                | Self::PageBreak
+                | Self::SectionBreak(_)
+                | Self::AozoraHeading(_)
+                | Self::Sashie(_)
+        )
+    }
+
+    /// Whether children of this node (if any) are inline content. Block variants that
+    /// wrap an indented run of paragraphs answer `true`; leaf blocks answer `false`.
+    #[must_use]
+    pub const fn contains_inlines(&self) -> bool {
+        matches!(
+            self,
+            Self::AozoraHeading(_)
+                | Self::AlignEnd(_)
+                | Self::Warichu(_)
+                | Self::Keigakomi(_)
+                | Self::Indent(_)
+        )
+    }
+
+    /// Name used by comrak's XML pretty-printer for nodes of this kind. Stable across
+    /// versions; appears in CI fixtures and user-visible diagnostics.
+    #[must_use]
+    pub const fn xml_node_name(&self) -> &'static str {
+        match self {
+            Self::Ruby(_) => "aozora_ruby",
+            Self::Bouten(_) => "aozora_bouten",
+            Self::TateChuYoko(_) => "aozora_tcy",
+            Self::Gaiji(_) => "aozora_gaiji",
+            Self::Indent(_) => "aozora_indent",
+            Self::AlignEnd(_) => "aozora_align_end",
+            Self::Warichu(_) => "aozora_warichu",
+            Self::Keigakomi(_) => "aozora_keigakomi",
+            Self::PageBreak => "aozora_page_break",
+            Self::SectionBreak(_) => "aozora_section_break",
+            Self::AozoraHeading(_) => "aozora_heading",
+            Self::Sashie(_) => "aozora_sashie",
+            Self::Annotation(_) => "aozora_annotation",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Ruby {
-    pub base: String,
-    pub reading: String,
+    pub base: Box<str>,
+    pub reading: Box<str>,
     /// `true` when the base was delimited by `｜`, `false` when inferred from the
     /// trailing kanji run before `《》`.
     pub delim_explicit: bool,
@@ -120,21 +214,21 @@ pub enum BoutenKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TateChuYoko {
-    pub text: String,
+    pub text: Box<str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Gaiji {
     /// Description text from the source, e.g. "木＋吶のつくり".
-    pub description: String,
+    pub description: Box<str>,
     /// Resolved Unicode scalar, if the gaiji maps to one.
     pub ucs: Option<char>,
     /// Raw mencode reference (e.g. "第3水準1-85-54" or "U+XXXX, page-line").
-    pub mencode: Option<String>,
+    pub mencode: Option<Box<str>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Indent {
     pub amount: u8,
@@ -150,11 +244,11 @@ pub struct AlignEnd {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Warichu {
-    pub upper: String,
-    pub lower: String,
+    pub upper: Box<str>,
+    pub lower: Box<str>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Keigakomi;
 
@@ -184,20 +278,20 @@ pub enum AozoraHeadingKind {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AozoraHeading {
     pub kind: AozoraHeadingKind,
-    pub text: String,
+    pub text: Box<str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Sashie {
-    pub file: String,
-    pub caption: Option<String>,
+    pub file: Box<str>,
+    pub caption: Option<Box<str>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Annotation {
-    pub raw: String,
+    pub raw: Box<str>,
     pub kind: AnnotationKind,
 }
 
@@ -223,7 +317,7 @@ pub enum AnnotationKind {
 pub enum SyntaxError {
     #[error("未知のノード種別です: {kind}")]
     #[diagnostic(code(afm::syntax::unknown_kind))]
-    UnknownKind { kind: String },
+    UnknownKind { kind: Box<str> },
 }
 
 #[cfg(test)]
@@ -233,29 +327,132 @@ mod tests {
     #[test]
     fn ruby_roundtrip_fields() {
         let r = Ruby {
-            base: "青梅".to_owned(),
-            reading: "おうめ".to_owned(),
+            base: "青梅".into(),
+            reading: "おうめ".into(),
             delim_explicit: true,
         };
-        assert_eq!(r.base, "青梅");
-        assert_eq!(r.reading, "おうめ");
+        assert_eq!(&*r.base, "青梅");
+        assert_eq!(&*r.reading, "おうめ");
         assert!(r.delim_explicit);
     }
 
     #[test]
     fn bouten_target_span_is_independent_of_children() {
-        // Bouten carries a span, not a child list — this test pins the intent.
         let b = Bouten {
             kind: BoutenKind::Goma,
             target: Span::new(10, 20),
         };
-        assert_eq!(b.target.range, 10..20);
+        assert_eq!(b.target.start, 10);
+        assert_eq!(b.target.end, 20);
+        assert_eq!(b.target.len(), 10);
+        assert!(!b.target.is_empty());
+    }
+
+    #[test]
+    fn empty_span_is_empty_and_zero_length() {
+        let s = Span::new(42, 42);
+        assert!(s.is_empty());
+        assert_eq!(s.len(), 0);
+    }
+
+    #[test]
+    fn span_slices_source_buffer() {
+        let source = "hello world";
+        let s = Span::new(6, 11);
+        assert_eq!(s.slice(source), "world");
+    }
+
+    #[test]
+    fn inline_variants_are_not_block() {
+        assert!(
+            !AozoraNode::Ruby(Ruby {
+                base: "a".into(),
+                reading: "a".into(),
+                delim_explicit: false,
+            })
+            .is_block()
+        );
+        assert!(!AozoraNode::TateChuYoko(TateChuYoko { text: "12".into() }).is_block());
+    }
+
+    #[test]
+    fn block_variants_are_block() {
+        assert!(AozoraNode::PageBreak.is_block());
+        assert!(AozoraNode::Indent(Indent { amount: 2 }).is_block());
+        assert!(AozoraNode::SectionBreak(SectionKind::Choho).is_block());
+    }
+
+    #[test]
+    fn containers_report_contains_inlines() {
+        assert!(AozoraNode::Indent(Indent { amount: 2 }).contains_inlines());
+        assert!(
+            AozoraNode::Warichu(Warichu {
+                upper: "a".into(),
+                lower: "b".into(),
+            })
+            .contains_inlines()
+        );
+    }
+
+    #[test]
+    fn leaf_blocks_do_not_contain_inlines() {
+        assert!(!AozoraNode::PageBreak.contains_inlines());
+        assert!(!AozoraNode::SectionBreak(SectionKind::Choho).contains_inlines());
+    }
+
+    #[test]
+    fn xml_node_names_are_stable_and_unique() {
+        use std::collections::BTreeSet;
+        let samples: [AozoraNode; 13] = [
+            AozoraNode::Ruby(Ruby {
+                base: "".into(),
+                reading: "".into(),
+                delim_explicit: false,
+            }),
+            AozoraNode::Bouten(Bouten {
+                kind: BoutenKind::Goma,
+                target: Span::new(0, 0),
+            }),
+            AozoraNode::TateChuYoko(TateChuYoko { text: "".into() }),
+            AozoraNode::Gaiji(Gaiji {
+                description: "".into(),
+                ucs: None,
+                mencode: None,
+            }),
+            AozoraNode::Indent(Indent { amount: 0 }),
+            AozoraNode::AlignEnd(AlignEnd { offset: 0 }),
+            AozoraNode::Warichu(Warichu {
+                upper: "".into(),
+                lower: "".into(),
+            }),
+            AozoraNode::Keigakomi(Keigakomi),
+            AozoraNode::PageBreak,
+            AozoraNode::SectionBreak(SectionKind::Choho),
+            AozoraNode::AozoraHeading(AozoraHeading {
+                kind: AozoraHeadingKind::Window,
+                text: "".into(),
+            }),
+            AozoraNode::Sashie(Sashie {
+                file: "".into(),
+                caption: None,
+            }),
+            AozoraNode::Annotation(Annotation {
+                raw: "".into(),
+                kind: AnnotationKind::Unknown,
+            }),
+        ];
+        let names: BTreeSet<&'static str> = samples.iter().map(AozoraNode::xml_node_name).collect();
+        assert_eq!(names.len(), samples.len(), "xml node names must be unique");
+        for name in &names {
+            assert!(
+                name.starts_with("aozora_"),
+                "xml name '{name}' missing aozora_ prefix"
+            );
+        }
     }
 
     #[test]
     fn all_variants_are_non_exhaustive_for_forward_compat() {
-        // If this compiles, `#[non_exhaustive]` is preserved. If a future PR removes it,
-        // CI catches it because downstream match arms will start breaking.
         match AozoraNode::PageBreak {
             AozoraNode::PageBreak => {}
             _ => unreachable!(),

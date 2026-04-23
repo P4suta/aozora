@@ -46,8 +46,8 @@ fn parse_explicit(input: &str) -> Option<(Ruby, usize)> {
     }
     Some((
         Ruby {
-            base: base.to_owned(),
-            reading: reading.to_owned(),
+            base: base.into(),
+            reading: reading.into(),
             delim_explicit: true,
         },
         consumed,
@@ -74,8 +74,8 @@ fn parse_implicit(input: &str, preceding_run: &str) -> Option<(Ruby, usize)> {
 
     Some((
         Ruby {
-            base: base.to_owned(),
-            reading: reading.to_owned(),
+            base: base.into(),
+            reading: reading.into(),
             delim_explicit: false,
         },
         bytes_open + close + '》'.len_utf8(),
@@ -122,8 +122,8 @@ mod tests {
     #[test]
     fn explicit_form_captures_base_and_reading() {
         let (ruby, consumed) = parse("青梅《おうめ》あとの文章", true, "").expect("parse");
-        assert_eq!(ruby.base, "青梅");
-        assert_eq!(ruby.reading, "おうめ");
+        assert_eq!(&*ruby.base, "青梅");
+        assert_eq!(&*ruby.reading, "おうめ");
         assert!(ruby.delim_explicit);
         assert_eq!(consumed, "青梅《おうめ》".len());
     }
@@ -141,8 +141,8 @@ mod tests {
     #[test]
     fn implicit_form_uses_trailing_kanji_run() {
         let (ruby, _) = parse("《にほん》です", false, "彼は日本").expect("parse");
-        assert_eq!(ruby.base, "日本");
-        assert_eq!(ruby.reading, "にほん");
+        assert_eq!(&*ruby.base, "日本");
+        assert_eq!(&*ruby.reading, "にほん");
         assert!(!ruby.delim_explicit);
     }
 

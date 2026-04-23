@@ -69,7 +69,7 @@ pub mod gaiji {
         /// `None` if the gaiji has no Unicode home and must render as its description.
         pub character: Option<char>,
         /// Echo of the input description, preserved for HTML `title` / accessibility.
-        pub description: String,
+        pub description: Box<str>,
     }
 
     /// Resolve a `Gaiji` node to a displayable form.
