@@ -55,6 +55,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "afm-lexer"
+version = "0.1.0"
+dependencies = [
+ "afm-encoding",
+ "afm-syntax",
+ "insta",
+ "miette",
+ "proptest",
+ "thiserror",
+]
+
+[[package]]
 name = "afm-parser"
 version = "0.1.0"
 dependencies = [

@@ -4,6 +4,7 @@ members = [
     "crates/afm-syntax",
     "crates/afm-parser",
     "crates/afm-encoding",
+    "crates/afm-lexer",
     "crates/afm-corpus",
     "crates/afm-cli",
     "crates/xtask",
@@ -146,6 +147,7 @@ redundant_pub_crate     = "allow"
 afm-syntax   = { version = "0.1.0", path = "crates/afm-syntax" }
 afm-parser   = { version = "0.1.0", path = "crates/afm-parser" }
 afm-encoding = { version = "0.1.0", path = "crates/afm-encoding" }
+afm-lexer    = { version = "0.1.0", path = "crates/afm-lexer" }
 afm-corpus   = { version = "0.1.0", path = "crates/afm-corpus" }
 
 # comrak vendored fork (path, not crates.io).

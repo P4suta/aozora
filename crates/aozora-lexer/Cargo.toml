@@ -1,0 +1,25 @@
+[package]
+name        = "afm-lexer"
+description = "Pure-functional Aozora-first lexer for afm — pre-comrak construct extraction"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+[lints]
+workspace = true
+
+[dependencies]
+afm-syntax   = { workspace = true }
+afm-encoding = { workspace = true }
+thiserror    = { workspace = true }
+miette       = { workspace = true }
+
+[dev-dependencies]
+insta    = { workspace = true }
+proptest = { workspace = true }
