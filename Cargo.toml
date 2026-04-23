@@ -1,0 +1,97 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/afm-syntax",
+    "crates/afm-parser",
+    "crates/afm-encoding",
+    "crates/afm-cli",
+    "crates/xtask",
+]
+# afm-book is an mdbook site, not a Rust crate, so it is not a workspace member.
+# upstream/comrak is managed by xtask and vendored verbatim; it does not participate
+# in the workspace build (afm-parser depends on the upstream path directly).
+exclude = ["upstream/comrak", "crates/afm-book"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95.0"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/yasunobu/afm"
+authors = ["afm contributors"]
+readme = "README.md"
+keywords = ["markdown", "aozora", "japanese", "typography", "parser"]
+categories = ["parser-implementations", "text-processing", "localization"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+rust_2024_compatibility = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+# Justified carve-outs. Keep this list short and documented.
+module_name_repetitions = "allow"  # `afm_syntax::syntax_error` is clearer than fighting this
+multiple_crate_versions = "allow"  # transitive dep collisions are not our problem
+
+[workspace.dependencies]
+# Internal crates
+afm-syntax   = { version = "0.1.0", path = "crates/afm-syntax" }
+afm-parser   = { version = "0.1.0", path = "crates/afm-parser" }
+afm-encoding = { version = "0.1.0", path = "crates/afm-encoding" }
+
+# comrak vendored fork (path, not crates.io).
+# Path is relative to the workspace root. Resolved once task #5 drops comrak 0.52.0
+# into `upstream/comrak/`.
+comrak = { path = "upstream/comrak" }
+
+# Error handling — versions verified against crates.io 2026-04-23
+thiserror = "2.0.18"
+anyhow    = "1.0"
+miette    = { version = "7.6.0", features = ["fancy"] }
+
+# Parsing helpers
+winnow                = "1.0"
+unicode-segmentation  = "1.13"
+regex                 = "1.12"
+
+# Serialization / data
+serde      = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Encoding
+encoding_rs = "0.8.35"
+
+# Observability
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# CLI
+clap = { version = "4.6.1", features = ["derive", "wrap_help", "env", "color", "cargo"] }
+
+# Testing
+insta     = { version = "1.47", features = ["yaml", "json", "filters"] }
+proptest  = "1.11"
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[profile.release]
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
+panic         = "abort"
+opt-level     = 3
+
+[profile.bench]
+inherits = "release"
+strip    = "none"
+debug    = 1
+
+[profile.dev]
+# Faster incremental for large workspaces with a vendored tree
+split-debuginfo = "unpacked"
+
+# Optimise proc-macros/build scripts/most upstream in dev to speed the test cycle
+[profile.dev.package."*"]
+opt-level = 1

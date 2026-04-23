@@ -1,0 +1,17 @@
+# Domain terms that clippy's `doc_markdown` lint should treat as valid identifiers so
+# they don't need to be wrapped in backticks every time. This is the documented escape
+# hatch — see https://rust-lang.github.io/rust-clippy/master/index.html#doc_markdown.
+
+doc-valid-idents = [
+    "..",
+    "CommonMark",
+    "GFM",
+    "GitHub",
+    "Shift_JIS",
+    "NFC",
+    "BOM",
+    "UTF-8",
+    "UTF-16",
+    "Aozora",
+    "JIS",
+]

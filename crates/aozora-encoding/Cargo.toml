@@ -1,0 +1,25 @@
+[package]
+name        = "afm-encoding"
+description = "Shift_JIS decoding and Aozora Bunko gaiji resolution for aozora-flavored-markdown"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+repository.workspace  = true
+authors.workspace     = true
+readme.workspace      = true
+keywords.workspace    = true
+categories.workspace  = true
+
+[lints]
+workspace = true
+
+[dependencies]
+afm-syntax  = { workspace = true }
+encoding_rs = { workspace = true }
+thiserror   = { workspace = true }
+miette      = { workspace = true }
+tracing     = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

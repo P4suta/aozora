@@ -1,0 +1,185 @@
+# afm CI
+#
+# Every job is `docker compose run ci just <target>`. CI and local dev invoke the same
+# Justfile through the same image, so "works on my machine" is structurally impossible.
+#
+# Actions are pinned by commit SHA with the human-readable tag in a trailing comment.
+# Dependabot (`.github/dependabot.yml`) bumps these weekly.
+#
+# Deliberately no `on.schedule`. Dependabot handles recurring maintenance; see
+# memory note "No cron/schedule in repos".
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_BUILDKIT: "1"
+
+jobs:
+  image:
+    name: build-image
+    runs-on: ubuntu-latest
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+      - id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+        with:
+          context: .
+          target: ci
+          tags: afm-ci:local
+          push: false
+          load: true
+          cache-from: type=gha,scope=ci
+          cache-to: type=gha,mode=max,scope=ci
+
+  lint:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+        with:
+          context: .
+          target: ci
+          tags: afm-ci:local
+          load: true
+          cache-from: type=gha,scope=ci
+      - run: docker compose run --rm --no-TTY ci just lint
+
+  build-and-test:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+        with:
+          context: .
+          target: ci
+          tags: afm-ci:local
+          load: true
+          cache-from: type=gha,scope=ci
+      - run: docker compose run --rm --no-TTY ci just build
+      - run: docker compose run --rm --no-TTY ci just test
+
+  spec:
+    needs: image
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - spec-commonmark
+          - spec-gfm
+          - spec-aozora
+          - spec-golden-56656
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+        with:
+          context: .
+          target: ci
+          tags: afm-ci:local
+          load: true
+          cache-from: type=gha,scope=ci
+      - run: docker compose run --rm --no-TTY ci just ${{ matrix.target }}
+
+  upstream-diff:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+        with:
+          context: .
+          target: ci
+          tags: afm-ci:local
+          load: true
+          cache-from: type=gha,scope=ci
+      - run: docker compose run --rm --no-TTY ci just upstream-diff
+
+  coverage:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+        with:
+          context: .
+          target: ci
+          tags: afm-ci:local
+          load: true
+          cache-from: type=gha,scope=ci
+      - run: docker compose run --rm --no-TTY ci just coverage
+
+  audit:
+    needs: image
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [deny, audit, udeps]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+        with:
+          context: .
+          target: ci
+          tags: afm-ci:local
+          load: true
+          cache-from: type=gha,scope=ci
+      - run: docker compose run --rm --no-TTY ci just ${{ matrix.target }}
+
+  book:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+        with:
+          context: .
+          target: book
+          tags: afm-book:local
+          load: true
+          cache-from: type=gha,scope=book
+          cache-to: type=gha,mode=max,scope=book
+      - run: docker compose run --rm --no-TTY book mdbook build
+
+  commitlint:
+    # Light-weight check; runs without the big CI image.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Check Conventional Commits
+        run: |
+          range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          while read -r sha subject; do
+            if ! echo "$subject" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?: .{1,}'; then
+              echo "::error::Commit $sha has non-conventional subject: $subject"
+              exit 1
+            fi
+          done < <(git log --format='%H %s' "$range")

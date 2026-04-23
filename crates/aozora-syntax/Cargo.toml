@@ -1,0 +1,27 @@
+[package]
+name        = "afm-syntax"
+description = "AST types for aozora-flavored-markdown"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+repository.workspace  = true
+authors.workspace     = true
+readme.workspace      = true
+keywords.workspace    = true
+categories.workspace  = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+miette    = { workspace = true }
+serde     = { workspace = true, optional = true }
+
+[features]
+default = []
+serde   = ["dep:serde"]
+
+[dev-dependencies]
+insta = { workspace = true }

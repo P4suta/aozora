@@ -1,0 +1,22 @@
+# typos (https://github.com/crate-ci/typos) configuration
+# Named `_typos.toml` so it doesn't shadow Cargo features matching on `typos.*`.
+
+[default]
+# Honorary words unique to this project / domain.
+extend-ignore-identifiers-re = [
+    "[A-Fa-f0-9]{7,}",   # git SHAs in comments
+]
+
+[default.extend-words]
+# Intentional. Japanese transliteration shouldn't trigger English typo heuristics.
+afm = "afm"
+
+[files]
+extend-exclude = [
+    "upstream/",            # vendored comrak owns its own spelling
+    "spec/aozora/fixtures/", # Aozora Bunko source files
+    "target/",
+    "coverage/",
+    "*.html",
+    "*.lock",
+]

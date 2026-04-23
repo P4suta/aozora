@@ -1,0 +1,5 @@
+# Stable rustfmt options only.
+edition = "2024"
+newline_style = "Unix"
+use_small_heuristics = "Default"
+max_width = 100

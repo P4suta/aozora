@@ -1,0 +1,36 @@
+# Pre-commit / pre-push hooks.
+# Every command runs inside the dev container via `just`; we never invoke cargo
+# or any other toolchain on the host.
+#
+# Enable with: `docker compose run --rm dev lefthook install`
+
+pre-commit:
+  parallel: true
+  commands:
+    fmt-check:
+      glob: "*.rs"
+      run: just fmt-check
+    clippy:
+      glob: "*.{rs,toml}"
+      run: just clippy
+    typos:
+      run: just typos
+    upstream-diff:
+      glob: "upstream/comrak/**"
+      run: just upstream-diff
+
+commit-msg:
+  commands:
+    # Conventional Commits — scope is optional but style is enforced.
+    conventional:
+      run: |
+        docker compose run --rm --no-TTY dev bash -c \
+          "grep -E '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?: .{1,}' $1 > /dev/null \
+            || { echo 'Commit message must follow Conventional Commits (https://www.conventionalcommits.org/)'; exit 1; }"
+
+pre-push:
+  commands:
+    test:
+      run: just test
+    deny:
+      run: just deny

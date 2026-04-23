@@ -1,0 +1,54 @@
+# Rust
+/target
+/crates/*/target
+**/*.rs.bk
+
+# Cargo
+Cargo.lock.bak
+# CARGO_HOME inside the dev container resolves to /workspace/.cargo, which bind-mounts
+# onto this directory. The registry/git caches underneath are docker volumes and
+# should never be tracked.
+/.cargo/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# mdbook build output
+/crates/afm-book/book/
+
+# Coverage
+/coverage/
+*.profraw
+*.profdata
+lcov.info
+
+# Node (for afm-book, playwright)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+playwright-report/
+test-results/
+
+# Fuzz
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+
+# Criterion
+/target/criterion/
+
+# Local env overrides
+.env
+.env.local
+/docker-compose.override.yml
+
+# macOS junk in WSL mounts
+:2e*

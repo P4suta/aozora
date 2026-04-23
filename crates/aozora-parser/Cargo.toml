@@ -1,0 +1,34 @@
+[package]
+name        = "afm-parser"
+description = "CommonMark + GFM + Aozora Bunko parser for aozora-flavored-markdown"
+version.workspace     = true
+edition.workspace     = true
+rust-version.workspace = true
+license.workspace     = true
+repository.workspace  = true
+authors.workspace     = true
+readme.workspace      = true
+keywords.workspace    = true
+categories.workspace  = true
+
+[lints]
+workspace = true
+
+[dependencies]
+afm-syntax = { workspace = true }
+# comrak is a path dep on upstream/comrak; wired in once the vendor lands (task #5).
+# comrak = { workspace = true }
+unicode-segmentation = { workspace = true }
+miette               = { workspace = true }
+thiserror            = { workspace = true }
+tracing              = { workspace = true }
+
+[dev-dependencies]
+insta     = { workspace = true }
+proptest  = { workspace = true }
+
+[features]
+default = ["html"]
+# HTML renderer. Enabled by default but kept behind a feature so downstream tools
+# can parse without pulling in the renderer.
+html = []

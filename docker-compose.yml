@@ -1,0 +1,89 @@
+# afm workspace compose file. Every `just` target runs a command here.
+#
+# Services:
+#   dev     — interactive development (VS Code Dev Containers attaches here)
+#   ci      — identical to dev; used by CI and `just ci` for provenance separation
+#   book    — mdbook serve / build
+#   browser — Playwright (Chromium + WebKit) for M3+ browser tests
+#
+# Volumes are named so cargo registry + target + sccache persist between runs.
+
+name: afm
+
+x-common-env: &common-env
+  CARGO_HOME: /workspace/.cargo
+  CARGO_TARGET_DIR: /workspace/target
+  RUSTC_WRAPPER: sccache
+  SCCACHE_DIR: /workspace/.sccache
+  RUST_BACKTRACE: "1"
+  TERM: ${TERM:-xterm-256color}
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    image: afm-dev:local
+    working_dir: /workspace
+    environment: *common-env
+    volumes:
+      - .:/workspace:cached
+      - cargo-registry:/workspace/.cargo/registry
+      - cargo-git:/workspace/.cargo/git
+      - cargo-target:/workspace/target
+      - sccache:/workspace/.sccache
+    init: true
+    tty: true
+    stdin_open: true
+
+  ci:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ci
+    image: afm-ci:local
+    working_dir: /workspace
+    environment:
+      <<: *common-env
+      CI: "true"
+    volumes:
+      - .:/workspace:ro
+      - cargo-registry:/workspace/.cargo/registry
+      - cargo-git:/workspace/.cargo/git
+      - cargo-target:/workspace/target
+      - sccache:/workspace/.sccache
+
+  book:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: book
+    image: afm-book:local
+    working_dir: /workspace/crates/afm-book
+    volumes:
+      - .:/workspace:cached
+    ports:
+      - "3000:3000"
+
+  browser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: browser
+    image: afm-browser:local
+    working_dir: /workspace
+    environment:
+      <<: *common-env
+      CI: "true"
+    volumes:
+      - .:/workspace:cached
+      - cargo-registry:/workspace/.cargo/registry
+      - cargo-git:/workspace/.cargo/git
+      - cargo-target:/workspace/target
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  cargo-target:
+  sccache:
