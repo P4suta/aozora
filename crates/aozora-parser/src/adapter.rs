@@ -7,6 +7,8 @@
 
 use afm_syntax::{AozoraExtension, AozoraNode, BlockCtx, BlockMatch, InlineCtx, InlineMatch};
 
+use crate::aozora::annotation::BracketCtx;
+
 /// Zero-state adapter. Construct once per parse session (or reuse globally) and
 /// register via `Options::default().extension.aozora = Some(Arc::new(AfmAdapter));`.
 #[derive(Debug, Default, Clone, Copy)]
@@ -18,8 +20,8 @@ impl AozoraExtension for AfmAdapter {
         match classify_inline_head(head) {
             InlineTrigger::Bar => parse_bar_ruby(head),
             InlineTrigger::OpenRuby => parse_implicit_ruby(head, cx.preceding),
-            InlineTrigger::OpenBracket => parse_bracket_annotation(head),
-            InlineTrigger::ReferenceMark => parse_reference_mark(head),
+            InlineTrigger::OpenBracket => parse_bracket_annotation(bracket_ctx(&cx, head)?),
+            InlineTrigger::ReferenceMark => parse_reference_mark(&cx, head),
             InlineTrigger::None => None,
         }
     }
@@ -83,6 +85,21 @@ fn parse_implicit_ruby(head: &str, preceding: &str) -> Option<InlineMatch> {
     InlineMatch::new(AozoraNode::Ruby(ruby), consumed)
 }
 
+/// Build the bracket scanner's context from the inline context + the head
+/// slice the bracket starts at. `line_start` is derived from `pos -
+/// preceding.len()` so the scanner can translate target offsets inside
+/// `preceding` into absolute source coordinates for forward-reference
+/// bouten.
+fn bracket_ctx<'a>(cx: &InlineCtx<'a>, head: &'a str) -> Option<BracketCtx<'a>> {
+    let line_start_usize = cx.pos.checked_sub(cx.preceding.len())?;
+    let line_start = u32::try_from(line_start_usize).ok()?;
+    Some(BracketCtx {
+        head,
+        preceding: cx.preceding,
+        line_start,
+    })
+}
+
 /// `［＃...］` — scan to the matching `］` and dispatch the interior by
 /// keyword via [`crate::aozora::annotation::scan_bracket`]. Returns `None` if
 /// the `＃` is absent (lone `［` falls through to comrak's default text
@@ -92,20 +109,27 @@ fn parse_implicit_ruby(head: &str, preceding: &str) -> Option<InlineMatch> {
 /// Classification semantics live in `aozora::annotation`; this function is
 /// only the adapter-side glue that converts a successful scan into an
 /// [`InlineMatch`].
-fn parse_bracket_annotation(head: &str) -> Option<InlineMatch> {
-    let m = crate::aozora::annotation::scan_bracket(head)?;
+fn parse_bracket_annotation(ctx: BracketCtx<'_>) -> Option<InlineMatch> {
+    let m = crate::aozora::annotation::scan_bracket(ctx)?;
     InlineMatch::new(m.node, m.consumed)
 }
 
 /// `※` on its own is a normal character. Only when it precedes `［＃` does it
 /// start a gaiji annotation; in that case consume the ※ + the bracket body.
-fn parse_reference_mark(head: &str) -> Option<InlineMatch> {
+fn parse_reference_mark(cx: &InlineCtx<'_>, head: &str) -> Option<InlineMatch> {
     let mark_len = '※'.len_utf8();
     let after_mark = head.get(mark_len..)?;
     if !after_mark.starts_with('［') {
         return None;
     }
-    let m = parse_bracket_annotation(after_mark)?;
+    // The bracket body starts `mark_len` bytes further into the line, so the
+    // reference mark's preceding stays the same but line_start shifts.
+    let base = bracket_ctx(cx, after_mark)?;
+    let shifted = BracketCtx {
+        line_start: base.line_start.checked_add(u32::try_from(mark_len).ok()?)?,
+        ..base
+    };
+    let m = parse_bracket_annotation(shifted)?;
     InlineMatch::new(m.node, mark_len + m.consumed.get())
 }
 
@@ -171,13 +195,16 @@ mod tests {
     }
 
     #[test]
-    fn recognises_forward_reference_bouten() {
-        // ［＃「X」に傍点］ — the most common Aozora Bunko bouten form. The adapter
-        // must consume the entire bracket span including the nested 「」 quotes.
+    fn forward_reference_bouten_without_matching_preceding_falls_back_to_annotation() {
+        // With `preceding=""` the target "可哀想" can't be located → the
+        // scanner degrades to `Annotation{Unknown}` so Tier-A (no bare ［＃
+        // leaks) is still guaranteed. C3 introduces the promotion path; the
+        // "promotes to Bouten" case is asserted end-to-end in
+        // `preceding_kanji_run_promotes_forward_reference_bouten`.
         let input = "［＃「可哀想」に傍点］という気";
         let m = adapter()
             .try_parse_inline(ctx(input, ""))
-            .expect("forward-reference bouten must be recognised as an annotation");
+            .expect("bracket must be consumed even when target doesn't resolve");
         let expected_len = "［＃「可哀想」に傍点］".len();
         assert_eq!(
             m.consumed.get(),
@@ -186,23 +213,32 @@ mod tests {
             m.consumed.get()
         );
         let AozoraNode::Annotation(a) = &m.node else {
-            panic!("expected Annotation, got {:?}", m.node);
+            panic!("expected Annotation fallback, got {:?}", m.node);
         };
         assert_eq!(&*a.raw, "［＃「可哀想」に傍点］");
     }
 
     #[test]
-    fn preceding_kanji_run_matters_for_forward_reference_bouten() {
-        // End-to-end via the full pipeline — verifies the hook routes the bracket
-        // annotation correctly even after a preceding ruby run.
+    fn preceding_kanji_run_promotes_forward_reference_bouten() {
+        // End-to-end through the full pipeline. With the target literal in
+        // the preceding run, C3 must promote the annotation to Bouten and
+        // drop the Annotation wrapper entirely.
         let nodes = crate::test_support::collect_aozora("可哀想［＃「可哀想」に傍点］という気");
+        let bouten_count = nodes
+            .iter()
+            .filter(|n| matches!(n, AozoraNode::Bouten(_)))
+            .count();
         let annotation_count = nodes
             .iter()
             .filter(|n| matches!(n, AozoraNode::Annotation(_)))
             .count();
         assert_eq!(
-            annotation_count, 1,
-            "expected exactly one Annotation node; got {nodes:?}"
+            bouten_count, 1,
+            "expected one promoted Bouten, got {nodes:?}"
+        );
+        assert_eq!(
+            annotation_count, 0,
+            "Annotation wrapper must disappear when bouten promotes; got {nodes:?}"
         );
     }
 

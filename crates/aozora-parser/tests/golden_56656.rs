@@ -32,46 +32,60 @@ fn tier_a_no_panic_and_no_unconsumed_square_brackets() {
     );
 }
 
-/// Count ruby spans produced and compare against the known floor. A regression
-/// to 0 would silently go undetected if we only asserted parse success.
+/// Count ruby spans and the total number of ［＃…］-sourced annotations
+/// (`Annotation` + `Bouten` + `PageBreak` + `SectionBreak`) and compare
+/// against the known floors. A regression to 0 would silently go undetected
+/// if we only asserted parse success.
 #[test]
 fn tier_a_ruby_recognition_floor() {
     let arena = comrak::Arena::new();
     let options = afm_parser::Options::afm_default();
     let root = afm_parser::parse(&arena, FIXTURE, &options);
 
-    let mut ruby_count = 0usize;
-    let mut annotation_count = 0usize;
-    count_aozora(root, &mut ruby_count, &mut annotation_count);
+    let mut counts = AozoraCounts::default();
+    count_aozora(root, &mut counts);
 
     // Observed on the 2021-10-27 publication: ~2229 ruby readings + ~93 explicit
-    // ｜ delimiters (some readings share a base). Annotation count ~489.
-    // Enforce a floor well below measured values so minor parser-policy shifts
-    // (e.g. smarter implicit-ruby base recovery) don't false-fail.
+    // ｜ delimiters (some readings share a base). Total bracket-sourced
+    // annotations ~489; the scanner reclassifies them into Annotation /
+    // Bouten / PageBreak / SectionBreak as C2+/C3+ recognisers land, so the
+    // floor covers the sum.
     assert!(
-        ruby_count >= 1500,
-        "ruby recognition dropped to {ruby_count} (expected >= 1500)"
+        counts.rubies >= 1500,
+        "ruby recognition dropped to {count} (expected >= 1500)",
+        count = counts.rubies,
     );
+    let bracket_sourced =
+        counts.annotations + counts.boutens + counts.page_breaks + counts.section_breaks;
     assert!(
-        annotation_count >= 400,
-        "annotation recognition dropped to {annotation_count} (expected >= 400)"
+        bracket_sourced >= 400,
+        "bracket-sourced annotation recognition dropped to {bracket_sourced} \
+         (expected >= 400); breakdown: {counts:?}"
     );
 }
 
-fn count_aozora<'a>(
-    node: &'a comrak::nodes::AstNode<'a>,
-    rubies: &mut usize,
-    annotations: &mut usize,
-) {
+#[derive(Debug, Default)]
+struct AozoraCounts {
+    rubies: usize,
+    annotations: usize,
+    boutens: usize,
+    page_breaks: usize,
+    section_breaks: usize,
+}
+
+fn count_aozora<'a>(node: &'a comrak::nodes::AstNode<'a>, counts: &mut AozoraCounts) {
     if let comrak::nodes::NodeValue::Aozora(ref boxed) = node.data.borrow().value {
         match **boxed {
-            afm_syntax::AozoraNode::Ruby(_) => *rubies += 1,
-            afm_syntax::AozoraNode::Annotation(_) => *annotations += 1,
+            afm_syntax::AozoraNode::Ruby(_) => counts.rubies += 1,
+            afm_syntax::AozoraNode::Annotation(_) => counts.annotations += 1,
+            afm_syntax::AozoraNode::Bouten(_) => counts.boutens += 1,
+            afm_syntax::AozoraNode::PageBreak => counts.page_breaks += 1,
+            afm_syntax::AozoraNode::SectionBreak(_) => counts.section_breaks += 1,
             _ => {}
         }
     }
     for child in node.children() {
-        count_aozora(child, rubies, annotations);
+        count_aozora(child, counts);
     }
 }
 

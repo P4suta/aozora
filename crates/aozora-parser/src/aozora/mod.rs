@@ -6,6 +6,7 @@
 
 pub mod annotation;
 pub mod block;
+pub mod bouten;
 pub mod html;
 pub mod inline;
 pub mod ruby;
