@@ -73,9 +73,9 @@ pub mod diagnostic;
 mod phase0_sanitize;
 mod phase1_events;
 pub mod phase2_pair;
+pub mod phase3_classify;
 pub mod token;
-// Phase-implementation modules land in subsequent commits C4-C7.
-// mod phase3_classify;
+// Phase-implementation modules land in subsequent commits C5-C7.
 // mod phase4_normalize;
 // mod phase5_registry;
 // mod phase6_validate;
@@ -86,6 +86,7 @@ pub use diagnostic::Diagnostic;
 pub use phase0_sanitize::{SanitizeOutput, sanitize};
 pub use phase1_events::tokenize;
 pub use phase2_pair::{PairEvent, PairKind, PairOutput, pair};
+pub use phase3_classify::{ClassifiedSpan, ClassifyOutput, SpanKind, classify};
 pub use token::{Token, TriggerKind};
 
 /// Placeholder output shape.
