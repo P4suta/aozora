@@ -9,6 +9,9 @@ Cargo.lock.bak
 # onto this directory. The registry/git caches underneath are docker volumes and
 # should never be tracked.
 /.cargo/
+# Inner Cargo.lock generated when building upstream/comrak standalone (e.g. for
+# running its own test suite). The workspace-root Cargo.lock is authoritative.
+/upstream/comrak/Cargo.lock
 
 # Editor / OS
 .DS_Store

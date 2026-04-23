@@ -46,6 +46,19 @@ pub struct InlineCtx<'a> {
     pub preceding: &'a str,
 }
 
+impl<'a> InlineCtx<'a> {
+    /// Constructor for out-of-crate callers (comrak fork) since the struct is
+    /// `#[non_exhaustive]` to allow additive fields without a breaking change.
+    #[must_use]
+    pub const fn new(input: &'a str, pos: usize, preceding: &'a str) -> Self {
+        Self {
+            input,
+            pos,
+            preceding,
+        }
+    }
+}
+
 /// Result of a successful inline match.
 ///
 /// `consumed` is `NonZeroUsize` so the type system enforces that a match actually
@@ -80,6 +93,17 @@ pub struct BlockCtx<'a> {
 
     /// Byte offset of `line[0]` in the source buffer, for diagnostic spans.
     pub source_offset: u32,
+}
+
+impl<'a> BlockCtx<'a> {
+    /// Constructor for out-of-crate callers (comrak fork).
+    #[must_use]
+    pub const fn new(line: &'a str, source_offset: u32) -> Self {
+        Self {
+            line,
+            source_offset,
+        }
+    }
 }
 
 /// Classification result for a line the extension inspected.
@@ -147,18 +171,27 @@ pub trait AozoraExtension: Send + Sync + RefUnwindSafe {
     fn try_start_block(&self, cx: BlockCtx<'_>) -> BlockMatch;
 
     /// Render a recognised [`AozoraNode`] to HTML. Called from comrak's renderer at
-    /// the one `NodeValue::Aozora(_)` arm. The extension may assume `writer` is
-    /// UTF-8 and flush-on-drop; it must not write raw bytes that would break the
-    /// surrounding HTML structure.
+    /// the one `NodeValue::Aozora(_)` arm. The extension emits well-formed,
+    /// correctly-escaped HTML; it must not write raw text that would break the
+    /// surrounding structure.
+    ///
+    /// Uses [`core::fmt::Write`] (rather than `std::io::Write`) to match comrak's
+    /// formatter-based output pipeline, avoiding an extra UTF-8 bridge.
     ///
     /// # Errors
     ///
-    /// Propagates I/O errors from `writer`.
+    /// Propagates formatter write errors.
     fn render_html(
         &self,
         node: &AozoraNode,
-        writer: &mut dyn std::io::Write,
-    ) -> std::io::Result<()>;
+        writer: &mut dyn core::fmt::Write,
+    ) -> core::fmt::Result;
+}
+
+impl std::fmt::Debug for dyn AozoraExtension + '_ {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<dyn AozoraExtension>")
+    }
 }
 
 #[cfg(test)]
