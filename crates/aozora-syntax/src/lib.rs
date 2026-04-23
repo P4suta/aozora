@@ -23,6 +23,8 @@
 
 #![forbid(unsafe_code)]
 
+use core::slice;
+
 use miette::Diagnostic;
 use thiserror::Error;
 
@@ -121,6 +123,12 @@ pub enum AozoraNode {
     /// when a caption is absent; the `Sashie` form is used when a caption is attached.
     Sashie(Sashie),
 
+    /// Chinese-reading order mark (返り点 / 訓読み符号). Ex: `［＃一］`, `［＃レ］`,
+    /// `［＃上］`. Emitted as a distinct variant rather than
+    /// [`AnnotationKind::Unknown`] so the classifier's semantic intent is
+    /// preserved through the AST.
+    Kaeriten(Kaeriten),
+
     /// An annotation recognised as Aozora-shaped but not understood by this version
     /// of the parser. Kept for round-trip fidelity and surfaced as a diagnostic.
     Annotation(Annotation),
@@ -180,7 +188,176 @@ impl AozoraNode {
             Self::SectionBreak(_) => "aozora_section_break",
             Self::AozoraHeading(_) => "aozora_heading",
             Self::Sashie(_) => "aozora_sashie",
+            Self::Kaeriten(_) => "aozora_kaeriten",
             Self::Annotation(_) => "aozora_annotation",
+        }
+    }
+}
+
+/// Body-content type for nodes whose textual payload may contain nested
+/// Aozora constructs (embedded gaiji, inline annotations).
+///
+/// Two-variant enum balancing the 99%+ plain-text fast path with the
+/// structured case: ruby readings with embedded gaiji markers, bouten
+/// targets quoted from editorial notes, etc.
+///
+/// # Invariants
+///
+/// - `Plain(s)` with `s.is_empty()` is forbidden. Empty content is
+///   `Segments(Box::new([]))`.
+/// - `Segments(segs)` whose contents collapse to a single text segment
+///   (or to concatenable text segments) is canonicalised to `Plain` by
+///   [`Content::from_segments`]. Construct via the builder rather than
+///   the variant directly to preserve the invariant.
+///
+/// Use [`Content::as_plain`] for the fast path; a `None` return signals
+/// that the caller must iterate [`Content::segments`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum Content {
+    /// Plain text without embedded Aozora constructs.
+    Plain(Box<str>),
+    /// Mixed text plus nested Aozora constructs.
+    Segments(Box<[Segment]>),
+}
+
+impl Content {
+    /// Construct from an arbitrary segment list. Applies the canonicalisation
+    /// invariants: empty input → `Segments([])`; all-text input collapses
+    /// into a single `Plain`; single-segment `Text(...)` input becomes `Plain`.
+    #[must_use]
+    pub fn from_segments(segs: Vec<Segment>) -> Self {
+        if segs.is_empty() {
+            return Self::Segments(Box::new([]));
+        }
+        if segs.iter().all(|s| matches!(s, Segment::Text(_))) {
+            let merged: String = segs
+                .into_iter()
+                .map(|s| match s {
+                    Segment::Text(t) => t,
+                    _ => unreachable!("filtered above to Segment::Text only"),
+                })
+                .fold(String::new(), |mut acc, t| {
+                    acc.push_str(&t);
+                    acc
+                });
+            if merged.is_empty() {
+                return Self::Segments(Box::new([]));
+            }
+            return Self::Plain(merged.into_boxed_str());
+        }
+        Self::Segments(segs.into_boxed_slice())
+    }
+
+    /// If this content is a single plain-text run, return a view of that
+    /// text. Returns `None` for mixed-content `Segments`. Use this to take
+    /// the fast path in callers that only care about the text dimension.
+    #[must_use]
+    pub fn as_plain(&self) -> Option<&str> {
+        match self {
+            Self::Plain(s) => Some(s),
+            Self::Segments(_) => None,
+        }
+    }
+
+    /// Iterate segments in their natural left-to-right order. `Plain(s)`
+    /// yields a single synthesised [`SegmentRef::Text`]; `Segments(…)`
+    /// yields each segment as a borrowed ref.
+    ///
+    /// The synthesised variant lets renderers write a single loop that
+    /// works uniformly over both variants without upfront match.
+    #[must_use]
+    pub fn iter(&self) -> ContentIter<'_> {
+        match self {
+            Self::Plain(s) => ContentIter::Plain(Some(s)),
+            Self::Segments(segs) => ContentIter::Segments(segs.iter()),
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a Content {
+    type Item = SegmentRef<'a>;
+    type IntoIter = ContentIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl Default for Content {
+    fn default() -> Self {
+        Self::Segments(Box::new([]))
+    }
+}
+
+impl From<Box<str>> for Content {
+    fn from(s: Box<str>) -> Self {
+        if s.is_empty() {
+            Self::Segments(Box::new([]))
+        } else {
+            Self::Plain(s)
+        }
+    }
+}
+
+impl From<String> for Content {
+    fn from(s: String) -> Self {
+        Self::from(s.into_boxed_str())
+    }
+}
+
+impl From<&str> for Content {
+    fn from(s: &str) -> Self {
+        Self::from(Box::<str>::from(s))
+    }
+}
+
+/// One element of a [`Content::Segments`] run.
+///
+/// See [`Content`] docs for construction rules. Direct use of these
+/// variants is legal but [`Content::from_segments`] is the preferred
+/// builder because it handles the collapse invariants.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum Segment {
+    Text(Box<str>),
+    Gaiji(Gaiji),
+    Annotation(Annotation),
+}
+
+/// Borrowed view yielded by [`Content::iter`]. Unifies the `Plain` /
+/// `Segments` variants of [`Content`] into a single iteration shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SegmentRef<'a> {
+    Text(&'a str),
+    Gaiji(&'a Gaiji),
+    Annotation(&'a Annotation),
+}
+
+/// Iterator over [`Content`]'s logical segments. Produced by
+/// [`Content::iter`].
+#[derive(Debug)]
+pub enum ContentIter<'a> {
+    /// Plain content — yields one synthesised `Text` segment and stops.
+    Plain(Option<&'a str>),
+    /// Mixed content — yields each segment via the inner slice iterator.
+    Segments(slice::Iter<'a, Segment>),
+}
+
+impl<'a> Iterator for ContentIter<'a> {
+    type Item = SegmentRef<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Plain(opt) => opt.take().map(SegmentRef::Text),
+            Self::Segments(it) => it.next().map(|seg| match seg {
+                Segment::Text(t) => SegmentRef::Text(t),
+                Segment::Gaiji(g) => SegmentRef::Gaiji(g),
+                Segment::Annotation(a) => SegmentRef::Annotation(a),
+            }),
         }
     }
 }
@@ -313,6 +490,20 @@ pub struct Annotation {
     pub kind: AnnotationKind,
 }
 
+/// Chinese-reading order mark (`返り点`). Written in source as
+/// `［＃X］` where `X` is one of `一`, `二`, `三`, `四`, `上`, `中`,
+/// `下`, `レ`, `甲`, `乙`, `丙`, `丁`, etc.
+///
+/// The mark's semantics belong to classical Chinese reading order; for
+/// typographic purposes we preserve the literal character and let the
+/// renderer emit it as a small superscript / side-note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Kaeriten {
+    /// The mark character as written in source.
+    pub mark: Box<str>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -388,6 +579,129 @@ mod tests {
             .is_block()
         );
         assert!(!AozoraNode::TateChuYoko(TateChuYoko { text: "12".into() }).is_block());
+        assert!(!AozoraNode::Kaeriten(Kaeriten { mark: "一".into() }).is_block());
+    }
+
+    #[test]
+    fn kaeriten_has_stable_xml_name() {
+        let node = AozoraNode::Kaeriten(Kaeriten { mark: "レ".into() });
+        assert_eq!(node.xml_node_name(), "aozora_kaeriten");
+        assert!(!node.contains_inlines());
+    }
+
+    #[test]
+    fn content_plain_from_str_is_plain() {
+        let c = Content::from("hello");
+        assert_eq!(c.as_plain(), Some("hello"));
+        assert!(matches!(c, Content::Plain(_)));
+    }
+
+    #[test]
+    fn content_empty_string_becomes_empty_segments() {
+        let c = Content::from("");
+        assert!(c.as_plain().is_none());
+        assert!(matches!(c, Content::Segments(ref s) if s.is_empty()));
+    }
+
+    #[test]
+    fn content_from_segments_single_text_collapses_to_plain() {
+        let c = Content::from_segments(vec![Segment::Text("hi".into())]);
+        assert_eq!(c.as_plain(), Some("hi"));
+    }
+
+    #[test]
+    fn content_from_segments_multiple_texts_concat_and_collapse() {
+        let c = Content::from_segments(vec![
+            Segment::Text("al".into()),
+            Segment::Text("ph".into()),
+            Segment::Text("a".into()),
+        ]);
+        assert_eq!(c.as_plain(), Some("alpha"));
+    }
+
+    #[test]
+    fn content_from_segments_mixed_stays_segmented() {
+        let c = Content::from_segments(vec![
+            Segment::Text("before ".into()),
+            Segment::Gaiji(Gaiji {
+                description: "X".into(),
+                ucs: None,
+                mencode: None,
+            }),
+            Segment::Text(" after".into()),
+        ]);
+        assert!(c.as_plain().is_none());
+        assert!(matches!(c, Content::Segments(ref s) if s.len() == 3));
+    }
+
+    #[test]
+    fn content_iter_over_plain_yields_single_text() {
+        let c = Content::from("x");
+        let collected: Vec<_> = c.iter().collect();
+        assert_eq!(collected.len(), 1);
+        match collected[0] {
+            SegmentRef::Text(t) => assert_eq!(t, "x"),
+            _ => panic!("plain must yield SegmentRef::Text"),
+        }
+    }
+
+    #[test]
+    fn content_iter_over_empty_segments_yields_nothing() {
+        let c = Content::from("");
+        assert_eq!(c.iter().count(), 0);
+    }
+
+    #[test]
+    fn content_iter_over_segments_preserves_order() {
+        let c = Content::from_segments(vec![
+            Segment::Text("a".into()),
+            Segment::Annotation(Annotation {
+                raw: "［＃X］".into(),
+                kind: AnnotationKind::Unknown,
+            }),
+            Segment::Text("b".into()),
+        ]);
+        let kinds: Vec<&'static str> = c
+            .iter()
+            .map(|sr| match sr {
+                SegmentRef::Text(_) => "text",
+                SegmentRef::Gaiji(_) => "gaiji",
+                SegmentRef::Annotation(_) => "annotation",
+            })
+            .collect();
+        assert_eq!(kinds, vec!["text", "annotation", "text"]);
+    }
+
+    #[test]
+    fn content_default_is_empty_segments() {
+        let c = Content::default();
+        assert!(matches!(c, Content::Segments(ref s) if s.is_empty()));
+    }
+
+    #[test]
+    fn content_from_box_str_fast_path() {
+        let b: Box<str> = "owned".into();
+        let c = Content::from(b);
+        assert_eq!(c.as_plain(), Some("owned"));
+    }
+
+    #[test]
+    fn content_from_string_fast_path() {
+        let c = Content::from(String::from("stringy"));
+        assert_eq!(c.as_plain(), Some("stringy"));
+    }
+
+    #[test]
+    fn content_from_segments_empty_vec_yields_empty_segments() {
+        let c = Content::from_segments(Vec::new());
+        assert!(matches!(c, Content::Segments(ref s) if s.is_empty()));
+    }
+
+    #[test]
+    fn content_from_segments_empty_text_concat_to_empty_segments() {
+        let c = Content::from_segments(vec![Segment::Text("".into()), Segment::Text("".into())]);
+        // Concatenation of empty strings → empty content → empty segments
+        assert!(matches!(c, Content::Segments(ref s) if s.is_empty()));
     }
 
     #[test]
