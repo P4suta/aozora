@@ -21,11 +21,12 @@
 
 pub mod aozora;
 pub mod html;
+pub mod serialize;
 
 #[doc(hidden)]
 pub mod test_support;
 
-use afm_lexer::Diagnostic;
+use afm_lexer::{Diagnostic, PlaceholderRegistry};
 use comrak::Arena;
 use comrak::nodes::AstNode;
 
@@ -33,6 +34,7 @@ pub mod post_process;
 
 pub use afm_lexer::Diagnostic as LexerDiagnostic;
 pub use comrak::{Arena as ComrakArena, Options as ComrakOptions};
+pub use serialize::serialize;
 
 /// Parse-time options.
 ///
@@ -89,7 +91,8 @@ impl Options<'_> {
 }
 
 /// Output of [`parse`]: the AST root plus every diagnostic the lexer
-/// emitted for the input.
+/// emitted for the input and (when the Aozora pipeline ran) the raw
+/// [`ParseArtifacts`] needed to invert the pipeline back to afm text.
 ///
 /// The lifetime `'a` is the arena lifetime — `root` is a reference
 /// into the typed-arena allocator the caller provided. Dropping the
@@ -102,6 +105,14 @@ impl Options<'_> {
 /// pass/fail decision (the CLI's `--strict` flag, Language-Server
 /// integrations, corpus sweeps) can inspect `diagnostics.is_empty()`
 /// without having to rerun the lexer.
+///
+/// `artifacts` is populated when the Aozora pipeline ran (the
+/// `render_aozora` hook is registered on the options — which
+/// [`Options::afm_default`] does). It carries the normalized text
+/// and the placeholder registry, and powers [`serialize`] without
+/// re-running the lexer or re-walking the AST. For
+/// [`Options::commonmark_only`] / [`Options::gfm_only`] the field
+/// is `None`.
 #[derive(Debug)]
 pub struct ParseResult<'a> {
     /// Root of the parsed document tree. Alive for the arena lifetime.
@@ -109,6 +120,33 @@ pub struct ParseResult<'a> {
     /// Non-fatal observations from the lexer (unclosed opens, stray
     /// triggers, PUA collisions, …). Empty on the happy path.
     pub diagnostics: Vec<Diagnostic>,
+    /// Lexer-side artifacts. `None` when the Aozora pipeline was
+    /// not invoked (commonmark-only / gfm-only paths).
+    pub artifacts: Option<ParseArtifacts>,
+}
+
+/// Inputs to [`serialize`] that the lexer computed during [`parse`].
+///
+/// Holds the PUA-sentinel-normalized text and the placeholder
+/// registry that maps every sentinel position back to the originating
+/// [`afm_syntax::AozoraNode`] / [`afm_syntax::ContainerKind`].
+///
+/// This bundle is the lexer's side of the parse pipeline captured so
+/// the serializer can run the inverse transformation without having
+/// to re-parse. Storing it on [`ParseResult`] costs one String + one
+/// struct move (no cloning) — the lexer produced them fresh and they
+/// would otherwise be dropped at the end of `parse()`.
+#[derive(Debug, Clone)]
+pub struct ParseArtifacts {
+    /// Normalized source text: the original afm input with every
+    /// Aozora span replaced by a PUA sentinel, CommonMark structure
+    /// otherwise preserved.
+    pub normalized: String,
+    /// Sentinel-position → originating `AozoraNode` / `ContainerKind`
+    /// lookup. Consumed by [`serialize`] via the registry's
+    /// `inline_at` / `block_leaf_at` / `block_open_at` / `block_close_at`
+    /// binary-search accessors.
+    pub registry: PlaceholderRegistry,
 }
 
 /// Parse a UTF-8 source buffer into a comrak AST with Aozora annotations
@@ -143,14 +181,22 @@ pub fn parse<'a>(arena: &'a Arena<'a>, input: &str, options: &Options<'_>) -> Pa
         post_process::splice_inline(arena, root, &lex_out.registry);
         post_process::splice_block_leaf(arena, root, &lex_out.registry);
         post_process::splice_paired_container(arena, root, &lex_out.registry);
+        // Move normalized + registry into ParseArtifacts (no clone);
+        // diagnostics break out separately so `serialize(&result)` never
+        // has to probe them.
         ParseResult {
             root,
             diagnostics: lex_out.diagnostics,
+            artifacts: Some(ParseArtifacts {
+                normalized: lex_out.normalized,
+                registry: lex_out.registry,
+            }),
         }
     } else {
         ParseResult {
             root: comrak::parse_document(arena, input, &options.comrak),
             diagnostics: Vec::new(),
+            artifacts: None,
         }
     }
 }
