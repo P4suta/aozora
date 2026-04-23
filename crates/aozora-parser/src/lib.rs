@@ -58,13 +58,32 @@ impl Options<'_> {
         Self { comrak }
     }
 
-    /// Plain CommonMark (no Aozora, no GFM). Useful for running the upstream
-    /// spec test suites through our crate.
+    /// Plain CommonMark (no Aozora, no GFM). Used by the spec-conformance
+    /// tests to verify our wrapper doesn't perturb comrak's CommonMark
+    /// behaviour. Enables raw-HTML rendering (`render.unsafe`) because the
+    /// CommonMark spec's expected outputs are all unsanitised.
     #[must_use]
     pub fn commonmark_only() -> Self {
-        Self {
-            comrak: comrak::Options::default(),
-        }
+        let mut comrak = comrak::Options::default();
+        comrak.render.r#unsafe = true;
+        Self { comrak }
+    }
+
+    /// Pure-GFM feature set: the extensions the official GFM 0.29 spec
+    /// exercises (strikethrough, tables, autolink, tasklist, tagfilter) with
+    /// NO Aozora extension registered. Used by the GFM spec-conformance test
+    /// to verify comrak's GFM output survives our wrapper without drift.
+    /// `render.unsafe` is enabled for the same reason as `commonmark_only`.
+    #[must_use]
+    pub fn gfm_only() -> Self {
+        let mut comrak = comrak::Options::default();
+        comrak.extension.strikethrough = true;
+        comrak.extension.table = true;
+        comrak.extension.autolink = true;
+        comrak.extension.tasklist = true;
+        comrak.extension.tagfilter = true;
+        comrak.render.r#unsafe = true;
+        Self { comrak }
     }
 }
 

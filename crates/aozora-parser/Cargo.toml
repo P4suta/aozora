@@ -26,6 +26,8 @@ tracing              = { workspace = true }
 insta             = { workspace = true }
 proptest          = { workspace = true }
 pretty_assertions = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
 
 [features]
 default = ["html"]

@@ -54,6 +54,8 @@ dependencies = [
  "miette",
  "pretty_assertions",
  "proptest",
+ "serde",
+ "serde_json",
  "thiserror",
  "tracing",
  "unicode-segmentation",

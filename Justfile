@@ -98,8 +98,95 @@ coverage-html:
 
 # --- lint / static analysis ---------------------------------------------------
 
-# Run all lints (fmt + clippy + typos)
-lint: fmt-check clippy typos
+# Run all lints (fmt + clippy + typos + strict-code)
+lint: fmt-check clippy typos strict-code
+
+# Forbid patterns that hide bugs or introduce unstable/unsafe surface in our
+# own crates. upstream/comrak is excluded (ADR-0001 keeps vendored tree
+# untouched). Every check is defensive — each represents a pattern we have
+# decided IS a bug-source and want rejected at the gate rather than fought
+# later in code review.
+strict-code:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shopt -s globstar
+    files=(crates/**/*.rs)
+
+    check() {
+        local label="$1"
+        local pattern="$2"
+        local hits
+        hits=$(grep -nE "$pattern" "${files[@]}" 2>/dev/null || true)
+        if [[ -n "$hits" ]]; then
+            echo "==> forbidden: $label" >&2
+            echo "$hits" >&2
+            return 1
+        fi
+    }
+
+    failed=0
+
+    # ---- Warning suppression -----------------------------------------------
+    # #[allow(...)] / #![allow(...)] / #[cfg_attr(..., allow(...))]
+    # accumulate dead rules that hide real bugs. Memory note
+    # feedback_no_warning_suppression: refactor the code instead.
+    check 'warning suppression (#[allow] / cfg_attr+allow)' \
+        '^\s*(#!?\[allow\(|#!?\[cfg_attr\([^)]*allow\()' || failed=1
+
+    # ---- Nightly / unstable feature gates ----------------------------------
+    # We ship on Rust stable only. Feature gates silently tie us to nightly
+    # and rot on toolchain bumps.
+    check 'nightly feature gate (#[feature] / #![feature])' \
+        '^\s*#!?\[feature\(' || failed=1
+
+    # ---- Unsafe code -------------------------------------------------------
+    # Every crate root has `#![forbid(unsafe_code)]` (checked below); this
+    # text-level grep is belt-and-braces for typos that would defeat the
+    # compiler gate. Excludes the legitimate `r#unsafe` raw-identifier form
+    # used by comrak's `render.r#unsafe` field.
+    check 'unsafe code (unsafe fn / unsafe { / unsafe impl / unsafe trait)' \
+        '(^|[^a-zA-Z_#])unsafe\s+(fn|impl|trait|\{)' || failed=1
+
+    # ---- Required deny directive -------------------------------------------
+    # Each crate root must start with `#![forbid(unsafe_code)]` so accidental
+    # unsafe additions are rejected at compile time.
+    for root in crates/*/src/lib.rs crates/*/src/main.rs; do
+        [[ -f "$root" ]] || continue
+        if ! grep -q '^#!\[forbid(unsafe_code)\]' "$root"; then
+            echo "==> forbidden: crate root missing '#![forbid(unsafe_code)]'" >&2
+            echo "  $root" >&2
+            failed=1
+        fi
+    done
+
+    # ---- Toolchain pinning -------------------------------------------------
+    # rust-toolchain.toml must pin a semver-numbered stable channel. Any
+    # appearance of nightly/beta in the channel pin is rejected.
+    if grep -qE '^\s*channel\s*=\s*"(nightly|beta)' rust-toolchain.toml; then
+        echo "==> forbidden: rust-toolchain.toml pins a pre-stable channel" >&2
+        grep -nE '^\s*channel' rust-toolchain.toml >&2
+        failed=1
+    fi
+
+    # ---- TODO/FIXME/XXX without an issue reference -------------------------
+    # Drive-by notes rot into dead reminders. Every TODO/FIXME/XXX must
+    # reference either an issue (`#N`) or a milestone (`M1..M4`) so it can
+    # be tracked or reclassified. Requires word-boundary match so placeholder
+    # hex sequences like `U+XXXX` don't false-positive.
+    todo_hits=$(grep -nE '(^|[^[:alnum:]_])(TODO|FIXME|XXX)([^[:alnum:]_]|$)' "${files[@]}" 2>/dev/null \
+        | grep -vE '(#[0-9]+|M[0-9]|issue|ADR-[0-9]+)' || true)
+    if [[ -n "$todo_hits" ]]; then
+        echo '==> forbidden: bare TODO/FIXME/XXX without an issue or milestone reference' >&2
+        echo "$todo_hits" >&2
+        failed=1
+    fi
+
+    if [[ $failed -ne 0 ]]; then
+        echo "" >&2
+        echo "strict-code check failed. Refactor the offending sites; do not silence." >&2
+        exit 1
+    fi
+    echo "strict-code: clean"
 
 # Format check (no-write)
 fmt-check:
