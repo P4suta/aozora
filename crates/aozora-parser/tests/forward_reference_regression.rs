@@ -5,6 +5,8 @@
 //! so a regression surfaces immediately instead of only when the full novel is
 //! exercised.
 
+use afm_parser::test_support::assert_no_bare;
+
 #[test]
 fn forward_reference_bouten_is_wrapped_in_annotation_html() {
     let src = "可哀想［＃「可哀想」に傍点］という気";
@@ -16,12 +18,7 @@ fn forward_reference_bouten_is_wrapped_in_annotation_html() {
         html.contains(r#"<span class="afm-annotation" hidden>［＃"#),
         "missing afm-annotation wrapper around the bouten annotation: {html}"
     );
-
-    let stripped = strip_annotation_wrappers(&html);
-    assert!(
-        !stripped.contains("［＃"),
-        "［＃ leaked outside the wrapper.\n  html: {html}\n  stripped: {stripped}"
-    );
+    assert_no_bare(&html, "［＃");
 }
 
 #[test]
@@ -33,11 +30,7 @@ fn forward_reference_bouten_survives_long_paragraph_context() {
     // and the subsequent ［＃ would never get classified.
     let src = "「そう、妹さんの心の中に可哀想［＃「可哀想」に傍点］という気が起こる";
     let html = afm_parser::html::render_to_string(src);
-    let stripped = strip_annotation_wrappers(&html);
-    assert!(
-        !stripped.contains("［＃"),
-        "［＃ leaked:\n  html: {html}\n  stripped: {stripped}"
-    );
+    assert_no_bare(&html, "［＃");
 }
 
 #[test]
@@ -46,25 +39,5 @@ fn curly_quote_followed_by_bracket_annotation() {
     // must not confuse 「 with a trigger character.
     let src = "「X」［＃「Y」に傍点］";
     let html = afm_parser::html::render_to_string(src);
-    let stripped = strip_annotation_wrappers(&html);
-    assert!(!stripped.contains("［＃"), "［＃ leaked: {html}");
-}
-
-fn strip_annotation_wrappers(html: &str) -> String {
-    let opener = r#"<span class="afm-annotation" hidden>"#;
-    let closer = "</span>";
-    let mut out = String::with_capacity(html.len());
-    let mut rest = html;
-    while let Some(at) = rest.find(opener) {
-        out.push_str(&rest[..at]);
-        let after_open = &rest[at + opener.len()..];
-        if let Some(close_at) = after_open.find(closer) {
-            rest = &after_open[close_at + closer.len()..];
-        } else {
-            out.push_str(rest);
-            return out;
-        }
-    }
-    out.push_str(rest);
-    out
+    assert_no_bare(&html, "［＃");
 }

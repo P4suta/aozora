@@ -8,6 +8,8 @@
 //!    node) — no bare annotation markers leak into the rendered HTML.
 //! 3. Every `｜…《…》` explicit-ruby span is recognised.
 
+use afm_parser::test_support::{assert_no_bare, strip_annotation_wrappers};
+
 const FIXTURE: &str = include_str!("../../../spec/aozora/fixtures/56656/input.utf8.txt");
 
 /// Tier A acceptance — the sole gate for M0 Spike completion.
@@ -15,22 +17,15 @@ const FIXTURE: &str = include_str!("../../../spec/aozora/fixtures/56656/input.ut
 fn tier_a_no_panic_and_no_unconsumed_square_brackets() {
     let html = afm_parser::html::render_to_string(FIXTURE);
 
-    // Strip every afm-annotation wrapper (which legitimately carries ［＃) and
-    // verify no bare annotation markers remain.
-    let bare = strip_afm_annotations(&html);
-    assert!(
-        !bare.contains("［＃"),
-        "Tier A violation: unconsumed ［＃ markers leaked outside afm-annotation wrappers.\n\
-         first occurrence near:\n{}\n\
-         total occurrences: {}",
-        first_occurrence_context(&bare, "［＃", 80),
-        bare.matches("［＃").count(),
-    );
+    // Any bare ［＃ (outside an afm-annotation wrapper) panics with a
+    // diagnostic snippet formatted by the shared helper.
+    assert_no_bare(&html, "［＃");
 
     // Sanity: the strip operation should be idempotent — running it again on
     // already-stripped output should produce no further change, proving our
     // splitter covers the full HTML shape the renderer emits.
-    let bare_again = strip_afm_annotations(&bare);
+    let bare = strip_annotation_wrappers(&html);
+    let bare_again = strip_annotation_wrappers(&bare);
     assert_eq!(
         bare, bare_again,
         "annotation stripper not idempotent — likely nested or malformed wrapper"
@@ -78,49 +73,6 @@ fn count_aozora<'a>(
     for child in node.children() {
         count_aozora(child, rubies, annotations);
     }
-}
-
-fn strip_afm_annotations(html: &str) -> String {
-    let opener = r#"<span class="afm-annotation" hidden>"#;
-    let closer = "</span>";
-    let mut out = String::with_capacity(html.len());
-    let mut rest = html;
-    while let Some(at) = rest.find(opener) {
-        out.push_str(&rest[..at]);
-        let after_open = &rest[at + opener.len()..];
-        if let Some(close_at) = after_open.find(closer) {
-            rest = &after_open[close_at + closer.len()..];
-        } else {
-            // malformed — preserve remainder so the assertion can still fire
-            out.push_str(rest);
-            return out;
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-fn first_occurrence_context(haystack: &str, needle: &str, window: usize) -> String {
-    let Some(at) = haystack.find(needle) else {
-        return "<needle missing>".to_owned();
-    };
-    let lo = snap_left(haystack, at.saturating_sub(window));
-    let hi = snap_right(haystack, (at + needle.len() + window).min(haystack.len()));
-    format!("...{}...", &haystack[lo..hi])
-}
-
-const fn snap_left(s: &str, mut i: usize) -> usize {
-    while i > 0 && !s.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
-}
-
-const fn snap_right(s: &str, mut i: usize) -> usize {
-    while i < s.len() && !s.is_char_boundary(i) {
-        i += 1;
-    }
-    i
 }
 
 /// Census the annotation-shaped sequences in the raw source. Serves as a canary on the

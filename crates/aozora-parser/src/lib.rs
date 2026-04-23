@@ -22,8 +22,8 @@ pub mod preparse;
 
 mod adapter;
 
-#[cfg(test)]
-mod test_support;
+#[doc(hidden)]
+pub mod test_support;
 
 use std::sync::Arc;
 
@@ -155,31 +155,7 @@ mod tests {
     /// Tier A canary: `［＃` and `※［＃` never appear in the output outside an
     /// `afm-annotation` wrapper. Used by parse/render integration tests.
     fn assert_tier_a_no_bare_brackets(html: &str) {
-        // Strip the annotation wrappers so we only look at "bare" output.
-        let stripped = strip_annotation_wrappers(html);
-        assert!(
-            !stripped.contains("［＃"),
-            "［＃ leaked outside afm-annotation wrapper:\n  html:     {html}\n  stripped: {stripped}"
-        );
-    }
-
-    fn strip_annotation_wrappers(html: &str) -> String {
-        let opener = r#"<span class="afm-annotation" hidden>"#;
-        let closer = "</span>";
-        let mut out = String::with_capacity(html.len());
-        let mut rest = html;
-        while let Some(open_at) = rest.find(opener) {
-            out.push_str(&rest[..open_at]);
-            let after_open = &rest[open_at + opener.len()..];
-            let Some(close_at) = after_open.find(closer) else {
-                // Malformed — fall through preserving rest so the assertion can fire.
-                out.push_str(rest);
-                return out;
-            };
-            rest = &after_open[close_at + closer.len()..];
-        }
-        out.push_str(rest);
-        out
+        crate::test_support::assert_no_bare(html, "［＃");
     }
 
     #[test]

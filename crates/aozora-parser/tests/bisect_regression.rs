@@ -1,30 +1,12 @@
 //! Binary-search which slice of the fixture triggers the Tier A leak.
 
+use afm_parser::test_support::strip_annotation_wrappers;
+
 const FIXTURE: &str = include_str!("../../../spec/aozora/fixtures/56656/input.utf8.txt");
 
 fn count_leaks(input: &str) -> usize {
     let html = afm_parser::html::render_to_string(input);
-    let stripped = strip(&html);
-    stripped.matches("［＃").count()
-}
-
-fn strip(html: &str) -> String {
-    let opener = r#"<span class="afm-annotation" hidden>"#;
-    let closer = "</span>";
-    let mut out = String::with_capacity(html.len());
-    let mut rest = html;
-    while let Some(at) = rest.find(opener) {
-        out.push_str(&rest[..at]);
-        let after_open = &rest[at + opener.len()..];
-        if let Some(close_at) = after_open.find(closer) {
-            rest = &after_open[close_at + closer.len()..];
-        } else {
-            out.push_str(rest);
-            return out;
-        }
-    }
-    out.push_str(rest);
-    out
+    strip_annotation_wrappers(&html).matches("［＃").count()
 }
 
 #[test]
