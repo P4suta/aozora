@@ -93,18 +93,17 @@ impl Options<'_> {
 /// Parse a UTF-8 source buffer into a comrak AST with Aozora annotations
 /// recognised.
 ///
-/// Delegates to [`parse_via_adapter`] when the Aozora extension is enabled,
-/// otherwise runs a straight `comrak::parse_document`. The arena is
-/// caller-owned so downstream consumers control allocator lifetime.
-///
-/// During the ADR-0008 cutover, both paths are reachable as hidden
-/// entrypoints ([`parse_via_adapter`] and [`parse_via_lexer`]) so the
-/// `path_parity` differential harness can compare them on a curated
-/// corpus without flipping `parse()` itself.
+/// Delegates to [`parse_via_lexer`] when the Aozora extension is enabled —
+/// the ADR-0008 cutover is complete and the lexer + `post_process`
+/// pipeline is the production path. The adapter entrypoint
+/// ([`parse_via_adapter`]) remains exposed as a hidden diagnostic hook so
+/// the `path_parity` harness can keep comparing both paths until the
+/// upstream `AozoraExtension` parse hooks are removed (D1) and the
+/// adapter module is deleted (E2).
 #[must_use]
 pub fn parse<'a>(arena: &'a Arena<'a>, input: &str, options: &Options<'_>) -> &'a AstNode<'a> {
     if options.comrak.extension.aozora.is_some() {
-        parse_via_adapter(arena, input, options)
+        parse_via_lexer(arena, input, options)
     } else {
         comrak::parse_document(arena, input, &options.comrak)
     }

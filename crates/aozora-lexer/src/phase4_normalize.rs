@@ -127,7 +127,19 @@ impl<'s> Normalizer<'s> {
                 self.out.push('\n');
             }
             SpanKind::Aozora(node) => {
-                if node.is_block() {
+                // `is_block()` on the AozoraNode schema answers a
+                // *semantic* question — whether the node occupies a
+                // paragraph position in the tree — but that is too
+                // broad for the rendering decision. `Indent`,
+                // `AlignEnd`, and `Warichu` are leaf *markers* that
+                // live inside the surrounding paragraph; only true
+                // document-level separators (page break / section
+                // break / heading / illustration) should be promoted
+                // to a block-leaf sentinel that splits paragraphs.
+                // Pre-existing adapter fixtures — and real Aozora
+                // reading convention — both assume these leaf markers
+                // sit inline with the text they modify.
+                if is_standalone_block_for_render(&node) {
                     self.emit_block_leaf(node);
                 } else {
                     self.emit_inline(node);
@@ -185,6 +197,28 @@ impl<'s> Normalizer<'s> {
         // fits.
         u32::try_from(self.out.len()).expect("normalized length fits u32")
     }
+}
+
+/// Decide whether an `AozoraNode` should be emitted as a block-leaf
+/// sentinel — a standalone paragraph in the normalized text — or as
+/// an inline sentinel that lives inside the surrounding paragraph.
+///
+/// Only the true document-structural nodes (page break, section
+/// break, heading, illustration) warrant paragraph splits. `Indent`,
+/// `AlignEnd`, `Warichu`, `Keigakomi` are marker / container nodes
+/// that still live within the inline stream of the paragraph they
+/// modify; promoting them to block-leaf separates them from the text
+/// they are supposed to apply to. Matches the adapter path's
+/// implicit behaviour (adapter's `try_start_block` never fires, so
+/// every match is inline).
+fn is_standalone_block_for_render(node: &AozoraNode) -> bool {
+    matches!(
+        node,
+        AozoraNode::PageBreak
+            | AozoraNode::SectionBreak(_)
+            | AozoraNode::AozoraHeading(_)
+            | AozoraNode::Sashie(_)
+    )
 }
 
 #[cfg(test)]

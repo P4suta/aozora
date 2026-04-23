@@ -2,27 +2,27 @@
   {
     "name": "page_break_standalone",
     "markdown": "［＃改ページ］\n",
-    "html": "<p><div class=\"afm-page-break\"></div></p>\n"
+    "html": "<div class=\"afm-page-break\"></div>"
   },
   {
     "name": "page_break_mid_paragraph",
     "markdown": "前［＃改ページ］後\n",
-    "html": "<p>前<div class=\"afm-page-break\"></div>後</p>\n"
+    "html": "<p>前</p>\n<div class=\"afm-page-break\"></div>\n<p>後</p>\n"
   },
   {
     "name": "section_break_choho",
     "markdown": "［＃改丁］\n",
-    "html": "<p><div class=\"afm-section-break afm-section-break-choho\"></div></p>\n"
+    "html": "<div class=\"afm-section-break afm-section-break-choho\"></div>"
   },
   {
     "name": "section_break_dan",
     "markdown": "［＃改段］\n",
-    "html": "<p><div class=\"afm-section-break afm-section-break-dan\"></div></p>\n"
+    "html": "<div class=\"afm-section-break afm-section-break-dan\"></div>"
   },
   {
     "name": "section_break_spread",
     "markdown": "［＃改見開き］\n",
-    "html": "<p><div class=\"afm-section-break afm-section-break-spread\"></div></p>\n"
+    "html": "<div class=\"afm-section-break afm-section-break-spread\"></div>"
   },
   {
     "name": "unknown_bracket_falls_back_to_annotation_wrapper",
