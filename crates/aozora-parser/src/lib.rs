@@ -231,9 +231,20 @@ mod tests {
 
     #[test]
     fn gaiji_reference_mark_is_consumed() {
+        // The `※［＃…］` reference mark must produce *some* Aozora node
+        // — the adapter path promotes to the generic `Annotation` (it
+        // never introspects gaiji descriptions), while the lexer path
+        // promotes to the richer `Gaiji` variant. Either is acceptable;
+        // the hard invariant is that the `［＃` marker is consumed so
+        // the Tier-A no-bare-bracket guarantee still holds.
         let src = "語※［＃「木＋吶のつくり」、第3水準1-85-54］で";
         let nodes = collect_aozora(src);
-        assert!(nodes.iter().any(|n| matches!(n, AozoraNode::Annotation(_))));
+        assert!(
+            nodes
+                .iter()
+                .any(|n| matches!(n, AozoraNode::Annotation(_) | AozoraNode::Gaiji(_))),
+            "expected at least one Annotation or Gaiji node, got {nodes:?}"
+        );
         let html = html::render_to_string(src);
         assert_tier_a_no_bare_brackets(&html);
     }

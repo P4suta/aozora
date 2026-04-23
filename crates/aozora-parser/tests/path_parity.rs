@@ -49,13 +49,6 @@ use comrak::nodes::{AstNode, NodeValue};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 enum ExpectedGap {
-    /// Lexer emits a more-specific `AozoraNode` variant (`Gaiji`,
-    /// `Kaeriten`) where the adapter folds it into the generic
-    /// `Annotation`. Both are semantically defensible; fix is to either
-    /// update fixtures to accept the richer variant, or to suppress the
-    /// uplift in the lexer until a later commit can route it through
-    /// the renderer.
-    SemanticUplift,
     /// Paired-container AST wrap awaits the `AozoraNode::Container`
     /// schema extension (F5). Today the lexer drops open/close markers
     /// into sentinel-only lines but `post_process` has no wrap logic.
@@ -250,9 +243,19 @@ const CORPUS: &[Case] = &[
     // the HTML may actually be parity — mark SemanticUplift if not.
     // -------------------------------------------------------------------
     Case {
+        // Adapter wraps the gaiji in a *hidden* afm-annotation span
+        // with the raw `［＃…］` body. The lexer promotes to the richer
+        // `AozoraNode::Gaiji` and renders a *visible* afm-gaiji span
+        // showing the description — strictly more information for
+        // readers. Content of the HTML differs; semantics are richer.
         label: "gaiji_reference_with_description",
         input: "語※［＃「木＋吶のつくり」、第3水準1-85-54］で",
-        gap: Some(ExpectedGap::SemanticUplift),
+        gap: Some(ExpectedGap::LexerImprovesAdapter),
+    },
+    Case {
+        label: "gaiji_reference_minimal_body",
+        input: "前※［＃「〻」、U+303B］後",
+        gap: Some(ExpectedGap::LexerImprovesAdapter),
     },
     // -------------------------------------------------------------------
     // Paired container (字下げ). F5 will wrap children; today both
@@ -427,7 +430,6 @@ fn print_parity_status() {
             (true, Some(_)) => "DRIFT-TO-PARITY",
             (false, None) => "REGRESSION",
             (false, Some(gap)) => match gap {
-                ExpectedGap::SemanticUplift => "gap:uplift",
                 ExpectedGap::PairedContainerUnimpl => "gap:paired-container",
                 ExpectedGap::LexerImprovesAdapter => "lexer-better",
             },
