@@ -91,20 +91,71 @@ impl Options<'_> {
 }
 
 /// Parse a UTF-8 source buffer into a comrak AST with Aozora annotations
-/// recognised. Delegates to `comrak::parse_document`; the arena is caller-owned
-/// so downstream consumers control allocator lifetime.
+/// recognised.
 ///
-/// When the Aozora extension is enabled on `options`, input runs through
-/// [`preparse::apply_preparse`] first so accent decomposition inside `〔...〕`
-/// spans is Unicode-normalised before comrak sees it (see ADR-0004).
+/// Delegates to [`parse_via_adapter`] when the Aozora extension is enabled,
+/// otherwise runs a straight `comrak::parse_document`. The arena is
+/// caller-owned so downstream consumers control allocator lifetime.
+///
+/// During the ADR-0008 cutover, both paths are reachable as hidden
+/// entrypoints ([`parse_via_adapter`] and [`parse_via_lexer`]) so the
+/// `path_parity` differential harness can compare them on a curated
+/// corpus without flipping `parse()` itself.
 #[must_use]
 pub fn parse<'a>(arena: &'a Arena<'a>, input: &str, options: &Options<'_>) -> &'a AstNode<'a> {
-    let source: Cow<'_, str> = if options.comrak.extension.aozora.is_some() {
-        preparse::apply_preparse(input)
+    if options.comrak.extension.aozora.is_some() {
+        parse_via_adapter(arena, input, options)
     } else {
-        Cow::Borrowed(input)
-    };
+        comrak::parse_document(arena, input, &options.comrak)
+    }
+}
+
+/// Legacy path: run `preparse` for accent decomposition, then let the
+/// comrak-fork adapter (inline + block hooks) drive Aozora recognition
+/// during parsing. Equivalent to the implementation of [`parse`] before
+/// ADR-0008.
+///
+/// Publicly hidden — exists to let the `path_parity` harness compare
+/// adapter output against [`parse_via_lexer`]. After the cutover (E1) and
+/// upstream hook removal (D1), this entrypoint will be deleted along with
+/// `adapter.rs`.
+#[must_use]
+#[doc(hidden)]
+pub fn parse_via_adapter<'a>(
+    arena: &'a Arena<'a>,
+    input: &str,
+    options: &Options<'_>,
+) -> &'a AstNode<'a> {
+    let source: Cow<'_, str> = preparse::apply_preparse(input);
     comrak::parse_document(arena, &source, &options.comrak)
+}
+
+/// Cutover-target path (ADR-0008): run the Aozora lexer to normalise every
+/// construct into PUA sentinels, feed the sentinel-only text to comrak as
+/// plain CommonMark+GFM, then AST-walk to splice `NodeValue::Aozora(...)`
+/// nodes back in at each sentinel.
+///
+/// Publicly hidden — exists so the `path_parity` harness can run it
+/// side-by-side with [`parse_via_adapter`] during the cutover. Once the
+/// harness reaches green parity on every curated case, E1 flips [`parse`]
+/// to delegate here.
+///
+/// Accent decomposition inside `〔...〕` still runs through the preparse
+/// step as in the adapter path — folding it into the lexer is tracked as
+/// C5b in the plan.
+#[must_use]
+#[doc(hidden)]
+pub fn parse_via_lexer<'a>(
+    arena: &'a Arena<'a>,
+    input: &str,
+    options: &Options<'_>,
+) -> &'a AstNode<'a> {
+    let preparsed = preparse::apply_preparse(input);
+    let lex_out = afm_lexer::lex(&preparsed);
+    let root = comrak::parse_document(arena, &lex_out.normalized, &options.comrak);
+    post_process::splice_inline(arena, root, &lex_out.registry);
+    post_process::splice_block_leaf(arena, root, &lex_out.registry);
+    root
 }
 
 #[cfg(test)]
