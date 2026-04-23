@@ -5,10 +5,7 @@
 //! dispatches inline / block / render callbacks to module-level functions under
 //! `crate::aozora`.
 
-use afm_syntax::{
-    Annotation, AnnotationKind, AozoraExtension, AozoraNode, BlockCtx, BlockMatch, InlineCtx,
-    InlineMatch,
-};
+use afm_syntax::{AozoraExtension, AozoraNode, BlockCtx, BlockMatch, InlineCtx, InlineMatch};
 
 /// Zero-state adapter. Construct once per parse session (or reuse globally) and
 /// register via `Options::default().extension.aozora = Some(Arc::new(AfmAdapter));`.
@@ -86,31 +83,18 @@ fn parse_implicit_ruby(head: &str, preceding: &str) -> Option<InlineMatch> {
     InlineMatch::new(AozoraNode::Ruby(ruby), consumed)
 }
 
-/// `［＃...］` — scan to the matching `］`. Returns `None` if the `＃` is absent
-/// (so a lone `［` falls through to comrak's default text handling) or if no
-/// close bracket is found (malformed sequence, leave as text for graceful
-/// degradation).
+/// `［＃...］` — scan to the matching `］` and dispatch the interior by
+/// keyword via [`crate::aozora::annotation::scan_bracket`]. Returns `None` if
+/// the `＃` is absent (lone `［` falls through to comrak's default text
+/// handling) or no closing `］` is found (malformed sequence, leave as text
+/// for graceful degradation).
 ///
-/// For M0 Spike the classification is uniformly [`AnnotationKind::Unknown`] —
-/// the semantic split (`AsIs`, `TextualNote`, gaiji-specific handling) lands as
-/// individual commits against the `spec/aozora/` fixtures in M1.
+/// Classification semantics live in `aozora::annotation`; this function is
+/// only the adapter-side glue that converts a successful scan into an
+/// [`InlineMatch`].
 fn parse_bracket_annotation(head: &str) -> Option<InlineMatch> {
-    let hash = head.get('［'.len_utf8()..)?;
-    if !hash.starts_with('＃') {
-        return None;
-    }
-    let body_start = '［'.len_utf8() + '＃'.len_utf8();
-    let rest = head.get(body_start..)?;
-    let close_relative = rest.find('］')?;
-    let total = body_start + close_relative + '］'.len_utf8();
-    let raw = &head[..total];
-    InlineMatch::new(
-        AozoraNode::Annotation(Annotation {
-            raw: raw.into(),
-            kind: AnnotationKind::Unknown,
-        }),
-        total,
-    )
+    let m = crate::aozora::annotation::scan_bracket(head)?;
+    InlineMatch::new(m.node, m.consumed)
 }
 
 /// `※` on its own is a normal character. Only when it precedes `［＃` does it
