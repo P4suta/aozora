@@ -48,7 +48,7 @@
 //! sanitized source. The driver loop stays the same — only the
 //! `try_recognize` dispatch grows.
 
-use afm_syntax::{AozoraNode, Content, Ruby, Span};
+use afm_syntax::{AozoraNode, Content, Ruby, SectionKind, Span};
 
 use crate::diagnostic::Diagnostic;
 use crate::phase2_pair::{PairEvent, PairKind, PairOutput};
@@ -139,14 +139,16 @@ impl<'s> Driver<'s> {
     /// the event for the fallback `accept` path.
     fn try_recognize(&mut self, events: &[PairEvent], i: usize) -> Option<usize> {
         let PairEvent::PairOpen {
-            kind: PairKind::Ruby,
-            close_idx,
-            ..
+            kind, close_idx, ..
         } = events[i]
         else {
             return None;
         };
-        self.try_ruby(events, i, close_idx)
+        match kind {
+            PairKind::Ruby => self.try_ruby(events, i, close_idx),
+            PairKind::Bracket => self.try_bracket_annotation(events, i, close_idx),
+            _ => None,
+        }
     }
 
     fn try_ruby(
@@ -167,6 +169,22 @@ impl<'s> Driver<'s> {
                 reading: Content::from(m.reading),
                 delim_explicit: m.explicit,
             })),
+            source_span: Span::new(m.consume_start, m.consume_end),
+        });
+        self.pending_plain_start = None;
+        Some(close_idx - open_idx + 1)
+    }
+
+    fn try_bracket_annotation(
+        &mut self,
+        events: &[PairEvent],
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<usize> {
+        let m = recognize_annotation(events, self.source, open_idx, close_idx)?;
+        self.flush_plain_up_to(m.consume_start);
+        self.spans.push(ClassifiedSpan {
+            kind: SpanKind::Aozora(m.node),
             source_span: Span::new(m.consume_start, m.consume_end),
         });
         self.pending_plain_start = None;
@@ -333,6 +351,79 @@ fn trailing_kanji_start(text: &str) -> usize {
         }
     }
     start
+}
+
+/// Intermediate result of [`recognize_annotation`]. Owns the final
+/// [`AozoraNode`] because annotation variants have heterogeneous
+/// lifetime/content shapes — some borrow nothing, some will borrow in
+/// future commits — so a single enum-free struct is simpler.
+struct AnnotationMatch {
+    node: AozoraNode,
+    consume_start: u32,
+    consume_end: u32,
+}
+
+/// Try to recognize a `［＃keyword…］` annotation at
+/// `events[open_idx]`.
+///
+/// Requires the immediately-next event to be a [`TriggerKind::Hash`]
+/// [`PairEvent::Solo`] — the shape `［` `＃` `body` `］`. Bodies
+/// without a hash (plain `［…］`) are not annotations; bodies with a
+/// hash whose keyword is unrecognized also fall through to Plain
+/// (they will be picked up by later C4c/d/e commits or emitted as
+/// `Annotation { Unknown }` once F4/F5 land).
+///
+/// C4c1 recognizes the four no-body block leaf keywords:
+/// `改ページ` / `改丁` / `改段` / `改見開き`.
+fn recognize_annotation(
+    events: &[PairEvent],
+    source: &str,
+    open_idx: usize,
+    close_idx: usize,
+) -> Option<AnnotationMatch> {
+    let PairEvent::PairOpen {
+        span: open_span, ..
+    } = events[open_idx]
+    else {
+        return None;
+    };
+    let PairEvent::PairClose {
+        span: close_span, ..
+    } = events[close_idx]
+    else {
+        return None;
+    };
+
+    // The next event must be `＃`. `open_idx + 1 < close_idx` is
+    // guaranteed whenever the hash exists, and `close_idx > open_idx`
+    // always holds for a surviving PairOpen.
+    let hash_end = match events.get(open_idx + 1)? {
+        PairEvent::Solo {
+            kind: TriggerKind::Hash,
+            span,
+        } => span.end,
+        _ => return None,
+    };
+
+    // Body bytes are everything between `＃` and `］`. Trim leading /
+    // trailing ASCII whitespace to be resilient to malformed input
+    // like `［＃ 改ページ  ］`; Aozora spec does not officially allow
+    // such whitespace but the corpus contains stragglers.
+    let body = source[hash_end as usize..close_span.start as usize].trim();
+
+    let node = match body {
+        "改ページ" => AozoraNode::PageBreak,
+        "改丁" => AozoraNode::SectionBreak(SectionKind::Choho),
+        "改段" => AozoraNode::SectionBreak(SectionKind::Dan),
+        "改見開き" => AozoraNode::SectionBreak(SectionKind::Spread),
+        _ => return None,
+    };
+
+    Some(AnnotationMatch {
+        node,
+        consume_start: open_span.start,
+        consume_end: close_span.end,
+    })
 }
 
 /// Characters eligible as an implicit-ruby base.
@@ -506,6 +597,103 @@ mod tests {
                 .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
             "expected no Aozora spans, got {:?}",
             out.spans
+        );
+    }
+
+    #[test]
+    fn page_break_annotation_becomes_single_page_break_span() {
+        let src = "前\n［＃改ページ］\n後";
+        let out = run(src);
+        // Plain("前"), Newline, Aozora(PageBreak), Newline, Plain("後")
+        assert_eq!(out.spans.len(), 5);
+        assert_eq!(out.spans[0].kind, SpanKind::Plain);
+        assert_eq!(out.spans[1].kind, SpanKind::Newline);
+        assert!(matches!(
+            out.spans[2].kind,
+            SpanKind::Aozora(AozoraNode::PageBreak)
+        ));
+        assert_eq!(out.spans[2].source_span.slice(src), "［＃改ページ］");
+        assert_eq!(out.spans[3].kind, SpanKind::Newline);
+        assert_eq!(out.spans[4].kind, SpanKind::Plain);
+    }
+
+    #[test]
+    fn section_break_choho_recognized() {
+        let out = run("［＃改丁］");
+        assert_eq!(out.spans.len(), 1);
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::Aozora(AozoraNode::SectionBreak(SectionKind::Choho))
+        ));
+    }
+
+    #[test]
+    fn section_break_dan_recognized() {
+        let out = run("［＃改段］");
+        assert_eq!(out.spans.len(), 1);
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::Aozora(AozoraNode::SectionBreak(SectionKind::Dan))
+        ));
+    }
+
+    #[test]
+    fn section_break_spread_recognized() {
+        let out = run("［＃改見開き］");
+        assert_eq!(out.spans.len(), 1);
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::Aozora(AozoraNode::SectionBreak(SectionKind::Spread))
+        ));
+    }
+
+    #[test]
+    fn bracket_without_hash_is_not_an_annotation() {
+        // `［普通］` (no `＃`) is plain literal text, not an annotation.
+        let out = run("［普通］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
+            "expected no Aozora spans, got {:?}",
+            out.spans
+        );
+    }
+
+    #[test]
+    fn unknown_annotation_keyword_falls_through_to_plain() {
+        // An unknown ［＃…］ keyword is left as plain until later
+        // recognizers land (C4c2/3/4, C4d, C4e).
+        let out = run("［＃未知のキーワード］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
+            "expected unknown keyword to stay Plain, got {:?}",
+            out.spans
+        );
+    }
+
+    #[test]
+    fn annotation_with_whitespace_padding_still_matches() {
+        // Corpus occasionally has `［＃ 改ページ ］` with spaces. We
+        // trim the body to be lenient.
+        let out = run("［＃ 改ページ ］");
+        assert_eq!(out.spans.len(), 1);
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::Aozora(AozoraNode::PageBreak)
+        ));
+    }
+
+    #[test]
+    fn empty_bracket_with_hash_is_not_an_annotation() {
+        // `［＃］` has no body at all — unknown keyword "".
+        let out = run("［＃］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
         );
     }
 
