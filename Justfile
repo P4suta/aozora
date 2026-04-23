@@ -150,6 +150,20 @@ upstream-sync TAG:
 corpus-refresh:
     {{_dev}} cargo run --package xtask --quiet -- corpus-refresh
 
+# Regenerate `spec/*.json` from the vendored cmark-format sources under
+# `spec/sources/*.txt`. Offline-pure: both the sources and the generated
+# fixtures are committed to the repo. Add new `spec/sources/<name>.txt`
+# files and extend the conversion block below to cover them.
+spec-refresh:
+    {{_dev}} bash -c '\
+        set -euo pipefail && \
+        cargo run --package xtask --quiet -- spec-refresh \
+            --input spec/sources/commonmark-0.31.2.txt \
+            --output spec/commonmark-0.31.2.json && \
+        cargo run --package xtask --quiet -- spec-refresh \
+            --input spec/sources/gfm-0.29-gfm.txt \
+            --output spec/gfm-0.29-gfm.json'
+
 # --- docs ---------------------------------------------------------------------
 
 # Build the mdbook documentation site
