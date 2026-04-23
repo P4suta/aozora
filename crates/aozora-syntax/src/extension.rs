@@ -233,7 +233,7 @@ mod tests {
         fn assert_copy<T: Copy>() {}
         assert_copy::<ContainerKind>();
         // u8 + discriminant, must fit in a few bytes so SmallVec entries stay tight.
-        assert!(std::mem::size_of::<ContainerKind>() <= 4);
+        assert!(size_of::<ContainerKind>() <= 4);
     }
 
     #[test]

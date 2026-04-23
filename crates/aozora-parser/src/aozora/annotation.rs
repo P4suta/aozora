@@ -16,7 +16,7 @@
 //!    success*, not on *semantic classification*, so M0 behaviour is
 //!    preserved byte-identical through this refactor.
 
-use afm_syntax::{Annotation, AnnotationKind, AozoraNode};
+use afm_syntax::{Annotation, AnnotationKind, AozoraNode, SectionKind};
 
 /// Result of a successful `［＃...］` scan.
 pub(crate) struct BracketMatch {
@@ -55,17 +55,26 @@ pub(crate) fn scan_bracket(head: &str) -> Option<BracketMatch> {
 
 /// Dispatch the bracket-body content to a concrete [`AozoraNode`].
 ///
-/// M0-compatible baseline: every annotation becomes
-/// [`AnnotationKind::Unknown`], preserving Tier-A consumption without
-/// committing to semantics. Later commits (C2+) extend this with keyword
-/// matches that promote specific annotations to typed variants
-/// (`PageBreak`, `SectionBreak`, `Bouten`, `TateChuYoko`, `Indent`,
-/// `AlignEnd`, …).
-fn classify(_body: &str, raw: &str) -> AozoraNode {
-    AozoraNode::Annotation(Annotation {
-        raw: raw.into(),
-        kind: AnnotationKind::Unknown,
-    })
+/// Extended incrementally per M1 phase C:
+/// - C2 (this commit): `改ページ` / `改丁` / `改段` / `改見開き` → `PageBreak`
+///   / `SectionBreak` variants.
+/// - C3 — C7 will add bouten, 縦中横, 字下げ, 地付き, and forward-reference
+///   heading / bouten classifications.
+///
+/// Unknown bodies fall back to [`AnnotationKind::Unknown`] so the Tier-A
+/// invariant (no bare `［＃` leaks) remains true throughout — graceful
+/// degradation is an architectural guarantee (ADR-0003 §6).
+fn classify(body: &str, raw: &str) -> AozoraNode {
+    match body {
+        "改ページ" => AozoraNode::PageBreak,
+        "改丁" => AozoraNode::SectionBreak(SectionKind::Choho),
+        "改段" => AozoraNode::SectionBreak(SectionKind::Dan),
+        "改見開き" => AozoraNode::SectionBreak(SectionKind::Spread),
+        _ => AozoraNode::Annotation(Annotation {
+            raw: raw.into(),
+            kind: AnnotationKind::Unknown,
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -73,24 +82,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scans_plain_bracket_annotation() {
+    fn page_break_classifies_to_dedicated_variant() {
         let m = scan_bracket("［＃改ページ］続き").expect("scan");
         assert_eq!(m.consumed, "［＃改ページ］".len());
-        let AozoraNode::Annotation(a) = &m.node else {
-            panic!("expected Annotation, got {:?}", m.node);
-        };
-        assert_eq!(&*a.raw, "［＃改ページ］");
-        assert_eq!(a.kind, AnnotationKind::Unknown);
+        assert!(
+            matches!(m.node, AozoraNode::PageBreak),
+            "expected PageBreak, got {:?}",
+            m.node
+        );
     }
 
     #[test]
-    fn scans_nested_quotation_inside_body() {
+    fn section_breaks_classify_per_kind() {
+        use afm_syntax::SectionKind;
+        for (body, want) in [
+            ("改丁", SectionKind::Choho),
+            ("改段", SectionKind::Dan),
+            ("改見開き", SectionKind::Spread),
+        ] {
+            let input = format!("［＃{body}］");
+            let m = scan_bracket(&input).expect("scan");
+            assert_eq!(m.consumed, input.len());
+            match m.node {
+                AozoraNode::SectionBreak(got) => assert_eq!(got, want, "body={body}"),
+                other => panic!("body={body}: expected SectionBreak({want:?}), got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_bodies_stay_as_unknown_annotation() {
+        // Preserves Tier-A graceful degradation: bodies we don't yet classify
+        // still get consumed and wrapped, never leak.
         let m = scan_bracket("［＃「可哀想」に傍点］あと").expect("scan");
         assert_eq!(m.consumed, "［＃「可哀想」に傍点］".len());
         let AozoraNode::Annotation(a) = &m.node else {
-            panic!();
+            panic!(
+                "expected Annotation for unclassified body, got {:?}",
+                m.node
+            );
         };
         assert_eq!(&*a.raw, "［＃「可哀想」に傍点］");
+        assert_eq!(a.kind, AnnotationKind::Unknown);
     }
 
     #[test]

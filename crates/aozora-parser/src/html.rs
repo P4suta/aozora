@@ -49,14 +49,25 @@ mod tests {
     }
 
     #[test]
-    fn block_annotation_produces_hidden_span() {
+    fn page_break_bracket_annotation_emits_page_break_div() {
+        // C2 promoted ［＃改ページ］ to PageBreak — it now renders as a div.
         let html = render_to_string("前［＃改ページ］後");
+        assert!(
+            html.contains(r#"<div class="afm-page-break"></div>"#),
+            "missing page-break div: {html}"
+        );
+        assert!(!html.contains("［＃"), "［＃ leaked: {html}");
+    }
+
+    #[test]
+    fn unknown_bracket_annotation_produces_hidden_span() {
+        let html = render_to_string("前［＃ほげふが］後");
         assert!(
             html.contains(r#"class="afm-annotation""#),
             "missing annotation wrapper: {html}"
         );
         assert!(
-            !html.contains("［＃改ページ］") || html.contains(">［＃改ページ］<"),
+            !html.contains("［＃ほげふが］") || html.contains(">［＃ほげふが］<"),
             "annotation not consumed: {html}"
         );
     }

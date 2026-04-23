@@ -107,10 +107,10 @@ pub fn parse<'a>(arena: &'a Arena<'a>, input: &str, options: &Options<'_>) -> &'
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::collect_aozora;
     use afm_syntax::AozoraNode;
     use comrak::Arena;
     use pretty_assertions::assert_eq;
+    use test_support::collect_aozora;
 
     #[test]
     fn parses_plain_paragraph_tree_shape() {
@@ -146,19 +146,32 @@ mod tests {
     }
 
     #[test]
-    fn bracketed_block_annotation_is_consumed_inline() {
+    fn bracketed_page_break_is_consumed_inline_and_promoted() {
+        // C2 promotes ［＃改ページ］ to AozoraNode::PageBreak; the bracket text
+        // no longer survives at all, even inside the afm-annotation wrapper.
         let src = "前［＃改ページ］後";
         let nodes = collect_aozora(src);
-        assert_eq!(nodes.len(), 1, "expected 1 annotation, got {nodes:?}");
+        assert_eq!(nodes.len(), 1, "expected 1 promoted node, got {nodes:?}");
+        assert!(
+            matches!(nodes[0], AozoraNode::PageBreak),
+            "expected PageBreak, got {:?}",
+            nodes[0]
+        );
+        // Tier A still holds: ［＃ appears nowhere in the HTML.
+        let html = html::render_to_string(src);
+        assert_tier_a_no_bare_brackets(&html);
+    }
+
+    #[test]
+    fn unknown_bracketed_annotation_stays_in_annotation_wrapper() {
+        let src = "前［＃ほげふが］後";
+        let nodes = collect_aozora(src);
+        assert_eq!(nodes.len(), 1);
         let AozoraNode::Annotation(a) = &nodes[0] else {
             panic!("expected Annotation, got {:?}", nodes[0]);
         };
-        // The raw text is preserved *inside* an annotation node — that's
-        // consumption in the Tier A sense.
-        assert_eq!(&*a.raw, "［＃改ページ］");
-        // Tier A promise: no ［＃ leaks as *unwrapped* text. It can survive
-        // inside `class="afm-annotation"` but never bare.
-        let html = crate::html::render_to_string(src);
+        assert_eq!(&*a.raw, "［＃ほげふが］");
+        let html = html::render_to_string(src);
         assert_tier_a_no_bare_brackets(&html);
     }
 
@@ -167,14 +180,14 @@ mod tests {
         let src = "語※［＃「木＋吶のつくり」、第3水準1-85-54］で";
         let nodes = collect_aozora(src);
         assert!(nodes.iter().any(|n| matches!(n, AozoraNode::Annotation(_))));
-        let html = crate::html::render_to_string(src);
+        let html = html::render_to_string(src);
         assert_tier_a_no_bare_brackets(&html);
     }
 
     /// Tier A canary: `［＃` and `※［＃` never appear in the output outside an
     /// `afm-annotation` wrapper. Used by parse/render integration tests.
     fn assert_tier_a_no_bare_brackets(html: &str) {
-        crate::test_support::assert_no_bare(html, "［＃");
+        test_support::assert_no_bare(html, "［＃");
     }
 
     #[test]
@@ -183,7 +196,7 @@ mod tests {
         let opts = Options::commonmark_only();
         let root = parse(&arena, "｜青梅《おうめ》へ", &opts);
         let mut found = Vec::<AozoraNode>::new();
-        crate::test_support::collect_aozora_recursive(root, &mut found);
+        test_support::collect_aozora_recursive(root, &mut found);
         assert_eq!(
             found.len(),
             0,

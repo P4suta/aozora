@@ -153,12 +153,21 @@ mod tests {
     }
 
     #[test]
-    fn recognises_block_annotation() {
+    fn recognises_page_break_bracket_annotation() {
+        // ［＃改ページ］ promotes to the PageBreak variant (see C2).
         let m = adapter()
             .try_parse_inline(ctx("［＃改ページ］続き", ""))
             .expect("annot");
-        assert!(matches!(m.node, AozoraNode::Annotation(_)));
+        assert!(matches!(m.node, AozoraNode::PageBreak));
         assert_eq!(m.consumed.get(), "［＃改ページ］".len());
+    }
+
+    #[test]
+    fn unknown_bracket_annotation_stays_as_annotation_node() {
+        let m = adapter()
+            .try_parse_inline(ctx("［＃ほげふが］続き", ""))
+            .expect("annot");
+        assert!(matches!(m.node, AozoraNode::Annotation(_)));
     }
 
     #[test]

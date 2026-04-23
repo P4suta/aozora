@@ -186,7 +186,7 @@ pub struct Ruby {
     pub delim_explicit: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Bouten {
     pub kind: BoutenKind,
