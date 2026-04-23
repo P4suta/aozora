@@ -25,19 +25,34 @@ categories = ["parser-implementations", "text-processing", "localization"]
 
 [workspace.lints.rust]
 # Hard bans — the compiler rejects these rather than warning.
-unsafe_code = "forbid"
+unsafe_code      = "forbid"
+# Identifier hygiene: all 日本語 appears as string literals, never as idents.
+# Deny rather than warn so the gate cannot be stepped past in a review.
+non_ascii_idents = "deny"
 
 # Strong signals that tend to mask real bugs.
 missing_debug_implementations = "warn"
 missing_copy_implementations  = "warn"
 trivial_casts                 = "warn"
 trivial_numeric_casts         = "warn"
-# `unreachable_pub` is noisy in binary crates where `pub` items are reachable
-# from `main.rs` but not "exported". Skip for now; revisit when the lib/bin
-# split stabilises.
 unused_import_braces          = "warn"
 unused_lifetimes              = "warn"
 unused_qualifications         = "warn"
+
+# Lifetime / path hygiene — catches over-broad `pub`, implicit lifetimes in
+# paths, and `'a: 'b` bounds that the compiler could infer.
+unreachable_pub                = "warn"
+single_use_lifetimes           = "warn"
+elided_lifetimes_in_paths      = "warn"
+redundant_lifetimes            = "warn"
+explicit_outlives_requirements = "warn"
+
+# Misc quality gates.
+let_underscore_drop        = "warn"  # `let _ = ...` silently drops Drop types
+keyword_idents_2024        = "warn"  # 2024-edition reserved keywords as idents
+variant_size_differences   = "warn"  # large enum variants — push to `Box`
+ambiguous_negative_literals = "warn" # `-1.pow(2)` precedence traps
+
 # Warn on edition-drift so we catch idioms deprecated by the next edition early.
 rust_2024_compatibility = { level = "warn", priority = -1 }
 
@@ -64,6 +79,11 @@ module_name_repetitions = "allow" # `afm_syntax::syntax_error` is clearer than f
 multiple_crate_versions = "allow" # transitive dep collisions are not our problem
 # Public APIs on stubs need these in places; we revisit when crate stabilises.
 missing_const_for_fn    = "allow"
+# `redundant_pub_crate` (nursery) conflicts with rustc's `unreachable_pub`:
+# the former asks `pub(crate)` → `pub` inside private modules, the latter
+# asks `pub` → `pub(crate)` when unreachable. We treat `unreachable_pub` as
+# the source of truth and silence this one structurally.
+redundant_pub_crate     = "allow"
 
 [workspace.dependencies]
 # Internal crates

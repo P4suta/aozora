@@ -196,12 +196,13 @@ fmt-check:
 fmt:
     {{_dev}} cargo fmt --all
 
-# Clippy with pedantic + nursery, no suppressions tolerated
+# Clippy — lint groups (pedantic/nursery/cargo) and carve-outs are owned
+# entirely by `[workspace.lints]` in Cargo.toml. Passing `-W clippy::<group>`
+# here would re-enable the whole group at CLI priority and silently undo
+# per-lint allow carve-outs (e.g. `redundant_pub_crate`). Keep the CLI
+# surface to `-D warnings` only.
 clippy:
-    {{_dev}} cargo clippy --workspace --all-targets --all-features -- \
-        -D warnings \
-        -W clippy::pedantic \
-        -W clippy::nursery
+    {{_dev}} cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Typo check
 typos:
