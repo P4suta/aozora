@@ -49,11 +49,6 @@ use comrak::nodes::{AstNode, NodeValue};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 enum ExpectedGap {
-    /// Lexer classifier accepts input the adapter's recogniser rejects.
-    /// Current examples: `［＃０字下げ］` (N = 0 is invalid in the spec),
-    /// and forward-reference bouten / 縦中横 whose target substring
-    /// does not actually appear in the preceding text.
-    ClassifierValidationMissing,
     /// Lexer emits a more-specific `AozoraNode` variant (`Gaiji`,
     /// `Kaeriten`) where the adapter folds it into the generic
     /// `Annotation`. Both are semantically defensible; fix is to either
@@ -213,17 +208,32 @@ const CORPUS: &[Case] = &[
     Case {
         label: "indent_zero_digit_invalid",
         input: "［＃０字下げ］本文\n",
-        gap: Some(ExpectedGap::ClassifierValidationMissing),
+        gap: None,
+    },
+    Case {
+        label: "indent_zero_ascii_digit_invalid",
+        input: "［＃0字下げ］本文\n",
+        gap: None,
+    },
+    Case {
+        label: "align_end_zero_digit_invalid",
+        input: "前［＃地から0字上げ］後\n",
+        gap: None,
     },
     Case {
         label: "forward_bouten_no_preceding_target",
         input: "［＃「X」に傍点］あと\n",
-        gap: Some(ExpectedGap::ClassifierValidationMissing),
+        gap: None,
+    },
+    Case {
+        label: "forward_bouten_target_with_different_char",
+        input: "Y［＃「X」に傍点］あと\n",
+        gap: None,
     },
     Case {
         label: "forward_tcy_no_preceding_target",
         input: "［＃「29」は縦中横］後\n",
-        gap: Some(ExpectedGap::ClassifierValidationMissing),
+        gap: None,
     },
     // -------------------------------------------------------------------
     // Forward-reference bouten where target does precede — parity
@@ -417,7 +427,6 @@ fn print_parity_status() {
             (true, Some(_)) => "DRIFT-TO-PARITY",
             (false, None) => "REGRESSION",
             (false, Some(gap)) => match gap {
-                ExpectedGap::ClassifierValidationMissing => "gap:validation",
                 ExpectedGap::SemanticUplift => "gap:uplift",
                 ExpectedGap::PairedContainerUnimpl => "gap:paired-container",
                 ExpectedGap::LexerImprovesAdapter => "lexer-better",

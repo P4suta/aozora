@@ -634,11 +634,15 @@ fn classify_indent_or_align(body: &str) -> Option<AozoraNode> {
     if let Some(rest) = body.strip_prefix("地から")
         && let Some((n, tail)) = parse_decimal_u8_prefix(rest)
         && tail == "字上げ"
+        && n >= 1
     {
         return Some(AozoraNode::AlignEnd(AlignEnd { offset: n }));
     }
     let (n, tail) = parse_decimal_u8_prefix(body)?;
-    if tail == "字下げ" {
+    // `N字下げ` requires N >= 1 per the Aozora annotation spec — a
+    // zero-width indent is not meaningful. Reject and let the body fall
+    // through to the generic Annotation classifier.
+    if tail == "字下げ" && n >= 1 {
         return Some(AozoraNode::Indent(Indent { amount: n }));
     }
     None
@@ -672,6 +676,14 @@ fn classify_forward_bouten(
     let (target, suffix) = extract_forward_quote_target(events, source, open_idx, close_idx)?;
     let suffix = suffix.strip_prefix("に")?;
     let kind = bouten_kind_from_suffix(suffix)?;
+    // A forward-reference bouten only makes sense when its target
+    // literal actually appears in the preceding text. Otherwise it has
+    // no referent and we fall through to the generic Annotation path
+    // so the reader sees the raw `［＃…］` rather than a mysterious
+    // styling applied to nothing.
+    if !forward_target_is_preceded(events, source, open_idx, target) {
+        return None;
+    }
     Some(AozoraNode::Bouten(Bouten {
         kind,
         target: Content::from(target),
@@ -695,9 +707,34 @@ fn classify_forward_tcy(
     if suffix != "は縦中横" {
         return None;
     }
+    // Same rationale as `classify_forward_bouten` — the styling has no
+    // meaning without a preceding target literal.
+    if !forward_target_is_preceded(events, source, open_idx, target) {
+        return None;
+    }
     Some(AozoraNode::TateChuYoko(TateChuYoko {
         text: Content::from(target),
     }))
+}
+
+/// Check whether `target` appears somewhere in the source preceding the
+/// `［` event at `open_idx`. Used by forward-reference recognisers to
+/// suppress `［＃「X」…］` spans whose target has no referent.
+///
+/// Returns `false` if the event shape isn't the expected `PairOpen`
+/// (defensive — the caller is responsible for having picked a valid
+/// bracket, so this only fails if invariants drift).
+fn forward_target_is_preceded(
+    events: &[PairEvent],
+    source: &str,
+    open_idx: usize,
+    target: &str,
+) -> bool {
+    let Some(PairEvent::PairOpen { span, .. }) = events.get(open_idx) else {
+        return false;
+    };
+    let preceding = &source[..span.start as usize];
+    preceding.contains(target)
 }
 
 /// Shared helper for the `［＃「X」<particle><keyword>］` shape.
@@ -1214,6 +1251,41 @@ mod tests {
     }
 
     #[test]
+    fn indent_zero_digit_falls_through() {
+        // N=0 is meaningless for 字下げ (a zero-width indent is not
+        // a thing). Fullwidth-digit variant.
+        let out = run("［＃０字下げ］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Indent(_)))),
+        );
+    }
+
+    #[test]
+    fn indent_zero_ascii_digit_falls_through() {
+        // ASCII-digit variant of the N=0 reject.
+        let out = run("［＃0字下げ］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Indent(_)))),
+        );
+    }
+
+    #[test]
+    fn align_end_zero_digit_falls_through() {
+        // 地から0字上げ is redundant with 地付き and not spec-sanctioned —
+        // reject so the text falls through to a generic Annotation.
+        let out = run("［＃地から0字上げ］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::AlignEnd(_)))),
+        );
+    }
+
+    #[test]
     fn chitsuki_zero_offset_recognized() {
         let out = run("［＃地付き］");
         assert_eq!(out.spans.len(), 1);
@@ -1247,7 +1319,10 @@ mod tests {
 
     #[test]
     fn forward_bouten_goma_recognized() {
-        let out = run("前置き［＃「青空」に傍点］後ろ");
+        // Preceding text "前置き" plus "青空" before the bracket — the
+        // target literal must appear in the preceding source for the
+        // forward-reference classifier to promote.
+        let out = run("前置きの青空［＃「青空」に傍点］後ろ");
         let bouten = out
             .spans
             .iter()
@@ -1262,7 +1337,7 @@ mod tests {
 
     #[test]
     fn forward_bouten_circle_recognized() {
-        let out = run("［＃「X」に丸傍点］");
+        let out = run("X［＃「X」に丸傍点］");
         let bouten = out
             .spans
             .iter()
@@ -1287,7 +1362,7 @@ mod tests {
             ("傍線", BoutenKind::UnderLine),
         ];
         for (suffix, expected_kind) in cases {
-            let src = format!("［＃「t」に{suffix}］");
+            let src = format!("t［＃「t」に{suffix}］");
             let out = run(&src);
             let Some(kind) = out.spans.iter().find_map(|s| match &s.kind {
                 SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b.kind),
@@ -1330,11 +1405,50 @@ mod tests {
     }
 
     #[test]
+    fn forward_bouten_without_preceding_target_falls_through() {
+        // Target 可哀想 never appears before the bracket — refusing to
+        // promote to Bouten lets the generic Annotation classifier
+        // wrap the raw `［＃…］` in an afm-annotation span instead of
+        // styling a non-existent referent.
+        let out = run("［＃「可哀想」に傍点］後");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Bouten(_)))),
+        );
+    }
+
+    #[test]
+    fn forward_bouten_target_in_preceding_paragraph_still_promotes() {
+        // The classifier currently scans the entire preceding source
+        // (not just the current paragraph). Preserving that lenient
+        // behaviour keeps real Aozora corpora working — authors
+        // sometimes refer backwards across paragraph boundaries.
+        let out = run("青空\n\n改行後［＃「青空」に傍点］");
+        assert!(
+            out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Bouten(_)))),
+        );
+    }
+
+    #[test]
+    fn forward_tcy_without_preceding_target_falls_through() {
+        let out = run("［＃「29」は縦中横］後");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::TateChuYoko(_)))),
+        );
+    }
+
+    #[test]
     fn forward_bouten_with_nested_quote_in_target_uses_outer_quote() {
         // Phase 2 balances 「「」」 correctly. The target is the full
         // outer-quote contents including the inner 「inner」 — not
-        // truncated at the first 」.
-        let out = run("［＃「A「inner」B」に傍点］");
+        // truncated at the first 」. The preceding copy of the target
+        // is required so the classifier's target-exists check passes.
+        let out = run("A「inner」B［＃「A「inner」B」に傍点］");
         let bouten = out
             .spans
             .iter()
@@ -1348,7 +1462,7 @@ mod tests {
 
     #[test]
     fn forward_tcy_single_recognized() {
-        let out = run("［＃「20」は縦中横］");
+        let out = run("20［＃「20」は縦中横］");
         let tcy = out
             .spans
             .iter()
