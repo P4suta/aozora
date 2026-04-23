@@ -48,9 +48,11 @@
 //! sanitized source. The driver loop stays the same — only the
 //! `try_recognize` dispatch grows.
 
+use core::ops::Range;
+
 use afm_syntax::{
     AlignEnd, Annotation, AnnotationKind, AozoraNode, Bouten, BoutenKind, ContainerKind, Content,
-    Gaiji, Indent, Kaeriten, Ruby, Sashie, SectionKind, Span, TateChuYoko,
+    Gaiji, Indent, Kaeriten, Ruby, Sashie, SectionKind, Segment, Span, TateChuYoko,
 };
 
 use crate::diagnostic::Diagnostic;
@@ -200,7 +202,7 @@ impl<'s> Driver<'s> {
         self.spans.push(ClassifiedSpan {
             kind: SpanKind::Aozora(AozoraNode::Ruby(Ruby {
                 base: Content::from(m.base),
-                reading: Content::from(m.reading),
+                reading: m.reading,
                 delim_explicit: m.explicit,
             })),
             source_span: Span::new(m.consume_start, m.consume_end),
@@ -306,12 +308,21 @@ impl<'s> Driver<'s> {
     }
 }
 
-/// Intermediate result of [`recognize_ruby`]. Strings are borrowed
-/// from the sanitized source; the driver owns them into the final
-/// `Content` values.
+/// Intermediate result of [`recognize_ruby`]. `base` stays borrowed
+/// (the two forms we handle — explicit `｜X《Y》` and implicit
+/// trailing-kanji — both come from a single [`PairEvent::Text`] event
+/// with no nested structure). `reading`, on the other hand, can carry
+/// embedded gaiji (`※［＃…］`) or annotations (`［＃ママ］`), so it is
+/// already resolved into a [`Content`] via [`build_content_from_body`].
+///
+/// Collapsing inside the lexer (rather than leaving the splitting to
+/// the renderer) keeps the [`AozoraNode`] payload self-contained:
+/// Phase 4 stamps one PUA sentinel over the whole `｜…《…》` source
+/// span, and the inner gaiji/annotation never reach the top-level
+/// `spans` list or the comrak parse phase.
 struct RubyMatch<'s> {
     base: &'s str,
-    reading: &'s str,
+    reading: Content,
     explicit: bool,
     consume_start: u32,
     consume_end: u32,
@@ -328,6 +339,12 @@ struct RubyMatch<'s> {
 /// * **Implicit** — `…X《Y》` where the preceding Text event ends in
 ///   a run of ideographs. The base is the trailing kanji run of that
 ///   Text; any non-kanji prefix remains plain.
+///
+/// The `《…》` reading body is walked with [`build_content_from_body`]
+/// so nested `※［＃…］` gaiji and `［＃…］` annotations fold into the
+/// returned `Content` as `Segment::Gaiji` / `Segment::Annotation`.
+/// Pure-text readings collapse back to [`Content::Plain`] via
+/// [`Content::from_segments`].
 ///
 /// Returns `None` if neither shape applies (empty reading, no
 /// preceding Text, no kanji for implicit).
@@ -349,8 +366,8 @@ fn recognize_ruby<'s>(
     else {
         return None;
     };
-    let reading = &source[open_span.end as usize..close_span.start as usize];
-    if reading.is_empty() {
+    if open_span.end >= close_span.start {
+        // Empty reading — the `《…》` body has no bytes.
         return None;
     }
     if open_idx == 0 {
@@ -363,6 +380,15 @@ fn recognize_ruby<'s>(
         return None;
     };
     let prev_text = &source[prev_range.start as usize..prev_range.end as usize];
+
+    let reading = build_content_from_body(
+        events,
+        source,
+        &BodyWindow {
+            events: open_idx + 1..close_idx,
+            bytes: open_span.end..close_span.start,
+        },
+    );
 
     // Explicit form: Solo(Bar) two events before the open, with the
     // Text between them acting as the base.
@@ -398,6 +424,206 @@ fn recognize_ruby<'s>(
         consume_start,
         consume_end: close_span.end,
     })
+}
+
+/// Half-open window into a [`PairEvent`] stream. Bundles the event-
+/// index range with the matching byte-offset range so
+/// [`build_content_from_body`] can flush text segments using source
+/// byte slices without re-derefing event spans on every iteration.
+///
+/// The two ranges are redundant in principle — `bytes.start` always
+/// equals `events[events.start]`'s leading edge — but caching them
+/// avoids a branch when the range is empty and makes the helper
+/// signature honest about what it needs.
+struct BodyWindow {
+    events: Range<usize>,
+    bytes: Range<u32>,
+}
+
+/// Walk `window` over `events` and build the corresponding
+/// [`Content`].
+///
+/// Each nested `※［＃description、mencode］` reduces to a
+/// [`Segment::Gaiji`] via [`recognize_gaiji`]; each standalone
+/// `［＃…］` reduces to a [`Segment::Annotation`] via
+/// [`recognize_annotation`]. Every other byte (plain text, stray
+/// triggers, unmatched delimiters) is captured into adjacent
+/// [`Segment::Text`] runs by tracking a single "outstanding text
+/// start" byte offset and flushing only when a recognisable construct
+/// consumes the intervening bytes.
+///
+/// Non-Annotation Aozora emits (a paired-container opener, a block
+/// leaf, etc.) are *not* first-class segments and are folded back
+/// into `Annotation{Unknown}` with the raw bracket bytes — this keeps
+/// the Tier-A canary intact inside a ruby body regardless of how
+/// unusual the inner annotation shape is.
+///
+/// ## Fast path
+///
+/// [`has_nested_candidate`] first short-circuits the body scan: when
+/// no `Solo(RefMark)` and no `PairOpen(Bracket)` appear, the body is
+/// guaranteed to be plain text (possibly peppered with unrelated
+/// triggers like `｜` or mismatched quotes, which we treat as text).
+/// Returning `Content::from(&str)` in that branch skips the `Vec`
+/// allocation and the `from_segments` collapse pass — a win for the
+/// 99%+ of ruby readings that carry no embedded structure.
+///
+/// ## Slow path
+///
+/// The fallback is a single `O(body_events)` sweep. `text_start`
+/// tracks the earliest byte that has not yet been committed to a Text
+/// segment; flushing is strictly triggered by a *recognised* nested
+/// construct, so unrelated events cost a single index increment. Each
+/// recognition jumps to `close_idx + 1` using Phase 2's pre-linked
+/// pair indices, keeping the sweep strictly forward-only regardless
+/// of nesting depth.
+///
+/// The returned value is always normalised via
+/// [`Content::from_segments`], so a slow-path body that turned out to
+/// contain only text (for example because its brackets were malformed
+/// and skipped) still collapses back to [`Content::Plain`].
+fn build_content_from_body(events: &[PairEvent], source: &str, window: &BodyWindow) -> Content {
+    debug_assert!(
+        window.events.start <= window.events.end,
+        "body window event range must be non-inverted",
+    );
+    debug_assert!(
+        window.bytes.start <= window.bytes.end,
+        "body window byte range must be non-inverted",
+    );
+
+    let body_events = &events[window.events.start..window.events.end];
+    if !has_nested_candidate(body_events) {
+        // Fast path: no `※` and no `［` in the body; bytes pass
+        // through verbatim. `Content::from(&str)` maps empty input to
+        // `Content::Segments([])` and otherwise to `Content::Plain`.
+        let text = &source[window.bytes.start as usize..window.bytes.end as usize];
+        return Content::from(text);
+    }
+
+    // Slow path: at least one potential nested construct exists.
+    // Pre-size the segment vector: worst case is `ceil(n / 2)` runs of
+    // `Text, Construct, Text, …` plus one trailing Text. Capping at
+    // `body_events.len() + 1` is a safe upper bound that is small in
+    // practice (ruby readings almost never reach double-digit events).
+    let mut segments: Vec<Segment> = Vec::with_capacity(body_events.len() + 1);
+    let mut text_start: u32 = window.bytes.start;
+    let mut i = window.events.start;
+
+    while i < window.events.end {
+        // Shape 1: `※［＃…］` — Solo(RefMark) followed by PairOpen(Bracket).
+        if let PairEvent::Solo {
+            kind: TriggerKind::RefMark,
+            span: refmark_span,
+        } = events[i]
+        {
+            let bracket_idx = i + 1;
+            if bracket_idx < window.events.end
+                && let PairEvent::PairOpen {
+                    kind: PairKind::Bracket,
+                    close_idx,
+                    ..
+                } = events[bracket_idx]
+                && close_idx < window.events.end
+                && let Some(g) = recognize_gaiji(events, source, refmark_span, bracket_idx)
+            {
+                let AozoraNode::Gaiji(gaiji) = g.node else {
+                    // `recognize_gaiji` always produces an `AozoraNode::Gaiji`; any
+                    // other variant would be a bug in the recogniser itself.
+                    unreachable!("recognize_gaiji returned non-Gaiji AozoraNode");
+                };
+                push_text_segment(&mut segments, source, text_start, g.consume_start);
+                segments.push(Segment::Gaiji(gaiji));
+                text_start = g.consume_end;
+                i = close_idx + 1;
+                continue;
+            }
+        }
+
+        // Shape 2: `［＃…］` — a standalone bracket annotation. The
+        // RefMark+Bracket combo above has already had its chance to
+        // claim this event, so here we handle the remaining brackets.
+        // `recognize_annotation` has an Unknown catch-all and only
+        // returns `None` for malformed brackets (no `＃` sentinel);
+        // those fall through to `i += 1` and the bracket bytes stay
+        // inside the pending Text run.
+        if let PairEvent::PairOpen {
+            kind: PairKind::Bracket,
+            close_idx,
+            span: open_span,
+        } = events[i]
+            && close_idx < window.events.end
+            && let Some(a) = recognize_annotation(events, source, i, close_idx)
+        {
+            let PairEvent::PairClose {
+                span: close_span, ..
+            } = events[close_idx]
+            else {
+                // PairOpen's `close_idx` always targets a PairClose of the same
+                // kind; anything else would be a Phase 2 invariant violation.
+                unreachable!("PairOpen close_idx must target a PairClose");
+            };
+            // The emit may be a non-Annotation node (e.g. a nested
+            // block leaf or container marker) which has no home in a
+            // Segment. Downgrade those to `Annotation{Unknown}` so
+            // the Tier-A canary (no bare `［＃` in HTML) still holds.
+            let annotation = match a.emit {
+                EmitKind::Aozora(AozoraNode::Annotation(ann)) => ann,
+                _ => Annotation {
+                    raw: source[open_span.start as usize..close_span.end as usize].into(),
+                    kind: AnnotationKind::Unknown,
+                },
+            };
+            push_text_segment(&mut segments, source, text_start, a.consume_start);
+            segments.push(Segment::Annotation(annotation));
+            text_start = a.consume_end;
+            i = close_idx + 1;
+            continue;
+        }
+
+        i += 1;
+    }
+
+    push_text_segment(&mut segments, source, text_start, window.bytes.end);
+    Content::from_segments(segments)
+}
+
+/// Whether `body` could host a nested gaiji / annotation. The Phase 2
+/// event model guarantees that:
+///
+/// * `※［＃…］` always emits a `Solo(RefMark)` event at its `※`.
+/// * `［＃…］` always emits a `PairOpen(Bracket)` event at its `［`.
+///
+/// So the absence of both event shapes in the body is sufficient proof
+/// that no nested construct can be recognised, allowing
+/// [`build_content_from_body`] to take the allocation-free fast path.
+fn has_nested_candidate(body: &[PairEvent]) -> bool {
+    body.iter().any(|e| {
+        matches!(
+            e,
+            PairEvent::Solo {
+                kind: TriggerKind::RefMark,
+                ..
+            } | PairEvent::PairOpen {
+                kind: PairKind::Bracket,
+                ..
+            }
+        )
+    })
+}
+
+/// Append `source[start..end]` to `segments` as a `Segment::Text` if
+/// the slice is non-empty. `start == end` occurs naturally when a
+/// recognised construct sits at the very start of the body or
+/// immediately follows a previous one; skipping those zero-length
+/// flushes keeps the post-collapse invariant "no empty `Text` in a
+/// `Segments` run" (see `Content::from_segments`) without a second
+/// compaction pass.
+#[inline]
+fn push_text_segment(segments: &mut Vec<Segment>, source: &str, start: u32, end: u32) {
+    if end > start {
+        segments.push(Segment::Text(source[start as usize..end as usize].into()));
+    }
 }
 
 /// Intermediate result of [`recognize_gaiji`].
@@ -1138,6 +1364,192 @@ mod tests {
             "expected no Aozora spans, got {:?}",
             out.spans
         );
+    }
+
+    // ---------------------------------------------------------------
+    // F1 — Ruby reading Content::Segments (nested gaiji / annotation)
+    // ---------------------------------------------------------------
+
+    /// Pull the sole `SpanKind::Aozora(Ruby(...))` out of a
+    /// [`ClassifyOutput`] so F1 tests can assert on the Ruby payload
+    /// without repeating the shape-match boilerplate.
+    fn only_ruby(out: &ClassifyOutput) -> &Ruby {
+        let mut found = None;
+        for span in &out.spans {
+            if let SpanKind::Aozora(AozoraNode::Ruby(ref r)) = span.kind {
+                assert!(found.is_none(), "more than one Ruby span: {:?}", out.spans);
+                found = Some(r);
+            }
+        }
+        found.unwrap_or_else(|| panic!("no Ruby span in {:?}", out.spans))
+    }
+
+    #[test]
+    fn ruby_plain_reading_still_collapses_to_plain_content() {
+        // F1 must not regress the plain-text ruby case: when the body
+        // holds only text, `Content::from_segments` is obliged to
+        // collapse back to `Content::Plain` so `.as_plain()` returns
+        // `Some(&str)` for downstream consumers (renderer fast path,
+        // property tests that assert the textual shape).
+        let out = run("｜青梅《おうめ》");
+        let r = only_ruby(&out);
+        assert_eq!(r.base.as_plain(), Some("青梅"));
+        assert_eq!(r.reading.as_plain(), Some("おうめ"));
+    }
+
+    #[test]
+    fn ruby_reading_with_embedded_gaiji_produces_segments() {
+        // `※［＃「ほ」、第3水準1-85-54］` inside the reading must fold
+        // into a `Segment::Gaiji` between Text segments so the renderer
+        // can wrap it in `<span class="afm-gaiji">` without leaking the
+        // bare `［＃` marker (Tier A).
+        let out = run("｜日本《に※［＃「ほ」、第3水準1-85-54］ん》");
+        let r = only_ruby(&out);
+        assert_eq!(r.base.as_plain(), Some("日本"));
+        let Content::Segments(ref segs) = r.reading else {
+            panic!("expected Segments, got {:?}", r.reading);
+        };
+        assert_eq!(segs.len(), 3);
+        assert!(
+            matches!(&segs[0], Segment::Text(t) if &**t == "に"),
+            "segment 0: {:?}",
+            segs[0]
+        );
+        let Segment::Gaiji(ref g) = segs[1] else {
+            panic!("segment 1 should be Gaiji, got {:?}", segs[1]);
+        };
+        assert_eq!(&*g.description, "ほ");
+        assert_eq!(g.mencode.as_deref(), Some("第3水準1-85-54"));
+        assert!(
+            matches!(&segs[2], Segment::Text(t) if &**t == "ん"),
+            "segment 2: {:?}",
+            segs[2]
+        );
+    }
+
+    #[test]
+    fn ruby_reading_wholly_gaiji_produces_single_gaiji_segment() {
+        // No surrounding text; the reading is exactly one gaiji
+        // marker. The Segments run must be a single Gaiji (not a
+        // trailing empty Text on either side).
+        let out = run("｜日本《※［＃「にほん」、第3水準1-85-54］》");
+        let r = only_ruby(&out);
+        let Content::Segments(ref segs) = r.reading else {
+            panic!("expected Segments, got {:?}", r.reading);
+        };
+        assert_eq!(segs.len(), 1);
+        let Segment::Gaiji(ref g) = segs[0] else {
+            panic!("expected Gaiji, got {:?}", segs[0]);
+        };
+        assert_eq!(&*g.description, "にほん");
+    }
+
+    #[test]
+    fn ruby_reading_with_trailing_annotation_produces_annotation_segment() {
+        // `［＃ママ］` inside a reading indicates editorial "sic" —
+        // must fold as `Segment::Annotation` so the renderer wraps it
+        // in the hidden `afm-annotation` span (Tier A compliance).
+        let out = run("｜日本《にほん［＃ママ］》");
+        let r = only_ruby(&out);
+        let Content::Segments(ref segs) = r.reading else {
+            panic!("expected Segments, got {:?}", r.reading);
+        };
+        assert_eq!(segs.len(), 2);
+        assert!(
+            matches!(&segs[0], Segment::Text(t) if &**t == "にほん"),
+            "segment 0: {:?}",
+            segs[0]
+        );
+        let Segment::Annotation(ref a) = segs[1] else {
+            panic!("segment 1 should be Annotation, got {:?}", segs[1]);
+        };
+        assert_eq!(&*a.raw, "［＃ママ］");
+    }
+
+    #[test]
+    fn ruby_reading_with_gaiji_and_annotation_interleaved() {
+        // Exercises the general Segments shape: Text, Gaiji, Text,
+        // Annotation. Proves the flusher preserves ordering and the
+        // `text_start` advancement correctly spans each gap.
+        let out = run("｜日本《に※［＃「ほ」、第3水準1-85-54］ん［＃ママ］》");
+        let r = only_ruby(&out);
+        let Content::Segments(ref segs) = r.reading else {
+            panic!("expected Segments, got {:?}", r.reading);
+        };
+        assert_eq!(segs.len(), 4);
+        assert!(matches!(&segs[0], Segment::Text(t) if &**t == "に"));
+        assert!(matches!(&segs[1], Segment::Gaiji(_)));
+        assert!(matches!(&segs[2], Segment::Text(t) if &**t == "ん"));
+        assert!(matches!(&segs[3], Segment::Annotation(_)));
+    }
+
+    #[test]
+    fn implicit_ruby_reading_with_embedded_gaiji_also_produces_segments() {
+        // Implicit form must use the same body walker; only the base
+        // extraction differs (trailing-kanji run instead of explicit
+        // `｜`-delimited Text event).
+        let out = run("日本《に※［＃「ほ」、第3水準1-85-54］ん》");
+        let r = only_ruby(&out);
+        assert_eq!(r.base.as_plain(), Some("日本"));
+        assert!(!r.delim_explicit);
+        let Content::Segments(ref segs) = r.reading else {
+            panic!("expected Segments, got {:?}", r.reading);
+        };
+        assert_eq!(segs.len(), 3);
+        assert!(matches!(&segs[0], Segment::Text(t) if &**t == "に"));
+        assert!(matches!(&segs[1], Segment::Gaiji(_)));
+        assert!(matches!(&segs[2], Segment::Text(t) if &**t == "ん"));
+    }
+
+    #[test]
+    fn ruby_reading_consume_span_still_covers_outer_source_bytes() {
+        // The Segments lift must not disturb the outer `source_span`
+        // of the classified span: Phase 4 still needs to replace the
+        // full `｜…《…》` bytes with a single PUA sentinel, and the
+        // inner gaiji/annotation source bytes are folded into the
+        // Ruby payload — not re-exposed to the outer classifier.
+        let src = "｜日本《に※［＃「ほ」、第3水準1-85-54］ん》";
+        let out = run(src);
+        let aozora_spans: Vec<_> = out
+            .spans
+            .iter()
+            .filter(|s| matches!(s.kind, SpanKind::Aozora(_)))
+            .collect();
+        assert_eq!(
+            aozora_spans.len(),
+            1,
+            "nested gaiji must stay inside the Ruby payload, not leak into a \
+             sibling span at the top level: {:?}",
+            out.spans
+        );
+        assert_eq!(
+            aozora_spans[0].source_span.end as usize,
+            src.len(),
+            "ruby span must cover through the final `》`"
+        );
+        assert_eq!(aozora_spans[0].source_span.start, 0);
+    }
+
+    #[test]
+    fn ruby_reading_preserves_tier_a_even_for_nested_block_leaf() {
+        // `［＃改ページ］` inside a ruby reading is nonsensical, but
+        // real corpora have been known to carry freak shapes. The
+        // non-Annotation emit path in `build_content_from_body` must
+        // downgrade such shapes into `Annotation{Unknown}` so the
+        // bare `［＃` never reaches the rendered HTML through a
+        // `Segment::Text` channel (Tier A canary).
+        let out = run("｜日本《にほん［＃改ページ］》");
+        let r = only_ruby(&out);
+        let Content::Segments(ref segs) = r.reading else {
+            panic!("expected Segments, got {:?}", r.reading);
+        };
+        // Last segment must be an Annotation carrying the raw bytes.
+        let last = segs.last().expect("non-empty segments");
+        let Segment::Annotation(a) = last else {
+            panic!("final segment should be Annotation, got {last:?}");
+        };
+        assert_eq!(&*a.raw, "［＃改ページ］");
+        assert_eq!(a.kind, AnnotationKind::Unknown);
     }
 
     #[test]
