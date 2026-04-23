@@ -1,37 +1,16 @@
-//! Render-side extension contract between the forked comrak parser and afm-parser.
+//! Extension-seam type that the forked comrak parser still needs.
 //!
-//! See ADR-0008 for the architectural rationale. Since the ADR-0008 cutover
-//! (E1), Aozora **parsing** happens entirely in `afm-lexer` + `afm-parser`'s
-//! post-process AST walk — comrak sees only normalized CommonMark text with
-//! PUA sentinels. The only hook that survives on comrak's side is the
-//! **render** dispatch: comrak's HTML renderer encounters
-//! `NodeValue::Aozora(_)` arms and needs a way to delegate rendering.
+//! Post-ADR-0008 (D2), the only afm seam inside comrak is a render-side
+//! `fn` pointer on `comrak::ExtensionOptions::render_aozora`. There is
+//! no trait object, no extension trait, and no parse-side hook. The
+//! `AozoraNode` variant on `NodeValue::Aozora` is carried by the lexer
+//! and `afm-parser::post_process` splice step, and the render callback
+//! simply writes an `AozoraNode` into a formatter.
 //!
-//! The trait lives in `afm-syntax` (beside [`AozoraNode`]) rather than inside
-//! comrak or afm-parser so that both can depend on it without creating a
-//! dependency cycle:
-//!
-//! ```text
-//!   comrak (fork) ──► afm-syntax ◄── afm-parser ──► comrak
-//!         (trait + NodeValue arm)          (impl)
-//! ```
-//!
-//! Implementations must be `Send + Sync + RefUnwindSafe`: comrak may run
-//! rendering under `catch_unwind` and share the extension across threads
-//! via `Arc`.
-//!
-//! A future commit (D2) converts this trait-object dispatch to a naked
-//! `fn` pointer on `comrak::Options`; the trait is kept for one more
-//! milestone so the upstream diff shrinks in two reviewable steps.
-//!
-//! [`ContainerKind`] is carried here (not the `AozoraNode` module) because
-//! the lexer's Phase 3 classification and Phase 4 normalization both need
-//! it, and `afm-syntax` is the common dependency.
-
-use core::fmt;
-use std::panic::RefUnwindSafe;
-
-use crate::AozoraNode;
+//! This module survives solely to carry [`ContainerKind`] — the
+//! paired-container classifier's tag — which is produced by the lexer's
+//! Phase 3 classification and consumed by `afm-parser::post_process`'s
+//! future paired-container splice (F5 schema extension pending).
 
 /// The kinds of Aozora container blocks the lexer classifies.
 ///
@@ -50,35 +29,6 @@ pub enum ContainerKind {
     Keigakomi,
     /// `［＃ここから地付き］` / `［＃ここから地から N 字上げ］`
     AlignEnd { offset: u8 },
-}
-
-/// Render-side hook surface registered with comrak via
-/// `comrak::ExtensionOptions::aozora: Option<Arc<dyn AozoraExtension + 'c>>`.
-///
-/// `render_html` takes `&self`; any state that must change during rendering
-/// should be held behind `Mutex` or `AtomicXxx`. Implementations must uphold
-/// the bounds listed at trait level — comrak may run the renderer under
-/// `catch_unwind` and may share the extension across threads.
-pub trait AozoraExtension: Send + Sync + RefUnwindSafe {
-    /// Render a recognised [`AozoraNode`] to HTML. Called from comrak's
-    /// renderer at the one `NodeValue::Aozora(_)` arm. The extension emits
-    /// well-formed, correctly-escaped HTML; it must not write raw text that
-    /// would break the surrounding structure.
-    ///
-    /// Uses [`core::fmt::Write`] (rather than `std::io::Write`) to match
-    /// comrak's formatter-based output pipeline, avoiding an extra UTF-8
-    /// bridge.
-    ///
-    /// # Errors
-    ///
-    /// Propagates formatter write errors.
-    fn render_html(&self, node: &AozoraNode, writer: &mut dyn fmt::Write) -> fmt::Result;
-}
-
-impl fmt::Debug for dyn AozoraExtension + '_ {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("<dyn AozoraExtension>")
-    }
 }
 
 #[cfg(test)]

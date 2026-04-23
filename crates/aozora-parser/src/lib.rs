@@ -5,14 +5,16 @@
 //! points:
 //!
 //! - [`parse`] — run the parser over a UTF-8 source into a comrak arena,
-//!   returning the root node and a Diagnostics collector.
+//!   returning the root node.
 //! - [`html::render_to_string`] — render the parsed tree to HTML.
-//! - [`Options`] — configuration; defaults enable the Aozora extension.
+//! - [`Options`] — configuration; defaults enable the Aozora render hook.
 //!
-//! Internal layout:
-//! - `adapter` implements [`afm_syntax::AozoraExtension`] for the fork.
-//! - `aozora/` holds the per-kind recognisers (`ruby.rs`, future `bouten.rs`, …)
-//!   and the HTML renderer (`html.rs`).
+//! Internal layout (post ADR-0008, E1/D1/D2):
+//! - `aozora/html` is the HTML renderer; its `render` function is registered
+//!   on `comrak::Options.extension.render_aozora` as a naked `fn` pointer.
+//! - `post_process` splices `NodeValue::Aozora(...)` nodes into comrak's AST
+//!   at each PUA sentinel the lexer planted.
+//! - `preparse` handles `〔...〕` accent decomposition ahead of the lexer.
 
 #![forbid(unsafe_code)]
 
@@ -20,19 +22,14 @@ pub mod aozora;
 pub mod html;
 pub mod preparse;
 
-mod adapter;
-
 #[doc(hidden)]
 pub mod test_support;
-
-use std::sync::Arc;
 
 use comrak::Arena;
 use comrak::nodes::AstNode;
 
 pub mod post_process;
 
-pub use adapter::AfmAdapter;
 pub use comrak::{Arena as ComrakArena, Options as ComrakOptions};
 
 /// Parse-time options.
@@ -46,13 +43,13 @@ pub struct Options<'c> {
 }
 
 impl Options<'_> {
-    /// Default configuration for afm documents: Aozora extension enabled, GFM
-    /// super-set enabled (tables, strikethrough, autolink, tasklist), and the
-    /// CommonMark 0.31.2 defaults left intact.
+    /// Default configuration for afm documents: Aozora render hook enabled,
+    /// GFM super-set enabled (tables, strikethrough, autolink, tasklist), and
+    /// the CommonMark 0.31.2 defaults left intact.
     #[must_use]
     pub fn afm_default() -> Self {
         let mut comrak = comrak::Options::default();
-        comrak.extension.aozora = Some(Arc::new(AfmAdapter));
+        comrak.extension.render_aozora = Some(aozora::html::render);
         comrak.extension.strikethrough = true;
         comrak.extension.table = true;
         comrak.extension.autolink = true;
@@ -112,7 +109,7 @@ impl Options<'_> {
 /// straight `comrak::parse_document` passthrough — CommonMark / GFM only.
 #[must_use]
 pub fn parse<'a>(arena: &'a Arena<'a>, input: &str, options: &Options<'_>) -> &'a AstNode<'a> {
-    if options.comrak.extension.aozora.is_some() {
+    if options.comrak.extension.render_aozora.is_some() {
         let preparsed = preparse::apply_preparse(input);
         let lex_out = afm_lexer::lex(&preparsed);
         let root = comrak::parse_document(arena, &lex_out.normalized, &options.comrak);
