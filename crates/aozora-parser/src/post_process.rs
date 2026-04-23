@@ -36,9 +36,9 @@
 //! C4 of the `post_process` branch (this commit, D3) handles inline
 //! splice. Block-level splice lands in D4.
 
-use std::mem;
+use std::{mem, ptr};
 
-use afm_lexer::{INLINE_SENTINEL, PlaceholderRegistry};
+use afm_lexer::{BLOCK_LEAF_SENTINEL, INLINE_SENTINEL, PlaceholderRegistry};
 use afm_syntax::AozoraNode;
 use comrak::Arena;
 use comrak::nodes::{AstNode, NodeValue};
@@ -146,6 +146,75 @@ fn alloc_text<'a>(arena: &'a Arena<'a>, text: String) -> &'a AstNode<'a> {
 
 fn alloc_aozora<'a>(arena: &'a Arena<'a>, node: AozoraNode) -> &'a AstNode<'a> {
     arena.alloc(NodeValue::Aozora(Box::new(node)).into())
+}
+
+/// Walk `root` and replace every single-sentinel paragraph
+/// (`Paragraph > Text("\u{E002}")`) with the corresponding
+/// [`AozoraNode`] from the block-leaf registry.
+///
+/// Comrak parses the lexer's block-leaf sentinel line (surrounded by
+/// `\n`) as a one-char `Paragraph > Text` pair. This pass detects
+/// that pattern and swaps the paragraph for a new `Aozora` node in
+/// place, preserving sibling order.
+///
+/// Paired-container splicing (block-open / block-close sentinels) is
+/// deferred to D4b — it needs a two-pass stack walk that also
+/// reparents sibling blocks, which is substantially more involved.
+pub fn splice_block_leaf<'a>(
+    arena: &'a Arena<'a>,
+    root: &'a AstNode<'a>,
+    registry: &PlaceholderRegistry,
+) {
+    let paragraphs: Vec<&AstNode<'_>> = root
+        .descendants()
+        .filter(|n| matches!(n.data.borrow().value, NodeValue::Paragraph))
+        .collect();
+
+    let mut cursor = 0usize;
+    for para in paragraphs {
+        if !is_single_sentinel_paragraph(para, BLOCK_LEAF_SENTINEL) {
+            continue;
+        }
+        let Some((_, node)) = registry.block_leaf.get(cursor) else {
+            // Desync: leave the paragraph in place (the sentinel stays
+            // visible in the HTML output, which makes the drift
+            // diagnosable) and keep walking.
+            continue;
+        };
+        let aozora = alloc_aozora(arena, node.clone());
+        para.insert_before(aozora);
+        para.detach();
+        cursor += 1;
+    }
+}
+
+/// Returns `true` when `para` is a `Paragraph` whose single child is
+/// a `Text` node containing exactly one `expected` sentinel character
+/// (trimmed of surrounding ASCII whitespace that comrak may preserve
+/// from line-folding).
+fn is_single_sentinel_paragraph(para: &AstNode<'_>, expected: char) -> bool {
+    if !matches!(para.data.borrow().value, NodeValue::Paragraph) {
+        return false;
+    }
+    let Some(first) = para.first_child() else {
+        return false;
+    };
+    if !ptr::eq(
+        first,
+        para.last_child().expect("first_child implies last_child"),
+    ) {
+        return false;
+    }
+    let data = first.data.borrow();
+    let NodeValue::Text(ref text) = data.value else {
+        return false;
+    };
+    let trimmed = text.trim();
+    let mut chars = trimmed.chars();
+    let Some(only) = chars.next() else {
+        return false;
+    };
+    only == expected && chars.next().is_none()
 }
 
 #[cfg(test)]
@@ -293,5 +362,89 @@ mod tests {
             .filter(|n| matches!(n.data.borrow().value, NodeValue::Aozora(_)))
             .count();
         assert_eq!(aozora_count, 0);
+    }
+
+    #[test]
+    fn splice_block_leaf_replaces_page_break_paragraph() {
+        let arena = Arena::new();
+        let (root, registry) = lex_and_parse(&arena, "前\n\n［＃改ページ］\n\n後");
+        splice_block_leaf(&arena, root, &registry);
+        // Expect a direct child of the document that is Aozora(PageBreak).
+        let page_break_count = root
+            .children()
+            .filter(|n| {
+                if let NodeValue::Aozora(ref node) = n.data.borrow().value {
+                    matches!(**node, AozoraNode::PageBreak)
+                } else {
+                    false
+                }
+            })
+            .count();
+        assert_eq!(page_break_count, 1);
+    }
+
+    #[test]
+    fn splice_block_leaf_preserves_surrounding_paragraphs() {
+        let arena = Arena::new();
+        let (root, registry) = lex_and_parse(&arena, "前\n\n［＃改ページ］\n\n後");
+        splice_block_leaf(&arena, root, &registry);
+        // First child = Paragraph("前"); middle = Aozora(PageBreak);
+        // last = Paragraph("後").
+        let kinds: Vec<&'static str> = root
+            .children()
+            .map(|n| match n.data.borrow().value {
+                NodeValue::Paragraph => "paragraph",
+                NodeValue::Aozora(_) => "aozora",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, vec!["paragraph", "aozora", "paragraph"]);
+    }
+
+    #[test]
+    fn splice_block_leaf_does_not_touch_non_sentinel_paragraphs() {
+        let arena = Arena::new();
+        let (root, registry) = lex_and_parse(&arena, "plain paragraph");
+        splice_block_leaf(&arena, root, &registry);
+        // No Aozora child at all.
+        assert!(
+            root.children()
+                .all(|n| !matches!(n.data.borrow().value, NodeValue::Aozora(_))),
+        );
+    }
+
+    #[test]
+    fn splice_block_leaf_handles_section_breaks_too() {
+        let arena = Arena::new();
+        let (root, registry) = lex_and_parse(&arena, "前\n\n［＃改丁］\n\n後");
+        splice_block_leaf(&arena, root, &registry);
+        let has_section_break = root.children().any(|n| {
+            matches!(
+                n.data.borrow().value,
+                NodeValue::Aozora(ref node) if matches!(**node, AozoraNode::SectionBreak(_))
+            )
+        });
+        assert!(has_section_break);
+    }
+
+    #[test]
+    fn splice_block_leaf_empty_registry_leaves_paragraph_in_place() {
+        let arena = Arena::new();
+        let lex_out = lex("［＃改ページ］");
+        let opts = Options::default();
+        let root = parse_document(&arena, &lex_out.normalized, &opts);
+        let empty_registry = PlaceholderRegistry::default();
+        splice_block_leaf(&arena, root, &empty_registry);
+        // The paragraph should remain, still carrying the sentinel as
+        // a Text child.
+        assert!(
+            root.children()
+                .any(|n| matches!(n.data.borrow().value, NodeValue::Paragraph)),
+        );
+        assert!(
+            !root
+                .children()
+                .any(|n| matches!(n.data.borrow().value, NodeValue::Aozora(_))),
+        );
     }
 }
