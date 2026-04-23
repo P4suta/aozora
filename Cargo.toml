@@ -55,6 +55,14 @@ keyword_idents_2024        = "warn"  # 2024-edition reserved keywords as idents
 variant_size_differences   = "warn"  # large enum variants — push to `Box`
 ambiguous_negative_literals = "warn" # `-1.pow(2)` precedence traps
 
+# Dead-code policy: the compiler already `warn`s about unused items, and our
+# `cargo clippy -- -D warnings` gate promotes that to an error at CI time. We
+# spell it out as `deny` here so the policy is visible in the manifest and
+# so a local `cargo build` (which doesn't pass `-D warnings`) still hard-fails
+# on unreferenced items — keeps stale recognisers / scaffolding code from
+# piling up across refactors.
+dead_code = "deny"
+
 # Warn on edition-drift so we catch idioms deprecated by the next edition early.
 rust_2024_compatibility = { level = "warn", priority = -1 }
 

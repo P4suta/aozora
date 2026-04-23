@@ -25,7 +25,6 @@ mod adapter;
 #[doc(hidden)]
 pub mod test_support;
 
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use comrak::Arena;
@@ -93,68 +92,36 @@ impl Options<'_> {
 /// Parse a UTF-8 source buffer into a comrak AST with Aozora annotations
 /// recognised.
 ///
-/// Delegates to [`parse_via_lexer`] when the Aozora extension is enabled —
-/// the ADR-0008 cutover is complete and the lexer + `post_process`
-/// pipeline is the production path. The adapter entrypoint
-/// ([`parse_via_adapter`]) remains exposed as a hidden diagnostic hook so
-/// the `path_parity` harness can keep comparing both paths until the
-/// upstream `AozoraExtension` parse hooks are removed (D1) and the
-/// adapter module is deleted (E2).
+/// ADR-0008 pipeline (the only path since E1 + D1 landed):
+///
+/// 1. [`preparse::apply_preparse`] — accent decomposition inside `〔...〕`
+///    spans (ADR-0004). C5b folds this into the lexer in a later commit.
+/// 2. [`afm_lexer::lex`] — tokenise + pair + classify + normalise every
+///    Aozora construct into a PUA sentinel (`U+E001..U+E004`) plus a
+///    `PlaceholderRegistry` that maps each sentinel back to its
+///    `AozoraNode` / `ContainerKind`.
+/// 3. `comrak::parse_document` on the normalised text — comrak sees only
+///    plain CommonMark+GFM. Aozora parse hooks were removed from the
+///    fork in D1; the only surviving comrak/afm seam is the render-side
+///    `AozoraExtension::render_html`.
+/// 4. [`post_process::splice_inline`] / [`post_process::splice_block_leaf`]
+///    — walk the resulting AST, replace sentinels with real
+///    `NodeValue::Aozora(...)` nodes from the registry.
+///
+/// When the Aozora extension is not enabled on `options`, this is a
+/// straight `comrak::parse_document` passthrough — CommonMark / GFM only.
 #[must_use]
 pub fn parse<'a>(arena: &'a Arena<'a>, input: &str, options: &Options<'_>) -> &'a AstNode<'a> {
     if options.comrak.extension.aozora.is_some() {
-        parse_via_lexer(arena, input, options)
+        let preparsed = preparse::apply_preparse(input);
+        let lex_out = afm_lexer::lex(&preparsed);
+        let root = comrak::parse_document(arena, &lex_out.normalized, &options.comrak);
+        post_process::splice_inline(arena, root, &lex_out.registry);
+        post_process::splice_block_leaf(arena, root, &lex_out.registry);
+        root
     } else {
         comrak::parse_document(arena, input, &options.comrak)
     }
-}
-
-/// Legacy path: run `preparse` for accent decomposition, then let the
-/// comrak-fork adapter (inline + block hooks) drive Aozora recognition
-/// during parsing. Equivalent to the implementation of [`parse`] before
-/// ADR-0008.
-///
-/// Publicly hidden — exists to let the `path_parity` harness compare
-/// adapter output against [`parse_via_lexer`]. After the cutover (E1) and
-/// upstream hook removal (D1), this entrypoint will be deleted along with
-/// `adapter.rs`.
-#[must_use]
-#[doc(hidden)]
-pub fn parse_via_adapter<'a>(
-    arena: &'a Arena<'a>,
-    input: &str,
-    options: &Options<'_>,
-) -> &'a AstNode<'a> {
-    let source: Cow<'_, str> = preparse::apply_preparse(input);
-    comrak::parse_document(arena, &source, &options.comrak)
-}
-
-/// Cutover-target path (ADR-0008): run the Aozora lexer to normalise every
-/// construct into PUA sentinels, feed the sentinel-only text to comrak as
-/// plain CommonMark+GFM, then AST-walk to splice `NodeValue::Aozora(...)`
-/// nodes back in at each sentinel.
-///
-/// Publicly hidden — exists so the `path_parity` harness can run it
-/// side-by-side with [`parse_via_adapter`] during the cutover. Once the
-/// harness reaches green parity on every curated case, E1 flips [`parse`]
-/// to delegate here.
-///
-/// Accent decomposition inside `〔...〕` still runs through the preparse
-/// step as in the adapter path — folding it into the lexer is tracked as
-/// C5b in the plan.
-#[must_use]
-#[doc(hidden)]
-pub fn parse_via_lexer<'a>(
-    arena: &'a Arena<'a>,
-    input: &str,
-    options: &Options<'_>,
-) -> &'a AstNode<'a> {
-    let preparsed = preparse::apply_preparse(input);
-    let lex_out = afm_lexer::lex(&preparsed);
-    let root = comrak::parse_document(arena, &lex_out.normalized, &options.comrak);
-    post_process::splice_inline(arena, root, &lex_out.registry);
-    post_process::splice_block_leaf(arena, root, &lex_out.registry);
-    root
 }
 
 #[cfg(test)]

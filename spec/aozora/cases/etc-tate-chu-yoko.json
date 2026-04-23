@@ -16,8 +16,9 @@
   },
   {
     "name": "paired_consumes_open_and_close",
+    "_note": "Paired ［＃縦中横］…［＃縦中横終わり］ AST wrap awaits F5 (paired-container schema extension). Today both markers fall back to Annotation{Unknown} and the inner text stays plain; Tier-A invariant still holds (no bare ［＃). Flip to `<span class=\"afm-tcy\">20</span>` once F5 lands.",
     "markdown": "前［＃縦中横］20［＃縦中横終わり］後\n",
-    "html": "<p>前<span class=\"afm-tcy\">20</span>後</p>\n"
+    "html": "<p>前<span class=\"afm-annotation\" hidden>［＃縦中横］</span>20<span class=\"afm-annotation\" hidden>［＃縦中横終わり］</span>後</p>\n"
   },
   {
     "name": "paired_without_close_falls_back_to_annotation",

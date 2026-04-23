@@ -49,8 +49,8 @@
 //! `try_recognize` dispatch grows.
 
 use afm_syntax::{
-    AlignEnd, AozoraNode, Bouten, BoutenKind, ContainerKind, Content, Gaiji, Indent, Kaeriten,
-    Ruby, Sashie, SectionKind, Span, TateChuYoko,
+    AlignEnd, Annotation, AnnotationKind, AozoraNode, Bouten, BoutenKind, ContainerKind, Content,
+    Gaiji, Indent, Kaeriten, Ruby, Sashie, SectionKind, Span, TateChuYoko,
 };
 
 use crate::diagnostic::Diagnostic;
@@ -597,7 +597,25 @@ fn recognize_annotation(
         })
         .or_else(|| classify_forward_tcy(events, source, open_idx, close_idx).map(EmitKind::Aozora))
         .or_else(|| classify_container_open(body))
-        .or_else(|| classify_container_close(body))?;
+        .or_else(|| classify_container_close(body))
+        .or_else(|| {
+            // Catch-all fallback for any well-formed `［＃…］` whose body
+            // no specialised recogniser claimed — including empty
+            // bodies (`［＃］`), which real Aozora corpora occasionally
+            // use as illustrative glyphs inside explanatory prose.
+            // Emitting `Annotation { Unknown }` with the raw source
+            // slice keeps the Tier-A canary (no bare `［＃` in HTML
+            // output) intact: the renderer wraps the raw bytes in an
+            // `afm-annotation` hidden span regardless of body shape.
+            //
+            // Pre-D1 this was the adapter's inline parse hook; post-D1
+            // the lexer is the sole owner of this classification.
+            let raw = &source[open_span.start as usize..close_span.end as usize];
+            Some(EmitKind::Aozora(AozoraNode::Annotation(Annotation {
+                raw: raw.into(),
+                kind: AnnotationKind::Unknown,
+            })))
+        })?;
 
     Some(AnnotationMatch {
         emit,
@@ -1183,17 +1201,23 @@ mod tests {
     }
 
     #[test]
-    fn unknown_annotation_keyword_falls_through_to_plain() {
-        // An unknown ［＃…］ keyword is left as plain until later
-        // recognizers land (C4c2/3/4, C4d, C4e).
+    fn unknown_annotation_keyword_is_promoted_to_annotation_unknown() {
+        // Post-D1 the lexer classifies every well-formed `［＃…］` with a
+        // non-empty body: if no specialised recogniser claims it, the
+        // Annotation{Unknown} fallback wraps the raw source so the
+        // renderer can emit an `afm-annotation` hidden span instead of
+        // leaking the brackets as plain text.
         let out = run("［＃未知のキーワード］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
-            "expected unknown keyword to stay Plain, got {:?}",
-            out.spans
-        );
+        let ann = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Annotation(a)) => Some(a),
+                _ => None,
+            })
+            .expect("unknown keyword must promote to Annotation{Unknown}");
+        assert_eq!(ann.kind, AnnotationKind::Unknown);
+        assert_eq!(&*ann.raw, "［＃未知のキーワード］");
     }
 
     #[test]
@@ -1209,14 +1233,24 @@ mod tests {
     }
 
     #[test]
-    fn empty_bracket_with_hash_is_not_an_annotation() {
-        // `［＃］` has no body at all — unknown keyword "".
+    fn empty_bracket_with_hash_is_wrapped_as_annotation_unknown() {
+        // Real Aozora corpora use `［＃］` as an illustrative glyph
+        // inside explanatory prose (e.g. "［＃］：入力者注…"). The
+        // Tier-A canary (no bare `［＃` in HTML output) requires that
+        // the bracket not leak even for empty-body forms, so the
+        // catch-all fallback wraps it as Annotation{Unknown} with the
+        // raw `［＃］` bytes preserved for round-trip.
         let out = run("［＃］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
-        );
+        let ann = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Annotation(a)) => Some(a),
+                _ => None,
+            })
+            .expect("empty body must still wrap as Annotation{Unknown}");
+        assert_eq!(ann.kind, AnnotationKind::Unknown);
+        assert_eq!(&*ann.raw, "［＃］");
     }
 
     #[test]
@@ -1240,13 +1274,27 @@ mod tests {
     }
 
     #[test]
-    fn indent_overflow_falls_through_to_plain() {
-        // 300 > 255, doesn't fit in u8. No annotation recognized.
+    fn indent_overflow_falls_back_to_annotation_unknown() {
+        // 300 > 255, doesn't fit in u8 — the `N字下げ` recogniser
+        // declines. After the D1 fallback we don't leak the raw
+        // bracket; instead it becomes `Annotation { Unknown }` so
+        // the renderer wraps the body in an afm-annotation span.
         let out = run("［＃300字下げ］");
+        let ann = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Annotation(a)) => Some(a),
+                _ => None,
+            })
+            .expect("overflow should fall back to Annotation{Unknown}");
+        assert_eq!(ann.kind, AnnotationKind::Unknown);
+        assert_eq!(&*ann.raw, "［＃300字下げ］");
+        // The specialised Indent recogniser MUST NOT claim it.
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Indent(_)))),
         );
     }
 

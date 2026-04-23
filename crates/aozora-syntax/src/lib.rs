@@ -30,7 +30,7 @@ use thiserror::Error;
 
 pub mod accent;
 mod extension;
-pub use extension::{AozoraExtension, BlockCtx, BlockMatch, ContainerKind, InlineCtx, InlineMatch};
+pub use extension::{AozoraExtension, ContainerKind};
 
 /// Byte-range span into the original source document.
 ///
