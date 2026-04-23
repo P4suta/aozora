@@ -20,7 +20,6 @@
 
 pub mod aozora;
 pub mod html;
-pub mod preparse;
 
 #[doc(hidden)]
 pub mod test_support;
@@ -89,29 +88,28 @@ impl Options<'_> {
 /// Parse a UTF-8 source buffer into a comrak AST with Aozora annotations
 /// recognised.
 ///
-/// ADR-0008 pipeline (the only path since E1 + D1 landed):
+/// ADR-0008 pipeline (the only path since E1 / D1 / D2 / E2 landed):
 ///
-/// 1. [`preparse::apply_preparse`] — accent decomposition inside `〔...〕`
-///    spans (ADR-0004). C5b folds this into the lexer in a later commit.
-/// 2. [`afm_lexer::lex`] — tokenise + pair + classify + normalise every
-///    Aozora construct into a PUA sentinel (`U+E001..U+E004`) plus a
-///    `PlaceholderRegistry` that maps each sentinel back to its
+/// 1. [`afm_lexer::lex`] — BOM strip, CRLF→LF, `〔...〕` accent
+///    decomposition (ADR-0004), tokenise + pair + classify + normalise
+///    every Aozora construct into a PUA sentinel (`U+E001..U+E004`)
+///    plus a `PlaceholderRegistry` that maps each sentinel back to its
 ///    `AozoraNode` / `ContainerKind`.
-/// 3. `comrak::parse_document` on the normalised text — comrak sees only
-///    plain CommonMark+GFM. Aozora parse hooks were removed from the
-///    fork in D1; the only surviving comrak/afm seam is the render-side
-///    `AozoraExtension::render_html`.
-/// 4. [`post_process::splice_inline`] / [`post_process::splice_block_leaf`]
+/// 2. `comrak::parse_document` on the normalised text — comrak sees
+///    only plain CommonMark+GFM. All Aozora parse hooks were removed
+///    from the fork in D1; the render-side `fn` pointer on
+///    `Options::extension::render_aozora` (D2) is the last remaining
+///    comrak/afm seam.
+/// 3. [`post_process::splice_inline`] / [`post_process::splice_block_leaf`]
 ///    — walk the resulting AST, replace sentinels with real
 ///    `NodeValue::Aozora(...)` nodes from the registry.
 ///
-/// When the Aozora extension is not enabled on `options`, this is a
+/// When the Aozora render hook is not enabled on `options`, this is a
 /// straight `comrak::parse_document` passthrough — CommonMark / GFM only.
 #[must_use]
 pub fn parse<'a>(arena: &'a Arena<'a>, input: &str, options: &Options<'_>) -> &'a AstNode<'a> {
     if options.comrak.extension.render_aozora.is_some() {
-        let preparsed = preparse::apply_preparse(input);
-        let lex_out = afm_lexer::lex(&preparsed);
+        let lex_out = afm_lexer::lex(input);
         let root = comrak::parse_document(arena, &lex_out.normalized, &options.comrak);
         post_process::splice_inline(arena, root, &lex_out.registry);
         post_process::splice_block_leaf(arena, root, &lex_out.registry);
