@@ -52,8 +52,8 @@ use core::ops::Range;
 
 use afm_syntax::{
     AlignEnd, Annotation, AnnotationKind, AozoraNode, Bouten, BoutenKind, BoutenPosition,
-    ContainerKind, Content, Gaiji, Indent, Kaeriten, Ruby, Sashie, SectionKind, Segment, Span,
-    TateChuYoko,
+    ContainerKind, Content, DoubleRuby, Gaiji, Indent, Kaeriten, Ruby, Sashie, SectionKind,
+    Segment, Span, TateChuYoko,
 };
 
 use crate::diagnostic::Diagnostic;
@@ -176,6 +176,11 @@ impl<'s> Driver<'s> {
                 ..
             } => self.try_ruby(events, i, close_idx),
             PairEvent::PairOpen {
+                kind: PairKind::DoubleRuby,
+                close_idx,
+                ..
+            } => self.try_double_ruby(events, i, close_idx),
+            PairEvent::PairOpen {
                 kind: PairKind::Bracket,
                 close_idx,
                 ..
@@ -186,6 +191,52 @@ impl<'s> Driver<'s> {
             } => self.try_gaiji(events, i, span),
             _ => None,
         }
+    }
+
+    /// Classify a `《《…》》` pair as an [`AozoraNode::DoubleRuby`]. The
+    /// body events are walked by [`build_content_from_body`] so any
+    /// nested gaiji / annotation fold into the payload `Content`
+    /// rather than leaking to the top-level span list.
+    ///
+    /// Empty `《《》》` pairs are still consumed — otherwise the bare
+    /// double brackets would leak to plain text and confuse a reader
+    /// (they look like a missing body). The renderer emits `≪≫` in
+    /// that case; the `afm-double-ruby` wrapper class is always
+    /// applied so stylesheets can size the academic brackets
+    /// correctly.
+    fn try_double_ruby(
+        &mut self,
+        events: &[PairEvent],
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<usize> {
+        let PairEvent::PairOpen {
+            span: open_span, ..
+        } = events[open_idx]
+        else {
+            return None;
+        };
+        let PairEvent::PairClose {
+            span: close_span, ..
+        } = events[close_idx]
+        else {
+            return None;
+        };
+        let content = build_content_from_body(
+            events,
+            self.source,
+            &BodyWindow {
+                events: open_idx + 1..close_idx,
+                bytes: open_span.end..close_span.start,
+            },
+        );
+        self.flush_plain_up_to(open_span.start);
+        self.spans.push(ClassifiedSpan {
+            kind: SpanKind::Aozora(AozoraNode::DoubleRuby(DoubleRuby { content })),
+            source_span: Span::new(open_span.start, close_span.end),
+        });
+        self.pending_plain_start = None;
+        Some(close_idx - open_idx + 1)
     }
 
     fn try_ruby(
@@ -2474,6 +2525,94 @@ mod tests {
             !out.spans
                 .iter()
                 .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Kaeriten(_)))),
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // F4 — double angle-bracket `《《X》》`
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn double_ruby_plain_body_produces_double_ruby_span() {
+        let out = run("前《《強調》》後");
+        let aozora = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(node) => Some(node),
+                _ => None,
+            })
+            .expect("DoubleRuby expected");
+        let AozoraNode::DoubleRuby(d) = aozora else {
+            panic!("expected DoubleRuby, got {aozora:?}");
+        };
+        assert_eq!(d.content.as_plain(), Some("強調"));
+    }
+
+    #[test]
+    fn double_ruby_consumes_entire_source_span() {
+        // Source `《《X》》` must fold into ONE Aozora span that covers
+        // the double brackets AND the body. No `《` characters may
+        // leak to the outer `spans` list.
+        let src = "《《ABC》》";
+        let out = run(src);
+        let aozora_count = out
+            .spans
+            .iter()
+            .filter(|s| matches!(s.kind, SpanKind::Aozora(_)))
+            .count();
+        assert_eq!(
+            aozora_count, 1,
+            "one DoubleRuby span expected: {:?}",
+            out.spans
+        );
+        let aozora = out
+            .spans
+            .iter()
+            .find(|s| matches!(s.kind, SpanKind::Aozora(_)))
+            .expect("Aozora span");
+        assert_eq!(aozora.source_span.start, 0);
+        assert_eq!(aozora.source_span.end as usize, src.len());
+    }
+
+    #[test]
+    fn double_ruby_with_nested_gaiji_folds_into_segments() {
+        // The helper reuses `build_content_from_body`, so a `※［＃…］`
+        // inside the double brackets must surface as Segment::Gaiji
+        // in the content — same invariant as F1 ruby readings.
+        let out = run("《《※［＃「ほ」、第3水準1-85-54］》》");
+        let aozora = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(node) => Some(node),
+                _ => None,
+            })
+            .expect("Aozora expected");
+        let AozoraNode::DoubleRuby(d) = aozora else {
+            panic!("expected DoubleRuby, got {aozora:?}");
+        };
+        let Content::Segments(segs) = &d.content else {
+            panic!("expected Segments, got {:?}", d.content);
+        };
+        assert_eq!(segs.len(), 1);
+        assert!(matches!(&segs[0], Segment::Gaiji(_)));
+    }
+
+    #[test]
+    fn double_ruby_empty_body_still_consumed() {
+        // `《《》》` with no body: we still consume the double brackets
+        // into a DoubleRuby span so no stray `《` leaks as plain text.
+        // The content is empty `Content::Segments([])`.
+        let out = run("A《《》》B");
+        let aozora_count = out
+            .spans
+            .iter()
+            .filter(|s| matches!(s.kind, SpanKind::Aozora(_)))
+            .count();
+        assert_eq!(
+            aozora_count, 1,
+            "empty double-ruby must still emit one span"
         );
     }
 

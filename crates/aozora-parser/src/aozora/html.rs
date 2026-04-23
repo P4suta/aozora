@@ -10,8 +10,8 @@
 use core::fmt::{self, Write};
 
 use afm_syntax::{
-    AlignEnd, Annotation, AozoraNode, Bouten, Content, Gaiji, Indent, Kaeriten, Ruby, SectionKind,
-    SegmentRef,
+    AlignEnd, Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, Indent, Kaeriten, Ruby,
+    SectionKind, SegmentRef,
 };
 
 use crate::aozora::bouten;
@@ -50,6 +50,7 @@ pub fn render(node: &AozoraNode, writer: &mut dyn Write) -> fmt::Result {
         }
         AozoraNode::Annotation(a) => render_annotation(a, writer),
         AozoraNode::Kaeriten(k) => render_kaeriten(k, writer),
+        AozoraNode::DoubleRuby(d) => render_double_ruby(d, writer),
         // Block / container kinds — ruby, bouten, etc. may gain distinct markup
         // in M1; for M0 we emit a class-carrying wrapper so presence is visible.
         _ => fallback(node, writer),
@@ -136,6 +137,21 @@ fn render_kaeriten(k: &Kaeriten, writer: &mut dyn Write) -> fmt::Result {
     writer.write_str(r#"<sup class="afm-kaeriten">"#)?;
     escape_text(&k.mark, writer)?;
     writer.write_str("</sup>")
+}
+
+/// Render a `《《X》》` (double angle-bracket) span.
+///
+/// The Aozora annotation manual recommends disambiguating these
+/// against single `《…》` ruby markers by emitting the academic
+/// "double-angle quotation" characters U+226A (`≪`) and U+226B (`≫`)
+/// around the payload, so the rendered text never collides visually
+/// with ruby parentheses. A dedicated `afm-double-ruby` wrapper lets
+/// the stylesheet tune size / spacing without the content markup
+/// having to change per writing mode.
+fn render_double_ruby(d: &DoubleRuby, writer: &mut dyn Write) -> fmt::Result {
+    writer.write_str(r#"<span class="afm-double-ruby">≪"#)?;
+    render_content(&d.content, writer)?;
+    writer.write_str("≫</span>")
 }
 
 /// Leaf `{N}字下げ` — emits an empty marker `<span>` with a per-amount

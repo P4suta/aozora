@@ -132,6 +132,15 @@ pub enum AozoraNode {
     /// An annotation recognised as Aozora-shaped but not understood by this version
     /// of the parser. Kept for round-trip fidelity and surfaced as a diagnostic.
     Annotation(Annotation),
+
+    /// Double angle-bracket notation — `《《X》》` in source. Used in
+    /// Aozora Bunko texts to represent a literal `《X》` pair that is
+    /// *not* ruby markup (disambiguating against the single-`《…》`
+    /// ruby-reading delimiter). The Aozora annotation manual notes
+    /// that these double brackets are conventionally rendered with
+    /// the academic U+226A/U+226B characters (`≪X≫`) to sidestep the
+    /// ruby-marker overload — the HTML renderer does exactly that.
+    DoubleRuby(DoubleRuby),
 }
 
 impl AozoraNode {
@@ -190,8 +199,22 @@ impl AozoraNode {
             Self::Sashie(_) => "aozora_sashie",
             Self::Kaeriten(_) => "aozora_kaeriten",
             Self::Annotation(_) => "aozora_annotation",
+            Self::DoubleRuby(_) => "aozora_double_ruby",
         }
     }
+}
+
+/// Double angle-bracket escape — the payload between `《《` and `》》`.
+///
+/// The content is modelled as [`Content`] (not `Box<str>`) so that
+/// corpus shapes like `《《※［＃「ほ」、第3水準1-85-54］》》` — where a
+/// gaiji marker sits between the double brackets — survive the lexer
+/// without flattening; they collapse to [`Content::Plain`] whenever
+/// the body is pure text (the overwhelmingly common case).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DoubleRuby {
+    pub content: Content,
 }
 
 /// Body-content type for nodes whose textual payload may contain nested
@@ -803,7 +826,7 @@ mod tests {
     #[test]
     fn xml_node_names_are_stable_and_unique() {
         use std::collections::BTreeSet;
-        let samples: [AozoraNode; 13] = [
+        let samples: [AozoraNode; 14] = [
             AozoraNode::Ruby(Ruby {
                 base: "".into(),
                 reading: "".into(),
@@ -841,6 +864,7 @@ mod tests {
                 raw: "".into(),
                 kind: AnnotationKind::Unknown,
             }),
+            AozoraNode::DoubleRuby(DoubleRuby { content: "".into() }),
         ];
         let names: BTreeSet<&'static str> = samples.iter().map(AozoraNode::xml_node_name).collect();
         assert_eq!(names.len(), samples.len(), "xml node names must be unique");
