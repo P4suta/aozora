@@ -50,6 +50,7 @@
 
 use core::ops::Range;
 
+use afm_encoding::gaiji as gaiji_resolve;
 use afm_syntax::{
     AlignEnd, Annotation, AnnotationKind, AozoraNode, Bouten, BoutenKind, BoutenPosition,
     ContainerKind, Content, DoubleRuby, Gaiji, Indent, Kaeriten, Ruby, Sashie, SectionKind,
@@ -770,10 +771,17 @@ fn recognize_gaiji(
         return None;
     }
 
+    // Resolve the Unicode scalar at lex time via the static table in
+    // afm-encoding so the downstream AST / renderer never has to
+    // re-probe. `None` stays `None` when the mencode has no mapping
+    // entry and no `U+XXXX` shape matches — the renderer falls back
+    // to escaping the raw `description`.
+    let ucs = gaiji_resolve::lookup(None, mencode.as_deref(), &description);
+
     Some(GaijiMatch {
         node: AozoraNode::Gaiji(Gaiji {
             description: description.into_boxed_str(),
-            ucs: None,
+            ucs,
             mencode: mencode.map(String::into_boxed_str),
         }),
         consume_start: refmark_span.start,
@@ -2333,7 +2341,8 @@ mod tests {
             .expect("expected a Gaiji span");
         assert_eq!(&*gaiji.description, "木＋吶のつくり");
         assert_eq!(gaiji.mencode.as_deref(), Some("第3水準1-85-54"));
-        assert!(gaiji.ucs.is_none(), "C4d does not resolve UCS — G1 does");
+        // Post-G1: the mencode table resolves 第3水準1-85-54 → 榁 (U+6903).
+        assert_eq!(gaiji.ucs, Some('\u{6903}'));
     }
 
     #[test]

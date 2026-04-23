@@ -17,6 +17,7 @@ workspace = true
 [dependencies]
 afm-syntax  = { workspace = true }
 encoding_rs = { workspace = true }
+phf         = { workspace = true }
 thiserror   = { workspace = true }
 miette      = { workspace = true }
 tracing     = { workspace = true }

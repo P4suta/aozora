@@ -72,7 +72,7 @@ fn assert_tier_a(html: &str) {
 
 #[test]
 fn ruby_reading_with_gaiji_emits_nested_span() {
-    let html = render_to_string("｜日本《に※［＃「ほ」、第3水準1-85-54］ん》");
+    let html = render_to_string("｜日本《に※［＃「ほ」、第3水準9-99-99］ん》");
     assert!(
         html.contains(r#"<rt>に<span class="afm-gaiji">ほ</span>ん</rt>"#),
         "expected nested gaiji span inside <rt>, got: {html:?}"
@@ -86,7 +86,7 @@ fn ruby_reading_with_gaiji_emits_nested_span() {
 
 #[test]
 fn ruby_reading_wholly_gaiji_emits_single_span_inside_rt() {
-    let html = render_to_string("｜日本《※［＃「にほん」、第3水準1-85-54］》");
+    let html = render_to_string("｜日本《※［＃「にほん」、第3水準9-99-99］》");
     assert!(
         html.contains(r#"<rt><span class="afm-gaiji">にほん</span></rt>"#),
         "whole-gaiji reading must render as a single inner span: {html:?}"
@@ -106,7 +106,7 @@ fn ruby_reading_with_trailing_annotation_emits_hidden_span() {
 
 #[test]
 fn ruby_reading_with_gaiji_and_annotation_interleave_preserves_order() {
-    let html = render_to_string("｜日本《に※［＃「ほ」、第3水準1-85-54］ん［＃ママ］》");
+    let html = render_to_string("｜日本《に※［＃「ほ」、第3水準9-99-99］ん［＃ママ］》");
     assert!(
         html.contains(
             r#"<rt>に<span class="afm-gaiji">ほ</span>ん<span class="afm-annotation" hidden>［＃ママ］</span></rt>"#
@@ -121,8 +121,8 @@ fn implicit_ruby_reading_with_gaiji_matches_explicit_output() {
     // Implicit form (no `｜`) takes the same body-walker path, so the
     // rendered `<rt>` body should be identical to the explicit form —
     // only the base extraction differs.
-    let implicit = render_to_string("日本《に※［＃「ほ」、第3水準1-85-54］ん》");
-    let explicit = render_to_string("｜日本《に※［＃「ほ」、第3水準1-85-54］ん》");
+    let implicit = render_to_string("日本《に※［＃「ほ」、第3水準9-99-99］ん》");
+    let explicit = render_to_string("｜日本《に※［＃「ほ」、第3水準9-99-99］ん》");
     // The `<rt>` contents must match verbatim.
     let rt_implicit = implicit
         .split_once("<rt>")
@@ -159,7 +159,11 @@ fn html_escape_of_ruby_reading_segments_still_applies() {
     // Construct a reading whose text contains all five OWASP HTML
     // escape targets around a gaiji marker — the gaiji description
     // itself is also escaped by `render_gaiji`.
-    let html = render_to_string("｜x《<&>\"'※［＃「a<b」、U+0061］<&>'\"》");
+    // Mencode `U+ZZZZ` intentionally does NOT parse as hex, so the
+    // `parse_u_plus` path misses and the renderer falls back to the
+    // description bytes — which is where the HTML-escape invariant
+    // must show its work.
+    let html = render_to_string("｜x《<&>\"'※［＃「a<b」、U+ZZZZ］<&>'\"》");
     // The five escapes must appear in the Text segments of the `<rt>`.
     let (_, tail) = html.split_once("<rt>").expect("<rt> present");
     let (rt_body, _) = tail.split_once("</rt>").expect("</rt> present");
@@ -221,7 +225,7 @@ fn ruby_with_nested_gaiji_produces_exactly_one_top_level_aozora_sentinel() {
     // embedded gaiji must produce ONE `<ruby>` in the rendered HTML
     // (not two, which would indicate the inner gaiji leaked to a
     // sibling span at the top level).
-    let html = render_to_string("前｜日本《に※［＃「ほ」、第3水準1-85-54］ん》後");
+    let html = render_to_string("前｜日本《に※［＃「ほ」、第3水準9-99-99］ん》後");
     let ruby_opens = html.matches("<ruby>").count();
     assert_eq!(
         ruby_opens, 1,

@@ -53,38 +53,7 @@ fn decode_strict(encoding: &'static Encoding, input: &[u8]) -> Result<String, De
     Ok(cow.into_owned())
 }
 
-pub mod gaiji {
-    //! Gaiji (外字) resolution.
-    //!
-    //! Two incoming forms:
-    //!   - `※［＃「component」、第3水準1-85-54］`  — JIS X 0213 plane/row/cell
-    //!   - `※［＃「component」、U+XXXX、page-line］` — explicit Unicode codepoint
-
-    use afm_syntax::Gaiji;
-
-    /// Outcome of resolving a gaiji reference.
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct Resolution {
-        /// The canonical representation: `Some(ch)` if we resolved to a single char,
-        /// `None` if the gaiji has no Unicode home and must render as its description.
-        pub character: Option<char>,
-        /// Echo of the input description, preserved for HTML `title` / accessibility.
-        pub description: Box<str>,
-    }
-
-    /// Resolve a `Gaiji` node to a displayable form.
-    ///
-    /// For M0 we accept whatever `ucs` the parser already extracted; the JIS-to-Unicode
-    /// lookup table lands in M2. This stub exists to pin the API surface early so
-    /// callers don't need to change later.
-    #[must_use]
-    pub fn resolve(node: &Gaiji) -> Resolution {
-        Resolution {
-            character: node.ucs,
-            description: node.description.clone(),
-        }
-    }
-}
+pub mod gaiji;
 
 #[cfg(test)]
 mod tests {
