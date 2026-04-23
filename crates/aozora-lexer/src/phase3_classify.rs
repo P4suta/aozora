@@ -49,7 +49,8 @@
 //! `try_recognize` dispatch grows.
 
 use afm_syntax::{
-    AlignEnd, AozoraNode, Bouten, BoutenKind, Content, Indent, Ruby, SectionKind, Span,
+    AlignEnd, AozoraNode, Bouten, BoutenKind, Content, Indent, Ruby, Sashie, SectionKind, Span,
+    TateChuYoko,
 };
 
 use crate::diagnostic::Diagnostic;
@@ -415,7 +416,9 @@ fn recognize_annotation(
 
     let node = classify_fixed_keyword(body)
         .or_else(|| classify_indent_or_align(body))
-        .or_else(|| classify_forward_bouten(events, source, open_idx, close_idx))?;
+        .or_else(|| classify_sashie(body))
+        .or_else(|| classify_forward_bouten(events, source, open_idx, close_idx))
+        .or_else(|| classify_forward_tcy(events, source, open_idx, close_idx))?;
 
     Some(AnnotationMatch {
         node,
@@ -487,6 +490,54 @@ fn classify_forward_bouten(
     open_idx: usize,
     close_idx: usize,
 ) -> Option<AozoraNode> {
+    let (target, suffix) = extract_forward_quote_target(events, source, open_idx, close_idx)?;
+    let suffix = suffix.strip_prefix("に")?;
+    let kind = bouten_kind_from_suffix(suffix)?;
+    Some(AozoraNode::Bouten(Bouten {
+        kind,
+        target: Content::from(target),
+    }))
+}
+
+/// Classify a `［＃「target」は縦中横］` forward-reference
+/// tate-chu-yoko (horizontal-in-vertical) annotation.
+///
+/// Same event-layout expectations as forward bouten, except the
+/// suffix uses the particle `は` and the keyword `縦中横`. Paired
+/// form (`［＃縦中横］…［＃縦中横終わり］`) is a C4e / C4d concern
+/// and is not matched here.
+fn classify_forward_tcy(
+    events: &[PairEvent],
+    source: &str,
+    open_idx: usize,
+    close_idx: usize,
+) -> Option<AozoraNode> {
+    let (target, suffix) = extract_forward_quote_target(events, source, open_idx, close_idx)?;
+    if suffix != "は縦中横" {
+        return None;
+    }
+    Some(AozoraNode::TateChuYoko(TateChuYoko {
+        text: Content::from(target),
+    }))
+}
+
+/// Shared helper for the `［＃「X」<particle><keyword>］` shape.
+///
+/// Returns `(target, suffix)` where:
+/// * `target` is the raw source bytes strictly inside the `「…」`
+///   quote pair that lives immediately after the `＃`.
+/// * `suffix` is the trimmed source bytes between the closing `」`
+///   and the bracket's `］`. Callers then match on the particle +
+///   keyword.
+///
+/// Returns `None` if any shape assumption fails: no adjacent quote
+/// pair, empty target, or quote crossing out of the bracket.
+fn extract_forward_quote_target<'s>(
+    events: &[PairEvent],
+    source: &'s str,
+    open_idx: usize,
+    close_idx: usize,
+) -> Option<(&'s str, &'s str)> {
     let quote_open_idx = open_idx + 2;
     let &PairEvent::PairOpen {
         kind: PairKind::Quote,
@@ -512,7 +563,6 @@ fn classify_forward_bouten(
     if target.is_empty() {
         return None;
     }
-
     let &PairEvent::PairClose {
         span: bracket_close_span,
         ..
@@ -521,12 +571,32 @@ fn classify_forward_bouten(
         return None;
     };
     let suffix = source[quote_close_span.end as usize..bracket_close_span.start as usize].trim();
-    let suffix = suffix.strip_prefix("に")?;
-    let kind = bouten_kind_from_suffix(suffix)?;
+    Some((target, suffix))
+}
 
-    Some(AozoraNode::Bouten(Bouten {
-        kind,
-        target: Content::from(target),
+/// Classify a `［＃挿絵（file）入る］` sashie (illustration insert).
+///
+/// Captures the filename between `（` and `）`; the rest of the body
+/// must be exactly `入る`. Captioned form
+/// (`［＃挿絵（file）「caption」入る］`) is left to F5 where the
+/// extra quote pair gets event-level handling — the simple no-caption
+/// shape accounts for the vast majority of corpus occurrences.
+fn classify_sashie(body: &str) -> Option<AozoraNode> {
+    let rest = body.strip_prefix("挿絵（")?;
+    // `）` is a full-width right parenthesis (U+FF09). Find its first
+    // occurrence — corpus rarely nests `（）` inside a filename.
+    let close_off = rest.find('）')?;
+    let file = &rest[..close_off];
+    if file.is_empty() {
+        return None;
+    }
+    let tail = &rest[close_off + '）'.len_utf8()..];
+    if tail != "入る" {
+        return None;
+    }
+    Some(AozoraNode::Sashie(Sashie {
+        file: file.into(),
+        caption: None,
     }))
 }
 
@@ -1010,6 +1080,88 @@ mod tests {
             })
             .expect("expected a Bouten span");
         assert_eq!(bouten.target.as_plain(), Some("A「inner」B"));
+    }
+
+    #[test]
+    fn forward_tcy_single_recognized() {
+        let out = run("［＃「20」は縦中横］");
+        let tcy = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::TateChuYoko(t)) => Some(t),
+                _ => None,
+            })
+            .expect("expected a TateChuYoko span");
+        assert_eq!(tcy.text.as_plain(), Some("20"));
+    }
+
+    #[test]
+    fn forward_tcy_wrong_particle_falls_through() {
+        // Using に instead of は — not a TCY shape.
+        let out = run("［＃「20」に縦中横］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::TateChuYoko(_)))),
+        );
+    }
+
+    #[test]
+    fn forward_tcy_empty_target_falls_through() {
+        let out = run("［＃「」は縦中横］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::TateChuYoko(_)))),
+        );
+    }
+
+    #[test]
+    fn sashie_without_caption_recognized() {
+        let out = run("［＃挿絵（fig01.png）入る］");
+        let sashie = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Sashie(s)) => Some(s),
+                _ => None,
+            })
+            .expect("expected a Sashie span");
+        assert_eq!(&*sashie.file, "fig01.png");
+        assert!(sashie.caption.is_none());
+    }
+
+    #[test]
+    fn sashie_with_caption_form_not_matched_in_c4c4() {
+        // Captioned sashie is F5 territory; the no-caption matcher
+        // must reject the captioned form cleanly.
+        let out = run("［＃挿絵（fig01.png）「キャプション」入る］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Sashie(_)))),
+        );
+    }
+
+    #[test]
+    fn sashie_empty_filename_falls_through() {
+        let out = run("［＃挿絵（）入る］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Sashie(_)))),
+        );
+    }
+
+    #[test]
+    fn sashie_missing_iru_suffix_falls_through() {
+        let out = run("［＃挿絵（fig01.png）］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Sashie(_)))),
+        );
     }
 
     #[test]
