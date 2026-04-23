@@ -26,6 +26,7 @@
 use miette::Diagnostic;
 use thiserror::Error;
 
+pub mod accent;
 mod extension;
 pub use extension::{AozoraExtension, BlockCtx, BlockMatch, ContainerKind, InlineCtx, InlineMatch};
 
