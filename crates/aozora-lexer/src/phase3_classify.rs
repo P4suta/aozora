@@ -49,8 +49,8 @@
 //! `try_recognize` dispatch grows.
 
 use afm_syntax::{
-    AlignEnd, AozoraNode, Bouten, BoutenKind, Content, Indent, Ruby, Sashie, SectionKind, Span,
-    TateChuYoko,
+    AlignEnd, AozoraNode, Bouten, BoutenKind, Content, Gaiji, Indent, Kaeriten, Ruby, Sashie,
+    SectionKind, Span, TateChuYoko,
 };
 
 use crate::diagnostic::Diagnostic;
@@ -141,15 +141,21 @@ impl<'s> Driver<'s> {
     /// Aozora span emitted and pending plain truncated); `None` leaves
     /// the event for the fallback `accept` path.
     fn try_recognize(&mut self, events: &[PairEvent], i: usize) -> Option<usize> {
-        let PairEvent::PairOpen {
-            kind, close_idx, ..
-        } = events[i]
-        else {
-            return None;
-        };
-        match kind {
-            PairKind::Ruby => self.try_ruby(events, i, close_idx),
-            PairKind::Bracket => self.try_bracket_annotation(events, i, close_idx),
+        match events[i] {
+            PairEvent::PairOpen {
+                kind: PairKind::Ruby,
+                close_idx,
+                ..
+            } => self.try_ruby(events, i, close_idx),
+            PairEvent::PairOpen {
+                kind: PairKind::Bracket,
+                close_idx,
+                ..
+            } => self.try_bracket_annotation(events, i, close_idx),
+            PairEvent::Solo {
+                kind: TriggerKind::RefMark,
+                span,
+            } => self.try_gaiji(events, i, span),
             _ => None,
         }
     }
@@ -192,6 +198,32 @@ impl<'s> Driver<'s> {
         });
         self.pending_plain_start = None;
         Some(close_idx - open_idx + 1)
+    }
+
+    fn try_gaiji(
+        &mut self,
+        events: &[PairEvent],
+        refmark_idx: usize,
+        refmark_span: Span,
+    ) -> Option<usize> {
+        let bracket_open_idx = refmark_idx + 1;
+        let &PairEvent::PairOpen {
+            kind: PairKind::Bracket,
+            close_idx,
+            ..
+        } = events.get(bracket_open_idx)?
+        else {
+            return None;
+        };
+        let m = recognize_gaiji(events, self.source, refmark_span, bracket_open_idx)?;
+        self.flush_plain_up_to(m.consume_start);
+        self.spans.push(ClassifiedSpan {
+            kind: SpanKind::Aozora(m.node),
+            source_span: Span::new(m.consume_start, m.consume_end),
+        });
+        self.pending_plain_start = None;
+        // RefMark + entire bracket pair events: 1 + (close_idx - bracket_open_idx + 1)
+        Some(close_idx - refmark_idx + 1)
     }
 
     fn accept(&mut self, event: &PairEvent) {
@@ -338,6 +370,109 @@ fn recognize_ruby<'s>(
     })
 }
 
+/// Intermediate result of [`recognize_gaiji`].
+struct GaijiMatch {
+    node: AozoraNode,
+    consume_start: u32,
+    consume_end: u32,
+}
+
+/// Try to recognize a gaiji reference at `events[refmark_idx]`.
+///
+/// Shape: `※［＃<description>、<mencode>］` or `※［＃<description>］`.
+/// The description may be wrapped in `「…」` (the common form) or
+/// appear bare. `<mencode>` is the mencode reference (`第3水準1-85-54`,
+/// `U+XXXX`, etc.) appearing after a `、` separator.
+///
+/// The UCS resolution column of [`Gaiji`] is left `None` here — G1
+/// (the gaiji UCS table) fills it in post-classification.
+///
+/// Event preconditions (checked):
+/// * `events[refmark_idx]` is `Solo(RefMark)` [done by caller]
+/// * `events[refmark_idx + 1]` is `PairOpen(Bracket)` [done by caller]
+/// * `events[refmark_idx + 2]` is `Solo(Hash)` [checked here]
+///
+/// Consume range is from `refmark_span.start` to the bracket close's
+/// end — i.e. the `※` and the entire following `［＃…］` fold into
+/// one Aozora span.
+fn recognize_gaiji(
+    events: &[PairEvent],
+    source: &str,
+    refmark_span: Span,
+    bracket_open_idx: usize,
+) -> Option<GaijiMatch> {
+    let &PairEvent::PairOpen {
+        kind: PairKind::Bracket,
+        close_idx: bracket_close_idx,
+        ..
+    } = events.get(bracket_open_idx)?
+    else {
+        return None;
+    };
+    let hash_end = match events.get(bracket_open_idx + 1)? {
+        PairEvent::Solo {
+            kind: TriggerKind::Hash,
+            span,
+        } => span.end,
+        _ => return None,
+    };
+    let &PairEvent::PairClose {
+        span: bracket_close_span,
+        ..
+    } = events.get(bracket_close_idx)?
+    else {
+        return None;
+    };
+
+    // Try the quoted-description form first: `「DESC」、MENCODE`. Two
+    // events after open: PairOpen(Quote).
+    let quote_open_idx = bracket_open_idx + 2;
+    let quoted = events.get(quote_open_idx).and_then(|ev| match *ev {
+        PairEvent::PairOpen {
+            kind: PairKind::Quote,
+            span: qos,
+            close_idx: qci,
+        } if qci < bracket_close_idx => {
+            let PairEvent::PairClose { span: qcs, .. } = *events.get(qci)? else {
+                return None;
+            };
+            let desc = &source[qos.end as usize..qcs.start as usize];
+            if desc.is_empty() {
+                return None;
+            }
+            let tail = source[qcs.end as usize..bracket_close_span.start as usize].trim();
+            let mencode = tail.strip_prefix('、').map(str::trim);
+            Some((desc.to_owned(), mencode.map(str::to_owned)))
+        }
+        _ => None,
+    });
+
+    let (description, mencode) = quoted.unwrap_or_else(|| {
+        // Bare-description fallback: split body at the first `、`.
+        // Whole body after `＃` becomes the description if there's no `、`.
+        let body = source[hash_end as usize..bracket_close_span.start as usize].trim();
+        if let Some((desc, men)) = body.split_once('、') {
+            (desc.trim().to_owned(), Some(men.trim().to_owned()))
+        } else {
+            (body.to_owned(), None)
+        }
+    });
+
+    if description.is_empty() {
+        return None;
+    }
+
+    Some(GaijiMatch {
+        node: AozoraNode::Gaiji(Gaiji {
+            description: description.into_boxed_str(),
+            ucs: None,
+            mencode: mencode.map(String::into_boxed_str),
+        }),
+        consume_start: refmark_span.start,
+        consume_end: bracket_close_span.end,
+    })
+}
+
 /// Byte offset where the trailing kanji run in `text` begins.
 ///
 /// Walks chars right-to-left, keeping track of the earliest byte
@@ -415,6 +550,7 @@ fn recognize_annotation(
     let body = source[hash_end as usize..close_span.start as usize].trim();
 
     let node = classify_fixed_keyword(body)
+        .or_else(|| classify_kaeriten(body))
         .or_else(|| classify_indent_or_align(body))
         .or_else(|| classify_sashie(body))
         .or_else(|| classify_forward_bouten(events, source, open_idx, close_idx))
@@ -572,6 +708,22 @@ fn extract_forward_quote_target<'s>(
     };
     let suffix = source[quote_close_span.end as usize..bracket_close_span.start as usize].trim();
     Some((target, suffix))
+}
+
+/// Classify a `［＃<mark>］` kaeriten (Chinese-reading order mark).
+///
+/// The body must be exactly one of the 12 canonical marks:
+/// 一 / 二 / 三 / 四 / 上 / 中 / 下 / レ / 甲 / 乙 / 丙 / 丁. Other
+/// single-character annotation bodies are left for other classifiers
+/// or fall through to Plain.
+fn classify_kaeriten(body: &str) -> Option<AozoraNode> {
+    const MARKS: &[&str] = &[
+        "一", "二", "三", "四", "上", "中", "下", "レ", "甲", "乙", "丙", "丁",
+    ];
+    if MARKS.contains(&body) {
+        return Some(AozoraNode::Kaeriten(Kaeriten { mark: body.into() }));
+    }
+    None
 }
 
 /// Classify a `［＃挿絵（file）入る］` sashie (illustration insert).
@@ -1161,6 +1313,128 @@ mod tests {
             !out.spans
                 .iter()
                 .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Sashie(_)))),
+        );
+    }
+
+    #[test]
+    fn gaiji_quoted_description_with_mencode() {
+        let out = run("※［＃「木＋吶のつくり」、第3水準1-85-54］");
+        let gaiji = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Gaiji(g)) => Some(g),
+                _ => None,
+            })
+            .expect("expected a Gaiji span");
+        assert_eq!(&*gaiji.description, "木＋吶のつくり");
+        assert_eq!(gaiji.mencode.as_deref(), Some("第3水準1-85-54"));
+        assert!(gaiji.ucs.is_none(), "C4d does not resolve UCS — G1 does");
+    }
+
+    #[test]
+    fn gaiji_quoted_description_without_mencode() {
+        let out = run("※［＃「試」］");
+        let gaiji = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Gaiji(g)) => Some(g),
+                _ => None,
+            })
+            .expect("expected a Gaiji span");
+        assert_eq!(&*gaiji.description, "試");
+        assert!(gaiji.mencode.is_none());
+    }
+
+    #[test]
+    fn gaiji_bare_description_with_mencode() {
+        let out = run("※［＃二の字点、1-2-23］");
+        let gaiji = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Gaiji(g)) => Some(g),
+                _ => None,
+            })
+            .expect("expected a Gaiji span");
+        assert_eq!(&*gaiji.description, "二の字点");
+        assert_eq!(gaiji.mencode.as_deref(), Some("1-2-23"));
+    }
+
+    #[test]
+    fn gaiji_consumes_refmark_and_bracket_as_one_span() {
+        let src = "a※［＃「X」、m］b";
+        let out = run(src);
+        let gaiji_span = out
+            .spans
+            .iter()
+            .find(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Gaiji(_))))
+            .expect("expected a Gaiji span");
+        // span must start at the ※ (after "a"), not at ［.
+        assert_eq!(gaiji_span.source_span.slice(src), "※［＃「X」、m］");
+    }
+
+    #[test]
+    fn refmark_without_following_bracket_stays_plain() {
+        // Bare ※ without ［＃...］ — not a gaiji, emit as Plain.
+        let out = run("a※b");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Gaiji(_)))),
+        );
+    }
+
+    #[test]
+    fn gaiji_without_hash_is_not_recognized() {
+        // ※ followed by ［ but no ＃ inside — not a gaiji shape.
+        let out = run("※［普通］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Gaiji(_)))),
+        );
+    }
+
+    #[test]
+    fn kaeriten_ichi_recognized() {
+        let out = run("之［＃一］");
+        let kaeriten = out
+            .spans
+            .iter()
+            .find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Kaeriten(k)) => Some(k),
+                _ => None,
+            })
+            .expect("expected a Kaeriten span");
+        assert_eq!(&*kaeriten.mark, "一");
+    }
+
+    #[test]
+    fn kaeriten_all_twelve_marks_recognized() {
+        for mark in [
+            "一", "二", "三", "四", "上", "中", "下", "レ", "甲", "乙", "丙", "丁",
+        ] {
+            let src = format!("［＃{mark}］");
+            let out = run(&src);
+            let Some(k) = out.spans.iter().find_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::Kaeriten(k)) => Some(k),
+                _ => None,
+            }) else {
+                panic!("no Kaeriten span for mark {mark:?}");
+            };
+            assert_eq!(&*k.mark, mark);
+        }
+    }
+
+    #[test]
+    fn kaeriten_unknown_mark_falls_through() {
+        let out = run("［＃甬］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Kaeriten(_)))),
         );
     }
 
