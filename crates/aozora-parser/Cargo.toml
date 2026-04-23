@@ -23,6 +23,8 @@ thiserror            = { workspace = true }
 tracing              = { workspace = true }
 
 [dev-dependencies]
+afm-corpus        = { workspace = true }
+afm-encoding      = { workspace = true }
 insta             = { workspace = true }
 proptest          = { workspace = true }
 pretty_assertions = { workspace = true }
