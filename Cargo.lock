@@ -72,6 +72,7 @@ version = "0.1.0"
 dependencies = [
  "afm-corpus",
  "afm-encoding",
+ "afm-lexer",
  "afm-syntax",
  "comrak",
  "insta",

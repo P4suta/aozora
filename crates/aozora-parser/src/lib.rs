@@ -31,6 +31,8 @@ use std::sync::Arc;
 use comrak::Arena;
 use comrak::nodes::AstNode;
 
+pub mod post_process;
+
 pub use adapter::AfmAdapter;
 pub use comrak::{Arena as ComrakArena, Options as ComrakOptions};
 
