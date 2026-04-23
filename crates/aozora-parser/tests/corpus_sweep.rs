@@ -17,6 +17,12 @@
 //!   an enforcement line. An `AFM_CORPUS_LEAK_BUDGET` env var can
 //!   override the budget to a non-zero int for staging a sweep over a
 //!   dirty corpus before promoting the fix back into the classifier.
+//! - **I4 — rendered HTML is tag-balanced (HARD GATE).** Every render
+//!   must produce HTML whose open/close tags balance per the minimal
+//!   validator at `tests/common/mod.rs`. Catches renderer bugs that
+//!   don't leak `［＃` but still produce malformed markup (e.g. a
+//!   `<div>` open without its `</div>` close). `AFM_CORPUS_I4_BUDGET`
+//!   overrides the budget for staging fixes on a dirty corpus.
 //! - **I5 — SJIS decode stable.** Every `.txt` file in a Aozora-format
 //!   corpus should be valid Shift_JIS. Decode failures are logged and
 //!   counted but don't abort the sweep (a corpus may legitimately contain
@@ -26,6 +32,8 @@
 //! to M2-S6 and M2-S4 respectively, pending a serializer and an
 //! html5ever-based validator.
 
+mod common;
+
 use core::fmt;
 use std::env;
 use std::panic::{self, AssertUnwindSafe};
@@ -34,6 +42,7 @@ use afm_corpus::{CorpusError, from_env};
 use afm_encoding::decode_sjis;
 use afm_parser::html::render_to_string;
 use afm_parser::test_support::strip_annotation_wrappers;
+use common::check_well_formed;
 
 /// Sweep entry point. The name is explicit so `cargo nextest run
 /// corpus_sweep` matches just this one test, and so CI log lines are
@@ -54,62 +63,7 @@ fn corpus_sweep_i1_no_panic_i2_report_i5_report() {
     let mut stats = SweepStats::default();
 
     for result in corpus.iter() {
-        let item = match result {
-            Ok(item) => item,
-            Err(CorpusError::Io { path, source }) => {
-                eprintln!(
-                    "corpus sweep: skipping unreadable item {}: {}",
-                    path.display(),
-                    source
-                );
-                stats.io_skips += 1;
-                continue;
-            }
-            Err(other) => {
-                eprintln!("corpus sweep: skipping item after unexpected error: {other}");
-                stats.io_skips += 1;
-                continue;
-            }
-        };
-
-        // I5 — Shift_JIS decode. Non-SJIS files are reported and skipped.
-        let text = match decode_sjis(&item.bytes) {
-            Ok(text) => text,
-            Err(err) => {
-                if stats.decode_error_samples.len() < MAX_SAMPLES {
-                    stats
-                        .decode_error_samples
-                        .push(format!("{}: {err}", item.label));
-                }
-                stats.decode_errors += 1;
-                continue;
-            }
-        };
-
-        // I1 — render_to_string must not panic. We wrap the renderer (which
-        // drives both parse and render inside a single call) in catch_unwind
-        // so that one panicking input does not abort the sweep over the
-        // rest of the corpus.
-        let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| render_to_string(&text))) else {
-            if stats.panic_samples.len() < MAX_SAMPLES {
-                stats.panic_samples.push(item.label.clone());
-            }
-            stats.panics += 1;
-            continue;
-        };
-
-        // I2 — no bare `［＃` outside afm-annotation wrappers.
-        let leaked = count_leaked_markers(&html);
-        if leaked > 0 {
-            if stats.leaked_marker_samples.len() < MAX_SAMPLES {
-                stats
-                    .leaked_marker_samples
-                    .push(format!("{}: {leaked} leak(s)", item.label));
-            }
-            stats.leaked_markers += 1;
-        }
-
-        stats.ok += 1;
+        sweep_one(result, &mut stats);
     }
 
     eprintln!("{stats}");
@@ -138,25 +92,121 @@ fn corpus_sweep_i1_no_panic_i2_report_i5_report() {
         stats.leaked_marker_samples,
     );
 
+    // I4 — hard gate as of M2-S4. `AFM_CORPUS_I4_BUDGET` mirrors I2's
+    // escape hatch for staged fixes. Zero by default.
+    let i4_budget = env_budget("AFM_CORPUS_I4_BUDGET");
+    assert!(
+        stats.malformed <= i4_budget,
+        "I4: {} corpus item(s) rendered to malformed HTML (budget = {i4_budget}; \
+         first {}: {:?})",
+        stats.malformed,
+        stats.malformed_samples.len(),
+        stats.malformed_samples,
+    );
+
     // I5 is still a report — corpora may legitimately contain non-SJIS
     // files (READMEs, bundled metadata); promoting to hard-gate would
     // force every sweep configuration to curate input shape first.
 }
 
 /// Read `AFM_CORPUS_LEAK_BUDGET` and return the allowed number of
-/// leaked ［＃ markers. Defaults to `0` (strict). Malformed values
-/// produce a warning and fall back to `0` so a typo does not
-/// silently paper over a real regression.
+/// leaked ［＃ markers. Defaults to `0` (strict). See
+/// [`env_budget`] for the generic shape.
 fn leak_budget_from_env() -> usize {
-    env::var("AFM_CORPUS_LEAK_BUDGET").map_or(0, |s| {
+    env_budget("AFM_CORPUS_LEAK_BUDGET")
+}
+
+/// Generic env-var budget reader. Defaults to `0` (strict) when the
+/// variable is absent. Malformed values (non-integer) produce a
+/// warning on stderr and fall back to `0` so a typo in CI config
+/// cannot silently paper over a real regression. Shared by I2 / I4.
+fn env_budget(name: &str) -> usize {
+    env::var(name).map_or(0, |s| {
         s.trim().parse::<usize>().unwrap_or_else(|_| {
             eprintln!(
-                "corpus sweep: AFM_CORPUS_LEAK_BUDGET={s:?} is not a non-negative integer — \
+                "corpus sweep: {name}={s:?} is not a non-negative integer — \
                  defaulting to 0 (strict)."
             );
             0
         })
     })
+}
+
+/// Drive one corpus item through the invariant suite, accumulating
+/// results into `stats`. Extracted from the sweep entry point to
+/// keep the latter under clippy's too-many-lines threshold and so
+/// each invariant's branch stays visually close to its siblings.
+fn sweep_one(result: Result<afm_corpus::CorpusItem, CorpusError>, stats: &mut SweepStats) {
+    let item = match result {
+        Ok(item) => item,
+        Err(CorpusError::Io { path, source }) => {
+            eprintln!(
+                "corpus sweep: skipping unreadable item {}: {}",
+                path.display(),
+                source
+            );
+            stats.io_skips += 1;
+            return;
+        }
+        Err(other) => {
+            eprintln!("corpus sweep: skipping item after unexpected error: {other}");
+            stats.io_skips += 1;
+            return;
+        }
+    };
+
+    // I5 — Shift_JIS decode. Non-SJIS files are reported and skipped.
+    let text = match decode_sjis(&item.bytes) {
+        Ok(text) => text,
+        Err(err) => {
+            if stats.decode_error_samples.len() < MAX_SAMPLES {
+                stats
+                    .decode_error_samples
+                    .push(format!("{}: {err}", item.label));
+            }
+            stats.decode_errors += 1;
+            return;
+        }
+    };
+
+    // I1 — render_to_string must not panic. `catch_unwind` bounds a
+    // single item's panic so the rest of the corpus keeps sweeping.
+    let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| render_to_string(&text))) else {
+        if stats.panic_samples.len() < MAX_SAMPLES {
+            stats.panic_samples.push(item.label);
+        }
+        stats.panics += 1;
+        return;
+    };
+
+    // I2 — no bare `［＃` outside afm-annotation wrappers.
+    let leaked = count_leaked_markers(&html);
+    if leaked > 0 {
+        if stats.leaked_marker_samples.len() < MAX_SAMPLES {
+            stats
+                .leaked_marker_samples
+                .push(format!("{}: {leaked} leak(s)", item.label));
+        }
+        stats.leaked_markers += 1;
+    }
+
+    // I4 — rendered HTML must be tag-balanced.
+    let wf_errors = check_well_formed(&html);
+    if !wf_errors.is_empty() {
+        if stats.malformed_samples.len() < MAX_SAMPLES {
+            let first = wf_errors
+                .first()
+                .map_or_else(|| "?".to_owned(), ToString::to_string);
+            stats.malformed_samples.push(format!(
+                "{}: {first} ({} total)",
+                item.label,
+                wf_errors.len()
+            ));
+        }
+        stats.malformed += 1;
+    }
+
+    stats.ok += 1;
 }
 
 const MAX_SAMPLES: usize = 10;
@@ -168,6 +218,8 @@ struct SweepStats {
     panic_samples: Vec<String>,
     leaked_markers: usize,
     leaked_marker_samples: Vec<String>,
+    malformed: usize,
+    malformed_samples: Vec<String>,
     decode_errors: usize,
     decode_error_samples: Vec<String>,
     io_skips: usize,
@@ -178,10 +230,12 @@ impl fmt::Display for SweepStats {
         writeln!(
             f,
             "corpus sweep summary: {ok} passed, {panics} panics, \
-             {leaks} with leaked ［＃ markers, {decode} decode errors, {io} I/O skips",
+             {leaks} with leaked ［＃ markers, {malformed} malformed HTML, \
+             {decode} decode errors, {io} I/O skips",
             ok = self.ok,
             panics = self.panics,
             leaks = self.leaked_markers,
+            malformed = self.malformed,
             decode = self.decode_errors,
             io = self.io_skips,
         )?;
@@ -193,6 +247,13 @@ impl fmt::Display for SweepStats {
                 f,
                 "  first leaked-marker samples: {:?}",
                 self.leaked_marker_samples
+            )?;
+        }
+        if !self.malformed_samples.is_empty() {
+            writeln!(
+                f,
+                "  first malformed-HTML samples: {:?}",
+                self.malformed_samples
             )?;
         }
         if !self.decode_error_samples.is_empty() {
