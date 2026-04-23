@@ -76,9 +76,9 @@ pub mod phase2_pair;
 pub mod phase3_classify;
 pub mod phase4_normalize;
 mod phase5_registry;
+pub mod phase6_validate;
 pub mod token;
-// Phase-implementation modules land in subsequent commits C7.
-// mod phase6_validate;
+// Source map (normalized pos → source pos) lands in C5b.
 // pub mod source_map;
 
 pub use diagnostic::Diagnostic;
@@ -87,6 +87,7 @@ pub use phase1_events::tokenize;
 pub use phase2_pair::{PairEvent, PairKind, PairOutput, pair};
 pub use phase3_classify::{ClassifiedSpan, ClassifyOutput, SpanKind, classify};
 pub use phase4_normalize::{NormalizeOutput, PlaceholderRegistry, normalize};
+pub use phase6_validate::{ValidateOutput, validate};
 pub use token::{Token, TriggerKind};
 
 /// Placeholder output shape.

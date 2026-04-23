@@ -94,6 +94,82 @@ pub enum Diagnostic {
         /// Byte-range of the stray *close* delimiter.
         span: Span,
     },
+
+    /// Phase 6 V1 — a `［＃` digraph survived Phase 4 into the
+    /// normalized text. Indicates an annotation escaped classification.
+    #[error("residual `［＃` annotation marker in normalized text")]
+    #[diagnostic(
+        code("afm::lex::residual_annotation_marker"),
+        help(
+            "a `［＃…］` pair reached the normalizer unclassified — \
+             most likely a missing recognizer for the keyword"
+        )
+    )]
+    ResidualAnnotationMarker {
+        #[label("leaked here")]
+        at: miette::SourceSpan,
+        /// Byte-range within the normalized text.
+        span: Span,
+    },
+
+    /// Phase 6 V2 — a PUA sentinel codepoint was found in the
+    /// normalized text at a position that is not recorded in the
+    /// placeholder registry. Source-side PUA collisions already
+    /// emitted `SourceContainsPua` at Phase 0; a violation here is
+    /// distinct: a sentinel landed but the registry does not know
+    /// about it, which would break `post_process` splicing.
+    #[error("unregistered PUA sentinel {codepoint:?} in normalized text")]
+    #[diagnostic(
+        code("afm::lex::unregistered_sentinel"),
+        help(
+            "the normalizer wrote this sentinel but the placeholder registry \
+             has no matching entry; post_process cannot resolve it"
+        )
+    )]
+    UnregisteredSentinel {
+        #[label("unregistered here")]
+        at: miette::SourceSpan,
+        codepoint: char,
+        /// Byte-range within the normalized text.
+        span: Span,
+    },
+
+    /// Phase 6 V3 — a placeholder-registry vector is not strictly
+    /// ordered by position. Indicates a Phase 4 driver bug.
+    #[error("placeholder registry entries are not strictly sorted")]
+    #[diagnostic(
+        code("afm::lex::registry_out_of_order"),
+        help(
+            "Phase 4 is expected to emit registry entries in ascending \
+             byte-position order; a violation here breaks binary-search lookups"
+        )
+    )]
+    RegistryOutOfOrder {
+        #[label("out-of-order pair")]
+        at: miette::SourceSpan,
+        /// Span covering the two offending entries' positions.
+        span: Span,
+    },
+
+    /// Phase 6 V3 — a registry entry references a normalized byte
+    /// position whose character does not match the expected sentinel
+    /// kind. The registry's `inline` vector, for instance, must only
+    /// name positions holding `U+E001`.
+    #[error("placeholder registry points at {expected:?} but byte there is different")]
+    #[diagnostic(
+        code("afm::lex::registry_position_mismatch"),
+        help(
+            "the normalized byte at this position is not the PUA sentinel \
+             the registry claims — the registry and the string drifted"
+        )
+    )]
+    RegistryPositionMismatch {
+        #[label("mismatch here")]
+        at: miette::SourceSpan,
+        expected: char,
+        /// Byte-range within the normalized text.
+        span: Span,
+    },
 }
 
 impl Diagnostic {
@@ -129,6 +205,48 @@ impl Diagnostic {
         Self::UnmatchedClose {
             at: miette::SourceSpan::new(offset.into(), length),
             kind,
+            span: at,
+        }
+    }
+
+    /// Quick constructor for [`Diagnostic::ResidualAnnotationMarker`].
+    #[must_use]
+    pub fn residual_annotation_marker(at: Span) -> Self {
+        let (offset, length) = span_to_miette_parts(at);
+        Self::ResidualAnnotationMarker {
+            at: miette::SourceSpan::new(offset.into(), length),
+            span: at,
+        }
+    }
+
+    /// Quick constructor for [`Diagnostic::UnregisteredSentinel`].
+    #[must_use]
+    pub fn unregistered_sentinel(at: Span, codepoint: char) -> Self {
+        let (offset, length) = span_to_miette_parts(at);
+        Self::UnregisteredSentinel {
+            at: miette::SourceSpan::new(offset.into(), length),
+            codepoint,
+            span: at,
+        }
+    }
+
+    /// Quick constructor for [`Diagnostic::RegistryOutOfOrder`].
+    #[must_use]
+    pub fn registry_out_of_order(at: Span) -> Self {
+        let (offset, length) = span_to_miette_parts(at);
+        Self::RegistryOutOfOrder {
+            at: miette::SourceSpan::new(offset.into(), length),
+            span: at,
+        }
+    }
+
+    /// Quick constructor for [`Diagnostic::RegistryPositionMismatch`].
+    #[must_use]
+    pub fn registry_position_mismatch(at: Span, expected: char) -> Self {
+        let (offset, length) = span_to_miette_parts(at);
+        Self::RegistryPositionMismatch {
+            at: miette::SourceSpan::new(offset.into(), length),
+            expected,
             span: at,
         }
     }
