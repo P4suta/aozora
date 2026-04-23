@@ -9,7 +9,9 @@
 
 use core::fmt::Write;
 
-use afm_syntax::{AozoraNode, Ruby, SectionKind};
+use afm_syntax::{AozoraNode, Bouten, Ruby, SectionKind};
+
+use crate::aozora::bouten;
 
 /// Render a single [`AozoraNode`] into `writer`. Called from the comrak fork's
 /// `NodeValue::Aozora(_)` renderer arm, which passes `&mut dyn fmt::Write` over
@@ -21,6 +23,7 @@ use afm_syntax::{AozoraNode, Ruby, SectionKind};
 pub fn render(node: &AozoraNode, writer: &mut dyn Write) -> core::fmt::Result {
     match node {
         AozoraNode::Ruby(r) => render_ruby(r, writer),
+        AozoraNode::Bouten(b) => render_bouten(b, writer),
         AozoraNode::TateChuYoko(t) => {
             writer.write_str(r#"<span class="afm-tcy">"#)?;
             escape_text(&t.text, writer)?;
@@ -72,6 +75,22 @@ fn render_ruby(r: &Ruby, writer: &mut dyn Write) -> core::fmt::Result {
     writer.write_str("</rt><rp>)</rp></ruby>")
 }
 
+/// Forward-reference bouten renders as a semantic `<em>` wrapping the
+/// annotated literal, with a per-kind class for CSS styling. The preceding
+/// plain occurrence of the literal remains in the surrounding text stream;
+/// visual deduplication (hiding the plain copy so the bouten-marked run
+/// takes its place) is a stylesheet concern — see
+/// `crates/afm-book/theme/afm-horizontal.css` for the CSS class contract.
+fn render_bouten(b: &Bouten, writer: &mut dyn Write) -> core::fmt::Result {
+    write!(
+        writer,
+        r#"<em class="afm-bouten afm-bouten-{slug}">"#,
+        slug = bouten::kind_slug(b.kind),
+    )?;
+    escape_text(&b.target, writer)?;
+    writer.write_str("</em>")
+}
+
 fn fallback(node: &AozoraNode, writer: &mut dyn Write) -> core::fmt::Result {
     write!(writer, "<!-- {} -->", node.xml_node_name())
 }
@@ -94,7 +113,7 @@ fn escape_text(text: &str, writer: &mut dyn Write) -> core::fmt::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use afm_syntax::{Annotation, AnnotationKind, Bouten, BoutenKind, Ruby, Span, TateChuYoko};
+    use afm_syntax::{Annotation, AnnotationKind, Bouten, BoutenKind, Ruby, TateChuYoko};
 
     fn render_to_string(node: &AozoraNode) -> String {
         let mut out = String::new();
@@ -154,11 +173,48 @@ mod tests {
     }
 
     #[test]
-    fn bouten_falls_back_to_comment_until_m1() {
+    fn bouten_emits_semantic_em_with_kind_slug() {
         let n = AozoraNode::Bouten(Bouten {
             kind: BoutenKind::Goma,
-            target: Span::new(0, 0),
+            target: "可哀想".into(),
         });
-        assert_eq!(render_to_string(&n), "<!-- aozora_bouten -->");
+        assert_eq!(
+            render_to_string(&n),
+            r#"<em class="afm-bouten afm-bouten-goma">可哀想</em>"#
+        );
+    }
+
+    #[test]
+    fn bouten_escapes_structural_characters_in_target() {
+        let n = AozoraNode::Bouten(Bouten {
+            kind: BoutenKind::WavyLine,
+            target: "a<b&c".into(),
+        });
+        assert_eq!(
+            render_to_string(&n),
+            r#"<em class="afm-bouten afm-bouten-wavy-line">a&lt;b&amp;c</em>"#
+        );
+    }
+
+    #[test]
+    fn bouten_kind_slugs_are_stable_across_variants() {
+        // Brittle on purpose — if a BoutenKind variant is renamed, the CSS
+        // class contract breaks here, before reaching the stylesheet tests.
+        for (kind, want_slug) in [
+            (BoutenKind::Goma, "goma"),
+            (BoutenKind::Circle, "circle"),
+            (BoutenKind::WhiteCircle, "white-circle"),
+            (BoutenKind::DoubleCircle, "double-circle"),
+            (BoutenKind::Janome, "janome"),
+            (BoutenKind::WavyLine, "wavy-line"),
+            (BoutenKind::UnderLine, "under-line"),
+        ] {
+            let html = render_to_string(&AozoraNode::Bouten(Bouten {
+                kind,
+                target: "x".into(),
+            }));
+            let expected = format!(r#"<em class="afm-bouten afm-bouten-{want_slug}">x</em>"#);
+            assert_eq!(html, expected, "kind={kind:?}");
+        }
     }
 }

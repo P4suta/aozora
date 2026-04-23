@@ -29,10 +29,17 @@ struct Case {
 fn all_cases() -> Vec<(&'static str, Vec<Case>)> {
     const LAYOUT_PAGE_BREAK: &str =
         include_str!("../../../spec/aozora/cases/layout-page-break.json");
-    vec![(
-        "layout-page-break.json",
-        serde_json::from_str(LAYOUT_PAGE_BREAK).expect("layout-page-break.json parses"),
-    )]
+    const EMPHASIS_BOUTEN: &str = include_str!("../../../spec/aozora/cases/emphasis-bouten.json");
+    vec![
+        (
+            "layout-page-break.json",
+            serde_json::from_str(LAYOUT_PAGE_BREAK).expect("layout-page-break.json parses"),
+        ),
+        (
+            "emphasis-bouten.json",
+            serde_json::from_str(EMPHASIS_BOUTEN).expect("emphasis-bouten.json parses"),
+        ),
+    ]
 }
 
 #[test]

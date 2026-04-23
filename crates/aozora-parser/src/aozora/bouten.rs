@@ -5,46 +5,47 @@
 //! *kind* of emphasis to apply to that run (default 傍点 = Goma, plus six
 //! shaped variants covered by [`afm_syntax::BoutenKind`]).
 //!
-//! This module is pure: it extracts `(kind, target_literal)` from a body, and
-//! resolves the target's most recent occurrence in the preceding text to a
-//! source [`Span`]. Dispatch glue lives in `annotation::classify`.
+//! This module is pure: it extracts `(kind, target_literal)` from a body.
+//! The classifier in [`crate::aozora::annotation`] then confirms the target
+//! is present in the preceding inline run before promoting to a
+//! [`afm_syntax::Bouten`]; absent targets degrade to `Annotation{Unknown}`
+//! so the Tier-A invariant (no bare `［＃` leaks) always holds.
 //!
 //! Paired bouten (`［＃傍点］…［＃傍点終わり］`) is a separate parse path landing
 //! with the paired-block container hook in Phase D.
 //!
 //! # Kind keyword table
 //!
-//! | Japanese     | [`BoutenKind`]          |
-//! |--------------|-------------------------|
-//! | 傍点         | [`BoutenKind::Goma`]    |
-//! | 丸傍点       | [`BoutenKind::Circle`]  |
+//! | Japanese     | [`BoutenKind`]              |
+//! |--------------|-----------------------------|
+//! | 傍点         | [`BoutenKind::Goma`]        |
+//! | 丸傍点       | [`BoutenKind::Circle`]      |
 //! | 白丸傍点     | [`BoutenKind::WhiteCircle`] |
-//! | 二重丸傍点   | [`BoutenKind::DoubleCircle`] |
-//! | 蛇の目傍点   | [`BoutenKind::Janome`]  |
-//! | 波線         | [`BoutenKind::WavyLine`] |
-//! | 傍線         | [`BoutenKind::UnderLine`] |
+//! | 二重丸傍点   | [`BoutenKind::DoubleCircle`]|
+//! | 蛇の目傍点   | [`BoutenKind::Janome`]      |
+//! | 波線         | [`BoutenKind::WavyLine`]    |
+//! | 傍線         | [`BoutenKind::UnderLine`]   |
 //!
 //! Aozora Bunko ships further variants (白ゴマ / ばつ / 三角 / 二重傍線 / 破線 /
 //! 鎖線 …); adding support is a matter of extending the `BoutenKind` enum and
 //! this keyword table together.
 
-use afm_syntax::{BoutenKind, Span};
+use afm_syntax::BoutenKind;
 
 /// Extracted shape of a forward-reference bouten body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ForwardRefBouten<'a> {
     pub kind: BoutenKind,
-    /// The literal characters between the `「` and `」` in the annotation. The
-    /// annotation is only promoted to a [`afm_syntax::Bouten`] when this
-    /// literal is also present in the preceding inline text.
+    /// The literal characters between the `「` and `」` in the annotation.
+    /// The classifier caller only promotes the annotation to
+    /// [`afm_syntax::Bouten`] when this literal also appears in the preceding
+    /// inline text, so the HTML rendering can legitimately wrap it.
     pub target: &'a str,
 }
 
 /// Parse an annotation body of shape `「X」に〈KIND〉` into a
 /// [`ForwardRefBouten`]. Returns `None` if the body doesn't match that shape
-/// or the keyword isn't one we map; the caller falls through to an
-/// `Annotation{Unknown}` wrapper so the Tier-A invariant (no bare `［＃`
-/// leaks) is preserved.
+/// or the keyword isn't one we map.
 #[must_use]
 pub(crate) fn parse_forward_ref(body: &str) -> Option<ForwardRefBouten<'_>> {
     let after_open = body.strip_prefix('「')?;
@@ -75,16 +76,21 @@ fn classify_kind(keyword: &str) -> Option<BoutenKind> {
     }
 }
 
-/// Locate the last occurrence of `target` in `preceding` and translate its
-/// byte range to a source [`Span`] given `line_start` — the byte offset of
-/// `preceding[0]` in the source. Returns `None` if `target` is absent from
-/// `preceding` (signals to dispatcher: demote to `Annotation{Unknown}`).
+/// Stable CSS-class slug for a [`BoutenKind`]. Used by the HTML renderer so
+/// the class-contract test can lock the output without caring about the
+/// Japanese keyword form.
 #[must_use]
-pub(crate) fn resolve_target_span(target: &str, preceding: &str, line_start: u32) -> Option<Span> {
-    let relative = preceding.rfind(target)?;
-    let start = line_start.checked_add(u32::try_from(relative).ok()?)?;
-    let end = start.checked_add(u32::try_from(target.len()).ok()?)?;
-    Some(Span::new(start, end))
+pub(crate) const fn kind_slug(kind: BoutenKind) -> &'static str {
+    match kind {
+        BoutenKind::Goma => "goma",
+        BoutenKind::Circle => "circle",
+        BoutenKind::WhiteCircle => "white-circle",
+        BoutenKind::DoubleCircle => "double-circle",
+        BoutenKind::Janome => "janome",
+        BoutenKind::WavyLine => "wavy-line",
+        BoutenKind::UnderLine => "under-line",
+        _ => "other",
+    }
 }
 
 #[cfg(test)]
@@ -152,29 +158,19 @@ mod tests {
     }
 
     #[test]
-    fn resolves_target_to_last_occurrence() {
-        let span = resolve_target_span("ab", "xabyab", 100).expect("resolved");
-        assert_eq!(span.start, 100 + 4);
-        assert_eq!(span.end, 100 + 4 + 2);
-    }
-
-    #[test]
-    fn resolve_returns_none_when_target_absent() {
-        assert!(resolve_target_span("foo", "bar baz", 0).is_none());
-    }
-
-    #[test]
-    fn resolve_returns_none_when_preceding_empty() {
-        assert!(resolve_target_span("foo", "", 0).is_none());
-    }
-
-    #[test]
-    fn resolve_handles_multibyte_target() {
-        let preceding = "前段可哀想";
-        let target = "可哀想";
-        let expected_start = "前段".len();
-        let span = resolve_target_span(target, preceding, 0).expect("resolved");
-        assert_eq!(span.start as usize, expected_start);
-        assert_eq!(span.end as usize, expected_start + target.len());
+    fn kind_slug_covers_every_enum_variant() {
+        // Brittle on purpose: if a new BoutenKind variant lands, this test
+        // fails until the slug table is updated so CSS classes stay complete.
+        for (kind, want) in [
+            (BoutenKind::Goma, "goma"),
+            (BoutenKind::Circle, "circle"),
+            (BoutenKind::WhiteCircle, "white-circle"),
+            (BoutenKind::DoubleCircle, "double-circle"),
+            (BoutenKind::Janome, "janome"),
+            (BoutenKind::WavyLine, "wavy-line"),
+            (BoutenKind::UnderLine, "under-line"),
+        ] {
+            assert_eq!(kind_slug(kind), want, "kind={kind:?}");
+        }
     }
 }

@@ -20,8 +20,8 @@ impl AozoraExtension for AfmAdapter {
         match classify_inline_head(head) {
             InlineTrigger::Bar => parse_bar_ruby(head),
             InlineTrigger::OpenRuby => parse_implicit_ruby(head, cx.preceding),
-            InlineTrigger::OpenBracket => parse_bracket_annotation(bracket_ctx(&cx, head)?),
-            InlineTrigger::ReferenceMark => parse_reference_mark(&cx, head),
+            InlineTrigger::OpenBracket => parse_bracket_annotation(head, cx.preceding),
+            InlineTrigger::ReferenceMark => parse_reference_mark(head, cx.preceding),
             InlineTrigger::None => None,
         }
     }
@@ -85,21 +85,6 @@ fn parse_implicit_ruby(head: &str, preceding: &str) -> Option<InlineMatch> {
     InlineMatch::new(AozoraNode::Ruby(ruby), consumed)
 }
 
-/// Build the bracket scanner's context from the inline context + the head
-/// slice the bracket starts at. `line_start` is derived from `pos -
-/// preceding.len()` so the scanner can translate target offsets inside
-/// `preceding` into absolute source coordinates for forward-reference
-/// bouten.
-fn bracket_ctx<'a>(cx: &InlineCtx<'a>, head: &'a str) -> Option<BracketCtx<'a>> {
-    let line_start_usize = cx.pos.checked_sub(cx.preceding.len())?;
-    let line_start = u32::try_from(line_start_usize).ok()?;
-    Some(BracketCtx {
-        head,
-        preceding: cx.preceding,
-        line_start,
-    })
-}
-
 /// `［＃...］` — scan to the matching `］` and dispatch the interior by
 /// keyword via [`crate::aozora::annotation::scan_bracket`]. Returns `None` if
 /// the `＃` is absent (lone `［` falls through to comrak's default text
@@ -109,27 +94,20 @@ fn bracket_ctx<'a>(cx: &InlineCtx<'a>, head: &'a str) -> Option<BracketCtx<'a>> 
 /// Classification semantics live in `aozora::annotation`; this function is
 /// only the adapter-side glue that converts a successful scan into an
 /// [`InlineMatch`].
-fn parse_bracket_annotation(ctx: BracketCtx<'_>) -> Option<InlineMatch> {
-    let m = crate::aozora::annotation::scan_bracket(ctx)?;
+fn parse_bracket_annotation<'a>(head: &'a str, preceding: &'a str) -> Option<InlineMatch> {
+    let m = crate::aozora::annotation::scan_bracket(BracketCtx { head, preceding })?;
     InlineMatch::new(m.node, m.consumed)
 }
 
 /// `※` on its own is a normal character. Only when it precedes `［＃` does it
 /// start a gaiji annotation; in that case consume the ※ + the bracket body.
-fn parse_reference_mark(cx: &InlineCtx<'_>, head: &str) -> Option<InlineMatch> {
+fn parse_reference_mark<'a>(head: &'a str, preceding: &'a str) -> Option<InlineMatch> {
     let mark_len = '※'.len_utf8();
     let after_mark = head.get(mark_len..)?;
     if !after_mark.starts_with('［') {
         return None;
     }
-    // The bracket body starts `mark_len` bytes further into the line, so the
-    // reference mark's preceding stays the same but line_start shifts.
-    let base = bracket_ctx(cx, after_mark)?;
-    let shifted = BracketCtx {
-        line_start: base.line_start.checked_add(u32::try_from(mark_len).ok()?)?,
-        ..base
-    };
-    let m = parse_bracket_annotation(shifted)?;
+    let m = parse_bracket_annotation(after_mark, preceding)?;
     InlineMatch::new(m.node, mark_len + m.consumed.get())
 }
 

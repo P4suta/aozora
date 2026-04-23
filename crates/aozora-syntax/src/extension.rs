@@ -197,7 +197,7 @@ impl std::fmt::Debug for dyn AozoraExtension + '_ {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BoutenKind, Ruby, Span};
+    use crate::{BoutenKind, Ruby};
 
     #[test]
     fn inline_match_rejects_zero_consumed() {
@@ -242,7 +242,7 @@ mod tests {
         // because we're in-crate and can omit the wildcard.
         let m = BlockMatch::Leaf(AozoraNode::Bouten(crate::Bouten {
             kind: BoutenKind::Goma,
-            target: Span::new(0, 0),
+            target: "".into(),
         }));
         let matched = matches!(m, BlockMatch::Leaf(_));
         assert!(matched);

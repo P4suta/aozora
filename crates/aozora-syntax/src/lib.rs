@@ -186,13 +186,18 @@ pub struct Ruby {
     pub delim_explicit: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Bouten {
     pub kind: BoutenKind,
-    /// Byte span of the annotated text *in the source*, NOT a child list — the
-    /// annotated run remains in the surrounding inline stream.
-    pub target: Span,
+    /// Literal text the annotation targets. For forward-reference bouten
+    /// (`［＃「X」に傍点］`) this is the run named between `「…」` in the
+    /// annotation body; for paired bouten (`［＃傍点］…［＃傍点終わり］`, a
+    /// later phase) it will be the children captured between the markers.
+    /// Storing the literal directly — rather than a source [`Span`] — lets
+    /// the HTML renderer emit `<em class="afm-bouten-{kind}">target</em>`
+    /// without threading source access through the extension seam.
+    pub target: Box<str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -341,15 +346,12 @@ mod tests {
     }
 
     #[test]
-    fn bouten_target_span_is_independent_of_children() {
+    fn bouten_target_carries_the_annotated_literal() {
         let b = Bouten {
             kind: BoutenKind::Goma,
-            target: Span::new(10, 20),
+            target: "可哀想".into(),
         };
-        assert_eq!(b.target.start, 10);
-        assert_eq!(b.target.end, 20);
-        assert_eq!(b.target.len(), 10);
-        assert!(!b.target.is_empty());
+        assert_eq!(&*b.target, "可哀想");
     }
 
     #[test]
@@ -415,7 +417,7 @@ mod tests {
             }),
             AozoraNode::Bouten(Bouten {
                 kind: BoutenKind::Goma,
-                target: Span::new(0, 0),
+                target: "".into(),
             }),
             AozoraNode::TateChuYoko(TateChuYoko { text: "".into() }),
             AozoraNode::Gaiji(Gaiji {
