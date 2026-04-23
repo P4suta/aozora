@@ -9,5 +9,6 @@ pub mod block;
 pub mod bouten;
 pub mod html;
 pub mod inline;
+pub mod layout;
 pub mod ruby;
 pub mod tcy;

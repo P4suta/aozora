@@ -9,7 +9,7 @@
 
 use core::fmt::Write;
 
-use afm_syntax::{AozoraNode, Bouten, Ruby, SectionKind};
+use afm_syntax::{AlignEnd, AozoraNode, Bouten, Indent, Ruby, SectionKind};
 
 use crate::aozora::bouten;
 
@@ -39,6 +39,8 @@ pub fn render(node: &AozoraNode, writer: &mut dyn Write) -> core::fmt::Result {
             }
             writer.write_str("</span>")
         }
+        AozoraNode::Indent(i) => render_indent(*i, writer),
+        AozoraNode::AlignEnd(a) => render_align_end(*a, writer),
         AozoraNode::PageBreak => writer.write_str(r#"<div class="afm-page-break"></div>"#),
         AozoraNode::SectionBreak(k) => {
             let slug = match k {
@@ -91,6 +93,34 @@ fn render_bouten(b: &Bouten, writer: &mut dyn Write) -> core::fmt::Result {
     writer.write_str("</em>")
 }
 
+/// Leaf `{N}字下げ` — emits an empty marker `<span>` with a per-amount
+/// class. The annotation applies to the following inline run; the
+/// stylesheet uses sibling selectors to apply the indent. Rendering as
+/// `<span>` (not `<div>`) keeps the markup valid inside `<p>`, which is
+/// where comrak places the inline-hook result.
+fn render_indent(i: Indent, writer: &mut dyn Write) -> core::fmt::Result {
+    write!(
+        writer,
+        r#"<span class="afm-indent afm-indent-{n}" data-amount="{n}"></span>"#,
+        n = i.amount,
+    )
+}
+
+/// Leaf `地付き` (offset 0) / `地からN字上げ` (offset N). Same shape as
+/// [`render_indent`]: an empty marker span that the stylesheet turns into
+/// a right-aligned block.
+fn render_align_end(a: AlignEnd, writer: &mut dyn Write) -> core::fmt::Result {
+    if a.offset == 0 {
+        writer.write_str(r#"<span class="afm-align-end" data-offset="0"></span>"#)
+    } else {
+        write!(
+            writer,
+            r#"<span class="afm-align-end afm-align-end-{n}" data-offset="{n}"></span>"#,
+            n = a.offset,
+        )
+    }
+}
+
 fn fallback(node: &AozoraNode, writer: &mut dyn Write) -> core::fmt::Result {
     write!(writer, "<!-- {} -->", node.xml_node_name())
 }
@@ -113,7 +143,9 @@ fn escape_text(text: &str, writer: &mut dyn Write) -> core::fmt::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use afm_syntax::{Annotation, AnnotationKind, Bouten, BoutenKind, Ruby, TateChuYoko};
+    use afm_syntax::{
+        AlignEnd, Annotation, AnnotationKind, Bouten, BoutenKind, Indent, Ruby, TateChuYoko,
+    };
 
     fn render_to_string(node: &AozoraNode) -> String {
         let mut out = String::new();
@@ -193,6 +225,33 @@ mod tests {
         assert_eq!(
             render_to_string(&n),
             r#"<em class="afm-bouten afm-bouten-wavy-line">a&lt;b&amp;c</em>"#
+        );
+    }
+
+    #[test]
+    fn indent_emits_empty_marker_span_with_amount_class() {
+        let n = AozoraNode::Indent(Indent { amount: 2 });
+        assert_eq!(
+            render_to_string(&n),
+            r#"<span class="afm-indent afm-indent-2" data-amount="2"></span>"#
+        );
+    }
+
+    #[test]
+    fn align_end_zero_offset_omits_numeric_class() {
+        let n = AozoraNode::AlignEnd(AlignEnd { offset: 0 });
+        assert_eq!(
+            render_to_string(&n),
+            r#"<span class="afm-align-end" data-offset="0"></span>"#
+        );
+    }
+
+    #[test]
+    fn align_end_nonzero_offset_appends_numeric_class() {
+        let n = AozoraNode::AlignEnd(AlignEnd { offset: 2 });
+        assert_eq!(
+            render_to_string(&n),
+            r#"<span class="afm-align-end afm-align-end-2" data-offset="2"></span>"#
         );
     }
 

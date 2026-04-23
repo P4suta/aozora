@@ -15,6 +15,7 @@
 use afm_syntax::{Annotation, AnnotationKind, AozoraNode, Bouten, SectionKind, TateChuYoko};
 
 use crate::aozora::bouten as bouten_mod;
+use crate::aozora::layout as layout_mod;
 use crate::aozora::tcy as tcy_mod;
 
 /// Context passed to [`scan_bracket`].
@@ -96,7 +97,9 @@ fn classify(body: &str, raw: &str, cx: &BracketCtx<'_>) -> AozoraNode {
         "改丁" => AozoraNode::SectionBreak(SectionKind::Choho),
         "改段" => AozoraNode::SectionBreak(SectionKind::Dan),
         "改見開き" => AozoraNode::SectionBreak(SectionKind::Spread),
-        _ => try_forward_ref_bouten(body, cx)
+        _ => try_leaf_indent(body)
+            .or_else(|| try_leaf_align_end(body))
+            .or_else(|| try_forward_ref_bouten(body, cx))
             .or_else(|| try_forward_ref_tcy(body, cx))
             .unwrap_or_else(|| {
                 AozoraNode::Annotation(Annotation {
@@ -105,6 +108,18 @@ fn classify(body: &str, raw: &str, cx: &BracketCtx<'_>) -> AozoraNode {
                 })
             }),
     }
+}
+
+/// Leaf `{N}字下げ` → [`AozoraNode::Indent`] (paired `［＃ここから…］` is
+/// Phase D). Returns `None` if the body isn't the leaf indent shape.
+fn try_leaf_indent(body: &str) -> Option<AozoraNode> {
+    layout_mod::parse_indent(body).map(AozoraNode::Indent)
+}
+
+/// Leaf `地付き` / `地からN字上げ` → [`AozoraNode::AlignEnd`]. Returns
+/// `None` if the body isn't one of those forms.
+fn try_leaf_align_end(body: &str) -> Option<AozoraNode> {
+    layout_mod::parse_align_end(body).map(AozoraNode::AlignEnd)
 }
 
 /// Attempt to promote `body` to a [`Bouten`] via the forward-reference
