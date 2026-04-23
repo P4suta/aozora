@@ -1,5 +1,35 @@
-# Stable rustfmt options only.
-edition = "2024"
-newline_style = "Unix"
+# rustfmt configuration — STABLE options only.
+#
+# Rationale: rust-toolchain.toml pins a stable channel (see ADR-0001 tool
+# policy). nightly-only options (`group_imports`, `imports_granularity`,
+# `wrap_comments`, `format_strings`, `normalize_doc_attributes`, …) would
+# tie this repo to nightly rustfmt just for formatting. That's a bad
+# trade: we don't need them badly enough to pay the toolchain cost.
+#
+# Entries below that match rustfmt defaults are still listed explicitly
+# so the policy is self-documenting — a future rustfmt default change
+# won't silently move this repo's formatting.
+
+edition              = "2024"
+newline_style        = "Unix"
 use_small_heuristics = "Default"
-max_width = 100
+max_width            = 100
+
+# Whitespace — lock to spaces, not tabs.
+hard_tabs  = false
+tab_spaces = 4
+
+# Concise idioms for the struct-init and `?` forms. Default `false` on
+# `use_field_init_shorthand`; flip it on because `Foo { a, b }` reads
+# better than `Foo { a: a, b: b }` and is the universal Rust convention.
+use_field_init_shorthand = true
+use_try_shorthand        = true
+
+# Parens, ABI, fn-sig — all rustfmt defaults, listed for transparency.
+remove_nested_parens         = true   # drop redundant outer parens
+force_explicit_abi           = true   # `extern "C" fn` over `extern fn`
+fn_params_layout             = "Tall" # one param per line past max_width
+
+# Match / derive grouping — keep layouts predictable across reviewers.
+match_block_trailing_comma = false
+merge_derives              = true
