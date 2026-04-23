@@ -90,27 +90,56 @@ pub use phase4_normalize::{NormalizeOutput, PlaceholderRegistry, normalize};
 pub use phase6_validate::{ValidateOutput, validate};
 pub use token::{Token, TriggerKind};
 
-/// Placeholder output shape.
+/// Public output of the lexer pipeline.
 ///
-/// Replaced with the full [`LexOutput`] (normalized text + registry +
-/// source map + diagnostics) as phases land. Exposed now so `afm-parser`
-/// can start integrating against the API seam (commit E1).
+/// Contains the normalized text (which the comrak parser consumes
+/// verbatim), the placeholder registry (which `afm-parser`'s
+/// `post_process` uses to splice Aozora constructs back into the AST),
+/// and the accumulated diagnostics from every phase.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct LexOutput {
-    /// Raw source text passed through unchanged. Replaced with the
-    /// normalized (sentinel-bearing) text in Phase 4.
+    /// Normalized text with every Aozora construct replaced by a PUA
+    /// sentinel. Safe to pass to a vanilla CommonMark/GFM parser.
     pub normalized: String,
+    /// Sentinel-position → original classification lookup tables.
+    pub registry: PlaceholderRegistry,
+    /// Non-fatal observations accumulated across Phase 0..6.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
-/// Lex `source` into a [`LexOutput`]. Pure function; no I/O, no global state.
+/// Run the lexer pipeline over `source`.
 ///
-/// Currently a stub that returns the source verbatim. Full implementation
-/// arrives in commits C1-C7.
+/// Pure function; no I/O, no global state. Chains Phases 0..6:
+///
+/// 1. [`sanitize`] — BOM strip, CRLF→LF, PUA collision scan.
+/// 2. [`tokenize`] — linear trigger-event extraction.
+/// 3. [`pair`] — balanced-stack pair cross-linking.
+/// 4. [`classify`] — per-span `AozoraNode` classification.
+/// 5. [`normalize`] — PUA sentinel substitution + registry build.
+/// 6. [`validate`] — V1..V3 structural invariants.
+///
+/// Accent decomposition, `SourceMap` construction, and gaiji UCS
+/// resolution are deferred to later commits (C5b/c/d / G1) and fold
+/// into this entrypoint without changing the shape of `LexOutput`.
 #[must_use]
 pub fn lex(source: &str) -> LexOutput {
+    let sanitized = sanitize(source);
+    let tokens = tokenize(&sanitized.text);
+    let pair_out = pair(&tokens);
+    let classify_out = classify(&pair_out, &sanitized.text);
+    let mut normalize_out = normalize(&classify_out, &sanitized.text);
+    // Merge Phase 0 diagnostics into the accumulator; Phase 0 output
+    // is only otherwise reachable via `sanitize()`'s direct return.
+    let mut diagnostics = sanitized.diagnostics;
+    diagnostics.append(&mut normalize_out.diagnostics);
+    normalize_out.diagnostics = diagnostics;
+
+    let validated = validate(normalize_out);
     LexOutput {
-        normalized: source.to_owned(),
+        normalized: validated.normalized,
+        registry: validated.registry,
+        diagnostics: validated.diagnostics,
     }
 }
 
@@ -150,10 +179,32 @@ mod tests {
     }
 
     #[test]
-    fn lex_stub_returns_source_verbatim() {
-        let input = "plain text with ｜漢字《かんじ》 ruby";
+    fn lex_plain_text_passes_through_unchanged() {
+        let input = "plain text only";
         let out = lex(input);
         assert_eq!(out.normalized, input);
+        assert!(out.registry.is_empty());
+    }
+
+    #[test]
+    fn lex_inline_ruby_becomes_single_sentinel() {
+        let input = "｜漢字《かんじ》";
+        let out = lex(input);
+        assert_eq!(out.normalized, "\u{E001}");
+        assert_eq!(out.registry.inline.len(), 1);
+    }
+
+    #[test]
+    fn lex_surfaces_phase0_pua_diagnostic() {
+        let input = "abc\u{E001}def";
+        let out = lex(input);
+        assert!(
+            out.diagnostics
+                .iter()
+                .any(|d| matches!(d, Diagnostic::SourceContainsPua { .. })),
+            "expected SourceContainsPua forwarded into LexOutput, got {:?}",
+            out.diagnostics
+        );
     }
 
     #[test]
