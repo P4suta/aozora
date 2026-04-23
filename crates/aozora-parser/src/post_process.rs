@@ -38,8 +38,11 @@
 
 use std::{mem, ptr};
 
-use afm_lexer::{BLOCK_LEAF_SENTINEL, INLINE_SENTINEL, PlaceholderRegistry};
-use afm_syntax::AozoraNode;
+use afm_lexer::{
+    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
+    PlaceholderRegistry,
+};
+use afm_syntax::{AozoraNode, Container};
 use comrak::Arena;
 use comrak::nodes::{AstNode, NodeValue};
 
@@ -186,6 +189,159 @@ pub fn splice_block_leaf<'a>(
         para.detach();
         cursor += 1;
     }
+}
+
+/// Walk `root` and wrap the blocks between each matched
+/// `BLOCK_OPEN_SENTINEL` / `BLOCK_CLOSE_SENTINEL` paragraph pair in a
+/// new [`AozoraNode::Container`] AST node.
+///
+/// ## Algorithm
+///
+/// A single linear pass over the sentinel paragraphs in document
+/// order, driven by a stack:
+///
+/// 1. Enumerate all `Paragraph > Text("\u{E003}" or "\u{E004}")`
+///    nodes in document order, binding each `BLOCK_OPEN_SENTINEL`
+///    paragraph to its [`afm_syntax::ContainerKind`] via the
+///    registry's in-order vectors (the lexer emits opens/closes in
+///    the same order as the source bytes, and comrak preserves
+///    document order, so the N-th sentinel paragraph and the N-th
+///    registry entry correspond).
+/// 2. Walk the tagged sequence: push each Open on a stack; when a
+///    Close arrives, pop the top Open and wrap everything between
+///    them via [`wrap_between`].
+///
+/// Because we wrap when we see the *close* (i.e. innermost first),
+/// subsequent outer wraps naturally pick up the wrapper as a single
+/// sibling — no iteration needed for nesting. Runtime is `O(n)` in
+/// the sentinel count; `O(1)` extra allocation per wrap (just the
+/// new container node).
+///
+/// ## Orphan handling
+///
+/// An unmatched open (no close before EOF) leaves its sentinel
+/// paragraph in place; same for an unmatched close. The sentinel
+/// chars are PUA codepoints which render invisibly but are caught
+/// by the property sweep in `tests/post_process_invariants.rs`.
+///
+/// ## Cross-parent pairs
+///
+/// A pair whose open and close lie under different parents (e.g. one
+/// inside a blockquote and one outside) is not wrapped — the
+/// cross-tree surgery is not attempted here. The open and close
+/// paragraphs stay, diagnosable via their sentinel content.
+pub fn splice_paired_container<'a>(
+    arena: &'a Arena<'a>,
+    root: &'a AstNode<'a>,
+    registry: &PlaceholderRegistry,
+) {
+    // One snapshot in document order. Subsequent `detach` / `append`
+    // do not invalidate borrowed `AstNode` references — typed_arena
+    // allocations are pinned — so we can safely hold pointers into
+    // the tree during the wrap pass.
+    let mut open_cursor = 0usize;
+    let mut close_cursor = 0usize;
+    let mut tagged: Vec<TaggedPara<'_>> = Vec::new();
+    for p in root
+        .descendants()
+        .filter(|n| matches!(n.data.borrow().value, NodeValue::Paragraph))
+    {
+        if is_single_sentinel_paragraph(p, BLOCK_OPEN_SENTINEL) {
+            if let Some(&(_, kind)) = registry.block_open.get(open_cursor) {
+                tagged.push(TaggedPara {
+                    para: p,
+                    role: Role::Open(kind),
+                });
+            }
+            open_cursor += 1;
+        } else if is_single_sentinel_paragraph(p, BLOCK_CLOSE_SENTINEL) {
+            if registry.block_close.get(close_cursor).is_some() {
+                tagged.push(TaggedPara {
+                    para: p,
+                    role: Role::Close,
+                });
+            }
+            close_cursor += 1;
+        }
+    }
+
+    // Stack-based balanced walk. Pop on Close → wrap the innermost
+    // matched pair first so outer wraps see a single sibling (the
+    // fresh container) covering the inner content.
+    let mut stack: Vec<(&AstNode<'_>, afm_syntax::ContainerKind)> = Vec::new();
+    for entry in tagged {
+        match entry.role {
+            Role::Open(kind) => stack.push((entry.para, kind)),
+            Role::Close => {
+                let Some((open_para, kind)) = stack.pop() else {
+                    continue; // orphan close; leave in place
+                };
+                if !same_parent(open_para, entry.para) {
+                    // Cross-parent pair: we already popped the
+                    // matching open; leave both sentinel paragraphs
+                    // in place (they render invisibly as PUA chars
+                    // but survive for diagnostic tooling).
+                    continue;
+                }
+                wrap_between(arena, kind, open_para, entry.para);
+            }
+        }
+    }
+}
+
+struct TaggedPara<'a> {
+    para: &'a AstNode<'a>,
+    role: Role,
+}
+
+enum Role {
+    Open(afm_syntax::ContainerKind),
+    Close,
+}
+
+/// True when `a` and `b` are direct children of the same parent node.
+fn same_parent<'a>(a: &'a AstNode<'a>, b: &'a AstNode<'a>) -> bool {
+    match (a.parent(), b.parent()) {
+        (Some(pa), Some(pb)) => ptr::eq(pa, pb),
+        _ => false,
+    }
+}
+
+/// Build a new `Aozora(Container{kind})` node, insert it in front of
+/// `open_para`, move every sibling strictly between `open_para` and
+/// `close_para` into it (preserving document order), and detach both
+/// the open and close sentinel paragraphs.
+fn wrap_between<'a>(
+    arena: &'a Arena<'a>,
+    kind: afm_syntax::ContainerKind,
+    open_para: &'a AstNode<'a>,
+    close_para: &'a AstNode<'a>,
+) {
+    let container = alloc_aozora(arena, AozoraNode::Container(Container { kind }));
+    // Splice the container into the tree before the open sentinel so
+    // it lands in the correct sibling position before we rehome
+    // content into it.
+    open_para.insert_before(container);
+
+    // Collect siblings between open and close *before* mutating, so
+    // detach/append does not perturb the iteration.
+    let mut movers: Vec<&AstNode<'_>> = Vec::new();
+    let mut cursor = open_para.next_sibling();
+    while let Some(node) = cursor {
+        if ptr::eq(node, close_para) {
+            break;
+        }
+        movers.push(node);
+        cursor = node.next_sibling();
+    }
+    for n in movers {
+        n.detach();
+        container.append(n);
+    }
+
+    // Finally drop the two sentinel paragraphs.
+    open_para.detach();
+    close_para.detach();
 }
 
 /// Returns `true` when `para` is a `Paragraph` whose single child is

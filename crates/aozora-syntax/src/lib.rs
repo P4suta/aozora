@@ -141,6 +141,16 @@ pub enum AozoraNode {
     /// the academic U+226A/U+226B characters (`≪X≫`) to sidestep the
     /// ruby-marker overload — the HTML renderer does exactly that.
     DoubleRuby(DoubleRuby),
+
+    /// Paired block container — `［＃ここから…］ ... ［＃ここで…終わり］`.
+    /// Holds no payload of its own beyond the container kind; the
+    /// wrapped child blocks live as children in the comrak AST (the
+    /// `post_process` paired-container splice reparents them during
+    /// F5). On render, the wrapper emits an opening tag on the
+    /// `entering` pass and a closing tag on exit while comrak walks
+    /// the children in between — same contract as `<ul>` / `<div>`
+    /// block renders.
+    Container(Container),
 }
 
 impl AozoraNode {
@@ -163,11 +173,15 @@ impl AozoraNode {
                 | Self::SectionBreak(_)
                 | Self::AozoraHeading(_)
                 | Self::Sashie(_)
+                | Self::Container(_)
         )
     }
 
     /// Whether children of this node (if any) are inline content. Block variants that
     /// wrap an indented run of paragraphs answer `true`; leaf blocks answer `false`.
+    /// `Container` is the F5 paired-container wrapper — its children are block
+    /// elements (paragraphs, headings, nested containers) rather than inlines, so
+    /// it answers `false` here.
     #[must_use]
     pub const fn contains_inlines(&self) -> bool {
         matches!(
@@ -200,8 +214,21 @@ impl AozoraNode {
             Self::Kaeriten(_) => "aozora_kaeriten",
             Self::Annotation(_) => "aozora_annotation",
             Self::DoubleRuby(_) => "aozora_double_ruby",
+            Self::Container(_) => "aozora_container",
         }
     }
+}
+
+/// Paired block container payload: carries only the kind descriptor.
+///
+/// Children are held in the comrak AST as the container node's
+/// children, rather than embedded here, so that comrak's standard
+/// tree walk (and serializer downstream) see the same parent/child
+/// relationships it sees for `<div>` / `<ul>` / etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Container {
+    pub kind: ContainerKind,
 }
 
 /// Double angle-bracket escape — the payload between `《《` and `》》`.
@@ -826,7 +853,7 @@ mod tests {
     #[test]
     fn xml_node_names_are_stable_and_unique() {
         use std::collections::BTreeSet;
-        let samples: [AozoraNode; 14] = [
+        let samples: [AozoraNode; 15] = [
             AozoraNode::Ruby(Ruby {
                 base: "".into(),
                 reading: "".into(),
@@ -865,6 +892,9 @@ mod tests {
                 kind: AnnotationKind::Unknown,
             }),
             AozoraNode::DoubleRuby(DoubleRuby { content: "".into() }),
+            AozoraNode::Container(Container {
+                kind: ContainerKind::Indent { amount: 1 },
+            }),
         ];
         let names: BTreeSet<&'static str> = samples.iter().map(AozoraNode::xml_node_name).collect();
         assert_eq!(names.len(), samples.len(), "xml node names must be unique");

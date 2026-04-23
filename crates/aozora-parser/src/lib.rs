@@ -113,6 +113,7 @@ pub fn parse<'a>(arena: &'a Arena<'a>, input: &str, options: &Options<'_>) -> &'
         let root = comrak::parse_document(arena, &lex_out.normalized, &options.comrak);
         post_process::splice_inline(arena, root, &lex_out.registry);
         post_process::splice_block_leaf(arena, root, &lex_out.registry);
+        post_process::splice_paired_container(arena, root, &lex_out.registry);
         root
     } else {
         comrak::parse_document(arena, input, &options.comrak)

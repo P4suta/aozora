@@ -10,21 +10,30 @@
 use core::fmt::{self, Write};
 
 use afm_syntax::{
-    AlignEnd, Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, Indent, Kaeriten, Ruby,
-    SectionKind, SegmentRef,
+    AlignEnd, Annotation, AozoraNode, Bouten, Container, ContainerKind, Content, DoubleRuby, Gaiji,
+    Indent, Kaeriten, Ruby, SectionKind, SegmentRef,
 };
 
 use crate::aozora::bouten;
 
-/// Render a single [`AozoraNode`] into `writer`. Called from the comrak fork's
-/// `NodeValue::Aozora(_)` renderer arm, which passes `&mut dyn fmt::Write` over
-/// its own output sink.
+/// Render a single [`AozoraNode`] into `writer`. Called from the
+/// comrak fork's `NodeValue::Aozora(_)` renderer arm.
+///
+/// `entering` is comrak's standard enter/exit event flag. Leaf and
+/// inline nodes emit their markup only on `entering == true` and
+/// ignore the exit pass. Container-type nodes ([`AozoraNode::Container`],
+/// the F5 paired-block wrapper) emit an opening tag on enter and a
+/// closing tag on exit, mirroring comrak's native `<ul>` / `<div>`
+/// rendering contract so the children comrak walks between the two
+/// events land inside the wrapper.
 ///
 /// # Errors
 ///
 /// Propagates formatter write errors.
-pub fn render(node: &AozoraNode, writer: &mut dyn Write) -> fmt::Result {
+pub fn render(node: &AozoraNode, entering: bool, writer: &mut dyn Write) -> fmt::Result {
     match node {
+        AozoraNode::Container(c) => render_container(*c, entering, writer),
+        _ if !entering => Ok(()),
         AozoraNode::Ruby(r) => render_ruby(r, writer),
         AozoraNode::Bouten(b) => render_bouten(b, writer),
         AozoraNode::TateChuYoko(t) => {
@@ -139,6 +148,43 @@ fn render_kaeriten(k: &Kaeriten, writer: &mut dyn Write) -> fmt::Result {
     writer.write_str("</sup>")
 }
 
+/// Render a paired block container. On enter, opens a `<div>` with
+/// a per-kind class (and an optional numeric amount attribute for
+/// the indent / align-end variants that carry a count); on exit,
+/// closes the `</div>`. The intervening child blocks — paragraphs,
+/// headings, nested containers — are walked by comrak's standard
+/// tree renderer between the two calls.
+///
+/// The class-contract is pinned by `tests/block_structure_interaction.rs`
+/// so stylesheet consumers can rely on the token list.
+fn render_container(c: Container, entering: bool, writer: &mut dyn Write) -> fmt::Result {
+    if entering {
+        match c.kind {
+            ContainerKind::Indent { amount } => {
+                write!(
+                    writer,
+                    r#"<div class="afm-container afm-container-indent afm-container-indent-{amount}" data-amount="{amount}">"#,
+                )
+            }
+            ContainerKind::AlignEnd { offset } => {
+                write!(
+                    writer,
+                    r#"<div class="afm-container afm-container-align-end" data-offset="{offset}">"#,
+                )
+            }
+            ContainerKind::Keigakomi => {
+                writer.write_str(r#"<div class="afm-container afm-container-keigakomi">"#)
+            }
+            ContainerKind::Warichu => {
+                writer.write_str(r#"<div class="afm-container afm-container-warichu">"#)
+            }
+            _ => writer.write_str(r#"<div class="afm-container">"#),
+        }
+    } else {
+        writer.write_str("</div>")
+    }
+}
+
 /// Render a `《《X》》` (double angle-bracket) span.
 ///
 /// The Aozora annotation manual recommends disambiguating these
@@ -211,7 +257,7 @@ mod tests {
 
     fn render_to_string(node: &AozoraNode) -> String {
         let mut out = String::new();
-        render(node, &mut out).expect("fmt::Write into String never fails");
+        render(node, true, &mut out).expect("fmt::Write into String never fails");
         out
     }
 

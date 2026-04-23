@@ -19,6 +19,7 @@
 /// entries. `afm-parser::post_process` reads these when splicing container
 /// nodes back into the AST (F5 schema extension pending).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum ContainerKind {
     /// `［＃ここから N字下げ］`

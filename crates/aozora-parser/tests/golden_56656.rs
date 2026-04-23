@@ -69,22 +69,19 @@ fn tier_a_ruby_recognition_floor() {
         + counts.gaijis
         + counts.kaeritens
         + counts.tate_chu_yokos
+        + counts.containers
+        + counts.double_rubies
         + counts.other;
-    // NOTE: paired-container open / close markers (`［＃ここから字下げ］`,
-    // `［＃ここで字下げ終わり］`, 罫囲み, 割り注, …) are classified by
-    // the lexer as `ContainerKind::{Indent,Keigakomi,Warichu,…}` open
-    // / close sentinels rather than `AozoraNode::Annotation`. The
-    // post_process AST wrap for these is deferred to F5 (`AozoraNode::Container`
-    // schema), so today the sentinels are left as raw PUA characters in
-    // text nodes and contribute nothing to this count. Once F5 lands we
-    // should restore the 400 floor (adapter-era baseline); until then
-    // `>= 350` keeps the canary meaningful without tripping on the known
-    // F5 gap.
+    // Post-F5 (paired-container AST wrap): each `［＃ここから…］` /
+    // `［＃ここで…終わり］` pair now folds into one
+    // `AozoraNode::Container` node (two source brackets reduce to one
+    // AST counter bump — not a pure addition). The floor tracks the
+    // adapter-era baseline ≥ 400; it will ratchet further upward
+    // as G1 (gaiji UCS table) and other recognisers land.
     assert!(
-        bracket_sourced >= 350,
+        bracket_sourced >= 400,
         "bracket-sourced annotation recognition dropped to {bracket_sourced} \
-         (expected >= 350; will rise to 400 when F5 paired-container wrap lands); \
-         breakdown: {counts:?}"
+         (expected >= 400 after F5); breakdown: {counts:?}"
     );
 }
 
@@ -100,6 +97,8 @@ struct AozoraCounts {
     gaijis: usize,
     kaeritens: usize,
     tate_chu_yokos: usize,
+    containers: usize,
+    double_rubies: usize,
     other: usize,
 }
 
@@ -116,6 +115,8 @@ fn count_aozora<'a>(node: &'a AstNode<'a>, counts: &mut AozoraCounts) {
             AozoraNode::Gaiji(_) => counts.gaijis += 1,
             AozoraNode::Kaeriten(_) => counts.kaeritens += 1,
             AozoraNode::TateChuYoko(_) => counts.tate_chu_yokos += 1,
+            AozoraNode::Container(_) => counts.containers += 1,
+            AozoraNode::DoubleRuby(_) => counts.double_rubies += 1,
             _ => counts.other += 1,
         }
     }
