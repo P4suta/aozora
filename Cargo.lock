@@ -33,6 +33,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "afm-corpus"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "thiserror",
+]
+
+[[package]]
 name = "afm-encoding"
 version = "0.1.0"
 dependencies = [
