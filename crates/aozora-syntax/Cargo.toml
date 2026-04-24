@@ -1,6 +1,6 @@
 [package]
 name        = "afm-syntax"
-description = "AST types for aozora-flavored-markdown"
+description = "Aozora Flavored Markdown (afm): AST types"
 version.workspace     = true
 edition.workspace     = true
 rust-version.workspace = true

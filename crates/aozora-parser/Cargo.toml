@@ -1,6 +1,6 @@
 [package]
 name        = "afm-parser"
-description = "CommonMark + GFM + Aozora Bunko parser for aozora-flavored-markdown"
+description = "Aozora Flavored Markdown (afm): CommonMark + GFM + Aozora Bunko parser — reference implementation"
 version.workspace     = true
 edition.workspace     = true
 rust-version.workspace = true

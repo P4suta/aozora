@@ -13,6 +13,18 @@ afm = "afm"
 # French fragments embedded in Aozora accent-decomposition examples.
 # "fune`bre" (funèbre) and siblings appear in doc comments + ADR prose.
 bre = "bre"
+# Proper names surfaced in NOTICE / docs. Listed here rather than
+# suppressed so typos still catches typos *around* them.
+kivikakk    = "kivikakk"
+Asherah     = "Asherah"
+Connor      = "Connor"
+MacFarlane  = "MacFarlane"
+Dostoyevsky = "Dostoyevsky"
+Fyodor      = "Fyodor"
+Yonekawa    = "Yonekawa"
+Masao       = "Masao"
+Dubost      = "Dubost"
+Yasunobu    = "Yasunobu"
 
 [files]
 extend-exclude = [

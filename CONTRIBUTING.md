@@ -96,6 +96,35 @@ Security-sensitive issues (parser crashes, memory safety concerns,
 sandbox escapes) should be reported privately per `SECURITY.md` — do
 **not** open a public issue.
 
+## How to release
+
+Releases are triggered by a git tag of the form `v<semver>`:
+
+1. Update `CHANGELOG.md` — promote `[Unreleased]` to
+   `[<version>] - YYYY-MM-DD` and add a fresh `[Unreleased]` stub.
+2. Commit the changelog bump: `git commit -m "chore: release v<version>"`.
+3. Tag (annotated): `git tag -a v<version> -m 'v<version>'`.
+4. Push: `git push origin main v<version>`.
+5. `.github/workflows/release.yml` reacts to the tag, builds release
+   binaries on five targets (linux-gnu, linux-musl, macos-aarch64,
+   macos-x86_64, windows-msvc), assembles tarballs with the `afm`
+   binary, `LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`, and `README.md`,
+   and uploads the archives plus `SHA256SUMS` to the GitHub Release.
+6. Sanity check: download one artefact, run `sha256sum --check`, then
+   `./afm --version` to confirm the embedded version matches the tag.
+
+A dry-run is available via `workflow_dispatch` from the
+[Actions tab](https://github.com/P4suta/afm/actions/workflows/release.yml) —
+trigger it from `main` or a release branch before cutting the tag to
+confirm the five-target matrix builds cleanly.
+
+**ADR-0002 scope exception**: release builds run on native GitHub
+Actions runners with the matching stable rustc, not inside the dev
+Docker image. The Docker-only rule applies to development and CI; the
+release pipeline is deliberately host-toolchain so each binary target
+matches its runner OS exactly. See the leading comment in
+`release.yml` for the full rationale.
+
 ## License
 
 By contributing, you agree that your contributions are dual-licensed

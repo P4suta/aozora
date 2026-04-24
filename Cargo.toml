@@ -15,15 +15,18 @@ members = [
 exclude = ["upstream/comrak", "crates/afm-book"]
 
 [workspace.package]
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.95.0"
-license = "Apache-2.0 OR MIT"
-repository = "https://github.com/P4suta/afm"
-authors = ["afm contributors"]
-readme = "README.md"
-keywords = ["markdown", "aozora", "japanese", "typography", "parser"]
-categories = ["parser-implementations", "text-processing", "localization"]
+version       = "0.1.0"
+edition       = "2024"
+rust-version  = "1.95.0"
+license       = "Apache-2.0 OR MIT"
+description   = "Aozora Flavored Markdown: CommonMark/GFM + Japanese typography (ruby, bouten, 縦中横, 外字, ...)"
+repository    = "https://github.com/P4suta/afm"
+homepage      = "https://p4suta.github.io/afm/"
+documentation = "https://p4suta.github.io/afm/api/"
+authors       = ["afm contributors"]
+readme        = "README.md"
+keywords      = ["markdown", "aozora", "japanese", "typography", "parser"]
+categories    = ["parser-implementations", "text-processing", "localization"]
 
 [workspace.lints.rust]
 # Hard bans — the compiler rejects these rather than warning.

@@ -1,6 +1,6 @@
 [package]
 name        = "afm-encoding"
-description = "Shift_JIS decoding and Aozora Bunko gaiji resolution for aozora-flavored-markdown"
+description = "Aozora Flavored Markdown (afm): Shift_JIS decoding and Aozora Bunko gaiji resolution"
 version.workspace     = true
 edition.workspace     = true
 rust-version.workspace = true
