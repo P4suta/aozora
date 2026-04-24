@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-04-24
-- Deciders: @yasunobu
+- Deciders: @P4suta
 - Supersedes: ADR-0005 (paired block annotation container hook)
 - Tags: architecture, parser, upstream-diff, lexer, pure-functional
 

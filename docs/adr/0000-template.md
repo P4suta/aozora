@@ -2,7 +2,7 @@
 
 - Status: {proposed | accepted | deprecated | superseded by ADR-XXXX}
 - Date: YYYY-MM-DD
-- Deciders: @yasunobu
+- Deciders: @P4suta
 - Tags: {architecture, infra, testing, ...}
 
 ## Context

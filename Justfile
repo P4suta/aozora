@@ -391,6 +391,42 @@ ci:
     just coverage
     just book-build
 
+# --- developer workflow helpers ----------------------------------------------
+
+# Run after a build to verify the cache is actually warm; a first-hand
+# way to notice when `RUSTC_WRAPPER` gets defeated by stray env or profile tweaks.
+# Show sccache hit/miss ratio, cache size, fetch counts.
+sccache-stats:
+    {{_dev}} sccache --show-stats
+
+# Useful before a measurement window:
+#   just sccache-zero && just clean && just build && just sccache-stats
+# Reset sccache counters to zero.
+sccache-zero:
+    {{_dev}} sccache --zero-stats
+
+# Defaults to the `check` job; pass a job name to pick another, e.g.
+# `just watch clippy`. Keybindings: `t` test / `c` clippy / `d` doc /
+# `f` failing-only / `esc` previous job / `q` quit / Ctrl-J list jobs.
+# Start the bacon file-watcher inside the dev container.
+watch JOB="":
+    {{_dev}} bacon {{JOB}}
+
+# Keeps the watch loop but prints plain lines. Useful for piping output
+# (`| tee`) and for sessions without a TTY.
+# Headless bacon run (no TUI).
+watch-headless JOB="check":
+    {{_ci}} bacon --headless --job {{JOB}}
+
+# Idempotent — re-run safely after lefthook.yml edits or to repair stubs.
+# Install git hooks (pre-commit / commit-msg / pre-push).
+hooks:
+    {{_dev}} lefthook install
+
+# Remove lefthook git hook stubs.
+hooks-uninstall:
+    {{_dev}} lefthook uninstall
+
 # --- cleanup ------------------------------------------------------------------
 
 # Remove build artifacts (keeps volumes; use `docker compose down -v` for volumes)

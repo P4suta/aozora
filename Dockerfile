@@ -66,6 +66,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         mdbook-linkcheck \
         sccache
 
+# bacon is intentionally installed in its own layer so version bumps don't
+# invalidate the expensive 14-tool install above (cargo-udeps / semver-checks
+# alone take >15 min from scratch because they transitively depend on cargo).
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/tmp/cargo-build \
+    CARGO_TARGET_DIR=/tmp/cargo-build \
+    cargo install --locked --root /usr/local bacon
+
 # just (task runner) installed separately; upstream provides an install script
 RUN curl -fsSL https://just.systems/install.sh \
     | bash -s -- --to /usr/local/bin --tag 1.36.0
@@ -121,8 +129,8 @@ FROM dev AS ci
 ########################################################################
 FROM node-base AS book
 
-COPY --from=cargo-tools /usr/local/cargo/bin/mdbook /usr/local/bin/mdbook
-COPY --from=cargo-tools /usr/local/cargo/bin/mdbook-linkcheck /usr/local/bin/mdbook-linkcheck
+COPY --from=cargo-tools /usr/local/bin/mdbook /usr/local/bin/mdbook
+COPY --from=cargo-tools /usr/local/bin/mdbook-linkcheck /usr/local/bin/mdbook-linkcheck
 
 WORKDIR /workspace/crates/afm-book
 EXPOSE 3000

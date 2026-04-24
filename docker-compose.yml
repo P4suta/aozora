@@ -15,8 +15,22 @@ x-common-env: &common-env
   CARGO_TARGET_DIR: /workspace/target
   RUSTC_WRAPPER: sccache
   SCCACHE_DIR: /workspace/.sccache
+  # sccache cannot cache crates compiled with cargo's incremental mode.
+  # Cargo defaults incremental=true for workspace members in dev/test profiles,
+  # which silently bypasses sccache for the very crates we build most often.
+  # Pinning this here applies to every service that inherits x-common-env.
+  CARGO_INCREMENTAL: "0"
+  SCCACHE_CACHE_SIZE: "10G"
   RUST_BACKTRACE: "1"
   TERM: ${TERM:-xterm-256color}
+  # /workspace is bind-mounted from the host as a non-root UID, but the
+  # container runs as root. Git otherwise refuses operations with
+  # "dubious ownership"; whitelist via the GIT_CONFIG_* triplet rather
+  # than baking a `git config` invocation into the image (keeps the
+  # whitelist local to the compose surface and trivially removable).
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: "safe.directory"
+  GIT_CONFIG_VALUE_0: "/workspace"
 
 services:
   dev:

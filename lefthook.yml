@@ -1,15 +1,25 @@
-# Pre-commit / pre-push hooks.
-# Every command runs inside the dev container via `just`; we never invoke cargo
-# or any other toolchain on the host.
+# Pre-commit / pre-push hooks — every command runs inside the dev
+# container through `just`, never directly on the host (ADR-0002).
 #
-# Enable with: `docker compose run --rm dev lefthook install`
+# Enable after clone:  `just hooks`
+# Disable:             `just hooks-uninstall`
+#
+# Reference: https://lefthook.dev/configuration/
 
 pre-commit:
   parallel: true
+  skip:
+    - rebase
+    - merge
   commands:
-    fmt-check:
+    # `cargo fmt --all` (writes). Any reformat is re-staged automatically
+    # so the commit carries the fixed formatting. `fmt-check` is kept out
+    # of pre-commit because fixing-and-restaging is strictly more helpful
+    # than failing the commit.
+    fmt:
       glob: "*.rs"
-      run: just fmt-check
+      run: just fmt
+      stage_fixed: true
     clippy:
       glob: "*.{rs,toml}"
       run: just clippy
@@ -21,14 +31,19 @@ pre-commit:
 
 commit-msg:
   commands:
-    # Conventional Commits — scope is optional but style is enforced.
+    # Conventional Commits — scope is optional but the type + style is enforced.
+    # `{1}` is lefthook's positional reference to the commit-message file path
+    # that git passes to the hook.
     conventional:
       run: |
         docker compose run --rm --no-TTY dev bash -c \
-          "grep -E '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?: .{1,}' $1 > /dev/null \
+          "grep -E '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?: .{1,}' {1} > /dev/null \
             || { echo 'Commit message must follow Conventional Commits (https://www.conventionalcommits.org/)'; exit 1; }"
 
 pre-push:
+  parallel: true
+  skip:
+    - rebase
   commands:
     test:
       run: just test

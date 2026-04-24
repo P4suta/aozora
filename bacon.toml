@@ -1,0 +1,64 @@
+# bacon configuration for afm.
+#
+# Launch with `just watch` — runs inside the dev container so every
+# command goes through the ADR-0002 Docker-only execution surface.
+# Keybindings (built-in defaults):
+#   c  clippy       t  test        d  doc           f  failing-only
+#   q  quit         esc previous   Ctrl-J  list jobs
+#
+# Config reference: https://dystroy.org/bacon/config/
+
+default_job = "check"
+
+# Fast edit-compile loop. `cargo check` skips codegen so the feedback
+# cycle stays under a second for most touches.
+[jobs.check]
+command = ["cargo", "check", "--workspace", "--all-targets", "--color", "always"]
+need_stdout = false
+watch = ["crates", "upstream/comrak/src", "spec"]
+on_change_strategy = "kill_then_restart"
+
+# Matches `just clippy`. Flag surface stays minimal because
+# [workspace.lints] is the single source of truth (ADR-0006).
+[jobs.clippy]
+command = [
+    "cargo", "clippy",
+    "--workspace", "--all-targets", "--all-features",
+    "--color", "always",
+    "--", "-D", "warnings",
+]
+need_stdout = false
+
+# Full workspace test suite via nextest — bacon's nextest analyzer
+# parses the output for inline failure navigation.
+[jobs.test]
+command = [
+    "cargo", "nextest", "run",
+    "--workspace", "--all-targets",
+    "--color", "always",
+]
+need_stdout = true
+analyzer = "nextest"
+
+# 罪と罰 Tier-A canary. Quick way to catch a regression on the golden
+# fixture without running the full test matrix.
+[jobs.golden]
+command = [
+    "cargo", "nextest", "run",
+    "--package", "afm-parser",
+    "--test", "golden_56656",
+    "--color", "always",
+]
+need_stdout = true
+analyzer = "nextest"
+
+# Hand-written Aozora annotation fixtures (spec/aozora/cases/*.json).
+[jobs.spec]
+command = [
+    "cargo", "nextest", "run",
+    "--package", "afm-parser",
+    "--test", "aozora_spec",
+    "--color", "always",
+]
+need_stdout = true
+analyzer = "nextest"

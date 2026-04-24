@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-04-24
-- Deciders: @yasunobu
+- Deciders: @P4suta
 - Tags: testing, parser, aozora-compat, workspace
 
 ## Context
