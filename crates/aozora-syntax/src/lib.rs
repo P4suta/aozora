@@ -119,6 +119,20 @@ pub enum AozoraNode {
     /// at parse time and never reach this variant.
     AozoraHeading(AozoraHeading),
 
+    /// Heading-hint marker derived from `［＃「X」は(大|中|小)見出し］`.
+    ///
+    /// Emitted by the lexer at the annotation's position as an inline
+    /// sentinel. The `afm-parser` post-process walks each paragraph
+    /// containing a `HeadingHint`, rewrites the paragraph node in place
+    /// to `comrak::NodeValue::Heading { level, setext: false }`, and
+    /// replaces its content with the extracted `target`. Under normal
+    /// flow this variant is consumed during post-process and never
+    /// reaches the renderer; it survives only if paragraph promotion
+    /// cannot be applied (e.g. hint appears in a non-paragraph
+    /// container), in which case the renderer falls back to a hidden
+    /// annotation wrapper for diagnosability.
+    HeadingHint(HeadingHint),
+
     /// Illustration (`［＃挿絵（fig.png）入る］`) — normalised to `NodeValue::Image`
     /// when a caption is absent; the `Sashie` form is used when a caption is attached.
     Sashie(Sashie),
@@ -210,6 +224,7 @@ impl AozoraNode {
             Self::PageBreak => "aozora_page_break",
             Self::SectionBreak(_) => "aozora_section_break",
             Self::AozoraHeading(_) => "aozora_heading",
+            Self::HeadingHint(_) => "aozora_heading_hint",
             Self::Sashie(_) => "aozora_sashie",
             Self::Kaeriten(_) => "aozora_kaeriten",
             Self::Annotation(_) => "aozora_annotation",
@@ -581,6 +596,27 @@ pub struct AozoraHeading {
     pub text: Content,
 }
 
+/// Forward-reference heading hint: the quoted target in the source
+/// preceded the `［＃「…」は(大|中|小)見出し］` annotation, and the host
+/// paragraph is expected to become a Markdown heading after post-process.
+///
+/// Kept as a plain `Box<str>` (rather than [`Content`]) because the
+/// target is always a single quoted run in the original source; nested
+/// Aozora constructs inside a forward-reference heading target are not
+/// attested in the spec or in the 17 k-work corpus.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct HeadingHint {
+    /// Markdown heading level: `1` for 大見出し, `2` for 中見出し,
+    /// `3` for 小見出し. No other levels are emitted by the lexer.
+    pub level: u8,
+    /// Target text extracted from the `「…」` quote inside the
+    /// annotation. Post-process uses it as the heading's text
+    /// content; the serializer uses it to reconstruct
+    /// `［＃「{target}」は…見出し］` on round-trip.
+    pub target: Box<str>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Sashie {
@@ -853,7 +889,11 @@ mod tests {
     #[test]
     fn xml_node_names_are_stable_and_unique() {
         use std::collections::BTreeSet;
-        let samples: [AozoraNode; 15] = [
+        // Bumping this count is intentional — every new `AozoraNode`
+        // variant must show up here so the xml-name uniqueness gate
+        // covers it. Do not silently grow the array; update the count
+        // in the type annotation too.
+        let samples: [AozoraNode; 16] = [
             AozoraNode::Ruby(Ruby {
                 base: "".into(),
                 reading: "".into(),
@@ -883,6 +923,10 @@ mod tests {
                 kind: AozoraHeadingKind::Window,
                 text: "".into(),
             }),
+            AozoraNode::HeadingHint(HeadingHint {
+                level: 1,
+                target: "".into(),
+            }),
             AozoraNode::Sashie(Sashie {
                 file: "".into(),
                 caption: None,
@@ -903,6 +947,71 @@ mod tests {
                 name.starts_with("aozora_"),
                 "xml name '{name}' missing aozora_ prefix"
             );
+        }
+    }
+
+    // -------------------------------------------------------------
+    // HeadingHint: documented contract that drives the post-process
+    // paragraph-to-Heading promotion. These tests pin the classifier
+    // <-> post_process contract: a `HeadingHint` is INLINE (it lives
+    // inside a host paragraph), carries NO inline children of its own,
+    // and uses the `aozora_heading_hint` xml name so serialisers and
+    // diagnostic tooling can target it deterministically.
+    // -------------------------------------------------------------
+
+    #[test]
+    fn heading_hint_is_inline_not_block() {
+        // HeadingHint is an inline sentinel placed inside the host
+        // paragraph; the promotion to a Markdown heading happens in
+        // post_process. If this ever returns `true` the sentinel
+        // would be misrouted into block-leaf splice and lost.
+        let h = AozoraNode::HeadingHint(HeadingHint {
+            level: 1,
+            target: "第一篇".into(),
+        });
+        assert!(!h.is_block());
+    }
+
+    #[test]
+    fn heading_hint_does_not_contain_inlines() {
+        // The hint itself is a marker, not a container; children in the
+        // host paragraph belong to the paragraph (pre-promotion) or to
+        // the heading node (post-promotion), never to HeadingHint.
+        let h = AozoraNode::HeadingHint(HeadingHint {
+            level: 2,
+            target: "X".into(),
+        });
+        assert!(!h.contains_inlines());
+    }
+
+    #[test]
+    fn heading_hint_has_stable_xml_name() {
+        // Serialisers, xml pretty printers, and diagnostic tooling all
+        // key on this string — any rename is a user-visible breaking
+        // change. Pin it.
+        let h = AozoraNode::HeadingHint(HeadingHint {
+            level: 3,
+            target: "一".into(),
+        });
+        assert_eq!(h.xml_node_name(), "aozora_heading_hint");
+    }
+
+    #[test]
+    fn heading_hint_accepts_all_three_markdown_levels() {
+        // The lexer only ever emits levels 1..=3 (大/中/小見出し).
+        // Spot-check construction for each to keep the AST shape in
+        // step with the classifier's accepted keywords.
+        for level in [1u8, 2, 3] {
+            let h = AozoraNode::HeadingHint(HeadingHint {
+                level,
+                target: "X".into(),
+            });
+            // Downcast and read back the level to prove the struct
+            // survives the enum wrap.
+            match h {
+                AozoraNode::HeadingHint(ref inner) => assert_eq!(inner.level, level),
+                _ => unreachable!("just constructed a HeadingHint"),
+            }
         }
     }
 

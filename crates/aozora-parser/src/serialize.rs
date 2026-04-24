@@ -54,7 +54,8 @@
 use afm_lexer::{BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL};
 use afm_syntax::{
     AlignEnd, Annotation, AozoraNode, Bouten, BoutenKind, BoutenPosition, ContainerKind, Content,
-    DoubleRuby, Gaiji, Indent, Kaeriten, Ruby, Sashie, SectionKind, SegmentRef, TateChuYoko,
+    DoubleRuby, Gaiji, HeadingHint, Indent, Kaeriten, Ruby, Sashie, SectionKind, SegmentRef,
+    TateChuYoko,
 };
 
 use crate::{ParseArtifacts, ParseResult};
@@ -248,6 +249,7 @@ fn emit_aozora(node: &AozoraNode, out: &mut String) {
         AozoraNode::Indent(i) => emit_indent(*i, out),
         AozoraNode::AlignEnd(a) => emit_align_end(*a, out),
         AozoraNode::Sashie(s) => emit_sashie(s, out),
+        AozoraNode::HeadingHint(h) => emit_heading_hint(h, out),
         _ => {
             // Aozora variants the serialiser doesn't yet cover
             // (`Container` is handled by the open/close sentinel
@@ -398,6 +400,32 @@ fn emit_sashie(s: &Sashie, out: &mut String) {
     out.push_str("［＃挿絵（");
     out.push_str(&s.file);
     out.push_str("）入る］");
+}
+
+/// Serialise a heading hint back to `［＃「target」は(大|中|小)見出し］`.
+///
+/// `post_process::splice_heading_hint` removes the hint from the AST
+/// by promoting its host paragraph to a Markdown heading; the
+/// serialiser still walks the lexer's `PlaceholderRegistry`, so the
+/// original markup is reconstructed from the hint fields regardless
+/// of AST-side promotion. Keeping the two in sync is what makes I3
+/// (`serialize ∘ parse` fixed point) hold for heading-hint paragraphs.
+///
+/// Level 1 / 2 / 3 cover the three spec keywords; the classifier
+/// rejects any other level, so the `_` arm in the match is
+/// unreachable for inputs that originated from the lexer. We keep it
+/// — rather than `unreachable!()` — to avoid a panic path on any
+/// future construction of `HeadingHint` from non-lexer callers; a
+/// best-effort fallback to `小見出し` keeps the round-trip string
+/// well-formed.
+fn emit_heading_hint(h: &HeadingHint, out: &mut String) {
+    out.push_str("［＃「");
+    out.push_str(&h.target);
+    out.push_str(match h.level {
+        1 => "」は大見出し］",
+        2 => "」は中見出し］",
+        _ => "」は小見出し］",
+    });
 }
 
 fn container_open_marker(kind: ContainerKind) -> &'static str {

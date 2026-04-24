@@ -181,6 +181,12 @@ pub fn parse<'a>(arena: &'a Arena<'a>, input: &str, options: &Options<'_>) -> Pa
         let root = comrak::parse_document(arena, &lex_out.normalized, &options.comrak);
         post_process::splice_inline(arena, root, &lex_out.registry);
         post_process::splice_block_leaf(arena, root, &lex_out.registry);
+        // Heading promotion runs after the inline/block-leaf splices so
+        // that any HeadingHint sentinels are already materialised as
+        // AozoraNodes inside their host paragraphs, and before paired-
+        // container wrapping so containers see the promoted heading
+        // as a single sibling block.
+        post_process::splice_heading_hint(arena, root);
         post_process::splice_paired_container(arena, root, &lex_out.registry);
         // Move normalized + registry into ParseArtifacts (no clone);
         // diagnostics break out separately so `serialize(&result)` never

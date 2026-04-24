@@ -58,8 +58,8 @@ use core::ops::Range;
 use afm_encoding::gaiji as gaiji_resolve;
 use afm_syntax::{
     AlignEnd, Annotation, AnnotationKind, AozoraNode, Bouten, BoutenKind, BoutenPosition,
-    ContainerKind, Content, DoubleRuby, Gaiji, Indent, Kaeriten, Ruby, Sashie, SectionKind,
-    Segment, Span, TateChuYoko,
+    ContainerKind, Content, DoubleRuby, Gaiji, HeadingHint, Indent, Kaeriten, Ruby, Sashie,
+    SectionKind, Segment, Span, TateChuYoko,
 };
 
 use crate::diagnostic::Diagnostic;
@@ -886,6 +886,9 @@ fn recognize_annotation(
             classify_forward_bouten(events, source, open_idx, close_idx).map(EmitKind::Aozora)
         })
         .or_else(|| classify_forward_tcy(events, source, open_idx, close_idx).map(EmitKind::Aozora))
+        .or_else(|| {
+            classify_forward_heading(events, source, open_idx, close_idx).map(EmitKind::Aozora)
+        })
         .or_else(|| classify_container_open(body))
         .or_else(|| classify_container_close(body))
         .or_else(|| {
@@ -1337,6 +1340,76 @@ fn classify_sashie(body: &str) -> Option<AozoraNode> {
         file: file.into(),
         caption: None,
     }))
+}
+
+/// Classify a `［＃「target」は(大|中|小)見出し］` forward-reference
+/// heading annotation.
+///
+/// Shares the event-stream extraction helper with [`classify_forward_bouten`]
+/// — the quote-delimited target and the trailing keyword live in the same
+/// `［＃「X」…］` shape. The suffix after the target must start with `は`
+/// (unlike bouten's `に`), and the keyword selects the Markdown heading
+/// level: `大見出し` → 1, `中見出し` → 2, `小見出し` → 3.
+///
+/// The docs in [`crate`] and ADR-0008 call out that 大/中/小 headings are
+/// promoted to `comrak::NodeValue::Heading` by `afm-parser::post_process`;
+/// this classifier only marks the position. 窓見出し / 副見出し remain
+/// first-class on [`AozoraNode::AozoraHeading`] via a separate path.
+///
+/// Same `forward_target_is_preceded` gate as forward bouten: a heading
+/// hint that names a target which does not appear in the preceding
+/// source text is rejected — the annotation has no referent and the
+/// paragraph would promote to an empty heading. Falling through lets
+/// the catch-all emit `Annotation { Unknown }` so the reader at least
+/// sees the raw bracket text in diagnostics.
+fn classify_forward_heading(
+    events: &[PairEvent],
+    source: &str,
+    open_idx: usize,
+    close_idx: usize,
+) -> Option<AozoraNode> {
+    let extracted = extract_forward_quote_targets(events, source, open_idx, close_idx)?;
+    let rest = extracted.suffix.strip_prefix("は")?;
+    let level = heading_level_from_suffix(rest)?;
+
+    // Reject hints whose targets are not preceded by matching text.
+    // See `classify_forward_bouten` for the same rationale.
+    for target in &extracted.targets {
+        if target.is_empty() {
+            continue;
+        }
+        if !forward_target_is_preceded(events, source, open_idx, target) {
+            return None;
+        }
+    }
+
+    // Concatenate targets in the (rare) multi-quote case so the full
+    // named run drives the heading content. For the 17 k-work corpus
+    // this is always a single quote, but the concat keeps the shape
+    // parallel to forward bouten.
+    let combined: String = extracted.targets.iter().copied().collect();
+    if combined.is_empty() {
+        return None;
+    }
+
+    Some(AozoraNode::HeadingHint(HeadingHint {
+        level,
+        target: combined.into_boxed_str(),
+    }))
+}
+
+/// Map the keyword after `は` to a Markdown heading level per the
+/// Aozora annotation manual
+/// (<https://www.aozora.gr.jp/annotation/heading.html>). Only the three
+/// first-class levels are recognised; 窓見出し / 副見出し remain on
+/// `AozoraHeading`.
+fn heading_level_from_suffix(s: &str) -> Option<u8> {
+    Some(match s {
+        "大見出し" => 1,
+        "中見出し" => 2,
+        "小見出し" => 3,
+        _ => return None,
+    })
 }
 
 /// Map the trailing keyword (after `に`) to a [`BoutenKind`].
@@ -2280,6 +2353,104 @@ mod tests {
                 .iter()
                 .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::TateChuYoko(_)))),
         );
+    }
+
+    // ---------------------------------------------------------------
+    // Forward-reference heading hints — `［＃「X」は(大|中|小)見出し］`.
+    // These tests pin the lexer contract that drives post-process
+    // paragraph promotion (docs/plan.md §M2): the classifier emits a
+    // `HeadingHint { level: 1..=3 }` when the target is preceded by a
+    // matching run in the source, otherwise falls through so the
+    // catch-all emits `Annotation { Unknown }` and the Tier-A canary
+    // ([# never leaks) still holds.
+    // ---------------------------------------------------------------
+
+    fn find_heading_hint(out: &ClassifyOutput) -> Option<HeadingHint> {
+        out.spans.iter().find_map(|s| match &s.kind {
+            SpanKind::Aozora(AozoraNode::HeadingHint(h)) => Some(h.clone()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn forward_heading_large_recognized() {
+        // Spec: 大見出し → Markdown H1 (level 1). The preceding
+        // occurrence of the target literal is required — same gate as
+        // forward-bouten.
+        let out = run("第一篇［＃「第一篇」は大見出し］");
+        let h = find_heading_hint(&out).expect("expected HeadingHint");
+        assert_eq!(h.level, 1);
+        assert_eq!(&*h.target, "第一篇");
+    }
+
+    #[test]
+    fn forward_heading_medium_recognized() {
+        // 中見出し → H2.
+        let out = run("一［＃「一」は中見出し］");
+        let h = find_heading_hint(&out).expect("expected HeadingHint");
+        assert_eq!(h.level, 2);
+        assert_eq!(&*h.target, "一");
+    }
+
+    #[test]
+    fn forward_heading_small_recognized() {
+        // 小見出し → H3.
+        let out = run("小題［＃「小題」は小見出し］");
+        let h = find_heading_hint(&out).expect("expected HeadingHint");
+        assert_eq!(h.level, 3);
+        assert_eq!(&*h.target, "小題");
+    }
+
+    #[test]
+    fn forward_heading_without_preceding_target_falls_through() {
+        // No 「第一篇」 run in the preceding source — hint has no
+        // referent; classifier must reject so the paragraph isn't
+        // promoted to an empty heading. The catch-all then emits
+        // `Annotation { Unknown }` to preserve Tier-A.
+        let out = run("［＃「第一篇」は大見出し］後");
+        assert!(find_heading_hint(&out).is_none());
+    }
+
+    #[test]
+    fn forward_heading_unknown_keyword_falls_through() {
+        // `大見出し` and friends are the only supported heading
+        // keywords; anything else (包括的, 飾り見出し, …) should not
+        // promote.
+        let out = run("X［＃「X」は飾り見出し］");
+        assert!(find_heading_hint(&out).is_none());
+    }
+
+    #[test]
+    fn forward_heading_wrong_particle_falls_through() {
+        // The Aozora annotation spec's heading shape uses `は` as the
+        // particle. Using `に` (the bouten particle) must not promote
+        // to HeadingHint — otherwise we'd clobber the bouten path.
+        let out = run("X［＃「X」に大見出し］");
+        assert!(find_heading_hint(&out).is_none());
+    }
+
+    #[test]
+    fn forward_heading_empty_target_falls_through() {
+        let out = run("［＃「」は大見出し］");
+        assert!(find_heading_hint(&out).is_none());
+    }
+
+    #[test]
+    fn forward_heading_all_three_levels_exercised_in_one_paragraph() {
+        // A single paragraph could conceivably carry multiple heading
+        // hints — the lexer emits one HeadingHint per bracket and
+        // post-process handles the first. This test locks the per-
+        // bracket classification rather than the post_process policy.
+        let out = run("A［＃「A」は大見出し］B［＃「B」は中見出し］C［＃「C」は小見出し］");
+        let levels: Vec<u8> = out
+            .spans
+            .iter()
+            .filter_map(|s| match &s.kind {
+                SpanKind::Aozora(AozoraNode::HeadingHint(h)) => Some(h.level),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(levels, vec![1, 2, 3]);
     }
 
     #[test]

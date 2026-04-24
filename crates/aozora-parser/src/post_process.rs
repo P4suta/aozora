@@ -39,7 +39,7 @@ use afm_lexer::{
 };
 use afm_syntax::{AozoraNode, Container};
 use comrak::Arena;
-use comrak::nodes::{AstNode, NodeValue};
+use comrak::nodes::{AstNode, NodeHeading, NodeValue};
 
 /// Walk `root` and splice an `Aozora` node for every inline PUA
 /// sentinel (`U+E001`) in descendant `Text` nodes.
@@ -282,6 +282,101 @@ pub fn splice_paired_container<'a>(
                 wrap_between(arena, kind, open_para, entry.para);
             }
         }
+    }
+}
+
+/// Promote heading-hint paragraphs to native Markdown headings.
+///
+/// Walks `root` and, for every paragraph that contains a
+/// [`AozoraNode::HeadingHint`] child, rewrites the paragraph node in
+/// place to `comrak::NodeValue::Heading` whose level comes from the
+/// hint and whose sole child is a `Text` carrying the hint's
+/// `target`.
+///
+/// This is the normalisation path documented on
+/// [`afm_syntax::AozoraNode::HeadingHint`]: the lexer emits the hint
+/// as an inline marker inside the source paragraph; post-process
+/// re-homes the paragraph node itself to a heading so the rendered
+/// HTML uses a native `<h1>/<h2>/<h3>` tag rather than a hidden
+/// annotation wrapper.
+///
+/// ## Why this runs between block-leaf and paired-container splices
+///
+/// - `splice_inline` has already turned the `［＃「X」は大見出し］`
+///   sentinel into an [`AozoraNode::HeadingHint`] child of the host
+///   paragraph, so the hint is visible in the tree.
+/// - `splice_block_leaf` replaces single-sentinel paragraphs (page
+///   break, section break, …). Heading paragraphs are not single-
+///   sentinel, so the two passes do not interact.
+/// - `splice_paired_container` wraps sibling blocks into containers.
+///   Running heading promotion first means container wraps see the
+///   already-promoted heading node, not a paragraph — this matches
+///   the natural HTML shape (a container can hold headings).
+///
+/// ## Side effects
+///
+/// The target paragraph's children are fully replaced with a single
+/// fresh `Text(target)` node. Any pre-existing inline content (indent
+/// markers, decorative text preceding the target) is dropped; the
+/// round-trip serialiser reconstructs `［＃「target」は…見出し］` from
+/// the hint's fields alone, so no information is lost on the afm
+/// side.
+pub fn splice_heading_hint<'a>(arena: &'a Arena<'a>, root: &'a AstNode<'a>) {
+    let candidates: Vec<&AstNode<'_>> = root
+        .descendants()
+        .filter(|n| matches!(n.data.borrow().value, NodeValue::Paragraph))
+        .filter(|p| p.children().any(is_heading_hint))
+        .collect();
+
+    for para in candidates {
+        let Some(hint_node) = para.children().find(|c| is_heading_hint(c)) else {
+            continue;
+        };
+
+        let (level, target) = {
+            let data = hint_node.data.borrow();
+            let NodeValue::Aozora(ref boxed) = data.value else {
+                continue;
+            };
+            let AozoraNode::HeadingHint(ref h) = **boxed else {
+                continue;
+            };
+            (h.level, h.target.to_string())
+        };
+
+        // Detach every child of the paragraph before we rewrite it —
+        // we will put back only a fresh Text node carrying the heading
+        // target. Snapshot first because detach mutates sibling links.
+        let children: Vec<&AstNode<'_>> = para.children().collect();
+        for c in children {
+            c.detach();
+        }
+
+        // Rewrite the paragraph's NodeValue in place, preserving its
+        // position in the parent's sibling chain. `data.sourcepos` is
+        // left untouched — we do not have a source-mapped position for
+        // the heading and zeroing it would confuse renderers that
+        // report diagnostic lines.
+        {
+            let mut data = para.data.borrow_mut();
+            data.value = NodeValue::Heading(NodeHeading {
+                level,
+                setext: false,
+                closed: true,
+            });
+        };
+
+        let text_node = alloc_text(arena, target);
+        para.append(text_node);
+    }
+}
+
+fn is_heading_hint(n: &AstNode<'_>) -> bool {
+    let data = n.data.borrow();
+    if let NodeValue::Aozora(ref boxed) = data.value {
+        matches!(**boxed, AozoraNode::HeadingHint(_))
+    } else {
+        false
     }
 }
 
@@ -577,6 +672,170 @@ mod tests {
             )
         });
         assert!(has_section_break);
+    }
+
+    // -----------------------------------------------------------------
+    // splice_heading_hint — paragraph-to-Heading promotion.
+    //
+    // These tests pin the contract that documents/specs/aozora/annotation-heading.html
+    // flavours of `［＃「X」は大見出し／中見出し／小見出し］` surface as
+    // native Markdown `<h1>/<h2>/<h3>` tags rather than hidden
+    // annotation wrappers. The promotion runs *after*
+    // `splice_inline` has placed the HeadingHint sentinel inside the
+    // host paragraph; the surgery rewrites the paragraph in place.
+    // -----------------------------------------------------------------
+
+    fn heading_levels<'a>(root: &'a AstNode<'a>) -> Vec<u8> {
+        root.descendants()
+            .filter_map(|n| {
+                if let NodeValue::Heading(ref h) = n.data.borrow().value {
+                    Some(h.level)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn text_of<'a>(node: &'a AstNode<'a>) -> String {
+        node.descendants()
+            .filter_map(|n| match n.data.borrow().value {
+                NodeValue::Text(ref t) => Some(t.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn heading_hint_paragraph_becomes_h1_for_big_headings() {
+        // 大見出し ⇒ h1. The preceding "第一篇" run is the target the
+        // forward-reference classifier needs to find, same rule as
+        // bouten.
+        let arena = Arena::new();
+        let (root, registry) = lex_and_parse(&arena, "第一篇［＃「第一篇」は大見出し］");
+        splice_inline(&arena, root, &registry);
+        splice_heading_hint(&arena, root);
+
+        assert_eq!(heading_levels(root), vec![1]);
+        let heading = root
+            .children()
+            .find(|n| matches!(n.data.borrow().value, NodeValue::Heading(_)))
+            .expect("paragraph should have been promoted");
+        assert_eq!(text_of(heading), "第一篇");
+    }
+
+    #[test]
+    fn heading_hint_paragraph_becomes_h2_for_medium_headings() {
+        let arena = Arena::new();
+        let (root, registry) = lex_and_parse(&arena, "一［＃「一」は中見出し］");
+        splice_inline(&arena, root, &registry);
+        splice_heading_hint(&arena, root);
+
+        assert_eq!(heading_levels(root), vec![2]);
+    }
+
+    #[test]
+    fn heading_hint_paragraph_becomes_h3_for_small_headings() {
+        let arena = Arena::new();
+        let (root, registry) = lex_and_parse(&arena, "小題［＃「小題」は小見出し］");
+        splice_inline(&arena, root, &registry);
+        splice_heading_hint(&arena, root);
+
+        assert_eq!(heading_levels(root), vec![3]);
+    }
+
+    #[test]
+    fn heading_promotion_strips_non_target_inline_content() {
+        // Indent markers and surrounding text are discarded; the
+        // resulting heading carries the extracted target only.
+        // This prevents `<h1>…指示マーカー…第一篇</h1>` output.
+        let arena = Arena::new();
+        let (root, registry) =
+            lex_and_parse(&arena, "［＃２字下げ］第一篇［＃「第一篇」は大見出し］");
+        splice_inline(&arena, root, &registry);
+        splice_heading_hint(&arena, root);
+
+        let heading = root
+            .children()
+            .find(|n| matches!(n.data.borrow().value, NodeValue::Heading(_)))
+            .expect("paragraph should have been promoted");
+        // The indent marker's AozoraNode must not survive inside the
+        // heading.
+        let has_aozora_inside = heading
+            .descendants()
+            .any(|n| matches!(n.data.borrow().value, NodeValue::Aozora(_)));
+        assert!(
+            !has_aozora_inside,
+            "heading must carry target only, not the indent marker"
+        );
+        assert_eq!(text_of(heading), "第一篇");
+    }
+
+    #[test]
+    fn paragraphs_without_heading_hint_are_unaffected() {
+        // Promotion must be a scalpel, not a shotgun — running the
+        // pass on an input with no hint leaves every paragraph intact.
+        let arena = Arena::new();
+        let (root, registry) = lex_and_parse(&arena, "普通の段落です。");
+        splice_inline(&arena, root, &registry);
+        splice_heading_hint(&arena, root);
+
+        assert!(
+            heading_levels(root).is_empty(),
+            "no heading should appear without a hint"
+        );
+        let para_count = root
+            .children()
+            .filter(|n| matches!(n.data.borrow().value, NodeValue::Paragraph))
+            .count();
+        assert_eq!(para_count, 1);
+    }
+
+    #[test]
+    fn heading_promotion_is_idempotent() {
+        // Running the promotion twice must not re-promote an already-
+        // promoted Heading into something else (idempotence anchors
+        // that the pass is safe to invoke from tooling that doesn't
+        // know if it's already run).
+        let arena = Arena::new();
+        let (root, registry) = lex_and_parse(&arena, "題［＃「題」は大見出し］");
+        splice_inline(&arena, root, &registry);
+        splice_heading_hint(&arena, root);
+        splice_heading_hint(&arena, root);
+
+        assert_eq!(heading_levels(root), vec![1]);
+    }
+
+    #[test]
+    fn heading_promotion_preserves_other_block_siblings() {
+        // A document with a heading-hint paragraph followed by a plain
+        // paragraph must still have both blocks as siblings after
+        // promotion — one heading + one paragraph.
+        let arena = Arena::new();
+        let (root, registry) = lex_and_parse(&arena, "題［＃「題」は大見出し］\n\n本文");
+        splice_inline(&arena, root, &registry);
+        splice_heading_hint(&arena, root);
+
+        let kinds: Vec<&'static str> = root
+            .children()
+            .map(|n| match n.data.borrow().value {
+                NodeValue::Heading(_) => "heading",
+                NodeValue::Paragraph => "paragraph",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, vec!["heading", "paragraph"]);
+    }
+
+    #[test]
+    fn heading_promotion_on_empty_document_is_noop() {
+        // Bounds / edge case: an empty input must not panic or insert
+        // stray nodes.
+        let arena = Arena::new();
+        let (root, registry) = lex_and_parse(&arena, "");
+        splice_inline(&arena, root, &registry);
+        splice_heading_hint(&arena, root);
+        assert_eq!(heading_levels(root), Vec::<u8>::new());
     }
 
     #[test]
