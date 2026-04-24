@@ -113,13 +113,29 @@ fn keigakomi_container_wraps_body() {
 }
 
 #[test]
-fn warichu_container_wraps_body() {
-    let html = render_to_string("［＃割り注］\n注記本体\n［＃割り注終わり］");
+fn warichu_renders_inline_not_as_block_container() {
+    // Aozora spec: `［＃割り注］…［＃割り注終わり］` is inline (a
+    // small-text side-note flowing with the surrounding prose). The
+    // renderer must emit a single `<span class="afm-warichu">` pair
+    // inside the host paragraph — *not* a block `<div>` that would
+    // split the sentence mid-stream (as the deprecated
+    // `ここから割り注` form used to). This test pins the fix for the
+    // 56656 `黄色い鑑札（…）` rendering bug.
+    let html = render_to_string("黄色い鑑札（［＃割り注］淫売婦の鑑札［＃割り注終わり］）をもって");
     assert!(
-        html.contains(r#"<div class="afm-container afm-container-warichu">"#),
-        "warichu open tag missing: {html:?}"
+        html.contains(r#"<span class="afm-warichu">淫売婦の鑑札</span>"#),
+        "warichu must render as inline span: {html}"
     );
-    assert!(html.contains("<p>注記本体</p>"));
+    assert!(
+        !html.contains(r#"<div class="afm-container afm-container-warichu">"#),
+        "warichu must not render as block container: {html}"
+    );
+    // Host paragraph stays intact — the full sentence is one <p>.
+    assert_eq!(
+        html.matches("<p>").count(),
+        1,
+        "warichu must not split the host paragraph: {html}"
+    );
     assert_tier_a(&html);
 }
 
@@ -208,4 +224,131 @@ fn container_with_multiple_child_blocks_captures_all() {
     let p_count = html.matches("<p>").count();
     assert_eq!(p_count, 3, "3 child paragraphs expected: {html:?}");
     assert_tier_a(&html);
+}
+
+// ---------------------------------------------------------------------------
+// Same-family implicit close (Aozora spec convention)
+//
+// The Aozora annotation spec for 字下げ / 地付き
+// (<https://www.aozora.gr.jp/annotation/indent.html>) asks that a
+// second `ここから…` of the same family implicitly ends the previous
+// scope — they are state-changing, not stack-nesting. 罪と罰 (fixture
+// 56656) exercises this shape around the Malborough song and was
+// leaking a bare U+E003 (BLOCK_OPEN_SENTINEL) into the rendered HTML
+// until Phase 5's post_process fix.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn consecutive_indent_opens_with_single_close_do_not_leak_sentinel() {
+    // Exact shape from 罪と罰 around offset 1.6 MB. Two ［＃ここから…
+    // 字下げ］ opens of different amounts with only one explicit close
+    // between them. Per Aozora spec the inner open implicitly ends the
+    // outer scope so both render as sibling containers.
+    let html = render_to_string(
+        "［＃ここから２字下げ］\n\
+         前半一行目\n\
+         前半二行目\n\
+         ［＃ここから５字下げ］\n\
+         後半一行目\n\
+         後半二行目\n\
+         ［＃ここで字下げ終わり］",
+    );
+    assert_tier_a(&html);
+    // Both indent scopes must materialise as containers.
+    assert!(
+        html.contains("afm-container-indent-2"),
+        "outer Indent{{2}} must not be lost: {html}"
+    );
+    assert!(
+        html.contains("afm-container-indent-5"),
+        "inner Indent{{5}} must render: {html}"
+    );
+    // No orphan sentinel survives — `assert_tier_a` already checks,
+    // but pin the specific codepoint so a regression surfaces under
+    // the exact lexer constant name.
+    assert!(
+        !html.contains('\u{E003}'),
+        "BLOCK_OPEN_SENTINEL (U+E003) leaked: {html}"
+    );
+}
+
+#[test]
+fn three_consecutive_same_family_opens_with_one_close_all_wrap() {
+    // Three cascading opens followed by a single explicit close. Each
+    // new open implicitly closes the previous; the explicit close
+    // matches the last open.
+    let html = render_to_string(
+        "［＃ここから１字下げ］\n\
+         A\n\
+         ［＃ここから２字下げ］\n\
+         B\n\
+         ［＃ここから３字下げ］\n\
+         C\n\
+         ［＃ここで字下げ終わり］",
+    );
+    assert_tier_a(&html);
+    for amount in [1, 2, 3] {
+        assert!(
+            html.contains(&format!("afm-container-indent-{amount}")),
+            "Indent{{{amount}}} scope must render: {html}"
+        );
+    }
+    assert!(!html.contains('\u{E003}'), "no U+E003 may survive: {html}");
+    assert!(!html.contains('\u{E004}'), "no U+E004 may survive: {html}");
+}
+
+#[test]
+fn cross_family_nest_preserved_only_same_family_cascades() {
+    // Keigakomi and Indent are different families — the inner Indent
+    // must NOT implicitly close the surrounding Keigakomi. Verifies
+    // the same_family predicate is not over-aggressive.
+    //
+    // Keigakomi's paired syntax is `［＃罫囲み］...［＃罫囲み終わり］`
+    // (no `ここから` / `ここで` prefix — the classifier accepts the
+    // bare form per phase3_classify).
+    let html = render_to_string(
+        "［＃罫囲み］\n\
+         外枠テキスト\n\
+         ［＃ここから２字下げ］\n\
+         内側テキスト\n\
+         ［＃ここで字下げ終わり］\n\
+         戻り\n\
+         ［＃罫囲み終わり］",
+    );
+    assert_tier_a(&html);
+    assert!(
+        html.contains("afm-container-keigakomi"),
+        "outer Keigakomi must render: {html}"
+    );
+    assert!(
+        html.contains("afm-container-indent-2"),
+        "nested Indent{{2}} must render: {html}"
+    );
+    // The keigakomi <div> must open BEFORE the indent <div> —
+    // nested containers preserve the source ordering.
+    let keigakomi_open = html.find("afm-container-keigakomi").unwrap();
+    let indent_open = html.find("afm-container-indent-2").unwrap();
+    assert!(
+        indent_open > keigakomi_open,
+        "Indent must open inside the Keigakomi: {html}"
+    );
+}
+
+#[test]
+fn same_family_cascade_preserves_align_end_shape() {
+    // 地付き (AlignEnd) family — two consecutive opens should cascade
+    // the same way Indent does.
+    let html = render_to_string(
+        "［＃ここから地付き］\n\
+         後書き一行目\n\
+         ［＃ここから地から３字上げ］\n\
+         後書き二行目\n\
+         ［＃ここで地付き終わり］",
+    );
+    assert_tier_a(&html);
+    assert!(
+        html.contains("afm-container-align-end"),
+        "AlignEnd must render: {html}"
+    );
+    assert!(!html.contains('\u{E003}'), "no U+E003 may survive: {html}");
 }

@@ -226,6 +226,28 @@ pub fn splice_block_leaf<'a>(
 /// inside a blockquote and one outside) is not wrapped — the
 /// cross-tree surgery is not attempted here. The open and close
 /// paragraphs stay, diagnosable via their sentinel content.
+///
+/// ## Same-family implicit close (Aozora convention)
+///
+/// The Aozora annotation spec for 字下げ / 地付き style containers
+/// (<https://www.aozora.gr.jp/annotation/indent.html>) documents that
+/// consecutive `［＃ここから…］` opens *of the same family* without an
+/// intervening close implicitly end the previous scope. A typical
+/// shape from 罪と罰 (fixture 56656) is:
+///
+/// ```text
+/// ［＃ここから２字下げ］   ← Indent{2} open
+/// …prose in 2-indent…
+/// ［＃ここから５字下げ］   ← Indent{5} open (implicit close of Indent{2})
+/// …prose in 5-indent…
+/// ［＃ここで字下げ終わり］ ← explicit close of Indent{5}
+/// ```
+///
+/// A strict stack would leave the outer `Indent{2}` orphaned; we
+/// instead synthesise an implicit close for the stack-top open when a
+/// new same-family open arrives, so both scopes become siblings with
+/// no leaked PUA sentinels. Cross-family nesting (`Keigakomi` outside
+/// `Indent`, say) is preserved — only same-family overlaps cascade.
 pub fn splice_paired_container<'a>(
     arena: &'a Arena<'a>,
     root: &'a AstNode<'a>,
@@ -267,7 +289,20 @@ pub fn splice_paired_container<'a>(
     let mut stack: Vec<(&AstNode<'_>, afm_syntax::ContainerKind)> = Vec::new();
     for entry in tagged {
         match entry.role {
-            Role::Open(kind) => stack.push((entry.para, kind)),
+            Role::Open(kind) => {
+                // Same-family implicit close: if the stack top is the
+                // same family as the incoming open and lives under the
+                // same parent, synthesise a close for it now so it
+                // does not leak its PUA sentinel.
+                if let Some(&(prev_para, prev_kind)) = stack.last()
+                    && same_family(prev_kind, kind)
+                    && same_parent(prev_para, entry.para)
+                {
+                    wrap_up_to(arena, prev_kind, prev_para, entry.para);
+                    stack.pop();
+                }
+                stack.push((entry.para, kind));
+            }
             Role::Close => {
                 let Some((open_para, kind)) = stack.pop() else {
                     continue; // orphan close; leave in place
@@ -283,6 +318,30 @@ pub fn splice_paired_container<'a>(
             }
         }
     }
+}
+
+/// Classify two [`afm_syntax::ContainerKind`] values as "same family"
+/// for the purposes of implicit-close cascading.
+///
+/// Two [`ContainerKind::Indent`] variants with different `amount` are
+/// the same family — a `ここから５字下げ` following a `ここから２字下げ`
+/// does not nest; it ends the outer scope. Same for
+/// [`ContainerKind::AlignEnd`] (`ここから地付き`). [`ContainerKind::Warichu`]
+/// and [`ContainerKind::Keigakomi`] are singletons — each is only
+/// same-family with itself.
+///
+/// This function is kept total over the current `ContainerKind`
+/// variants; new variants default to their own family (no
+/// cascading), which is the conservative choice.
+fn same_family(a: afm_syntax::ContainerKind, b: afm_syntax::ContainerKind) -> bool {
+    use afm_syntax::ContainerKind::{AlignEnd, Indent, Keigakomi, Warichu};
+    matches!(
+        (a, b),
+        (Indent { .. }, Indent { .. })
+            | (AlignEnd { .. }, AlignEnd { .. })
+            | (Warichu, Warichu)
+            | (Keigakomi, Keigakomi)
+    )
 }
 
 /// Promote heading-hint paragraphs to native Markdown headings.
@@ -433,6 +492,40 @@ fn wrap_between<'a>(
     // Finally drop the two sentinel paragraphs.
     open_para.detach();
     close_para.detach();
+}
+
+/// Like [`wrap_between`], but the right-hand `boundary` is an
+/// implicit close: everything strictly between `open_para` and
+/// `boundary` gets wrapped, `open_para` is detached, but `boundary`
+/// is *not* detached — the caller still needs it for its own pairing
+/// (typically a new same-family open the Aozora spec asks us to
+/// treat as an implicit end for the previous scope).
+fn wrap_up_to<'a>(
+    arena: &'a Arena<'a>,
+    kind: afm_syntax::ContainerKind,
+    open_para: &'a AstNode<'a>,
+    boundary: &'a AstNode<'a>,
+) {
+    let container = alloc_aozora(arena, AozoraNode::Container(Container { kind }));
+    open_para.insert_before(container);
+
+    let mut movers: Vec<&AstNode<'_>> = Vec::new();
+    let mut cursor = open_para.next_sibling();
+    while let Some(node) = cursor {
+        if ptr::eq(node, boundary) {
+            break;
+        }
+        movers.push(node);
+        cursor = node.next_sibling();
+    }
+    for n in movers {
+        n.detach();
+        container.append(n);
+    }
+
+    // Open sentinel is consumed; boundary stays — it will be handled
+    // by its own `Role::Open` / `Role::Close` branch in the caller.
+    open_para.detach();
 }
 
 /// Returns `true` when `para` is a `Paragraph` whose single child is

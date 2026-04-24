@@ -103,7 +103,7 @@ corpus *ARGS:
 #   I3 — serialize ∘ parse fixed point (hard).
 #   I4 — emitted HTML is tag-balanced (hard).
 #   I5 — SJIS decode stable (report-only).
-#   I6 — no PUA sentinel U+E001–U+E004 in HTML (hard, budget=1 default).
+#   I6 — no PUA sentinel U+E001–U+E004 in HTML (hard, budget=0).
 #   I7 — every afm-* class is in AFM_CLASSES (hard, budget=0).
 #   I8 — no <script / javascript: / on<event>= markers (hard, budget=0).
 #   I9 — afm-annotation wrapper shape is well-formed (hard, budget=0).

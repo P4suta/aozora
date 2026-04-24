@@ -130,6 +130,18 @@ fn render_gaiji(g: &Gaiji, writer: &mut dyn Write) -> fmt::Result {
 }
 
 fn render_annotation(a: &Annotation, writer: &mut dyn Write) -> fmt::Result {
+    use afm_syntax::AnnotationKind;
+    // Inline warichu pair — `［＃割り注］X［＃割り注終わり］`. The Aozora
+    // spec has deprecated the block form (`ここから割り注`…) in favour
+    // of this inline shape, so we emit an opening `<span>` on
+    // `WarichuOpen` and a closing `</span>` on `WarichuClose`. The
+    // body text between them flows inline with the surrounding prose
+    // rather than being wrapped in a block-level container.
+    match a.kind {
+        AnnotationKind::WarichuOpen => return writer.write_str(r#"<span class="afm-warichu">"#),
+        AnnotationKind::WarichuClose => return writer.write_str("</span>"),
+        _ => {}
+    }
     // Round-trip preservation: visible-but-unstyled by default, carrying
     // the raw annotation text as accessible content, kept inside a
     // hidden span so CommonMark/GFM-only readers don't see it but

@@ -882,6 +882,7 @@ fn recognize_annotation(
         .or_else(|| classify_kaeriten(body).map(EmitKind::Aozora))
         .or_else(|| classify_indent_or_align(body).map(EmitKind::Aozora))
         .or_else(|| classify_sashie(body).map(EmitKind::Aozora))
+        .or_else(|| classify_inline_warichu(body).map(EmitKind::Aozora))
         .or_else(|| {
             classify_forward_bouten(events, source, open_idx, close_idx).map(EmitKind::Aozora)
         })
@@ -1181,7 +1182,12 @@ fn extract_forward_quote_targets<'s>(
 /// * `ここから地付き`       → `AlignEnd { offset: 0 }`
 /// * `ここから地からN字上げ` → `AlignEnd { offset: N }`
 /// * `罫囲み`               → `Keigakomi`
-/// * `割り注`               → `Warichu`
+///
+/// `割り注` is claimed earlier by [`classify_inline_warichu`] and
+/// emitted as an inline annotation pair rather than a block container —
+/// see the Aozora spec note at
+/// <https://www.aozora.gr.jp/annotation/etc.html#warichu> deprecating
+/// the `ここから割り注` / `ここで割り注終わり` block form.
 ///
 /// Returns `None` for closers or unknown bodies; those go to
 /// [`classify_container_close`] or fall through to Plain.
@@ -1208,7 +1214,6 @@ fn classify_container_open(body: &str) -> Option<EmitKind> {
     }
     match body {
         "罫囲み" => Some(EmitKind::BlockOpen(ContainerKind::Keigakomi)),
-        "割り注" => Some(EmitKind::BlockOpen(ContainerKind::Warichu)),
         _ => None,
     }
 }
@@ -1220,7 +1225,9 @@ fn classify_container_open(body: &str) -> Option<EmitKind> {
 /// * `ここで字下げ終わり` → `Indent { amount: 0 }` (amount is a placeholder)
 /// * `ここで地付き終わり` → `AlignEnd { offset: 0 }`
 /// * `罫囲み終わり`         → `Keigakomi`
-/// * `割り注終わり`         → `Warichu`
+///
+/// `割り注終わり` is claimed by [`classify_inline_warichu`]; see that
+/// function's docs for the rationale.
 ///
 /// The carried [`ContainerKind`] only conveys the *variant* — the
 /// numeric field (`amount` / `offset`) is a placeholder because the
@@ -1236,7 +1243,37 @@ fn classify_container_close(body: &str) -> Option<EmitKind> {
     }
     match rest {
         "罫囲み" => Some(EmitKind::BlockClose(ContainerKind::Keigakomi)),
-        "割り注" => Some(EmitKind::BlockClose(ContainerKind::Warichu)),
+        _ => None,
+    }
+}
+
+/// Classify `［＃割り注］` / `［＃割り注終わり］` as paired inline
+/// annotations.
+///
+/// The Aozora annotation spec
+/// (<https://www.aozora.gr.jp/annotation/etc.html#warichu>) says:
+/// > かつては［＃ここから割り注］〜［＃ここで割り注終わり］と書いていましたが、
+/// > 行中の注記の書式をそろえるために、変更しました。
+///
+/// So `割り注` is always inline. Emitting each open / close as a
+/// separate [`AnnotationKind::WarichuOpen`] / [`AnnotationKind::WarichuClose`]
+/// annotation keeps them in the inline token stream — the renderer
+/// emits `<span class="afm-warichu">` on open and `</span>` on close,
+/// producing the canonical `<span class="afm-warichu">…</span>` shape
+/// without splitting the host paragraph the way a block container
+/// would.
+///
+/// Returns `None` for bodies other than the two warichu markers.
+fn classify_inline_warichu(body: &str) -> Option<AozoraNode> {
+    match body {
+        "割り注" => Some(AozoraNode::Annotation(Annotation {
+            raw: "［＃割り注］".into(),
+            kind: AnnotationKind::WarichuOpen,
+        })),
+        "割り注終わり" => Some(AozoraNode::Annotation(Annotation {
+            raw: "［＃割り注終わり］".into(),
+            kind: AnnotationKind::WarichuClose,
+        })),
         _ => None,
     }
 }
@@ -2861,16 +2898,30 @@ mod tests {
     }
 
     #[test]
-    fn container_open_close_warichu() {
+    fn warichu_open_close_are_inline_annotations() {
+        // Aozora spec: `［＃割り注］…［＃割り注終わり］` is inline
+        // (`<span class="afm-warichu">…</span>`). The legacy block
+        // form (`ここから割り注` / `ここで割り注終わり`) is deprecated
+        // and not classified here.
+        use afm_syntax::AnnotationKind;
         let out = run("［＃割り注］内部［＃割り注終わり］");
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Warichu)
-        ));
-        assert!(matches!(
-            out.spans[2].kind,
-            SpanKind::BlockClose(ContainerKind::Warichu)
-        ));
+        let SpanKind::Aozora(AozoraNode::Annotation(ref open)) = out.spans[0].kind else {
+            panic!(
+                "expected Aozora(Annotation) for ［＃割り注］, got {:?}",
+                out.spans[0].kind,
+            );
+        };
+        assert_eq!(open.kind, AnnotationKind::WarichuOpen);
+        assert_eq!(&*open.raw, "［＃割り注］");
+
+        let SpanKind::Aozora(AozoraNode::Annotation(ref close)) = out.spans[2].kind else {
+            panic!(
+                "expected Aozora(Annotation) for ［＃割り注終わり］, got {:?}",
+                out.spans[2].kind,
+            );
+        };
+        assert_eq!(close.kind, AnnotationKind::WarichuClose);
+        assert_eq!(&*close.raw, "［＃割り注終わり］");
     }
 
     #[test]

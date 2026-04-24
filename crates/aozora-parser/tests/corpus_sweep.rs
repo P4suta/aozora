@@ -150,9 +150,9 @@ fn assert_all_hard_gates(stats: &SweepStats) {
     );
 
     // Budgeted hard gates. Each row: (tier, invariant id, env var,
-    // default budget, failure description). Defaults are zero except
-    // I6, which accommodates the known 56656 leak — see ADR-0007
-    // amendment for rationale.
+    // default budget, failure description). All defaults are zero;
+    // the env-var escape hatches exist for staging fixes on a dirty
+    // corpus. See ADR-0007 amendment for the rollout protocol.
     let rows: &[(&str, &str, &str, usize, &str)] = &[
         (
             TIER_I2_LEAKED,
@@ -179,7 +179,7 @@ fn assert_all_hard_gates(stats: &SweepStats) {
             TIER_I6_SENTINEL_LEAK,
             "I6",
             "AFM_CORPUS_I6_BUDGET",
-            1,
+            0,
             "leaked PUA sentinel (U+E001–U+E004) into rendered HTML",
         ),
         (
@@ -226,12 +226,11 @@ fn assert_all_hard_gates(stats: &SweepStats) {
 
 /// Generic env-var budget reader with a caller-supplied default.
 ///
-/// Defaults to `0` (strict) for I2 / I3 / I4 / I7–I10; `1` for I6 to
-/// accommodate the known U+E003 leak in
-/// `spec/aozora/fixtures/56656/input.sjis.txt` — see ADR-0007
-/// amendment. Malformed values (non-integer) fall back to `default`
-/// with a stderr warning so a typo in CI config cannot silently
-/// paper over a real regression.
+/// Every hard gate currently defaults to `0` (strict); the `default`
+/// parameter exists so a future invariant can land with a non-zero
+/// ratcheting budget without changing the signature. Malformed values
+/// (non-integer) fall back to `default` with a stderr warning so a
+/// typo in CI config cannot silently paper over a real regression.
 fn env_budget_or(name: &str, default: usize) -> usize {
     env::var(name).map_or(default, |s| {
         s.trim().parse::<usize>().unwrap_or_else(|_| {

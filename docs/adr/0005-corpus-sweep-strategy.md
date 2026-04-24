@@ -89,7 +89,7 @@ Each sweep iteration runs the following checks:
 | I3 | `parse → serialize → parse` AST equality | Hard | Pending M2-S5/S6 (serializer) |
 | I4 | Generated HTML parses via html5ever | Soft → Hard | Pending M2-S4 |
 | I5 | SJIS decode stable | Soft (report-only) | Enforced diagnostic |
-| I6 | No lexer PUA sentinel (U+E001–U+E004) in HTML | Hard with budget | Enforced with budget 1 |
+| I6 | No lexer PUA sentinel (U+E001–U+E004) in HTML | Hard with budget | Enforced with budget 0 |
 | I7 | Every `afm-*` class token is in [`AFM_CLASSES`] | Hard with budget | Enforced with budget 0 |
 | I8 | No `<script` / `javascript:` / `on<event>=` markers | Hard with budget | Enforced with budget 0 |
 | I9 | `strip_annotation_wrappers` is idempotent, wrappers carry `hidden`, no nesting | Hard with budget | Enforced with budget 0 |
@@ -274,22 +274,31 @@ extends to I6–I10. Landing plan:
 1. **Phase 4a** — add each invariant as report-only (stderr count, no
    assertion). Committed.
 2. **Phase 4b** — run the sweep against representative corpora to
-   observe baseline counts. Committed observations:
-   - `spec/aozora/fixtures/` (in-tree vendored, 56656 SJIS + UTF-8):
-     - I6: **1 leak** in 56656 SJIS — U+E003 (BLOCK_OPEN_SENTINEL)
-       survives to a bare `<p>\u{E003}</p>` paragraph around offset
-       1.6 MB in the rendered HTML. The post-process paired-container
-       pass is missing a close-side pairing for at least one container
-       shape in the 罪と罰 source. Tracked as a follow-up bug; initial
-       budget accommodates the known leak.
-     - I7–I10: **0** occurrences.
-   - No external `AFM_CORPUS_ROOT` corpus was measured during this
-     landing; developers with a 17 k-work corpus should re-run the
-     sweep and ratchet the budgets to the observed values before
-     merging their own follow-up PRs.
-3. **Phase 4c** — promote to hard gate with `AFM_CORPUS_I6_BUDGET` =
-   1, I7–I10 = 0 by default. Same `AFM_CORPUS_*_BUDGET` env-var
-   override convention as I2 / I3 / I4.
+   observe baseline counts. Initial observations on
+   `spec/aozora/fixtures/` flagged a single U+E003 leak in 56656 SJIS
+   around offset 1.6 MB — post_process was treating same-family
+   `ここから…字下げ` opens as a nesting stack rather than the
+   state-changing shape the Aozora annotation spec mandates. Around
+   the Malborough song, 罪と罰 has:
+   ```
+   ［＃ここから２字下げ］          <- outer open
+   …
+   ［＃ここから５字下げ］          <- inner open (no close for outer)
+   …
+   ［＃ここで字下げ終わり］        <- explicit close
+   ```
+   The strict stack left `Indent{2}` unmatched and its
+   `BLOCK_OPEN_SENTINEL` (U+E003) paragraph surfaced in the render.
+3. **Phase 4c fix** — post_process now recognises same-family
+   consecutive opens and synthesises an implicit close for the
+   outer scope before pushing the new open. See `same_family` and
+   `wrap_up_to` in `crates/afm-parser/src/post_process.rs`. After the
+   fix, every I6–I10 invariant clears at budget `0` against the
+   in-tree fixtures; a dirty external corpus can still stage fixes
+   via the `AFM_CORPUS_*_BUDGET` env overrides.
+4. **External-corpus sweep** — developers with a 17 k-work corpus
+   should re-run the sweep and ratchet any non-zero budgets to the
+   observed values before merging their own follow-up PRs.
 
 The budget is an upper bound, not a floor — ratcheting down to zero
 is the long-term goal as each latent bug is fixed.

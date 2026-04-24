@@ -55,4 +55,5 @@ pub const AFM_CLASSES: &[&str] = &[
     "afm-section-break-dan",
     "afm-section-break-spread",
     "afm-tcy",
+    "afm-warichu",
 ];

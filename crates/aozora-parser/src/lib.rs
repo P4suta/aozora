@@ -28,12 +28,15 @@ pub mod serialize;
 #[doc(hidden)]
 pub mod test_support;
 
-use afm_lexer::{Diagnostic, PlaceholderRegistry};
 use comrak::Arena;
 use comrak::nodes::AstNode;
 
 pub mod post_process;
 
+pub use afm_lexer::{Diagnostic, PlaceholderRegistry};
+// Legacy alias for `Diagnostic`; retained for downstream consumers that
+// imported the lexer diagnostic under this name before the v0.1 API
+// surface was consolidated (currently `afm-cli`).
 pub use afm_lexer::Diagnostic as LexerDiagnostic;
 pub use comrak::{Arena as ComrakArena, Options as ComrakOptions};
 pub use serialize::serialize;
@@ -50,8 +53,25 @@ pub struct Options<'c> {
 
 impl Options<'_> {
     /// Default configuration for afm documents: Aozora render hook enabled,
-    /// GFM super-set enabled (tables, strikethrough, autolink, tasklist), and
-    /// the CommonMark 0.31.2 defaults left intact.
+    /// GFM super-set enabled (tables, strikethrough, autolink, tasklist),
+    /// hard line breaks preserved, and the remaining CommonMark 0.31.2
+    /// defaults left intact.
+    ///
+    /// **Why `hardbreaks` is on by default:** Aozora Bunko source text
+    /// treats every newline as meaningful — verse lines, dialogue
+    /// turn-boundaries, and `改丁`/`改ページ`-style structure all rely on
+    /// visible line breaks. CommonMark's default "soft break" behaviour
+    /// collapses `\n` inside a paragraph into a single space, fusing
+    /// lines like
+    /// ```text
+    /// Malborough s'en-va-t-en guerre
+    /// Ne-sait quand reviendra ……
+    /// ```
+    /// into one flat line, which reads wrong for any Aozora work. Setting
+    /// `render.hardbreaks = true` makes comrak emit a `<br>` at each
+    /// newline, which aligns with the typographic intent the
+    /// source carries. Callers who want pure CommonMark soft-break
+    /// behaviour should use [`Options::commonmark_only`] instead.
     #[must_use]
     pub fn afm_default() -> Self {
         let mut comrak = comrak::Options::default();
@@ -60,6 +80,7 @@ impl Options<'_> {
         comrak.extension.table = true;
         comrak.extension.autolink = true;
         comrak.extension.tasklist = true;
+        comrak.render.hardbreaks = true;
         Self { comrak }
     }
 

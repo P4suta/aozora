@@ -661,6 +661,19 @@ pub enum AnnotationKind {
     TextualNote,
     /// A ruby span that couldn't be parsed cleanly — round-tripped as-is.
     InvalidRubySpan,
+    /// Inline warichu (割り注) opener — `［＃割り注］`. The Aozora spec
+    /// documents this shape as inline by convention (see
+    /// <https://www.aozora.gr.jp/annotation/etc.html#warichu>):
+    /// the previous block-level `［＃ここから割り注］…［＃ここで割り注終わり］`
+    /// shape is explicitly deprecated. Renderer emits
+    /// `<span class="afm-warichu">`; the matching [`WarichuClose`]
+    /// annotation emits `</span>`.
+    WarichuOpen,
+    /// Inline warichu closer — `［＃割り注終わり］`. Paired with
+    /// [`WarichuOpen`] by the renderer; kept as a separate annotation
+    /// rather than a `Container` so comrak does not split the host
+    /// paragraph mid-sentence.
+    WarichuClose,
 }
 
 /// Parse- and render-time error surface for afm-syntax consumers. Parsers and renderers
