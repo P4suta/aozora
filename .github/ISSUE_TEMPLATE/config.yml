@@ -1,0 +1,17 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report (parser crashes, HTML-escape bypass, panics on untrusted input)
+    url: https://github.com/P4suta/afm/security/advisories/new
+    about: Open a **private** security advisory. Do not file security issues publicly.
+
+  - name: Conduct concern
+    url: https://github.com/P4suta/afm/security/advisories/new
+    about: Code of conduct reports also go through private security advisories — mark the title clearly as a conduct report.
+
+  - name: Questions, design debate, "how do I …?"
+    url: https://github.com/P4suta/afm/discussions
+    about: Prefer Discussions over issues for general questions and exploratory design conversations.
+
+  - name: CommonMark / GFM spec questions (upstream)
+    url: https://spec.commonmark.org/
+    about: afm follows CommonMark and GFM verbatim; questions about the base specs belong upstream.

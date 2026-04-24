@@ -1,0 +1,14 @@
+# GitHub reads this to auto-request reviewers on pull requests.
+# afm is currently a single-maintainer project; route everything to @P4suta.
+
+* @P4suta
+
+# Surfaces that especially need maintainer review (duplicated for explicitness
+# so a PR that touches these always shows @P4suta even once CODEOWNERS grows).
+/upstream/comrak/    @P4suta
+/docs/adr/           @P4suta
+/crates/afm-lexer/   @P4suta
+/crates/afm-parser/  @P4suta
+/.github/workflows/  @P4suta
+/Dockerfile          @P4suta
+/docker-compose.yml  @P4suta

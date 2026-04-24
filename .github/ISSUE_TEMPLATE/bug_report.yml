@@ -1,0 +1,94 @@
+name: Bug report
+description: Report a parser crash, render regression, or spec non-conformance in afm.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue. The single most
+        valuable thing you can supply is a **minimal reproducible
+        input** — the shortest source text that triggers the issue.
+        Parser bugs frequently hide behind unrelated surrounding text,
+        so please try to shrink the input before filing.
+
+  - type: textarea
+    id: input
+    attributes:
+      label: Minimal reproducing input
+      description: |
+        Paste the shortest afm source that triggers the bug. If the
+        input is Shift_JIS, include a hex dump (e.g. `xxd foo.txt`)
+        rather than pasted glyphs, since the issue tracker will
+        transcode the bytes on display.
+      render: markdown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: encoding
+    attributes:
+      label: Input encoding
+      options:
+        - UTF-8
+        - UTF-8 with BOM
+        - Shift_JIS
+        - other (explain in "Minimal reproducing input")
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected output
+      description: What the parser / renderer should have produced.
+      render: html
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual output
+      description: |
+        HTML, error, panic message, or diagnostic actually produced.
+        For panics, paste the full backtrace (run with
+        `RUST_BACKTRACE=1`).
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: afm-version
+    attributes:
+      label: "afm version (`afm --version` or commit hash)"
+    validations:
+      required: true
+
+  - type: input
+    id: rustc-version
+    attributes:
+      label: "rustc version (`rustc --version`)"
+    validations:
+      required: false
+
+  - type: input
+    id: spec-url
+    attributes:
+      label: Related Aozora Bunko spec page
+      description: |
+        If the bug is about an Aozora notation, link the relevant
+        section under https://www.aozora.gr.jp/annotation/ .
+      placeholder: https://www.aozora.gr.jp/annotation/etc.html
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I have tried shrinking the input toward a minimal reproducer.
+          required: false
