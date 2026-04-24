@@ -15,7 +15,20 @@
 //!    swallow adjacent `［＃…］` annotations. Scope is deliberately
 //!    restricted to tortoiseshell-bracket spans; the function is the
 //!    identity outside them.
-//! 4. **PUA sentinel collision scan** — the lexer will shortly inject
+//! 4. **Decorative rule isolation** — lines composed entirely of 10 or
+//!    more `-`, `=`, or `_` characters (a very common visual separator
+//!    in Aozora Bunko prose) are forced to sit on their own stanza by
+//!    inserting a blank line before them. This defeats CommonMark's
+//!    setext-heading rule (paragraph followed by `---` → H2), which
+//!    would otherwise turn the preceding prose into a spurious heading
+//!    whenever an Aozora text drops a `---...` row right after the
+//!    front-matter. The intervention is semantics-preserving for
+//!    CommonMark: inserting a blank line before what would otherwise
+//!    be a setext underline yields the same AST as if the author had
+//!    written the blank line themselves. Short (≤ 9 char) `---` /
+//!    `===` runs are untouched so the genuine setext-heading idiom
+//!    keeps working verbatim.
+//! 5. **PUA sentinel collision scan** — the lexer will shortly inject
 //!    [`crate::INLINE_SENTINEL`] / [`crate::BLOCK_LEAF_SENTINEL`] /
 //!    [`crate::BLOCK_OPEN_SENTINEL`] / [`crate::BLOCK_CLOSE_SENTINEL`] into
 //!    the normalized text (Phase 4). If the source already uses any of
@@ -43,6 +56,13 @@ const TORTOISE_OPEN: char = '〔';
 /// Tortoiseshell-bracket close character.
 const TORTOISE_CLOSE: char = '〕';
 
+/// Minimum run length for a `-` / `=` / `_` line to be treated as a
+/// decorative rule rather than a setext underline. Nine characters is
+/// the longest setext underline observed in the CommonMark 0.31.2 spec
+/// cases; ten is the first length where Aozora's typical `---...---`
+/// separator starts to appear in the 17 k-work corpus.
+const DECORATIVE_RULE_MIN_LEN: usize = 10;
+
 /// Output of Phase 0. `text` is what downstream phases consume; `diagnostics`
 /// carries any non-fatal observations gathered during sanitation.
 #[derive(Debug, Clone)]
@@ -63,13 +83,19 @@ pub fn sanitize(source: &str) -> SanitizeOutput<'_> {
         Cow::Borrowed(after_bom)
     };
 
-    let text: Cow<'_, str> = if line_normalized.contains(TORTOISE_OPEN) {
-        // Move out of the Cow so the rewrite doesn't double-allocate if
-        // the line-ending pass already owned the buffer.
-        let owned = line_normalized.into_owned();
-        Cow::Owned(rewrite_accent_spans(&owned))
+    let rule_isolated: Cow<'_, str> = if has_long_rule_line(&line_normalized) {
+        Cow::Owned(isolate_decorative_rules(&line_normalized))
     } else {
         line_normalized
+    };
+
+    let text: Cow<'_, str> = if rule_isolated.contains(TORTOISE_OPEN) {
+        // Move out of the Cow so the rewrite doesn't double-allocate if
+        // an earlier pass already owned the buffer.
+        let owned = rule_isolated.into_owned();
+        Cow::Owned(rewrite_accent_spans(&owned))
+    } else {
+        rule_isolated
     };
 
     let diagnostics = scan_for_sentinel_collisions(&text);
@@ -109,6 +135,58 @@ fn rewrite_accent_spans(input: &str) -> String {
         cursor = close_abs + TORTOISE_CLOSE.len_utf8();
     }
 
+    out
+}
+
+/// Return `true` when at least one line in `input` is a decorative
+/// rule (≥ `DECORATIVE_RULE_MIN_LEN` of `-` / `=` / `_`).
+///
+/// Used as a fast-path gate in [`sanitize`]: when the whole document
+/// has no long rule line, the pass is a no-op and [`Cow::Borrowed`]
+/// survives.
+fn has_long_rule_line(input: &str) -> bool {
+    input.lines().any(is_decorative_rule_line)
+}
+
+/// Return `true` when `line` is composed of ≥ `DECORATIVE_RULE_MIN_LEN`
+/// repeats of a single `-` / `=` / `_` character with no other content
+/// (surrounding whitespace is tolerated to match real-world formatting).
+fn is_decorative_rule_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.len() < DECORATIVE_RULE_MIN_LEN {
+        return false;
+    }
+    let Some(first) = trimmed.chars().next() else {
+        return false;
+    };
+    if !matches!(first, '-' | '=' | '_') {
+        return false;
+    }
+    trimmed.chars().all(|c| c == first)
+}
+
+/// Insert a blank line before every decorative rule that would
+/// otherwise be interpreted by CommonMark as a setext underline for
+/// the preceding paragraph. Lines are iterated with their terminating
+/// newline preserved (`split_inclusive`), so the output differs from
+/// the input *only* in the blank lines inserted.
+fn isolate_decorative_rules(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 16);
+    let mut prev_nonblank = false;
+    for line in input.split_inclusive('\n') {
+        let without_eol = line.strip_suffix('\n').unwrap_or(line);
+        if is_decorative_rule_line(without_eol) && prev_nonblank {
+            // Inject a blank line before the rule so the previous
+            // paragraph does not fuse with it into a setext heading.
+            out.push('\n');
+        }
+        out.push_str(line);
+        // Track whether the line we just emitted was itself visibly
+        // non-blank. A rule line counts as non-blank — inserting a
+        // blank before the *next* rule still needs the gate to flip
+        // to false once a blank line is emitted.
+        prev_nonblank = !without_eol.trim().is_empty();
+    }
     out
 }
 
@@ -363,6 +441,163 @@ mod tests {
         let input = "〔a\u{E001}b〕";
         let out = sanitize(input);
         assert_eq!(out.diagnostics.len(), 1);
+    }
+
+    // -------------------------------------------------------------
+    // Decorative rule isolation — long `-` / `=` / `_` rows must not
+    // be misread as setext underlines for a preceding paragraph.
+    //
+    // Background: Aozora Bunko prose frequently inserts
+    // `---------------------------------------------------------`
+    // as a visual separator between front matter and body. Without
+    // this pass, CommonMark would swallow the front-matter paragraph
+    // into an H2. These tests pin both halves of the contract — long
+    // runs are isolated, short runs (the genuine setext idiom) are
+    // untouched — so future refactors cannot silently regress either
+    // direction.
+    // -------------------------------------------------------------
+
+    #[test]
+    fn long_hyphen_rule_gets_blank_line_before_it() {
+        let input = "前置き\n-----------\n本文";
+        let out = sanitize(input);
+        assert!(
+            out.text.contains("前置き\n\n-----------"),
+            "expected blank line inserted; got {:?}",
+            out.text
+        );
+    }
+
+    #[test]
+    fn long_equals_rule_gets_blank_line_before_it() {
+        let input = "前置き\n===============\n本文";
+        let out = sanitize(input);
+        assert!(
+            out.text.contains("前置き\n\n==============="),
+            "expected blank line before long-equals rule; got {:?}",
+            out.text
+        );
+    }
+
+    #[test]
+    fn long_underscore_rule_gets_blank_line_before_it() {
+        let input = "前置き\n____________\n本文";
+        let out = sanitize(input);
+        assert!(
+            out.text.contains("前置き\n\n____________"),
+            "expected blank line before long-underscore rule; got {:?}",
+            out.text
+        );
+    }
+
+    #[test]
+    fn short_hyphen_setext_underline_is_not_split() {
+        // The genuine setext-heading idiom uses `---` or `===` rows
+        // of modest length (typically < 10 chars). Those must reach
+        // comrak unmodified so the H1/H2 promotion still fires.
+        let input = "Heading\n---\nbody";
+        let out = sanitize(input);
+        assert_eq!(
+            out.text.as_ref(),
+            input,
+            "short setext underline must not gain a blank line"
+        );
+    }
+
+    #[test]
+    fn nine_char_hyphen_row_stays_as_setext_underline() {
+        // Nine characters: still inside the setext-heading length
+        // range per our DECORATIVE_RULE_MIN_LEN threshold.
+        let input = "Heading\n---------\nbody";
+        let out = sanitize(input);
+        assert_eq!(out.text.as_ref(), input);
+    }
+
+    #[test]
+    fn ten_char_hyphen_row_is_isolated() {
+        // Ten characters — the first length at which we classify the
+        // row as decorative rather than setext.
+        let input = "Heading\n----------\nbody";
+        let out = sanitize(input);
+        assert!(
+            out.text.contains("Heading\n\n----------"),
+            "expected 10-char rule to be isolated; got {:?}",
+            out.text
+        );
+    }
+
+    #[test]
+    fn rule_already_preceded_by_blank_line_is_unchanged() {
+        // Idempotence: if the author already put a blank line before
+        // the rule, we must not add a second.
+        let input = "前置き\n\n-----------\n本文";
+        let out = sanitize(input);
+        assert_eq!(out.text.as_ref(), input);
+    }
+
+    #[test]
+    fn document_without_any_rule_stays_borrowed() {
+        // The fast-path gate (`has_long_rule_line`) must keep the
+        // common case allocation-free.
+        let input = "plain paragraph\n\nsecond paragraph";
+        let out = sanitize(input);
+        assert!(
+            matches!(out.text, Cow::Borrowed(_)),
+            "documents without a long rule must pass through borrowed"
+        );
+        assert_eq!(out.text.as_ref(), input);
+    }
+
+    #[test]
+    fn rule_at_document_start_is_unchanged() {
+        // With no preceding non-blank line, the setext-heading
+        // confusion cannot arise — no blank line needed.
+        let input = "-----------\n本文";
+        let out = sanitize(input);
+        assert_eq!(out.text.as_ref(), input);
+    }
+
+    #[test]
+    fn mixed_character_rule_is_not_isolated() {
+        // `---===---` is neither a valid setext underline nor a
+        // homogeneous rule; leave it alone so CommonMark handles it
+        // as a plain paragraph line.
+        let input = "text\n---===---\ntail";
+        let out = sanitize(input);
+        assert_eq!(out.text.as_ref(), input);
+    }
+
+    #[test]
+    fn consecutive_rule_rows_each_get_isolated() {
+        // Author stacks two rules back-to-back for a thick border.
+        // Current policy isolates every decorative rule uniformly;
+        // the extra blank line between two rules is a no-op in
+        // CommonMark (both become `<hr>` regardless), so the simpler
+        // uniform behaviour is preferred over a conditional that
+        // special-cases rule-after-rule. Test documents the shape so
+        // a future tightening that skips the second isolation has to
+        // update this expectation deliberately.
+        let input = "前置き\n----------\n==========\n本文";
+        let out = sanitize(input);
+        assert_eq!(
+            out.text.as_ref(),
+            "前置き\n\n----------\n\n==========\n本文"
+        );
+    }
+
+    #[test]
+    fn aozora_style_long_rule_fixture_shape() {
+        // Direct analogue of the `spec/aozora/fixtures/56656/input.utf8.txt`
+        // front-matter: a prose paragraph (here condensed) immediately
+        // followed by a 55-char `-` row. The promotion would otherwise
+        // turn the prose into a setext H2; the isolation pass must
+        // separate them so the paragraph reaches comrak as a
+        // paragraph.
+        let rule: String = "-".repeat(55);
+        let input = format!("凡例です。\n{rule}\n本文");
+        let out = sanitize(&input);
+        let expected = format!("凡例です。\n\n{rule}\n本文");
+        assert_eq!(out.text.as_ref(), expected);
     }
 
     #[test]
