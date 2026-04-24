@@ -1,6 +1,6 @@
-//! Integration tests for F5 — paired-container AST wrap.
+//! Integration tests for paired-container AST wrap.
 //!
-//! `［＃ここから…］ … ［＃ここで…終わり］` brackets in the source now
+//! `［＃ここから…］ … ［＃ここで…終わり］` brackets in the source
 //! surface as an `AozoraNode::Container(Container { kind })` block in
 //! the AST, with every block between the open and close moved under
 //! it as children. Rendering wraps the children in a

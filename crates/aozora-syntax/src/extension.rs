@@ -1,23 +1,23 @@
 //! Extension-seam type that the forked comrak parser still needs.
 //!
-//! Post-ADR-0008 (D2), the only afm seam inside comrak is a render-side
-//! `fn` pointer on `comrak::ExtensionOptions::render_aozora`. There is
-//! no trait object, no extension trait, and no parse-side hook. The
-//! `AozoraNode` variant on `NodeValue::Aozora` is carried by the lexer
-//! and `afm-parser::post_process` splice step, and the render callback
+//! The only afm seam inside comrak is a render-side `fn` pointer on
+//! `comrak::ExtensionOptions::render_aozora`. There is no trait object,
+//! no extension trait, and no parse-side hook. The `AozoraNode` variant
+//! on `NodeValue::Aozora` is carried by the lexer and
+//! `afm-parser::post_process` splice step, and the render callback
 //! simply writes an `AozoraNode` into a formatter.
 //!
-//! This module survives solely to carry [`ContainerKind`] — the
-//! paired-container classifier's tag — which is produced by the lexer's
-//! Phase 3 classification and consumed by `afm-parser::post_process`'s
-//! future paired-container splice (F5 schema extension pending).
+//! This module carries [`ContainerKind`] — the paired-container
+//! classifier's tag — produced by the lexer's Phase 3 classification
+//! and consumed by `afm-parser::post_process`'s paired-container
+//! splice.
 
 /// The kinds of Aozora container blocks the lexer classifies.
 ///
 /// Carried on `afm-lexer::phase3_classify::SpanKind::{BlockOpen,
 /// BlockClose}` and on `afm-lexer::PlaceholderRegistry`'s paired-container
-/// entries. `afm-parser::post_process` reads these when splicing container
-/// nodes back into the AST (F5 schema extension pending).
+/// entries. `afm-parser::post_process` reads these when wrapping
+/// sibling blocks into an `AozoraNode::Container` node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]

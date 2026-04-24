@@ -50,7 +50,8 @@ mod tests {
 
     #[test]
     fn page_break_bracket_annotation_emits_page_break_div() {
-        // C2 promoted ［＃改ページ］ to PageBreak — it now renders as a div.
+        // `［＃改ページ］` promotes to `AozoraNode::PageBreak`, which
+        // renders as a standalone `<div class="afm-page-break">`.
         let html = render_to_string("前［＃改ページ］後");
         assert!(
             html.contains(r#"<div class="afm-page-break"></div>"#),

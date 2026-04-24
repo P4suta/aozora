@@ -1,6 +1,5 @@
-//! M2-S4 — HTML well-formedness invariant I4.
-//!
-//! Drive a small battery of real-world shapes through
+//! HTML well-formedness invariant — drives a small battery of
+//! real-world shapes through
 //! `afm_parser::html::render_to_string` and assert the resulting
 //! HTML is balanced (every open tag has a matching close in the
 //! correct order). Guards against renderer bugs that the Tier-A
@@ -63,7 +62,7 @@ fn page_break_standalone_div_is_balanced() {
 
 #[test]
 fn paired_indent_container_wraps_children_cleanly() {
-    // F5 container: `<div class="afm-container-indent-1" …>` must
+    // Paired-container: `<div class="afm-container-indent-1" …>` must
     // wrap the body `<p>` and close properly on exit.
     assert_balanced(
         &render_to_string("［＃ここから字下げ］\n本文\n［＃ここで字下げ終わり］"),

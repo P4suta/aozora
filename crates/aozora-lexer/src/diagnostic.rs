@@ -6,8 +6,10 @@
 //! render them via [`miette::Report`], tests can assert on the variants,
 //! library consumers can ignore them.
 //!
-//! Variants are added as phases land. The current enumeration covers
-//! Phase 0 (source sanitation); Phases 2–4 add their own as they land.
+//! The enumeration covers every phase that can emit a diagnostic:
+//! Phase 0 (PUA collision in the source), Phase 2 (unmatched /
+//! unclosed pair delimiters), and Phase 6 (structural self-check of
+//! the normalized text + registry).
 
 use afm_syntax::Span;
 use miette::Diagnostic as MietteDiagnostic;
@@ -328,9 +330,9 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Phase 6 diagnostic constructors — cover the V1/V2/V3 shapes so
-    // the `#[must_use]` builders and their miette SourceSpan wrapping
-    // are exercised by the unit layer (Cov-Ratchet).
+    // Phase 6 diagnostic constructors — cover the V1/V2/V3 shapes
+    // so the `#[must_use]` builders and their miette SourceSpan
+    // wrapping are exercised by the unit layer.
     // ---------------------------------------------------------------
 
     #[test]

@@ -22,7 +22,7 @@ use crate::aozora::bouten;
 /// `entering` is comrak's standard enter/exit event flag. Leaf and
 /// inline nodes emit their markup only on `entering == true` and
 /// ignore the exit pass. Container-type nodes ([`AozoraNode::Container`],
-/// the F5 paired-block wrapper) emit an opening tag on enter and a
+/// the paired-block wrapper) emit an opening tag on enter and a
 /// closing tag on exit, mirroring comrak's native `<ul>` / `<div>`
 /// rendering contract so the children comrak walks between the two
 /// events land inside the wrapper.
@@ -443,8 +443,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------
-    // Cov-Ratchet — coverage of render arms not touched by the
-    // integration tests directly.
+    // Render arms not touched by the integration tests directly.
     // -------------------------------------------------------------
 
     #[test]

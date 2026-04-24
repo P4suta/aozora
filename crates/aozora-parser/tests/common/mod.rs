@@ -17,7 +17,7 @@
 //!
 //! Comments, doctype declarations, raw text (`<script>`, `<style>`),
 //! and CDATA are out of scope: afm's renderer produces none of them
-//! today. When M2-S4 needs them, this helper grows accordingly.
+//! today. Extend this helper when that changes.
 //!
 //! The validator is `pub` inside the shared `common` module so any
 //! integration test in `tests/` can assert well-formedness; the

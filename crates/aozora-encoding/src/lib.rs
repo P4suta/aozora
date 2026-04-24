@@ -35,11 +35,11 @@ pub fn decode_sjis(input: &[u8]) -> Result<String, DecodeError> {
 
 /// Whether the byte slice carries a UTF-8 BOM (`EF BB BF`).
 ///
-/// Used by the CLI to strip the BOM before handing input to the parser. A full
-/// encoding sniffer (BOM + byte-frequency heuristic) is deferred to M2 when we
-/// actually need to accept unknown-encoding input streams; today the CLI uses an
-/// explicit `--encoding` flag, so BOM presence is the only runtime signal we care
-/// about.
+/// Used by the CLI to strip the BOM before handing input to the parser. The
+/// CLI requires an explicit `--encoding` flag, so BOM presence is the only
+/// runtime signal we care about. A full encoding sniffer (BOM + byte-frequency
+/// heuristic) is intentionally out of scope until unknown-encoding input
+/// streams become a concern.
 #[must_use]
 pub const fn has_utf8_bom(input: &[u8]) -> bool {
     matches!(input, [0xEF, 0xBB, 0xBF, ..])

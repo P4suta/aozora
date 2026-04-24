@@ -5,10 +5,10 @@
 //! <https://www.aozora.gr.jp/annotation/ruby.html>:
 //!
 //! * Explicit `｜BASE《READING》` with plain reading always round-trips
-//!   both literals and sets `delim_explicit = true` (legacy invariant).
-//! * F1 extension: when `READING` embeds a `※［＃「X」、mencode］` gaiji
-//!   marker, the reading lifts to `Content::Segments` with the gaiji
-//!   segment preserved and the surrounding text literals intact.
+//!   both literals and sets `delim_explicit = true`.
+//! * When `READING` embeds a `※［＃「X」、mencode］` gaiji marker, the
+//!   reading lifts to `Content::Segments` with the gaiji segment
+//!   preserved and the surrounding text literals intact.
 //!
 //! Implicit-delimiter forms are covered by the lexer's unit tests in
 //! `afm_lexer::phase3_classify`; the proptests here stay scoped to the
@@ -88,8 +88,8 @@ proptest! {
         prop_assert!(ruby.delim_explicit);
     }
 
-    /// F1 property: a reading that embeds `※［＃「GAIJI」、mencode］`
-    /// between two hiragana runs must surface as
+    /// A reading that embeds `※［＃「GAIJI」、mencode］` between two
+    /// hiragana runs must surface as
     /// `Content::Segments([Text(prefix), Gaiji(..), Text(suffix)])`.
     /// Checking the three-segment shape and the gaiji description
     /// pinpoints any regression in `build_content_from_body`'s

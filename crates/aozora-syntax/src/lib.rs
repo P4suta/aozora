@@ -145,10 +145,10 @@ pub enum AozoraNode {
     /// Paired block container — `［＃ここから…］ ... ［＃ここで…終わり］`.
     /// Holds no payload of its own beyond the container kind; the
     /// wrapped child blocks live as children in the comrak AST (the
-    /// `post_process` paired-container splice reparents them during
-    /// F5). On render, the wrapper emits an opening tag on the
-    /// `entering` pass and a closing tag on exit while comrak walks
-    /// the children in between — same contract as `<ul>` / `<div>`
+    /// `post_process` paired-container splice reparents them). On
+    /// render, the wrapper emits an opening tag on the `entering`
+    /// pass and a closing tag on exit while comrak walks the
+    /// children in between — same contract as `<ul>` / `<div>`
     /// block renders.
     Container(Container),
 }
@@ -179,7 +179,7 @@ impl AozoraNode {
 
     /// Whether children of this node (if any) are inline content. Block variants that
     /// wrap an indented run of paragraphs answer `true`; leaf blocks answer `false`.
-    /// `Container` is the F5 paired-container wrapper — its children are block
+    /// `Container` is the paired-container wrapper — its children are block
     /// elements (paragraphs, headings, nested containers) rather than inlines, so
     /// it answers `false` here.
     #[must_use]

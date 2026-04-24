@@ -15,11 +15,11 @@
 //! * **Inline** (`U+E001`) — splits a `NodeValue::Text` at each
 //!   sentinel, inserting `[Text(before), Aozora(node), Text(after)]`
 //!   as sibling nodes in the original's place.
-//! * **Block-leaf** (`U+E002`) / **block-open** (`U+E003`) /
-//!   **block-close** (`U+E004`) — D4 extends this module to replace
-//!   the hosting paragraph with the corresponding block construct
-//!   and (for open/close pairs) wrap sibling blocks in the matching
-//!   container node.
+//! * **Block-leaf** (`U+E002`) — replaces the hosting paragraph
+//!   with the corresponding block construct in-place.
+//! * **Block-open** / **block-close** (`U+E003` / `U+E004`) — stack-
+//!   walks the sentinel paragraphs in document order and wraps the
+//!   intervening siblings into an `AozoraNode::Container` node.
 //!
 //! ## Sentinel → registry mapping
 //!
@@ -31,11 +31,6 @@
 //! in-order AST walk is always the N-th entry in `registry.inline`.
 //! The same ordering logic applies to each block-sentinel class.
 //!
-//! ## Staging
-//!
-//! C4 of the `post_process` branch (this commit, D3) handles inline
-//! splice. Block-level splice lands in D4.
-
 use std::{mem, ptr};
 
 use afm_lexer::{
@@ -141,9 +136,9 @@ fn split_at_sentinels(
 
 fn alloc_text<'a>(arena: &'a Arena<'a>, text: String) -> &'a AstNode<'a> {
     // `From<NodeValue> for AstNode<'_>` builds a default-positioned
-    // AstNode. Sourcepos is zero since post_process does not yet have
-    // normalized-to-source line tracking — SourceMap (C5b) will layer
-    // that on later.
+    // AstNode. Sourcepos is zero because `post_process` has no
+    // normalized-to-source line tracking yet; a dedicated
+    // `SourceMap` pass would layer that on later if needed.
     arena.alloc(NodeValue::Text(text.into()).into())
 }
 
@@ -161,8 +156,9 @@ fn alloc_aozora<'a>(arena: &'a Arena<'a>, node: AozoraNode) -> &'a AstNode<'a> {
 /// place, preserving sibling order.
 ///
 /// Paired-container splicing (block-open / block-close sentinels) is
-/// deferred to D4b — it needs a two-pass stack walk that also
-/// reparents sibling blocks, which is substantially more involved.
+/// handled by [`splice_paired_container`]: a single stack-walk over
+/// the tagged sentinel paragraphs that wraps sibling blocks into an
+/// `AozoraNode::Container` node.
 pub fn splice_block_leaf<'a>(
     arena: &'a Arena<'a>,
     root: &'a AstNode<'a>,
@@ -505,14 +501,14 @@ mod tests {
 
     #[test]
     fn block_sentinel_chars_are_ignored_by_inline_splice() {
-        // `［＃改ページ］` generates a U+E002 block-leaf sentinel —
-        // D4's block splice handles that. For D3 the inline splice
-        // must *not* mistakenly consume the block sentinel as inline.
+        // `［＃改ページ］` generates a U+E002 block-leaf sentinel
+        // which the block splice handles. The inline splice must
+        // *not* mistakenly consume the block sentinel as inline.
         let arena = Arena::new();
         let (root, registry) = lex_and_parse(&arena, "前\n［＃改ページ］\n後");
         splice_inline(&arena, root, &registry);
-        // No Aozora node should have been spliced (block-leaf splice
-        // lives in D4).
+        // No Aozora node should have been spliced — block-leaf
+        // splice is a separate pass.
         let aozora_count = root
             .descendants()
             .filter(|n| matches!(n.data.borrow().value, NodeValue::Aozora(_)))

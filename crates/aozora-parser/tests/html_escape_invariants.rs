@@ -108,7 +108,7 @@ fn forward_bouten_target_escape_targets_are_escaped() {
         "expected afm-bouten wrapper in {html:?}"
     );
     // Inside <em class="afm-bouten ..."> the target appears once,
-    // escaped. Post-F2 the class list includes a position modifier
+    // escaped. The class list includes a position modifier
     // (`afm-bouten-right` by default); the target bytes must still
     // escape.
     assert!(

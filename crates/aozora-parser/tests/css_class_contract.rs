@@ -1,4 +1,4 @@
-//! M1 Phase E — class-contract test between renderer and themes.
+//! Class-contract test between renderer and themes.
 //!
 //! The afm-book ships two CSS themes (`afm-horizontal.css` and
 //! `afm-vertical.css`) whose class selectors must cover every

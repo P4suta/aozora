@@ -10,12 +10,12 @@ use afm_parser::test_support::assert_no_bare;
 
 #[test]
 fn forward_reference_bouten_source_span_is_consumed() {
-    // Core Tier-A invariant: the ［＃…］ bracket must not leak into the HTML
-    // regardless of whether the scanner promotes to Bouten (C3, preceding
-    // contains the target) or degrades to Annotation{Unknown} (target not
-    // found in preceding). The specific downstream rendering is covered by
-    // html.rs tests — this regression suite only pins the span-consumption
-    // contract.
+    // Core Tier-A invariant: the ［＃…］ bracket must not leak into
+    // the HTML regardless of whether the classifier promotes to
+    // `Bouten` (preceding text contains the target literal) or
+    // degrades to `Annotation{Unknown}` (no preceding match). The
+    // specific downstream rendering is covered by `html.rs` tests;
+    // this regression suite only pins the span-consumption contract.
     let src = "可哀想［＃「可哀想」に傍点］という気";
     let html = render_to_string(src);
     assert_no_bare(&html, "［＃");

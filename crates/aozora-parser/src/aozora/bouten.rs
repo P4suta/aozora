@@ -1,9 +1,8 @@
-//! Bouten CSS-class slug tables — the only bit of the old bouten module that
-//! survives the ADR-0008 cutover.
+//! Bouten CSS-class slug tables.
 //!
-//! The forward-reference parser (`［＃「X」に〈KIND〉］`) moved to
-//! `afm-lexer::phase3_classify::classify_forward_bouten`; what this module
-//! now exposes is:
+//! The forward-reference parser (`［＃「X」に〈KIND〉］`) lives in
+//! `afm-lexer::phase3_classify::classify_forward_bouten`; this module
+//! exposes only:
 //!
 //! * [`kind_slug`] — stable CSS slug for each [`BoutenKind`] variant.
 //! * [`position_slug`] — `"right"` / `"left"` for [`BoutenPosition`].

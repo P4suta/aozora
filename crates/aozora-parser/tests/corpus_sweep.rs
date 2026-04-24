@@ -4,7 +4,7 @@
 //! set the test runtime-skips with a diagnostic message (and passes), so
 //! machines and CI jobs without a corpus configured stay green.
 //!
-//! Invariants checked in this harness (M2-S3):
+//! Five invariants are checked:
 //!
 //! - **I1 — no panic.** The parser must never `panic!()` for any input.
 //!   Failures here are hard: the sweep fails with a diagnostic listing the
@@ -12,31 +12,25 @@
 //!   `panic::catch_unwind` to recover across iterations.
 //! - **I2 — no unconsumed `［＃` markers (HARD GATE).** After rendering
 //!   to HTML and stripping the `afm-annotation` wrapper spans, no bare
-//!   `［＃` may remain. Post-F5 (paired container wrap) + G1 (gaiji
-//!   table) the recogniser set is comprehensive enough to make this
-//!   an enforcement line. An `AFM_CORPUS_LEAK_BUDGET` env var can
-//!   override the budget to a non-zero int for staging a sweep over a
-//!   dirty corpus before promoting the fix back into the classifier.
-//! - **I4 — rendered HTML is tag-balanced (HARD GATE).** Every render
-//!   must produce HTML whose open/close tags balance per the minimal
-//!   validator at `tests/common/mod.rs`. Catches renderer bugs that
-//!   don't leak `［＃` but still produce malformed markup (e.g. a
-//!   `<div>` open without its `</div>` close). `AFM_CORPUS_I4_BUDGET`
-//!   overrides the budget for staging fixes on a dirty corpus.
+//!   `［＃` may remain. An `AFM_CORPUS_LEAK_BUDGET` env var can override
+//!   the budget to a non-zero int for staging a sweep over a dirty
+//!   corpus before promoting the fix back into the classifier.
 //! - **I3 — `serialize ∘ parse` is a round-trip fixed point (HARD
 //!   GATE).** One parse+serialize canonicalises the afm source; a
 //!   second parse+serialize of that output must be byte-identical.
 //!   Catches classifier / serializer drift where the round trip
 //!   oscillates or drops bytes. `AFM_CORPUS_I3_BUDGET` mirrors the
 //!   I2/I4 escape hatch; zero by default.
-//! - **I5 — SJIS decode stable.** Every `.txt` file in a Aozora-format
+//! - **I4 — rendered HTML is tag-balanced (HARD GATE).** Every render
+//!   must produce HTML whose open/close tags balance per the minimal
+//!   validator at `tests/common/mod.rs`. Catches renderer bugs that
+//!   don't leak `［＃` but still produce malformed markup (e.g. a
+//!   `<div>` open without its `</div>` close). `AFM_CORPUS_I4_BUDGET`
+//!   overrides the budget for staging fixes on a dirty corpus.
+//! - **I5 — SJIS decode stable.** Every `.txt` file in an Aozora-format
 //!   corpus should be valid Shift_JIS. Decode failures are logged and
 //!   counted but don't abort the sweep (a corpus may legitimately contain
 //!   non-SJIS files, e.g. README files walked in by a loose configuration).
-//!
-//! Invariants I3 (round-trip) and I4 (HTML well-formedness) are deferred
-//! to M2-S6 and M2-S4 respectively, pending a serializer and an
-//! html5ever-based validator.
 
 mod common;
 
@@ -87,9 +81,9 @@ fn corpus_sweep_i1_no_panic_i2_report_i5_report() {
         stats.panic_samples,
     );
 
-    // I2 — hard gate as of G3. `AFM_CORPUS_LEAK_BUDGET` allows a
-    // non-zero budget while preparing a classifier fix, so sweep runs
-    // over an unclean corpus don't block unrelated work.
+    // I2 hard gate. `AFM_CORPUS_LEAK_BUDGET` allows a non-zero
+    // budget while preparing a classifier fix, so sweep runs over
+    // an unclean corpus don't block unrelated work.
     let budget = leak_budget_from_env();
     assert!(
         stats.leaked_markers <= budget,
@@ -100,8 +94,8 @@ fn corpus_sweep_i1_no_panic_i2_report_i5_report() {
         stats.leaked_marker_samples,
     );
 
-    // I4 — hard gate as of M2-S4. `AFM_CORPUS_I4_BUDGET` mirrors I2's
-    // escape hatch for staged fixes. Zero by default.
+    // I4 hard gate. `AFM_CORPUS_I4_BUDGET` mirrors I2's escape
+    // hatch for staged fixes. Zero by default.
     let i4_budget = env_budget("AFM_CORPUS_I4_BUDGET");
     assert!(
         stats.malformed <= i4_budget,
@@ -112,10 +106,10 @@ fn corpus_sweep_i1_no_panic_i2_report_i5_report() {
         stats.malformed_samples,
     );
 
-    // I3 — hard gate as of M2-S6. `AFM_CORPUS_I3_BUDGET` mirrors
-    // I2 / I4. Zero by default. Any divergence is a real bug in
-    // the classifier or serializer that the ADR-0008 pipeline's
-    // round-trip contract aims to preclude.
+    // I3 hard gate. `AFM_CORPUS_I3_BUDGET` mirrors I2 / I4; zero
+    // by default. Any divergence is a real bug in the classifier
+    // or serializer — the ADR-0008 pipeline's round-trip contract
+    // aims to preclude it.
     let i3_budget = env_budget("AFM_CORPUS_I3_BUDGET");
     assert!(
         stats.round_trip_diverge <= i3_budget,

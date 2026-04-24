@@ -4,11 +4,11 @@
 //! The validator runs *after* normalization and is a sanity harness,
 //! not a correctness fallback: in a well-behaved pipeline every V
 //! check trivially passes. The value is in catching architectural
-//! regressions (e.g. a C4 recognizer that forgets to consume its
-//! source span, leaving an `［＃` behind in the normalized text;
-//! a C5 driver bug that pushes a registry entry at the wrong byte
-//! offset). Each violation becomes a [`Diagnostic`] so the caller
-//! sees the full picture.
+//! regressions (e.g. a Phase 3 recogniser that forgets to consume
+//! its source span, leaving an `［＃` behind in the normalized
+//! text; a Phase 4 driver bug that pushes a registry entry at the
+//! wrong byte offset). Each violation becomes a [`Diagnostic`] so
+//! the caller sees the full picture.
 //!
 //! ## Invariants
 //!
@@ -31,8 +31,8 @@
 //!   position and every recorded position must address a PUA char
 //!   of the matching kind.
 //!
-//! * V4 (`SourceMap` coverage) — deferred until the `SourceMap` pass
-//!   lands (C5b).
+//! * V4 (`SourceMap` coverage) — deferred until the `SourceMap`
+//!   pass lands.
 //!
 //! The validator takes `&NormalizeOutput` and returns an extended
 //! diagnostics vector; it never mutates or drops the normalized text.
@@ -278,11 +278,11 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Cov-Ratchet — synthetic registries exercising V2 / V3 paths
-    // that are unreachable from the lex() → normalize() pipeline
-    // because the upstream phases are well-behaved. Tests construct
-    // deliberately malformed NormalizeOutput values and feed them
-    // into validate() directly to cover the diagnostic-emission arms.
+    // Synthetic registries exercising V2 / V3 paths that are not
+    // reachable from the `lex() → normalize()` pipeline because
+    // the upstream phases are well-behaved. Tests construct
+    // deliberately malformed `NormalizeOutput` values and feed them
+    // into `validate()` to cover the diagnostic-emission arms.
     // ---------------------------------------------------------------
 
     use afm_syntax::{AozoraNode, Ruby};

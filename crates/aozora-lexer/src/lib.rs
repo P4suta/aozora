@@ -48,14 +48,14 @@
 //! application internal use and never assigned) if collision becomes a
 //! recurring issue.
 //!
-//! ## Status
+//! ## Shape at a glance
 //!
-//! This crate is newly scaffolded (commit A3 in the plan). Phase
-//! implementations land incrementally in commits C1-C7. Until then the
-//! public surface is the type declarations below and [`lex`] returns a
-//! placeholder [`LexOutput`] wrapping the source verbatim — a stub that
-//! lets downstream consumers (afm-parser integration) land in parallel
-//! without blocking on lexer completion.
+//! [`lex`] runs each phase once, in order, and returns a
+//! [`LexOutput`] packaging the normalized text, placeholder registry,
+//! and accumulated diagnostics. Each phase is a pure function of its
+//! inputs; re-running the pipeline on the same source yields
+//! byte-identical output (verified by the determinism property test
+//! in `afm-parser`'s post-process invariants).
 
 #![forbid(unsafe_code)]
 
@@ -78,8 +78,8 @@ pub mod phase4_normalize;
 mod phase5_registry;
 pub mod phase6_validate;
 pub mod token;
-// Source map (normalized pos → source pos) lands in C5b.
-// pub mod source_map;
+// A `SourceMap` module (normalized position → source byte offset)
+// would slot in here if future milestones need it.
 
 pub use diagnostic::Diagnostic;
 pub use phase0_sanitize::{SanitizeOutput, sanitize};
@@ -119,9 +119,11 @@ pub struct LexOutput {
 /// 5. [`normalize`] — PUA sentinel substitution + registry build.
 /// 6. [`validate`] — V1..V3 structural invariants.
 ///
-/// Accent decomposition, `SourceMap` construction, and gaiji UCS
-/// resolution are deferred to later commits (C5b/c/d / G1) and fold
-/// into this entrypoint without changing the shape of `LexOutput`.
+/// Accent decomposition happens inside [`sanitize`]; gaiji UCS
+/// resolution happens during [`classify`] via
+/// `afm_encoding::gaiji::lookup`. `SourceMap` construction is not
+/// yet layered in and would fold into this entrypoint without
+/// changing the shape of [`LexOutput`].
 #[must_use]
 pub fn lex(source: &str) -> LexOutput {
     let sanitized = sanitize(source);

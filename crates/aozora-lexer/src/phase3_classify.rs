@@ -31,22 +31,27 @@
 //! Phase 4 relies on this invariant to emit `normalized` text without
 //! ever re-scanning `source`.
 //!
-//! ## Staged build-out
+//! ## Recogniser layout
 //!
-//! Recognizers land incrementally on top of the same driver:
-//!
-//! * ✅ C4a — scaffolding (Plain + Newline only).
-//! * ✅ C4b — ruby (explicit `｜base《reading》` and implicit-kanji).
-//! * C4c — bracket-annotation keyword dispatch (leaf blocks, bouten
-//!   keyword table).
-//! * C4d — inline: forward-ref bouten, tcy, gaiji, kaeriten.
-//! * C4e — paired containers (字下げ / 地付き / 罫囲み / 割り注 /
-//!   小書き / 大中小見出し).
-//!
-//! Each recognizer is a narrow function that inspects a
+//! Every recogniser is a narrow function that inspects a
 //! `&[PairEvent]` slice (often one pair's `body_events`) plus the
-//! sanitized source. The driver loop stays the same — only the
-//! `try_recognize` dispatch grows.
+//! sanitized source. The driver loop's [`Classifier::try_recognize`]
+//! dispatches based on the leading event kind:
+//!
+//! * Ruby (`｜X《Y》` explicit, trailing-kanji implicit)
+//! * Bracket annotations, dispatched on the body keyword:
+//!   fixed keyword (`改ページ` / `地付き` / ...), kaeriten
+//!   (`一`/`二`/... plus okurigana `（X）`), indent / align-end
+//!   (`N字下げ` / `地からN字上げ`), sashie (`挿絵`), forward-ref
+//!   bouten, forward-ref TCY, paired-container open / close, and
+//!   an `Annotation{Unknown}` catch-all.
+//! * Gaiji — `※［＃...］` reference-mark + bracket combos.
+//! * Double angle-bracket `《《…》》` escape (`DoubleRuby`).
+//!
+//! The catch-all makes every well-formed `［＃…］` bracket produce
+//! *some* `AozoraNode`, so the Tier-A canary (no bare `［＃` in the
+//! HTML output outside an `afm-annotation` wrapper) holds regardless
+//! of which specialised recogniser claims the bracket.
 
 use core::ops::Range;
 
@@ -693,8 +698,10 @@ struct GaijiMatch {
 /// appear bare. `<mencode>` is the mencode reference (`第3水準1-85-54`,
 /// `U+XXXX`, etc.) appearing after a `、` separator.
 ///
-/// The UCS resolution column of [`Gaiji`] is left `None` here — G1
-/// (the gaiji UCS table) fills it in post-classification.
+/// The UCS resolution column of [`Gaiji`] is populated by
+/// `afm_encoding::gaiji::lookup` before the recogniser returns, so
+/// downstream consumers receive a resolved `Option<char>` without
+/// having to re-probe the mencode table.
 ///
 /// Event preconditions (checked):
 /// * `events[refmark_idx]` is `Solo(RefMark)` [done by caller]
@@ -831,12 +838,9 @@ enum EmitKind {
 /// Requires the immediately-next event to be a [`TriggerKind::Hash`]
 /// [`PairEvent::Solo`] — the shape `［` `＃` `body` `］`. Bodies
 /// without a hash (plain `［…］`) are not annotations; bodies with a
-/// hash whose keyword is unrecognized also fall through to Plain
-/// (they will be picked up by later C4c/d/e commits or emitted as
-/// `Annotation { Unknown }` once F4/F5 land).
-///
-/// C4c1 recognizes the four no-body block leaf keywords:
-/// `改ページ` / `改丁` / `改段` / `改見開き`.
+/// hash whose keyword no specialised recogniser matches fall through
+/// to the `Annotation { Unknown }` catch-all so the bracket is
+/// always consumed into some `AozoraNode`.
 fn recognize_annotation(
     events: &[PairEvent],
     source: &str,
@@ -893,9 +897,8 @@ fn recognize_annotation(
             // slice keeps the Tier-A canary (no bare `［＃` in HTML
             // output) intact: the renderer wraps the raw bytes in an
             // `afm-annotation` hidden span regardless of body shape.
-            //
-            // Pre-D1 this was the adapter's inline parse hook; post-D1
-            // the lexer is the sole owner of this classification.
+            // The lexer is the sole owner of this classification —
+            // comrak's parse phase never sees `［＃…］`.
             let raw = &source[open_span.start as usize..close_span.end as usize];
             Some(EmitKind::Aozora(AozoraNode::Annotation(Annotation {
                 raw: raw.into(),
@@ -1043,8 +1046,8 @@ fn build_bouten_target(targets: &[&str]) -> Content {
 ///
 /// Same event-layout expectations as forward bouten, except the
 /// suffix uses the particle `は` and the keyword `縦中横`. Paired
-/// form (`［＃縦中横］…［＃縦中横終わり］`) is a C4e / C4d concern
-/// and is not matched here.
+/// form (`［＃縦中横］…［＃縦中横終わり］`) is handled by the
+/// paired-container classifier and not matched here.
 ///
 /// Multi-quote `［＃「A」「B」は縦中横］` bodies are not standard Aozora
 /// spec; we accept the first target's text and ignore the rest for
@@ -1313,9 +1316,9 @@ const fn is_okurigana_char(ch: char) -> bool {
 /// Classify a `［＃挿絵（file）入る］` sashie (illustration insert).
 ///
 /// Captures the filename between `（` and `）`; the rest of the body
-/// must be exactly `入る`. Captioned form
-/// (`［＃挿絵（file）「caption」入る］`) is left to F5 where the
-/// extra quote pair gets event-level handling — the simple no-caption
+/// must be exactly `入る`. The captioned form
+/// (`［＃挿絵（file）「caption」入る］`) needs an event-level caption
+/// recogniser that this pass does not yet perform; the no-caption
 /// shape accounts for the vast majority of corpus occurrences.
 fn classify_sashie(body: &str) -> Option<AozoraNode> {
     let rest = body.strip_prefix("挿絵（")?;
@@ -1394,10 +1397,7 @@ fn parse_decimal_u8_prefix(s: &str) -> Option<(u8, &str)> {
     Some((value_u8, &s[consumed..]))
 }
 
-/// Characters eligible as an implicit-ruby base.
-///
-/// Mirrors `afm-parser::aozora::ruby::is_ruby_base_char` so the
-/// corpus behavior stays consistent across the E2 cutover. Covers:
+/// Characters eligible as an implicit-ruby base. Covers:
 ///
 /// * CJK Unified Ideographs (main block + Extension A)
 /// * CJK Compatibility Ideographs
@@ -1569,11 +1569,12 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // F1 — Ruby reading Content::Segments (nested gaiji / annotation)
+    // Ruby reading Content::Segments — nested gaiji / annotation
+    // inside the `《reading》` body.
     // ---------------------------------------------------------------
 
     /// Pull the sole `SpanKind::Aozora(Ruby(...))` out of a
-    /// [`ClassifyOutput`] so F1 tests can assert on the Ruby payload
+    /// [`ClassifyOutput`] so tests can assert on the Ruby payload
     /// without repeating the shape-match boilerplate.
     fn only_ruby(out: &ClassifyOutput) -> &Ruby {
         let mut found = None;
@@ -1588,11 +1589,11 @@ mod tests {
 
     #[test]
     fn ruby_plain_reading_still_collapses_to_plain_content() {
-        // F1 must not regress the plain-text ruby case: when the body
-        // holds only text, `Content::from_segments` is obliged to
-        // collapse back to `Content::Plain` so `.as_plain()` returns
-        // `Some(&str)` for downstream consumers (renderer fast path,
-        // property tests that assert the textual shape).
+        // The Segments lift must not regress the plain-text ruby case:
+        // when the body holds only text, `Content::from_segments` is
+        // obliged to collapse back to `Content::Plain` so `.as_plain()`
+        // returns `Some(&str)` for downstream consumers (renderer fast
+        // path, property tests that assert the textual shape).
         let out = run("｜青梅《おうめ》");
         let r = only_ruby(&out);
         assert_eq!(r.base.as_plain(), Some("青梅"));
@@ -1816,11 +1817,10 @@ mod tests {
 
     #[test]
     fn unknown_annotation_keyword_is_promoted_to_annotation_unknown() {
-        // Post-D1 the lexer classifies every well-formed `［＃…］` with a
-        // non-empty body: if no specialised recogniser claims it, the
-        // Annotation{Unknown} fallback wraps the raw source so the
-        // renderer can emit an `afm-annotation` hidden span instead of
-        // leaking the brackets as plain text.
+        // The lexer claims every well-formed `［＃…］`: if no specialised
+        // recogniser matches, the `Annotation{Unknown}` fallback wraps
+        // the raw source so the renderer can emit an `afm-annotation`
+        // hidden span instead of leaking the brackets as plain text.
         let out = run("［＃未知のキーワード］");
         let ann = out
             .spans
@@ -1890,9 +1890,9 @@ mod tests {
     #[test]
     fn indent_overflow_falls_back_to_annotation_unknown() {
         // 300 > 255, doesn't fit in u8 — the `N字下げ` recogniser
-        // declines. After the D1 fallback we don't leak the raw
-        // bracket; instead it becomes `Annotation { Unknown }` so
-        // the renderer wraps the body in an afm-annotation span.
+        // declines. The `Annotation { Unknown }` catch-all then
+        // claims the bracket so the renderer wraps the body in an
+        // afm-annotation span instead of leaking raw brackets.
         let out = run("［＃300字下げ］");
         let ann = out
             .spans
@@ -1969,8 +1969,9 @@ mod tests {
 
     #[test]
     fn indent_without_digits_falls_through() {
-        // "ここから字下げ" is a paired-container opener, not a leaf.
-        // C4c2 must not grab it — C4e will.
+        // "ここから字下げ" is a paired-container opener, not a leaf
+        // indent — the leaf classifier must not grab it, and the
+        // paired-container recogniser claims it instead.
         let out = run("［＃ここから字下げ］");
         assert!(
             !out.spans
@@ -2014,10 +2015,10 @@ mod tests {
 
     #[test]
     fn forward_bouten_all_eleven_kinds() {
-        // F2 expansion: 7 legacy kinds + 4 newly-recognised kinds
-        // (白ゴマ / ばつ / 白三角 / 二重傍線). Each suffix must promote
-        // the bracket into a Bouten node rather than fall through to
-        // `Annotation{Unknown}`, lowering the sweep leak rate.
+        // All eleven bouten kinds — the seven core shapes plus
+        // 白ゴマ / ばつ / 白三角 / 二重傍線. Each suffix must promote
+        // the bracket into a `Bouten` node rather than fall through
+        // to `Annotation{Unknown}`, lowering the sweep leak rate.
         let cases = [
             ("傍点", BoutenKind::Goma),
             ("白ゴマ傍点", BoutenKind::WhiteSesame),
@@ -2297,9 +2298,10 @@ mod tests {
     }
 
     #[test]
-    fn sashie_with_caption_form_not_matched_in_c4c4() {
-        // Captioned sashie is F5 territory; the no-caption matcher
-        // must reject the captioned form cleanly.
+    fn sashie_with_caption_form_not_matched() {
+        // Captioned sashie needs a dedicated caption recogniser;
+        // the no-caption matcher must reject the captioned form
+        // cleanly so the bracket falls through to the catch-all.
         let out = run("［＃挿絵（fig01.png）「キャプション」入る］");
         assert!(
             !out.spans
@@ -2341,7 +2343,7 @@ mod tests {
             .expect("expected a Gaiji span");
         assert_eq!(&*gaiji.description, "木＋吶のつくり");
         assert_eq!(gaiji.mencode.as_deref(), Some("第3水準1-85-54"));
-        // Post-G1: the mencode table resolves 第3水準1-85-54 → 榁 (U+6903).
+        // The mencode table resolves 第3水準1-85-54 → 榁 (U+6903).
         assert_eq!(gaiji.ucs, Some('\u{6903}'));
     }
 
@@ -2453,8 +2455,8 @@ mod tests {
 
     #[test]
     fn kaeriten_compound_marks_recognized() {
-        // F3: compound kaeriten pair an order mark with the reversal
-        // mark (`レ`). Six combinations are canonical per the Aozora
+        // Compound kaeriten pair an order mark with the reversal mark
+        // (`レ`). Six combinations are canonical per the Aozora
         // kunten spec. Each must produce a Kaeriten with the combo
         // string preserved verbatim.
         let cases = ["一レ", "二レ", "三レ", "上レ", "中レ", "下レ"];
@@ -2538,7 +2540,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // F4 — double angle-bracket `《《X》》`
+    // Double angle-bracket `《《X》》`.
     // ---------------------------------------------------------------
 
     #[test]
@@ -2587,8 +2589,8 @@ mod tests {
     #[test]
     fn double_ruby_with_nested_gaiji_folds_into_segments() {
         // The helper reuses `build_content_from_body`, so a `※［＃…］`
-        // inside the double brackets must surface as Segment::Gaiji
-        // in the content — same invariant as F1 ruby readings.
+        // inside the double brackets must surface as `Segment::Gaiji`
+        // in the content — same invariant as nested gaiji in ruby.
         let out = run("《《※［＃「ほ」、第3水準1-85-54］》》");
         let aozora = out
             .spans

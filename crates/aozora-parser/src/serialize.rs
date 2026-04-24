@@ -1,4 +1,4 @@
-//! AST → afm text serialiser (M2-S5).
+//! AST → afm text serialiser.
 //!
 //! Inverse of the `afm-lexer` pipeline: consumes the normalized text
 //! and placeholder registry captured on [`crate::ParseResult`] and
@@ -48,8 +48,8 @@
 //!   to re-classify back into the same `ContainerKind`, so the
 //!   second serialise is byte-identical to the first.
 //!
-//! M2-S6's corpus sweep hard-gates this (`I3`: `serialize ∘ parse`
-//! is a fixed point after one round-trip).
+//! The corpus sweep's `I3` invariant hard-gates this contract:
+//! `serialize ∘ parse` is a fixed point after one round-trip.
 
 use afm_lexer::{BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL};
 use afm_syntax::{
@@ -63,9 +63,8 @@ use crate::{ParseArtifacts, ParseResult};
 ///
 /// Only the Aozora-pipeline path (see [`crate::Options::afm_default`])
 /// retains enough data to invert the parse; for commonmark-only /
-/// gfm-only paths this function returns an empty string with a
-/// `TODO`-bearing marker comment — downstream M2-S6 work will pin
-/// the commonmark-passthrough case.
+/// gfm-only paths this function returns an HTML-comment placeholder
+/// rather than re-implementing comrak's `format_commonmark`.
 ///
 /// # Complexity
 ///
@@ -77,10 +76,10 @@ pub fn serialize(result: &ParseResult<'_>) -> String {
     let Some(artifacts) = &result.artifacts else {
         // No normalized text / registry — only the AST, which for
         // commonmark-only input is plain CommonMark. Emitting that
-        // back is comrak's job (`format_commonmark`) and out of M2-S5's
-        // scope. Return a visible placeholder so a caller that
-        // inadvertently wired commonmark-only to `serialize` sees
-        // the gap rather than silently getting empty bytes.
+        // back is comrak's job (`format_commonmark`) and out of
+        // scope here. Return a visible placeholder so a caller
+        // that inadvertently wired commonmark-only to `serialize`
+        // sees the gap rather than silently getting empty bytes.
         return String::from(
             "<!-- serialize: commonmark-only passthrough is not supported (use afm_default) -->\n",
         );
@@ -300,7 +299,7 @@ fn emit_bouten_targets(c: &Content, out: &mut String) {
                     && !t.is_empty()
                 {
                     // Emit each comma-separated chunk as its own
-                    // `「…」`. The F2 classifier joins multi-targets
+                    // `「…」`. The classifier joins multi-targets
                     // with `、`, so re-splitting on `、` recovers the
                     // original target list.
                     for part in t.split('、').filter(|p| !p.is_empty()) {
@@ -485,8 +484,8 @@ mod tests {
     }
 
     /// Parse, serialize, parse again, serialize — the two outputs
-    /// must match byte-for-byte. This is the M2-S6 I3 invariant in
-    /// unit-test form.
+    /// must match byte-for-byte. This is the corpus sweep's I3
+    /// invariant in unit-test form.
     fn round_trip_fixed_point(src: &str) {
         let first = once(src);
         let second = once(&first);

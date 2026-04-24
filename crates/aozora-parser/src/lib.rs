@@ -5,17 +5,19 @@
 //! points:
 //!
 //! - [`parse`] — run the parser over a UTF-8 source into a comrak arena,
-//!   returning a [`ParseResult`] carrying the root node plus any lexer
-//!   diagnostics.
+//!   returning a [`ParseResult`] carrying the root node, any lexer
+//!   diagnostics, and the [`ParseArtifacts`] needed by [`serialize`].
+//! - [`serialize`] — invert the pipeline, emitting afm text from a
+//!   [`ParseResult`] via registry-driven PUA-sentinel substitution.
 //! - [`html::render_to_string`] — render the parsed tree to HTML.
 //! - [`Options`] — configuration; defaults enable the Aozora render hook.
 //!
-//! Internal layout (post ADR-0008, E1/D1/D2):
+//! Internal layout (see ADR-0008 for the architectural rationale):
 //! - `aozora/html` is the HTML renderer; its `render` function is registered
 //!   on `comrak::Options.extension.render_aozora` as a naked `fn` pointer.
 //! - `post_process` splices `NodeValue::Aozora(...)` nodes into comrak's AST
-//!   at each PUA sentinel the lexer planted.
-//! - `preparse` handles `〔...〕` accent decomposition ahead of the lexer.
+//!   at each PUA sentinel the lexer planted, including stack-walked
+//!   paired-container wrapping.
 
 #![forbid(unsafe_code)]
 
@@ -152,7 +154,7 @@ pub struct ParseArtifacts {
 /// Parse a UTF-8 source buffer into a comrak AST with Aozora annotations
 /// recognised.
 ///
-/// ADR-0008 pipeline (the only path since E1 / D1 / D2 / E2 landed):
+/// ADR-0008 pipeline:
 ///
 /// 1. [`afm_lexer::lex`] — BOM strip, CRLF→LF, `〔...〕` accent
 ///    decomposition (ADR-0004), tokenise + pair + classify + normalise
@@ -161,15 +163,14 @@ pub struct ParseArtifacts {
 ///    `AozoraNode` / `ContainerKind`. Diagnostics from this pass are
 ///    forwarded into [`ParseResult::diagnostics`] verbatim.
 /// 2. `comrak::parse_document` on the normalised text — comrak sees
-///    only plain CommonMark+GFM. All Aozora parse hooks were removed
-///    from the fork in D1; the render-side `fn` pointer on
-///    `Options::extension::render_aozora` (D2) is the last remaining
-///    comrak/afm seam.
+///    only plain CommonMark+GFM. Upstream has no Aozora parse hooks;
+///    the render-side `fn` pointer on
+///    `Options::extension::render_aozora` is the only comrak/afm seam.
 /// 3. [`post_process::splice_inline`] / [`post_process::splice_block_leaf`]
 ///    / [`post_process::splice_paired_container`] — walk the resulting
 ///    AST, replace sentinels with real `NodeValue::Aozora(...)` nodes
-///    from the registry and wrap paired-container pairs into a
-///    `Container` block (F5).
+///    from the registry, and wrap paired-container pairs into an
+///    `AozoraNode::Container` block.
 ///
 /// When the Aozora render hook is not enabled on `options`, this is a
 /// straight `comrak::parse_document` passthrough — CommonMark / GFM
@@ -247,8 +248,8 @@ mod tests {
 
     #[test]
     fn bracketed_page_break_is_consumed_inline_and_promoted() {
-        // C2 promotes ［＃改ページ］ to AozoraNode::PageBreak; the bracket text
-        // no longer survives at all, even inside the afm-annotation wrapper.
+        // `［＃改ページ］` promotes to `AozoraNode::PageBreak`; the bracket text
+        // no longer survives — not even inside the afm-annotation wrapper.
         let src = "前［＃改ページ］後";
         let nodes = collect_aozora(src);
         assert_eq!(nodes.len(), 1, "expected 1 promoted node, got {nodes:?}");

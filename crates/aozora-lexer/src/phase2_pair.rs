@@ -39,8 +39,11 @@
 //!   `Unmatched` in the body event slice and classifies it as plain
 //!   text.
 //!
-//! The recovery policy is intentionally conservative for C3a; C3b can
-//! revisit aggressive stack-unwinding if corpus sweep shows it pays.
+//! The recovery policy is intentionally conservative: we keep the
+//! outer open on the stack when an inner close doesn't match, so a
+//! stray `》` inside a `［…］` body doesn't knock the bracket's
+//! `PairOpen` off. Aggressive stack-unwinding is a future option if
+//! the corpus sweep ever shows it paying.
 
 use afm_syntax::Span;
 

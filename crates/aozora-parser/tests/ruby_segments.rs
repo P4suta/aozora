@@ -1,4 +1,5 @@
-//! Integration tests for F1 — ruby reading `Content::Segments` lift.
+//! Integration tests for ruby reading `Content::Segments` lift —
+//! nested gaiji / annotation inside a `《reading》` body.
 //!
 //! Drives the full parse + render pipeline (`afm_parser::html::render_to_string`)
 //! so regressions in any of the layers surface here:
@@ -143,11 +144,11 @@ fn implicit_ruby_reading_with_gaiji_matches_explicit_output() {
 
 #[test]
 fn plain_reading_still_renders_unchanged_from_pre_f1_shape() {
-    // Fast-path regression: plain ruby must render the same before and
-    // after F1. If `Content::Plain` is ever accidentally lifted to
-    // `Segments([Text])` it would still render the same text, but
-    // would cost a spurious allocation — checked indirectly through
-    // the other F1 tests; here we just pin the rendered bytes.
+    // Fast-path regression: plain ruby must keep rendering on the
+    // `Content::Plain` path. If it's ever accidentally lifted to
+    // `Segments([Text])` the render is identical but the allocation
+    // is spurious — checked indirectly through the other tests in
+    // this file; here we just pin the rendered bytes.
     let html = render_to_string("｜青梅《おうめ》");
     assert!(html.contains("<ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby>"));
     assert_tier_a(&html);

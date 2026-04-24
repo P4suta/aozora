@@ -30,18 +30,16 @@
 //! Multiple consecutive blank lines collapse harmlessly per the
 //! CommonMark spec.
 //!
-//! ## Staging
+//! The output registry keeps entries in strictly increasing byte
+//! order because the driver only appends at the end of `normalized`.
+//! `phase5_registry` wraps the `Vec`s with a `binary_search`-backed
+//! public API; the driver skips that sort cost because sorted-by-
+//! construction invariant holds.
 //!
-//! C5a (this commit) ships the substitution pass and a simple
-//! push-into-Vec registry. Subsequent commits layer on:
-//!
-//! * C5b — `SourceMap` (normalized position → source byte offset).
-//! * C5c — accent decomposition inside `〔…〕` segments.
-//! * C5d — gaiji UCS resolution in concert with `afm-encoding`.
-//!
-//! Post-C6 the registry gains a binary-search API; until then the
-//! Vec form is adequate — the driver only pushes in normalized order,
-//! which is already sorted by construction.
+//! Accent decomposition happens inside the earlier
+//! [`crate::phase0_sanitize`] pass; gaiji UCS resolution folds into
+//! [`crate::phase3_classify`] via `afm_encoding::gaiji::lookup`.
+//! This pass only performs the sentinel substitution.
 
 use afm_syntax::{AozoraNode, ContainerKind};
 
@@ -63,9 +61,9 @@ pub struct NormalizeOutput {
 
 /// Sentinel-position → original classification.
 ///
-/// Entries land in strictly increasing order of
-/// normalized byte offset — the driver only ever appends at the end
-/// of `normalized`, so sorts at build-time would be redundant. C6
+/// Entries land in strictly increasing order of normalized byte
+/// offset — the driver only ever appends at the end of `normalized`,
+/// so sorts at build-time would be redundant. `phase5_registry`
 /// wraps this with a `binary_search`-backed public API.
 #[derive(Debug, Clone, Default)]
 pub struct PlaceholderRegistry {

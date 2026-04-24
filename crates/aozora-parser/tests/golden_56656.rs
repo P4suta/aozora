@@ -72,16 +72,15 @@ fn tier_a_ruby_recognition_floor() {
         + counts.containers
         + counts.double_rubies
         + counts.other;
-    // Post-F5 (paired-container AST wrap): each `［＃ここから…］` /
-    // `［＃ここで…終わり］` pair now folds into one
-    // `AozoraNode::Container` node (two source brackets reduce to one
-    // AST counter bump — not a pure addition). The floor tracks the
-    // adapter-era baseline ≥ 400; it will ratchet further upward
-    // as G1 (gaiji UCS table) and other recognisers land.
+    // Paired-container AST wrap folds each `［＃ここから…］` /
+    // `［＃ここで…終わり］` pair into one `AozoraNode::Container`
+    // node — two source brackets reduce to one AST counter bump,
+    // not a pure addition. The floor tracks the baseline ≥ 400
+    // and can ratchet upward as further recognisers land.
     assert!(
         bracket_sourced >= 400,
         "bracket-sourced annotation recognition dropped to {bracket_sourced} \
-         (expected >= 400 after F5); breakdown: {counts:?}"
+         (expected >= 400); breakdown: {counts:?}"
     );
 }
 

@@ -3,10 +3,10 @@
 //! [`PlaceholderRegistry`] is built as four parallel `Vec<(u32, T)>`
 //! by Phase 4, sorted by construction because the normalizer only
 //! appends at the end of the output buffer. Phase 5 layers
-//! `binary_search_by_key`–based accessors on top so `post_process`
-//! (D3/D4) and diagnostic consumers can resolve a sentinel's
-//! position to its original classification in `O(log N)` without
-//! cloning or re-sorting.
+//! `binary_search_by_key`–based accessors on top so
+//! `afm-parser::post_process` and diagnostic consumers can resolve
+//! a sentinel's position to its original classification in
+//! `O(log N)` without cloning or re-sorting.
 //!
 //! The module holds *only* accessor impls and (cfg-test) coverage —
 //! the storage type itself lives in [`crate::phase4_normalize`].

@@ -1,7 +1,8 @@
 //! Error types for corpus source operations.
 //!
-//! Kept in its own module so that future impls in sibling files (M2-S2)
-//! can extend [`CorpusError`] without touching the public-facing `lib.rs`.
+//! Kept in its own module so each `CorpusSource` impl (see
+//! `in_memory.rs`, `filesystem.rs`, `vendored.rs`) can extend
+//! [`CorpusError`] without touching the public-facing `lib.rs`.
 
 use std::io;
 use std::path::PathBuf;
