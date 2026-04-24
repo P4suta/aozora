@@ -53,5 +53,8 @@ fuzz/artifacts/
 .env.local
 /docker-compose.override.yml
 
+# Ad-hoc scratch files (render outputs, debug dumps, …)
+.tmp-*
+
 # macOS junk in WSL mounts
 :2e*

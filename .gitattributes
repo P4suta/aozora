@@ -1,0 +1,22 @@
+# Defaults: everything is text, normalised to LF in the repo.
+* text=auto eol=lf
+
+# Aozora Bunko Shift_JIS fixtures. Must stay byte-for-byte identical to
+# what Aozora ships; any eol conversion or whitespace trimming corrupts them.
+spec/aozora/fixtures/**/*.txt  binary
+spec/aozora/fixtures/**/*.zip  binary
+
+# Vendored comrak — exclude from GitHub's language statistics so afm's
+# actual Rust (and not the entire comrak codebase) is what shows up on
+# the repo page.
+upstream/comrak/**             linguist-vendored=true
+
+# Generated spec JSON; the authoritative sources live alongside as *.txt
+# under spec/sources/. Mark as generated so they don't count toward
+# language stats and don't expand by default in diffs.
+spec/commonmark-0.31.2.json    linguist-generated=true
+spec/gfm-0.29-gfm.json         linguist-generated=true
+
+# License / notice text files must stay LF even on Windows checkouts.
+LICENSE-*                      text eol=lf
+NOTICE                         text eol=lf
