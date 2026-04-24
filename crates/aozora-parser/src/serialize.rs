@@ -334,9 +334,17 @@ fn emit_tate_chu_yoko(t: &TateChuYoko, out: &mut String) {
 }
 
 fn emit_gaiji(g: &Gaiji, out: &mut String) {
+    // Aozora gaiji shape is always `※［＃「description」、mencode］` or
+    // `※［＃「description」］`. The closing 」 was previously omitted,
+    // which `round_trip_fixed_point` could not catch (the malformed
+    // form still re-parses to the same node so the second-pass output
+    // equals the first). The byte-identity test
+    // `gaiji_with_mencode_emits_canonical_shape_on_first_serialize`
+    // locks the shape so the regression cannot land silently again.
     out.push('※');
     out.push_str("［＃「");
     out.push_str(&g.description);
+    out.push('」');
     if let Some(m) = &g.mencode {
         out.push('、');
         out.push_str(m);
@@ -557,7 +565,35 @@ mod tests {
 
     #[test]
     fn gaiji_with_mencode_round_trips() {
+        round_trip_fixed_point("※[＃「木＋吶のつくり」、第3水準9-99-99］".replace('[', "［").as_str());
         round_trip_fixed_point("※［＃「木＋吶のつくり」、第3水準9-99-99］");
+    }
+
+    #[test]
+    fn gaiji_with_mencode_emits_canonical_shape_on_first_serialize() {
+        // Byte-identity on the *first* pass — the fixed-point test
+        // above only catches stability, not correctness, so a
+        // serializer that silently drops the closing 」 still passes
+        // `gaiji_with_mencode_round_trips`. This test pins the
+        // shape that actually matches the Aozora annotation manual.
+        let src = "※［＃「木＋吶のつくり」、第3水準1-85-54］";
+        let out = once(src);
+        assert_eq!(
+            out, src,
+            "first-pass serializer must preserve closing 」; got {out:?}",
+        );
+    }
+
+    #[test]
+    fn gaiji_without_mencode_emits_canonical_shape_on_first_serialize() {
+        // description-only gaiji (no `、mencode` tail) still needs
+        // the closing 」 on first pass.
+        let src = "※［＃「〓」］";
+        let out = once(src);
+        assert_eq!(
+            out, src,
+            "first-pass serializer must preserve closing 」 even without mencode; got {out:?}",
+        );
     }
 
     #[test]
