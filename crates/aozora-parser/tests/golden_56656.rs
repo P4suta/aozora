@@ -71,16 +71,43 @@ fn tier_a_ruby_recognition_floor() {
         + counts.tate_chu_yokos
         + counts.containers
         + counts.double_rubies
+        + counts.heading_promoted
         + counts.other;
-    // Paired-container AST wrap folds each `［＃ここから…］` /
-    // `［＃ここで…終わり］` pair into one `AozoraNode::Container`
-    // node — two source brackets reduce to one AST counter bump,
-    // not a pure addition. The floor tracks the baseline ≥ 400
-    // and can ratchet upward as further recognisers land.
+    // Two shapes reduce the bracket-to-AST-node ratio below 1:1 —
+    //
+    // * Paired-container wrap folds each `［＃ここから…］` /
+    //   `［＃ここで…終わり］` pair into one `AozoraNode::Container`,
+    //   so the two source brackets reduce to a single counter bump.
+    // * Heading promotion consumes the `［＃「X」は…見出し］` bracket
+    //   AND detaches any companion indent marker (e.g. `［＃２字下げ］`)
+    //   that decorated the heading paragraph — the heading is an
+    //   independent block and does not carry paragraph-level
+    //   indentation. In the 56656 fixture this moves ~48 brackets from
+    //   the `indents` counter to the discarded bucket; the residual
+    //   floor below reflects the real recognition depth with heading
+    //   promotion in force.
+    //
+    // The floor covers the sum of every bracket-sourced sink so
+    // adding a new recogniser cannot silently erode the total, and
+    // can ratchet upward as further recognisers land.
     assert!(
-        bracket_sourced >= 400,
+        bracket_sourced >= 370,
         "bracket-sourced annotation recognition dropped to {bracket_sourced} \
-         (expected >= 400); breakdown: {counts:?}"
+         (expected >= 370); breakdown: {counts:?}"
+    );
+
+    // Independent assertion: heading promotion must actually be
+    // firing on the 大/中/小 見出し brackets. Without this, a
+    // regression that stopped promoting headings would still satisfy
+    // the bracket-sourced floor because the reduction in
+    // `heading_promoted` would be offset by a rise in `annotations`
+    // (the pre-promotion catch-all). The floor is set a few counts
+    // below the observed 48 to tolerate minor fixture drift.
+    assert!(
+        counts.heading_promoted >= 40,
+        "heading promotion under 56656 dropped to {promoted} \
+         (expected >= 40); breakdown: {counts:?}",
+        promoted = counts.heading_promoted,
     );
 }
 
@@ -98,12 +125,17 @@ struct AozoraCounts {
     tate_chu_yokos: usize,
     containers: usize,
     double_rubies: usize,
+    /// Count of `NodeValue::Heading` nodes produced by `splice_heading_hint`
+    /// promoting a paragraph to a Markdown heading. A heading hint bracket
+    /// consumes itself as it promotes, so it shows up under this counter
+    /// rather than `annotations`.
+    heading_promoted: usize,
     other: usize,
 }
 
 fn count_aozora<'a>(node: &'a AstNode<'a>, counts: &mut AozoraCounts) {
-    if let NodeValue::Aozora(ref boxed) = node.data.borrow().value {
-        match **boxed {
+    match node.data.borrow().value {
+        NodeValue::Aozora(ref boxed) => match **boxed {
             AozoraNode::Ruby(_) => counts.rubies += 1,
             AozoraNode::Annotation(_) => counts.annotations += 1,
             AozoraNode::Bouten(_) => counts.boutens += 1,
@@ -117,7 +149,9 @@ fn count_aozora<'a>(node: &'a AstNode<'a>, counts: &mut AozoraCounts) {
             AozoraNode::Container(_) => counts.containers += 1,
             AozoraNode::DoubleRuby(_) => counts.double_rubies += 1,
             _ => counts.other += 1,
-        }
+        },
+        NodeValue::Heading(_) => counts.heading_promoted += 1,
+        _ => {}
     }
     for child in node.children() {
         count_aozora(child, counts);
