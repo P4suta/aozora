@@ -7,14 +7,13 @@
 //! `</div>` close leaves the surrounding markup technically
 //! broken even though no `［＃` leaked.
 //!
-//! The validator lives in `tests/common/mod.rs` so both this file
-//! and `corpus_sweep.rs` can call it; this file is the fast-path
+//! The validator lives in [`afm_parser::test_support`] alongside
+//! the other invariant predicates so both this file and
+//! `corpus_sweep.rs` can call it; this file is the fast-path
 //! unit coverage for shapes with known expected-balanced output.
 
-mod common;
-
 use afm_parser::html::render_to_string;
-use common::check_well_formed;
+use afm_parser::test_support::{WellFormedError, check_well_formed};
 
 /// Small helper: fail with the full HTML context so a violation is
 /// actionable without re-running with eyeball inspection.
@@ -119,14 +118,14 @@ fn validator_accepts_well_formed_html() {
 fn validator_rejects_unclosed_tag() {
     let errs = check_well_formed("<p>hello");
     assert_eq!(errs.len(), 1);
-    assert!(matches!(&errs[0], common::WellFormedError::UnclosedTag { tag, .. } if tag == "p"));
+    assert!(matches!(&errs[0], WellFormedError::UnclosedTag { tag, .. } if tag == "p"));
 }
 
 #[test]
 fn validator_rejects_extra_close() {
     let errs = check_well_formed("</p>");
     assert_eq!(errs.len(), 1);
-    assert!(matches!(&errs[0], common::WellFormedError::ExtraClose { tag, .. } if tag == "p"));
+    assert!(matches!(&errs[0], WellFormedError::ExtraClose { tag, .. } if tag == "p"));
 }
 
 #[test]
@@ -134,7 +133,7 @@ fn validator_rejects_misordered_close() {
     let errs = check_well_formed("<p><em>hi</p></em>");
     assert!(
         errs.iter()
-            .any(|e| matches!(e, common::WellFormedError::MisorderedClose { .. })),
+            .any(|e| matches!(e, WellFormedError::MisorderedClose { .. })),
         "expected MisorderedClose, got {errs:?}"
     );
 }

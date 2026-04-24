@@ -1,0 +1,45 @@
+[package]
+name = "afm-parser-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+afm-parser   = { path = ".." }
+afm-lexer    = { path = "../../afm-lexer" }
+afm-encoding = { path = "../../afm-encoding" }
+comrak       = { path = "../../../upstream/comrak", default-features = false }
+
+# Prevent this crate from joining the afm workspace.
+# Each fuzz target needs libfuzzer-sys (nightly-gated), which the
+# workspace-wide `cargo build --workspace` should not pick up.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "parse_render"
+path = "fuzz_targets/parse_render.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "serialize_round_trip"
+path = "fuzz_targets/serialize_round_trip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sjis_decode"
+path = "fuzz_targets/sjis_decode.rs"
+test = false
+doc = false
+bench = false

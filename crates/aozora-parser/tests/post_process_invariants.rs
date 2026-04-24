@@ -31,6 +31,7 @@ use afm_parser::html::render_to_string;
 use afm_parser::test_support::strip_annotation_wrappers;
 use afm_parser::{Options, parse};
 use afm_syntax::AozoraNode;
+use afm_test_utils::generators::aozora_fragment;
 use comrak::Arena;
 use comrak::nodes::{AstNode, NodeValue};
 use proptest::prelude::*;
@@ -216,32 +217,6 @@ fn tier_a_holds_for_every_static_fixture() {
 // Property tests — random adversarial input
 // ---------------------------------------------------------------------------
 
-/// Strategy that produces a string of mixed plain text, ruby shapes,
-/// bracket annotations, and reference marks. Length is bounded so the
-/// test suite stays fast.
-fn mixed_aozora_strategy() -> impl Strategy<Value = String> {
-    let atoms = prop_oneof![
-        Just("｜".to_owned()),
-        Just("《".to_owned()),
-        Just("》".to_owned()),
-        Just("［＃".to_owned()),
-        Just("］".to_owned()),
-        Just("※".to_owned()),
-        Just("改ページ".to_owned()),
-        Just("改丁".to_owned()),
-        Just("漢字".to_owned()),
-        Just("かんじ".to_owned()),
-        Just("ABC".to_owned()),
-        Just("1234".to_owned()),
-        Just("\n".to_owned()),
-        Just("\n\n".to_owned()),
-        Just("、".to_owned()),
-        Just("。".to_owned()),
-        Just(" ".to_owned()),
-    ];
-    prop::collection::vec(atoms, 0..16).prop_map(|pieces| pieces.join(""))
-}
-
 /// Returns `true` when the lexer raises no diagnostic for `src`, i.e.
 /// every bracket / ruby / quote pair was closed in order. Used to
 /// restrict property-test inputs to well-formed Aozora shapes before
@@ -263,7 +238,7 @@ proptest! {
     /// 3. For well-formed inputs (matched brackets), not leak `［＃`
     ///    into rendered HTML (Tier-A canary).
     #[test]
-    fn parse_survives_arbitrary_aozora_shaped_input(src in mixed_aozora_strategy()) {
+    fn parse_survives_arbitrary_aozora_shaped_input(src in aozora_fragment(16)) {
         let (_nodes, text) = parse_one(&src);
         prop_assert!(
             !text.contains(INLINE_SENTINEL),
@@ -281,7 +256,7 @@ proptest! {
     /// Parse is deterministic: two independent arena allocations
     /// produce identical rendered HTML.
     #[test]
-    fn parse_determinism(src in mixed_aozora_strategy()) {
+    fn parse_determinism(src in aozora_fragment(16)) {
         let a = render_to_string(&src);
         let b = render_to_string(&src);
         prop_assert_eq!(a, b);

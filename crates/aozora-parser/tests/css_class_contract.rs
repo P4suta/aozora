@@ -21,45 +21,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-/// Base + modifier class tokens the renderer can emit. Kept in
-/// strict alphabetical order so the `pinned_classes_are_sorted`
-/// hygiene test stays green and PR diffs minimise. The semantic
-/// groups (bouten / container / section-break / …) are visible in
-/// the shared prefixes; no hand-grouping needed.
-const EMITTED_CLASSES: &[&str] = &[
-    "afm-align-end",
-    "afm-annotation",
-    "afm-bouten",
-    "afm-bouten-circle",
-    "afm-bouten-cross",
-    "afm-bouten-double-circle",
-    "afm-bouten-double-under-line",
-    "afm-bouten-goma",
-    "afm-bouten-janome",
-    "afm-bouten-left",
-    "afm-bouten-other",
-    "afm-bouten-right",
-    "afm-bouten-under-line",
-    "afm-bouten-wavy-line",
-    "afm-bouten-white-circle",
-    "afm-bouten-white-sesame",
-    "afm-bouten-white-triangle",
-    "afm-container",
-    "afm-container-align-end",
-    "afm-container-indent",
-    "afm-container-keigakomi",
-    "afm-container-warichu",
-    "afm-double-ruby",
-    "afm-gaiji",
-    "afm-indent",
-    "afm-kaeriten",
-    "afm-page-break",
-    "afm-section-break",
-    "afm-section-break-choho",
-    "afm-section-break-dan",
-    "afm-section-break-spread",
-    "afm-tcy",
-];
+use afm_parser::aozora::AFM_CLASSES;
 
 /// Absolute path to one of the theme CSS files. Resolving via
 /// `CARGO_MANIFEST_DIR` keeps the test stable regardless of the
@@ -110,7 +72,7 @@ fn every_emitted_class_has_a_horizontal_theme_rule() {
     let css = fs::read_to_string(theme_path("afm-horizontal.css"))
         .expect("afm-horizontal.css must exist alongside afm-book/theme/");
     let selectors = collect_afm_selectors(&css);
-    let missing: Vec<&&str> = EMITTED_CLASSES
+    let missing: Vec<&&str> = AFM_CLASSES
         .iter()
         .filter(|c| !selectors.contains(**c))
         .collect();
@@ -125,7 +87,7 @@ fn every_emitted_class_has_a_vertical_theme_rule() {
     let css = fs::read_to_string(theme_path("afm-vertical.css"))
         .expect("afm-vertical.css must exist alongside afm-book/theme/");
     let selectors = collect_afm_selectors(&css);
-    let missing: Vec<&&str> = EMITTED_CLASSES
+    let missing: Vec<&&str> = AFM_CLASSES
         .iter()
         .filter(|c| !selectors.contains(**c))
         .collect();
@@ -140,16 +102,12 @@ fn pinned_classes_are_sorted_and_unique() {
     // Hygiene: the pinned list is kept in sorted order + no dupes
     // for review friendliness. A sorted list also makes PR diffs
     // trivial to review.
-    let mut copy: Vec<&str> = EMITTED_CLASSES.to_vec();
+    let mut copy: Vec<&str> = AFM_CLASSES.to_vec();
     copy.sort_unstable();
-    assert_eq!(
-        EMITTED_CLASSES.to_vec(),
-        copy,
-        "EMITTED_CLASSES must stay sorted"
-    );
+    assert_eq!(AFM_CLASSES.to_vec(), copy, "AFM_CLASSES must stay sorted");
     let mut seen: HashSet<&str> = HashSet::new();
-    for &c in EMITTED_CLASSES {
-        assert!(seen.insert(c), "duplicate entry in EMITTED_CLASSES: {c}");
+    for &c in AFM_CLASSES {
+        assert!(seen.insert(c), "duplicate entry in AFM_CLASSES: {c}");
     }
 }
 

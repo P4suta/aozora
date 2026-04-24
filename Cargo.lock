@@ -75,6 +75,7 @@ dependencies = [
  "afm-encoding",
  "afm-lexer",
  "afm-syntax",
+ "afm-test-utils",
  "comrak",
  "insta",
  "miette",
@@ -95,6 +96,13 @@ dependencies = [
  "miette",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "afm-test-utils"
+version = "0.1.0"
+dependencies = [
+ "proptest",
 ]
 
 [[package]]

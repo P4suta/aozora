@@ -38,12 +38,55 @@ just test                      # confirm green
 just watch                     # bacon watcher inside the dev container
 just lint                      # fmt + clippy pedantic+nursery + typos + strict-code
 just test                      # full workspace nextest
+just prop                      # property-based sweep (128 cases per block)
+just invariants                # predicate unit pinning (fast regression hunt)
 just spec-golden-56656         # 罪と罰 Tier-A acceptance gate
 just coverage                  # cargo llvm-cov, fails below _COV_FLOOR
 just ci                        # replica of the full CI pipeline
+
+# Before a release:
+just prop-deep                 # 4096 cases per block — deeper than CI
+
+# Developer-only (fuzzing / corpus sweep):
+export AFM_CORPUS_ROOT=$HOME/aozora-corpus  # or any directory of .txt files
+just corpus-sweep              # I1-I10 invariants over the whole corpus
+just fuzz parse_render -- -runs=10000  # cargo-fuzz smoke on the parse→render path
 ```
 
 `just --list` enumerates everything available.
+
+## How to add an invariant
+
+afm codifies "must-never-be" shapes as *predicates* in
+`afm_parser::test_support` (`check_no_bare_bracket`, `check_heading_integrity`,
+…). Each predicate is asserted from four layers: unit tests, proptests,
+the corpus sweep, and the fuzz harness. Adding a new invariant is a
+five-step flow:
+
+1. **Predicate** — add `pub fn check_X(html: &str) -> Result<(), Violation>`
+   to `crates/afm-parser/src/test_support.rs` and a new
+   [`Violation`](crates/afm-parser/src/test_support.rs) variant.
+   Document the forbidden shape with an example in the doc-comment.
+2. **Unit pin** — add `invariant_unit_check_X_passes_on_clean_input` and
+   `invariant_unit_check_X_fires_on_<shape>` in the same file's test
+   module. Test names prefixed `invariant_unit_` so `just invariants`
+   filters them out.
+3. **Property test** — append a `prop_assert!` call to the matching
+   property test (`tests/property_html_shape.rs` for structure-style
+   invariants, dedicated files for XSS / heading / fixpoint). Reuse
+   `afm_test_utils::generators` strategies.
+4. **Corpus sweep** — reserve a new `TIER_IN_…` constant and a
+   `stats.record_in(...)` call in `tests/corpus_sweep.rs`. Land
+   **report-only first** (no `assert!`), run against `spec/aozora/fixtures`
+   and any external `AFM_CORPUS_ROOT` to observe the baseline, record
+   the count in ADR-0007's amendment, then promote to a hard gate with
+   an initial budget via a follow-up commit.
+5. **Fuzz** — add the predicate call to
+   `crates/afm-parser/fuzz/fuzz_targets/parse_render.rs` and
+   `sjis_decode.rs`. No new target needed — the existing ones
+   aggregate every invariant.
+
+ADR-0007 documents the corpus-sweep protocol in full.
 
 ## Commit style
 

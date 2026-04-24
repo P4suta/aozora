@@ -16,27 +16,10 @@
 
 use afm_parser::{Options, parse};
 use afm_syntax::{AozoraNode, Content, Segment, SegmentRef};
+use afm_test_utils::generators::{hiragana_fragment, kanji_fragment};
 use comrak::Arena;
 use comrak::nodes::{AstNode, NodeValue};
 use proptest::prelude::*;
-
-fn kanji_strategy(max_len: usize) -> impl Strategy<Value = String> {
-    prop::collection::vec(0x4E00_u32..=0x9FFF, 1..=max_len).prop_map(|codepoints| {
-        codepoints
-            .into_iter()
-            .map(|c| char::from_u32(c).unwrap())
-            .collect()
-    })
-}
-
-fn hiragana_strategy(max_len: usize) -> impl Strategy<Value = String> {
-    prop::collection::vec(0x3041_u32..=0x3096, 1..=max_len).prop_map(|codepoints| {
-        codepoints
-            .into_iter()
-            .map(|c| char::from_u32(c).unwrap())
-            .collect()
-    })
-}
 
 /// Walk `root` and return the first `AozoraNode::Ruby` encountered, or
 /// `None` if the tree contains no ruby. Test-only helper.
@@ -77,7 +60,7 @@ proptest! {
     /// the reading on the `Content::Plain` fast path (no allocation for
     /// a `Segments` run).
     #[test]
-    fn explicit_ruby_round_trips(base in kanji_strategy(5), reading in hiragana_strategy(10)) {
+    fn explicit_ruby_round_trips(base in kanji_fragment(5), reading in hiragana_fragment(10)) {
         let input = format!("｜{base}《{reading}》");
         let arena = Arena::new();
         let opts = Options::afm_default();
@@ -96,10 +79,10 @@ proptest! {
     /// text-span bookkeeping.
     #[test]
     fn explicit_ruby_with_nested_gaiji_lifts_to_segments(
-        base in kanji_strategy(4),
-        prefix in hiragana_strategy(5),
-        suffix in hiragana_strategy(5),
-        gaiji_desc in kanji_strategy(2),
+        base in kanji_fragment(4),
+        prefix in hiragana_fragment(5),
+        suffix in hiragana_fragment(5),
+        gaiji_desc in kanji_fragment(2),
     ) {
         let input = format!(
             "｜{base}《{prefix}※［＃「{gaiji_desc}」、第3水準1-85-54］{suffix}》"

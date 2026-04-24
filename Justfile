@@ -46,9 +46,22 @@ test *ARGS:
 test-doc:
     {{_dev}} cargo test --workspace --doc
 
-# Property-based tests only
+# Property-based tests only. Default 128 cases per proptest block
+# (AFM_PROPTEST_CASES override via afm-test-utils::config). Fast
+# enough to live in `just ci` — see `just prop-deep` for a stress run.
 prop:
     {{_dev}} cargo nextest run --workspace --all-features --test 'property_*' --run-ignored default
+
+# Deep property sweep — 4096 cases per block, used before cutting a
+# release to exercise invariants beyond the default CI budget.
+prop-deep:
+    {{_dev}} bash -c 'AFM_PROPTEST_CASES=4096 cargo nextest run --workspace --all-features --test "property_*" --run-ignored default'
+
+# Unit-test-only predicate pinning — runs every `invariant_unit_` test
+# in `afm_parser::test_support`. Narrow target for regression hunts
+# that don't need the full proptest sweep.
+invariants:
+    {{_dev}} cargo nextest run --package afm-parser --lib -E 'test(invariant_unit_)'
 
 # CommonMark 0.31.2 spec compliance (652 cases, pass = 652/652)
 spec-commonmark:
@@ -84,12 +97,18 @@ corpus *ARGS:
 #   just corpus-sweep
 #
 # Invariants checked (report/enforcement split documented in the test
-# itself at crates/afm-parser/tests/corpus_sweep.rs):
+# itself at crates/afm-parser/tests/corpus_sweep.rs, and in ADR-0007):
 #   I1 — no panic on any input (hard).
 #   I2 — no unconsumed ［＃ markers (hard).
 #   I3 — serialize ∘ parse fixed point (hard).
 #   I4 — emitted HTML is tag-balanced (hard).
 #   I5 — SJIS decode stable (report-only).
+#   I6 — no PUA sentinel U+E001–U+E004 in HTML (hard, budget=1 default).
+#   I7 — every afm-* class is in AFM_CLASSES (hard, budget=0).
+#   I8 — no <script / javascript: / on<event>= markers (hard, budget=0).
+#   I9 — afm-annotation wrapper shape is well-formed (hard, budget=0).
+#   I10 — no afm-indent / afm-annotation inside <h1>-<h6> (hard, budget=0).
+# Per-invariant budget overrides via AFM_CORPUS_I{2,3,4,6,7,8,9,10}_BUDGET.
 corpus-sweep:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -270,12 +289,14 @@ strict-code:
     # ---- println! / eprintln! in library crates ----------------------------
     # Library crates should emit observability via `tracing`, not raw print.
     # CLI crates (afm-cli, xtask) are expected to print, so they are scoped
-    # out. This complements clippy::print_stdout / clippy::print_stderr,
-    # which cannot be selectively enabled per-crate while still inheriting
-    # [workspace.lints] (rust-lang/cargo#12697).
+    # out. Examples (`crates/*/examples/`) and fuzz targets
+    # (`crates/*/fuzz/fuzz_targets/`) are also exempt — they're binary-style
+    # demos, not library code. This complements clippy::print_stdout /
+    # clippy::print_stderr, which cannot be selectively enabled per-crate
+    # while still inheriting [workspace.lints] (rust-lang/cargo#12697).
     lib_files=(crates/afm-syntax/**/*.rs crates/afm-parser/**/*.rs crates/afm-encoding/**/*.rs)
     print_hits=$(grep -nE '(^|[^[:alnum:]_])e?print(ln)?!\s*\(' "${lib_files[@]}" 2>/dev/null \
-        | grep -vE '/(tests|benches)/' || true)
+        | grep -vE '/(tests|benches|examples|fuzz_targets)/' || true)
     if [[ -n "$print_hits" ]]; then
         echo '==> forbidden: println! / eprintln! in library crates (use tracing instead)' >&2
         echo "$print_hits" >&2
@@ -392,6 +413,7 @@ ci:
     just lint
     just build
     just test
+    just prop
     just spec-commonmark
     just spec-gfm
     just spec-aozora

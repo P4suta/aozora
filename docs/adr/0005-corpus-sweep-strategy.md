@@ -89,6 +89,11 @@ Each sweep iteration runs the following checks:
 | I3 | `parse → serialize → parse` AST equality | Hard | Pending M2-S5/S6 (serializer) |
 | I4 | Generated HTML parses via html5ever | Soft → Hard | Pending M2-S4 |
 | I5 | SJIS decode stable | Soft (report-only) | Enforced diagnostic |
+| I6 | No lexer PUA sentinel (U+E001–U+E004) in HTML | Hard with budget | Enforced with budget 1 |
+| I7 | Every `afm-*` class token is in [`AFM_CLASSES`] | Hard with budget | Enforced with budget 0 |
+| I8 | No `<script` / `javascript:` / `on<event>=` markers | Hard with budget | Enforced with budget 0 |
+| I9 | `strip_annotation_wrappers` is idempotent, wrappers carry `hidden`, no nesting | Hard with budget | Enforced with budget 0 |
+| I10 | `<h1>`–`<h6>` bodies free of `afm-indent` / `afm-container-indent` / `afm-annotation` | Hard with budget | Enforced with budget 0 |
 
 Report-only invariants surface counts and sample labels in the test
 output but do not fail the test. This is a deliberate ratchet: new
@@ -231,3 +236,70 @@ synonym. `just corpus-sweep` stands on its own; if the stubbed
 - ADR-0006 — lint profile scope (same "workspace boundary" idea
   applied to coverage/lint).
 - Memory: `feedback_parser_corpus_property_sweep.md`.
+
+## Amendment 2026-04-24 — I6–I10 (negative invariants)
+
+### Rationale
+
+The "must-never-be" coverage gap identified during 2026-04 (see plan
+`github-lexical-mist.md`) argued for pinning each bad-output shape as
+a predicate that runs uniformly across unit tests, proptests, the
+corpus sweep, and the fuzz harness. I6–I10 extend this ADR's sweep
+contract with the five shape predicates exported from
+`afm_parser::test_support`:
+
+- **I6 — no lexer PUA sentinel leak.** U+E001–U+E004 are lexer-internal
+  markers that `post_process` must consume; one surviving to HTML
+  indicates a paired-container pass missed an opener / closer.
+- **I7 — CSS class contract.** Every `afm-*` class token emitted must
+  be in the pinned `AFM_CLASSES` list (or a legitimate `afm-X-N`
+  numeric-suffix form). Catches renderer additions that ship unstyled
+  markup.
+- **I8 — XSS markers.** Literal `<script`, `javascript:`-in-attribute,
+  and `on<event>=` handlers. Caught only inside tag bodies so
+  annotation-wrapper text content does not false-positive (see the
+  tag-context-aware detectors in `test_support`).
+- **I9 — annotation wrapper shape.** `strip_annotation_wrappers` must
+  be idempotent, every wrapper must close, every wrapper must carry
+  `hidden`.
+- **I10 — heading integrity.** `<h1>`–`<h6>` bodies must not contain
+  `afm-indent`, `afm-container-indent`, or `afm-annotation` class
+  tokens. Proptest version of commit 7f5463a's fixed regression.
+
+### Rollout protocol
+
+The "report-only → observe → ratchet" pattern documented for I2 / I4
+extends to I6–I10. Landing plan:
+
+1. **Phase 4a** — add each invariant as report-only (stderr count, no
+   assertion). Committed.
+2. **Phase 4b** — run the sweep against representative corpora to
+   observe baseline counts. Committed observations:
+   - `spec/aozora/fixtures/` (in-tree vendored, 56656 SJIS + UTF-8):
+     - I6: **1 leak** in 56656 SJIS — U+E003 (BLOCK_OPEN_SENTINEL)
+       survives to a bare `<p>\u{E003}</p>` paragraph around offset
+       1.6 MB in the rendered HTML. The post-process paired-container
+       pass is missing a close-side pairing for at least one container
+       shape in the 罪と罰 source. Tracked as a follow-up bug; initial
+       budget accommodates the known leak.
+     - I7–I10: **0** occurrences.
+   - No external `AFM_CORPUS_ROOT` corpus was measured during this
+     landing; developers with a 17 k-work corpus should re-run the
+     sweep and ratchet the budgets to the observed values before
+     merging their own follow-up PRs.
+3. **Phase 4c** — promote to hard gate with `AFM_CORPUS_I6_BUDGET` =
+   1, I7–I10 = 0 by default. Same `AFM_CORPUS_*_BUDGET` env-var
+   override convention as I2 / I3 / I4.
+
+The budget is an upper bound, not a floor — ratcheting down to zero
+is the long-term goal as each latent bug is fixed.
+
+### Predicate source of truth
+
+Every I6–I10 predicate is implemented in
+`crates/afm-parser/src/test_support.rs` (the [Invariant catalog]
+table in the module docs). The same predicates back the
+`property_html_shape.rs` / `property_xss_prevention.rs` /
+`property_heading_integrity.rs` / `property_fixpoint.rs` property
+tests — so the corpus sweep and the proptest suite assert identical
+contracts from different angles.

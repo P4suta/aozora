@@ -1,0 +1,17 @@
+[package]
+name        = "afm-test-utils"
+description = "Aozora Flavored Markdown (afm): shared proptest strategies and test configuration. Not published."
+publish     = false
+
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+
+[lints]
+workspace = true
+
+[dependencies]
+proptest = { workspace = true }

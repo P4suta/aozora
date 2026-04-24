@@ -32,25 +32,84 @@
 //!   counted but don't abort the sweep (a corpus may legitimately contain
 //!   non-SJIS files, e.g. README files walked in by a loose configuration).
 
-mod common;
-
 use core::fmt;
+use std::collections::BTreeMap;
 use std::env;
 use std::panic::{self, AssertUnwindSafe};
 
 use afm_corpus::{CorpusError, from_env};
 use afm_encoding::decode_sjis;
 use afm_parser::html::render_to_string;
-use afm_parser::test_support::strip_annotation_wrappers;
+use afm_parser::test_support::{
+    check_annotation_wrapper_shape, check_css_class_contract, check_heading_integrity,
+    check_no_sentinel_leak, check_no_xss_marker, check_well_formed, strip_annotation_wrappers,
+};
 use afm_parser::{Options, parse, serialize};
-use common::check_well_formed;
 use comrak::Arena;
+
+// ---------------------------------------------------------------------------
+// Tier name registry
+//
+// Every invariant has a `&'static str` key in [`SweepStats::tiers`]. Keeping
+// them as string constants rather than inline literals makes adding a new
+// invariant a single-line addition (one constant + one `stats.record_in(...)`
+// call site) and keeps the stats-struct field count from ballooning as I6-I10
+// land.
+// ---------------------------------------------------------------------------
+
+const TIER_I1_PANIC: &str = "I1_panic";
+const TIER_I2_LEAKED: &str = "I2_leaked";
+const TIER_I3_ROUND_TRIP: &str = "I3_round_trip";
+const TIER_I4_MALFORMED: &str = "I4_malformed";
+const TIER_I5_DECODE: &str = "I5_decode";
+// I6-I10 added in Phase 4 of the negative-test enhancement. Landed
+// as report-only — stderr-printed counts only, no hard assertion —
+// until the 17 k corpus observation run records their baselines in
+// ADR-0007. Promotion to hard gate happens in a follow-up commit via
+// `AFM_CORPUS_I6_BUDGET` (etc.) defaulting to the observed count.
+const TIER_I6_SENTINEL_LEAK: &str = "I6_sentinel";
+const TIER_I7_UNKNOWN_CSS_CLASS: &str = "I7_css_class";
+const TIER_I8_XSS_MARKER: &str = "I8_xss";
+const TIER_I9_WRAPPER_SHAPE: &str = "I9_wrapper_shape";
+const TIER_I10_HEADING_INTEGRITY: &str = "I10_heading";
+
+/// Order used by [`SweepStats`] Display so a human reading the output sees
+/// invariants in I1 → In sequence rather than [`HashMap`] hash order.
+const TIER_REPORT_ORDER: &[&str] = &[
+    TIER_I1_PANIC,
+    TIER_I2_LEAKED,
+    TIER_I3_ROUND_TRIP,
+    TIER_I4_MALFORMED,
+    TIER_I5_DECODE,
+    TIER_I6_SENTINEL_LEAK,
+    TIER_I7_UNKNOWN_CSS_CLASS,
+    TIER_I8_XSS_MARKER,
+    TIER_I9_WRAPPER_SHAPE,
+    TIER_I10_HEADING_INTEGRITY,
+];
+
+/// Human-readable label for each tier, rendered by [`SweepStats`] Display.
+fn tier_label(name: &str) -> &'static str {
+    match name {
+        "I1_panic" => "panics",
+        "I2_leaked" => "with leaked ［＃ markers",
+        "I3_round_trip" => "round-trip divergences",
+        "I4_malformed" => "malformed HTML",
+        "I5_decode" => "decode errors",
+        "I6_sentinel" => "PUA sentinel leaks",
+        "I7_css_class" => "unknown afm-* CSS classes",
+        "I8_xss" => "XSS markers",
+        "I9_wrapper_shape" => "malformed afm-annotation wrappers",
+        "I10_heading" => "heading bodies with forbidden classes",
+        _ => "other",
+    }
+}
 
 /// Sweep entry point. The name is explicit so `cargo nextest run
 /// corpus_sweep` matches just this one test, and so CI log lines are
 /// self-describing when the test's diagnostic output is all users see.
 #[test]
-fn corpus_sweep_i1_no_panic_i2_report_i5_report() {
+fn corpus_sweep_i1_through_i10() {
     let Some(corpus) = from_env() else {
         eprintln!(
             "corpus sweep: AFM_CORPUS_ROOT not set; skipping (pass). \
@@ -69,81 +128,118 @@ fn corpus_sweep_i1_no_panic_i2_report_i5_report() {
     }
 
     eprintln!("{stats}");
-
-    // I1 is the hard gate. Fail loudly with the first handful of offending
-    // labels so the developer has immediate pointers for reproduction.
-    assert_eq!(
-        stats.panics,
-        0,
-        "parser panicked on {} corpus item(s); first {}: {:?}",
-        stats.panics,
-        stats.panic_samples.len(),
-        stats.panic_samples,
-    );
-
-    // I2 hard gate. `AFM_CORPUS_LEAK_BUDGET` allows a non-zero
-    // budget while preparing a classifier fix, so sweep runs over
-    // an unclean corpus don't block unrelated work.
-    let budget = leak_budget_from_env();
-    assert!(
-        stats.leaked_markers <= budget,
-        "I2: {} corpus item(s) leaked ［＃ markers outside the afm-annotation wrapper \
-         (budget = {budget}; first {}: {:?})",
-        stats.leaked_markers,
-        stats.leaked_marker_samples.len(),
-        stats.leaked_marker_samples,
-    );
-
-    // I4 hard gate. `AFM_CORPUS_I4_BUDGET` mirrors I2's escape
-    // hatch for staged fixes. Zero by default.
-    let i4_budget = env_budget("AFM_CORPUS_I4_BUDGET");
-    assert!(
-        stats.malformed <= i4_budget,
-        "I4: {} corpus item(s) rendered to malformed HTML (budget = {i4_budget}; \
-         first {}: {:?})",
-        stats.malformed,
-        stats.malformed_samples.len(),
-        stats.malformed_samples,
-    );
-
-    // I3 hard gate. `AFM_CORPUS_I3_BUDGET` mirrors I2 / I4; zero
-    // by default. Any divergence is a real bug in the classifier
-    // or serializer — the ADR-0008 pipeline's round-trip contract
-    // aims to preclude it.
-    let i3_budget = env_budget("AFM_CORPUS_I3_BUDGET");
-    assert!(
-        stats.round_trip_diverge <= i3_budget,
-        "I3: {} corpus item(s) diverged under a second `serialize ∘ parse` \
-         (budget = {i3_budget}; first {}: {:?})",
-        stats.round_trip_diverge,
-        stats.round_trip_diverge_samples.len(),
-        stats.round_trip_diverge_samples,
-    );
+    assert_all_hard_gates(&stats);
 
     // I5 is still a report — corpora may legitimately contain non-SJIS
     // files (READMEs, bundled metadata); promoting to hard-gate would
     // force every sweep configuration to curate input shape first.
 }
 
-/// Read `AFM_CORPUS_LEAK_BUDGET` and return the allowed number of
-/// leaked ［＃ markers. Defaults to `0` (strict). See
-/// [`env_budget`] for the generic shape.
-fn leak_budget_from_env() -> usize {
-    env_budget("AFM_CORPUS_LEAK_BUDGET")
+/// Assert every hard-gated invariant. Split out of the test entry
+/// point so the entry stays under clippy's too-many-lines threshold
+/// and so each gate reads as a single line.
+fn assert_all_hard_gates(stats: &SweepStats) {
+    // I1 is non-budgeted — a single panic is always a test failure.
+    let panics = stats.count(TIER_I1_PANIC);
+    assert_eq!(
+        panics,
+        0,
+        "I1: parser panicked on {panics} corpus item(s); first {}: {:?}",
+        stats.samples(TIER_I1_PANIC).len(),
+        stats.samples(TIER_I1_PANIC),
+    );
+
+    // Budgeted hard gates. Each row: (tier, invariant id, env var,
+    // default budget, failure description). Defaults are zero except
+    // I6, which accommodates the known 56656 leak — see ADR-0007
+    // amendment for rationale.
+    let rows: &[(&str, &str, &str, usize, &str)] = &[
+        (
+            TIER_I2_LEAKED,
+            "I2",
+            "AFM_CORPUS_LEAK_BUDGET",
+            0,
+            "leaked ［＃ markers outside the afm-annotation wrapper",
+        ),
+        (
+            TIER_I3_ROUND_TRIP,
+            "I3",
+            "AFM_CORPUS_I3_BUDGET",
+            0,
+            "diverged under a second `serialize ∘ parse`",
+        ),
+        (
+            TIER_I4_MALFORMED,
+            "I4",
+            "AFM_CORPUS_I4_BUDGET",
+            0,
+            "rendered to malformed HTML",
+        ),
+        (
+            TIER_I6_SENTINEL_LEAK,
+            "I6",
+            "AFM_CORPUS_I6_BUDGET",
+            1,
+            "leaked PUA sentinel (U+E001–U+E004) into rendered HTML",
+        ),
+        (
+            TIER_I7_UNKNOWN_CSS_CLASS,
+            "I7",
+            "AFM_CORPUS_I7_BUDGET",
+            0,
+            "emitted unknown afm-* CSS class",
+        ),
+        (
+            TIER_I8_XSS_MARKER,
+            "I8",
+            "AFM_CORPUS_I8_BUDGET",
+            0,
+            "leaked an XSS marker",
+        ),
+        (
+            TIER_I9_WRAPPER_SHAPE,
+            "I9",
+            "AFM_CORPUS_I9_BUDGET",
+            0,
+            "produced malformed afm-annotation wrappers",
+        ),
+        (
+            TIER_I10_HEADING_INTEGRITY,
+            "I10",
+            "AFM_CORPUS_I10_BUDGET",
+            0,
+            "emitted a heading carrying a forbidden class",
+        ),
+    ];
+    for &(tier, id, env_name, default, description) in rows {
+        let budget = env_budget_or(env_name, default);
+        let count = stats.count(tier);
+        assert!(
+            count <= budget,
+            "{id}: {count} corpus item(s) {description} \
+             (budget = {budget}; first {}: {:?})",
+            stats.samples(tier).len(),
+            stats.samples(tier),
+        );
+    }
 }
 
-/// Generic env-var budget reader. Defaults to `0` (strict) when the
-/// variable is absent. Malformed values (non-integer) produce a
-/// warning on stderr and fall back to `0` so a typo in CI config
-/// cannot silently paper over a real regression. Shared by I2 / I4.
-fn env_budget(name: &str) -> usize {
-    env::var(name).map_or(0, |s| {
+/// Generic env-var budget reader with a caller-supplied default.
+///
+/// Defaults to `0` (strict) for I2 / I3 / I4 / I7–I10; `1` for I6 to
+/// accommodate the known U+E003 leak in
+/// `spec/aozora/fixtures/56656/input.sjis.txt` — see ADR-0007
+/// amendment. Malformed values (non-integer) fall back to `default`
+/// with a stderr warning so a typo in CI config cannot silently
+/// paper over a real regression.
+fn env_budget_or(name: &str, default: usize) -> usize {
+    env::var(name).map_or(default, |s| {
         s.trim().parse::<usize>().unwrap_or_else(|_| {
             eprintln!(
                 "corpus sweep: {name}={s:?} is not a non-negative integer — \
-                 defaulting to 0 (strict)."
+                 defaulting to {default} (strict)."
             );
-            0
+            default
         })
     })
 }
@@ -175,12 +271,7 @@ fn sweep_one(result: Result<afm_corpus::CorpusItem, CorpusError>, stats: &mut Sw
     let text = match decode_sjis(&item.bytes) {
         Ok(text) => text,
         Err(err) => {
-            if stats.decode_error_samples.len() < MAX_SAMPLES {
-                stats
-                    .decode_error_samples
-                    .push(format!("{}: {err}", item.label));
-            }
-            stats.decode_errors += 1;
+            stats.record_in(TIER_I5_DECODE, format!("{}: {err}", item.label));
             return;
         }
     };
@@ -188,42 +279,50 @@ fn sweep_one(result: Result<afm_corpus::CorpusItem, CorpusError>, stats: &mut Sw
     // I1 — render_to_string must not panic. `catch_unwind` bounds a
     // single item's panic so the rest of the corpus keeps sweeping.
     let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| render_to_string(&text))) else {
-        if stats.panic_samples.len() < MAX_SAMPLES {
-            stats.panic_samples.push(item.label);
-        }
-        stats.panics += 1;
+        stats.record_in(TIER_I1_PANIC, item.label);
         return;
     };
 
     // I2 — no bare `［＃` outside afm-annotation wrappers.
     let leaked = count_leaked_markers(&html);
     if leaked > 0 {
-        if stats.leaked_marker_samples.len() < MAX_SAMPLES {
-            stats
-                .leaked_marker_samples
-                .push(format!("{}: {leaked} leak(s)", item.label));
-        }
-        stats.leaked_markers += 1;
+        stats.record_in(TIER_I2_LEAKED, format!("{}: {leaked} leak(s)", item.label));
     }
 
     // I4 — rendered HTML must be tag-balanced.
     let wf_errors = check_well_formed(&html);
     if !wf_errors.is_empty() {
-        if stats.malformed_samples.len() < MAX_SAMPLES {
-            let first = wf_errors
-                .first()
-                .map_or_else(|| "?".to_owned(), ToString::to_string);
-            stats.malformed_samples.push(format!(
-                "{}: {first} ({} total)",
-                item.label,
-                wf_errors.len()
-            ));
-        }
-        stats.malformed += 1;
+        let first = wf_errors
+            .first()
+            .map_or_else(|| "?".to_owned(), ToString::to_string);
+        stats.record_in(
+            TIER_I4_MALFORMED,
+            format!("{}: {first} ({} total)", item.label, wf_errors.len()),
+        );
     }
 
     // I3 — `serialize ∘ parse` must be a round-trip fixed point.
     check_round_trip(&text, &item.label, stats);
+
+    // I6-I10 — report-only invariants. Every predicate returns
+    // `Result<(), Violation>`; a failure is recorded to the tier
+    // counter for later promotion to a hard gate. Until then, stderr
+    // reports the count so developers can observe drift.
+    if let Err(v) = check_no_sentinel_leak(&html) {
+        stats.record_in(TIER_I6_SENTINEL_LEAK, format!("{}: {v}", item.label));
+    }
+    if let Err(v) = check_css_class_contract(&html) {
+        stats.record_in(TIER_I7_UNKNOWN_CSS_CLASS, format!("{}: {v}", item.label));
+    }
+    if let Err(v) = check_no_xss_marker(&html) {
+        stats.record_in(TIER_I8_XSS_MARKER, format!("{}: {v}", item.label));
+    }
+    if let Err(v) = check_annotation_wrapper_shape(&html) {
+        stats.record_in(TIER_I9_WRAPPER_SHAPE, format!("{}: {v}", item.label));
+    }
+    if let Err(v) = check_heading_integrity(&html) {
+        stats.record_in(TIER_I10_HEADING_INTEGRITY, format!("{}: {v}", item.label));
+    }
 
     stats.ok += 1;
 }
@@ -244,21 +343,13 @@ fn check_round_trip(text: &str, label: &str, stats: &mut SweepStats) {
     }));
     match round_trip_result {
         Ok((first, second)) if first != second => {
-            if stats.round_trip_diverge_samples.len() < MAX_SAMPLES {
-                // Record only the diff length so a differing 2-MB
-                // item doesn't blow up the report.
-                let diff_bytes = second.len().abs_diff(first.len());
-                stats
-                    .round_trip_diverge_samples
-                    .push(format!("{label}: diff {diff_bytes}B"));
-            }
-            stats.round_trip_diverge += 1;
+            // Record only the diff length so a differing 2-MB
+            // item doesn't blow up the report.
+            let diff_bytes = second.len().abs_diff(first.len());
+            stats.record_in(TIER_I3_ROUND_TRIP, format!("{label}: diff {diff_bytes}B"));
         }
         Err(_) => {
-            if stats.panic_samples.len() < MAX_SAMPLES {
-                stats.panic_samples.push(format!("{label} [round-trip]"));
-            }
-            stats.panics += 1;
+            stats.record_in(TIER_I1_PANIC, format!("{label} [round-trip]"));
         }
         _ => {}
     }
@@ -266,67 +357,68 @@ fn check_round_trip(text: &str, label: &str, stats: &mut SweepStats) {
 
 const MAX_SAMPLES: usize = 10;
 
+/// Per-invariant counter + bounded sample log.
+///
+/// Each tier records its own count and up to [`MAX_SAMPLES`] diagnostic
+/// strings. Extracted from the per-invariant field soup that `SweepStats`
+/// used to carry so adding a new invariant is a one-line tier insertion
+/// rather than three parallel fields plus matching Display arms.
+#[derive(Debug, Default)]
+struct Tier {
+    count: usize,
+    samples: Vec<String>,
+}
+
+impl Tier {
+    fn record(&mut self, sample: impl Into<String>) {
+        if self.samples.len() < MAX_SAMPLES {
+            self.samples.push(sample.into());
+        }
+        self.count += 1;
+    }
+}
+
 #[derive(Debug, Default)]
 struct SweepStats {
     ok: usize,
-    panics: usize,
-    panic_samples: Vec<String>,
-    leaked_markers: usize,
-    leaked_marker_samples: Vec<String>,
-    malformed: usize,
-    malformed_samples: Vec<String>,
-    round_trip_diverge: usize,
-    round_trip_diverge_samples: Vec<String>,
-    decode_errors: usize,
-    decode_error_samples: Vec<String>,
     io_skips: usize,
+    /// Invariant -> Tier. `BTreeMap` gives deterministic iteration for
+    /// testing without extra plumbing. Keys are the `TIER_*` constants
+    /// declared at the top of this file.
+    tiers: BTreeMap<&'static str, Tier>,
+}
+
+impl SweepStats {
+    /// Record one occurrence of `tier` with the given diagnostic sample.
+    fn record_in(&mut self, tier: &'static str, sample: impl Into<String>) {
+        self.tiers.entry(tier).or_default().record(sample);
+    }
+
+    fn count(&self, tier: &'static str) -> usize {
+        self.tiers.get(tier).map_or(0, |t| t.count)
+    }
+
+    fn samples(&self, tier: &'static str) -> &[String] {
+        const EMPTY: &[String] = &[];
+        self.tiers.get(tier).map_or(EMPTY, |t| t.samples.as_slice())
+    }
 }
 
 impl fmt::Display for SweepStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(
-            f,
-            "corpus sweep summary: {ok} passed, {panics} panics, \
-             {leaks} with leaked ［＃ markers, {malformed} malformed HTML, \
-             {diverge} round-trip divergences, {decode} decode errors, {io} I/O skips",
-            ok = self.ok,
-            panics = self.panics,
-            leaks = self.leaked_markers,
-            malformed = self.malformed,
-            diverge = self.round_trip_diverge,
-            decode = self.decode_errors,
-            io = self.io_skips,
-        )?;
-        if !self.panic_samples.is_empty() {
-            writeln!(f, "  first panic samples: {:?}", self.panic_samples)?;
+        write!(f, "corpus sweep summary: {ok} passed", ok = self.ok)?;
+        for &name in TIER_REPORT_ORDER {
+            let n = self.count(name);
+            if n > 0 {
+                write!(f, ", {n} {}", tier_label(name))?;
+            }
         }
-        if !self.leaked_marker_samples.is_empty() {
-            writeln!(
-                f,
-                "  first leaked-marker samples: {:?}",
-                self.leaked_marker_samples
-            )?;
-        }
-        if !self.malformed_samples.is_empty() {
-            writeln!(
-                f,
-                "  first malformed-HTML samples: {:?}",
-                self.malformed_samples
-            )?;
-        }
-        if !self.round_trip_diverge_samples.is_empty() {
-            writeln!(
-                f,
-                "  first round-trip-divergence samples: {:?}",
-                self.round_trip_diverge_samples
-            )?;
-        }
-        if !self.decode_error_samples.is_empty() {
-            writeln!(
-                f,
-                "  first decode-error samples: {:?}",
-                self.decode_error_samples
-            )?;
+        writeln!(f, ", {io} I/O skips", io = self.io_skips)?;
+        for &name in TIER_REPORT_ORDER {
+            let samples = self.samples(name);
+            if !samples.is_empty() {
+                writeln!(f, "  first {} samples: {samples:?}", tier_label(name))?;
+            }
         }
         Ok(())
     }

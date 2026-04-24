@@ -6,4 +6,7 @@
 //! pointer as the only surviving comrak/afm seam.
 
 pub mod bouten;
+pub mod classes;
 pub mod html;
+
+pub use classes::AFM_CLASSES;

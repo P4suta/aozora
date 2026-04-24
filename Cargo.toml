@@ -7,6 +7,7 @@ members = [
     "crates/afm-lexer",
     "crates/afm-corpus",
     "crates/afm-cli",
+    "crates/afm-test-utils",
     "crates/xtask",
 ]
 # afm-book is an mdbook site, not a Rust crate, so it is not a workspace member.
@@ -155,11 +156,12 @@ redundant_pub_crate     = "allow"
 
 [workspace.dependencies]
 # Internal crates
-afm-syntax   = { version = "0.1.0", path = "crates/afm-syntax" }
-afm-parser   = { version = "0.1.0", path = "crates/afm-parser" }
-afm-encoding = { version = "0.1.0", path = "crates/afm-encoding" }
-afm-lexer    = { version = "0.1.0", path = "crates/afm-lexer" }
-afm-corpus   = { version = "0.1.0", path = "crates/afm-corpus" }
+afm-syntax     = { version = "0.1.0", path = "crates/afm-syntax" }
+afm-parser     = { version = "0.1.0", path = "crates/afm-parser" }
+afm-encoding   = { version = "0.1.0", path = "crates/afm-encoding" }
+afm-lexer      = { version = "0.1.0", path = "crates/afm-lexer" }
+afm-corpus     = { version = "0.1.0", path = "crates/afm-corpus" }
+afm-test-utils = { path = "crates/afm-test-utils" }
 
 # comrak vendored fork (path, not crates.io).
 # Path is relative to the workspace root. `default-features = false` drops the
