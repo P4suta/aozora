@@ -1,0 +1,183 @@
+# Release workflow for Aozora Flavored Markdown (afm).
+#
+# Trigger on: annotated tags matching `v*`, plus manual `workflow_dispatch`
+# for dry runs. Builds the `afm` CLI on five target triples and uploads
+# the archives + SHA256SUMS to the GitHub Release.
+#
+# ADR-0002 scope exception: release builds run on native GitHub Actions
+# runners with the matching stable rustc, *not* inside the dev Docker
+# image. The Docker-only rule applies to development and CI; release
+# artefacts need to match each runner OS exactly, so we use the native
+# toolchain here. See CONTRIBUTING.md "How to release" for the full
+# rationale.
+#
+# Action pinning: we use `@v<major>` tags below rather than commit SHAs
+# because Dependabot (`.github/dependabot.yml`) only discovers and
+# SHA-pins new workflow files on its weekly sweep. Once that sweep has
+# run, the pins will be upgraded automatically and this file will align
+# with `ci.yml`'s commit-SHA convention.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive: tar.gz
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            archive: tar.gz
+            extra-deps: musl-tools
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            archive: zip
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install musl toolchain (linux-musl only)
+        if: matrix.extra-deps == 'musl-tools'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build afm
+        run: cargo build --release --target ${{ matrix.target }} --package afm-cli
+
+      - name: Assemble archive
+        id: archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # On tag push, use the tag directly; on manual dispatch, tag
+          # the artefact as a dispatch dry-run so it never collides with
+          # a real release.
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+              tag="v0.0.0-dispatch.$(date -u +%Y%m%d%H%M%S)"
+          else
+              tag="${GITHUB_REF_NAME}"
+          fi
+
+          name="afm-${tag}-${{ matrix.target }}"
+          staging="${RUNNER_TEMP}/${name}"
+          mkdir -p "${staging}"
+
+          bin_suffix=""
+          [[ "${{ matrix.archive }}" == "zip" ]] && bin_suffix=".exe"
+          cp "target/${{ matrix.target }}/release/afm${bin_suffix}" "${staging}/"
+
+          cp LICENSE-APACHE LICENSE-MIT NOTICE README.md "${staging}/"
+
+          cd "${RUNNER_TEMP}"
+          case "${{ matrix.archive }}" in
+              zip)
+                  7z a "${name}.zip" "${name}" > /dev/null
+                  artefact="${name}.zip"
+                  ;;
+              tar.gz)
+                  tar czf "${name}.tar.gz" "${name}"
+                  artefact="${name}.tar.gz"
+                  ;;
+          esac
+
+          # sha256 tool varies by OS: shasum exists on macOS + Linux;
+          # sha256sum exists on Linux + Git-for-Windows but not macOS.
+          if command -v shasum >/dev/null 2>&1; then
+              shasum -a 256 "${artefact}" > "${artefact}.sha256"
+          else
+              sha256sum "${artefact}" > "${artefact}.sha256"
+          fi
+
+          echo "archive=${RUNNER_TEMP}/${artefact}" >> "$GITHUB_OUTPUT"
+          echo "checksum=${RUNNER_TEMP}/${artefact}.sha256" >> "$GITHUB_OUTPUT"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.archive.outputs.name }}
+          path: |
+            ${{ steps.archive.outputs.archive }}
+            ${{ steps.archive.outputs.checksum }}
+          retention-days: 7
+
+  publish:
+    name: publish release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: afm-*
+          merge-multiple: true
+          path: artefacts
+
+      - name: Aggregate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd artefacts
+          # Produce a single SHA256SUMS file for the whole release so
+          # users can `sha256sum --check SHA256SUMS` in one go.
+          sha256sum afm-*.tar.gz afm-*.zip 2>/dev/null | sort > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Generate release notes with git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip all
+        env:
+          # git-cliff-action writes its output to this path.
+          OUTPUT: CHANGES.md
+
+      - name: Show release notes
+        run: cat CHANGES.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artefacts/afm-*.tar.gz
+            artefacts/afm-*.zip
+            artefacts/*.sha256
+            artefacts/SHA256SUMS
+          body_path: CHANGES.md
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true

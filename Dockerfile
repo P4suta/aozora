@@ -74,6 +74,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     CARGO_TARGET_DIR=/tmp/cargo-build \
     cargo install --locked --root /usr/local bacon
 
+# git-cliff for CHANGELOG generation. Same-reasoning as bacon: kept
+# in its own layer so version bumps don't invalidate the big install.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/tmp/cargo-build \
+    CARGO_TARGET_DIR=/tmp/cargo-build \
+    cargo install --locked --root /usr/local git-cliff
+
 # just (task runner) installed separately; upstream provides an install script
 RUN curl -fsSL https://just.systems/install.sh \
     | bash -s -- --to /usr/local/bin --tag 1.36.0

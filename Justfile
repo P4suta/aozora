@@ -62,11 +62,14 @@ spec-gfm:
 spec-aozora:
     {{_dev}} cargo nextest run --package afm-parser --test aozora_spec
 
-# Golden fixture: 罪と罰 (card 56656), the M0 acceptance test
+# Golden fixture: 罪と罰 (card 56656) — Tier-A acceptance gate
+# (panic-free + zero unconsumed ［＃ markers in the rendered HTML).
 spec-golden-56656:
     {{_dev}} cargo nextest run --package afm-parser --test golden_56656
 
-# 120-work Aozora regression corpus (Tier A + B are hard gates)
+# Aozora regression corpus (currently a thin xtask front-end; the actual
+# invariant sweep lives in `corpus-sweep` below). Kept for forward
+# compatibility with the xtask-driven corpus refresh flow.
 corpus *ARGS:
     {{_dev}} cargo run --package xtask --quiet -- corpus-test {{ARGS}}
 
@@ -83,7 +86,9 @@ corpus *ARGS:
 # Invariants checked (report/enforcement split documented in the test
 # itself at crates/afm-parser/tests/corpus_sweep.rs):
 #   I1 — no panic on any input (hard).
-#   I2 — no unconsumed ［＃ markers (report-only, M1 D pending).
+#   I2 — no unconsumed ［＃ markers (hard).
+#   I3 — serialize ∘ parse fixed point (hard).
+#   I4 — emitted HTML is tag-balanced (hard).
 #   I5 — SJIS decode stable (report-only).
 corpus-sweep:
     #!/usr/bin/env bash
@@ -365,6 +370,13 @@ book-linkcheck:
 # New Architecture Decision Record (MADR template)
 adr TITLE:
     {{_dev}} cargo run --package xtask --quiet -- new-adr {{TITLE}}
+
+# Regenerate CHANGELOG.md from Conventional-Commits history (see cliff.toml).
+# Uses git-cliff inside the dev container — the tool is provisioned by the
+# Dockerfile's cargo-tools stage, so `just changelog` should work on any
+# developer machine after the initial image build.
+changelog:
+    {{_dev}} git-cliff -o CHANGELOG.md
 
 # --- end-to-end (M3 onward) --------------------------------------------------
 

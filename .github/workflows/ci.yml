@@ -183,3 +183,23 @@ jobs:
               exit 1
             fi
           done < <(git log --format='%H %s' "$range")
+
+  msrv:
+    # Verify that the pinned MSRV (1.95.0, see `rust-toolchain.toml` and
+    # the `rust-version` in `Cargo.toml`) still builds the workspace.
+    # ADR-0002 scope exception: this job uses a native runner toolchain
+    # rather than the dev Docker image — the point of the check is to
+    # exercise a clean install of rustc 1.95.0 specifically, which the
+    # image has no mechanism to downgrade to.
+    name: msrv (rust 1.95.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: Install Rust 1.95.0 (MSRV)
+        # Tag pin for now; Dependabot will upgrade to a commit SHA on its
+        # first sweep, aligning with the rest of this file.
+        uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      - run: cargo check --workspace --all-targets

@@ -1,0 +1,83 @@
+# Publish the afm book + rustdoc to GitHub Pages.
+#
+# afm does not currently publish to crates.io, so docs.rs is not an
+# option for the API reference. Instead we build rustdoc locally,
+# layer it under the mdbook site at `/afm/api/`, and deploy the whole
+# thing to GitHub Pages.
+#
+# Layout produced:
+#   https://p4suta.github.io/afm/            ← mdbook (Welcome, Getting Started, …)
+#   https://p4suta.github.io/afm/api/        ← cargo doc --workspace --no-deps
+#
+# ADR-0002 scope exception (matching release.yml): docs builds use the
+# native runner toolchain rather than the dev Docker image, because the
+# Pages deploy actions expect artefacts on the runner filesystem.
+#
+# Action pinning: @v<major> tags are intentional pre-first-run;
+# Dependabot will upgrade them to commit SHAs on its first weekly sweep.
+
+name: docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deploy in flight at a time; queue the rest so we never
+# partially overwrite the Pages bucket.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: docs
+
+      - uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: latest
+
+      - name: Build rustdoc
+        run: cargo doc --workspace --no-deps --document-private-items
+
+      - name: Build mdbook
+        run: mdbook build crates/afm-book
+
+      - name: Assemble site
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp -r crates/afm-book/book/. site/
+          mkdir -p site/api
+          cp -r target/doc/. site/api/
+          # GitHub Pages otherwise runs Jekyll and hides paths like `_sources`.
+          touch site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
