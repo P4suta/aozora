@@ -1,0 +1,23 @@
+[package]
+name        = "aozora-render"
+description = "HTML / serialisation renderers for the aozora AST"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Move 3 façade phase: future home of the visitor-pattern renderer
+# stack, but for now this crate re-exports the existing HTML and
+# serialise implementations from aozora-parser. Migration to the
+# borrowed-AST visitor design (Innovation I-10 of the 0.2.0 plan)
+# happens once Move 2's fused engine produces borrowed AST natively.
+aozora-parser = { workspace = true, features = ["html"] }

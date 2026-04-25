@@ -1,0 +1,29 @@
+[package]
+name        = "aozora"
+description = "Aozora Bunko notation parser — single front door (Document + AozoraTree)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Move 3 façade phase: this is the public meta crate that downstream
+# consumers will eventually depend on as their single entry point. For
+# now Document<'src> wraps aozora-parser's ParseResult; once Move 2's
+# fused engine produces borrowed AST and Move 3's visitor renderer
+# lands, Document gains a real bumpalo arena and AozoraTree borrows
+# from it directly.
+aozora-parser   = { workspace = true }
+aozora-render   = { workspace = true }
+aozora-parallel = { workspace = true }
+aozora-lex      = { workspace = true }
+aozora-syntax   = { workspace = true }
+aozora-spec     = { workspace = true }

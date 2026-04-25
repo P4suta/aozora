@@ -19,6 +19,7 @@
 //! Plus a smaller exhaustive matrix of hand-curated inputs that
 //! anchor the proptest with deterministic regression targets.
 
+use aozora_test_utils::config::default_config;
 use aozora_test_utils::generators::*;
 use proptest::prelude::*;
 
@@ -168,7 +169,7 @@ fn long_decorative_rule_is_byte_identical() {
 // ----------------------------------------------------------------------
 
 proptest! {
-    #![proptest_config(aozora_test_utils::config::default_config())]
+    #![proptest_config(default_config())]
 
     #[test]
     fn aozora_fragment_is_byte_identical(s in aozora_fragment(120)) {

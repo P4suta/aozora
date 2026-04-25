@@ -12,6 +12,9 @@ members = [
     "crates/aozora-veb",
     "crates/aozora-scan",
     "crates/aozora-lex",
+    "crates/aozora-parallel",
+    "crates/aozora-render",
+    "crates/aozora",
 ]
 
 [workspace.package]
@@ -127,6 +130,9 @@ aozora-syntax     = { version = "0.1.0", path = "crates/aozora-syntax" }
 aozora-veb        = { path = "crates/aozora-veb" }
 aozora-scan       = { path = "crates/aozora-scan" }
 aozora-lex        = { version = "0.1.0", path = "crates/aozora-lex" }
+aozora-parallel   = { version = "0.1.0", path = "crates/aozora-parallel" }
+aozora-render     = { version = "0.1.0", path = "crates/aozora-render" }
+aozora            = { version = "0.1.0", path = "crates/aozora" }
 
 # Memory management
 bumpalo = "3.16"

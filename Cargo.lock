@@ -98,6 +98,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "aozora"
+version = "0.1.0"
+dependencies = [
+ "aozora-lex",
+ "aozora-parallel",
+ "aozora-parser",
+ "aozora-render",
+ "aozora-spec",
+ "aozora-syntax",
+]
+
+[[package]]
 name = "aozora-cli"
 version = "0.1.0"
 dependencies = [
@@ -163,6 +175,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aozora-parallel"
+version = "0.1.0"
+dependencies = [
+ "aozora-parser",
+]
+
+[[package]]
 name = "aozora-parser"
 version = "0.1.0"
 dependencies = [
@@ -183,6 +202,13 @@ dependencies = [
  "thiserror",
  "tracing",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "aozora-render"
+version = "0.1.0"
+dependencies = [
+ "aozora-parser",
 ]
 
 [[package]]

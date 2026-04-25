@@ -99,7 +99,7 @@ mod tests {
     /// `aozora_scan::ScalarScanner` MUST yield the exact same byte
     /// offsets that the legacy phase-1 tokeniser uses for its trigger
     /// positions. We don't have a public hook into phase 1's offsets,
-    /// so we cross-check at the LexOutput level: every PUA sentinel
+    /// so we cross-check at the [`LexOutput`] level: every PUA sentinel
     /// in `normalized` must correspond to a consumed source trigger.
     #[test]
     fn lex_produces_normalized_with_pua_sentinels_for_trigger_inputs() {

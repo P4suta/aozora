@@ -1,0 +1,24 @@
+[package]
+name        = "aozora-parallel"
+description = "Intra-document segment-parallel parse orchestrator for aozora"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Move 3 façade phase: this crate is the future home of the
+# segment/parallel orchestration logic, but for now it re-exports the
+# implementation that still lives in aozora-parser. This keeps the
+# workspace green during the multi-Move migration; the implementation
+# physically moves here once Move 4's fused engine + driver crates
+# settle the surrounding shape.
+aozora-parser = { workspace = true, features = ["parallel"] }
