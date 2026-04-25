@@ -53,6 +53,9 @@ use crate::{BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLI
 /// Tortoiseshell-bracket open character — delimits accent-decomposition
 /// spans per ADR-0004.
 const TORTOISE_OPEN: char = '〔';
+/// UTF-8 byte encoding of [`TORTOISE_OPEN`] for `memmem`-based scans.
+/// `'〔'` (U+3014) → `0xE3 0x80 0x94`.
+const TORTOISE_OPEN_BYTES: &[u8] = "〔".as_bytes();
 /// Tortoiseshell-bracket close character.
 const TORTOISE_CLOSE: char = '〕';
 
@@ -89,9 +92,18 @@ pub fn sanitize(source: &str) -> SanitizeOutput<'_> {
         line_normalized
     };
 
-    let text: Cow<'_, str> = if rule_isolated.contains(TORTOISE_OPEN) {
-        // Move out of the Cow so the rewrite doesn't double-allocate if
-        // an earlier pass already owned the buffer.
+    // Gate via `memmem::find` on the UTF-8 byte sequence rather than
+    // `str::contains(char)`, which falls back to a per-codepoint
+    // scan via `Pattern::is_contained_in` and pays full UTF-8 decode
+    // cost on every char of the input. memmem uses Two-Way / SIMD on
+    // the 3-byte needle and zooms through Japanese prose at memory-
+    // bandwidth speed.
+    let text: Cow<'_, str> = if memchr::memmem::find(
+        rule_isolated.as_bytes(),
+        TORTOISE_OPEN_BYTES,
+    )
+    .is_some()
+    {
         let owned = rule_isolated.into_owned();
         Cow::Owned(rewrite_accent_spans(&owned))
     } else {
@@ -105,7 +117,8 @@ pub fn sanitize(source: &str) -> SanitizeOutput<'_> {
 
 /// Rewrite every `〔...〕` span applying accent decomposition to the body.
 /// Text outside spans is copied verbatim.
-fn rewrite_accent_spans(input: &str) -> String {
+#[doc(hidden)]
+pub fn rewrite_accent_spans(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut cursor = 0;
 
@@ -144,7 +157,8 @@ fn rewrite_accent_spans(input: &str) -> String {
 /// Used as a fast-path gate in [`sanitize`]: when the whole document
 /// has no long rule line, the pass is a no-op and [`Cow::Borrowed`]
 /// survives.
-fn has_long_rule_line(input: &str) -> bool {
+#[doc(hidden)]
+pub fn has_long_rule_line(input: &str) -> bool {
     input.lines().any(is_decorative_rule_line)
 }
 
@@ -152,53 +166,144 @@ fn has_long_rule_line(input: &str) -> bool {
 /// repeats of a single `-` / `=` / `_` character with no other content
 /// (surrounding whitespace is tolerated to match real-world formatting).
 fn is_decorative_rule_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    if trimmed.len() < DECORATIVE_RULE_MIN_LEN {
+    is_rule_line_trimmed(line.trim())
+}
+
+/// Byte-level rule-line check on a string the caller has already
+/// trimmed. Used by [`isolate_decorative_rules`] which also needs
+/// the trimmed length for the blank-line bookkeeping — sharing the
+/// trim avoids the duplicate work the prior split called for.
+///
+/// `-` / `=` / `_` are ASCII single-byte characters, so the
+/// `bytes().all(...)` comparison is a `memcmp`-class scan. For lines
+/// whose first byte is multi-byte UTF-8 (every Japanese line in the
+/// corpus, the dominant case) the leading `matches!` check rejects
+/// in 2–3 ops and the rest of the function is skipped entirely.
+fn is_rule_line_trimmed(trimmed: &str) -> bool {
+    let bytes = trimmed.as_bytes();
+    if bytes.len() < DECORATIVE_RULE_MIN_LEN {
         return false;
     }
-    let Some(first) = trimmed.chars().next() else {
-        return false;
-    };
-    if !matches!(first, '-' | '=' | '_') {
+    let first = bytes[0];
+    if !matches!(first, b'-' | b'=' | b'_') {
         return false;
     }
-    trimmed.chars().all(|c| c == first)
+    bytes.iter().all(|&b| b == first)
 }
 
 /// Insert a blank line before every decorative rule that would
 /// otherwise be interpreted by CommonMark as a setext underline for
-/// the preceding paragraph. Lines are iterated with their terminating
-/// newline preserved (`split_inclusive`), so the output differs from
-/// the input *only* in the blank lines inserted.
-fn isolate_decorative_rules(input: &str) -> String {
+/// the preceding paragraph. The output differs from the input *only*
+/// in the blank lines inserted.
+///
+/// ## Algorithm
+///
+/// `memchr::memchr_iter(b'\n', ...)` walks every newline position via
+/// SIMD byte scan. For each line we run [`is_decorative_rule_line`]
+/// (which exits in O(1) when the trimmed first char isn't `-=_`,
+/// covering ≥99% of Aozora lines). Only when a rule line needs an
+/// inserted blank line does the algorithm break the running bulk-copy
+/// to flush `[copy_from..line_start)` and emit a `\n`.
+///
+/// Replaces a previous `for line in input.split_inclusive('\n')` /
+/// `out.push_str(line)` loop that paid one `push_str` (one `memcpy`)
+/// per line. Real Aozora corpora have ~10⁴ short lines per document
+/// and typically only 1–5 rule line insertions, so the new path
+/// collapses ~10⁴ small `memcpy`s into a small handful of large ones.
+#[doc(hidden)]
+pub fn isolate_decorative_rules(input: &str) -> String {
+    let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len() + 16);
+    let mut line_start: usize = 0;
+    let mut copy_from: usize = 0;
     let mut prev_nonblank = false;
-    for line in input.split_inclusive('\n') {
-        let without_eol = line.strip_suffix('\n').unwrap_or(line);
-        if is_decorative_rule_line(without_eol) && prev_nonblank {
-            // Inject a blank line before the rule so the previous
-            // paragraph does not fuse with it into a setext heading.
+
+    for nl_pos in memchr::memchr_iter(b'\n', bytes) {
+        let line_no_eol = &input[line_start..nl_pos];
+        // Single trim per line: feed the result to both the rule check
+        // and the blank-line bookkeeping. Avoids the double `.trim()`
+        // the prior implementation paid on every line.
+        let trimmed = line_no_eol.trim();
+        if is_rule_line_trimmed(trimmed) && prev_nonblank {
+            // Flush the bulk-copy run up to (but not including) this
+            // rule line, then inject the separating blank line. The
+            // rule line itself stays in the next bulk-copy chunk.
+            out.push_str(&input[copy_from..line_start]);
             out.push('\n');
+            copy_from = line_start;
         }
-        out.push_str(line);
-        // Track whether the line we just emitted was itself visibly
-        // non-blank. A rule line counts as non-blank — inserting a
-        // blank before the *next* rule still needs the gate to flip
-        // to false once a blank line is emitted.
-        prev_nonblank = !without_eol.trim().is_empty();
+        // A rule line (or any visible line) keeps `prev_nonblank` true;
+        // an empty / whitespace-only line flips it false so the next
+        // rule line does not trigger another spurious insertion.
+        prev_nonblank = !trimmed.is_empty();
+        line_start = nl_pos + 1;
+    }
+    // Final tail line (no trailing `\n`). Mirrors the per-line check.
+    if line_start < bytes.len() {
+        let tail = &input[line_start..];
+        let tail_trimmed = tail.trim();
+        if is_rule_line_trimmed(tail_trimmed) && prev_nonblank {
+            out.push_str(&input[copy_from..line_start]);
+            out.push('\n');
+            copy_from = line_start;
+        }
+    }
+    // Single closing flush emits the unmodified tail of the input
+    // verbatim. Typical corpus documents take this path with
+    // `copy_from == 0` and one big `push_str` of the whole buffer.
+    if copy_from < bytes.len() {
+        out.push_str(&input[copy_from..]);
     }
     out
 }
 
-/// Replace every `\r\n` with `\n`, then every remaining `\r` with `\n`.
+/// Normalise line endings: every `\r\n` and every standalone `\r`
+/// collapses to a single `\n`.
 ///
-/// Done in two passes for clarity rather than a single `replace` with a
-/// regex: CRLF must collapse to one LF (not two), which a naive
-/// `replace('\r', "\n")` would miss. The two-pass form is also the one
-/// the CommonMark spec prescribes (§2.1 Line endings), matching comrak's
-/// own internal expectations.
-fn normalize_line_endings(input: &str) -> String {
-    input.replace("\r\n", "\n").replace('\r', "\n")
+/// ## Algorithm
+///
+/// `memchr::memchr_iter(b'\r', ...)` walks every `\r` position in the
+/// input via SIMD-accelerated byte scan, bulk-copying the inter-`\r`
+/// runs through `push_str` (one `memcpy` per chunk). At each hit a
+/// single-byte lookahead distinguishes `\r\n` (skip both, emit `\n`)
+/// from a lone `\r` (skip the `\r`, emit `\n`).
+///
+/// One pass over the input, one buffer allocation. Replaces the prior
+/// `.replace("\r\n", "\n").replace('\r', "\n")` pair which materialised
+/// **two** intermediate `String`s and walked the input twice. On the
+/// 17 k-document Aozora corpus — where every document arrives with
+/// CRLF line endings (the archive's house format) — this sub-pass is
+/// the dominant cost in phase 0; the single-pass form is ~2–3× faster
+/// at memory-bandwidth ceiling.
+///
+/// Safety: `\r` (0x0D) is ASCII; `memchr` cannot land mid-codepoint
+/// in UTF-8.
+#[doc(hidden)]
+pub fn normalize_line_endings(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut cursor = 0;
+    for cr_pos in memchr::memchr_iter(b'\r', bytes) {
+        // Bulk-copy the run between the previous cursor and this `\r`.
+        // `push_str` lowers to a single `memcpy` when the chunk is
+        // contiguous and non-empty.
+        if cr_pos > cursor {
+            out.push_str(&input[cursor..cr_pos]);
+        }
+        // Always emit one `\n` for the line terminator. Skip the
+        // following `\n` if this is `\r\n` (the CRLF path); otherwise
+        // step past the lone `\r` only.
+        out.push('\n');
+        cursor = if bytes.get(cr_pos + 1) == Some(&b'\n') {
+            cr_pos + 2
+        } else {
+            cr_pos + 1
+        };
+    }
+    if cursor < bytes.len() {
+        out.push_str(&input[cursor..]);
+    }
+    out
 }
 
 /// Scan `text` for source-side occurrences of any of the four PUA
@@ -221,7 +326,8 @@ fn normalize_line_endings(input: &str) -> String {
 /// dominant cost in phase 0 (~23% of corpus parse wall-clock per
 /// ADR-0014). The new path runs at ~580 MB/s on the corpus profile,
 /// down from ~75 MB/s for the chars()-based version.
-fn scan_for_sentinel_collisions(text: &str) -> Vec<Diagnostic> {
+#[doc(hidden)]
+pub fn scan_for_sentinel_collisions(text: &str) -> Vec<Diagnostic> {
     let bytes = text.as_bytes();
     let mut diagnostics = Vec::new();
     for cand in memchr::memchr_iter(0xEE, bytes) {

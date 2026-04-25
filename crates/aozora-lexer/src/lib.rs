@@ -81,6 +81,11 @@ pub mod token;
 
 pub use diagnostic::Diagnostic;
 pub use phase0_sanitize::{SanitizeOutput, sanitize};
+#[doc(hidden)]
+pub use phase0_sanitize::{
+    has_long_rule_line, isolate_decorative_rules, normalize_line_endings,
+    rewrite_accent_spans, scan_for_sentinel_collisions,
+};
 pub use phase1_events::tokenize;
 pub use phase2_pair::{PairEvent, PairKind, PairOutput, pair};
 pub use phase3_classify::{ClassifiedSpan, ClassifyOutput, SpanKind, classify};

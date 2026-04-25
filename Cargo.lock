@@ -119,6 +119,7 @@ dependencies = [
  "aozora-lexer",
  "aozora-syntax",
  "criterion",
+ "memchr",
 ]
 
 [[package]]
