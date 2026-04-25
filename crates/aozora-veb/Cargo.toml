@@ -1,0 +1,28 @@
+[package]
+name        = "aozora-veb"
+description = "Cache-friendly sorted-collection lookup for the aozora pipeline (Eytzinger layout, no_std)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+# Internal dev-only support crate. Not published to crates.io —
+# the registry depends on it via path, and the algorithm is general
+# enough that we'd want a separate strategic decision before exposing
+# it as a public crate.
+publish     = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# (none) — core algorithm is no_std + alloc only.
+
+[dev-dependencies]
+proptest  = { workspace = true }
+criterion = { workspace = true }

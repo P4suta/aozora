@@ -9,6 +9,7 @@ members = [
     "crates/aozora-corpus",
     "crates/aozora-cli",
     "crates/aozora-test-utils",
+    "crates/aozora-veb",
 ]
 
 [workspace.package]
@@ -121,6 +122,7 @@ large_enum_variant      = "allow"
 # Internal crates — paths within this workspace.
 aozora-spec       = { version = "0.1.0", path = "crates/aozora-spec" }
 aozora-syntax     = { version = "0.1.0", path = "crates/aozora-syntax" }
+aozora-veb        = { path = "crates/aozora-veb" }
 aozora-lexer      = { version = "0.1.0", path = "crates/aozora-lexer" }
 aozora-parser     = { version = "0.1.0", path = "crates/aozora-parser" }
 aozora-encoding   = { version = "0.1.0", path = "crates/aozora-encoding" }
