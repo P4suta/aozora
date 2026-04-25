@@ -22,6 +22,8 @@ unicode-segmentation = { workspace = true }
 miette               = { workspace = true }
 thiserror            = { workspace = true }
 tracing              = { workspace = true }
+# `parallel` feature pulls in rayon; sequential builds skip it.
+rayon                = { workspace = true, optional = true }
 
 [dev-dependencies]
 aozora-corpus     = { workspace = true }
@@ -31,9 +33,27 @@ proptest          = { workspace = true }
 pretty_assertions = { workspace = true }
 serde             = { workspace = true }
 serde_json        = { workspace = true }
+criterion         = { workspace = true }
+# Always available for examples / benches even when the parallel
+# feature is off (an example is "is rayon faster than sequential?").
+rayon             = { workspace = true }
+
+[[bench]]
+name    = "incremental_fastpath"
+harness = false
+
+[[bench]]
+name    = "parallel_parse"
+harness = false
 
 [features]
-default = ["html"]
+default = ["html", "parallel"]
 # HTML renderer. Enabled by default but kept behind a feature so downstream
 # consumers can parse + serialize without pulling in the renderer.
 html = []
+# Transparent intra-document parallel parse. With this feature on
+# (default), `parse()` automatically dispatches to the parallel path
+# for inputs above PARALLEL_THRESHOLD; smaller inputs and inputs with
+# a single segment go through the original sequential path. Turning
+# this off compiles out rayon entirely.
+parallel = ["dep:rayon"]

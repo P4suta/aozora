@@ -50,35 +50,9 @@ use aozora_syntax::Span;
 use crate::diagnostic::Diagnostic;
 use crate::token::{Token, TriggerKind};
 
-/// Categories of open/close delimiter pairs recognized by Phase 2.
-///
-/// [`TriggerKind`] values that appear only in isolation (`｜`, `＃`, `※`)
-/// do not have a corresponding [`PairKind`]; they become
-/// [`PairEvent::Solo`] in the output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum PairKind {
-    /// `［ … ］` (U+FF3B / U+FF3D). The annotation-body container —
-    /// always a bracket pair, with or without the leading `＃`.
-    Bracket,
-
-    /// `《 … 》` (U+300A / U+300B). Ruby reading.
-    Ruby,
-
-    /// `《《 … 》》`. Double-bracket bouten. Open/close are already
-    /// merged into single trigger tokens in Phase 1, so the stack
-    /// treats them as an independent `PairKind` (a stray inner `》`
-    /// never closes a `《《`).
-    DoubleRuby,
-
-    /// `〔 … 〕` (U+3014 / U+3015). Accent-decomposition segment per
-    /// ADR-0004.
-    Tortoise,
-
-    /// `「 … 」` (U+300C / U+300D). Quoted literal inside annotation
-    /// bodies (e.g. `［＃「青空」に傍点］`).
-    Quote,
-}
+// `PairKind` lives in `aozora-spec`; re-exported here for backward
+// compatibility through the 0.1 → 0.2 transition.
+pub use aozora_spec::PairKind;
 
 /// One event in the Phase 2 output.
 ///

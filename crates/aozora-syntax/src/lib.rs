@@ -34,49 +34,11 @@ pub use extension::ContainerKind;
 
 /// Byte-range span into the original source document.
 ///
-/// `u32` (rather than `usize`) caps the addressable source at 4 GiB, which is
-/// roughly 4 000× the largest plausible Aozora Bunko work — and halves span size on
-/// 64-bit targets, which compounds across the thousands of nodes a long novel
-/// produces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Span {
-    pub start: u32,
-    pub end: u32,
-}
-
-impl Span {
-    #[must_use]
-    pub const fn new(start: u32, end: u32) -> Self {
-        Self { start, end }
-    }
-
-    #[must_use]
-    pub const fn len(self) -> u32 {
-        self.end - self.start
-    }
-
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        self.start == self.end
-    }
-
-    /// Slice the source buffer by this span. Assumes `self` was produced by the
-    /// parser and therefore sits on UTF-8 boundaries.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `self` does not align to UTF-8 char boundaries in `source`.
-    /// Parser-produced spans always do; a panic here signals a bug upstream.
-    #[must_use]
-    pub fn slice(self, source: &str) -> &str {
-        let start = self.start as usize;
-        let end = self.end as usize;
-        source
-            .get(start..end)
-            .expect("span must align to UTF-8 char boundaries in source")
-    }
-}
+/// Re-exported from [`aozora_spec::Span`] — see that module for the
+/// canonical definition. Pinned here because every AST type below
+/// references `Span` and downstream consumers historically import it
+/// from this crate.
+pub use aozora_spec::Span;
 
 /// Every afm-specific AST node. Embedded into comrak's `NodeValue` tree as a single
 /// `NodeValue::Aozora(AozoraNode)` variant so the upstream diff stays at one line.

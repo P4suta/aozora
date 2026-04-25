@@ -36,6 +36,9 @@
 
 pub mod aozora;
 pub mod html;
+pub mod incremental;
+pub mod parallel;
+pub mod segment;
 pub mod serialize;
 
 #[doc(hidden)]
@@ -45,6 +48,11 @@ pub use aozora_lexer::{
     self as lexer, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic,
     INLINE_SENTINEL, PlaceholderRegistry, lex,
 };
+pub use incremental::{
+    EditError, IncrementalDecision, IncrementalOutcome, TextEdit, apply_edits, parse_incremental,
+};
+pub use parallel::{SegmentParse, merge_segments, parse_segment, parse_sequential};
+pub use segment::identify_segments;
 pub use serialize::{serialize, serialize_from_artifacts};
 
 /// Output of [`parse`]: the lexer diagnostics and the
@@ -89,16 +97,27 @@ pub struct ParseArtifacts {
 /// Runs [`aozora_lexer::lex`] and packages the result into a
 /// [`ParseResult`]. The lexer is the only Aozora recogniser in the
 /// pipeline (ADR-0001).
+///
+/// # Parallelism
+///
+/// With the `parallel` feature on (default), inputs above
+/// [`parallel::PARALLEL_THRESHOLD`] are dispatched to a paragraph-
+/// segmented parallel path that runs `lex` over independent segments
+/// in a rayon thread pool, then merges the per-segment outputs. The
+/// dispatch is transparent: result shape, byte offsets, normalized
+/// text, registry positions, and diagnostic spans are byte-equivalent
+/// to the sequential path. Inputs below the threshold or producing a
+/// single segment go through the sequential path with zero rayon
+/// overhead.
 #[must_use]
 pub fn parse(input: &str) -> ParseResult {
-    let lex_out = lex(input);
-    ParseResult {
-        diagnostics: lex_out.diagnostics,
-        artifacts: ParseArtifacts {
-            normalized: lex_out.normalized,
-            registry: lex_out.registry,
-        },
+    #[cfg(feature = "parallel")]
+    {
+        if input.len() >= parallel::PARALLEL_THRESHOLD {
+            return parallel::parse_parallel(input);
+        }
     }
+    parallel::parse_sequential_inner(input)
 }
 
 #[cfg(test)]

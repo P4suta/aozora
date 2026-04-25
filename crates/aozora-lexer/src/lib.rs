@@ -59,15 +59,13 @@
 
 #![forbid(unsafe_code)]
 
-/// Private-Use-Area character reserved as the inline Aozora placeholder
-/// in normalized text. See module docs.
-pub const INLINE_SENTINEL: char = '\u{E001}';
-/// Private-Use-Area character reserved as the block-leaf line sentinel.
-pub const BLOCK_LEAF_SENTINEL: char = '\u{E002}';
-/// Private-Use-Area character reserved as the paired-container open line sentinel.
-pub const BLOCK_OPEN_SENTINEL: char = '\u{E003}';
-/// Private-Use-Area character reserved as the paired-container close line sentinel.
-pub const BLOCK_CLOSE_SENTINEL: char = '\u{E004}';
+// PUA sentinel constants moved to `aozora-spec`. Re-exported here so
+// the existing `aozora_lexer::INLINE_SENTINEL` etc. import paths keep
+// working through the 0.1 → 0.2 transition (Move 1.2 compatibility
+// shim).
+pub use aozora_spec::{
+    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
+};
 
 pub mod diagnostic;
 mod phase0_sanitize;
@@ -106,6 +104,14 @@ pub struct LexOutput {
     pub registry: PlaceholderRegistry,
     /// Non-fatal observations accumulated across Phase 0..6.
     pub diagnostics: Vec<Diagnostic>,
+    /// Byte length of the Phase 0-sanitized intermediate. Equals the
+    /// input source length except where accent decomposition (only
+    /// fires inside `〔...〕` spans) shifts byte counts. Diagnostic
+    /// `Span` byte offsets are relative to *this* sanitized buffer,
+    /// so external consumers that need to merge or split `LexOutput`s —
+    /// e.g. `aozora_parser::parse_parallel` — track this length to
+    /// correctly shift spans across segment boundaries.
+    pub sanitized_len: u32,
 }
 
 /// Run the lexer pipeline over `source`.
@@ -124,6 +130,13 @@ pub struct LexOutput {
 /// `aozora_encoding::gaiji::lookup`. `SourceMap` construction is not
 /// yet layered in and would fold into this entrypoint without
 /// changing the shape of [`LexOutput`].
+///
+/// # Panics
+///
+/// Panics if `sanitize(source)` produces a buffer larger than
+/// `u32::MAX` bytes (4 GB) — [`LexOutput::sanitized_len`] is `u32`
+/// to match the [`Span`] field width used throughout the diagnostic
+/// path. In practice this bound is never hit on aozora-format text.
 #[must_use]
 pub fn lex(source: &str) -> LexOutput {
     let sanitized = sanitize(source);
@@ -138,10 +151,13 @@ pub fn lex(source: &str) -> LexOutput {
     normalize_out.diagnostics = diagnostics;
 
     let validated = validate(normalize_out);
+    let sanitized_len = u32::try_from(sanitized.text.len())
+        .expect("sanitized text fits in u32 (matches Span field width used by Diagnostic)");
     LexOutput {
         normalized: validated.normalized,
         registry: validated.registry,
         diagnostics: validated.diagnostics,
+        sanitized_len,
     }
 }
 

@@ -15,11 +15,18 @@ categories.workspace   = true
 workspace = true
 
 [dependencies]
+aozora-spec     = { workspace = true }
 aozora-syntax   = { workspace = true }
 aozora-encoding = { workspace = true }
 thiserror    = { workspace = true }
 miette       = { workspace = true }
+phf          = { workspace = true }
 
 [dev-dependencies]
-insta    = { workspace = true }
-proptest = { workspace = true }
+insta     = { workspace = true }
+proptest  = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name    = "classify_kaeriten"
+harness = false

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/aozora-spec",
     "crates/aozora-syntax",
     "crates/aozora-lexer",
     "crates/aozora-parser",
@@ -118,6 +119,7 @@ large_enum_variant      = "allow"
 
 [workspace.dependencies]
 # Internal crates — paths within this workspace.
+aozora-spec       = { version = "0.1.0", path = "crates/aozora-spec" }
 aozora-syntax     = { version = "0.1.0", path = "crates/aozora-syntax" }
 aozora-lexer      = { version = "0.1.0", path = "crates/aozora-lexer" }
 aozora-parser     = { version = "0.1.0", path = "crates/aozora-parser" }
@@ -154,6 +156,11 @@ tempfile = "3.27"
 # Observability
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Parallelism — workspace-default work-stealing thread pool. Used by
+# `aozora-parser`'s parallel parse path (gated on the `parallel`
+# feature, default on) and by batch tools (corpus_sweep, profile_corpus).
+rayon              = "1.11"
 
 # CLI
 clap = { version = "4.6.1", features = ["derive", "wrap_help", "env", "color", "cargo"] }

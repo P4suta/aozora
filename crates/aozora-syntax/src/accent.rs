@@ -34,9 +34,13 @@
 
 use std::borrow::Cow;
 
-/// The full accent decomposition table in table order (base letter group then
-/// marker as listed on the spec page). `ligatures` are probed first to honour
-/// the longest-match rule.
+/// The full accent decomposition table in spec-page order.
+///
+/// Public for downstream iteration (tests, doc-builders, corpus
+/// tooling). For runtime lookup, `decompose_fragment` uses the
+/// perfect-hash split tables ([`ACCENT_DIGRAPHS`] for the 110 two-byte
+/// entries; a 4-arm match for the four three-byte ligatures) — the
+/// linear `ACCENT_TABLE` scan is no longer on the hot path.
 pub const ACCENT_TABLE: &[(&str, char)] = &[
     // --- Ligatures (checked first: 3-char patterns beat the 2-char group) ---
     ("ae&", 'æ'),
@@ -191,9 +195,174 @@ pub const ACCENT_TABLE: &[(&str, char)] = &[
     ("Z'", 'Ź'),
 ];
 
-/// ASCII characters that act as accent markers in the spec. Used by the
-/// rewriter to cheaply skip past characters that *cannot* end a digraph.
+/// ASCII characters that act as accent markers in the spec.
+///
+/// Kept as a `&[u8]` slice for downstream consumers that want to
+/// enumerate the marker bytes; runtime membership checks go through
+/// the `u128` bitmap [`ACCENT_MARKER_MASK`] instead, which lowers to a
+/// single shift + AND.
 pub const ACCENT_MARKERS: &[u8] = b"'`^:~&,/_";
+
+/// 128-bit bitmap of [`ACCENT_MARKERS`] for branchless ASCII membership
+/// testing. Bit `n` is 1 iff byte `n` is an accent marker. Computed at
+/// compile time from [`ACCENT_MARKERS`] so the two stay in lockstep.
+const ACCENT_MARKER_MASK: u128 = {
+    let mut m: u128 = 0;
+    let bs = ACCENT_MARKERS;
+    let mut i = 0;
+    while i < bs.len() {
+        // All marker bytes are < 128 (ASCII). Compile-time-asserted by
+        // the const block below.
+        m |= 1u128 << bs[i];
+        i += 1;
+    }
+    m
+};
+
+const _: () = {
+    // Pin the marker set to ASCII; if a future spec edit adds a non-ASCII
+    // marker the bitmap shape must change (no longer fits in u128).
+    let bs = ACCENT_MARKERS;
+    let mut i = 0;
+    while i < bs.len() {
+        assert!(bs[i] < 128, "ACCENT_MARKERS must stay ASCII-only");
+        i += 1;
+    }
+};
+
+/// Branchless membership test against [`ACCENT_MARKERS`].
+///
+/// Compiles to `(b < 128) & ((MASK >> b) & 1)` — one cmp, one shift,
+/// one AND — no memory load, no loop, no branch. Replaces the prior
+/// `ACCENT_MARKERS.contains(&b)` linear scan over 9 bytes.
+#[inline]
+#[must_use]
+pub const fn is_accent_marker(b: u8) -> bool {
+    // `b as u32` to avoid `1u128 << 200` overflow if a non-ASCII byte
+    // were ever passed; the AND with the high mask is 0 there anyway,
+    // but the shift itself UB without the guard.
+    (b < 128) && ((ACCENT_MARKER_MASK >> b) & 1) != 0
+}
+
+/// 3-byte ligatures (ASCII keys → Latin char). Only four entries, so a
+/// `match` beats `phf::Map` here: the compiler lowers it to a small
+/// jump table, branch prediction nails the common ASCII miss path, and
+/// the `match` keeps the keys inlined as immediates rather than
+/// reaching out to a static array.
+#[inline]
+fn match_ligature(head: &[u8]) -> Option<char> {
+    debug_assert_eq!(head.len(), 3, "match_ligature requires exactly 3 bytes");
+    match head {
+        b"ae&" => Some('æ'),
+        b"AE&" => Some('Æ'),
+        b"oe&" => Some('œ'),
+        b"OE&" => Some('Œ'),
+        _ => None,
+    }
+}
+
+/// 2-byte digraphs as a compile-time perfect hash table. 110 entries,
+/// `&[u8]` keys (the 2 ASCII bytes), `char` values. `phf::Map::get` is
+/// O(1) and constant-comparison-bounded, replacing the 110-entry
+/// linear scan that the old `ACCENT_TABLE` lookup used.
+static ACCENT_DIGRAPHS: phf::Map<&'static [u8], char> = phf::phf_map! {
+    // s& is grouped as a "ligature" on the spec page but is 2 bytes;
+    // it lives here in the digraph map alongside the rest.
+    b"s&" => 'ß',
+    // --- 【a】 ---
+    b"a`" => 'à', b"a'" => 'á', b"a^" => 'â', b"a~" => 'ã',
+    b"a:" => 'ä', b"a&" => 'å', b"a_" => 'ā',
+    // --- 【c】 ---
+    b"c," => 'ç', b"c'" => 'ć', b"c^" => 'ĉ',
+    // --- 【d】 ---
+    b"d/" => 'đ',
+    // --- 【e】 ---
+    b"e`" => 'è', b"e'" => 'é', b"e^" => 'ê', b"e:" => 'ë',
+    b"e_" => 'ē', b"e~" => 'ẽ',
+    // --- 【g】 ---
+    b"g^" => 'ĝ',
+    // --- 【h】 ---
+    b"h^" => 'ĥ', b"h/" => 'ħ',
+    // --- 【i】 ---
+    b"i`" => 'ì', b"i'" => 'í', b"i^" => 'î', b"i:" => 'ï',
+    b"i_" => 'ī', b"i/" => 'ɨ', b"i~" => 'ĩ',
+    // --- 【j】 ---
+    b"j^" => 'ĵ',
+    // --- 【l】 ---
+    b"l/" => 'ł', b"l'" => 'ĺ',
+    // --- 【m】 ---
+    b"m'" => 'ḿ',
+    // --- 【n】 ---
+    b"n`" => 'ǹ', b"n~" => 'ñ', b"n'" => 'ń',
+    // --- 【o】 ---
+    b"o`" => 'ò', b"o'" => 'ó', b"o^" => 'ô', b"o~" => 'õ',
+    b"o:" => 'ö', b"o/" => 'ø', b"o_" => 'ō',
+    // --- 【r】 ---
+    b"r'" => 'ŕ',
+    // --- 【s】 ---
+    b"s'" => 'ś', b"s," => 'ş', b"s^" => 'ŝ',
+    // --- 【t】 ---
+    b"t," => 'ţ',
+    // --- 【u】 ---
+    b"u`" => 'ù', b"u'" => 'ú', b"u^" => 'û', b"u:" => 'ü',
+    b"u_" => 'ū', b"u&" => 'ů', b"u~" => 'ũ',
+    // --- 【y】 ---
+    b"y'" => 'ý', b"y:" => 'ÿ',
+    // --- 【z】 ---
+    b"z'" => 'ź',
+    // --- 【A】 ---
+    b"A`" => 'À', b"A'" => 'Á', b"A^" => 'Â', b"A~" => 'Ã',
+    b"A:" => 'Ä', b"A&" => 'Å', b"A_" => 'Ā',
+    // --- 【C】 ---
+    b"C," => 'Ç', b"C'" => 'Ć', b"C^" => 'Ĉ',
+    // --- 【D】 ---
+    b"D/" => 'Đ',
+    // --- 【E】 ---
+    b"E`" => 'È', b"E'" => 'É', b"E^" => 'Ê', b"E:" => 'Ë',
+    b"E_" => 'Ē', b"E~" => 'Ẽ',
+    // --- 【G】 ---
+    b"G^" => 'Ĝ',
+    // --- 【H】 ---
+    b"H^" => 'Ĥ',
+    // --- 【I】 ---
+    b"I`" => 'Ì', b"I'" => 'Í', b"I^" => 'Î', b"I:" => 'Ï',
+    b"I_" => 'Ī', b"I~" => 'Ĩ',
+    // --- 【J】 ---
+    b"J^" => 'Ĵ',
+    // --- 【L】 ---
+    b"L/" => 'Ł', b"L'" => 'Ĺ',
+    // --- 【M】 ---
+    b"M'" => 'Ḿ',
+    // --- 【N】 ---
+    b"N`" => 'Ǹ', b"N~" => 'Ñ', b"N'" => 'Ń',
+    // --- 【O】 ---
+    b"O`" => 'Ò', b"O'" => 'Ó', b"O^" => 'Ô', b"O~" => 'Õ',
+    b"O:" => 'Ö', b"O/" => 'Ø', b"O_" => 'Ō',
+    // --- 【R】 ---
+    b"R'" => 'Ŕ',
+    // --- 【S】 ---
+    b"S'" => 'Ś', b"S," => 'Ş', b"S^" => 'Ŝ',
+    // --- 【T】 ---
+    b"T," => 'Ţ',
+    // --- 【U】 ---
+    b"U`" => 'Ù', b"U'" => 'Ú', b"U^" => 'Û', b"U:" => 'Ü',
+    b"U_" => 'Ū', b"U&" => 'Ů', b"U~" => 'Ũ',
+    // --- 【Y】 ---
+    b"Y'" => 'Ý',
+    // --- 【Z】 ---
+    b"Z'" => 'Ź',
+};
+
+const _: () = {
+    // Pin runtime tables to canonical table size: 4 ligatures (in
+    // `match_ligature`) + 110 digraphs = 114 spec entries. Compile-time
+    // assert so a forgotten entry surfaces during build, not at the
+    // first runtime test.
+    assert!(
+        ACCENT_DIGRAPHS.len() == 110,
+        "ACCENT_DIGRAPHS must contain exactly 110 entries (114 spec − 4 ligatures)"
+    );
+};
 
 /// Decompose Aozora accent digraphs anywhere inside `fragment`.
 ///
@@ -219,7 +388,14 @@ pub fn decompose_fragment(fragment: &str) -> Cow<'_, str> {
     let bytes = fragment.as_bytes();
     // Early-out: if no accent marker byte appears at all, the output equals the
     // input bit-for-bit. Borrow to avoid allocation.
-    if !bytes.iter().any(|b| ACCENT_MARKERS.contains(b)) {
+    //
+    // The membership test goes through the [`ACCENT_MARKER_MASK`] u128
+    // bitmap, which lowers to one cmp + shift + AND per byte — the
+    // tightest path possible without SIMD. SIMD prefilter wouldn't help
+    // here: aozora text is overwhelmingly Japanese (3-byte UTF-8 with
+    // 0xE3 lead byte), so byte-level memchr-style searches don't reduce
+    // the candidate set.
+    if !bytes.iter().any(|b| is_accent_marker(*b)) {
         return Cow::Borrowed(fragment);
     }
 
@@ -246,27 +422,27 @@ pub fn decompose_fragment(fragment: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-/// Attempt to match a table entry starting at `bytes[i]`. Longest-first: try
-/// 3-byte ligatures before 2-byte digraphs. Returns `(consumed_bytes,
-/// replacement_char)` on match.
+/// Attempt to match a table entry starting at `bytes[i]`. Longest-first
+/// (the spec rule): try 3-byte ligatures before 2-byte digraphs.
+///
+/// - **3-byte path**: a 4-arm `match` against the four ligatures
+///   (`ae&`, `AE&`, `oe&`, `OE&`). `match_ligature` lowers to a tight
+///   jump-table-or-direct-compares form.
+/// - **2-byte path**: O(1) lookup in [`ACCENT_DIGRAPHS`], a `phf::Map`
+///   built at compile time over all 110 spec digraph entries.
+///
+/// Returns `(consumed_bytes, replacement_char)` on match.
+#[inline]
 fn try_match(bytes: &[u8], i: usize) -> Option<(usize, char)> {
-    // Ligature probes (ae&, AE&, oe&, OE&) — all 3 ASCII bytes.
-    if i + 3 <= bytes.len() {
-        let head = &bytes[i..i + 3];
-        for (pat, ch) in ACCENT_TABLE.iter().take_while(|(p, _)| p.len() == 3) {
-            if head == pat.as_bytes() {
-                return Some((3, *ch));
-            }
-        }
+    if i + 3 <= bytes.len()
+        && let Some(ch) = match_ligature(&bytes[i..i + 3])
+    {
+        return Some((3, ch));
     }
-    // Single-letter digraph probes. Skip table entries that aren't 2 bytes.
-    if i + 2 <= bytes.len() {
-        let head = &bytes[i..i + 2];
-        for (pat, ch) in ACCENT_TABLE.iter().filter(|(p, _)| p.len() == 2) {
-            if head == pat.as_bytes() {
-                return Some((2, *ch));
-            }
-        }
+    if i + 2 <= bytes.len()
+        && let Some(&ch) = ACCENT_DIGRAPHS.get(&bytes[i..i + 2])
+    {
+        return Some((2, ch));
     }
     None
 }

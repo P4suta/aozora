@@ -792,6 +792,15 @@ fn recognize_gaiji(
     if description.is_empty() {
         return None;
     }
+    // Reject descriptions that carry structural quote characters.
+    // The serializer wraps the description in `「…」` for round-trip,
+    // so a stray `」` (e.g. from the malformed input `※［＃」］`) would
+    // make `serialize ∘ parse` non-stable. Falling through to `None`
+    // here lets the higher-level classifier wrap the raw bracket in
+    // an `Annotation{Unknown}`, which round-trips byte-identical.
+    if description.contains(['「', '」']) {
+        return None;
+    }
 
     // Resolve the Unicode scalar at lex time via the static table in
     // afm-encoding so the downstream AST / renderer never has to
@@ -1316,14 +1325,12 @@ fn classify_inline_warichu(body: &str) -> Option<AozoraNode> {
 /// schema-uniform; per-shape styling is a CSS concern via attribute
 /// selectors on `afm-kaeriten` + content.
 fn classify_kaeriten(body: &str) -> Option<AozoraNode> {
-    // Kept sorted so a future migration to `binary_search` is a
-    // one-liner; today's 18 entries fit comfortably in a linear
-    // `contains` scan.
-    const CANONICAL: &[&str] = &[
-        "一", "丁", "三", "上", "下", "中", "丙", "乙", "二", "四", "甲", "レ",
-    ];
-    const COMPOUND: &[&str] = &["一レ", "上レ", "下レ", "中レ", "二レ", "三レ"];
-    if CANONICAL.contains(&body) || COMPOUND.contains(&body) {
+    // Length prefilter: every spec mark is exactly one CJK glyph
+    // (3 bytes UTF-8) or two CJK glyphs (6 bytes). `body.len()` is a
+    // free check; when it's neither 3 nor 6 we skip the hash entirely
+    // and fall through to the okurigana path. Saves a perfect-hash
+    // probe on every annotation that isn't a kaeriten.
+    if matches!(body.len(), 3 | 6) && KAERITEN_MARKS.contains(body) {
         return Some(AozoraNode::Kaeriten(Kaeriten { mark: body.into() }));
     }
     if is_okurigana_body(body) {
@@ -1331,6 +1338,25 @@ fn classify_kaeriten(body: &str) -> Option<AozoraNode> {
     }
     None
 }
+
+/// Compile-time perfect hash of every standardised kaeriten mark
+/// (canonical 12 + compound 6 = 18 entries). `phf::Set::contains`
+/// is O(1) and replaces the dual `&[&str]::contains` linear scan
+/// the prior implementation made.
+static KAERITEN_MARKS: phf::Set<&'static str> = phf::phf_set! {
+    // Canonical 12: single-glyph marks.
+    "一", "丁", "三", "上", "下", "中", "丙", "乙", "二", "四", "甲", "レ",
+    // Compound 6: two-glyph marks (ending in レ).
+    "一レ", "上レ", "下レ", "中レ", "二レ", "三レ",
+};
+
+const _: () = {
+    // Pin the count to the spec: 12 canonical + 6 compound = 18.
+    assert!(
+        KAERITEN_MARKS.len() == 18,
+        "KAERITEN_MARKS must contain exactly 18 entries (12 canonical + 6 compound)"
+    );
+};
 
 /// Whether `body` is the okurigana shape `（X）` where X is a short
 /// run of Japanese characters.
@@ -1344,12 +1370,27 @@ fn is_okurigana_body(body: &str) -> bool {
     let Some(inner) = body.strip_prefix('（').and_then(|s| s.strip_suffix('）')) else {
         return false;
     };
-    // Empty parens are not meaningful okurigana.
-    let char_count = inner.chars().count();
-    if !(1..=6).contains(&char_count) {
+    // Byte-length prefilter: every accepted okurigana char is a CJK
+    // glyph in {hiragana, katakana, half-width katakana, CJK unified}.
+    // Hiragana/katakana/CJK are 3 bytes UTF-8; half-width katakana
+    // is also 3 bytes (U+FF61..U+FF9F). So a 1..=6 char inner has
+    // byte length in `3..=18`. Any inner outside that range cannot
+    // satisfy `is_okurigana_char.all` and we skip the char decode.
+    if !(3..=18).contains(&inner.len()) {
         return false;
     }
-    inner.chars().all(is_okurigana_char)
+    // Single-pass fusion of `chars().count()` + `chars().all()`:
+    // count and class-check in one walk, with early-out at >6 chars
+    // or first non-conforming char. Replaces two iterations over
+    // the same byte stream.
+    let mut count = 0usize;
+    for c in inner.chars() {
+        count += 1;
+        if count > 6 || !is_okurigana_char(c) {
+            return false;
+        }
+    }
+    count >= 1
 }
 
 /// Character class accepted inside okurigana parens: hiragana,
