@@ -35,26 +35,24 @@ mod bindings {
 
     /// JS-facing handle to a parsed Aozora document.
     ///
-    /// Owns the source string (passed in from JS) plus the parse
-    /// result. Drop is automatic when the JS-side handle is GC'd.
+    /// Wraps an [`aozora::Document`] (which owns both the source and
+    /// the bumpalo arena that backs the borrowed AST). Drop is
+    /// automatic when the JS-side handle is GC'd.
     #[wasm_bindgen]
     pub struct Document {
-        source: String,
-        parse_result: aozora::ParseResult,
+        inner: aozora::Document,
     }
 
     #[wasm_bindgen]
     impl Document {
         /// Construct from a UTF-16 JS string. The string is copied
-        /// once into a Rust `String` and re-parsed; subsequent
-        /// renders reuse the parse output.
+        /// once into the Document's internal `Box<str>`; subsequent
+        /// renders reuse the bumpalo arena.
         #[wasm_bindgen(constructor)]
         #[must_use]
         pub fn new(source: String) -> Self {
-            let parse_result = aozora::parse(&source);
             Self {
-                source,
-                parse_result,
+                inner: aozora::Document::new(source),
             }
         }
 
@@ -62,30 +60,28 @@ mod bindings {
         #[wasm_bindgen]
         #[must_use]
         pub fn to_html(&self) -> String {
-            aozora::html::render_from_artifacts(&self.parse_result.artifacts)
+            self.inner.parse().to_html()
         }
 
         /// Re-emit Aozora source text from the parse tree.
         #[wasm_bindgen]
         #[must_use]
         pub fn serialize(&self) -> String {
-            aozora::serialize(&self.parse_result)
+            self.inner.parse().serialize()
         }
 
         /// Diagnostics as a JSON string. Empty parse → `"[]"`.
         #[wasm_bindgen]
         #[must_use]
         pub fn diagnostics_json(&self) -> String {
-            // Delegate to the same JSON shape `aozora-ffi` exposes,
-            // so JS / native callers see identical diagnostic schemas.
-            crate::diagnostics_json_view(&self.parse_result.diagnostics)
+            crate::diagnostics_json_view(self.inner.parse().diagnostics())
         }
 
         /// Source byte length. Useful for JS-side progress UI.
         #[wasm_bindgen]
         #[must_use]
         pub fn source_byte_len(&self) -> usize {
-            self.source.len()
+            self.inner.source().len()
         }
     }
 }

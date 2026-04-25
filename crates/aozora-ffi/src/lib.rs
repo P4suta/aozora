@@ -66,20 +66,13 @@ pub enum AozoraStatus {
 /// Opaque handle to a parsed Aozora document. Allocate via
 /// [`aozora_document_new`]; free via [`aozora_document_free`].
 ///
-/// The handle owns the parsed source string and the parse output;
-/// it is `Send` (callers may move it across threads) but not `Sync`
-/// (concurrent access from multiple threads is undefined).
+/// Wraps an [`aozora::Document`] (which owns both the source buffer
+/// and a bumpalo arena). On drop the arena releases every borrowed-AST
+/// allocation in a single step. `Send` (callers may move it across
+/// threads) but not `Sync` (concurrent access is undefined).
 #[derive(Debug)]
 pub struct AozoraDocument {
-    /// Owned source string. The parse output borrows from it for the
-    /// document's lifetime. Currently the legacy aozora_parser path
-    /// re-parses by ownership, so this field is a forward-looking
-    /// anchor for the borrowed-AST migration that arrives with
-    /// Move 2's fused engine.
-    #[allow(dead_code, reason = "anchor for borrowed-AST migration; see comment")]
-    source: String,
-    /// Parse output. Owned; freed when the handle drops.
-    parse_result: aozora::ParseResult,
+    inner: aozora::Document,
 }
 
 /// `(ptr, len, cap)` triple representing an owned `Vec<u8>` returned
@@ -124,11 +117,8 @@ pub unsafe extern "C" fn aozora_document_new(
         unsafe { out_doc.write(core::ptr::null_mut()) };
         return AozoraStatus::InvalidUtf8 as c_int;
     };
-    let source = source_str.to_owned();
-    let parse_result = aozora::parse(&source);
     let doc = Box::new(AozoraDocument {
-        source,
-        parse_result,
+        inner: aozora::Document::new(source_str.to_owned()),
     });
     // SAFETY: caller guarantees out_doc is writable.
     unsafe { out_doc.write(Box::into_raw(doc)) };
@@ -157,7 +147,7 @@ pub unsafe extern "C" fn aozora_document_to_html(
     }
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
-    let html = aozora::html::render_from_artifacts(&doc_ref.parse_result.artifacts);
+    let html = doc_ref.inner.parse().to_html();
     let bytes = into_owned_bytes(html.into_bytes());
     // SAFETY: caller guarantees out_html is writable.
     unsafe { out_html.write(bytes) };
@@ -185,11 +175,11 @@ pub unsafe extern "C" fn aozora_document_diagnostics_json(
     }
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
+    let tree = doc_ref.inner.parse();
     // The diagnostics include miette::SourceSpan fields that don't
     // implement Serialize; we project to a plain shape first.
-    let diags: Vec<DiagnosticView> = doc_ref
-        .parse_result
-        .diagnostics
+    let diags: Vec<DiagnosticView> = tree
+        .diagnostics()
         .iter()
         .map(DiagnosticView::from)
         .collect();

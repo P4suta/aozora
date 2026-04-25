@@ -1,110 +1,188 @@
-//! `Document<'src>` — the single owning handle to a parsed Aozora
-//! source buffer, and `AozoraTree<'src>` — the borrowed view a
-//! caller walks for output.
+//! `Document` — single owning handle to a parsed Aozora source
+//! buffer, and `AozoraTree<'a>` — borrowed view a caller walks for
+//! output rendering.
 //!
-//! ## Move 3 façade phase
+//! ## Plan B.4 — borrowed AST production surface
 //!
-//! Today both types are thin wrappers around
-//! [`aozora_parser::ParseResult`]. The lifetime parameter `'src`
-//! tracks the source string's lifetime as the future-state design
-//! requires; the wrapper does not (yet) own a bumpalo arena because
-//! the legacy `ParseResult` allocates with the global allocator. When
-//! Move 2's fused engine starts producing arena-backed
-//! [`aozora_syntax::borrowed::AozoraNode`] values, `Document` will
-//! gain the arena and `AozoraTree` will switch to borrowing from it
-//! — without changing this module's public API shape.
+//! `Document` owns both the source buffer and a [`bumpalo`]-backed
+//! [`Arena`]; [`Document::parse`] returns an [`AozoraTree<'_>`]
+//! that borrows from the arena via the `&self` lifetime. Owning
+//! source removes the self-referential-struct problem that would
+//! otherwise plague driver wrappers (FFI/WASM/Py): callers can hold
+//! a `Document` inside any wrapper without juggling source lifetimes.
+//!
+//! Every borrowed-AST allocation lives inside the arena, with the
+//! [`Interner`](aozora_syntax::borrowed::Interner) deduplicating
+//! repeated string content (Innovation I-7). Dropping the `Document`
+//! frees the entire tree in a single `Bump::reset` step; no per-node
+//! `Drop` runs.
+//!
+//! The legacy owned-AST [`ParseResult`] path remains available via
+//! [`Document::parse_owned`] for downstream callers that have not
+//! migrated yet — Plan B.5 retires that surface alongside
+//! `aozora-parser`.
 
+use core::fmt;
+
+use aozora_lex::{lex_into_arena, BorrowedLexOutput};
 use aozora_parser::ParseResult;
 use aozora_render::legacy::html::render_from_artifacts;
-use aozora_render::serialize as render_serialize;
+use aozora_render::legacy::serialize as legacy_serialize;
+use aozora_render::{html as borrowed_html, serialize as borrowed_serialize};
+use aozora_spec::Diagnostic;
+use aozora_syntax::borrowed::Arena;
 
 /// Single owning handle to a parsed Aozora source.
 ///
-/// `'src` is the lifetime of the source string this `Document`
-/// borrows. Consumers typically own the source themselves and pass
-/// it in via [`Document::new`]; the parser produces arena-allocated
-/// or source-borrowed structures whose lifetime is bounded by `'src`.
-#[derive(Debug)]
-pub struct Document<'src> {
-    source: &'src str,
+/// Owns both the source buffer and a [`bumpalo`]-backed [`Arena`].
+/// The `&self` lifetime parameterises every borrowed-AST view
+/// returned from [`Document::parse`]; consumers hold the tree only
+/// as long as they hold a `&Document` reference.
+pub struct Document {
+    source: Box<str>,
+    arena: Arena,
 }
 
-impl<'src> Document<'src> {
-    /// Wrap a source string in a `Document` ready for parsing.
+impl Document {
+    /// Wrap a source string in a `Document`. The source is copied
+    /// into a `Box<str>` so the document is fully self-contained
+    /// (no external lifetime).
     #[must_use]
-    pub fn new(source: &'src str) -> Self {
-        Self { source }
+    pub fn new(source: impl Into<Box<str>>) -> Self {
+        Self {
+            source: source.into(),
+            arena: Arena::new(),
+        }
     }
 
-    /// The source text this document borrows.
+    /// Wrap a source string with a pre-sized arena.
     #[must_use]
-    pub fn source(&self) -> &'src str {
-        self.source
+    pub fn with_arena_capacity(source: impl Into<Box<str>>, capacity_hint: usize) -> Self {
+        Self {
+            source: source.into(),
+            arena: Arena::with_capacity(capacity_hint),
+        }
     }
 
-    /// Parse the document, returning a tree view of the result.
-    ///
-    /// Today this delegates to the legacy [`aozora_parser::parse`]
-    /// pipeline; once Move 2 ships the fused engine the tree will
-    /// borrow from a bumpalo arena owned by `self`.
+    /// The source text owned by this document.
     #[must_use]
-    pub fn parse(&self) -> AozoraTree<'src> {
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Arena bytes currently committed. Diagnostic / benchmarking only.
+    #[must_use]
+    pub fn arena_bytes(&self) -> usize {
+        self.arena.allocated_bytes()
+    }
+
+    /// Parse the document, returning a borrowed-AST view bound to
+    /// `&self`'s lifetime.
+    #[must_use]
+    pub fn parse(&self) -> AozoraTree<'_> {
         AozoraTree {
-            source: self.source,
-            inner: aozora_parser::parse(self.source),
+            source: &self.source,
+            inner: lex_into_arena(&self.source, &self.arena),
+        }
+    }
+
+    /// Legacy owned-AST parse. Returned as the pre-Plan-B
+    /// [`ParseResult`] that wraps comrak's AST plus the lex registry.
+    /// Plan B.5 deprecates this entry; Plan B.6 removes it.
+    #[must_use]
+    pub fn parse_owned(&self) -> OwnedAozoraTree<'_> {
+        OwnedAozoraTree {
+            source: &self.source,
+            inner: aozora_parser::parse(&self.source),
         }
     }
 }
 
-/// Borrowed view into a parsed Aozora document.
-///
-/// Owns the legacy [`ParseResult`] internally (Move 3 façade); the
-/// rendering surface (`to_html`, `serialize`) walks the result
-/// without exposing the wrapping type.
-#[derive(Debug)]
-pub struct AozoraTree<'src> {
-    /// Source text this tree was parsed from. Borrowed back to
-    /// callers that want to slice spans without re-loading the file.
-    source: &'src str,
-    /// Underlying parse output. Crate-private — outside callers
-    /// reach for it via the renderer methods.
-    inner: ParseResult,
+impl fmt::Debug for Document {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Document")
+            .field("source_len", &self.source.len())
+            .field("arena_bytes", &self.arena.allocated_bytes())
+            .finish()
+    }
 }
 
-impl<'src> AozoraTree<'src> {
+/// Borrowed view into a parsed Aozora document (Plan B.4).
+///
+/// Wraps a [`BorrowedLexOutput`] whose normalized text and registry
+/// borrow from the parent [`Document`]'s arena. Renderer methods
+/// dispatch to `aozora_render`'s borrowed-AST implementations.
+#[derive(Debug)]
+pub struct AozoraTree<'a> {
+    source: &'a str,
+    inner: BorrowedLexOutput<'a>,
+}
+
+impl<'a> AozoraTree<'a> {
     /// The source text this tree was parsed from.
     #[must_use]
-    pub fn source(&self) -> &'src str {
+    pub fn source(&self) -> &'a str {
         self.source
     }
 
-    /// Diagnostics emitted during parsing. Empty on the happy path.
+    /// Diagnostics emitted during parsing.
     #[must_use]
-    pub fn diagnostics(&self) -> &[aozora_spec::Diagnostic] {
+    pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.inner.diagnostics
+    }
+
+    /// Borrow the underlying [`BorrowedLexOutput`].
+    #[must_use]
+    pub fn lex_output(&self) -> &BorrowedLexOutput<'a> {
+        &self.inner
     }
 
     /// Render the tree to a semantic-HTML5 string.
     #[must_use]
     pub fn to_html(&self) -> String {
-        // We use `render_from_artifacts` so the source is not re-parsed
-        // a second time inside the renderer; `render_to_string` would
-        // call `parse(input)` again.
+        borrowed_html::render_to_string(&self.inner)
+    }
+
+    /// Re-emit Aozora source text from the parsed tree.
+    #[must_use]
+    pub fn serialize(&self) -> String {
+        borrowed_serialize::serialize(&self.inner)
+    }
+}
+
+/// Legacy owned-AST view returned by [`Document::parse_owned`].
+#[derive(Debug)]
+pub struct OwnedAozoraTree<'a> {
+    source: &'a str,
+    inner: ParseResult,
+}
+
+impl<'a> OwnedAozoraTree<'a> {
+    /// The source text this tree was parsed from.
+    #[must_use]
+    pub fn source(&self) -> &'a str {
+        self.source
+    }
+
+    /// Diagnostics emitted during parsing.
+    #[must_use]
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.inner.diagnostics
+    }
+
+    /// Render via the legacy owned-AST renderer.
+    #[must_use]
+    pub fn to_html(&self) -> String {
         render_from_artifacts(&self.inner.artifacts)
     }
 
-    /// Re-emit Aozora source text from the parsed tree. Round-trips
-    /// to a fixed point after one parse-serialize cycle (ADR-0005
-    /// corpus invariant I3).
+    /// Serialize via the legacy owned-AST serializer.
     #[must_use]
     pub fn serialize(&self) -> String {
-        render_serialize(&self.inner)
+        legacy_serialize(&self.inner)
     }
 
-    /// The underlying [`ParseResult`]. Exposed for callers that need
-    /// to reach into the legacy shape during the Move 3 transition;
-    /// new code should prefer [`AozoraTree::to_html`] /
-    /// [`AozoraTree::serialize`] / [`AozoraTree::diagnostics`].
+    /// Unwrap into the underlying [`ParseResult`].
     #[must_use]
     pub fn into_parse_result(self) -> ParseResult {
         self.inner
@@ -123,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_exposes_source_back() {
+    fn parse_returns_borrowed_tree_with_same_source() {
         let s = "world";
         let d = Document::new(s);
         let t = d.parse();
@@ -131,32 +209,65 @@ mod tests {
     }
 
     #[test]
-    fn tree_diagnostics_empty_for_clean_input() {
+    fn diagnostics_empty_for_clean_input() {
         let d = Document::new("plain");
         let t = d.parse();
         assert!(t.diagnostics().is_empty());
     }
 
     #[test]
-    fn tree_diagnostics_populated_for_pua_collision() {
+    fn diagnostics_populated_for_pua_collision() {
         let d = Document::new("contains \u{E001} sentinel");
         let t = d.parse();
         assert!(!t.diagnostics().is_empty());
     }
 
     #[test]
+    fn to_html_matches_legacy_owned_path() {
+        let inputs = [
+            "Hello.",
+            "｜青梅《おうめ》",
+            "text［＃改ページ］more",
+        ];
+        for src in inputs {
+            let d = Document::new(src);
+            let borrowed = d.parse().to_html();
+            let owned = d.parse_owned().to_html();
+            assert_eq!(borrowed, owned, "html diverged for {src:?}");
+        }
+    }
+
+    #[test]
+    fn serialize_matches_legacy_owned_path() {
+        let inputs = [
+            "Hello.",
+            "｜青梅《おうめ》",
+            "text［＃改ページ］more",
+            "［＃ここから2字下げ］\nA\n［＃ここで字下げ終わり］",
+        ];
+        for src in inputs {
+            let d = Document::new(src);
+            let borrowed = d.parse().serialize();
+            let owned = d.parse_owned().serialize();
+            assert_eq!(borrowed, owned, "serialize diverged for {src:?}");
+        }
+    }
+
+    #[test]
     fn round_trip_through_serialize_is_a_fixed_point() {
         let s = "｜青梅《おうめ》";
         let first = Document::new(s).parse().serialize();
-        let second = Document::new(&first).parse().serialize();
+        let second = Document::new(first.clone()).parse().serialize();
         assert_eq!(first, second, "round-trip must be a fixed point");
     }
 
     #[test]
-    fn into_parse_result_yields_underlying_data() {
-        let d = Document::new("x");
-        let t = d.parse();
-        let pr = t.into_parse_result();
-        assert_eq!(pr.artifacts.normalized, "x");
+    fn arena_grows_with_source_size() {
+        let small = Document::new("a");
+        let _ = small.parse();
+        let big_src = "｜青梅《おうめ》".repeat(100);
+        let big = Document::new(big_src);
+        let _ = big.parse();
+        assert!(big.arena_bytes() > small.arena_bytes());
     }
 }

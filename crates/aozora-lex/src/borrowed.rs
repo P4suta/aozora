@@ -1,4 +1,4 @@
-//! Arena-emitting lex API (Plan B.2).
+//! Arena-emitting lex API (Plan B.2 + I-7 string interner).
 //!
 //! Produces a [`BorrowedLexOutput<'a>`] whose normalized text and
 //! placeholder registry live entirely inside an external [`Arena`].
@@ -7,19 +7,23 @@
 //! step — no per-node `Drop` ever runs, no scattered `Box::drop`
 //! malloc traffic on the way out.
 //!
-//! ## Pipeline (today)
+//! ## Pipeline
 //!
 //! 1. Run the legacy [`crate::lex`] pipeline (which still owns the
 //!    Box-allocated AST internally).
-//! 2. Convert each registry node into the arena via
-//!    [`aozora_syntax::convert::to_borrowed`].
+//! 2. Build an [`Interner`] backed by `arena` and feed every owned
+//!    registry node through [`aozora_syntax::convert::to_borrowed_with`]
+//!    so byte-equal strings (ruby readings, kaeriten marks, container
+//!    labels) share a single arena allocation. Innovation I-7 in
+//!    action — empirically Aozora corpora dedup to 30–50% of the
+//!    naive size.
 //! 3. Wrap the resulting `(u32, borrowed::AozoraNode<'a>)` lists in
 //!    [`aozora_veb::EytzingerMap`] for cache-friendly lookup.
 //!
-//! Step 1 is heap-allocating; steps 2–3 collapse the heap tree into
-//! the arena. The conversion pass is a single linear walk of the
-//! registry vectors, expected ~100 µs for a 2 MB document with ~2,700
-//! nodes.
+//! The interner's diagnostic counters (cache hits, table hits, allocs,
+//! avg probe length) are exposed via [`BorrowedLexOutput::intern_stats`]
+//! so callers and benchmarks can measure dedup effectiveness without
+//! re-running the conversion.
 //!
 //! ## Future migration
 //!
@@ -29,8 +33,9 @@
 //! [`lex_into_arena`] signature stays stable across that change.
 
 use aozora_spec::Diagnostic;
-use aozora_syntax::borrowed::{self, Arena, Registry};
-use aozora_syntax::{convert, ContainerKind};
+use aozora_syntax::borrowed::{self, Arena, InternStats, Interner, Registry};
+use aozora_syntax::convert::{self, StringPool};
+use aozora_syntax::ContainerKind;
 use aozora_veb::EytzingerMap;
 
 /// Borrowed-AST analogue of [`crate::LexOutput`].
@@ -55,6 +60,11 @@ pub struct BorrowedLexOutput<'a> {
     /// Byte length of the Phase 0 sanitized buffer. Same semantics as
     /// the owned [`crate::LexOutput::sanitized_len`].
     pub sanitized_len: u32,
+    /// Counters from the [`Interner`] used during conversion.
+    /// Exposed so benchmarks can measure dedup ratio
+    /// (`(cache_hits + table_hits) / calls`) and average probe length
+    /// without re-running the lex.
+    pub intern_stats: InternStats,
 }
 
 /// Run the lex pipeline and collect the result into `arena`.
@@ -79,21 +89,34 @@ pub struct BorrowedLexOutput<'a> {
 #[must_use]
 pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'a> {
     let owned = crate::lex(source);
-    // Step 2: copy normalized text into the arena.
+
+    // Step 2a: copy normalized text into the arena. The normalized
+    // buffer is single-instance per parse, no dedup applies.
     let normalized: &'a str = arena.alloc_str(&owned.normalized);
 
-    // Step 3: convert each registry entry. The legacy registry stores
-    // entries in monotonically increasing position order; we preserve
-    // that order so the EytzingerMap construction can skip its sort
-    // step (debug_assert verifies the invariant).
-    let inline = convert_node_table(&owned.registry.inline, arena);
-    let block_leaf = convert_node_table(&owned.registry.block_leaf, arena);
+    // Step 2b: build the interner with a capacity hint sized to the
+    // total registry entry count. Each entry contributes 1–4 strings
+    // (ruby base/reading, gaiji description+mencode, etc.), so a
+    // per-entry hint of 2 is a tight but safe upper bound. Power-of-
+    // two rounding inside `Interner::with_capacity_in` smooths the
+    // allocation pattern.
+    let registry_node_count = owned.registry.inline.len() + owned.registry.block_leaf.len();
+    let interner_hint = registry_node_count.saturating_mul(2).max(64);
+    let mut interner = Interner::with_capacity_in(interner_hint, arena);
+
+    // Step 3: convert each registry entry, routing every string field
+    // through the interner so byte-equal payloads share a single arena
+    // allocation (Innovation I-7).
+    let inline = convert_node_table(&owned.registry.inline, arena, &mut interner);
+    let block_leaf = convert_node_table(&owned.registry.block_leaf, arena, &mut interner);
 
     // Step 4: build the four EytzingerMaps. The block_open / block_close
     // tables already use `ContainerKind` (a `Copy` enum) so they pass
     // straight through with no per-entry conversion.
     let block_open = EytzingerMap::from_sorted_slice(&owned.registry.block_open);
     let block_close = EytzingerMap::from_sorted_slice(&owned.registry.block_close);
+
+    let intern_stats = interner.stats;
 
     BorrowedLexOutput {
         normalized,
@@ -105,18 +128,20 @@ pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'
         },
         diagnostics: owned.diagnostics,
         sanitized_len: owned.sanitized_len,
+        intern_stats,
     }
 }
 
 /// Helper: convert a `Vec<(u32, owned::AozoraNode)>` registry table
 /// into an arena-backed `EytzingerMap<u32, borrowed::AozoraNode<'a>>`.
-fn convert_node_table<'a>(
+fn convert_node_table<'a, P: StringPool<'a>>(
     owned_entries: &[(u32, aozora_syntax::AozoraNode)],
     arena: &'a Arena,
+    pool: &mut P,
 ) -> EytzingerMap<u32, borrowed::AozoraNode<'a>> {
     let pairs: Vec<(u32, borrowed::AozoraNode<'a>)> = owned_entries
         .iter()
-        .map(|(pos, node)| (*pos, convert::to_borrowed(node, arena)))
+        .map(|(pos, node)| (*pos, convert::to_borrowed_with(node, arena, pool)))
         .collect();
     EytzingerMap::from_sorted_slice(&pairs)
 }

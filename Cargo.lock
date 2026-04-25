@@ -116,6 +116,7 @@ dependencies = [
  "aozora",
  "aozora-corpus",
  "aozora-encoding",
+ "aozora-lex",
  "aozora-lexer",
  "aozora-syntax",
  "criterion",
@@ -126,6 +127,7 @@ name = "aozora-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aozora",
  "aozora-encoding",
  "aozora-lexer",
  "aozora-parser",
@@ -177,6 +179,7 @@ dependencies = [
  "aozora-spec",
  "aozora-syntax",
  "aozora-test-utils",
+ "aozora-veb",
  "criterion",
  "memchr",
  "proptest",
@@ -243,7 +246,13 @@ dependencies = [
 name = "aozora-render"
 version = "0.1.0"
 dependencies = [
+ "aozora-lex",
  "aozora-parser",
+ "aozora-spec",
+ "aozora-syntax",
+ "aozora-test-utils",
+ "pretty_assertions",
+ "proptest",
 ]
 
 [[package]]

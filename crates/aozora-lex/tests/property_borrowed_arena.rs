@@ -15,15 +15,19 @@
 //! 3. Diagnostic count.
 //! 4. Inline / block-leaf / block-open / block-close registry sizes.
 //!
-//! Plus per-entry node-variant equivalence (xml node name + is_block)
-//! across the inline and block-leaf tables — confirms the converter
-//! routes every variant correctly.
+//! Plus per-entry node-variant equivalence (`xml_node_name` +
+//! `is_block`) across the inline and block-leaf tables — confirms
+//! the converter routes every variant correctly.
 
 use aozora_syntax::borrowed::Arena;
 use aozora_test_utils::config::default_config;
 use aozora_test_utils::generators::*;
 use proptest::prelude::*;
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "single assertion stack — splitting would scatter the equivalence checks"
+)]
 fn assert_arena_equivalent(source: &str) {
     let arena = Arena::new();
     let owned = aozora_lex::lex(source);

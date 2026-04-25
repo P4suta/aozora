@@ -7,118 +7,212 @@
 //! produces owned trees natively, then converts into the arena so the
 //! public API surface is borrowed-only.
 //!
-//! Once Plan B finishes (owned types removed from the codebase),
-//! this module disappears with them — the lex layer will allocate
-//! directly into the arena.
+//! # String allocation strategy
+//!
+//! All string fields flow through a [`StringPool`] trait so callers
+//! can choose between two strategies:
+//!
+//! - [`DirectAlloc`] — every string copies into the arena once
+//!   (`arena.alloc_str`). Use when the input has no string-content
+//!   repetition or when conversion latency is paramount.
+//! - [`Interned`] — strings flow through an [`Interner`] (Innovation
+//!   I-7) so byte-equal content shares a single arena allocation.
+//!   Use for real-world Aozora corpora, where short ruby readings
+//!   (`の`, `に`, `を`, …), kaeriten marks, and container labels
+//!   repeat dozens to hundreds of times per document. The interner
+//!   has its own diagnostic counters so callers can measure dedup
+//!   rates and average probe length.
+//!
+//! Both strategies preserve byte-identical output (the same final
+//! `&str` content); only the underlying memory layout differs.
 //!
 //! # Cost
 //!
-//! Every string field copies once into the arena (`alloc_str`); every
-//! node payload copies once (`alloc`); slices flow through
-//! `alloc_slice_copy` which is a single `memcpy`. For a 2 MB document
-//! with ~2,700 nodes the conversion overhead is ~100 µs, well under
-//! the 20 ms parse cost it bridges. Native arena emission is the
-//! follow-up performance win (deferred to Plan B's later steps).
+//! Direct allocation is O(|s|) per string. The interner adds a
+//! constant-factor hash + probe (avg < 2 probes per call at typical
+//! load) but eliminates duplicate-byte allocations entirely on
+//! repeated content. Empirically Aozora corpora dedup to ~30–50%
+//! of the naive size.
 
 use crate as owned;
-use crate::borrowed::{self, Arena};
+use crate::borrowed::{self, Arena, Interner};
+
+/// Strategy for placing a `&str` into the arena.
+///
+/// Implemented by both [`DirectAlloc`] (one fresh `arena.alloc_str`
+/// per call) and [`Interned`] (deduplicates byte-equal content via
+/// an [`Interner`]). The converter is generic over this trait so the
+/// choice of strategy is per-call; the per-node walker code is
+/// shared.
+pub trait StringPool<'a> {
+    /// Place `s` into the underlying arena and return a stable
+    /// `&'a str` reference. Implementations differ on whether
+    /// repeated calls with byte-equal `s` return the same pointer.
+    fn place(&mut self, s: &str) -> &'a str;
+}
+
+/// One `arena.alloc_str` per call. No deduplication. Use when the
+/// input is known not to repeat strings, or when the per-call
+/// constant of an interner is not worth paying.
+#[derive(Debug)]
+pub struct DirectAlloc<'a> {
+    arena: &'a Arena,
+}
+
+impl<'a> DirectAlloc<'a> {
+    /// Wrap an arena reference as a no-dedup string pool.
+    #[must_use]
+    pub const fn new(arena: &'a Arena) -> Self {
+        Self { arena }
+    }
+}
+
+impl<'a> StringPool<'a> for DirectAlloc<'a> {
+    fn place(&mut self, s: &str) -> &'a str {
+        self.arena.alloc_str(s)
+    }
+}
+
+impl<'a> StringPool<'a> for Interner<'a> {
+    fn place(&mut self, s: &str) -> &'a str {
+        self.intern(s)
+    }
+}
 
 /// Convert an owned [`AozoraNode`](crate::AozoraNode) into a borrowed
 /// `borrowed::AozoraNode<'a>` allocated inside `arena`.
 ///
-/// All string and child-node payloads are copied into the arena; the
-/// returned tree is fully self-contained (no references to the input).
-/// Drop the arena to free the entire converted tree in one step.
+/// Convenience wrapper around [`to_borrowed_with`] that uses
+/// [`DirectAlloc`] (no string deduplication). For real-corpus
+/// throughput prefer [`to_borrowed_with`] with an [`Interner`].
 #[must_use]
-pub fn to_borrowed<'a>(node: &owned::AozoraNode, arena: &'a Arena) -> borrowed::AozoraNode<'a> {
+pub fn to_borrowed<'a>(
+    node: &owned::AozoraNode,
+    arena: &'a Arena,
+) -> borrowed::AozoraNode<'a> {
+    let mut pool = DirectAlloc::new(arena);
+    to_borrowed_with(node, arena, &mut pool)
+}
+
+/// Convert an owned `AozoraNode` into a borrowed equivalent, routing
+/// every string field through `pool`.
+///
+/// `pool` is an arena-bound [`StringPool`] strategy; pass
+/// [`DirectAlloc`] for one-alloc-per-string, or [`Interner`] for
+/// hash-table-based deduplication of byte-equal content.
+#[must_use]
+pub fn to_borrowed_with<'a, P: StringPool<'a>>(
+    node: &owned::AozoraNode,
+    arena: &'a Arena,
+    pool: &mut P,
+) -> borrowed::AozoraNode<'a> {
     use borrowed::AozoraNode as B;
     use owned::AozoraNode as O;
     match node {
         O::Ruby(r) => B::Ruby(arena.alloc(borrowed::Ruby {
-            base: convert_content(&r.base, arena),
-            reading: convert_content(&r.reading, arena),
+            base: convert_content_with(&r.base, arena, pool),
+            reading: convert_content_with(&r.reading, arena, pool),
             delim_explicit: r.delim_explicit,
         })),
         O::Bouten(b) => B::Bouten(arena.alloc(borrowed::Bouten {
             kind: b.kind,
-            target: convert_content(&b.target, arena),
+            target: convert_content_with(&b.target, arena, pool),
             position: b.position,
         })),
         O::TateChuYoko(t) => B::TateChuYoko(arena.alloc(borrowed::TateChuYoko {
-            text: convert_content(&t.text, arena),
+            text: convert_content_with(&t.text, arena, pool),
         })),
-        O::Gaiji(g) => B::Gaiji(arena.alloc(convert_gaiji(g, arena))),
+        O::Gaiji(g) => B::Gaiji(arena.alloc(convert_gaiji(g, pool))),
         O::Indent(i) => B::Indent(*i),
         O::AlignEnd(a) => B::AlignEnd(*a),
         O::Warichu(w) => B::Warichu(arena.alloc(borrowed::Warichu {
-            upper: convert_content(&w.upper, arena),
-            lower: convert_content(&w.lower, arena),
+            upper: convert_content_with(&w.upper, arena, pool),
+            lower: convert_content_with(&w.lower, arena, pool),
         })),
         O::Keigakomi(k) => B::Keigakomi(*k),
         O::PageBreak => B::PageBreak,
         O::SectionBreak(s) => B::SectionBreak(*s),
         O::AozoraHeading(h) => B::AozoraHeading(arena.alloc(borrowed::AozoraHeading {
             kind: h.kind,
-            text: convert_content(&h.text, arena),
+            text: convert_content_with(&h.text, arena, pool),
         })),
         O::HeadingHint(h) => B::HeadingHint(arena.alloc(borrowed::HeadingHint {
             level: h.level,
-            target: arena.alloc_str(&h.target),
+            target: pool.place(&h.target),
         })),
         O::Sashie(s) => B::Sashie(arena.alloc(borrowed::Sashie {
-            file: arena.alloc_str(&s.file),
-            caption: s.caption.as_ref().map(|c| convert_content(c, arena)),
+            file: pool.place(&s.file),
+            caption: s.caption.as_ref().map(|c| convert_content_with(c, arena, pool)),
         })),
         O::Kaeriten(k) => B::Kaeriten(arena.alloc(borrowed::Kaeriten {
-            mark: arena.alloc_str(&k.mark),
+            mark: pool.place(&k.mark),
         })),
-        O::Annotation(a) => B::Annotation(arena.alloc(convert_annotation(a, arena))),
+        O::Annotation(a) => B::Annotation(arena.alloc(convert_annotation(a, pool))),
         O::DoubleRuby(d) => B::DoubleRuby(arena.alloc(borrowed::DoubleRuby {
-            content: convert_content(&d.content, arena),
+            content: convert_content_with(&d.content, arena, pool),
         })),
         O::Container(c) => B::Container(*c),
     }
 }
 
 /// Convert an owned [`Content`](crate::Content) into the borrowed
-/// equivalent allocated inside `arena`.
+/// equivalent. Convenience wrapper that uses [`DirectAlloc`].
 #[must_use]
 pub fn convert_content<'a>(c: &owned::Content, arena: &'a Arena) -> borrowed::Content<'a> {
+    let mut pool = DirectAlloc::new(arena);
+    convert_content_with(c, arena, &mut pool)
+}
+
+/// Convert an owned [`Content`](crate::Content) into the borrowed
+/// equivalent, routing strings through `pool`. The segment list
+/// itself is copied via `alloc_slice_copy` (single arena memcpy).
+#[must_use]
+pub fn convert_content_with<'a, P: StringPool<'a>>(
+    c: &owned::Content,
+    arena: &'a Arena,
+    pool: &mut P,
+) -> borrowed::Content<'a> {
     match c {
-        owned::Content::Plain(s) => borrowed::Content::Plain(arena.alloc_str(s)),
+        owned::Content::Plain(s) => borrowed::Content::Plain(pool.place(s)),
         owned::Content::Segments(segs) => {
-            // Build the borrowed segment list in a temporary Vec, then
-            // bulk-copy via `alloc_slice_copy` so the slice ends up
-            // contiguous in the arena. Borrowed segments are `Copy`,
-            // satisfying the `T: Copy` bound on `alloc_slice_copy`.
             let new_segs: Vec<borrowed::Segment<'a>> =
-                segs.iter().map(|s| convert_segment(s, arena)).collect();
+                segs.iter().map(|s| convert_segment(s, arena, pool)).collect();
             borrowed::Content::Segments(arena.alloc_slice_copy(&new_segs))
         }
     }
 }
 
-fn convert_segment<'a>(s: &owned::Segment, arena: &'a Arena) -> borrowed::Segment<'a> {
+fn convert_segment<'a, P: StringPool<'a>>(
+    s: &owned::Segment,
+    arena: &'a Arena,
+    pool: &mut P,
+) -> borrowed::Segment<'a> {
     match s {
-        owned::Segment::Text(t) => borrowed::Segment::Text(arena.alloc_str(t)),
-        owned::Segment::Gaiji(g) => borrowed::Segment::Gaiji(arena.alloc(convert_gaiji(g, arena))),
+        owned::Segment::Text(t) => borrowed::Segment::Text(pool.place(t)),
+        owned::Segment::Gaiji(g) => borrowed::Segment::Gaiji(arena.alloc(convert_gaiji(g, pool))),
         owned::Segment::Annotation(a) => {
-            borrowed::Segment::Annotation(arena.alloc(convert_annotation(a, arena)))
+            borrowed::Segment::Annotation(arena.alloc(convert_annotation(a, pool)))
         }
     }
 }
 
-fn convert_gaiji<'a>(g: &owned::Gaiji, arena: &'a Arena) -> borrowed::Gaiji<'a> {
+fn convert_gaiji<'a, P: StringPool<'a>>(
+    g: &owned::Gaiji,
+    pool: &mut P,
+) -> borrowed::Gaiji<'a> {
     borrowed::Gaiji {
-        description: arena.alloc_str(&g.description),
+        description: pool.place(&g.description),
         ucs: g.ucs,
-        mencode: g.mencode.as_deref().map(|s| arena.alloc_str(s)),
+        mencode: g.mencode.as_deref().map(|s| pool.place(s)),
     }
 }
 
-fn convert_annotation<'a>(a: &owned::Annotation, arena: &'a Arena) -> borrowed::Annotation<'a> {
+fn convert_annotation<'a, P: StringPool<'a>>(
+    a: &owned::Annotation,
+    pool: &mut P,
+) -> borrowed::Annotation<'a> {
     borrowed::Annotation {
-        raw: arena.alloc_str(&a.raw),
+        raw: pool.place(&a.raw),
         kind: a.kind,
     }
 }

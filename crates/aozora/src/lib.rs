@@ -9,7 +9,7 @@
 //! use aozora::Document;
 //!
 //! let source = std::fs::read_to_string("crime_and_punishment.txt").unwrap();
-//! let doc = Document::new(&source);
+//! let doc = Document::new(source);
 //! let tree = doc.parse();
 //! let html = tree.to_html();
 //! println!("{html}");
@@ -37,7 +37,7 @@ pub use aozora_parser::{ParseArtifacts, ParseResult, parse};
 // reachable via `aozora_render::html` directly. Plan B.4 switches this
 // re-export over.
 pub use aozora_render::legacy::html;
-pub use aozora_render::{serialize, serialize_from_artifacts};
+pub use aozora_render::legacy::{serialize, serialize_from_artifacts};
 pub use aozora_spec::{Diagnostic, PairKind, Span, TriggerKind};
 
 mod document;

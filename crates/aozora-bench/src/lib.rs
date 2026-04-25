@@ -50,7 +50,7 @@ pub fn parse_corpus<P: AsRef<Path>>(
         match item {
             Ok(CorpusItem { bytes, .. }) => match decode_sjis(&bytes) {
                 Ok(text) => {
-                    let doc = Document::new(&text);
+                    let doc = Document::new(text.clone());
                     let tree = doc.parse();
                     // Touch the tree so the optimizer can't hoist
                     // the parse out — a real consumer reads
@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn build_synthetic_parses_without_panic() {
         let s = build_synthetic_aozora(4096);
-        let doc = Document::new(&s);
+        let doc = Document::new(s.clone());
         let tree = doc.parse();
         black_box(tree);
     }
@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn build_synthetic_emits_no_diagnostics_for_well_formed_input() {
         let s = build_synthetic_aozora(2048);
-        let doc = Document::new(&s);
+        let doc = Document::new(s.clone());
         let tree = doc.parse();
         assert!(
             tree.diagnostics().is_empty(),

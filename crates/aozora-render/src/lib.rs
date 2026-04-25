@@ -22,6 +22,7 @@
 mod bouten;
 pub mod html;
 pub mod render_node;
+pub mod serialize;
 
 /// Pre-Plan-B owned-AST renderers, re-exported from `aozora-parser`.
 ///
@@ -34,10 +35,14 @@ pub mod legacy {
     };
 }
 
-// Backwards-compat: prior crate revisions exposed `aozora-parser`'s
-// `html` / `serialize` directly under `aozora-render`. Keep the old
-// import paths working until Plan B.5 retires them.
-pub use legacy::{ParseArtifacts, ParseResult, serialize, serialize_from_artifacts};
+// Re-export the legacy owned-AST artifact types so downstream
+// (aozora meta crate) can still wire the pre-B.5 path while the
+// borrowed surface stabilises. The owned `serialize` and
+// `serialize_from_artifacts` functions live at
+// `aozora_render::legacy::serialize` / `legacy::serialize_from_artifacts`;
+// the bare `aozora_render::serialize` namespace is now the borrowed
+// module added in B.4.
+pub use legacy::{ParseArtifacts, ParseResult};
 
 #[cfg(test)]
 mod tests {
@@ -52,7 +57,7 @@ mod tests {
     #[test]
     fn legacy_serialize_round_trips_plain_text() {
         let parsed = aozora_parser::parse("plain text");
-        let out = serialize(&parsed);
+        let out = legacy::serialize(&parsed);
         assert_eq!(out, "plain text");
     }
 

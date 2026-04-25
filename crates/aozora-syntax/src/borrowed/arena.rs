@@ -93,6 +93,15 @@ impl Arena {
     pub fn allocated_bytes(&self) -> usize {
         self.bump.allocated_bytes()
     }
+
+    /// Borrow the inner [`Bump`] allocator. Used by structures that
+    /// need to hold their own arena-backed storage (e.g. the
+    /// [`super::Interner`]'s probe table, which is itself a
+    /// `BumpVec` allocated inside the arena).
+    #[must_use]
+    pub fn bump(&self) -> &Bump {
+        &self.bump
+    }
 }
 
 #[cfg(test)]

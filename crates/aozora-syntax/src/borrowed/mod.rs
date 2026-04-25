@@ -40,10 +40,12 @@
 //! permits arena mutation behind the scenes.
 
 mod arena;
+mod intern;
 mod registry;
 mod types;
 
 pub use arena::Arena;
+pub use intern::{InternStats, Interner};
 pub use registry::{BlockRegistry, ContainerRegistry, InlineRegistry, Registry};
 pub use types::{
     Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby,

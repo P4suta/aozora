@@ -43,8 +43,7 @@ mod bindings {
     /// `PyO3`-facing handle to a parsed Aozora document.
     #[pyclass]
     pub struct Document {
-        source: String,
-        parse_result: aozora::ParseResult,
+        inner: aozora::Document,
     }
 
     #[pymethods]
@@ -52,47 +51,35 @@ mod bindings {
         /// Construct from a Python `str`.
         #[new]
         fn new(source: &str) -> Self {
-            let owned = source.to_owned();
-            let parse_result = aozora::parse(&owned);
             Self {
-                source: owned,
-                parse_result,
+                inner: aozora::Document::new(source.to_owned()),
             }
         }
 
         /// The source text the document was parsed from.
         #[getter]
         fn source(&self) -> &str {
-            &self.source
+            self.inner.source()
         }
 
         /// Render the document to HTML and return as a Python `str`.
         fn to_html(&self) -> String {
-            aozora::html::render_from_artifacts(&self.parse_result.artifacts)
+            self.inner.parse().to_html()
         }
 
-        /// Re-emit Aozora source text. Round-trips to a fixed point
-        /// after one parse-serialize cycle (ADR-0005 corpus
-        /// invariant I3).
+        /// Re-emit Aozora source text.
         fn serialize(&self) -> String {
-            aozora::serialize(&self.parse_result)
+            self.inner.parse().serialize()
         }
 
-        /// Diagnostics as a list of dicts (parsed from the JSON
-        /// projection so the schema matches the C ABI / WASM
-        /// drivers exactly).
+        /// Diagnostics as JSON.
         fn diagnostics(&self) -> PyResult<String> {
-            // Returning the JSON string lets the Python side parse
-            // it with `json.loads(...)`; this avoids a second copy
-            // through PyDict construction. A future commit can add
-            // a typed dataclass projection if profiling shows
-            // json.loads is the bottleneck.
-            Ok(crate::diagnostics_json_view(&self.parse_result.diagnostics))
+            Ok(crate::diagnostics_json_view(self.inner.parse().diagnostics()))
         }
 
         /// Source byte length.
         fn source_byte_len(&self) -> usize {
-            self.source.len()
+            self.inner.source().len()
         }
     }
 

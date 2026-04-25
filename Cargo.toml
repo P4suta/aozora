@@ -140,7 +140,7 @@ aozora            = { version = "0.1.0", path = "crates/aozora" }
 aozora-wasm       = { path = "crates/aozora-wasm" }
 
 # Memory management
-bumpalo = "3.16"
+bumpalo = { version = "3.16", features = ["collections"] }
 
 # SIMD-friendly substring scan
 memchr = "2.7"

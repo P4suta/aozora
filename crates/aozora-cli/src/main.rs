@@ -24,7 +24,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use aozora_parser::html::render_to_string;
+use aozora::Document;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -126,14 +126,15 @@ fn main() -> ExitCode {
 
 fn run_check(args: &CheckArgs) -> Result<ExitCode> {
     let source = read_source(&args.file, args.encoding)?;
-    let result = aozora_parser::parse(&source);
+    let doc = Document::new(source);
+    let tree = doc.parse();
 
-    if result.diagnostics.is_empty() {
+    if tree.diagnostics().is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
 
     let mut stderr = io::stderr().lock();
-    for diag in &result.diagnostics {
+    for diag in tree.diagnostics() {
         let _drop = writeln!(stderr, "{diag}");
     }
 
@@ -146,8 +147,8 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
 
 fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
     let source = read_source(&args.file, args.encoding)?;
-    let parsed = aozora_parser::parse(&source);
-    let formatted = aozora_parser::serialize(&parsed);
+    let doc = Document::new(source.clone());
+    let formatted = doc.parse().serialize();
 
     // The lexer's Phase 0 sanitize strips BOM and normalises CRLF→LF;
     // the canonical form is fixed-point on the sanitized input, not
@@ -185,7 +186,8 @@ fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
 
 fn run_render(args: &RenderArgs) -> Result<ExitCode> {
     let source = read_source(&args.file, args.encoding)?;
-    let html = render_to_string(&source);
+    let doc = Document::new(source);
+    let html = doc.parse().to_html();
     let mut stdout = io::stdout().lock();
     stdout
         .write_all(html.as_bytes())
