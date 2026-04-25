@@ -313,6 +313,23 @@ udeps:
 semver:
     {{_dev}} cargo semver-checks check-release --workspace
 
+# --- release optimisation ----------------------------------------------------
+
+# PGO (+ optional BOLT) release build. Needs cargo-pgo installed
+# (`cargo install cargo-pgo`) and AOZORA_CORPUS_ROOT pointing at a
+# real Aozora corpus checkout. See scripts/pgo-build.sh for details.
+# Runs on the host (not in the dev container) because cargo-pgo +
+# llvm-bolt expect direct access to the host's profiling data.
+pgo:
+    bash scripts/pgo-build.sh
+
+# C ABI smoke test — builds aozora-ffi as cdylib, compiles the C
+# harness against it, runs end-to-end. The 11-check harness exercises
+# every public C entry point on the happy path plus three error
+# cases (null input, invalid UTF-8, PUA collision).
+smoke-ffi:
+    bash crates/aozora-ffi/tests/c_smoke/run.sh
+
 # --- corpus / spec helpers ---------------------------------------------------
 
 # New Architecture Decision Record (MADR template)

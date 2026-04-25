@@ -60,11 +60,23 @@ fn scan_offsets_scalar(bytes: &[u8]) -> Vec<u32> {
     // bytes (corpus 2026-04-25 measurement). One extra alloc on a
     // pathological dense input is cheap.
     let mut out = Vec::with_capacity(bytes.len() / 200);
+    scan_offsets_scalar_with_offset(bytes, 0, &mut out);
+    out
+}
 
+/// Variant that scans only `bytes[start..]` and appends the
+/// (absolute, in `bytes`) offsets to `out`. Exposed as
+/// `pub(crate)` so the SIMD backends can hand off the < 32-byte
+/// tail to the scalar path without duplicating the classify logic.
+pub(crate) fn scan_offsets_scalar_with_offset(bytes: &[u8], start: usize, out: &mut Vec<u32>) {
+    if start >= bytes.len() {
+        return;
+    }
     let [needle0, needle1, needle2] = TRIGGER_LEADING_BYTES;
-    let finder = memchr::memchr3_iter(needle0, needle1, needle2, bytes);
+    let finder = memchr::memchr3_iter(needle0, needle1, needle2, &bytes[start..]);
 
-    for cand in finder {
+    for cand_rel in finder {
+        let cand = start + cand_rel;
         // Need 3 bytes for the trigger window. If we hit a leading
         // byte too close to EOF, that byte is mid-character and
         // cannot be a trigger.
@@ -83,7 +95,6 @@ fn scan_offsets_scalar(bytes: &[u8]) -> Vec<u32> {
             out.push(cand as u32);
         }
     }
-    out
 }
 
 #[cfg(test)]

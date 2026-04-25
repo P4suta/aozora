@@ -15,8 +15,25 @@ categories.workspace   = true
 # crate path-only. crates.io publication is a future ADR.
 publish     = false
 
-[lints]
-workspace = true
+# NOTE: aozora-scan does NOT inherit the workspace
+# `unsafe_code = "forbid"` lint. SIMD intrinsics
+# (`std::arch::x86_64::*`, `std::arch::aarch64::*`, etc.) are
+# `unsafe fn`, and the `#[target_feature]` annotations they require
+# are themselves unsafe. The `unsafe` surface is quarantined to the
+# `backends/{avx2,neon,wasm_simd}.rs` files; the rest of the crate
+# stays under `unsafe_code = "deny"` so a stray unsafe block in the
+# scalar / dispatcher code surfaces immediately.
+[lints.rust]
+unsafe_code = "deny"
+non_ascii_idents = "deny"
+missing_debug_implementations = "warn"
+
+[features]
+default = ["std"]
+# `std` enables runtime CPU dispatch via `is_x86_feature_detected!`.
+# Without it `best_scanner()` returns the always-available
+# `ScalarScanner` even on x86_64 hosts that have AVX2.
+std = []
 
 [dependencies]
 aozora-spec = { workspace = true }

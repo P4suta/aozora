@@ -41,16 +41,28 @@
 //! triggers (`《《`, `》》`) are detected at the lex layer by adjacent
 //! single-trigger offsets, not here.
 
-#![forbid(unsafe_code)]
+// `unsafe_code = "deny"` is set in Cargo.toml at the crate level so
+// `backends/*.rs` (SIMD intrinsics) can locally `#[allow(unsafe_code)]`
+// while every other module — scalar.rs, dispatch logic — keeps the
+// stricter surface. See the Cargo.toml comment for rationale.
 #![no_std]
 
 extern crate alloc;
+
+#[cfg(feature = "std")]
+extern crate std;
 
 use alloc::vec::Vec;
 
 mod scalar;
 
+#[cfg(target_arch = "x86_64")]
+mod backends;
+
 pub use scalar::ScalarScanner;
+
+#[cfg(target_arch = "x86_64")]
+pub use backends::Avx2Scanner;
 
 /// A backend that finds trigger-byte candidate positions in a UTF-8
 /// source buffer.
@@ -80,12 +92,29 @@ pub trait TriggerScanner {
 
 /// The runtime-best [`TriggerScanner`] for the current target.
 ///
-/// Today this is always [`ScalarScanner`] (which already vectorises
-/// internally via `memchr::memchr3`). Future commits will add SIMD
-/// backends and runtime CPU dispatch (`x86_64` AVX2 vs SSE2; aarch64
-/// NEON; wasm32 simd128); this function's signature is the contract
-/// the lex layer holds onto.
+/// On `x86_64` hosts the dispatcher checks at runtime for AVX2
+/// support (via `is_x86_feature_detected!`) and prefers
+/// [`Avx2Scanner`] when available. Otherwise — including all
+/// non-`x86_64` targets — falls back to [`ScalarScanner`] (which
+/// internally vectorises through `memchr::memchr3`'s own dispatch).
+///
+/// `is_x86_feature_detected!` itself is a `std`-only macro, so
+/// runtime dispatch only fires under `cfg(target_arch = "x86_64")`
+/// AND the surrounding crate having `std`. The `no_std` build paths
+/// (currently the entire crate) just return [`ScalarScanner`].
+#[cfg(any(not(target_arch = "x86_64"), not(feature = "std")))]
 #[must_use]
 pub fn best_scanner() -> &'static dyn TriggerScanner {
     &ScalarScanner
+}
+
+/// `x86_64` + std variant: runtime CPU dispatch.
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+#[must_use]
+pub fn best_scanner() -> &'static dyn TriggerScanner {
+    if std::is_x86_feature_detected!("avx2") {
+        &Avx2Scanner
+    } else {
+        &ScalarScanner
+    }
 }

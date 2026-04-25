@@ -19,6 +19,8 @@
 )]
 
 use aozora_scan::{ScalarScanner, TriggerScanner};
+#[cfg(target_arch = "x86_64")]
+use aozora_scan::Avx2Scanner;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
@@ -74,12 +76,21 @@ fn bench_scan_throughput(c: &mut Criterion) {
     ] {
         let mut g = c.benchmark_group(label);
         g.throughput(Throughput::Bytes(sample.len() as u64));
-        g.bench_function("scalar_scan", |b| {
+        g.bench_function("scalar", |b| {
             b.iter(|| {
                 let offsets = ScalarScanner.scan_offsets(black_box(sample));
                 black_box(offsets);
             });
         });
+        #[cfg(target_arch = "x86_64")]
+        if std::is_x86_feature_detected!("avx2") {
+            g.bench_function("avx2", |b| {
+                b.iter(|| {
+                    let offsets = Avx2Scanner.scan_offsets(black_box(sample));
+                    black_box(offsets);
+                });
+            });
+        }
         g.finish();
     }
 }
