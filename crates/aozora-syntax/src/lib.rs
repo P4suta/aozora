@@ -32,6 +32,7 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 pub mod accent;
+pub mod alloc;
 pub mod borrowed;
 pub mod convert;
 mod extension;
