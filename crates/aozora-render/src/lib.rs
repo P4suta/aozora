@@ -22,6 +22,9 @@ mod bouten;
 pub mod html;
 pub mod render_node;
 pub mod serialize;
+pub mod visitor;
+
+pub use visitor::{AozoraVisitor, dispatch_node};
 
 #[cfg(test)]
 mod tests {
