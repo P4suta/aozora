@@ -15,7 +15,7 @@
 //! — without changing this module's public API shape.
 
 use aozora_parser::ParseResult;
-use aozora_render::html::render_from_artifacts;
+use aozora_render::legacy::html::render_from_artifacts;
 use aozora_render::serialize as render_serialize;
 
 /// Single owning handle to a parsed Aozora source.
