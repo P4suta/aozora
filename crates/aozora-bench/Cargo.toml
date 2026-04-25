@@ -21,6 +21,10 @@ workspace = true
 aozora          = { workspace = true }
 aozora-corpus   = { workspace = true }
 aozora-encoding = { workspace = true }
+aozora-syntax   = { workspace = true }
+# phase_breakdown example reaches into the legacy phases directly.
+# Once Move 2's fused engine ships, this dep becomes aozora-lex.
+aozora-lexer    = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

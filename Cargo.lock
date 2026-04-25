@@ -116,6 +116,8 @@ dependencies = [
  "aozora",
  "aozora-corpus",
  "aozora-encoding",
+ "aozora-lexer",
+ "aozora-syntax",
  "criterion",
 ]
 
@@ -184,11 +186,13 @@ dependencies = [
 name = "aozora-lexer"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "aozora-encoding",
  "aozora-spec",
  "aozora-syntax",
  "criterion",
  "insta",
+ "memchr",
  "miette",
  "phf",
  "proptest",

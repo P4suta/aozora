@@ -144,6 +144,10 @@ bumpalo = "3.16"
 
 # SIMD-friendly substring scan
 memchr = "2.7"
+
+# Multi-pattern search (forward-reference target precedence check;
+# annotation prefix DFA in a future commit).
+aho-corasick = "1.1"
 aozora-lexer      = { version = "0.1.0", path = "crates/aozora-lexer" }
 aozora-parser     = { version = "0.1.0", path = "crates/aozora-parser" }
 aozora-encoding   = { version = "0.1.0", path = "crates/aozora-encoding" }

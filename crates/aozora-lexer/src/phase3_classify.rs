@@ -148,6 +148,18 @@ pub enum SpanKind {
 #[must_use]
 pub fn classify(pair_output: &PairOutput, source: &str) -> ClassifyOutput {
     let events = &pair_output.events;
+
+    // Pre-pass: collect every forward-reference target in the event
+    // stream and run a SINGLE Aho-Corasick scan over the source to
+    // record each target's first occurrence position. This collapses
+    // the per-annotation O(N×M) backreference precedence check into
+    // O(K + M) — see ADR-0014 for the measurement that motivated
+    // this. K = unique forward-reference targets, M = source length.
+    // Stored in a thread-local so the deeply nested forward-reference
+    // recognisers can read it without plumbing a parameter through
+    // every recursive call in `build_content_from_body`.
+    install_forward_target_index(events, source);
+
     let mut driver = Driver::new(source);
     let mut i = 0;
     while i < events.len() {
@@ -158,7 +170,173 @@ pub fn classify(pair_output: &PairOutput, source: &str) -> ClassifyOutput {
             i += 1;
         }
     }
-    driver.finish(pair_output.diagnostics.clone())
+    let out = driver.finish(pair_output.diagnostics.clone());
+    clear_forward_target_index();
+    out
+}
+
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+
+thread_local! {
+    /// Forward-reference target → first byte offset in source.
+    ///
+    /// `state.installed = true` means the map is authoritative: every
+    /// target queried by `forward_target_is_preceded` is either in the
+    /// map or genuinely absent from source. `state.installed = false`
+    /// means the index was skipped (target count below the threshold);
+    /// the lookup falls back to the legacy `source[..cutoff].contains`
+    /// path for correctness.
+    ///
+    /// Owned `String` keys so the map is `'static`-compatible — avoids
+    /// threading a `'s` lifetime through the deep recursive recogniser
+    /// call chain via `build_content_from_body`.
+    static FORWARD_TARGET_INDEX: RefCell<ForwardTargetState> = RefCell::default();
+}
+
+#[derive(Default)]
+struct ForwardTargetState {
+    installed: bool,
+    first_position: HashMap<String, u32>,
+}
+
+/// Below this many events the AC pre-build always loses to the
+/// legacy substring fast path. Picked from the corpus profile
+/// (2026-04-26): the median Aozora doc has < 1000 events; the
+/// pathological annotation-dense doc has ~50,000. A 5000-event
+/// gate keeps every short doc on the fast path while still catching
+/// the pathological case, with O(1) `events.len()` cost on every
+/// classify call.
+const FORWARD_AC_EVENT_THRESHOLD: usize = 5000;
+
+/// Below this many forward-reference targets even the AC build
+/// loses (build cost > substring scans saved). Used as a second-
+/// stage filter after the event-count gate.
+const FORWARD_AC_TARGET_THRESHOLD: usize = 8;
+
+// Earlier attempts used a `memmem` source-prefilter to count
+// `［＃「` occurrences; switched to an event-stream count below
+// because events are already in cache from phase 2 and the per-
+// iteration cost is one enum match (vs full byte-scan of source
+// for 0-occurrence docs).
+
+/// Cheap prefilter + Aho-Corasick batch index for forward-reference
+/// target precedence checks.
+///
+/// Strategy: gate on event-stream size first (one cmp + branch),
+/// then on the actual collected target set, only finally building
+/// the Aho-Corasick scanner. The three-tier design keeps the
+/// per-call overhead near-zero on the median corpus doc while still
+/// collapsing the pathological doc's classify cost from 170 ms to
+/// ~20 ms — see the inline comments below for the per-stage logic.
+fn install_forward_target_index(events: &[PairEvent], source: &str) {
+    // Stage 1: O(1) gate based on event-stream size.
+    //
+    // The AC build only pays off when the document has many
+    // `［＃「X」…］` forward-reference shapes — and those almost
+    // exclusively appear in long, annotation-rich works. For
+    // documents below the size threshold the legacy substring
+    // fast path is strictly faster than any AC machinery (the
+    // per-call thread_local + RefCell + HashMap probe overhead
+    // outweighs the per-call substring scan we'd save). We use
+    // event-count as the proxy; it's an `events.len()` comparison
+    // (literally one cmp + branch), zero allocations.
+    if events.len() < FORWARD_AC_EVENT_THRESHOLD {
+        FORWARD_TARGET_INDEX.with(|cell| {
+            let mut state = cell.borrow_mut();
+            state.installed = false;
+            state.first_position.clear();
+        });
+        return;
+    }
+
+    // Stage 2: above threshold — walk events to collect target
+    // strings. Only reached for docs that genuinely benefit from
+    // batching.
+    let mut targets: HashSet<&str> = HashSet::new();
+    for (i, ev) in events.iter().enumerate() {
+        let PairEvent::PairOpen {
+            kind: PairKind::Bracket,
+            ..
+        } = ev
+        else {
+            continue;
+        };
+        if !matches!(
+            events.get(i + 1),
+            Some(PairEvent::Solo {
+                kind: TriggerKind::Hash,
+                ..
+            })
+        ) {
+            continue;
+        }
+        let mut cursor = i + 2;
+        while let Some(&PairEvent::PairOpen {
+            kind: PairKind::Quote,
+            span: open_span,
+            close_idx,
+        }) = events.get(cursor)
+        {
+            let Some(&PairEvent::PairClose {
+                span: close_span, ..
+            }) = events.get(close_idx)
+            else {
+                break;
+            };
+            let body = &source[open_span.end as usize..close_span.start as usize];
+            if !body.is_empty() {
+                targets.insert(body);
+            }
+            cursor = close_idx + 1;
+        }
+    }
+
+    // Stage 3: above target threshold? Then single Aho-Corasick scan
+    // recording the earliest occurrence of every collected target.
+    if targets.len() < FORWARD_AC_TARGET_THRESHOLD {
+        FORWARD_TARGET_INDEX.with(|cell| {
+            let mut state = cell.borrow_mut();
+            state.installed = false;
+            state.first_position.clear();
+        });
+        return;
+    }
+    FORWARD_TARGET_INDEX.with(|cell| {
+        let mut state = cell.borrow_mut();
+        state.first_position.clear();
+        let target_vec: Vec<&str> = targets.into_iter().collect();
+        let Ok(ac) = aho_corasick::AhoCorasick::new(&target_vec) else {
+            state.installed = false;
+            return;
+        };
+        state.first_position.reserve(target_vec.len());
+        for mat in ac.find_iter(source) {
+            let target = target_vec[mat.pattern().as_usize()];
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "source length already bounded to u32::MAX upstream"
+            )]
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "source length already bounded to u32::MAX upstream"
+            )]
+            state
+                .first_position
+                .entry(target.to_owned())
+                .or_insert_with(|| mat.start() as u32);
+        }
+        state.installed = true;
+    });
+}
+
+/// Drop the per-classify forward-target index.
+fn clear_forward_target_index() {
+    FORWARD_TARGET_INDEX.with(|cell| {
+        let mut state = cell.borrow_mut();
+        state.installed = false;
+        state.first_position.clear();
+    });
 }
 
 /// Mutable state for the event-walk.
@@ -1118,8 +1296,27 @@ fn forward_target_is_preceded(
     let Some(PairEvent::PairOpen { span, .. }) = events.get(open_idx) else {
         return false;
     };
-    let preceding = &source[..span.start as usize];
-    preceding.contains(target)
+    let cutoff = span.start;
+
+    // Hot path: a pre-built per-classify Aho-Corasick index covers the
+    // target in O(1). Only installed when the doc has enough forward-
+    // reference targets to amortise the AC build (see
+    // `install_forward_target_index` and `FORWARD_AC_THRESHOLD`).
+    let indexed = FORWARD_TARGET_INDEX.with(|cell| {
+        let state = cell.borrow();
+        if !state.installed {
+            return None;
+        }
+        Some(matches!(state.first_position.get(target), Some(&first_pos) if first_pos < cutoff))
+    });
+    if let Some(decided) = indexed {
+        return decided;
+    }
+
+    // Fallback: median corpus doc has too few forward-reference
+    // targets to make the AC build worthwhile. Pay the legacy
+    // substring scan instead.
+    source[..cutoff as usize].contains(target)
 }
 
 /// Result of walking the `［＃「…」「…」…<particle><keyword>］`
