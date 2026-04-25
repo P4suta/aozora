@@ -142,6 +142,12 @@ aozora-wasm       = { path = "crates/aozora-wasm" }
 # Memory management
 bumpalo = { version = "3.16", features = ["collections"] }
 
+# Stack-inline small vectors — Innovation I-8. `smallvec` over
+# `tinyvec` because the workspace's hot-stack payloads (e.g.,
+# `(PairKind, usize)`) lack a meaningful `Default` impl that
+# `tinyvec` would require.
+smallvec = "1.13"
+
 # SIMD-friendly substring scan
 memchr = "2.7"
 

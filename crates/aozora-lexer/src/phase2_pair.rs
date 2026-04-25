@@ -185,13 +185,20 @@ impl PairOutput {
 /// Bundling `events`, `stack`, and `diagnostics` together keeps the
 /// trigger-handling helpers below the clippy `too_many_arguments` limit
 /// and makes it obvious which state a given helper can touch.
+///
+/// `stack` is a [`smallvec::SmallVec`] with inline capacity 8.
+/// Innovation I-8: corpus profile shows bracket nesting depth is
+/// 99% < 8 in real Aozora text; the inline storage skips the heap
+/// allocation that the prior `Vec::new()` paid on the first push of
+/// every well-formed document. Spills to heap on the rare deeply-
+/// nested input.
 struct PairState {
     events: Vec<PairEvent>,
     diagnostics: Vec<Diagnostic>,
     /// `(kind, event_idx_of_open)`. The `event_idx` always points at a
     /// [`PairEvent::PairOpen`] until that open either gets closed
     /// (entry popped) or rewritten to [`PairEvent::Unclosed`] at EOF.
-    stack: Vec<(PairKind, usize)>,
+    stack: smallvec::SmallVec<[(PairKind, usize); 8]>,
 }
 
 /// Run the balanced-stack pass over a Phase 1 token stream.
@@ -204,7 +211,7 @@ pub fn pair(tokens: &[Token]) -> PairOutput {
     let mut state = PairState {
         events: Vec::with_capacity(tokens.len()),
         diagnostics: Vec::new(),
-        stack: Vec::new(),
+        stack: smallvec::SmallVec::new(),
     };
 
     for tok in tokens {
