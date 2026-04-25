@@ -34,6 +34,11 @@
 
 #![forbid(unsafe_code)]
 
+mod engine;
+mod tokenize;
+
+pub use tokenize::tokenize_with_scan;
+
 // Public surface — the `lex(&str) -> LexOutput` entry point plus the
 // supporting types the lex driver and downstream consumers need.
 //
@@ -45,7 +50,7 @@
 // (or to `aozora-spec`, where the canonical types already live).
 
 pub use aozora_lexer::{
-    LexOutput, NormalizeOutput, PlaceholderRegistry, SanitizeOutput, ValidateOutput,
+    LexOutput, NormalizeOutput, PlaceholderRegistry, SanitizeOutput, Token, ValidateOutput,
 };
 pub use aozora_spec::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic, INLINE_SENTINEL,
@@ -63,33 +68,23 @@ pub use aozora_spec::{
 /// Panics if `source.len()` exceeds `u32::MAX` bytes (~4 GiB) —
 /// inherited from the upstream lexer's `Span` field width. In
 /// practice this bound is never hit on aozora-format text.
-///
-/// # Performance
-///
-/// `#[inline]` because this is a one-line wrapper today and we want
-/// the same code to compile across the `aozora-lex` ↔ `aozora-lexer`
-/// crate boundary as if it were a single function (avoids a ~8%
-/// regression vs the legacy direct call observed on the corpus
-/// sweep). When Move 2's fused engine grows out of this body the
-/// `#[inline]` may need to come off — but that decision can wait
-/// until the body justifies it.
 #[must_use]
-#[inline(always)]
-#[allow(
-    clippy::inline_always,
-    reason = "thin wrapper across a crate boundary; #[inline] alone wasn't enough to elide the call under thin-LTO"
-)]
 pub fn lex(source: &str) -> LexOutput {
-    // Move 2.2 status:
+    // Phase ownership today (Move 2 fused-engine migration in progress):
     //
-    // We currently delegate the entire pipeline to the legacy
-    // aozora-lexer engine. The migration plan (Move 2.3 onward)
-    // replaces phase 1 first (with aozora-scan), then folds phases
-    // 0, 2, 3, 4, 5, 6 into a single fused state machine that lives
-    // in this crate. The public signature of `lex` does not change
-    // across that migration — the byte-identical proptest harness in
-    // `aozora-test-utils` pins it.
-    aozora_lexer::lex(source)
+    //   phase 0 (sanitize)     — aozora_lexer::sanitize
+    //   phase 1 (tokenize)     — crate::tokenize::tokenize_with_scan (NEW)
+    //   phase 2 (pair)         — aozora_lexer::pair
+    //   phase 3 (classify)     — aozora_lexer::classify
+    //   phase 4 (normalize)    — aozora_lexer::normalize
+    //   phase 6 (validate)     — aozora_lexer::validate
+    //
+    // The engine module owns the orchestration so it can incrementally
+    // absorb each remaining legacy phase as the fused engine grows.
+    // The public `lex` signature stays fixed by ADR-0010 — the
+    // byte-identical proptest in tests/property_byte_identical.rs is
+    // the load-bearing equivalence gate across this transition.
+    engine::run_pipeline(source)
 }
 
 #[cfg(test)]

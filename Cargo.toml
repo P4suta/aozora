@@ -195,7 +195,14 @@ criterion         = { version = "0.8", features = ["html_reports"] }
 pretty_assertions = "1.4.1"
 
 [profile.release]
-lto           = "thin"
+# `lto = "fat"` (vs the prior "thin") so cross-crate function calls
+# in the lex pipeline (aozora-parser → aozora-lex → aozora-lexer
+# phase functions) inline across the boundary. Measured 30%+ wall-
+# clock regression on the corpus sweep with thin LTO once the lex
+# orchestrator was split out of aozora-lexer's monolithic `lex()`;
+# fat LTO recovers it. The compile-time cost is acceptable because
+# the workspace already pins `codegen-units = 1` for release.
+lto           = "fat"
 codegen-units = 1
 strip         = "symbols"
 panic         = "abort"

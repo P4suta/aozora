@@ -175,6 +175,8 @@ dependencies = [
  "aozora-spec",
  "aozora-syntax",
  "aozora-test-utils",
+ "criterion",
+ "memchr",
  "proptest",
 ]
 

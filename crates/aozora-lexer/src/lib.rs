@@ -114,6 +114,37 @@ pub struct LexOutput {
     pub sanitized_len: u32,
 }
 
+impl LexOutput {
+    /// Construct from already-computed parts. Crate-external lex
+    /// orchestrators (notably `aozora_lex::engine`) need this because
+    /// `LexOutput` is `#[non_exhaustive]`; the public-API guarantee
+    /// remains "the canonical pipeline produces this shape" but the
+    /// fused-engine migration needs to assemble the same shape from
+    /// outside the lexer crate.
+    ///
+    /// Field validation is the caller's responsibility: the
+    /// `normalized` text is expected to satisfy the V1..V3 structural
+    /// invariants of [`validate`], and `sanitized_len` must equal the
+    /// length of the Phase 0 sanitized buffer the upstream phases
+    /// consumed. The byte-identical proptest in
+    /// `aozora-lex/tests/property_byte_identical.rs` enforces both
+    /// invariants by cross-checking against the canonical pipeline.
+    #[must_use]
+    pub fn from_parts(
+        normalized: String,
+        registry: PlaceholderRegistry,
+        diagnostics: Vec<Diagnostic>,
+        sanitized_len: u32,
+    ) -> Self {
+        Self {
+            normalized,
+            registry,
+            diagnostics,
+            sanitized_len,
+        }
+    }
+}
+
 /// Run the lexer pipeline over `source`.
 ///
 /// Pure function; no I/O, no global state. Chains Phases 0..6:
