@@ -29,6 +29,7 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 pub mod accent;
+pub mod borrowed;
 mod extension;
 pub use extension::ContainerKind;
 

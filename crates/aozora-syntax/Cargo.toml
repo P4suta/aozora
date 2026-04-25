@@ -16,6 +16,8 @@ workspace = true
 
 [dependencies]
 aozora-spec = { workspace = true }
+aozora-veb  = { workspace = true }
+bumpalo     = { workspace = true }
 thiserror   = { workspace = true }
 miette      = { workspace = true }
 phf         = { workspace = true }
