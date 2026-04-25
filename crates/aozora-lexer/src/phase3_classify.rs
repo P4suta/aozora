@@ -177,6 +177,9 @@ pub fn classify(pair_output: &PairOutput, source: &str) -> ClassifyOutput {
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
+
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, Anchored, Input, MatchKind, StartKind};
 
 thread_local! {
     /// Forward-reference target → first byte offset in source.
@@ -306,7 +309,7 @@ fn install_forward_target_index(events: &[PairEvent], source: &str) {
         let mut state = cell.borrow_mut();
         state.first_position.clear();
         let target_vec: Vec<&str> = targets.into_iter().collect();
-        let Ok(ac) = aho_corasick::AhoCorasick::new(&target_vec) else {
+        let Ok(ac) = AhoCorasick::new(&target_vec) else {
             state.installed = false;
             return;
         };
@@ -337,6 +340,283 @@ fn clear_forward_target_index() {
         state.installed = false;
         state.first_position.clear();
     });
+}
+
+// ----------------------------------------------------------------------
+// Body-keyword dispatcher: single anchored Aho-Corasick DFA covering
+// every fixed-string and prefix-with-parameter family in one pass.
+//
+// Replaces the prior 7-step `or_else` chain in `recognize_annotation`
+// (fixed_keyword / kaeriten / indent_or_align / sashie / inline_warichu
+// / container_open / container_close), each of which used to scan the
+// body bytes from start in its own `match` or `strip_prefix`. The DFA
+// runs once, anchored at byte 0, and its `pattern_id` indexes into a
+// constant family table. Per-family branches finish the work — exact
+// families verify `match_end == body.len()`, prefix families parse the
+// remainder for parameters.
+//
+// Forward classifiers (bouten / TCY / heading) and the `Annotation
+// {Unknown}` catch-all stay in `recognize_annotation` because they
+// need event-stream context, not body bytes.
+// ----------------------------------------------------------------------
+
+/// One row of [`BODY_PATTERNS`]: the byte sequence the DFA matches at
+/// `body[0..match_end]`, and the family that decides what to emit.
+#[derive(Clone, Copy)]
+struct BodyPattern {
+    needle: &'static str,
+    family: BodyFamily,
+}
+
+/// Outcome category for an anchored AC match against the annotation
+/// body. Each variant carries enough information to either emit a
+/// constant `EmitKind` directly (when the family is exact-match) or to
+/// dispatch to a small per-family parser for the body remainder.
+#[derive(Clone, Copy)]
+enum BodyFamily {
+    // === Exact-match (body must equal needle) ===
+    PageBreak,
+    SectionChoho,
+    SectionDan,
+    SectionSpread,
+    AlignEnd0,                  // 地付き
+    KeigakomiOpen,              // 罫囲み
+    KeigakomiClose,             // 罫囲み終わり
+    IndentBlock1,               // ここから字下げ → Indent { amount: 1 }
+    AlignEndBlock0,             // ここから地付き → AlignEnd { offset: 0 }
+    IndentBlockEnd,             // ここで字下げ終わり
+    AlignEndBlockEnd,           // ここで地付き終わり
+    WarichuOpen,                // 割り注
+    WarichuClose,               // 割り注終わり
+    KaeritenSingle,             // body must equal one of 12 single-char marks
+    KaeritenCompound,           // body must equal one of 6 compound marks
+
+    // === Prefix-with-parameter (parse body[match_end..]) ===
+    AlignEndParamPrefix,        // 地から → 地から{N}字上げ
+    SashiePrefix,               // 挿絵（ → 挿絵（X）入る
+    IndentBlockParamPrefix,     // ここから → ここから{N}字下げ
+    AlignEndBlockParamPrefix,   // ここから地から → ここから地から{N}字上げ
+    OkuriganaPrefix,            // （ → kaeriten okurigana （X）
+
+    // === Body-equals-pattern then parse from body[0] ===
+    IndentParamPrefix,          // {digit} → {N}字下げ (re-parse from body[0])
+}
+
+/// Static pattern table. Order is irrelevant for behavior because the
+/// DFA is built with [`MatchKind::LeftmostLongest`]: the longer needle
+/// always wins (so `罫囲み終わり` beats `罫囲み`, `ここから字下げ` beats
+/// `ここから`, `一レ` beats `一`, etc.). Keeping families together for
+/// readability instead of sorting by length.
+static BODY_PATTERNS: &[BodyPattern] = &[
+    // Block container with full-keyword bodies.
+    BodyPattern { needle: "ここから字下げ",    family: BodyFamily::IndentBlock1 },
+    BodyPattern { needle: "ここから地付き",    family: BodyFamily::AlignEndBlock0 },
+    BodyPattern { needle: "ここから地から",    family: BodyFamily::AlignEndBlockParamPrefix },
+    BodyPattern { needle: "ここから",          family: BodyFamily::IndentBlockParamPrefix },
+    BodyPattern { needle: "ここで字下げ終わり", family: BodyFamily::IndentBlockEnd },
+    BodyPattern { needle: "ここで地付き終わり", family: BodyFamily::AlignEndBlockEnd },
+    // Section / page break (exact).
+    BodyPattern { needle: "改ページ",          family: BodyFamily::PageBreak },
+    BodyPattern { needle: "改丁",              family: BodyFamily::SectionChoho },
+    BodyPattern { needle: "改段",              family: BodyFamily::SectionDan },
+    BodyPattern { needle: "改見開き",          family: BodyFamily::SectionSpread },
+    // Geographic alignment.
+    BodyPattern { needle: "地から",            family: BodyFamily::AlignEndParamPrefix },
+    BodyPattern { needle: "地付き",            family: BodyFamily::AlignEnd0 },
+    // Other inline / block.
+    BodyPattern { needle: "挿絵（",            family: BodyFamily::SashiePrefix },
+    BodyPattern { needle: "罫囲み終わり",      family: BodyFamily::KeigakomiClose },
+    BodyPattern { needle: "罫囲み",            family: BodyFamily::KeigakomiOpen },
+    BodyPattern { needle: "割り注終わり",      family: BodyFamily::WarichuClose },
+    BodyPattern { needle: "割り注",            family: BodyFamily::WarichuOpen },
+    // Kaeriten okurigana opener (full-width left paren U+FF08).
+    BodyPattern { needle: "（",                family: BodyFamily::OkuriganaPrefix },
+    // Kaeriten compound marks (6) — must precede the single forms in
+    // the table only for documentation; LeftmostLongest does the
+    // actual disambiguation (`一レ` 6 bytes > `一` 3 bytes).
+    BodyPattern { needle: "一レ",              family: BodyFamily::KaeritenCompound },
+    BodyPattern { needle: "上レ",              family: BodyFamily::KaeritenCompound },
+    BodyPattern { needle: "下レ",              family: BodyFamily::KaeritenCompound },
+    BodyPattern { needle: "中レ",              family: BodyFamily::KaeritenCompound },
+    BodyPattern { needle: "二レ",              family: BodyFamily::KaeritenCompound },
+    BodyPattern { needle: "三レ",              family: BodyFamily::KaeritenCompound },
+    // Kaeriten single marks (12).
+    BodyPattern { needle: "一",                family: BodyFamily::KaeritenSingle },
+    BodyPattern { needle: "丁",                family: BodyFamily::KaeritenSingle },
+    BodyPattern { needle: "三",                family: BodyFamily::KaeritenSingle },
+    BodyPattern { needle: "上",                family: BodyFamily::KaeritenSingle },
+    BodyPattern { needle: "下",                family: BodyFamily::KaeritenSingle },
+    BodyPattern { needle: "中",                family: BodyFamily::KaeritenSingle },
+    BodyPattern { needle: "丙",                family: BodyFamily::KaeritenSingle },
+    BodyPattern { needle: "乙",                family: BodyFamily::KaeritenSingle },
+    BodyPattern { needle: "二",                family: BodyFamily::KaeritenSingle },
+    BodyPattern { needle: "四",                family: BodyFamily::KaeritenSingle },
+    BodyPattern { needle: "甲",                family: BodyFamily::KaeritenSingle },
+    BodyPattern { needle: "レ",                family: BodyFamily::KaeritenSingle },
+    // {N}字下げ — anchored on each digit (ASCII + full-width).
+    BodyPattern { needle: "0", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "1", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "2", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "3", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "4", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "5", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "6", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "7", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "8", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "9", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "０", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "１", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "２", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "３", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "４", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "５", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "６", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "７", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "８", family: BodyFamily::IndentParamPrefix },
+    BodyPattern { needle: "９", family: BodyFamily::IndentParamPrefix },
+];
+
+/// One-time DFA build, amortised across the entire process lifetime.
+/// AC build cost is ~tens of microseconds; lookup cost is a few ns
+/// per call so the build pays back in under a thousand annotations.
+fn body_dispatcher() -> &'static AhoCorasick {
+    static DFA: OnceLock<AhoCorasick> = OnceLock::new();
+    DFA.get_or_init(|| {
+        AhoCorasickBuilder::new()
+            .match_kind(MatchKind::LeftmostLongest)
+            .start_kind(StartKind::Anchored)
+            .build(BODY_PATTERNS.iter().map(|p| p.needle))
+            .expect("BODY_PATTERNS is a static, non-empty, valid set")
+    })
+}
+
+/// Single-pass classification of `body` (the trimmed bytes between
+/// `［＃` and `］`) into an `EmitKind` for body-only annotation
+/// families. Returns `None` if the body matches no body-only family;
+/// the caller then falls through to forward classifiers and finally
+/// the `Annotation{Unknown}` catch-all.
+#[allow(
+    clippy::too_many_lines,
+    reason = "single match arm per BodyFamily — splitting would scatter \
+              the dispatch logic and obscure the intentional 1:1 mapping"
+)]
+fn classify_annotation_body(body: &str) -> Option<EmitKind> {
+    if body.is_empty() {
+        return None;
+    }
+    let dfa = body_dispatcher();
+    let mat = dfa.find(Input::new(body).anchored(Anchored::Yes))?;
+    let pat = BODY_PATTERNS[mat.pattern().as_usize()];
+    let match_end = mat.end();
+    let exact = match_end == body.len();
+    match pat.family {
+        // ----- Exact-match families (must consume the entire body) -----
+        BodyFamily::PageBreak if exact => Some(EmitKind::Aozora(AozoraNode::PageBreak)),
+        BodyFamily::SectionChoho if exact => {
+            Some(EmitKind::Aozora(AozoraNode::SectionBreak(SectionKind::Choho)))
+        }
+        BodyFamily::SectionDan if exact => {
+            Some(EmitKind::Aozora(AozoraNode::SectionBreak(SectionKind::Dan)))
+        }
+        BodyFamily::SectionSpread if exact => Some(EmitKind::Aozora(
+            AozoraNode::SectionBreak(SectionKind::Spread),
+        )),
+        BodyFamily::AlignEnd0 if exact => {
+            Some(EmitKind::Aozora(AozoraNode::AlignEnd(AlignEnd { offset: 0 })))
+        }
+        BodyFamily::KeigakomiOpen if exact => {
+            Some(EmitKind::BlockOpen(ContainerKind::Keigakomi))
+        }
+        BodyFamily::KeigakomiClose if exact => {
+            Some(EmitKind::BlockClose(ContainerKind::Keigakomi))
+        }
+        BodyFamily::IndentBlock1 if exact => {
+            Some(EmitKind::BlockOpen(ContainerKind::Indent { amount: 1 }))
+        }
+        BodyFamily::AlignEndBlock0 if exact => {
+            Some(EmitKind::BlockOpen(ContainerKind::AlignEnd { offset: 0 }))
+        }
+        BodyFamily::IndentBlockEnd if exact => {
+            Some(EmitKind::BlockClose(ContainerKind::Indent { amount: 0 }))
+        }
+        BodyFamily::AlignEndBlockEnd if exact => {
+            Some(EmitKind::BlockClose(ContainerKind::AlignEnd { offset: 0 }))
+        }
+        BodyFamily::WarichuOpen if exact => Some(EmitKind::Aozora(AozoraNode::Annotation(
+            Annotation {
+                raw: "［＃割り注］".into(),
+                kind: AnnotationKind::WarichuOpen,
+            },
+        ))),
+        BodyFamily::WarichuClose if exact => Some(EmitKind::Aozora(AozoraNode::Annotation(
+            Annotation {
+                raw: "［＃割り注終わり］".into(),
+                kind: AnnotationKind::WarichuClose,
+            },
+        ))),
+        BodyFamily::KaeritenSingle | BodyFamily::KaeritenCompound if exact => Some(
+            EmitKind::Aozora(AozoraNode::Kaeriten(Kaeriten { mark: body.into() })),
+        ),
+
+        // ----- Prefix-with-parameter families -----
+        BodyFamily::AlignEndParamPrefix => {
+            // body == 地から{N}字上げ; remainder = body[match_end..]
+            let rest = &body[match_end..];
+            let (n, tail) = parse_decimal_u8_prefix(rest)?;
+            (tail == "字上げ" && n >= 1)
+                .then_some(EmitKind::Aozora(AozoraNode::AlignEnd(AlignEnd { offset: n })))
+        }
+        BodyFamily::SashiePrefix => classify_sashie_body(body),
+        BodyFamily::IndentBlockParamPrefix => {
+            // body == ここから{N}字下げ; remainder = body[match_end..]
+            let rest = &body[match_end..];
+            let (n, tail) = parse_decimal_u8_prefix(rest)?;
+            (tail == "字下げ").then_some(EmitKind::BlockOpen(ContainerKind::Indent {
+                amount: n,
+            }))
+        }
+        BodyFamily::AlignEndBlockParamPrefix => {
+            // body == ここから地から{N}字上げ; remainder = body[match_end..]
+            let rest = &body[match_end..];
+            let (n, tail) = parse_decimal_u8_prefix(rest)?;
+            (tail == "字上げ").then_some(EmitKind::BlockOpen(ContainerKind::AlignEnd {
+                offset: n,
+            }))
+        }
+        BodyFamily::OkuriganaPrefix => {
+            // The DFA matched `（` at body[0..3]. Defer to the same
+            // parens-recognising helper as the legacy code so the
+            // length / character-class invariants stay in one place.
+            is_okurigana_body(body).then_some(EmitKind::Aozora(AozoraNode::Kaeriten(
+                Kaeriten { mark: body.into() },
+            )))
+        }
+        BodyFamily::IndentParamPrefix => {
+            // The DFA matched a single digit. Re-parse from body[0]
+            // for full multi-digit support.
+            let (n, tail) = parse_decimal_u8_prefix(body)?;
+            (tail == "字下げ" && n >= 1)
+                .then_some(EmitKind::Aozora(AozoraNode::Indent(Indent { amount: n })))
+        }
+
+        // Exact-only families that didn't fully consume the body (e.g.
+        // `罫囲みfoo` matched `罫囲み` but body is longer): no claim.
+        BodyFamily::PageBreak
+        | BodyFamily::SectionChoho
+        | BodyFamily::SectionDan
+        | BodyFamily::SectionSpread
+        | BodyFamily::AlignEnd0
+        | BodyFamily::KeigakomiOpen
+        | BodyFamily::KeigakomiClose
+        | BodyFamily::IndentBlock1
+        | BodyFamily::AlignEndBlock0
+        | BodyFamily::IndentBlockEnd
+        | BodyFamily::AlignEndBlockEnd
+        | BodyFamily::WarichuOpen
+        | BodyFamily::WarichuClose
+        | BodyFamily::KaeritenSingle
+        | BodyFamily::KaeritenCompound => None,
+    }
 }
 
 /// Mutable state for the event-walk.
@@ -979,6 +1259,18 @@ fn recognize_gaiji(
     if description.contains(['「', '」']) {
         return None;
     }
+    // Reject descriptions that embed a nested annotation-opening
+    // sequence `［＃`. Pathological shapes like `※［＃［＃改］］`
+    // produce a description string that *contains* `［＃`, which the
+    // gaiji renderer would emit verbatim inside `<span class=
+    // "afm-gaiji">…</span>` — leaking a bare `［＃` outside the
+    // `afm-annotation` wrapper and violating the Tier A canary.
+    // Falling through here lets the outer bracket be claimed by
+    // `Annotation{Unknown}`, which is rendered inside an
+    // `afm-annotation` wrapper as the canary requires.
+    if description.contains("［＃") {
+        return None;
+    }
 
     // Resolve the Unicode scalar at lex time via the static table in
     // afm-encoding so the downstream AST / renderer never has to
@@ -1079,12 +1371,7 @@ fn recognize_annotation(
     // such whitespace but the corpus contains stragglers.
     let body = source[hash_end as usize..close_span.start as usize].trim();
 
-    let emit = classify_fixed_keyword(body)
-        .map(EmitKind::Aozora)
-        .or_else(|| classify_kaeriten(body).map(EmitKind::Aozora))
-        .or_else(|| classify_indent_or_align(body).map(EmitKind::Aozora))
-        .or_else(|| classify_sashie(body).map(EmitKind::Aozora))
-        .or_else(|| classify_inline_warichu(body).map(EmitKind::Aozora))
+    let emit = classify_annotation_body(body)
         .or_else(|| {
             classify_forward_bouten(events, source, open_idx, close_idx).map(EmitKind::Aozora)
         })
@@ -1092,8 +1379,6 @@ fn recognize_annotation(
         .or_else(|| {
             classify_forward_heading(events, source, open_idx, close_idx).map(EmitKind::Aozora)
         })
-        .or_else(|| classify_container_open(body))
-        .or_else(|| classify_container_close(body))
         .or_else(|| {
             // Catch-all fallback for any well-formed `［＃…］` whose body
             // no specialised recogniser claimed — including empty
@@ -1117,48 +1402,6 @@ fn recognize_annotation(
         consume_start: open_span.start,
         consume_end: close_span.end,
     })
-}
-
-/// Fixed-string annotation keywords — no parameters, no body
-/// variations. Each entry corresponds to a single constant
-/// [`AozoraNode`].
-fn classify_fixed_keyword(body: &str) -> Option<AozoraNode> {
-    Some(match body {
-        "改ページ" => AozoraNode::PageBreak,
-        "改丁" => AozoraNode::SectionBreak(SectionKind::Choho),
-        "改段" => AozoraNode::SectionBreak(SectionKind::Dan),
-        "改見開き" => AozoraNode::SectionBreak(SectionKind::Spread),
-        "地付き" => AozoraNode::AlignEnd(AlignEnd { offset: 0 }),
-        _ => return None,
-    })
-}
-
-/// Parameterized indent / end-alignment annotations:
-///
-/// * `N字下げ`       → `Indent { amount: N }`
-/// * `地からN字上げ` → `AlignEnd { offset: N }`
-///
-/// The `N` prefix accepts ASCII digits (`0-9`) and full-width digits
-/// (`０-９`); both conventions appear in Aozora corpora. 漢数字 is not
-/// accepted here (rare for indent amounts, and ambiguous to parse
-/// without a full reader). Invalid or unsupported shapes return
-/// `None` so the body flows to the next recognizer or to Plain.
-fn classify_indent_or_align(body: &str) -> Option<AozoraNode> {
-    if let Some(rest) = body.strip_prefix("地から")
-        && let Some((n, tail)) = parse_decimal_u8_prefix(rest)
-        && tail == "字上げ"
-        && n >= 1
-    {
-        return Some(AozoraNode::AlignEnd(AlignEnd { offset: n }));
-    }
-    let (n, tail) = parse_decimal_u8_prefix(body)?;
-    // `N字下げ` requires N >= 1 per the Aozora annotation spec — a
-    // zero-width indent is not meaningful. Reject and let the body fall
-    // through to the generic Annotation classifier.
-    if tail == "字下げ" && n >= 1 {
-        return Some(AozoraNode::Indent(Indent { amount: n }));
-    }
-    None
 }
 
 /// Classify a `［＃「target」に<bouten-kind>］` forward-reference
@@ -1394,167 +1637,6 @@ fn extract_forward_quote_targets<'s>(
     Some(ForwardQuoteExtract { targets, suffix })
 }
 
-/// Classify a paired-container opener annotation.
-///
-/// Accepted shapes:
-///
-/// * `ここから字下げ`      → `Indent { amount: 1 }` (default)
-/// * `ここからN字下げ`     → `Indent { amount: N }` (N is ASCII or 全角)
-/// * `ここから地付き`       → `AlignEnd { offset: 0 }`
-/// * `ここから地からN字上げ` → `AlignEnd { offset: N }`
-/// * `罫囲み`               → `Keigakomi`
-///
-/// `割り注` is claimed earlier by [`classify_inline_warichu`] and
-/// emitted as an inline annotation pair rather than a block container —
-/// see the Aozora spec note at
-/// <https://www.aozora.gr.jp/annotation/etc.html#warichu> deprecating
-/// the `ここから割り注` / `ここで割り注終わり` block form.
-///
-/// Returns `None` for closers or unknown bodies; those go to
-/// [`classify_container_close`] or fall through to Plain.
-fn classify_container_open(body: &str) -> Option<EmitKind> {
-    if let Some(rest) = body.strip_prefix("ここから") {
-        if rest == "字下げ" {
-            return Some(EmitKind::BlockOpen(ContainerKind::Indent { amount: 1 }));
-        }
-        if rest == "地付き" {
-            return Some(EmitKind::BlockOpen(ContainerKind::AlignEnd { offset: 0 }));
-        }
-        if let Some(inner) = rest.strip_prefix("地から")
-            && let Some((n, tail)) = parse_decimal_u8_prefix(inner)
-            && tail == "字上げ"
-        {
-            return Some(EmitKind::BlockOpen(ContainerKind::AlignEnd { offset: n }));
-        }
-        if let Some((n, tail)) = parse_decimal_u8_prefix(rest)
-            && tail == "字下げ"
-        {
-            return Some(EmitKind::BlockOpen(ContainerKind::Indent { amount: n }));
-        }
-        return None;
-    }
-    match body {
-        "罫囲み" => Some(EmitKind::BlockOpen(ContainerKind::Keigakomi)),
-        _ => None,
-    }
-}
-
-/// Classify a paired-container closer annotation.
-///
-/// Accepted shapes (corresponding to the opener list above):
-///
-/// * `ここで字下げ終わり` → `Indent { amount: 0 }` (amount is a placeholder)
-/// * `ここで地付き終わり` → `AlignEnd { offset: 0 }`
-/// * `罫囲み終わり`         → `Keigakomi`
-///
-/// `割り注終わり` is claimed by [`classify_inline_warichu`]; see that
-/// function's docs for the rationale.
-///
-/// The carried [`ContainerKind`] only conveys the *variant* — the
-/// numeric field (`amount` / `offset`) is a placeholder because the
-/// closer does not restate it. `post_process` compares open and close
-/// by variant, not by field value.
-fn classify_container_close(body: &str) -> Option<EmitKind> {
-    let rest = body.strip_suffix("終わり")?;
-    if rest == "ここで字下げ" {
-        return Some(EmitKind::BlockClose(ContainerKind::Indent { amount: 0 }));
-    }
-    if rest == "ここで地付き" {
-        return Some(EmitKind::BlockClose(ContainerKind::AlignEnd { offset: 0 }));
-    }
-    match rest {
-        "罫囲み" => Some(EmitKind::BlockClose(ContainerKind::Keigakomi)),
-        _ => None,
-    }
-}
-
-/// Classify `［＃割り注］` / `［＃割り注終わり］` as paired inline
-/// annotations.
-///
-/// The Aozora annotation spec
-/// (<https://www.aozora.gr.jp/annotation/etc.html#warichu>) says:
-/// > かつては［＃ここから割り注］〜［＃ここで割り注終わり］と書いていましたが、
-/// > 行中の注記の書式をそろえるために、変更しました。
-///
-/// So `割り注` is always inline. Emitting each open / close as a
-/// separate [`AnnotationKind::WarichuOpen`] / [`AnnotationKind::WarichuClose`]
-/// annotation keeps them in the inline token stream — the renderer
-/// emits `<span class="afm-warichu">` on open and `</span>` on close,
-/// producing the canonical `<span class="afm-warichu">…</span>` shape
-/// without splitting the host paragraph the way a block container
-/// would.
-///
-/// Returns `None` for bodies other than the two warichu markers.
-fn classify_inline_warichu(body: &str) -> Option<AozoraNode> {
-    match body {
-        "割り注" => Some(AozoraNode::Annotation(Annotation {
-            raw: "［＃割り注］".into(),
-            kind: AnnotationKind::WarichuOpen,
-        })),
-        "割り注終わり" => Some(AozoraNode::Annotation(Annotation {
-            raw: "［＃割り注終わり］".into(),
-            kind: AnnotationKind::WarichuClose,
-        })),
-        _ => None,
-    }
-}
-
-/// Classify a `［＃<mark>］` kaeriten (Chinese-reading order mark).
-///
-/// Three shapes recognised — see
-/// <https://www.aozora.gr.jp/annotation/kunten.html>:
-///
-/// 1. **Canonical single-char marks** — `一` / `二` / `三` / `四` /
-///    `上` / `中` / `下` / `レ` / `甲` / `乙` / `丙` / `丁`. Binary-
-///    searched against a sorted `&[&str]` table for O(log n) lookup.
-/// 2. **Compound marks** — `一レ`, `二レ`, `三レ`, `上レ`, `中レ`,
-///    `下レ`. These pair an order mark with the reversal mark; they
-///    render identically to their canonical counterparts (the CSS
-///    theme can differentiate via content-based selectors).
-/// 3. **送り仮名 (okurigana)** — `（X）` where X is 1–6 CJK characters
-///    (hiragana / katakana / kanji). Kept verbatim as the Kaeriten
-///    mark so the renderer can emit `<sup>（X）</sup>`. The canonical
-///    use is supplying a Japanese particle reading for a Chinese
-///    character where a full ruby run would be overkill.
-///
-/// Other single-character bodies fall through to other classifiers.
-/// The shared [`AozoraNode::Kaeriten`] payload keeps the renderer
-/// schema-uniform; per-shape styling is a CSS concern via attribute
-/// selectors on `afm-kaeriten` + content.
-fn classify_kaeriten(body: &str) -> Option<AozoraNode> {
-    // Length prefilter: every spec mark is exactly one CJK glyph
-    // (3 bytes UTF-8) or two CJK glyphs (6 bytes). `body.len()` is a
-    // free check; when it's neither 3 nor 6 we skip the hash entirely
-    // and fall through to the okurigana path. Saves a perfect-hash
-    // probe on every annotation that isn't a kaeriten.
-    if matches!(body.len(), 3 | 6) && KAERITEN_MARKS.contains(body) {
-        return Some(AozoraNode::Kaeriten(Kaeriten { mark: body.into() }));
-    }
-    if is_okurigana_body(body) {
-        return Some(AozoraNode::Kaeriten(Kaeriten { mark: body.into() }));
-    }
-    None
-}
-
-/// Compile-time perfect hash of every standardised kaeriten mark
-/// (canonical 12 + compound 6 = 18 entries). `phf::Set::contains`
-/// is O(1) and replaces the dual `&[&str]::contains` linear scan
-/// the prior implementation made.
-static KAERITEN_MARKS: phf::Set<&'static str> = phf::phf_set! {
-    // Canonical 12: single-glyph marks.
-    "一", "丁", "三", "上", "下", "中", "丙", "乙", "二", "四", "甲", "レ",
-    // Compound 6: two-glyph marks (ending in レ).
-    "一レ", "上レ", "下レ", "中レ", "二レ", "三レ",
-};
-
-const _: () = {
-    // Pin the count to the spec: 12 canonical + 6 compound = 18.
-    assert!(
-        KAERITEN_MARKS.len() == 18,
-        "KAERITEN_MARKS must contain exactly 18 entries (12 canonical + 6 compound)"
-    );
-};
-
 /// Whether `body` is the okurigana shape `（X）` where X is a short
 /// run of Japanese characters.
 ///
@@ -1608,12 +1690,14 @@ const fn is_okurigana_char(ch: char) -> bool {
 
 /// Classify a `［＃挿絵（file）入る］` sashie (illustration insert).
 ///
-/// Captures the filename between `（` and `）`; the rest of the body
-/// must be exactly `入る`. The captioned form
+/// Called from [`classify_annotation_body`]'s `SashiePrefix` arm —
+/// the AC has already verified the `挿絵（` prefix at body[0..9]; this
+/// function captures the filename between `（` and `）` and confirms
+/// the trailing `入る` keyword. The captioned form
 /// (`［＃挿絵（file）「caption」入る］`) needs an event-level caption
 /// recogniser that this pass does not yet perform; the no-caption
 /// shape accounts for the vast majority of corpus occurrences.
-fn classify_sashie(body: &str) -> Option<AozoraNode> {
+fn classify_sashie_body(body: &str) -> Option<EmitKind> {
     let rest = body.strip_prefix("挿絵（")?;
     // `）` is a full-width right parenthesis (U+FF09). Find its first
     // occurrence — corpus rarely nests `（）` inside a filename.
@@ -1626,10 +1710,10 @@ fn classify_sashie(body: &str) -> Option<AozoraNode> {
     if tail != "入る" {
         return None;
     }
-    Some(AozoraNode::Sashie(Sashie {
+    Some(EmitKind::Aozora(AozoraNode::Sashie(Sashie {
         file: file.into(),
         caption: None,
-    }))
+    })))
 }
 
 /// Classify a `［＃「target」は(大|中|小)見出し］` forward-reference
