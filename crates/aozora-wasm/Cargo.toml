@@ -1,0 +1,36 @@
+[package]
+name        = "aozora-wasm"
+description = "WASM driver for the aozora parser — wasm-bindgen + wasm-pack distribution"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+# Driver crate — published to npm via wasm-pack once Move 4's WASM
+# pipeline is wired in CI. Host (cargo workspace) builds skip it
+# unless the wasm32 target is selected.
+publish     = false
+
+[lints]
+workspace = true
+
+# wasm-bindgen + js-sys are pulled in only when targeting wasm32, so
+# host (x86_64 / aarch64) builds of the workspace skip them entirely.
+# Without these targets the crate compiles to a zero-cost passthrough
+# library that re-exports the underlying types unchanged.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen          = "0.2"
+serde-wasm-bindgen    = "0.6"
+
+[dependencies]
+aozora     = { workspace = true }
+serde      = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[lib]
+crate-type = ["lib", "cdylib"]

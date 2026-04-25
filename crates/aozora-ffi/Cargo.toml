@@ -1,0 +1,37 @@
+[package]
+name        = "aozora-ffi"
+description = "C ABI driver for the aozora parser — opaque handle + JSON output"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+# Driver crate — published once cbindgen-generated headers ship as
+# release artefacts. Today: scaffold + opaque handle pattern; next
+# Move 4 commit wires the cbindgen build script.
+publish     = false
+
+# NOTE: this crate intentionally does NOT inherit the workspace
+# `unsafe_code = "forbid"` lint. The C ABI surface inherently
+# requires unsafe blocks for `extern "C"`, raw pointer dereference,
+# and `Box::into_raw` / `Box::from_raw`. We re-state the rest of the
+# workspace's lint discipline locally so the FFI crate stays held to
+# the same standard everywhere else.
+[lints.rust]
+unsafe_code = "deny"
+non_ascii_idents = "deny"
+missing_debug_implementations = "warn"
+missing_copy_implementations = "warn"
+
+[dependencies]
+aozora     = { workspace = true }
+serde      = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]

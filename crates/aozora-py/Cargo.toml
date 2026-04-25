@@ -1,0 +1,42 @@
+[package]
+name        = "aozora-py"
+description = "Python (PyO3) driver for the aozora parser — maturin / pip distribution"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+# Driver crate — published to PyPI via maturin once Move 4's Python
+# pipeline is wired in CI. Host (cargo workspace) builds skip the
+# pyo3 dep unless the `extension-module` feature is enabled.
+publish     = false
+
+[lints]
+workspace = true
+
+[dependencies]
+aozora      = { workspace = true }
+aozora-wasm = { workspace = true }
+serde_json  = { workspace = true }
+
+# pyo3 + python dev headers are not installed in the default dev
+# environment; expose the actual Python binding behind an opt-in
+# feature so a plain `cargo build --workspace` does not need to
+# discover Python. Enable the feature when running `maturin develop`
+# / `maturin build`.
+[dependencies.pyo3]
+version = "0.26"
+optional = true
+features = ["extension-module"]
+
+[features]
+default = []
+extension-module = ["dep:pyo3"]
+
+[lib]
+crate-type = ["lib", "cdylib"]

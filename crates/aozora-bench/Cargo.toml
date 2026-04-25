@@ -1,0 +1,34 @@
+[package]
+name        = "aozora-bench"
+description = "criterion + corpus-driven bench harness for the aozora parser (PGO profile source)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+# Internal — bench-only crate, never published.
+publish     = false
+
+[lints]
+workspace = true
+
+[dependencies]
+aozora          = { workspace = true }
+aozora-corpus   = { workspace = true }
+aozora-encoding = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name    = "crime_and_punishment"
+harness = false
+
+[[bench]]
+name    = "synthetic_corpus"
+harness = false

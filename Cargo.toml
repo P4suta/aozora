@@ -15,6 +15,10 @@ members = [
     "crates/aozora-parallel",
     "crates/aozora-render",
     "crates/aozora",
+    "crates/aozora-ffi",
+    "crates/aozora-wasm",
+    "crates/aozora-py",
+    "crates/aozora-bench",
 ]
 
 [workspace.package]
@@ -133,6 +137,7 @@ aozora-lex        = { version = "0.1.0", path = "crates/aozora-lex" }
 aozora-parallel   = { version = "0.1.0", path = "crates/aozora-parallel" }
 aozora-render     = { version = "0.1.0", path = "crates/aozora-render" }
 aozora            = { version = "0.1.0", path = "crates/aozora" }
+aozora-wasm       = { path = "crates/aozora-wasm" }
 
 # Memory management
 bumpalo = "3.16"
