@@ -90,6 +90,8 @@ pub use phase1_events::tokenize;
 pub use phase2_pair::{PairEvent, PairKind, PairOutput, pair};
 pub use phase3_classify::{ClassifiedSpan, ClassifyOutput, SpanKind, classify};
 pub use phase4_normalize::{NormalizeOutput, PlaceholderRegistry, normalize};
+#[doc(hidden)]
+pub use phase4_normalize::is_standalone_block_for_render;
 pub use phase6_validate::{ValidateOutput, validate};
 pub use token::{Token, TriggerKind};
 

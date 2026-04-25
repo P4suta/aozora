@@ -218,7 +218,15 @@ impl<'s> Normalizer<'s> {
 /// they are supposed to apply to. Matches the adapter path's
 /// implicit behaviour (adapter's `try_start_block` never fires, so
 /// every match is inline).
-fn is_standalone_block_for_render(node: &AozoraNode) -> bool {
+/// Whether a node should be promoted to a block-leaf sentinel
+/// (`\n\n` separator + `BLOCK_LEAF_SENTINEL` + `\n\n`) instead of
+/// inlined into the surrounding paragraph.
+///
+/// Exposed `pub` (doc-hidden) so the arena-emitting normalizer in
+/// `aozora-lex::lex_into_arena` can reuse the same predicate without
+/// copy-pasting the variant list.
+#[doc(hidden)]
+pub fn is_standalone_block_for_render(node: &AozoraNode) -> bool {
     matches!(
         node,
         AozoraNode::PageBreak

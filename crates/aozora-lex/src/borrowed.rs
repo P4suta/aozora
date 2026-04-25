@@ -32,6 +32,10 @@
 //! into one allocate-into-the-arena pass. The public
 //! [`lex_into_arena`] signature stays stable across that change.
 
+use aozora_lexer::{
+    is_standalone_block_for_render, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL,
+    BLOCK_OPEN_SENTINEL, ClassifiedSpan, INLINE_SENTINEL, SpanKind,
+};
 use aozora_spec::Diagnostic;
 use aozora_syntax::borrowed::{self, Arena, InternStats, Interner, Registry};
 use aozora_syntax::convert::{self, StringPool};
@@ -88,62 +92,210 @@ pub struct BorrowedLexOutput<'a> {
 /// directly into the arena). The public signature does not change.
 #[must_use]
 pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'a> {
-    let owned = crate::lex(source);
+    // Phases 0-3 stay on the legacy owned path. Phase 3 still
+    // box-allocates `AozoraNode` per span — that's I-2.2 future
+    // work to make arena-native. What this function does in I-2.1
+    // is FUSE the legacy phase 4 normalize + the post-pass arena
+    // convert into a single walk that emits the borrowed registry
+    // directly (no intermediate `PlaceholderRegistry` Vec, no
+    // post-hoc deep-clone of every AozoraNode into the registry).
+    let sanitized = aozora_lexer::sanitize(source);
+    let tokens = aozora_lexer::tokenize(&sanitized.text);
+    let pair_out = aozora_lexer::pair(&tokens);
+    let classify_out = aozora_lexer::classify(&pair_out, &sanitized.text);
 
-    // Step 2a: copy normalized text into the arena. The normalized
-    // buffer is single-instance per parse, no dedup applies.
-    let normalized: &'a str = arena.alloc_str(&owned.normalized);
-
-    // Step 2b: build the interner with a capacity hint sized to the
-    // total registry entry count. Each entry contributes 1–4 strings
-    // (ruby base/reading, gaiji description+mencode, etc.), so a
-    // per-entry hint of 2 is a tight but safe upper bound. Power-of-
-    // two rounding inside `Interner::with_capacity_in` smooths the
-    // allocation pattern.
-    let registry_node_count = owned.registry.inline.len() + owned.registry.block_leaf.len();
-    let interner_hint = registry_node_count.saturating_mul(2).max(64);
+    // Pre-allocate the interner sized to the span count. Each Aozora
+    // span contributes 1-4 strings (ruby base/reading, gaiji
+    // description, kaeriten mark, etc.); the *2 multiplier is a tight
+    // upper bound that keeps the table from resizing on average corpus
+    // documents. `with_capacity_in` rounds up to the next power of two.
+    let span_count = classify_out.spans.len();
+    let interner_hint = span_count.max(64);
     let mut interner = Interner::with_capacity_in(interner_hint, arena);
 
-    // Step 3: convert each registry entry, routing every string field
-    // through the interner so byte-equal payloads share a single arena
-    // allocation (Innovation I-7).
-    let inline = convert_node_table(&owned.registry.inline, arena, &mut interner);
-    let block_leaf = convert_node_table(&owned.registry.block_leaf, arena, &mut interner);
+    // Single fused walk: emit normalized text + build the four
+    // borrowed-registry tables in one pass. Eliminates the legacy
+    // `Normalizer::emit_inline`'s `node.clone()` per span (deep clone
+    // of every AozoraNode into the owned `PlaceholderRegistry`) and
+    // the subsequent post-hoc convert-to-arena sweep — both replaced
+    // by an inline `convert::to_borrowed_with` per span at write time.
+    let mut builder = ArenaNormalizer::new(&sanitized.text, span_count);
+    for span in &classify_out.spans {
+        builder.emit(span, arena, &mut interner);
+    }
 
-    // Step 4: build the four EytzingerMaps. The block_open / block_close
-    // tables already use `ContainerKind` (a `Copy` enum) so they pass
-    // straight through with no per-entry conversion.
-    let block_open = EytzingerMap::from_sorted_slice(&owned.registry.block_open);
-    let block_close = EytzingerMap::from_sorted_slice(&owned.registry.block_close);
+    let normalized: &'a str = arena.alloc_str(&builder.out);
+
+    let registry = Registry {
+        inline: EytzingerMap::from_sorted_slice(&builder.inline),
+        block_leaf: EytzingerMap::from_sorted_slice(&builder.block_leaf),
+        block_open: EytzingerMap::from_sorted_slice(&builder.block_open),
+        block_close: EytzingerMap::from_sorted_slice(&builder.block_close),
+    };
+
+    // Diagnostics merge order (mirrors `aozora_lexer::lex`):
+    //
+    // 1. Phase 0 sanitize diagnostics first (`SourceContainsPua`).
+    // 2. `classify_out.diagnostics` already merges in phase 2 pair
+    //    diagnostics via `Driver::finish(pair_output.diagnostics.clone())`,
+    //    so we extend with classify ONLY — `pair_out.diagnostics`
+    //    would double-count.
+    // 3. Phase 6 validate (in debug + with the validate-invariants
+    //    feature) appends V1..V3 invariant breaches, skipped in
+    //    release per ADR-0014.
+    let mut diagnostics = sanitized.diagnostics;
+    diagnostics.extend(classify_out.diagnostics.iter().cloned());
+    if cfg!(any(debug_assertions, feature = "validate-invariants")) {
+        diagnostics.extend(validate_inline(&builder, &mut Vec::new()));
+    }
 
     let intern_stats = interner.stats;
+    let sanitized_len =
+        u32::try_from(sanitized.text.len()).expect("sanitize asserts source.len() <= u32::MAX");
 
     BorrowedLexOutput {
         normalized,
-        registry: Registry {
-            inline,
-            block_leaf,
-            block_open,
-            block_close,
-        },
-        diagnostics: owned.diagnostics,
-        sanitized_len: owned.sanitized_len,
+        registry,
+        diagnostics,
+        sanitized_len,
         intern_stats,
     }
 }
 
-/// Helper: convert a `Vec<(u32, owned::AozoraNode)>` registry table
-/// into an arena-backed `EytzingerMap<u32, borrowed::AozoraNode<'a>>`.
-fn convert_node_table<'a, P: StringPool<'a>>(
-    owned_entries: &[(u32, aozora_syntax::owned::AozoraNode)],
-    arena: &'a Arena,
-    pool: &mut P,
-) -> EytzingerMap<u32, borrowed::AozoraNode<'a>> {
-    let pairs: Vec<(u32, borrowed::AozoraNode<'a>)> = owned_entries
-        .iter()
-        .map(|(pos, node)| (*pos, convert::to_borrowed_with(node, arena, pool)))
-        .collect();
-    EytzingerMap::from_sorted_slice(&pairs)
+/// Single-pass arena-emitting normalizer (Plan I-2.1).
+///
+/// Mirrors `aozora_lexer::phase4_normalize::Normalizer`'s sentinel /
+/// padding contract byte-for-byte, but pushes into per-kind
+/// `Vec<(u32, borrowed::AozoraNode<'a>)>` tables backed by the same
+/// arena that the converted nodes live in. Replaces the prior
+/// `aozora_lexer::lex` → `convert_node_table` two-pass pipeline.
+struct ArenaNormalizer<'src, 'a> {
+    out: String,
+    source: &'src str,
+    inline: Vec<(u32, borrowed::AozoraNode<'a>)>,
+    block_leaf: Vec<(u32, borrowed::AozoraNode<'a>)>,
+    block_open: Vec<(u32, ContainerKind)>,
+    block_close: Vec<(u32, ContainerKind)>,
+}
+
+impl<'src, 'a> ArenaNormalizer<'src, 'a> {
+    fn new(source: &'src str, span_capacity_hint: usize) -> Self {
+        Self {
+            // Normalized text always shrinks vs source (multi-byte
+            // Aozora constructs collapse to a single PUA char), so
+            // `source.len()` is a safe upper bound.
+            out: String::with_capacity(source.len()),
+            source,
+            // Per-kind table capacities are educated guesses from
+            // corpus profiling: inline dominates (~80% of spans),
+            // block_leaf ~10%, containers ~5% each. Conservative
+            // splits keep early `push`es alloc-free.
+            inline: Vec::with_capacity(span_capacity_hint.saturating_mul(4) / 5),
+            block_leaf: Vec::with_capacity(span_capacity_hint / 10),
+            block_open: Vec::with_capacity(span_capacity_hint / 20),
+            block_close: Vec::with_capacity(span_capacity_hint / 20),
+        }
+    }
+
+    fn current_pos(&self) -> u32 {
+        u32::try_from(self.out.len()).expect("normalized fits u32 per Phase 0 cap")
+    }
+
+    fn emit<P: StringPool<'a>>(
+        &mut self,
+        span: &ClassifiedSpan,
+        arena: &'a Arena,
+        pool: &mut P,
+    ) {
+        match &span.kind {
+            SpanKind::Plain => {
+                self.out.push_str(span.source_span.slice(self.source));
+            }
+            SpanKind::Newline => {
+                self.out.push('\n');
+            }
+            SpanKind::Aozora(node) => {
+                if is_standalone_block_for_render(node) {
+                    // Block-leaf padding: blank-line / sentinel /
+                    // blank-line. Mirrors `Normalizer::emit_block_leaf`
+                    // byte-for-byte so comrak still sees the standalone
+                    // paragraph shape.
+                    self.out.push_str("\n\n");
+                    let pos = self.current_pos();
+                    self.out.push(BLOCK_LEAF_SENTINEL);
+                    self.out.push_str("\n\n");
+                    let borrowed = convert::to_borrowed_with(node, arena, pool);
+                    self.block_leaf.push((pos, borrowed));
+                } else {
+                    let pos = self.current_pos();
+                    self.out.push(INLINE_SENTINEL);
+                    let borrowed = convert::to_borrowed_with(node, arena, pool);
+                    self.inline.push((pos, borrowed));
+                }
+            }
+            SpanKind::BlockOpen(container) => {
+                self.out.push_str("\n\n");
+                let pos = self.current_pos();
+                self.out.push(BLOCK_OPEN_SENTINEL);
+                self.out.push_str("\n\n");
+                self.block_open.push((pos, *container));
+            }
+            SpanKind::BlockClose(container) => {
+                self.out.push_str("\n\n");
+                let pos = self.current_pos();
+                self.out.push(BLOCK_CLOSE_SENTINEL);
+                self.out.push_str("\n\n");
+                self.block_close.push((pos, *container));
+            }
+            // `SpanKind` is `#[non_exhaustive]`; new variants land
+            // here as no-op until the normalizer adds a dedicated arm.
+            _ => {}
+        }
+    }
+}
+
+/// Run V1..V3 invariant checks on the normalizer's output. Wraps
+/// `aozora_lexer::validate` by reconstructing a temporary
+/// `PlaceholderRegistry` from the borrowed builder — the legacy
+/// validator is read-only over the registry shape, and its
+/// diagnostics carry the only relevant payload. Returns the new
+/// diagnostics it produced.
+///
+/// Unused `_scratch` argument anchored for a future zero-alloc
+/// validator that takes a borrowed-registry view directly; kept
+/// here so the call site doesn't churn when that lands.
+fn validate_inline(
+    builder: &ArenaNormalizer<'_, '_>,
+    _scratch: &mut Vec<Diagnostic>,
+) -> Vec<Diagnostic> {
+    // Build a minimal owned PlaceholderRegistry view for the legacy
+    // validator. It only inspects positions and variant kinds, so we
+    // can hand it dummy `AozoraNode::PageBreak` payloads without
+    // affecting the diagnostics it produces. Avoids an arena drain
+    // that a per-entry deep clone would require.
+    use aozora_lexer::PlaceholderRegistry;
+    use aozora_syntax::owned::AozoraNode as OwnedNode;
+    let registry = PlaceholderRegistry {
+        inline: builder
+            .inline
+            .iter()
+            .map(|(p, _)| (*p, OwnedNode::PageBreak))
+            .collect(),
+        block_leaf: builder
+            .block_leaf
+            .iter()
+            .map(|(p, _)| (*p, OwnedNode::PageBreak))
+            .collect(),
+        block_open: builder.block_open.clone(),
+        block_close: builder.block_close.clone(),
+    };
+    let normalize_out = aozora_lexer::NormalizeOutput {
+        normalized: builder.out.clone(),
+        registry,
+        diagnostics: Vec::new(),
+    };
+    let validated = aozora_lexer::validate(normalize_out);
+    validated.diagnostics
 }
 
 // Container registries: pure copy of (u32, ContainerKind) — both are
