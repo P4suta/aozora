@@ -43,7 +43,8 @@ use core::fmt;
 use aozora_lex::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
 };
-use aozora_syntax::{AozoraNode, Container};
+use aozora_syntax::owned::AozoraNode;
+use aozora_syntax::Container;
 
 use crate::aozora::html::render as render_node;
 use crate::{ParseArtifacts, parse};

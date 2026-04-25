@@ -299,7 +299,7 @@ mod tests {
     // into `validate()` to cover the diagnostic-emission arms.
     // ---------------------------------------------------------------
 
-    use aozora_syntax::{AozoraNode, Ruby};
+    use aozora_syntax::owned::{AozoraNode, Ruby};
 
     /// Construct a minimal [`NormalizeOutput`] that satisfies V1 (no
     /// residual `［＃`) but can be tweaked per-test to trigger V2/V3

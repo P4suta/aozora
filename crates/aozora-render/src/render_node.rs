@@ -225,10 +225,8 @@ mod tests {
     use super::*;
     use aozora_syntax::borrowed::Arena;
     use aozora_syntax::convert::to_borrowed;
-    use aozora_syntax::{
-        AlignEnd, Annotation, AnnotationKind, AozoraNode as OwnedNode, Bouten, BoutenKind,
-        BoutenPosition, Indent, Ruby as ORuby, SectionKind,
-    };
+    use aozora_syntax::owned::{Annotation, AozoraNode as OwnedNode, Bouten, Ruby as ORuby};
+    use aozora_syntax::{AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, Indent, SectionKind};
 
     fn render_to_string(arena: &Arena, owner: &OwnedNode) -> String {
         let borrowed = to_borrowed(owner, arena);

@@ -13,7 +13,7 @@
 
 use aozora_parser::html::render_to_string;
 use aozora_parser::test_support::{assert_no_bare, collect_aozora, strip_annotation_wrappers};
-use aozora_syntax::AozoraNode;
+use aozora_syntax::owned::AozoraNode;
 
 const FIXTURE: &str = include_str!("../../../spec/aozora/fixtures/56656/input.utf8.txt");
 

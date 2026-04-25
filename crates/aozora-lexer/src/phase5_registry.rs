@@ -11,7 +11,8 @@
 //! The module holds *only* accessor impls and (cfg-test) coverage —
 //! the storage type itself lives in [`crate::phase4_normalize`].
 
-use aozora_syntax::{AozoraNode, ContainerKind};
+use aozora_syntax::owned::AozoraNode;
+use aozora_syntax::ContainerKind;
 
 use crate::phase4_normalize::PlaceholderRegistry;
 

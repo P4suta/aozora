@@ -112,7 +112,7 @@ fn main() {
         use aozora_lexer::SpanKind;
         if let SpanKind::Aozora(node) = &span.kind {
             aozora_count += 1;
-            use aozora_syntax::AozoraNode;
+            use aozora_syntax::owned::AozoraNode;
             let name = match &**node {
                 AozoraNode::Ruby(_) => "Ruby",
                 AozoraNode::Bouten(_) => "Bouten",

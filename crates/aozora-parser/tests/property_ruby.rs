@@ -15,7 +15,7 @@
 //! explicit form so the generated corpus of random inputs is unambiguous.
 
 use aozora_parser::test_support::collect_aozora;
-use aozora_syntax::{AozoraNode, Content, Ruby, Segment, SegmentRef};
+use aozora_syntax::owned::{AozoraNode, Content, Ruby, Segment, SegmentRef};
 use aozora_test_utils::generators::{hiragana_fragment, kanji_fragment};
 use proptest::prelude::*;
 

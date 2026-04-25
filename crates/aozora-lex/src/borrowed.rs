@@ -135,7 +135,7 @@ pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'
 /// Helper: convert a `Vec<(u32, owned::AozoraNode)>` registry table
 /// into an arena-backed `EytzingerMap<u32, borrowed::AozoraNode<'a>>`.
 fn convert_node_table<'a, P: StringPool<'a>>(
-    owned_entries: &[(u32, aozora_syntax::AozoraNode)],
+    owned_entries: &[(u32, aozora_syntax::owned::AozoraNode)],
     arena: &'a Arena,
     pool: &mut P,
 ) -> EytzingerMap<u32, borrowed::AozoraNode<'a>> {

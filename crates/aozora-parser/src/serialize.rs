@@ -49,10 +49,12 @@ use core::fmt;
 use aozora_lex::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
 };
+use aozora_syntax::owned::{
+    Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, Ruby,
+    Sashie, SegmentRef, TateChuYoko,
+};
 use aozora_syntax::{
-    AlignEnd, Annotation, AozoraNode, Bouten, BoutenKind, BoutenPosition, ContainerKind, Content,
-    DoubleRuby, Gaiji, HeadingHint, Indent, Kaeriten, Ruby, Sashie, SectionKind, SegmentRef,
-    TateChuYoko,
+    AlignEnd, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind,
 };
 
 use crate::{ParseArtifacts, ParseResult};
@@ -334,7 +336,7 @@ fn emit_bouten_targets(c: &Content, out: &mut dyn fmt::Write) -> fmt::Result {
         Content::Segments(segs) => {
             let mut any = false;
             for seg in segs {
-                if let aozora_syntax::Segment::Text(t) = seg
+                if let aozora_syntax::owned::Segment::Text(t) = seg
                     && !t.is_empty()
                 {
                     // Emit each comma-separated chunk as its own

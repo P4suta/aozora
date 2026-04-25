@@ -56,10 +56,13 @@
 use core::ops::Range;
 
 use aozora_encoding::gaiji as gaiji_resolve;
+use aozora_syntax::owned::{
+    Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, Ruby,
+    Sashie, Segment, TateChuYoko,
+};
 use aozora_syntax::{
-    AlignEnd, Annotation, AnnotationKind, AozoraNode, Bouten, BoutenKind, BoutenPosition,
-    ContainerKind, Content, DoubleRuby, Gaiji, HeadingHint, Indent, Kaeriten, Ruby, Sashie,
-    SectionKind, Segment, Span, TateChuYoko,
+    AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind,
+    Span,
 };
 
 use crate::diagnostic::Diagnostic;

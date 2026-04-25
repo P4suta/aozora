@@ -34,8 +34,8 @@
 //! repeated content. Empirically Aozora corpora dedup to ~30–50%
 //! of the naive size.
 
-use crate as owned;
 use crate::borrowed::{self, Arena, Interner};
+use crate::owned;
 
 /// Strategy for placing a `&str` into the arena.
 ///
@@ -220,11 +220,13 @@ fn convert_annotation<'a, P: StringPool<'a>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::owned::{
+        Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,
+        Kaeriten, Ruby, Sashie, Segment, TateChuYoko, Warichu,
+    };
     use crate::{
-        AlignEnd, Annotation, AnnotationKind, AozoraHeading, AozoraHeadingKind, AozoraNode,
-        Bouten, BoutenKind, BoutenPosition, Container, ContainerKind, Content, DoubleRuby, Gaiji,
-        HeadingHint, Indent, Kaeriten, Keigakomi, Ruby, Sashie, SectionKind, Segment, TateChuYoko,
-        Warichu,
+        AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container,
+        ContainerKind, Indent, Keigakomi, SectionKind,
     };
 
     /// Spot-check that every variant survives the round-trip with

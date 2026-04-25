@@ -10,10 +10,10 @@
 
 use core::fmt::{self, Write};
 
-use aozora_syntax::{
-    AlignEnd, Annotation, AozoraNode, Bouten, Container, ContainerKind, Content, DoubleRuby, Gaiji,
-    Indent, Kaeriten, Ruby, SectionKind, SegmentRef,
+use aozora_syntax::owned::{
+    Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, Kaeriten, Ruby, SegmentRef,
 };
+use aozora_syntax::{AlignEnd, Container, ContainerKind, Indent, SectionKind};
 
 use crate::aozora::bouten;
 
@@ -291,10 +291,8 @@ const fn html_entity(c: char) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aozora_syntax::{
-        AlignEnd, Annotation, AnnotationKind, Bouten, BoutenKind, BoutenPosition, Indent, Ruby,
-        TateChuYoko,
-    };
+    use aozora_syntax::owned::{Annotation, Bouten, Ruby, TateChuYoko};
+    use aozora_syntax::{AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, Indent};
 
     fn render_to_string(node: &AozoraNode) -> String {
         let mut out = String::new();
@@ -335,7 +333,7 @@ mod tests {
 
     #[test]
     fn ruby_reading_with_embedded_gaiji_renders_segmented() {
-        use aozora_syntax::{Content, Gaiji, Segment};
+        use aozora_syntax::owned::{Content, Gaiji, Segment};
         let reading = Content::from_segments(vec![
             Segment::Text("く".into()),
             Segment::Gaiji(Gaiji {
@@ -359,7 +357,8 @@ mod tests {
     #[test]
     fn ruby_base_with_kun_yomi_via_annotation_segment_stays_in_content() {
         use crate::test_support::strip_annotation_wrappers;
-        use aozora_syntax::{Annotation, AnnotationKind, Content, Segment};
+        use aozora_syntax::owned::{Annotation, Content, Segment};
+        use aozora_syntax::AnnotationKind;
         // Classical kun-yomi mark embedded between kanji characters —
         // handled as an Annotation segment here (the dedicated Kaeriten
         // variant is an independent node, not a segment kind per B1).
@@ -386,7 +385,7 @@ mod tests {
 
     #[test]
     fn kaeriten_renders_as_superscript_afm_kaeriten() {
-        use aozora_syntax::Kaeriten;
+        use aozora_syntax::owned::Kaeriten;
         let n = AozoraNode::Kaeriten(Kaeriten { mark: "レ".into() });
         assert_eq!(
             render_to_string(&n),
@@ -519,7 +518,7 @@ mod tests {
 
     #[test]
     fn gaiji_with_resolved_ucs_emits_single_char() {
-        use aozora_syntax::Gaiji;
+        use aozora_syntax::owned::Gaiji;
         let n = AozoraNode::Gaiji(Gaiji {
             description: "placeholder".into(),
             ucs: Some('榁'),
@@ -530,7 +529,7 @@ mod tests {
 
     #[test]
     fn gaiji_without_ucs_falls_back_to_description_escaped() {
-        use aozora_syntax::Gaiji;
+        use aozora_syntax::owned::Gaiji;
         let n = AozoraNode::Gaiji(Gaiji {
             description: "a<b>".into(),
             ucs: None,
@@ -544,7 +543,7 @@ mod tests {
 
     #[test]
     fn double_ruby_plain_content_wraps_academic_brackets() {
-        use aozora_syntax::DoubleRuby;
+        use aozora_syntax::owned::DoubleRuby;
         let n = AozoraNode::DoubleRuby(DoubleRuby {
             content: "emphasis".into(),
         });
@@ -556,7 +555,7 @@ mod tests {
 
     #[test]
     fn double_ruby_escapes_structural_characters() {
-        use aozora_syntax::DoubleRuby;
+        use aozora_syntax::owned::DoubleRuby;
         let n = AozoraNode::DoubleRuby(DoubleRuby {
             content: "a<b&c".into(),
         });

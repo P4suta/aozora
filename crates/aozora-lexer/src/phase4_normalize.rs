@@ -41,7 +41,8 @@
 //! [`crate::phase3_classify`] via `aozora_encoding::gaiji::lookup`.
 //! This pass only performs the sentinel substitution.
 
-use aozora_syntax::{AozoraNode, ContainerKind};
+use aozora_syntax::owned::AozoraNode;
+use aozora_syntax::ContainerKind;
 
 use crate::diagnostic::Diagnostic;
 use crate::phase3_classify::{ClassifiedSpan, ClassifyOutput, SpanKind};
