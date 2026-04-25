@@ -244,18 +244,48 @@ fn fallback(node: &AozoraNode, writer: &mut dyn Write) -> fmt::Result {
 }
 
 /// Minimal HTML5 text escape for the five structural characters.
+///
+/// Bulk-copy chunk between matches via `write_str` (one logical
+/// `memcpy` per safe run); only the five unsafe ASCII characters
+/// trigger the entity dispatch. On long Japanese-prose runs (the
+/// common case for ruby base / reading content) every UTF-8 byte
+/// passes through `match_indices` without ever entering the entity
+/// match, so the cost is dominated by `memchr`-style scanning rather
+/// than per-character dispatch.
 fn escape_text(text: &str, writer: &mut dyn Write) -> fmt::Result {
-    for ch in text.chars() {
-        match ch {
-            '&' => writer.write_str("&amp;")?,
-            '<' => writer.write_str("&lt;")?,
-            '>' => writer.write_str("&gt;")?,
-            '"' => writer.write_str("&quot;")?,
-            '\'' => writer.write_str("&#x27;")?,
-            _ => writer.write_char(ch)?,
-        }
+    let mut cursor = 0;
+    for (pos, m) in text.match_indices(HTML_UNSAFE_CHARS) {
+        writer.write_str(&text[cursor..pos])?;
+        // `HTML_UNSAFE_CHARS` admits only the five 1-byte ASCII
+        // characters listed below, so the match string is exactly
+        // one byte and `as_bytes()[0]` is safe to interpret as char.
+        let ch = m.as_bytes()[0] as char;
+        writer.write_str(html_entity(ch))?;
+        cursor = pos + m.len();
     }
-    Ok(())
+    writer.write_str(&text[cursor..])
+}
+
+/// HTML-unsafe ASCII characters expressed as a slice pattern. `&[char]`
+/// implements [`core::str::pattern::Pattern`], which lets
+/// [`str::match_indices`] lower the scan to a memchr-class probe over
+/// the small char set without per-call closure construction.
+const HTML_UNSAFE_CHARS: &[char] = &['<', '>', '&', '"', '\''];
+
+/// Entity for one of the five characters in [`HTML_UNSAFE_CHARS`].
+/// Apostrophe uses the hex form `&#x27;` to match the existing class
+/// contract pinned by the integration tests in
+/// `tests/html_escape_invariants.rs` and `tests/ruby_segments.rs`.
+#[inline]
+const fn html_entity(c: char) -> &'static str {
+    match c {
+        '<' => "&lt;",
+        '>' => "&gt;",
+        '&' => "&amp;",
+        '"' => "&quot;",
+        '\'' => "&#x27;",
+        _ => "",
+    }
 }
 
 #[cfg(test)]

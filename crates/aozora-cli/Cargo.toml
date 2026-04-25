@@ -26,3 +26,6 @@ clap            = { workspace = true }
 miette          = { workspace = true }
 anyhow          = { workspace = true }
 thiserror       = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

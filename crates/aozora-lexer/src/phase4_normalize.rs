@@ -115,7 +115,15 @@ impl<'s> Normalizer<'s> {
     }
 
     fn emit(&mut self, span: &ClassifiedSpan) {
-        match span.kind.clone() {
+        // Match by reference. The previous version cloned the entire
+        // `SpanKind` enum on entry — for the `Plain` / `Newline` /
+        // `BlockOpen` / `BlockClose` cases that was free
+        // (no inner heap data) but the `Aozora` variant pulled along
+        // the full `AozoraNode` (a Ruby with two `Content`s, a
+        // multi-target Bouten, etc.). The borrow path below clones
+        // the node only once, at the moment it is recorded into the
+        // registry, instead of cloning at the match boundary.
+        match &span.kind {
             SpanKind::Plain => {
                 // Sanitize-phase guarantees valid UTF-8 boundaries in
                 // the span, so `slice` never panics.
@@ -137,28 +145,28 @@ impl<'s> Normalizer<'s> {
                 // Pre-existing adapter fixtures — and real Aozora
                 // reading convention — both assume these leaf markers
                 // sit inline with the text they modify.
-                if is_standalone_block_for_render(&node) {
+                if is_standalone_block_for_render(node) {
                     self.emit_block_leaf(node);
                 } else {
                     self.emit_inline(node);
                 }
             }
             SpanKind::BlockOpen(container) => {
-                self.emit_block_open(container);
+                self.emit_block_open(*container);
             }
             SpanKind::BlockClose(container) => {
-                self.emit_block_close(container);
+                self.emit_block_close(*container);
             }
         }
     }
 
-    fn emit_inline(&mut self, node: AozoraNode) {
+    fn emit_inline(&mut self, node: &AozoraNode) {
         let pos = self.current_pos();
         self.out.push(INLINE_SENTINEL);
-        self.registry.inline.push((pos, node));
+        self.registry.inline.push((pos, node.clone()));
     }
 
-    fn emit_block_leaf(&mut self, node: AozoraNode) {
+    fn emit_block_leaf(&mut self, node: &AozoraNode) {
         // Pad with **blank** lines (`\n\n`) so comrak treats the
         // sentinel character as a standalone paragraph rather than
         // soft-joining it with adjacent inline text. A single `\n`
@@ -169,7 +177,7 @@ impl<'s> Normalizer<'s> {
         let pos = self.current_pos();
         self.out.push(BLOCK_LEAF_SENTINEL);
         self.out.push_str("\n\n");
-        self.registry.block_leaf.push((pos, node));
+        self.registry.block_leaf.push((pos, node.clone()));
     }
 
     fn emit_block_open(&mut self, container: ContainerKind) {

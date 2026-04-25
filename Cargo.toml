@@ -44,7 +44,14 @@ explicit_outlives_requirements = "warn"
 
 let_underscore_drop        = "warn"
 keyword_idents_2024        = "warn"
-variant_size_differences   = "warn"
+# `variant_size_differences` (rustc): used to nudge fat variants
+# behind `Box`. The lexer's `SpanKind::Aozora` already wraps its
+# inner `AozoraNode` in `Box` so the variant is 8 bytes, but the
+# residual ratio against 0-byte unit variants (`Plain`, `Newline`)
+# still trips the heuristic. Allowed at the workspace level — the
+# related `clippy::large_enum_variant` carve-out below documents the
+# same call.
+variant_size_differences   = "allow"
 ambiguous_negative_literals = "warn"
 
 dead_code = "deny"
@@ -100,6 +107,14 @@ module_name_repetitions = "allow"
 multiple_crate_versions = "allow"
 missing_const_for_fn    = "allow"
 redundant_pub_crate     = "allow"
+# `large_enum_variant`: SpanKind::Aozora already wraps its inner
+# `AozoraNode` in `Box` (~8 bytes ptr) to keep the variant data 7×
+# smaller than the inline form (~56 bytes). The clippy heuristic
+# still flags Box-vs-1-byte ContainerKind discrepancy as "more than
+# 3× larger"; further uniformisation (boxing every variant) would
+# regress code clarity and force Box::new at every construction
+# site for negligible additional layout savings.
+large_enum_variant      = "allow"
 
 [workspace.dependencies]
 # Internal crates — paths within this workspace.

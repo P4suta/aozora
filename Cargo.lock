@@ -92,6 +92,7 @@ dependencies = [
  "aozora-parser",
  "clap",
  "miette",
+ "tempfile",
  "thiserror",
 ]
 

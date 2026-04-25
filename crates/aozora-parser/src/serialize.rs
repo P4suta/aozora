@@ -44,6 +44,8 @@
 //! The corpus sweep's `I3` invariant hard-gates this contract:
 //! `serialize ∘ parse` is a fixed point after one round-trip.
 
+use core::fmt;
+
 use aozora_lexer::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
 };
@@ -116,7 +118,6 @@ pub fn serialize_from_artifacts(artifacts: &ParseArtifacts) -> String {
     // every char is 3 bytes, and keeps the O(n) walk branch-free
     // in its fast path.
     let mut out = NewlineCappedWriter::with_capacity(normalized.len() * 2);
-
     let mut cursor = 0usize;
     for (pos, sentinel_str) in
         normalized.match_indices(|c: char| SentinelKind::from_char(c).is_some())
@@ -134,20 +135,20 @@ pub fn serialize_from_artifacts(artifacts: &ParseArtifacts) -> String {
         // Dispatch via the registry accessor for this sentinel
         // class. Drift (no registry entry) silently drops the
         // sentinel; Phase 6's V2/V3 diagnostics would have already
-        // flagged the shape.
+        // flagged the shape. `emit_aozora` writes directly into
+        // [`NewlineCappedWriter`] via its [`core::fmt::Write`] impl,
+        // so the only buffer materialised in this loop is `out`
+        // itself — no per-sentinel allocations, no copy from
+        // scratch.
         match SentinelKind::from_char(sentinel_ch).expect("predicate matched on this char") {
             SentinelKind::Inline => {
                 if let Some(node) = registry.inline_at(byte_pos) {
-                    let mut buf = String::new();
-                    emit_aozora(node, &mut buf);
-                    out.push_str(&buf);
+                    let _drop = emit_aozora(node, &mut out);
                 }
             }
             SentinelKind::BlockLeaf => {
                 if let Some(node) = registry.block_leaf_at(byte_pos) {
-                    let mut buf = String::new();
-                    emit_aozora(node, &mut buf);
-                    out.push_str(&buf);
+                    let _drop = emit_aozora(node, &mut out);
                 }
             }
             SentinelKind::BlockOpen => {
@@ -194,29 +195,39 @@ impl NewlineCappedWriter {
     }
 
     fn push_str(&mut self, s: &str) {
-        // Fast path: no newline in the chunk — one memcpy and reset
-        // the trailing-newline counter. memchr hot path.
-        if !s.contains('\n') {
-            if !s.is_empty() {
-                self.out.push_str(s);
-                self.trailing_newlines = 0;
-            }
+        if s.is_empty() {
             return;
         }
-        // Slow path: chunk contains newlines. Walk char-by-char so
-        // the cap is honoured at every position. UTF-8 char iteration
-        // is cheap relative to the memcpy it replaces only on chunks
-        // dense with newlines.
-        for ch in s.chars() {
-            if ch == '\n' {
-                self.trailing_newlines += 1;
-                if self.trailing_newlines <= 2 {
-                    self.out.push('\n');
-                }
-            } else {
+        // Fast path: no newline in the chunk — one memcpy and reset
+        // the trailing-newline counter. `str::contains(char)` lowers
+        // to memchr for ASCII patterns.
+        if !s.contains('\n') {
+            self.out.push_str(s);
+            self.trailing_newlines = 0;
+            return;
+        }
+        // Slow path: chunk contains newlines. `match_indices('\n')`
+        // walks newline positions via memchr (SIMD on supported
+        // targets), so the inter-newline spans are emitted as one
+        // bulk `push_str` per span instead of one `push(ch)` per
+        // character. On 3-byte Japanese prose with paragraph breaks
+        // every ~80 chars, the bulk path emits ~80 chars per
+        // `push_str` instead of 80 individual pushes.
+        let mut cursor = 0;
+        for (nl_pos, _) in s.match_indices('\n') {
+            if nl_pos > cursor {
+                self.out.push_str(&s[cursor..nl_pos]);
                 self.trailing_newlines = 0;
-                self.out.push(ch);
             }
+            self.trailing_newlines += 1;
+            if self.trailing_newlines <= 2 {
+                self.out.push('\n');
+            }
+            cursor = nl_pos + 1;
+        }
+        if cursor < s.len() {
+            self.out.push_str(&s[cursor..]);
+            self.trailing_newlines = 0;
         }
     }
 
@@ -225,11 +236,43 @@ impl NewlineCappedWriter {
     }
 }
 
-/// Append the afm markup for an [`AozoraNode`] to `out`. Covers all
+/// `fmt::Write` impl threads the newline cap into every formatter
+/// write — `write!`, `writeln!`, `write_str`, `write_char` all funnel
+/// through `push_str`/`push` here, so the cap is honoured regardless
+/// of which API the caller chooses. `Result` is always `Ok` because
+/// the underlying `String` cannot fail; the trait's signature
+/// requires it for compatibility with formatter macros.
+impl fmt::Write for NewlineCappedWriter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.push_str(s);
+        Ok(())
+    }
+
+    fn write_char(&mut self, c: char) -> fmt::Result {
+        if c == '\n' {
+            self.trailing_newlines += 1;
+            if self.trailing_newlines <= 2 {
+                self.out.push('\n');
+            }
+        } else {
+            self.trailing_newlines = 0;
+            self.out.push(c);
+        }
+        Ok(())
+    }
+}
+
+/// Append the Aozora markup for an [`AozoraNode`] to `out`. Covers all
 /// variants currently produced by the lexer; unknown variants emit
 /// a visible `<!-- unsupported-aozora: … -->` placeholder so a
 /// round-trip gap is diagnosable rather than silent.
-fn emit_aozora(node: &AozoraNode, out: &mut String) {
+///
+/// The writer is generic over [`fmt::Write`] so callers can stream
+/// directly into the destination buffer (the
+/// [`NewlineCappedWriter`] used by [`serialize_from_artifacts`]
+/// implements the trait, eliminating the per-sentinel scratch
+/// allocation that an earlier `&mut String`-only version paid).
+fn emit_aozora(node: &AozoraNode, out: &mut dyn fmt::Write) -> fmt::Result {
     match node {
         AozoraNode::Ruby(r) => emit_ruby(r, out),
         AozoraNode::Bouten(b) => emit_bouten(b, out),
@@ -238,7 +281,7 @@ fn emit_aozora(node: &AozoraNode, out: &mut String) {
         AozoraNode::Kaeriten(k) => emit_kaeriten(k, out),
         AozoraNode::Annotation(a) => emit_annotation(a, out),
         AozoraNode::DoubleRuby(d) => emit_double_ruby(d, out),
-        AozoraNode::PageBreak => out.push_str("［＃改ページ］"),
+        AozoraNode::PageBreak => out.write_str("［＃改ページ］"),
         AozoraNode::SectionBreak(kind) => emit_section_break(*kind, out),
         AozoraNode::Indent(i) => emit_indent(*i, out),
         AozoraNode::AlignEnd(a) => emit_align_end(*a, out),
@@ -249,44 +292,44 @@ fn emit_aozora(node: &AozoraNode, out: &mut String) {
             // (`Container` is handled by the open/close sentinel
             // path, never by inline/block-leaf; `Warichu`,
             // `Keigakomi`, `AozoraHeading` land here).
-            out.push_str("<!-- unsupported-aozora: ");
-            out.push_str(node.xml_node_name());
-            out.push_str(" -->");
+            out.write_str("<!-- unsupported-aozora: ")?;
+            out.write_str(node.xml_node_name())?;
+            out.write_str(" -->")
         }
     }
 }
 
-fn emit_ruby(r: &Ruby, out: &mut String) {
-    out.push('｜');
-    emit_content(&r.base, out);
-    out.push('《');
-    emit_content(&r.reading, out);
-    out.push('》');
+fn emit_ruby(r: &Ruby, out: &mut dyn fmt::Write) -> fmt::Result {
+    out.write_char('｜')?;
+    emit_content(&r.base, out)?;
+    out.write_char('《')?;
+    emit_content(&r.reading, out)?;
+    out.write_char('》')
 }
 
-fn emit_bouten(b: &Bouten, out: &mut String) {
+fn emit_bouten(b: &Bouten, out: &mut dyn fmt::Write) -> fmt::Result {
     // The PUA sentinel only spans `［＃「…」(particle)(kind)］` — the
     // preceding target text is plain bytes already copied through
     // by the outer walk, so we must NOT re-emit it here.
-    out.push_str("［＃");
-    emit_bouten_targets(&b.target, out);
+    out.write_str("［＃")?;
+    emit_bouten_targets(&b.target, out)?;
     match b.position {
-        BoutenPosition::Left => out.push_str("の左に"),
-        _ => out.push('に'),
+        BoutenPosition::Left => out.write_str("の左に")?,
+        _ => out.write_char('に')?,
     }
-    out.push_str(bouten_kind_keyword(b.kind));
-    out.push('］');
+    out.write_str(bouten_kind_keyword(b.kind))?;
+    out.write_char('］')
 }
 
 /// Render each target run as a separate `「X」` chunk so the next
 /// parse's multi-quote classifier picks them back up as the same
 /// Segments shape.
-fn emit_bouten_targets(c: &Content, out: &mut String) {
+fn emit_bouten_targets(c: &Content, out: &mut dyn fmt::Write) -> fmt::Result {
     match c {
         Content::Plain(s) => {
-            out.push('「');
-            out.push_str(s);
-            out.push('」');
+            out.write_char('「')?;
+            out.write_str(s)?;
+            out.write_char('」')
         }
         Content::Segments(segs) => {
             let mut any = false;
@@ -299,9 +342,9 @@ fn emit_bouten_targets(c: &Content, out: &mut String) {
                     // with `、`, so re-splitting on `、` recovers the
                     // original target list.
                     for part in t.split('、').filter(|p| !p.is_empty()) {
-                        out.push('「');
-                        out.push_str(part);
-                        out.push('」');
+                        out.write_char('「')?;
+                        out.write_str(part)?;
+                        out.write_char('」')?;
                         any = true;
                     }
                 }
@@ -311,23 +354,24 @@ fn emit_bouten_targets(c: &Content, out: &mut String) {
                 // non-Text content still needs *some* target shape
                 // so the next parse doesn't reclassify as an unknown
                 // annotation. Use an empty quote pair.
-                out.push('「');
-                out.push('」');
+                out.write_char('「')?;
+                out.write_char('」')?;
             }
+            Ok(())
         }
-        _ => {}
+        _ => Ok(()),
     }
 }
 
-fn emit_tate_chu_yoko(t: &TateChuYoko, out: &mut String) {
+fn emit_tate_chu_yoko(t: &TateChuYoko, out: &mut dyn fmt::Write) -> fmt::Result {
     // Same rule as bouten — the sentinel spans only the
     // `［＃「…」は縦中横］` annotation, not the target text.
-    out.push_str("［＃「");
-    emit_content_as_plain(&t.text, out);
-    out.push_str("」は縦中横］");
+    out.write_str("［＃「")?;
+    emit_content_as_plain(&t.text, out)?;
+    out.write_str("」は縦中横］")
 }
 
-fn emit_gaiji(g: &Gaiji, out: &mut String) {
+fn emit_gaiji(g: &Gaiji, out: &mut dyn fmt::Write) -> fmt::Result {
     // Aozora gaiji shape is always `※［＃「description」、mencode］` or
     // `※［＃「description」］`. The closing 」 was previously omitted,
     // which `round_trip_fixed_point` could not catch (the malformed
@@ -335,73 +379,71 @@ fn emit_gaiji(g: &Gaiji, out: &mut String) {
     // equals the first). The byte-identity test
     // `gaiji_with_mencode_emits_canonical_shape_on_first_serialize`
     // locks the shape so the regression cannot land silently again.
-    out.push('※');
-    out.push_str("［＃「");
-    out.push_str(&g.description);
-    out.push('」');
+    out.write_char('※')?;
+    out.write_str("［＃「")?;
+    out.write_str(&g.description)?;
+    out.write_char('」')?;
     if let Some(m) = &g.mencode {
-        out.push('、');
-        out.push_str(m);
+        out.write_char('、')?;
+        out.write_str(m)?;
     }
-    out.push('］');
+    out.write_char('］')
 }
 
-fn emit_kaeriten(k: &Kaeriten, out: &mut String) {
-    out.push_str("［＃");
-    out.push_str(&k.mark);
-    out.push('］');
+fn emit_kaeriten(k: &Kaeriten, out: &mut dyn fmt::Write) -> fmt::Result {
+    out.write_str("［＃")?;
+    out.write_str(&k.mark)?;
+    out.write_char('］')
 }
 
-fn emit_annotation(a: &Annotation, out: &mut String) {
+fn emit_annotation(a: &Annotation, out: &mut dyn fmt::Write) -> fmt::Result {
     // `raw` is the verbatim `［＃…］` byte range from the source;
     // round-tripping is byte-identical.
-    out.push_str(&a.raw);
+    out.write_str(&a.raw)
 }
 
-fn emit_double_ruby(d: &DoubleRuby, out: &mut String) {
-    out.push('《');
-    out.push('《');
-    emit_content(&d.content, out);
-    out.push('》');
-    out.push('》');
+fn emit_double_ruby(d: &DoubleRuby, out: &mut dyn fmt::Write) -> fmt::Result {
+    out.write_char('《')?;
+    out.write_char('《')?;
+    emit_content(&d.content, out)?;
+    out.write_char('》')?;
+    out.write_char('》')
 }
 
-fn emit_section_break(kind: SectionKind, out: &mut String) {
+fn emit_section_break(kind: SectionKind, out: &mut dyn fmt::Write) -> fmt::Result {
     let keyword = match kind {
         SectionKind::Choho => "改丁",
         SectionKind::Dan => "改段",
         SectionKind::Spread => "改見開き",
         _ => "改ページ",
     };
-    out.push_str("［＃");
-    out.push_str(keyword);
-    out.push('］');
+    out.write_str("［＃")?;
+    out.write_str(keyword)?;
+    out.write_char('］')
 }
 
-fn emit_indent(i: Indent, out: &mut String) {
-    use core::fmt::Write as _;
+fn emit_indent(i: Indent, out: &mut dyn fmt::Write) -> fmt::Result {
     // Width 1 is the "default" indent marker grammar in the spec
     // (`［＃字下げ］` is implicitly "1"). For ≥2 we keep the digit.
     if i.amount == 1 {
-        out.push_str("［＃字下げ］");
+        out.write_str("［＃字下げ］")
     } else {
-        write!(out, "［＃{}字下げ］", i.amount).expect("writing to a String is infallible");
+        write!(out, "［＃{}字下げ］", i.amount)
     }
 }
 
-fn emit_align_end(a: AlignEnd, out: &mut String) {
-    use core::fmt::Write as _;
+fn emit_align_end(a: AlignEnd, out: &mut dyn fmt::Write) -> fmt::Result {
     if a.offset == 0 {
-        out.push_str("［＃地付き］");
+        out.write_str("［＃地付き］")
     } else {
-        write!(out, "［＃地から{}字上げ］", a.offset).expect("writing to a String is infallible");
+        write!(out, "［＃地から{}字上げ］", a.offset)
     }
 }
 
-fn emit_sashie(s: &Sashie, out: &mut String) {
-    out.push_str("［＃挿絵（");
-    out.push_str(&s.file);
-    out.push_str("）入る］");
+fn emit_sashie(s: &Sashie, out: &mut dyn fmt::Write) -> fmt::Result {
+    out.write_str("［＃挿絵（")?;
+    out.write_str(&s.file)?;
+    out.write_str("）入る］")
 }
 
 /// Serialise a heading hint back to `［＃「target」は(大|中|小)見出し］`.
@@ -420,14 +462,14 @@ fn emit_sashie(s: &Sashie, out: &mut String) {
 /// future construction of `HeadingHint` from non-lexer callers; a
 /// best-effort fallback to `小見出し` keeps the round-trip string
 /// well-formed.
-fn emit_heading_hint(h: &HeadingHint, out: &mut String) {
-    out.push_str("［＃「");
-    out.push_str(&h.target);
-    out.push_str(match h.level {
+fn emit_heading_hint(h: &HeadingHint, out: &mut dyn fmt::Write) -> fmt::Result {
+    out.write_str("［＃「")?;
+    out.write_str(&h.target)?;
+    out.write_str(match h.level {
         1 => "」は大見出し］",
         2 => "」は中見出し］",
         _ => "」は小見出し］",
-    });
+    })
 }
 
 fn container_open_marker(kind: ContainerKind) -> &'static str {
@@ -473,29 +515,31 @@ fn bouten_kind_keyword(kind: BoutenKind) -> &'static str {
     }
 }
 
-fn emit_content(c: &Content, out: &mut String) {
+fn emit_content(c: &Content, out: &mut dyn fmt::Write) -> fmt::Result {
     for seg in c {
         match seg {
-            SegmentRef::Text(t) => out.push_str(t),
-            SegmentRef::Gaiji(g) => emit_gaiji(g, out),
-            SegmentRef::Annotation(a) => emit_annotation(a, out),
+            SegmentRef::Text(t) => out.write_str(t)?,
+            SegmentRef::Gaiji(g) => emit_gaiji(g, out)?,
+            SegmentRef::Annotation(a) => emit_annotation(a, out)?,
             _ => {}
         }
     }
+    Ok(())
 }
 
 /// Flatten [`Content`] to its plain textual form, discarding any
 /// embedded Gaiji/Annotation wrapping. Used for `「…」` contexts
 /// where the target reference must be a single text literal.
-fn emit_content_as_plain(c: &Content, out: &mut String) {
+fn emit_content_as_plain(c: &Content, out: &mut dyn fmt::Write) -> fmt::Result {
     for seg in c {
         match seg {
-            SegmentRef::Text(t) => out.push_str(t),
-            SegmentRef::Gaiji(g) => out.push_str(&g.description),
-            SegmentRef::Annotation(a) => out.push_str(&a.raw),
+            SegmentRef::Text(t) => out.write_str(t)?,
+            SegmentRef::Gaiji(g) => out.write_str(&g.description)?,
+            SegmentRef::Annotation(a) => out.write_str(&a.raw)?,
             _ => {}
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

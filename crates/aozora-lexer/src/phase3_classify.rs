@@ -98,6 +98,19 @@ pub struct ClassifiedSpan {
 /// content between the two markers. The lexer emits both markers as
 /// independent spans and lets `post_process` walk the AST to wrap
 /// sibling nodes in the container — see ADR-0008.
+///
+/// # Memory layout
+///
+/// The `Aozora` variant carries a [`Box<AozoraNode>`][AozoraNode]
+/// rather than the `AozoraNode` inline. `AozoraNode` is the fattest
+/// inhabitant of the enum (~56 bytes for variants like Ruby with two
+/// `Content` fields), and the spans Vec is dominated by `Plain` /
+/// `Newline` spans on real input. Boxing the rare-and-fat variant
+/// pulls the enum down to ~16 bytes per span and cuts the spans Vec
+/// by roughly 4× on a typical document, at the cost of one
+/// indirection per Aozora dispatch in Phase 4 (a single deref that
+/// the cache hierarchy amortises against the Aozora-variant clone
+/// that follows immediately).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SpanKind {
@@ -108,8 +121,10 @@ pub enum SpanKind {
     /// Phase 4 replaces the source span with an `E001` (inline) or
     /// `E002` (block-leaf) sentinel and records the node in the
     /// placeholder registry keyed at the sentinel's normalized
-    /// position.
-    Aozora(AozoraNode),
+    /// position. Boxed because `AozoraNode` is the fattest variant
+    /// of this enum (~56 bytes); the indirection shrinks the spans
+    /// `Vec` by ~4× on real input — see the type-level docs above.
+    Aozora(Box<AozoraNode>),
     /// Paired-container opener — `［＃ここから字下げ］`, `［＃罫囲み］`,
     /// etc. Phase 4 emits an `E003` sentinel line; `post_process`
     /// matches it to the corresponding `BlockClose` via a balanced
@@ -238,7 +253,7 @@ impl<'s> Driver<'s> {
         );
         self.flush_plain_up_to(open_span.start);
         self.spans.push(ClassifiedSpan {
-            kind: SpanKind::Aozora(AozoraNode::DoubleRuby(DoubleRuby { content })),
+            kind: SpanKind::Aozora(Box::new(AozoraNode::DoubleRuby(DoubleRuby { content }))),
             source_span: Span::new(open_span.start, close_span.end),
         });
         self.pending_plain_start = None;
@@ -258,11 +273,11 @@ impl<'s> Driver<'s> {
         // ruby right after a newline.
         self.flush_plain_up_to(m.consume_start);
         self.spans.push(ClassifiedSpan {
-            kind: SpanKind::Aozora(AozoraNode::Ruby(Ruby {
+            kind: SpanKind::Aozora(Box::new(AozoraNode::Ruby(Ruby {
                 base: Content::from(m.base),
                 reading: m.reading,
                 delim_explicit: m.explicit,
-            })),
+            }))),
             source_span: Span::new(m.consume_start, m.consume_end),
         });
         self.pending_plain_start = None;
@@ -278,7 +293,7 @@ impl<'s> Driver<'s> {
         let m = recognize_annotation(events, self.source, open_idx, close_idx)?;
         self.flush_plain_up_to(m.consume_start);
         let kind = match m.emit {
-            EmitKind::Aozora(node) => SpanKind::Aozora(node),
+            EmitKind::Aozora(node) => SpanKind::Aozora(Box::new(node)),
             EmitKind::BlockOpen(container) => SpanKind::BlockOpen(container),
             EmitKind::BlockClose(container) => SpanKind::BlockClose(container),
         };
@@ -308,7 +323,7 @@ impl<'s> Driver<'s> {
         let m = recognize_gaiji(events, self.source, refmark_span, bracket_open_idx)?;
         self.flush_plain_up_to(m.consume_start);
         self.spans.push(ClassifiedSpan {
-            kind: SpanKind::Aozora(m.node),
+            kind: SpanKind::Aozora(Box::new(m.node)),
             source_span: Span::new(m.consume_start, m.consume_end),
         });
         self.pending_plain_start = None;
@@ -1540,6 +1555,16 @@ mod tests {
         classify(&pair_out, src)
     }
 
+    /// Test-only helper: deref the boxed `Aozora` variant so tests can
+    /// pattern-match on `AozoraNode` without spelling out the
+    /// `Box<...>` indirection at every call site.
+    fn aozora_node(span: &ClassifiedSpan) -> Option<&AozoraNode> {
+        match &span.kind {
+            SpanKind::Aozora(boxed) => Some(boxed.as_ref()),
+            _ => None,
+        }
+    }
+
     #[test]
     fn empty_input_produces_empty_span_vector() {
         let out = run("");
@@ -1594,8 +1619,11 @@ mod tests {
         let src = "｜青梅《おうめ》";
         let out = run(src);
         assert_eq!(out.spans.len(), 1);
-        let SpanKind::Aozora(AozoraNode::Ruby(ref ruby)) = out.spans[0].kind else {
-            panic!("expected Aozora(Ruby) span, got {:?}", out.spans[0].kind);
+        let SpanKind::Aozora(ref boxed) = out.spans[0].kind else {
+            panic!("expected Aozora span, got {:?}", out.spans[0].kind);
+        };
+        let AozoraNode::Ruby(ref ruby) = **boxed else {
+            panic!("expected Ruby variant, got {boxed:?}");
         };
         assert_eq!(ruby.base.as_plain(), Some("青梅"));
         assert_eq!(ruby.reading.as_plain(), Some("おうめ"));
@@ -1611,8 +1639,11 @@ mod tests {
         let out = run(src);
         assert_eq!(out.spans.len(), 2);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
-        let SpanKind::Aozora(AozoraNode::Ruby(ref ruby)) = out.spans[1].kind else {
-            panic!("expected Aozora(Ruby) span, got {:?}", out.spans[1].kind);
+        let SpanKind::Aozora(ref boxed) = out.spans[1].kind else {
+            panic!("expected Aozora span, got {:?}", out.spans[1].kind);
+        };
+        let AozoraNode::Ruby(ref ruby) = **boxed else {
+            panic!("expected Ruby variant, got {boxed:?}");
         };
         assert_eq!(ruby.base.as_plain(), Some("漢字"));
         assert_eq!(ruby.reading.as_plain(), Some("かんじ"));
@@ -1657,10 +1688,11 @@ mod tests {
         assert_eq!(out.spans.len(), 3);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
         assert_eq!(out.spans[1].kind, SpanKind::Newline);
-        assert!(matches!(
-            out.spans[2].kind,
-            SpanKind::Aozora(AozoraNode::Ruby(_))
-        ));
+        let is_ruby = matches!(
+            &out.spans[2].kind,
+            SpanKind::Aozora(boxed) if matches!(**boxed, AozoraNode::Ruby(_))
+        );
+        assert!(is_ruby, "expected Aozora(Ruby), got {:?}", out.spans[2].kind);
     }
 
     #[test]
@@ -1689,7 +1721,9 @@ mod tests {
     fn only_ruby(out: &ClassifyOutput) -> &Ruby {
         let mut found = None;
         for span in &out.spans {
-            if let SpanKind::Aozora(AozoraNode::Ruby(ref r)) = span.kind {
+            if let SpanKind::Aozora(ref boxed) = span.kind
+                && let AozoraNode::Ruby(ref r) = **boxed
+            {
                 assert!(found.is_none(), "more than one Ruby span: {:?}", out.spans);
                 found = Some(r);
             }
@@ -1874,8 +1908,8 @@ mod tests {
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
         assert_eq!(out.spans[1].kind, SpanKind::Newline);
         assert!(matches!(
-            out.spans[2].kind,
-            SpanKind::Aozora(AozoraNode::PageBreak)
+            aozora_node(&out.spans[2]),
+            Some(AozoraNode::PageBreak)
         ));
         assert_eq!(out.spans[2].source_span.slice(src), "［＃改ページ］");
         assert_eq!(out.spans[3].kind, SpanKind::Newline);
@@ -1887,8 +1921,8 @@ mod tests {
         let out = run("［＃改丁］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::Aozora(AozoraNode::SectionBreak(SectionKind::Choho))
+            aozora_node(&out.spans[0]),
+            Some(AozoraNode::SectionBreak(SectionKind::Choho))
         ));
     }
 
@@ -1897,8 +1931,8 @@ mod tests {
         let out = run("［＃改段］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::Aozora(AozoraNode::SectionBreak(SectionKind::Dan))
+            aozora_node(&out.spans[0]),
+            Some(AozoraNode::SectionBreak(SectionKind::Dan))
         ));
     }
 
@@ -1907,8 +1941,8 @@ mod tests {
         let out = run("［＃改見開き］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::Aozora(AozoraNode::SectionBreak(SectionKind::Spread))
+            aozora_node(&out.spans[0]),
+            Some(AozoraNode::SectionBreak(SectionKind::Spread))
         ));
     }
 
@@ -1935,8 +1969,8 @@ mod tests {
         let ann = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Annotation(a)) => Some(a),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Annotation(a)) => Some(a),
                 _ => None,
             })
             .expect("unknown keyword must promote to Annotation{Unknown}");
@@ -1951,8 +1985,8 @@ mod tests {
         let out = run("［＃ 改ページ ］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::Aozora(AozoraNode::PageBreak)
+            aozora_node(&out.spans[0]),
+            Some(AozoraNode::PageBreak)
         ));
     }
 
@@ -1968,8 +2002,8 @@ mod tests {
         let ann = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Annotation(a)) => Some(a),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Annotation(a)) => Some(a),
                 _ => None,
             })
             .expect("empty body must still wrap as Annotation{Unknown}");
@@ -1982,8 +2016,8 @@ mod tests {
         let out = run("［＃２字下げ］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::Aozora(AozoraNode::Indent(Indent { amount: 2 }))
+            aozora_node(&out.spans[0]),
+            Some(AozoraNode::Indent(Indent { amount: 2 }))
         ));
     }
 
@@ -1992,8 +2026,8 @@ mod tests {
         let out = run("［＃10字下げ］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::Aozora(AozoraNode::Indent(Indent { amount: 10 }))
+            aozora_node(&out.spans[0]),
+            Some(AozoraNode::Indent(Indent { amount: 10 }))
         ));
     }
 
@@ -2007,8 +2041,8 @@ mod tests {
         let ann = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Annotation(a)) => Some(a),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Annotation(a)) => Some(a),
                 _ => None,
             })
             .expect("overflow should fall back to Annotation{Unknown}");
@@ -2018,7 +2052,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Indent(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Indent(_)))),
         );
     }
 
@@ -2030,7 +2064,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Indent(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Indent(_)))),
         );
     }
 
@@ -2041,7 +2075,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Indent(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Indent(_)))),
         );
     }
 
@@ -2053,7 +2087,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::AlignEnd(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::AlignEnd(_)))),
         );
     }
 
@@ -2062,8 +2096,8 @@ mod tests {
         let out = run("［＃地付き］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::Aozora(AozoraNode::AlignEnd(AlignEnd { offset: 0 }))
+            aozora_node(&out.spans[0]),
+            Some(AozoraNode::AlignEnd(AlignEnd { offset: 0 }))
         ));
     }
 
@@ -2072,8 +2106,8 @@ mod tests {
         let out = run("［＃地から３字上げ］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::Aozora(AozoraNode::AlignEnd(AlignEnd { offset: 3 }))
+            aozora_node(&out.spans[0]),
+            Some(AozoraNode::AlignEnd(AlignEnd { offset: 3 }))
         ));
     }
 
@@ -2086,7 +2120,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Indent(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Indent(_)))),
         );
     }
 
@@ -2099,8 +2133,8 @@ mod tests {
         let bouten = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("expected a Bouten span");
@@ -2114,8 +2148,8 @@ mod tests {
         let bouten = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("expected a Bouten span");
@@ -2145,8 +2179,8 @@ mod tests {
         for (suffix, expected_kind) in cases {
             let src = format!("t［＃「t」に{suffix}］");
             let out = run(&src);
-            let Some(b) = out.spans.iter().find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+            let Some(b) = out.spans.iter().find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Bouten(b)) => Some(b),
                 _ => None,
             }) else {
                 panic!("no Bouten span for suffix {suffix:?}");
@@ -2166,8 +2200,8 @@ mod tests {
         let b = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("Bouten expected");
@@ -2189,8 +2223,8 @@ mod tests {
         for (suffix, expected_kind) in cases {
             let src = format!("t［＃「t」の左に{suffix}］");
             let out = run(&src);
-            let Some(b) = out.spans.iter().find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+            let Some(b) = out.spans.iter().find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Bouten(b)) => Some(b),
                 _ => None,
             }) else {
                 panic!("no Bouten span for left-side suffix {suffix:?}");
@@ -2211,8 +2245,8 @@ mod tests {
         let b = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("multi-quote Bouten expected");
@@ -2232,7 +2266,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_)))),
             "Bouten must not promote when any target is unreferenced"
         );
     }
@@ -2246,8 +2280,8 @@ mod tests {
         let b = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("Bouten expected");
@@ -2262,8 +2296,8 @@ mod tests {
         let b = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("Bouten expected");
@@ -2277,7 +2311,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_)))),
         );
     }
 
@@ -2287,7 +2321,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_)))),
         );
     }
 
@@ -2297,7 +2331,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_)))),
         );
     }
 
@@ -2311,7 +2345,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_)))),
         );
     }
 
@@ -2325,7 +2359,7 @@ mod tests {
         assert!(
             out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_)))),
         );
     }
 
@@ -2335,7 +2369,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::TateChuYoko(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::TateChuYoko(_)))),
         );
     }
 
@@ -2349,8 +2383,8 @@ mod tests {
         let bouten = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("expected a Bouten span");
@@ -2363,8 +2397,8 @@ mod tests {
         let tcy = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::TateChuYoko(t)) => Some(t),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::TateChuYoko(t)) => Some(t),
                 _ => None,
             })
             .expect("expected a TateChuYoko span");
@@ -2378,7 +2412,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::TateChuYoko(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::TateChuYoko(_)))),
         );
     }
 
@@ -2388,7 +2422,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::TateChuYoko(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::TateChuYoko(_)))),
         );
     }
 
@@ -2403,8 +2437,8 @@ mod tests {
     // ---------------------------------------------------------------
 
     fn find_heading_hint(out: &ClassifyOutput) -> Option<HeadingHint> {
-        out.spans.iter().find_map(|s| match &s.kind {
-            SpanKind::Aozora(AozoraNode::HeadingHint(h)) => Some(h.clone()),
+        out.spans.iter().find_map(|s| match aozora_node(s) {
+            Some(AozoraNode::HeadingHint(h)) => Some(h.clone()),
             _ => None,
         })
     }
@@ -2482,8 +2516,8 @@ mod tests {
         let levels: Vec<u8> = out
             .spans
             .iter()
-            .filter_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::HeadingHint(h)) => Some(h.level),
+            .filter_map(|s| match aozora_node(s) {
+                Some(AozoraNode::HeadingHint(h)) => Some(h.level),
                 _ => None,
             })
             .collect();
@@ -2496,8 +2530,8 @@ mod tests {
         let sashie = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Sashie(s)) => Some(s),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Sashie(s)) => Some(s),
                 _ => None,
             })
             .expect("expected a Sashie span");
@@ -2514,7 +2548,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Sashie(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Sashie(_)))),
         );
     }
 
@@ -2524,7 +2558,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Sashie(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Sashie(_)))),
         );
     }
 
@@ -2534,7 +2568,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Sashie(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Sashie(_)))),
         );
     }
 
@@ -2544,8 +2578,8 @@ mod tests {
         let gaiji = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Gaiji(g)) => Some(g),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Gaiji(g)) => Some(g),
                 _ => None,
             })
             .expect("expected a Gaiji span");
@@ -2561,8 +2595,8 @@ mod tests {
         let gaiji = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Gaiji(g)) => Some(g),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Gaiji(g)) => Some(g),
                 _ => None,
             })
             .expect("expected a Gaiji span");
@@ -2576,8 +2610,8 @@ mod tests {
         let gaiji = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Gaiji(g)) => Some(g),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Gaiji(g)) => Some(g),
                 _ => None,
             })
             .expect("expected a Gaiji span");
@@ -2592,7 +2626,7 @@ mod tests {
         let gaiji_span = out
             .spans
             .iter()
-            .find(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Gaiji(_))))
+            .find(|s| matches!(aozora_node(s), Some(AozoraNode::Gaiji(_))))
             .expect("expected a Gaiji span");
         // span must start at the ※ (after "a"), not at ［.
         assert_eq!(gaiji_span.source_span.slice(src), "※［＃「X」、m］");
@@ -2605,7 +2639,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Gaiji(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Gaiji(_)))),
         );
     }
 
@@ -2616,7 +2650,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Gaiji(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Gaiji(_)))),
         );
     }
 
@@ -2626,8 +2660,8 @@ mod tests {
         let kaeriten = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Kaeriten(k)) => Some(k),
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Kaeriten(k)) => Some(k),
                 _ => None,
             })
             .expect("expected a Kaeriten span");
@@ -2641,8 +2675,8 @@ mod tests {
         ] {
             let src = format!("［＃{mark}］");
             let out = run(&src);
-            let Some(k) = out.spans.iter().find_map(|s| match &s.kind {
-                SpanKind::Aozora(AozoraNode::Kaeriten(k)) => Some(k),
+            let Some(k) = out.spans.iter().find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Kaeriten(k)) => Some(k),
                 _ => None,
             }) else {
                 panic!("no Kaeriten span for mark {mark:?}");
@@ -2657,7 +2691,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Kaeriten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Kaeriten(_)))),
         );
     }
 
@@ -2674,8 +2708,8 @@ mod tests {
             let k = out
                 .spans
                 .iter()
-                .find_map(|s| match &s.kind {
-                    SpanKind::Aozora(AozoraNode::Kaeriten(k)) => Some(k),
+                .find_map(|s| match aozora_node(s) {
+                    Some(AozoraNode::Kaeriten(k)) => Some(k),
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("no Kaeriten span for mark {mark:?}"));
@@ -2701,8 +2735,8 @@ mod tests {
             let k = out
                 .spans
                 .iter()
-                .find_map(|s| match &s.kind {
-                    SpanKind::Aozora(AozoraNode::Kaeriten(k)) => Some(k),
+                .find_map(|s| match aozora_node(s) {
+                    Some(AozoraNode::Kaeriten(k)) => Some(k),
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("no Kaeriten for okurigana {mark:?}"));
@@ -2719,7 +2753,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Kaeriten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Kaeriten(_)))),
             "long parenthesised bodies must not be Kaeriten: {:?}",
             out.spans
         );
@@ -2733,7 +2767,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Kaeriten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Kaeriten(_)))),
         );
     }
 
@@ -2743,7 +2777,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(AozoraNode::Kaeriten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Kaeriten(_)))),
         );
     }
 
@@ -2757,10 +2791,7 @@ mod tests {
         let aozora = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(node) => Some(node),
-                _ => None,
-            })
+            .find_map(aozora_node)
             .expect("DoubleRuby expected");
         let AozoraNode::DoubleRuby(d) = aozora else {
             panic!("expected DoubleRuby, got {aozora:?}");
@@ -2803,10 +2834,7 @@ mod tests {
         let aozora = out
             .spans
             .iter()
-            .find_map(|s| match &s.kind {
-                SpanKind::Aozora(node) => Some(node),
-                _ => None,
-            })
+            .find_map(aozora_node)
             .expect("Aozora expected");
         let AozoraNode::DoubleRuby(d) = aozora else {
             panic!("expected DoubleRuby, got {aozora:?}");
@@ -2905,7 +2933,7 @@ mod tests {
         // and not classified here.
         use aozora_syntax::AnnotationKind;
         let out = run("［＃割り注］内部［＃割り注終わり］");
-        let SpanKind::Aozora(AozoraNode::Annotation(ref open)) = out.spans[0].kind else {
+        let Some(AozoraNode::Annotation(open)) = aozora_node(&out.spans[0]) else {
             panic!(
                 "expected Aozora(Annotation) for ［＃割り注］, got {:?}",
                 out.spans[0].kind,
@@ -2914,7 +2942,7 @@ mod tests {
         assert_eq!(open.kind, AnnotationKind::WarichuOpen);
         assert_eq!(&*open.raw, "［＃割り注］");
 
-        let SpanKind::Aozora(AozoraNode::Annotation(ref close)) = out.spans[2].kind else {
+        let Some(AozoraNode::Annotation(close)) = aozora_node(&out.spans[2]) else {
             panic!(
                 "expected Aozora(Annotation) for ［＃割り注終わり］, got {:?}",
                 out.spans[2].kind,
