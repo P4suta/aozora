@@ -366,11 +366,22 @@ impl<'a> BorrowedAllocator<'a> {
     }
 }
 
-// Stub trait impl: every method panics with an explicit "not yet
-// implemented in Commit A" message. Commit B replaces this. The stub
-// exists so the trait file documents *both* backends and downstream
-// code that imports `BorrowedAllocator` against the trait surface
-// type-checks today.
+/// Strings flow through the interner; per-node payloads are
+/// `arena.alloc(...)`. Mirrors `convert::to_borrowed_with` exactly so
+/// the byte-identical proptest in `aozora-lex/tests/property_borrowed_arena.rs`
+/// continues to pass once Phase 3 routes through this allocator
+/// (Commit C).
+///
+/// ## Canonicalisation
+///
+/// Both `content_plain("")` and `content_segments(vec![])` return
+/// `Content::Segments(&[])` to match `owned::Content::from("")` and
+/// `owned::Content::from_segments(vec![])` exactly. `content_segments`
+/// also collapses an all-`Text` input into a single concatenated
+/// `Plain` (the concatenation is interned). Without this collapse the
+/// borrowed AST would diverge from the owned shape on documents like
+/// `｜青空《せい—く》` where the body parses into multiple text-only
+/// segments, and the byte-identical proptest would fail at Commit C.
 impl<'a> NodeAllocator<'a> for BorrowedAllocator<'a> {
     type Node = borrowed::AozoraNode<'a>;
     type Content = borrowed::Content<'a>;
@@ -378,92 +389,174 @@ impl<'a> NodeAllocator<'a> for BorrowedAllocator<'a> {
     type Gaiji = &'a borrowed::Gaiji<'a>;
     type Annotation = &'a borrowed::Annotation<'a>;
 
-    fn content_plain(&mut self, _s: &str) -> Self::Content {
-        unimplemented!("BorrowedAllocator::content_plain — landing in Commit B")
+    fn content_plain(&mut self, s: &str) -> Self::Content {
+        if s.is_empty() {
+            borrowed::Content::EMPTY
+        } else {
+            borrowed::Content::Plain(self.interner.intern(s))
+        }
     }
-    fn content_segments(&mut self, _segs: Vec<Self::Segment>) -> Self::Content {
-        unimplemented!("BorrowedAllocator::content_segments — landing in Commit B")
+
+    fn content_segments(&mut self, segs: Vec<Self::Segment>) -> Self::Content {
+        if segs.is_empty() {
+            return borrowed::Content::EMPTY;
+        }
+        // Canonicalisation: all-Text → concatenate + Plain. Mirrors
+        // `owned::Content::from_segments` so byte-identical output is
+        // preserved.
+        if segs
+            .iter()
+            .all(|s| matches!(s, borrowed::Segment::Text(_)))
+        {
+            // Total length is known (sum of text lengths) so we can
+            // pre-size the buffer and avoid reallocation.
+            let total: usize = segs
+                .iter()
+                .map(|s| match s {
+                    borrowed::Segment::Text(t) => t.len(),
+                    _ => 0,
+                })
+                .sum();
+            let mut buf = String::with_capacity(total);
+            for s in &segs {
+                if let borrowed::Segment::Text(t) = s {
+                    buf.push_str(t);
+                }
+            }
+            return borrowed::Content::Plain(self.interner.intern(&buf));
+        }
+        borrowed::Content::Segments(self.arena.alloc_slice_copy(&segs))
     }
-    fn seg_text(&mut self, _s: &str) -> Self::Segment {
-        unimplemented!("BorrowedAllocator::seg_text — landing in Commit B")
+
+    fn seg_text(&mut self, s: &str) -> Self::Segment {
+        borrowed::Segment::Text(self.interner.intern(s))
     }
-    fn seg_gaiji(&mut self, _g: Self::Gaiji) -> Self::Segment {
-        unimplemented!("BorrowedAllocator::seg_gaiji — landing in Commit B")
+
+    fn seg_gaiji(&mut self, g: Self::Gaiji) -> Self::Segment {
+        borrowed::Segment::Gaiji(g)
     }
-    fn seg_annotation(&mut self, _a: Self::Annotation) -> Self::Segment {
-        unimplemented!("BorrowedAllocator::seg_annotation — landing in Commit B")
+
+    fn seg_annotation(&mut self, a: Self::Annotation) -> Self::Segment {
+        borrowed::Segment::Annotation(a)
     }
+
     fn make_gaiji(
         &mut self,
-        _description: &str,
-        _ucs: Option<char>,
-        _mencode: Option<&str>,
+        description: &str,
+        ucs: Option<char>,
+        mencode: Option<&str>,
     ) -> Self::Gaiji {
-        unimplemented!("BorrowedAllocator::make_gaiji — landing in Commit B")
+        let g = borrowed::Gaiji {
+            description: self.interner.intern(description),
+            ucs,
+            mencode: mencode.map(|s| self.interner.intern(s)),
+        };
+        self.arena.alloc(g)
     }
-    fn make_annotation(&mut self, _raw: &str, _kind: AnnotationKind) -> Self::Annotation {
-        unimplemented!("BorrowedAllocator::make_annotation — landing in Commit B")
+
+    fn make_annotation(&mut self, raw: &str, kind: AnnotationKind) -> Self::Annotation {
+        let a = borrowed::Annotation {
+            raw: self.interner.intern(raw),
+            kind,
+        };
+        self.arena.alloc(a)
     }
+
     fn ruby(
         &mut self,
-        _base: Self::Content,
-        _reading: Self::Content,
-        _delim_explicit: bool,
+        base: Self::Content,
+        reading: Self::Content,
+        delim_explicit: bool,
     ) -> Self::Node {
-        unimplemented!("BorrowedAllocator::ruby — landing in Commit B")
+        borrowed::AozoraNode::Ruby(self.arena.alloc(borrowed::Ruby {
+            base,
+            reading,
+            delim_explicit,
+        }))
     }
+
     fn bouten(
         &mut self,
-        _kind: BoutenKind,
-        _target: Self::Content,
-        _position: BoutenPosition,
+        kind: BoutenKind,
+        target: Self::Content,
+        position: BoutenPosition,
     ) -> Self::Node {
-        unimplemented!("BorrowedAllocator::bouten — landing in Commit B")
+        borrowed::AozoraNode::Bouten(self.arena.alloc(borrowed::Bouten {
+            kind,
+            target,
+            position,
+        }))
     }
-    fn tate_chu_yoko(&mut self, _text: Self::Content) -> Self::Node {
-        unimplemented!("BorrowedAllocator::tate_chu_yoko — landing in Commit B")
+
+    fn tate_chu_yoko(&mut self, text: Self::Content) -> Self::Node {
+        borrowed::AozoraNode::TateChuYoko(self.arena.alloc(borrowed::TateChuYoko { text }))
     }
-    fn gaiji(&mut self, _g: Self::Gaiji) -> Self::Node {
-        unimplemented!("BorrowedAllocator::gaiji — landing in Commit B")
+
+    fn gaiji(&mut self, g: Self::Gaiji) -> Self::Node {
+        borrowed::AozoraNode::Gaiji(g)
     }
-    fn indent(&mut self, _i: Indent) -> Self::Node {
-        unimplemented!("BorrowedAllocator::indent — landing in Commit B")
+
+    fn indent(&mut self, i: Indent) -> Self::Node {
+        borrowed::AozoraNode::Indent(i)
     }
-    fn align_end(&mut self, _a: AlignEnd) -> Self::Node {
-        unimplemented!("BorrowedAllocator::align_end — landing in Commit B")
+
+    fn align_end(&mut self, a: AlignEnd) -> Self::Node {
+        borrowed::AozoraNode::AlignEnd(a)
     }
-    fn warichu(&mut self, _upper: Self::Content, _lower: Self::Content) -> Self::Node {
-        unimplemented!("BorrowedAllocator::warichu — landing in Commit B")
+
+    fn warichu(&mut self, upper: Self::Content, lower: Self::Content) -> Self::Node {
+        borrowed::AozoraNode::Warichu(self.arena.alloc(borrowed::Warichu { upper, lower }))
     }
-    fn keigakomi(&mut self, _k: Keigakomi) -> Self::Node {
-        unimplemented!("BorrowedAllocator::keigakomi — landing in Commit B")
+
+    fn keigakomi(&mut self, k: Keigakomi) -> Self::Node {
+        borrowed::AozoraNode::Keigakomi(k)
     }
+
     fn page_break(&mut self) -> Self::Node {
-        unimplemented!("BorrowedAllocator::page_break — landing in Commit B")
+        borrowed::AozoraNode::PageBreak
     }
-    fn section_break(&mut self, _k: SectionKind) -> Self::Node {
-        unimplemented!("BorrowedAllocator::section_break — landing in Commit B")
+
+    fn section_break(&mut self, k: SectionKind) -> Self::Node {
+        borrowed::AozoraNode::SectionBreak(k)
     }
-    fn aozora_heading(&mut self, _kind: AozoraHeadingKind, _text: Self::Content) -> Self::Node {
-        unimplemented!("BorrowedAllocator::aozora_heading — landing in Commit B")
+
+    fn aozora_heading(&mut self, kind: AozoraHeadingKind, text: Self::Content) -> Self::Node {
+        borrowed::AozoraNode::AozoraHeading(self.arena.alloc(borrowed::AozoraHeading {
+            kind,
+            text,
+        }))
     }
-    fn heading_hint(&mut self, _level: u8, _target: &str) -> Self::Node {
-        unimplemented!("BorrowedAllocator::heading_hint — landing in Commit B")
+
+    fn heading_hint(&mut self, level: u8, target: &str) -> Self::Node {
+        borrowed::AozoraNode::HeadingHint(self.arena.alloc(borrowed::HeadingHint {
+            level,
+            target: self.interner.intern(target),
+        }))
     }
-    fn sashie(&mut self, _file: &str, _caption: Option<Self::Content>) -> Self::Node {
-        unimplemented!("BorrowedAllocator::sashie — landing in Commit B")
+
+    fn sashie(&mut self, file: &str, caption: Option<Self::Content>) -> Self::Node {
+        borrowed::AozoraNode::Sashie(self.arena.alloc(borrowed::Sashie {
+            file: self.interner.intern(file),
+            caption,
+        }))
     }
-    fn kaeriten(&mut self, _mark: &str) -> Self::Node {
-        unimplemented!("BorrowedAllocator::kaeriten — landing in Commit B")
+
+    fn kaeriten(&mut self, mark: &str) -> Self::Node {
+        borrowed::AozoraNode::Kaeriten(self.arena.alloc(borrowed::Kaeriten {
+            mark: self.interner.intern(mark),
+        }))
     }
-    fn annotation(&mut self, _a: Self::Annotation) -> Self::Node {
-        unimplemented!("BorrowedAllocator::annotation — landing in Commit B")
+
+    fn annotation(&mut self, a: Self::Annotation) -> Self::Node {
+        borrowed::AozoraNode::Annotation(a)
     }
-    fn double_ruby(&mut self, _content: Self::Content) -> Self::Node {
-        unimplemented!("BorrowedAllocator::double_ruby — landing in Commit B")
+
+    fn double_ruby(&mut self, content: Self::Content) -> Self::Node {
+        borrowed::AozoraNode::DoubleRuby(self.arena.alloc(borrowed::DoubleRuby { content }))
     }
-    fn container(&mut self, _c: Container) -> Self::Node {
-        unimplemented!("BorrowedAllocator::container — landing in Commit B")
+
+    fn container(&mut self, c: Container) -> Self::Node {
+        borrowed::AozoraNode::Container(c)
     }
 }
 
@@ -753,8 +846,14 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // BorrowedAllocator surface — only metadata accessors today, full
-    // method impls land in Commit B.
+    // BorrowedAllocator round-trip equivalence (Commit B)
+    //
+    // For each variant, build the same logical node via OwnedAllocator
+    // and BorrowedAllocator and assert the borrowed result has the
+    // matching shape + payload. We compare via xml_node_name +
+    // explicit field reads rather than synthesising owned-from-borrowed
+    // (the borrowed AST has no `to_owned`), since field-by-field is the
+    // direct check the byte-identical proptest needs at Commit C.
     // -----------------------------------------------------------------
 
     #[test]
@@ -765,10 +864,502 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Commit B")]
-    fn borrowed_allocator_methods_panic_until_commit_b() {
+    fn borrowed_ruby_round_trip_equals_owned() {
         let arena = Arena::new();
         let mut b = BorrowedAllocator::new(&arena);
-        let _ = b.content_plain("x");
+        let base = b.content_plain("青梅");
+        let reading = b.content_plain("おうめ");
+        let n = b.ruby(base, reading, true);
+        let r = match n {
+            borrowed::AozoraNode::Ruby(r) => r,
+            other => panic!("expected Ruby, got {other:?}"),
+        };
+        assert_eq!(r.base.as_plain(), Some("青梅"));
+        assert_eq!(r.reading.as_plain(), Some("おうめ"));
+        assert!(r.delim_explicit);
+    }
+
+    #[test]
+    fn borrowed_bouten_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let target = b.content_plain("青空");
+        let n = b.bouten(BoutenKind::Goma, target, BoutenPosition::Right);
+        let bo = match n {
+            borrowed::AozoraNode::Bouten(b) => b,
+            other => panic!("expected Bouten, got {other:?}"),
+        };
+        assert_eq!(bo.kind, BoutenKind::Goma);
+        assert_eq!(bo.target.as_plain(), Some("青空"));
+        assert_eq!(bo.position, BoutenPosition::Right);
+    }
+
+    #[test]
+    fn borrowed_tate_chu_yoko_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let text = b.content_plain("12");
+        let n = b.tate_chu_yoko(text);
+        let t = match n {
+            borrowed::AozoraNode::TateChuYoko(t) => t,
+            other => panic!("expected TateChuYoko, got {other:?}"),
+        };
+        assert_eq!(t.text.as_plain(), Some("12"));
+    }
+
+    #[test]
+    fn borrowed_gaiji_with_full_metadata() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let g = b.make_gaiji("木＋吶のつくり", Some('𠀋'), Some("第3水準1-85-54"));
+        let n = b.gaiji(g);
+        let gn = match n {
+            borrowed::AozoraNode::Gaiji(g) => g,
+            other => panic!("expected Gaiji, got {other:?}"),
+        };
+        assert_eq!(gn.description, "木＋吶のつくり");
+        assert_eq!(gn.ucs, Some('𠀋'));
+        assert_eq!(gn.mencode, Some("第3水準1-85-54"));
+    }
+
+    #[test]
+    fn borrowed_gaiji_with_no_mencode() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let g = b.make_gaiji("desc", None, None);
+        let n = b.gaiji(g);
+        let gn = match n {
+            borrowed::AozoraNode::Gaiji(g) => g,
+            other => panic!("expected Gaiji, got {other:?}"),
+        };
+        assert_eq!(gn.description, "desc");
+        assert!(gn.ucs.is_none());
+        assert!(gn.mencode.is_none());
+    }
+
+    #[test]
+    fn borrowed_indent_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let n = b.indent(Indent { amount: 3 });
+        assert!(matches!(
+            n,
+            borrowed::AozoraNode::Indent(Indent { amount: 3 })
+        ));
+    }
+
+    #[test]
+    fn borrowed_align_end_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let n = b.align_end(AlignEnd { offset: 2 });
+        assert!(matches!(
+            n,
+            borrowed::AozoraNode::AlignEnd(AlignEnd { offset: 2 })
+        ));
+    }
+
+    #[test]
+    fn borrowed_warichu_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let upper = b.content_plain("上");
+        let lower = b.content_plain("下");
+        let n = b.warichu(upper, lower);
+        let w = match n {
+            borrowed::AozoraNode::Warichu(w) => w,
+            other => panic!("expected Warichu, got {other:?}"),
+        };
+        assert_eq!(w.upper.as_plain(), Some("上"));
+        assert_eq!(w.lower.as_plain(), Some("下"));
+    }
+
+    #[test]
+    fn borrowed_keigakomi_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let n = b.keigakomi(Keigakomi);
+        assert!(matches!(n, borrowed::AozoraNode::Keigakomi(Keigakomi)));
+    }
+
+    #[test]
+    fn borrowed_page_break_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let n = b.page_break();
+        assert!(matches!(n, borrowed::AozoraNode::PageBreak));
+    }
+
+    #[test]
+    fn borrowed_section_break_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let n = b.section_break(SectionKind::Choho);
+        assert!(matches!(
+            n,
+            borrowed::AozoraNode::SectionBreak(SectionKind::Choho)
+        ));
+    }
+
+    #[test]
+    fn borrowed_aozora_heading_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let text = b.content_plain("見出し");
+        let n = b.aozora_heading(AozoraHeadingKind::Window, text);
+        let h = match n {
+            borrowed::AozoraNode::AozoraHeading(h) => h,
+            other => panic!("expected AozoraHeading, got {other:?}"),
+        };
+        assert_eq!(h.kind, AozoraHeadingKind::Window);
+        assert_eq!(h.text.as_plain(), Some("見出し"));
+    }
+
+    #[test]
+    fn borrowed_heading_hint_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let n = b.heading_hint(2, "対象");
+        let h = match n {
+            borrowed::AozoraNode::HeadingHint(h) => h,
+            other => panic!("expected HeadingHint, got {other:?}"),
+        };
+        assert_eq!(h.level, 2);
+        assert_eq!(h.target, "対象");
+    }
+
+    #[test]
+    fn borrowed_sashie_with_caption() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let caption = b.content_plain("挿絵キャプション");
+        let n = b.sashie("fig01.png", Some(caption));
+        let s = match n {
+            borrowed::AozoraNode::Sashie(s) => s,
+            other => panic!("expected Sashie, got {other:?}"),
+        };
+        assert_eq!(s.file, "fig01.png");
+        assert_eq!(
+            s.caption.and_then(borrowed::Content::as_plain),
+            Some("挿絵キャプション")
+        );
+    }
+
+    #[test]
+    fn borrowed_sashie_without_caption() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let n = b.sashie("fig02.png", None);
+        let s = match n {
+            borrowed::AozoraNode::Sashie(s) => s,
+            other => panic!("expected Sashie, got {other:?}"),
+        };
+        assert_eq!(s.file, "fig02.png");
+        assert!(s.caption.is_none());
+    }
+
+    #[test]
+    fn borrowed_kaeriten_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let n = b.kaeriten("一");
+        let k = match n {
+            borrowed::AozoraNode::Kaeriten(k) => k,
+            other => panic!("expected Kaeriten, got {other:?}"),
+        };
+        assert_eq!(k.mark, "一");
+    }
+
+    #[test]
+    fn borrowed_annotation_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let payload = b.make_annotation("［＃X］", AnnotationKind::Unknown);
+        let n = b.annotation(payload);
+        let a = match n {
+            borrowed::AozoraNode::Annotation(a) => a,
+            other => panic!("expected Annotation, got {other:?}"),
+        };
+        assert_eq!(a.raw, "［＃X］");
+        assert_eq!(a.kind, AnnotationKind::Unknown);
+    }
+
+    #[test]
+    fn borrowed_double_ruby_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let content = b.content_plain("重要");
+        let n = b.double_ruby(content);
+        let d = match n {
+            borrowed::AozoraNode::DoubleRuby(d) => d,
+            other => panic!("expected DoubleRuby, got {other:?}"),
+        };
+        assert_eq!(d.content.as_plain(), Some("重要"));
+    }
+
+    #[test]
+    fn borrowed_container_round_trip_equals_owned() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let c = Container {
+            kind: ContainerKind::Indent { amount: 1 },
+        };
+        let n = b.container(c);
+        assert!(matches!(n, borrowed::AozoraNode::Container(cc) if cc == c));
+    }
+
+    // -----------------------------------------------------------------
+    // Borrowed content / segment composition (canonicalisation rules)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn borrowed_content_plain_empty_collapses_to_empty_segments() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let c = b.content_plain("");
+        // Mirrors `owned::Content::from("")` canonicalisation; needed
+        // for byte-identical proptest equivalence.
+        assert!(matches!(c, borrowed::Content::Segments(s) if s.is_empty()));
+    }
+
+    #[test]
+    fn borrowed_content_plain_nonempty_returns_plain_variant() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let c = b.content_plain("hello");
+        assert_eq!(c.as_plain(), Some("hello"));
+    }
+
+    #[test]
+    fn borrowed_content_segments_preserves_order_and_kind() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let g = b.make_gaiji("X", None, None);
+        let seg_g = b.seg_gaiji(g);
+        let seg_t1 = b.seg_text("before ");
+        let seg_t2 = b.seg_text(" after");
+        let ann = b.make_annotation("［＃X］", AnnotationKind::Unknown);
+        let seg_a = b.seg_annotation(ann);
+        let c = b.content_segments(vec![seg_t1, seg_g, seg_t2, seg_a]);
+        let segs = match c {
+            borrowed::Content::Segments(s) => s,
+            _ => panic!("expected Segments variant for mixed-kind input"),
+        };
+        assert_eq!(segs.len(), 4);
+        assert!(matches!(&segs[0], borrowed::Segment::Text(t) if *t == "before "));
+        assert!(matches!(&segs[1], borrowed::Segment::Gaiji(_)));
+        assert!(matches!(&segs[2], borrowed::Segment::Text(t) if *t == " after"));
+        assert!(matches!(&segs[3], borrowed::Segment::Annotation(_)));
+    }
+
+    #[test]
+    fn borrowed_content_segments_all_text_collapses_to_plain() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let s1 = b.seg_text("hi ");
+        let s2 = b.seg_text("there");
+        let c = b.content_segments(vec![s1, s2]);
+        // Mirrors `owned::Content::from_segments` canonicalisation.
+        assert_eq!(c.as_plain(), Some("hi there"));
+    }
+
+    #[test]
+    fn borrowed_content_segments_empty_collapses_to_empty_segments() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        let c = b.content_segments(vec![]);
+        assert!(matches!(c, borrowed::Content::Segments(s) if s.is_empty()));
+    }
+
+    // -----------------------------------------------------------------
+    // Interner dedup is wired up — repeated short strings must share
+    // a single arena slot.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn borrowed_interner_dedups_repeated_readings() {
+        let arena = Arena::new();
+        let mut b = BorrowedAllocator::new(&arena);
+        // Build two Ruby nodes with the same reading. Pointer
+        // equality of the resulting `&'a str` proves the interner
+        // is wired through `content_plain`.
+        let base1 = b.content_plain("青梅");
+        let reading1 = b.content_plain("おうめ");
+        let n1 = b.ruby(base1, reading1, false);
+        let base2 = b.content_plain("青梅");
+        let reading2 = b.content_plain("おうめ");
+        let n2 = b.ruby(base2, reading2, false);
+        let r1 = match n1 {
+            borrowed::AozoraNode::Ruby(r) => r,
+            _ => unreachable!(),
+        };
+        let r2 = match n2 {
+            borrowed::AozoraNode::Ruby(r) => r,
+            _ => unreachable!(),
+        };
+        let s1 = r1.reading.as_plain().expect("plain");
+        let s2 = r2.reading.as_plain().expect("plain");
+        assert_eq!(s1.as_ptr(), s2.as_ptr(), "interner must dedup repeated readings");
+    }
+
+    // -----------------------------------------------------------------
+    // Cross-allocator equivalence: every variant constructed via both
+    // backends must produce the same xml_node_name and is_block.
+    // -----------------------------------------------------------------
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "single equivalence sweep — splitting hides the parallel-construction pattern"
+    )]
+    #[test]
+    fn cross_allocator_xml_names_match_for_every_variant() {
+        let arena = Arena::new();
+        let mut o = OwnedAllocator;
+        let mut b = BorrowedAllocator::new(&arena);
+
+        // Build both shapes side-by-side. Each entry uses scoped
+        // blocks so the borrow on the allocator is released between
+        // arg construction and node construction (Rust enforces this
+        // even for stateless `OwnedAllocator`, since the trait
+        // signature is `&mut self`).
+        let pairs: Vec<(AozoraNode, borrowed::AozoraNode<'_>)> = vec![
+            (
+                {
+                    let base = o.content_plain("a");
+                    let reading = o.content_plain("b");
+                    o.ruby(base, reading, true)
+                },
+                {
+                    let base = b.content_plain("a");
+                    let reading = b.content_plain("b");
+                    b.ruby(base, reading, true)
+                },
+            ),
+            (
+                {
+                    let target = o.content_plain("x");
+                    o.bouten(BoutenKind::Goma, target, BoutenPosition::Right)
+                },
+                {
+                    let target = b.content_plain("x");
+                    b.bouten(BoutenKind::Goma, target, BoutenPosition::Right)
+                },
+            ),
+            (
+                {
+                    let text = o.content_plain("12");
+                    o.tate_chu_yoko(text)
+                },
+                {
+                    let text = b.content_plain("12");
+                    b.tate_chu_yoko(text)
+                },
+            ),
+            (
+                {
+                    let g = o.make_gaiji("desc", Some('A'), Some("1-2-3"));
+                    o.gaiji(g)
+                },
+                {
+                    let g = b.make_gaiji("desc", Some('A'), Some("1-2-3"));
+                    b.gaiji(g)
+                },
+            ),
+            (o.indent(Indent { amount: 3 }), b.indent(Indent { amount: 3 })),
+            (
+                o.align_end(AlignEnd { offset: 2 }),
+                b.align_end(AlignEnd { offset: 2 }),
+            ),
+            (
+                {
+                    let upper = o.content_plain("u");
+                    let lower = o.content_plain("l");
+                    o.warichu(upper, lower)
+                },
+                {
+                    let upper = b.content_plain("u");
+                    let lower = b.content_plain("l");
+                    b.warichu(upper, lower)
+                },
+            ),
+            (o.keigakomi(Keigakomi), b.keigakomi(Keigakomi)),
+            (o.page_break(), b.page_break()),
+            (
+                o.section_break(SectionKind::Choho),
+                b.section_break(SectionKind::Choho),
+            ),
+            (
+                {
+                    let text = o.content_plain("h");
+                    o.aozora_heading(AozoraHeadingKind::Window, text)
+                },
+                {
+                    let text = b.content_plain("h");
+                    b.aozora_heading(AozoraHeadingKind::Window, text)
+                },
+            ),
+            (o.heading_hint(1, "t"), b.heading_hint(1, "t")),
+            (
+                {
+                    let cap = o.content_plain("c");
+                    o.sashie("f.png", Some(cap))
+                },
+                {
+                    let cap = b.content_plain("c");
+                    b.sashie("f.png", Some(cap))
+                },
+            ),
+            (o.kaeriten("一"), b.kaeriten("一")),
+            (
+                {
+                    let p = o.make_annotation("r", AnnotationKind::Unknown);
+                    o.annotation(p)
+                },
+                {
+                    let p = b.make_annotation("r", AnnotationKind::Unknown);
+                    b.annotation(p)
+                },
+            ),
+            (
+                {
+                    let c = o.content_plain("d");
+                    o.double_ruby(c)
+                },
+                {
+                    let c = b.content_plain("d");
+                    b.double_ruby(c)
+                },
+            ),
+            (
+                o.container(Container {
+                    kind: ContainerKind::Indent { amount: 1 },
+                }),
+                b.container(Container {
+                    kind: ContainerKind::Indent { amount: 1 },
+                }),
+            ),
+        ];
+
+        for (owned_n, borrowed_n) in &pairs {
+            assert_eq!(
+                owned_n.xml_node_name(),
+                borrowed_n.xml_node_name(),
+                "xml_node_name diverged for variant {owned_n:?}"
+            );
+            assert_eq!(
+                owned_n.is_block(),
+                borrowed_n.is_block(),
+                "is_block diverged for variant {owned_n:?}"
+            );
+            assert_eq!(
+                owned_n.contains_inlines(),
+                borrowed_n.contains_inlines(),
+                "contains_inlines diverged for variant {owned_n:?}"
+            );
+        }
+
+        // Pin the variant count so a future enum addition forces the
+        // cross-allocator sweep to be updated.
+        assert_eq!(pairs.len(), 17, "AozoraNode has 17 variants today");
     }
 }
