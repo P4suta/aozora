@@ -36,9 +36,13 @@
 
 mod borrowed;
 mod engine;
+pub mod state;
 mod tokenize;
 
 pub use borrowed::{BorrowedLexOutput, lex_into_arena};
+pub use state::{
+    Classified, Normalized, Paired, Sanitized, Source, Tokenized, lex_chained_into_arena,
+};
 pub use tokenize::tokenize_with_scan;
 
 // Public surface — the `lex(&str) -> LexOutput` entry point plus the
