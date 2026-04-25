@@ -53,11 +53,36 @@ pub fn tokenize(source: &str) -> Vec<Token> {
         source.len()
     );
 
+    let bytes = source.as_bytes();
     let mut out = Vec::with_capacity(source.len() / 32);
     let mut cursor: u32 = 0;
     let mut text_start: u32 = 0;
 
-    while (cursor as usize) < source.len() {
+    while (cursor as usize) < bytes.len() {
+        let b = bytes[cursor as usize];
+
+        // ASCII fast path: every Aozora trigger is a 3-byte UTF-8
+        // sequence whose lead byte is in {0xE2, 0xE3, 0xEF}; no
+        // ASCII byte can begin one. Newline (`\n` / 0x0A) is the
+        // sole ASCII byte we treat structurally. Skipping the
+        // `chars().next()` decode + `classify_single` jump table
+        // here is most of the win on English-mixed corpus.
+        // Pure-Japanese sources spend almost no time in this branch
+        // because every byte is ≥ 0x80, so this is a strict
+        // improvement (no Japanese-side regression).
+        if b < 0x80 {
+            if b == b'\n' {
+                push_text(&mut out, text_start, cursor);
+                out.push(Token::Newline { pos: cursor });
+                cursor += 1;
+                text_start = cursor;
+            } else {
+                cursor += 1;
+            }
+            continue;
+        }
+
+        // Multi-byte char: full UTF-8 decode + trigger classification.
         let rest = &source[cursor as usize..];
         let ch = rest.chars().next().expect("not at end");
         let ch_len = u32::try_from(ch.len_utf8()).expect("char len 1..=4");
@@ -83,14 +108,6 @@ pub fn tokenize(source: &str) -> Vec<Token> {
                 span: Span::new(cursor, cursor + consumed),
             });
             cursor += consumed;
-            text_start = cursor;
-            continue;
-        }
-
-        if ch == '\n' {
-            push_text(&mut out, text_start, cursor);
-            out.push(Token::Newline { pos: cursor });
-            cursor += ch_len;
             text_start = cursor;
             continue;
         }
