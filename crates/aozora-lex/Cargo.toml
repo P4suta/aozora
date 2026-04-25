@@ -1,0 +1,30 @@
+[package]
+name        = "aozora-lex"
+description = "Aozora notation lexer — fused streaming pipeline (Move 2 of the 0.2.0 plan)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+[lints]
+workspace = true
+
+[dependencies]
+aozora-spec     = { workspace = true }
+aozora-syntax   = { workspace = true }
+aozora-encoding = { workspace = true }
+aozora-scan     = { workspace = true }
+
+# Phase 0 transition: we delegate the heavy phase 2-6 work to the
+# legacy aozora-lexer pipeline while the fused engine is being built
+# out. Once Move 2's fused engine lands, this dependency goes away.
+aozora-lexer    = { workspace = true }
+
+[dev-dependencies]
+proptest          = { workspace = true }
+aozora-test-utils = { workspace = true }

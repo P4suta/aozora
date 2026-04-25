@@ -46,7 +46,7 @@
 
 use core::fmt;
 
-use aozora_lexer::{
+use aozora_lex::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
 };
 use aozora_syntax::{

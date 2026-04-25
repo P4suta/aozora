@@ -135,6 +135,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aozora-lex"
+version = "0.1.0"
+dependencies = [
+ "aozora-encoding",
+ "aozora-lexer",
+ "aozora-scan",
+ "aozora-spec",
+ "aozora-syntax",
+ "aozora-test-utils",
+ "proptest",
+]
+
+[[package]]
 name = "aozora-lexer"
 version = "0.1.0"
 dependencies = [
@@ -155,6 +168,7 @@ version = "0.1.0"
 dependencies = [
  "aozora-corpus",
  "aozora-encoding",
+ "aozora-lex",
  "aozora-lexer",
  "aozora-syntax",
  "aozora-test-utils",
@@ -172,6 +186,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "aozora-scan"
+version = "0.1.0"
+dependencies = [
+ "aozora-spec",
+ "criterion",
+ "memchr",
+ "proptest",
+]
+
+[[package]]
 name = "aozora-spec"
 version = "0.1.0"
 dependencies = [
@@ -186,6 +210,8 @@ name = "aozora-syntax"
 version = "0.1.0"
 dependencies = [
  "aozora-spec",
+ "aozora-veb",
+ "bumpalo",
  "criterion",
  "insta",
  "miette",

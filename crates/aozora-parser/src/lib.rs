@@ -44,10 +44,15 @@ pub mod serialize;
 #[doc(hidden)]
 pub mod test_support;
 
-pub use aozora_lexer::{
-    self as lexer, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic,
-    INLINE_SENTINEL, PlaceholderRegistry, lex,
+pub use aozora_lex::{
+    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic, INLINE_SENTINEL,
+    PlaceholderRegistry, lex,
 };
+// `aozora_lexer` is still re-exported as `lexer` for backward
+// compatibility with downstream consumers that reach into the legacy
+// phase modules. Move 2's fused engine will absorb those modules and
+// this re-export will deprecate.
+pub use aozora_lexer as lexer;
 pub use incremental::{
     EditError, IncrementalDecision, IncrementalOutcome, TextEdit, apply_edits, parse_incremental,
 };

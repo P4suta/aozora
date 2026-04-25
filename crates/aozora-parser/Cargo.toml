@@ -16,6 +16,12 @@ workspace = true
 
 [dependencies]
 aozora-syntax   = { workspace = true }
+aozora-lex      = { workspace = true }
+# Phase migration: legacy lexer types (PairKind etc.) are still
+# imported by name in some modules. They re-export through aozora-lex
+# now, but a few internal modules (segment.rs) still reach for
+# crate-private items that haven't moved. Once Move 2's fused engine
+# absorbs aozora-lexer entirely, this dep drops.
 aozora-lexer    = { workspace = true }
 aozora-encoding = { workspace = true }
 unicode-segmentation = { workspace = true }

@@ -10,6 +10,8 @@ members = [
     "crates/aozora-cli",
     "crates/aozora-test-utils",
     "crates/aozora-veb",
+    "crates/aozora-scan",
+    "crates/aozora-lex",
 ]
 
 [workspace.package]
@@ -123,6 +125,14 @@ large_enum_variant      = "allow"
 aozora-spec       = { version = "0.1.0", path = "crates/aozora-spec" }
 aozora-syntax     = { version = "0.1.0", path = "crates/aozora-syntax" }
 aozora-veb        = { path = "crates/aozora-veb" }
+aozora-scan       = { path = "crates/aozora-scan" }
+aozora-lex        = { version = "0.1.0", path = "crates/aozora-lex" }
+
+# Memory management
+bumpalo = "3.16"
+
+# SIMD-friendly substring scan
+memchr = "2.7"
 aozora-lexer      = { version = "0.1.0", path = "crates/aozora-lexer" }
 aozora-parser     = { version = "0.1.0", path = "crates/aozora-parser" }
 aozora-encoding   = { version = "0.1.0", path = "crates/aozora-encoding" }

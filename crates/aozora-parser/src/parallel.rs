@@ -41,7 +41,7 @@
 
 use core::ops::Range;
 
-use aozora_lexer::{Diagnostic, LexOutput, PlaceholderRegistry, lex};
+use aozora_lex::{Diagnostic, LexOutput, PlaceholderRegistry, lex};
 use aozora_syntax::Span;
 
 #[cfg(feature = "parallel")]
