@@ -36,6 +36,7 @@
 
 pub mod aozora;
 pub mod html;
+pub mod incremental;
 pub mod serialize;
 
 #[doc(hidden)]
@@ -44,6 +45,9 @@ pub mod test_support;
 pub use aozora_lexer::{
     self as lexer, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic,
     INLINE_SENTINEL, PlaceholderRegistry, lex,
+};
+pub use incremental::{
+    EditError, IncrementalDecision, IncrementalOutcome, TextEdit, apply_edits, parse_incremental,
 };
 pub use serialize::{serialize, serialize_from_artifacts};
 

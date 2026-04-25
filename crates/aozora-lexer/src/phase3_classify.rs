@@ -792,6 +792,15 @@ fn recognize_gaiji(
     if description.is_empty() {
         return None;
     }
+    // Reject descriptions that carry structural quote characters.
+    // The serializer wraps the description in `「…」` for round-trip,
+    // so a stray `」` (e.g. from the malformed input `※［＃」］`) would
+    // make `serialize ∘ parse` non-stable. Falling through to `None`
+    // here lets the higher-level classifier wrap the raw bracket in
+    // an `Annotation{Unknown}`, which round-trips byte-identical.
+    if description.contains(['「', '」']) {
+        return None;
+    }
 
     // Resolve the Unicode scalar at lex time via the static table in
     // afm-encoding so the downstream AST / renderer never has to
