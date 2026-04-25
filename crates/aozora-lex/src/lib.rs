@@ -34,9 +34,11 @@
 
 #![forbid(unsafe_code)]
 
+mod borrowed;
 mod engine;
 mod tokenize;
 
+pub use borrowed::{BorrowedLexOutput, lex_into_arena};
 pub use tokenize::tokenize_with_scan;
 
 // Public surface — the `lex(&str) -> LexOutput` entry point plus the

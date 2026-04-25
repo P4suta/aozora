@@ -30,6 +30,7 @@ use thiserror::Error;
 
 pub mod accent;
 pub mod borrowed;
+pub mod convert;
 mod extension;
 pub use extension::ContainerKind;
 
