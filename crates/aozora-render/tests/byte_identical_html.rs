@@ -16,7 +16,7 @@
 //!    (`aozora_fragment`, `pathological_aozora`, `unicode_adversarial`)
 //!    so any future renderer divergence shows up under shrinking.
 
-use aozora_render::{html, legacy};
+use aozora_render::html;
 use aozora_syntax::borrowed::Arena;
 use aozora_test_utils::config::default_config;
 use aozora_test_utils::generators::*;
@@ -26,7 +26,7 @@ fn assert_html_equal(source: &str) {
     let arena = Arena::new();
     let borrowed_lex = aozora_lex::lex_into_arena(source, &arena);
     let borrowed = html::render_to_string(&borrowed_lex);
-    let owned = legacy::html::render_to_string(source);
+    let owned = aozora_parser::html::render_to_string(source);
     assert_eq!(
         borrowed, owned,
         "borrowed HTML diverged for input {source:?}"

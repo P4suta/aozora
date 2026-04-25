@@ -15,29 +15,24 @@
 //! println!("{html}");
 //! ```
 //!
-//! ## Move 3 façade phase
+//! ## Architecture
 //!
-//! Today [`Document`] / [`AozoraTree`] are thin façades over the
-//! legacy [`aozora_parser::ParseResult`]. Once Move 2's fused engine
-//! lands, [`Document`] will own a [`bumpalo::Bump`] arena and
-//! [`AozoraTree`] will borrow from it directly per the architecture
-//! described in ADR-0009 / ADR-0010. The public API shape stays
-//! source-compatible across the migration.
+//! [`Document`] owns the source buffer plus a [`bumpalo`]-backed
+//! arena. [`AozoraTree`] borrows from that arena via the `&self`
+//! lifetime returned by [`Document::parse`]. Every per-node
+//! allocation lives inside the arena, with the
+//! [`Interner`](aozora_syntax::borrowed::Interner) deduplicating
+//! repeated string content (Innovation I-7); dropping the
+//! `Document` releases the entire tree in a single `Bump::reset`
+//! step. ADR-0009 / ADR-0010 cover the design rationale.
 
 #![forbid(unsafe_code)]
 
 pub use aozora_lex::{
-    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL, LexOutput,
-    PlaceholderRegistry, lex,
+    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
+    BorrowedLexOutput, lex_into_arena,
 };
-pub use aozora_parser::{ParseArtifacts, ParseResult, parse};
-// During Plan B's incremental migration, `aozora::html` continues to
-// expose the legacy owned-AST renderer (drives `render_from_artifacts`
-// from FFI/WASM/Py drivers). The borrowed-AST native renderer is
-// reachable via `aozora_render::html` directly. Plan B.4 switches this
-// re-export over.
-pub use aozora_render::legacy::html;
-pub use aozora_render::legacy::{serialize, serialize_from_artifacts};
+pub use aozora_render::{html, serialize};
 pub use aozora_spec::{Diagnostic, PairKind, Span, TriggerKind};
 
 mod document;

@@ -103,7 +103,6 @@ version = "0.1.0"
 dependencies = [
  "aozora-lex",
  "aozora-parallel",
- "aozora-parser",
  "aozora-render",
  "aozora-spec",
  "aozora-syntax",

@@ -178,8 +178,8 @@ mod tests {
 
     #[test]
     fn diagnostics_json_view_emits_pua_diagnostic() {
-        let parsed = aozora::parse("abc\u{E001}def");
-        let json = diagnostics_json_view(&parsed.diagnostics);
+        let doc = aozora::Document::new("abc\u{E001}def".to_owned());
+        let json = diagnostics_json_view(doc.parse().diagnostics());
         assert!(
             json.contains("source_contains_pua"),
             "json missing diag kind: {json}"
@@ -188,8 +188,8 @@ mod tests {
 
     #[test]
     fn diagnostics_json_view_is_valid_json() {
-        let parsed = aozora::parse("abc\u{E001}def");
-        let json = diagnostics_json_view(&parsed.diagnostics);
+        let doc = aozora::Document::new("abc\u{E001}def".to_owned());
+        let json = diagnostics_json_view(doc.parse().diagnostics());
         // Round-trip parse via serde_json — fails the test if the
         // produced string isn't valid JSON.
         let parsed_json: serde_json::Value =

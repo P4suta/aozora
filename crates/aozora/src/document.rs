@@ -2,7 +2,7 @@
 //! buffer, and `AozoraTree<'a>` — borrowed view a caller walks for
 //! output rendering.
 //!
-//! ## Plan B.4 — borrowed AST production surface
+//! ## Plan B.4 / B.5 — borrowed AST production surface
 //!
 //! `Document` owns both the source buffer and a [`bumpalo`]-backed
 //! [`Arena`]; [`Document::parse`] returns an [`AozoraTree<'_>`]
@@ -17,17 +17,13 @@
 //! frees the entire tree in a single `Bump::reset` step; no per-node
 //! `Drop` runs.
 //!
-//! The legacy owned-AST [`ParseResult`] path remains available via
-//! [`Document::parse_owned`] for downstream callers that have not
-//! migrated yet — Plan B.5 retires that surface alongside
-//! `aozora-parser`.
+//! Plan B.5 has retired the legacy owned-AST `ParseResult` path that
+//! pre-Plan-B `Document::parse_owned` exposed; the borrowed
+//! [`Document::parse`] is now the only public entry.
 
 use core::fmt;
 
 use aozora_lex::{lex_into_arena, BorrowedLexOutput};
-use aozora_parser::ParseResult;
-use aozora_render::legacy::html::render_from_artifacts;
-use aozora_render::legacy::serialize as legacy_serialize;
 use aozora_render::{html as borrowed_html, serialize as borrowed_serialize};
 use aozora_spec::Diagnostic;
 use aozora_syntax::borrowed::Arena;
@@ -85,17 +81,6 @@ impl Document {
             inner: lex_into_arena(&self.source, &self.arena),
         }
     }
-
-    /// Legacy owned-AST parse. Returned as the pre-Plan-B
-    /// [`ParseResult`] that wraps comrak's AST plus the lex registry.
-    /// Plan B.5 deprecates this entry; Plan B.6 removes it.
-    #[must_use]
-    pub fn parse_owned(&self) -> OwnedAozoraTree<'_> {
-        OwnedAozoraTree {
-            source: &self.source,
-            inner: aozora_parser::parse(&self.source),
-        }
-    }
 }
 
 impl fmt::Debug for Document {
@@ -150,44 +135,6 @@ impl<'a> AozoraTree<'a> {
     }
 }
 
-/// Legacy owned-AST view returned by [`Document::parse_owned`].
-#[derive(Debug)]
-pub struct OwnedAozoraTree<'a> {
-    source: &'a str,
-    inner: ParseResult,
-}
-
-impl<'a> OwnedAozoraTree<'a> {
-    /// The source text this tree was parsed from.
-    #[must_use]
-    pub fn source(&self) -> &'a str {
-        self.source
-    }
-
-    /// Diagnostics emitted during parsing.
-    #[must_use]
-    pub fn diagnostics(&self) -> &[Diagnostic] {
-        &self.inner.diagnostics
-    }
-
-    /// Render via the legacy owned-AST renderer.
-    #[must_use]
-    pub fn to_html(&self) -> String {
-        render_from_artifacts(&self.inner.artifacts)
-    }
-
-    /// Serialize via the legacy owned-AST serializer.
-    #[must_use]
-    pub fn serialize(&self) -> String {
-        legacy_serialize(&self.inner)
-    }
-
-    /// Unwrap into the underlying [`ParseResult`].
-    #[must_use]
-    pub fn into_parse_result(self) -> ParseResult {
-        self.inner
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -220,37 +167,6 @@ mod tests {
         let d = Document::new("contains \u{E001} sentinel");
         let t = d.parse();
         assert!(!t.diagnostics().is_empty());
-    }
-
-    #[test]
-    fn to_html_matches_legacy_owned_path() {
-        let inputs = [
-            "Hello.",
-            "｜青梅《おうめ》",
-            "text［＃改ページ］more",
-        ];
-        for src in inputs {
-            let d = Document::new(src);
-            let borrowed = d.parse().to_html();
-            let owned = d.parse_owned().to_html();
-            assert_eq!(borrowed, owned, "html diverged for {src:?}");
-        }
-    }
-
-    #[test]
-    fn serialize_matches_legacy_owned_path() {
-        let inputs = [
-            "Hello.",
-            "｜青梅《おうめ》",
-            "text［＃改ページ］more",
-            "［＃ここから2字下げ］\nA\n［＃ここで字下げ終わり］",
-        ];
-        for src in inputs {
-            let d = Document::new(src);
-            let borrowed = d.parse().serialize();
-            let owned = d.parse_owned().serialize();
-            assert_eq!(borrowed, owned, "serialize diverged for {src:?}");
-        }
     }
 
     #[test]

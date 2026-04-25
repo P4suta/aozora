@@ -109,15 +109,15 @@ mod tests {
 
     #[test]
     fn diagnostics_json_view_works_through_aozora_wasm() {
-        let parsed = aozora::parse("abc\u{E001}def");
-        let json = diagnostics_json_view(&parsed.diagnostics);
+        let doc = aozora::Document::new("abc\u{E001}def".to_owned());
+        let json = diagnostics_json_view(doc.parse().diagnostics());
         assert!(json.contains("source_contains_pua"));
     }
 
     #[test]
     fn diagnostics_json_view_emits_empty_array_for_clean_input() {
-        let parsed = aozora::parse("plain text");
-        let json = diagnostics_json_view(&parsed.diagnostics);
+        let doc = aozora::Document::new("plain text".to_owned());
+        let json = diagnostics_json_view(doc.parse().diagnostics());
         assert_eq!(json, "[]");
     }
 }

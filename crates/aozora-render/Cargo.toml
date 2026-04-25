@@ -15,17 +15,20 @@ categories.workspace   = true
 workspace = true
 
 [dependencies]
-# Borrowed-AST native renderers (Plan B.3). The legacy owned-AST
-# implementation continues to live in aozora-parser; this crate now
-# carries the borrowed-AST mirrors that consume `aozora_lex::lex_into_arena`
-# output directly. The aozora-parser dep is retained for the legacy
-# façade re-exports until Plan B.5 retires them.
-aozora-parser = { workspace = true, features = ["html"] }
+# Borrowed-AST native renderers (Plan B.5). The aozora-parser dep
+# was retired in Plan B.5 — the legacy owned-AST renderers no
+# longer have any public consumer. `aozora-parser` itself remains as
+# an internal-test artifact (its proptest suite continues to pin
+# the lex-pipeline equivalence with the legacy comrak-driven path).
 aozora-spec   = { workspace = true }
 aozora-syntax = { workspace = true }
 aozora-lex    = { workspace = true }
 
 [dev-dependencies]
+# `aozora-parser` is a dev-only dep so the byte-identical proptest
+# in tests/byte_identical_html.rs can compare borrowed-AST output
+# against the legacy owned renderer.
+aozora-parser     = { workspace = true, features = ["html"] }
 pretty_assertions = { workspace = true }
 proptest          = { workspace = true }
 aozora-test-utils = { workspace = true }
