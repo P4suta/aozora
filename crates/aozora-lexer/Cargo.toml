@@ -14,6 +14,16 @@ categories.workspace   = true
 [lints]
 workspace = true
 
+[features]
+default = []
+# Phase 6 V1..V3 structural invariants. Always on in `cargo test`
+# (gated by `cfg(debug_assertions)` inside `phase6_validate::validate`)
+# and in CI (corpus sweep + property tests). Production release builds
+# skip them by default to recover ~11% on the corpus profile per
+# ADR-0014; reach for this feature when running release builds whose
+# diagnostic output you want to gate on V1..V3.
+validate-invariants = []
+
 [dependencies]
 aozora-spec     = { workspace = true }
 aozora-syntax   = { workspace = true }

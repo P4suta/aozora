@@ -55,6 +55,18 @@ pub struct ValidateOutput {
 /// Pure function; no I/O. Consumes the `NormalizeOutput` by value so
 /// the caller cannot observe the state between validate and any
 /// downstream consumer.
+///
+/// ## Conditional execution
+///
+/// The V1..V3 checks are sanity guardrails for Phase 3/4 driver
+/// bugs, not gates against malformed user input. Production release
+/// builds (`cargo build --release` without the `validate-invariants`
+/// feature) skip the per-byte walks entirely and pass the
+/// `NormalizeOutput` through unchanged. The 17 k-work corpus sweep
+/// keeps `validate-invariants` enabled so any regression that would
+/// have been caught by V1..V3 still surfaces in CI; the production
+/// hot path is freed of the per-doc 11% it costs (per the phase
+/// breakdown in ADR-0014).
 #[must_use]
 pub fn validate(input: NormalizeOutput) -> ValidateOutput {
     let NormalizeOutput {
@@ -63,8 +75,10 @@ pub fn validate(input: NormalizeOutput) -> ValidateOutput {
         mut diagnostics,
     } = input;
 
-    check_v1(&normalized, &mut diagnostics);
-    check_v2_v3(&normalized, &registry, &mut diagnostics);
+    if cfg!(any(debug_assertions, feature = "validate-invariants")) {
+        check_v1(&normalized, &mut diagnostics);
+        check_v2_v3(&normalized, &registry, &mut diagnostics);
+    }
 
     ValidateOutput {
         normalized,
