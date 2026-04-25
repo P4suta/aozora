@@ -9,7 +9,7 @@
 //! lookup.
 //!
 //! ```
-//! use afm_syntax::accent::decompose_fragment;
+//! use aozora_syntax::accent::decompose_fragment;
 //! assert_eq!(decompose_fragment("fune`bre"), "funèbre");
 //! assert_eq!(decompose_fragment("ae&on"), "æon");
 //! assert_eq!(decompose_fragment("plain"), "plain");

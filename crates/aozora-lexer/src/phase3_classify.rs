@@ -55,8 +55,8 @@
 
 use core::ops::Range;
 
-use afm_encoding::gaiji as gaiji_resolve;
-use afm_syntax::{
+use aozora_encoding::gaiji as gaiji_resolve;
+use aozora_syntax::{
     AlignEnd, Annotation, AnnotationKind, AozoraNode, Bouten, BoutenKind, BoutenPosition,
     ContainerKind, Content, DoubleRuby, Gaiji, HeadingHint, Indent, Kaeriten, Ruby, Sashie,
     SectionKind, Segment, Span, TateChuYoko,
@@ -699,7 +699,7 @@ struct GaijiMatch {
 /// `U+XXXX`, etc.) appearing after a `、` separator.
 ///
 /// The UCS resolution column of [`Gaiji`] is populated by
-/// `afm_encoding::gaiji::lookup` before the recogniser returns, so
+/// `aozora_encoding::gaiji::lookup` before the recogniser returns, so
 /// downstream consumers receive a resolved `Option<char>` without
 /// having to re-probe the mencode table.
 ///
@@ -2903,7 +2903,7 @@ mod tests {
         // (`<span class="afm-warichu">…</span>`). The legacy block
         // form (`ここから割り注` / `ここで割り注終わり`) is deprecated
         // and not classified here.
-        use afm_syntax::AnnotationKind;
+        use aozora_syntax::AnnotationKind;
         let out = run("［＃割り注］内部［＃割り注終わり］");
         let SpanKind::Aozora(AozoraNode::Annotation(ref open)) = out.spans[0].kind else {
             panic!(

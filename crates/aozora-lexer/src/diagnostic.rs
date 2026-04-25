@@ -11,7 +11,7 @@
 //! unclosed pair delimiters), and Phase 6 (structural self-check of
 //! the normalized text + registry).
 
-use afm_syntax::Span;
+use aozora_syntax::Span;
 use miette::Diagnostic as MietteDiagnostic;
 use thiserror::Error;
 

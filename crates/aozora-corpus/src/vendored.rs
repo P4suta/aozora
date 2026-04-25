@@ -8,7 +8,7 @@
 //! Dedicated to the "sweep the goldens themselves" use case — applying
 //! sweep invariants to Tier A fixtures to catch regressions without
 //! running the full golden diff test, and to provide a non-empty
-//! corpus when no external `AFM_CORPUS_ROOT` is available.
+//! corpus when no external `AOZORA_CORPUS_ROOT` is available.
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -5,7 +5,7 @@
 //! on the input side must not survive as `<script>` on the output
 //! side. This property drives curated dangerous payloads through
 //! `render_to_string` and asserts that
-//! [`check_no_xss_marker`](afm_parser::test_support::check_no_xss_marker)
+//! [`check_no_xss_marker`](aozora_parser::test_support::check_no_xss_marker)
 //! succeeds: no raw `<script`, no `javascript:` URI in attribute
 //! values, no `on<event>=` attribute handler.
 //!
@@ -30,10 +30,10 @@
 //! shape from the Aozora fragment generators — combining them into
 //! one file would dilute shrinking effectiveness.
 
-use afm_parser::html::render_to_string;
-use afm_parser::test_support::check_no_xss_marker;
-use afm_test_utils::config::default_config;
-use afm_test_utils::generators::{aozora_fragment, commonmark_adversarial, xss_payload};
+use aozora_parser::html::render_to_string;
+use aozora_parser::test_support::check_no_xss_marker;
+use aozora_test_utils::config::default_config;
+use aozora_test_utils::generators::{aozora_fragment, commonmark_adversarial, xss_payload};
 use proptest::prelude::*;
 
 proptest! {

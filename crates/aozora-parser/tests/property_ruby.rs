@@ -1,5 +1,5 @@
 //! Property-based tests for ruby recognition, exercised end-to-end through
-//! the lexer + `post_process` pipeline (`afm_parser::parse`).
+//! the lexer + registry pipeline (`aozora_parser::parse`).
 //!
 //! Targets the core round-trip invariants from
 //! <https://www.aozora.gr.jp/annotation/ruby.html>:
@@ -11,27 +11,20 @@
 //!   preserved and the surrounding text literals intact.
 //!
 //! Implicit-delimiter forms are covered by the lexer's unit tests in
-//! `afm_lexer::phase3_classify`; the proptests here stay scoped to the
+//! `aozora_lexer::phase3_classify`; the proptests here stay scoped to the
 //! explicit form so the generated corpus of random inputs is unambiguous.
 
-use afm_parser::{Options, parse};
-use afm_syntax::{AozoraNode, Content, Segment, SegmentRef};
-use afm_test_utils::generators::{hiragana_fragment, kanji_fragment};
-use comrak::Arena;
-use comrak::nodes::{AstNode, NodeValue};
+use aozora_parser::test_support::collect_aozora;
+use aozora_syntax::{AozoraNode, Content, Ruby, Segment, SegmentRef};
+use aozora_test_utils::generators::{hiragana_fragment, kanji_fragment};
 use proptest::prelude::*;
 
-/// Walk `root` and return the first `AozoraNode::Ruby` encountered, or
-/// `None` if the tree contains no ruby. Test-only helper.
-fn first_ruby<'a>(root: &'a AstNode<'a>) -> Option<afm_syntax::Ruby> {
-    for n in root.descendants() {
-        if let NodeValue::Aozora(ref boxed) = n.data.borrow().value
-            && let AozoraNode::Ruby(ref r) = **boxed
-        {
-            return Some(r.clone());
-        }
-    }
-    None
+/// Walk the source-order Aozora node list and return the first Ruby.
+fn first_ruby(input: &str) -> Option<Ruby> {
+    collect_aozora(input).into_iter().find_map(|n| match n {
+        AozoraNode::Ruby(r) => Some(r),
+        _ => None,
+    })
 }
 
 /// Concatenate the text segments of a [`Content`] in order. Gaiji and
@@ -62,10 +55,7 @@ proptest! {
     #[test]
     fn explicit_ruby_round_trips(base in kanji_fragment(5), reading in hiragana_fragment(10)) {
         let input = format!("｜{base}《{reading}》");
-        let arena = Arena::new();
-        let opts = Options::afm_default();
-        let root = parse(&arena, &input, &opts).root;
-        let ruby = first_ruby(root).expect("explicit form must parse to a Ruby node");
+        let ruby = first_ruby(&input).expect("explicit form must parse to a Ruby node");
         prop_assert_eq!(ruby.base.as_plain(), Some(base.as_str()));
         prop_assert_eq!(ruby.reading.as_plain(), Some(reading.as_str()));
         prop_assert!(ruby.delim_explicit);
@@ -87,10 +77,7 @@ proptest! {
         let input = format!(
             "｜{base}《{prefix}※［＃「{gaiji_desc}」、第3水準1-85-54］{suffix}》"
         );
-        let arena = Arena::new();
-        let opts = Options::afm_default();
-        let root = parse(&arena, &input, &opts).root;
-        let ruby = first_ruby(root).expect("ruby must parse");
+        let ruby = first_ruby(&input).expect("ruby must parse");
         // Base stays Plain (explicit base is always a single Text event).
         prop_assert_eq!(ruby.base.as_plain(), Some(base.as_str()));
         // Reading lifts to Segments.
@@ -121,10 +108,7 @@ proptest! {
 #[test]
 fn ruby_reading_with_mama_annotation_lifts_to_segments() {
     let input = "｜日本《にほん［＃ママ］》";
-    let arena = Arena::new();
-    let opts = Options::afm_default();
-    let root = parse(&arena, input, &opts).root;
-    let ruby = first_ruby(root).expect("ruby must parse");
+    let ruby = first_ruby(input).expect("ruby must parse");
     let Content::Segments(ref segs) = ruby.reading else {
         panic!("expected Segments, got {:?}", ruby.reading);
     };

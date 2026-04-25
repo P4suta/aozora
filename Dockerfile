@@ -1,11 +1,10 @@
 # syntax=docker/dockerfile:1.7
-# afm development / CI container
+# aozora development / CI container
 # Every developer and CI job runs inside this image. Host toolchain is never invoked.
 #
-# Layered so upstream-sync / dependency bumps rebuild minimal surface.
+# Layered so dependency bumps rebuild minimal surface.
 
 ARG RUST_VERSION=1.95.0
-ARG NODE_VERSION=22
 
 ########################################################################
 # Stage: toolchain — Rust stable + system deps for builds and CJK work
@@ -62,8 +61,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         cargo-edit \
         cargo-fuzz \
         typos-cli \
-        mdbook \
-        mdbook-linkcheck \
         sccache
 
 # bacon is intentionally installed in its own layer so version bumps don't
@@ -93,21 +90,9 @@ RUN curl -fsSL \
     && chmod +x /usr/local/bin/lefthook
 
 ########################################################################
-# Stage: node — Node.js 22 for mdbook plugins & Playwright (used by book/browser)
-########################################################################
-FROM toolchain AS node-base
-
-ARG NODE_VERSION
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    corepack enable
-
-########################################################################
 # Stage: dev — everything a contributor needs
 ########################################################################
-FROM node-base AS dev
+FROM toolchain AS dev
 
 COPY --from=cargo-tools /usr/local/cargo/bin/ /usr/local/cargo/bin/
 COPY --from=cargo-tools /usr/local/bin/ /usr/local/bin/
@@ -130,23 +115,3 @@ CMD ["bash"]
 # Stage: ci — same image as dev; named separately so CI pins an explicit target
 ########################################################################
 FROM dev AS ci
-
-########################################################################
-# Stage: book — lean image for mdbook build / serve
-########################################################################
-FROM node-base AS book
-
-COPY --from=cargo-tools /usr/local/bin/mdbook /usr/local/bin/mdbook
-COPY --from=cargo-tools /usr/local/bin/mdbook-linkcheck /usr/local/bin/mdbook-linkcheck
-
-WORKDIR /workspace/crates/afm-book
-EXPOSE 3000
-CMD ["mdbook", "serve", "--hostname", "0.0.0.0", "--port", "3000"]
-
-########################################################################
-# Stage: browser — Playwright with Chromium + WebKit for M3 onward
-########################################################################
-FROM mcr.microsoft.com/playwright:v1.50.0-jammy AS browser
-
-WORKDIR /workspace
-CMD ["bash"]

@@ -1,34 +1,27 @@
-//! AST → afm text serialiser.
+//! Aozora text serialiser.
 //!
-//! Inverse of the `afm-lexer` pipeline: consumes the normalized text
-//! and placeholder registry captured on [`crate::ParseResult`] and
-//! rebuilds the afm-format source by **substituting each PUA
-//! sentinel back into its original afm markup**. The CommonMark
-//! structure already lives verbatim in `normalized` (the lexer
-//! preserves it); only the Aozora spans needed the round-trip
-//! machinery in the registry.
+//! Inverse of the `aozora-lexer` pipeline: consumes the normalized
+//! text and placeholder registry captured on [`crate::ParseResult`]
+//! and rebuilds the Aozora-format source by **substituting each PUA
+//! sentinel back into its original Aozora markup**. Plain text
+//! between sentinels passes through verbatim — the lexer's
+//! normalization step preserves anything it did not classify as
+//! Aozora notation.
 //!
-//! ## Why byte walk, not AST walk
+//! ## Why byte walk, not tree walk
 //!
-//! Walking the comrak AST and re-emitting CommonMark syntax per node
-//! means reimplementing comrak's `cm.rs` serialiser — paragraphs,
-//! headings, emphasis, links, lists, code blocks, blockquotes. The
-//! feature surface is broad, the corner cases are many (tight vs
-//! loose lists, emphasis-delimiter ambiguity, link-destination
-//! escaping), and none of that code belongs in afm-parser.
-//!
-//! Because the lexer already produced `normalized` as a string with
-//! Aozora spans reduced to 1-character PUA sentinels and everything
-//! else passed through verbatim, the inverse is trivial:
+//! The lexer already produced `normalized` as a string with Aozora
+//! spans reduced to 1-character PUA sentinels and everything else
+//! passed through verbatim, so the inverse is trivial:
 //!
 //! 1. Walk `normalized` byte-by-byte (char-by-char for UTF-8).
 //! 2. At each sentinel `U+E001..=U+E004`, look the position up in
-//!    the registry and emit the afm markup for the stored node.
+//!    the registry and emit the Aozora markup for the stored node.
 //! 3. Everything else passes through.
 //!
 //! Runtime is `O(normalized.len())` with one binary-search probe
-//! per sentinel (via the registry's existing accessors). No AST
-//! traversal, no per-variant re-escaping, no comrak coupling.
+//! per sentinel (via the registry's existing accessors). No tree
+//! traversal, no per-variant re-escaping.
 //!
 //! ## Round-trip stability
 //!
@@ -51,8 +44,10 @@
 //! The corpus sweep's `I3` invariant hard-gates this contract:
 //! `serialize ∘ parse` is a fixed point after one round-trip.
 
-use afm_lexer::{BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL};
-use afm_syntax::{
+use aozora_lexer::{
+    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
+};
+use aozora_syntax::{
     AlignEnd, Annotation, AozoraNode, Bouten, BoutenKind, BoutenPosition, ContainerKind, Content,
     DoubleRuby, Gaiji, HeadingHint, Indent, Kaeriten, Ruby, Sashie, SectionKind, SegmentRef,
     TateChuYoko,
@@ -60,12 +55,9 @@ use afm_syntax::{
 
 use crate::{ParseArtifacts, ParseResult};
 
-/// Serialize a parsed document back into afm-format source text.
+/// Serialize a parsed document back into Aozora-format source text.
 ///
-/// Only the Aozora-pipeline path (see [`crate::Options::afm_default`])
-/// retains enough data to invert the parse; for commonmark-only /
-/// gfm-only paths this function returns an HTML-comment placeholder
-/// rather than re-implementing comrak's `format_commonmark`.
+/// Convenience wrapper over [`serialize_from_artifacts`].
 ///
 /// # Complexity
 ///
@@ -73,19 +65,8 @@ use crate::{ParseArtifacts, ParseResult};
 /// registry access is the `phase5_registry` binary-search accessor;
 /// the outer walk is a single forward pass over the normalized text.
 #[must_use]
-pub fn serialize(result: &ParseResult<'_>) -> String {
-    let Some(artifacts) = &result.artifacts else {
-        // No normalized text / registry — only the AST, which for
-        // commonmark-only input is plain CommonMark. Emitting that
-        // back is comrak's job (`format_commonmark`) and out of
-        // scope here. Return a visible placeholder so a caller
-        // that inadvertently wired commonmark-only to `serialize`
-        // sees the gap rather than silently getting empty bytes.
-        return String::from(
-            "<!-- serialize: commonmark-only passthrough is not supported (use afm_default) -->\n",
-        );
-    };
-    serialize_from_artifacts(artifacts)
+pub fn serialize(result: &ParseResult) -> String {
+    serialize_from_artifacts(&result.artifacts)
 }
 
 /// Sentinel dispatch. Returning an enum here (instead of branching
@@ -111,7 +92,20 @@ impl SentinelKind {
     }
 }
 
-fn serialize_from_artifacts(artifacts: &ParseArtifacts) -> String {
+/// Serialize directly from a [`ParseArtifacts`] bundle.
+///
+/// Useful when a downstream caller only retains the artifacts
+/// (e.g. an LSP backend that holds onto registry + normalized text
+/// across edits without keeping the full [`ParseResult`] alive).
+///
+/// # Panics
+///
+/// Does not panic on well-formed input. The lexer's Phase 0 caps
+/// `normalized.len()` at `u32::MAX`, which guarantees every
+/// `match_indices` position fits in `u32`; if that invariant were
+/// ever violated upstream, the index conversion would panic.
+#[must_use]
+pub fn serialize_from_artifacts(artifacts: &ParseArtifacts) -> String {
     let normalized = &artifacts.normalized;
     let registry = &artifacts.registry;
 
@@ -297,7 +291,7 @@ fn emit_bouten_targets(c: &Content, out: &mut String) {
         Content::Segments(segs) => {
             let mut any = false;
             for seg in segs {
-                if let afm_syntax::Segment::Text(t) = seg
+                if let aozora_syntax::Segment::Text(t) = seg
                     && !t.is_empty()
                 {
                     // Emit each comma-separated chunk as its own
@@ -507,16 +501,12 @@ fn emit_content_as_plain(c: &Content, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Options, parse};
-    use comrak::Arena;
+    use crate::parse;
 
     /// Parse once, serialize, assert the output is non-empty and
     /// looks canonical.
     fn once(src: &str) -> String {
-        let arena = Arena::new();
-        let opts = Options::afm_default();
-        let result = parse(&arena, src, &opts);
-        serialize(&result)
+        serialize(&parse(src))
     }
 
     /// Parse, serialize, parse again, serialize — the two outputs
@@ -565,7 +555,11 @@ mod tests {
 
     #[test]
     fn gaiji_with_mencode_round_trips() {
-        round_trip_fixed_point("※[＃「木＋吶のつくり」、第3水準9-99-99］".replace('[', "［").as_str());
+        round_trip_fixed_point(
+            "※[＃「木＋吶のつくり」、第3水準9-99-99］"
+                .replace('[', "［")
+                .as_str(),
+        );
         round_trip_fixed_point("※［＃「木＋吶のつくり」、第3水準9-99-99］");
     }
 
@@ -642,22 +636,6 @@ mod tests {
     fn serialize_on_empty_input_is_empty() {
         let out = once("");
         assert_eq!(out, "");
-    }
-
-    #[test]
-    fn serialize_on_commonmark_only_options_returns_placeholder() {
-        // commonmark-only path has no artifacts — the serialiser
-        // returns the placeholder comment rather than an empty
-        // string so a caller that wires the wrong options sees
-        // the gap.
-        let arena = Arena::new();
-        let opts = Options::commonmark_only();
-        let result = parse(&arena, "hello", &opts);
-        let out = serialize(&result);
-        assert!(
-            out.contains("serialize: commonmark-only"),
-            "expected placeholder, got {out:?}"
-        );
     }
 
     #[test]

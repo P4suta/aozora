@@ -29,7 +29,7 @@
 //! is common but not universal (a stray `［` followed by plain text is
 //! legal). Phase 2 inspects the two tokens together.
 
-use afm_syntax::Span;
+use aozora_syntax::Span;
 
 use crate::token::{Token, TriggerKind};
 

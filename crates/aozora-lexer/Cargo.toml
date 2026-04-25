@@ -1,6 +1,6 @@
 [package]
-name        = "afm-lexer"
-description = "Pure-functional Aozora-first lexer for afm — pre-comrak construct extraction"
+name        = "aozora-lexer"
+description = "Pure-functional 7-phase lexer for Aozora Bunko notation"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -15,8 +15,8 @@ categories.workspace   = true
 workspace = true
 
 [dependencies]
-afm-syntax   = { workspace = true }
-afm-encoding = { workspace = true }
+aozora-syntax   = { workspace = true }
+aozora-encoding = { workspace = true }
 thiserror    = { workspace = true }
 miette       = { workspace = true }
 

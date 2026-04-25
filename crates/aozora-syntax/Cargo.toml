@@ -1,6 +1,6 @@
 [package]
-name        = "afm-syntax"
-description = "Aozora Flavored Markdown (afm): AST types"
+name        = "aozora-syntax"
+description = "Aozora Bunko notation: AST types (ruby, bouten, 縦中横, 外字, kaeriten, indent containers)"
 version.workspace     = true
 edition.workspace     = true
 rust-version.workspace = true

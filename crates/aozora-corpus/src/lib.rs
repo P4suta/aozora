@@ -5,7 +5,7 @@
 //! human-readable label used only for diagnostics. Implementations choose
 //! where the bytes come from — an in-memory literal, a vendored fixture
 //! directory, or a filesystem root supplied by the developer via the
-//! `AFM_CORPUS_ROOT` environment variable.
+//! `AOZORA_CORPUS_ROOT` environment variable.
 //!
 //! See ADR-0007 for the design rationale. Key design points:
 //!
@@ -17,7 +17,7 @@
 //!   Pinning a specific upstream corpus is explicitly rejected: it would
 //!   mandate a particular content set on every contributor and conflate
 //!   "golden ground-truth" with "stress-test volume".
-//! - **Opt-in via environment.** With `AFM_CORPUS_ROOT` unset, sweep tests
+//! - **Opt-in via environment.** With `AOZORA_CORPUS_ROOT` unset, sweep tests
 //!   runtime-skip; they never hard-fail on missing corpus.
 //!
 //! Golden fixtures (exact expected-HTML checks for canonical works like
@@ -42,7 +42,7 @@ pub use vendored::VendoredCorpus;
 /// Environment variable name consulted by [`from_env`]. Exposed so
 /// tests and documentation can reference the exact string rather than
 /// re-declaring it.
-pub const ENV_CORPUS_ROOT: &str = "AFM_CORPUS_ROOT";
+pub const ENV_CORPUS_ROOT: &str = "AOZORA_CORPUS_ROOT";
 
 /// A single candidate text for sweep invariants to check.
 ///
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn env_constant_matches_documented_name() {
-        assert_eq!(ENV_CORPUS_ROOT, "AFM_CORPUS_ROOT");
+        assert_eq!(ENV_CORPUS_ROOT, "AOZORA_CORPUS_ROOT");
     }
 
     #[test]

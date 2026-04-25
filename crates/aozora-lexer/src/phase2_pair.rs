@@ -45,7 +45,7 @@
 //! `PairOpen` off. Aggressive stack-unwinding is a future option if
 //! the corpus sweep ever shows it paying.
 
-use afm_syntax::Span;
+use aozora_syntax::Span;
 
 use crate::diagnostic::Diagnostic;
 use crate::token::{Token, TriggerKind};

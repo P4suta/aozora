@@ -13,7 +13,7 @@
 //! Fixtures live under `spec/aozora/cases/` (distinct from
 //! `spec/aozora/fixtures/` which holds full-work golden texts like 『罪と罰』).
 
-use afm_parser::html::render_to_string;
+use aozora_parser::html::render_to_string;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

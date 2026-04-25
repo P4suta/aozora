@@ -1,6 +1,6 @@
 [package]
-name        = "afm-corpus"
-description = "Corpus source abstraction for afm parser sweep tests (dev-only, not published)"
+name        = "aozora-corpus"
+description = "Corpus source abstraction for aozora parser sweep tests (dev-only, not published)"
 # dev-only support crate — never published to crates.io.
 publish     = false
 version.workspace      = true

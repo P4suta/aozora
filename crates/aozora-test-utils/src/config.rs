@@ -1,15 +1,15 @@
 //! Shared proptest configuration.
 //!
 //! Every property test in the afm workspace should use
-//! [`default_config`] so `AFM_PROPTEST_CASES` tunes the whole sweep
+//! [`default_config`] so `AOZORA_PROPTEST_CASES` tunes the whole sweep
 //! consistently. The default of 128 cases is a deliberate compromise
 //! between catching regressions quickly during `just test` and keeping
 //! the CI loop under a few seconds per proptest binary.
 //!
 //! Override sites:
 //!
-//! * `AFM_PROPTEST_CASES=16` for tight local iteration.
-//! * `AFM_PROPTEST_CASES=4096` for pre-release deep sweeps
+//! * `AOZORA_PROPTEST_CASES=16` for tight local iteration.
+//! * `AOZORA_PROPTEST_CASES=4096` for pre-release deep sweeps
 //!   (`just prop-deep`).
 
 use std::env;
@@ -20,7 +20,7 @@ use proptest::test_runner::FileFailurePersistence;
 /// Default [`ProptestConfig`] used across every afm property test.
 ///
 /// * `cases` defaults to 128 and can be overridden via the
-///   `AFM_PROPTEST_CASES` environment variable; values that fail to
+///   `AOZORA_PROPTEST_CASES` environment variable; values that fail to
 ///   parse fall through to the default rather than panicking, because a
 ///   CI misconfiguration must never silently replace strict testing
 ///   with a permissive default.
@@ -34,7 +34,7 @@ use proptest::test_runner::FileFailurePersistence;
 #[must_use]
 pub fn default_config() -> ProptestConfig {
     ProptestConfig {
-        cases: env::var("AFM_PROPTEST_CASES")
+        cases: env::var("AOZORA_PROPTEST_CASES")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(128),

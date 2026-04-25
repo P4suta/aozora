@@ -1,6 +1,6 @@
 [package]
-name        = "afm-parser"
-description = "Aozora Flavored Markdown (afm): CommonMark + GFM + Aozora Bunko parser — reference implementation"
+name        = "aozora-parser"
+description = "Aozora Bunko notation parser: lex → parse → serialize round-trip + per-node HTML render"
 version.workspace     = true
 edition.workspace     = true
 rust-version.workspace = true
@@ -15,18 +15,17 @@ categories.workspace  = true
 workspace = true
 
 [dependencies]
-afm-syntax = { workspace = true }
-afm-lexer  = { workspace = true }
-comrak     = { workspace = true }
+aozora-syntax   = { workspace = true }
+aozora-lexer    = { workspace = true }
+aozora-encoding = { workspace = true }
 unicode-segmentation = { workspace = true }
 miette               = { workspace = true }
 thiserror            = { workspace = true }
 tracing              = { workspace = true }
 
 [dev-dependencies]
-afm-corpus        = { workspace = true }
-afm-encoding      = { workspace = true }
-afm-test-utils    = { workspace = true }
+aozora-corpus     = { workspace = true }
+aozora-test-utils = { workspace = true }
 insta             = { workspace = true }
 proptest          = { workspace = true }
 pretty_assertions = { workspace = true }
@@ -35,6 +34,6 @@ serde_json        = { workspace = true }
 
 [features]
 default = ["html"]
-# HTML renderer. Enabled by default but kept behind a feature so downstream tools
-# can parse without pulling in the renderer.
+# HTML renderer. Enabled by default but kept behind a feature so downstream
+# consumers can parse + serialize without pulling in the renderer.
 html = []

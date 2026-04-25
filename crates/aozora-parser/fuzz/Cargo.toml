@@ -1,5 +1,5 @@
 [package]
-name = "afm-parser-fuzz"
+name = "aozora-parser-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
@@ -8,13 +8,12 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
-afm-parser   = { path = ".." }
-afm-lexer    = { path = "../../afm-lexer" }
-afm-encoding = { path = "../../afm-encoding" }
-comrak       = { path = "../../../upstream/comrak", default-features = false }
+libfuzzer-sys   = "0.4"
+aozora-parser   = { path = ".." }
+aozora-lexer    = { path = "../../aozora-lexer" }
+aozora-encoding = { path = "../../aozora-encoding" }
 
-# Prevent this crate from joining the afm workspace.
+# Prevent this crate from joining the aozora workspace.
 # Each fuzz target needs libfuzzer-sys (nightly-gated), which the
 # workspace-wide `cargo build --workspace` should not pick up.
 [workspace]
@@ -26,13 +25,6 @@ debug = 1
 [[bin]]
 name = "parse_render"
 path = "fuzz_targets/parse_render.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "serialize_round_trip"
-path = "fuzz_targets/serialize_round_trip.rs"
 test = false
 doc = false
 bench = false

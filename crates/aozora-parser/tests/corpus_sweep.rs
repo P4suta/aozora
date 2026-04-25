@@ -1,6 +1,6 @@
 //! Corpus sweep — property-based invariants over any aozora-format text.
 //!
-//! Runs when `AFM_CORPUS_ROOT` points at a directory. Without the variable
+//! Runs when `AOZORA_CORPUS_ROOT` points at a directory. Without the variable
 //! set the test runtime-skips with a diagnostic message (and passes), so
 //! machines and CI jobs without a corpus configured stay green.
 //!
@@ -12,20 +12,20 @@
 //!   `panic::catch_unwind` to recover across iterations.
 //! - **I2 — no unconsumed `［＃` markers (HARD GATE).** After rendering
 //!   to HTML and stripping the `afm-annotation` wrapper spans, no bare
-//!   `［＃` may remain. An `AFM_CORPUS_LEAK_BUDGET` env var can override
+//!   `［＃` may remain. An `AOZORA_CORPUS_LEAK_BUDGET` env var can override
 //!   the budget to a non-zero int for staging a sweep over a dirty
 //!   corpus before promoting the fix back into the classifier.
 //! - **I3 — `serialize ∘ parse` is a round-trip fixed point (HARD
 //!   GATE).** One parse+serialize canonicalises the afm source; a
 //!   second parse+serialize of that output must be byte-identical.
 //!   Catches classifier / serializer drift where the round trip
-//!   oscillates or drops bytes. `AFM_CORPUS_I3_BUDGET` mirrors the
+//!   oscillates or drops bytes. `AOZORA_CORPUS_I3_BUDGET` mirrors the
 //!   I2/I4 escape hatch; zero by default.
 //! - **I4 — rendered HTML is tag-balanced (HARD GATE).** Every render
 //!   must produce HTML whose open/close tags balance per the minimal
 //!   validator at `tests/common/mod.rs`. Catches renderer bugs that
 //!   don't leak `［＃` but still produce malformed markup (e.g. a
-//!   `<div>` open without its `</div>` close). `AFM_CORPUS_I4_BUDGET`
+//!   `<div>` open without its `</div>` close). `AOZORA_CORPUS_I4_BUDGET`
 //!   overrides the budget for staging fixes on a dirty corpus.
 //! - **I5 — SJIS decode stable.** Every `.txt` file in an Aozora-format
 //!   corpus should be valid Shift_JIS. Decode failures are logged and
@@ -37,15 +37,14 @@ use std::collections::BTreeMap;
 use std::env;
 use std::panic::{self, AssertUnwindSafe};
 
-use afm_corpus::{CorpusError, from_env};
-use afm_encoding::decode_sjis;
-use afm_parser::html::render_to_string;
-use afm_parser::test_support::{
+use aozora_corpus::{CorpusError, from_env};
+use aozora_encoding::decode_sjis;
+use aozora_parser::html::render_to_string;
+use aozora_parser::test_support::{
     check_annotation_wrapper_shape, check_css_class_contract, check_heading_integrity,
     check_no_sentinel_leak, check_no_xss_marker, check_well_formed, strip_annotation_wrappers,
 };
-use afm_parser::{Options, parse, serialize};
-use comrak::Arena;
+use aozora_parser::{parse, serialize};
 
 // ---------------------------------------------------------------------------
 // Tier name registry
@@ -66,7 +65,7 @@ const TIER_I5_DECODE: &str = "I5_decode";
 // as report-only — stderr-printed counts only, no hard assertion —
 // until the 17 k corpus observation run records their baselines in
 // ADR-0007. Promotion to hard gate happens in a follow-up commit via
-// `AFM_CORPUS_I6_BUDGET` (etc.) defaulting to the observed count.
+// `AOZORA_CORPUS_I6_BUDGET` (etc.) defaulting to the observed count.
 const TIER_I6_SENTINEL_LEAK: &str = "I6_sentinel";
 const TIER_I7_UNKNOWN_CSS_CLASS: &str = "I7_css_class";
 const TIER_I8_XSS_MARKER: &str = "I8_xss";
@@ -112,8 +111,8 @@ fn tier_label(name: &str) -> &'static str {
 fn corpus_sweep_i1_through_i10() {
     let Some(corpus) = from_env() else {
         eprintln!(
-            "corpus sweep: AFM_CORPUS_ROOT not set; skipping (pass). \
-             Set AFM_CORPUS_ROOT to a directory of aozora-format .txt \
+            "corpus sweep: AOZORA_CORPUS_ROOT not set; skipping (pass). \
+             Set AOZORA_CORPUS_ROOT to a directory of aozora-format .txt \
              files to enable the sweep."
         );
         return;
@@ -157,56 +156,56 @@ fn assert_all_hard_gates(stats: &SweepStats) {
         (
             TIER_I2_LEAKED,
             "I2",
-            "AFM_CORPUS_LEAK_BUDGET",
+            "AOZORA_CORPUS_LEAK_BUDGET",
             0,
             "leaked ［＃ markers outside the afm-annotation wrapper",
         ),
         (
             TIER_I3_ROUND_TRIP,
             "I3",
-            "AFM_CORPUS_I3_BUDGET",
+            "AOZORA_CORPUS_I3_BUDGET",
             0,
             "diverged under a second `serialize ∘ parse`",
         ),
         (
             TIER_I4_MALFORMED,
             "I4",
-            "AFM_CORPUS_I4_BUDGET",
+            "AOZORA_CORPUS_I4_BUDGET",
             0,
             "rendered to malformed HTML",
         ),
         (
             TIER_I6_SENTINEL_LEAK,
             "I6",
-            "AFM_CORPUS_I6_BUDGET",
+            "AOZORA_CORPUS_I6_BUDGET",
             0,
             "leaked PUA sentinel (U+E001–U+E004) into rendered HTML",
         ),
         (
             TIER_I7_UNKNOWN_CSS_CLASS,
             "I7",
-            "AFM_CORPUS_I7_BUDGET",
+            "AOZORA_CORPUS_I7_BUDGET",
             0,
             "emitted unknown afm-* CSS class",
         ),
         (
             TIER_I8_XSS_MARKER,
             "I8",
-            "AFM_CORPUS_I8_BUDGET",
+            "AOZORA_CORPUS_I8_BUDGET",
             0,
             "leaked an XSS marker",
         ),
         (
             TIER_I9_WRAPPER_SHAPE,
             "I9",
-            "AFM_CORPUS_I9_BUDGET",
+            "AOZORA_CORPUS_I9_BUDGET",
             0,
             "produced malformed afm-annotation wrappers",
         ),
         (
             TIER_I10_HEADING_INTEGRITY,
             "I10",
-            "AFM_CORPUS_I10_BUDGET",
+            "AOZORA_CORPUS_I10_BUDGET",
             0,
             "emitted a heading carrying a forbidden class",
         ),
@@ -247,7 +246,7 @@ fn env_budget_or(name: &str, default: usize) -> usize {
 /// results into `stats`. Extracted from the sweep entry point to
 /// keep the latter under clippy's too-many-lines threshold and so
 /// each invariant's branch stays visually close to its siblings.
-fn sweep_one(result: Result<afm_corpus::CorpusItem, CorpusError>, stats: &mut SweepStats) {
+fn sweep_one(result: Result<aozora_corpus::CorpusItem, CorpusError>, stats: &mut SweepStats) {
     let item = match result {
         Ok(item) => item,
         Err(CorpusError::Io { path, source }) => {
@@ -333,11 +332,8 @@ fn sweep_one(result: Result<afm_corpus::CorpusItem, CorpusError>, stats: &mut Sw
 /// isolates a panicky render.
 fn check_round_trip(text: &str, label: &str, stats: &mut SweepStats) {
     let round_trip_result = panic::catch_unwind(AssertUnwindSafe(|| {
-        let opts = Options::afm_default();
-        let arena_a = Arena::new();
-        let first = serialize(&parse(&arena_a, text, &opts));
-        let arena_b = Arena::new();
-        let second = serialize(&parse(&arena_b, &first, &opts));
+        let first = serialize(&parse(text));
+        let second = serialize(&parse(&first));
         (first, second)
     }));
     match round_trip_result {

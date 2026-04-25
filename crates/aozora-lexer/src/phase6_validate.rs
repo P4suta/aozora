@@ -86,7 +86,7 @@ fn check_v1(normalized: &str, diagnostics: &mut Vec<Diagnostic>) {
         let abs_u32 = u32::try_from(abs).expect("sanitize caps source at u32");
         let end_u32 = abs_u32 + u32::try_from(needle.len()).expect("needle fits u32");
         diagnostics.push(Diagnostic::residual_annotation_marker(
-            afm_syntax::Span::new(abs_u32, end_u32),
+            aozora_syntax::Span::new(abs_u32, end_u32),
         ));
         start = abs + needle.len();
     }
@@ -114,7 +114,7 @@ fn check_v2_v3(
         };
         if !recorded {
             diagnostics.push(Diagnostic::unregistered_sentinel(
-                afm_syntax::Span::new(byte_pos, byte_pos + ch_len),
+                aozora_syntax::Span::new(byte_pos, byte_pos + ch_len),
                 ch,
             ));
         }
@@ -163,7 +163,7 @@ fn check_registry_slice<T>(
             } else {
                 (window[1].0, window[0].0)
             };
-            diagnostics.push(Diagnostic::registry_out_of_order(afm_syntax::Span::new(
+            diagnostics.push(Diagnostic::registry_out_of_order(aozora_syntax::Span::new(
                 lo, hi,
             )));
         }
@@ -176,7 +176,7 @@ fn check_registry_slice<T>(
             .and_then(|s| s.chars().next());
         if actual != Some(expected_char) {
             diagnostics.push(Diagnostic::registry_position_mismatch(
-                afm_syntax::Span::new(pos, pos + u32::try_from(ch_len).expect("utf8 len")),
+                aozora_syntax::Span::new(pos, pos + u32::try_from(ch_len).expect("utf8 len")),
                 expected_char,
             ));
         }
@@ -285,7 +285,7 @@ mod tests {
     // into `validate()` to cover the diagnostic-emission arms.
     // ---------------------------------------------------------------
 
-    use afm_syntax::{AozoraNode, Ruby};
+    use aozora_syntax::{AozoraNode, Ruby};
 
     /// Construct a minimal [`NormalizeOutput`] that satisfies V1 (no
     /// residual `［＃`) but can be tweaked per-test to trigger V2/V3
@@ -364,7 +364,7 @@ mod tests {
         let output = NormalizeOutput {
             normalized: norm.to_owned(),
             registry: PlaceholderRegistry {
-                block_close: vec![(99, afm_syntax::ContainerKind::Keigakomi)],
+                block_close: vec![(99, aozora_syntax::ContainerKind::Keigakomi)],
                 ..PlaceholderRegistry::default()
             },
             diagnostics: Vec::new(),

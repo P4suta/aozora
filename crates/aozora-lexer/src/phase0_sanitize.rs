@@ -44,8 +44,8 @@
 
 use std::borrow::Cow;
 
-use afm_syntax::Span;
-use afm_syntax::accent::decompose_fragment;
+use aozora_syntax::Span;
+use aozora_syntax::accent::decompose_fragment;
 
 use crate::diagnostic::Diagnostic;
 use crate::{BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL};

@@ -1,4 +1,4 @@
-//! Test utilities for afm-parser.
+//! Test utilities for aozora-parser.
 //!
 //! This module hosts the *predicates* that codify every "must never
 //! be" output shape the renderer must avoid — see the [Invariant
@@ -8,9 +8,9 @@
 //! footing. [`assert_invariants`] runs every predicate and aggregates
 //! their diagnostics.
 //!
-//! The matching *generator* strategies live in the `afm-test-utils`
+//! The matching *generator* strategies live in the `aozora-test-utils`
 //! crate so `proptest` does not become a transitive runtime
-//! dependency of `afm-parser`.
+//! dependency of `aozora-parser`.
 //!
 //! # Invariant catalog
 //!
@@ -37,7 +37,7 @@
 //! `#[doc(hidden)] pub` rather than `#[cfg(test)] mod` so integration
 //! tests in `tests/` (which are separate crate roots) can reach these
 //! helpers without duplicating them. Marked `doc(hidden)` because the
-//! module is not part of the public afm-parser API.
+//! module is not part of the public aozora-parser API.
 //!
 //! [`AFM_CLASSES`]: crate::aozora::classes::AFM_CLASSES
 
@@ -47,40 +47,62 @@ use core::error::Error;
 use core::fmt;
 use std::collections::HashSet;
 
-use comrak::Arena;
-use comrak::nodes::{AstNode, NodeValue};
+use aozora_lexer::{
+    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
+};
+use aozora_syntax::{AozoraNode, Container};
 
 use crate::aozora::AFM_CLASSES;
-use crate::{Options, parse};
+use crate::parse;
 
 // ---------------------------------------------------------------------------
-// AST traversal
+// Registry traversal
 // ---------------------------------------------------------------------------
 
-/// Parse `input` with afm defaults and return every Aozora node in order.
+/// Parse `input` and return every Aozora node in source order.
 ///
-/// Drives behavioural tests that care about "which recognisers fired" rather
-/// than the shape of the arena tree. See also [`collect_aozora_recursive`] for
-/// tests that already hold an [`AstNode`] and only need the traversal glue.
+/// Drives behavioural tests that care about "which recognisers fired"
+/// rather than the shape of any tree. The traversal walks the lexer's
+/// normalized text byte-by-byte and dispatches each PUA sentinel
+/// through the registry, so the resulting `Vec` follows source order
+/// without ever materialising a tree.
+///
+/// Block-open sentinels surface as `AozoraNode::Container { kind }`
+/// at the open position; block-close sentinels are skipped (the
+/// container appears once, on enter, mirroring how AST consumers see
+/// it).
 #[must_use]
-pub fn collect_aozora(input: &str) -> Vec<afm_syntax::AozoraNode> {
-    let arena = Arena::new();
-    let opts = Options::afm_default();
-    let result = parse(&arena, input, &opts);
+pub fn collect_aozora(input: &str) -> Vec<AozoraNode> {
+    let result = parse(input);
+    let normalized = &result.artifacts.normalized;
+    let registry = &result.artifacts.registry;
     let mut out = Vec::new();
-    collect_aozora_recursive(result.root, &mut out);
+    for (bpos, ch) in normalized.char_indices() {
+        let pos = u32::try_from(bpos).expect("normalized fits u32 per Phase 0 cap");
+        match ch {
+            INLINE_SENTINEL => {
+                if let Some(node) = registry.inline_at(pos) {
+                    out.push(node.clone());
+                }
+            }
+            BLOCK_LEAF_SENTINEL => {
+                if let Some(node) = registry.block_leaf_at(pos) {
+                    out.push(node.clone());
+                }
+            }
+            BLOCK_OPEN_SENTINEL => {
+                if let Some(kind) = registry.block_open_at(pos) {
+                    out.push(AozoraNode::Container(Container { kind }));
+                }
+            }
+            BLOCK_CLOSE_SENTINEL => {
+                // Skipped — the open already produced one entry.
+                let _ = pos;
+            }
+            _ => {}
+        }
+    }
     out
-}
-
-/// Recursive traversal helper usable by tests that already hold an [`AstNode`]
-/// (e.g. when testing parse modes that bypass the default arena).
-pub fn collect_aozora_recursive<'a>(node: &'a AstNode<'a>, out: &mut Vec<afm_syntax::AozoraNode>) {
-    if let NodeValue::Aozora(ref boxed) = node.data.borrow().value {
-        out.push((**boxed).clone());
-    }
-    for child in node.children() {
-        collect_aozora_recursive(child, out);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -343,7 +365,7 @@ pub fn check_no_bare_bracket(html: &str) -> Result<(), Violation> {
 /// the character, so the sentinel may flow through to the output. This
 /// predicate is therefore meaningful only on sources that produced no
 /// lexer diagnostics. Property tests that feed random input should
-/// gate on `afm_lexer::lex(src).diagnostics.is_empty()` before calling.
+/// gate on `aozora_lexer::lex(src).diagnostics.is_empty()` before calling.
 ///
 /// # Errors
 ///
@@ -515,16 +537,14 @@ pub fn check_annotation_wrapper_shape(html: &str) -> Result<(), Violation> {
 /// Forbidden shapes:
 ///
 /// * Literal `<script` (case-insensitive) — a raw script-tag opener.
-///   Safe as a bare substring check because `afm_parser::aozora::html`
-///   always escapes `<` to `&lt;` in text content, and comrak's
-///   default `render.unsafe_ = false` suppresses raw-HTML passthrough.
-///   So `<script` can appear *only* if afm emits the tag itself, which
-///   is always a bug.
+///   Safe as a bare substring check because every text-content path in
+///   `aozora_parser::html` and `aozora_parser::aozora::html` escapes
+///   `<` to `&lt;`. So `<script` can appear *only* if the renderer
+///   emits the tag itself, which is always a bug.
 /// * `javascript:` inside an attribute value (between `<` and `>`).
-///   The substring may legitimately appear in rendered prose (a
-///   markdown tutorial discussing JS URIs, for example), so we require
-///   it to live inside a tag body — the only position where a browser
-///   would act on it.
+///   The substring may legitimately appear in rendered prose, so we
+///   require it to live inside a tag body — the only position where
+///   a browser would act on it.
 /// * `on<event>=` (`onerror=`, `onload=`, `onclick=`, …) inside an
 ///   attribute position. Same tag-context requirement as above — the
 ///   `onerror=alert(1)` text inside a `<span hidden>` annotation
@@ -567,8 +587,9 @@ pub fn check_no_xss_marker(html: &str) -> Result<(), Violation> {
 /// modifier classes `afm-indent-N`, `afm-align-end-N`,
 /// `afm-container-indent-N`).
 ///
-/// Non-`afm-` classes (e.g. comrak's own `language-rust` on code
-/// blocks) are ignored.
+/// Non-`afm-` classes (e.g. classes from a downstream Markdown
+/// integration that wraps the aozora layer with its own renderer)
+/// are ignored.
 ///
 /// # Errors
 ///

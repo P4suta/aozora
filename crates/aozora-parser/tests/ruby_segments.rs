@@ -1,21 +1,21 @@
 //! Integration tests for ruby reading `Content::Segments` lift —
 //! nested gaiji / annotation inside a `《reading》` body.
 //!
-//! Drives the full parse + render pipeline (`afm_parser::html::render_to_string`)
+//! Drives the full parse + render pipeline (`aozora_parser::html::render_to_string`)
 //! so regressions in any of the layers surface here:
 //!
-//! * **Lexer classifier** (`afm_lexer::phase3_classify::build_content_from_body`)
+//! * **Lexer classifier** (`aozora_lexer::phase3_classify::build_content_from_body`)
 //!   — folds nested `※［＃…］` and `［＃…］` into `Segment::Gaiji` /
 //!   `Segment::Annotation`.
-//! * **Normalize / registry** (`afm_lexer::phase4_normalize`) — replaces
+//! * **Normalize / registry** (`aozora_lexer::phase4_normalize`) — replaces
 //!   the full `｜…《…》` source span with one inline PUA sentinel; the
 //!   nested gaiji/annotation are carried *inside* the Ruby payload, not
 //!   as sibling sentinels at the top level.
-//! * **`post_process`** (`afm_parser::post_process::splice_inline`) — the
+//! * **`post_process`** (`aozora_parser::post_process::splice_inline`) — the
 //!   sentinel is replaced with `NodeValue::Aozora(Box::new(Ruby{…}))`;
 //!   nothing special about Segments payload here, but the harness
 //!   verifies the pipeline is payload-agnostic.
-//! * **Renderer** (`afm_parser::aozora::html::render_content`) — walks
+//! * **Renderer** (`aozora_parser::aozora::html::render_content`) — walks
 //!   the Segments in order, emitting `<span class="afm-gaiji">…</span>`
 //!   and `<span class="afm-annotation" hidden>…</span>` inside `<rt>`.
 //!
@@ -26,7 +26,7 @@
 //! — in an `afm-annotation` hidden span, so the raw bytes survive
 //! inside that wrapper but no bare marker leaks.
 
-use afm_parser::html::render_to_string;
+use aozora_parser::html::render_to_string;
 
 /// Gold-standard Tier-A canary: no raw `［＃` may appear outside an
 /// `afm-annotation` wrapper. Rather than try to prove the absence

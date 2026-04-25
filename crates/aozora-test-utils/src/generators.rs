@@ -28,7 +28,7 @@
 //!   use area codepoints (including the PUA sentinels U+E001–U+E004 the
 //!   lexer reserves for itself), full-width bracket variants.
 //! * [`sjis_bytes`] — arbitrary `Vec<u8>` for exercising
-//!   `afm_encoding::decode_sjis` error paths; most draws are random
+//!   `aozora_encoding::decode_sjis` error paths; most draws are random
 //!   bytes so the failure modes of interest all get exercised.
 
 use proptest::prelude::*;
@@ -273,7 +273,7 @@ pub fn unicode_adversarial() -> impl Strategy<Value = String> {
     ]
 }
 
-/// Generate arbitrary byte strings for `afm_encoding::decode_sjis`'s
+/// Generate arbitrary byte strings for `aozora_encoding::decode_sjis`'s
 /// error path.
 ///
 /// Most draws are random `Vec<u8>`; the strategy deliberately does

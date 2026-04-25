@@ -38,10 +38,10 @@
 //!
 //! Accent decomposition happens inside the earlier
 //! [`crate::phase0_sanitize`] pass; gaiji UCS resolution folds into
-//! [`crate::phase3_classify`] via `afm_encoding::gaiji::lookup`.
+//! [`crate::phase3_classify`] via `aozora_encoding::gaiji::lookup`.
 //! This pass only performs the sentinel substitution.
 
-use afm_syntax::{AozoraNode, ContainerKind};
+use aozora_syntax::{AozoraNode, ContainerKind};
 
 use crate::diagnostic::Diagnostic;
 use crate::phase3_classify::{ClassifiedSpan, ClassifyOutput, SpanKind};

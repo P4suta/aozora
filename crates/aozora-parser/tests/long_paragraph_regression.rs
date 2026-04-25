@@ -1,8 +1,8 @@
 //! Reproduce the Tier A leak on an isolated long paragraph so we don't need
 //! 2 MB of context to debug each iteration.
 
-use afm_parser::html::render_to_string;
-use afm_parser::test_support::assert_no_bare;
+use aozora_parser::html::render_to_string;
+use aozora_parser::test_support::assert_no_bare;
 
 const FIXTURE: &str = include_str!("../../../spec/aozora/fixtures/56656/input.utf8.txt");
 

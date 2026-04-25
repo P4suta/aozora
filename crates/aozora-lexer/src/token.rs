@@ -12,7 +12,7 @@
 //! `` ` ``) is NOT a trigger here: the lexer leaves it for comrak to
 //! interpret later.
 
-use afm_syntax::Span;
+use aozora_syntax::Span;
 
 /// A single lexer event.
 #[derive(Debug, Clone, PartialEq, Eq)]

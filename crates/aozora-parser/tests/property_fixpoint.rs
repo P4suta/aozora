@@ -24,12 +24,11 @@
 //!   corpus (I3); the proptest gives the invariant a random-input
 //!   sibling so regressions show up locally before a corpus sweep.
 
-use afm_parser::html::render_to_string;
-use afm_parser::test_support::strip_annotation_wrappers;
-use afm_parser::{Options, parse, serialize};
-use afm_test_utils::config::default_config;
-use afm_test_utils::generators::{aozora_fragment, pathological_aozora};
-use comrak::Arena;
+use aozora_parser::html::render_to_string;
+use aozora_parser::test_support::strip_annotation_wrappers;
+use aozora_parser::{parse, serialize};
+use aozora_test_utils::config::default_config;
+use aozora_test_utils::generators::{aozora_fragment, pathological_aozora};
 use proptest::prelude::*;
 
 proptest! {
@@ -78,11 +77,8 @@ proptest! {
     /// on the canonical form.
     #[test]
     fn serialize_parse_is_fixed_point(src in aozora_fragment(16)) {
-        let opts = Options::afm_default();
-        let arena_a = Arena::new();
-        let first = serialize(&parse(&arena_a, &src, &opts));
-        let arena_b = Arena::new();
-        let second = serialize(&parse(&arena_b, &first, &opts));
+        let first = serialize(&parse(&src));
+        let second = serialize(&parse(&first));
         prop_assert_eq!(
             &first, &second,
             "I3 fixed-point broken for src={:?}: first vs second differ",

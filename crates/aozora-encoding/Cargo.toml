@@ -1,6 +1,6 @@
 [package]
-name        = "afm-encoding"
-description = "Aozora Flavored Markdown (afm): Shift_JIS decoding and Aozora Bunko gaiji resolution"
+name        = "aozora-encoding"
+description = "Aozora Bunko notation: Shift_JIS decoding and gaiji (外字) resolution"
 version.workspace     = true
 edition.workspace     = true
 rust-version.workspace = true
@@ -15,7 +15,7 @@ categories.workspace  = true
 workspace = true
 
 [dependencies]
-afm-syntax  = { workspace = true }
+aozora-syntax = { workspace = true }
 encoding_rs = { workspace = true }
 phf         = { workspace = true }
 thiserror   = { workspace = true }

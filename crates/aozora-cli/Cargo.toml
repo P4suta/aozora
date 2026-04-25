@@ -1,0 +1,28 @@
+[package]
+name        = "aozora-cli"
+description = "Command-line frontend for the aozora parser: check / fmt against Aozora Bunko notation files"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "aozora"
+path = "src/main.rs"
+
+[dependencies]
+aozora-parser   = { workspace = true }
+aozora-lexer    = { workspace = true }
+aozora-encoding = { workspace = true }
+clap            = { workspace = true }
+miette          = { workspace = true }
+anyhow          = { workspace = true }
+thiserror       = { workspace = true }

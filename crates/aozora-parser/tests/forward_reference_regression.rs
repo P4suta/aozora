@@ -5,8 +5,8 @@
 //! so a regression surfaces immediately instead of only when the full novel is
 //! exercised.
 
-use afm_parser::html::render_to_string;
-use afm_parser::test_support::assert_no_bare;
+use aozora_parser::html::render_to_string;
+use aozora_parser::test_support::assert_no_bare;
 
 #[test]
 fn forward_reference_bouten_source_span_is_consumed() {

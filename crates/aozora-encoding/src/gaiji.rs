@@ -53,7 +53,7 @@
 //! Consortium mapping ships. Meanwhile the hand-curated seed keeps
 //! downstream consumers wired to a working API.
 
-use afm_syntax::Gaiji;
+use aozora_syntax::Gaiji;
 
 /// Outcome of resolving a gaiji reference.
 ///

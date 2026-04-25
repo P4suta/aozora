@@ -19,11 +19,11 @@
 //!    (`<>&`) is still handled; `'` and `"` are HTML5-legal in text
 //!    content so comrak is spec-compliant to leave them as-is.
 //!
-//! The tests drive the full parse + render pipeline (`afm_parser::render_to_string`)
+//! The tests drive the full parse + render pipeline (`aozora_parser::render_to_string`)
 //! so regressions in the lexer fallback, `post_process` AST surgery, or the
 //! renderer surface here.
 
-use afm_parser::html::render_to_string;
+use aozora_parser::html::render_to_string;
 
 /// Gold-standard XSS canary. Any render output that contains the literal
 /// `<script` means a browser-executable tag has escaped through.

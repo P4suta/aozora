@@ -6,10 +6,10 @@
 //! - **No parser hooks in the upstream CommonMark parser**. The lexer runs
 //!   first, produces a normalized text with Private-Use-Area sentinel
 //!   characters at Aozora construct positions, plus a side registry mapping
-//!   sentinel positions back to pre-classified [`afm_syntax::AozoraNode`]
+//!   sentinel positions back to pre-classified [`aozora_syntax::AozoraNode`]
 //!   values. The CommonMark parser sees only plain CommonMark + GFM.
 //! - **Post-comrak AST walk** substitutes sentinels with the registry's
-//!   [`afm_syntax::AozoraNode`] values. That walk lives in `afm-parser`.
+//!   [`aozora_syntax::AozoraNode`] values. That walk lives in `afm-parser`.
 //! - **Pure-functional pipeline**: every phase is `fn(input) -> output` with
 //!   no shared mutable state. Unit-testable and deterministic.
 //!
@@ -121,7 +121,7 @@ pub struct LexOutput {
 ///
 /// Accent decomposition happens inside [`sanitize`]; gaiji UCS
 /// resolution happens during [`classify`] via
-/// `afm_encoding::gaiji::lookup`. `SourceMap` construction is not
+/// `aozora_encoding::gaiji::lookup`. `SourceMap` construction is not
 /// yet layered in and would fold into this entrypoint without
 /// changing the shape of [`LexOutput`].
 #[must_use]

@@ -1,6 +1,6 @@
 [package]
-name        = "afm-test-utils"
-description = "Aozora Flavored Markdown (afm): shared proptest strategies and test configuration. Not published."
+name        = "aozora-test-utils"
+description = "Aozora notation: shared proptest strategies and test configuration. Not published."
 publish     = false
 
 version.workspace      = true

@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn gaiji_resolve_echoes_description_and_ucs_when_present() {
-        use afm_syntax::Gaiji;
+        use aozora_syntax::Gaiji;
         let node = Gaiji {
             description: "木＋吶のつくり".into(),
             ucs: Some('吶'),
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn gaiji_resolve_returns_none_character_when_ucs_unresolved() {
-        use afm_syntax::Gaiji;
+        use aozora_syntax::Gaiji;
         let node = Gaiji {
             description: "第3水準1-85-54".into(),
             ucs: None,

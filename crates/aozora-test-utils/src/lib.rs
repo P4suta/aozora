@@ -8,7 +8,7 @@
 //! consumed only via `[dev-dependencies]` — production code must not
 //! pull it in.
 //!
-//! The split between predicates (hosted in `afm_parser::test_support`)
+//! The split between predicates (hosted in `aozora_parser::test_support`)
 //! and generators (here) is deliberate: predicates are pure `fn(&str)`
 //! helpers with no runtime dependencies, while generators need
 //! `proptest` and so their dependency lives here alone.

@@ -1,16 +1,16 @@
-//! Render a Shift_JIS afm source (as Aozora Bunko ships) to HTML on stdout.
+//! Render a Shift_JIS Aozora Bunko source file to HTML on stdout.
 //!
 //! Run it against an unpacked Aozora Bunko file:
 //!
-//!     cargo run --example render-sjis -p afm-parser -- tsumito_batsu.txt
+//!     cargo run --example render-sjis -p aozora-parser -- tsumito_batsu.txt
 
 use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use afm_encoding::decode_sjis;
-use afm_parser::html::render_to_string;
+use aozora_encoding::decode_sjis;
+use aozora_parser::html::render_to_string;
 
 fn main() -> ExitCode {
     let Some(path) = env::args().nth(1) else {

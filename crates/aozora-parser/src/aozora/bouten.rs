@@ -11,7 +11,7 @@
 //! class-contract tests can lock output without caring about the
 //! Japanese keyword form.
 
-use afm_syntax::{BoutenKind, BoutenPosition};
+use aozora_syntax::{BoutenKind, BoutenPosition};
 
 /// Stable CSS-class slug for a [`BoutenKind`]. Used by the HTML renderer
 /// at `crate::aozora::html::render_bouten`.

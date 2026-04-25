@@ -1,31 +1,30 @@
-//! HTML rendering for Aozora AST nodes.
+//! HTML rendering for individual Aozora AST nodes.
 //!
-//! Emits semantic HTML5; visual styling comes from the paired
-//! `afm-horizontal.css` / `afm-vertical.css` stylesheets. This module keeps
-//! rendering decisions centralised so the comrak-side adapter is a thin
-//! dispatcher.
+//! Emits semantic HTML5; visual styling comes from a paired stylesheet
+//! (the bundled `afm-horizontal.css` / `afm-vertical.css` shipped with
+//! the `afm` Markdown-dialect repo are one such pair, but the class
+//! contract documented in [`classes::AFM_CLASSES`] is the stable
+//! interface — any consumer can write its own stylesheet against it).
 //!
 //! Public entry point: [`render`].
 
 use core::fmt::{self, Write};
 
-use afm_syntax::{
+use aozora_syntax::{
     AlignEnd, Annotation, AozoraNode, Bouten, Container, ContainerKind, Content, DoubleRuby, Gaiji,
     Indent, Kaeriten, Ruby, SectionKind, SegmentRef,
 };
 
 use crate::aozora::bouten;
 
-/// Render a single [`AozoraNode`] into `writer`. Called from the
-/// comrak fork's `NodeValue::Aozora(_)` renderer arm.
+/// Render a single [`AozoraNode`] into `writer`.
 ///
-/// `entering` is comrak's standard enter/exit event flag. Leaf and
-/// inline nodes emit their markup only on `entering == true` and
-/// ignore the exit pass. Container-type nodes ([`AozoraNode::Container`],
-/// the paired-block wrapper) emit an opening tag on enter and a
-/// closing tag on exit, mirroring comrak's native `<ul>` / `<div>`
-/// rendering contract so the children comrak walks between the two
-/// events land inside the wrapper.
+/// `entering` follows the standard enter/exit event convention used by
+/// tree walkers: leaf and inline nodes emit their markup only on
+/// `entering == true` and ignore the exit pass. Container-type nodes
+/// ([`AozoraNode::Container`], the paired-block wrapper) emit an
+/// opening tag on enter and a closing tag on exit, so a walker can
+/// sandwich the container's children between the two calls.
 ///
 /// # Errors
 ///
@@ -130,7 +129,7 @@ fn render_gaiji(g: &Gaiji, writer: &mut dyn Write) -> fmt::Result {
 }
 
 fn render_annotation(a: &Annotation, writer: &mut dyn Write) -> fmt::Result {
-    use afm_syntax::AnnotationKind;
+    use aozora_syntax::AnnotationKind;
     // Inline warichu pair — `［＃割り注］X［＃割り注終わり］`. The Aozora
     // spec has deprecated the block form (`ここから割り注`…) in favour
     // of this inline shape, so we emit an opening `<span>` on
@@ -163,11 +162,11 @@ fn render_kaeriten(k: &Kaeriten, writer: &mut dyn Write) -> fmt::Result {
 /// Render a paired block container. On enter, opens a `<div>` with
 /// a per-kind class (and an optional numeric amount attribute for
 /// the indent / align-end variants that carry a count); on exit,
-/// closes the `</div>`. The intervening child blocks — paragraphs,
-/// headings, nested containers — are walked by comrak's standard
-/// tree renderer between the two calls.
+/// closes the `</div>`. The walker driving this function is
+/// expected to emit the container's children between the two calls
+/// (the block-level walker in [`crate::html`] does this).
 ///
-/// The class-contract is pinned by `tests/block_structure_interaction.rs`
+/// The class-contract is part of [`super::classes::AFM_CLASSES`]
 /// so stylesheet consumers can rely on the token list.
 fn render_container(c: Container, entering: bool, writer: &mut dyn Write) -> fmt::Result {
     if entering {
@@ -215,8 +214,8 @@ fn render_double_ruby(d: &DoubleRuby, writer: &mut dyn Write) -> fmt::Result {
 /// Leaf `{N}字下げ` — emits an empty marker `<span>` with a per-amount
 /// class. The annotation applies to the following inline run; the
 /// stylesheet uses sibling selectors to apply the indent. Rendering as
-/// `<span>` (not `<div>`) keeps the markup valid inside `<p>`, which is
-/// where comrak places the inline-hook result.
+/// `<span>` (not `<div>`) keeps the markup valid inside the host
+/// `<p>` paragraph that the inline sentinel lives inside.
 fn render_indent(i: Indent, writer: &mut dyn Write) -> fmt::Result {
     write!(
         writer,
@@ -262,7 +261,7 @@ fn escape_text(text: &str, writer: &mut dyn Write) -> fmt::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use afm_syntax::{
+    use aozora_syntax::{
         AlignEnd, Annotation, AnnotationKind, Bouten, BoutenKind, BoutenPosition, Indent, Ruby,
         TateChuYoko,
     };
@@ -306,7 +305,7 @@ mod tests {
 
     #[test]
     fn ruby_reading_with_embedded_gaiji_renders_segmented() {
-        use afm_syntax::{Content, Gaiji, Segment};
+        use aozora_syntax::{Content, Gaiji, Segment};
         let reading = Content::from_segments(vec![
             Segment::Text("く".into()),
             Segment::Gaiji(Gaiji {
@@ -330,7 +329,7 @@ mod tests {
     #[test]
     fn ruby_base_with_kun_yomi_via_annotation_segment_stays_in_content() {
         use crate::test_support::strip_annotation_wrappers;
-        use afm_syntax::{Annotation, AnnotationKind, Content, Segment};
+        use aozora_syntax::{Annotation, AnnotationKind, Content, Segment};
         // Classical kun-yomi mark embedded between kanji characters —
         // handled as an Annotation segment here (the dedicated Kaeriten
         // variant is an independent node, not a segment kind per B1).
@@ -357,7 +356,7 @@ mod tests {
 
     #[test]
     fn kaeriten_renders_as_superscript_afm_kaeriten() {
-        use afm_syntax::Kaeriten;
+        use aozora_syntax::Kaeriten;
         let n = AozoraNode::Kaeriten(Kaeriten { mark: "レ".into() });
         assert_eq!(
             render_to_string(&n),
@@ -460,7 +459,7 @@ mod tests {
 
     #[test]
     fn section_break_renders_each_kind_with_stable_slug() {
-        use afm_syntax::SectionKind;
+        use aozora_syntax::SectionKind;
         for (kind, slug) in [
             (SectionKind::Choho, "choho"),
             (SectionKind::Dan, "dan"),
@@ -490,7 +489,7 @@ mod tests {
 
     #[test]
     fn gaiji_with_resolved_ucs_emits_single_char() {
-        use afm_syntax::Gaiji;
+        use aozora_syntax::Gaiji;
         let n = AozoraNode::Gaiji(Gaiji {
             description: "placeholder".into(),
             ucs: Some('榁'),
@@ -501,7 +500,7 @@ mod tests {
 
     #[test]
     fn gaiji_without_ucs_falls_back_to_description_escaped() {
-        use afm_syntax::Gaiji;
+        use aozora_syntax::Gaiji;
         let n = AozoraNode::Gaiji(Gaiji {
             description: "a<b>".into(),
             ucs: None,
@@ -515,7 +514,7 @@ mod tests {
 
     #[test]
     fn double_ruby_plain_content_wraps_academic_brackets() {
-        use afm_syntax::DoubleRuby;
+        use aozora_syntax::DoubleRuby;
         let n = AozoraNode::DoubleRuby(DoubleRuby {
             content: "emphasis".into(),
         });
@@ -527,7 +526,7 @@ mod tests {
 
     #[test]
     fn double_ruby_escapes_structural_characters() {
-        use afm_syntax::DoubleRuby;
+        use aozora_syntax::DoubleRuby;
         let n = AozoraNode::DoubleRuby(DoubleRuby {
             content: "a<b&c".into(),
         });
@@ -540,10 +539,10 @@ mod tests {
     #[test]
     fn container_variants_emit_distinct_class_tokens_on_enter() {
         // render() dispatches to render_container which emits the
-        // opening tag on enter and `</div>` on exit. The comrak
-        // walker normally drives enter→children→exit; the unit
-        // test covers just the two states to pin the class contract.
-        use afm_syntax::{Container, ContainerKind};
+        // opening tag on enter and `</div>` on exit. A walker
+        // normally drives enter→children→exit; the unit test
+        // covers just the two states to pin the class contract.
+        use aozora_syntax::{Container, ContainerKind};
         let indent = AozoraNode::Container(Container {
             kind: ContainerKind::Indent { amount: 2 },
         });
