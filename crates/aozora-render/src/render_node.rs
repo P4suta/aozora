@@ -29,11 +29,7 @@ use crate::bouten;
 /// # Errors
 ///
 /// Propagates formatter write errors.
-pub fn render<W: Write>(
-    node: AozoraNode<'_>,
-    entering: bool,
-    writer: &mut W,
-) -> fmt::Result {
+pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) -> fmt::Result {
     match node {
         AozoraNode::Container(c) => render_container(c, entering, writer),
         _ if !entering => Ok(()),
@@ -224,8 +220,10 @@ const fn html_entity(c: char) -> &'static str {
 mod tests {
     use super::*;
     use aozora_syntax::alloc::BorrowedAllocator;
-    use aozora_syntax::borrowed::{Arena, AozoraNode};
-    use aozora_syntax::{AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, Indent, SectionKind};
+    use aozora_syntax::borrowed::{AozoraNode, Arena};
+    use aozora_syntax::{
+        AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, Indent, SectionKind,
+    };
 
     fn render_node_to_string(node: AozoraNode<'_>) -> String {
         let mut out = String::new();
@@ -261,7 +259,7 @@ mod tests {
     #[test]
     fn page_break_is_self_contained_div() {
         let arena = Arena::new();
-        let mut alloc = BorrowedAllocator::new(&arena);
+        let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.page_break();
         assert_eq!(
             render_node_to_string(n),
@@ -296,7 +294,7 @@ mod tests {
     #[test]
     fn indent_emits_marker_with_amount_attr() {
         let arena = Arena::new();
-        let mut alloc = BorrowedAllocator::new(&arena);
+        let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.indent(Indent { amount: 2 });
         assert_eq!(
             render_node_to_string(n),
@@ -307,7 +305,7 @@ mod tests {
     #[test]
     fn align_end_zero_omits_numeric_class() {
         let arena = Arena::new();
-        let mut alloc = BorrowedAllocator::new(&arena);
+        let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.align_end(AlignEnd { offset: 0 });
         assert_eq!(
             render_node_to_string(n),
@@ -318,7 +316,7 @@ mod tests {
     #[test]
     fn align_end_nonzero_offset_appends_numeric_class() {
         let arena = Arena::new();
-        let mut alloc = BorrowedAllocator::new(&arena);
+        let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.align_end(AlignEnd { offset: 2 });
         assert_eq!(
             render_node_to_string(n),
@@ -329,7 +327,7 @@ mod tests {
     #[test]
     fn section_break_kinds_use_stable_slugs() {
         let arena = Arena::new();
-        let mut alloc = BorrowedAllocator::new(&arena);
+        let alloc = BorrowedAllocator::new(&arena);
         for (kind, slug) in [
             (SectionKind::Choho, "choho"),
             (SectionKind::Dan, "dan"),
@@ -346,7 +344,7 @@ mod tests {
     #[test]
     fn container_open_close_round_trip() {
         let arena = Arena::new();
-        let mut alloc = BorrowedAllocator::new(&arena);
+        let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.container(Container {
             kind: ContainerKind::Indent { amount: 2 },
         });
@@ -362,7 +360,7 @@ mod tests {
     #[test]
     fn inline_nodes_emit_nothing_on_exit() {
         let arena = Arena::new();
-        let mut alloc = BorrowedAllocator::new(&arena);
+        let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.page_break();
         let mut buf = String::new();
         render(n, false, &mut buf).unwrap();

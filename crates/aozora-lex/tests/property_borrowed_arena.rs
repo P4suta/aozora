@@ -14,7 +14,7 @@
 //!    (V1/V2 lex invariants, but observed from outside).
 //!
 //! Together these gate any future change to `lex_into_arena` from
-//! introducing nondeterminism (e.g. iteration order over a HashMap)
+//! introducing nondeterminism (e.g. iteration order over a `HashMap`)
 //! or from desynchronising the registry from the normalised text.
 
 use aozora_syntax::borrowed::Arena;
@@ -22,6 +22,10 @@ use aozora_test_utils::config::default_config;
 use aozora_test_utils::generators::*;
 use proptest::prelude::*;
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "exhaustive determinism asserter: each block checks one independent invariant (normalized text, sanitized_len, diagnostic count, four registries, four iter_sorted walks). Splitting into helpers would obscure the per-invariant intent without saving lines."
+)]
 fn assert_deterministic(source: &str) {
     let arena_a = Arena::new();
     let arena_b = Arena::new();
@@ -64,8 +68,11 @@ fn assert_deterministic(source: &str) {
 
     // Per-position node kind equivalence across the two runs. Cheap +
     // exhaustive across the AST surface.
-    for ((pos_a, node_a), (pos_b, node_b)) in
-        a.registry.inline.iter_sorted().zip(b.registry.inline.iter_sorted())
+    for ((pos_a, node_a), (pos_b, node_b)) in a
+        .registry
+        .inline
+        .iter_sorted()
+        .zip(b.registry.inline.iter_sorted())
     {
         assert_eq!(*pos_a, *pos_b, "inline[{pos_a}] position drift");
         assert_eq!(

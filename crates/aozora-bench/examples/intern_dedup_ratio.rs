@@ -1,4 +1,4 @@
-//! Measure the ArenaInterner's deduplication effect on the
+//! Measure the `ArenaInterner`'s deduplication effect on the
 //! 17 k-document Aozora corpus.
 //!
 //! For each document we run `aozora_lex::lex_into_arena` (which uses
@@ -30,6 +30,7 @@
 )]
 
 use std::env;
+use std::process;
 use std::time::Instant;
 
 use aozora_corpus::{CorpusSource, FilesystemCorpus};
@@ -38,12 +39,9 @@ use aozora_lex::lex_into_arena;
 use aozora_syntax::borrowed::{Arena, InternStats};
 
 fn main() {
-    let root = match env::var("AOZORA_CORPUS_ROOT") {
-        Ok(p) => p,
-        Err(_) => {
-            eprintln!("AOZORA_CORPUS_ROOT not set; aborting");
-            std::process::exit(2);
-        }
+    let Ok(root) = env::var("AOZORA_CORPUS_ROOT") else {
+        eprintln!("AOZORA_CORPUS_ROOT not set; aborting");
+        process::exit(2);
     };
     eprintln!("intern_dedup_ratio: scanning {root}");
 
@@ -58,12 +56,9 @@ fn main() {
     let start = Instant::now();
 
     for item in &items {
-        let text = match decode_sjis(&item.bytes) {
-            Ok(t) => t,
-            Err(_) => {
-                total_decode_errors += 1;
-                continue;
-            }
+        let Ok(text) = decode_sjis(&item.bytes) else {
+            total_decode_errors += 1;
+            continue;
         };
         let arena = Arena::new();
         let out = lex_into_arena(&text, &arena);
@@ -126,10 +121,7 @@ fn main() {
     println!("table resizes (total)     : {}", agg.resizes);
     println!("avg probe length          : {avg_probe:.2}");
     println!();
-    println!(
-        "dedup ratio (reuses/total) : {:.1}%",
-        dedup_ratio * 100.0
-    );
+    println!("dedup ratio (reuses/total) : {:.1}%", dedup_ratio * 100.0);
     println!(
         "  => for every 100 string fields, ~{:.0} skip allocation",
         dedup_ratio * 100.0

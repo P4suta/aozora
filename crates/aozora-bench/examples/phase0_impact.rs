@@ -32,13 +32,17 @@
 )]
 
 use std::env;
+use std::hint;
+use std::process;
 use std::time::Instant;
+
+use memchr::memmem;
 
 use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_sjis;
 use aozora_lexer::{
-    has_long_rule_line, isolate_decorative_rules, normalize_line_endings,
-    rewrite_accent_spans, tokenize,
+    has_long_rule_line, isolate_decorative_rules, normalize_line_endings, rewrite_accent_spans,
+    tokenize,
 };
 
 const TORTOISE_OPEN: &str = "〔";
@@ -65,7 +69,7 @@ struct Bucket {
 fn main() {
     let Some(corpus) = aozora_corpus::from_env() else {
         eprintln!("AOZORA_CORPUS_ROOT not set or not a directory; nothing to profile.");
-        std::process::exit(2);
+        process::exit(2);
     };
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")
         .ok()
@@ -109,14 +113,17 @@ fn main() {
         };
         let rule_iso_ref: &str = if has_rule { &rule_iso } else { line_norm_ref };
 
-        let has_accent =
-            memchr::memmem::find(rule_iso_ref.as_bytes(), TORTOISE_OPEN.as_bytes()).is_some();
+        let has_accent = memmem::find(rule_iso_ref.as_bytes(), TORTOISE_OPEN.as_bytes()).is_some();
         let final_text: String = if has_accent {
             rewrite_accent_spans(rule_iso_ref)
         } else {
             String::new()
         };
-        let final_ref: &str = if has_accent { &final_text } else { rule_iso_ref };
+        let final_ref: &str = if has_accent {
+            &final_text
+        } else {
+            rule_iso_ref
+        };
 
         // Time tokenize on the post-sanitize text. `tokenize` returns
         // an iterator; `.count()` drains it without allocating a Vec.
@@ -125,15 +132,14 @@ fn main() {
         let token_count = tokenize(final_ref).count();
         let elapsed = t.elapsed().as_nanos() as u64;
         // Sanity-touch the count so the optimizer can't elide it.
-        std::hint::black_box(token_count);
+        hint::black_box(token_count);
 
-        let mask: usize = (usize::from(has_cr))
-            | (usize::from(has_rule) << 1)
-            | (usize::from(has_accent) << 2);
+        let mask: usize =
+            (usize::from(has_cr)) | (usize::from(has_rule) << 1) | (usize::from(has_accent) << 2);
         let b = &mut buckets[mask];
         b.docs += 1;
         b.bytes_total += bytes;
-        b.tokenize_ns_total += elapsed as u128;
+        b.tokenize_ns_total += u128::from(elapsed);
         if bytes > 0 {
             b.ns_per_byte.push(elapsed as f64 / bytes as f64);
         }
@@ -193,8 +199,5 @@ fn print_report(buckets: &[Bucket; 8], decode_errors: u64) {
         );
     }
     println!();
-    println!(
-        "Compare 'none' to single-flag buckets to see the per-pass downstream cost."
-    );
+    println!("Compare 'none' to single-flag buckets to see the per-pass downstream cost.");
 }
-

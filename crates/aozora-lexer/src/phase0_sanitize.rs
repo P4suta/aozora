@@ -44,6 +44,8 @@
 
 use std::borrow::Cow;
 
+use memchr::memmem;
+
 use aozora_syntax::Span;
 use aozora_syntax::accent::decompose_fragment;
 
@@ -98,17 +100,13 @@ pub fn sanitize(source: &str) -> SanitizeOutput<'_> {
     // cost on every char of the input. memmem uses Two-Way / SIMD on
     // the 3-byte needle and zooms through Japanese prose at memory-
     // bandwidth speed.
-    let text: Cow<'_, str> = if memchr::memmem::find(
-        rule_isolated.as_bytes(),
-        TORTOISE_OPEN_BYTES,
-    )
-    .is_some()
-    {
-        let owned = rule_isolated.into_owned();
-        Cow::Owned(rewrite_accent_spans(&owned))
-    } else {
-        rule_isolated
-    };
+    let text: Cow<'_, str> =
+        if memmem::find(rule_isolated.as_bytes(), TORTOISE_OPEN_BYTES).is_some() {
+            let owned = rule_isolated.into_owned();
+            Cow::Owned(rewrite_accent_spans(&owned))
+        } else {
+            rule_isolated
+        };
 
     let diagnostics = scan_for_sentinel_collisions(&text);
 
@@ -118,6 +116,7 @@ pub fn sanitize(source: &str) -> SanitizeOutput<'_> {
 /// Rewrite every `〔...〕` span applying accent decomposition to the body.
 /// Text outside spans is copied verbatim.
 #[doc(hidden)]
+#[must_use]
 pub fn rewrite_accent_spans(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut cursor = 0;
@@ -211,6 +210,7 @@ fn is_rule_line_trimmed(trimmed: &str) -> bool {
 /// and typically only 1–5 rule line insertions, so the new path
 /// collapses ~10⁴ small `memcpy`s into a small handful of large ones.
 #[doc(hidden)]
+#[must_use]
 pub fn isolate_decorative_rules(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len() + 16);
@@ -276,9 +276,10 @@ pub fn isolate_decorative_rules(input: &str) -> String {
 /// the dominant cost in phase 0; the single-pass form is ~2–3× faster
 /// at memory-bandwidth ceiling.
 ///
-/// Safety: `\r` (0x0D) is ASCII; `memchr` cannot land mid-codepoint
-/// in UTF-8.
+/// `\r` (0x0D) is ASCII so `memchr` lands cleanly on UTF-8 boundaries;
+/// no need for `is_char_boundary` checks.
 #[doc(hidden)]
+#[must_use]
 pub fn normalize_line_endings(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());
@@ -327,6 +328,7 @@ pub fn normalize_line_endings(input: &str) -> String {
 /// ADR-0014). The new path runs at ~580 MB/s on the corpus profile,
 /// down from ~75 MB/s for the chars()-based version.
 #[doc(hidden)]
+#[must_use]
 pub fn scan_for_sentinel_collisions(text: &str) -> Vec<Diagnostic> {
     let bytes = text.as_bytes();
     let mut diagnostics = Vec::new();

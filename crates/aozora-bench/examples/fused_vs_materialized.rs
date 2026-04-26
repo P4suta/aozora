@@ -25,18 +25,18 @@
     clippy::missing_errors_doc,
     clippy::too_many_lines,
     clippy::disallowed_methods,
-    reason = "profiling-example tool, not library code"
+    clippy::needless_collect,
+    reason = "profiling-example tool, not library code; .collect() in time_materialized is the very thing being measured"
 )]
 
 use std::env;
+use std::process;
 use std::time::Instant;
 
 use aozora_bench::{SizeBand, corpus_size_bands};
 use aozora_corpus::CorpusItem;
 use aozora_lex::lex_into_arena;
-use aozora_lexer::{
-    ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
-};
+use aozora_lexer::{ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize};
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;
 
@@ -52,7 +52,7 @@ struct BandStats {
 fn main() {
     let Some(corpus) = aozora_corpus::from_env() else {
         eprintln!("AOZORA_CORPUS_ROOT not set or not a directory; nothing to profile.");
-        std::process::exit(2);
+        process::exit(2);
     };
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")
         .ok()
@@ -81,8 +81,8 @@ fn main() {
         for (_, text) in banded.band(band) {
             let fused = time_fused(text);
             let mat = time_materialized(text);
-            stats[slot].fused_ns_total += fused as u128;
-            stats[slot].mat_ns_total += mat as u128;
+            stats[slot].fused_ns_total += u128::from(fused);
+            stats[slot].mat_ns_total += u128::from(mat);
             stats[slot].docs += 1;
             if fused > 0 {
                 stats[slot]
@@ -111,7 +111,7 @@ fn time_materialized(text: &str) -> u64 {
     drop(ps.take_diagnostics());
     let arena = Arena::new();
     let mut alloc = BorrowedAllocator::new(&arena);
-    let mut cs = classify(pe.into_iter(), &sanitized.text, &mut alloc);
+    let mut cs = classify(pe, &sanitized.text, &mut alloc);
     let _spans: Vec<ClassifiedSpan<'_>> = (&mut cs).collect();
     drop(cs.take_diagnostics());
     t.elapsed().as_nanos() as u64
@@ -144,9 +144,7 @@ fn print_report(stats: &[BandStats; 4]) {
         let agg_gap_pct = if s.fused_ns_total == 0 {
             0.0
         } else {
-            (s.mat_ns_total as f64 - s.fused_ns_total as f64)
-                / s.fused_ns_total as f64
-                * 100.0
+            (s.mat_ns_total as f64 - s.fused_ns_total as f64) / s.fused_ns_total as f64 * 100.0
         };
         let p50_gap_pct = {
             let mut g = s.gaps.clone();

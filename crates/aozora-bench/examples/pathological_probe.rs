@@ -9,22 +9,34 @@
 #![allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
     clippy::missing_panics_doc,
+    clippy::too_many_lines,
     clippy::disallowed_methods,
-    reason = "profiling tool, not library"
+    clippy::needless_collect,
+    clippy::semicolon_if_nothing_returned,
+    clippy::semicolon_outside_block,
+    clippy::redundant_clone,
+    clippy::uninlined_format_args,
+    clippy::absolute_paths,
+    reason = "profiling tool, not library; per-phase .collect() calls are intentional materialisation so each phase can be timed in isolation. main() is intentionally long because the cfg(feature = instrument) dump prints ~13 distinct sections in sequence"
 )]
 
+use std::cmp::Reverse;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::process;
 use std::time::Instant;
 
 use aozora_encoding::decode_sjis;
 use aozora_lex::lex_into_arena;
 use aozora_lexer::{
-    ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
+    ClassifiedSpan, PairEvent, SpanKind, Token, classify, pair, sanitize, tokenize,
 };
 use aozora_syntax::alloc::BorrowedAllocator;
+use aozora_syntax::borrowed::AozoraNode;
 use aozora_syntax::borrowed::Arena;
 
 /// Default pathological doc — kaeriten / annotation density extreme.
@@ -35,20 +47,18 @@ const ITERS: u32 = 100;
 
 fn main() {
     let Some(root) = env::var_os("AOZORA_CORPUS_ROOT") else {
-        eprintln!(
-            "AOZORA_CORPUS_ROOT not set; this probe needs the corpus to load doc #5667."
-        );
-        std::process::exit(2);
+        eprintln!("AOZORA_CORPUS_ROOT not set; this probe needs the corpus to load doc #5667.");
+        process::exit(2);
     };
-    let relative = env::var("AOZORA_PROBE_DOC")
-        .unwrap_or_else(|_| DEFAULT_RELATIVE_PATH.to_owned());
+    let relative =
+        env::var("AOZORA_PROBE_DOC").unwrap_or_else(|_| DEFAULT_RELATIVE_PATH.to_owned());
     let path = PathBuf::from(&root).join(&relative);
     if !path.is_file() {
         eprintln!(
             "expected pathological doc at {}; if your corpus checkout differs, override the path",
             path.display()
         );
-        std::process::exit(2);
+        process::exit(2);
     }
 
     let bytes = fs::read(&path).expect("read pathological doc");
@@ -88,7 +98,7 @@ fn main() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let t = Instant::now();
-        let mut classify_stream = classify(pair_events.into_iter(), &sanitized.text, &mut alloc);
+        let mut classify_stream = classify(pair_events, &sanitized.text, &mut alloc);
         let _classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
         drop(classify_stream.take_diagnostics());
         classify_total += t.elapsed().as_nanos() as u64;
@@ -104,18 +114,36 @@ fn main() {
     let avg = |total: u64| -> f64 { total as f64 / f64::from(ITERS) / 1_000_000.0 };
     let pct = |total: u64, all: u64| -> f64 { total as f64 * 100.0 / all as f64 };
 
-    let standalone =
-        sanitize_total + tokenize_total + pair_total + classify_total;
+    let standalone = sanitize_total + tokenize_total + pair_total + classify_total;
 
     println!("Per-call averages over {ITERS} iterations:");
-    println!("  sanitize       : {:>7.2} ms  ({:>5.1}%)", avg(sanitize_total), pct(sanitize_total, standalone));
-    println!("  tokenize       : {:>7.2} ms  ({:>5.1}%)", avg(tokenize_total), pct(tokenize_total, standalone));
-    println!("  pair           : {:>7.2} ms  ({:>5.1}%)", avg(pair_total), pct(pair_total, standalone));
-    println!("  classify       : {:>7.2} ms  ({:>5.1}%)", avg(classify_total), pct(classify_total, standalone));
+    println!(
+        "  sanitize       : {:>7.2} ms  ({:>5.1}%)",
+        avg(sanitize_total),
+        pct(sanitize_total, standalone)
+    );
+    println!(
+        "  tokenize       : {:>7.2} ms  ({:>5.1}%)",
+        avg(tokenize_total),
+        pct(tokenize_total, standalone)
+    );
+    println!(
+        "  pair           : {:>7.2} ms  ({:>5.1}%)",
+        avg(pair_total),
+        pct(pair_total, standalone)
+    );
+    println!(
+        "  classify       : {:>7.2} ms  ({:>5.1}%)",
+        avg(classify_total),
+        pct(classify_total, standalone)
+    );
     println!("  ──────────────────────────────────────");
     println!("  4-PHASE TOTAL  : {:>7.2} ms", avg(standalone));
     println!("  lex_into_arena : {:>7.2} ms", avg(full_total));
-    println!("  post-classify ∼: {:>7.2} ms", avg(full_total.saturating_sub(standalone)));
+    println!(
+        "  post-classify ∼: {:>7.2} ms",
+        avg(full_total.saturating_sub(standalone))
+    );
 
     // When `aozora-lexer/phase3-instrument` is enabled, dump the
     // per-subsystem call counts for the LAST iteration so callers can
@@ -143,7 +171,11 @@ fn main() {
         for sub in Subsystem::ordered() {
             let calls = snap.counts.get(&sub).copied().unwrap_or(0);
             let ns = snap.total_ns.get(&sub).copied().unwrap_or(0);
-            let avg_ns = if calls == 0 { 0.0 } else { (ns as f64) / (calls as f64) };
+            let avg_ns = if calls == 0 {
+                0.0
+            } else {
+                (ns as f64) / (calls as f64)
+            };
             println!(
                 "  {:<32}  {:>8} calls  {:>10.3} ms  {:>10.0} ns/call",
                 sub.label(),
@@ -156,36 +188,78 @@ fn main() {
         let total = yields.total();
         println!("Yield-kind histogram (total yields = {total}):");
         let bar = |n: u64| -> String {
-            let frac = if total == 0 { 0.0 } else { (n as f64) / (total as f64) };
+            let frac = if total == 0 {
+                0.0
+            } else {
+                (n as f64) / (total as f64)
+            };
             let width = (frac * 30.0) as usize;
             "█".repeat(width)
         };
-        println!("  Plain        {:>8}  {:>5.1}%  {}", yields.plain,      100.0 * yields.plain      as f64 / total.max(1) as f64, bar(yields.plain));
-        println!("  Newline      {:>8}  {:>5.1}%  {}", yields.newline,    100.0 * yields.newline    as f64 / total.max(1) as f64, bar(yields.newline));
-        println!("  Aozora       {:>8}  {:>5.1}%  {}", yields.aozora,     100.0 * yields.aozora     as f64 / total.max(1) as f64, bar(yields.aozora));
-        println!("  BlockOpen    {:>8}  {:>5.1}%  {}", yields.block_open, 100.0 * yields.block_open as f64 / total.max(1) as f64, bar(yields.block_open));
-        println!("  BlockClose   {:>8}  {:>5.1}%  {}", yields.block_close,100.0 * yields.block_close as f64 / total.max(1) as f64, bar(yields.block_close));
+        println!(
+            "  Plain        {:>8}  {:>5.1}%  {}",
+            yields.plain,
+            100.0 * yields.plain as f64 / total.max(1) as f64,
+            bar(yields.plain)
+        );
+        println!(
+            "  Newline      {:>8}  {:>5.1}%  {}",
+            yields.newline,
+            100.0 * yields.newline as f64 / total.max(1) as f64,
+            bar(yields.newline)
+        );
+        println!(
+            "  Aozora       {:>8}  {:>5.1}%  {}",
+            yields.aozora,
+            100.0 * yields.aozora as f64 / total.max(1) as f64,
+            bar(yields.aozora)
+        );
+        println!(
+            "  BlockOpen    {:>8}  {:>5.1}%  {}",
+            yields.block_open,
+            100.0 * yields.block_open as f64 / total.max(1) as f64,
+            bar(yields.block_open)
+        );
+        println!(
+            "  BlockClose   {:>8}  {:>5.1}%  {}",
+            yields.block_close,
+            100.0 * yields.block_close as f64 / total.max(1) as f64,
+            bar(yields.block_close)
+        );
 
         let phist = PendingSizeHistogram::snapshot();
         let ptotal = phist.total();
         println!();
-        println!("pending_outputs.len() histogram at pop_front (total = {ptotal}, max seen = {}):", phist.max_seen);
+        println!(
+            "pending_outputs.len() histogram at pop_front (total = {ptotal}, max seen = {}):",
+            phist.max_seen
+        );
         let pbar = |n: u64| -> String {
-            let frac = if ptotal == 0 { 0.0 } else { (n as f64) / (ptotal as f64) };
+            let frac = if ptotal == 0 {
+                0.0
+            } else {
+                (n as f64) / (ptotal as f64)
+            };
             let width = (frac * 30.0) as usize;
             "█".repeat(width)
         };
         let pp = |label: &str, n: u64| {
             let pct = 100.0 * n as f64 / ptotal.max(1) as f64;
-            println!("  size {:>10}  {:>10}  {:>5.1}%  {}", label, n, pct, pbar(n));
+            println!(
+                "  size {:>10}  {:>10}  {:>5.1}%  {}",
+                label,
+                n,
+                pct,
+                pbar(n)
+            );
         };
-        pp("0 (empty)",  phist.size_0);
-        pp("1",          phist.size_1);
-        pp("2-4",        phist.size_2_4);
-        pp("5-15",       phist.size_5_15);
-        pp("16-63",      phist.size_16_63);
-        pp("64-255",     phist.size_64_255);
-        pp("256+",       phist.size_256_plus);
+        pp("0 (empty)", phist.size_0);
+        pp("1", phist.size_1);
+        pp("2-4", phist.size_2_4);
+        pp("5-15", phist.size_5_15);
+        pp("16-63", phist.size_16_63);
+        pp("64-255", phist.size_64_255);
+        pp("256+", phist.size_256_plus);
 
         let replay_sizes = aozora_lexer::instrumentation::snapshot_replay_sizes();
         if !replay_sizes.is_empty() {
@@ -216,13 +290,10 @@ fn main() {
     let classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
     drop(classify_stream.take_diagnostics());
     let mut aozora_count = 0;
-    let mut counts: std::collections::HashMap<&'static str, usize> =
-        std::collections::HashMap::new();
+    let mut counts: HashMap<&'static str, usize> = HashMap::new();
     for span in &classify_spans {
-        use aozora_lexer::SpanKind;
         if let SpanKind::Aozora(node) = &span.kind {
             aozora_count += 1;
-            use aozora_syntax::borrowed::AozoraNode;
             let name = match node {
                 AozoraNode::Ruby(_) => "Ruby",
                 AozoraNode::Bouten(_) => "Bouten",
@@ -250,26 +321,27 @@ fn main() {
     println!("Classify output shape:");
     println!("  Aozora nodes total : {aozora_count}");
     let mut entries: Vec<(&str, usize)> = counts.into_iter().collect();
-    entries.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    entries.sort_by_key(|(_, n)| Reverse(*n));
     for (k, n) in entries {
         println!("  {k:<14} : {n}");
     }
-    println!("  classify ms / Aozora node : {:.3} µs",
-        avg(classify_total) * 1000.0 / aozora_count as f64);
+    println!(
+        "  classify ms / Aozora node : {:.3} µs",
+        avg(classify_total) * 1000.0 / f64::from(aozora_count)
+    );
 
     // Count event-stream features that would help the AC analysis.
     let mut bracket_pair_count = 0;
     let mut quote_open_count = 0;
     for ev in &pair_events {
-        match ev {
-            PairEvent::PairOpen { kind, .. } => match kind {
+        if let PairEvent::PairOpen { kind, .. } = ev {
+            match kind {
                 aozora_lexer::PairKind::Bracket => {
                     bracket_pair_count += 1;
                 }
                 aozora_lexer::PairKind::Quote => quote_open_count += 1,
                 _ => {}
-            },
-            _ => {}
+            }
         }
     }
     println!();

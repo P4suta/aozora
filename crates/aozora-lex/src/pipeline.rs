@@ -100,7 +100,10 @@ pub struct Paired;
 /// states (defaults to `()` for states that haven't wired an iterator
 /// yet). All public construction goes through [`Pipeline::new`] and
 /// the per-state transition methods, never via the struct literal.
-#[allow(missing_debug_implementations, reason = "I parameter is opaque iterator")]
+#[allow(
+    missing_debug_implementations,
+    reason = "I parameter is opaque iterator"
+)]
 pub struct Pipeline<'src, 'a, S, I = ()> {
     source: &'src str,
     arena: &'a Arena,
@@ -136,7 +139,11 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
     /// [`BorrowedLexOutput`]. Equivalent to [`crate::lex_into_arena`].
     #[must_use]
     pub fn run_to_completion(source: &'src str, arena: &'a Arena) -> BorrowedLexOutput<'a> {
-        Self::new(source, arena).sanitize().tokenize().pair().build()
+        Self::new(source, arena)
+            .sanitize()
+            .tokenize()
+            .pair()
+            .build()
     }
 
     /// Borrow the original source text.
@@ -170,6 +177,12 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
 
 impl<'src, 'a> Pipeline<'src, 'a, Sanitized> {
     /// Sanitized text (arena-allocated).
+    ///
+    /// # Panics
+    ///
+    /// Cannot panic in normal use: `sanitized_text` is always `Some`
+    /// after the `Sanitized` state has been reached. The expect is a
+    /// type-state invariant guard, not a runtime branch.
     #[must_use]
     pub fn sanitized_text(&self) -> &'a str {
         self.sanitized_text
@@ -233,13 +246,19 @@ impl<'a, T: Iterator<Item = Token>> Pipeline<'_, 'a, Paired, PairStream<T>> {
     /// Sanitize (Phase 0) → Pair (Phase 2 unclosed/unmatched) →
     /// Classify (Phase 3 unknown annotations etc.). This matches the
     /// pre-Pipeline `lex_into_arena` ordering.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the sanitized source exceeds `u32::MAX` bytes
+    /// (the lexer's `Span` width contract). In practice unreachable;
+    /// Phase 0 caps source length at the same boundary.
     #[must_use]
     pub fn build(mut self) -> BorrowedLexOutput<'a> {
         let sanitized_text = self
             .sanitized_text
             .expect("sanitized_text is always Some after Sanitized transition");
-        let sanitized_len = u32::try_from(sanitized_text.len())
-            .expect("sanitize asserts source.len() <= u32::MAX");
+        let sanitized_len =
+            u32::try_from(sanitized_text.len()).expect("sanitize asserts source.len() <= u32::MAX");
 
         // Allocator capacity hint: source.len()/32 is a rough upper bound
         // on the number of distinct strings the borrowed pipeline will
@@ -285,14 +304,15 @@ impl<'a, T: Iterator<Item = Token>> Pipeline<'_, 'a, Paired, PairStream<T>> {
 // Suppress an unused-import warning when the only use of `ContainerKind`
 // is through the `Registry` field types — the import is still needed for
 // the trait-impl resolution but the analyser doesn't see it.
-const _: fn() = || {
-    let _ = size_of::<ContainerKind>();
-};
+const _CONTAINER_KIND_USE_MARKER: usize = size_of::<ContainerKind>();
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use core::ptr;
+
     use aozora_syntax::borrowed::Arena;
+
+    use super::*;
 
     #[test]
     fn type_state_chain_compiles() {
@@ -355,6 +375,6 @@ mod tests {
         let arena = Arena::new();
         let s = "the original";
         let p = Pipeline::new(s, &arena);
-        assert!(core::ptr::eq(p.source(), s));
+        assert!(ptr::eq(p.source(), s));
     }
 }

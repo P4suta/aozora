@@ -7,7 +7,7 @@
 //! - BOM strip (`strip_prefix("\u{FEFF}")`)
 //! - Line-ending normalisation (CRLF→LF) — gated on `\r` presence
 //! - Decorative rule isolation — gated on `has_long_rule_line`
-//! - Accent decomposition inside `〔...〕` — gated on TORTOISE_OPEN
+//! - Accent decomposition inside `〔...〕` — gated on `TORTOISE_OPEN`
 //! - PUA sentinel collision scan
 //!
 //! This bench measures each sub-pass independently across the corpus
@@ -27,18 +27,22 @@
     clippy::missing_panics_doc,
     clippy::missing_errors_doc,
     clippy::too_many_lines,
+    clippy::too_many_arguments,
     clippy::disallowed_methods,
     reason = "profiling-example tool"
 )]
 
 use std::env;
+use std::process;
 use std::time::Instant;
+
+use memchr::memmem;
 
 use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
 use aozora_encoding::decode_sjis;
 use aozora_lexer::{
-    has_long_rule_line, isolate_decorative_rules, normalize_line_endings,
-    rewrite_accent_spans, scan_for_sentinel_collisions,
+    has_long_rule_line, isolate_decorative_rules, normalize_line_endings, rewrite_accent_spans,
+    scan_for_sentinel_collisions,
 };
 
 const NS_PER_MS: f64 = 1_000_000.0;
@@ -62,12 +66,9 @@ struct Sub {
 }
 
 fn main() {
-    let root = match env::var("AOZORA_CORPUS_ROOT") {
-        Ok(p) => p,
-        Err(_) => {
-            eprintln!("AOZORA_CORPUS_ROOT not set; aborting");
-            std::process::exit(2);
-        }
+    let Ok(root) = env::var("AOZORA_CORPUS_ROOT") else {
+        eprintln!("AOZORA_CORPUS_ROOT not set; aborting");
+        process::exit(2);
     };
     eprintln!("phase0_breakdown: scanning {root}");
 
@@ -79,12 +80,9 @@ fn main() {
     let mut decode_errors = 0u64;
     let start = Instant::now();
     for item in &items {
-        let text = match decode_sjis(&item.bytes) {
-            Ok(t) => t,
-            Err(_) => {
-                decode_errors += 1;
-                continue;
-            }
+        let Ok(text) = decode_sjis(&item.bytes) else {
+            decode_errors += 1;
+            continue;
         };
         samples.push(measure_one(&text));
     }
@@ -127,12 +125,15 @@ fn measure_one(text: &str) -> Sub {
         String::new()
     };
     let rule_isolate_ns = t.elapsed().as_nanos() as u64;
-    let rule_isolated_ref: &str = if has_rule { &rule_isolated } else { line_normalized_ref };
+    let rule_isolated_ref: &str = if has_rule {
+        &rule_isolated
+    } else {
+        line_normalized_ref
+    };
 
     // Sub 4: accent rewrite gate + transform.
     let t = Instant::now();
-    let has_tortoise =
-        memchr::memmem::find(rule_isolated_ref.as_bytes(), TORTOISE_OPEN_BYTES).is_some();
+    let has_tortoise = memmem::find(rule_isolated_ref.as_bytes(), TORTOISE_OPEN_BYTES).is_some();
     let accent_gate_ns = t.elapsed().as_nanos() as u64;
     let t = Instant::now();
     let final_text: String = if has_tortoise {
@@ -141,7 +142,11 @@ fn measure_one(text: &str) -> Sub {
         String::new()
     };
     let accent_rewrite_ns = t.elapsed().as_nanos() as u64;
-    let final_text_ref: &str = if has_tortoise { &final_text } else { rule_isolated_ref };
+    let final_text_ref: &str = if has_tortoise {
+        &final_text
+    } else {
+        rule_isolated_ref
+    };
 
     // Sub 5: PUA sentinel scan.
     let t = Instant::now();
@@ -257,13 +262,7 @@ fn print_report(samples: &[Sub]) {
         bytes,
         &format!("{accent_taken_ct} docs"),
     );
-    line(
-        "pua_scan (memchr 0xEE)",
-        pua_ns,
-        total_ns,
-        bytes,
-        "always",
-    );
+    line("pua_scan (memchr 0xEE)", pua_ns, total_ns, bytes, "always");
 }
 
 fn line(name: &str, ns: u64, total: u64, bytes: u64, note: &str) {

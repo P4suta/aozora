@@ -144,7 +144,13 @@ mod tests {
             block_close: EytzingerMap::new(),
         };
         assert_eq!(r.len(), 2);
-        assert_eq!(r.block_open.get(&5).copied(), Some(ContainerKind::Indent { amount: 2 }));
-        assert_eq!(r.block_open.get(&10).copied(), Some(ContainerKind::Keigakomi));
+        assert_eq!(
+            r.block_open.get(&5).copied(),
+            Some(ContainerKind::Indent { amount: 2 })
+        );
+        assert_eq!(
+            r.block_open.get(&10).copied(),
+            Some(ContainerKind::Keigakomi)
+        );
     }
 }

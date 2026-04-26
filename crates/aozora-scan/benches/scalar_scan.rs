@@ -18,9 +18,9 @@
     reason = "bench code, not library"
 )]
 
-use aozora_scan::{ScalarScanner, TriggerScanner};
 #[cfg(target_arch = "x86_64")]
 use aozora_scan::Avx2Scanner;
+use aozora_scan::{ScalarScanner, TriggerScanner};
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 

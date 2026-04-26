@@ -209,11 +209,7 @@ mod tests {
 
     #[test]
     fn three_element_lookup_returns_paired_value() {
-        let m = EytzingerMap::from_sorted_slice(&[
-            (10u32, "ten"),
-            (20, "twenty"),
-            (30, "thirty"),
-        ]);
+        let m = EytzingerMap::from_sorted_slice(&[(10u32, "ten"), (20, "twenty"), (30, "thirty")]);
         assert_eq!(m.get(&10), Some(&"ten"));
         assert_eq!(m.get(&20), Some(&"twenty"));
         assert_eq!(m.get(&30), Some(&"thirty"));
@@ -222,8 +218,15 @@ mod tests {
 
     #[test]
     fn iter_sorted_yields_input_order() {
-        let pairs: Vec<(u32, u32)> =
-            vec![(1, 100), (2, 200), (3, 300), (4, 400), (5, 500), (6, 600), (7, 700)];
+        let pairs: Vec<(u32, u32)> = vec![
+            (1, 100),
+            (2, 200),
+            (3, 300),
+            (4, 400),
+            (5, 500),
+            (6, 600),
+            (7, 700),
+        ];
         let m = EytzingerMap::from_sorted_slice(&pairs);
         let walked: Vec<(u32, u32)> = m.iter_sorted().map(|(k, v)| (*k, *v)).collect();
         assert_eq!(walked, pairs);

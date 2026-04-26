@@ -104,7 +104,9 @@ pub fn diagnostics_json_view(diagnostics: &[aozora::Diagnostic]) -> String {
     let views: Vec<DiagnosticView<'_>> = diagnostics
         .iter()
         .map(|d| match d {
-            aozora::Diagnostic::SourceContainsPua { codepoint, span, .. } => DiagnosticView {
+            aozora::Diagnostic::SourceContainsPua {
+                codepoint, span, ..
+            } => DiagnosticView {
                 kind: "source_contains_pua",
                 span_start: span.start,
                 span_end: span.end,
@@ -132,7 +134,9 @@ pub fn diagnostics_json_view(diagnostics: &[aozora::Diagnostic]) -> String {
                 codepoint: None,
                 _phantom: None,
             },
-            aozora::Diagnostic::UnregisteredSentinel { codepoint, span, .. } => DiagnosticView {
+            aozora::Diagnostic::UnregisteredSentinel {
+                codepoint, span, ..
+            } => DiagnosticView {
                 kind: "unregistered_sentinel",
                 span_start: span.start,
                 span_end: span.end,
@@ -192,8 +196,7 @@ mod tests {
         let json = diagnostics_json_view(doc.parse().diagnostics());
         // Round-trip parse via serde_json — fails the test if the
         // produced string isn't valid JSON.
-        let parsed_json: serde_json::Value =
-            serde_json::from_str(&json).expect("valid JSON");
+        let parsed_json: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert!(parsed_json.is_array(), "diagnostics JSON must be an array");
     }
 }

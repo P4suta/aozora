@@ -30,6 +30,7 @@
 )]
 
 use std::env;
+use std::process;
 use std::time::Instant;
 
 use aozora_corpus::CorpusItem;
@@ -48,7 +49,7 @@ struct DocSample {
 fn main() {
     let Some(corpus) = aozora_corpus::from_env() else {
         eprintln!("AOZORA_CORPUS_ROOT not set or not a directory; nothing to profile.");
-        std::process::exit(2);
+        process::exit(2);
     };
 
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")

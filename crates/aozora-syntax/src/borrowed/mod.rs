@@ -48,6 +48,6 @@ pub use arena::Arena;
 pub use intern::{InternStats, Interner};
 pub use registry::{BlockRegistry, ContainerRegistry, InlineRegistry, Registry};
 pub use types::{
-    Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby,
-    Gaiji, HeadingHint, Kaeriten, Ruby, Sashie, Segment, TateChuYoko, Warichu,
+    Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,
+    Kaeriten, Ruby, Sashie, Segment, TateChuYoko, Warichu,
 };

@@ -9,17 +9,27 @@
 //!
 //! For each band, reports doc count, total bytes, single-thread parse
 //! throughput (MB/s), p50 / p90 / p99 / max latency (ns), and per-byte
-//! cost (ns/byte). The phase_breakdown probe lumps every doc together
+//! cost (ns/byte). The `phase_breakdown` probe lumps every doc together
 //! and so over-weights the very few pathological documents that
 //! dominate aggregate wall-clock; this probe makes the per-class
 //! distribution visible.
 //!
 //! Reads `AOZORA_CORPUS_ROOT`. Optional `AOZORA_PROFILE_LIMIT=N` caps
-//! the sweep.
+//! the sweep. Optional `AOZORA_PROFILE_REPEAT=K` runs the parser
+//! sweep K times back-to-back (load is paid once); useful when
+//! profiling under `samply` because the longer parser-bound run
+//! drowns out the corpus-decode fixed cost.
 //!
 //! ```text
 //! AOZORA_CORPUS_ROOT=… cargo run --release --example throughput_by_class -p aozora-bench
 //! ```
+//!
+//! Output is split into **load wall** (Shift-JIS decode + bucketing)
+//! and **parse wall** (the actual `lex_into_arena` work). Earlier
+//! versions reported a single "wall" that conflated both — when read
+//! by a sampling profiler this caused the corpus-load syscalls
+//! (`read` / `__nss_database_lookup` / `__memmove_avx_unaligned`) to
+//! dominate the trace and bury the parser hot path.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -29,11 +39,13 @@
     clippy::missing_panics_doc,
     clippy::missing_errors_doc,
     clippy::too_many_lines,
+    clippy::too_many_arguments,
     clippy::disallowed_methods,
     reason = "profiling-example tool, not library code"
 )]
 
 use std::env;
+use std::process;
 use std::time::Instant;
 
 use aozora_bench::{SizeBand, SizeBandedCorpus, corpus_size_bands};
@@ -45,25 +57,33 @@ const NS_PER_S: f64 = 1_000_000_000.0;
 
 fn main() {
     let Some(corpus) = aozora_corpus::from_env() else {
-        eprintln!(
-            "AOZORA_CORPUS_ROOT not set or not a directory; nothing to profile."
-        );
-        std::process::exit(2);
+        eprintln!("AOZORA_CORPUS_ROOT not set or not a directory; nothing to profile.");
+        process::exit(2);
     };
 
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")
         .ok()
         .and_then(|s| s.trim().parse().ok());
+    let repeat: usize = env::var("AOZORA_PROFILE_REPEAT")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(1)
+        .max(1);
 
-    eprintln!("throughput_by_class: starting (limit = {limit:?})");
+    eprintln!("throughput_by_class: starting (limit = {limit:?}, repeat = {repeat})");
 
+    let load_start = Instant::now();
     let items: Vec<CorpusItem> = corpus
         .iter()
         .take(limit.unwrap_or(usize::MAX))
         .filter_map(Result::ok)
         .collect();
-    eprintln!("throughput_by_class: loaded {} items, bucketing…", items.len());
+    eprintln!(
+        "throughput_by_class: loaded {} items, bucketing…",
+        items.len()
+    );
     let banded = corpus_size_bands(items);
+    let load_secs = load_start.elapsed().as_secs_f64();
     eprintln!(
         "throughput_by_class: bucketed (small={}, medium={}, large={}, path={}, decode_err={})",
         banded.small.len(),
@@ -72,12 +92,23 @@ fn main() {
         banded.pathological.len(),
         banded.decode_errors,
     );
+    eprintln!(
+        "throughput_by_class: load wall {load_secs:.2}s (Shift-JIS decode + bucketing — \
+         excluded from parse measurements)"
+    );
 
-    let wall_start = Instant::now();
-    let report = measure_all(&banded);
-    let wall_elapsed = wall_start.elapsed();
+    let parse_start = Instant::now();
+    let mut report = measure_all(&banded);
+    for _ in 1..repeat {
+        // Discard repeats — only the per-doc latencies of the final
+        // pass are kept; earlier passes serve to warm caches and
+        // (importantly) to give a sampling profiler more parser-bound
+        // wall time to attach to.
+        report = measure_all(&banded);
+    }
+    let parse_secs = parse_start.elapsed().as_secs_f64();
 
-    print_report(&report, &banded, wall_elapsed.as_secs_f64());
+    print_report(&report, &banded, parse_secs, load_secs, repeat);
 }
 
 #[derive(Debug, Default)]
@@ -134,14 +165,23 @@ fn measure_all(banded: &SizeBandedCorpus) -> AllReport {
     report
 }
 
-fn print_report(report: &AllReport, banded: &SizeBandedCorpus, wall_secs: f64) {
+fn print_report(
+    report: &AllReport,
+    banded: &SizeBandedCorpus,
+    parse_secs: f64,
+    load_secs: f64,
+    repeat: usize,
+) {
     println!("=== throughput_by_class ===");
     println!();
     println!(
-        "Corpus: {} docs across 4 bands; {} decode errors; {:.2}s wall",
+        "Corpus: {} docs across 4 bands; {} decode errors",
         banded.total_docs(),
         banded.decode_errors,
-        wall_secs
+    );
+    println!(
+        "Wall:    load {load_secs:.2}s   parse {parse_secs:.2}s ({repeat} pass{plural})",
+        plural = if repeat == 1 { "" } else { "es" }
     );
     println!();
     println!(
@@ -153,8 +193,18 @@ fn print_report(report: &AllReport, banded: &SizeBandedCorpus, wall_secs: f64) {
         let r = &report.bands[slot];
         let docs = r.latencies_ns.len();
         if docs == 0 {
-            println!("{:<13} {:>6} {:>13} {:>10} {:>10} {:>10} {:>10} {:>11} {:>10}",
-                band.label(), 0, 0, "-", "-", "-", "-", "-", "-");
+            println!(
+                "{:<13} {:>6} {:>13} {:>10} {:>10} {:>10} {:>10} {:>11} {:>10}",
+                band.label(),
+                0,
+                0,
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-"
+            );
             continue;
         }
         let mut sorted = r.latencies_ns.clone();

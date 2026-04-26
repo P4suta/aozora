@@ -14,8 +14,8 @@
 
 use alloc::vec::Vec;
 
-use aozora_spec::{TriggerKind, classify_trigger_bytes};
 use aozora_spec::trigger::TRIGGER_LEADING_BYTES;
+use aozora_spec::{TriggerKind, classify_trigger_bytes};
 
 use crate::TriggerScanner;
 
@@ -134,7 +134,10 @@ mod tests {
         ];
         for (s, expected) in cases {
             let got = ScalarScanner.scan_offsets(s);
-            assert_eq!(&got, expected, "trigger {s:?}: expected {expected:?}, got {got:?}");
+            assert_eq!(
+                &got, expected,
+                "trigger {s:?}: expected {expected:?}, got {got:?}"
+            );
         }
     }
 

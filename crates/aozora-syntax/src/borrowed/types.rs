@@ -14,8 +14,8 @@
 use core::slice;
 
 use crate::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container,
-    Indent, Keigakomi, SectionKind,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container, Indent,
+    Keigakomi, SectionKind,
 };
 
 // ----------------------------------------------------------------------
@@ -363,11 +363,8 @@ mod tests {
 
     #[test]
     fn content_iter_over_segments_preserves_order() {
-        let segs: &'static [Segment<'static>] = &[
-            Segment::Text("a"),
-            Segment::Text("b"),
-            Segment::Text("c"),
-        ];
+        let segs: &'static [Segment<'static>] =
+            &[Segment::Text("a"), Segment::Text("b"), Segment::Text("c")];
         let collected: Vec<Segment<'static>> = Content::Segments(segs).iter().collect();
         assert_eq!(collected.len(), 3);
         for (i, seg) in collected.iter().enumerate() {

@@ -12,7 +12,7 @@
 //! nodes; phase3 of the lex pipeline was generic over the trait so a
 //! single classifier body served both backends through the migration.
 //! With every owned-AST consumer removed (aozora-parser deleted in
-//! F.1, the aozora_lex / aozora_lexer owned API removed in F.2-F.3),
+//! F.1, the `aozora_lex` / `aozora_lexer` owned API removed in F.2-F.3),
 //! the trait gymnastics no longer earn their keep — phase3 now calls
 //! `BorrowedAllocator`'s inherent methods directly.
 //!
@@ -30,7 +30,7 @@
 //!
 //! ## Canonicalisation
 //!
-//! Both `content_plain("")` and `content_segments(vec![])` return
+//! Both `content_plain("")` and `content_segments(&[])` return
 //! [`borrowed::Content::EMPTY`] (i.e. `Segments(&[])`). `content_segments`
 //! collapses an all-`Text` input into a single concatenated `Plain`
 //! (the concatenation is interned). The legacy owned `Content::from`
@@ -51,13 +51,17 @@ use crate::{
 /// Owns an [`Interner`] keyed off the supplied [`Arena`]; both string
 /// content and per-variant payloads land in the arena, so dropping the
 /// arena tears the entire AST down in one step (no per-node `Drop`
-/// runs, no Box::drop traffic).
+/// runs, no `Box::drop` traffic).
 #[derive(Debug)]
 pub struct BorrowedAllocator<'a> {
     arena: &'a Arena,
     interner: Interner<'a>,
 }
 
+#[allow(
+    clippy::unused_self,
+    reason = "API consistency: every BorrowedAllocator builder method takes &mut self even when the variant is a pure wrapper, so call sites have a uniform shape (alloc.method(...) for every variant). Switching trivial wrappers to free fns would split the API in half."
+)]
 impl<'a> BorrowedAllocator<'a> {
     /// New allocator with a fresh interner sized to `interner_capacity`.
     /// Capacity is rounded up to the next power of two by the interner.
@@ -87,6 +91,7 @@ impl<'a> BorrowedAllocator<'a> {
     /// inspect its dedup counters (cache hits, table hits, allocs,
     /// average probe length). The interner's `&'a` arena reference
     /// continues to keep the interned strings alive.
+    #[must_use]
     pub fn into_interner(self) -> Interner<'a> {
         self.interner
     }
@@ -108,17 +113,11 @@ impl<'a> BorrowedAllocator<'a> {
     /// Build a body content from a sequence of segments. Empty input →
     /// `Segments(&[])`; all-`Text` input collapses into a single
     /// concatenated `Plain` (interned).
-    pub fn content_segments(
-        &mut self,
-        segs: Vec<borrowed::Segment<'a>>,
-    ) -> borrowed::Content<'a> {
+    pub fn content_segments(&mut self, segs: &[borrowed::Segment<'a>]) -> borrowed::Content<'a> {
         if segs.is_empty() {
             return borrowed::Content::EMPTY;
         }
-        if segs
-            .iter()
-            .all(|s| matches!(s, borrowed::Segment::Text(_)))
-        {
+        if segs.iter().all(|s| matches!(s, borrowed::Segment::Text(_))) {
             // Total length is known (sum of text lengths) so we can
             // pre-size the buffer and avoid reallocation.
             let total: usize = segs
@@ -129,14 +128,14 @@ impl<'a> BorrowedAllocator<'a> {
                 })
                 .sum();
             let mut buf = String::with_capacity(total);
-            for s in &segs {
+            for s in segs {
                 if let borrowed::Segment::Text(t) = s {
                     buf.push_str(t);
                 }
             }
             return borrowed::Content::Plain(self.interner.intern(&buf));
         }
-        borrowed::Content::Segments(self.arena.alloc_slice_copy(&segs))
+        borrowed::Content::Segments(self.arena.alloc_slice_copy(segs))
     }
 
     /// `Segment::Text(s)` — interns the string.
@@ -145,15 +144,14 @@ impl<'a> BorrowedAllocator<'a> {
     }
 
     /// `Segment::Gaiji(g)` — wraps a payload built via [`Self::make_gaiji`].
-    pub fn seg_gaiji(&mut self, g: &'a borrowed::Gaiji<'a>) -> borrowed::Segment<'a> {
+    #[must_use]
+    pub fn seg_gaiji(&self, g: &'a borrowed::Gaiji<'a>) -> borrowed::Segment<'a> {
         borrowed::Segment::Gaiji(g)
     }
 
     /// `Segment::Annotation(a)` — wraps a payload built via [`Self::make_annotation`].
-    pub fn seg_annotation(
-        &mut self,
-        a: &'a borrowed::Annotation<'a>,
-    ) -> borrowed::Segment<'a> {
+    #[must_use]
+    pub fn seg_annotation(&self, a: &'a borrowed::Annotation<'a>) -> borrowed::Segment<'a> {
         borrowed::Segment::Annotation(a)
     }
 
@@ -196,8 +194,9 @@ impl<'a> BorrowedAllocator<'a> {
     // ---------------------------------------------------------------------
 
     /// `AozoraNode::Ruby(Ruby { base, reading, delim_explicit })`.
+    #[must_use]
     pub fn ruby(
-        &mut self,
+        &self,
         base: borrowed::Content<'a>,
         reading: borrowed::Content<'a>,
         delim_explicit: bool,
@@ -210,8 +209,9 @@ impl<'a> BorrowedAllocator<'a> {
     }
 
     /// `AozoraNode::Bouten(Bouten { kind, target, position })`.
+    #[must_use]
     pub fn bouten(
-        &mut self,
+        &self,
         kind: BoutenKind,
         target: borrowed::Content<'a>,
         position: BoutenPosition,
@@ -224,28 +224,33 @@ impl<'a> BorrowedAllocator<'a> {
     }
 
     /// `AozoraNode::TateChuYoko(TateChuYoko { text })`.
-    pub fn tate_chu_yoko(&mut self, text: borrowed::Content<'a>) -> borrowed::AozoraNode<'a> {
+    #[must_use]
+    pub fn tate_chu_yoko(&self, text: borrowed::Content<'a>) -> borrowed::AozoraNode<'a> {
         borrowed::AozoraNode::TateChuYoko(self.arena.alloc(borrowed::TateChuYoko { text }))
     }
 
     /// `AozoraNode::Gaiji(g)`.
-    pub fn gaiji(&mut self, g: &'a borrowed::Gaiji<'a>) -> borrowed::AozoraNode<'a> {
+    #[must_use]
+    pub fn gaiji(&self, g: &'a borrowed::Gaiji<'a>) -> borrowed::AozoraNode<'a> {
         borrowed::AozoraNode::Gaiji(g)
     }
 
     /// `AozoraNode::Indent(i)`.
-    pub fn indent(&mut self, i: Indent) -> borrowed::AozoraNode<'a> {
+    #[must_use]
+    pub fn indent(&self, i: Indent) -> borrowed::AozoraNode<'a> {
         borrowed::AozoraNode::Indent(i)
     }
 
     /// `AozoraNode::AlignEnd(a)`.
-    pub fn align_end(&mut self, a: AlignEnd) -> borrowed::AozoraNode<'a> {
+    #[must_use]
+    pub fn align_end(&self, a: AlignEnd) -> borrowed::AozoraNode<'a> {
         borrowed::AozoraNode::AlignEnd(a)
     }
 
     /// `AozoraNode::Warichu(Warichu { upper, lower })`.
+    #[must_use]
     pub fn warichu(
-        &mut self,
+        &self,
         upper: borrowed::Content<'a>,
         lower: borrowed::Content<'a>,
     ) -> borrowed::AozoraNode<'a> {
@@ -253,30 +258,33 @@ impl<'a> BorrowedAllocator<'a> {
     }
 
     /// `AozoraNode::Keigakomi(k)`.
-    pub fn keigakomi(&mut self, k: Keigakomi) -> borrowed::AozoraNode<'a> {
+    #[must_use]
+    pub fn keigakomi(&self, k: Keigakomi) -> borrowed::AozoraNode<'a> {
         borrowed::AozoraNode::Keigakomi(k)
     }
 
     /// `AozoraNode::PageBreak`.
-    pub fn page_break(&mut self) -> borrowed::AozoraNode<'a> {
+    #[must_use]
+    pub fn page_break(&self) -> borrowed::AozoraNode<'a> {
         borrowed::AozoraNode::PageBreak
     }
 
     /// `AozoraNode::SectionBreak(k)`.
-    pub fn section_break(&mut self, k: SectionKind) -> borrowed::AozoraNode<'a> {
+    #[must_use]
+    pub fn section_break(&self, k: SectionKind) -> borrowed::AozoraNode<'a> {
         borrowed::AozoraNode::SectionBreak(k)
     }
 
     /// `AozoraNode::AozoraHeading(AozoraHeading { kind, text })`.
+    #[must_use]
     pub fn aozora_heading(
-        &mut self,
+        &self,
         kind: AozoraHeadingKind,
         text: borrowed::Content<'a>,
     ) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::AozoraHeading(self.arena.alloc(borrowed::AozoraHeading {
-            kind,
-            text,
-        }))
+        borrowed::AozoraNode::AozoraHeading(
+            self.arena.alloc(borrowed::AozoraHeading { kind, text }),
+        )
     }
 
     /// `AozoraNode::HeadingHint(HeadingHint { level, target })`.
@@ -307,20 +315,20 @@ impl<'a> BorrowedAllocator<'a> {
     }
 
     /// `AozoraNode::Annotation(a)`.
-    pub fn annotation(
-        &mut self,
-        a: &'a borrowed::Annotation<'a>,
-    ) -> borrowed::AozoraNode<'a> {
+    #[must_use]
+    pub fn annotation(&self, a: &'a borrowed::Annotation<'a>) -> borrowed::AozoraNode<'a> {
         borrowed::AozoraNode::Annotation(a)
     }
 
     /// `AozoraNode::DoubleRuby(DoubleRuby { content })`.
-    pub fn double_ruby(&mut self, content: borrowed::Content<'a>) -> borrowed::AozoraNode<'a> {
+    #[must_use]
+    pub fn double_ruby(&self, content: borrowed::Content<'a>) -> borrowed::AozoraNode<'a> {
         borrowed::AozoraNode::DoubleRuby(self.arena.alloc(borrowed::DoubleRuby { content }))
     }
 
     /// `AozoraNode::Container(c)`.
-    pub fn container(&mut self, c: Container) -> borrowed::AozoraNode<'a> {
+    #[must_use]
+    pub fn container(&self, c: Container) -> borrowed::AozoraNode<'a> {
         borrowed::AozoraNode::Container(c)
     }
 }
@@ -334,9 +342,14 @@ mod tests {
     //! we asked for. Together they cover all 17 node variants plus
     //! content / segment composition + interner dedup.
 
+    use core::ptr;
+
     use super::*;
     use crate::borrowed;
-    use crate::{AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container, ContainerKind, Indent, Keigakomi, SectionKind};
+    use crate::{
+        AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container,
+        ContainerKind, Indent, Keigakomi, SectionKind,
+    };
 
     fn fresh_alloc(arena: &Arena) -> BorrowedAllocator<'_> {
         BorrowedAllocator::new(arena)
@@ -424,7 +437,7 @@ mod tests {
     #[test]
     fn indent_round_trip() {
         let arena = Arena::new();
-        let mut a = fresh_alloc(&arena);
+        let a = fresh_alloc(&arena);
         let n = a.indent(Indent { amount: 3 });
         assert!(matches!(
             n,
@@ -435,7 +448,7 @@ mod tests {
     #[test]
     fn align_end_round_trip() {
         let arena = Arena::new();
-        let mut a = fresh_alloc(&arena);
+        let a = fresh_alloc(&arena);
         let n = a.align_end(AlignEnd { offset: 2 });
         assert!(matches!(
             n,
@@ -462,7 +475,7 @@ mod tests {
     #[test]
     fn keigakomi_round_trip() {
         let arena = Arena::new();
-        let mut a = fresh_alloc(&arena);
+        let a = fresh_alloc(&arena);
         let n = a.keigakomi(Keigakomi);
         assert!(matches!(n, borrowed::AozoraNode::Keigakomi(Keigakomi)));
     }
@@ -470,7 +483,7 @@ mod tests {
     #[test]
     fn page_break_round_trip() {
         let arena = Arena::new();
-        let mut a = fresh_alloc(&arena);
+        let a = fresh_alloc(&arena);
         let n = a.page_break();
         assert!(matches!(n, borrowed::AozoraNode::PageBreak));
     }
@@ -478,7 +491,7 @@ mod tests {
     #[test]
     fn section_break_round_trip() {
         let arena = Arena::new();
-        let mut a = fresh_alloc(&arena);
+        let a = fresh_alloc(&arena);
         let n = a.section_break(SectionKind::Choho);
         assert!(matches!(
             n,
@@ -590,7 +603,7 @@ mod tests {
     #[test]
     fn container_round_trip() {
         let arena = Arena::new();
-        let mut a = fresh_alloc(&arena);
+        let a = fresh_alloc(&arena);
         let c = Container {
             kind: ContainerKind::Indent { amount: 1 },
         };
@@ -628,10 +641,9 @@ mod tests {
         let seg_t2 = a.seg_text(" after");
         let ann = a.make_annotation("［＃X］", AnnotationKind::Unknown);
         let seg_a = a.seg_annotation(ann);
-        let c = a.content_segments(vec![seg_t1, seg_g, seg_t2, seg_a]);
-        let segs = match c {
-            borrowed::Content::Segments(s) => s,
-            _ => panic!("expected Segments variant for mixed-kind input"),
+        let c = a.content_segments(&[seg_t1, seg_g, seg_t2, seg_a]);
+        let borrowed::Content::Segments(segs) = c else {
+            panic!("expected Segments variant for mixed-kind input");
         };
         assert_eq!(segs.len(), 4);
         assert!(matches!(&segs[0], borrowed::Segment::Text(t) if *t == "before "));
@@ -646,7 +658,7 @@ mod tests {
         let mut a = fresh_alloc(&arena);
         let s1 = a.seg_text("hi ");
         let s2 = a.seg_text("there");
-        let c = a.content_segments(vec![s1, s2]);
+        let c = a.content_segments(&[s1, s2]);
         assert_eq!(c.as_plain(), Some("hi there"));
     }
 
@@ -654,7 +666,7 @@ mod tests {
     fn content_segments_empty_collapses_to_empty_segments() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let c = a.content_segments(vec![]);
+        let c = a.content_segments(&[]);
         assert!(matches!(c, borrowed::Content::Segments(s) if s.is_empty()));
     }
 
@@ -673,13 +685,11 @@ mod tests {
         let base2 = a.content_plain("青梅");
         let reading2 = a.content_plain("おうめ");
         let n2 = a.ruby(base2, reading2, false);
-        let r1 = match n1 {
-            borrowed::AozoraNode::Ruby(r) => r,
-            _ => unreachable!(),
+        let borrowed::AozoraNode::Ruby(r1) = n1 else {
+            unreachable!();
         };
-        let r2 = match n2 {
-            borrowed::AozoraNode::Ruby(r) => r,
-            _ => unreachable!(),
+        let borrowed::AozoraNode::Ruby(r2) = n2 else {
+            unreachable!();
         };
         let s1 = r1.reading.as_plain().expect("plain");
         let s2 = r2.reading.as_plain().expect("plain");
@@ -694,6 +704,6 @@ mod tests {
     fn arena_accessor_returns_construction_arena() {
         let arena = Arena::new();
         let a = fresh_alloc(&arena);
-        assert!(core::ptr::eq(a.arena(), &arena));
+        assert!(ptr::eq(a.arena(), &raw const arena));
     }
 }

@@ -89,9 +89,8 @@ unsafe fn scan_offsets_avx2(bytes: &[u8]) -> Vec<u32> {
         // in-bounds; `_mm256_loadu_si256` is the unaligned load
         // intrinsic so alignment is not required. Pointer arithmetic
         // requires `unsafe` even inside the AVX2-feature-enabled fn.
-        let chunk: __m256i = unsafe {
-            _mm256_loadu_si256(bytes.as_ptr().add(chunk_offset).cast::<__m256i>())
-        };
+        let chunk: __m256i =
+            unsafe { _mm256_loadu_si256(bytes.as_ptr().add(chunk_offset).cast::<__m256i>()) };
 
         // Three byte-equal compares, OR'd together: mask bit `i` is
         // set iff byte `chunk_offset + i` equals one of the three
@@ -225,14 +224,20 @@ mod tests {
         }
         // Pad with 30 ASCII bytes so the trigger sits right at the
         // chunk boundary (offset 30 .. 33; chunk boundary is 32).
-        let triggers = ["｜", "《", "》", "［", "］", "＃", "※", "〔", "〕", "「", "」"];
+        let triggers = [
+            "｜", "《", "》", "［", "］", "＃", "※", "〔", "〕", "「", "」",
+        ];
         for trigger in triggers {
             let pad: String = "x".repeat(30);
             let s = format!("{pad}{trigger}tail");
             let avx2 = Avx2Scanner.scan_offsets(&s);
             let scalar = ScalarScanner.scan_offsets(&s);
             assert_eq!(avx2, scalar, "diverged on trigger {trigger:?}");
-            assert_eq!(avx2, vec![30], "expected trigger at offset 30 for {trigger:?}");
+            assert_eq!(
+                avx2,
+                vec![30],
+                "expected trigger at offset 30 for {trigger:?}"
+            );
         }
     }
 }

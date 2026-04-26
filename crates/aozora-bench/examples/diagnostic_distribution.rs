@@ -23,7 +23,9 @@
     reason = "profiling-example tool, not library code"
 )]
 
+use std::cmp::Reverse;
 use std::env;
+use std::process;
 use std::time::Instant;
 
 use aozora_corpus::CorpusItem;
@@ -58,7 +60,7 @@ const BUCKET_LABELS: [&str; 5] = ["0", "1-5", "6-20", "21-100", "100+"];
 fn main() {
     let Some(corpus) = aozora_corpus::from_env() else {
         eprintln!("AOZORA_CORPUS_ROOT not set or not a directory; nothing to profile.");
-        std::process::exit(2);
+        process::exit(2);
     };
 
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")
@@ -154,7 +156,7 @@ fn print_report(samples: &[Sample], labels: &[String], decode_errors: usize) {
     println!();
 
     let mut indexed: Vec<(usize, &Sample)> = samples.iter().enumerate().collect();
-    indexed.sort_by_key(|(_, s)| std::cmp::Reverse(s.diag_count));
+    indexed.sort_by_key(|(_, s)| Reverse(s.diag_count));
     println!("Top-5 docs by diagnostic count");
     for (idx, s) in indexed.iter().take(5) {
         let label = labels.get(*idx).map_or("?", String::as_str);

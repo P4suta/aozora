@@ -23,7 +23,7 @@
 
 use core::fmt;
 
-use aozora_lex::{lex_into_arena, BorrowedLexOutput};
+use aozora_lex::{BorrowedLexOutput, lex_into_arena};
 use aozora_render::{html as borrowed_html, serialize as borrowed_serialize};
 use aozora_spec::Diagnostic;
 use aozora_syntax::borrowed::Arena;
@@ -54,7 +54,7 @@ impl Document {
     ///
     /// The arena is pre-sized to `source.len() * ARENA_CAPACITY_FACTOR`
     /// bytes (a corpus-profile-driven estimate of the AST footprint).
-    /// N6 finding (full-corpus allocator_pressure probe): p50 arena/source
+    /// N6 finding (full-corpus `allocator_pressure` probe): p50 arena/source
     /// ratio is 3.4×, p99 is 8.25×; pre-sizing eliminates the early
     /// chunk-grow churn that hits large docs hardest. Callers that
     /// know the AST is unusually small can fall back to
@@ -152,7 +152,6 @@ impl<'a> AozoraTree<'a> {
         borrowed_serialize::serialize(&self.inner)
     }
 }
-
 
 #[cfg(test)]
 mod tests {

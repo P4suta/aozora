@@ -81,15 +81,13 @@ impl<'s> Tokenizer<'s> {
     }
 
     fn flush_text(&mut self, end: u32) -> Option<Token> {
-        if end > self.text_start {
+        (end > self.text_start).then(|| {
             let tok = Token::Text {
                 range: Span::new(self.text_start, end),
             };
             self.text_start = end;
-            Some(tok)
-        } else {
-            None
-        }
+            tok
+        })
     }
 }
 
@@ -147,10 +145,9 @@ impl Iterator for Tokenizer<'_> {
                     }
                     _ => None,
                 };
-                let (emit_kind, consumed) = merged
-                    .map_or((kind, ch_len), |merged_kind| {
-                        (merged_kind, merged_kind.source_byte_len())
-                    });
+                let (emit_kind, consumed) = merged.map_or((kind, ch_len), |merged_kind| {
+                    (merged_kind, merged_kind.source_byte_len())
+                });
 
                 let trigger_pos = self.cursor;
                 let text = self.flush_text(trigger_pos);

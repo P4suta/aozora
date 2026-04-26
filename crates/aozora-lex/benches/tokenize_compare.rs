@@ -38,11 +38,7 @@ fn bench_tokenize(c: &mut Criterion) {
     let sparse = build_sparse(SIZE);
     let dense = build_dense(SIZE);
 
-    for (label, sample) in [
-        ("plain", &plain),
-        ("sparse", &sparse),
-        ("dense", &dense),
-    ] {
+    for (label, sample) in [("plain", &plain), ("sparse", &sparse), ("dense", &dense)] {
         let mut g = c.benchmark_group(label);
         g.throughput(Throughput::Bytes(sample.len() as u64));
 

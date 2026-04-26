@@ -53,8 +53,16 @@
 //! HTML output outside an `afm-annotation` wrapper) holds regardless
 //! of which specialised recogniser claims the bracket.
 
+use core::mem;
 use core::ops::Range;
 use std::collections::VecDeque;
+use std::iter;
+
+#[cfg(feature = "phase3-instrument")]
+use crate::instrumentation::{
+    Subsystem, SubsystemGuard, YieldKind, record_pending_size, record_replay_body_size,
+    record_yield,
+};
 
 use aozora_encoding::gaiji as gaiji_resolve;
 // Phase 3 builds borrowed AST directly via `BorrowedAllocator`'s
@@ -223,15 +231,14 @@ const FORWARD_QUOTE_BODY_THRESHOLD: usize = 64;
 /// pipeline starts and replaces the legacy event-driven pre-pass that
 /// I-2 deforestation made impossible to keep around.
 fn install_forward_target_index_from_source(source: &str) {
-    #[cfg(feature = "phase3-instrument")]
-    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-        crate::instrumentation::Subsystem::ForwardIndexInstall,
-    );
     use memchr::memmem;
 
     // `「` is U+300C, UTF-8 = E3 80 8C; `」` is U+300D, UTF-8 = E3 80 8D.
     const QUOTE_OPEN: &[u8] = b"\xE3\x80\x8C";
     const QUOTE_CLOSE: &[u8] = b"\xE3\x80\x8D";
+
+    #[cfg(feature = "phase3-instrument")]
+    let _phase3_guard = SubsystemGuard::new(Subsystem::ForwardIndexInstall);
 
     let bytes = source.as_bytes();
     // Cheap up-front gate: if there are very few `「` triggers in the
@@ -257,9 +264,9 @@ fn install_forward_target_index_from_source(source: &str) {
         if body.is_empty() {
             continue;
         }
-        first_positions
-            .entry(body.to_owned())
-            .or_insert(open_pos as u32);
+        first_positions.entry(body.to_owned()).or_insert_with(|| {
+            u32::try_from(open_pos).expect("source positions fit in u32 per Phase 0 cap")
+        });
     }
 
     if first_positions.len() < FORWARD_QUOTE_BODY_THRESHOLD {
@@ -311,27 +318,27 @@ enum BodyFamily {
     SectionChoho,
     SectionDan,
     SectionSpread,
-    AlignEnd0,                  // 地付き
-    KeigakomiOpen,              // 罫囲み
-    KeigakomiClose,             // 罫囲み終わり
-    IndentBlock1,               // ここから字下げ → Indent { amount: 1 }
-    AlignEndBlock0,             // ここから地付き → AlignEnd { offset: 0 }
-    IndentBlockEnd,             // ここで字下げ終わり
-    AlignEndBlockEnd,           // ここで地付き終わり
-    WarichuOpen,                // 割り注
-    WarichuClose,               // 割り注終わり
-    KaeritenSingle,             // body must equal one of 12 single-char marks
-    KaeritenCompound,           // body must equal one of 6 compound marks
+    AlignEnd0,        // 地付き
+    KeigakomiOpen,    // 罫囲み
+    KeigakomiClose,   // 罫囲み終わり
+    IndentBlock1,     // ここから字下げ → Indent { amount: 1 }
+    AlignEndBlock0,   // ここから地付き → AlignEnd { offset: 0 }
+    IndentBlockEnd,   // ここで字下げ終わり
+    AlignEndBlockEnd, // ここで地付き終わり
+    WarichuOpen,      // 割り注
+    WarichuClose,     // 割り注終わり
+    KaeritenSingle,   // body must equal one of 12 single-char marks
+    KaeritenCompound, // body must equal one of 6 compound marks
 
     // === Prefix-with-parameter (parse body[match_end..]) ===
-    AlignEndParamPrefix,        // 地から → 地から{N}字上げ
-    SashiePrefix,               // 挿絵（ → 挿絵（X）入る
-    IndentBlockParamPrefix,     // ここから → ここから{N}字下げ
-    AlignEndBlockParamPrefix,   // ここから地から → ここから地から{N}字上げ
-    OkuriganaPrefix,            // （ → kaeriten okurigana （X）
+    AlignEndParamPrefix,      // 地から → 地から{N}字上げ
+    SashiePrefix,             // 挿絵（ → 挿絵（X）入る
+    IndentBlockParamPrefix,   // ここから → ここから{N}字下げ
+    AlignEndBlockParamPrefix, // ここから地から → ここから地から{N}字上げ
+    OkuriganaPrefix,          // （ → kaeriten okurigana （X）
 
     // === Body-equals-pattern then parse from body[0] ===
-    IndentParamPrefix,          // {digit} → {N}字下げ (re-parse from body[0])
+    IndentParamPrefix, // {digit} → {N}字下げ (re-parse from body[0])
 }
 
 /// Static pattern table. Order is irrelevant for behavior because the
@@ -341,71 +348,239 @@ enum BodyFamily {
 /// readability instead of sorting by length.
 static BODY_PATTERNS: &[BodyPattern] = &[
     // Block container with full-keyword bodies.
-    BodyPattern { needle: "ここから字下げ",    family: BodyFamily::IndentBlock1 },
-    BodyPattern { needle: "ここから地付き",    family: BodyFamily::AlignEndBlock0 },
-    BodyPattern { needle: "ここから地から",    family: BodyFamily::AlignEndBlockParamPrefix },
-    BodyPattern { needle: "ここから",          family: BodyFamily::IndentBlockParamPrefix },
-    BodyPattern { needle: "ここで字下げ終わり", family: BodyFamily::IndentBlockEnd },
-    BodyPattern { needle: "ここで地付き終わり", family: BodyFamily::AlignEndBlockEnd },
+    BodyPattern {
+        needle: "ここから字下げ",
+        family: BodyFamily::IndentBlock1,
+    },
+    BodyPattern {
+        needle: "ここから地付き",
+        family: BodyFamily::AlignEndBlock0,
+    },
+    BodyPattern {
+        needle: "ここから地から",
+        family: BodyFamily::AlignEndBlockParamPrefix,
+    },
+    BodyPattern {
+        needle: "ここから",
+        family: BodyFamily::IndentBlockParamPrefix,
+    },
+    BodyPattern {
+        needle: "ここで字下げ終わり",
+        family: BodyFamily::IndentBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここで地付き終わり",
+        family: BodyFamily::AlignEndBlockEnd,
+    },
     // Section / page break (exact).
-    BodyPattern { needle: "改ページ",          family: BodyFamily::PageBreak },
-    BodyPattern { needle: "改丁",              family: BodyFamily::SectionChoho },
-    BodyPattern { needle: "改段",              family: BodyFamily::SectionDan },
-    BodyPattern { needle: "改見開き",          family: BodyFamily::SectionSpread },
+    BodyPattern {
+        needle: "改ページ",
+        family: BodyFamily::PageBreak,
+    },
+    BodyPattern {
+        needle: "改丁",
+        family: BodyFamily::SectionChoho,
+    },
+    BodyPattern {
+        needle: "改段",
+        family: BodyFamily::SectionDan,
+    },
+    BodyPattern {
+        needle: "改見開き",
+        family: BodyFamily::SectionSpread,
+    },
     // Geographic alignment.
-    BodyPattern { needle: "地から",            family: BodyFamily::AlignEndParamPrefix },
-    BodyPattern { needle: "地付き",            family: BodyFamily::AlignEnd0 },
+    BodyPattern {
+        needle: "地から",
+        family: BodyFamily::AlignEndParamPrefix,
+    },
+    BodyPattern {
+        needle: "地付き",
+        family: BodyFamily::AlignEnd0,
+    },
     // Other inline / block.
-    BodyPattern { needle: "挿絵（",            family: BodyFamily::SashiePrefix },
-    BodyPattern { needle: "罫囲み終わり",      family: BodyFamily::KeigakomiClose },
-    BodyPattern { needle: "罫囲み",            family: BodyFamily::KeigakomiOpen },
-    BodyPattern { needle: "割り注終わり",      family: BodyFamily::WarichuClose },
-    BodyPattern { needle: "割り注",            family: BodyFamily::WarichuOpen },
+    BodyPattern {
+        needle: "挿絵（",
+        family: BodyFamily::SashiePrefix,
+    },
+    BodyPattern {
+        needle: "罫囲み終わり",
+        family: BodyFamily::KeigakomiClose,
+    },
+    BodyPattern {
+        needle: "罫囲み",
+        family: BodyFamily::KeigakomiOpen,
+    },
+    BodyPattern {
+        needle: "割り注終わり",
+        family: BodyFamily::WarichuClose,
+    },
+    BodyPattern {
+        needle: "割り注",
+        family: BodyFamily::WarichuOpen,
+    },
     // Kaeriten okurigana opener (full-width left paren U+FF08).
-    BodyPattern { needle: "（",                family: BodyFamily::OkuriganaPrefix },
+    BodyPattern {
+        needle: "（",
+        family: BodyFamily::OkuriganaPrefix,
+    },
     // Kaeriten compound marks (6) — must precede the single forms in
     // the table only for documentation; LeftmostLongest does the
     // actual disambiguation (`一レ` 6 bytes > `一` 3 bytes).
-    BodyPattern { needle: "一レ",              family: BodyFamily::KaeritenCompound },
-    BodyPattern { needle: "上レ",              family: BodyFamily::KaeritenCompound },
-    BodyPattern { needle: "下レ",              family: BodyFamily::KaeritenCompound },
-    BodyPattern { needle: "中レ",              family: BodyFamily::KaeritenCompound },
-    BodyPattern { needle: "二レ",              family: BodyFamily::KaeritenCompound },
-    BodyPattern { needle: "三レ",              family: BodyFamily::KaeritenCompound },
+    BodyPattern {
+        needle: "一レ",
+        family: BodyFamily::KaeritenCompound,
+    },
+    BodyPattern {
+        needle: "上レ",
+        family: BodyFamily::KaeritenCompound,
+    },
+    BodyPattern {
+        needle: "下レ",
+        family: BodyFamily::KaeritenCompound,
+    },
+    BodyPattern {
+        needle: "中レ",
+        family: BodyFamily::KaeritenCompound,
+    },
+    BodyPattern {
+        needle: "二レ",
+        family: BodyFamily::KaeritenCompound,
+    },
+    BodyPattern {
+        needle: "三レ",
+        family: BodyFamily::KaeritenCompound,
+    },
     // Kaeriten single marks (12).
-    BodyPattern { needle: "一",                family: BodyFamily::KaeritenSingle },
-    BodyPattern { needle: "丁",                family: BodyFamily::KaeritenSingle },
-    BodyPattern { needle: "三",                family: BodyFamily::KaeritenSingle },
-    BodyPattern { needle: "上",                family: BodyFamily::KaeritenSingle },
-    BodyPattern { needle: "下",                family: BodyFamily::KaeritenSingle },
-    BodyPattern { needle: "中",                family: BodyFamily::KaeritenSingle },
-    BodyPattern { needle: "丙",                family: BodyFamily::KaeritenSingle },
-    BodyPattern { needle: "乙",                family: BodyFamily::KaeritenSingle },
-    BodyPattern { needle: "二",                family: BodyFamily::KaeritenSingle },
-    BodyPattern { needle: "四",                family: BodyFamily::KaeritenSingle },
-    BodyPattern { needle: "甲",                family: BodyFamily::KaeritenSingle },
-    BodyPattern { needle: "レ",                family: BodyFamily::KaeritenSingle },
+    BodyPattern {
+        needle: "一",
+        family: BodyFamily::KaeritenSingle,
+    },
+    BodyPattern {
+        needle: "丁",
+        family: BodyFamily::KaeritenSingle,
+    },
+    BodyPattern {
+        needle: "三",
+        family: BodyFamily::KaeritenSingle,
+    },
+    BodyPattern {
+        needle: "上",
+        family: BodyFamily::KaeritenSingle,
+    },
+    BodyPattern {
+        needle: "下",
+        family: BodyFamily::KaeritenSingle,
+    },
+    BodyPattern {
+        needle: "中",
+        family: BodyFamily::KaeritenSingle,
+    },
+    BodyPattern {
+        needle: "丙",
+        family: BodyFamily::KaeritenSingle,
+    },
+    BodyPattern {
+        needle: "乙",
+        family: BodyFamily::KaeritenSingle,
+    },
+    BodyPattern {
+        needle: "二",
+        family: BodyFamily::KaeritenSingle,
+    },
+    BodyPattern {
+        needle: "四",
+        family: BodyFamily::KaeritenSingle,
+    },
+    BodyPattern {
+        needle: "甲",
+        family: BodyFamily::KaeritenSingle,
+    },
+    BodyPattern {
+        needle: "レ",
+        family: BodyFamily::KaeritenSingle,
+    },
     // {N}字下げ — anchored on each digit (ASCII + full-width).
-    BodyPattern { needle: "0", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "1", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "2", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "3", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "4", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "5", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "6", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "7", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "8", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "9", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "０", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "１", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "２", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "３", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "４", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "５", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "６", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "７", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "８", family: BodyFamily::IndentParamPrefix },
-    BodyPattern { needle: "９", family: BodyFamily::IndentParamPrefix },
+    BodyPattern {
+        needle: "0",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "1",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "2",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "3",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "4",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "5",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "6",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "7",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "8",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "9",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "０",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "１",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "２",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "３",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "４",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "５",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "６",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "７",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "８",
+        family: BodyFamily::IndentParamPrefix,
+    },
+    BodyPattern {
+        needle: "９",
+        family: BodyFamily::IndentParamPrefix,
+    },
 ];
 
 /// One-time DFA build, amortised across the entire process lifetime.
@@ -437,9 +612,7 @@ fn classify_annotation_body<'a>(
     alloc: &mut BorrowedAllocator<'a>,
 ) -> Option<(EmitKind<'a>, Option<&'a borrowed::Annotation<'a>>)> {
     #[cfg(feature = "phase3-instrument")]
-    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-        crate::instrumentation::Subsystem::BodyDispatcher,
-    );
+    let _phase3_guard = SubsystemGuard::new(Subsystem::BodyDispatcher);
     if body.is_empty() {
         return None;
     }
@@ -501,11 +674,9 @@ fn classify_annotation_body<'a>(
             Some((EmitKind::Aozora(node), Some(p2)))
         }
         BodyFamily::WarichuClose if exact => {
-            let p =
-                alloc.make_annotation("［＃割り注終わり］", AnnotationKind::WarichuClose);
+            let p = alloc.make_annotation("［＃割り注終わり］", AnnotationKind::WarichuClose);
             let node = alloc.annotation(p);
-            let p2 =
-                alloc.make_annotation("［＃割り注終わり］", AnnotationKind::WarichuClose);
+            let p2 = alloc.make_annotation("［＃割り注終わり］", AnnotationKind::WarichuClose);
             Some((EmitKind::Aozora(node), Some(p2)))
         }
         BodyFamily::KaeritenSingle | BodyFamily::KaeritenCompound if exact => {
@@ -517,8 +688,12 @@ fn classify_annotation_body<'a>(
             // body == 地から{N}字上げ; remainder = body[match_end..]
             let rest = &body[match_end..];
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
-            (tail == "字上げ" && n >= 1)
-                .then(|| (EmitKind::Aozora(alloc.align_end(AlignEnd { offset: n })), None))
+            (tail == "字上げ" && n >= 1).then(|| {
+                (
+                    EmitKind::Aozora(alloc.align_end(AlignEnd { offset: n })),
+                    None,
+                )
+            })
         }
         BodyFamily::SashiePrefix => classify_sashie_body(body, alloc).map(|e| (e, None)),
         BodyFamily::IndentBlockParamPrefix => {
@@ -580,8 +755,8 @@ fn classify_annotation_body<'a>(
 /// classifier maintains its own per-pair frame stack — when a top-level
 /// `PairOpen` arrives, all subsequent events accumulate into a smallvec
 /// body buffer until the matching `PairClose`; recognition then runs
-/// against the buffer and yields a single span (or, in the rare gaiji
-/// + ref-mark case, consumes a buffered `Solo(RefMark)` from the
+/// against the buffer and yields a single span (or, in the rare
+/// gaiji+ref-mark case, consumes a buffered `Solo(RefMark)` from the
 /// previous emission and folds it into the bracket span).
 ///
 /// State:
@@ -591,7 +766,7 @@ fn classify_annotation_body<'a>(
 ///   draining this queue first keeps `next` simple.
 /// * `frame`: current outermost open frame, if any. Inside a frame all
 ///   incoming events are appended to the body buffer; nested
-///   `PairOpen`/`PairClose` adjust the buffer-local stack so close_idx
+///   `PairOpen`/`PairClose` adjust the buffer-local stack so `close_idx`
 ///   slots can be patched and the OUTER pair can be detected as
 ///   "matching close at depth 0".
 /// * `pending_plain_start`: byte position where the current Plain run
@@ -601,7 +776,10 @@ fn classify_annotation_body<'a>(
 ///   following event is anything else the refmark is folded into the
 ///   pending Plain run.
 /// * `diagnostics`: non-fatal observations accumulated during the pass.
-#[allow(missing_debug_implementations, reason = "the &mut BorrowedAllocator field cannot derive Debug; the iterator is opaque to consumers")]
+#[allow(
+    missing_debug_implementations,
+    reason = "the &mut BorrowedAllocator field cannot derive Debug; the iterator is opaque to consumers"
+)]
 pub struct ClassifyStream<'src, 'al, 'a, I>
 where
     I: Iterator<Item = PairEvent>,
@@ -643,6 +821,29 @@ where
 pub(crate) struct BodyView<'b> {
     pub events: &'b [PairEvent],
     pub links: &'b [u32],
+}
+
+/// Per-recognise-call shared context.
+///
+/// Bundles the (allocator, sanitized source) pair that every Phase 3
+/// recogniser / classifier helper needs but doesn't vary per call
+/// within a single recognise pass. Threading it as a single `&mut`
+/// argument keeps each helper's signature at ≤4 args (project-rule
+/// `clippy.toml::too-many-arguments-threshold = 4`) without losing
+/// the per-call positional clarity of the body-window indices.
+///
+/// The three lifetimes deliberately stay distinct:
+/// - `'al` — the borrow lifetime of the `&mut alloc` reference
+/// - `'a`  — the arena lifetime that strings interned now will live in
+/// - `'s`  — the sanitized source lifetime
+///
+/// In practice `'a` and `'s` collapse at the top-level driver
+/// (the arena and the source both live as long as the `Document`),
+/// but keeping them separate here avoids over-constraining helpers
+/// that thread synthetic source slices through `Cow`.
+pub(crate) struct RecogniseCtx<'al, 'a, 's> {
+    pub alloc: &'al mut BorrowedAllocator<'a>,
+    pub source: &'s str,
 }
 
 /// One outermost open-pair frame currently being buffered.
@@ -692,23 +893,18 @@ where
     /// iterator is exhausted (otherwise the trailing Plain flush has
     /// not yet recorded any final-span observations).
     pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
-        core::mem::take(&mut self.diagnostics)
+        mem::take(&mut self.diagnostics)
     }
 
     fn push_output(&mut self, span: ClassifiedSpan<'a>) {
         #[cfg(feature = "phase3-instrument")]
-        {
-            use crate::instrumentation::{record_yield, YieldKind};
-            let kind = match &span.kind {
-                SpanKind::Plain => YieldKind::Plain,
-                SpanKind::Newline => YieldKind::Newline,
-                SpanKind::Aozora(_) => YieldKind::Aozora,
-                SpanKind::BlockOpen(_) => YieldKind::BlockOpen,
-                SpanKind::BlockClose(_) => YieldKind::BlockClose,
-                _ => YieldKind::Plain, // non-exhaustive fallback
-            };
-            record_yield(kind);
-        }
+        record_yield(match &span.kind {
+            SpanKind::Plain => YieldKind::Plain,
+            SpanKind::Newline => YieldKind::Newline,
+            SpanKind::Aozora(_) => YieldKind::Aozora,
+            SpanKind::BlockOpen(_) => YieldKind::BlockOpen,
+            SpanKind::BlockClose(_) => YieldKind::BlockClose,
+        });
         self.pending_outputs.push_back(span);
     }
 
@@ -717,14 +913,12 @@ where
     /// (its span is contiguous with the surrounding text).
     fn flush_plain_up_to(&mut self, end: u32) {
         #[cfg(feature = "phase3-instrument")]
-        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-            crate::instrumentation::Subsystem::FlushPlain,
-        );
+        let _phase3_guard = SubsystemGuard::new(Subsystem::FlushPlain);
         // A pending refmark contributes its bytes to the plain run.
-        if let Some(rm) = self.pending_refmark.take() {
-            if self.pending_plain_start.is_none() {
-                self.pending_plain_start = Some(rm.start);
-            }
+        if let Some(rm) = self.pending_refmark.take()
+            && self.pending_plain_start.is_none()
+        {
+            self.pending_plain_start = Some(rm.start);
         }
         if let Some(start) = self.pending_plain_start.take()
             && end > start
@@ -741,9 +935,7 @@ where
     /// absorbed (the gaiji shape).
     fn open_frame(&mut self, open_event: PairEvent, gaiji_refmark: Option<Span>) {
         #[cfg(feature = "phase3-instrument")]
-        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-            crate::instrumentation::Subsystem::OpenFrame,
-        );
+        let _phase3_guard = SubsystemGuard::new(Subsystem::OpenFrame);
         let mut body: smallvec::SmallVec<[PairEvent; 16]> = smallvec::SmallVec::new();
         let mut links: smallvec::SmallVec<[u32; 16]> = smallvec::SmallVec::new();
         // Inner stack tracks NESTED opens; the outer open lives at
@@ -771,9 +963,7 @@ where
     /// buffer.
     fn append_to_frame(&mut self, event: PairEvent) -> bool {
         #[cfg(feature = "phase3-instrument")]
-        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-            crate::instrumentation::Subsystem::FrameAppend,
-        );
+        let _phase3_guard = SubsystemGuard::new(Subsystem::FrameAppend);
         let frame = self
             .frame
             .as_mut()
@@ -795,8 +985,8 @@ where
                 if let Some(pos) = frame.inner_stack.iter().rposition(|&(k, _)| k == *kind) {
                     let (_, open_body_idx) = frame.inner_stack.remove(pos);
                     frame.body.push(event);
-                    let body_idx_u32 =
-                        u32::try_from(body_idx).expect("body_idx fits u32 (corpus body lengths are bounded)");
+                    let body_idx_u32 = u32::try_from(body_idx)
+                        .expect("body_idx fits u32 (corpus body lengths are bounded)");
                     let open_body_idx_u32 = u32::try_from(open_body_idx)
                         .expect("body_idx fits u32 (corpus body lengths are bounded)");
                     frame.links.push(open_body_idx_u32);
@@ -823,9 +1013,7 @@ where
     /// resulting span. Called when the OUTERMOST pair has just closed.
     fn recognize_and_emit(&mut self) {
         #[cfg(feature = "phase3-instrument")]
-        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-            crate::instrumentation::Subsystem::RecognizeAndEmit,
-        );
+        let _phase3_guard = SubsystemGuard::new(Subsystem::RecognizeAndEmit);
         let frame = self
             .frame
             .take()
@@ -841,9 +1029,11 @@ where
         let close_idx = body.len() - 1;
 
         // Pull open span / kind for emission and pending-plain truncation.
-        let (open_kind, open_span) = match body[open_idx] {
-            PairEvent::PairOpen { kind, span, .. } => (kind, span),
-            _ => unreachable!("frame body[0] must be PairOpen"),
+        let PairEvent::PairOpen {
+            kind: open_kind, ..
+        } = body[open_idx]
+        else {
+            unreachable!("frame body[0] must be PairOpen");
         };
 
         let view = BodyView {
@@ -859,7 +1049,7 @@ where
                 }
             }
             PairKind::DoubleRuby => {
-                let span = self.emit_double_ruby(view, open_idx, close_idx, open_span);
+                let span = self.emit_double_ruby(view, open_idx, close_idx);
                 self.push_output(span);
                 return;
             }
@@ -872,14 +1062,18 @@ where
                     // prepended refmark gets `u32::MAX`, every other
                     // link is shifted by +1.
                     let gaiji_body: smallvec::SmallVec<[PairEvent; 16]> =
-                        std::iter::once(PairEvent::Solo {
+                        iter::once(PairEvent::Solo {
                             kind: TriggerKind::RefMark,
                             span: rm_span,
                         })
                         .chain(body.iter().cloned())
                         .collect();
-                    let gaiji_links: smallvec::SmallVec<[u32; 16]> = std::iter::once(u32::MAX)
-                        .chain(links.iter().map(|&l| if l == u32::MAX { u32::MAX } else { l + 1 }))
+                    let gaiji_links: smallvec::SmallVec<[u32; 16]> = iter::once(u32::MAX)
+                        .chain(
+                            links
+                                .iter()
+                                .map(|&l| if l == u32::MAX { u32::MAX } else { l + 1 }),
+                        )
                         .collect();
                     let gaiji_view = BodyView {
                         events: &gaiji_body,
@@ -936,7 +1130,7 @@ where
     ///
     /// `Unclosed` events are SKIPPED during replay: they are
     /// synthetic EOF markers carrying the same span as the original
-    /// PairOpen (which is also in `body`), and re-adding their span
+    /// `PairOpen` (which is also in `body`), and re-adding their span
     /// to the pending plain run would double-count bytes already
     /// covered by the open's body[0] entry.
     fn replay_unrecognised_body(
@@ -945,11 +1139,9 @@ where
         refmark: Option<Span>,
     ) {
         #[cfg(feature = "phase3-instrument")]
-        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-            crate::instrumentation::Subsystem::ReplayBody,
-        );
+        let _phase3_guard = SubsystemGuard::new(Subsystem::ReplayBody);
         #[cfg(feature = "phase3-instrument")]
-        crate::instrumentation::record_replay_body_size(body.len() as u64);
+        record_replay_body_size(body.len() as u64);
         if let Some(rm) = refmark
             && self.pending_plain_start.is_none()
         {
@@ -965,7 +1157,7 @@ where
 
     /// Handle a top-level event (no active frame) in either streaming
     /// mode (`replay = false`) or replay mode (`replay = true`, which
-    /// suppresses the frame-open path so a residual nested PairOpen in
+    /// suppresses the frame-open path so a residual nested `PairOpen` in
     /// a declined body doesn't try to re-open a sub-frame).
     fn handle_top_level(&mut self, event: PairEvent, replay: bool) {
         match event {
@@ -1003,14 +1195,9 @@ where
                 } else {
                     None
                 };
-                let preserve_pending_plain =
-                    matches!(kind, PairKind::Ruby | PairKind::DoubleRuby);
+                let preserve_pending_plain = matches!(kind, PairKind::Ruby | PairKind::DoubleRuby);
                 if !preserve_pending_plain {
-                    let truncate_to = if let Some(rm) = gaiji_refmark {
-                        rm.start
-                    } else {
-                        span.start
-                    };
+                    let truncate_to = gaiji_refmark.map_or(span.start, |rm| rm.start);
                     self.flush_plain_up_to(truncate_to);
                 }
                 self.open_frame(PairEvent::PairOpen { kind, span }, gaiji_refmark);
@@ -1035,9 +1222,7 @@ where
         close_idx: usize,
     ) -> Option<ClassifiedSpan<'a>> {
         #[cfg(feature = "phase3-instrument")]
-        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-            crate::instrumentation::Subsystem::TryRubyEmit,
-        );
+        let _phase3_guard = SubsystemGuard::new(Subsystem::TryRubyEmit);
         // Ruby recognition uses the PRECEDING text (if any) as the
         // base — but in the streaming model we don't have that text in
         // the body buffer. We walk back through `pending_outputs` and
@@ -1050,9 +1235,11 @@ where
         // mirrors what `recognize_ruby` expects:
         //   events[open_idx - 1] = Text { range: ... preceding ... }
         //   events[open_idx - 2] = optional Solo(Bar)
-        let open_span = match body.events[open_idx] {
-            PairEvent::PairOpen { span, .. } => span,
-            _ => return None,
+        let PairEvent::PairOpen {
+            span: open_span, ..
+        } = body.events[open_idx]
+        else {
+            return None;
         };
 
         // Determine the preceding text range and (optionally) a Solo(Bar).
@@ -1086,8 +1273,7 @@ where
         // events).
         let mut synth: Vec<PairEvent> = Vec::with_capacity(body.events.len() + 2);
         let mut synth_links: Vec<u32> = Vec::with_capacity(body.events.len() + 2);
-        let synth_open_idx;
-        if let Some(bar_off) = bar_byte_offset {
+        let synth_open_idx = if let Some(bar_off) = bar_byte_offset {
             let bar_pos = preceding_start + u32::try_from(bar_off).expect("bar offset fits");
             let bar_span = Span::new(bar_pos, bar_pos + u32::try_from('｜'.len_utf8()).unwrap());
             synth.push(PairEvent::Solo {
@@ -1104,32 +1290,34 @@ where
                 range: Span::new(text_after_bar_start, open_span.start),
             });
             synth_links.push(u32::MAX);
-            synth_open_idx = 2;
+            2
         } else {
             synth.push(PairEvent::Text {
                 range: prev_text_range,
             });
             synth_links.push(u32::MAX);
-            synth_open_idx = 1;
-        }
+            1
+        };
 
         // Push the body events as-is and shift body links by `shift`.
         let shift = u32::try_from(synth.len()).expect("synth prefix fits u32");
         synth.extend(body.events.iter().cloned());
-        synth_links.extend(body.links.iter().map(|&l| if l == u32::MAX { u32::MAX } else { l + shift }));
+        synth_links.extend(
+            body.links
+                .iter()
+                .map(|&l| if l == u32::MAX { u32::MAX } else { l + shift }),
+        );
         let synth_close_idx = synth_open_idx + (close_idx - open_idx);
 
         let synth_view = BodyView {
             events: &synth,
             links: &synth_links,
         };
-        let m = recognize_ruby(
-            synth_view,
-            self.source,
-            synth_open_idx,
-            synth_close_idx,
-            self.alloc,
-        )?;
+        let mut ctx = RecogniseCtx {
+            alloc: self.alloc,
+            source: self.source,
+        };
+        let m = ctx.recognize_ruby(synth_view, synth_open_idx, synth_close_idx)?;
         // Truncate any in-progress plain run to end exactly where the
         // ruby takes over.
         // Restore pending_refmark for downstream flushing semantics
@@ -1151,20 +1339,29 @@ where
         body: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-        open_span: Span,
     ) -> ClassifiedSpan<'a> {
-        let close_span = match body.events[close_idx] {
-            PairEvent::PairClose { span, .. } => span,
-            _ => unreachable!("body[close_idx] must be PairClose"),
+        let PairEvent::PairOpen {
+            span: open_span, ..
+        } = body.events[open_idx]
+        else {
+            unreachable!("body[open_idx] must be PairOpen");
         };
-        let content = build_content_from_body(
+        let PairEvent::PairClose {
+            span: close_span, ..
+        } = body.events[close_idx]
+        else {
+            unreachable!("body[close_idx] must be PairClose");
+        };
+        let mut ctx = RecogniseCtx {
+            alloc: self.alloc,
+            source: self.source,
+        };
+        let content = ctx.build_content_from_body(
             body,
-            self.source,
             &BodyWindow {
                 events: open_idx + 1..close_idx,
                 bytes: open_span.end..close_span.start,
             },
-            self.alloc,
         );
         self.flush_plain_up_to(open_span.start);
         let node = self.alloc.double_ruby(content);
@@ -1182,10 +1379,12 @@ where
         close_idx: usize,
     ) -> Option<ClassifiedSpan<'a>> {
         #[cfg(feature = "phase3-instrument")]
-        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-            crate::instrumentation::Subsystem::TryBracketEmit,
-        );
-        let m = recognize_annotation(body, self.source, open_idx, close_idx, self.alloc)?;
+        let _phase3_guard = SubsystemGuard::new(Subsystem::TryBracketEmit);
+        let mut ctx = RecogniseCtx {
+            alloc: self.alloc,
+            source: self.source,
+        };
+        let m = ctx.recognize_annotation(body, open_idx, close_idx)?;
         self.flush_plain_up_to(m.consume_start);
         let kind = match m.emit {
             EmitKind::Aozora(node) => SpanKind::Aozora(node),
@@ -1205,13 +1404,11 @@ where
         bracket_open_idx: usize,
         refmark_span: Span,
     ) -> Option<ClassifiedSpan<'a>> {
-        let m = recognize_gaiji(
-            body,
-            self.source,
-            refmark_span,
-            bracket_open_idx,
-            self.alloc,
-        )?;
+        let mut ctx = RecogniseCtx {
+            alloc: self.alloc,
+            source: self.source,
+        };
+        let m = ctx.recognize_gaiji(body, refmark_span, bracket_open_idx)?;
         self.flush_plain_up_to(m.consume_start);
         let node = self.alloc.gaiji(m.payload);
         self.pending_plain_start = None;
@@ -1224,10 +1421,10 @@ where
     /// Final flush: emit any trailing Plain run covering the source
     /// tail. Called once when the upstream iterator hits None.
     fn finalize(&mut self) {
-        if let Some(rm) = self.pending_refmark.take() {
-            if self.pending_plain_start.is_none() {
-                self.pending_plain_start = Some(rm.start);
-            }
+        if let Some(rm) = self.pending_refmark.take()
+            && self.pending_plain_start.is_none()
+        {
+            self.pending_plain_start = Some(rm.start);
         }
         let end = self.source_len;
         self.flush_plain_up_to(end);
@@ -1242,9 +1439,7 @@ where
 
     fn next(&mut self) -> Option<ClassifiedSpan<'a>> {
         #[cfg(feature = "phase3-instrument")]
-        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-            crate::instrumentation::Subsystem::IterDispatch,
-        );
+        let _phase3_guard = SubsystemGuard::new(Subsystem::IterDispatch);
         loop {
             if let Some(span) = self.pending_outputs_pop_front() {
                 return Some(span);
@@ -1253,32 +1448,25 @@ where
                 return None;
             }
             #[cfg(feature = "phase3-instrument")]
-            let _events_next_guard = crate::instrumentation::SubsystemGuard::new(
-                crate::instrumentation::Subsystem::EventsNext,
-            );
+            let events_next_guard = SubsystemGuard::new(Subsystem::EventsNext);
             let next_event = self.events.next();
             #[cfg(feature = "phase3-instrument")]
-            drop(_events_next_guard);
-            match next_event {
-                Some(event) => {
-                    #[cfg(feature = "phase3-instrument")]
-                    let _phase3_loop_guard = crate::instrumentation::SubsystemGuard::new(
-                        crate::instrumentation::Subsystem::LoopBody,
-                    );
-                    self.process_event(event);
+            drop(events_next_guard);
+            if let Some(event) = next_event {
+                #[cfg(feature = "phase3-instrument")]
+                let _phase3_loop_guard = SubsystemGuard::new(Subsystem::LoopBody);
+                self.process_event(event);
+            } else {
+                // Upstream exhausted. Close any active frame as
+                // unclosed (its body events fold back to plain;
+                // a gaiji-mode refmark also falls into plain),
+                // then run final flush.
+                if let Some(frame) = self.frame.take() {
+                    let refmark = frame.gaiji_refmark;
+                    self.replay_unrecognised_body(frame.body, refmark);
                 }
-                None => {
-                    // Upstream exhausted. Close any active frame as
-                    // unclosed (its body events fold back to plain;
-                    // a gaiji-mode refmark also falls into plain),
-                    // then run final flush.
-                    if let Some(frame) = self.frame.take() {
-                        let refmark = frame.gaiji_refmark;
-                        self.replay_unrecognised_body(frame.body, refmark);
-                    }
-                    self.finalize();
-                    self.finished = true;
-                }
+                self.finalize();
+                self.finished = true;
             }
         }
     }
@@ -1295,7 +1483,7 @@ where
             // pre-N2 distribution histogram comparable.
             let len = self.pending_outputs.len() as u64;
             if len > 0 {
-                crate::instrumentation::record_pending_size(len);
+                record_pending_size(len);
             }
         }
         self.pending_outputs.pop_front()
@@ -1307,7 +1495,10 @@ where
             // refmark cannot exist while a frame is open (frames are
             // opened from top level and the refmark would have been
             // absorbed or flushed there).
-            debug_assert!(self.pending_refmark.is_none());
+            debug_assert!(
+                self.pending_refmark.is_none(),
+                "frames are opened from top level; any pending refmark should have been absorbed or flushed before frame entry"
+            );
             let outer_closed = self.append_to_frame(event);
             if outer_closed {
                 self.recognize_and_emit();
@@ -1318,24 +1509,22 @@ where
         // Top level. If a refmark is pending, decide based on the
         // current event:
         if self.pending_refmark.is_some() {
-            match &event {
-                PairEvent::PairOpen {
-                    kind: PairKind::Bracket,
-                    ..
-                } => {
-                    // Will be absorbed by the next handle_top_level call.
-                }
-                _ => {
-                    // Refmark not followed by Bracket: fold into plain
-                    // up to the end of the refmark, then continue
-                    // processing the new event normally. The refmark's
-                    // span gets absorbed by `flush_plain_up_to` because
-                    // we set `pending_plain_start` to `rm.start` before
-                    // taking it.
-                    let rm = self.pending_refmark.take().expect("checked Some");
-                    if self.pending_plain_start.is_none() {
-                        self.pending_plain_start = Some(rm.start);
-                    }
+            if let PairEvent::PairOpen {
+                kind: PairKind::Bracket,
+                ..
+            } = &event
+            {
+                // Will be absorbed by the next handle_top_level call.
+            } else {
+                // Refmark not followed by Bracket: fold into plain
+                // up to the end of the refmark, then continue
+                // processing the new event normally. The refmark's
+                // span gets absorbed by `flush_plain_up_to` because
+                // we set `pending_plain_start` to `rm.start` before
+                // taking it.
+                let rm = self.pending_refmark.take().expect("checked Some");
+                if self.pending_plain_start.is_none() {
+                    self.pending_plain_start = Some(rm.start);
                 }
             }
         }
@@ -1384,89 +1573,86 @@ struct RubyMatch<'s, 'a> {
 ///
 /// Returns `None` if neither shape applies (empty reading, no
 /// preceding Text, no kanji for implicit).
-fn recognize_ruby<'s, 'a>(
-    view: BodyView<'_>,
-    source: &'s str,
-    open_idx: usize,
-    close_idx: usize,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Option<RubyMatch<'s, 'a>> {
-    #[cfg(feature = "phase3-instrument")]
-    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-        crate::instrumentation::Subsystem::Ruby,
-    );
-    let events = view.events;
-    let PairEvent::PairOpen {
-        span: open_span, ..
-    } = events[open_idx]
-    else {
-        return None;
-    };
-    let PairEvent::PairClose {
-        span: close_span, ..
-    } = events[close_idx]
-    else {
-        return None;
-    };
-    if open_span.end >= close_span.start {
-        // Empty reading — the `《…》` body has no bytes.
-        return None;
-    }
-    if open_idx == 0 {
-        return None;
-    }
-    let PairEvent::Text {
-        range: prev_range, ..
-    } = events[open_idx - 1]
-    else {
-        return None;
-    };
-    let prev_text = &source[prev_range.start as usize..prev_range.end as usize];
-
-    let reading = build_content_from_body(
-        view,
-        source,
-        &BodyWindow {
-            events: open_idx + 1..close_idx,
-            bytes: open_span.end..close_span.start,
-        },
-        alloc,
-    );
-
-    // Explicit form: Solo(Bar) two events before the open, with the
-    // Text between them acting as the base.
-    if open_idx >= 2
-        && let PairEvent::Solo {
-            kind: TriggerKind::Bar,
-            span: bar_span,
-        } = events[open_idx - 2]
-    {
-        if prev_text.is_empty() {
+impl<'a, 's> RecogniseCtx<'_, 'a, 's> {
+    fn recognize_ruby(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<RubyMatch<'s, 'a>> {
+        #[cfg(feature = "phase3-instrument")]
+        let _phase3_guard = SubsystemGuard::new(Subsystem::Ruby);
+        let events = view.events;
+        let PairEvent::PairOpen {
+            span: open_span, ..
+        } = events[open_idx]
+        else {
+            return None;
+        };
+        let PairEvent::PairClose {
+            span: close_span, ..
+        } = events[close_idx]
+        else {
+            return None;
+        };
+        if open_span.end >= close_span.start {
+            // Empty reading — the `《…》` body has no bytes.
             return None;
         }
-        return Some(RubyMatch {
-            base: prev_text,
-            reading,
-            explicit: true,
-            consume_start: bar_span.start,
-            consume_end: close_span.end,
-        });
-    }
+        if open_idx == 0 {
+            return None;
+        }
+        let PairEvent::Text {
+            range: prev_range, ..
+        } = events[open_idx - 1]
+        else {
+            return None;
+        };
+        let prev_text = &self.source[prev_range.start as usize..prev_range.end as usize];
 
-    // Implicit form: trailing-kanji run of the preceding Text.
-    let kanji_offset = trailing_kanji_start(prev_text);
-    if kanji_offset == prev_text.len() {
-        return None;
+        let reading = self.build_content_from_body(
+            view,
+            &BodyWindow {
+                events: open_idx + 1..close_idx,
+                bytes: open_span.end..close_span.start,
+            },
+        );
+
+        // Explicit form: Solo(Bar) two events before the open, with the
+        // Text between them acting as the base.
+        if open_idx >= 2
+            && let PairEvent::Solo {
+                kind: TriggerKind::Bar,
+                span: bar_span,
+            } = events[open_idx - 2]
+        {
+            if prev_text.is_empty() {
+                return None;
+            }
+            return Some(RubyMatch {
+                base: prev_text,
+                reading,
+                explicit: true,
+                consume_start: bar_span.start,
+                consume_end: close_span.end,
+            });
+        }
+
+        // Implicit form: trailing-kanji run of the preceding Text.
+        let kanji_offset = trailing_kanji_start(prev_text);
+        if kanji_offset == prev_text.len() {
+            return None;
+        }
+        let consume_start =
+            prev_range.start + u32::try_from(kanji_offset).expect("kanji offset fits in u32");
+        Some(RubyMatch {
+            base: &prev_text[kanji_offset..],
+            reading,
+            explicit: false,
+            consume_start,
+            consume_end: close_span.end,
+        })
     }
-    let consume_start =
-        prev_range.start + u32::try_from(kanji_offset).expect("kanji offset fits in u32");
-    Some(RubyMatch {
-        base: &prev_text[kanji_offset..],
-        reading,
-        explicit: false,
-        consume_start,
-        consume_end: close_span.end,
-    })
 }
 
 /// Half-open window into a [`PairEvent`] stream. Bundles the event-
@@ -1525,130 +1711,210 @@ struct BodyWindow {
 /// [`Content::from_segments`], so a slow-path body that turned out to
 /// contain only text (for example because its brackets were malformed
 /// and skipped) still collapses back to [`Content::Plain`].
-fn build_content_from_body<'a>(
-    view: BodyView<'_>,
-    source: &str,
-    window: &BodyWindow,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> borrowed::Content<'a> {
-    #[cfg(feature = "phase3-instrument")]
-    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-        crate::instrumentation::Subsystem::BuildContent,
-    );
-    debug_assert!(
-        window.events.start <= window.events.end,
-        "body window event range must be non-inverted",
-    );
-    debug_assert!(
-        window.bytes.start <= window.bytes.end,
-        "body window byte range must be non-inverted",
-    );
-    debug_assert_eq!(
-        view.events.len(),
-        view.links.len(),
-        "BodyView events/links must be parallel",
-    );
+/// Immutable per-call body-walk context shared across the
+/// [`build_content_from_body`] orchestrator and its per-shape helpers
+/// (`try_emit_gaiji_at` / `try_emit_annotation_at`). Bundling `view`
+/// and `window` together prevents the per-helper signatures from
+/// exceeding the project's 4-arg threshold without losing positional
+/// clarity at call sites.
+#[derive(Clone, Copy)]
+struct BodyWalkCtx<'b> {
+    view: BodyView<'b>,
+    window: &'b BodyWindow,
+}
 
-    let events = view.events;
-    let body_events = &events[window.events.start..window.events.end];
-    if !has_nested_candidate(body_events) {
-        // Fast path: no `※` and no `［` in the body; bytes pass
-        // through verbatim. `content_plain("")` canonicalises to
-        // empty `Segments(&[])` to match the legacy
-        // `Content::from(&str)` shape exactly.
-        let text = &source[window.bytes.start as usize..window.bytes.end as usize];
-        return alloc.content_plain(text);
-    }
+/// Mutable per-call build state for [`build_content_from_body`].
+/// Tracks the under-construction segment vector and the byte position
+/// where the current pending Text run started. Threading these through
+/// per-shape helpers as a single `&mut` field keeps the helper
+/// signatures at ≤4 args.
+struct ContentBuild<'a> {
+    segments: Vec<borrowed::Segment<'a>>,
+    /// Byte position of the earliest source byte not yet committed
+    /// to a `Segment::Text`. Each successful gaiji / annotation emit
+    /// advances this past the consumed bracket.
+    text_start: u32,
+}
 
-    // Slow path: at least one potential nested construct exists.
-    // Pre-size the segment vector: worst case is `ceil(n / 2)` runs of
-    // `Text, Construct, Text, …` plus one trailing Text. Capping at
-    // `body_events.len() + 1` is a safe upper bound that is small in
-    // practice (ruby readings almost never reach double-digit events).
-    let mut segments: Vec<borrowed::Segment<'a>> = Vec::with_capacity(body_events.len() + 1);
-    let mut text_start: u32 = window.bytes.start;
-    let mut i = window.events.start;
+impl<'a> RecogniseCtx<'_, 'a, '_> {
+    /// Build a borrowed [`Content`](borrowed::Content) for the body
+    /// window, recognising any nested gaiji / annotation constructs in
+    /// a single forward sweep.
+    ///
+    /// Fast path returns when the body has no `※` and no `［` —
+    /// emits the raw byte run as a single `Plain`. The slow path
+    /// dispatches each event index through two per-shape recognise
+    /// helpers and falls through (advancing `i`) when neither claims
+    /// the slot.
+    fn build_content_from_body(
+        &mut self,
+        view: BodyView<'_>,
+        window: &BodyWindow,
+    ) -> borrowed::Content<'a> {
+        #[cfg(feature = "phase3-instrument")]
+        let _phase3_guard = SubsystemGuard::new(Subsystem::BuildContent);
+        debug_assert!(
+            window.events.start <= window.events.end,
+            "body window event range must be non-inverted",
+        );
+        debug_assert!(
+            window.bytes.start <= window.bytes.end,
+            "body window byte range must be non-inverted",
+        );
+        debug_assert_eq!(
+            view.events.len(),
+            view.links.len(),
+            "BodyView events/links must be parallel",
+        );
 
-    while i < window.events.end {
-        // Shape 1: `※［＃…］` — Solo(RefMark) followed by PairOpen(Bracket).
-        if let PairEvent::Solo {
-            kind: TriggerKind::RefMark,
-            span: refmark_span,
-        } = events[i]
-        {
-            let bracket_idx = i + 1;
-            if bracket_idx < window.events.end
-                && let PairEvent::PairOpen {
-                    kind: PairKind::Bracket,
-                    ..
-                } = events[bracket_idx]
-            {
-                let close_idx = view.links[bracket_idx] as usize;
-                if view.links[bracket_idx] != u32::MAX
-                    && close_idx < window.events.end
-                    && let Some(g) = recognize_gaiji(view, source, refmark_span, bracket_idx, alloc)
-                {
-                    push_text_segment(&mut segments, source, text_start, g.consume_start, alloc);
-                    segments.push(alloc.seg_gaiji(g.payload));
-                    text_start = g.consume_end;
-                    i = close_idx + 1;
-                    continue;
-                }
-            }
+        let body_events = &view.events[window.events.start..window.events.end];
+        if !has_nested_candidate(body_events) {
+            // Fast path: no `※` and no `［` in the body; bytes pass
+            // through verbatim. `content_plain("")` canonicalises to
+            // empty `Segments(&[])` to match the legacy
+            // `Content::from(&str)` shape exactly.
+            let text = &self.source[window.bytes.start as usize..window.bytes.end as usize];
+            return self.alloc.content_plain(text);
         }
 
-        // Shape 2: `［＃…］` — a standalone bracket annotation. The
-        // RefMark+Bracket combo above has already had its chance to
-        // claim this event, so here we handle the remaining brackets.
-        // `recognize_annotation` has an Unknown catch-all and only
-        // returns `None` for malformed brackets (no `＃` sentinel);
-        // those fall through to `i += 1` and the bracket bytes stay
-        // inside the pending Text run.
-        if let PairEvent::PairOpen {
-            kind: PairKind::Bracket,
-            span: open_span,
-        } = events[i]
-        {
-            let close_idx = view.links[i] as usize;
-            if view.links[i] != u32::MAX
-                && close_idx < window.events.end
-                && let Some(a) = recognize_annotation(view, source, i, close_idx, alloc)
-            {
-                let PairEvent::PairClose {
-                    span: close_span, ..
-                } = events[close_idx]
-                else {
-                    // PairOpen's link always targets a PairClose of the same
-                    // kind; anything else would be a Phase 2 invariant
-                    // violation.
-                    unreachable!("PairOpen link must target a PairClose");
-                };
-                // The emit may carry a node we cannot directly use as a
-                // Segment::Annotation payload (e.g. a paired-container
-                // marker). The recogniser hands back a separate
-                // `annotation_payload` slot for the inline-segment case;
-                // when present we use it directly, otherwise we synthesise
-                // an `Annotation{Unknown}` so the Tier-A canary (no bare
-                // `［＃` in HTML output) still holds.
-                let payload = if let Some(p) = a.annotation_payload {
-                    p
-                } else {
-                    let raw = &source[open_span.start as usize..close_span.end as usize];
-                    alloc.make_annotation(raw, AnnotationKind::Unknown)
-                };
-                push_text_segment(&mut segments, source, text_start, a.consume_start, alloc);
-                segments.push(alloc.seg_annotation(payload));
-                text_start = a.consume_end;
-                i = close_idx + 1;
+        // Slow path: at least one potential nested construct exists.
+        // Pre-size the segment vector: worst case is `ceil(n / 2)` runs
+        // of `Text, Construct, Text, …` plus one trailing Text.
+        // `body_events.len() + 1` is a safe upper bound that is small
+        // in practice (ruby readings almost never reach double-digit
+        // events).
+        let body = BodyWalkCtx { view, window };
+        let mut build = ContentBuild {
+            segments: Vec::with_capacity(body_events.len() + 1),
+            text_start: window.bytes.start,
+        };
+        let mut i = window.events.start;
+        while i < window.events.end {
+            if let Some(next_i) = self.try_emit_gaiji_at(body, &mut build, i) {
+                i = next_i;
                 continue;
             }
+            if let Some(next_i) = self.try_emit_annotation_at(body, &mut build, i) {
+                i = next_i;
+                continue;
+            }
+            i += 1;
         }
-
-        i += 1;
+        push_text_segment(
+            &mut build.segments,
+            self.source,
+            build.text_start..window.bytes.end,
+            self.alloc,
+        );
+        self.alloc.content_segments(&build.segments)
     }
 
-    push_text_segment(&mut segments, source, text_start, window.bytes.end, alloc);
-    alloc.content_segments(segments)
+    /// Shape 1: `※［＃…］` — `Solo(RefMark)` immediately followed by a
+    /// matched `PairOpen(Bracket)`. On a successful gaiji recognise,
+    /// flush the pending Text run, push a `Segment::Gaiji`, advance
+    /// `text_start`, and return the index of the first event past the
+    /// bracket close. Returns `None` if the shape doesn't match or if
+    /// the inner [`recognize_gaiji`](Self::recognize_gaiji) bails.
+    fn try_emit_gaiji_at(
+        &mut self,
+        body: BodyWalkCtx<'_>,
+        build: &mut ContentBuild<'a>,
+        i: usize,
+    ) -> Option<usize> {
+        let PairEvent::Solo {
+            kind: TriggerKind::RefMark,
+            span: refmark_span,
+        } = body.view.events[i]
+        else {
+            return None;
+        };
+        let bracket_idx = i + 1;
+        if bracket_idx >= body.window.events.end {
+            return None;
+        }
+        let PairEvent::PairOpen {
+            kind: PairKind::Bracket,
+            ..
+        } = body.view.events[bracket_idx]
+        else {
+            return None;
+        };
+        let close_link = body.view.links[bracket_idx];
+        if close_link == u32::MAX {
+            return None;
+        }
+        let close_idx = close_link as usize;
+        if close_idx >= body.window.events.end {
+            return None;
+        }
+        let g = self.recognize_gaiji(body.view, refmark_span, bracket_idx)?;
+        push_text_segment(
+            &mut build.segments,
+            self.source,
+            build.text_start..g.consume_start,
+            self.alloc,
+        );
+        build.segments.push(self.alloc.seg_gaiji(g.payload));
+        build.text_start = g.consume_end;
+        Some(close_idx + 1)
+    }
+
+    /// Shape 2: `［＃…］` — a standalone bracket annotation. Tried
+    /// after [`Self::try_emit_gaiji_at`] so the `※`+bracket combo gets
+    /// first claim on a leading bracket. `recognize_annotation` has an
+    /// `Unknown` catch-all (only returns `None` for malformed brackets
+    /// with no `＃` sentinel); on success the bracket folds into a
+    /// `Segment::Annotation` with the recogniser's payload (or a
+    /// synthetic `Unknown` payload built from the raw source bytes
+    /// when the recogniser left `annotation_payload` unset). The
+    /// fallback synthesis preserves the Tier-A canary: no bare `［＃`
+    /// ever leaks outside an `afm-annotation` wrapper.
+    fn try_emit_annotation_at(
+        &mut self,
+        body: BodyWalkCtx<'_>,
+        build: &mut ContentBuild<'a>,
+        i: usize,
+    ) -> Option<usize> {
+        let PairEvent::PairOpen {
+            kind: PairKind::Bracket,
+            span: open_span,
+        } = body.view.events[i]
+        else {
+            return None;
+        };
+        let close_link = body.view.links[i];
+        if close_link == u32::MAX {
+            return None;
+        }
+        let close_idx = close_link as usize;
+        if close_idx >= body.window.events.end {
+            return None;
+        }
+        let a = self.recognize_annotation(body.view, i, close_idx)?;
+        let PairEvent::PairClose {
+            span: close_span, ..
+        } = body.view.events[close_idx]
+        else {
+            // Phase 2 invariant: PairOpen's link always targets a
+            // PairClose of the matching kind.
+            unreachable!("PairOpen link must target a PairClose");
+        };
+        let payload = if let Some(p) = a.annotation_payload {
+            p
+        } else {
+            let raw = &self.source[open_span.start as usize..close_span.end as usize];
+            self.alloc.make_annotation(raw, AnnotationKind::Unknown)
+        };
+        push_text_segment(
+            &mut build.segments,
+            self.source,
+            build.text_start..a.consume_start,
+            self.alloc,
+        );
+        build.segments.push(self.alloc.seg_annotation(payload));
+        build.text_start = a.consume_end;
+        Some(close_idx + 1)
+    }
 }
 
 /// Whether `body` could host a nested gaiji / annotation. The Phase 2
@@ -1686,12 +1952,11 @@ fn has_nested_candidate(body: &[PairEvent]) -> bool {
 fn push_text_segment<'a>(
     segments: &mut Vec<borrowed::Segment<'a>>,
     source: &str,
-    start: u32,
-    end: u32,
+    bytes: Range<u32>,
     alloc: &mut BorrowedAllocator<'a>,
 ) {
-    if end > start {
-        segments.push(alloc.seg_text(&source[start as usize..end as usize]));
+    if !bytes.is_empty() {
+        segments.push(alloc.seg_text(&source[bytes.start as usize..bytes.end as usize]));
     }
 }
 
@@ -1727,124 +1992,123 @@ struct GaijiMatch<'a> {
 /// Consume range is from `refmark_span.start` to the bracket close's
 /// end — i.e. the `※` and the entire following `［＃…］` fold into
 /// one Aozora span.
-fn recognize_gaiji<'a>(
-    view: BodyView<'_>,
-    source: &str,
-    refmark_span: Span,
-    bracket_open_idx: usize,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Option<GaijiMatch<'a>> {
-    #[cfg(feature = "phase3-instrument")]
-    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-        crate::instrumentation::Subsystem::Gaiji,
-    );
-    let events = view.events;
-    let &PairEvent::PairOpen {
-        kind: PairKind::Bracket,
-        ..
-    } = events.get(bracket_open_idx)?
-    else {
-        return None;
-    };
-    let bracket_close_link = *view.links.get(bracket_open_idx)?;
-    if bracket_close_link == u32::MAX {
-        return None;
-    }
-    let bracket_close_idx = bracket_close_link as usize;
-    let hash_end = match events.get(bracket_open_idx + 1)? {
-        PairEvent::Solo {
-            kind: TriggerKind::Hash,
-            span,
-        } => span.end,
-        _ => return None,
-    };
-    let &PairEvent::PairClose {
-        span: bracket_close_span,
-        ..
-    } = events.get(bracket_close_idx)?
-    else {
-        return None;
-    };
-
-    // Try the quoted-description form first: `「DESC」、MENCODE`. Two
-    // events after open: PairOpen(Quote).
-    let quote_open_idx = bracket_open_idx + 2;
-    let quoted = events.get(quote_open_idx).and_then(|ev| match *ev {
-        PairEvent::PairOpen {
-            kind: PairKind::Quote,
-            span: qos,
-        } => {
-            let qci_link = *view.links.get(quote_open_idx)?;
-            if qci_link == u32::MAX {
-                return None;
-            }
-            let qci = qci_link as usize;
-            if qci >= bracket_close_idx {
-                return None;
-            }
-            let PairEvent::PairClose { span: qcs, .. } = *events.get(qci)? else {
-                return None;
-            };
-            let desc = &source[qos.end as usize..qcs.start as usize];
-            if desc.is_empty() {
-                return None;
-            }
-            let tail = source[qcs.end as usize..bracket_close_span.start as usize].trim();
-            let mencode = tail.strip_prefix('、').map(str::trim);
-            Some((desc.to_owned(), mencode.map(str::to_owned)))
+impl<'a> RecogniseCtx<'_, 'a, '_> {
+    fn recognize_gaiji(
+        &mut self,
+        view: BodyView<'_>,
+        refmark_span: Span,
+        bracket_open_idx: usize,
+    ) -> Option<GaijiMatch<'a>> {
+        #[cfg(feature = "phase3-instrument")]
+        let _phase3_guard = SubsystemGuard::new(Subsystem::Gaiji);
+        let events = view.events;
+        let &PairEvent::PairOpen {
+            kind: PairKind::Bracket,
+            ..
+        } = events.get(bracket_open_idx)?
+        else {
+            return None;
+        };
+        let bracket_close_link = *view.links.get(bracket_open_idx)?;
+        if bracket_close_link == u32::MAX {
+            return None;
         }
-        _ => None,
-    });
+        let bracket_close_idx = bracket_close_link as usize;
+        let hash_end = match events.get(bracket_open_idx + 1)? {
+            PairEvent::Solo {
+                kind: TriggerKind::Hash,
+                span,
+            } => span.end,
+            _ => return None,
+        };
+        let &PairEvent::PairClose {
+            span: bracket_close_span,
+            ..
+        } = events.get(bracket_close_idx)?
+        else {
+            return None;
+        };
 
-    let (description, mencode) = quoted.unwrap_or_else(|| {
-        // Bare-description fallback: split body at the first `、`.
-        // Whole body after `＃` becomes the description if there's no `、`.
-        let body = source[hash_end as usize..bracket_close_span.start as usize].trim();
-        if let Some((desc, men)) = body.split_once('、') {
-            (desc.trim().to_owned(), Some(men.trim().to_owned()))
-        } else {
-            (body.to_owned(), None)
+        // Try the quoted-description form first: `「DESC」、MENCODE`. Two
+        // events after open: PairOpen(Quote).
+        let quote_open_idx = bracket_open_idx + 2;
+        let quoted = events.get(quote_open_idx).and_then(|ev| match *ev {
+            PairEvent::PairOpen {
+                kind: PairKind::Quote,
+                span: qos,
+            } => {
+                let qci_link = *view.links.get(quote_open_idx)?;
+                if qci_link == u32::MAX {
+                    return None;
+                }
+                let qci = qci_link as usize;
+                if qci >= bracket_close_idx {
+                    return None;
+                }
+                let PairEvent::PairClose { span: qcs, .. } = *events.get(qci)? else {
+                    return None;
+                };
+                let desc = &self.source[qos.end as usize..qcs.start as usize];
+                if desc.is_empty() {
+                    return None;
+                }
+                let tail = self.source[qcs.end as usize..bracket_close_span.start as usize].trim();
+                let mencode = tail.strip_prefix('、').map(str::trim);
+                Some((desc.to_owned(), mencode.map(str::to_owned)))
+            }
+            _ => None,
+        });
+
+        let (description, mencode) = quoted.unwrap_or_else(|| {
+            // Bare-description fallback: split body at the first `、`.
+            // Whole body after `＃` becomes the description if there's no `、`.
+            let body = self.source[hash_end as usize..bracket_close_span.start as usize].trim();
+            if let Some((desc, men)) = body.split_once('、') {
+                (desc.trim().to_owned(), Some(men.trim().to_owned()))
+            } else {
+                (body.to_owned(), None)
+            }
+        });
+
+        if description.is_empty() {
+            return None;
         }
-    });
+        // Reject descriptions that carry structural quote characters.
+        // The serializer wraps the description in `「…」` for round-trip,
+        // so a stray `」` (e.g. from the malformed input `※［＃」］`) would
+        // make `serialize ∘ parse` non-stable. Falling through to `None`
+        // here lets the higher-level classifier wrap the raw bracket in
+        // an `Annotation{Unknown}`, which round-trips byte-identical.
+        if description.contains(['「', '」']) {
+            return None;
+        }
+        // Reject descriptions that embed a nested annotation-opening
+        // sequence `［＃`. Pathological shapes like `※［＃［＃改］］`
+        // produce a description string that *contains* `［＃`, which the
+        // gaiji renderer would emit verbatim inside `<span class=
+        // "afm-gaiji">…</span>` — leaking a bare `［＃` outside the
+        // `afm-annotation` wrapper and violating the Tier A canary.
+        // Falling through here lets the outer bracket be claimed by
+        // `Annotation{Unknown}`, which is rendered inside an
+        // `afm-annotation` wrapper as the canary requires.
+        if description.contains("［＃") {
+            return None;
+        }
 
-    if description.is_empty() {
-        return None;
-    }
-    // Reject descriptions that carry structural quote characters.
-    // The serializer wraps the description in `「…」` for round-trip,
-    // so a stray `」` (e.g. from the malformed input `※［＃」］`) would
-    // make `serialize ∘ parse` non-stable. Falling through to `None`
-    // here lets the higher-level classifier wrap the raw bracket in
-    // an `Annotation{Unknown}`, which round-trips byte-identical.
-    if description.contains(['「', '」']) {
-        return None;
-    }
-    // Reject descriptions that embed a nested annotation-opening
-    // sequence `［＃`. Pathological shapes like `※［＃［＃改］］`
-    // produce a description string that *contains* `［＃`, which the
-    // gaiji renderer would emit verbatim inside `<span class=
-    // "afm-gaiji">…</span>` — leaking a bare `［＃` outside the
-    // `afm-annotation` wrapper and violating the Tier A canary.
-    // Falling through here lets the outer bracket be claimed by
-    // `Annotation{Unknown}`, which is rendered inside an
-    // `afm-annotation` wrapper as the canary requires.
-    if description.contains("［＃") {
-        return None;
-    }
+        // Resolve the Unicode scalar at lex time via the static table in
+        // afm-encoding so the downstream AST / renderer never has to
+        // re-probe. `None` stays `None` when the mencode has no mapping
+        // entry and no `U+XXXX` shape matches — the renderer falls back
+        // to escaping the raw `description`.
+        let ucs = gaiji_resolve::lookup(None, mencode.as_deref(), &description);
 
-    // Resolve the Unicode scalar at lex time via the static table in
-    // afm-encoding so the downstream AST / renderer never has to
-    // re-probe. `None` stays `None` when the mencode has no mapping
-    // entry and no `U+XXXX` shape matches — the renderer falls back
-    // to escaping the raw `description`.
-    let ucs = gaiji_resolve::lookup(None, mencode.as_deref(), &description);
-
-    let payload = alloc.make_gaiji(&description, ucs, mencode.as_deref());
-    Some(GaijiMatch {
-        payload,
-        consume_start: refmark_span.start,
-        consume_end: bracket_close_span.end,
-    })
+        let payload = self.alloc.make_gaiji(&description, ucs, mencode.as_deref());
+        Some(GaijiMatch {
+            payload,
+            consume_start: refmark_span.start,
+            consume_end: bracket_close_span.end,
+        })
+    }
 }
 
 /// Byte offset where the trailing kanji run in `text` begins.
@@ -1901,117 +2165,116 @@ enum EmitKind<'a> {
 /// hash whose keyword no specialised recogniser matches fall through
 /// to the `Annotation { Unknown }` catch-all so the bracket is
 /// always consumed into some `AozoraNode`.
-fn recognize_annotation<'a>(
-    view: BodyView<'_>,
-    source: &str,
-    open_idx: usize,
-    close_idx: usize,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Option<AnnotationMatch<'a>> {
-    #[cfg(feature = "phase3-instrument")]
-    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-        crate::instrumentation::Subsystem::Annotation,
-    );
-    let events = view.events;
-    let PairEvent::PairOpen {
-        span: open_span, ..
-    } = events[open_idx]
-    else {
-        return None;
-    };
-    let PairEvent::PairClose {
-        span: close_span, ..
-    } = events[close_idx]
-    else {
-        return None;
-    };
+impl<'a> RecogniseCtx<'_, 'a, '_> {
+    fn recognize_annotation(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<AnnotationMatch<'a>> {
+        #[cfg(feature = "phase3-instrument")]
+        let _phase3_guard = SubsystemGuard::new(Subsystem::Annotation);
+        let events = view.events;
+        let PairEvent::PairOpen {
+            span: open_span, ..
+        } = events[open_idx]
+        else {
+            return None;
+        };
+        let PairEvent::PairClose {
+            span: close_span, ..
+        } = events[close_idx]
+        else {
+            return None;
+        };
 
-    // The next event must be `＃`. `open_idx + 1 < close_idx` is
-    // guaranteed whenever the hash exists, and `close_idx > open_idx`
-    // always holds for a surviving PairOpen.
-    let hash_end = match events.get(open_idx + 1)? {
-        PairEvent::Solo {
-            kind: TriggerKind::Hash,
-            span,
-        } => span.end,
-        _ => return None,
-    };
+        // The next event must be `＃`. `open_idx + 1 < close_idx` is
+        // guaranteed whenever the hash exists, and `close_idx > open_idx`
+        // always holds for a surviving PairOpen.
+        let hash_end = match events.get(open_idx + 1)? {
+            PairEvent::Solo {
+                kind: TriggerKind::Hash,
+                span,
+            } => span.end,
+            _ => return None,
+        };
 
-    // Body bytes are everything between `＃` and `］`. Trim leading /
-    // trailing ASCII whitespace to be resilient to malformed input
-    // like `［＃ 改ページ  ］`; Aozora spec does not officially allow
-    // such whitespace but the corpus contains stragglers.
-    let body = source[hash_end as usize..close_span.start as usize].trim();
+        // Body bytes are everything between `＃` and `］`. Trim leading /
+        // trailing ASCII whitespace to be resilient to malformed input
+        // like `［＃ 改ページ  ］`; Aozora spec does not officially allow
+        // such whitespace but the corpus contains stragglers.
+        let body = self.source[hash_end as usize..close_span.start as usize].trim();
 
-    // Body-keyword classifier. Cannot be `or_else`d with the forward
-    // ones because each step needs the same `&mut alloc` borrow; we
-    // run them sequentially with explicit early returns instead.
-    if let Some((emit, annotation_payload)) = classify_annotation_body(body, alloc) {
-        return Some(AnnotationMatch {
-            emit,
-            // For Warichu open / close the body classifier hands back
-            // a payload alongside the node; the body-builder uses it to
-            // wrap as a `Segment::Annotation` with the correct
-            // `WarichuOpen` / `WarichuClose` kind instead of the
-            // catch-all `Unknown` downgrade. Other body-keyword
-            // families (PageBreak, Indent, …) leave the payload as
-            // `None`, matching the legacy behaviour where the body-
-            // builder fell through to its `Annotation{Unknown}`
-            // synthesis path.
-            annotation_payload,
-            consume_start: open_span.start,
-            consume_end: close_span.end,
-        });
-    }
-    if let Some(node) = classify_forward_bouten(view, source, open_idx, close_idx, alloc) {
-        return Some(AnnotationMatch {
+        // Body-keyword classifier. Cannot be `or_else`d with the forward
+        // ones because each step needs the same `&mut alloc` borrow; we
+        // run them sequentially with explicit early returns instead.
+        if let Some((emit, annotation_payload)) = classify_annotation_body(body, self.alloc) {
+            return Some(AnnotationMatch {
+                emit,
+                // For Warichu open / close the body classifier hands back
+                // a payload alongside the node; the body-builder uses it to
+                // wrap as a `Segment::Annotation` with the correct
+                // `WarichuOpen` / `WarichuClose` kind instead of the
+                // catch-all `Unknown` downgrade. Other body-keyword
+                // families (PageBreak, Indent, …) leave the payload as
+                // `None`, matching the legacy behaviour where the body-
+                // builder fell through to its `Annotation{Unknown}`
+                // synthesis path.
+                annotation_payload,
+                consume_start: open_span.start,
+                consume_end: close_span.end,
+            });
+        }
+        if let Some(node) = self.classify_forward_bouten(view, open_idx, close_idx) {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start: open_span.start,
+                consume_end: close_span.end,
+            });
+        }
+        if let Some(node) = self.classify_forward_tcy(view, open_idx, close_idx) {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start: open_span.start,
+                consume_end: close_span.end,
+            });
+        }
+        if let Some(node) = self.classify_forward_heading(view, open_idx, close_idx) {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start: open_span.start,
+                consume_end: close_span.end,
+            });
+        }
+
+        // Catch-all fallback for any well-formed `［＃…］` whose body no
+        // specialised recogniser claimed — including empty bodies
+        // (`［＃］`), which real Aozora corpora occasionally use as
+        // illustrative glyphs inside explanatory prose. Emitting
+        // `Annotation { Unknown }` with the raw source slice keeps the
+        // Tier-A canary (no bare `［＃` in HTML output) intact: the
+        // renderer wraps the raw bytes in an `afm-annotation` hidden span
+        // regardless of body shape. The lexer is the sole owner of this
+        // classification — comrak's parse phase never sees `［＃…］`.
+        //
+        // Build the annotation payload once and hand it to the caller in
+        // both `emit` and `annotation_payload` so the body-builder can
+        // re-wrap the same payload as a `Segment::Annotation` without
+        // re-interning the raw string.
+        let raw = &self.source[open_span.start as usize..close_span.end as usize];
+        let payload = self.alloc.make_annotation(raw, AnnotationKind::Unknown);
+        let node = self.alloc.annotation(payload);
+        let payload_for_seg = self.alloc.make_annotation(raw, AnnotationKind::Unknown);
+        Some(AnnotationMatch {
             emit: EmitKind::Aozora(node),
-            annotation_payload: None,
+            annotation_payload: Some(payload_for_seg),
             consume_start: open_span.start,
             consume_end: close_span.end,
-        });
+        })
     }
-    if let Some(node) = classify_forward_tcy(view, source, open_idx, close_idx, alloc) {
-        return Some(AnnotationMatch {
-            emit: EmitKind::Aozora(node),
-            annotation_payload: None,
-            consume_start: open_span.start,
-            consume_end: close_span.end,
-        });
-    }
-    if let Some(node) = classify_forward_heading(view, source, open_idx, close_idx, alloc) {
-        return Some(AnnotationMatch {
-            emit: EmitKind::Aozora(node),
-            annotation_payload: None,
-            consume_start: open_span.start,
-            consume_end: close_span.end,
-        });
-    }
-
-    // Catch-all fallback for any well-formed `［＃…］` whose body no
-    // specialised recogniser claimed — including empty bodies
-    // (`［＃］`), which real Aozora corpora occasionally use as
-    // illustrative glyphs inside explanatory prose. Emitting
-    // `Annotation { Unknown }` with the raw source slice keeps the
-    // Tier-A canary (no bare `［＃` in HTML output) intact: the
-    // renderer wraps the raw bytes in an `afm-annotation` hidden span
-    // regardless of body shape. The lexer is the sole owner of this
-    // classification — comrak's parse phase never sees `［＃…］`.
-    //
-    // Build the annotation payload once and hand it to the caller in
-    // both `emit` and `annotation_payload` so the body-builder can
-    // re-wrap the same payload as a `Segment::Annotation` without
-    // re-interning the raw string.
-    let raw = &source[open_span.start as usize..close_span.end as usize];
-    let payload = alloc.make_annotation(raw, AnnotationKind::Unknown);
-    let node = alloc.annotation(payload);
-    let payload_for_seg = alloc.make_annotation(raw, AnnotationKind::Unknown);
-    Some(AnnotationMatch {
-        emit: EmitKind::Aozora(node),
-        annotation_payload: Some(payload_for_seg),
-        consume_start: open_span.start,
-        consume_end: close_span.end,
-    })
 }
 
 /// Classify a `［＃「target」に<bouten-kind>］` forward-reference
@@ -2033,38 +2296,39 @@ fn recognize_annotation<'a>(
 /// Q+1..close_idx   suffix events             [usually Text("に…")]
 /// close_idx        PairClose(Bracket)
 /// ```
-fn classify_forward_bouten<'a>(
-    view: BodyView<'_>,
-    source: &str,
-    open_idx: usize,
-    close_idx: usize,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Option<borrowed::AozoraNode<'a>> {
-    let extracted = extract_forward_quote_targets(view, source, open_idx, close_idx)?;
-    // Shape 1: `に<kind>` — default right-side placement.
-    // Shape 2: `の左に<kind>` — left-side placement (position flipped).
-    let (position, kind_suffix) = if let Some(rest) = extracted.suffix.strip_prefix("に") {
-        (BoutenPosition::Right, rest)
-    } else if let Some(rest) = extracted.suffix.strip_prefix("の左に") {
-        (BoutenPosition::Left, rest)
-    } else {
-        return None;
-    };
-    let kind = bouten_kind_from_suffix(kind_suffix)?;
-    // A forward-reference bouten only makes sense when every named
-    // target actually appears in the preceding text. Otherwise it
-    // has no referent and we fall through to the Annotation{Unknown}
-    // catch-all so the reader sees the raw `［＃…］` rather than a
-    // mysterious styling applied to nothing. Each target is checked
-    // independently so a partially-valid multi-quote bracket (rare
-    // but present in corpora) still fails cleanly.
-    for target in &extracted.targets {
-        if !forward_target_is_preceded(view.events, source, open_idx, target) {
+impl<'a> RecogniseCtx<'_, 'a, '_> {
+    fn classify_forward_bouten(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<borrowed::AozoraNode<'a>> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        // Shape 1: `に<kind>` — default right-side placement.
+        // Shape 2: `の左に<kind>` — left-side placement (position flipped).
+        let (position, kind_suffix) = if let Some(rest) = extracted.suffix.strip_prefix("に") {
+            (BoutenPosition::Right, rest)
+        } else if let Some(rest) = extracted.suffix.strip_prefix("の左に") {
+            (BoutenPosition::Left, rest)
+        } else {
             return None;
+        };
+        let kind = bouten_kind_from_suffix(kind_suffix)?;
+        // A forward-reference bouten only makes sense when every named
+        // target actually appears in the preceding text. Otherwise it
+        // has no referent and we fall through to the Annotation{Unknown}
+        // catch-all so the reader sees the raw `［＃…］` rather than a
+        // mysterious styling applied to nothing. Each target is checked
+        // independently so a partially-valid multi-quote bracket (rare
+        // but present in corpora) still fails cleanly.
+        for target in &extracted.targets {
+            if !forward_target_is_preceded(view.events, self.source, open_idx, target) {
+                return None;
+            }
         }
+        let target = build_bouten_target(&extracted.targets, self.alloc);
+        Some(self.alloc.bouten(kind, target, position))
     }
-    let target = build_bouten_target(&extracted.targets, alloc);
-    Some(alloc.bouten(kind, target, position))
 }
 
 /// Fold a list of forward-bouten target strings into a single
@@ -2096,7 +2360,7 @@ fn build_bouten_target<'a>(
                 }
                 segs.push(alloc.seg_text(t));
             }
-            alloc.content_segments(segs)
+            alloc.content_segments(&segs)
         }
     }
 }
@@ -2113,25 +2377,26 @@ fn build_bouten_target<'a>(
 /// spec; we accept the first target's text and ignore the rest for
 /// robustness rather than failing, so the bracket still consumes via
 /// [`classify_forward_tcy`] instead of leaking to `Annotation{Unknown}`.
-fn classify_forward_tcy<'a>(
-    view: BodyView<'_>,
-    source: &str,
-    open_idx: usize,
-    close_idx: usize,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Option<borrowed::AozoraNode<'a>> {
-    let extracted = extract_forward_quote_targets(view, source, open_idx, close_idx)?;
-    if extracted.suffix != "は縦中横" {
-        return None;
+impl<'a> RecogniseCtx<'_, 'a, '_> {
+    fn classify_forward_tcy(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<borrowed::AozoraNode<'a>> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        if extracted.suffix != "は縦中横" {
+            return None;
+        }
+        let first = extracted.targets.first()?;
+        // Same rationale as `classify_forward_bouten` — the styling has no
+        // meaning without a preceding target literal.
+        if !forward_target_is_preceded(view.events, self.source, open_idx, first) {
+            return None;
+        }
+        let text = self.alloc.content_plain(first);
+        Some(self.alloc.tate_chu_yoko(text))
     }
-    let first = extracted.targets.first()?;
-    // Same rationale as `classify_forward_bouten` — the styling has no
-    // meaning without a preceding target literal.
-    if !forward_target_is_preceded(view.events, source, open_idx, first) {
-        return None;
-    }
-    let text = alloc.content_plain(first);
-    Some(alloc.tate_chu_yoko(text))
 }
 
 /// Check whether `target` appears somewhere in the source preceding the
@@ -2148,9 +2413,7 @@ fn forward_target_is_preceded(
     target: &str,
 ) -> bool {
     #[cfg(feature = "phase3-instrument")]
-    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
-        crate::instrumentation::Subsystem::ForwardTargetCheck,
-    );
+    let _phase3_guard = SubsystemGuard::new(Subsystem::ForwardTargetCheck);
     let Some(PairEvent::PairOpen { span, .. }) = events.get(open_idx) else {
         return false;
     };
@@ -2323,10 +2586,7 @@ const fn is_okurigana_char(ch: char) -> bool {
 /// (`［＃挿絵（file）「caption」入る］`) needs an event-level caption
 /// recogniser that this pass does not yet perform; the no-caption
 /// shape accounts for the vast majority of corpus occurrences.
-fn classify_sashie_body<'a>(
-    body: &str,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Option<EmitKind<'a>> {
+fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Option<EmitKind<'a>> {
     let rest = body.strip_prefix("挿絵（")?;
     // `）` is a full-width right parenthesis (U+FF09). Find its first
     // occurrence — corpus rarely nests `（）` inside a filename.
@@ -2362,38 +2622,39 @@ fn classify_sashie_body<'a>(
 /// paragraph would promote to an empty heading. Falling through lets
 /// the catch-all emit `Annotation { Unknown }` so the reader at least
 /// sees the raw bracket text in diagnostics.
-fn classify_forward_heading<'a>(
-    view: BodyView<'_>,
-    source: &str,
-    open_idx: usize,
-    close_idx: usize,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Option<borrowed::AozoraNode<'a>> {
-    let extracted = extract_forward_quote_targets(view, source, open_idx, close_idx)?;
-    let rest = extracted.suffix.strip_prefix("は")?;
-    let level = heading_level_from_suffix(rest)?;
+impl<'a> RecogniseCtx<'_, 'a, '_> {
+    fn classify_forward_heading(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<borrowed::AozoraNode<'a>> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        let rest = extracted.suffix.strip_prefix("は")?;
+        let level = heading_level_from_suffix(rest)?;
 
-    // Reject hints whose targets are not preceded by matching text.
-    // See `classify_forward_bouten` for the same rationale.
-    for target in &extracted.targets {
-        if target.is_empty() {
-            continue;
+        // Reject hints whose targets are not preceded by matching text.
+        // See `classify_forward_bouten` for the same rationale.
+        for target in &extracted.targets {
+            if target.is_empty() {
+                continue;
+            }
+            if !forward_target_is_preceded(view.events, self.source, open_idx, target) {
+                return None;
+            }
         }
-        if !forward_target_is_preceded(view.events, source, open_idx, target) {
+
+        // Concatenate targets in the (rare) multi-quote case so the full
+        // named run drives the heading content. For the 17 k-work corpus
+        // this is always a single quote, but the concat keeps the shape
+        // parallel to forward bouten.
+        let combined: String = extracted.targets.iter().copied().collect();
+        if combined.is_empty() {
             return None;
         }
-    }
 
-    // Concatenate targets in the (rare) multi-quote case so the full
-    // named run drives the heading content. For the 17 k-work corpus
-    // this is always a single quote, but the concat keeps the shape
-    // parallel to forward bouten.
-    let combined: String = extracted.targets.iter().copied().collect();
-    if combined.is_empty() {
-        return None;
+        Some(self.alloc.heading_hint(level, &combined))
     }
-
-    Some(alloc.heading_hint(level, &combined))
 }
 
 /// Map the keyword after `は` to a Markdown heading level per the
@@ -2510,10 +2771,11 @@ mod tests {
 
     /// Test-only materialised classify output: collects `spans` from
     /// the streaming iterator and merges its post-exhaustion
-    /// diagnostics with the upstream pair stream's diagnostics. Phase F
-    /// + I-2 retired the public `ClassifyOutput` struct; this is the
-    /// per-test convenience shape that tests use to assert on the
-    /// full pipeline result without building it inline at every site.
+    /// diagnostics with the upstream pair stream's diagnostics.
+    /// Phase F and I-2 retired the public `ClassifyOutput` struct;
+    /// this is the per-test convenience shape that tests use to assert
+    /// on the full pipeline result without building it inline at every
+    /// site.
     #[derive(Debug)]
     struct TestClassifyOutput<'a> {
         spans: Vec<ClassifiedSpan<'a>>,
@@ -2542,10 +2804,7 @@ mod tests {
             };
             let mut diagnostics = pair_stream.take_diagnostics();
             diagnostics.extend(classify_diagnostics);
-            let $name = TestClassifyOutput {
-                spans,
-                diagnostics,
-            };
+            let $name = TestClassifyOutput { spans, diagnostics };
         };
     }
 
@@ -2683,11 +2942,12 @@ mod tests {
         assert_eq!(out.spans.len(), 3);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
         assert_eq!(out.spans[1].kind, SpanKind::Newline);
-        let is_ruby = matches!(
-            out.spans[2].kind,
-            SpanKind::Aozora(AozoraNode::Ruby(_))
+        let is_ruby = matches!(out.spans[2].kind, SpanKind::Aozora(AozoraNode::Ruby(_)));
+        assert!(
+            is_ruby,
+            "expected Aozora(Ruby), got {:?}",
+            out.spans[2].kind
         );
-        assert!(is_ruby, "expected Aozora(Ruby), got {:?}", out.spans[2].kind);
     }
 
     #[test]
@@ -2746,7 +3006,7 @@ mod tests {
         run!(out, "｜日本《に※［＃「ほ」、第3水準1-85-54］ん》");
         let r = only_ruby(&out);
         assert_eq!(r.base.as_plain(), Some("日本"));
-        let Content::Segments(ref segs) = r.reading else {
+        let Content::Segments(segs) = r.reading else {
             panic!("expected Segments, got {:?}", r.reading);
         };
         assert_eq!(segs.len(), 3);
@@ -2755,11 +3015,11 @@ mod tests {
             "segment 0: {:?}",
             segs[0]
         );
-        let Segment::Gaiji(ref g) = segs[1] else {
+        let Segment::Gaiji(g) = segs[1] else {
             panic!("segment 1 should be Gaiji, got {:?}", segs[1]);
         };
-        assert_eq!(&*g.description, "ほ");
-        assert_eq!(g.mencode.as_deref(), Some("第3水準1-85-54"));
+        assert_eq!(g.description, "ほ");
+        assert_eq!(g.mencode, Some("第3水準1-85-54"));
         assert!(
             matches!(&segs[2], Segment::Text(t) if &**t == "ん"),
             "segment 2: {:?}",
@@ -2774,14 +3034,14 @@ mod tests {
         // trailing empty Text on either side).
         run!(out, "｜日本《※［＃「にほん」、第3水準1-85-54］》");
         let r = only_ruby(&out);
-        let Content::Segments(ref segs) = r.reading else {
+        let Content::Segments(segs) = r.reading else {
             panic!("expected Segments, got {:?}", r.reading);
         };
         assert_eq!(segs.len(), 1);
-        let Segment::Gaiji(ref g) = segs[0] else {
+        let Segment::Gaiji(g) = segs[0] else {
             panic!("expected Gaiji, got {:?}", segs[0]);
         };
-        assert_eq!(&*g.description, "にほん");
+        assert_eq!(g.description, "にほん");
     }
 
     #[test]
@@ -2791,7 +3051,7 @@ mod tests {
         // in the hidden `afm-annotation` span (Tier A compliance).
         run!(out, "｜日本《にほん［＃ママ］》");
         let r = only_ruby(&out);
-        let Content::Segments(ref segs) = r.reading else {
+        let Content::Segments(segs) = r.reading else {
             panic!("expected Segments, got {:?}", r.reading);
         };
         assert_eq!(segs.len(), 2);
@@ -2800,10 +3060,10 @@ mod tests {
             "segment 0: {:?}",
             segs[0]
         );
-        let Segment::Annotation(ref a) = segs[1] else {
+        let Segment::Annotation(a) = segs[1] else {
             panic!("segment 1 should be Annotation, got {:?}", segs[1]);
         };
-        assert_eq!(&*a.raw, "［＃ママ］");
+        assert_eq!(a.raw, "［＃ママ］");
     }
 
     #[test]
@@ -2813,7 +3073,7 @@ mod tests {
         // `text_start` advancement correctly spans each gap.
         run!(out, "｜日本《に※［＃「ほ」、第3水準1-85-54］ん［＃ママ］》");
         let r = only_ruby(&out);
-        let Content::Segments(ref segs) = r.reading else {
+        let Content::Segments(segs) = r.reading else {
             panic!("expected Segments, got {:?}", r.reading);
         };
         assert_eq!(segs.len(), 4);
@@ -2832,7 +3092,7 @@ mod tests {
         let r = only_ruby(&out);
         assert_eq!(r.base.as_plain(), Some("日本"));
         assert!(!r.delim_explicit);
-        let Content::Segments(ref segs) = r.reading else {
+        let Content::Segments(segs) = r.reading else {
             panic!("expected Segments, got {:?}", r.reading);
         };
         assert_eq!(segs.len(), 3);
@@ -2880,7 +3140,7 @@ mod tests {
         // `Segment::Text` channel (Tier A canary).
         run!(out, "｜日本《にほん［＃改ページ］》");
         let r = only_ruby(&out);
-        let Content::Segments(ref segs) = r.reading else {
+        let Content::Segments(segs) = r.reading else {
             panic!("expected Segments, got {:?}", r.reading);
         };
         // Last segment must be an Annotation carrying the raw bytes.
@@ -2888,7 +3148,7 @@ mod tests {
         let Segment::Annotation(a) = last else {
             panic!("final segment should be Annotation, got {last:?}");
         };
-        assert_eq!(&*a.raw, "［＃改ページ］");
+        assert_eq!(a.raw, "［＃改ページ］");
         assert_eq!(a.kind, AnnotationKind::Unknown);
     }
 
@@ -2968,7 +3228,7 @@ mod tests {
             })
             .expect("unknown keyword must promote to Annotation{Unknown}");
         assert_eq!(ann.kind, AnnotationKind::Unknown);
-        assert_eq!(&*ann.raw, "［＃未知のキーワード］");
+        assert_eq!(ann.raw, "［＃未知のキーワード］");
     }
 
     #[test]
@@ -3001,7 +3261,7 @@ mod tests {
             })
             .expect("empty body must still wrap as Annotation{Unknown}");
         assert_eq!(ann.kind, AnnotationKind::Unknown);
-        assert_eq!(&*ann.raw, "［＃］");
+        assert_eq!(ann.raw, "［＃］");
     }
 
     #[test]
@@ -3040,7 +3300,7 @@ mod tests {
             })
             .expect("overflow should fall back to Annotation{Unknown}");
         assert_eq!(ann.kind, AnnotationKind::Unknown);
-        assert_eq!(&*ann.raw, "［＃300字下げ］");
+        assert_eq!(ann.raw, "［＃300字下げ］");
         // The specialised Indent recogniser MUST NOT claim it.
         assert!(
             !out.spans
@@ -3444,7 +3704,7 @@ mod tests {
         run!(out, "第一篇［＃「第一篇」は大見出し］");
         let h = find_heading_hint(&out).expect("expected HeadingHint");
         assert_eq!(h.level, 1);
-        assert_eq!(&*h.target, "第一篇");
+        assert_eq!(h.target, "第一篇");
     }
 
     #[test]
@@ -3453,7 +3713,7 @@ mod tests {
         run!(out, "一［＃「一」は中見出し］");
         let h = find_heading_hint(&out).expect("expected HeadingHint");
         assert_eq!(h.level, 2);
-        assert_eq!(&*h.target, "一");
+        assert_eq!(h.target, "一");
     }
 
     #[test]
@@ -3462,7 +3722,7 @@ mod tests {
         run!(out, "小題［＃「小題」は小見出し］");
         let h = find_heading_hint(&out).expect("expected HeadingHint");
         assert_eq!(h.level, 3);
-        assert_eq!(&*h.target, "小題");
+        assert_eq!(h.target, "小題");
     }
 
     #[test]
@@ -3505,7 +3765,10 @@ mod tests {
         // hints — the lexer emits one HeadingHint per bracket and
         // post-process handles the first. This test locks the per-
         // bracket classification rather than the post_process policy.
-        run!(out, "A［＃「A」は大見出し］B［＃「B」は中見出し］C［＃「C」は小見出し］");
+        run!(
+            out,
+            "A［＃「A」は大見出し］B［＃「B」は中見出し］C［＃「C」は小見出し］"
+        );
         let levels: Vec<u8> = out
             .spans
             .iter()
@@ -3528,7 +3791,7 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Sashie span");
-        assert_eq!(&*sashie.file, "fig01.png");
+        assert_eq!(sashie.file, "fig01.png");
         assert!(sashie.caption.is_none());
     }
 
@@ -3576,8 +3839,8 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Gaiji span");
-        assert_eq!(&*gaiji.description, "木＋吶のつくり");
-        assert_eq!(gaiji.mencode.as_deref(), Some("第3水準1-85-54"));
+        assert_eq!(gaiji.description, "木＋吶のつくり");
+        assert_eq!(gaiji.mencode, Some("第3水準1-85-54"));
         // The mencode table resolves 第3水準1-85-54 → 榁 (U+6903).
         assert_eq!(gaiji.ucs, Some('\u{6903}'));
     }
@@ -3593,7 +3856,7 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Gaiji span");
-        assert_eq!(&*gaiji.description, "試");
+        assert_eq!(gaiji.description, "試");
         assert!(gaiji.mencode.is_none());
     }
 
@@ -3608,8 +3871,8 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Gaiji span");
-        assert_eq!(&*gaiji.description, "二の字点");
-        assert_eq!(gaiji.mencode.as_deref(), Some("1-2-23"));
+        assert_eq!(gaiji.description, "二の字点");
+        assert_eq!(gaiji.mencode, Some("1-2-23"));
     }
 
     #[test]
@@ -3658,7 +3921,7 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Kaeriten span");
-        assert_eq!(&*kaeriten.mark, "一");
+        assert_eq!(kaeriten.mark, "一");
     }
 
     #[test]
@@ -3674,7 +3937,7 @@ mod tests {
             }) else {
                 panic!("no Kaeriten span for mark {mark:?}");
             };
-            assert_eq!(&*k.mark, mark);
+            assert_eq!(k.mark, mark);
         }
     }
 
@@ -3706,7 +3969,7 @@ mod tests {
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("no Kaeriten span for mark {mark:?}"));
-            assert_eq!(&*k.mark, mark, "mark={mark:?}");
+            assert_eq!(k.mark, mark, "mark={mark:?}");
         }
     }
 
@@ -3733,7 +3996,7 @@ mod tests {
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("no Kaeriten for okurigana {mark:?}"));
-            assert_eq!(&*k.mark, mark, "mark={mark:?}");
+            assert_eq!(k.mark, mark, "mark={mark:?}");
         }
     }
 
@@ -3933,7 +4196,7 @@ mod tests {
             );
         };
         assert_eq!(open.kind, AnnotationKind::WarichuOpen);
-        assert_eq!(&*open.raw, "［＃割り注］");
+        assert_eq!(open.raw, "［＃割り注］");
 
         let Some(AozoraNode::Annotation(close)) = aozora_node(&out.spans[2]) else {
             panic!(
@@ -3942,7 +4205,7 @@ mod tests {
             );
         };
         assert_eq!(close.kind, AnnotationKind::WarichuClose);
-        assert_eq!(&*close.raw, "［＃割り注終わり］");
+        assert_eq!(close.raw, "［＃割り注終わり］");
     }
 
     #[test]

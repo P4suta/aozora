@@ -86,10 +86,10 @@ impl SizeBand {
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
-            SizeBand::Small => "<50KB",
-            SizeBand::Medium => "50KB-500KB",
-            SizeBand::Large => "500KB-2MB",
-            SizeBand::Pathological => ">2MB",
+            Self::Small => "<50KB",
+            Self::Medium => "50KB-500KB",
+            Self::Large => "500KB-2MB",
+            Self::Pathological => ">2MB",
         }
     }
 
@@ -101,13 +101,13 @@ impl SizeBand {
         const KIB: usize = 1024;
         const MIB: usize = 1024 * 1024;
         if bytes < 50 * KIB {
-            SizeBand::Small
+            Self::Small
         } else if bytes < 500 * KIB {
-            SizeBand::Medium
+            Self::Medium
         } else if bytes < 2 * MIB {
-            SizeBand::Large
+            Self::Large
         } else {
-            SizeBand::Pathological
+            Self::Pathological
         }
     }
 
@@ -115,13 +115,8 @@ impl SizeBand {
     /// progression. Used by every probe that prints per-band rows so
     /// the report layout stays stable across runs.
     #[must_use]
-    pub fn ordered() -> [SizeBand; 4] {
-        [
-            SizeBand::Small,
-            SizeBand::Medium,
-            SizeBand::Large,
-            SizeBand::Pathological,
-        ]
+    pub fn ordered() -> [Self; 4] {
+        [Self::Small, Self::Medium, Self::Large, Self::Pathological]
     }
 }
 
@@ -196,15 +191,20 @@ pub fn corpus_size_bands(items: Vec<CorpusItem>) -> SizeBandedCorpus {
     out
 }
 
-/// Logarithmic-bucket histogram over an `&[u64]` of nanosecond
-/// durations. `min_ns` and `max_ns` set the inclusive lower / exclusive
-/// upper edges of the histogram range; samples outside fall in the
-/// first / last bucket respectively. Returns `(low, high, count)`
-/// triples in ascending bucket order.
+/// Logarithmic-bucket histogram over an `&[u64]` of nanosecond durations.
 ///
-/// Bucket boundaries are computed in `ln`-space so each bucket spans an
-/// equal multiplicative ratio. With 10 buckets across `1µs..1s` each
-/// bucket covers a ratio of `(1e9/1e3)^(1/10) ≈ 4×`.
+/// `min_ns` and `max_ns` set the inclusive lower / exclusive upper
+/// edges of the histogram range; samples outside fall in the first /
+/// last bucket respectively. Returns `(low, high, count)` triples in
+/// ascending bucket order. Bucket boundaries are computed in `ln`-space
+/// so each bucket spans an equal multiplicative ratio. With 10 buckets
+/// across `1µs..1s` each bucket covers a ratio of
+/// `(1e9/1e3)^(1/10) ≈ 4×`.
+///
+/// # Panics
+///
+/// Panics if `buckets == 0` or if `min_ns == 0` or `min_ns >= max_ns`
+/// — the bucket-bound math requires a strictly positive range.
 #[must_use]
 #[allow(
     clippy::cast_precision_loss,
@@ -231,7 +231,7 @@ pub fn log_histogram_ns(
 
     let mut edges: Vec<u64> = Vec::with_capacity(buckets + 1);
     for i in 0..=buckets {
-        let edge = (log_lo + step * (i as f64)).exp();
+        let edge = step.mul_add(i as f64, log_lo).exp();
         edges.push(edge as u64);
     }
 
@@ -253,10 +253,11 @@ pub fn log_histogram_ns(
         .collect()
 }
 
-/// Render a single histogram bar row of the form
-/// `<label>  <bar>  <count>`. The bar is `█` repeated with width
-/// proportional to `count / max_count`, capped at `max_width` cells.
-/// Empty buckets render as a single space so columns stay aligned.
+/// Render a single histogram bar row of the form `<label>  <bar>  <count>`.
+///
+/// The bar is `█` repeated with width proportional to `count / max_count`,
+/// capped at `max_width` cells. Empty buckets render as a single space
+/// so columns stay aligned.
 #[must_use]
 #[allow(
     clippy::cast_precision_loss,
@@ -314,7 +315,7 @@ mod tests {
     #[test]
     fn build_synthetic_parses_without_panic() {
         let s = build_synthetic_aozora(4096);
-        let doc = Document::new(s.clone());
+        let doc = Document::new(s);
         let tree = doc.parse();
         black_box(tree);
     }
@@ -327,7 +328,10 @@ mod tests {
         assert_eq!(SizeBand::from_bytes(500 * 1024 - 1), SizeBand::Medium);
         assert_eq!(SizeBand::from_bytes(500 * 1024), SizeBand::Large);
         assert_eq!(SizeBand::from_bytes(2 * 1024 * 1024 - 1), SizeBand::Large);
-        assert_eq!(SizeBand::from_bytes(2 * 1024 * 1024), SizeBand::Pathological);
+        assert_eq!(
+            SizeBand::from_bytes(2 * 1024 * 1024),
+            SizeBand::Pathological
+        );
         assert_eq!(SizeBand::from_bytes(usize::MAX), SizeBand::Pathological);
     }
 
@@ -389,7 +393,7 @@ mod tests {
     #[test]
     fn build_synthetic_emits_no_diagnostics_for_well_formed_input() {
         let s = build_synthetic_aozora(2048);
-        let doc = Document::new(s.clone());
+        let doc = Document::new(s);
         let tree = doc.parse();
         assert!(
             tree.diagnostics().is_empty(),

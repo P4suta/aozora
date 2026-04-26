@@ -39,7 +39,7 @@ fn nested_annotation(depth: usize) -> String {
     s
 }
 
-/// 16 levels — exactly fills the SmallVec inline capacity.
+/// 16 levels — exactly fills the `SmallVec` inline capacity.
 #[test]
 fn nested_annotations_16_levels_lex_without_panic() {
     let src = nested_annotation(16);
@@ -65,7 +65,7 @@ fn nested_annotations_16_levels_lex_without_panic() {
     );
 }
 
-/// 64 levels — forces the SmallVec body buffer to spill to the heap.
+/// 64 levels — forces the `SmallVec` body buffer to spill to the heap.
 /// The result must still be structurally identical to the 16-level
 /// case (same registry shape, no diagnostics).
 #[test]

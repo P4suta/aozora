@@ -82,7 +82,7 @@ fn classify_stream_drop_partway_does_not_corrupt_global_state() {
 // 2. Lazy iteration semantics
 // =====================================================================
 
-/// PairStream events are emitted *roughly* in lock-step with the
+/// `PairStream` events are emitted *roughly* in lock-step with the
 /// underlying source position. Full laziness is hard to assert without
 /// a custom counting wrapper because `tokenize` is itself lazy and
 /// `pair` may peek; we instead pin a behavioural proxy: the byte
@@ -145,7 +145,7 @@ fn pair_stream_take_n_matches_collect_then_take() {
         let full: Vec<PairEvent> = pair(tokenize(src)).collect();
         for &n in ns {
             let via_take: Vec<PairEvent> = pair(tokenize(src)).take(n).collect();
-            let via_collect_take: Vec<PairEvent> = full.iter().cloned().take(n).collect();
+            let via_collect_take: Vec<PairEvent> = full.iter().take(n).cloned().collect();
             assert_eq!(
                 via_take, via_collect_take,
                 "src={src:?} n={n}: take(n) must agree with collect().take(n)"
@@ -288,7 +288,8 @@ fn pipeline_phase0_diagnostic_observed_at_sanitized_also_present_after_build() {
         .filter(|d| matches!(d, Diagnostic::SourceContainsPua { .. }))
         .count();
     assert_eq!(
-        phase0_count_at_sanitized, 1,
+        phase0_count_at_sanitized,
+        1,
         "expected one SourceContainsPua at Sanitized state, \
          got: {:?}",
         sanitized.diagnostics()

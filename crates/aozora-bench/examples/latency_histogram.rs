@@ -19,19 +19,19 @@
     clippy::missing_errors_doc,
     clippy::too_many_lines,
     clippy::disallowed_methods,
-    reason = "profiling-example tool, not library code"
+    clippy::needless_collect,
+    reason = "profiling-example tool, not library code; the per-phase .collect() calls are intentional materialisation so each phase can be timed independently"
 )]
 
 use std::env;
+use std::process;
 use std::time::Instant;
 
 use aozora_bench::{log_histogram_ns, render_bar_row};
 use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_sjis;
 use aozora_lex::lex_into_arena;
-use aozora_lexer::{
-    ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
-};
+use aozora_lexer::{ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize};
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;
 
@@ -42,7 +42,7 @@ const MAX_NS: u64 = 1_000_000_000;
 fn main() {
     let Some(corpus) = aozora_corpus::from_env() else {
         eprintln!("AOZORA_CORPUS_ROOT not set or not a directory; nothing to profile.");
-        std::process::exit(2);
+        process::exit(2);
     };
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")
         .ok()
@@ -87,7 +87,7 @@ fn main() {
         let arena_p3 = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena_p3);
         let t = Instant::now();
-        let mut cs = classify(pe.into_iter(), &sanitized.text, &mut alloc);
+        let mut cs = classify(pe, &sanitized.text, &mut alloc);
         let _spans: Vec<ClassifiedSpan<'_>> = (&mut cs).collect();
         drop(cs.take_diagnostics());
         classify_ns.push(t.elapsed().as_nanos() as u64);

@@ -44,6 +44,8 @@
 //!   a well-formed outer pair like `［...］` still closes correctly even
 //!   when an inner stray `》` appears inside the body.
 
+use core::mem;
+
 use aozora_syntax::Span;
 use smallvec::SmallVec;
 
@@ -177,7 +179,7 @@ where
     /// iterator is exhausted (otherwise EOF unclosed-bracket
     /// diagnostics will not yet have been emitted).
     pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
-        core::mem::take(&mut self.diagnostics)
+        mem::take(&mut self.diagnostics)
     }
 
     /// Borrow accumulated diagnostics in place. Same caveat as
@@ -556,11 +558,11 @@ mod tests {
         );
 
         // Diagnostic ordering: same innermost-first, one per frame.
-        let bracket_diags: Vec<&Diagnostic> = diagnostics
+        let bracket_diag_count = diagnostics
             .iter()
             .filter(|d| matches!(d, Diagnostic::UnclosedBracket { .. }))
-            .collect();
-        assert_eq!(bracket_diags.len(), 3);
+            .count();
+        assert_eq!(bracket_diag_count, 3);
     }
 
     /// `take_diagnostics` on a partly-driven stream returns whatever

@@ -36,14 +36,25 @@ pub fn diagnostics_json_view(diagnostics: &[aozora::Diagnostic]) -> String {
 }
 
 #[cfg(feature = "extension-module")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the #[pyfunction] / #[pymethods] macros expand each fn into a Python ABI wrapper that PyO3 fills with extra context args (Python token, args, kwargs, …). The warning fires on the macro-generated signature, not on user code; per-item allow doesn't reach inside the macro expansion."
+)]
 mod bindings {
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
 
     /// `PyO3`-facing handle to a parsed Aozora document.
-    #[pyclass]
+    ///
+    /// `unsendable` because [`::aozora::Document`] owns a `bumpalo` arena
+    /// with interior `Cell` state — `Send` but not `Sync`. Pinning the
+    /// `PyO3` handle to its constructing Python thread reflects the
+    /// underlying ownership contract; concurrent access from other
+    /// Python threads raises a `RuntimeError` instead of unsound sharing.
+    #[pyclass(unsendable)]
+    #[derive(Debug)]
     pub struct Document {
-        inner: aozora::Document,
+        inner: ::aozora::Document,
     }
 
     #[pymethods]
@@ -52,7 +63,7 @@ mod bindings {
         #[new]
         fn new(source: &str) -> Self {
             Self {
-                inner: aozora::Document::new(source.to_owned()),
+                inner: ::aozora::Document::new(source.to_owned()),
             }
         }
 
@@ -72,9 +83,18 @@ mod bindings {
             self.inner.parse().serialize()
         }
 
-        /// Diagnostics as JSON.
+        /// Diagnostics as JSON. Returns `PyResult<String>` for `PyO3`
+        /// signature uniformity even though this method cannot fail —
+        /// future expansion (per-diagnostic schema validation) is the
+        /// natural place to surface fallible behaviour.
+        #[allow(
+            clippy::unnecessary_wraps,
+            reason = "PyO3 method signatures stay uniform in PyResult so future fallible expansion doesn't break the Python ABI"
+        )]
         fn diagnostics(&self) -> PyResult<String> {
-            Ok(crate::diagnostics_json_view(self.inner.parse().diagnostics()))
+            Ok(crate::diagnostics_json_view(
+                self.inner.parse().diagnostics(),
+            ))
         }
 
         /// Source byte length.
@@ -109,14 +129,14 @@ mod tests {
 
     #[test]
     fn diagnostics_json_view_works_through_aozora_wasm() {
-        let doc = aozora::Document::new("abc\u{E001}def".to_owned());
+        let doc = ::aozora::Document::new("abc\u{E001}def".to_owned());
         let json = diagnostics_json_view(doc.parse().diagnostics());
         assert!(json.contains("source_contains_pua"));
     }
 
     #[test]
     fn diagnostics_json_view_emits_empty_array_for_clean_input() {
-        let doc = aozora::Document::new("plain text".to_owned());
+        let doc = ::aozora::Document::new("plain text".to_owned());
         let json = diagnostics_json_view(doc.parse().diagnostics());
         assert_eq!(json, "[]");
     }

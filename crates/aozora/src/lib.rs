@@ -29,8 +29,8 @@
 #![forbid(unsafe_code)]
 
 pub use aozora_lex::{
-    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
-    BorrowedLexOutput, lex_into_arena,
+    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, BorrowedLexOutput,
+    INLINE_SENTINEL, lex_into_arena,
 };
 pub use aozora_render::{html, serialize};
 pub use aozora_spec::{Diagnostic, PairKind, Span, TriggerKind};

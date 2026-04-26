@@ -12,18 +12,18 @@
 //! Instrumented sub-systems (9 total):
 //!
 //! Recogniser leaves (do not nest):
-//!   - recognize_ruby
-//!   - recognize_annotation
-//!   - recognize_gaiji
-//!   - build_content_from_body
-//!   - body_dispatcher (Aho-Corasick lookup inside annotation body)
+//!   - `recognize_ruby`
+//!   - `recognize_annotation`
+//!   - `recognize_gaiji`
+//!   - `build_content_from_body`
+//!   - `body_dispatcher` (Aho-Corasick lookup inside annotation body)
 //!
 //! Framework / dispatch (their elapsed time INCLUDES nested leaf
 //! time; subtract leaf sum to get pure framework cost):
-//!   - iter_dispatch (outer)              — ClassifyStream::next() body
-//!   - forward_target_is_preceded         — per-call source scan / AC lookup
-//!   - install_forward_target_index       — one-time per-doc AC pre-pass
-//!   - append_to_frame                    — per-event frame buffer push
+//!   - `iter_dispatch` (outer)            — `ClassifyStream::next()` body
+//!   - `forward_target_is_preceded`       — per-call source scan / AC lookup
+//!   - `install_forward_target_index`     — one-time per-doc AC pre-pass
+//!   - `append_to_frame`                  — per-event frame buffer push
 //!
 //! ```text
 //! AOZORA_CORPUS_ROOT=… cargo run --release --example phase3_subsystems \
@@ -44,6 +44,7 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::process;
 use std::time::Instant;
 
 use aozora_corpus::CorpusItem;
@@ -77,7 +78,7 @@ impl Aggregate {
 fn main() {
     let Some(corpus) = aozora_corpus::from_env() else {
         eprintln!("AOZORA_CORPUS_ROOT not set or not a directory; nothing to profile.");
-        std::process::exit(2);
+        process::exit(2);
     };
 
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")
@@ -91,7 +92,10 @@ fn main() {
         .take(limit.unwrap_or(usize::MAX))
         .filter_map(Result::ok)
         .collect();
-    eprintln!("phase3_subsystems: loaded {} items, measuring…", items.len());
+    eprintln!(
+        "phase3_subsystems: loaded {} items, measuring…",
+        items.len()
+    );
 
     let mut agg = Aggregate::default();
     let mut decode_errors: u64 = 0;
@@ -222,9 +226,7 @@ fn print_report(agg: &Aggregate, docs: u64, decode_errors: u64) {
             0.0
         }
     );
-    println!(
-        "  pure dispatch overhead (== outer - leaves - frame_append):",
-    );
+    println!("  pure dispatch overhead (== outer - leaves - frame_append):");
     println!(
         "    {:.2} ms ({:.1}%) — iterator next() match-arm + Driver state machine",
         (pure_dispatch_ns as f64) / NS_PER_MS,

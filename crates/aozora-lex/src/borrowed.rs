@@ -244,12 +244,7 @@ mod tests {
         // Exactly one inline sentinel emitted by the normalizer.
         assert_eq!(out.registry.inline.len(), 1);
         // The borrowed AozoraNode behind it must be a Ruby.
-        let (pos, node) = out
-            .registry
-            .inline
-            .iter_sorted()
-            .next()
-            .expect("one entry");
+        let (pos, node) = out.registry.inline.iter_sorted().next().expect("one entry");
         assert!(out.normalized.as_bytes()[*pos as usize..].starts_with(&[0xEE, 0x80, 0x81]));
         assert!(matches!(node, borrowed::AozoraNode::Ruby(_)));
     }
@@ -322,7 +317,9 @@ mod tests {
         assert!(out.normalized.contains('\u{E001}'));
         assert_eq!(out.registry.inline.len(), 1);
         let (_, node) = out.registry.inline.iter_sorted().next().unwrap();
-        assert!(matches!(node, borrowed::AozoraNode::Ruby(r) if r.reading.as_plain() == Some("おうめ")));
+        assert!(
+            matches!(node, borrowed::AozoraNode::Ruby(r) if r.reading.as_plain() == Some("おうめ"))
+        );
     }
 
     #[test]
@@ -478,10 +475,7 @@ mod tests {
         );
         // The bytes AT the sentinel position must be the open sentinel.
         let open_after = open_pos as usize + open_sentinel_bytes.len();
-        assert_eq!(
-            &bytes[open_pos as usize..open_after],
-            open_sentinel_bytes
-        );
+        assert_eq!(&bytes[open_pos as usize..open_after], open_sentinel_bytes);
         // Followed by `\n\n`.
         assert!(open_after + 2 <= bytes.len());
         assert_eq!(&bytes[open_after..open_after + 2], b"\n\n");

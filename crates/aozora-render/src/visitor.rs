@@ -24,8 +24,8 @@
 use core::fmt;
 
 use aozora_syntax::borrowed::{
-    Annotation, AozoraHeading, AozoraNode, Bouten, DoubleRuby, Gaiji, HeadingHint, Kaeriten,
-    Ruby, Sashie, TateChuYoko, Warichu,
+    Annotation, AozoraHeading, AozoraNode, Bouten, DoubleRuby, Gaiji, HeadingHint, Kaeriten, Ruby,
+    Sashie, TateChuYoko, Warichu,
 };
 use aozora_syntax::{AlignEnd, Container, Indent, Keigakomi, SectionKind};
 
@@ -43,7 +43,14 @@ use aozora_syntax::{AlignEnd, Container, Indent, Keigakomi, SectionKind};
 /// Methods return `fmt::Result` so visitors that write to a
 /// [`fmt::Write`] sink can propagate I/O errors. Visitors with
 /// infallible state (e.g., counting visits) can ignore the result.
-#[allow(unused_variables, reason = "default no-op impls; downstream visitors override per-variant")]
+#[allow(
+    unused_variables,
+    reason = "default no-op impls; downstream visitors override per-variant"
+)]
+#[allow(
+    clippy::missing_errors_doc,
+    reason = "every visit_* method shares the trait-level # Errors contract above (propagates the underlying fmt::Write sink's error). Per-method # Errors lines would be 17 redundant duplicates."
+)]
 pub trait AozoraVisitor<'src> {
     fn visit_ruby(&mut self, r: &Ruby<'src>) -> fmt::Result {
         Ok(())

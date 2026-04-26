@@ -24,8 +24,8 @@ use aozora_lex::BorrowedLexOutput;
 use aozora_spec::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
 };
-use aozora_syntax::borrowed::AozoraNode;
 use aozora_syntax::Container;
+use aozora_syntax::borrowed::AozoraNode;
 
 use crate::render_node;
 
@@ -58,10 +58,7 @@ pub fn render_to_string(out: &BorrowedLexOutput<'_>) -> String {
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited
 /// from the lexer's `Span` width contract; in practice unreachable
 /// (Phase 0 sanitize already gates on this bound).
-pub fn render_into<W: fmt::Write>(
-    out: &BorrowedLexOutput<'_>,
-    writer: &mut W,
-) -> fmt::Result {
+pub fn render_into<W: fmt::Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -> fmt::Result {
     let normalized = out.normalized;
     let registry = &out.registry;
     let mut state = RenderState::default();
@@ -250,9 +247,7 @@ mod tests {
 
     #[test]
     fn paired_container_open_close_renders_div_pair() {
-        let html = render(
-            "［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］",
-        );
+        let html = render("［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］");
         assert!(html.contains("afm-container-indent afm-container-indent-2"));
         assert!(html.contains("</div>"));
     }

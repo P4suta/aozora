@@ -265,7 +265,9 @@ impl From<&aozora::Diagnostic> for DiagnosticView {
         // triplet. The catch-all `_` arm keeps the impl total against
         // the upstream `#[non_exhaustive]` contract.
         match d {
-            aozora::Diagnostic::SourceContainsPua { codepoint, span, .. } => Self {
+            aozora::Diagnostic::SourceContainsPua {
+                codepoint, span, ..
+            } => Self {
                 kind: "source_contains_pua",
                 span_start: span.start,
                 span_end: span.end,
@@ -289,7 +291,9 @@ impl From<&aozora::Diagnostic> for DiagnosticView {
                 span_end: span.end,
                 codepoint: None,
             },
-            aozora::Diagnostic::UnregisteredSentinel { codepoint, span, .. } => Self {
+            aozora::Diagnostic::UnregisteredSentinel {
+                codepoint, span, ..
+            } => Self {
                 kind: "unregistered_sentinel",
                 span_start: span.start,
                 span_end: span.end,

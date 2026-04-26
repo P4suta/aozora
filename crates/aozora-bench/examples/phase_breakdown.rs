@@ -36,18 +36,19 @@
     clippy::missing_errors_doc,
     clippy::too_many_lines,
     clippy::disallowed_methods,
-    reason = "profiling-example tool, not library code"
+    clippy::needless_collect,
+    reason = "profiling-example tool, not library code; per-phase .collect() calls are intentional materialisation so each phase can be timed in isolation"
 )]
 
+use std::cmp::Reverse;
 use std::env;
+use std::process;
 use std::time::Instant;
 
 use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
 use aozora_encoding::decode_sjis;
 use aozora_lex::lex_into_arena;
-use aozora_lexer::{
-    ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
-};
+use aozora_lexer::{ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize};
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;
 
@@ -79,16 +80,14 @@ fn main() {
              usage: AOZORA_CORPUS_ROOT=/path/to/corpus \
              cargo run --release --example phase_breakdown -p aozora-bench"
         );
-        std::process::exit(2);
+        process::exit(2);
     };
 
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")
         .ok()
         .and_then(|s| s.trim().parse().ok());
 
-    eprintln!(
-        "phase_breakdown: starting (limit = {limit:?})"
-    );
+    eprintln!("phase_breakdown: starting (limit = {limit:?})");
 
     // Drain the corpus so I/O isn't mixed into per-phase numbers.
     let items: Vec<CorpusItem> = corpus
@@ -155,7 +154,7 @@ fn measure_one(text: &str) -> PhaseSample {
     let arena = Arena::new();
     let mut alloc = BorrowedAllocator::new(&arena);
     let t = Instant::now();
-    let mut classify_stream = classify(pair_events.into_iter(), &sanitized.text, &mut alloc);
+    let mut classify_stream = classify(pair_events, &sanitized.text, &mut alloc);
     let _classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
     drop(classify_stream.take_diagnostics());
     let classify_ns = t.elapsed().as_nanos() as u64;
@@ -210,7 +209,11 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64) {
     println!();
     println!("Corpus");
     println!("  docs              : {n}");
-    println!("  bytes (sanitised) : {} ({:.2} MB)", total_bytes, total_bytes as f64 / (1024.0 * 1024.0));
+    println!(
+        "  bytes (sanitised) : {} ({:.2} MB)",
+        total_bytes,
+        total_bytes as f64 / (1024.0 * 1024.0)
+    );
     println!("  wall-clock        : {:.2} s", wall_ns as f64 / NS_PER_S);
     println!();
 
@@ -226,20 +229,37 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64) {
     println!();
 
     println!("Per-doc latency (per phase, microseconds)");
-    print_phase_quantiles("sanitize     ", samples.iter().map(|s| s.sanitize_ns).collect());
-    print_phase_quantiles("tokenize     ", samples.iter().map(|s| s.tokenize_ns).collect());
+    print_phase_quantiles(
+        "sanitize     ",
+        samples.iter().map(|s| s.sanitize_ns).collect(),
+    );
+    print_phase_quantiles(
+        "tokenize     ",
+        samples.iter().map(|s| s.tokenize_ns).collect(),
+    );
     print_phase_quantiles("pair         ", samples.iter().map(|s| s.pair_ns).collect());
-    print_phase_quantiles("classify     ", samples.iter().map(|s| s.classify_ns).collect());
-    print_phase_quantiles("post-classify", samples.iter().map(|s| s.post_classify_ns).collect());
-    print_phase_quantiles("lex_into_arena", samples.iter().map(|s| s.full_ns).collect());
-    print_phase_quantiles("4-PHASE TOTAL", samples.iter().map(|s| s.total_ns).collect());
+    print_phase_quantiles(
+        "classify     ",
+        samples.iter().map(|s| s.classify_ns).collect(),
+    );
+    print_phase_quantiles(
+        "post-classify",
+        samples.iter().map(|s| s.post_classify_ns).collect(),
+    );
+    print_phase_quantiles(
+        "lex_into_arena",
+        samples.iter().map(|s| s.full_ns).collect(),
+    );
+    print_phase_quantiles(
+        "4-PHASE TOTAL",
+        samples.iter().map(|s| s.total_ns).collect(),
+    );
     println!();
 
     // Identify the top-3 docs by classify_ns — likely the
     // pathological annotation-density outliers.
-    let mut by_classify: Vec<(usize, &PhaseSample)> =
-        samples.iter().enumerate().collect();
-    by_classify.sort_by_key(|(_, s)| std::cmp::Reverse(s.classify_ns));
+    let mut by_classify: Vec<(usize, &PhaseSample)> = samples.iter().enumerate().collect();
+    by_classify.sort_by_key(|(_, s)| Reverse(s.classify_ns));
     println!("Top-5 docs by phase 3 classify cost");
     for (idx, s) in by_classify.iter().take(5) {
         let label = labels.get(*idx).map_or("?", String::as_str);
@@ -253,9 +273,8 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64) {
 
     println!();
     println!("Top-5 docs by sanitize cost (phase 0 was unexpectedly hot)");
-    let mut by_sanitize: Vec<(usize, &PhaseSample)> =
-        samples.iter().enumerate().collect();
-    by_sanitize.sort_by_key(|(_, s)| std::cmp::Reverse(s.sanitize_ns));
+    let mut by_sanitize: Vec<(usize, &PhaseSample)> = samples.iter().enumerate().collect();
+    by_sanitize.sort_by_key(|(_, s)| Reverse(s.sanitize_ns));
     for (idx, s) in by_sanitize.iter().take(5) {
         let label = labels.get(*idx).map_or("?", String::as_str);
         println!(
@@ -269,8 +288,7 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64) {
 
 fn print_phase_row(label: &str, phase_ns: u64, total_ns: u64, total_bytes: u64) {
     let pct = phase_ns as f64 * 100.0 / total_ns as f64;
-    let throughput_mbps =
-        total_bytes as f64 * NS_PER_S / phase_ns as f64 / (1024.0 * 1024.0);
+    let throughput_mbps = total_bytes as f64 * NS_PER_S / phase_ns as f64 / (1024.0 * 1024.0);
     println!(
         "  {label} : {:>6.0} ms ({:>5.1}%) — {:>6.1} MB/s",
         phase_ns as f64 / NS_PER_MS,

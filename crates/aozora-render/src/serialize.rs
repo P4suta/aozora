@@ -20,9 +20,7 @@ use aozora_syntax::borrowed::{
     Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, Ruby,
     Sashie, Segment, TateChuYoko,
 };
-use aozora_syntax::{
-    AlignEnd, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind,
-};
+use aozora_syntax::{AlignEnd, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind};
 
 /// Serialize a `BorrowedLexOutput` back to Aozora source text.
 ///
@@ -52,17 +50,12 @@ pub fn serialize(out: &BorrowedLexOutput<'_>) -> String {
 ///
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited
 /// from the lexer's `Span` width contract; in practice unreachable.
-pub fn serialize_into<W: Write>(
-    out: &BorrowedLexOutput<'_>,
-    writer: &mut W,
-) -> fmt::Result {
+pub fn serialize_into<W: Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -> fmt::Result {
     let normalized = out.normalized;
     let registry = &out.registry;
 
     let mut cursor = 0usize;
-    for (pos, sentinel_str) in
-        normalized.match_indices(|c: char| sentinel_kind(c).is_some())
-    {
+    for (pos, sentinel_str) in normalized.match_indices(|c: char| sentinel_kind(c).is_some()) {
         writer.write_str(&normalized[cursor..pos])?;
 
         let ch = sentinel_str

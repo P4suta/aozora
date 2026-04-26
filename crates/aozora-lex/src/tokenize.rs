@@ -89,10 +89,7 @@ pub fn tokenize_with_scan(source: &str) -> Vec<Token> {
 
     // Merge-walk the two sorted streams in event order.
     while t_idx < trigger_offsets.len() || n_idx < newline_offsets.len() {
-        let next_is_trigger = match (
-            trigger_offsets.get(t_idx),
-            newline_offsets.get(n_idx),
-        ) {
+        let next_is_trigger = match (trigger_offsets.get(t_idx), newline_offsets.get(n_idx)) {
             (Some(&t), Some(&n)) => t < n,
             (Some(_), None) => true,
             (None, Some(_)) => false,
@@ -116,7 +113,10 @@ pub fn tokenize_with_scan(source: &str) -> Vec<Token> {
                 try_merge_double_trigger(bytes, &trigger_offsets, t_idx, kind);
 
             let span = Span::new(trigger_pos as u32, trigger_pos as u32 + byte_len);
-            tokens.push(Token::Trigger { kind: emit_kind, span });
+            tokens.push(Token::Trigger {
+                kind: emit_kind,
+                span,
+            });
 
             let after_trigger = trigger_pos as u32 + byte_len;
             text_start = after_trigger;

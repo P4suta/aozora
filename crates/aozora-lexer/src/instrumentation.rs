@@ -68,16 +68,16 @@ pub enum Subsystem {
     /// inside an open frame.
     FrameAppend,
     /// `recognize_and_emit` — runs when the outermost open closes;
-    /// dispatches into the per-PairKind recogniser. Wraps recogniser
+    /// dispatches into the per-`PairKind` recogniser. Wraps recogniser
     /// leaves so its time INCLUDES Ruby/Annotation/Gaiji/etc. — the
-    /// dispatch overhead = recognize_and_emit - leaf_total.
+    /// dispatch overhead = `recognize_and_emit` - `leaf_total`.
     RecognizeAndEmit,
     /// `replay_unrecognised_body` — frames whose recogniser declined
     /// (or whose kind has no recogniser at top level) walk the body
     /// events back as Plain spans. One frame may yield many spans.
     ReplayBody,
-    /// `open_frame` — initial frame allocation when an outer PairOpen
-    /// appears at top level. Allocates the body buffer SmallVec.
+    /// `open_frame` — initial frame allocation when an outer `PairOpen`
+    /// appears at top level. Allocates the body buffer `SmallVec`.
     OpenFrame,
     /// `flush_plain_up_to` — emit any pending plain run on outer
     /// boundary (newline / Aozora yield). Cheap, but called per
@@ -90,12 +90,12 @@ pub enum Subsystem {
     /// `try_bracket_emit` — wraps `recognize_annotation`. Pre-work:
     /// frame setup + sentinel padding decisions.
     TryBracketEmit,
-    /// Outer next() loop body INCLUDING all sub-callees, MINUS the
+    /// Outer `next()` loop body INCLUDING all sub-callees, MINUS the
     /// upstream `events.next()` call. Use to isolate "loop body work"
-    /// from "PairStream pulling work".
+    /// from "`PairStream` pulling work".
     LoopBody,
-    /// `events.next()` upstream pull. Should be O(1) for a Vec iterator
-    /// or O(constant) for PairStream. If this is large, the issue is
+    /// `events.next()` upstream pull. Should be O(1) for a `Vec` iterator
+    /// or O(constant) for `PairStream`. If this is large, the issue is
     /// in the upstream iterator, not in classify itself.
     EventsNext,
 }
@@ -105,48 +105,48 @@ impl Subsystem {
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
-            Subsystem::Ruby => "recognize_ruby",
-            Subsystem::Annotation => "recognize_annotation",
-            Subsystem::Gaiji => "recognize_gaiji",
-            Subsystem::BuildContent => "build_content_from_body",
-            Subsystem::BodyDispatcher => "body_dispatcher",
-            Subsystem::IterDispatch => "iter_dispatch (outer)",
-            Subsystem::ForwardTargetCheck => "forward_target_is_preceded",
-            Subsystem::ForwardIndexInstall => "install_forward_target_index",
-            Subsystem::FrameAppend => "append_to_frame",
-            Subsystem::RecognizeAndEmit => "recognize_and_emit",
-            Subsystem::ReplayBody => "replay_unrecognised_body",
-            Subsystem::OpenFrame => "open_frame",
-            Subsystem::FlushPlain => "flush_plain_up_to",
-            Subsystem::TryRubyEmit => "try_ruby_emit",
-            Subsystem::TryBracketEmit => "try_bracket_emit",
-            Subsystem::LoopBody => "loop_body (outer-events.next())",
-            Subsystem::EventsNext => "events.next() (upstream pull)",
+            Self::Ruby => "recognize_ruby",
+            Self::Annotation => "recognize_annotation",
+            Self::Gaiji => "recognize_gaiji",
+            Self::BuildContent => "build_content_from_body",
+            Self::BodyDispatcher => "body_dispatcher",
+            Self::IterDispatch => "iter_dispatch (outer)",
+            Self::ForwardTargetCheck => "forward_target_is_preceded",
+            Self::ForwardIndexInstall => "install_forward_target_index",
+            Self::FrameAppend => "append_to_frame",
+            Self::RecognizeAndEmit => "recognize_and_emit",
+            Self::ReplayBody => "replay_unrecognised_body",
+            Self::OpenFrame => "open_frame",
+            Self::FlushPlain => "flush_plain_up_to",
+            Self::TryRubyEmit => "try_ruby_emit",
+            Self::TryBracketEmit => "try_bracket_emit",
+            Self::LoopBody => "loop_body (outer-events.next())",
+            Self::EventsNext => "events.next() (upstream pull)",
         }
     }
 
     /// Iteration order matching the human-friendly source-of-data order.
     /// Leaves first, then framework.
     #[must_use]
-    pub fn ordered() -> [Subsystem; 17] {
+    pub fn ordered() -> [Self; 17] {
         [
-            Subsystem::Ruby,
-            Subsystem::Annotation,
-            Subsystem::Gaiji,
-            Subsystem::BuildContent,
-            Subsystem::BodyDispatcher,
-            Subsystem::IterDispatch,
-            Subsystem::EventsNext,
-            Subsystem::LoopBody,
-            Subsystem::RecognizeAndEmit,
-            Subsystem::TryRubyEmit,
-            Subsystem::TryBracketEmit,
-            Subsystem::ReplayBody,
-            Subsystem::OpenFrame,
-            Subsystem::FlushPlain,
-            Subsystem::FrameAppend,
-            Subsystem::ForwardTargetCheck,
-            Subsystem::ForwardIndexInstall,
+            Self::Ruby,
+            Self::Annotation,
+            Self::Gaiji,
+            Self::BuildContent,
+            Self::BodyDispatcher,
+            Self::IterDispatch,
+            Self::EventsNext,
+            Self::LoopBody,
+            Self::RecognizeAndEmit,
+            Self::TryRubyEmit,
+            Self::TryBracketEmit,
+            Self::ReplayBody,
+            Self::OpenFrame,
+            Self::FlushPlain,
+            Self::FrameAppend,
+            Self::ForwardTargetCheck,
+            Self::ForwardIndexInstall,
         ]
     }
 
@@ -157,11 +157,7 @@ impl Subsystem {
     pub fn is_leaf(self) -> bool {
         matches!(
             self,
-            Subsystem::Ruby
-                | Subsystem::Annotation
-                | Subsystem::Gaiji
-                | Subsystem::BuildContent
-                | Subsystem::BodyDispatcher
+            Self::Ruby | Self::Annotation | Self::Gaiji | Self::BuildContent | Self::BodyDispatcher
         )
     }
 }
@@ -171,6 +167,7 @@ impl Subsystem {
 /// Construct one at the entry of a recogniser; the guard records
 /// `Instant::now()` and on Drop logs `elapsed.as_nanos()` into the
 /// thread-local [`TimingTable`] under its [`Subsystem`] key.
+#[derive(Debug)]
 pub struct SubsystemGuard {
     kind: Subsystem,
     started: Instant,
@@ -191,7 +188,7 @@ impl SubsystemGuard {
 
 impl Drop for SubsystemGuard {
     fn drop(&mut self) {
-        let elapsed_ns = self.started.elapsed().as_nanos() as u64;
+        let elapsed_ns = u64::try_from(self.started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         TIMING_TABLE.with(|t| {
             let mut table = t.borrow_mut();
             *table.counts.entry(self.kind).or_insert(0) += 1;
@@ -215,9 +212,9 @@ pub struct TimingTable {
 impl TimingTable {
     /// Snapshot the current thread's table (cloned).
     ///
-    /// Cheap: at most a 3-entry HashMap clone.
+    /// Cheap: at most a 3-entry `HashMap` clone.
     #[must_use]
-    pub fn snapshot() -> TimingTable {
+    pub fn snapshot() -> Self {
         TIMING_TABLE.with(|t| t.borrow().clone())
     }
 
@@ -273,15 +270,21 @@ pub fn record_pending_size(len: u64) {
 
 impl PendingSizeHistogram {
     #[must_use]
-    pub fn snapshot() -> PendingSizeHistogram {
+    pub fn snapshot() -> Self {
         PENDING_SIZE_HIST.with(|h| *h.borrow())
     }
     pub fn reset() {
-        PENDING_SIZE_HIST.with(|h| *h.borrow_mut() = PendingSizeHistogram::default());
+        PENDING_SIZE_HIST.with(|h| *h.borrow_mut() = Self::default());
     }
+    #[must_use]
     pub fn total(self) -> u64 {
-        self.size_0 + self.size_1 + self.size_2_4 + self.size_5_15
-            + self.size_16_63 + self.size_64_255 + self.size_256_plus
+        self.size_0
+            + self.size_1
+            + self.size_2_4
+            + self.size_5_15
+            + self.size_16_63
+            + self.size_64_255
+            + self.size_256_plus
     }
 }
 
@@ -293,6 +296,7 @@ pub fn record_replay_body_size(size: u64) {
     REPLAY_SIZES.with(|v| v.borrow_mut().push(size));
 }
 
+#[must_use]
 pub fn snapshot_replay_sizes() -> Vec<u64> {
     REPLAY_SIZES.with(|v| v.borrow().clone())
 }
@@ -301,10 +305,10 @@ pub fn reset_replay_sizes() {
     REPLAY_SIZES.with(|v| v.borrow_mut().clear());
 }
 
-/// Per-yield-kind histogram, populated at every span yield from
-/// `ClassifyStream::next()`. Useful for spotting "this doc yields
-/// 10× more Plain spans than expected" patterns. Each variant maps
-/// to a `SpanKind` arm.
+/// Per-yield-kind histogram, populated at every span yield from `ClassifyStream::next()`.
+///
+/// Useful for spotting "this doc yields 10× more Plain spans than
+/// expected" patterns. Each variant maps to a `SpanKind` arm.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct YieldCounters {
     pub plain: u64,
@@ -344,13 +348,13 @@ pub fn record_yield(kind: YieldKind) {
 impl YieldCounters {
     /// Snapshot the current thread's yield counters.
     #[must_use]
-    pub fn snapshot() -> YieldCounters {
+    pub fn snapshot() -> Self {
         YIELD_COUNTERS.with(|c| *c.borrow())
     }
 
     /// Reset the current thread's yield counters to zero.
     pub fn reset() {
-        YIELD_COUNTERS.with(|c| *c.borrow_mut() = YieldCounters::default());
+        YIELD_COUNTERS.with(|c| *c.borrow_mut() = Self::default());
     }
 
     /// Total yield count.
@@ -372,7 +376,7 @@ mod tests {
         {
             let _g = SubsystemGuard::new(Subsystem::Ruby);
             thread::sleep(Duration::from_micros(10));
-        }
+        };
         let snap = TimingTable::snapshot();
         assert_eq!(snap.counts.get(&Subsystem::Ruby).copied(), Some(1));
         assert!(snap.total_ns.get(&Subsystem::Ruby).copied().unwrap_or(0) > 0);

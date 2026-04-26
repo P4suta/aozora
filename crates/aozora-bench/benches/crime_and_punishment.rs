@@ -5,10 +5,7 @@
 //! so a fresh checkout without a corpus continues to compile + run
 //! the rest of the bench suite.
 
-#![allow(
-    clippy::missing_panics_doc,
-    reason = "bench code, not library"
-)]
+#![allow(clippy::missing_panics_doc, reason = "bench code, not library")]
 
 use std::env;
 use std::fs;
