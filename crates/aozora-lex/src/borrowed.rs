@@ -1,4 +1,5 @@
-//! Arena-emitting lex API (Plan B.2 + I-7 string interner).
+//! Arena-emitting lex API (Plan B.2 + I-7 interner + I-2.2 native
+//! borrowed Phase 3).
 //!
 //! Produces a [`BorrowedLexOutput<'a>`] whose normalized text and
 //! placeholder registry live entirely inside an external [`Arena`].
@@ -7,38 +8,36 @@
 //! step — no per-node `Drop` ever runs, no scattered `Box::drop`
 //! malloc traffic on the way out.
 //!
-//! ## Pipeline
+//! ## Pipeline (post I-2.2)
 //!
-//! 1. Run the legacy [`crate::lex`] pipeline (which still owns the
-//!    Box-allocated AST internally).
-//! 2. Build an [`Interner`] backed by `arena` and feed every owned
-//!    registry node through [`aozora_syntax::convert::to_borrowed_with`]
-//!    so byte-equal strings (ruby readings, kaeriten marks, container
-//!    labels) share a single arena allocation. Innovation I-7 in
-//!    action — empirically Aozora corpora dedup to 30–50% of the
-//!    naive size.
-//! 3. Wrap the resulting `(u32, borrowed::AozoraNode<'a>)` lists in
+//! 1. Phases 0-2 (sanitize / tokenize / pair) run as owned-data
+//!    helpers operating on byte spans and event indices — they never
+//!    construct AST.
+//! 2. Phase 3 [`aozora_lexer::classify_with`] is invoked with a
+//!    [`BorrowedAllocator`] backed by `arena`. Borrowed AST nodes
+//!    land directly in the arena; strings flow through the I-7
+//!    [`aozora_syntax::borrowed::Interner`] owned by the allocator
+//!    so byte-equal content (ruby readings, container labels,
+//!    kaeriten marks, …) shares a single allocation.
+//! 3. A single fused walk emits the PUA-rewritten text into the arena
+//!    and builds the four borrowed-registry tables. Replaces the
+//!    legacy two-pass pipeline (owned classify → per-span
+//!    `convert::to_borrowed_with` deep-clone) entirely.
+//! 4. Each per-kind position list is wrapped in an
 //!    [`aozora_veb::EytzingerMap`] for cache-friendly lookup.
 //!
 //! The interner's diagnostic counters (cache hits, table hits, allocs,
 //! avg probe length) are exposed via [`BorrowedLexOutput::intern_stats`]
 //! so callers and benchmarks can measure dedup effectiveness without
 //! re-running the conversion.
-//!
-//! ## Future migration
-//!
-//! Plan B's later steps fold the conversion away: the lex pipeline
-//! grows native arena-aware classifiers so steps 1 and 2 collapse
-//! into one allocate-into-the-arena pass. The public
-//! [`lex_into_arena`] signature stays stable across that change.
 
 use aozora_lexer::{
-    is_standalone_block_for_render, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL,
-    BLOCK_OPEN_SENTINEL, ClassifiedSpan, INLINE_SENTINEL, SpanKind,
+    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, ClassifiedSpanGen,
+    INLINE_SENTINEL, SpanKindGen, classify_with,
 };
 use aozora_spec::Diagnostic;
-use aozora_syntax::borrowed::{self, Arena, InternStats, Interner, Registry};
-use aozora_syntax::convert::{self, StringPool};
+use aozora_syntax::alloc::BorrowedAllocator;
+use aozora_syntax::borrowed::{self, Arena, InternStats, Registry};
 use aozora_syntax::ContainerKind;
 use aozora_veb::EytzingerMap;
 
@@ -78,50 +77,43 @@ pub struct BorrowedLexOutput<'a> {
 /// lives, then drop the arena to free the entire allocation in one
 /// `Bump::reset`-equivalent step.
 ///
-/// Equivalent to:
+/// Pipeline (post I-2.2):
 ///
-/// 1. `let owned = crate::lex(source);`
-/// 2. Copy `owned.normalized` into `arena`.
-/// 3. Convert each registry entry through
-///    [`aozora_syntax::convert::to_borrowed`].
-/// 4. Wrap each per-kind position list in an
-///    [`aozora_veb::EytzingerMap`].
-///
-/// Once the new lex pipeline learns native arena emission, steps 1
-/// and 3 collapse and step 2 disappears (the normalizer writes
-/// directly into the arena). The public signature does not change.
+/// 1. Sanitize / tokenize / pair (Phases 0-2) — unchanged owned-data
+///    helpers operating on byte spans and event indices.
+/// 2. `classify_with::<BorrowedAllocator>` — Phase 3 builds borrowed
+///    `AozoraNode<'a>` directly into `arena`, with strings interned
+///    through the I-7 `Interner` owned by the allocator. No owned-AST
+///    intermediate is constructed; `convert::to_borrowed_with` is
+///    not called.
+/// 3. Single fused normalize walk: build the four borrowed-registry
+///    tables and stream the PUA-rewritten text into `arena` in one
+///    pass. Mirrors `aozora_lexer::phase4_normalize::Normalizer`'s
+///    sentinel / padding contract byte-for-byte, so the output is
+///    proptest-pinned identical to `crate::lex(source)`.
 #[must_use]
 pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'a> {
-    // Phases 0-3 stay on the legacy owned path. Phase 3 still
-    // box-allocates `AozoraNode` per span — that's I-2.2 future
-    // work to make arena-native. What this function does in I-2.1
-    // is FUSE the legacy phase 4 normalize + the post-pass arena
-    // convert into a single walk that emits the borrowed registry
-    // directly (no intermediate `PlaceholderRegistry` Vec, no
-    // post-hoc deep-clone of every AozoraNode into the registry).
     let sanitized = aozora_lexer::sanitize(source);
     let tokens = aozora_lexer::tokenize(&sanitized.text);
     let pair_out = aozora_lexer::pair(&tokens);
-    let classify_out = aozora_lexer::classify(&pair_out, &sanitized.text);
 
-    // Pre-allocate the interner sized to the span count. Each Aozora
-    // span contributes 1-4 strings (ruby base/reading, gaiji
-    // description, kaeriten mark, etc.); the *2 multiplier is a tight
-    // upper bound that keeps the table from resizing on average corpus
-    // documents. `with_capacity_in` rounds up to the next power of two.
+    // Size the interner from the event count — `pair_out.events.len()`
+    // is a tight upper bound on the number of distinct strings Phase 3
+    // can intern (each event contributes at most a handful of payload
+    // strings). `BorrowedAllocator::with_capacity` rounds up to the
+    // next power of two, so 64 is the floor for documents with no
+    // events at all.
+    let interner_hint = pair_out.events.len().max(64);
+    let mut alloc = BorrowedAllocator::with_capacity(arena, interner_hint);
+
+    // Phase 3 emits borrowed nodes straight into `arena` via `alloc`.
+    // No owned-AST shadow intermediate; no post-pass conversion.
+    let classify_out = classify_with(&pair_out, &sanitized.text, &mut alloc);
+
     let span_count = classify_out.spans.len();
-    let interner_hint = span_count.max(64);
-    let mut interner = Interner::with_capacity_in(interner_hint, arena);
-
-    // Single fused walk: emit normalized text + build the four
-    // borrowed-registry tables in one pass. Eliminates the legacy
-    // `Normalizer::emit_inline`'s `node.clone()` per span (deep clone
-    // of every AozoraNode into the owned `PlaceholderRegistry`) and
-    // the subsequent post-hoc convert-to-arena sweep — both replaced
-    // by an inline `convert::to_borrowed_with` per span at write time.
     let mut builder = ArenaNormalizer::new(&sanitized.text, span_count);
     for span in &classify_out.spans {
-        builder.emit(span, arena, &mut interner);
+        builder.emit(span);
     }
 
     let normalized: &'a str = arena.alloc_str(&builder.out);
@@ -149,7 +141,7 @@ pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'
         diagnostics.extend(validate_inline(&builder, &mut Vec::new()));
     }
 
-    let intern_stats = interner.stats;
+    let intern_stats = alloc.into_interner().stats;
     let sanitized_len =
         u32::try_from(sanitized.text.len()).expect("sanitize asserts source.len() <= u32::MAX");
 
@@ -162,13 +154,15 @@ pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'
     }
 }
 
-/// Single-pass arena-emitting normalizer (Plan I-2.1).
+/// Single-pass arena-emitting normalizer (Plan I-2.1 + I-2.2).
 ///
 /// Mirrors `aozora_lexer::phase4_normalize::Normalizer`'s sentinel /
 /// padding contract byte-for-byte, but pushes into per-kind
-/// `Vec<(u32, borrowed::AozoraNode<'a>)>` tables backed by the same
-/// arena that the converted nodes live in. Replaces the prior
-/// `aozora_lexer::lex` → `convert_node_table` two-pass pipeline.
+/// `Vec<(u32, borrowed::AozoraNode<'a>)>` tables. The nodes are
+/// allocated upstream by [`BorrowedAllocator`] during
+/// [`classify_with`] (I-2.2); this walker is now strictly the
+/// PUA-rewriter + position-recorder, doing zero AST allocation of
+/// its own.
 struct ArenaNormalizer<'src, 'a> {
     out: String,
     source: &'src str,
@@ -201,57 +195,70 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
         u32::try_from(self.out.len()).expect("normalized fits u32 per Phase 0 cap")
     }
 
-    fn emit<P: StringPool<'a>>(
-        &mut self,
-        span: &ClassifiedSpan,
-        arena: &'a Arena,
-        pool: &mut P,
-    ) {
+    fn emit(&mut self, span: &ClassifiedSpanGen<borrowed::AozoraNode<'a>>) {
         match &span.kind {
-            SpanKind::Plain => {
+            SpanKindGen::Plain => {
                 self.out.push_str(span.source_span.slice(self.source));
             }
-            SpanKind::Newline => {
+            SpanKindGen::Newline => {
                 self.out.push('\n');
             }
-            SpanKind::Aozora(node) => {
-                if is_standalone_block_for_render(node) {
+            SpanKindGen::Aozora(node) => {
+                // Phase 3 has already allocated the borrowed node into
+                // the arena via `BorrowedAllocator`. We only have to
+                // emit the appropriate sentinel and remember the
+                // position. No conversion, no per-node allocation.
+                if is_standalone_block_for_render_borrowed(*node) {
                     // Block-leaf padding: blank-line / sentinel /
-                    // blank-line. Mirrors `Normalizer::emit_block_leaf`
+                    // blank-line. Mirrors
+                    // `aozora_lexer::phase4_normalize::Normalizer::emit_block_leaf`
                     // byte-for-byte so comrak still sees the standalone
                     // paragraph shape.
                     self.out.push_str("\n\n");
                     let pos = self.current_pos();
                     self.out.push(BLOCK_LEAF_SENTINEL);
                     self.out.push_str("\n\n");
-                    let borrowed = convert::to_borrowed_with(node, arena, pool);
-                    self.block_leaf.push((pos, borrowed));
+                    self.block_leaf.push((pos, *node));
                 } else {
                     let pos = self.current_pos();
                     self.out.push(INLINE_SENTINEL);
-                    let borrowed = convert::to_borrowed_with(node, arena, pool);
-                    self.inline.push((pos, borrowed));
+                    self.inline.push((pos, *node));
                 }
             }
-            SpanKind::BlockOpen(container) => {
+            SpanKindGen::BlockOpen(container) => {
                 self.out.push_str("\n\n");
                 let pos = self.current_pos();
                 self.out.push(BLOCK_OPEN_SENTINEL);
                 self.out.push_str("\n\n");
                 self.block_open.push((pos, *container));
             }
-            SpanKind::BlockClose(container) => {
+            SpanKindGen::BlockClose(container) => {
                 self.out.push_str("\n\n");
                 let pos = self.current_pos();
                 self.out.push(BLOCK_CLOSE_SENTINEL);
                 self.out.push_str("\n\n");
                 self.block_close.push((pos, *container));
             }
-            // `SpanKind` is `#[non_exhaustive]`; new variants land
+            // `SpanKindGen` is `#[non_exhaustive]`; new variants land
             // here as no-op until the normalizer adds a dedicated arm.
             _ => {}
         }
     }
+}
+
+/// Borrowed-AST mirror of
+/// [`aozora_lexer::is_standalone_block_for_render`]. Pinned by variant
+/// kind, not payload, so it stays in sync trivially with the owned
+/// helper (any new standalone-block variant must be added in both
+/// places — caught by the byte-identical proptest).
+fn is_standalone_block_for_render_borrowed(node: borrowed::AozoraNode<'_>) -> bool {
+    matches!(
+        node,
+        borrowed::AozoraNode::PageBreak
+            | borrowed::AozoraNode::SectionBreak(_)
+            | borrowed::AozoraNode::AozoraHeading(_)
+            | borrowed::AozoraNode::Sashie(_)
+    )
 }
 
 /// Run V1..V3 invariant checks on the normalizer's output. Wraps
