@@ -223,7 +223,7 @@ const fn html_entity(c: char) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aozora_syntax::alloc::{BorrowedAllocator, NodeAllocator};
+    use aozora_syntax::alloc::BorrowedAllocator;
     use aozora_syntax::borrowed::{Arena, AozoraNode};
     use aozora_syntax::{AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, Indent, SectionKind};
 

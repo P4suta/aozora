@@ -153,7 +153,7 @@ pub fn dispatch_node<'src, V: AozoraVisitor<'src>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aozora_syntax::alloc::{BorrowedAllocator, NodeAllocator};
+    use aozora_syntax::alloc::BorrowedAllocator;
     use aozora_syntax::borrowed::Arena;
 
     /// Demonstration visitor: count one tick per node visited. Proves

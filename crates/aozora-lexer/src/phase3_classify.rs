@@ -56,12 +56,10 @@
 use core::ops::Range;
 
 use aozora_encoding::gaiji as gaiji_resolve;
-// `NodeAllocator` is kept in scope only so the `alloc.ruby(...)` /
-// `alloc.gaiji(...)` method calls in this module resolve through the
-// trait's inherent-on-impl methods. After F.3 the allocator is
-// hardcoded to `BorrowedAllocator<'a>`; F.4 will collapse the trait
-// itself into inherent methods.
-use aozora_syntax::alloc::{BorrowedAllocator, NodeAllocator};
+// Phase 3 builds borrowed AST directly via `BorrowedAllocator`'s
+// inherent methods. The `NodeAllocator` trait abstraction was retired
+// in F.4 once the owned-AST path was gone.
+use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
 use aozora_syntax::{
     AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind, Span,

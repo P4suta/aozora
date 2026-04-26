@@ -1,32 +1,24 @@
 //! AST type definitions for the aozora parser.
 //!
-//! # Plan B end state
+//! # End state (post I-2.2 / Phase F)
 //!
-//! As of Plan B, the **canonical user-facing AST** is the borrowed-AST
-//! defined in [`borrowed`]: arena-allocated, `Copy`-able, deduplicated
-//! through [`borrowed::Interner`] (Innovation I-7). Public consumers
+//! The **sole AST** is the borrowed-AST defined in [`borrowed`]:
+//! arena-allocated, `Copy`-able, deduplicated through
+//! [`borrowed::Interner`] (Innovation I-7). Public consumers
 //! (`aozora` meta crate, FFI / WASM / Python drivers, CLI) parse via
 //! `aozora::Document::parse()` and walk a `borrowed::AozoraNode<'_>`.
-//!
-//! The legacy owned-AST types ([`owned::AozoraNode`] etc., heap-allocated
-//! via `Box<str>` / `Box<AozoraNode>`) live in the [`owned`] submodule.
-//! As of I-2.2 they are no longer constructed by the lex pipeline's
-//! borrowed entry ([`alloc::BorrowedAllocator`] feeds Phase 3 directly);
-//! they remain only for the legacy `aozora_lexer::lex` /
-//! `aozora_lexer::classify` owned-API compat layer that
-//! `aozora-parser` (parallel/incremental/parse) still uses internally.
-//! No public surface re-exports them as the canonical entry. New code
-//! SHOULD prefer `borrowed::AozoraNode<'_>`.
+//! The legacy owned (`Box<str>` / `Box<AozoraNode>`) AST and its
+//! `OwnedAllocator` / `NodeAllocator` trait abstraction were removed
+//! in Phase F.4.
 //!
 //! # Top-level surface
 //!
-//! Only the **shared `Copy`-able payloads** referenced by both AST
-//! shapes (`BoutenKind`, `BoutenPosition`, `Indent`, `AlignEnd`,
+//! Only the **shared `Copy`-able payloads** referenced by the borrowed
+//! AST (`BoutenKind`, `BoutenPosition`, `Indent`, `AlignEnd`,
 //! `Container`, `ContainerKind`, `Keigakomi`, `SectionKind`,
 //! `AozoraHeadingKind`, `AnnotationKind`) live at the top level. The
-//! owned-AST node types live under `owned::`; the borrowed-AST node
-//! types live under `borrowed::`. Both AST shapes reference the
-//! shared payloads via `crate::*`.
+//! borrowed-AST node types live under `borrowed::`. The arena-backed
+//! builder lives under `alloc::`.
 
 #![forbid(unsafe_code)]
 
@@ -37,7 +29,6 @@ pub mod accent;
 pub mod alloc;
 pub mod borrowed;
 mod extension;
-pub mod owned;
 
 pub use extension::ContainerKind;
 

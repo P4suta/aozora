@@ -148,7 +148,6 @@ dependencies = [
 name = "aozora-encoding"
 version = "0.1.0"
 dependencies = [
- "aozora-syntax",
  "encoding_rs",
  "insta",
  "miette",

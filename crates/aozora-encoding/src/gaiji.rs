@@ -53,43 +53,8 @@
 //! Consortium mapping ships. Meanwhile the hand-curated seed keeps
 //! downstream consumers wired to a working API.
 
-use aozora_syntax::owned::Gaiji;
-
-/// Outcome of resolving a gaiji reference.
-///
-/// `character` is the single resolved code point, or `None` if no
-/// table entry matches and the `description` must carry the display
-/// weight. `description` is an un-mutated copy of the input — the
-/// renderer keeps it around for `<span title="…">` and accessibility.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Resolution {
-    pub character: Option<char>,
-    pub description: Box<str>,
-}
-
-/// Resolve a [`Gaiji`] node to a displayable form.
-///
-/// Lookup order:
-///
-/// 1. If the node's own `ucs` is already set (e.g. the lexer has
-///    pre-resolved it), echo that back unchanged.
-/// 2. Otherwise consult [`MENCODE_TO_UCS`] keyed by `mencode`.
-/// 3. If that misses and `mencode` starts with `U+`, parse the hex
-///    digits.
-/// 4. As a last resort, consult [`DESCRIPTION_TO_UCS`] keyed by the
-///    raw description bytes.
-/// 5. Return `None` for the character and let the renderer fall back.
-#[must_use]
-pub fn resolve(node: &Gaiji) -> Resolution {
-    Resolution {
-        character: lookup(node.ucs, node.mencode.as_deref(), &node.description),
-        description: node.description.clone(),
-    }
-}
-
-/// Pure-function lookup used by [`resolve`] and by `afm-lexer`
-/// directly during Phase 3 classification so the emitted
-/// `AozoraNode::Gaiji` already carries a populated `ucs`.
+/// Pure-function lookup used by `aozora-lexer`'s Phase 3 classifier
+/// to populate `borrowed::Gaiji::ucs` at construction time.
 #[must_use]
 pub fn lookup(existing: Option<char>, mencode: Option<&str>, description: &str) -> Option<char> {
     if let Some(ch) = existing {
@@ -205,110 +170,70 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_prefers_node_ucs_when_already_set() {
-        let node = Gaiji {
-            description: "木＋吶のつくり".into(),
-            ucs: Some('\u{6903}'),
-            mencode: Some("第3水準1-85-54".into()),
-        };
-        let r = resolve(&node);
-        assert_eq!(r.character, Some('\u{6903}'));
-        assert_eq!(&*r.description, "木＋吶のつくり");
+    fn lookup_prefers_existing_ucs_when_already_set() {
+        assert_eq!(
+            lookup(Some('\u{6903}'), Some("第3水準1-85-54"), "木＋吶のつくり"),
+            Some('\u{6903}')
+        );
     }
 
     #[test]
-    fn resolve_via_mencode_table_when_ucs_missing() {
+    fn lookup_via_mencode_table_when_ucs_missing() {
         // Hallmark 罪と罰 gaiji: `木＋吶のつくり` with 第3水準1-85-54
         // must land on 榁 (U+6903) via the static table.
-        let node = Gaiji {
-            description: "木＋吶のつくり".into(),
-            ucs: None,
-            mencode: Some("第3水準1-85-54".into()),
-        };
-        assert_eq!(resolve(&node).character, Some('\u{6903}'));
+        assert_eq!(
+            lookup(None, Some("第3水準1-85-54"), "木＋吶のつくり"),
+            Some('\u{6903}')
+        );
     }
 
     #[test]
-    fn resolve_via_u_plus_form() {
-        let node = Gaiji {
-            description: "Latin Small Letter G With Acute".into(),
-            ucs: None,
-            mencode: Some("U+01F5".into()),
-        };
-        assert_eq!(resolve(&node).character, Some('\u{01F5}'));
+    fn lookup_via_u_plus_form() {
+        assert_eq!(
+            lookup(None, Some("U+01F5"), "Latin Small Letter G With Acute"),
+            Some('\u{01F5}')
+        );
     }
 
     #[test]
-    fn resolve_via_u_plus_max_six_hex_digits() {
+    fn lookup_via_u_plus_max_six_hex_digits() {
         // U+10FFFF is the Unicode max; any shape past 6 digits is
         // rejected outright.
-        let node = Gaiji {
-            description: "".into(),
-            ucs: None,
-            mencode: Some("U+10FFFF".into()),
-        };
-        assert_eq!(resolve(&node).character, Some('\u{10FFFF}'));
+        assert_eq!(lookup(None, Some("U+10FFFF"), ""), Some('\u{10FFFF}'));
     }
 
     #[test]
-    fn resolve_rejects_u_plus_beyond_seven_hex_digits() {
-        let node = Gaiji {
-            description: "".into(),
-            ucs: None,
-            mencode: Some("U+1234567".into()),
-        };
-        assert_eq!(resolve(&node).character, None);
+    fn lookup_rejects_u_plus_beyond_seven_hex_digits() {
+        assert_eq!(lookup(None, Some("U+1234567"), ""), None);
     }
 
     #[test]
-    fn resolve_rejects_u_plus_surrogate() {
+    fn lookup_rejects_u_plus_surrogate() {
         // U+D800 is a high surrogate and is NOT a valid scalar.
-        let node = Gaiji {
-            description: "".into(),
-            ucs: None,
-            mencode: Some("U+D800".into()),
-        };
-        assert_eq!(resolve(&node).character, None);
+        assert_eq!(lookup(None, Some("U+D800"), ""), None);
     }
 
     #[test]
-    fn resolve_rejects_u_plus_non_hex() {
-        let node = Gaiji {
-            description: "".into(),
-            ucs: None,
-            mencode: Some("U+GG12".into()),
-        };
-        assert_eq!(resolve(&node).character, None);
+    fn lookup_rejects_u_plus_non_hex() {
+        assert_eq!(lookup(None, Some("U+GG12"), ""), None);
     }
 
     #[test]
-    fn resolve_rejects_u_plus_without_digits() {
-        let node = Gaiji {
-            description: "".into(),
-            ucs: None,
-            mencode: Some("U+".into()),
-        };
-        assert_eq!(resolve(&node).character, None);
+    fn lookup_rejects_u_plus_without_digits() {
+        assert_eq!(lookup(None, Some("U+"), ""), None);
     }
 
     #[test]
-    fn resolve_via_description_fallback_when_mencode_absent() {
-        let node = Gaiji {
-            description: "〓".into(),
-            ucs: None,
-            mencode: None,
-        };
-        assert_eq!(resolve(&node).character, Some('\u{3013}'));
+    fn lookup_via_description_fallback_when_mencode_absent() {
+        assert_eq!(lookup(None, None, "〓"), Some('\u{3013}'));
     }
 
     #[test]
-    fn resolve_returns_none_when_all_paths_miss() {
-        let node = Gaiji {
-            description: "unresolved gaiji".into(),
-            ucs: None,
-            mencode: Some("not-in-any-table".into()),
-        };
-        assert_eq!(resolve(&node).character, None);
+    fn lookup_returns_none_when_all_paths_miss() {
+        assert_eq!(
+            lookup(None, Some("not-in-any-table"), "unresolved gaiji"),
+            None
+        );
     }
 
     #[test]

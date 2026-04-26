@@ -214,32 +214,19 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Gaiji resolution
+    // Gaiji resolution (via primitive `gaiji::lookup`)
     // ------------------------------------------------------------------
 
     #[test]
-    fn gaiji_resolve_echoes_description_and_ucs_when_present() {
-        use aozora_syntax::owned::Gaiji;
-        let node = Gaiji {
-            description: "木＋吶のつくり".into(),
-            ucs: Some('吶'),
-            mencode: Some("第3水準1-85-54".into()),
-        };
-        let r = gaiji::resolve(&node);
-        assert_eq!(r.character, Some('吶'));
-        assert_eq!(&*r.description, "木＋吶のつくり");
+    fn gaiji_lookup_echoes_existing_ucs_when_set() {
+        assert_eq!(
+            gaiji::lookup(Some('吶'), Some("第3水準1-85-54"), "木＋吶のつくり"),
+            Some('吶')
+        );
     }
 
     #[test]
-    fn gaiji_resolve_returns_none_character_when_ucs_unresolved() {
-        use aozora_syntax::owned::Gaiji;
-        let node = Gaiji {
-            description: "第3水準1-85-54".into(),
-            ucs: None,
-            mencode: None,
-        };
-        let r = gaiji::resolve(&node);
-        assert_eq!(r.character, None);
-        assert_eq!(&*r.description, "第3水準1-85-54");
+    fn gaiji_lookup_returns_none_when_unresolvable() {
+        assert_eq!(gaiji::lookup(None, None, "第3水準1-85-54"), None);
     }
 }
