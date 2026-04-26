@@ -37,9 +37,7 @@ use aozora_lexer::{
 };
 use aozora_spec::Diagnostic;
 use aozora_syntax::ContainerKind;
-use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{self, Arena, InternStats, Registry};
-use aozora_veb::EytzingerMap;
 
 /// Borrowed-AST analogue of [`crate::LexOutput`].
 ///
@@ -94,61 +92,11 @@ pub struct BorrowedLexOutput<'a> {
 ///    `tests/property_borrowed_arena.rs`.
 #[must_use]
 pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'a> {
-    let sanitized = aozora_lexer::sanitize(source);
-
-    // Size the interner from the source length — a rough upper bound
-    // on the number of distinct strings the borrowed pipeline will
-    // intern. `BorrowedAllocator::with_capacity` rounds up to the
-    // next power of two, so 64 is the floor for short documents.
-    let interner_hint = (sanitized.text.len() / 32).max(64);
-    let mut alloc = BorrowedAllocator::with_capacity(arena, interner_hint);
-
-    let mut diagnostics = sanitized.diagnostics;
-    let mut builder = ArenaNormalizer::new(&sanitized.text, sanitized.text.len() / 64);
-
-    // FUSED CHAIN: source bytes flow through Phase 1 (tokenize) →
-    // Phase 2 (pair) → Phase 3 (classify) → ArenaNormalizer in a
-    // single nested-iterator walk. No `Vec<Token>`, no
-    // `Vec<PairEvent>`, no `Vec<ClassifiedSpan>` intermediate
-    // materialisation: each phase exposes an `Iterator` and the next
-    // phase pulls one item at a time, so a span lands in the arena
-    // before the next byte is even read in the worst-case interleaving.
-    let mut pair_stream = aozora_lexer::pair(aozora_lexer::tokenize(&sanitized.text));
-    let classify_diagnostics: Vec<Diagnostic> = {
-        let mut classify_stream =
-            aozora_lexer::classify(&mut pair_stream, &sanitized.text, &mut alloc);
-        for span in &mut classify_stream {
-            builder.emit(&span);
-        }
-        classify_stream.take_diagnostics()
-    };
-    // Drain pair-stream diagnostics post-classify (Phase 2 emits
-    // unclosed/unmatched diagnostics as it consumes its token input;
-    // they're complete only after the classify pass has fully
-    // consumed the pair stream).
-    diagnostics.extend(pair_stream.take_diagnostics());
-    diagnostics.extend(classify_diagnostics);
-
-    let normalized: &'a str = arena.alloc_str(&builder.out);
-
-    let registry = Registry {
-        inline: EytzingerMap::from_sorted_slice(&builder.inline),
-        block_leaf: EytzingerMap::from_sorted_slice(&builder.block_leaf),
-        block_open: EytzingerMap::from_sorted_slice(&builder.block_open),
-        block_close: EytzingerMap::from_sorted_slice(&builder.block_close),
-    };
-
-    let intern_stats = alloc.into_interner().stats;
-    let sanitized_len =
-        u32::try_from(sanitized.text.len()).expect("sanitize asserts source.len() <= u32::MAX");
-
-    BorrowedLexOutput {
-        normalized,
-        registry,
-        diagnostics,
-        sanitized_len,
-        intern_stats,
-    }
+    // Thin wrapper around the canonical Pipeline (Innovation I-3,
+    // post-deforestation). The Pipeline owns the type-state machine
+    // that enforces phase order at compile time; this function exists
+    // for API compatibility and is what `Document::parse` calls.
+    crate::pipeline::Pipeline::run_to_completion(source, arena)
 }
 
 /// Single-pass arena-emitting normalizer (Plan I-2.1 + I-2.2).
@@ -160,17 +108,17 @@ pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'
 /// [`classify_with`] (I-2.2); this walker is now strictly the
 /// PUA-rewriter + position-recorder, doing zero AST allocation of
 /// its own.
-struct ArenaNormalizer<'src, 'a> {
-    out: String,
+pub(crate) struct ArenaNormalizer<'src, 'a> {
+    pub(crate) out: String,
     source: &'src str,
-    inline: Vec<(u32, borrowed::AozoraNode<'a>)>,
-    block_leaf: Vec<(u32, borrowed::AozoraNode<'a>)>,
-    block_open: Vec<(u32, ContainerKind)>,
-    block_close: Vec<(u32, ContainerKind)>,
+    pub(crate) inline: Vec<(u32, borrowed::AozoraNode<'a>)>,
+    pub(crate) block_leaf: Vec<(u32, borrowed::AozoraNode<'a>)>,
+    pub(crate) block_open: Vec<(u32, ContainerKind)>,
+    pub(crate) block_close: Vec<(u32, ContainerKind)>,
 }
 
 impl<'src, 'a> ArenaNormalizer<'src, 'a> {
-    fn new(source: &'src str, span_capacity_hint: usize) -> Self {
+    pub(crate) fn new(source: &'src str, span_capacity_hint: usize) -> Self {
         Self {
             // Normalized text always shrinks vs source (multi-byte
             // Aozora constructs collapse to a single PUA char), so
@@ -192,7 +140,7 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
         u32::try_from(self.out.len()).expect("normalized fits u32 per Phase 0 cap")
     }
 
-    fn emit(&mut self, span: &ClassifiedSpan<'a>) {
+    pub(crate) fn emit(&mut self, span: &ClassifiedSpan<'a>) {
         match &span.kind {
             SpanKind::Plain => {
                 self.out.push_str(span.source_span.slice(self.source));
