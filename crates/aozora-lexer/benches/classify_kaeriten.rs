@@ -1,7 +1,8 @@
-//! Criterion bench for kaeriten classification through `lex()`.
+//! Criterion bench for kaeriten classification through the public
+//! borrowed-pipeline entry point.
 //!
 //! `classify_kaeriten` itself is crate-private, so the bench drives
-//! it via the public `lex()` API on synthetic inputs:
+//! it via [`aozora_lex::lex_into_arena`] on synthetic inputs:
 //!
 //! - **`kaeriten_dense`** — a buffer dominated by `［＃<mark>］`
 //!   annotations whose body is one of the 18 spec marks. Every
@@ -14,7 +15,8 @@
 //!
 //! Run via `cargo bench -p aozora-lexer`.
 
-use aozora_lexer::lex;
+use aozora_lex::lex_into_arena;
+use aozora_syntax::borrowed::Arena;
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
@@ -63,12 +65,14 @@ fn bench_kaeriten(c: &mut Criterion) {
 
     group.bench_function("kaeriten_dense_32k", |b| {
         b.iter(|| {
-            black_box(lex(black_box(&dense)));
+            let arena = Arena::new();
+            black_box(lex_into_arena(black_box(&dense), &arena));
         });
     });
     group.bench_function("annotations_no_kaeriten_32k", |b| {
         b.iter(|| {
-            black_box(lex(black_box(&absent)));
+            let arena = Arena::new();
+            black_box(lex_into_arena(black_box(&absent), &arena));
         });
     });
     group.finish();

@@ -35,7 +35,10 @@ use std::time::Instant;
 
 use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
 use aozora_encoding::decode_sjis;
-use aozora_lexer::{classify, normalize, pair, sanitize, tokenize, validate};
+use aozora_lex::lex_into_arena;
+use aozora_lexer::{classify, pair, sanitize, tokenize};
+use aozora_syntax::alloc::BorrowedAllocator;
+use aozora_syntax::borrowed::Arena;
 
 const NS_PER_MS: f64 = 1_000_000.0;
 const NS_PER_S: f64 = 1_000_000_000.0;
@@ -47,9 +50,14 @@ struct PhaseSample {
     tokenize_ns: u64,
     pair_ns: u64,
     classify_ns: u64,
-    normalize_ns: u64,
-    validate_ns: u64,
-    /// All-phases sum.
+    /// `lex_into_arena` total — everything from sanitize through the
+    /// fused `ArenaNormalizer` walk that builds the borrowed registry.
+    full_ns: u64,
+    /// Derived: `full_ns - (sanitize + tokenize + pair + classify)`.
+    /// Estimate of the post-classify normalize+registry-build cost
+    /// that was the legacy phase 4-6.
+    post_classify_ns: u64,
+    /// Sum of the four standalone phases.
     total_ns: u64,
 }
 
@@ -126,23 +134,29 @@ fn measure_one(text: &str) -> PhaseSample {
     let pair_out = pair(&tokens);
     let pair_ns = t.elapsed().as_nanos() as u64;
 
-    // Phase 3
+    // Phase 3 — needs an arena + allocator. The arena is dropped at
+    // the end of the call so we don't carry borrowed AST across the
+    // measurement boundary.
+    let arena = Arena::new();
+    let mut alloc = BorrowedAllocator::new(&arena);
     let t = Instant::now();
-    let classify_out = classify(&pair_out, &sanitized.text);
+    let _classify_out = classify(&pair_out, &sanitized.text, &mut alloc);
     let classify_ns = t.elapsed().as_nanos() as u64;
 
-    // Phase 4
+    // Full pipeline (sanitize → arena registry build). Includes the
+    // post-classify ArenaNormalizer walk (the work that the legacy
+    // phases 4–6 used to perform). Subtracting the four standalone
+    // phases from `full_ns` gives an estimate of the post-classify
+    // cost without us having to reach into `aozora-lex`'s private
+    // builder.
+    let arena_full = Arena::new();
     let t = Instant::now();
-    let normalize_out = normalize(&classify_out, &sanitized.text);
-    let normalize_ns = t.elapsed().as_nanos() as u64;
+    let _full = lex_into_arena(text, &arena_full);
+    let full_ns = t.elapsed().as_nanos() as u64;
 
-    // Phase 6
-    let t = Instant::now();
-    let _validated = validate(normalize_out);
-    let validate_ns = t.elapsed().as_nanos() as u64;
-
-    let total_ns =
-        sanitize_ns + tokenize_ns + pair_ns + classify_ns + normalize_ns + validate_ns;
+    let standalone_sum = sanitize_ns + tokenize_ns + pair_ns + classify_ns;
+    let post_classify_ns = full_ns.saturating_sub(standalone_sum);
+    let total_ns = standalone_sum;
 
     PhaseSample {
         bytes_in,
@@ -150,8 +164,8 @@ fn measure_one(text: &str) -> PhaseSample {
         tokenize_ns,
         pair_ns,
         classify_ns,
-        normalize_ns,
-        validate_ns,
+        full_ns,
+        post_classify_ns,
         total_ns,
     }
 }
@@ -169,11 +183,11 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64) {
         samples.iter().map(|s| s.tokenize_ns).sum::<u64>(),
         samples.iter().map(|s| s.pair_ns).sum::<u64>(),
         samples.iter().map(|s| s.classify_ns).sum::<u64>(),
-        samples.iter().map(|s| s.normalize_ns).sum::<u64>(),
-        samples.iter().map(|s| s.validate_ns).sum::<u64>(),
+        samples.iter().map(|s| s.post_classify_ns).sum::<u64>(),
+        samples.iter().map(|s| s.full_ns).sum::<u64>(),
         samples.iter().map(|s| s.total_ns).sum::<u64>(),
     );
-    let (sanitize, tokenize, pair_, classify_, normalize_, validate_, total) = sums;
+    let (sanitize, tokenize, pair_, classify_, post_classify_, full_, total) = sums;
 
     println!("=== aozora-lex phase breakdown ===");
     println!();
@@ -184,24 +198,24 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64) {
     println!();
 
     println!("Per-phase totals (sum across all docs)");
-    print_phase_row("phase 0 sanitize", sanitize, total, total_bytes);
-    print_phase_row("phase 1 tokenize", tokenize, total, total_bytes);
-    print_phase_row("phase 2 pair    ", pair_, total, total_bytes);
-    print_phase_row("phase 3 classify", classify_, total, total_bytes);
-    print_phase_row("phase 4 normalize", normalize_, total, total_bytes);
-    print_phase_row("phase 6 validate", validate_, total, total_bytes);
+    print_phase_row("phase 0 sanitize ", sanitize, total, total_bytes);
+    print_phase_row("phase 1 tokenize ", tokenize, total, total_bytes);
+    print_phase_row("phase 2 pair     ", pair_, total, total_bytes);
+    print_phase_row("phase 3 classify ", classify_, total, total_bytes);
     println!("  ─────────────────────────────────────────────────");
-    print_phase_row("ALL              ", total, total, total_bytes);
+    print_phase_row("4 standalone sum ", total, total, total_bytes);
+    print_phase_row("post-classify (∼) ", post_classify_, full_, total_bytes);
+    print_phase_row("lex_into_arena   ", full_, full_, total_bytes);
     println!();
 
     println!("Per-doc latency (per phase, microseconds)");
-    print_phase_quantiles("sanitize ", samples.iter().map(|s| s.sanitize_ns).collect());
-    print_phase_quantiles("tokenize ", samples.iter().map(|s| s.tokenize_ns).collect());
-    print_phase_quantiles("pair     ", samples.iter().map(|s| s.pair_ns).collect());
-    print_phase_quantiles("classify ", samples.iter().map(|s| s.classify_ns).collect());
-    print_phase_quantiles("normalize", samples.iter().map(|s| s.normalize_ns).collect());
-    print_phase_quantiles("validate ", samples.iter().map(|s| s.validate_ns).collect());
-    print_phase_quantiles("TOTAL    ", samples.iter().map(|s| s.total_ns).collect());
+    print_phase_quantiles("sanitize     ", samples.iter().map(|s| s.sanitize_ns).collect());
+    print_phase_quantiles("tokenize     ", samples.iter().map(|s| s.tokenize_ns).collect());
+    print_phase_quantiles("pair         ", samples.iter().map(|s| s.pair_ns).collect());
+    print_phase_quantiles("classify     ", samples.iter().map(|s| s.classify_ns).collect());
+    print_phase_quantiles("post-classify", samples.iter().map(|s| s.post_classify_ns).collect());
+    print_phase_quantiles("lex_into_arena", samples.iter().map(|s| s.full_ns).collect());
+    print_phase_quantiles("4-PHASE TOTAL", samples.iter().map(|s| s.total_ns).collect());
     println!();
 
     // Identify the top-3 docs by classify_ns — likely the

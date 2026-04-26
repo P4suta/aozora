@@ -20,7 +20,10 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use aozora_encoding::decode_sjis;
-use aozora_lexer::{classify, normalize, pair, sanitize, tokenize, validate};
+use aozora_lex::lex_into_arena;
+use aozora_lexer::{classify, pair, sanitize, tokenize};
+use aozora_syntax::alloc::BorrowedAllocator;
+use aozora_syntax::borrowed::Arena;
 
 const RELATIVE_PATH: &str = "001161/files/43624_ruby_28995/43624_ruby_28995.txt";
 const ITERS: u32 = 100;
@@ -55,8 +58,7 @@ fn main() {
     let mut tokenize_total = 0u64;
     let mut pair_total = 0u64;
     let mut classify_total = 0u64;
-    let mut normalize_total = 0u64;
-    let mut validate_total = 0u64;
+    let mut full_total = 0u64;
 
     for _ in 0..ITERS {
         let t = Instant::now();
@@ -71,40 +73,44 @@ fn main() {
         let pair_out = pair(&tokens);
         pair_total += t.elapsed().as_nanos() as u64;
 
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
         let t = Instant::now();
-        let classify_out = classify(&pair_out, &sanitized.text);
+        let _classify_out = classify(&pair_out, &sanitized.text, &mut alloc);
         classify_total += t.elapsed().as_nanos() as u64;
 
+        // Full pipeline run, separate arena so the per-doc cost
+        // includes the post-classify ArenaNormalizer walk.
+        let arena_full = Arena::new();
         let t = Instant::now();
-        let normalize_out = normalize(&classify_out, &sanitized.text);
-        normalize_total += t.elapsed().as_nanos() as u64;
-
-        let t = Instant::now();
-        let _validated = validate(normalize_out);
-        validate_total += t.elapsed().as_nanos() as u64;
+        let _full = lex_into_arena(&text, &arena_full);
+        full_total += t.elapsed().as_nanos() as u64;
     }
 
     let avg = |total: u64| -> f64 { total as f64 / f64::from(ITERS) / 1_000_000.0 };
     let pct = |total: u64, all: u64| -> f64 { total as f64 * 100.0 / all as f64 };
 
-    let all =
-        sanitize_total + tokenize_total + pair_total + classify_total + normalize_total + validate_total;
+    let standalone =
+        sanitize_total + tokenize_total + pair_total + classify_total;
 
     println!("Per-call averages over {ITERS} iterations:");
-    println!("  sanitize  : {:>7.2} ms  ({:>5.1}%)", avg(sanitize_total), pct(sanitize_total, all));
-    println!("  tokenize  : {:>7.2} ms  ({:>5.1}%)", avg(tokenize_total), pct(tokenize_total, all));
-    println!("  pair      : {:>7.2} ms  ({:>5.1}%)", avg(pair_total), pct(pair_total, all));
-    println!("  classify  : {:>7.2} ms  ({:>5.1}%)", avg(classify_total), pct(classify_total, all));
-    println!("  normalize : {:>7.2} ms  ({:>5.1}%)", avg(normalize_total), pct(normalize_total, all));
-    println!("  validate  : {:>7.2} ms  ({:>5.1}%)", avg(validate_total), pct(validate_total, all));
-    println!("  TOTAL     : {:>7.2} ms", avg(all));
+    println!("  sanitize       : {:>7.2} ms  ({:>5.1}%)", avg(sanitize_total), pct(sanitize_total, standalone));
+    println!("  tokenize       : {:>7.2} ms  ({:>5.1}%)", avg(tokenize_total), pct(tokenize_total, standalone));
+    println!("  pair           : {:>7.2} ms  ({:>5.1}%)", avg(pair_total), pct(pair_total, standalone));
+    println!("  classify       : {:>7.2} ms  ({:>5.1}%)", avg(classify_total), pct(classify_total, standalone));
+    println!("  ──────────────────────────────────────");
+    println!("  4-PHASE TOTAL  : {:>7.2} ms", avg(standalone));
+    println!("  lex_into_arena : {:>7.2} ms", avg(full_total));
+    println!("  post-classify ∼: {:>7.2} ms", avg(full_total.saturating_sub(standalone)));
 
     // Single high-precision parse to dump classify shape (annotation
     // count, gaiji count) for sizing the AC DFA work.
     let sanitized = sanitize(&text);
     let tokens = tokenize(&sanitized.text);
     let pair_out = pair(&tokens);
-    let classify_out = classify(&pair_out, &sanitized.text);
+    let arena = Arena::new();
+    let mut alloc = BorrowedAllocator::new(&arena);
+    let classify_out = classify(&pair_out, &sanitized.text, &mut alloc);
     let mut aozora_count = 0;
     let mut counts: std::collections::HashMap<&'static str, usize> =
         std::collections::HashMap::new();
@@ -112,8 +118,8 @@ fn main() {
         use aozora_lexer::SpanKind;
         if let SpanKind::Aozora(node) = &span.kind {
             aozora_count += 1;
-            use aozora_syntax::owned::AozoraNode;
-            let name = match &**node {
+            use aozora_syntax::borrowed::AozoraNode;
+            let name = match node {
                 AozoraNode::Ruby(_) => "Ruby",
                 AozoraNode::Bouten(_) => "Bouten",
                 AozoraNode::TateChuYoko(_) => "TateChuYoko",

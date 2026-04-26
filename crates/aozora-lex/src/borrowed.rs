@@ -32,8 +32,8 @@
 //! re-running the conversion.
 
 use aozora_lexer::{
-    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, ClassifiedSpanGen,
-    INLINE_SENTINEL, SpanKindGen, classify_with,
+    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, ClassifiedSpan,
+    INLINE_SENTINEL, SpanKind, classify,
 };
 use aozora_spec::Diagnostic;
 use aozora_syntax::alloc::BorrowedAllocator;
@@ -109,7 +109,7 @@ pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'
 
     // Phase 3 emits borrowed nodes straight into `arena` via `alloc`.
     // No owned-AST shadow intermediate; no post-pass conversion.
-    let classify_out = classify_with(&pair_out, &sanitized.text, &mut alloc);
+    let classify_out = classify(&pair_out, &sanitized.text, &mut alloc);
 
     let span_count = classify_out.spans.len();
     let mut builder = ArenaNormalizer::new(&sanitized.text, span_count);
@@ -126,21 +126,22 @@ pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'
         block_close: EytzingerMap::from_sorted_slice(&builder.block_close),
     };
 
-    // Diagnostics merge order (mirrors `aozora_lexer::lex`):
+    // Diagnostics merge order:
     //
     // 1. Phase 0 sanitize diagnostics first (`SourceContainsPua`).
     // 2. `classify_out.diagnostics` already merges in phase 2 pair
     //    diagnostics via `Driver::finish(pair_output.diagnostics.clone())`,
     //    so we extend with classify ONLY — `pair_out.diagnostics`
     //    would double-count.
-    // 3. Phase 6 validate (in debug + with the validate-invariants
-    //    feature) appends V1..V3 invariant breaches, skipped in
-    //    release per ADR-0014.
+    //
+    // The legacy phase-6 validator was retired with the rest of the
+    // owned API in I-2.2 Phase F. The proptest in
+    // `tests/property_borrowed_arena.rs` pins the V1..V3 invariants
+    // by construction (sentinel positions in `normalized` agree with
+    // the four registry tables), so the runtime validator is no
+    // longer required to keep the contract honest.
     let mut diagnostics = sanitized.diagnostics;
     diagnostics.extend(classify_out.diagnostics.iter().cloned());
-    if cfg!(any(debug_assertions, feature = "validate-invariants")) {
-        diagnostics.extend(validate_inline(&builder, &mut Vec::new()));
-    }
 
     let intern_stats = alloc.into_interner().stats;
     let sanitized_len =
@@ -196,15 +197,15 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
         u32::try_from(self.out.len()).expect("normalized fits u32 per Phase 0 cap")
     }
 
-    fn emit(&mut self, span: &ClassifiedSpanGen<borrowed::AozoraNode<'a>>) {
+    fn emit(&mut self, span: &ClassifiedSpan<'a>) {
         match &span.kind {
-            SpanKindGen::Plain => {
+            SpanKind::Plain => {
                 self.out.push_str(span.source_span.slice(self.source));
             }
-            SpanKindGen::Newline => {
+            SpanKind::Newline => {
                 self.out.push('\n');
             }
-            SpanKindGen::Aozora(node) => {
+            SpanKind::Aozora(node) => {
                 // Phase 3 has already allocated the borrowed node into
                 // the arena via `BorrowedAllocator`. We only have to
                 // emit the appropriate sentinel and remember the
@@ -226,21 +227,21 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     self.inline.push((pos, *node));
                 }
             }
-            SpanKindGen::BlockOpen(container) => {
+            SpanKind::BlockOpen(container) => {
                 self.out.push_str("\n\n");
                 let pos = self.current_pos();
                 self.out.push(BLOCK_OPEN_SENTINEL);
                 self.out.push_str("\n\n");
                 self.block_open.push((pos, *container));
             }
-            SpanKindGen::BlockClose(container) => {
+            SpanKind::BlockClose(container) => {
                 self.out.push_str("\n\n");
                 let pos = self.current_pos();
                 self.out.push(BLOCK_CLOSE_SENTINEL);
                 self.out.push_str("\n\n");
                 self.block_close.push((pos, *container));
             }
-            // `SpanKindGen` is `#[non_exhaustive]`; new variants land
+            // `SpanKind` is `#[non_exhaustive]`; new variants land
             // here as no-op until the normalizer adds a dedicated arm.
             _ => {}
         }
@@ -260,50 +261,6 @@ fn is_standalone_block_for_render_borrowed(node: borrowed::AozoraNode<'_>) -> bo
             | borrowed::AozoraNode::AozoraHeading(_)
             | borrowed::AozoraNode::Sashie(_)
     )
-}
-
-/// Run V1..V3 invariant checks on the normalizer's output. Wraps
-/// `aozora_lexer::validate` by reconstructing a temporary
-/// `PlaceholderRegistry` from the borrowed builder — the legacy
-/// validator is read-only over the registry shape, and its
-/// diagnostics carry the only relevant payload. Returns the new
-/// diagnostics it produced.
-///
-/// Unused `_scratch` argument anchored for a future zero-alloc
-/// validator that takes a borrowed-registry view directly; kept
-/// here so the call site doesn't churn when that lands.
-fn validate_inline(
-    builder: &ArenaNormalizer<'_, '_>,
-    _scratch: &mut Vec<Diagnostic>,
-) -> Vec<Diagnostic> {
-    // Build a minimal owned PlaceholderRegistry view for the legacy
-    // validator. It only inspects positions and variant kinds, so we
-    // can hand it dummy `AozoraNode::PageBreak` payloads without
-    // affecting the diagnostics it produces. Avoids an arena drain
-    // that a per-entry deep clone would require.
-    use aozora_lexer::PlaceholderRegistry;
-    use aozora_syntax::owned::AozoraNode as OwnedNode;
-    let registry = PlaceholderRegistry {
-        inline: builder
-            .inline
-            .iter()
-            .map(|(p, _)| (*p, OwnedNode::PageBreak))
-            .collect(),
-        block_leaf: builder
-            .block_leaf
-            .iter()
-            .map(|(p, _)| (*p, OwnedNode::PageBreak))
-            .collect(),
-        block_open: builder.block_open.clone(),
-        block_close: builder.block_close.clone(),
-    };
-    let normalize_out = aozora_lexer::NormalizeOutput {
-        normalized: builder.out.clone(),
-        registry,
-        diagnostics: Vec::new(),
-    };
-    let validated = aozora_lexer::validate(normalize_out);
-    validated.diagnostics
 }
 
 // Container registries: pure copy of (u32, ContainerKind) — both are

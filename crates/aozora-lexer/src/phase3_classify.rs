@@ -56,8 +56,13 @@
 use core::ops::Range;
 
 use aozora_encoding::gaiji as gaiji_resolve;
-use aozora_syntax::alloc::{NodeAllocator, OwnedAllocator};
-use aozora_syntax::owned::AozoraNode;
+// `NodeAllocator` is kept in scope only so the `alloc.ruby(...)` /
+// `alloc.gaiji(...)` method calls in this module resolve through the
+// trait's inherent-on-impl methods. After F.3 the allocator is
+// hardcoded to `BorrowedAllocator<'a>`; F.4 will collapse the trait
+// itself into inherent methods.
+use aozora_syntax::alloc::{BorrowedAllocator, NodeAllocator};
+use aozora_syntax::borrowed;
 use aozora_syntax::{
     AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind, Span,
 };
@@ -68,60 +73,28 @@ use crate::token::TriggerKind;
 
 /// Output of Phase 3. `spans` tiles the sanitized source contiguously
 /// (see the span-coverage invariant in the module docs).
+///
+/// Carries arena-borrowed `borrowed::AozoraNode<'a>` payloads; the
+/// arena lifetime `'a` flows in from the caller's
+/// [`BorrowedAllocator`].
 #[derive(Debug, Clone)]
-pub struct ClassifyOutput {
-    pub spans: Vec<ClassifiedSpan>,
+pub struct ClassifyOutput<'a> {
+    pub spans: Vec<ClassifiedSpan<'a>>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
 /// One classified slice of the sanitized source.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClassifiedSpan {
-    pub kind: SpanKind,
+pub struct ClassifiedSpan<'a> {
+    pub kind: SpanKind<'a>,
     pub source_span: Span,
-}
-
-/// Generic sibling of [`ClassifyOutput`]. Phase 3's internal helpers
-/// build values of this shape; the public [`classify`] wrapper converts
-/// to the owned [`ClassifyOutput`] for backward compatibility. New
-/// consumers (Commit D's `lex_into_arena`) call [`classify_with`]
-/// directly with a [`aozora_syntax::alloc::BorrowedAllocator`] to
-/// receive arena-backed nodes without a per-node post-pass clone.
-///
-/// `N` is the [`NodeAllocator::Node`] associated type of the allocator
-/// the caller passes — `owned::AozoraNode` for [`OwnedAllocator`],
-/// `borrowed::AozoraNode<'a>` for `BorrowedAllocator<'a>`.
-#[derive(Debug, Clone)]
-pub struct ClassifyOutputGen<N> {
-    pub spans: Vec<ClassifiedSpanGen<N>>,
-    pub diagnostics: Vec<Diagnostic>,
-}
-
-/// Generic sibling of [`ClassifiedSpan`]. See [`ClassifyOutputGen`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClassifiedSpanGen<N> {
-    pub kind: SpanKindGen<N>,
-    pub source_span: Span,
-}
-
-/// Generic sibling of [`SpanKind`]. The `Aozora(N)` variant is *not*
-/// boxed — `borrowed::AozoraNode<'a>` is `Copy` and 16 bytes, the same
-/// size as the boxed owned variant; the legacy `Box` only re-appears
-/// in the [`classify`] wrapper that converts the generic shape back
-/// into the owned [`SpanKind`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SpanKindGen<N> {
-    Plain,
-    Aozora(N),
-    BlockOpen(ContainerKind),
-    BlockClose(ContainerKind),
-    Newline,
 }
 
 /// Classification of a [`ClassifiedSpan`].
 ///
-/// Phase 4 maps the variants to PUA sentinels as follows:
+/// Phase 4 (now folded into `aozora_lex::lex_into_arena`'s
+/// `ArenaNormalizer` walk) maps the variants to PUA sentinels as
+/// follows:
 ///
 /// | variant        | sentinel              | `post_process` role |
 /// |----------------|-----------------------|-------------------|
@@ -139,38 +112,30 @@ pub enum SpanKindGen<N> {
 ///
 /// # Memory layout
 ///
-/// The `Aozora` variant carries a [`Box<AozoraNode>`][AozoraNode]
-/// rather than the `AozoraNode` inline. `AozoraNode` is the fattest
-/// inhabitant of the enum (~56 bytes for variants like Ruby with two
-/// `Content` fields), and the spans Vec is dominated by `Plain` /
-/// `Newline` spans on real input. Boxing the rare-and-fat variant
-/// pulls the enum down to ~16 bytes per span and cuts the spans Vec
-/// by roughly 4× on a typical document, at the cost of one
-/// indirection per Aozora dispatch in Phase 4 (a single deref that
-/// the cache hierarchy amortises against the Aozora-variant clone
-/// that follows immediately).
+/// The `Aozora(borrowed::AozoraNode<'a>)` variant is *not* boxed —
+/// `borrowed::AozoraNode<'a>` is `Copy` and 16 bytes, so storing it
+/// inline keeps `SpanKind` to `Aozora`-variant size while avoiding
+/// the `Box` indirection the legacy owned shape paid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum SpanKind {
+pub enum SpanKind<'a> {
     /// Source bytes that carry no Aozora construct. Emitted verbatim
-    /// by Phase 4.
+    /// by the normalizer.
     Plain,
     /// Classified Aozora construct (inline span or block-leaf line).
-    /// Phase 4 replaces the source span with an `E001` (inline) or
-    /// `E002` (block-leaf) sentinel and records the node in the
+    /// The normalizer replaces the source span with an `E001` (inline)
+    /// or `E002` (block-leaf) sentinel and records the node in the
     /// placeholder registry keyed at the sentinel's normalized
-    /// position. Boxed because `AozoraNode` is the fattest variant
-    /// of this enum (~56 bytes); the indirection shrinks the spans
-    /// `Vec` by ~4× on real input — see the type-level docs above.
-    Aozora(Box<AozoraNode>),
+    /// position.
+    Aozora(borrowed::AozoraNode<'a>),
     /// Paired-container opener — `［＃ここから字下げ］`, `［＃罫囲み］`,
-    /// etc. Phase 4 emits an `E003` sentinel line; `post_process`
+    /// etc. The normalizer emits an `E003` sentinel line; `post_process`
     /// matches it to the corresponding `BlockClose` via a balanced
     /// stack walk of the comrak AST.
     BlockOpen(ContainerKind),
     /// Paired-container closer — `［＃ここで字下げ終わり］`,
-    /// `［＃罫囲み終わり］`, etc. Phase 4 emits an `E004` sentinel
-    /// line; the carried `ContainerKind` is a hint used by
+    /// `［＃罫囲み終わり］`, etc. The normalizer emits an `E004`
+    /// sentinel line; the carried `ContainerKind` is a hint used by
     /// `post_process` to diagnose `［＃罫囲み終わり］` closing an
     /// `Indent` opener (kind mismatch).
     BlockClose(ContainerKind),
@@ -181,53 +146,20 @@ pub enum SpanKind {
 
 /// Classify a Phase 2 event stream against the sanitized source.
 ///
+/// Drives the recognition logic and emits nodes straight into the
+/// arena owned by `alloc` (a [`BorrowedAllocator<'a>`]). The resulting
+/// [`ClassifyOutput`] carries `borrowed::AozoraNode<'a>` directly —
+/// no owned-AST shadow is constructed, no per-span conversion is
+/// performed.
+///
 /// Pure function; no I/O. The output is a byte-contiguous cover of
 /// `source` — see the module-level span-coverage invariant.
-///
-/// This is a thin compatibility wrapper around [`classify_with`] using
-/// the [`OwnedAllocator`]; consumers that already own an allocator
-/// (e.g. an arena-backed `BorrowedAllocator`) should call
-/// [`classify_with`] directly to skip the wrap-as-`Box<AozoraNode>`
-/// translation back to the owned shape.
 #[must_use]
-pub fn classify(pair_output: &PairOutput, source: &str) -> ClassifyOutput {
-    let mut alloc = OwnedAllocator;
-    let generic = classify_with(pair_output, source, &mut alloc);
-    ClassifyOutput {
-        diagnostics: generic.diagnostics,
-        spans: generic
-            .spans
-            .into_iter()
-            .map(|s| ClassifiedSpan {
-                source_span: s.source_span,
-                kind: match s.kind {
-                    SpanKindGen::Plain => SpanKind::Plain,
-                    SpanKindGen::Aozora(n) => SpanKind::Aozora(Box::new(n)),
-                    SpanKindGen::BlockOpen(c) => SpanKind::BlockOpen(c),
-                    SpanKindGen::BlockClose(c) => SpanKind::BlockClose(c),
-                    SpanKindGen::Newline => SpanKind::Newline,
-                },
-            })
-            .collect(),
-    }
-}
-
-/// Allocator-generic Phase 3 entry point.
-///
-/// Drives the same recognition logic as [`classify`] but emits nodes
-/// through the supplied [`NodeAllocator`], so a single classifier body
-/// services both the legacy owned AST and the arena-backed borrowed
-/// AST. Callers using the borrowed pipeline (`lex_into_arena`) pass a
-/// `BorrowedAllocator<'a>`; the resulting [`ClassifyOutputGen`]
-/// contains `borrowed::AozoraNode<'a>` directly, eliminating the
-/// per-span owned→borrowed translation that the legacy pipeline used
-/// to perform.
-#[must_use]
-pub fn classify_with<'a, A: NodeAllocator<'a>>(
+pub fn classify<'a>(
     pair_output: &PairOutput,
     source: &str,
-    alloc: &mut A,
-) -> ClassifyOutputGen<A::Node> {
+    alloc: &mut BorrowedAllocator<'a>,
+) -> ClassifyOutput<'a> {
     let events = &pair_output.events;
 
     // Pre-pass: collect every forward-reference target in the event
@@ -581,10 +513,10 @@ fn body_dispatcher() -> &'static AhoCorasick {
     reason = "single match arm per BodyFamily — splitting would scatter \
               the dispatch logic and obscure the intentional 1:1 mapping"
 )]
-fn classify_annotation_body<'a, A: NodeAllocator<'a>>(
+fn classify_annotation_body<'a>(
     body: &str,
-    alloc: &mut A,
-) -> Option<(EmitKind<A::Node>, Option<A::Annotation>)> {
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Option<(EmitKind<'a>, Option<&'a borrowed::Annotation<'a>>)> {
     if body.is_empty() {
         return None;
     }
@@ -725,26 +657,22 @@ fn classify_annotation_body<'a, A: NodeAllocator<'a>>(
 /// emitted was a Newline or a classified Aozora span (or nothing yet).
 /// Flushing the pending plain span is the only place Plain spans are
 /// produced.
-struct Driver<'s, 'al, 'a, A: NodeAllocator<'a>> {
+struct Driver<'s, 'al, 'a> {
     source_len: u32,
     source: &'s str,
-    spans: Vec<ClassifiedSpanGen<A::Node>>,
+    spans: Vec<ClassifiedSpan<'a>>,
     pending_plain_start: Option<u32>,
-    alloc: &'al mut A,
-    /// Pin the arena lifetime so the compiler keeps the
-    /// `'al mut A: NodeAllocator<'a>` borrow honest. Zero-sized.
-    _arena: core::marker::PhantomData<&'a ()>,
+    alloc: &'al mut BorrowedAllocator<'a>,
 }
 
-impl<'s, 'al, 'a, A: NodeAllocator<'a>> Driver<'s, 'al, 'a, A> {
-    fn new(source: &'s str, alloc: &'al mut A) -> Self {
+impl<'s, 'al, 'a> Driver<'s, 'al, 'a> {
+    fn new(source: &'s str, alloc: &'al mut BorrowedAllocator<'a>) -> Self {
         Self {
             source_len: u32::try_from(source.len()).expect("sanitize asserts fit in u32"),
             source,
             spans: Vec::new(),
             pending_plain_start: None,
             alloc,
-            _arena: core::marker::PhantomData,
         }
     }
 
@@ -817,8 +745,8 @@ impl<'s, 'al, 'a, A: NodeAllocator<'a>> Driver<'s, 'al, 'a, A> {
         );
         self.flush_plain_up_to(open_span.start);
         let node = self.alloc.double_ruby(content);
-        self.spans.push(ClassifiedSpanGen {
-            kind: SpanKindGen::Aozora(node),
+        self.spans.push(ClassifiedSpan {
+            kind: SpanKind::Aozora(node),
             source_span: Span::new(open_span.start, close_span.end),
         });
         self.pending_plain_start = None;
@@ -839,8 +767,8 @@ impl<'s, 'al, 'a, A: NodeAllocator<'a>> Driver<'s, 'al, 'a, A> {
         self.flush_plain_up_to(m.consume_start);
         let base_content = self.alloc.content_plain(m.base);
         let node = self.alloc.ruby(base_content, m.reading, m.explicit);
-        self.spans.push(ClassifiedSpanGen {
-            kind: SpanKindGen::Aozora(node),
+        self.spans.push(ClassifiedSpan {
+            kind: SpanKind::Aozora(node),
             source_span: Span::new(m.consume_start, m.consume_end),
         });
         self.pending_plain_start = None;
@@ -856,11 +784,11 @@ impl<'s, 'al, 'a, A: NodeAllocator<'a>> Driver<'s, 'al, 'a, A> {
         let m = recognize_annotation(events, self.source, open_idx, close_idx, self.alloc)?;
         self.flush_plain_up_to(m.consume_start);
         let kind = match m.emit {
-            EmitKind::Aozora(node) => SpanKindGen::Aozora(node),
-            EmitKind::BlockOpen(container) => SpanKindGen::BlockOpen(container),
-            EmitKind::BlockClose(container) => SpanKindGen::BlockClose(container),
+            EmitKind::Aozora(node) => SpanKind::Aozora(node),
+            EmitKind::BlockOpen(container) => SpanKind::BlockOpen(container),
+            EmitKind::BlockClose(container) => SpanKind::BlockClose(container),
         };
-        self.spans.push(ClassifiedSpanGen {
+        self.spans.push(ClassifiedSpan {
             kind,
             source_span: Span::new(m.consume_start, m.consume_end),
         });
@@ -886,8 +814,8 @@ impl<'s, 'al, 'a, A: NodeAllocator<'a>> Driver<'s, 'al, 'a, A> {
         let m = recognize_gaiji(events, self.source, refmark_span, bracket_open_idx, self.alloc)?;
         self.flush_plain_up_to(m.consume_start);
         let node = self.alloc.gaiji(m.payload);
-        self.spans.push(ClassifiedSpanGen {
-            kind: SpanKindGen::Aozora(node),
+        self.spans.push(ClassifiedSpan {
+            kind: SpanKind::Aozora(node),
             source_span: Span::new(m.consume_start, m.consume_end),
         });
         self.pending_plain_start = None;
@@ -901,8 +829,8 @@ impl<'s, 'al, 'a, A: NodeAllocator<'a>> Driver<'s, 'al, 'a, A> {
             // the newline as its own span. LF is always a single byte
             // in UTF-8, so `pos + 1` is safe.
             self.flush_plain_up_to(pos);
-            self.spans.push(ClassifiedSpanGen {
-                kind: SpanKindGen::Newline,
+            self.spans.push(ClassifiedSpan {
+                kind: SpanKind::Newline,
                 source_span: Span::new(pos, pos + 1),
             });
             return;
@@ -929,16 +857,16 @@ impl<'s, 'al, 'a, A: NodeAllocator<'a>> Driver<'s, 'al, 'a, A> {
         if let Some(start) = self.pending_plain_start.take()
             && end > start
         {
-            self.spans.push(ClassifiedSpanGen {
-                kind: SpanKindGen::Plain,
+            self.spans.push(ClassifiedSpan {
+                kind: SpanKind::Plain,
                 source_span: Span::new(start, end),
             });
         }
     }
 
-    fn finish(mut self, diagnostics: Vec<Diagnostic>) -> ClassifyOutputGen<A::Node> {
+    fn finish(mut self, diagnostics: Vec<Diagnostic>) -> ClassifyOutput<'a> {
         self.flush_plain_up_to(self.source_len);
-        ClassifyOutputGen {
+        ClassifyOutput {
             spans: self.spans,
             diagnostics,
         }
@@ -957,9 +885,9 @@ impl<'s, 'al, 'a, A: NodeAllocator<'a>> Driver<'s, 'al, 'a, A> {
 /// Phase 4 stamps one PUA sentinel over the whole `｜…《…》` source
 /// span, and the inner gaiji/annotation never reach the top-level
 /// `spans` list or the comrak parse phase.
-struct RubyMatch<'s, C> {
+struct RubyMatch<'s, 'a> {
     base: &'s str,
-    reading: C,
+    reading: borrowed::Content<'a>,
     explicit: bool,
     consume_start: u32,
     consume_end: u32,
@@ -985,13 +913,13 @@ struct RubyMatch<'s, C> {
 ///
 /// Returns `None` if neither shape applies (empty reading, no
 /// preceding Text, no kanji for implicit).
-fn recognize_ruby<'s, 'a, A: NodeAllocator<'a>>(
+fn recognize_ruby<'s, 'a>(
     events: &[PairEvent],
     source: &'s str,
     open_idx: usize,
     close_idx: usize,
-    alloc: &mut A,
-) -> Option<RubyMatch<'s, A::Content>> {
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Option<RubyMatch<'s, 'a>> {
     let PairEvent::PairOpen {
         span: open_span, ..
     } = events[open_idx]
@@ -1121,12 +1049,12 @@ struct BodyWindow {
 /// [`Content::from_segments`], so a slow-path body that turned out to
 /// contain only text (for example because its brackets were malformed
 /// and skipped) still collapses back to [`Content::Plain`].
-fn build_content_from_body<'a, A: NodeAllocator<'a>>(
+fn build_content_from_body<'a>(
     events: &[PairEvent],
     source: &str,
     window: &BodyWindow,
-    alloc: &mut A,
-) -> A::Content {
+    alloc: &mut BorrowedAllocator<'a>,
+) -> borrowed::Content<'a> {
     debug_assert!(
         window.events.start <= window.events.end,
         "body window event range must be non-inverted",
@@ -1151,7 +1079,7 @@ fn build_content_from_body<'a, A: NodeAllocator<'a>>(
     // `Text, Construct, Text, …` plus one trailing Text. Capping at
     // `body_events.len() + 1` is a safe upper bound that is small in
     // practice (ruby readings almost never reach double-digit events).
-    let mut segments: Vec<A::Segment> = Vec::with_capacity(body_events.len() + 1);
+    let mut segments: Vec<borrowed::Segment<'a>> = Vec::with_capacity(body_events.len() + 1);
     let mut text_start: u32 = window.bytes.start;
     let mut i = window.events.start;
 
@@ -1262,12 +1190,12 @@ fn has_nested_candidate(body: &[PairEvent]) -> bool {
 /// `Segments` run" (see `Content::from_segments`) without a second
 /// compaction pass.
 #[inline]
-fn push_text_segment<'a, A: NodeAllocator<'a>>(
-    segments: &mut Vec<A::Segment>,
+fn push_text_segment<'a>(
+    segments: &mut Vec<borrowed::Segment<'a>>,
     source: &str,
     start: u32,
     end: u32,
-    alloc: &mut A,
+    alloc: &mut BorrowedAllocator<'a>,
 ) {
     if end > start {
         segments.push(alloc.seg_text(&source[start as usize..end as usize]));
@@ -1276,12 +1204,12 @@ fn push_text_segment<'a, A: NodeAllocator<'a>>(
 
 /// Intermediate result of [`recognize_gaiji`].
 ///
-/// Holds the payload (`A::Gaiji`) rather than a wrapped node so the
-/// caller can route it to either `alloc.gaiji(p)` (top-level span) or
-/// `alloc.seg_gaiji(p)` (nested inside a body content) without
-/// re-paying the description / mencode intern cost.
-struct GaijiMatch<G> {
-    payload: G,
+/// Holds the payload (`&'a borrowed::Gaiji<'a>`) rather than a wrapped
+/// node so the caller can route it to either `alloc.gaiji(p)`
+/// (top-level span) or `alloc.seg_gaiji(p)` (nested inside a body
+/// content) without re-paying the description / mencode intern cost.
+struct GaijiMatch<'a> {
+    payload: &'a borrowed::Gaiji<'a>,
     consume_start: u32,
     consume_end: u32,
 }
@@ -1306,13 +1234,13 @@ struct GaijiMatch<G> {
 /// Consume range is from `refmark_span.start` to the bracket close's
 /// end — i.e. the `※` and the entire following `［＃…］` fold into
 /// one Aozora span.
-fn recognize_gaiji<'a, A: NodeAllocator<'a>>(
+fn recognize_gaiji<'a>(
     events: &[PairEvent],
     source: &str,
     refmark_span: Span,
     bracket_open_idx: usize,
-    alloc: &mut A,
-) -> Option<GaijiMatch<A::Gaiji>> {
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Option<GaijiMatch<'a>> {
     let &PairEvent::PairOpen {
         kind: PairKind::Bracket,
         close_idx: bracket_close_idx,
@@ -1430,7 +1358,7 @@ fn trailing_kanji_start(text: &str) -> usize {
 
 /// Intermediate result of [`recognize_annotation`].
 ///
-/// `emit` decides which [`SpanKindGen`] the driver pushes for the
+/// `emit` decides which [`SpanKind`] the driver pushes for the
 /// top-level case. `annotation_payload` is `Some` exactly when the
 /// recogniser produced an `Annotation{…}` payload — the
 /// [`build_content_from_body`] caller uses it to wrap the same payload
@@ -1438,20 +1366,20 @@ fn trailing_kanji_start(text: &str) -> usize {
 /// variants `BlockOpen` / `BlockClose` and non-`Annotation` `Aozora`
 /// nodes leave `annotation_payload` as `None`, so the body-builder
 /// falls back to its `Annotation{Unknown}` synthesis path.
-struct AnnotationMatch<N, AP> {
-    emit: EmitKind<N>,
-    annotation_payload: Option<AP>,
+struct AnnotationMatch<'a> {
+    emit: EmitKind<'a>,
+    annotation_payload: Option<&'a borrowed::Annotation<'a>>,
     consume_start: u32,
     consume_end: u32,
 }
 
 /// What to emit for a matched annotation.
-enum EmitKind<N> {
-    /// Inline or block-leaf — becomes [`SpanKindGen::Aozora`].
-    Aozora(N),
-    /// Paired-container opener — becomes [`SpanKindGen::BlockOpen`].
+enum EmitKind<'a> {
+    /// Inline or block-leaf — becomes [`SpanKind::Aozora`].
+    Aozora(borrowed::AozoraNode<'a>),
+    /// Paired-container opener — becomes [`SpanKind::BlockOpen`].
     BlockOpen(ContainerKind),
-    /// Paired-container closer — becomes [`SpanKindGen::BlockClose`].
+    /// Paired-container closer — becomes [`SpanKind::BlockClose`].
     BlockClose(ContainerKind),
 }
 
@@ -1464,13 +1392,13 @@ enum EmitKind<N> {
 /// hash whose keyword no specialised recogniser matches fall through
 /// to the `Annotation { Unknown }` catch-all so the bracket is
 /// always consumed into some `AozoraNode`.
-fn recognize_annotation<'a, A: NodeAllocator<'a>>(
+fn recognize_annotation<'a>(
     events: &[PairEvent],
     source: &str,
     open_idx: usize,
     close_idx: usize,
-    alloc: &mut A,
-) -> Option<AnnotationMatch<A::Node, A::Annotation>> {
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Option<AnnotationMatch<'a>> {
     let PairEvent::PairOpen {
         span: open_span, ..
     } = events[open_idx]
@@ -1591,13 +1519,13 @@ fn recognize_annotation<'a, A: NodeAllocator<'a>>(
 /// Q+1..close_idx   suffix events             [usually Text("に…")]
 /// close_idx        PairClose(Bracket)
 /// ```
-fn classify_forward_bouten<'a, A: NodeAllocator<'a>>(
+fn classify_forward_bouten<'a>(
     events: &[PairEvent],
     source: &str,
     open_idx: usize,
     close_idx: usize,
-    alloc: &mut A,
-) -> Option<A::Node> {
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Option<borrowed::AozoraNode<'a>> {
     let extracted = extract_forward_quote_targets(events, source, open_idx, close_idx)?;
     // Shape 1: `に<kind>` — default right-side placement.
     // Shape 2: `の左に<kind>` — left-side placement (position flipped).
@@ -1639,15 +1567,15 @@ fn classify_forward_bouten<'a, A: NodeAllocator<'a>>(
 /// would ripple through every renderer / serializer). Callers that
 /// need the per-target list can walk `Content::iter` and filter on
 /// `SegmentRef::Text`.
-fn build_bouten_target<'a, A: NodeAllocator<'a>>(
+fn build_bouten_target<'a>(
     targets: &[&str],
-    alloc: &mut A,
-) -> A::Content {
+    alloc: &mut BorrowedAllocator<'a>,
+) -> borrowed::Content<'a> {
     match targets {
         [] => alloc.content_plain(""),
         [only] => alloc.content_plain(only),
         many => {
-            let mut segs: Vec<A::Segment> = Vec::with_capacity(many.len() * 2 - 1);
+            let mut segs: Vec<borrowed::Segment<'a>> = Vec::with_capacity(many.len() * 2 - 1);
             for (i, t) in many.iter().enumerate() {
                 if i > 0 {
                     segs.push(alloc.seg_text("、"));
@@ -1671,13 +1599,13 @@ fn build_bouten_target<'a, A: NodeAllocator<'a>>(
 /// spec; we accept the first target's text and ignore the rest for
 /// robustness rather than failing, so the bracket still consumes via
 /// [`classify_forward_tcy`] instead of leaking to `Annotation{Unknown}`.
-fn classify_forward_tcy<'a, A: NodeAllocator<'a>>(
+fn classify_forward_tcy<'a>(
     events: &[PairEvent],
     source: &str,
     open_idx: usize,
     close_idx: usize,
-    alloc: &mut A,
-) -> Option<A::Node> {
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Option<borrowed::AozoraNode<'a>> {
     let extracted = extract_forward_quote_targets(events, source, open_idx, close_idx)?;
     if extracted.suffix != "は縦中横" {
         return None;
@@ -1866,10 +1794,10 @@ const fn is_okurigana_char(ch: char) -> bool {
 /// (`［＃挿絵（file）「caption」入る］`) needs an event-level caption
 /// recogniser that this pass does not yet perform; the no-caption
 /// shape accounts for the vast majority of corpus occurrences.
-fn classify_sashie_body<'a, A: NodeAllocator<'a>>(
+fn classify_sashie_body<'a>(
     body: &str,
-    alloc: &mut A,
-) -> Option<EmitKind<A::Node>> {
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Option<EmitKind<'a>> {
     let rest = body.strip_prefix("挿絵（")?;
     // `）` is a full-width right parenthesis (U+FF09). Find its first
     // occurrence — corpus rarely nests `（）` inside a filename.
@@ -1905,13 +1833,13 @@ fn classify_sashie_body<'a, A: NodeAllocator<'a>>(
 /// paragraph would promote to an empty heading. Falling through lets
 /// the catch-all emit `Annotation { Unknown }` so the reader at least
 /// sees the raw bracket text in diagnostics.
-fn classify_forward_heading<'a, A: NodeAllocator<'a>>(
+fn classify_forward_heading<'a>(
     events: &[PairEvent],
     source: &str,
     open_idx: usize,
     close_idx: usize,
-    alloc: &mut A,
-) -> Option<A::Node> {
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Option<borrowed::AozoraNode<'a>> {
     let extracted = extract_forward_quote_targets(events, source, open_idx, close_idx)?;
     let rest = extracted.suffix.strip_prefix("は")?;
     let level = heading_level_from_suffix(rest)?;
@@ -2035,48 +1963,60 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    // Re-import the owned types the tests pattern-match on. The
-    // production code now goes through `NodeAllocator`, so these
-    // owned-shape constructors / variants are no longer in
-    // `super::*`'s scope.
+    // Borrowed-AST types pattern-matched throughout. `AozoraNode<'a>`
+    // is `Copy` and holds payloads via `&'a Ruby<'a>` etc., so tests
+    // pattern-match `AozoraNode::Ruby(r)` where `r` is already a
+    // reference — no `Box` deref needed.
     #[allow(
         unused_imports,
         reason = "individual tests pattern-match on subsets; bringing them all in keeps the import block stable"
     )]
-    use aozora_syntax::owned::{
-        Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, Ruby,
-        Sashie, Segment, TateChuYoko,
+    use aozora_syntax::borrowed::{
+        Annotation, AozoraNode, Arena, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten,
+        Ruby, Sashie, Segment, TateChuYoko,
     };
 
     use crate::phase1_events::tokenize;
     use crate::phase2_pair::pair;
 
-    fn run(src: &str) -> ClassifyOutput {
-        let tokens = tokenize(src);
-        let pair_out = pair(&tokens);
-        classify(&pair_out, src)
+    /// Test-only `run` macro. Materialises a fresh
+    /// [`Arena`] / [`BorrowedAllocator`] pair in the calling scope and
+    /// binds `out` (or the explicitly-named identifier) to the
+    /// resulting [`ClassifyOutput`]. Replaces the legacy
+    /// `let out = run(src)` shape so each test's borrow chain is
+    /// arena-rooted in the test's own stack frame, with no per-test
+    /// allocator boilerplate.
+    macro_rules! run {
+        ($name:ident, $src:expr) => {
+            let arena = Arena::new();
+            let mut alloc = BorrowedAllocator::new(&arena);
+            let tokens = tokenize($src);
+            let pair_out = pair(&tokens);
+            let $name: ClassifyOutput<'_> = classify(&pair_out, $src, &mut alloc);
+        };
     }
 
-    /// Test-only helper: deref the boxed `Aozora` variant so tests can
-    /// pattern-match on `AozoraNode` without spelling out the
-    /// `Box<...>` indirection at every call site.
-    fn aozora_node(span: &ClassifiedSpan) -> Option<&AozoraNode> {
-        match &span.kind {
-            SpanKind::Aozora(boxed) => Some(boxed.as_ref()),
+    /// Test-only helper: extract the `Aozora` variant's borrowed
+    /// `AozoraNode<'a>` (which is `Copy`) so tests can pattern-match
+    /// on it without spelling out the variant boilerplate at every
+    /// call site.
+    fn aozora_node<'a>(span: &ClassifiedSpan<'a>) -> Option<AozoraNode<'a>> {
+        match span.kind {
+            SpanKind::Aozora(node) => Some(node),
             _ => None,
         }
     }
 
     #[test]
     fn empty_input_produces_empty_span_vector() {
-        let out = run("");
+        run!(out, "");
         assert!(out.spans.is_empty());
         assert!(out.diagnostics.is_empty());
     }
 
     #[test]
     fn plain_ascii_becomes_single_plain_span() {
-        let out = run("hello");
+        run!(out, "hello");
         assert_eq!(out.spans.len(), 1);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
         assert_eq!(out.spans[0].source_span, Span::new(0, 5));
@@ -2085,7 +2025,7 @@ mod tests {
     #[test]
     fn plain_multibyte_becomes_single_plain_span() {
         let src = "こんにちは";
-        let out = run(src);
+        run!(out, src);
         assert_eq!(out.spans.len(), 1);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
         assert_eq!(
@@ -2096,7 +2036,7 @@ mod tests {
 
     #[test]
     fn newline_in_middle_splits_into_three_spans() {
-        let out = run("line1\nline2");
+        run!(out, "line1\nline2");
         assert_eq!(out.spans.len(), 3);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
         assert_eq!(out.spans[0].source_span, Span::new(0, 5));
@@ -2108,7 +2048,7 @@ mod tests {
 
     #[test]
     fn leading_and_trailing_newlines_do_not_emit_empty_plain_spans() {
-        let out = run("\nbody\n");
+        run!(out, "\nbody\n");
         // Expected: Newline, Plain("body"), Newline. No empty Plain at the edges.
         assert_eq!(out.spans.len(), 3);
         assert_eq!(out.spans[0].kind, SpanKind::Newline);
@@ -2119,13 +2059,13 @@ mod tests {
     #[test]
     fn explicit_ruby_produces_single_aozora_span() {
         let src = "｜青梅《おうめ》";
-        let out = run(src);
+        run!(out, src);
         assert_eq!(out.spans.len(), 1);
-        let SpanKind::Aozora(ref boxed) = out.spans[0].kind else {
+        let SpanKind::Aozora(node) = out.spans[0].kind else {
             panic!("expected Aozora span, got {:?}", out.spans[0].kind);
         };
-        let AozoraNode::Ruby(ref ruby) = **boxed else {
-            panic!("expected Ruby variant, got {boxed:?}");
+        let AozoraNode::Ruby(ruby) = node else {
+            panic!("expected Ruby variant, got {node:?}");
         };
         assert_eq!(ruby.base.as_plain(), Some("青梅"));
         assert_eq!(ruby.reading.as_plain(), Some("おうめ"));
@@ -2138,14 +2078,14 @@ mod tests {
         // "あいう" (kana) + "漢字" (kanji) + ruby → base is "漢字",
         // leading kana stays Plain.
         let src = "あいう漢字《かんじ》";
-        let out = run(src);
+        run!(out, src);
         assert_eq!(out.spans.len(), 2);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
-        let SpanKind::Aozora(ref boxed) = out.spans[1].kind else {
+        let SpanKind::Aozora(node) = out.spans[1].kind else {
             panic!("expected Aozora span, got {:?}", out.spans[1].kind);
         };
-        let AozoraNode::Ruby(ref ruby) = **boxed else {
-            panic!("expected Ruby variant, got {boxed:?}");
+        let AozoraNode::Ruby(ruby) = node else {
+            panic!("expected Ruby variant, got {node:?}");
         };
         assert_eq!(ruby.base.as_plain(), Some("漢字"));
         assert_eq!(ruby.reading.as_plain(), Some("かんじ"));
@@ -2158,7 +2098,7 @@ mod tests {
     fn implicit_ruby_without_leading_kanji_leaves_ruby_unrecognized() {
         // No kanji before 《 → ruby can't bind. Ruby remains plain.
         let src = "あいう《かんじ》";
-        let out = run(src);
+        run!(out, src);
         assert!(
             !out.spans
                 .iter()
@@ -2171,7 +2111,7 @@ mod tests {
     #[test]
     fn explicit_ruby_with_empty_reading_is_not_recognized() {
         let src = "｜漢字《》";
-        let out = run(src);
+        run!(out, src);
         // Empty reading fails recognition; whole source stays plain.
         assert!(
             !out.spans
@@ -2185,14 +2125,14 @@ mod tests {
     #[test]
     fn ruby_after_newline_keeps_newline_as_its_own_span() {
         let src = "line1\n｜漢《かん》";
-        let out = run(src);
+        run!(out, src);
         // Plain("line1"), Newline, Aozora(Ruby)
         assert_eq!(out.spans.len(), 3);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
         assert_eq!(out.spans[1].kind, SpanKind::Newline);
         let is_ruby = matches!(
-            &out.spans[2].kind,
-            SpanKind::Aozora(boxed) if matches!(**boxed, AozoraNode::Ruby(_))
+            out.spans[2].kind,
+            SpanKind::Aozora(AozoraNode::Ruby(_))
         );
         assert!(is_ruby, "expected Aozora(Ruby), got {:?}", out.spans[2].kind);
     }
@@ -2202,7 +2142,7 @@ mod tests {
         // A close-bracket between `」` and `《` means the preceding
         // event is PairClose, not Text. Implicit ruby can't bind.
         let src = "「台詞」《かんじ》";
-        let out = run(src);
+        run!(out, src);
         assert!(
             !out.spans
                 .iter()
@@ -2220,12 +2160,10 @@ mod tests {
     /// Pull the sole `SpanKind::Aozora(Ruby(...))` out of a
     /// [`ClassifyOutput`] so tests can assert on the Ruby payload
     /// without repeating the shape-match boilerplate.
-    fn only_ruby(out: &ClassifyOutput) -> &Ruby {
+    fn only_ruby<'a>(out: &ClassifyOutput<'a>) -> &'a Ruby<'a> {
         let mut found = None;
         for span in &out.spans {
-            if let SpanKind::Aozora(ref boxed) = span.kind
-                && let AozoraNode::Ruby(ref r) = **boxed
-            {
+            if let SpanKind::Aozora(AozoraNode::Ruby(r)) = span.kind {
                 assert!(found.is_none(), "more than one Ruby span: {:?}", out.spans);
                 found = Some(r);
             }
@@ -2240,7 +2178,7 @@ mod tests {
         // obliged to collapse back to `Content::Plain` so `.as_plain()`
         // returns `Some(&str)` for downstream consumers (renderer fast
         // path, property tests that assert the textual shape).
-        let out = run("｜青梅《おうめ》");
+        run!(out, "｜青梅《おうめ》");
         let r = only_ruby(&out);
         assert_eq!(r.base.as_plain(), Some("青梅"));
         assert_eq!(r.reading.as_plain(), Some("おうめ"));
@@ -2252,7 +2190,7 @@ mod tests {
         // into a `Segment::Gaiji` between Text segments so the renderer
         // can wrap it in `<span class="afm-gaiji">` without leaking the
         // bare `［＃` marker (Tier A).
-        let out = run("｜日本《に※［＃「ほ」、第3水準1-85-54］ん》");
+        run!(out, "｜日本《に※［＃「ほ」、第3水準1-85-54］ん》");
         let r = only_ruby(&out);
         assert_eq!(r.base.as_plain(), Some("日本"));
         let Content::Segments(ref segs) = r.reading else {
@@ -2281,7 +2219,7 @@ mod tests {
         // No surrounding text; the reading is exactly one gaiji
         // marker. The Segments run must be a single Gaiji (not a
         // trailing empty Text on either side).
-        let out = run("｜日本《※［＃「にほん」、第3水準1-85-54］》");
+        run!(out, "｜日本《※［＃「にほん」、第3水準1-85-54］》");
         let r = only_ruby(&out);
         let Content::Segments(ref segs) = r.reading else {
             panic!("expected Segments, got {:?}", r.reading);
@@ -2298,7 +2236,7 @@ mod tests {
         // `［＃ママ］` inside a reading indicates editorial "sic" —
         // must fold as `Segment::Annotation` so the renderer wraps it
         // in the hidden `afm-annotation` span (Tier A compliance).
-        let out = run("｜日本《にほん［＃ママ］》");
+        run!(out, "｜日本《にほん［＃ママ］》");
         let r = only_ruby(&out);
         let Content::Segments(ref segs) = r.reading else {
             panic!("expected Segments, got {:?}", r.reading);
@@ -2320,7 +2258,7 @@ mod tests {
         // Exercises the general Segments shape: Text, Gaiji, Text,
         // Annotation. Proves the flusher preserves ordering and the
         // `text_start` advancement correctly spans each gap.
-        let out = run("｜日本《に※［＃「ほ」、第3水準1-85-54］ん［＃ママ］》");
+        run!(out, "｜日本《に※［＃「ほ」、第3水準1-85-54］ん［＃ママ］》");
         let r = only_ruby(&out);
         let Content::Segments(ref segs) = r.reading else {
             panic!("expected Segments, got {:?}", r.reading);
@@ -2337,7 +2275,7 @@ mod tests {
         // Implicit form must use the same body walker; only the base
         // extraction differs (trailing-kanji run instead of explicit
         // `｜`-delimited Text event).
-        let out = run("日本《に※［＃「ほ」、第3水準1-85-54］ん》");
+        run!(out, "日本《に※［＃「ほ」、第3水準1-85-54］ん》");
         let r = only_ruby(&out);
         assert_eq!(r.base.as_plain(), Some("日本"));
         assert!(!r.delim_explicit);
@@ -2358,7 +2296,7 @@ mod tests {
         // inner gaiji/annotation source bytes are folded into the
         // Ruby payload — not re-exposed to the outer classifier.
         let src = "｜日本《に※［＃「ほ」、第3水準1-85-54］ん》";
-        let out = run(src);
+        run!(out, src);
         let aozora_spans: Vec<_> = out
             .spans
             .iter()
@@ -2387,7 +2325,7 @@ mod tests {
         // downgrade such shapes into `Annotation{Unknown}` so the
         // bare `［＃` never reaches the rendered HTML through a
         // `Segment::Text` channel (Tier A canary).
-        let out = run("｜日本《にほん［＃改ページ］》");
+        run!(out, "｜日本《にほん［＃改ページ］》");
         let r = only_ruby(&out);
         let Content::Segments(ref segs) = r.reading else {
             panic!("expected Segments, got {:?}", r.reading);
@@ -2404,7 +2342,7 @@ mod tests {
     #[test]
     fn page_break_annotation_becomes_single_page_break_span() {
         let src = "前\n［＃改ページ］\n後";
-        let out = run(src);
+        run!(out, src);
         // Plain("前"), Newline, Aozora(PageBreak), Newline, Plain("後")
         assert_eq!(out.spans.len(), 5);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
@@ -2420,7 +2358,7 @@ mod tests {
 
     #[test]
     fn section_break_choho_recognized() {
-        let out = run("［＃改丁］");
+        run!(out, "［＃改丁］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
@@ -2430,7 +2368,7 @@ mod tests {
 
     #[test]
     fn section_break_dan_recognized() {
-        let out = run("［＃改段］");
+        run!(out, "［＃改段］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
@@ -2440,7 +2378,7 @@ mod tests {
 
     #[test]
     fn section_break_spread_recognized() {
-        let out = run("［＃改見開き］");
+        run!(out, "［＃改見開き］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
@@ -2451,7 +2389,7 @@ mod tests {
     #[test]
     fn bracket_without_hash_is_not_an_annotation() {
         // `［普通］` (no `＃`) is plain literal text, not an annotation.
-        let out = run("［普通］");
+        run!(out, "［普通］");
         assert!(
             !out.spans
                 .iter()
@@ -2467,7 +2405,7 @@ mod tests {
         // recogniser matches, the `Annotation{Unknown}` fallback wraps
         // the raw source so the renderer can emit an `afm-annotation`
         // hidden span instead of leaking the brackets as plain text.
-        let out = run("［＃未知のキーワード］");
+        run!(out, "［＃未知のキーワード］");
         let ann = out
             .spans
             .iter()
@@ -2484,7 +2422,7 @@ mod tests {
     fn annotation_with_whitespace_padding_still_matches() {
         // Corpus occasionally has `［＃ 改ページ ］` with spaces. We
         // trim the body to be lenient.
-        let out = run("［＃ 改ページ ］");
+        run!(out, "［＃ 改ページ ］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
@@ -2500,7 +2438,7 @@ mod tests {
         // the bracket not leak even for empty-body forms, so the
         // catch-all fallback wraps it as Annotation{Unknown} with the
         // raw `［＃］` bytes preserved for round-trip.
-        let out = run("［＃］");
+        run!(out, "［＃］");
         let ann = out
             .spans
             .iter()
@@ -2515,7 +2453,7 @@ mod tests {
 
     #[test]
     fn indent_with_full_width_digit() {
-        let out = run("［＃２字下げ］");
+        run!(out, "［＃２字下げ］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
@@ -2525,7 +2463,7 @@ mod tests {
 
     #[test]
     fn indent_with_ascii_digit() {
-        let out = run("［＃10字下げ］");
+        run!(out, "［＃10字下げ］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
@@ -2539,7 +2477,7 @@ mod tests {
         // declines. The `Annotation { Unknown }` catch-all then
         // claims the bracket so the renderer wraps the body in an
         // afm-annotation span instead of leaking raw brackets.
-        let out = run("［＃300字下げ］");
+        run!(out, "［＃300字下げ］");
         let ann = out
             .spans
             .iter()
@@ -2562,7 +2500,7 @@ mod tests {
     fn indent_zero_digit_falls_through() {
         // N=0 is meaningless for 字下げ (a zero-width indent is not
         // a thing). Fullwidth-digit variant.
-        let out = run("［＃０字下げ］");
+        run!(out, "［＃０字下げ］");
         assert!(
             !out.spans
                 .iter()
@@ -2573,7 +2511,7 @@ mod tests {
     #[test]
     fn indent_zero_ascii_digit_falls_through() {
         // ASCII-digit variant of the N=0 reject.
-        let out = run("［＃0字下げ］");
+        run!(out, "［＃0字下げ］");
         assert!(
             !out.spans
                 .iter()
@@ -2585,7 +2523,7 @@ mod tests {
     fn align_end_zero_digit_falls_through() {
         // 地から0字上げ is redundant with 地付き and not spec-sanctioned —
         // reject so the text falls through to a generic Annotation.
-        let out = run("［＃地から0字上げ］");
+        run!(out, "［＃地から0字上げ］");
         assert!(
             !out.spans
                 .iter()
@@ -2595,7 +2533,7 @@ mod tests {
 
     #[test]
     fn chitsuki_zero_offset_recognized() {
-        let out = run("［＃地付き］");
+        run!(out, "［＃地付き］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
@@ -2605,7 +2543,7 @@ mod tests {
 
     #[test]
     fn chi_kara_n_ji_age_recognized() {
-        let out = run("［＃地から３字上げ］");
+        run!(out, "［＃地から３字上げ］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
@@ -2618,7 +2556,7 @@ mod tests {
         // "ここから字下げ" is a paired-container opener, not a leaf
         // indent — the leaf classifier must not grab it, and the
         // paired-container recogniser claims it instead.
-        let out = run("［＃ここから字下げ］");
+        run!(out, "［＃ここから字下げ］");
         assert!(
             !out.spans
                 .iter()
@@ -2631,7 +2569,7 @@ mod tests {
         // Preceding text "前置き" plus "青空" before the bracket — the
         // target literal must appear in the preceding source for the
         // forward-reference classifier to promote.
-        let out = run("前置きの青空［＃「青空」に傍点］後ろ");
+        run!(out, "前置きの青空［＃「青空」に傍点］後ろ");
         let bouten = out
             .spans
             .iter()
@@ -2646,7 +2584,7 @@ mod tests {
 
     #[test]
     fn forward_bouten_circle_recognized() {
-        let out = run("X［＃「X」に丸傍点］");
+        run!(out, "X［＃「X」に丸傍点］");
         let bouten = out
             .spans
             .iter()
@@ -2680,7 +2618,7 @@ mod tests {
         ];
         for (suffix, expected_kind) in cases {
             let src = format!("t［＃「t」に{suffix}］");
-            let out = run(&src);
+            run!(out, &src);
             let Some(b) = out.spans.iter().find_map(|s| match aozora_node(s) {
                 Some(AozoraNode::Bouten(b)) => Some(b),
                 _ => None,
@@ -2698,7 +2636,7 @@ mod tests {
         // `の左に傍点` sets BoutenPosition::Left. The same forward-
         // reference validation (target appears in preceding text) still
         // applies so we prepend a matching target.
-        let out = run("X［＃「X」の左に傍点］");
+        run!(out, "X［＃「X」の左に傍点］");
         let b = out
             .spans
             .iter()
@@ -2724,7 +2662,7 @@ mod tests {
         ];
         for (suffix, expected_kind) in cases {
             let src = format!("t［＃「t」の左に{suffix}］");
-            let out = run(&src);
+            run!(out, &src);
             let Some(b) = out.spans.iter().find_map(|s| match aozora_node(s) {
                 Some(AozoraNode::Bouten(b)) => Some(b),
                 _ => None,
@@ -2743,7 +2681,7 @@ mod tests {
         // Bouten target joined with `、`. Both A and B must appear in
         // the preceding text for the classifier to promote — this
         // keeps the forward-reference semantic intact.
-        let out = run("AとB［＃「A」「B」に傍点］");
+        run!(out, "AとB［＃「A」「B」に傍点］");
         let b = out
             .spans
             .iter()
@@ -2764,7 +2702,7 @@ mod tests {
         // classifier refuses to promote — the bracket is consumed as
         // `Annotation{Unknown}` by the catch-all instead, preserving
         // Tier-A without inventing a bouten target.
-        let out = run("A［＃「A」「B」に傍点］");
+        run!(out, "A［＃「A」「B」に傍点］");
         assert!(
             !out.spans
                 .iter()
@@ -2778,7 +2716,7 @@ mod tests {
         // `「」` placeholders in the middle of a multi-quote body do
         // not contribute to the target list. This guards against
         // corpus stragglers like `［＃「A」「」「B」に傍点］`.
-        let out = run("AB［＃「A」「」「B」に傍点］");
+        run!(out, "AB［＃「A」「」「B」に傍点］");
         let b = out
             .spans
             .iter()
@@ -2794,7 +2732,7 @@ mod tests {
     fn forward_bouten_position_slug_and_segments_render_together() {
         // Regression: the position modifier must be propagated even
         // when the target is a Segments (multi-quote) value.
-        let out = run("AB［＃「A」「B」の左に傍点］");
+        run!(out, "AB［＃「A」「B」の左に傍点］");
         let b = out
             .spans
             .iter()
@@ -2809,7 +2747,7 @@ mod tests {
 
     #[test]
     fn forward_bouten_empty_target_falls_through() {
-        let out = run("［＃「」に傍点］");
+        run!(out, "［＃「」に傍点］");
         assert!(
             !out.spans
                 .iter()
@@ -2819,7 +2757,7 @@ mod tests {
 
     #[test]
     fn forward_bouten_unknown_suffix_falls_through() {
-        let out = run("［＃「X」に未知］");
+        run!(out, "［＃「X」に未知］");
         assert!(
             !out.spans
                 .iter()
@@ -2829,7 +2767,7 @@ mod tests {
 
     #[test]
     fn forward_bouten_missing_ni_particle_falls_through() {
-        let out = run("［＃「X」傍点］");
+        run!(out, "［＃「X」傍点］");
         assert!(
             !out.spans
                 .iter()
@@ -2843,7 +2781,7 @@ mod tests {
         // promote to Bouten lets the generic Annotation classifier
         // wrap the raw `［＃…］` in an afm-annotation span instead of
         // styling a non-existent referent.
-        let out = run("［＃「可哀想」に傍点］後");
+        run!(out, "［＃「可哀想」に傍点］後");
         assert!(
             !out.spans
                 .iter()
@@ -2857,7 +2795,7 @@ mod tests {
         // (not just the current paragraph). Preserving that lenient
         // behaviour keeps real Aozora corpora working — authors
         // sometimes refer backwards across paragraph boundaries.
-        let out = run("青空\n\n改行後［＃「青空」に傍点］");
+        run!(out, "青空\n\n改行後［＃「青空」に傍点］");
         assert!(
             out.spans
                 .iter()
@@ -2867,7 +2805,7 @@ mod tests {
 
     #[test]
     fn forward_tcy_without_preceding_target_falls_through() {
-        let out = run("［＃「29」は縦中横］後");
+        run!(out, "［＃「29」は縦中横］後");
         assert!(
             !out.spans
                 .iter()
@@ -2881,7 +2819,7 @@ mod tests {
         // outer-quote contents including the inner 「inner」 — not
         // truncated at the first 」. The preceding copy of the target
         // is required so the classifier's target-exists check passes.
-        let out = run("A「inner」B［＃「A「inner」B」に傍点］");
+        run!(out, "A「inner」B［＃「A「inner」B」に傍点］");
         let bouten = out
             .spans
             .iter()
@@ -2895,7 +2833,7 @@ mod tests {
 
     #[test]
     fn forward_tcy_single_recognized() {
-        let out = run("20［＃「20」は縦中横］");
+        run!(out, "20［＃「20」は縦中横］");
         let tcy = out
             .spans
             .iter()
@@ -2910,7 +2848,7 @@ mod tests {
     #[test]
     fn forward_tcy_wrong_particle_falls_through() {
         // Using に instead of は — not a TCY shape.
-        let out = run("［＃「20」に縦中横］");
+        run!(out, "［＃「20」に縦中横］");
         assert!(
             !out.spans
                 .iter()
@@ -2920,7 +2858,7 @@ mod tests {
 
     #[test]
     fn forward_tcy_empty_target_falls_through() {
-        let out = run("［＃「」は縦中横］");
+        run!(out, "［＃「」は縦中横］");
         assert!(
             !out.spans
                 .iter()
@@ -2938,9 +2876,9 @@ mod tests {
     // ([# never leaks) still holds.
     // ---------------------------------------------------------------
 
-    fn find_heading_hint(out: &ClassifyOutput) -> Option<HeadingHint> {
+    fn find_heading_hint<'a>(out: &ClassifyOutput<'a>) -> Option<&'a HeadingHint<'a>> {
         out.spans.iter().find_map(|s| match aozora_node(s) {
-            Some(AozoraNode::HeadingHint(h)) => Some(h.clone()),
+            Some(AozoraNode::HeadingHint(h)) => Some(h),
             _ => None,
         })
     }
@@ -2950,7 +2888,7 @@ mod tests {
         // Spec: 大見出し → Markdown H1 (level 1). The preceding
         // occurrence of the target literal is required — same gate as
         // forward-bouten.
-        let out = run("第一篇［＃「第一篇」は大見出し］");
+        run!(out, "第一篇［＃「第一篇」は大見出し］");
         let h = find_heading_hint(&out).expect("expected HeadingHint");
         assert_eq!(h.level, 1);
         assert_eq!(&*h.target, "第一篇");
@@ -2959,7 +2897,7 @@ mod tests {
     #[test]
     fn forward_heading_medium_recognized() {
         // 中見出し → H2.
-        let out = run("一［＃「一」は中見出し］");
+        run!(out, "一［＃「一」は中見出し］");
         let h = find_heading_hint(&out).expect("expected HeadingHint");
         assert_eq!(h.level, 2);
         assert_eq!(&*h.target, "一");
@@ -2968,7 +2906,7 @@ mod tests {
     #[test]
     fn forward_heading_small_recognized() {
         // 小見出し → H3.
-        let out = run("小題［＃「小題」は小見出し］");
+        run!(out, "小題［＃「小題」は小見出し］");
         let h = find_heading_hint(&out).expect("expected HeadingHint");
         assert_eq!(h.level, 3);
         assert_eq!(&*h.target, "小題");
@@ -2980,7 +2918,7 @@ mod tests {
         // referent; classifier must reject so the paragraph isn't
         // promoted to an empty heading. The catch-all then emits
         // `Annotation { Unknown }` to preserve Tier-A.
-        let out = run("［＃「第一篇」は大見出し］後");
+        run!(out, "［＃「第一篇」は大見出し］後");
         assert!(find_heading_hint(&out).is_none());
     }
 
@@ -2989,7 +2927,7 @@ mod tests {
         // `大見出し` and friends are the only supported heading
         // keywords; anything else (包括的, 飾り見出し, …) should not
         // promote.
-        let out = run("X［＃「X」は飾り見出し］");
+        run!(out, "X［＃「X」は飾り見出し］");
         assert!(find_heading_hint(&out).is_none());
     }
 
@@ -2998,13 +2936,13 @@ mod tests {
         // The Aozora annotation spec's heading shape uses `は` as the
         // particle. Using `に` (the bouten particle) must not promote
         // to HeadingHint — otherwise we'd clobber the bouten path.
-        let out = run("X［＃「X」に大見出し］");
+        run!(out, "X［＃「X」に大見出し］");
         assert!(find_heading_hint(&out).is_none());
     }
 
     #[test]
     fn forward_heading_empty_target_falls_through() {
-        let out = run("［＃「」は大見出し］");
+        run!(out, "［＃「」は大見出し］");
         assert!(find_heading_hint(&out).is_none());
     }
 
@@ -3014,7 +2952,7 @@ mod tests {
         // hints — the lexer emits one HeadingHint per bracket and
         // post-process handles the first. This test locks the per-
         // bracket classification rather than the post_process policy.
-        let out = run("A［＃「A」は大見出し］B［＃「B」は中見出し］C［＃「C」は小見出し］");
+        run!(out, "A［＃「A」は大見出し］B［＃「B」は中見出し］C［＃「C」は小見出し］");
         let levels: Vec<u8> = out
             .spans
             .iter()
@@ -3028,7 +2966,7 @@ mod tests {
 
     #[test]
     fn sashie_without_caption_recognized() {
-        let out = run("［＃挿絵（fig01.png）入る］");
+        run!(out, "［＃挿絵（fig01.png）入る］");
         let sashie = out
             .spans
             .iter()
@@ -3046,7 +2984,7 @@ mod tests {
         // Captioned sashie needs a dedicated caption recogniser;
         // the no-caption matcher must reject the captioned form
         // cleanly so the bracket falls through to the catch-all.
-        let out = run("［＃挿絵（fig01.png）「キャプション」入る］");
+        run!(out, "［＃挿絵（fig01.png）「キャプション」入る］");
         assert!(
             !out.spans
                 .iter()
@@ -3056,7 +2994,7 @@ mod tests {
 
     #[test]
     fn sashie_empty_filename_falls_through() {
-        let out = run("［＃挿絵（）入る］");
+        run!(out, "［＃挿絵（）入る］");
         assert!(
             !out.spans
                 .iter()
@@ -3066,7 +3004,7 @@ mod tests {
 
     #[test]
     fn sashie_missing_iru_suffix_falls_through() {
-        let out = run("［＃挿絵（fig01.png）］");
+        run!(out, "［＃挿絵（fig01.png）］");
         assert!(
             !out.spans
                 .iter()
@@ -3076,7 +3014,7 @@ mod tests {
 
     #[test]
     fn gaiji_quoted_description_with_mencode() {
-        let out = run("※［＃「木＋吶のつくり」、第3水準1-85-54］");
+        run!(out, "※［＃「木＋吶のつくり」、第3水準1-85-54］");
         let gaiji = out
             .spans
             .iter()
@@ -3093,7 +3031,7 @@ mod tests {
 
     #[test]
     fn gaiji_quoted_description_without_mencode() {
-        let out = run("※［＃「試」］");
+        run!(out, "※［＃「試」］");
         let gaiji = out
             .spans
             .iter()
@@ -3108,7 +3046,7 @@ mod tests {
 
     #[test]
     fn gaiji_bare_description_with_mencode() {
-        let out = run("※［＃二の字点、1-2-23］");
+        run!(out, "※［＃二の字点、1-2-23］");
         let gaiji = out
             .spans
             .iter()
@@ -3124,7 +3062,7 @@ mod tests {
     #[test]
     fn gaiji_consumes_refmark_and_bracket_as_one_span() {
         let src = "a※［＃「X」、m］b";
-        let out = run(src);
+        run!(out, src);
         let gaiji_span = out
             .spans
             .iter()
@@ -3137,7 +3075,7 @@ mod tests {
     #[test]
     fn refmark_without_following_bracket_stays_plain() {
         // Bare ※ without ［＃...］ — not a gaiji, emit as Plain.
-        let out = run("a※b");
+        run!(out, "a※b");
         assert!(
             !out.spans
                 .iter()
@@ -3148,7 +3086,7 @@ mod tests {
     #[test]
     fn gaiji_without_hash_is_not_recognized() {
         // ※ followed by ［ but no ＃ inside — not a gaiji shape.
-        let out = run("※［普通］");
+        run!(out, "※［普通］");
         assert!(
             !out.spans
                 .iter()
@@ -3158,7 +3096,7 @@ mod tests {
 
     #[test]
     fn kaeriten_ichi_recognized() {
-        let out = run("之［＃一］");
+        run!(out, "之［＃一］");
         let kaeriten = out
             .spans
             .iter()
@@ -3176,7 +3114,7 @@ mod tests {
             "一", "二", "三", "四", "上", "中", "下", "レ", "甲", "乙", "丙", "丁",
         ] {
             let src = format!("［＃{mark}］");
-            let out = run(&src);
+            run!(out, &src);
             let Some(k) = out.spans.iter().find_map(|s| match aozora_node(s) {
                 Some(AozoraNode::Kaeriten(k)) => Some(k),
                 _ => None,
@@ -3189,7 +3127,7 @@ mod tests {
 
     #[test]
     fn kaeriten_unknown_mark_falls_through() {
-        let out = run("［＃甬］");
+        run!(out, "［＃甬］");
         assert!(
             !out.spans
                 .iter()
@@ -3206,7 +3144,7 @@ mod tests {
         let cases = ["一レ", "二レ", "三レ", "上レ", "中レ", "下レ"];
         for mark in cases {
             let src = format!("［＃{mark}］");
-            let out = run(&src);
+            run!(out, &src);
             let k = out
                 .spans
                 .iter()
@@ -3233,7 +3171,7 @@ mod tests {
         ];
         for mark in cases {
             let src = format!("［＃{mark}］");
-            let out = run(&src);
+            run!(out, &src);
             let k = out
                 .spans
                 .iter()
@@ -3251,7 +3189,7 @@ mod tests {
         // 7+ character parenthesised content is almost always an
         // editorial gloss, not okurigana. Must fall through to
         // Annotation{Unknown} so we don't mislabel it as kaeriten.
-        let out = run("［＃（これはおくりがなではない）］");
+        run!(out, "［＃（これはおくりがなではない）］");
         assert!(
             !out.spans
                 .iter()
@@ -3265,7 +3203,7 @@ mod tests {
     fn kaeriten_okurigana_with_latin_body_falls_through() {
         // Okurigana payload must be hiragana/katakana/kanji. ASCII
         // inside parens is probably an editorial note, not kaeriten.
-        let out = run("［＃（abc）］");
+        run!(out, "［＃（abc）］");
         assert!(
             !out.spans
                 .iter()
@@ -3275,7 +3213,7 @@ mod tests {
 
     #[test]
     fn kaeriten_okurigana_empty_parens_fall_through() {
-        let out = run("［＃（）］");
+        run!(out, "［＃（）］");
         assert!(
             !out.spans
                 .iter()
@@ -3289,7 +3227,7 @@ mod tests {
 
     #[test]
     fn double_ruby_plain_body_produces_double_ruby_span() {
-        let out = run("前《《強調》》後");
+        run!(out, "前《《強調》》後");
         let aozora = out
             .spans
             .iter()
@@ -3307,7 +3245,7 @@ mod tests {
         // the double brackets AND the body. No `《` characters may
         // leak to the outer `spans` list.
         let src = "《《ABC》》";
-        let out = run(src);
+        run!(out, src);
         let aozora_count = out
             .spans
             .iter()
@@ -3332,7 +3270,7 @@ mod tests {
         // The helper reuses `build_content_from_body`, so a `※［＃…］`
         // inside the double brackets must surface as `Segment::Gaiji`
         // in the content — same invariant as nested gaiji in ruby.
-        let out = run("《《※［＃「ほ」、第3水準1-85-54］》》");
+        run!(out, "《《※［＃「ほ」、第3水準1-85-54］》》");
         let aozora = out
             .spans
             .iter()
@@ -3353,7 +3291,7 @@ mod tests {
         // `《《》》` with no body: we still consume the double brackets
         // into a DoubleRuby span so no stray `《` leaks as plain text.
         // The content is empty `Content::Segments([])`.
-        let out = run("A《《》》B");
+        run!(out, "A《《》》B");
         let aozora_count = out
             .spans
             .iter()
@@ -3367,7 +3305,7 @@ mod tests {
 
     #[test]
     fn container_open_indent_default_amount_one() {
-        let out = run("［＃ここから字下げ］");
+        run!(out, "［＃ここから字下げ］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             out.spans[0].kind,
@@ -3377,7 +3315,7 @@ mod tests {
 
     #[test]
     fn container_open_indent_with_amount() {
-        let out = run("［＃ここから３字下げ］");
+        run!(out, "［＃ここから３字下げ］");
         assert!(matches!(
             out.spans[0].kind,
             SpanKind::BlockOpen(ContainerKind::Indent { amount: 3 })
@@ -3386,7 +3324,7 @@ mod tests {
 
     #[test]
     fn container_close_indent_matches_open_by_variant() {
-        let out = run("［＃ここから字下げ］本文［＃ここで字下げ終わり］");
+        run!(out, "［＃ここから字下げ］本文［＃ここで字下げ終わり］");
         // Spans: BlockOpen(Indent{1}), Plain("本文"), BlockClose(Indent{0})
         assert_eq!(out.spans.len(), 3);
         assert!(matches!(
@@ -3402,12 +3340,12 @@ mod tests {
 
     #[test]
     fn container_open_chitsuki_and_chi_kara_n() {
-        let out = run("［＃ここから地付き］");
+        run!(out, "［＃ここから地付き］");
         assert!(matches!(
             out.spans[0].kind,
             SpanKind::BlockOpen(ContainerKind::AlignEnd { offset: 0 })
         ));
-        let out2 = run("［＃ここから地から2字上げ］");
+        run!(out2, "［＃ここから地から2字上げ］");
         assert!(matches!(
             out2.spans[0].kind,
             SpanKind::BlockOpen(ContainerKind::AlignEnd { offset: 2 })
@@ -3416,7 +3354,7 @@ mod tests {
 
     #[test]
     fn container_open_close_keigakomi() {
-        let out = run("［＃罫囲み］内部［＃罫囲み終わり］");
+        run!(out, "［＃罫囲み］内部［＃罫囲み終わり］");
         assert!(matches!(
             out.spans[0].kind,
             SpanKind::BlockOpen(ContainerKind::Keigakomi)
@@ -3434,7 +3372,7 @@ mod tests {
         // form (`ここから割り注` / `ここで割り注終わり`) is deprecated
         // and not classified here.
         use aozora_syntax::AnnotationKind;
-        let out = run("［＃割り注］内部［＃割り注終わり］");
+        run!(out, "［＃割り注］内部［＃割り注終わり］");
         let Some(AozoraNode::Annotation(open)) = aozora_node(&out.spans[0]) else {
             panic!(
                 "expected Aozora(Annotation) for ［＃割り注］, got {:?}",
@@ -3458,7 +3396,7 @@ mod tests {
     fn container_close_without_matching_open_still_emits_close() {
         // Phase 3 does not pair opens with closes — that's `post_process`.
         // A bare `［＃罫囲み終わり］` is still classified.
-        let out = run("［＃罫囲み終わり］");
+        run!(out, "［＃罫囲み終わり］");
         assert!(matches!(
             out.spans[0].kind,
             SpanKind::BlockClose(ContainerKind::Keigakomi)
@@ -3467,7 +3405,7 @@ mod tests {
 
     #[test]
     fn container_unknown_here_from_keyword_falls_through() {
-        let out = run("［＃ここから未知］");
+        run!(out, "［＃ここから未知］");
         assert!(
             !out.spans
                 .iter()
@@ -3479,7 +3417,7 @@ mod tests {
 
     #[test]
     fn only_newline_source_emits_only_newline_span() {
-        let out = run("\n");
+        run!(out, "\n");
         assert_eq!(out.spans.len(), 1);
         assert_eq!(out.spans[0].kind, SpanKind::Newline);
         assert_eq!(out.spans[0].source_span, Span::new(0, 1));
@@ -3487,7 +3425,7 @@ mod tests {
 
     #[test]
     fn diagnostics_from_phase2_are_forwarded() {
-        let out = run("stray］");
+        run!(out, "stray］");
         // Phase 2 emits an UnmatchedClose diagnostic for `］`. The
         // classifier must propagate it (and not swallow it silently).
         assert!(
@@ -3508,7 +3446,7 @@ mod tests {
         /// ending at `source.len()` with no gaps or overlaps.
         #[test]
         fn proptest_spans_tile_source_contiguously(src in source_strategy()) {
-            let out = run(&src);
+            run!(out, &src);
             if src.is_empty() {
                 prop_assert!(out.spans.is_empty());
                 return Ok(());
@@ -3533,7 +3471,7 @@ mod tests {
         /// Phase 4 holds.
         #[test]
         fn proptest_no_empty_spans(src in source_strategy()) {
-            let out = run(&src);
+            run!(out, &src);
             for span in &out.spans {
                 prop_assert!(span.source_span.end > span.source_span.start);
             }
@@ -3543,7 +3481,7 @@ mod tests {
         /// position.
         #[test]
         fn proptest_newline_spans_are_single_byte(src in source_strategy()) {
-            let out = run(&src);
+            run!(out, &src);
             for span in &out.spans {
                 if span.kind == SpanKind::Newline {
                     prop_assert_eq!(span.source_span.len(), 1);
@@ -3556,11 +3494,25 @@ mod tests {
         }
 
         /// Classification is a pure function of the input.
+        ///
+        /// Determinism is asserted span-by-span; we cannot direct-`==`
+        /// the two `ClassifyOutput`s across separate arenas because
+        /// `borrowed::AozoraNode<'a>` `PartialEq` recurses through the
+        /// arena-allocated payload pointers, which differ across runs
+        /// even when the logical AST is identical. The pointer-aware
+        /// equality is the right semantics — it lets the byte-identical
+        /// proptest in `aozora-lex` pin pointer dedup. Here we want
+        /// logical equality, so we compare via the `Debug` shape, which
+        /// formats payload values rather than addresses.
         #[test]
         fn proptest_classify_is_deterministic(src in source_strategy()) {
-            let a = run(&src);
-            let b = run(&src);
-            prop_assert_eq!(a.spans, b.spans);
+            run!(a, &src);
+            run!(b, &src);
+            prop_assert_eq!(a.spans.len(), b.spans.len());
+            for (l, r) in a.spans.iter().zip(b.spans.iter()) {
+                prop_assert_eq!(l.source_span, r.source_span);
+                prop_assert_eq!(format!("{:?}", l.kind), format!("{:?}", r.kind));
+            }
         }
     }
 

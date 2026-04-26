@@ -188,6 +188,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "aozora-encoding",
+ "aozora-lex",
  "aozora-spec",
  "aozora-syntax",
  "criterion",
