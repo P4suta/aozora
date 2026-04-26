@@ -391,6 +391,23 @@ watch-headless JOB="check":
 hooks:
     {{_dev}} lefthook install
 
+# --- profiling (samply, host-only) -------------------------------------------
+# samply uses perf_event_open(2) which Docker's seccomp profile blocks; the
+# xtask binary therefore runs on the host (not via {{_dev}}). Requires
+# /proc/sys/kernel/perf_event_paranoid <= 1; the binary checks and prints
+# the fix-up command if not.
+
+# Sample-profile a single corpus document (relative to AOZORA_CORPUS_ROOT).
+# Example: just samply-doc 001529/files/50685_ruby_67979/50685_ruby_67979.txt
+samply-doc DOC:
+    cargo run --release -p aozora-xtask -- samply doc {{DOC}}
+
+# Sample-profile the full corpus parser hot path. REPEAT controls how many
+# parse passes the throughput_by_class probe runs after the one-time load,
+# so samply has ample parser-bound wall time to attach to. Defaults to 5.
+samply-corpus REPEAT="5":
+    cargo run --release -p aozora-xtask -- samply corpus {{REPEAT}}
+
 # Remove lefthook git hook stubs.
 hooks-uninstall:
     {{_dev}} lefthook uninstall

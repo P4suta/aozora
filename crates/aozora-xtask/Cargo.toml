@@ -1,0 +1,23 @@
+[package]
+name        = "aozora-xtask"
+description = "Developer-side tooling for the aozora workspace (samply profile wrappers, etc.). Runs on the host — does not go through the Docker dev image because perf_event_open and clock_gettime need direct kernel access."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+publish     = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }

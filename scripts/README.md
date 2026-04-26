@@ -86,3 +86,36 @@ Reserved name for an opt-in 17 K aozora-corpus sweep that takes
 2–5 min. Not yet implemented; see `aozora-parser/tests/corpus_sweep.rs`
 for the existing in-band test that runs when `AOZORA_CORPUS_ROOT` is
 set.
+
+## Profiling (samply)
+
+Profiling lives in the `aozora-xtask` workspace crate and is invoked
+through `just`, not as a shell script:
+
+```sh
+# Sample-profile a single corpus document.
+AOZORA_CORPUS_ROOT=/path/to/corpus \
+  just samply-doc 001529/files/50685_ruby_67979/50685_ruby_67979.txt
+# → /tmp/aozora-doc-50685_ruby_67979.json.gz
+
+# Sample-profile the corpus parser hot path. REPEAT defaults to 5
+# parse passes after the one-time load.
+AOZORA_CORPUS_ROOT=/path/to/corpus just samply-corpus
+AOZORA_CORPUS_ROOT=/path/to/corpus just samply-corpus 10
+
+# Open the resulting JSON in the Firefox-Profiler UI.
+samply load /tmp/aozora-doc-50685_ruby_67979.json.gz
+```
+
+Both targets:
+1. Verify `/proc/sys/kernel/perf_event_paranoid <= 1` and tell you
+   the fix-up command if not.
+2. Rebuild the bench example with `--profile=bench` so debug info is
+   preserved (samply needs symbols; `cargo run --release` strips
+   them, which is the original foot-gun).
+3. Spawn `samply record --save-only --no-open` at 4 kHz.
+
+Why on the host (not Docker): `samply` opens `perf_event_open(2)`
+directly against the kernel; Docker's default seccomp profile
+blocks it. The xtask binary therefore runs without the `{{_dev}}`
+prefix that other Justfile targets use.

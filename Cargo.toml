@@ -17,6 +17,7 @@ members = [
     "crates/aozora-wasm",
     "crates/aozora-py",
     "crates/aozora-bench",
+    "crates/aozora-xtask",
 ]
 
 [workspace.package]

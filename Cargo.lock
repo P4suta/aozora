@@ -285,6 +285,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aozora-xtask"
+version = "0.1.0"
+dependencies = [
+ "clap",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
