@@ -67,6 +67,37 @@ pub enum Subsystem {
     /// pair-stack maintenance. Called on every event consumed
     /// inside an open frame.
     FrameAppend,
+    /// `recognize_and_emit` — runs when the outermost open closes;
+    /// dispatches into the per-PairKind recogniser. Wraps recogniser
+    /// leaves so its time INCLUDES Ruby/Annotation/Gaiji/etc. — the
+    /// dispatch overhead = recognize_and_emit - leaf_total.
+    RecognizeAndEmit,
+    /// `replay_unrecognised_body` — frames whose recogniser declined
+    /// (or whose kind has no recogniser at top level) walk the body
+    /// events back as Plain spans. One frame may yield many spans.
+    ReplayBody,
+    /// `open_frame` — initial frame allocation when an outer PairOpen
+    /// appears at top level. Allocates the body buffer SmallVec.
+    OpenFrame,
+    /// `flush_plain_up_to` — emit any pending plain run on outer
+    /// boundary (newline / Aozora yield). Cheap, but called per
+    /// trigger event.
+    FlushPlain,
+    /// `try_ruby_emit` — wraps `recognize_ruby`. Pre-work: scan
+    /// preceding source text for `｜` (potential O(N) per ruby on
+    /// large pending plain runs), build synthetic event vec.
+    TryRubyEmit,
+    /// `try_bracket_emit` — wraps `recognize_annotation`. Pre-work:
+    /// frame setup + sentinel padding decisions.
+    TryBracketEmit,
+    /// Outer next() loop body INCLUDING all sub-callees, MINUS the
+    /// upstream `events.next()` call. Use to isolate "loop body work"
+    /// from "PairStream pulling work".
+    LoopBody,
+    /// `events.next()` upstream pull. Should be O(1) for a Vec iterator
+    /// or O(constant) for PairStream. If this is large, the issue is
+    /// in the upstream iterator, not in classify itself.
+    EventsNext,
 }
 
 impl Subsystem {
@@ -83,13 +114,21 @@ impl Subsystem {
             Subsystem::ForwardTargetCheck => "forward_target_is_preceded",
             Subsystem::ForwardIndexInstall => "install_forward_target_index",
             Subsystem::FrameAppend => "append_to_frame",
+            Subsystem::RecognizeAndEmit => "recognize_and_emit",
+            Subsystem::ReplayBody => "replay_unrecognised_body",
+            Subsystem::OpenFrame => "open_frame",
+            Subsystem::FlushPlain => "flush_plain_up_to",
+            Subsystem::TryRubyEmit => "try_ruby_emit",
+            Subsystem::TryBracketEmit => "try_bracket_emit",
+            Subsystem::LoopBody => "loop_body (outer-events.next())",
+            Subsystem::EventsNext => "events.next() (upstream pull)",
         }
     }
 
     /// Iteration order matching the human-friendly source-of-data order.
     /// Leaves first, then framework.
     #[must_use]
-    pub fn ordered() -> [Subsystem; 9] {
+    pub fn ordered() -> [Subsystem; 17] {
         [
             Subsystem::Ruby,
             Subsystem::Annotation,
@@ -97,9 +136,17 @@ impl Subsystem {
             Subsystem::BuildContent,
             Subsystem::BodyDispatcher,
             Subsystem::IterDispatch,
+            Subsystem::EventsNext,
+            Subsystem::LoopBody,
+            Subsystem::RecognizeAndEmit,
+            Subsystem::TryRubyEmit,
+            Subsystem::TryBracketEmit,
+            Subsystem::ReplayBody,
+            Subsystem::OpenFrame,
+            Subsystem::FlushPlain,
+            Subsystem::FrameAppend,
             Subsystem::ForwardTargetCheck,
             Subsystem::ForwardIndexInstall,
-            Subsystem::FrameAppend,
         ]
     }
 
@@ -186,6 +233,131 @@ impl TimingTable {
 
 thread_local! {
     static TIMING_TABLE: RefCell<TimingTable> = RefCell::new(TimingTable::default());
+    static YIELD_COUNTERS: RefCell<YieldCounters> = RefCell::new(YieldCounters::default());
+    static PENDING_SIZE_HIST: RefCell<PendingSizeHistogram> = RefCell::new(PendingSizeHistogram::default());
+}
+
+/// Histogram of `pending_outputs.len()` measured at every
+/// `pending_outputs_pop_front()` call. Bucket boundaries chosen to
+/// catch the "tiny vs large" distinction relevant to the N2 outlier
+/// investigation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PendingSizeHistogram {
+    pub size_0: u64,
+    pub size_1: u64,
+    pub size_2_4: u64,
+    pub size_5_15: u64,
+    pub size_16_63: u64,
+    pub size_64_255: u64,
+    pub size_256_plus: u64,
+    pub max_seen: u64,
+}
+
+pub fn record_pending_size(len: u64) {
+    PENDING_SIZE_HIST.with(|h| {
+        let mut hist = h.borrow_mut();
+        match len {
+            0 => hist.size_0 += 1,
+            1 => hist.size_1 += 1,
+            2..=4 => hist.size_2_4 += 1,
+            5..=15 => hist.size_5_15 += 1,
+            16..=63 => hist.size_16_63 += 1,
+            64..=255 => hist.size_64_255 += 1,
+            _ => hist.size_256_plus += 1,
+        }
+        if len > hist.max_seen {
+            hist.max_seen = len;
+        }
+    });
+}
+
+impl PendingSizeHistogram {
+    #[must_use]
+    pub fn snapshot() -> PendingSizeHistogram {
+        PENDING_SIZE_HIST.with(|h| *h.borrow())
+    }
+    pub fn reset() {
+        PENDING_SIZE_HIST.with(|h| *h.borrow_mut() = PendingSizeHistogram::default());
+    }
+    pub fn total(self) -> u64 {
+        self.size_0 + self.size_1 + self.size_2_4 + self.size_5_15
+            + self.size_16_63 + self.size_64_255 + self.size_256_plus
+    }
+}
+
+thread_local! {
+    static REPLAY_SIZES: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
+
+pub fn record_replay_body_size(size: u64) {
+    REPLAY_SIZES.with(|v| v.borrow_mut().push(size));
+}
+
+pub fn snapshot_replay_sizes() -> Vec<u64> {
+    REPLAY_SIZES.with(|v| v.borrow().clone())
+}
+
+pub fn reset_replay_sizes() {
+    REPLAY_SIZES.with(|v| v.borrow_mut().clear());
+}
+
+/// Per-yield-kind histogram, populated at every span yield from
+/// `ClassifyStream::next()`. Useful for spotting "this doc yields
+/// 10× more Plain spans than expected" patterns. Each variant maps
+/// to a `SpanKind` arm.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct YieldCounters {
+    pub plain: u64,
+    pub newline: u64,
+    pub aozora: u64,
+    pub block_open: u64,
+    pub block_close: u64,
+}
+
+/// Yield-kind tags used by `record_yield` to bump the appropriate
+/// counter without forcing the lexer crate to depend on `SpanKind`'s
+/// concrete variant set.
+#[derive(Debug, Clone, Copy)]
+pub enum YieldKind {
+    Plain,
+    Newline,
+    Aozora,
+    BlockOpen,
+    BlockClose,
+}
+
+/// Bump the per-thread yield-kind counter. No-op when feature is OFF
+/// (the function only exists under cfg).
+pub fn record_yield(kind: YieldKind) {
+    YIELD_COUNTERS.with(|c| {
+        let mut counters = c.borrow_mut();
+        match kind {
+            YieldKind::Plain => counters.plain += 1,
+            YieldKind::Newline => counters.newline += 1,
+            YieldKind::Aozora => counters.aozora += 1,
+            YieldKind::BlockOpen => counters.block_open += 1,
+            YieldKind::BlockClose => counters.block_close += 1,
+        }
+    });
+}
+
+impl YieldCounters {
+    /// Snapshot the current thread's yield counters.
+    #[must_use]
+    pub fn snapshot() -> YieldCounters {
+        YIELD_COUNTERS.with(|c| *c.borrow())
+    }
+
+    /// Reset the current thread's yield counters to zero.
+    pub fn reset() {
+        YIELD_COUNTERS.with(|c| *c.borrow_mut() = YieldCounters::default());
+    }
+
+    /// Total yield count.
+    #[must_use]
+    pub fn total(self) -> u64 {
+        self.plain + self.newline + self.aozora + self.block_open + self.block_close
+    }
 }
 
 #[cfg(test)]

@@ -54,6 +54,7 @@
 //! of which specialised recogniser claims the bracket.
 
 use core::ops::Range;
+use std::collections::VecDeque;
 
 use aozora_encoding::gaiji as gaiji_resolve;
 // Phase 3 builds borrowed AST directly via `BorrowedAllocator`'s
@@ -609,7 +610,16 @@ where
     source: &'src str,
     source_len: u32,
     alloc: &'al mut BorrowedAllocator<'a>,
-    pending_outputs: smallvec::SmallVec<[ClassifiedSpan<'a>; 4]>,
+    /// Buffered ready-to-yield spans drained one-per-`next()` by the
+    /// consumer. `VecDeque` (not `SmallVec`) because the consumer pulls
+    /// from the front and `SmallVec::remove(0)` is `O(N)`: the
+    /// `replay_unrecognised_body` path can push thousands of spans at
+    /// once for top-level unrecognised paired containers (e.g. doc 49178
+    /// in the corpus emits ~16k pending spans), and the per-yield
+    /// front-pop turns into a quadratic memmove storm. `VecDeque` is a
+    /// ring buffer with `O(1)` `push_back` / `pop_front`, eliminating
+    /// the back-shift entirely.
+    pending_outputs: VecDeque<ClassifiedSpan<'a>>,
     frame: Option<Frame>,
     pending_plain_start: Option<u32>,
     pending_refmark: Option<Span>,
@@ -669,7 +679,7 @@ where
             source,
             source_len: u32::try_from(source.len()).expect("sanitize asserts fit in u32"),
             alloc,
-            pending_outputs: smallvec::SmallVec::new(),
+            pending_outputs: VecDeque::new(),
             frame: None,
             pending_plain_start: None,
             pending_refmark: None,
@@ -686,13 +696,30 @@ where
     }
 
     fn push_output(&mut self, span: ClassifiedSpan<'a>) {
-        self.pending_outputs.push(span);
+        #[cfg(feature = "phase3-instrument")]
+        {
+            use crate::instrumentation::{record_yield, YieldKind};
+            let kind = match &span.kind {
+                SpanKind::Plain => YieldKind::Plain,
+                SpanKind::Newline => YieldKind::Newline,
+                SpanKind::Aozora(_) => YieldKind::Aozora,
+                SpanKind::BlockOpen(_) => YieldKind::BlockOpen,
+                SpanKind::BlockClose(_) => YieldKind::BlockClose,
+                _ => YieldKind::Plain, // non-exhaustive fallback
+            };
+            record_yield(kind);
+        }
+        self.pending_outputs.push_back(span);
     }
 
     /// Emit any pending top-level plain run whose end is `end`. The
     /// pending refmark, if any, is folded into the plain run's coverage
     /// (its span is contiguous with the surrounding text).
     fn flush_plain_up_to(&mut self, end: u32) {
+        #[cfg(feature = "phase3-instrument")]
+        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+            crate::instrumentation::Subsystem::FlushPlain,
+        );
         // A pending refmark contributes its bytes to the plain run.
         if let Some(rm) = self.pending_refmark.take() {
             if self.pending_plain_start.is_none() {
@@ -713,6 +740,10 @@ where
     /// the outer open was preceded by a `Solo(RefMark)` waiting to be
     /// absorbed (the gaiji shape).
     fn open_frame(&mut self, open_event: PairEvent, gaiji_refmark: Option<Span>) {
+        #[cfg(feature = "phase3-instrument")]
+        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+            crate::instrumentation::Subsystem::OpenFrame,
+        );
         let mut body: smallvec::SmallVec<[PairEvent; 16]> = smallvec::SmallVec::new();
         let mut links: smallvec::SmallVec<[u32; 16]> = smallvec::SmallVec::new();
         // Inner stack tracks NESTED opens; the outer open lives at
@@ -791,6 +822,10 @@ where
     /// Run recognition on the current frame's body buffer and emit the
     /// resulting span. Called when the OUTERMOST pair has just closed.
     fn recognize_and_emit(&mut self) {
+        #[cfg(feature = "phase3-instrument")]
+        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+            crate::instrumentation::Subsystem::RecognizeAndEmit,
+        );
         let frame = self
             .frame
             .take()
@@ -909,6 +944,12 @@ where
         body: smallvec::SmallVec<[PairEvent; 16]>,
         refmark: Option<Span>,
     ) {
+        #[cfg(feature = "phase3-instrument")]
+        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+            crate::instrumentation::Subsystem::ReplayBody,
+        );
+        #[cfg(feature = "phase3-instrument")]
+        crate::instrumentation::record_replay_body_size(body.len() as u64);
         if let Some(rm) = refmark
             && self.pending_plain_start.is_none()
         {
@@ -993,6 +1034,10 @@ where
         open_idx: usize,
         close_idx: usize,
     ) -> Option<ClassifiedSpan<'a>> {
+        #[cfg(feature = "phase3-instrument")]
+        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+            crate::instrumentation::Subsystem::TryRubyEmit,
+        );
         // Ruby recognition uses the PRECEDING text (if any) as the
         // base — but in the streaming model we don't have that text in
         // the body buffer. We walk back through `pending_outputs` and
@@ -1136,6 +1181,10 @@ where
         open_idx: usize,
         close_idx: usize,
     ) -> Option<ClassifiedSpan<'a>> {
+        #[cfg(feature = "phase3-instrument")]
+        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+            crate::instrumentation::Subsystem::TryBracketEmit,
+        );
         let m = recognize_annotation(body, self.source, open_idx, close_idx, self.alloc)?;
         self.flush_plain_up_to(m.consume_start);
         let kind = match m.emit {
@@ -1203,8 +1252,19 @@ where
             if self.finished {
                 return None;
             }
-            match self.events.next() {
+            #[cfg(feature = "phase3-instrument")]
+            let _events_next_guard = crate::instrumentation::SubsystemGuard::new(
+                crate::instrumentation::Subsystem::EventsNext,
+            );
+            let next_event = self.events.next();
+            #[cfg(feature = "phase3-instrument")]
+            drop(_events_next_guard);
+            match next_event {
                 Some(event) => {
+                    #[cfg(feature = "phase3-instrument")]
+                    let _phase3_loop_guard = crate::instrumentation::SubsystemGuard::new(
+                        crate::instrumentation::Subsystem::LoopBody,
+                    );
                     self.process_event(event);
                 }
                 None => {
@@ -1229,13 +1289,16 @@ where
     I: Iterator<Item = PairEvent>,
 {
     fn pending_outputs_pop_front(&mut self) -> Option<ClassifiedSpan<'a>> {
-        if self.pending_outputs.is_empty() {
-            return None;
+        #[cfg(feature = "phase3-instrument")]
+        {
+            // Record pending_outputs.len() BEFORE the pop to keep the
+            // pre-N2 distribution histogram comparable.
+            let len = self.pending_outputs.len() as u64;
+            if len > 0 {
+                crate::instrumentation::record_pending_size(len);
+            }
         }
-        // SmallVec doesn't have pop_front; rotate via remove(0). Span
-        // emission is bursty and small (typically 0-2 buffered) so the
-        // O(n) shift is negligible.
-        Some(self.pending_outputs.remove(0))
+        self.pending_outputs.pop_front()
     }
 
     fn process_event(&mut self, event: PairEvent) {

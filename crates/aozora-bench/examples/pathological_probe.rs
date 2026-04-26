@@ -126,13 +126,18 @@ fn main() {
     // a local stand-in feature defined in this crate's Cargo.toml.)
     #[cfg(feature = "instrument")]
     {
-        use aozora_lexer::instrumentation::{Subsystem, TimingTable};
+        use aozora_lexer::instrumentation::{
+            PendingSizeHistogram, Subsystem, TimingTable, YieldCounters,
+        };
         TimingTable::reset();
+        YieldCounters::reset();
+        PendingSizeHistogram::reset();
         {
             let arena_inst = Arena::new();
             let _ = lex_into_arena(&text, &arena_inst);
         }
         let snap = TimingTable::snapshot();
+        let yields = YieldCounters::snapshot();
         println!();
         println!("Per-subsystem (single instrumented run):");
         for sub in Subsystem::ordered() {
@@ -147,6 +152,55 @@ fn main() {
                 avg_ns,
             );
         }
+        println!();
+        let total = yields.total();
+        println!("Yield-kind histogram (total yields = {total}):");
+        let bar = |n: u64| -> String {
+            let frac = if total == 0 { 0.0 } else { (n as f64) / (total as f64) };
+            let width = (frac * 30.0) as usize;
+            "█".repeat(width)
+        };
+        println!("  Plain        {:>8}  {:>5.1}%  {}", yields.plain,      100.0 * yields.plain      as f64 / total.max(1) as f64, bar(yields.plain));
+        println!("  Newline      {:>8}  {:>5.1}%  {}", yields.newline,    100.0 * yields.newline    as f64 / total.max(1) as f64, bar(yields.newline));
+        println!("  Aozora       {:>8}  {:>5.1}%  {}", yields.aozora,     100.0 * yields.aozora     as f64 / total.max(1) as f64, bar(yields.aozora));
+        println!("  BlockOpen    {:>8}  {:>5.1}%  {}", yields.block_open, 100.0 * yields.block_open as f64 / total.max(1) as f64, bar(yields.block_open));
+        println!("  BlockClose   {:>8}  {:>5.1}%  {}", yields.block_close,100.0 * yields.block_close as f64 / total.max(1) as f64, bar(yields.block_close));
+
+        let phist = PendingSizeHistogram::snapshot();
+        let ptotal = phist.total();
+        println!();
+        println!("pending_outputs.len() histogram at pop_front (total = {ptotal}, max seen = {}):", phist.max_seen);
+        let pbar = |n: u64| -> String {
+            let frac = if ptotal == 0 { 0.0 } else { (n as f64) / (ptotal as f64) };
+            let width = (frac * 30.0) as usize;
+            "█".repeat(width)
+        };
+        let pp = |label: &str, n: u64| {
+            let pct = 100.0 * n as f64 / ptotal.max(1) as f64;
+            println!("  size {:>10}  {:>10}  {:>5.1}%  {}", label, n, pct, pbar(n));
+        };
+        pp("0 (empty)",  phist.size_0);
+        pp("1",          phist.size_1);
+        pp("2-4",        phist.size_2_4);
+        pp("5-15",       phist.size_5_15);
+        pp("16-63",      phist.size_16_63);
+        pp("64-255",     phist.size_64_255);
+        pp("256+",       phist.size_256_plus);
+
+        let replay_sizes = aozora_lexer::instrumentation::snapshot_replay_sizes();
+        if !replay_sizes.is_empty() {
+            let mut sorted = replay_sizes.clone();
+            sorted.sort_unstable();
+            let total_events: u64 = sorted.iter().sum();
+            println!();
+            println!(
+                "replay_unrecognised_body invocations: {} (total events replayed = {})",
+                sorted.len(),
+                total_events,
+            );
+            println!("  body sizes (sorted): {:?}", sorted);
+        }
+        aozora_lexer::instrumentation::reset_replay_sizes();
     }
 
     // Single high-precision parse to dump classify shape (annotation
