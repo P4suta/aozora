@@ -28,6 +28,14 @@ use aozora_render::{html as borrowed_html, serialize as borrowed_serialize};
 use aozora_spec::Diagnostic;
 use aozora_syntax::borrowed::Arena;
 
+/// Pre-size the document arena as `source.len() * ARENA_CAPACITY_FACTOR`
+/// bytes. Picked from the full-corpus `allocator_pressure` probe (N6
+/// finding, 17435 docs): the median AST footprint is 3.4× the source
+/// size, p99 is 8.25×, max 15.4×. Factor 4 covers the median + a
+/// margin while keeping small-doc overhead minimal (a 1 KB doc gets
+/// a 4 KB arena, the bumpalo default chunk size).
+const ARENA_CAPACITY_FACTOR: usize = 4;
+
 /// Single owning handle to a parsed Aozora source.
 ///
 /// Owns both the source buffer and a [`bumpalo`]-backed [`Arena`].
@@ -43,11 +51,21 @@ impl Document {
     /// Wrap a source string in a `Document`. The source is copied
     /// into a `Box<str>` so the document is fully self-contained
     /// (no external lifetime).
+    ///
+    /// The arena is pre-sized to `source.len() * ARENA_CAPACITY_FACTOR`
+    /// bytes (a corpus-profile-driven estimate of the AST footprint).
+    /// N6 finding (full-corpus allocator_pressure probe): p50 arena/source
+    /// ratio is 3.4×, p99 is 8.25×; pre-sizing eliminates the early
+    /// chunk-grow churn that hits large docs hardest. Callers that
+    /// know the AST is unusually small can fall back to
+    /// [`Self::with_arena_capacity`] with a smaller hint.
     #[must_use]
     pub fn new(source: impl Into<Box<str>>) -> Self {
+        let source: Box<str> = source.into();
+        let capacity = source.len().saturating_mul(ARENA_CAPACITY_FACTOR);
         Self {
-            source: source.into(),
-            arena: Arena::new(),
+            source,
+            arena: Arena::with_capacity(capacity),
         }
     }
 
