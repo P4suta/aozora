@@ -1,5 +1,4 @@
-//! Aozora notation lexer — public entry point for the fused
-//! streaming pipeline.
+//! Aozora notation lexer — borrowed-AST front door.
 //!
 //! The 0.2.0 architecture (ADR-0009) splits the legacy 7-phase
 //! [`aozora_lexer`] into:
@@ -7,12 +6,10 @@
 //! - [`aozora_scan`] — the SIMD-friendly trigger-byte scanner that
 //!   replaces phase 1's char-by-char loop with a `memchr3` candidate
 //!   sweep + const-PHF precise classify.
-//! - **this crate** — the orchestrator that drives `aozora-scan` for
-//!   the trigger pass and (for now) delegates the remaining
-//!   sanitise / pair / classify / normalise / validate work to the
-//!   legacy `aozora-lexer` engine. Each subsequent Move 2 commit
-//!   migrates one more phase into the fused engine that lives in this
-//!   crate.
+//! - **this crate** — the orchestrator that drives the borrowed-AST
+//!   pipeline. The single public entry [`lex_into_arena`] runs every
+//!   phase and lands the resulting borrowed AST inside an
+//!   `aozora_syntax::borrowed::Arena` provided by the caller.
 //!
 //! ## Why two crates?
 //!
@@ -20,91 +17,52 @@
 //! from SIMD: shipping it as a standalone `no_std` crate lets us
 //! benchmark backends (`memchr3` scalar today; AVX2 / NEON /
 //! `wasm-simd` later) in isolation, and lets the FFI / WASM driver
-//! crates (Move 4) link only what they need.
+//! crates link only what they need.
 //!
 //! ## Observable equivalence
 //!
 //! ADR-0010 codifies the "observable equivalence" purity contract for
-//! this crate: [`lex`] is a pure function from source text to
-//! [`LexOutput`] *as observed externally*, even though the internal
-//! pipeline mutates a bumpalo arena and runs SIMD scratch buffers.
-//! The `byte_identical_*` proptests in `aozora-test-utils` pin this
-//! property against the legacy `aozora_lexer::lex` for as long as
-//! both implementations coexist.
+//! this crate: [`lex_into_arena`] is a pure function from source text
+//! to [`BorrowedLexOutput`] *as observed externally*, even though the
+//! internal pipeline mutates the bumpalo arena and runs SIMD scratch
+//! buffers. The determinism + sentinel-alignment proptests in
+//! `tests/property_borrowed_arena.rs` pin the property in the absence
+//! of an owned-AST reference (the reference was retired with the rest
+//! of the owned API in I-2.2 Phase F).
 
 #![forbid(unsafe_code)]
 
 mod borrowed;
-mod engine;
-pub mod state;
 mod tokenize;
 
 pub use borrowed::{BorrowedLexOutput, lex_into_arena};
-pub use state::{
-    Classified, Normalized, Paired, Sanitized, Source, Tokenized, lex_chained_into_arena,
-};
 pub use tokenize::tokenize_with_scan;
 
-// Public surface — the `lex(&str) -> LexOutput` entry point plus the
-// supporting types the lex driver and downstream consumers need.
-//
-// During Move 2's gradual fused-engine migration we re-export the
-// legacy aozora-lexer types so callers can switch their `use
-// aozora_lexer::*` imports to `use aozora_lex::*` without otherwise
-// changing code. Once Move 2 finishes and `aozora-lexer` is deleted,
-// each of these re-exports moves to a definition local to this crate
-// (or to `aozora-spec`, where the canonical types already live).
-
-pub use aozora_lexer::{
-    LexOutput, NormalizeOutput, PlaceholderRegistry, SanitizeOutput, Token, ValidateOutput,
-};
+// Public surface — re-exports of the legacy lexer's allocator-agnostic
+// types (Token, SanitizeOutput) the borrowed pipeline still consumes
+// internally. Phase F.3 collapses these into definitions local to this
+// crate (or moves them to `aozora-spec`).
+pub use aozora_lexer::{SanitizeOutput, Token};
 pub use aozora_spec::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic, INLINE_SENTINEL,
     PairKind, Span, TriggerKind, classify_trigger_bytes,
 };
 
-/// Run the Aozora-notation lexer pipeline over `source`.
-///
-/// Pure function (per ADR-0010 observable equivalence). The returned
-/// [`LexOutput`] carries the normalized text, the placeholder
-/// registry, and any diagnostics emitted along the way.
-///
-/// # Panics
-///
-/// Panics if `source.len()` exceeds `u32::MAX` bytes (~4 GiB) —
-/// inherited from the upstream lexer's `Span` field width. In
-/// practice this bound is never hit on aozora-format text.
-#[must_use]
-pub fn lex(source: &str) -> LexOutput {
-    // Phase ownership today (Move 2 fused-engine migration in progress):
-    //
-    //   phase 0 (sanitize)     — aozora_lexer::sanitize
-    //   phase 1 (tokenize)     — crate::tokenize::tokenize_with_scan (NEW)
-    //   phase 2 (pair)         — aozora_lexer::pair
-    //   phase 3 (classify)     — aozora_lexer::classify
-    //   phase 4 (normalize)    — aozora_lexer::normalize
-    //   phase 6 (validate)     — aozora_lexer::validate
-    //
-    // The engine module owns the orchestration so it can incrementally
-    // absorb each remaining legacy phase as the fused engine grows.
-    // The public `lex` signature stays fixed by ADR-0010 — the
-    // byte-identical proptest in tests/property_byte_identical.rs is
-    // the load-bearing equivalence gate across this transition.
-    engine::run_pipeline(source)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aozora_syntax::borrowed::Arena;
 
     /// `aozora_scan::ScalarScanner` MUST yield the exact same byte
     /// offsets that the legacy phase-1 tokeniser uses for its trigger
     /// positions. We don't have a public hook into phase 1's offsets,
-    /// so we cross-check at the [`LexOutput`] level: every PUA sentinel
-    /// in `normalized` must correspond to a consumed source trigger.
+    /// so we cross-check at the [`BorrowedLexOutput`] level: every PUA
+    /// sentinel in `normalized` must correspond to a consumed source
+    /// trigger.
     #[test]
     fn lex_produces_normalized_with_pua_sentinels_for_trigger_inputs() {
-        let out = lex("｜青梅《おうめ》");
+        let arena = Arena::new();
+        let out = lex_into_arena("｜青梅《おうめ》", &arena);
         // Exactly one inline sentinel for the ruby span.
         let inline_count = out
             .normalized
@@ -117,7 +75,8 @@ mod tests {
 
     #[test]
     fn lex_passes_through_plain_text_unchanged() {
-        let out = lex("hello, world");
+        let arena = Arena::new();
+        let out = lex_into_arena("hello, world", &arena);
         assert_eq!(out.normalized, "hello, world");
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
@@ -137,7 +96,8 @@ mod tests {
 
     #[test]
     fn lex_handles_empty_input() {
-        let out = lex("");
+        let arena = Arena::new();
+        let out = lex_into_arena("", &arena);
         assert!(out.normalized.is_empty());
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
@@ -145,7 +105,8 @@ mod tests {
 
     #[test]
     fn lex_emits_diagnostics_for_pua_collision() {
-        let out = lex("abc\u{E001}def");
+        let arena = Arena::new();
+        let out = lex_into_arena("abc\u{E001}def", &arena);
         assert!(
             out.diagnostics
                 .iter()
@@ -158,7 +119,8 @@ mod tests {
     #[test]
     fn lex_preserves_sanitized_len_for_segment_merge() {
         // Sanitize is identity on plain text → sanitized_len == source.len().
-        let out = lex("plain text");
+        let arena = Arena::new();
+        let out = lex_into_arena("plain text", &arena);
         assert_eq!(usize::try_from(out.sanitized_len), Ok("plain text".len()));
     }
 }

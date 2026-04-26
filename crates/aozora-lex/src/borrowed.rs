@@ -90,7 +90,8 @@ pub struct BorrowedLexOutput<'a> {
 ///    tables and stream the PUA-rewritten text into `arena` in one
 ///    pass. Mirrors `aozora_lexer::phase4_normalize::Normalizer`'s
 ///    sentinel / padding contract byte-for-byte, so the output is
-///    proptest-pinned identical to `crate::lex(source)`.
+///    proptest-pinned for determinism + sentinel-alignment in
+///    `tests/property_borrowed_arena.rs`.
 #[must_use]
 pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'a> {
     let sanitized = aozora_lexer::sanitize(source);
@@ -395,52 +396,17 @@ mod tests {
     }
 
     #[test]
-    fn sanitized_len_matches_owned_pipeline() {
+    fn sanitized_len_equals_input_for_plain_text() {
+        // Sanitize is identity on plain UTF-8 text, so sanitized_len
+        // matches the input length.
         let arena = Arena::new();
-        let owned = crate::lex("plain text\nwith newline");
-        let borrowed = lex_into_arena("plain text\nwith newline", &arena);
-        assert_eq!(borrowed.sanitized_len, owned.sanitized_len);
+        let input = "plain text\nwith newline";
+        let out = lex_into_arena(input, &arena);
+        assert_eq!(usize::try_from(out.sanitized_len), Ok(input.len()));
     }
 
     #[test]
-    fn normalized_text_byte_identical_to_owned_pipeline() {
-        let arena = Arena::new();
-        let inputs = [
-            "",
-            "hello, world",
-            "明治の頃｜青梅《おうめ》街道沿いに、",
-            "［＃改ページ］",
-            "［＃ここから字下げ］\nA\n［＃ここで字下げ終わり］",
-            "※［＃「木＋吶のつくり」、第3水準1-85-54］",
-            "［＃「青空」に傍点］",
-            "line1\r\nline2\r\nline3",
-        ];
-        for src in inputs {
-            let owned = crate::lex(src);
-            let borrowed = lex_into_arena(src, &arena);
-            assert_eq!(
-                borrowed.normalized, owned.normalized,
-                "normalized text diverged for input {src:?}"
-            );
-            assert_eq!(borrowed.sanitized_len, owned.sanitized_len);
-            assert_eq!(borrowed.registry.inline.len(), owned.registry.inline.len());
-            assert_eq!(
-                borrowed.registry.block_leaf.len(),
-                owned.registry.block_leaf.len()
-            );
-            assert_eq!(
-                borrowed.registry.block_open.len(),
-                owned.registry.block_open.len()
-            );
-            assert_eq!(
-                borrowed.registry.block_close.len(),
-                owned.registry.block_close.len()
-            );
-        }
-    }
-
-    #[test]
-    fn arena_owns_normalized_after_owned_pipeline_drops() {
+    fn arena_owns_normalized_after_source_drops() {
         // Pin lifetime invariant: the borrowed output continues to be
         // valid after the owned source-side strings have been dropped,
         // because everything was copied into the arena. We can't test
@@ -460,16 +426,14 @@ mod tests {
     }
 
     #[test]
-    fn many_inline_entries_preserve_order() {
+    fn many_inline_entries_preserve_sort_order() {
         let arena = Arena::new();
         // Five distinct ruby spans → five inline registry entries in
         // monotonic source order.
         let src = "a｜A《a》b｜B《b》c｜C《c》d｜D《d》e｜E《e》";
-        let owned = crate::lex(src);
-        let borrowed = lex_into_arena(src, &arena);
-        assert_eq!(borrowed.registry.inline.len(), 5);
-        assert_eq!(borrowed.registry.inline.len(), owned.registry.inline.len());
-        let positions: Vec<u32> = borrowed
+        let out = lex_into_arena(src, &arena);
+        assert_eq!(out.registry.inline.len(), 5);
+        let positions: Vec<u32> = out
             .registry
             .inline
             .iter_sorted()
@@ -495,39 +459,28 @@ mod tests {
         }
     }
 
-    /// Exercise an instance of every owned variant kind that appears
-    /// in the lex output, to make sure the converter walks every arm.
-    /// Synthesises a corpus-shaped paragraph with as many constructs
-    /// as we can pack densely; not every variant lands in the registry
-    /// from a single shape (`DoubleRuby` etc. need the right context),
-    /// so this is a soft cover, not a strict per-variant matrix.
+    /// Exercise multiple variant kinds in a single dense paragraph so a
+    /// regression in any one classifier shows up in the registry sizes.
+    /// Numbers are pinned at the values produced by the canonical
+    /// pipeline at the time of writing — refresh if a future
+    /// classifier upgrade legitimately changes the count.
     #[test]
-    fn dense_corpus_paragraph_all_pieces_land_borrowed() {
+    fn dense_corpus_paragraph_lands_expected_pieces() {
         let arena = Arena::new();
         let src = "明治の頃｜青梅《おうめ》街道沿いに、※［＃「木＋吶のつくり」、第3水準1-85-54］\n\
                    なる珍しき木が立つ。［＃ここから2字下げ］\n\
                    その下で人々は語らひ、［＃「青空」に傍点］\n\
                    ［＃ここで字下げ終わり］";
-        let owned = crate::lex(src);
-        let borrowed = lex_into_arena(src, &arena);
-        assert_eq!(borrowed.normalized, owned.normalized);
-        // Each table preserved its size.
-        assert_eq!(borrowed.registry.inline.len(), owned.registry.inline.len());
-        assert_eq!(
-            borrowed.registry.block_leaf.len(),
-            owned.registry.block_leaf.len()
-        );
-        assert_eq!(
-            borrowed.registry.block_open.len(),
-            owned.registry.block_open.len()
-        );
-        assert_eq!(
-            borrowed.registry.block_close.len(),
-            owned.registry.block_close.len()
-        );
+        let out = lex_into_arena(src, &arena);
+        // Inline: ruby + gaiji + bouten ⇒ 3 entries. Block container
+        // open/close ⇒ 1 each. No leaves.
+        assert_eq!(out.registry.inline.len(), 3);
+        assert_eq!(out.registry.block_leaf.len(), 0);
+        assert_eq!(out.registry.block_open.len(), 1);
+        assert_eq!(out.registry.block_close.len(), 1);
         // Every registered position must round-trip via lookup.
-        for (pos, _) in borrowed.registry.inline.iter_sorted() {
-            assert!(borrowed.registry.inline.contains_key(pos));
+        for (pos, _) in out.registry.inline.iter_sorted() {
+            assert!(out.registry.inline.contains_key(pos));
         }
     }
 }
