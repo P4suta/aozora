@@ -78,13 +78,12 @@
 
 use core::marker::PhantomData;
 
-use aozora_lexer::{PairEvent, Token, classify, pair_in, sanitize, tokenize_in};
+use aozora_lexer::{PairEventStream, TokenStream, classify, pair_in, sanitize, tokenize_in};
 use aozora_spec::Diagnostic;
 use aozora_syntax::ContainerKind;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Registry};
 use aozora_veb::EytzingerMap;
-use bumpalo::collections::Vec as BumpVec;
 
 use crate::BorrowedLexOutput;
 use crate::borrowed::ArenaNormalizer;
@@ -124,12 +123,12 @@ pub struct Pipeline<'src, 'a, S> {
     /// downstream phase so the iterators don't refer back into the
     /// Pipeline struct itself.
     sanitized_text: Option<&'a str>,
-    /// `Some` after Phase 1 has materialised the token list inside
-    /// `arena` (R4-A).
-    tokens: Option<BumpVec<'a, Token>>,
-    /// `Some` after Phase 2 has materialised the event list inside
-    /// `arena` (R4-A).
-    events: Option<BumpVec<'a, PairEvent>>,
+    /// `Some` after Phase 1 has materialised the token stream inside
+    /// `arena` (M-2). Pure `SoA` — see [`TokenStream`] doc.
+    tokens: Option<TokenStream<'a>>,
+    /// `Some` after Phase 2 has materialised the event stream inside
+    /// `arena` (M-2). Pure `SoA` — see [`PairEventStream`] doc.
+    events: Option<PairEventStream<'a>>,
     diagnostics: Vec<Diagnostic>,
     _state: PhantomData<S>,
 }
@@ -238,21 +237,24 @@ impl<'src, 'a> Pipeline<'src, 'a, Sanitized> {
 // ---------------------------------------------------------------------
 
 impl<'src, 'a> Pipeline<'src, 'a, Tokenized> {
-    /// Borrow the materialised token list. Useful for instrumentation.
+    /// Borrow the materialised token stream (4-column `SoA`, M-2).
+    /// Useful for instrumentation. Iterate as `Token` values via
+    /// `tokens.iter()`, or scan the tag column directly via
+    /// [`TokenStream::tag_at`].
     ///
     /// # Panics
     ///
     /// Cannot panic in normal use: `tokens` is always `Some` after the
     /// `Tokenized` state has been reached.
     #[must_use]
-    pub fn tokens(&self) -> &[Token] {
+    pub fn tokens(&self) -> &TokenStream<'a> {
         self.tokens
-            .as_deref()
+            .as_ref()
             .expect("tokens is always Some after Tokenized transition")
     }
 
-    /// Run Phase 2 (pair). Materialises `BumpVec<'a, PairEvent>`
-    /// inside `arena` via [`pair_in`] (R4-A / ADR-0017). Phase 2's
+    /// Run Phase 2 (pair). Materialises [`PairEventStream<'a>`]
+    /// inside `arena` via [`pair_in`] (M-2 / ADR-0019). Phase 2's
     /// diagnostics are drained into the pipeline's diagnostic
     /// accumulator immediately.
     ///
@@ -286,17 +288,19 @@ impl<'src, 'a> Pipeline<'src, 'a, Tokenized> {
 // ---------------------------------------------------------------------
 
 impl<'a> Pipeline<'_, 'a, Paired> {
-    /// Borrow the materialised pair-event list. Useful for inspection
-    /// before `.build()`.
+    /// Borrow the materialised pair-event stream (4-column `SoA`, M-2).
+    /// Useful for inspection before `.build()`. Iterate as `PairEvent`
+    /// values via `events.iter()`, or scan the tag column directly via
+    /// [`PairEventStream::tag_at`].
     ///
     /// # Panics
     ///
     /// Cannot panic in normal use: `events` is always `Some` after the
     /// `Paired` state has been reached.
     #[must_use]
-    pub fn events(&self) -> &[PairEvent] {
+    pub fn events(&self) -> &PairEventStream<'a> {
         self.events
-            .as_deref()
+            .as_ref()
             .expect("events is always Some after Paired transition")
     }
 
@@ -338,17 +342,17 @@ impl<'a> Pipeline<'_, 'a, Paired> {
         let mut alloc = BorrowedAllocator::with_capacity(self.arena, interner_hint);
         let mut builder = ArenaNormalizer::new(sanitized_text, sanitized_text.len() / 64);
 
-        // R3 (ADR-0016) → R4-A (ADR-0017) production wiring: drain
-        // the arena-allocated BumpVec<PairEvent> through the
-        // streaming `classify` Iterator path. R3 measured wholesale
-        // Vec<ClassifiedSpan> and emit-callback variants for Phase 3,
-        // both regressed corpus throughput, so Phase 3 stays
-        // streaming. R4-A drops the dead `classify_slice` /
-        // `classify_into_emit` heap-batch APIs entirely; only the
-        // streaming `classify` survives. BumpVec::into_iter is a
-        // bumpalo-collections IntoIter that yields owned PairEvents —
-        // the iterator chain into `classify` is unchanged from R3.
-        let mut events_iter = events.into_iter();
+        // R3 (ADR-0016) → R4-A (ADR-0017) → M-2 (ADR-0019) production
+        // wiring: drain the arena-allocated `SoA` `PairEventStream`
+        // through the streaming `classify` Iterator path. R3 measured
+        // wholesale Vec<ClassifiedSpan> and emit-callback variants
+        // for Phase 3, both regressed corpus throughput, so Phase 3
+        // stays streaming. R4-A dropped the dead heap-batch APIs;
+        // only streaming `classify` survives. M-2 reconstructs each
+        // `PairEvent` value from the `SoA` columns via `events.iter()`
+        // — cheap (tag dispatch + 1-2 column reads per event) and
+        // keeps the streaming `classify` API unchanged.
+        let mut events_iter = events.iter();
         let classify_diagnostics: Vec<Diagnostic> = {
             let mut classify_stream = classify(&mut events_iter, sanitized_text, &mut alloc);
             for span in &mut classify_stream {

@@ -10,10 +10,10 @@
 //!
 //! - [`tokenize`] — streaming `impl Iterator<Item = Token>`, kept for
 //!   FFI / incremental / pull-based consumers that have no arena.
-//! - [`tokenize_in`] — arena-batch `BumpVec<'a, Token>` allocated
-//!   inside the caller's [`Arena`]. Used by the borrowed pipeline:
-//!   one bump-pointer advance per token replaces N heap mallocs per
-//!   parse (R4-A / ADR-0017).
+//! - [`tokenize_in`] — arena-batch [`TokenStream`] allocated inside
+//!   the caller's [`Arena`]. The 4-column `SoA` layout (M-2 / ADR-0019)
+//!   keeps the tag column dense so Phase 2's hot loop scans 1 cache
+//!   line per 64 tokens instead of 1 per ~5 (the old enum layout).
 //!
 //! The Aozora pipeline drives `tokenize_in` because it already owns an
 //! arena; benchmarks and FFI shims that want lazy semantics use
@@ -54,9 +54,8 @@
 use aozora_spec::classify_trigger_bytes;
 use aozora_syntax::Span;
 use aozora_syntax::borrowed::Arena;
-use bumpalo::collections::Vec as BumpVec;
 
-use crate::token::{Token, TriggerKind};
+use crate::token::{Token, TokenStream, TriggerKind};
 
 /// Streaming tokeniser over sanitized source text.
 ///
@@ -77,21 +76,19 @@ pub fn tokenize(source: &str) -> Tokenizer<'_> {
 }
 
 /// Materialise every Phase 1 token into an arena-backed
-/// [`bumpalo::collections::Vec`] in one pass.
+/// [`TokenStream`] (4-column `SoA`) in one pass.
 ///
-/// R4-A (ADR-0017): the inter-phase token list is allocated inside the
-/// caller's arena instead of on the heap. The borrowed pipeline already
-/// owns one [`Arena`] per parse — collapsing per-parse `Vec<Token>`
-/// `malloc`/`free` traffic into a single bump-pointer advance per token
-/// removed allocation from the corpus profile's top bucket. The
-/// streaming [`tokenize`] iterator is kept for incremental / FFI
-/// consumers that pull lazily and have no arena to spend.
+/// M-2 (ADR-0019): the inter-phase token list is stored as
+/// Structure-of-Arrays inside the caller's arena. The hot tag
+/// column (1 byte / token) is scanned dense in Phase 2; payload
+/// columns (`spans`, `trigger_kinds`) are read out-of-band only
+/// when the tag selects them.
 ///
 /// Internally this is exactly the merge-walk [`Tokenizer::next`] runs,
-/// flattened into a single `for` loop pushing into a pre-sized `BumpVec`.
-/// Drops the `pending: Option<Token>` slot (the streaming buffer for
-/// "Text+Trigger emitted together") because direct pushes can write
-/// both events back-to-back.
+/// flattened into a single `for` loop pushing into a pre-sized
+/// [`TokenStream`]. Drops the `pending: Option<Token>` slot (the
+/// streaming buffer for "Text+Trigger emitted together") because
+/// direct pushes can write both events back-to-back.
 ///
 /// Capacity hint: 2 tokens per trigger (text+trigger) + one per
 /// newline + a small fixed overhead. Slight over-estimate is cheap
@@ -106,7 +103,7 @@ pub fn tokenize(source: &str) -> Tokenizer<'_> {
     clippy::cast_possible_truncation,
     reason = "function entry asserts source.len() <= u32::MAX, so every byte index fits"
 )]
-pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> BumpVec<'a, Token> {
+pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> TokenStream<'a> {
     assert!(
         u32::try_from(source.len()).is_ok(),
         "source too long for u32 span offsets ({} bytes)",
@@ -124,7 +121,7 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> BumpVec<'a, Token> {
     }
 
     let cap = trigger_offsets.len() * 2 + newline_offsets.len() + 8;
-    let mut out: BumpVec<'a, Token> = BumpVec::with_capacity_in(cap, arena.bump());
+    let mut out: TokenStream<'a> = TokenStream::with_capacity_in(cap, arena);
 
     let mut text_start: u32 = 0;
     let mut t_idx: usize = 0;
@@ -146,14 +143,9 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> BumpVec<'a, Token> {
             let (emit_kind, byte_len, extra) =
                 merge_double(bytes, &trigger_offsets, t_idx, kind, t_pos);
             if t_pos > text_start {
-                out.push(Token::Text {
-                    range: Span::new(text_start, t_pos),
-                });
+                out.push_text(Span::new(text_start, t_pos));
             }
-            out.push(Token::Trigger {
-                kind: emit_kind,
-                span: Span::new(t_pos, t_pos + byte_len),
-            });
+            out.push_trigger(emit_kind, Span::new(t_pos, t_pos + byte_len));
             let after = t_pos + byte_len;
             text_start = after;
             t_idx += 1 + extra;
@@ -163,11 +155,9 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> BumpVec<'a, Token> {
         } else {
             let n_pos = n_offset.expect("checked Some by !next_is_trigger arm");
             if n_pos > text_start {
-                out.push(Token::Text {
-                    range: Span::new(text_start, n_pos),
-                });
+                out.push_text(Span::new(text_start, n_pos));
             }
-            out.push(Token::Newline { pos: n_pos });
+            out.push_newline(n_pos);
             text_start = n_pos + 1;
             n_idx += 1;
         }
@@ -175,9 +165,7 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> BumpVec<'a, Token> {
 
     let total_len = bytes.len() as u32;
     if total_len > text_start {
-        out.push(Token::Text {
-            range: Span::new(text_start, total_len),
-        });
+        out.push_text(Span::new(text_start, total_len));
     }
     out
 }

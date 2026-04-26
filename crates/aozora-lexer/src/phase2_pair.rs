@@ -9,12 +9,11 @@
 //! Two production-ready surfaces sit side by side, mirroring Phase 1:
 //!
 //! - [`pair`] — streaming `PairStream` for FFI / incremental consumers.
-//! - [`pair_in`] — arena-batch `PairOutputIn<'a>` whose `events` is a
-//!   `BumpVec<'a, PairEvent>` allocated inside the caller's [`Arena`].
-//!   Used by the borrowed pipeline (R4-A / ADR-0017): the per-parse
-//!   event list lives in the arena alongside the AST it feeds, so
-//!   `PairEvent` materialisation is one bump-pointer advance per event
-//!   instead of `Vec<PairEvent>` heap allocation.
+//! - [`pair_in`] — arena-batch [`PairOutputIn<'a>`] whose `events` is
+//!   a [`PairEventStream<'a>`] allocated inside the caller's [`Arena`].
+//!   The 4-column `SoA` layout (M-2 / ADR-0019) keeps the tag column
+//!   dense so Phase 3's recogniser dispatch reads 1 cache line per 64
+//!   events instead of 1 per ~4 (the old enum layout).
 //!
 //! Diagnostics stay heap-allocated. The corpus-median doc emits ~0.1
 //! diagnostics; per-arena allocation would cost more than it saves and
@@ -60,7 +59,7 @@ use bumpalo::collections::Vec as BumpVec;
 use smallvec::SmallVec;
 
 use crate::diagnostic::Diagnostic;
-use crate::token::{Token, TriggerKind};
+use crate::token::{Token, TokenStream, TokenTag, TriggerKind};
 
 // `PairKind` lives in `aozora-spec`; re-exported here for backward
 // compatibility through the 0.1 → 0.2 transition.
@@ -144,61 +143,226 @@ where
     PairStream::new(tokens)
 }
 
+/// Storage tag for [`PairEventStream`]. One byte per event,
+/// scanned densely in Phase 3's hot dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventTag {
+    Text,
+    Solo,
+    PairOpen,
+    PairClose,
+    Unclosed,
+    Unmatched,
+    Newline,
+}
+
+/// Arena-backed Structure-of-Arrays storage for a Phase 2 event
+/// stream. Materialised by [`pair_in`]; consumed by Phase 3's
+/// `classify` (and any inspection callers).
+///
+/// ## Storage layout
+///
+/// | Column | Type | Bytes / elem | Populated when |
+/// |---|---|---:|---|
+/// | `tags` | [`EventTag`] | 1 | always |
+/// | `spans` | [`Span`] | 8 | always (Newline rows store `Span(pos, pos + 1)`) |
+/// | `trigger_kinds` | [`TriggerKind`] | 1 | only `tag == Solo` |
+/// | `pair_kinds` | [`PairKind`] | 1 | only `tag ∈ {PairOpen, PairClose, Unclosed, Unmatched}` |
+///
+/// Total: ~11 bytes / event. Tag-only iteration: 1 cache line per
+/// 64 events vs 1 per ~4 events for the 16-byte enum layout.
+#[derive(Debug)]
+pub struct PairEventStream<'a> {
+    tags: BumpVec<'a, EventTag>,
+    spans: BumpVec<'a, Span>,
+    trigger_kinds: BumpVec<'a, TriggerKind>,
+    pair_kinds: BumpVec<'a, PairKind>,
+}
+
+impl<'a> PairEventStream<'a> {
+    /// Empty stream backed by `arena`.
+    #[must_use]
+    pub fn with_capacity_in(cap: usize, arena: &'a Arena) -> Self {
+        let bump = arena.bump();
+        Self {
+            tags: BumpVec::with_capacity_in(cap, bump),
+            spans: BumpVec::with_capacity_in(cap, bump),
+            trigger_kinds: BumpVec::with_capacity_in(cap, bump),
+            pair_kinds: BumpVec::with_capacity_in(cap, bump),
+        }
+    }
+
+    /// Append a [`PairEvent::Text`] row.
+    #[inline]
+    pub fn push_text(&mut self, range: Span) {
+        self.tags.push(EventTag::Text);
+        self.spans.push(range);
+        self.trigger_kinds.push(TriggerKind::Bar);
+        self.pair_kinds.push(PairKind::Bracket);
+    }
+
+    /// Append a [`PairEvent::Solo`] row.
+    #[inline]
+    pub fn push_solo(&mut self, kind: TriggerKind, span: Span) {
+        self.tags.push(EventTag::Solo);
+        self.spans.push(span);
+        self.trigger_kinds.push(kind);
+        self.pair_kinds.push(PairKind::Bracket);
+    }
+
+    /// Append a structural pair event. `tag` must be one of
+    /// `PairOpen` / `PairClose` / `Unclosed` / `Unmatched`.
+    #[inline]
+    pub fn push_pair(&mut self, tag: EventTag, kind: PairKind, span: Span) {
+        debug_assert!(
+            matches!(
+                tag,
+                EventTag::PairOpen | EventTag::PairClose | EventTag::Unclosed | EventTag::Unmatched
+            ),
+            "push_pair called with non-structural tag: {tag:?}"
+        );
+        self.tags.push(tag);
+        self.spans.push(span);
+        self.trigger_kinds.push(TriggerKind::Bar);
+        self.pair_kinds.push(kind);
+    }
+
+    /// Append a [`PairEvent::Newline`] row. Internally stored as
+    /// `Span(pos, pos + 1)` so the spans column stays uniform.
+    #[inline]
+    pub fn push_newline(&mut self, pos: u32) {
+        self.tags.push(EventTag::Newline);
+        self.spans.push(Span::new(pos, pos + 1));
+        self.trigger_kinds.push(TriggerKind::Bar);
+        self.pair_kinds.push(PairKind::Bracket);
+    }
+
+    /// Total number of events.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.tags.len()
+    }
+
+    /// True if the stream contains no events.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tags.is_empty()
+    }
+
+    /// Tag at index `i`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i >= self.len()`.
+    #[inline]
+    #[must_use]
+    pub fn tag_at(&self, i: usize) -> EventTag {
+        self.tags[i]
+    }
+
+    /// Span at index `i`. Newline rows return `Span(pos, pos + 1)`;
+    /// callers reading newline position should use [`Self::newline_pos_at`].
+    #[inline]
+    #[must_use]
+    pub fn span_at(&self, i: usize) -> Span {
+        self.spans[i]
+    }
+
+    /// Trigger kind at index `i` (only meaningful for Solo rows).
+    #[inline]
+    #[must_use]
+    pub fn trigger_kind_at(&self, i: usize) -> TriggerKind {
+        self.trigger_kinds[i]
+    }
+
+    /// Pair kind at index `i` (only meaningful for structural rows).
+    #[inline]
+    #[must_use]
+    pub fn pair_kind_at(&self, i: usize) -> PairKind {
+        self.pair_kinds[i]
+    }
+
+    /// Newline position at index `i` (only meaningful for Newline rows).
+    #[inline]
+    #[must_use]
+    pub fn newline_pos_at(&self, i: usize) -> u32 {
+        self.spans[i].start
+    }
+
+    /// Iterator over the stream as `PairEvent` values, reconstructing
+    /// each variant from the columns. Hot Phase 3 consumers should
+    /// use the per-column accessors directly.
+    pub fn iter(&self) -> impl Iterator<Item = PairEvent> + '_ {
+        (0..self.len()).map(move |i| match self.tag_at(i) {
+            EventTag::Text => PairEvent::Text {
+                range: self.span_at(i),
+            },
+            EventTag::Solo => PairEvent::Solo {
+                kind: self.trigger_kind_at(i),
+                span: self.span_at(i),
+            },
+            EventTag::PairOpen => PairEvent::PairOpen {
+                kind: self.pair_kind_at(i),
+                span: self.span_at(i),
+            },
+            EventTag::PairClose => PairEvent::PairClose {
+                kind: self.pair_kind_at(i),
+                span: self.span_at(i),
+            },
+            EventTag::Unclosed => PairEvent::Unclosed {
+                kind: self.pair_kind_at(i),
+                span: self.span_at(i),
+            },
+            EventTag::Unmatched => PairEvent::Unmatched {
+                kind: self.pair_kind_at(i),
+                span: self.span_at(i),
+            },
+            EventTag::Newline => PairEvent::Newline {
+                pos: self.newline_pos_at(i),
+            },
+        })
+    }
+}
+
 /// Output of [`pair_in`]. `events` lives in the caller's arena;
 /// `diagnostics` stays heap-allocated (rare and outlives the arena).
 #[derive(Debug)]
 pub struct PairOutputIn<'a> {
-    pub events: BumpVec<'a, PairEvent>,
+    pub events: PairEventStream<'a>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
-/// Materialise every Phase 2 event from a `&[Token]` slice into a
-/// single arena-backed `PairOutputIn { events: BumpVec, diagnostics }`.
+/// Materialise every Phase 2 event from a [`TokenStream`] into a
+/// single arena-backed [`PairOutputIn`].
 ///
-/// R4-A (ADR-0017): production entry point for Phase 2. The borrowed
-/// pipeline owns the [`Arena`] and forwards it here; the resulting
-/// `BumpVec<'a, PairEvent>` lives next to the AST it will be folded
-/// into, eliminating per-parse `Vec<PairEvent>` malloc/free traffic
-/// from the corpus profile.
-///
-/// Internally this is the same balanced-stack pass [`PairStream::next`]
-/// runs, flattened into a single `for token in tokens` loop pushing
-/// directly into a pre-sized `BumpVec<PairEvent>`. Capacity hint:
-/// `tokens.len() + small`. The EOF-drain pass (synthetic `Unclosed`
-/// emission) is appended after the main loop, mirroring the
-/// `eof_drain` state-machine behaviour.
-///
-/// Diagnostics stay on the heap — see the module docstring for the
-/// rationale (median doc emits ~0.1 diagnostics; arena allocation
-/// would cost more than it saves and diagnostics outlive the arena).
+/// M-2 (ADR-0019): production entry point for Phase 2. Reads the
+/// tag column densely (1 cache line per 64 tokens) and dispatches
+/// into the balanced-stack walk. The EOF-drain pass (synthetic
+/// `Unclosed` emission) is appended after the main loop, mirroring
+/// the `eof_drain` state-machine behaviour.
 #[must_use]
-pub fn pair_in<'a>(tokens: &[Token], arena: &'a Arena) -> PairOutputIn<'a> {
-    let mut events: BumpVec<'a, PairEvent> =
-        BumpVec::with_capacity_in(tokens.len() + 4, arena.bump());
+pub fn pair_in<'a>(tokens: &TokenStream<'_>, arena: &'a Arena) -> PairOutputIn<'a> {
+    let mut events = PairEventStream::with_capacity_in(tokens.len() + 4, arena);
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut stack: SmallVec<[(PairKind, Span); 8]> = SmallVec::new();
 
-    for token in tokens {
-        match *token {
-            Token::Text { range } => events.push(PairEvent::Text { range }),
-            Token::Newline { pos } => events.push(PairEvent::Newline { pos }),
-            Token::Trigger { kind, span } => {
-                events.push(classify_trigger_inline(
-                    kind,
-                    span,
-                    &mut stack,
-                    &mut diagnostics,
-                ));
+    for i in 0..tokens.len() {
+        match tokens.tag_at(i) {
+            TokenTag::Text => events.push_text(tokens.span_at(i)),
+            TokenTag::Newline => events.push_newline(tokens.newline_pos_at(i)),
+            TokenTag::Trigger => {
+                let kind = tokens.trigger_kind_at(i);
+                let span = tokens.span_at(i);
+                push_trigger_event(&mut events, kind, span, &mut stack, &mut diagnostics);
             }
         }
     }
 
     // Drain the residual stack: emit one synthetic `Unclosed` event
-    // per remaining open frame, in innermost-first order to match
-    // the streaming behaviour.
+    // per remaining open frame, in innermost-first order.
     while let Some((kind, span)) = stack.pop() {
         diagnostics.push(Diagnostic::unclosed_bracket(span, kind));
-        events.push(PairEvent::Unclosed { kind, span });
+        events.push_pair(EventTag::Unclosed, kind, span);
     }
 
     PairOutputIn {
@@ -207,38 +371,36 @@ pub fn pair_in<'a>(tokens: &[Token], arena: &'a Arena) -> PairOutputIn<'a> {
     }
 }
 
-/// Free-function variant of [`PairStream::classify_trigger`] for
-/// [`pair_in`]. Mutates the stack + diagnostics in place; same
-/// invariants as the streaming version.
+/// Trigger classification for [`pair_in`]. Mutates the stack +
+/// diagnostics in place; pushes the resulting event into `events`.
 #[inline]
-fn classify_trigger_inline(
+#[allow(
+    clippy::too_many_arguments,
+    reason = "five small args: 2 mutable column references + 2 mutable balancing-state references + 1 small Span. Bundling into a struct would obscure the inner-loop hot path."
+)]
+fn push_trigger_event(
+    events: &mut PairEventStream<'_>,
     kind: TriggerKind,
     span: Span,
     stack: &mut SmallVec<[(PairKind, Span); 8]>,
     diagnostics: &mut Vec<Diagnostic>,
-) -> PairEvent {
+) {
     if let Some(pair_kind) = open_kind_of(kind) {
         stack.push((pair_kind, span));
-        return PairEvent::PairOpen {
-            kind: pair_kind,
-            span,
-        };
+        events.push_pair(EventTag::PairOpen, pair_kind, span);
+        return;
     }
     if let Some(pair_kind) = close_kind_of(kind) {
         if stack.last().is_some_and(|&(top, _)| top == pair_kind) {
             stack.pop();
-            return PairEvent::PairClose {
-                kind: pair_kind,
-                span,
-            };
+            events.push_pair(EventTag::PairClose, pair_kind, span);
+            return;
         }
         diagnostics.push(Diagnostic::unmatched_close(span, pair_kind));
-        return PairEvent::Unmatched {
-            kind: pair_kind,
-            span,
-        };
+        events.push_pair(EventTag::Unmatched, pair_kind, span);
+        return;
     }
-    PairEvent::Solo { kind, span }
+    events.push_solo(kind, span);
 }
 
 /// Stream of [`PairEvent`]s produced from an upstream [`Token`]
