@@ -47,8 +47,10 @@ use std::process::{self, Command, ExitStatus};
 
 use clap::{Args, Parser, Subcommand};
 
+mod deps;
 mod trace;
 
+pub(crate) use deps::DepsArgs;
 pub(crate) use trace::TraceArgs;
 
 const PERF_PARANOID_PATH: &str = "/proc/sys/kernel/perf_event_paranoid";
@@ -70,6 +72,11 @@ enum Cmd {
     Samply(SamplyArgs),
     /// Analyse a saved samply `.json.gz` trace via `aozora-trace`.
     Trace(TraceArgs),
+    /// Local-only dependency-follow-up tooling — install / inspect /
+    /// remove the systemd user timer that runs `just deps-check`
+    /// weekly. Replaces the dependabot / GitHub-Actions pattern with
+    /// a host-side pure-Rust mechanism (ADR-0018).
+    Deps(DepsArgs),
 }
 
 #[derive(Args)]
@@ -137,6 +144,7 @@ fn main() {
             SamplyTarget::Render { repeat } => samply_render(repeat),
         },
         Cmd::Trace(args) => trace::dispatch(args),
+        Cmd::Deps(args) => deps::dispatch(&args),
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");

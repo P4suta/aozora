@@ -80,6 +80,41 @@ component on first run. Nothing else is global state.
   forces `-Z build-std` which compensates.
 - **ASan**: doesn't catch races, only memory issues. Pair with TSan.
 
+## Dependency follow-up timer (xtask, not a shell script)
+
+Install / inspect / remove a systemd **user** timer that runs `just
+deps-check` weekly. Replaces the dependabot / renovate / GitHub
+Actions pattern with an entirely-local mechanism — there is no
+remote CI involved at any point. ADR-0018 records the policy.
+
+The implementation lives in `crates/aozora-xtask/src/deps.rs` and
+is invoked through `just`:
+
+```sh
+just deps-timer-install     # weekly schedule activated
+just deps-timer-status      # next run + recent journal entries
+just deps-timer-uninstall   # schedule removed; log preserved
+```
+
+(Equivalent low-level invocation: `cargo run --release -p
+aozora-xtask -- deps {install-timer|status|uninstall-timer}`.)
+
+Cadence: Sunday 03:30 local, with a 30-minute random delay so
+multiple developer machines on the same LAN don't hit `crates.io`
+in lock-step. `Persistent=true` so a missed run (laptop asleep)
+fires on next boot.
+
+The unit bakes in `WorkingDirectory=$REPO_ROOT`, so the timer is
+**bound to the checkout that ran the install**. Cloning the repo
+elsewhere and re-running `just deps-timer-install` there is fine —
+the unit name stays `aozora-deps-check.{service,timer}` and the new
+install overwrites the old.
+
+Output rolls into `$XDG_STATE_HOME/aozora/deps-check.log`
+(or `~/.local/state/aozora/deps-check.log`). The lefthook
+`post-merge` hook surfaces freshness via `just deps-status` so the
+developer sees the report whenever they pull.
+
 ## `corpus_sweep.sh` (planned)
 
 Reserved name for an opt-in 17 K aozora-corpus sweep that takes

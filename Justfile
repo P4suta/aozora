@@ -365,6 +365,24 @@ deps-check:
     @date -u +%FT%TZ > {{_deps_marker}}
     @echo "[deps-check] OK — marker written to {{_deps_marker}}"
 
+# Install the systemd user timer that runs `just deps-check` weekly.
+# Pure-Rust implementation in `crates/aozora-xtask/src/deps.rs` —
+# bound to the *current* repo checkout (the unit bakes in
+# `WorkingDirectory=$REPO`). Idempotent. Runs on the host, not in
+# the dev container, because `systemctl --user` only makes sense on
+# the host.
+deps-timer-install:
+    cargo run --release -p aozora-xtask -- deps install-timer
+
+# Show the timer's current state + most recent journal entries.
+deps-timer-status:
+    cargo run --release -p aozora-xtask -- deps status
+
+# Remove the timer. Preserves the rolling log file under
+# `$XDG_STATE_HOME/aozora/deps-check.log`.
+deps-timer-uninstall:
+    cargo run --release -p aozora-xtask -- deps uninstall-timer
+
 # Print the freshness of the last `deps-check`. Exit non-zero if it
 # has been more than 7 days, so shells / CI / hooks can wire it as
 # "deps stale" detection without parsing dates.
