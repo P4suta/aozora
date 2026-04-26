@@ -94,7 +94,6 @@
 use core::mem;
 use core::ops::Range;
 use std::collections::VecDeque;
-use std::iter;
 
 #[cfg(feature = "phase3-instrument")]
 use crate::instrumentation::{
@@ -1148,31 +1147,19 @@ where
             PairKind::Bracket => {
                 let refmark = frame.gaiji_refmark;
                 if let Some(rm_span) = refmark {
-                    // Build a synthetic event slice: [Solo(RefMark),
-                    // PairOpen(Bracket), ...inner body..., PairClose].
-                    // Build a parallel synthetic links table: the
-                    // prepended refmark gets `u32::MAX`, every other
-                    // link is shifted by +1.
-                    let gaiji_body: smallvec::SmallVec<[PairEvent; 16]> =
-                        iter::once(PairEvent::Solo {
-                            kind: TriggerKind::RefMark,
-                            span: rm_span,
-                        })
-                        .chain(body.iter().cloned())
-                        .collect();
-                    let gaiji_links: smallvec::SmallVec<[u32; 16]> = iter::once(u32::MAX)
-                        .chain(
-                            links
-                                .iter()
-                                .map(|&l| if l == u32::MAX { u32::MAX } else { l + 1 }),
-                        )
-                        .collect();
-                    let gaiji_view = BodyView {
-                        events: &gaiji_body,
-                        links: &gaiji_links,
-                    };
-                    let bracket_open_idx = 1usize;
-                    if let Some(span) = self.try_gaiji_emit(gaiji_view, bracket_open_idx, rm_span) {
+                    // B (zero-copy): pass the original body+links
+                    // directly with `bracket_open_idx = 0`. The previous
+                    // shape rebuilt body+links into a SmallVec just to
+                    // prepend a synthetic Solo(RefMark) at index 0 so
+                    // `recognize_gaiji` could read the bracket open at
+                    // index 1. But `recognize_gaiji` parameterises the
+                    // bracket entry point via `bracket_open_idx` and
+                    // takes `refmark_span` as a separate argument — the
+                    // synthetic prefix was never consumed. Eliminating
+                    // the rebuild closes pathological doc 50685's
+                    // memcpy_memmove 25.13 % bucket and doc 49178's
+                    // 22.63 %, both attributed to this hot path.
+                    if let Some(span) = self.try_gaiji_emit(view, open_idx, rm_span) {
                         self.push_output(span);
                         return;
                     }
