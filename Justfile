@@ -408,6 +408,12 @@ samply-doc DOC:
 samply-corpus REPEAT="5":
     cargo run --release -p aozora-xtask -- samply corpus {{REPEAT}}
 
+# Sample-profile the HTML render hot path across the full corpus. REPEAT
+# controls per-doc render-loop iterations so render frames dominate the
+# trace over the per-doc parse warmup. Defaults to 5.
+samply-render REPEAT="5":
+    cargo run --release -p aozora-xtask -- samply render {{REPEAT}}
+
 # Remove lefthook git hook stubs.
 hooks-uninstall:
     {{_dev}} lefthook uninstall

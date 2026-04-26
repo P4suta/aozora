@@ -23,6 +23,7 @@ workspace = true
 aozora-spec   = { workspace = true }
 aozora-syntax = { workspace = true }
 aozora-lex    = { workspace = true }
+memchr        = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

@@ -219,6 +219,7 @@ dependencies = [
  "aozora-spec",
  "aozora-syntax",
  "aozora-test-utils",
+ "memchr",
  "pretty_assertions",
  "proptest",
 ]

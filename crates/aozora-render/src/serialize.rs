@@ -13,14 +13,27 @@
 use core::fmt::{self, Write};
 
 use aozora_lex::BorrowedLexOutput;
-use aozora_spec::{
-    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
-};
 use aozora_syntax::borrowed::{
     Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, Ruby,
     Sashie, Segment, TateChuYoko,
 };
 use aozora_syntax::{AlignEnd, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind};
+use memchr::memchr_iter;
+
+/// First UTF-8 byte of every PUA sentinel (E001..E004). See
+/// [`crate::html`] for the full discussion of why we scan bytes
+/// instead of `match_indices`-ing chars.
+const SENTINEL_LEAD_BYTE: u8 = 0xEE;
+/// Second UTF-8 byte shared by every PUA sentinel.
+const SENTINEL_MID_BYTE: u8 = 0x80;
+/// Third UTF-8 byte → [`SentinelKind::Inline`].
+const INLINE_SENTINEL_TAIL: u8 = 0x81;
+/// Third UTF-8 byte → [`SentinelKind::BlockLeaf`].
+const BLOCK_LEAF_SENTINEL_TAIL: u8 = 0x82;
+/// Third UTF-8 byte → [`SentinelKind::BlockOpen`].
+const BLOCK_OPEN_SENTINEL_TAIL: u8 = 0x83;
+/// Third UTF-8 byte → [`SentinelKind::BlockClose`].
+const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
 
 /// Serialize a `BorrowedLexOutput` back to Aozora source text.
 ///
@@ -53,18 +66,26 @@ pub fn serialize(out: &BorrowedLexOutput<'_>) -> String {
 pub fn serialize_into<W: Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -> fmt::Result {
     let normalized = out.normalized;
     let registry = &out.registry;
-
+    let bytes = normalized.as_bytes();
     let mut cursor = 0usize;
-    for (pos, sentinel_str) in normalized.match_indices(|c: char| sentinel_kind(c).is_some()) {
-        writer.write_str(&normalized[cursor..pos])?;
 
-        let ch = sentinel_str
-            .chars()
-            .next()
-            .expect("match_indices yields non-empty match");
-        let byte_pos = u32::try_from(pos).expect("normalized fits u32 per Phase 0 cap");
+    // Byte-level PUA sentinel scan — same rationale as `crate::html`.
+    // The four sentinels share the 2-byte UTF-8 prefix `0xEE 0x80`;
+    // a single `memchr(0xEE)` finds candidates at memory-bandwidth
+    // speed and we validate each against the third byte. PUA
+    // collisions in source (Phase 0 records a diagnostic but doesn't
+    // delete them) flow through as plain text via the cursor advance.
+    for cand_pos in memchr_iter(SENTINEL_LEAD_BYTE, bytes) {
+        if cand_pos + 2 >= bytes.len() || bytes[cand_pos + 1] != SENTINEL_MID_BYTE {
+            continue;
+        }
+        let Some(kind) = sentinel_kind_for_tail_byte(bytes[cand_pos + 2]) else {
+            continue;
+        };
 
-        match sentinel_kind(ch).expect("predicate matched on this char") {
+        writer.write_str(&normalized[cursor..cand_pos])?;
+        let byte_pos = u32::try_from(cand_pos).expect("normalized fits u32 per Phase 0 cap");
+        match kind {
             SentinelKind::Inline => {
                 if let Some(&node) = registry.inline.get(&byte_pos) {
                     emit_aozora(node, writer)?;
@@ -86,7 +107,7 @@ pub fn serialize_into<W: Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -> 
                 }
             }
         }
-        cursor = pos + sentinel_str.len();
+        cursor = cand_pos + 3;
     }
     writer.write_str(&normalized[cursor..])
 }
@@ -99,13 +120,17 @@ enum SentinelKind {
     BlockClose,
 }
 
+/// Decode the third UTF-8 byte of a PUA-sentinel candidate. Returns
+/// `Some` only for the four well-known sentinels; any other byte is
+/// a collision (plain text that happens to share the prefix) and
+/// falls through to plain copy via the caller's cursor advance.
 #[inline]
-fn sentinel_kind(c: char) -> Option<SentinelKind> {
-    match c {
-        INLINE_SENTINEL => Some(SentinelKind::Inline),
-        BLOCK_LEAF_SENTINEL => Some(SentinelKind::BlockLeaf),
-        BLOCK_OPEN_SENTINEL => Some(SentinelKind::BlockOpen),
-        BLOCK_CLOSE_SENTINEL => Some(SentinelKind::BlockClose),
+fn sentinel_kind_for_tail_byte(b: u8) -> Option<SentinelKind> {
+    match b {
+        INLINE_SENTINEL_TAIL => Some(SentinelKind::Inline),
+        BLOCK_LEAF_SENTINEL_TAIL => Some(SentinelKind::BlockLeaf),
+        BLOCK_OPEN_SENTINEL_TAIL => Some(SentinelKind::BlockOpen),
+        BLOCK_CLOSE_SENTINEL_TAIL => Some(SentinelKind::BlockClose),
         _ => None,
     }
 }

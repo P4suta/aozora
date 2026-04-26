@@ -51,6 +51,7 @@ const PERF_PARANOID_PATH: &str = "/proc/sys/kernel/perf_event_paranoid";
 const PERF_PARANOID_MAX: i32 = 1;
 const SAMPLY_RATE_HZ: u32 = 4000;
 const DEFAULT_CORPUS_REPEAT: usize = 5;
+const DEFAULT_RENDER_REPEAT: usize = 5;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "aozora developer tooling", version)]
@@ -104,6 +105,18 @@ enum SamplyTarget {
         #[arg(default_value_t = DEFAULT_CORPUS_REPEAT)]
         repeat: usize,
     },
+    /// Profile the **HTML render** hot path across the full corpus via
+    /// the `render_hot_path` example.
+    ///
+    /// `repeat` controls the per-doc render loop count. Default 5 so
+    /// render-bound stack frames dominate the trace; the per-doc parse
+    /// (untimed in the probe report but still on the wall) drops to a
+    /// minority of samples at this multiplier.
+    Render {
+        /// Number of `render_to_string` calls per document.
+        #[arg(default_value_t = DEFAULT_RENDER_REPEAT)]
+        repeat: usize,
+    },
 }
 
 fn main() {
@@ -115,6 +128,7 @@ fn main() {
                 out_name,
             } => samply_doc(&relative_path, out_name.as_deref()),
             SamplyTarget::Corpus { repeat } => samply_corpus(repeat),
+            SamplyTarget::Render { repeat } => samply_render(repeat),
         },
     };
     if let Err(err) = result {
@@ -192,6 +206,47 @@ fn samply_corpus(repeat: usize) -> Result<(), String> {
         .arg("--")
         .arg(bin)
         .env("AOZORA_PROFILE_REPEAT", repeat.to_string())
+        .status()
+        .map_err(|e| format!("failed to spawn samply: {e}"))?;
+    expect_status(status, "samply record")?;
+
+    eprintln!();
+    eprintln!(">>> done. inspect with:");
+    eprintln!(
+        "    samply load {}        # opens local Firefox-Profiler UI",
+        out.display()
+    );
+    Ok(())
+}
+
+/// Sample-profile the HTML render hot path via `render_hot_path`.
+/// `repeat` controls per-doc render-loop iterations so render frames
+/// dominate the trace over the per-doc parse warmup.
+fn samply_render(repeat: usize) -> Result<(), String> {
+    require_env("AOZORA_CORPUS_ROOT")?;
+    require_perf_paranoid()?;
+
+    let timestamp = current_yyyymmdd_hhmmss();
+    let out = PathBuf::from("/tmp").join(format!("aozora-render-{timestamp}.json.gz"));
+
+    rebuild_with_debug("render_hot_path")?;
+    let bin = bench_example_path("render_hot_path")?;
+
+    eprintln!(
+        ">>> samply: repeat={repeat}\n           out={}",
+        out.display()
+    );
+    let status = Command::new("samply")
+        .arg("record")
+        .arg("--save-only")
+        .arg("--no-open")
+        .arg("-o")
+        .arg(&out)
+        .arg("-r")
+        .arg(SAMPLY_RATE_HZ.to_string())
+        .arg("--")
+        .arg(bin)
+        .env("AOZORA_RENDER_REPEAT", repeat.to_string())
         .status()
         .map_err(|e| format!("failed to spawn samply: {e}"))?;
     expect_status(status, "samply record")?;
