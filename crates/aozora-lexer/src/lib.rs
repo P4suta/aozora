@@ -85,7 +85,10 @@ pub use phase0_sanitize::{
 };
 pub use phase1_events::{Tokenizer, tokenize, tokenize_to_vec};
 pub use phase2_pair::{PairEvent, PairKind, PairOutput, PairStream, pair, pair_slice};
-pub use phase3_classify::{ClassifiedSpan, ClassifyStream, SpanKind, classify};
+pub use phase3_classify::{
+    ClassifiedSpan, ClassifyOutput, ClassifyStream, SpanKind, classify, classify_into_emit,
+    classify_slice,
+};
 pub use token::{Token, TriggerKind};
 
 #[cfg(test)]

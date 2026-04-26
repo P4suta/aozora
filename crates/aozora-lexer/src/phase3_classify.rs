@@ -215,6 +215,89 @@ where
     ClassifyStream::new(events.into_iter(), source, alloc)
 }
 
+/// Output of [`classify_slice`].
+#[derive(Debug)]
+pub struct ClassifyOutput<'a> {
+    pub spans: Vec<ClassifiedSpan<'a>>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Materialise every Phase 3 span from a `&[PairEvent]` slice into
+/// `ClassifyOutput { spans, diagnostics }`.
+///
+/// API entry — convenient for FFI / batch consumers that want the
+/// classified Vec back. **Production drives `classify_into_emit`
+/// instead** (skipping the wholesale Vec materialisation): on the
+/// corpus, R3 measurements showed that building a `Vec<ClassifiedSpan>`
+/// then iterating it through the normalizer doubled cache pressure
+/// vs the fused emit-callback path (corpus throughput regressed
+/// 8-23 % on every band when the Pipeline went through this slice
+/// API; the callback variant restores the streaming-path cache
+/// behaviour while still skipping the upstream `Iterator` chain).
+pub fn classify_slice<'a>(
+    events: &[PairEvent],
+    source: &str,
+    alloc: &mut BorrowedAllocator<'a>,
+) -> ClassifyOutput<'a> {
+    let mut spans: Vec<ClassifiedSpan<'a>> = Vec::with_capacity(events.len() / 2 + 8);
+    let diagnostics = classify_into_emit(events, source, alloc, |span| spans.push(span.clone()));
+    ClassifyOutput { spans, diagnostics }
+}
+
+/// Drive Phase 3 over a `&[PairEvent]` slice and feed each
+/// `ClassifiedSpan` to `emit` as it's produced — no intermediate
+/// `Vec` materialisation.
+///
+/// R3 (ADR-0016) deforestation reversal **production path**. The
+/// driver loop calls `process_event(event)` directly per slice
+/// element, eliminating both:
+///
+/// 1. The `loop { pop pending; pull next; process }` Iterator-next
+///    shape that showed `ClassifyStream::next` at 1.4 % on doc
+///    49178's samply.
+/// 2. The `into_iter()` chain at the Phase 2 → Phase 3 boundary.
+///
+/// `pending_outputs: VecDeque` still exists inside `ClassifyStream`
+/// as a tiny intra-event FIFO (a single event's recogniser may emit
+/// up to 3-4 spans; the drain loop empties it immediately), but the
+/// loop never builds a `Vec` of spans — `emit` runs in tight
+/// callback succession with the recogniser, keeping the cache
+/// pattern identical to the pre-R3 streaming path while removing the
+/// outer `Iterator` overhead.
+pub fn classify_into_emit<'a, F>(
+    events: &[PairEvent],
+    source: &str,
+    alloc: &mut BorrowedAllocator<'a>,
+    mut emit: F,
+) -> Vec<Diagnostic>
+where
+    F: FnMut(&ClassifiedSpan<'a>),
+{
+    install_forward_target_index_from_source(source);
+
+    // Empty upstream — we drive `process_event` directly per slice
+    // element. The Iterator type parameter is `iter::Empty`, a
+    // zero-cost monomorphisation.
+    let mut stream = ClassifyStream::new(iter::empty::<PairEvent>(), source, alloc);
+
+    for event in events {
+        // Drain spans the previous event pushed into pending_outputs.
+        // Mirrors `ClassifyStream::next`'s "yield pending first"
+        // invariant — order stays source-aligned.
+        while let Some(span) = stream.pending_outputs.pop_front() {
+            emit(&span);
+        }
+        stream.process_event(event.clone());
+    }
+    // EOF processing: close any active frame as unclosed; flush
+    // pending plain run.
+    stream.finalize();
+    while let Some(span) = stream.pending_outputs.pop_front() {
+        emit(&span);
+    }
+    stream.take_diagnostics()
+}
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::OnceLock;

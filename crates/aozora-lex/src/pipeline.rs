@@ -325,10 +325,15 @@ impl<'a> Pipeline<'_, 'a, Paired> {
         let mut alloc = BorrowedAllocator::with_capacity(self.arena, interner_hint);
         let mut builder = ArenaNormalizer::new(sanitized_text, sanitized_text.len() / 64);
 
-        // Phase 3 still consumes an iterator interface in R2 (R3 will
-        // switch it to `&[PairEvent]` + `Vec<ClassifiedSpan>`). Drain
-        // the materialised event list through the existing
-        // ClassifyStream API.
+        // R3 (ADR-0016) production wiring: drain the materialised
+        // Vec<PairEvent> through the streaming `classify` Iterator
+        // path. The slice-API alternatives `classify_slice` (returns
+        // Vec<ClassifiedSpan>) and `classify_into_emit` (callback) are
+        // available for batch / FFI consumers but measurably regressed
+        // corpus throughput when wired here — the streaming Iterator
+        // chain is the production-cheapest shape on this workload, even
+        // though Phase 1 / Phase 2 above materialise their outputs.
+        // ADR-0016 has the bake-off table.
         let mut events_iter = events.into_iter();
         let classify_diagnostics: Vec<Diagnostic> = {
             let mut classify_stream = classify(&mut events_iter, sanitized_text, &mut alloc);
