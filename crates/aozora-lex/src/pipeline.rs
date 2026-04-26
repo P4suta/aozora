@@ -1,4 +1,4 @@
-//! Type-state lex pipeline (post-R2 / R3 — Vec-passing between phases).
+//! Type-state lex pipeline (post-R4-A — arena `BumpVec` between phases).
 //!
 //! `Pipeline<'src, 'a, S>` makes the lex phase order enforceable at
 //! compile time. The state markers [`Source`], [`Sanitized`],
@@ -18,16 +18,24 @@
 //!   `.tokens()`, `.events()`, `.diagnostics()`) so callers can probe
 //!   the partial output without re-running the pipeline.
 //!
-//! # Vec-passing (R2/R3, ADR-0016)
+//! # Arena-batch passing (R4-A, ADR-0017)
 //!
-//! Every inter-phase boundary now materialises a `Vec<…>` instead of
-//! handing the next phase an `impl Iterator<Item = …>`. Phase 1 emits
-//! `Vec<Token>`; Phase 2 emits `Vec<PairEvent>`; Phase 3 emits the
-//! final `Vec<ClassifiedSpan>` directly into the arena normalizer.
+//! Every inter-phase boundary materialises a [`bumpalo::collections::Vec`]
+//! inside the pipeline's [`Arena`]. Phase 1 emits `BumpVec<'a, Token>`;
+//! Phase 2 emits `BumpVec<'a, PairEvent>`; Phase 3 streams its
+//! `ClassifiedSpan`s through the [`crate::borrowed::ArenaNormalizer`]
+//! callback (no third Vec materialisation — R3 measured the streaming
+//! `classify` Iterator path as the cheapest shape on the corpus).
+//!
+//! Net effect on the corpus profile: the per-parse `malloc`/`free`
+//! traffic that R2 introduced (allocation bucket = 25.7 % of corpus
+//! parse) collapses into a single bump-pointer advance per element.
+//! Allocation drops to <15 % and the remaining cost is recovered by
+//! the rayon-parallel bench harness (R4-B).
 //!
 //! The `I` generic parameter the pre-R2 pipeline carried (to thread
 //! the iterator type through state transitions) is *gone*. Each state
-//! holds its phase output as a concrete `Option<Vec<…>>` field.
+//! holds its phase output as a concrete `Option<BumpVec<'a, …>>` field.
 //!
 //! # Lifetime model
 //!
@@ -70,12 +78,13 @@
 
 use core::marker::PhantomData;
 
-use aozora_lexer::{PairEvent, Token, classify, pair_slice, sanitize, tokenize_to_vec};
+use aozora_lexer::{PairEvent, Token, classify, pair_in, sanitize, tokenize_in};
 use aozora_spec::Diagnostic;
 use aozora_syntax::ContainerKind;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Registry};
 use aozora_veb::EytzingerMap;
+use bumpalo::collections::Vec as BumpVec;
 
 use crate::BorrowedLexOutput;
 use crate::borrowed::ArenaNormalizer;
@@ -92,11 +101,11 @@ pub struct Source;
 #[derive(Debug, Clone, Copy)]
 pub struct Sanitized;
 
-/// Phase 1 has run; `tokens: Vec<Token>` materialised.
+/// Phase 1 has run; `tokens: BumpVec<'a, Token>` materialised in arena.
 #[derive(Debug, Clone, Copy)]
 pub struct Tokenized;
 
-/// Phase 2 has run; `events: Vec<PairEvent>` materialised.
+/// Phase 2 has run; `events: BumpVec<'a, PairEvent>` materialised in arena.
 #[derive(Debug, Clone, Copy)]
 pub struct Paired;
 
@@ -115,10 +124,12 @@ pub struct Pipeline<'src, 'a, S> {
     /// downstream phase so the iterators don't refer back into the
     /// Pipeline struct itself.
     sanitized_text: Option<&'a str>,
-    /// `Some` after Phase 1 has materialised the token list (R2).
-    tokens: Option<Vec<Token>>,
-    /// `Some` after Phase 2 has materialised the event list (R2).
-    events: Option<Vec<PairEvent>>,
+    /// `Some` after Phase 1 has materialised the token list inside
+    /// `arena` (R4-A).
+    tokens: Option<BumpVec<'a, Token>>,
+    /// `Some` after Phase 2 has materialised the event list inside
+    /// `arena` (R4-A).
+    events: Option<BumpVec<'a, PairEvent>>,
     diagnostics: Vec<Diagnostic>,
     _state: PhantomData<S>,
 }
@@ -203,12 +214,13 @@ impl<'src, 'a> Pipeline<'src, 'a, Sanitized> {
         &self.diagnostics
     }
 
-    /// Run Phase 1 (tokenize). Materialises the full `Vec<Token>` in
-    /// one pass via [`tokenize_to_vec`] (R2 / ADR-0016).
+    /// Run Phase 1 (tokenize). Materialises the full
+    /// `BumpVec<'a, Token>` inside `arena` via [`tokenize_in`]
+    /// (R4-A / ADR-0017).
     #[must_use]
     pub fn tokenize(self) -> Pipeline<'src, 'a, Tokenized> {
         let text = self.sanitized_text();
-        let tokens = tokenize_to_vec(text);
+        let tokens = tokenize_in(text, self.arena);
         Pipeline {
             source: self.source,
             arena: self.arena,
@@ -239,9 +251,10 @@ impl<'src, 'a> Pipeline<'src, 'a, Tokenized> {
             .expect("tokens is always Some after Tokenized transition")
     }
 
-    /// Run Phase 2 (pair). Materialises `Vec<PairEvent>` in one pass
-    /// via [`pair_slice`] (R2 / ADR-0016). Phase 2's diagnostics are
-    /// drained into the pipeline's diagnostic accumulator immediately.
+    /// Run Phase 2 (pair). Materialises `BumpVec<'a, PairEvent>`
+    /// inside `arena` via [`pair_in`] (R4-A / ADR-0017). Phase 2's
+    /// diagnostics are drained into the pipeline's diagnostic
+    /// accumulator immediately.
     ///
     /// # Panics
     ///
@@ -254,7 +267,7 @@ impl<'src, 'a> Pipeline<'src, 'a, Tokenized> {
             .tokens
             .take()
             .expect("tokens is always Some after Tokenized transition");
-        let out = pair_slice(&tokens);
+        let out = pair_in(&tokens, self.arena);
         self.diagnostics.extend(out.diagnostics);
         Pipeline {
             source: self.source,
@@ -325,15 +338,16 @@ impl<'a> Pipeline<'_, 'a, Paired> {
         let mut alloc = BorrowedAllocator::with_capacity(self.arena, interner_hint);
         let mut builder = ArenaNormalizer::new(sanitized_text, sanitized_text.len() / 64);
 
-        // R3 (ADR-0016) production wiring: drain the materialised
-        // Vec<PairEvent> through the streaming `classify` Iterator
-        // path. The slice-API alternatives `classify_slice` (returns
-        // Vec<ClassifiedSpan>) and `classify_into_emit` (callback) are
-        // available for batch / FFI consumers but measurably regressed
-        // corpus throughput when wired here — the streaming Iterator
-        // chain is the production-cheapest shape on this workload, even
-        // though Phase 1 / Phase 2 above materialise their outputs.
-        // ADR-0016 has the bake-off table.
+        // R3 (ADR-0016) → R4-A (ADR-0017) production wiring: drain
+        // the arena-allocated BumpVec<PairEvent> through the
+        // streaming `classify` Iterator path. R3 measured wholesale
+        // Vec<ClassifiedSpan> and emit-callback variants for Phase 3,
+        // both regressed corpus throughput, so Phase 3 stays
+        // streaming. R4-A drops the dead `classify_slice` /
+        // `classify_into_emit` heap-batch APIs entirely; only the
+        // streaming `classify` survives. BumpVec::into_iter is a
+        // bumpalo-collections IntoIter that yields owned PairEvents —
+        // the iterator chain into `classify` is unchanged from R3.
         let mut events_iter = events.into_iter();
         let classify_diagnostics: Vec<Diagnostic> = {
             let mut classify_stream = classify(&mut events_iter, sanitized_text, &mut alloc);

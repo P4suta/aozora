@@ -6,12 +6,20 @@
 //! into [`PairEvent::PairOpen`] / [`PairEvent::PairClose`] /
 //! [`PairEvent::Solo`] / [`PairEvent::Unmatched`] / [`PairEvent::Unclosed`].
 //!
-//! After I-2 (deforestation) the public entry point is [`pair`], which
-//! returns `PairStream` — an `impl Iterator<Item = PairEvent>` with no
-//! intermediate `Vec<PairEvent>` materialisation. Phase 3's classifier
-//! consumes that stream directly, maintaining its own balanced stack
-//! to track body extents (since the stream no longer carries the prior
-//! `close_idx` / `open_idx` cross-link indices).
+//! Two production-ready surfaces sit side by side, mirroring Phase 1:
+//!
+//! - [`pair`] — streaming `PairStream` for FFI / incremental consumers.
+//! - [`pair_in`] — arena-batch `PairOutputIn<'a>` whose `events` is a
+//!   `BumpVec<'a, PairEvent>` allocated inside the caller's [`Arena`].
+//!   Used by the borrowed pipeline (R4-A / ADR-0017): the per-parse
+//!   event list lives in the arena alongside the AST it feeds, so
+//!   `PairEvent` materialisation is one bump-pointer advance per event
+//!   instead of `Vec<PairEvent>` heap allocation.
+//!
+//! Diagnostics stay heap-allocated. The corpus-median doc emits ~0.1
+//! diagnostics; per-arena allocation would cost more than it saves and
+//! diagnostics outlive the arena anyway (drained into the Pipeline
+//! accumulator).
 //!
 //! ## Why pairing must happen here, not in classify
 //!
@@ -47,6 +55,8 @@
 use core::mem;
 
 use aozora_syntax::Span;
+use aozora_syntax::borrowed::Arena;
+use bumpalo::collections::Vec as BumpVec;
 use smallvec::SmallVec;
 
 use crate::diagnostic::Diagnostic;
@@ -134,32 +144,37 @@ where
     PairStream::new(tokens)
 }
 
-/// Output of [`pair_slice`].
-#[derive(Debug, Default)]
-pub struct PairOutput {
-    pub events: Vec<PairEvent>,
+/// Output of [`pair_in`]. `events` lives in the caller's arena;
+/// `diagnostics` stays heap-allocated (rare and outlives the arena).
+#[derive(Debug)]
+pub struct PairOutputIn<'a> {
+    pub events: BumpVec<'a, PairEvent>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
 /// Materialise every Phase 2 event from a `&[Token]` slice into a
-/// single `PairOutput { events, diagnostics }`.
+/// single arena-backed `PairOutputIn { events: BumpVec, diagnostics }`.
 ///
-/// R2 (ADR-0016) deforestation reversal: this is the production entry
-/// point for Phase 2. The streaming [`pair`] / [`PairStream`] pair is
-/// kept for incremental / FFI consumers and for the existing test
-/// helpers; production drives `pair_slice(&tokens)` after Phase 1
-/// materialised its `Vec<Token>` via
-/// [`crate::tokenize_to_vec`][crate::phase1_events::tokenize_to_vec].
+/// R4-A (ADR-0017): production entry point for Phase 2. The borrowed
+/// pipeline owns the [`Arena`] and forwards it here; the resulting
+/// `BumpVec<'a, PairEvent>` lives next to the AST it will be folded
+/// into, eliminating per-parse `Vec<PairEvent>` malloc/free traffic
+/// from the corpus profile.
 ///
 /// Internally this is the same balanced-stack pass [`PairStream::next`]
 /// runs, flattened into a single `for token in tokens` loop pushing
-/// directly into a pre-sized `Vec<PairEvent>`. Capacity hint:
+/// directly into a pre-sized `BumpVec<PairEvent>`. Capacity hint:
 /// `tokens.len() + small`. The EOF-drain pass (synthetic `Unclosed`
 /// emission) is appended after the main loop, mirroring the
 /// `eof_drain` state-machine behaviour.
+///
+/// Diagnostics stay on the heap — see the module docstring for the
+/// rationale (median doc emits ~0.1 diagnostics; arena allocation
+/// would cost more than it saves and diagnostics outlive the arena).
 #[must_use]
-pub fn pair_slice(tokens: &[Token]) -> PairOutput {
-    let mut events: Vec<PairEvent> = Vec::with_capacity(tokens.len() + 4);
+pub fn pair_in<'a>(tokens: &[Token], arena: &'a Arena) -> PairOutputIn<'a> {
+    let mut events: BumpVec<'a, PairEvent> =
+        BumpVec::with_capacity_in(tokens.len() + 4, arena.bump());
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut stack: SmallVec<[(PairKind, Span); 8]> = SmallVec::new();
 
@@ -186,14 +201,14 @@ pub fn pair_slice(tokens: &[Token]) -> PairOutput {
         events.push(PairEvent::Unclosed { kind, span });
     }
 
-    PairOutput {
+    PairOutputIn {
         events,
         diagnostics,
     }
 }
 
 /// Free-function variant of [`PairStream::classify_trigger`] for
-/// [`pair_slice`]. Mutates the stack + diagnostics in place; same
+/// [`pair_in`]. Mutates the stack + diagnostics in place; same
 /// invariants as the streaming version.
 #[inline]
 fn classify_trigger_inline(

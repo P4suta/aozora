@@ -20,6 +20,7 @@ aozora-syntax   = { workspace = true }
 aozora-encoding = { workspace = true }
 aozora-scan     = { workspace = true }
 aozora-veb      = { workspace = true }
+bumpalo         = { workspace = true }
 memchr          = { workspace = true }
 
 # Phase migration in progress: we now own phase 1 (tokenize) via

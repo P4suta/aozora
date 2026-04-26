@@ -30,6 +30,7 @@ aozora-syntax   = { workspace = true }
 aozora-encoding = { workspace = true }
 aozora-scan     = { workspace = true }
 aho-corasick = { workspace = true, features = ["std"] }
+bumpalo      = { workspace = true }
 memchr       = { workspace = true }
 smallvec     = { workspace = true }
 thiserror    = { workspace = true }

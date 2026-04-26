@@ -6,12 +6,20 @@
 //! Aozora notation marker characters listed in [`TriggerKind`];
 //! everything else flows into [`Token::Text`] runs.
 //!
-//! After I-2 (deforestation) the public entry point is [`tokenize`],
-//! which returns `impl Iterator<Item = Token>` rather than a
-//! materialised `Vec<Token>`. Downstream phases (`pair`, `classify`)
-//! consume that stream directly so source bytes flow through CPU
-//! registers from `&str` input to arena-landed nodes in a single
-//! fused chain — no intermediate `Vec<Token>` allocation between phases.
+//! Two production-ready surfaces sit side by side:
+//!
+//! - [`tokenize`] — streaming `impl Iterator<Item = Token>`, kept for
+//!   FFI / incremental / pull-based consumers that have no arena.
+//! - [`tokenize_in`] — arena-batch `BumpVec<'a, Token>` allocated
+//!   inside the caller's [`Arena`]. Used by the borrowed pipeline:
+//!   one bump-pointer advance per token replaces N heap mallocs per
+//!   parse (R4-A / ADR-0017).
+//!
+//! The Aozora pipeline drives `tokenize_in` because it already owns an
+//! arena; benchmarks and FFI shims that want lazy semantics use
+//! `tokenize`. There is no third "heap-batch" entry point — R2 added
+//! one (`tokenize_to_vec`); R4-A removed it once the arena migration
+//! made it dead code.
 //!
 //! ## Algorithm (post-T2 / ADR-0015)
 //!
@@ -45,6 +53,8 @@
 
 use aozora_spec::classify_trigger_bytes;
 use aozora_syntax::Span;
+use aozora_syntax::borrowed::Arena;
+use bumpalo::collections::Vec as BumpVec;
 
 use crate::token::{Token, TriggerKind};
 
@@ -66,22 +76,27 @@ pub fn tokenize(source: &str) -> Tokenizer<'_> {
     Tokenizer::new(source)
 }
 
-/// Materialise every Phase 1 token into a `Vec<Token>` in one pass.
+/// Materialise every Phase 1 token into an arena-backed
+/// [`bumpalo::collections::Vec`] in one pass.
 ///
-/// R2 (ADR-0016) deforestation reversal: Phase 2 takes `&[Token]`, so
-/// production now goes through this function instead of the streaming
-/// [`tokenize`] iterator. The streaming variant is kept for incremental
-/// / FFI consumers that pull lazily.
+/// R4-A (ADR-0017): the inter-phase token list is allocated inside the
+/// caller's arena instead of on the heap. The borrowed pipeline already
+/// owns one [`Arena`] per parse — collapsing per-parse `Vec<Token>`
+/// `malloc`/`free` traffic into a single bump-pointer advance per token
+/// removed allocation from the corpus profile's top bucket. The
+/// streaming [`tokenize`] iterator is kept for incremental / FFI
+/// consumers that pull lazily and have no arena to spend.
 ///
 /// Internally this is exactly the merge-walk [`Tokenizer::next`] runs,
-/// flattened into a single `for` loop pushing into a pre-sized `Vec`.
+/// flattened into a single `for` loop pushing into a pre-sized `BumpVec`.
 /// Drops the `pending: Option<Token>` slot (the streaming buffer for
 /// "Text+Trigger emitted together") because direct pushes can write
 /// both events back-to-back.
 ///
 /// Capacity hint: 2 tokens per trigger (text+trigger) + one per
 /// newline + a small fixed overhead. Slight over-estimate is cheap
-/// and avoids reallocs on dense docs.
+/// and avoids the `BumpVec` re-grow path (which moves the previous
+/// allocation forward in the arena, doubling its footprint).
 ///
 /// # Panics
 ///
@@ -91,7 +106,7 @@ pub fn tokenize(source: &str) -> Tokenizer<'_> {
     clippy::cast_possible_truncation,
     reason = "function entry asserts source.len() <= u32::MAX, so every byte index fits"
 )]
-pub fn tokenize_to_vec(source: &str) -> Vec<Token> {
+pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> BumpVec<'a, Token> {
     assert!(
         u32::try_from(source.len()).is_ok(),
         "source too long for u32 span offsets ({} bytes)",
@@ -109,7 +124,7 @@ pub fn tokenize_to_vec(source: &str) -> Vec<Token> {
     }
 
     let cap = trigger_offsets.len() * 2 + newline_offsets.len() + 8;
-    let mut out: Vec<Token> = Vec::with_capacity(cap);
+    let mut out: BumpVec<'a, Token> = BumpVec::with_capacity_in(cap, arena.bump());
 
     let mut text_start: u32 = 0;
     let mut t_idx: usize = 0;
@@ -168,7 +183,7 @@ pub fn tokenize_to_vec(source: &str) -> Vec<Token> {
 }
 
 /// Free-function variant of [`Tokenizer::try_merge_double`] used by
-/// [`tokenize_to_vec`]. Returns `(kind, byte_len, extra_idx)`.
+/// [`tokenize_in`]. Returns `(kind, byte_len, extra_idx)`.
 #[inline]
 #[allow(
     clippy::too_many_arguments,
