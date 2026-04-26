@@ -381,6 +381,55 @@ work: tighten the iterator path to recover the win on outliers too.
 
 Commits: TBD. ADR: `docs/adr/0015-aozora-scan-bake-off-and-result.md`.
 
+### R1 / R2 / R3: I-2 deforestation reversal investigation (2026-04-27)
+
+After T2 (Teddy SIMD scanner), `phase3_subsystems` instrumented
+output reported "88 % iterator-dispatch overhead" in Phase 3 and
+samply showed `*Stream::next` chains accumulating ~7 % on doc 49178.
+Hypothesis: ADR-0009 § I-2 (fuse phases as `impl Iterator` chains)
+was a premature optimisation; per-item iterator overhead would dwarf
+one extra `Vec` alloc per phase.
+
+Three sequential jj changes on `r1-r2-r3-deforestation-reversal`,
+each independently benchmarkable via `jj edit`:
+
+- **R1**: `#[inline]` annotations on Phase 3 hot dispatch.
+  Aggressive: -5.5 % to -1.1 % regression by band (i-cache thrash).
+  Selective: ±1.3 % noise. **Negative result — documented inline in
+  `phase3_classify.rs`. LLVM at -O3 + fat-LTO already inlines
+  optimally on this code.**
+- **R2**: Phase 1 → `Vec<Token>`; Phase 2 takes `&[Token]`. Pipeline
+  drops the `I` generic + gains `.tokens()` / `.events()` accessors.
+  Architecturally net-positive; perf -3 to -15 % on corpus,
+  -4 % on doc 49178.
+- **R3**: Adds `classify_slice` / `classify_into_emit` Phase 3 batch
+  APIs. Pipeline.build retained the streaming `classify` Iterator
+  path (the slice/callback APIs regressed corpus throughput when
+  wired). Doc 49178 outlier: lex_into_arena 1.86 → 1.21 ms (-35 %),
+  classify 0.84 → 0.43 ms (-49 %) — gained because the production
+  path now has *one* concrete `Iterator` type
+  (`Vec<PairEvent>::IntoIter`) instead of three nested ones
+  (`Tokenizer → PairStream<Tokenizer> → ClassifyStream`).
+
+Net architectural change:
+- New `tokenize_to_vec` / `pair_slice` / `classify_slice` /
+  `classify_into_emit` APIs for batch / FFI consumers.
+- Pipeline shape simpler (no `I` generic, intermediate-state
+  accessors).
+- Production `lex_into_arena` retains the streaming path on the
+  corpus average (Iterator chain re-affirmed by data).
+
+Reading: the "88 % dispatch overhead" reading was inflated by the
+instrumentation itself (`Instant::now` per `SubsystemGuard`). Without
+instrumentation, the streaming Iterator chain monomorphises tightly
+enough that LLVM fuses it across crates, and per-doc Vec allocation
+cost (3-5 mid-sized `Vec`s) dominates the corpus-median 25 µs parse
+budget. **ADR-0009 § I-2 deforestation hypothesis: re-affirmed for
+production; reversed for batch / FFI APIs.**
+
+Commits: TBD. ADR:
+`docs/adr/0016-deforestation-reversal-investigation.md`.
+
 ---
 
 ## Workflow recipes
@@ -491,3 +540,4 @@ SIMD, just not aozora-scan's).
 | `docs/adr/0014-phase-breakdown-findings.md` | original phase 3 outlier finding (`明治人物月旦`) |
 | `docs/adr/0013-aozora-scan-leading-byte-strategy-loses-on-japanese.md` | T1 architectural decision (superseded by 0015) |
 | `docs/adr/0015-aozora-scan-bake-off-and-result.md` | T2 four-backend bake-off + Teddy winner |
+| `docs/adr/0016-deforestation-reversal-investigation.md` | R1/R2/R3 deforestation reversal — Iterator chain re-affirmed, batch APIs added |

@@ -20,17 +20,26 @@ use std::path::Path;
 use regex::Regex;
 
 /// Built-in category table for [`RollupConfig::aozora_defaults`].
-/// First-match wins, in declaration order.
+/// First-match wins, in declaration order. The ordering matters —
+/// e.g. AVX2 SIMD intrinsics are attributed to `phase1_scan`
+/// (because that's where the only AVX2 use is) BEFORE the generic
+/// `core_simd_intrinsics` catch-all sees them.
 const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
     (
         "phase1_scan",
         &[
-            r"aho_corasick::packed::teddy",
-            r"aho_corasick::packed::vector",
-            r"aozora_scan::backends::teddy",
-            r"aozora_scan::backends::structural_bitmap",
-            r"aozora_scan::backends::dfa",
+            r"aho_corasick::packed",
+            r"aozora_scan::backends",
             r"aozora_scan::naive",
+            // AVX2 SIMD primitives only used inside Teddy / packed
+            // (the production scanner). Attribute to the caller.
+            r"core::core_arch::x86_64::avx::_mm256_extract",
+            r"core::core_arch::x86::avx2::_mm256_movemask",
+            r"core::core_arch::x86::avx2::_mm256_cmpeq",
+            r"core::core_arch::x86::avx2::_mm256_shuffle",
+            r"core::core_arch::x86::avx2::_mm256_or",
+            r"core::core_arch::x86::avx2::_mm256_and",
+            r"core::core_arch::x86::avx2::_mm256_alignr",
         ],
     ),
     ("phase1_walker", &[r"aozora_lexer::phase1_events"]),
@@ -47,7 +56,15 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
         "phase4_intern",
         &[r"aozora_syntax::borrowed::intern", r"Interner"],
     ),
-    ("memchr_scan", &[r"memchr::arch", r"memchr::memmem"]),
+    (
+        "memchr_scan",
+        &[
+            r"memchr::arch",
+            r"memchr::memmem",
+            r"memchr::vector",
+            r"core::slice::memchr",
+        ],
+    ),
     (
         "corpus_load_sjis",
         &[
@@ -80,18 +97,134 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
     (
         "allocation",
         &[
-            r"alloc::",
+            r"alloc::vec",
+            r"alloc::raw_vec",
+            r"alloc::string",
+            r"alloc::collections",
+            r"alloc::alloc",
             r"bumpalo::",
+            r"smallvec::",
             r"__rust_alloc",
             r"__rust_dealloc",
-            r"malloc",
-            r"realloc",
-            r"free",
-            r"memmove",
-            r"memcpy",
+            // libc heap (resolved via .dynsym fallback)
+            r"^malloc$",
+            r"^realloc$",
+            r"^calloc$",
+            r"^free$",
+            r"^cfree$",
+            r"^aligned_alloc$",
+            r"^posix_memalign$",
+            r"^__libc_malloc",
+            r"^__libc_free",
+            r"^__libc_calloc",
+            r"^__libc_realloc",
+            r"^_int_malloc",
+            r"^_int_free",
+            r"^_int_realloc",
+            r"^arena_",
+            r"^malloc_consolidate",
+            // libc memory ops
+            r"^memmove",
+            r"^memcpy",
+            r"^memset",
+            r"^bzero",
+            r"^__memmove",
+            r"^__memcpy",
+            r"^__memset",
+            r"GlobalAlloc",
+            // libc heap internals — when fuzzy lookup attributes
+            // an address to `__default_morecore+0xNNNN`, that's
+            // really `_int_malloc` / `malloc_consolidate` /
+            // `_int_free` (hidden symbols only resolved with
+            // libc6-dbg). Treat as allocation.
+            r"^__default_morecore",
+            // NSS region in libc happens to share the linker
+            // segment with __memcpy_chk / __memmove_chk and the
+            // optimised string ops — fuzzy hits here in our trace
+            // are not actually NSS calls (we don't do DNS lookups
+            // during corpus parse).
+            r"^__nss_database_lookup\+",
+        ],
+    ),
+    (
+        "io_syscalls",
+        &[
+            r"^__read$",
+            r"^__write$",
+            r"^read$",
+            r"^write$",
+            r"^open(at)?$",
+            r"^close$",
+            r"^fstat",
+            r"^lseek",
+            r"^mmap",
+            r"^munmap",
+            r"^brk$",
+            r"^sbrk$",
+            r"^syscall",
+            r"^__libc_read",
+            r"^__libc_write",
         ],
     ),
     ("rendering", &[r"aozora_render"]),
+    // Generic helpers that can't be attributed to a specific phase
+    // because the same primitive is called from many places. Useful
+    // to surface as a single bucket so they don't drown in `unknown`.
+    (
+        "core_ptr_ops",
+        &[
+            r"core::ptr::write",
+            r"core::ptr::read",
+            r"core::ptr::const_ptr",
+            r"core::ptr::mut_ptr",
+            r"core::ptr::non_null",
+        ],
+    ),
+    (
+        "core_slice_ops",
+        &[
+            r"core::slice::cmp",
+            r"core::slice::index",
+            r"core::slice::iter",
+            r"core::str::pattern",
+            r"core::str::iter",
+            r"core::str::traits",
+            r"core::ops::range",
+        ],
+    ),
+    (
+        "core_arith",
+        &[
+            r"<u8>",
+            r"<u16>",
+            r"<u32>",
+            r"<u64>",
+            r"<usize>",
+            r"<i8>",
+            r"<i16>",
+            r"<i32>",
+            r"<i64>",
+            r"<isize>",
+            r"core::intrinsics",
+            r"core::num",
+        ],
+    ),
+    (
+        "core_misc",
+        &[
+            r"core::option",
+            r"core::result",
+            r"core::cmp",
+            r"core::convert",
+            r"core::iter",
+            r"core::mem",
+            r"core::unicode",
+            r"core::char",
+            r"core::fmt",
+            r"core::str::validations",
+            r"core::ops",
+        ],
+    ),
 ];
 
 #[derive(Debug, thiserror::Error)]

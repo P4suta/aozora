@@ -48,8 +48,19 @@ pub fn compare(before: &Trace, after: &Trace, top: usize) -> ComparisonReport {
     let bsize = top.saturating_mul(4).max(top);
     let b = hot_leaves(before, bsize);
     let a = hot_leaves(after, bsize);
-    let bmap: HashMap<&str, f64> = b.rows.iter().map(|r| (r.label.as_str(), r.pct)).collect();
-    let amap: HashMap<&str, f64> = a.rows.iter().map(|r| (r.label.as_str(), r.pct)).collect();
+    // For comparison purposes the leaf-mode `self_pct` IS the
+    // canonical "where the CPU was" percentage (incl_pct equals
+    // self_pct in leaf mode).
+    let bmap: HashMap<&str, f64> = b
+        .rows
+        .iter()
+        .map(|r| (r.label.as_str(), r.self_pct))
+        .collect();
+    let amap: HashMap<&str, f64> = a
+        .rows
+        .iter()
+        .map(|r| (r.label.as_str(), r.self_pct))
+        .collect();
 
     let mut rows: Vec<ComparisonRow> = Vec::new();
     let mut keys: BTreeSet<&str> = BTreeSet::new();

@@ -49,7 +49,11 @@ pub(crate) enum TraceCmd {
         #[arg(long)]
         lib_name: Option<String>,
     },
-    /// Top-N hot frames.
+    /// Top-N hot frames. Both `incl %` (frame anywhere on stack)
+    /// and `self %` (frame is the leaf) are shown so entry-point
+    /// trampolines (`_start` / `FnOnce::call_once` — `incl ≈ 99`,
+    /// `self ≈ 0`) are visually distinguishable from real hot work
+    /// without being filtered out.
     Hot {
         trace: PathBuf,
         /// Number of rows to print.
@@ -156,6 +160,29 @@ fn cmd_cache(trace_path: &Path, binary: &Path, lib_name: Option<&str>) -> Result
     sym.add_binary(&lib_name, binary)
         .map_err(|e| e.to_string())?;
     sym.verify_against(&trace).map_err(|e| e.to_string())?;
+
+    // Auto-register every other library in the trace via the
+    // dynamic-symbol fallback. libc.so.6 etc. don't have DWARF on
+    // most distros without `libc6-dbg`, but `.dynsym` is always
+    // present and gives us memcpy / memmove / malloc / etc.
+    for lib in &trace.libs {
+        if lib.name == lib_name {
+            continue;
+        }
+        let path = Path::new(&lib.path);
+        if path.exists() {
+            match sym.add_binary_dynamic_only(&lib.name, path) {
+                Ok(n) if n > 0 => {
+                    eprintln!(
+                        "[symbolicator] {}: {n} dynamic symbols loaded (.dynsym fallback)",
+                        lib.name
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
     let mut cache = SymbolCache::default();
     let (resolved, attempted) = sym.resolve_into(&mut trace, &mut cache);
     let cache_path = SymbolCache::sidecar_path_for(trace_path);

@@ -32,7 +32,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use addr2line::Loader;
-use object::{Object as _, ObjectKind};
+use object::{Object as _, ObjectKind, ObjectSymbol as _};
 
 use crate::{SymbolCache, Trace};
 
@@ -47,6 +47,64 @@ pub struct Symbolicator {
     /// Build-id (gnu .note.gnu.build-id) per registered library —
     /// used to validate against the trace's recorded `debug_id`.
     build_ids: HashMap<String, String>,
+    /// Dynamic symbol table per registered library, sorted by start
+    /// address. Used as the *fallback* when DWARF resolution returns
+    /// `None` — picks up `memcpy` / `malloc` / etc. in stripped
+    /// system libraries (libc.so.6 doesn't ship DWARF debuginfo on
+    /// most distros without the libc6-dbg package).
+    dyn_symbols: HashMap<String, DynSymbolTable>,
+}
+
+/// Sorted (`start_address`, `end_address`, `demangled_name`) triples
+/// extracted from an ELF's `.dynsym` table. Lookup is binary-search
+/// over `start` then range-check.
+#[derive(Debug, Default)]
+struct DynSymbolTable {
+    entries: Vec<(u64, u64, String)>,
+}
+
+/// Maximum distance (bytes) for the fuzzy fallback to attribute an
+/// unresolved address to the nearest preceding symbol. 256 KiB
+/// covers libc's malloc-area gap (the internal allocator code lives
+/// in a contiguous block after `__default_morecore` with no
+/// `.dynsym` entries pointing into it). Bigger than the largest
+/// reasonable single function body but small enough that we don't
+/// label random gaps as `+ huge_offset`.
+const DYNSYM_FUZZY_GAP_LIMIT: u64 = 256 * 1024;
+
+impl DynSymbolTable {
+    /// Resolve `address` to a function name.
+    ///
+    /// Two-tier:
+    /// 1. **Exact range match** — `address ∈ [start, end)` for a
+    ///    symbol with a non-zero size. This is what addr2line gives
+    ///    you for fully-DWARF'd binaries; here it covers symbols
+    ///    whose ELF size is known.
+    /// 2. **Fuzzy nearest-preceding** — for libc-style stripped
+    ///    libraries where IFUNC stubs and internal hidden helpers
+    ///    leave most code-bytes outside any `.dynsym` range, fall
+    ///    back to the nearest preceding symbol + offset, capped at
+    ///    [`DYNSYM_FUZZY_GAP_LIMIT`]. Returns names like
+    ///    `__libc_malloc+0x582` instead of bare `0xac098`.
+    fn lookup(&self, address: u64) -> Option<String> {
+        if self.entries.is_empty() {
+            return None;
+        }
+        let idx = self
+            .entries
+            .partition_point(|(start, _, _)| *start <= address);
+        if idx == 0 {
+            return None;
+        }
+        let (start, end, name) = &self.entries[idx - 1];
+        if address >= *start && address < *end {
+            return Some(name.clone());
+        }
+        // Fuzzy fallback: address is past `end` (or `end == start`,
+        // which happens for IFUNC stubs with size 0).
+        let gap = address - *start;
+        (gap <= DYNSYM_FUZZY_GAP_LIMIT).then(|| format!("{name}+0x{gap:x}"))
+    }
 }
 
 impl std::fmt::Debug for Symbolicator {
@@ -58,6 +116,14 @@ impl std::fmt::Debug for Symbolicator {
             .field("loader_count", &self.loaders.len())
             .field("registered_libs", &self.paths)
             .field("build_ids", &self.build_ids)
+            .field(
+                "dyn_symbol_libs",
+                &self
+                    .dyn_symbols
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.entries.len()))
+                    .collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -101,6 +167,8 @@ impl Symbolicator {
             message: e.to_string(),
         })?;
         let build_id = read_build_id(binary_path).unwrap_or_default();
+        let dyn_table = read_dynamic_symbols(binary_path).unwrap_or_default();
+        self.dyn_symbols.insert(lib_name.to_owned(), dyn_table);
         self.loaders.insert(lib_name.to_owned(), loader);
         self.paths
             .insert(lib_name.to_owned(), binary_path.to_path_buf());
@@ -167,23 +235,59 @@ impl Symbolicator {
         count
     }
 
+    /// Register a binary using *only* the dynamic-symbol table —
+    /// no DWARF expected. Convenient for stripped system libraries
+    /// (`libc.so.6`, `ld-linux-x86-64.so.2`, …) that ship `.dynsym`
+    /// but no debuginfo. Returns the number of dynamic symbols
+    /// loaded.
+    pub fn add_binary_dynamic_only(
+        &mut self,
+        lib_name: &str,
+        binary_path: &Path,
+    ) -> Result<usize, SymbolError> {
+        let dyn_table = read_dynamic_symbols(binary_path).ok_or_else(|| SymbolError::Loader {
+            path: binary_path.to_path_buf(),
+            message: "no readable .dynsym table".into(),
+        })?;
+        let count = dyn_table.entries.len();
+        self.dyn_symbols.insert(lib_name.to_owned(), dyn_table);
+        self.paths
+            .insert(lib_name.to_owned(), binary_path.to_path_buf());
+        Ok(count)
+    }
+
     /// Walk every unresolved frame in `trace` and resolve via the
-    /// appropriate loader. Returns `(resolved, attempted)` counts.
-    /// Records each new name into `cache`.
+    /// appropriate loader, then via the dynamic-symbol fallback for
+    /// libraries that have no DWARF (system libs). Returns
+    /// `(resolved, attempted)` counts. Records each new name into
+    /// `cache`.
     pub fn resolve_into(&self, trace: &mut Trace, cache: &mut SymbolCache) -> (usize, usize) {
         let mut resolved = 0;
         let mut attempted = 0;
-        // Build a per-thread "library_idx → loader + name + debug_id"
-        // lookup once.
+        // Build a per-thread "library_idx → (loader?, dyn_table?,
+        // name, debug_id)" lookup once. Either source is optional —
+        // a library may have only DWARF, only dynsym, or both.
         for thread_idx in 0..trace.threads.len() {
-            let mut lib_to_loader: Vec<Option<(&Loader, &str, &str)>> =
-                Vec::with_capacity(trace.libs.len());
+            type LibBindings<'a> = Option<(
+                Option<&'a Loader>,
+                Option<&'a DynSymbolTable>,
+                &'a str,
+                &'a str,
+            )>;
+            let mut lib_bindings: Vec<LibBindings<'_>> = Vec::with_capacity(trace.libs.len());
             for lib in &trace.libs {
-                lib_to_loader.push(
-                    self.loaders
-                        .get(&lib.name)
-                        .map(|l| (l, lib.name.as_str(), lib.debug_id.as_str())),
-                );
+                let loader = self.loaders.get(&lib.name);
+                let dyn_table = self.dyn_symbols.get(&lib.name);
+                if loader.is_some() || dyn_table.is_some() {
+                    lib_bindings.push(Some((
+                        loader,
+                        dyn_table,
+                        lib.name.as_str(),
+                        lib.debug_id.as_str(),
+                    )));
+                } else {
+                    lib_bindings.push(None);
+                }
             }
             let thread = &mut trace.threads[thread_idx];
             for frame_idx in 0..thread.frame_table.len() {
@@ -193,12 +297,16 @@ impl Symbolicator {
                 let Some(lib_idx) = thread.frame_library(frame_idx) else {
                     continue;
                 };
-                let Some(Some((loader, lib_name, debug_id))) = lib_to_loader.get(lib_idx) else {
+                let Some(Some((loader, dyn_table, lib_name, debug_id))) = lib_bindings.get(lib_idx)
+                else {
                     continue;
                 };
                 attempted += 1;
                 let addr = thread.frame_table[frame_idx].address;
-                if let Some(name) = resolve_one(loader, addr) {
+                let name = loader
+                    .and_then(|l| resolve_one(l, addr))
+                    .or_else(|| dyn_table.and_then(|t| t.lookup(addr)));
+                if let Some(name) = name {
                     cache.record(
                         crate::LibIdent {
                             name: lib_name,
@@ -242,6 +350,40 @@ fn read_build_id(path: &Path) -> Option<String> {
         write!(&mut hex, "{b:02x}").expect("String write_fmt is infallible");
     }
     Some(hex)
+}
+
+/// Read the ELF dynamic-symbol table (`.dynsym`) and return a
+/// sorted (`start`, `end`, `demangled_name`) triple table for
+/// fallback address → name resolution when DWARF is unavailable.
+///
+/// `.dynsym` is present on every dynamically-linked ELF, even when
+/// the binary is `strip`'d — it's required by the runtime linker
+/// for symbol relocation. So `libc.so.6` (typically stripped)
+/// yields ~2300 exported symbols including `memcpy` / `memmove` /
+/// `malloc` / etc., which is what shows up hot in our traces.
+///
+/// Returns `None` only if the file isn't a readable ELF.
+fn read_dynamic_symbols(path: &Path) -> Option<DynSymbolTable> {
+    let bytes = fs::read(path).ok()?;
+    let obj = object::File::parse(&bytes[..]).ok()?;
+    let mut entries: Vec<(u64, u64, String)> = Vec::new();
+    for sym in obj.dynamic_symbols() {
+        let Ok(name) = sym.name() else { continue };
+        if name.is_empty() {
+            continue;
+        }
+        let address = sym.address();
+        if address == 0 {
+            continue;
+        }
+        let size = sym.size().max(1);
+        // Best-effort Rust demangle (no-op for C names like `malloc`).
+        let demangled =
+            addr2line::demangle_auto(std::borrow::Cow::Borrowed(name), None).into_owned();
+        entries.push((address, address + size, demangled));
+    }
+    entries.sort_by_key(|(start, _, _)| *start);
+    Some(DynSymbolTable { entries })
 }
 
 /// Strip dashes and lowercase. Breakpad and GNU forms differ in
