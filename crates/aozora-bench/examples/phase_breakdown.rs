@@ -51,6 +51,8 @@ use std::env;
 use std::process;
 use std::time::Instant;
 
+use std::cell::RefCell;
+
 use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
 use aozora_encoding::decode_sjis;
 use aozora_lex::lex_into_arena;
@@ -58,6 +60,21 @@ use aozora_lexer::{ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, t
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;
 use rayon::prelude::*;
+
+// One arena per worker thread per measurement role. Reused across
+// docs by resetting between parses (M-1 / ADR-0019). The two arenas
+// are kept separate because the Phase 3 measurement and the full
+// pipeline measurement run back-to-back inside a single
+// `measure_one` call — sharing one arena would force a reset
+// mid-call, after which the prior measurement's borrowed output
+// would be invalidated.
+//
+// `RefCell` matches `Arena`'s `!Sync` contract (each rayon worker
+// owns its own thread-local cell, never shared across threads).
+thread_local! {
+    static WORKER_ARENA_PHASE3: RefCell<Arena> = RefCell::new(Arena::new());
+    static WORKER_ARENA_FULL: RefCell<Arena> = RefCell::new(Arena::new());
+}
 
 const NS_PER_MS: f64 = 1_000_000.0;
 const NS_PER_S: f64 = 1_000_000_000.0;
@@ -189,27 +206,35 @@ fn measure_one(text: &str) -> PhaseSample {
     drop(pair_stream.take_diagnostics());
     let pair_ns = t.elapsed().as_nanos() as u64;
 
-    // Phase 3 — needs an arena + allocator. The arena is dropped at
-    // the end of the call so we don't carry borrowed AST across the
-    // measurement boundary.
-    let arena = Arena::new();
-    let mut alloc = BorrowedAllocator::new(&arena);
-    let t = Instant::now();
-    let mut classify_stream = classify(pair_events, &sanitized.text, &mut alloc);
-    let _classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
-    drop(classify_stream.take_diagnostics());
-    let classify_ns = t.elapsed().as_nanos() as u64;
+    // Phase 3 — needs an arena + allocator. Borrows the per-worker
+    // reusable arena (M-1) and resets it before parsing so the prior
+    // doc's allocations don't bloat this measurement.
+    let classify_ns = WORKER_ARENA_PHASE3.with(|cell| {
+        let mut arena = cell.borrow_mut();
+        arena.reset();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let t = Instant::now();
+        let mut classify_stream = classify(pair_events, &sanitized.text, &mut alloc);
+        let _classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
+        drop(classify_stream.take_diagnostics());
+        t.elapsed().as_nanos() as u64
+    });
 
     // Full pipeline (sanitize → arena registry build). Includes the
     // post-classify ArenaNormalizer walk (the work that the legacy
     // phases 4–6 used to perform). Subtracting the four standalone
     // phases from `full_ns` gives an estimate of the post-classify
     // cost without us having to reach into `aozora-lex`'s private
-    // builder.
-    let arena_full = Arena::new();
-    let t = Instant::now();
-    let _full = lex_into_arena(text, &arena_full);
-    let full_ns = t.elapsed().as_nanos() as u64;
+    // builder. Same per-worker arena reuse as the Phase 3 block —
+    // separate cell because the two measurements would otherwise
+    // share one arena and reset mid-call.
+    let full_ns = WORKER_ARENA_FULL.with(|cell| {
+        let mut arena = cell.borrow_mut();
+        arena.reset();
+        let t = Instant::now();
+        let _full = lex_into_arena(text, &arena);
+        t.elapsed().as_nanos() as u64
+    });
 
     let standalone_sum = sanitize_ns + tokenize_ns + pair_ns + classify_ns;
     let post_classify_ns = full_ns.saturating_sub(standalone_sum);

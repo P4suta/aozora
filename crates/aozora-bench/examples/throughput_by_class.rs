@@ -57,6 +57,7 @@
     reason = "profiling-example tool, not library code"
 )]
 
+use std::cell::RefCell;
 use std::env;
 use std::process;
 use std::time::Instant;
@@ -66,6 +67,22 @@ use aozora_corpus::CorpusItem;
 use aozora_lex::lex_into_arena;
 use aozora_syntax::borrowed::Arena;
 use rayon::prelude::*;
+
+// One Arena per worker thread, reused across the docs that worker
+// processes. `Bump::reset()` between docs drops the prior parse's
+// allocations without releasing the chunks — saving the per-doc
+// `mmap` syscall that R4-B's per-task `Arena::new()` was paying.
+//
+// `RefCell` matches `Arena`'s `!Sync` contract exactly (the rayon
+// pool gives each worker its own thread-local cell, so the cell is
+// never observed from a second thread). The borrow scope must close
+// before the closure returns — which it does, because the closure
+// drops `_out` immediately after timing.
+//
+// M-1 / ADR-0019.
+thread_local! {
+    static WORKER_ARENA: RefCell<Arena> = RefCell::new(Arena::new());
+}
 
 const NS_PER_S: f64 = 1_000_000_000.0;
 
@@ -176,18 +193,24 @@ fn measure_all(banded: &SizeBandedCorpus, parallel: bool) -> AllReport {
     report
 }
 
-/// Measure one size-band. Each closure invocation owns a fresh
-/// [`Arena`] (matching `lex_into_arena`'s contract); under `parallel`
-/// the closures run concurrently across rayon's pool — `Arena` is
-/// `Send`, so the per-task arena is moved into each worker thread
-/// without violating `bumpalo`'s `!Sync` contract.
+/// Measure one size-band. Each closure invocation borrows the
+/// current worker thread's reusable [`Arena`] from [`WORKER_ARENA`]
+/// and resets it before parsing — drops the prior parse's
+/// allocations without paying the per-doc `mmap` syscall a fresh
+/// `Arena::new()` would cost. Under `parallel`, rayon's work-stealing
+/// pool gives each worker its own thread-local cell, so the
+/// `RefCell` is never observed from a second thread (matches
+/// `Arena`'s `!Sync` contract).
 fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
     let measure = |text: &str| -> (u64, u64) {
-        let arena = Arena::new();
-        let t = Instant::now();
-        let _out = lex_into_arena(text, &arena);
-        let ns = t.elapsed().as_nanos() as u64;
-        (text.len() as u64, ns)
+        WORKER_ARENA.with(|cell| {
+            let mut arena = cell.borrow_mut();
+            arena.reset();
+            let t = Instant::now();
+            let _out = lex_into_arena(text, &arena);
+            let ns = t.elapsed().as_nanos() as u64;
+            (text.len() as u64, ns)
+        })
     };
 
     let pairs: Vec<(u64, u64)> = if parallel {
