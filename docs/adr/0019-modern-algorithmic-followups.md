@@ -290,14 +290,119 @@ follow-up roadmap.**
 ## Decision
 
 - **M-1**: ship on default. Clear win.
-- **M-2**: keep in jj history (`m1-m4-modern-followups` bookmark).
-  Production stays on R4-A's `BumpVec<Token>` / `BumpVec<PairEvent>`.
-- **M-3**: keep in jj history, cfg-gated behind `phase3-fsm`.
-  Production stays on the default cascade. Feature flag exists for
-  future revisits.
+- **M-2**: keep in jj history (`m1-m4-modern-followups` bookmark);
+  **reverted from default code path** after the A0+A re-evaluation
+  re-confirmed regression even with Phase 1 heap eliminated.
+- **M-3**: keep in jj history; **reverted from default code path**
+  along with M-2. The cfg-gated `phase3-fsm` feature flag is
+  removed (no benefit to keeping a dead alternative dispatcher).
 - **PEXT**: closed (not deferred); ADR-0015 rejection stands.
 - **Variable-length encoding**: dropped; SoA already addresses the
   padding concern and measurement says SoA itself doesn't pay.
+
+## Step C drill-down (post-deploy follow-up)
+
+After the four steps above shipped, a deeper profile drill-down
+exposed two additional hot paths that the categoriser had been
+hiding inside the monolithic `allocation` bucket:
+
+- **Phase 1 scratch `Vec<u32>`** (trigger / newline offsets) was
+  heap-allocated despite the surrounding pipeline already owning an
+  arena. `Vec::extend_desugared` showed at 5.85 % inclusive of
+  corpus parse — the result of an unrealistic 1/1000 capacity
+  heuristic in `aozora-scan` that drove ~16 grow doublings per parse.
+- **Per-thread arena initial capacity** (M-1 left it at bumpalo's
+  512-byte default) caused the first ~7 docs each rayon worker saw
+  to pay 7 successive chunk-grow doublings before reaching the
+  ~50 KB the corpus median needs.
+
+### A0 — arena-allocate Phase 1 scratch buffers
+
+- `aozora-scan` cap heuristic fixed (1/1000 → 1/56, matching the
+  measured 1.8 % corpus trigger density)
+- `aozora_scan::scan_offsets_in(source, &Bump) -> BumpVec<'a, u32>`
+  free function added (dyn-compat preserved)
+- `tokenize_in` lifts both scratch buffers into the parse arena
+
+Measured: +1.2 % / +1.6 % / +3.2 % / 0 % per band sequential.
+Smaller than the inclusive 5.85 % suggested because the bulk of that
+inclusive cost was the iterator walk itself (self only 0.01 %), not
+the alloc pair.
+
+### A — pre-size the per-thread arena
+
+- bench harness `WORKER_ARENA` initialised with 256 KB capacity
+  (covers >95 % of corpus docs in one chunk)
+- production `Document::new` was already pre-sizing
+  (`source.len() * 4` since N6); M-1's reuse path was the only one
+  paying default cap
+
+Measured (incremental on top of A0): **+3.0 % / +2.8 % / +9.3 % /
++13.5 %** per band. The large bands win disproportionately because
+each chunk-grow doubling on a multi-MB doc is a multi-MB `mmap`,
+and pre-sizing skips them.
+
+### A0 + A re-evaluation of M-2 / M-3
+
+The Phase 1 heap allocation A0 closed was the leading hypothesis
+for why the original M-2/M-3 measurement showed regression: maybe
+the Pure SoA / flat FSM weren't slower per se, but the noisy
+heap-Vec baseline was hiding their wins. Re-measuring with A0+A in
+place falsified that:
+
+```
+                     <50KB  50-500K  500K-2M   >2M
+M-1 alone (baseline) 261    277      260      120
++ A0 + A (no M-2/3)  262    269      235      115   ← reverted-state ship
++ M-2 + M-3 + A0 + A 252    257      245      115   ← rejected
+```
+
+M-2/M-3 still cost throughput even after A0+A. The category-error
+diagnosis (Phase 3 cross-cutting state doesn't compress to a flat
+state machine; per-event SoA push overhead exceeds the tag-density
+win for this corpus profile) is data-confirmed.
+
+### Final shipping shape
+
+- **`Arena::reset` (M-1)**: kept
+- **bench thread_local arena reuse (M-1) + 256 KB initial cap (A)**:
+  kept
+- **arena-allocated Phase 1 scratch buffers (A0)**: kept
+- **`tokenize_in` returns `BumpVec<'a, Token>` (R4-A baseline)**:
+  kept; M-2's `TokenStream` SoA reverted
+- **`pair_in` returns `BumpVec<'a, PairEvent>` (R4-A baseline)**:
+  kept; M-2's `PairEventStream` SoA reverted
+- **`process_event` cascade (R4-A baseline)**: kept; M-3's flat
+  state machine + `phase3-fsm` feature reverted
+- **categoriser allocation breakdown (4 sub-buckets)**: kept (now
+  the standard categoriser shape for future drill-downs)
+- **`install_forward_target_index_from_source` early-break +
+  `clear_forward_target_index_if_installed` no-op skip**: kept
+
+## ADR-0019 final lessons
+
+The original M-1 → M-4 work shipped four ambitious ideas and
+documented two as negative results; the post-ship A0/A/Step-C
+follow-up confirmed those negatives weren't artefacts of an
+upstream bottleneck. The architectural takeaways are stronger now:
+
+1. **Profile-driven beats principle-driven on this corpus.** The
+   data, not the categories of "things that ought to help",
+   selects the wins. M-2 (Pure SoA) and M-3 (flat state machine)
+   are both well-understood patterns; neither paid here.
+2. **Pure-Rust drill-down (xtask trace stacks + categoriser splits)
+   was decisive.** Without the per-bucket allocation breakdown the
+   true winner (A) would have stayed buried.
+3. **Reverting committed-but-disproved work is part of the
+   discipline.** ADR-0016 (R1 reverted) set the precedent; ADR-0019
+   continues it for M-2/M-3.
+
+Future Phase 3 work should target **algorithmic** changes (recogniser-
+body rewrites: annotation parser unification, ruby preceding-bytes
+SIMD scan, interner short-string fast-paths re-evaluated after A
+reduces baseline noise) rather than **structural** re-shaping of
+the dispatch / storage layout. The ceiling on structural changes
+for this hot path is now well-bounded by data.
 
 ## Lesson recorded
 
