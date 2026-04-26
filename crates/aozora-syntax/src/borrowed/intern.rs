@@ -83,10 +83,18 @@ pub struct Interner<'a> {
     mask: usize,
     /// Number of occupied slots.
     occupied: usize,
-    /// Inline cache: last successfully-interned `(hash, ptr)` pair.
-    /// Long runs of identical interns short-circuit on this single
-    /// pointer compare.
-    last: Option<(u64, &'a str)>,
+    /// Inline cache: last successfully-interned string. Long runs of
+    /// identical interns short-circuit on this single pointer compare.
+    ///
+    /// **N4 investigation note**: a 2-slot LRU cache (intended to
+    /// catch Ruby's alternating `(base, reading, base, reading, …)`
+    /// access pattern) was tried and reverted. Corpus dedup ratio
+    /// stayed at p50 0.275 / mean 0.308 (identical to the 1-slot
+    /// baseline), throughput moved within noise. The pattern that
+    /// would benefit — consecutive rubies sharing a base or reading
+    /// — is rarer than the design assumed; distinct rubies on
+    /// distinct words dominate.
+    last: Option<&'a str>,
     /// Diagnostic counters. Updated on every intern call. Useful for
     /// benchmarks and the corpus-sweep dedup-ratio report.
     pub stats: InternStats,
@@ -151,7 +159,7 @@ impl<'a> Interner<'a> {
         // a single pointer-content compare. Equality on `&str`
         // compares lengths first then bytes, which is fast for the
         // typical mismatch.
-        if let Some((_, cached)) = self.last
+        if let Some(cached) = self.last
             && cached == s
         {
             self.stats.cache_hits += 1;
@@ -166,7 +174,7 @@ impl<'a> Interner<'a> {
             self.stats.long_bypass += 1;
             self.stats.allocs += 1;
             let dst = self.arena.alloc_str(s);
-            self.last = Some((0, dst));
+            self.last = Some(dst);
             return dst;
         }
 
@@ -189,7 +197,7 @@ impl<'a> Interner<'a> {
             match self.table[idx] {
                 Some(existing) if existing == s => {
                     self.stats.table_hits += 1;
-                    self.last = Some((hash, existing));
+                    self.last = Some(existing);
                     return existing;
                 }
                 None => {
@@ -197,7 +205,7 @@ impl<'a> Interner<'a> {
                     self.table[idx] = Some(dst);
                     self.occupied += 1;
                     self.stats.allocs += 1;
-                    self.last = Some((hash, dst));
+                    self.last = Some(dst);
                     return dst;
                 }
                 Some(_) => idx = (idx + 1) & self.mask,
@@ -264,6 +272,14 @@ impl<'a> Interner<'a> {
 /// `wrapping_mul`-and-xor mix loop. Fast on short inputs (the dominant
 /// case for Aozora ruby readings); avoids the per-call state setup
 /// cost of std `SipHash`.
+///
+/// **N4 investigation note**: an 8-byte-chunk fast path with an
+/// xxHash-style avalanche was tried and reverted. For the typical
+/// 3-byte single-codepoint reading the avalanche's two extra
+/// multiplications cost more than the per-byte loop saves; corpus
+/// throughput moved within noise (-4 % to +2 % depending on band).
+/// The byte loop fits in a few cycles on short inputs and is hard to
+/// beat without a different hash family. Keeping the simple shape.
 #[inline]
 fn fx_hash(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0;
