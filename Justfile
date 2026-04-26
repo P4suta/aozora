@@ -313,6 +313,76 @@ udeps:
 semver:
     {{_dev}} cargo semver-checks check-release --workspace
 
+# --- dependency follow-up (local-only, no remote CI) -------------------------
+# Policy: workspace deps track @latest. The mechanism is purely local —
+# `just deps-check` runs the full dependency-health gate (outdated +
+# audit + deny), `just upgrade` bumps Cargo.toml to the latest
+# compatible versions, and a systemd user timer (see
+# `scripts/install-deps-timer.sh`) runs `just deps-check` weekly so
+# new advisories surface even on quiet branches. ADR-0018 records
+# the policy + cadence rationale.
+
+# `target/.deps-check.timestamp` is the last-success marker that
+# `deps-status` reads. Written under `target/` (Docker-volume-mounted
+# so host can read it) and intentionally ephemeral — `cargo clean`
+# wipes it, which prompts a fresh `deps-check`.
+_deps_marker := "target/.deps-check.timestamp"
+
+# Show out-of-date workspace deps (root deps only — transitive bumps
+# are noise unless they break something). Exit 0 even when something
+# is outdated; this recipe is for inspection, not for gating.
+outdated:
+    {{_dev}} cargo outdated --workspace --root-deps-only --depth 2 --exit-code 0
+
+# Bump every workspace dep to the latest semver-compatible version
+# and re-resolve `Cargo.lock`. Safe to run anytime; rejects
+# major-version bumps (use `upgrade-incompat` for those, opt-in,
+# review-required).
+upgrade:
+    {{_dev}} cargo upgrade --workspace --pinned --recursive
+    {{_dev}} cargo update --workspace
+    @echo "Lockfile updated. Run 'just ci' before committing to verify."
+
+# Bump every workspace dep including major-version (incompatible)
+# bumps. Always review the Cargo.toml diff afterwards — major bumps
+# are API breaks by definition, and the build / test gate is the
+# only thing that catches breakage.
+upgrade-incompat:
+    {{_dev}} cargo upgrade --workspace --incompatible allow --recursive
+    {{_dev}} cargo update --workspace
+    @echo "Lockfile updated WITH incompatible bumps. Review 'git diff Cargo.toml' before committing."
+
+# Full dependency-health gate: outdated + audit + deny + udeps. Marks
+# `target/.deps-check.timestamp` on success so `deps-status` can
+# report freshness. Designed to be runnable from a systemd user timer
+# (no TTY requirement, no destructive side effects).
+deps-check:
+    @mkdir -p target
+    @echo "[deps-check] $(date -u +%FT%TZ) — outdated, audit, deny"
+    just outdated
+    just audit
+    just deny
+    @date -u +%FT%TZ > {{_deps_marker}}
+    @echo "[deps-check] OK — marker written to {{_deps_marker}}"
+
+# Print the freshness of the last `deps-check`. Exit non-zero if it
+# has been more than 7 days, so shells / CI / hooks can wire it as
+# "deps stale" detection without parsing dates.
+deps-status:
+    @if [ ! -f {{_deps_marker}} ]; then \
+        echo "[deps-status] never run; run 'just deps-check'"; \
+        exit 1; \
+    fi
+    @ts="$(cat {{_deps_marker}})"; \
+    age_secs=$(( $(date -u +%s) - $(date -u -d "$ts" +%s) )); \
+    age_days=$(( age_secs / 86400 )); \
+    if [ "$age_days" -gt 7 ]; then \
+        echo "[deps-status] last check $age_days days ago ($ts) — STALE; run 'just deps-check'"; \
+        exit 1; \
+    else \
+        echo "[deps-status] last check $age_days days ago ($ts) — fresh"; \
+    fi
+
 # --- release optimisation ----------------------------------------------------
 
 # PGO (+ optional BOLT) release build. Needs cargo-pgo installed
