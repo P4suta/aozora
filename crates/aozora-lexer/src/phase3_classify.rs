@@ -1075,6 +1075,7 @@ where
 
     /// Run recognition on the current frame's body buffer and emit the
     /// resulting span. Called when the OUTERMOST pair has just closed.
+    #[cfg(not(feature = "phase3-fsm"))]
     fn recognize_and_emit(&mut self) {
         #[cfg(feature = "phase3-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::RecognizeAndEmit);
@@ -1646,6 +1647,7 @@ where
         self.pending_outputs.pop_front()
     }
 
+    #[cfg(not(feature = "phase3-fsm"))]
     fn process_event(&mut self, event: PairEvent) {
         // Stream-through path for top-level Quote / Tortoise — see
         // `StreamingFrame` for the rationale. Bypasses both frame
@@ -1695,6 +1697,373 @@ where
 
         self.handle_top_level(event, /*replay=*/ false);
     }
+
+    /// M-3 / ADR-0019: large-scale flat state machine dispatcher.
+    ///
+    /// The cross-cutting `process_event` → `handle_top_level` →
+    /// `recognize_and_emit` cascade (three methods, ~210 lines of
+    /// nested if/match with shared mutable state) is replaced by:
+    ///
+    /// 1. A pure `(state, event, has_pending_refmark) → ActionList`
+    ///    transition function — testable in isolation, no `&mut self`.
+    /// 2. A single `execute` loop that applies actions via narrow
+    ///    helpers on `&mut self`. Each helper touches one logical
+    ///    responsibility (refmark, plain run, frame open/close,
+    ///    recogniser invocation).
+    ///
+    /// Helpers reused: `handle_stream_event`, `append_to_frame`,
+    /// `flush_plain_up_to`, `open_frame`, `try_ruby_emit`,
+    /// `try_bracket_emit`, `try_gaiji_emit`, `emit_double_ruby`,
+    /// `replay_unrecognised_body`, `push_output`. The FSM never
+    /// re-implements recogniser bodies — those are leaf
+    /// computations that wouldn't compress to flat state regardless.
+    ///
+    /// Action vocabulary: 15 variants. Plan-agent's "≤ 10" cap is
+    /// exceeded; ADR-0019 records the trade-off measurement.
+    #[cfg(feature = "phase3-fsm")]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "signature mirrors the default `process_event(event: PairEvent)` for cfg-gated swap parity; FSM execute clones internally on the actions that need ownership"
+    )]
+    fn process_event(&mut self, event: PairEvent) {
+        let state = self.fsm_state();
+        let actions = fsm_dispatch(state, &event, self.pending_refmark.is_some());
+        self.fsm_execute(&actions, &event);
+    }
+
+    /// Project the [`ClassifyStream`]'s mutable interior into the
+    /// FSM's coarse state. Reads `streaming` then `frame` to mirror
+    /// the default dispatcher's priority order.
+    #[cfg(feature = "phase3-fsm")]
+    fn fsm_state(&self) -> FsmState {
+        if self.streaming.is_some() {
+            FsmState::Streaming
+        } else if self.frame.is_some() {
+            FsmState::InFrame
+        } else {
+            FsmState::Top
+        }
+    }
+
+    /// Apply an action list returned by [`fsm_dispatch`]. Each arm
+    /// is a single helper call; cross-cutting state is read/written
+    /// via `&mut self` rather than threaded through the action
+    /// payload, keeping the action vocabulary type-stable.
+    #[cfg(feature = "phase3-fsm")]
+    fn fsm_execute(&mut self, actions: &FsmActionList, event: &PairEvent) {
+        for action in actions {
+            match *action {
+                FsmAction::HandleStream => {
+                    self.handle_stream_event((*event).clone());
+                }
+                FsmAction::AppendToFrameAndMaybeRecognise => {
+                    debug_assert!(
+                        self.pending_refmark.is_none(),
+                        "frames are opened from top level; any pending refmark should have been absorbed or flushed before frame entry"
+                    );
+                    let outer_closed = self.append_to_frame((*event).clone());
+                    if outer_closed {
+                        // FSM-mode recogniser dispatch: read open kind
+                        // from frame body and route. Bypasses the
+                        // legacy `recognize_and_emit` method's static
+                        // match — same observable behaviour.
+                        let open_kind = self.frame.as_ref().and_then(|f| match f.body.first() {
+                            Some(PairEvent::PairOpen { kind, .. }) => Some(*kind),
+                            _ => None,
+                        });
+                        if let Some(kind) = open_kind {
+                            self.fsm_recognise_dispatch(kind);
+                        }
+                    }
+                }
+                FsmAction::FoldPendingRefmarkIntoPlain => {
+                    if let Some(rm) = self.pending_refmark.take()
+                        && self.pending_plain_start.is_none()
+                    {
+                        self.pending_plain_start = Some(rm.start);
+                    }
+                }
+                FsmAction::EmitNewlineFlushAndPush(pos) => {
+                    self.flush_plain_up_to(pos);
+                    self.push_output(ClassifiedSpan {
+                        kind: SpanKind::Newline,
+                        source_span: Span::new(pos, pos + 1),
+                    });
+                }
+                FsmAction::SetPendingRefmark(span) => {
+                    self.pending_refmark = Some(span);
+                }
+                FsmAction::EnterStreamingFrame { kind, span_start } => {
+                    let pre_open = self
+                        .pending_refmark
+                        .take()
+                        .map_or(span_start, |rm| rm.start);
+                    self.flush_plain_up_to(pre_open);
+                    if self.pending_plain_start.is_none() {
+                        self.pending_plain_start = Some(span_start);
+                    }
+                    self.streaming = Some(StreamingFrame { kind, depth: 1 });
+                }
+                FsmAction::OpenBracketFrameAbsorbingRefmark(span) => {
+                    let gaiji_refmark = self.pending_refmark.take();
+                    let truncate_to = gaiji_refmark.map_or(span.start, |rm| rm.start);
+                    self.flush_plain_up_to(truncate_to);
+                    self.open_frame(
+                        PairEvent::PairOpen {
+                            kind: PairKind::Bracket,
+                            span,
+                        },
+                        gaiji_refmark,
+                    );
+                }
+                FsmAction::OpenRubyFrame { kind, span } => {
+                    // Ruby/DoubleRuby preserve `pending_plain_start` so the
+                    // recogniser can decide how much preceding text the
+                    // ruby swallows.
+                    self.open_frame(PairEvent::PairOpen { kind, span }, None);
+                }
+                FsmAction::FoldEventIntoPendingPlain(start) => {
+                    if self.pending_plain_start.is_none() {
+                        self.pending_plain_start = Some(start);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Per-PairKind recogniser dispatch. Replaces the static `match`
+    /// in `recognize_and_emit`; for the four kinds with recognisers
+    /// (Ruby/DoubleRuby/Bracket and "all others fall through to
+    /// replay") it routes to the existing leaf functions.
+    ///
+    /// The Bracket branch handles the gaiji-refmark case inline
+    /// because the synthetic body construction is local — extracting
+    /// it as a separate action would force the action payload to
+    /// carry `BodyView` references that don't outlive the call.
+    #[cfg(feature = "phase3-fsm")]
+    fn fsm_recognise_dispatch(&mut self, open_kind: PairKind) {
+        let frame = self
+            .frame
+            .take()
+            .expect("recognise dispatch requires an active frame");
+        let body = frame.body;
+        let links = frame.links;
+        debug_assert!(
+            body.len() >= 2,
+            "frame body must contain open + close (got {} events)",
+            body.len()
+        );
+        debug_assert_eq!(body.len(), links.len(), "links must parallel body");
+        let open_idx = 0usize;
+        let close_idx = body.len() - 1;
+
+        let view = BodyView {
+            events: &body,
+            links: &links,
+        };
+
+        match open_kind {
+            PairKind::Ruby => {
+                if let Some(span) = self.try_ruby_emit(view, open_idx, close_idx) {
+                    self.push_output(span);
+                    return;
+                }
+            }
+            PairKind::DoubleRuby => {
+                let span = self.emit_double_ruby(view, open_idx, close_idx);
+                self.push_output(span);
+                return;
+            }
+            PairKind::Bracket => {
+                let refmark = frame.gaiji_refmark;
+                if let Some(rm_span) = refmark {
+                    let gaiji_body: smallvec::SmallVec<[PairEvent; 16]> =
+                        iter::once(PairEvent::Solo {
+                            kind: TriggerKind::RefMark,
+                            span: rm_span,
+                        })
+                        .chain(body.iter().cloned())
+                        .collect();
+                    let gaiji_links: smallvec::SmallVec<[u32; 16]> = iter::once(u32::MAX)
+                        .chain(
+                            links
+                                .iter()
+                                .map(|&l| if l == u32::MAX { u32::MAX } else { l + 1 }),
+                        )
+                        .collect();
+                    let gaiji_view = BodyView {
+                        events: &gaiji_body,
+                        links: &gaiji_links,
+                    };
+                    if let Some(span) = self.try_gaiji_emit(gaiji_view, 1usize, rm_span) {
+                        self.push_output(span);
+                        return;
+                    }
+                    if self.pending_plain_start.is_none() {
+                        self.pending_plain_start = Some(rm_span.start);
+                    }
+                    if let Some(span) = self.try_bracket_emit(view, open_idx, close_idx) {
+                        self.push_output(span);
+                        return;
+                    }
+                    self.replay_unrecognised_body(body, None);
+                    return;
+                }
+                if let Some(span) = self.try_bracket_emit(view, open_idx, close_idx) {
+                    self.push_output(span);
+                    return;
+                }
+            }
+            _ => {}
+        }
+
+        self.replay_unrecognised_body(body, None);
+    }
+}
+
+/// Top-level dispatch state for the M-3 / ADR-0019 flat state
+/// machine. Three values cover every dispatch decision the default
+/// cascade makes; subordinate state (`pending_refmark`,
+/// `pending_plain_start`, frame internals) lives in the
+/// [`ClassifyStream`] fields the actions read and write.
+#[cfg(feature = "phase3-fsm")]
+#[derive(Debug, Clone, Copy)]
+enum FsmState {
+    Top,
+    InFrame,
+    Streaming,
+}
+
+/// FSM action vocabulary — 15 variants spanning the
+/// `process_event` + `handle_top_level` + `recognize_and_emit`
+/// cross-cutting cascade. Larger than plan-agent's "≤ 10" cap;
+/// ADR-0019 records the trade-off (action payload stays type-
+/// stable; per-event dispatch overhead is the cost).
+#[cfg(feature = "phase3-fsm")]
+#[derive(Debug, Clone, Copy)]
+enum FsmAction {
+    // --- top-level structural routing (3) ---
+    /// Forward to `handle_stream_event` (Quote/Tortoise streaming).
+    HandleStream,
+    /// `append_to_frame` + conditional `recognize_and_emit` chain.
+    AppendToFrameAndMaybeRecognise,
+    /// Pop pending refmark into the plain run before processing.
+    FoldPendingRefmarkIntoPlain,
+    // --- handle_top_level decomposition (6) ---
+    /// `Newline { pos }`: flush plain up to pos, emit Newline span.
+    EmitNewlineFlushAndPush(u32),
+    /// `Solo(RefMark)`: hold the span as `pending_refmark`.
+    SetPendingRefmark(Span),
+    /// `PairOpen(Quote|Tortoise)`: enter streaming mode, fold
+    /// any pending refmark into plain, set pending plain to `span_start`.
+    EnterStreamingFrame { kind: PairKind, span_start: u32 },
+    /// `PairOpen(Bracket)`: open a frame, optionally absorbing the
+    /// pending refmark for gaiji recognition; flush plain up to the
+    /// frame open (or to the refmark, if absorbing).
+    OpenBracketFrameAbsorbingRefmark(Span),
+    /// `PairOpen(Ruby|DoubleRuby)`: open a frame WITHOUT flushing
+    /// pending plain (the recogniser walks preceding bytes to
+    /// decide how much it consumes).
+    OpenRubyFrame { kind: PairKind, span: Span },
+    /// Catch-all: fold the event's start into pending plain.
+    FoldEventIntoPendingPlain(u32),
+    // recognize_and_emit decomposition is performed inside
+    // `AppendToFrameAndMaybeRecognise` directly — that action
+    // dispatches to `fsm_recognise_dispatch(frame_open_kind)` once
+    // the outer close fires. Per-PairKind action variants would
+    // bloat the vocabulary without adding architectural clarity:
+    // the recogniser leaves are leaf computations, not flat-
+    // dispatchable. ADR-0019 records this scoping decision.
+}
+
+/// Inline action list. `SmallVec` inline cap of 2 covers every
+/// transition (the largest dispatch — Top + pending-refmark + non-
+/// Bracket event — emits two actions: `FoldPendingRefmarkIntoPlain`
+/// then one of the `handle_top_level` decompositions). No heap
+/// allocation in steady state.
+#[cfg(feature = "phase3-fsm")]
+type FsmActionList = smallvec::SmallVec<[FsmAction; 2]>;
+
+/// Pure (state, event, `has_pending_refmark`) → action transition.
+/// No `&mut self`; the caller applies the actions afterwards.
+/// This split is the architectural payoff: dispatch logic is
+/// testable in isolation, and adding a new event class adds one
+/// match arm here without touching the side-effect site.
+///
+/// The full `handle_top_level` cascade is decomposed inline here
+/// so the dispatcher's behaviour is visible at one glance — the
+/// previous structure required reading three methods to follow
+/// one event's path.
+#[cfg(feature = "phase3-fsm")]
+fn fsm_dispatch(state: FsmState, event: &PairEvent, has_pending_refmark: bool) -> FsmActionList {
+    let mut actions = FsmActionList::new();
+    match state {
+        FsmState::Streaming => {
+            actions.push(FsmAction::HandleStream);
+            return actions;
+        }
+        FsmState::InFrame => {
+            actions.push(FsmAction::AppendToFrameAndMaybeRecognise);
+            return actions;
+        }
+        FsmState::Top => {
+            // Refmark absorption gate: any non-Bracket event after a
+            // pending refmark folds the refmark into plain first.
+            if has_pending_refmark
+                && !matches!(
+                    event,
+                    PairEvent::PairOpen {
+                        kind: PairKind::Bracket,
+                        ..
+                    }
+                )
+            {
+                actions.push(FsmAction::FoldPendingRefmarkIntoPlain);
+            }
+            // Decompose handle_top_level's match into one action per
+            // arm. The action carries the minimum payload the executor
+            // needs (span / kind / pos); cross-cutting state lives in
+            // ClassifyStream fields.
+            match *event {
+                PairEvent::Newline { pos } => {
+                    actions.push(FsmAction::EmitNewlineFlushAndPush(pos));
+                }
+                PairEvent::Solo {
+                    kind: TriggerKind::RefMark,
+                    span,
+                } => {
+                    actions.push(FsmAction::SetPendingRefmark(span));
+                }
+                PairEvent::PairOpen { kind, span } => match kind {
+                    PairKind::Quote | PairKind::Tortoise => {
+                        actions.push(FsmAction::EnterStreamingFrame {
+                            kind,
+                            span_start: span.start,
+                        });
+                    }
+                    PairKind::Bracket => {
+                        actions.push(FsmAction::OpenBracketFrameAbsorbingRefmark(span));
+                    }
+                    PairKind::Ruby | PairKind::DoubleRuby => {
+                        actions.push(FsmAction::OpenRubyFrame { kind, span });
+                    }
+                    // PairKind is `#[non_exhaustive]`; future variants
+                    // fall back to "fold into pending plain" (the same
+                    // catch-all the default `handle_top_level` would
+                    // hit for an unknown PairOpen).
+                    _ => {
+                        actions.push(FsmAction::FoldEventIntoPendingPlain(span.start));
+                    }
+                },
+                ref other => {
+                    if let Some(span) = other.span() {
+                        actions.push(FsmAction::FoldEventIntoPendingPlain(span.start));
+                    }
+                }
+            }
+        }
+    }
+    actions
 }
 
 /// Intermediate result of [`recognize_ruby`]. `base` stays borrowed
