@@ -430,6 +430,61 @@ production; reversed for batch / FFI APIs.**
 Commits: TBD. ADR:
 `docs/adr/0016-deforestation-reversal-investigation.md`.
 
+### R4: bumpalo arena BumpVec + rayon corpus parallelism (2026-04-27)
+
+After R3 settled the inter-phase shape on heap-`Vec`s (R2) + streaming
+Phase 3 (R3 measurement), the post-R3 categorised samply trace
+showed two clean targets: **allocation 25.7 %** of corpus parse and
+**single-threaded only** corpus sweep. R4 attacks both.
+
+- **R4-A** — replace `Vec<Token>` / `Vec<PairEvent>` with arena-backed
+  `bumpalo::collections::Vec<'a, _>`. The borrowed `Pipeline` already
+  owns one `Arena` per parse, so `tokenize_in(s, arena)` and
+  `pair_in(&tokens, arena)` collapse N heap mallocs into one
+  bump-pointer advance per element. The dead heap-batch surface
+  (`tokenize_to_vec`, `pair_slice`, `PairOutput`, `classify_slice`,
+  `classify_into_emit`, `ClassifyOutput` — all only ever called by
+  Pipeline internals) is **deleted** rather than left alongside.
+  Public API surface contracts from 3 axes (streaming + heap-batch +
+  arena-batch) to 2 (streaming + arena-batch); each axis has one
+  clear consumer.
+- **R4-B** — `AOZORA_PROFILE_PARALLEL=1` opt-in on
+  `throughput_by_class` and `phase_breakdown`. Per-task
+  `Arena::new()` keeps `bumpalo`'s `!Sync` contract intact;
+  `par_iter().collect()` preserves input order so per-doc rankings
+  match between sequential and parallel runs.
+
+Measurements:
+
+| Metric | R3 final | R4-A (sequential) | R4-B (16-thread parallel) |
+|---|---:|---:|---:|
+| corpus throughput aggregate | 284.7 MB/s | 284.7 MB/s | wall 0.68 s vs 3.31 s |
+| `throughput_by_class` scaling | — | — | **14.14× / 16 = 88.4 % efficiency** |
+| `phase_breakdown` scaling | — | — | 6.81× (5× per-doc work + 2× arenas) |
+| doc 49178 `lex_into_arena` outlier | 1.21 ms | 1.21 ms (unchanged) | n/a |
+
+R4-A's sequential corpus throughput is **neutral within ±5 % noise**.
+The hypothesis "alloc 25.7 % → bumpalo collapses it" was falsified:
+glibc's `tcache`-amortised malloc matches bumpalo's bump-pointer on
+small per-doc Vecs, and bumpalo itself pays a new-chunk `mmap` when
+capacity hints force fresh chunks. R4-A still ships because it is an
+**architectural** win (3 → 2 surfaces; ~200 LoC dead heap-batch
+removed; lifetime visibly threaded through Pipeline).
+
+R4-B is a **development-iteration** speedup, not a production change.
+`lex_into_arena` itself is unchanged. Sequential remains the canonical
+CI / regression measurement; parallel mode is the developer's "is the
+corpus done yet?" amplifier.
+
+The remaining 25.7 % allocation bucket lives in Phase 3's recogniser
+AST allocations (interner growth, Container/Inline/Block arena allocs)
+— work R4-A does not touch. Modern follow-ups under consideration:
+SoA Token storage, per-thread `Bump::reset()` reuse, variable-length
+PairEvent encoding. None ship in R4 (deferred — measure first).
+
+Commits: TBD (`r4-bumpalo-rayon` bookmark). ADR:
+`docs/adr/0017-bumpalo-arena-vec-and-rayon-parallelism.md`.
+
 ---
 
 ## Workflow recipes
@@ -541,3 +596,4 @@ SIMD, just not aozora-scan's).
 | `docs/adr/0013-aozora-scan-leading-byte-strategy-loses-on-japanese.md` | T1 architectural decision (superseded by 0015) |
 | `docs/adr/0015-aozora-scan-bake-off-and-result.md` | T2 four-backend bake-off + Teddy winner |
 | `docs/adr/0016-deforestation-reversal-investigation.md` | R1/R2/R3 deforestation reversal — Iterator chain re-affirmed, batch APIs added |
+| `docs/adr/0017-bumpalo-arena-vec-and-rayon-parallelism.md` | R4 — bumpalo arena BumpVec for inter-phase materialisation + rayon corpus parallelism |
