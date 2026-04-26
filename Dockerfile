@@ -59,6 +59,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         cargo-insta \
         cargo-release \
         cargo-edit \
+        cargo-outdated \
         cargo-fuzz \
         typos-cli \
         sccache
