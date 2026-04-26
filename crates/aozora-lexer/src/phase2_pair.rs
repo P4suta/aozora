@@ -56,16 +56,13 @@ pub use aozora_spec::PairKind;
 
 /// One event in the Phase 2 stream.
 ///
-/// `PairOpen` and `PairClose` carry the `close_idx` / `open_idx`
-/// cross-link slots used by Phase 3's body recognisers, but Phase 2's
-/// streaming emission cannot fill them at emit time (the matching
-/// close hasn't been seen yet). The convention is: events freshly
-/// streamed from [`PairStream`] always carry `usize::MAX` in these
-/// slots. Phase 3 [`crate::classify`] patches them with valid relative
-/// indices as it accumulates each pair body into its smallvec
-/// frame buffer; the recognise helpers consume those patched buffers
-/// directly. External callers should treat the fields as opaque
-/// unless they're walking a body buffer built by Phase 3.
+/// `PairOpen` and `PairClose` carry only their `kind` and `span`.
+/// Body cross-link information (which `PairOpen` matches which
+/// `PairClose` inside a body buffer) is maintained out-of-band by
+/// Phase 3 in a parallel `pair_links` side-table — see
+/// [`crate::phase3_classify::BodyView`]. This keeps `PairEvent`'s API
+/// clean (no dual-meaning fields between phase 2 emission and phase 3
+/// internal patching).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PairEvent {
@@ -76,25 +73,16 @@ pub enum PairEvent {
     Solo { kind: TriggerKind, span: Span },
 
     /// Matched open delimiter. Phase 3 pushes a new body-buffer frame
-    /// onto its own stack on this event. `close_idx` is `usize::MAX`
-    /// in the freshly-streamed event and gets patched by Phase 3 to
-    /// the matching close's body-buffer index when the pair is
-    /// resolved (used by recognise helpers walking the body slice).
-    PairOpen {
-        kind: PairKind,
-        span: Span,
-        close_idx: usize,
-    },
+    /// onto its own stack on this event. The matching close's
+    /// body-local index is recorded in the parallel `links` side-table
+    /// once the close arrives.
+    PairOpen { kind: PairKind, span: Span },
 
     /// Matched close delimiter. Phase 3 pops the corresponding body
     /// frame on this event and runs recognition on the buffered body.
-    /// `open_idx` follows the same patching contract as `close_idx`
-    /// on [`Self::PairOpen`].
-    PairClose {
-        kind: PairKind,
-        span: Span,
-        open_idx: usize,
-    },
+    /// The matching open's body-local index lives in the parallel
+    /// `links` side-table.
+    PairClose { kind: PairKind, span: Span },
 
     /// End-of-stream synthetic event indicating that an earlier
     /// [`PairEvent::PairOpen`] of the carried `kind` was never closed.
@@ -205,7 +193,6 @@ where
             return PairEvent::PairOpen {
                 kind: pair_kind,
                 span,
-                close_idx: usize::MAX,
             };
         }
 
@@ -215,7 +202,6 @@ where
                 return PairEvent::PairClose {
                     kind: pair_kind,
                     span,
-                    open_idx: usize::MAX,
                 };
             }
             self.diagnostics

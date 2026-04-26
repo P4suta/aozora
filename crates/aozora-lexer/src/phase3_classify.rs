@@ -609,22 +609,41 @@ where
     finished: bool,
 }
 
+/// Body window passed to recogniser helpers.
+///
+/// `events` is a contiguous body slice (between matched
+/// `PairOpen`/`PairClose`); `links[i]` gives the body-local index of
+/// the matching `PairOpen`/`PairClose` for `events[i]` if it's a
+/// paired event (`u32::MAX` otherwise). Both slices are the same
+/// length and are constructed by [`ClassifyStream`]'s frame buffers.
+///
+/// The split keeps [`PairEvent`] free of cross-link fields (Phase 2
+/// can stream events one-at-a-time without back-patching) while still
+/// giving recogniser helpers O(1) "jump to my matching delimiter"
+/// access via the parallel side-table.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BodyView<'b> {
+    pub events: &'b [PairEvent],
+    pub links: &'b [u32],
+}
+
 /// One outermost open-pair frame currently being buffered.
 ///
 /// `body` holds every event seen between the open and the matching
-/// close (inclusive of nested Pair events); each nested
-/// `PairEvent::PairOpen` has its `close_idx` patched to the matching
-/// close's body-buffer index when the nested close arrives. The
-/// recognise helpers (`recognize_ruby` / `recognize_annotation` /
+/// close (inclusive of nested Pair events). The parallel `links`
+/// smallvec records, for each entry of `body`, the body-local index
+/// of the matching `PairOpen` / `PairClose` (or `u32::MAX` for
+/// non-paired entries and unmatched delimiters). The recognise
+/// helpers (`recognize_ruby` / `recognize_annotation` /
 /// `recognize_gaiji` / `try_double_ruby`) consume the buffer as a
-/// `&[PairEvent]` slice with `open_idx = 0` and
-/// `close_idx = body.len() - 1`.
+/// [`BodyView`] with `open_idx = 0` and `close_idx = body.len() - 1`.
 ///
 /// `inner_stack` tracks the per-buffer mini-stack of nested opens —
 /// `(kind, body_index)` — so that on each nested close we can locate
-/// the matching open in the body buffer and patch its `close_idx`.
+/// the matching open in the body buffer and patch the `links` table.
 struct Frame {
-    body: Vec<PairEvent>,
+    body: smallvec::SmallVec<[PairEvent; 16]>,
+    links: smallvec::SmallVec<[u32; 16]>,
     inner_stack: smallvec::SmallVec<[(PairKind, usize); 8]>,
     /// `true` when the outer open follows a `Solo(RefMark)` and the
     /// frame should be recognised as gaiji rather than a generic
@@ -686,7 +705,8 @@ where
     /// the outer open was preceded by a `Solo(RefMark)` waiting to be
     /// absorbed (the gaiji shape).
     fn open_frame(&mut self, open_event: PairEvent, gaiji_refmark: Option<Span>) {
-        let mut body = Vec::with_capacity(8);
+        let mut body: smallvec::SmallVec<[PairEvent; 16]> = smallvec::SmallVec::new();
+        let mut links: smallvec::SmallVec<[u32; 16]> = smallvec::SmallVec::new();
         // Inner stack tracks NESTED opens; the outer open lives at
         // body[0], so we record its position there.
         let mut inner_stack = smallvec::SmallVec::new();
@@ -695,18 +715,21 @@ where
         };
         inner_stack.push((kind, 0_usize));
         body.push(open_event);
+        links.push(u32::MAX);
         self.frame = Some(Frame {
             body,
+            links,
             inner_stack,
             gaiji_refmark,
         });
     }
 
     /// Append an event to the current frame's body, updating the
-    /// inner-stack and patching nested close_idx slots as needed.
-    /// Returns `true` if the appended event closed the OUTERMOST pair
-    /// (i.e. `inner_stack` became empty), signalling that the caller
-    /// should run recognition on the now-complete buffer.
+    /// inner-stack and patching the parallel `links` side-table as
+    /// needed. Returns `true` if the appended event closed the
+    /// OUTERMOST pair (i.e. `inner_stack` became empty), signalling
+    /// that the caller should run recognition on the now-complete
+    /// buffer.
     fn append_to_frame(&mut self, event: PairEvent) -> bool {
         let frame = self
             .frame
@@ -718,41 +741,36 @@ where
             PairEvent::PairOpen { kind, .. } => {
                 frame.inner_stack.push((*kind, body_idx));
                 frame.body.push(event);
+                frame.links.push(u32::MAX);
             }
-            PairEvent::PairClose { kind, span, .. } => {
+            PairEvent::PairClose { kind, .. } => {
                 // Find the matching open via the inner stack. Phase 2
                 // guarantees that a PairClose only arrives when the
                 // top of the global stack matches its kind, but inside
                 // the body buffer we may have nested opens of various
                 // kinds — we patch the nearest matching open.
-                if let Some(pos) =
-                    frame.inner_stack.iter().rposition(|&(k, _)| k == *kind)
-                {
+                if let Some(pos) = frame.inner_stack.iter().rposition(|&(k, _)| k == *kind) {
                     let (_, open_body_idx) = frame.inner_stack.remove(pos);
-                    // Patch the open's close_idx and emit a close with
-                    // the patched open_idx so recognise helpers see a
-                    // valid cross-link.
-                    let patched_close = PairEvent::PairClose {
-                        kind: *kind,
-                        span: *span,
-                        open_idx: open_body_idx,
-                    };
-                    if let PairEvent::PairOpen {
-                        close_idx: slot, ..
-                    } = &mut frame.body[open_body_idx]
-                    {
-                        *slot = body_idx;
-                    }
-                    frame.body.push(patched_close);
+                    frame.body.push(event);
+                    let body_idx_u32 =
+                        u32::try_from(body_idx).expect("body_idx fits u32 (corpus body lengths are bounded)");
+                    let open_body_idx_u32 = u32::try_from(open_body_idx)
+                        .expect("body_idx fits u32 (corpus body lengths are bounded)");
+                    frame.links.push(open_body_idx_u32);
+                    frame.links[open_body_idx] = body_idx_u32;
                 } else {
                     // No matching open in this buffer — should not
                     // happen because Phase 2's stack-balance contract
                     // means a PairClose only arrives when the outer
                     // stack matches; but be defensive and append as-is.
                     frame.body.push(event);
+                    frame.links.push(u32::MAX);
                 }
             }
-            _ => frame.body.push(event),
+            _ => {
+                frame.body.push(event);
+                frame.links.push(u32::MAX);
+            }
         }
 
         frame.inner_stack.is_empty()
@@ -766,7 +784,9 @@ where
             .take()
             .expect("recognize_and_emit requires an active frame");
         let body = frame.body;
+        let links = frame.links;
         debug_assert!(body.len() >= 2, "frame body must contain open + close");
+        debug_assert_eq!(body.len(), links.len(), "links must parallel body");
 
         // The frame's outer open lives at body[0], the matching close
         // at body[body.len() - 1].
@@ -779,15 +799,20 @@ where
             _ => unreachable!("frame body[0] must be PairOpen"),
         };
 
+        let view = BodyView {
+            events: &body,
+            links: &links,
+        };
+
         match open_kind {
             PairKind::Ruby => {
-                if let Some(span) = self.try_ruby_emit(&body, open_idx, close_idx) {
+                if let Some(span) = self.try_ruby_emit(view, open_idx, close_idx) {
                     self.push_output(span);
                     return;
                 }
             }
             PairKind::DoubleRuby => {
-                let span = self.emit_double_ruby(&body, open_idx, close_idx, open_span);
+                let span = self.emit_double_ruby(view, open_idx, close_idx, open_span);
                 self.push_output(span);
                 return;
             }
@@ -796,38 +821,25 @@ where
                 if let Some(rm_span) = refmark {
                     // Build a synthetic event slice: [Solo(RefMark),
                     // PairOpen(Bracket), ...inner body..., PairClose].
-                    // Shift internal cross-link indices by +1 since we
-                    // prepended the refmark.
-                    let gaiji_body: Vec<PairEvent> = std::iter::once(PairEvent::Solo {
-                        kind: TriggerKind::RefMark,
-                        span: rm_span,
-                    })
-                    .chain(body.iter().cloned().map(|ev| match ev {
-                        PairEvent::PairOpen {
-                            kind,
-                            span,
-                            close_idx,
-                        } => PairEvent::PairOpen {
-                            kind,
-                            span,
-                            close_idx: close_idx.saturating_add(1),
-                        },
-                        PairEvent::PairClose {
-                            kind,
-                            span,
-                            open_idx,
-                        } => PairEvent::PairClose {
-                            kind,
-                            span,
-                            open_idx: open_idx.saturating_add(1),
-                        },
-                        other => other,
-                    }))
-                    .collect();
+                    // Build a parallel synthetic links table: the
+                    // prepended refmark gets `u32::MAX`, every other
+                    // link is shifted by +1.
+                    let gaiji_body: smallvec::SmallVec<[PairEvent; 16]> =
+                        std::iter::once(PairEvent::Solo {
+                            kind: TriggerKind::RefMark,
+                            span: rm_span,
+                        })
+                        .chain(body.iter().cloned())
+                        .collect();
+                    let gaiji_links: smallvec::SmallVec<[u32; 16]> = std::iter::once(u32::MAX)
+                        .chain(links.iter().map(|&l| if l == u32::MAX { u32::MAX } else { l + 1 }))
+                        .collect();
+                    let gaiji_view = BodyView {
+                        events: &gaiji_body,
+                        links: &gaiji_links,
+                    };
                     let bracket_open_idx = 1usize;
-                    if let Some(span) =
-                        self.try_gaiji_emit(&gaiji_body, bracket_open_idx, rm_span)
-                    {
+                    if let Some(span) = self.try_gaiji_emit(gaiji_view, bracket_open_idx, rm_span) {
                         self.push_output(span);
                         return;
                     }
@@ -837,7 +849,7 @@ where
                     if self.pending_plain_start.is_none() {
                         self.pending_plain_start = Some(rm_span.start);
                     }
-                    if let Some(span) = self.try_bracket_emit(&body, open_idx, close_idx) {
+                    if let Some(span) = self.try_bracket_emit(view, open_idx, close_idx) {
                         self.push_output(span);
                         return;
                     }
@@ -846,7 +858,7 @@ where
                     self.replay_unrecognised_body(body, None);
                     return;
                 }
-                if let Some(span) = self.try_bracket_emit(&body, open_idx, close_idx) {
+                if let Some(span) = self.try_bracket_emit(view, open_idx, close_idx) {
                     self.push_output(span);
                     return;
                 }
@@ -882,7 +894,7 @@ where
     /// covered by the open's body[0] entry.
     fn replay_unrecognised_body(
         &mut self,
-        body: Vec<PairEvent>,
+        body: smallvec::SmallVec<[PairEvent; 16]>,
         refmark: Option<Span>,
     ) {
         if let Some(rm) = refmark
@@ -948,14 +960,7 @@ where
                     };
                     self.flush_plain_up_to(truncate_to);
                 }
-                self.open_frame(
-                    PairEvent::PairOpen {
-                        kind,
-                        span,
-                        close_idx: usize::MAX,
-                    },
-                    gaiji_refmark,
-                );
+                self.open_frame(PairEvent::PairOpen { kind, span }, gaiji_refmark);
             }
             other => {
                 // Catch-all: every non-Newline event carries a span
@@ -972,7 +977,7 @@ where
 
     fn try_ruby_emit(
         &mut self,
-        body: &[PairEvent],
+        body: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
     ) -> Option<ClassifiedSpan<'a>> {
@@ -988,7 +993,7 @@ where
         // mirrors what `recognize_ruby` expects:
         //   events[open_idx - 1] = Text { range: ... preceding ... }
         //   events[open_idx - 2] = optional Solo(Bar)
-        let open_span = match body[open_idx] {
+        let open_span = match body.events[open_idx] {
             PairEvent::PairOpen { span, .. } => span,
             _ => return None,
         };
@@ -1018,17 +1023,21 @@ where
         // Construct synthetic events to feed recognize_ruby. We need
         // shape: [optional Solo(Bar), Text, PairOpen, ...body inner...,
         // PairClose]. Then call recognize_ruby with open_idx pointing
-        // at the synthetic PairOpen.
-        let mut synth: Vec<PairEvent> = Vec::with_capacity(body.len() + 2);
+        // at the synthetic PairOpen. The parallel `links` table is
+        // built in lock-step: the prepended events get `u32::MAX`,
+        // every body link is shifted by `shift` (= number of prepended
+        // events).
+        let mut synth: Vec<PairEvent> = Vec::with_capacity(body.events.len() + 2);
+        let mut synth_links: Vec<u32> = Vec::with_capacity(body.events.len() + 2);
         let synth_open_idx;
         if let Some(bar_off) = bar_byte_offset {
-            let bar_pos =
-                preceding_start + u32::try_from(bar_off).expect("bar offset fits");
+            let bar_pos = preceding_start + u32::try_from(bar_off).expect("bar offset fits");
             let bar_span = Span::new(bar_pos, bar_pos + u32::try_from('｜'.len_utf8()).unwrap());
             synth.push(PairEvent::Solo {
                 kind: TriggerKind::Bar,
                 span: bar_span,
             });
+            synth_links.push(u32::MAX);
             // Text after the bar to open_span.start.
             let text_after_bar_start = bar_span.end;
             if text_after_bar_start >= open_span.start {
@@ -1037,45 +1046,28 @@ where
             synth.push(PairEvent::Text {
                 range: Span::new(text_after_bar_start, open_span.start),
             });
+            synth_links.push(u32::MAX);
             synth_open_idx = 2;
         } else {
             synth.push(PairEvent::Text {
                 range: prev_text_range,
             });
+            synth_links.push(u32::MAX);
             synth_open_idx = 1;
         }
 
-        // Push the body events with index shift.
-        let shift = synth.len();
-        for (i, ev) in body.iter().enumerate() {
-            let shifted = match ev {
-                PairEvent::PairOpen {
-                    kind,
-                    span,
-                    close_idx,
-                } => PairEvent::PairOpen {
-                    kind: *kind,
-                    span: *span,
-                    close_idx: close_idx.checked_add(shift).unwrap_or(*close_idx),
-                },
-                PairEvent::PairClose {
-                    kind,
-                    span,
-                    open_idx,
-                } => PairEvent::PairClose {
-                    kind: *kind,
-                    span: *span,
-                    open_idx: open_idx.checked_add(shift).unwrap_or(*open_idx),
-                },
-                other => other.clone(),
-            };
-            synth.push(shifted);
-            let _ = i;
-        }
+        // Push the body events as-is and shift body links by `shift`.
+        let shift = u32::try_from(synth.len()).expect("synth prefix fits u32");
+        synth.extend(body.events.iter().cloned());
+        synth_links.extend(body.links.iter().map(|&l| if l == u32::MAX { u32::MAX } else { l + shift }));
         let synth_close_idx = synth_open_idx + (close_idx - open_idx);
 
+        let synth_view = BodyView {
+            events: &synth,
+            links: &synth_links,
+        };
         let m = recognize_ruby(
-            &synth,
+            synth_view,
             self.source,
             synth_open_idx,
             synth_close_idx,
@@ -1099,12 +1091,12 @@ where
 
     fn emit_double_ruby(
         &mut self,
-        body: &[PairEvent],
+        body: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
         open_span: Span,
     ) -> ClassifiedSpan<'a> {
-        let close_span = match body[close_idx] {
+        let close_span = match body.events[close_idx] {
             PairEvent::PairClose { span, .. } => span,
             _ => unreachable!("body[close_idx] must be PairClose"),
         };
@@ -1128,7 +1120,7 @@ where
 
     fn try_bracket_emit(
         &mut self,
-        body: &[PairEvent],
+        body: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
     ) -> Option<ClassifiedSpan<'a>> {
@@ -1148,7 +1140,7 @@ where
 
     fn try_gaiji_emit(
         &mut self,
-        body: &[PairEvent],
+        body: BodyView<'_>,
         bracket_open_idx: usize,
         refmark_span: Span,
     ) -> Option<ClassifiedSpan<'a>> {
@@ -1314,12 +1306,13 @@ struct RubyMatch<'s, 'a> {
 /// Returns `None` if neither shape applies (empty reading, no
 /// preceding Text, no kanji for implicit).
 fn recognize_ruby<'s, 'a>(
-    events: &[PairEvent],
+    view: BodyView<'_>,
     source: &'s str,
     open_idx: usize,
     close_idx: usize,
     alloc: &mut BorrowedAllocator<'a>,
 ) -> Option<RubyMatch<'s, 'a>> {
+    let events = view.events;
     let PairEvent::PairOpen {
         span: open_span, ..
     } = events[open_idx]
@@ -1348,7 +1341,7 @@ fn recognize_ruby<'s, 'a>(
     let prev_text = &source[prev_range.start as usize..prev_range.end as usize];
 
     let reading = build_content_from_body(
-        events,
+        view,
         source,
         &BodyWindow {
             events: open_idx + 1..close_idx,
@@ -1450,7 +1443,7 @@ struct BodyWindow {
 /// contain only text (for example because its brackets were malformed
 /// and skipped) still collapses back to [`Content::Plain`].
 fn build_content_from_body<'a>(
-    events: &[PairEvent],
+    view: BodyView<'_>,
     source: &str,
     window: &BodyWindow,
     alloc: &mut BorrowedAllocator<'a>,
@@ -1463,7 +1456,13 @@ fn build_content_from_body<'a>(
         window.bytes.start <= window.bytes.end,
         "body window byte range must be non-inverted",
     );
+    debug_assert_eq!(
+        view.events.len(),
+        view.links.len(),
+        "BodyView events/links must be parallel",
+    );
 
+    let events = view.events;
     let body_events = &events[window.events.start..window.events.end];
     if !has_nested_candidate(body_events) {
         // Fast path: no `※` and no `［` in the body; bytes pass
@@ -1494,17 +1493,20 @@ fn build_content_from_body<'a>(
             if bracket_idx < window.events.end
                 && let PairEvent::PairOpen {
                     kind: PairKind::Bracket,
-                    close_idx,
                     ..
                 } = events[bracket_idx]
-                && close_idx < window.events.end
-                && let Some(g) = recognize_gaiji(events, source, refmark_span, bracket_idx, alloc)
             {
-                push_text_segment(&mut segments, source, text_start, g.consume_start, alloc);
-                segments.push(alloc.seg_gaiji(g.payload));
-                text_start = g.consume_end;
-                i = close_idx + 1;
-                continue;
+                let close_idx = view.links[bracket_idx] as usize;
+                if view.links[bracket_idx] != u32::MAX
+                    && close_idx < window.events.end
+                    && let Some(g) = recognize_gaiji(view, source, refmark_span, bracket_idx, alloc)
+                {
+                    push_text_segment(&mut segments, source, text_start, g.consume_start, alloc);
+                    segments.push(alloc.seg_gaiji(g.payload));
+                    text_start = g.consume_end;
+                    i = close_idx + 1;
+                    continue;
+                }
             }
         }
 
@@ -1517,38 +1519,42 @@ fn build_content_from_body<'a>(
         // inside the pending Text run.
         if let PairEvent::PairOpen {
             kind: PairKind::Bracket,
-            close_idx,
             span: open_span,
         } = events[i]
-            && close_idx < window.events.end
-            && let Some(a) = recognize_annotation(events, source, i, close_idx, alloc)
         {
-            let PairEvent::PairClose {
-                span: close_span, ..
-            } = events[close_idx]
-            else {
-                // PairOpen's `close_idx` always targets a PairClose of the same
-                // kind; anything else would be a Phase 2 invariant violation.
-                unreachable!("PairOpen close_idx must target a PairClose");
-            };
-            // The emit may carry a node we cannot directly use as a
-            // Segment::Annotation payload (e.g. a paired-container
-            // marker). The recogniser hands back a separate
-            // `annotation_payload` slot for the inline-segment case;
-            // when present we use it directly, otherwise we synthesise
-            // an `Annotation{Unknown}` so the Tier-A canary (no bare
-            // `［＃` in HTML output) still holds.
-            let payload = if let Some(p) = a.annotation_payload {
-                p
-            } else {
-                let raw = &source[open_span.start as usize..close_span.end as usize];
-                alloc.make_annotation(raw, AnnotationKind::Unknown)
-            };
-            push_text_segment(&mut segments, source, text_start, a.consume_start, alloc);
-            segments.push(alloc.seg_annotation(payload));
-            text_start = a.consume_end;
-            i = close_idx + 1;
-            continue;
+            let close_idx = view.links[i] as usize;
+            if view.links[i] != u32::MAX
+                && close_idx < window.events.end
+                && let Some(a) = recognize_annotation(view, source, i, close_idx, alloc)
+            {
+                let PairEvent::PairClose {
+                    span: close_span, ..
+                } = events[close_idx]
+                else {
+                    // PairOpen's link always targets a PairClose of the same
+                    // kind; anything else would be a Phase 2 invariant
+                    // violation.
+                    unreachable!("PairOpen link must target a PairClose");
+                };
+                // The emit may carry a node we cannot directly use as a
+                // Segment::Annotation payload (e.g. a paired-container
+                // marker). The recogniser hands back a separate
+                // `annotation_payload` slot for the inline-segment case;
+                // when present we use it directly, otherwise we synthesise
+                // an `Annotation{Unknown}` so the Tier-A canary (no bare
+                // `［＃` in HTML output) still holds.
+                let payload = if let Some(p) = a.annotation_payload {
+                    p
+                } else {
+                    let raw = &source[open_span.start as usize..close_span.end as usize];
+                    alloc.make_annotation(raw, AnnotationKind::Unknown)
+                };
+                push_text_segment(&mut segments, source, text_start, a.consume_start, alloc);
+                segments.push(alloc.seg_annotation(payload));
+                text_start = a.consume_end;
+                i = close_idx + 1;
+                continue;
+            }
         }
 
         i += 1;
@@ -1635,20 +1641,25 @@ struct GaijiMatch<'a> {
 /// end — i.e. the `※` and the entire following `［＃…］` fold into
 /// one Aozora span.
 fn recognize_gaiji<'a>(
-    events: &[PairEvent],
+    view: BodyView<'_>,
     source: &str,
     refmark_span: Span,
     bracket_open_idx: usize,
     alloc: &mut BorrowedAllocator<'a>,
 ) -> Option<GaijiMatch<'a>> {
+    let events = view.events;
     let &PairEvent::PairOpen {
         kind: PairKind::Bracket,
-        close_idx: bracket_close_idx,
         ..
     } = events.get(bracket_open_idx)?
     else {
         return None;
     };
+    let bracket_close_link = *view.links.get(bracket_open_idx)?;
+    if bracket_close_link == u32::MAX {
+        return None;
+    }
+    let bracket_close_idx = bracket_close_link as usize;
     let hash_end = match events.get(bracket_open_idx + 1)? {
         PairEvent::Solo {
             kind: TriggerKind::Hash,
@@ -1671,8 +1682,15 @@ fn recognize_gaiji<'a>(
         PairEvent::PairOpen {
             kind: PairKind::Quote,
             span: qos,
-            close_idx: qci,
-        } if qci < bracket_close_idx => {
+        } => {
+            let qci_link = *view.links.get(quote_open_idx)?;
+            if qci_link == u32::MAX {
+                return None;
+            }
+            let qci = qci_link as usize;
+            if qci >= bracket_close_idx {
+                return None;
+            }
             let PairEvent::PairClose { span: qcs, .. } = *events.get(qci)? else {
                 return None;
             };
@@ -1793,12 +1811,13 @@ enum EmitKind<'a> {
 /// to the `Annotation { Unknown }` catch-all so the bracket is
 /// always consumed into some `AozoraNode`.
 fn recognize_annotation<'a>(
-    events: &[PairEvent],
+    view: BodyView<'_>,
     source: &str,
     open_idx: usize,
     close_idx: usize,
     alloc: &mut BorrowedAllocator<'a>,
 ) -> Option<AnnotationMatch<'a>> {
+    let events = view.events;
     let PairEvent::PairOpen {
         span: open_span, ..
     } = events[open_idx]
@@ -1849,7 +1868,7 @@ fn recognize_annotation<'a>(
             consume_end: close_span.end,
         });
     }
-    if let Some(node) = classify_forward_bouten(events, source, open_idx, close_idx, alloc) {
+    if let Some(node) = classify_forward_bouten(view, source, open_idx, close_idx, alloc) {
         return Some(AnnotationMatch {
             emit: EmitKind::Aozora(node),
             annotation_payload: None,
@@ -1857,7 +1876,7 @@ fn recognize_annotation<'a>(
             consume_end: close_span.end,
         });
     }
-    if let Some(node) = classify_forward_tcy(events, source, open_idx, close_idx, alloc) {
+    if let Some(node) = classify_forward_tcy(view, source, open_idx, close_idx, alloc) {
         return Some(AnnotationMatch {
             emit: EmitKind::Aozora(node),
             annotation_payload: None,
@@ -1865,7 +1884,7 @@ fn recognize_annotation<'a>(
             consume_end: close_span.end,
         });
     }
-    if let Some(node) = classify_forward_heading(events, source, open_idx, close_idx, alloc) {
+    if let Some(node) = classify_forward_heading(view, source, open_idx, close_idx, alloc) {
         return Some(AnnotationMatch {
             emit: EmitKind::Aozora(node),
             annotation_payload: None,
@@ -1920,13 +1939,13 @@ fn recognize_annotation<'a>(
 /// close_idx        PairClose(Bracket)
 /// ```
 fn classify_forward_bouten<'a>(
-    events: &[PairEvent],
+    view: BodyView<'_>,
     source: &str,
     open_idx: usize,
     close_idx: usize,
     alloc: &mut BorrowedAllocator<'a>,
 ) -> Option<borrowed::AozoraNode<'a>> {
-    let extracted = extract_forward_quote_targets(events, source, open_idx, close_idx)?;
+    let extracted = extract_forward_quote_targets(view, source, open_idx, close_idx)?;
     // Shape 1: `に<kind>` — default right-side placement.
     // Shape 2: `の左に<kind>` — left-side placement (position flipped).
     let (position, kind_suffix) = if let Some(rest) = extracted.suffix.strip_prefix("に") {
@@ -1945,7 +1964,7 @@ fn classify_forward_bouten<'a>(
     // independently so a partially-valid multi-quote bracket (rare
     // but present in corpora) still fails cleanly.
     for target in &extracted.targets {
-        if !forward_target_is_preceded(events, source, open_idx, target) {
+        if !forward_target_is_preceded(view.events, source, open_idx, target) {
             return None;
         }
     }
@@ -2000,20 +2019,20 @@ fn build_bouten_target<'a>(
 /// robustness rather than failing, so the bracket still consumes via
 /// [`classify_forward_tcy`] instead of leaking to `Annotation{Unknown}`.
 fn classify_forward_tcy<'a>(
-    events: &[PairEvent],
+    view: BodyView<'_>,
     source: &str,
     open_idx: usize,
     close_idx: usize,
     alloc: &mut BorrowedAllocator<'a>,
 ) -> Option<borrowed::AozoraNode<'a>> {
-    let extracted = extract_forward_quote_targets(events, source, open_idx, close_idx)?;
+    let extracted = extract_forward_quote_targets(view, source, open_idx, close_idx)?;
     if extracted.suffix != "は縦中横" {
         return None;
     }
     let first = extracted.targets.first()?;
     // Same rationale as `classify_forward_bouten` — the styling has no
     // meaning without a preceding target literal.
-    if !forward_target_is_preceded(events, source, open_idx, first) {
+    if !forward_target_is_preceded(view.events, source, open_idx, first) {
         return None;
     }
     let text = alloc.content_plain(first);
@@ -2065,7 +2084,10 @@ fn forward_target_is_preceded(
 /// trimmed source between the last quote's `」` and the bracket's `］`,
 /// ready for particle + keyword matching.
 struct ForwardQuoteExtract<'s> {
-    targets: Vec<&'s str>,
+    /// Inline capacity 4 covers the corpus 99th percentile — most
+    /// forward-reference annotations have a single quoted target,
+    /// the long tail rarely exceeds 2-3.
+    targets: smallvec::SmallVec<[&'s str; 4]>,
     suffix: &'s str,
 }
 
@@ -2082,11 +2104,12 @@ struct ForwardQuoteExtract<'s> {
 /// (defensive against `「」` placeholders in real corpora) rather
 /// than aborting the recognition.
 fn extract_forward_quote_targets<'s>(
-    events: &[PairEvent],
+    view: BodyView<'_>,
     source: &'s str,
     open_idx: usize,
     close_idx: usize,
 ) -> Option<ForwardQuoteExtract<'s>> {
+    let events = view.events;
     let &PairEvent::PairClose {
         span: bracket_close_span,
         ..
@@ -2095,16 +2118,23 @@ fn extract_forward_quote_targets<'s>(
         return None;
     };
 
-    let mut targets: Vec<&'s str> = Vec::new();
+    let mut targets: smallvec::SmallVec<[&'s str; 4]> = smallvec::SmallVec::new();
     let mut cursor = open_idx + 2; // skip `［` and `＃`
     let mut last_quote_end: u32 = 0;
 
     while let Some(&PairEvent::PairOpen {
         kind: PairKind::Quote,
         span: quote_open_span,
-        close_idx: quote_close_idx,
     }) = events.get(cursor)
     {
+        // Look up the quote's matching close via the side-table. An
+        // unmatched/orphan PairOpen has `links[cursor] == u32::MAX`,
+        // which we treat as "not nested inside this bracket" and bail.
+        let quote_close_link = *view.links.get(cursor)?;
+        if quote_close_link == u32::MAX {
+            return None;
+        }
+        let quote_close_idx = quote_close_link as usize;
         // The quote must close *before* the bracket — a cross-boundary
         // close would mean the quote is not nested inside the bracket.
         if quote_close_idx >= close_idx {
@@ -2234,13 +2264,13 @@ fn classify_sashie_body<'a>(
 /// the catch-all emit `Annotation { Unknown }` so the reader at least
 /// sees the raw bracket text in diagnostics.
 fn classify_forward_heading<'a>(
-    events: &[PairEvent],
+    view: BodyView<'_>,
     source: &str,
     open_idx: usize,
     close_idx: usize,
     alloc: &mut BorrowedAllocator<'a>,
 ) -> Option<borrowed::AozoraNode<'a>> {
-    let extracted = extract_forward_quote_targets(events, source, open_idx, close_idx)?;
+    let extracted = extract_forward_quote_targets(view, source, open_idx, close_idx)?;
     let rest = extracted.suffix.strip_prefix("は")?;
     let level = heading_level_from_suffix(rest)?;
 
@@ -2250,7 +2280,7 @@ fn classify_forward_heading<'a>(
         if target.is_empty() {
             continue;
         }
-        if !forward_target_is_preceded(events, source, open_idx, target) {
+        if !forward_target_is_preceded(view.events, source, open_idx, target) {
             return None;
         }
     }
