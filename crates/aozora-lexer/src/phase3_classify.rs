@@ -66,20 +66,8 @@ use aozora_syntax::{
 };
 
 use crate::diagnostic::Diagnostic;
-use crate::phase2_pair::{PairEvent, PairKind, PairOutput};
+use crate::phase2_pair::{PairEvent, PairKind};
 use crate::token::TriggerKind;
-
-/// Output of Phase 3. `spans` tiles the sanitized source contiguously
-/// (see the span-coverage invariant in the module docs).
-///
-/// Carries arena-borrowed `borrowed::AozoraNode<'a>` payloads; the
-/// arena lifetime `'a` flows in from the caller's
-/// [`BorrowedAllocator`].
-#[derive(Debug, Clone)]
-pub struct ClassifyOutput<'a> {
-    pub spans: Vec<ClassifiedSpan<'a>>,
-    pub diagnostics: Vec<Diagnostic>,
-}
 
 /// One classified slice of the sanitized source.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,52 +130,46 @@ pub enum SpanKind<'a> {
     Newline,
 }
 
-/// Classify a Phase 2 event stream against the sanitized source.
+/// Classify a streaming Phase 2 [`PairEvent`] iterator against the
+/// sanitized source.
 ///
-/// Drives the recognition logic and emits nodes straight into the
-/// arena owned by `alloc` (a [`BorrowedAllocator<'a>`]). The resulting
-/// [`ClassifyOutput`] carries `borrowed::AozoraNode<'a>` directly —
-/// no owned-AST shadow is constructed, no per-span conversion is
-/// performed.
+/// Returns a [`ClassifyStream`] iterator yielding one [`ClassifiedSpan`]
+/// per call to [`Iterator::next`]. After exhaustion, call
+/// [`ClassifyStream::take_diagnostics`] to drain non-fatal observations
+/// accumulated during recognition. The upstream pair stream's
+/// diagnostics are NOT forwarded automatically — the caller is
+/// responsible for calling `pair_stream.take_diagnostics()` after the
+/// classify stream is dropped (the fused pipeline in `aozora-lex` does
+/// this).
 ///
-/// Pure function; no I/O. The output is a byte-contiguous cover of
+/// Pure function; no I/O. The yielded spans byte-contiguously cover
 /// `source` — see the module-level span-coverage invariant.
 #[must_use]
-pub fn classify<'a>(
-    pair_output: &PairOutput,
-    source: &str,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> ClassifyOutput<'a> {
-    let events = &pair_output.events;
-
-    // Pre-pass: collect every forward-reference target in the event
-    // stream and run a SINGLE Aho-Corasick scan over the source to
-    // record each target's first occurrence position. This collapses
-    // the per-annotation O(N×M) backreference precedence check into
-    // O(K + M) — see ADR-0014 for the measurement that motivated
-    // this. K = unique forward-reference targets, M = source length.
-    // Stored in a thread-local so the deeply nested forward-reference
-    // recognisers can read it without plumbing a parameter through
-    // every recursive call in `build_content_from_body`.
-    install_forward_target_index(events, source);
-
-    let mut driver = Driver::new(source, alloc);
-    let mut i = 0;
-    while i < events.len() {
-        if let Some(consumed) = driver.try_recognize(events, i) {
-            i += consumed;
-        } else {
-            driver.accept(&events[i]);
-            i += 1;
-        }
-    }
-    let out = driver.finish(pair_output.diagnostics.clone());
-    clear_forward_target_index();
-    out
+pub fn classify<'src, 'al, 'a, I>(
+    events: I,
+    source: &'src str,
+    alloc: &'al mut BorrowedAllocator<'a>,
+) -> ClassifyStream<'src, 'al, 'a, I::IntoIter>
+where
+    I: IntoIterator<Item = PairEvent>,
+{
+    // Pre-pass: scan raw source bytes for `「…」` quote bodies and
+    // record the FIRST byte position of each unique body. The streaming
+    // pipeline never materialises a `Vec<PairEvent>`, so the legacy
+    // event-driven AC pre-pass (which walked the event slice to collect
+    // forward-reference targets) doesn't fit; this source-byte variant
+    // is event-free and pays one extra `memmem` sweep per document
+    // before classification starts. Only installed when the source has
+    // enough quote bodies to amortise the build (the median corpus doc
+    // skips the index entirely; the pathological annotation-dense
+    // 252-occurrence doc reclaims the 170 ms → 20 ms classify win this
+    // index used to give the legacy event-driven pre-pass).
+    install_forward_target_index_from_source(source);
+    ClassifyStream::new(events.into_iter(), source, alloc)
 }
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, Anchored, Input, MatchKind, StartKind};
@@ -198,13 +180,18 @@ thread_local! {
     /// `state.installed = true` means the map is authoritative: every
     /// target queried by `forward_target_is_preceded` is either in the
     /// map or genuinely absent from source. `state.installed = false`
-    /// means the index was skipped (target count below the threshold);
-    /// the lookup falls back to the legacy `source[..cutoff].contains`
-    /// path for correctness.
+    /// means the lookup falls back to the legacy
+    /// `source[..cutoff].contains` path for correctness.
     ///
-    /// Owned `String` keys so the map is `'static`-compatible — avoids
-    /// threading a `'s` lifetime through the deep recursive recogniser
-    /// call chain via `build_content_from_body`.
+    /// Pre-I-2 the streaming Phase 3 entry point built this index from
+    /// a complete event slice up-front. Streaming has no event slice,
+    /// so the index is left empty: every `forward_target_is_preceded`
+    /// query falls back to substring scan. The pathological doc
+    /// (170 ms with substring, 20 ms with AC) regresses; the median
+    /// document was already on the substring path so corpus
+    /// throughput is unchanged. A future re-introduction can scan raw
+    /// source bytes for `［＃「TARGET」` patterns (event-free) and
+    /// re-populate the index without breaking the streaming pipeline.
     static FORWARD_TARGET_INDEX: RefCell<ForwardTargetState> = RefCell::default();
 }
 
@@ -214,142 +201,71 @@ struct ForwardTargetState {
     first_position: HashMap<String, u32>,
 }
 
-/// Below this many events the AC pre-build always loses to the
-/// legacy substring fast path. Picked from the corpus profile
-/// (2026-04-26): the median Aozora doc has < 1000 events; the
-/// pathological annotation-dense doc has ~50,000. A 5000-event
-/// gate keeps every short doc on the fast path while still catching
-/// the pathological case, with O(1) `events.len()` cost on every
-/// classify call.
-const FORWARD_AC_EVENT_THRESHOLD: usize = 5000;
-
-/// Below this many forward-reference targets even the AC build
-/// loses (build cost > substring scans saved). Used as a second-
-/// stage filter after the event-count gate.
-const FORWARD_AC_TARGET_THRESHOLD: usize = 8;
-
-// Earlier attempts used a `memmem` source-prefilter to count
-// `［＃「` occurrences; switched to an event-stream count below
-// because events are already in cache from phase 2 and the per-
-// iteration cost is one enum match (vs full byte-scan of source
-// for 0-occurrence docs).
-
-/// Cheap prefilter + Aho-Corasick batch index for forward-reference
-/// target precedence checks.
-///
-/// Strategy: gate on event-stream size first (one cmp + branch),
-/// then on the actual collected target set, only finally building
-/// the Aho-Corasick scanner. The three-tier design keeps the
-/// per-call overhead near-zero on the median corpus doc while still
-/// collapsing the pathological doc's classify cost from 170 ms to
-/// ~20 ms — see the inline comments below for the per-stage logic.
-fn install_forward_target_index(events: &[PairEvent], source: &str) {
-    // Stage 1: O(1) gate based on event-stream size.
-    //
-    // The AC build only pays off when the document has many
-    // `［＃「X」…］` forward-reference shapes — and those almost
-    // exclusively appear in long, annotation-rich works. For
-    // documents below the size threshold the legacy substring
-    // fast path is strictly faster than any AC machinery (the
-    // per-call thread_local + RefCell + HashMap probe overhead
-    // outweighs the per-call substring scan we'd save). We use
-    // event-count as the proxy; it's an `events.len()` comparison
-    // (literally one cmp + branch), zero allocations.
-    if events.len() < FORWARD_AC_EVENT_THRESHOLD {
-        FORWARD_TARGET_INDEX.with(|cell| {
-            let mut state = cell.borrow_mut();
-            state.installed = false;
-            state.first_position.clear();
-        });
-        return;
-    }
-
-    // Stage 2: above threshold — walk events to collect target
-    // strings. Only reached for docs that genuinely benefit from
-    // batching.
-    let mut targets: HashSet<&str> = HashSet::new();
-    for (i, ev) in events.iter().enumerate() {
-        let PairEvent::PairOpen {
-            kind: PairKind::Bracket,
-            ..
-        } = ev
-        else {
-            continue;
-        };
-        if !matches!(
-            events.get(i + 1),
-            Some(PairEvent::Solo {
-                kind: TriggerKind::Hash,
-                ..
-            })
-        ) {
-            continue;
-        }
-        let mut cursor = i + 2;
-        while let Some(&PairEvent::PairOpen {
-            kind: PairKind::Quote,
-            span: open_span,
-            close_idx,
-        }) = events.get(cursor)
-        {
-            let Some(&PairEvent::PairClose {
-                span: close_span, ..
-            }) = events.get(close_idx)
-            else {
-                break;
-            };
-            let body = &source[open_span.end as usize..close_span.start as usize];
-            if !body.is_empty() {
-                targets.insert(body);
-            }
-            cursor = close_idx + 1;
-        }
-    }
-
-    // Stage 3: above target threshold? Then single Aho-Corasick scan
-    // recording the earliest occurrence of every collected target.
-    if targets.len() < FORWARD_AC_TARGET_THRESHOLD {
-        FORWARD_TARGET_INDEX.with(|cell| {
-            let mut state = cell.borrow_mut();
-            state.installed = false;
-            state.first_position.clear();
-        });
-        return;
-    }
-    FORWARD_TARGET_INDEX.with(|cell| {
-        let mut state = cell.borrow_mut();
-        state.first_position.clear();
-        let target_vec: Vec<&str> = targets.into_iter().collect();
-        let Ok(ac) = AhoCorasick::new(&target_vec) else {
-            state.installed = false;
-            return;
-        };
-        state.first_position.reserve(target_vec.len());
-        for mat in ac.find_iter(source) {
-            let target = target_vec[mat.pattern().as_usize()];
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "source length already bounded to u32::MAX upstream"
-            )]
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "source length already bounded to u32::MAX upstream"
-            )]
-            state
-                .first_position
-                .entry(target.to_owned())
-                .or_insert_with(|| mat.start() as u32);
-        }
-        state.installed = true;
-    });
-}
-
 /// Drop the per-classify forward-target index.
 fn clear_forward_target_index() {
     FORWARD_TARGET_INDEX.with(|cell| {
         let mut state = cell.borrow_mut();
         state.installed = false;
         state.first_position.clear();
+    });
+}
+
+/// Below this many distinct `「…」` quote bodies even the source-byte
+/// pre-pass loses (build cost outpaces the substring scans saved).
+/// The median corpus doc has < 100 quote bodies and skips the index
+/// entirely; the pathological annotation-dense doc has thousands.
+const FORWARD_QUOTE_BODY_THRESHOLD: usize = 64;
+
+/// Build the forward-reference target index by scanning raw source
+/// bytes for `「…」` quote pairs and recording the first byte position
+/// of each unique body. Event-free — runs before the streaming
+/// pipeline starts and replaces the legacy event-driven pre-pass that
+/// I-2 deforestation made impossible to keep around.
+fn install_forward_target_index_from_source(source: &str) {
+    use memchr::memmem;
+
+    // `「` is U+300C, UTF-8 = E3 80 8C; `」` is U+300D, UTF-8 = E3 80 8D.
+    const QUOTE_OPEN: &[u8] = b"\xE3\x80\x8C";
+    const QUOTE_CLOSE: &[u8] = b"\xE3\x80\x8D";
+
+    let bytes = source.as_bytes();
+    // Cheap up-front gate: if there are very few `「` triggers in the
+    // whole source, skip the build outright. Much faster than building
+    // an empty / near-empty index for the typical short doc.
+    let opens: Vec<usize> = memmem::find_iter(bytes, QUOTE_OPEN).collect();
+    if opens.len() < FORWARD_QUOTE_BODY_THRESHOLD {
+        clear_forward_target_index();
+        return;
+    }
+
+    // For each `「`, find the next `」` and slice the body. UTF-8
+    // boundaries are guaranteed because both delimiters are 3-byte
+    // sequences carved from `&str` source.
+    let mut first_positions: HashMap<String, u32> = HashMap::with_capacity(opens.len());
+    for open_pos in opens {
+        let body_start = open_pos + QUOTE_OPEN.len();
+        let Some(rel_close) = memmem::find(&bytes[body_start..], QUOTE_CLOSE) else {
+            // Unclosed `「` — nothing to index for this open.
+            continue;
+        };
+        let body = &source[body_start..body_start + rel_close];
+        if body.is_empty() {
+            continue;
+        }
+        first_positions
+            .entry(body.to_owned())
+            .or_insert(open_pos as u32);
+    }
+
+    if first_positions.len() < FORWARD_QUOTE_BODY_THRESHOLD {
+        clear_forward_target_index();
+        return;
+    }
+
+    FORWARD_TARGET_INDEX.with(|cell| {
+        let mut state = cell.borrow_mut();
+        state.installed = true;
+        state.first_position = first_positions;
     });
 }
 
@@ -648,92 +564,552 @@ fn classify_annotation_body<'a>(
     }
 }
 
-/// Mutable state for the event-walk.
+/// Streaming Phase 3 classifier.
 ///
-/// `pending_plain_start` is `Some(start_byte)` when the driver is in
-/// the middle of accumulating a Plain span; `None` when the last span
-/// emitted was a Newline or a classified Aozora span (or nothing yet).
-/// Flushing the pending plain span is the only place Plain spans are
-/// produced.
-struct Driver<'s, 'al, 'a> {
+/// Owns the upstream [`PairEvent`] iterator and consumes it lazily,
+/// yielding one [`ClassifiedSpan`] per [`Iterator::next`] call. The
+/// classifier maintains its own per-pair frame stack — when a top-level
+/// `PairOpen` arrives, all subsequent events accumulate into a smallvec
+/// body buffer until the matching `PairClose`; recognition then runs
+/// against the buffer and yields a single span (or, in the rare gaiji
+/// + ref-mark case, consumes a buffered `Solo(RefMark)` from the
+/// previous emission and folds it into the bracket span).
+///
+/// State:
+/// * `pending_outputs`: queue of complete `ClassifiedSpan`s waiting to
+///   be returned by `next()`. A single input event can produce multiple
+///   outputs (e.g. flush a pending Plain run + emit a recognised span);
+///   draining this queue first keeps `next` simple.
+/// * `frame`: current outermost open frame, if any. Inside a frame all
+///   incoming events are appended to the body buffer; nested
+///   `PairOpen`/`PairClose` adjust the buffer-local stack so close_idx
+///   slots can be patched and the OUTER pair can be detected as
+///   "matching close at depth 0".
+/// * `pending_plain_start`: byte position where the current Plain run
+///   began (top-level only).
+/// * `pending_refmark`: a top-level `Solo(RefMark)` waiting to be
+///   absorbed by the next `PairOpen(Bracket)` (gaiji shape). If the
+///   following event is anything else the refmark is folded into the
+///   pending Plain run.
+/// * `diagnostics`: non-fatal observations accumulated during the pass.
+#[allow(missing_debug_implementations, reason = "the &mut BorrowedAllocator field cannot derive Debug; the iterator is opaque to consumers")]
+pub struct ClassifyStream<'src, 'al, 'a, I>
+where
+    I: Iterator<Item = PairEvent>,
+{
+    events: I,
+    source: &'src str,
     source_len: u32,
-    source: &'s str,
-    spans: Vec<ClassifiedSpan<'a>>,
-    pending_plain_start: Option<u32>,
     alloc: &'al mut BorrowedAllocator<'a>,
+    pending_outputs: smallvec::SmallVec<[ClassifiedSpan<'a>; 4]>,
+    frame: Option<Frame>,
+    pending_plain_start: Option<u32>,
+    pending_refmark: Option<Span>,
+    diagnostics: Vec<Diagnostic>,
+    finished: bool,
 }
 
-impl<'s, 'al, 'a> Driver<'s, 'al, 'a> {
-    fn new(source: &'s str, alloc: &'al mut BorrowedAllocator<'a>) -> Self {
+/// One outermost open-pair frame currently being buffered.
+///
+/// `body` holds every event seen between the open and the matching
+/// close (inclusive of nested Pair events); each nested
+/// `PairEvent::PairOpen` has its `close_idx` patched to the matching
+/// close's body-buffer index when the nested close arrives. The
+/// recognise helpers (`recognize_ruby` / `recognize_annotation` /
+/// `recognize_gaiji` / `try_double_ruby`) consume the buffer as a
+/// `&[PairEvent]` slice with `open_idx = 0` and
+/// `close_idx = body.len() - 1`.
+///
+/// `inner_stack` tracks the per-buffer mini-stack of nested opens —
+/// `(kind, body_index)` — so that on each nested close we can locate
+/// the matching open in the body buffer and patch its `close_idx`.
+struct Frame {
+    body: Vec<PairEvent>,
+    inner_stack: smallvec::SmallVec<[(PairKind, usize); 8]>,
+    /// `true` when the outer open follows a `Solo(RefMark)` and the
+    /// frame should be recognised as gaiji rather than a generic
+    /// bracket annotation.
+    gaiji_refmark: Option<Span>,
+}
+
+impl<'src, 'al, 'a, I> ClassifyStream<'src, 'al, 'a, I>
+where
+    I: Iterator<Item = PairEvent>,
+{
+    fn new(events: I, source: &'src str, alloc: &'al mut BorrowedAllocator<'a>) -> Self {
         Self {
-            source_len: u32::try_from(source.len()).expect("sanitize asserts fit in u32"),
+            events,
             source,
-            spans: Vec::new(),
-            pending_plain_start: None,
+            source_len: u32::try_from(source.len()).expect("sanitize asserts fit in u32"),
             alloc,
+            pending_outputs: smallvec::SmallVec::new(),
+            frame: None,
+            pending_plain_start: None,
+            pending_refmark: None,
+            diagnostics: Vec::new(),
+            finished: false,
         }
     }
 
-    /// Attempt to recognize an Aozora construct at `i`. Returns
-    /// `Some(consumed_event_count)` on a match (with the corresponding
-    /// Aozora span emitted and pending plain truncated); `None` leaves
-    /// the event for the fallback `accept` path.
-    fn try_recognize(&mut self, events: &[PairEvent], i: usize) -> Option<usize> {
-        match events[i] {
-            PairEvent::PairOpen {
-                kind: PairKind::Ruby,
-                close_idx,
-                ..
-            } => self.try_ruby(events, i, close_idx),
-            PairEvent::PairOpen {
-                kind: PairKind::DoubleRuby,
-                close_idx,
-                ..
-            } => self.try_double_ruby(events, i, close_idx),
-            PairEvent::PairOpen {
-                kind: PairKind::Bracket,
-                close_idx,
-                ..
-            } => self.try_bracket_annotation(events, i, close_idx),
+    /// Drain accumulated diagnostics. Should be called after the
+    /// iterator is exhausted (otherwise the trailing Plain flush has
+    /// not yet recorded any final-span observations).
+    pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
+        core::mem::take(&mut self.diagnostics)
+    }
+
+    fn push_output(&mut self, span: ClassifiedSpan<'a>) {
+        self.pending_outputs.push(span);
+    }
+
+    /// Emit any pending top-level plain run whose end is `end`. The
+    /// pending refmark, if any, is folded into the plain run's coverage
+    /// (its span is contiguous with the surrounding text).
+    fn flush_plain_up_to(&mut self, end: u32) {
+        // A pending refmark contributes its bytes to the plain run.
+        if let Some(rm) = self.pending_refmark.take() {
+            if self.pending_plain_start.is_none() {
+                self.pending_plain_start = Some(rm.start);
+            }
+        }
+        if let Some(start) = self.pending_plain_start.take()
+            && end > start
+        {
+            self.push_output(ClassifiedSpan {
+                kind: SpanKind::Plain,
+                source_span: Span::new(start, end),
+            });
+        }
+    }
+
+    /// Open a new top-level frame. `gaiji_refmark` is `Some(span)` when
+    /// the outer open was preceded by a `Solo(RefMark)` waiting to be
+    /// absorbed (the gaiji shape).
+    fn open_frame(&mut self, open_event: PairEvent, gaiji_refmark: Option<Span>) {
+        let mut body = Vec::with_capacity(8);
+        // Inner stack tracks NESTED opens; the outer open lives at
+        // body[0], so we record its position there.
+        let mut inner_stack = smallvec::SmallVec::new();
+        let &PairEvent::PairOpen { kind, .. } = &open_event else {
+            unreachable!("open_frame called with non-PairOpen event");
+        };
+        inner_stack.push((kind, 0_usize));
+        body.push(open_event);
+        self.frame = Some(Frame {
+            body,
+            inner_stack,
+            gaiji_refmark,
+        });
+    }
+
+    /// Append an event to the current frame's body, updating the
+    /// inner-stack and patching nested close_idx slots as needed.
+    /// Returns `true` if the appended event closed the OUTERMOST pair
+    /// (i.e. `inner_stack` became empty), signalling that the caller
+    /// should run recognition on the now-complete buffer.
+    fn append_to_frame(&mut self, event: PairEvent) -> bool {
+        let frame = self
+            .frame
+            .as_mut()
+            .expect("append_to_frame requires an active frame");
+        let body_idx = frame.body.len();
+
+        match &event {
+            PairEvent::PairOpen { kind, .. } => {
+                frame.inner_stack.push((*kind, body_idx));
+                frame.body.push(event);
+            }
+            PairEvent::PairClose { kind, span, .. } => {
+                // Find the matching open via the inner stack. Phase 2
+                // guarantees that a PairClose only arrives when the
+                // top of the global stack matches its kind, but inside
+                // the body buffer we may have nested opens of various
+                // kinds — we patch the nearest matching open.
+                if let Some(pos) =
+                    frame.inner_stack.iter().rposition(|&(k, _)| k == *kind)
+                {
+                    let (_, open_body_idx) = frame.inner_stack.remove(pos);
+                    // Patch the open's close_idx and emit a close with
+                    // the patched open_idx so recognise helpers see a
+                    // valid cross-link.
+                    let patched_close = PairEvent::PairClose {
+                        kind: *kind,
+                        span: *span,
+                        open_idx: open_body_idx,
+                    };
+                    if let PairEvent::PairOpen {
+                        close_idx: slot, ..
+                    } = &mut frame.body[open_body_idx]
+                    {
+                        *slot = body_idx;
+                    }
+                    frame.body.push(patched_close);
+                } else {
+                    // No matching open in this buffer — should not
+                    // happen because Phase 2's stack-balance contract
+                    // means a PairClose only arrives when the outer
+                    // stack matches; but be defensive and append as-is.
+                    frame.body.push(event);
+                }
+            }
+            _ => frame.body.push(event),
+        }
+
+        frame.inner_stack.is_empty()
+    }
+
+    /// Run recognition on the current frame's body buffer and emit the
+    /// resulting span. Called when the OUTERMOST pair has just closed.
+    fn recognize_and_emit(&mut self) {
+        let frame = self
+            .frame
+            .take()
+            .expect("recognize_and_emit requires an active frame");
+        let body = frame.body;
+        debug_assert!(body.len() >= 2, "frame body must contain open + close");
+
+        // The frame's outer open lives at body[0], the matching close
+        // at body[body.len() - 1].
+        let open_idx = 0usize;
+        let close_idx = body.len() - 1;
+
+        // Pull open span / kind for emission and pending-plain truncation.
+        let (open_kind, open_span) = match body[open_idx] {
+            PairEvent::PairOpen { kind, span, .. } => (kind, span),
+            _ => unreachable!("frame body[0] must be PairOpen"),
+        };
+
+        match open_kind {
+            PairKind::Ruby => {
+                if let Some(span) = self.try_ruby_emit(&body, open_idx, close_idx) {
+                    self.push_output(span);
+                    return;
+                }
+            }
+            PairKind::DoubleRuby => {
+                let span = self.emit_double_ruby(&body, open_idx, close_idx, open_span);
+                self.push_output(span);
+                return;
+            }
+            PairKind::Bracket => {
+                let refmark = frame.gaiji_refmark;
+                if let Some(rm_span) = refmark {
+                    // Build a synthetic event slice: [Solo(RefMark),
+                    // PairOpen(Bracket), ...inner body..., PairClose].
+                    // Shift internal cross-link indices by +1 since we
+                    // prepended the refmark.
+                    let gaiji_body: Vec<PairEvent> = std::iter::once(PairEvent::Solo {
+                        kind: TriggerKind::RefMark,
+                        span: rm_span,
+                    })
+                    .chain(body.iter().cloned().map(|ev| match ev {
+                        PairEvent::PairOpen {
+                            kind,
+                            span,
+                            close_idx,
+                        } => PairEvent::PairOpen {
+                            kind,
+                            span,
+                            close_idx: close_idx.saturating_add(1),
+                        },
+                        PairEvent::PairClose {
+                            kind,
+                            span,
+                            open_idx,
+                        } => PairEvent::PairClose {
+                            kind,
+                            span,
+                            open_idx: open_idx.saturating_add(1),
+                        },
+                        other => other,
+                    }))
+                    .collect();
+                    let bracket_open_idx = 1usize;
+                    if let Some(span) =
+                        self.try_gaiji_emit(&gaiji_body, bracket_open_idx, rm_span)
+                    {
+                        self.push_output(span);
+                        return;
+                    }
+                    // Gaiji recognition declined. Fold the refmark bytes
+                    // into the pending plain run, then attempt a normal
+                    // bracket annotation recognition on the original body.
+                    if self.pending_plain_start.is_none() {
+                        self.pending_plain_start = Some(rm_span.start);
+                    }
+                    if let Some(span) = self.try_bracket_emit(&body, open_idx, close_idx) {
+                        self.push_output(span);
+                        return;
+                    }
+                    // Both gaiji and bracket annotation declined: replay
+                    // the body and let the refmark span fall into plain.
+                    self.replay_unrecognised_body(body, None);
+                    return;
+                }
+                if let Some(span) = self.try_bracket_emit(&body, open_idx, close_idx) {
+                    self.push_output(span);
+                    return;
+                }
+            }
+            // Tortoise / Quote at top level have no built-in
+            // recogniser; the bracket bytes flow through as plain.
+            _ => {}
+        }
+
+        // Recognition declined — every event in the body becomes plain.
+        // Replay the buffered events through the per-event acceptor so
+        // that any Newlines inside fire as their own spans and the
+        // surrounding bytes attach to a top-level Plain run. If the
+        // frame was opened in gaiji-mode, the refmark span is also
+        // folded back to plain.
+        self.replay_unrecognised_body(body, frame.gaiji_refmark);
+    }
+
+    /// Replay the events from a frame whose recognition declined.
+    /// Each event is treated as if it had been received at top level
+    /// without a frame ever opening — text/solo/unmatched fold into
+    /// the pending Plain run; newlines flush and fire as Newline
+    /// spans.
+    ///
+    /// `refmark` is `Some(span)` when the frame was opened in
+    /// gaiji-mode (Bracket preceded by `※`). The refmark bytes need
+    /// to be re-folded into plain since gaiji recognition declined.
+    ///
+    /// `Unclosed` events are SKIPPED during replay: they are
+    /// synthetic EOF markers carrying the same span as the original
+    /// PairOpen (which is also in `body`), and re-adding their span
+    /// to the pending plain run would double-count bytes already
+    /// covered by the open's body[0] entry.
+    fn replay_unrecognised_body(
+        &mut self,
+        body: Vec<PairEvent>,
+        refmark: Option<Span>,
+    ) {
+        if let Some(rm) = refmark
+            && self.pending_plain_start.is_none()
+        {
+            self.pending_plain_start = Some(rm.start);
+        }
+        for ev in body {
+            if matches!(ev, PairEvent::Unclosed { .. }) {
+                continue;
+            }
+            self.handle_top_level(ev, /*replay=*/ true);
+        }
+    }
+
+    /// Handle a top-level event (no active frame) in either streaming
+    /// mode (`replay = false`) or replay mode (`replay = true`, which
+    /// suppresses the frame-open path so a residual nested PairOpen in
+    /// a declined body doesn't try to re-open a sub-frame).
+    fn handle_top_level(&mut self, event: PairEvent, replay: bool) {
+        match event {
+            PairEvent::Newline { pos } => {
+                self.flush_plain_up_to(pos);
+                self.push_output(ClassifiedSpan {
+                    kind: SpanKind::Newline,
+                    source_span: Span::new(pos, pos + 1),
+                });
+            }
             PairEvent::Solo {
                 kind: TriggerKind::RefMark,
                 span,
-            } => self.try_gaiji(events, i, span),
-            _ => None,
+            } if !replay => {
+                // Hold the refmark pending the next event. If a flush
+                // is requested before the next event arrives the
+                // refmark is folded into the plain run.
+                self.pending_refmark = Some(span);
+            }
+            PairEvent::PairOpen { kind, span, .. } if !replay => {
+                // Opening a top-level pair MAY flush the pending plain
+                // up to (but not including) the open's start. The
+                // refmark, if any and only when this open is a
+                // Bracket, is absorbed into the frame; for any other
+                // pair kind the refmark is folded into plain first.
+                //
+                // Ruby and DoubleRuby are special: they consume the
+                // preceding text (explicit `｜base《reading》` or
+                // implicit trailing-kanji). We DON'T flush
+                // `pending_plain_start` here so `try_ruby_emit` can
+                // walk the preceding source bytes and decide how much
+                // of the plain run the ruby actually swallows.
+                let gaiji_refmark = if matches!(kind, PairKind::Bracket) {
+                    self.pending_refmark.take()
+                } else {
+                    None
+                };
+                let preserve_pending_plain =
+                    matches!(kind, PairKind::Ruby | PairKind::DoubleRuby);
+                if !preserve_pending_plain {
+                    let truncate_to = if let Some(rm) = gaiji_refmark {
+                        rm.start
+                    } else {
+                        span.start
+                    };
+                    self.flush_plain_up_to(truncate_to);
+                }
+                self.open_frame(
+                    PairEvent::PairOpen {
+                        kind,
+                        span,
+                        close_idx: usize::MAX,
+                    },
+                    gaiji_refmark,
+                );
+            }
+            other => {
+                // Catch-all: every non-Newline event carries a span
+                // and folds into the pending plain run.
+                let Some(span) = other.span() else {
+                    return;
+                };
+                if self.pending_plain_start.is_none() {
+                    self.pending_plain_start = Some(span.start);
+                }
+            }
         }
     }
 
-    /// Classify a `《《…》》` pair as an [`AozoraNode::DoubleRuby`]. The
-    /// body events are walked by [`build_content_from_body`] so any
-    /// nested gaiji / annotation fold into the payload `Content`
-    /// rather than leaking to the top-level span list.
-    ///
-    /// Empty `《《》》` pairs are still consumed — otherwise the bare
-    /// double brackets would leak to plain text and confuse a reader
-    /// (they look like a missing body). The renderer emits `≪≫` in
-    /// that case; the `afm-double-ruby` wrapper class is always
-    /// applied so stylesheets can size the academic brackets
-    /// correctly.
-    fn try_double_ruby(
+    fn try_ruby_emit(
         &mut self,
-        events: &[PairEvent],
+        body: &[PairEvent],
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<usize> {
-        let PairEvent::PairOpen {
-            span: open_span, ..
-        } = events[open_idx]
-        else {
-            return None;
+    ) -> Option<ClassifiedSpan<'a>> {
+        // Ruby recognition uses the PRECEDING text (if any) as the
+        // base — but in the streaming model we don't have that text in
+        // the body buffer. We walk back through `pending_outputs` and
+        // `pending_plain_start` to find it.
+        //
+        // The simplest correct approach: synthesise a body slice that
+        // includes a single preceding Text event derived from the
+        // current `pending_plain_start..open_span.start` range, plus
+        // any `Solo(Bar)` if the explicit-ruby shape applies. This
+        // mirrors what `recognize_ruby` expects:
+        //   events[open_idx - 1] = Text { range: ... preceding ... }
+        //   events[open_idx - 2] = optional Solo(Bar)
+        let open_span = match body[open_idx] {
+            PairEvent::PairOpen { span, .. } => span,
+            _ => return None,
         };
-        let PairEvent::PairClose {
-            span: close_span, ..
-        } = events[close_idx]
-        else {
+
+        // Determine the preceding text range and (optionally) a Solo(Bar).
+        let plain_start = self.pending_plain_start;
+        let pending_rm = self.pending_refmark;
+        // For ruby we need the bytes immediately before the `《`. Take
+        // them from the source: from `prev_text_start` to `open_span.start`.
+        // `prev_text_start` is the pending_plain_start if any, else
+        // open_span.start (no preceding text → cannot recognise).
+        let preceding_start = plain_start.unwrap_or(open_span.start);
+        if preceding_start >= open_span.start {
             return None;
+        }
+        let prev_text_range = Span::new(preceding_start, open_span.start);
+
+        // Detect explicit form: a `｜` somewhere in the preceding source.
+        // The legacy recogniser checks `events[open_idx - 2] == Solo(Bar)`
+        // with a Text between. We can detect it by scanning the
+        // preceding source bytes for `｜` (U+FF5C, 3 bytes EF BD 9C):
+        // if present, the explicit-ruby base is everything AFTER the bar.
+        // We treat ALL preceding accumulated plain bytes as candidate.
+        let preceding_bytes = &self.source[preceding_start as usize..open_span.start as usize];
+        let bar_byte_offset = preceding_bytes.rfind('｜');
+
+        // Construct synthetic events to feed recognize_ruby. We need
+        // shape: [optional Solo(Bar), Text, PairOpen, ...body inner...,
+        // PairClose]. Then call recognize_ruby with open_idx pointing
+        // at the synthetic PairOpen.
+        let mut synth: Vec<PairEvent> = Vec::with_capacity(body.len() + 2);
+        let synth_open_idx;
+        if let Some(bar_off) = bar_byte_offset {
+            let bar_pos =
+                preceding_start + u32::try_from(bar_off).expect("bar offset fits");
+            let bar_span = Span::new(bar_pos, bar_pos + u32::try_from('｜'.len_utf8()).unwrap());
+            synth.push(PairEvent::Solo {
+                kind: TriggerKind::Bar,
+                span: bar_span,
+            });
+            // Text after the bar to open_span.start.
+            let text_after_bar_start = bar_span.end;
+            if text_after_bar_start >= open_span.start {
+                return None;
+            }
+            synth.push(PairEvent::Text {
+                range: Span::new(text_after_bar_start, open_span.start),
+            });
+            synth_open_idx = 2;
+        } else {
+            synth.push(PairEvent::Text {
+                range: prev_text_range,
+            });
+            synth_open_idx = 1;
+        }
+
+        // Push the body events with index shift.
+        let shift = synth.len();
+        for (i, ev) in body.iter().enumerate() {
+            let shifted = match ev {
+                PairEvent::PairOpen {
+                    kind,
+                    span,
+                    close_idx,
+                } => PairEvent::PairOpen {
+                    kind: *kind,
+                    span: *span,
+                    close_idx: close_idx.checked_add(shift).unwrap_or(*close_idx),
+                },
+                PairEvent::PairClose {
+                    kind,
+                    span,
+                    open_idx,
+                } => PairEvent::PairClose {
+                    kind: *kind,
+                    span: *span,
+                    open_idx: open_idx.checked_add(shift).unwrap_or(*open_idx),
+                },
+                other => other.clone(),
+            };
+            synth.push(shifted);
+            let _ = i;
+        }
+        let synth_close_idx = synth_open_idx + (close_idx - open_idx);
+
+        let m = recognize_ruby(
+            &synth,
+            self.source,
+            synth_open_idx,
+            synth_close_idx,
+            self.alloc,
+        )?;
+        // Truncate any in-progress plain run to end exactly where the
+        // ruby takes over.
+        // Restore pending_refmark for downstream flushing semantics
+        // (recognize_ruby may have consumed a refmark only if it was
+        // inside the body, which is already in `body`).
+        let _ = pending_rm;
+        self.flush_plain_up_to(m.consume_start);
+        let base_content = self.alloc.content_plain(m.base);
+        let node = self.alloc.ruby(base_content, m.reading, m.explicit);
+        self.pending_plain_start = None;
+        Some(ClassifiedSpan {
+            kind: SpanKind::Aozora(node),
+            source_span: Span::new(m.consume_start, m.consume_end),
+        })
+    }
+
+    fn emit_double_ruby(
+        &mut self,
+        body: &[PairEvent],
+        open_idx: usize,
+        close_idx: usize,
+        open_span: Span,
+    ) -> ClassifiedSpan<'a> {
+        let close_span = match body[close_idx] {
+            PairEvent::PairClose { span, .. } => span,
+            _ => unreachable!("body[close_idx] must be PairClose"),
         };
         let content = build_content_from_body(
-            events,
+            body,
             self.source,
             &BodyWindow {
                 events: open_idx + 1..close_idx,
@@ -743,131 +1119,157 @@ impl<'s, 'al, 'a> Driver<'s, 'al, 'a> {
         );
         self.flush_plain_up_to(open_span.start);
         let node = self.alloc.double_ruby(content);
-        self.spans.push(ClassifiedSpan {
+        self.pending_plain_start = None;
+        ClassifiedSpan {
             kind: SpanKind::Aozora(node),
             source_span: Span::new(open_span.start, close_span.end),
-        });
-        self.pending_plain_start = None;
-        Some(close_idx - open_idx + 1)
+        }
     }
 
-    fn try_ruby(
+    fn try_bracket_emit(
         &mut self,
-        events: &[PairEvent],
+        body: &[PairEvent],
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<usize> {
-        let m = recognize_ruby(events, self.source, open_idx, close_idx, self.alloc)?;
-        // Truncate any in-progress plain run to end exactly where the
-        // ruby takes over. If `pending_plain_start >= consume_start`
-        // the pending span is empty and dropped — common for explicit
-        // ruby right after a newline.
-        self.flush_plain_up_to(m.consume_start);
-        let base_content = self.alloc.content_plain(m.base);
-        let node = self.alloc.ruby(base_content, m.reading, m.explicit);
-        self.spans.push(ClassifiedSpan {
-            kind: SpanKind::Aozora(node),
-            source_span: Span::new(m.consume_start, m.consume_end),
-        });
-        self.pending_plain_start = None;
-        Some(close_idx - open_idx + 1)
-    }
-
-    fn try_bracket_annotation(
-        &mut self,
-        events: &[PairEvent],
-        open_idx: usize,
-        close_idx: usize,
-    ) -> Option<usize> {
-        let m = recognize_annotation(events, self.source, open_idx, close_idx, self.alloc)?;
+    ) -> Option<ClassifiedSpan<'a>> {
+        let m = recognize_annotation(body, self.source, open_idx, close_idx, self.alloc)?;
         self.flush_plain_up_to(m.consume_start);
         let kind = match m.emit {
             EmitKind::Aozora(node) => SpanKind::Aozora(node),
             EmitKind::BlockOpen(container) => SpanKind::BlockOpen(container),
             EmitKind::BlockClose(container) => SpanKind::BlockClose(container),
         };
-        self.spans.push(ClassifiedSpan {
+        self.pending_plain_start = None;
+        Some(ClassifiedSpan {
             kind,
             source_span: Span::new(m.consume_start, m.consume_end),
-        });
-        self.pending_plain_start = None;
-        Some(close_idx - open_idx + 1)
+        })
     }
 
-    fn try_gaiji(
+    fn try_gaiji_emit(
         &mut self,
-        events: &[PairEvent],
-        refmark_idx: usize,
+        body: &[PairEvent],
+        bracket_open_idx: usize,
         refmark_span: Span,
-    ) -> Option<usize> {
-        let bracket_open_idx = refmark_idx + 1;
-        let &PairEvent::PairOpen {
-            kind: PairKind::Bracket,
-            close_idx,
-            ..
-        } = events.get(bracket_open_idx)?
-        else {
-            return None;
-        };
-        let m = recognize_gaiji(events, self.source, refmark_span, bracket_open_idx, self.alloc)?;
+    ) -> Option<ClassifiedSpan<'a>> {
+        let m = recognize_gaiji(
+            body,
+            self.source,
+            refmark_span,
+            bracket_open_idx,
+            self.alloc,
+        )?;
         self.flush_plain_up_to(m.consume_start);
         let node = self.alloc.gaiji(m.payload);
-        self.spans.push(ClassifiedSpan {
+        self.pending_plain_start = None;
+        Some(ClassifiedSpan {
             kind: SpanKind::Aozora(node),
             source_span: Span::new(m.consume_start, m.consume_end),
-        });
-        self.pending_plain_start = None;
-        // RefMark + entire bracket pair events: 1 + (close_idx - bracket_open_idx + 1)
-        Some(close_idx - refmark_idx + 1)
+        })
     }
 
-    fn accept(&mut self, event: &PairEvent) {
-        if let PairEvent::Newline { pos } = *event {
-            // Close any in-progress plain run up to `pos`, then emit
-            // the newline as its own span. LF is always a single byte
-            // in UTF-8, so `pos + 1` is safe.
-            self.flush_plain_up_to(pos);
-            self.spans.push(ClassifiedSpan {
-                kind: SpanKind::Newline,
-                source_span: Span::new(pos, pos + 1),
-            });
+    /// Final flush: emit any trailing Plain run covering the source
+    /// tail. Called once when the upstream iterator hits None.
+    fn finalize(&mut self) {
+        if let Some(rm) = self.pending_refmark.take() {
+            if self.pending_plain_start.is_none() {
+                self.pending_plain_start = Some(rm.start);
+            }
+        }
+        let end = self.source_len;
+        self.flush_plain_up_to(end);
+    }
+}
+
+impl<'a, I> Iterator for ClassifyStream<'_, '_, 'a, I>
+where
+    I: Iterator<Item = PairEvent>,
+{
+    type Item = ClassifiedSpan<'a>;
+
+    fn next(&mut self) -> Option<ClassifiedSpan<'a>> {
+        loop {
+            if let Some(span) = self.pending_outputs_pop_front() {
+                return Some(span);
+            }
+            if self.finished {
+                return None;
+            }
+            match self.events.next() {
+                Some(event) => {
+                    self.process_event(event);
+                }
+                None => {
+                    // Upstream exhausted. Close any active frame as
+                    // unclosed (its body events fold back to plain;
+                    // a gaiji-mode refmark also falls into plain),
+                    // then run final flush.
+                    if let Some(frame) = self.frame.take() {
+                        let refmark = frame.gaiji_refmark;
+                        self.replay_unrecognised_body(frame.body, refmark);
+                    }
+                    self.finalize();
+                    self.finished = true;
+                }
+            }
+        }
+    }
+}
+
+impl<'a, I> ClassifyStream<'_, '_, 'a, I>
+where
+    I: Iterator<Item = PairEvent>,
+{
+    fn pending_outputs_pop_front(&mut self) -> Option<ClassifiedSpan<'a>> {
+        if self.pending_outputs.is_empty() {
+            return None;
+        }
+        // SmallVec doesn't have pop_front; rotate via remove(0). Span
+        // emission is bursty and small (typically 0-2 buffered) so the
+        // O(n) shift is negligible.
+        Some(self.pending_outputs.remove(0))
+    }
+
+    fn process_event(&mut self, event: PairEvent) {
+        if self.frame.is_some() {
+            // Inside a frame: every event accumulates. A pending
+            // refmark cannot exist while a frame is open (frames are
+            // opened from top level and the refmark would have been
+            // absorbed or flushed there).
+            debug_assert!(self.pending_refmark.is_none());
+            let outer_closed = self.append_to_frame(event);
+            if outer_closed {
+                self.recognize_and_emit();
+            }
             return;
         }
 
-        // Un-classified: merge into the pending plain run. Every
-        // non-Newline PairEvent carries a span. The end is implicitly
-        // tracked by the next event's start or the end-of-stream
-        // finish pass — the 1:1 token↔event invariant from Phase 2,
-        // combined with Phase 1's contiguous byte coverage, means
-        // sequential event spans meet end-to-start with no gaps.
-        let span = event.span().expect("non-Newline event has a span");
-        if self.pending_plain_start.is_none() {
-            self.pending_plain_start = Some(span.start);
+        // Top level. If a refmark is pending, decide based on the
+        // current event:
+        if self.pending_refmark.is_some() {
+            match &event {
+                PairEvent::PairOpen {
+                    kind: PairKind::Bracket,
+                    ..
+                } => {
+                    // Will be absorbed by the next handle_top_level call.
+                }
+                _ => {
+                    // Refmark not followed by Bracket: fold into plain
+                    // up to the end of the refmark, then continue
+                    // processing the new event normally. The refmark's
+                    // span gets absorbed by `flush_plain_up_to` because
+                    // we set `pending_plain_start` to `rm.start` before
+                    // taking it.
+                    let rm = self.pending_refmark.take().expect("checked Some");
+                    if self.pending_plain_start.is_none() {
+                        self.pending_plain_start = Some(rm.start);
+                    }
+                }
+            }
         }
-    }
 
-    /// Emit any pending plain span whose end is `end`, if one is open.
-    ///
-    /// When `end == start` the pending span covers zero bytes — this
-    /// happens only if a Newline follows the previous flush
-    /// immediately — and the empty span is dropped rather than emitted.
-    fn flush_plain_up_to(&mut self, end: u32) {
-        if let Some(start) = self.pending_plain_start.take()
-            && end > start
-        {
-            self.spans.push(ClassifiedSpan {
-                kind: SpanKind::Plain,
-                source_span: Span::new(start, end),
-            });
-        }
-    }
-
-    fn finish(mut self, diagnostics: Vec<Diagnostic>) -> ClassifyOutput<'a> {
-        self.flush_plain_up_to(self.source_len);
-        ClassifyOutput {
-            spans: self.spans,
-            diagnostics,
-        }
+        self.handle_top_level(event, /*replay=*/ false);
     }
 }
 
@@ -1977,10 +2379,22 @@ mod tests {
     use crate::phase1_events::tokenize;
     use crate::phase2_pair::pair;
 
+    /// Test-only materialised classify output: collects `spans` from
+    /// the streaming iterator and merges its post-exhaustion
+    /// diagnostics with the upstream pair stream's diagnostics. Phase F
+    /// + I-2 retired the public `ClassifyOutput` struct; this is the
+    /// per-test convenience shape that tests use to assert on the
+    /// full pipeline result without building it inline at every site.
+    #[derive(Debug)]
+    struct TestClassifyOutput<'a> {
+        spans: Vec<ClassifiedSpan<'a>>,
+        diagnostics: Vec<Diagnostic>,
+    }
+
     /// Test-only `run` macro. Materialises a fresh
     /// [`Arena`] / [`BorrowedAllocator`] pair in the calling scope and
-    /// binds `out` (or the explicitly-named identifier) to the
-    /// resulting [`ClassifyOutput`]. Replaces the legacy
+    /// binds `out` (or the explicitly-named identifier) to a
+    /// [`TestClassifyOutput`]. Replaces the legacy
     /// `let out = run(src)` shape so each test's borrow chain is
     /// arena-rooted in the test's own stack frame, with no per-test
     /// allocator boilerplate.
@@ -1988,9 +2402,21 @@ mod tests {
         ($name:ident, $src:expr) => {
             let arena = Arena::new();
             let mut alloc = BorrowedAllocator::new(&arena);
-            let tokens = tokenize($src);
-            let pair_out = pair(&tokens);
-            let $name: ClassifyOutput<'_> = classify(&pair_out, $src, &mut alloc);
+            let mut pair_stream = pair(tokenize($src));
+            let mut spans: Vec<ClassifiedSpan<'_>> = Vec::new();
+            let classify_diagnostics: Vec<Diagnostic> = {
+                let mut stream = classify(&mut pair_stream, $src, &mut alloc);
+                for span in &mut stream {
+                    spans.push(span);
+                }
+                stream.take_diagnostics()
+            };
+            let mut diagnostics = pair_stream.take_diagnostics();
+            diagnostics.extend(classify_diagnostics);
+            let $name = TestClassifyOutput {
+                spans,
+                diagnostics,
+            };
         };
     }
 
@@ -2158,7 +2584,7 @@ mod tests {
     /// Pull the sole `SpanKind::Aozora(Ruby(...))` out of a
     /// [`ClassifyOutput`] so tests can assert on the Ruby payload
     /// without repeating the shape-match boilerplate.
-    fn only_ruby<'a>(out: &ClassifyOutput<'a>) -> &'a Ruby<'a> {
+    fn only_ruby<'a>(out: &TestClassifyOutput<'a>) -> &'a Ruby<'a> {
         let mut found = None;
         for span in &out.spans {
             if let SpanKind::Aozora(AozoraNode::Ruby(r)) = span.kind {
@@ -2874,7 +3300,7 @@ mod tests {
     // ([# never leaks) still holds.
     // ---------------------------------------------------------------
 
-    fn find_heading_hint<'a>(out: &ClassifyOutput<'a>) -> Option<&'a HeadingHint<'a>> {
+    fn find_heading_hint<'a>(out: &TestClassifyOutput<'a>) -> Option<&'a HeadingHint<'a>> {
         out.spans.iter().find_map(|s| match aozora_node(s) {
             Some(AozoraNode::HeadingHint(h)) => Some(h),
             _ => None,

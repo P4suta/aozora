@@ -1,21 +1,16 @@
-//! Phase 1 — linear tokenization of sanitized source into an event stream.
+//! Phase 1 — linear tokenization of sanitized source into a token stream.
 //!
-//! Consumes the output of Phase 0 (sanitize) and walks it byte by byte,
-//! emitting one [`Token`] per delimiter or contiguous text run. Triggers
-//! are the Aozora notation marker characters listed in [`TriggerKind`];
-//! everything else flows into [`Token::Text`] runs.
+//! Walks the Phase 0 sanitized text byte-by-byte and exposes a stateful
+//! iterator yielding one [`Token`] per delimiter or contiguous text run.
+//! Triggers are the Aozora notation marker characters listed in
+//! [`TriggerKind`]; everything else flows into [`Token::Text`] runs.
 //!
-//! The phase is a pure function: `fn(&str) -> Vec<Token>`. The resulting
-//! stream is the input to Phase 2 (balanced-stack pairing).
-//!
-//! ## Why a token stream rather than direct string indexing
-//!
-//! The subsequent phases (pair, classify) need to repeatedly ask "where
-//! is the next `］` after position P?" or "are these two `《` adjacent?".
-//! Doing that directly on the string means re-scanning bytes. Fixing it
-//! once here, in an `O(n)` linear walk that produces a `Vec<Token>`,
-//! lets downstream phases iterate the vector without reparsing —
-//! classical compiler-front-end discipline (lex → parse → …).
+//! After I-2 (deforestation) the public entry point is
+//! [`tokenize`], which returns `impl Iterator<Item = Token>` rather than
+//! a materialised `Vec<Token>`. Downstream phases (`pair`, `classify`)
+//! consume that stream directly so source bytes flow through CPU
+//! registers from `&str` input to arena-landed nodes in a single fused
+//! chain — no intermediate `Vec<Token>` allocation between phases.
 //!
 //! ## Multi-character triggers
 //!
@@ -33,97 +28,158 @@ use aozora_syntax::Span;
 
 use crate::token::{Token, TriggerKind};
 
-/// Linear-time tokenize over sanitized source text.
+/// Streaming tokeniser over sanitized source text.
 ///
 /// The input is expected to already be Phase 0 output (BOM-stripped,
-/// LF-normalized). Giving raw source to this phase is not wrong but
+/// LF-normalized). Giving raw source to this iterator is not wrong but
 /// means diagnostics and positions reference pre-normalization bytes,
 /// which will confuse downstream phases.
 ///
 /// # Panics
 ///
-/// Panics if `source.len()` exceeds [`u32::MAX`] (≈ 4 GiB). All afm spans
-/// use `u32` offsets per the `afm-syntax::Span` contract; inputs that
-/// large are rejected loudly rather than silently truncated.
+/// Panics on construction if `source.len()` exceeds [`u32::MAX`]
+/// (≈ 4 GiB). All afm spans use `u32` offsets per the
+/// `aozora-syntax::Span` contract; inputs that large are rejected
+/// loudly rather than silently truncated.
 #[must_use]
-pub fn tokenize(source: &str) -> Vec<Token> {
-    assert!(
-        u32::try_from(source.len()).is_ok(),
-        "source too long for u32 span offsets ({} bytes)",
-        source.len()
-    );
-
-    let bytes = source.as_bytes();
-    let mut out = Vec::with_capacity(source.len() / 32);
-    let mut cursor: u32 = 0;
-    let mut text_start: u32 = 0;
-
-    while (cursor as usize) < bytes.len() {
-        let b = bytes[cursor as usize];
-
-        // ASCII fast path: every Aozora trigger is a 3-byte UTF-8
-        // sequence whose lead byte is in {0xE2, 0xE3, 0xEF}; no
-        // ASCII byte can begin one. Newline (`\n` / 0x0A) is the
-        // sole ASCII byte we treat structurally. Skipping the
-        // `chars().next()` decode + `classify_single` jump table
-        // here is most of the win on English-mixed corpus.
-        // Pure-Japanese sources spend almost no time in this branch
-        // because every byte is ≥ 0x80, so this is a strict
-        // improvement (no Japanese-side regression).
-        if b < 0x80 {
-            if b == b'\n' {
-                push_text(&mut out, text_start, cursor);
-                out.push(Token::Newline { pos: cursor });
-                cursor += 1;
-                text_start = cursor;
-            } else {
-                cursor += 1;
-            }
-            continue;
-        }
-
-        // Multi-byte char: full UTF-8 decode + trigger classification.
-        let rest = &source[cursor as usize..];
-        let ch = rest.chars().next().expect("not at end");
-        let ch_len = u32::try_from(ch.len_utf8()).expect("char len 1..=4");
-
-        if let Some(kind) = classify_single(ch) {
-            // Look ahead for double-trigger merge (《《 / 》》).
-            let merged = match kind {
-                TriggerKind::RubyOpen if rest[ch.len_utf8()..].starts_with('《') => {
-                    Some(TriggerKind::DoubleRubyOpen)
-                }
-                TriggerKind::RubyClose if rest[ch.len_utf8()..].starts_with('》') => {
-                    Some(TriggerKind::DoubleRubyClose)
-                }
-                _ => None,
-            };
-            let (emit_kind, consumed) = merged.map_or((kind, ch_len), |merged_kind| {
-                (merged_kind, merged_kind.source_byte_len())
-            });
-
-            push_text(&mut out, text_start, cursor);
-            out.push(Token::Trigger {
-                kind: emit_kind,
-                span: Span::new(cursor, cursor + consumed),
-            });
-            cursor += consumed;
-            text_start = cursor;
-            continue;
-        }
-
-        cursor += ch_len;
-    }
-
-    push_text(&mut out, text_start, cursor);
-    out
+pub fn tokenize(source: &str) -> Tokenizer<'_> {
+    Tokenizer::new(source)
 }
 
-fn push_text(out: &mut Vec<Token>, start: u32, end: u32) {
-    if end > start {
-        out.push(Token::Text {
-            range: Span::new(start, end),
-        });
+/// Streaming Phase 1 tokeniser. Maintains a single-byte cursor and a
+/// `text_start` watermark so a Text run is flushed exactly once when
+/// the next Trigger / Newline arrives or at end-of-stream.
+///
+/// A single-slot `pending` buffer holds a Trigger / Newline that was
+/// produced *together* with a closing Text run on the same `next()`
+/// call: [`Iterator::next`] returns the Text first, then the buffered
+/// trigger on the following call, preserving the legacy Phase 1
+/// emission order without paying for a `Vec` accumulator.
+#[derive(Debug)]
+pub struct Tokenizer<'s> {
+    source: &'s str,
+    cursor: u32,
+    text_start: u32,
+    pending: Option<Token>,
+    finished: bool,
+}
+
+impl<'s> Tokenizer<'s> {
+    fn new(source: &'s str) -> Self {
+        assert!(
+            u32::try_from(source.len()).is_ok(),
+            "source too long for u32 span offsets ({} bytes)",
+            source.len()
+        );
+        Self {
+            source,
+            cursor: 0,
+            text_start: 0,
+            pending: None,
+            finished: false,
+        }
+    }
+
+    fn flush_text(&mut self, end: u32) -> Option<Token> {
+        if end > self.text_start {
+            let tok = Token::Text {
+                range: Span::new(self.text_start, end),
+            };
+            self.text_start = end;
+            Some(tok)
+        } else {
+            None
+        }
+    }
+}
+
+impl Iterator for Tokenizer<'_> {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Token> {
+        if let Some(tok) = self.pending.take() {
+            return Some(tok);
+        }
+        if self.finished {
+            return None;
+        }
+        let bytes = self.source.as_bytes();
+        loop {
+            if (self.cursor as usize) >= bytes.len() {
+                self.finished = true;
+                return self.flush_text(self.cursor);
+            }
+            let b = bytes[self.cursor as usize];
+
+            // ASCII fast path — no Aozora trigger has an ASCII lead
+            // byte; only `\n` is structural here.
+            if b < 0x80 {
+                if b == b'\n' {
+                    let pos = self.cursor;
+                    let text = self.flush_text(pos);
+                    let nl = Token::Newline { pos };
+                    self.cursor = pos + 1;
+                    self.text_start = self.cursor;
+                    return match text {
+                        Some(t) => {
+                            self.pending = Some(nl);
+                            Some(t)
+                        }
+                        None => Some(nl),
+                    };
+                }
+                self.cursor += 1;
+                continue;
+            }
+
+            // Multi-byte char: full UTF-8 decode + trigger classify.
+            let rest = &self.source[self.cursor as usize..];
+            let ch = rest.chars().next().expect("not at end");
+            let ch_len = u32::try_from(ch.len_utf8()).expect("char len 1..=4");
+
+            if let Some(kind) = classify_single(ch) {
+                let merged = match kind {
+                    TriggerKind::RubyOpen if rest[ch.len_utf8()..].starts_with('《') => {
+                        Some(TriggerKind::DoubleRubyOpen)
+                    }
+                    TriggerKind::RubyClose if rest[ch.len_utf8()..].starts_with('》') => {
+                        Some(TriggerKind::DoubleRubyClose)
+                    }
+                    _ => None,
+                };
+                let (emit_kind, consumed) = merged
+                    .map_or((kind, ch_len), |merged_kind| {
+                        (merged_kind, merged_kind.source_byte_len())
+                    });
+
+                let trigger_pos = self.cursor;
+                let text = self.flush_text(trigger_pos);
+                let trigger = Token::Trigger {
+                    kind: emit_kind,
+                    span: Span::new(trigger_pos, trigger_pos + consumed),
+                };
+                self.cursor += consumed;
+                self.text_start = self.cursor;
+                return match text {
+                    Some(t) => {
+                        self.pending = Some(trigger);
+                        Some(t)
+                    }
+                    None => Some(trigger),
+                };
+            }
+
+            self.cursor += ch_len;
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        // Lower bound 0 (we may be at EOF after a final flush). Upper
+        // bound is at most one event per byte (every byte either advances
+        // text or starts a new trigger), plus the pending slot.
+        let remaining = (self.source.len()).saturating_sub(self.text_start as usize);
+        let upper = remaining + usize::from(self.pending.is_some());
+        (0, Some(upper))
     }
 }
 
@@ -151,6 +207,10 @@ const fn classify_single(ch: char) -> Option<TriggerKind> {
 mod tests {
     use super::*;
 
+    fn collect(src: &str) -> Vec<Token> {
+        tokenize(src).collect()
+    }
+
     fn triggers(tokens: &[Token]) -> Vec<TriggerKind> {
         tokens
             .iter()
@@ -163,7 +223,7 @@ mod tests {
 
     #[test]
     fn plain_text_is_one_text_token() {
-        let toks = tokenize("hello world こんにちは");
+        let toks = collect("hello world こんにちは");
         assert_eq!(toks.len(), 1);
         match &toks[0] {
             Token::Text { range } => {
@@ -176,19 +236,19 @@ mod tests {
 
     #[test]
     fn empty_input_yields_no_tokens() {
-        assert!(tokenize("").is_empty());
+        assert!(collect("").is_empty());
     }
 
     #[test]
     fn single_newline_emits_newline_token() {
-        let toks = tokenize("\n");
+        let toks = collect("\n");
         assert_eq!(toks.len(), 1);
         assert!(matches!(toks[0], Token::Newline { pos: 0 }));
     }
 
     #[test]
     fn explicit_ruby_emits_bar_open_close() {
-        let toks = tokenize("a｜漢字《かんじ》b");
+        let toks = collect("a｜漢字《かんじ》b");
         let kinds = triggers(&toks);
         assert_eq!(
             kinds,
@@ -202,7 +262,7 @@ mod tests {
 
     #[test]
     fn double_bouten_brackets_merge_into_double_triggers() {
-        let toks = tokenize("《《強調》》");
+        let toks = collect("《《強調》》");
         let kinds = triggers(&toks);
         assert_eq!(
             kinds,
@@ -212,7 +272,7 @@ mod tests {
 
     #[test]
     fn bracket_annotation_emits_each_component_separately() {
-        let toks = tokenize("［＃改ページ］");
+        let toks = collect("［＃改ページ］");
         let kinds = triggers(&toks);
         assert_eq!(
             kinds,
@@ -226,7 +286,7 @@ mod tests {
 
     #[test]
     fn gaiji_ref_mark_is_emitted() {
-        let toks = tokenize("※［＃「木」、1-2-3］");
+        let toks = collect("※［＃「木」、1-2-3］");
         let kinds = triggers(&toks);
         assert_eq!(
             kinds,
@@ -243,7 +303,7 @@ mod tests {
 
     #[test]
     fn tortoise_brackets_emit_dedicated_triggers() {
-        let toks = tokenize("〔e^〕");
+        let toks = collect("〔e^〕");
         let kinds = triggers(&toks);
         assert_eq!(
             kinds,
@@ -253,7 +313,7 @@ mod tests {
 
     #[test]
     fn text_between_triggers_is_preserved() {
-        let toks = tokenize("a｜b《c》d");
+        let toks = collect("a｜b《c》d");
         let text_ranges: Vec<Span> = toks
             .iter()
             .filter_map(|t| match t {
@@ -261,9 +321,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // "a"(0..1) before ｜, "b"(4..5) between ｜ and 《, "c"(8..11 wait...
-        // Actually: ｜ is 3 bytes (U+FF5C). "a" at 0..1. ｜ at 1..4. "b" at 4..5.
-        // 《 (U+300A) = 3 bytes at 5..8. "c" at 8..9. 》 (U+300B) at 9..12. "d" at 12..13.
+        // "a"(0..1) before ｜, "b"(4..5) between ｜ and 《, "c"(8..9), "d"(12..13).
         assert_eq!(text_ranges.len(), 4);
         assert_eq!(text_ranges[0], Span::new(0, 1));
         assert_eq!(text_ranges[1], Span::new(4, 5));
@@ -273,7 +331,7 @@ mod tests {
 
     #[test]
     fn adjacent_triggers_produce_no_empty_text_tokens() {
-        let toks = tokenize("｜《》");
+        let toks = collect("｜《》");
         for tok in &toks {
             if let Token::Text { range } = tok {
                 assert!(
@@ -286,7 +344,7 @@ mod tests {
 
     #[test]
     fn newline_is_its_own_token_between_text_runs() {
-        let toks = tokenize("line1\nline2");
+        let toks = collect("line1\nline2");
         assert_eq!(toks.len(), 3);
         match &toks[0] {
             Token::Text { range } => assert_eq!(*range, Span::new(0, 5)),
@@ -301,7 +359,7 @@ mod tests {
 
     #[test]
     fn trigger_span_covers_all_constituent_bytes() {
-        let toks = tokenize("《《ab》》");
+        let toks = collect("《《ab》》");
         let open_span = toks
             .iter()
             .find_map(|t| match t {

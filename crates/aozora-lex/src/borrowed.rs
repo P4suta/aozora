@@ -33,12 +33,12 @@
 
 use aozora_lexer::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, ClassifiedSpan,
-    INLINE_SENTINEL, SpanKind, classify,
+    INLINE_SENTINEL, SpanKind,
 };
 use aozora_spec::Diagnostic;
+use aozora_syntax::ContainerKind;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{self, Arena, InternStats, Registry};
-use aozora_syntax::ContainerKind;
 use aozora_veb::EytzingerMap;
 
 /// Borrowed-AST analogue of [`crate::LexOutput`].
@@ -95,27 +95,39 @@ pub struct BorrowedLexOutput<'a> {
 #[must_use]
 pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'a> {
     let sanitized = aozora_lexer::sanitize(source);
-    let tokens = aozora_lexer::tokenize(&sanitized.text);
-    let pair_out = aozora_lexer::pair(&tokens);
 
-    // Size the interner from the event count — `pair_out.events.len()`
-    // is a tight upper bound on the number of distinct strings Phase 3
-    // can intern (each event contributes at most a handful of payload
-    // strings). `BorrowedAllocator::with_capacity` rounds up to the
-    // next power of two, so 64 is the floor for documents with no
-    // events at all.
-    let interner_hint = pair_out.events.len().max(64);
+    // Size the interner from the source length — a rough upper bound
+    // on the number of distinct strings the borrowed pipeline will
+    // intern. `BorrowedAllocator::with_capacity` rounds up to the
+    // next power of two, so 64 is the floor for short documents.
+    let interner_hint = (sanitized.text.len() / 32).max(64);
     let mut alloc = BorrowedAllocator::with_capacity(arena, interner_hint);
 
-    // Phase 3 emits borrowed nodes straight into `arena` via `alloc`.
-    // No owned-AST shadow intermediate; no post-pass conversion.
-    let classify_out = classify(&pair_out, &sanitized.text, &mut alloc);
+    let mut diagnostics = sanitized.diagnostics;
+    let mut builder = ArenaNormalizer::new(&sanitized.text, sanitized.text.len() / 64);
 
-    let span_count = classify_out.spans.len();
-    let mut builder = ArenaNormalizer::new(&sanitized.text, span_count);
-    for span in &classify_out.spans {
-        builder.emit(span);
-    }
+    // FUSED CHAIN: source bytes flow through Phase 1 (tokenize) →
+    // Phase 2 (pair) → Phase 3 (classify) → ArenaNormalizer in a
+    // single nested-iterator walk. No `Vec<Token>`, no
+    // `Vec<PairEvent>`, no `Vec<ClassifiedSpan>` intermediate
+    // materialisation: each phase exposes an `Iterator` and the next
+    // phase pulls one item at a time, so a span lands in the arena
+    // before the next byte is even read in the worst-case interleaving.
+    let mut pair_stream = aozora_lexer::pair(aozora_lexer::tokenize(&sanitized.text));
+    let classify_diagnostics: Vec<Diagnostic> = {
+        let mut classify_stream =
+            aozora_lexer::classify(&mut pair_stream, &sanitized.text, &mut alloc);
+        for span in &mut classify_stream {
+            builder.emit(&span);
+        }
+        classify_stream.take_diagnostics()
+    };
+    // Drain pair-stream diagnostics post-classify (Phase 2 emits
+    // unclosed/unmatched diagnostics as it consumes its token input;
+    // they're complete only after the classify pass has fully
+    // consumed the pair stream).
+    diagnostics.extend(pair_stream.take_diagnostics());
+    diagnostics.extend(classify_diagnostics);
 
     let normalized: &'a str = arena.alloc_str(&builder.out);
 
@@ -125,23 +137,6 @@ pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'
         block_open: EytzingerMap::from_sorted_slice(&builder.block_open),
         block_close: EytzingerMap::from_sorted_slice(&builder.block_close),
     };
-
-    // Diagnostics merge order:
-    //
-    // 1. Phase 0 sanitize diagnostics first (`SourceContainsPua`).
-    // 2. `classify_out.diagnostics` already merges in phase 2 pair
-    //    diagnostics via `Driver::finish(pair_output.diagnostics.clone())`,
-    //    so we extend with classify ONLY — `pair_out.diagnostics`
-    //    would double-count.
-    //
-    // The legacy phase-6 validator was retired with the rest of the
-    // owned API in I-2.2 Phase F. The proptest in
-    // `tests/property_borrowed_arena.rs` pins the V1..V3 invariants
-    // by construction (sentinel positions in `normalized` agree with
-    // the four registry tables), so the runtime validator is no
-    // longer required to keep the contract honest.
-    let mut diagnostics = sanitized.diagnostics;
-    diagnostics.extend(classify_out.diagnostics.iter().cloned());
 
     let intern_stats = alloc.into_interner().stats;
     let sanitized_len =

@@ -21,7 +21,9 @@ use std::time::Instant;
 
 use aozora_encoding::decode_sjis;
 use aozora_lex::lex_into_arena;
-use aozora_lexer::{classify, pair, sanitize, tokenize};
+use aozora_lexer::{
+    ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
+};
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;
 
@@ -60,23 +62,30 @@ fn main() {
     let mut classify_total = 0u64;
     let mut full_total = 0u64;
 
+    // NOTE: post-I-2 the production pipeline fuses tokenize → pair
+    // → classify with no `Vec` materialisation; this probe still
+    // collects each phase to a Vec for individual timing.
     for _ in 0..ITERS {
         let t = Instant::now();
         let sanitized = sanitize(&text);
         sanitize_total += t.elapsed().as_nanos() as u64;
 
         let t = Instant::now();
-        let tokens = tokenize(&sanitized.text);
+        let tokens: Vec<Token> = tokenize(&sanitized.text).collect();
         tokenize_total += t.elapsed().as_nanos() as u64;
 
         let t = Instant::now();
-        let pair_out = pair(&tokens);
+        let mut pair_stream = pair(tokens.into_iter());
+        let pair_events: Vec<PairEvent> = (&mut pair_stream).collect();
+        let _ = pair_stream.take_diagnostics();
         pair_total += t.elapsed().as_nanos() as u64;
 
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let t = Instant::now();
-        let _classify_out = classify(&pair_out, &sanitized.text, &mut alloc);
+        let mut classify_stream = classify(pair_events.into_iter(), &sanitized.text, &mut alloc);
+        let _: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
+        let _ = classify_stream.take_diagnostics();
         classify_total += t.elapsed().as_nanos() as u64;
 
         // Full pipeline run, separate arena so the per-doc cost
@@ -106,15 +115,19 @@ fn main() {
     // Single high-precision parse to dump classify shape (annotation
     // count, gaiji count) for sizing the AC DFA work.
     let sanitized = sanitize(&text);
-    let tokens = tokenize(&sanitized.text);
-    let pair_out = pair(&tokens);
+    let tokens: Vec<Token> = tokenize(&sanitized.text).collect();
+    let mut pair_stream = pair(tokens.into_iter());
+    let pair_events: Vec<PairEvent> = (&mut pair_stream).collect();
+    let _ = pair_stream.take_diagnostics();
     let arena = Arena::new();
     let mut alloc = BorrowedAllocator::new(&arena);
-    let classify_out = classify(&pair_out, &sanitized.text, &mut alloc);
+    let mut classify_stream = classify(pair_events.iter().cloned(), &sanitized.text, &mut alloc);
+    let classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
+    let _ = classify_stream.take_diagnostics();
     let mut aozora_count = 0;
     let mut counts: std::collections::HashMap<&'static str, usize> =
         std::collections::HashMap::new();
-    for span in &classify_out.spans {
+    for span in &classify_spans {
         use aozora_lexer::SpanKind;
         if let SpanKind::Aozora(node) = &span.kind {
             aozora_count += 1;
@@ -154,15 +167,12 @@ fn main() {
         avg(classify_total) * 1000.0 / aozora_count as f64);
 
     // Count event-stream features that would help the AC analysis.
-    let mut bracket_open_count = 0;
     let mut bracket_pair_count = 0;
     let mut quote_open_count = 0;
-    use aozora_lexer::PairEvent;
-    for ev in &pair_out.events {
+    for ev in &pair_events {
         match ev {
             PairEvent::PairOpen { kind, .. } => match kind {
                 aozora_lexer::PairKind::Bracket => {
-                    bracket_open_count += 1;
                     bracket_pair_count += 1;
                 }
                 aozora_lexer::PairKind::Quote => quote_open_count += 1,
@@ -175,5 +185,4 @@ fn main() {
     println!("Pair-event shape:");
     println!("  Bracket pairs (［…］) : {bracket_pair_count}");
     println!("  Quote pairs (「…」)   : {quote_open_count}");
-    let _ = bracket_open_count;
 }

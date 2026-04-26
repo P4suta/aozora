@@ -221,7 +221,7 @@ mod tests {
     #[track_caller]
     fn assert_tokens_match_legacy(source: &str) {
         let ours = tokenize_with_scan(source);
-        let theirs = aozora_lexer::tokenize(source);
+        let theirs: Vec<Token> = aozora_lexer::tokenize(source).collect();
         assert_eq!(
             ours, theirs,
             "token streams diverged for input {source:?}\n  ours:   {ours:?}\n  legacy: {theirs:?}"

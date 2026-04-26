@@ -1,11 +1,17 @@
-//! Phase 2 — balanced-stack pairing over the Phase 1 event stream.
+//! Phase 2 — streaming balanced-stack pairing over the Phase 1 token stream.
 //!
-//! Consumes the flat [`Token`] stream from Phase 1 and links matching
-//! opens/closes — `［…］`, `《…》`, `《《…》》`, `〔…〕`, `「…」` — via
-//! a single stack pass. The output is still a flat event vector, but
-//! every [`PairEvent::PairOpen`] carries a `close_idx` pointing at its
-//! matching [`PairEvent::PairClose`] in the same vector (and vice-versa),
-//! so Phase 3 can jump between them in O(1) without rescanning bytes.
+//! Consumes the [`Token`] iterator produced by Phase 1 and emits a
+//! parallel [`PairEvent`] iterator: [`Token::Text`] / [`Token::Newline`]
+//! pass through unchanged, and each [`Token::Trigger`] is classified
+//! into [`PairEvent::PairOpen`] / [`PairEvent::PairClose`] /
+//! [`PairEvent::Solo`] / [`PairEvent::Unmatched`] / [`PairEvent::Unclosed`].
+//!
+//! After I-2 (deforestation) the public entry point is [`pair`], which
+//! returns `PairStream` — an `impl Iterator<Item = PairEvent>` with no
+//! intermediate `Vec<PairEvent>` materialisation. Phase 3's classifier
+//! consumes that stream directly, maintaining its own balanced stack
+//! to track body extents (since the stream no longer carries the prior
+//! `close_idx` / `open_idx` cross-link indices).
 //!
 //! ## Why pairing must happen here, not in classify
 //!
@@ -25,27 +31,21 @@
 //!
 //! ## Mismatch policy (current)
 //!
-//! * **Unclosed open**: left on the stack at end-of-input. The event is
-//!   rewritten from [`PairEvent::PairOpen`] to [`PairEvent::Unclosed`]
-//!   and a [`Diagnostic::UnclosedBracket`] is emitted. The stack entry
-//!   itself is *not* used to close anything by force, so later (valid)
-//!   close delimiters do not accidentally bind to an earlier, distant
-//!   open on a different line.
+//! * **Unclosed open**: left on the stack at end-of-input. The original
+//!   `PairOpen` event has already been streamed downstream by the time
+//!   we discover the open never closes; instead, on EOF we emit a
+//!   synthetic [`PairEvent::Unclosed`] for each still-open frame and
+//!   push a [`Diagnostic::UnclosedBracket`]. Phase 3's stack-aware
+//!   classifier interprets the trailing `Unclosed` as "the matching
+//!   open never closed; treat its accumulated body events as plain".
 //! * **Stray close** (empty stack or kind-mismatched top): emitted as
 //!   [`PairEvent::Unmatched`] with a [`Diagnostic::UnmatchedClose`].
 //!   The stack is *not* popped — this is deliberately conservative, so
 //!   a well-formed outer pair like `［...］` still closes correctly even
-//!   when an inner stray `》` appears inside the body. Phase 3 sees
-//!   `Unmatched` in the body event slice and classifies it as plain
-//!   text.
-//!
-//! The recovery policy is intentionally conservative: we keep the
-//! outer open on the stack when an inner close doesn't match, so a
-//! stray `》` inside a `［…］` body doesn't knock the bracket's
-//! `PairOpen` off. Aggressive stack-unwinding is a future option if
-//! the corpus sweep ever shows it paying.
+//!   when an inner stray `》` appears inside the body.
 
 use aozora_syntax::Span;
+use smallvec::SmallVec;
 
 use crate::diagnostic::Diagnostic;
 use crate::token::{Token, TriggerKind};
@@ -54,13 +54,18 @@ use crate::token::{Token, TriggerKind};
 // compatibility through the 0.1 → 0.2 transition.
 pub use aozora_spec::PairKind;
 
-/// One event in the Phase 2 output.
+/// One event in the Phase 2 stream.
 ///
-/// Indices referenced by `close_idx` / `open_idx` are into the same
-/// `Vec<PairEvent>` the event is a member of. The invariant enforced
-/// by [`pair`] is: if `events[i]` is a `PairOpen` with `close_idx == j`,
-/// then `events[j]` is the corresponding `PairClose` with
-/// `open_idx == i` (and both share the same [`PairKind`]).
+/// `PairOpen` and `PairClose` carry the `close_idx` / `open_idx`
+/// cross-link slots used by Phase 3's body recognisers, but Phase 2's
+/// streaming emission cannot fill them at emit time (the matching
+/// close hasn't been seen yet). The convention is: events freshly
+/// streamed from [`PairStream`] always carry `usize::MAX` in these
+/// slots. Phase 3 [`crate::classify`] patches them with valid relative
+/// indices as it accumulates each pair body into its smallvec
+/// frame buffer; the recognise helpers consume those patched buffers
+/// directly. External callers should treat the fields as opaque
+/// unless they're walking a body buffer built by Phase 3.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PairEvent {
@@ -70,22 +75,31 @@ pub enum PairEvent {
     /// A trigger with no opposing pair on its own (`｜`, `＃`, `※`).
     Solo { kind: TriggerKind, span: Span },
 
-    /// Matched open delimiter with a back-reference to its close.
+    /// Matched open delimiter. Phase 3 pushes a new body-buffer frame
+    /// onto its own stack on this event. `close_idx` is `usize::MAX`
+    /// in the freshly-streamed event and gets patched by Phase 3 to
+    /// the matching close's body-buffer index when the pair is
+    /// resolved (used by recognise helpers walking the body slice).
     PairOpen {
         kind: PairKind,
         span: Span,
         close_idx: usize,
     },
 
-    /// Matched close delimiter with a back-reference to its open.
+    /// Matched close delimiter. Phase 3 pops the corresponding body
+    /// frame on this event and runs recognition on the buffered body.
+    /// `open_idx` follows the same patching contract as `close_idx`
+    /// on [`Self::PairOpen`].
     PairClose {
         kind: PairKind,
         span: Span,
         open_idx: usize,
     },
 
-    /// Open delimiter that reached end-of-input with no matching close.
-    /// Classifier treats the span as plain text.
+    /// End-of-stream synthetic event indicating that an earlier
+    /// [`PairEvent::PairOpen`] of the carried `kind` was never closed.
+    /// Phase 3 treats the corresponding body buffer as having no
+    /// matching close and re-fires the buffered events as plain.
     Unclosed { kind: PairKind, span: Span },
 
     /// Close delimiter that hit an empty stack or a kind-mismatched
@@ -97,27 +111,10 @@ pub enum PairEvent {
     Newline { pos: u32 },
 }
 
-/// Bundle returned by [`pair`].
-///
-/// Intentionally does *not* derive `PartialEq` — [`Diagnostic`] wraps
-/// miette's [`miette::SourceSpan`] which lacks structural equality, and
-/// tests never need to compare whole outputs wholesale. Destructure on
-/// `events` and `diagnostics` separately instead.
-#[derive(Debug, Clone)]
-pub struct PairOutput {
-    /// The event stream with cross-linked opens/closes.
-    pub events: Vec<PairEvent>,
-    /// Non-fatal observations (unclosed opens, unmatched closes).
-    pub diagnostics: Vec<Diagnostic>,
-}
-
 impl PairEvent {
     /// Source byte-range span of this event, or `None` for
     /// [`PairEvent::Newline`] (which has only a single position, not a
     /// range).
-    ///
-    /// Exists so Phase 3 can walk an event stream uniformly without a
-    /// hand-written match for every variant each time it needs a span.
     #[must_use]
     pub const fn span(&self) -> Option<Span> {
         Some(match *self {
@@ -132,170 +129,144 @@ impl PairEvent {
     }
 }
 
-impl PairOutput {
-    /// Slice of events strictly inside the pair whose open event is at
-    /// `open_idx`, or `None` if `open_idx` does not point at a matched
-    /// [`PairEvent::PairOpen`].
-    ///
-    /// Phase 3 uses this to iterate a bracket body's contents without
-    /// re-walking the full stream. The returned slice excludes both
-    /// the `PairOpen` and `PairClose` events themselves.
-    #[must_use]
-    pub fn body_events(&self, open_idx: usize) -> Option<&[PairEvent]> {
-        let &PairEvent::PairOpen { close_idx, .. } = self.events.get(open_idx)? else {
-            return None;
-        };
-        // An unclosed open is rewritten to `PairEvent::Unclosed` before
-        // `pair()` returns, so any surviving `PairOpen` is guaranteed
-        // to have a valid `close_idx`. The bounds check below is a
-        // cheap defense against a caller passing an `open_idx` drawn
-        // from a stale or hand-constructed output.
-        if close_idx <= open_idx || close_idx >= self.events.len() {
-            return None;
-        }
-        Some(&self.events[open_idx + 1..close_idx])
-    }
-
-    /// Byte span strictly between the open's end and the close's start
-    /// — the *contents* of the pair in the source, excluding the
-    /// delimiters themselves. `None` if `open_idx` does not point at a
-    /// matched [`PairEvent::PairOpen`].
-    #[must_use]
-    pub fn body_byte_span(&self, open_idx: usize) -> Option<Span> {
-        let &PairEvent::PairOpen {
-            span: open_span,
-            close_idx,
-            ..
-        } = self.events.get(open_idx)?
-        else {
-            return None;
-        };
-        let &PairEvent::PairClose {
-            span: close_span, ..
-        } = self.events.get(close_idx)?
-        else {
-            return None;
-        };
-        Some(Span::new(open_span.end, close_span.start))
-    }
-}
-
-/// Mutable state carried through the pairing loop.
+/// Run the streaming balanced-stack pass over a Phase 1 token stream.
 ///
-/// Bundling `events`, `stack`, and `diagnostics` together keeps the
-/// trigger-handling helpers below the clippy `too_many_arguments` limit
-/// and makes it obvious which state a given helper can touch.
-///
-/// `stack` is a [`smallvec::SmallVec`] with inline capacity 8.
-/// Innovation I-8: corpus profile shows bracket nesting depth is
-/// 99% < 8 in real Aozora text; the inline storage skips the heap
-/// allocation that the prior `Vec::new()` paid on the first push of
-/// every well-formed document. Spills to heap on the rare deeply-
-/// nested input.
-struct PairState {
-    events: Vec<PairEvent>,
-    diagnostics: Vec<Diagnostic>,
-    /// `(kind, event_idx_of_open)`. The `event_idx` always points at a
-    /// [`PairEvent::PairOpen`] until that open either gets closed
-    /// (entry popped) or rewritten to [`PairEvent::Unclosed`] at EOF.
-    stack: smallvec::SmallVec<[(PairKind, usize); 8]>,
-}
-
-/// Run the balanced-stack pass over a Phase 1 token stream.
-///
-/// Pure function; no I/O. Output event count equals input token count
-/// (each input token maps to exactly one output event) — downstream
-/// phases rely on this 1:1 correspondence for position tracking.
+/// The returned [`PairStream`] is an iterator yielding one
+/// [`PairEvent`] per call to [`Iterator::next`]. After the iterator is
+/// exhausted, call [`PairStream::take_diagnostics`] to drain any
+/// non-fatal observations that accumulated during the pass
+/// (unclosed opens, unmatched closes).
 #[must_use]
-pub fn pair(tokens: &[Token]) -> PairOutput {
-    let mut state = PairState {
-        events: Vec::with_capacity(tokens.len()),
-        diagnostics: Vec::new(),
-        stack: smallvec::SmallVec::new(),
-    };
+pub fn pair<I>(tokens: I) -> PairStream<I>
+where
+    I: Iterator<Item = Token>,
+{
+    PairStream::new(tokens)
+}
 
-    for tok in tokens {
-        match *tok {
-            Token::Text { range } => state.events.push(PairEvent::Text { range }),
-            Token::Newline { pos } => state.events.push(PairEvent::Newline { pos }),
-            Token::Trigger { kind, span } => push_trigger(&mut state, kind, span),
+/// Stream of [`PairEvent`]s produced from an upstream [`Token`]
+/// iterator. Internal state:
+///
+/// * `tokens`: upstream token producer; tokens are pulled lazily.
+/// * `stack`: smallvec of open `PairKind`s with their open spans.
+///   Inline capacity 8 covers the 99th-percentile bracket nesting in
+///   real Aozora text (Innovation I-8 corpus profile).
+/// * `pending`: single-slot output buffer for the case where one
+///   token resolves into a `Solo` event AND a follow-on synthetic
+///   `Unclosed` from a now-impossible earlier open. Currently unused
+///   — the streaming policy emits at most one event per input token —
+///   but kept for future extension.
+/// * `diagnostics`: collected non-fatal observations.
+/// * `eof_drain`: cursor through the residual stack at end-of-input
+///   used to emit one `Unclosed` event per remaining open frame.
+#[derive(Debug)]
+pub struct PairStream<I>
+where
+    I: Iterator<Item = Token>,
+{
+    tokens: I,
+    stack: SmallVec<[(PairKind, Span); 8]>,
+    diagnostics: Vec<Diagnostic>,
+    eof_drain: bool,
+    finished: bool,
+}
+
+impl<I> PairStream<I>
+where
+    I: Iterator<Item = Token>,
+{
+    fn new(tokens: I) -> Self {
+        Self {
+            tokens,
+            stack: SmallVec::new(),
+            diagnostics: Vec::new(),
+            eof_drain: false,
+            finished: false,
         }
     }
 
-    // Anything still on the stack is an unclosed open; rewrite in place
-    // so the caller sees a consistent stream. Emit diagnostics in stack
-    // order (innermost last-pushed → outermost first) so miette renders
-    // them stably.
-    while let Some((kind, idx)) = state.stack.pop() {
-        // The stack only ever holds indices of freshly-pushed PairOpen
-        // events; an entry pointing at any other variant would be a
-        // bug in `push_trigger`.
-        let PairEvent::PairOpen { span, .. } = state.events[idx] else {
-            unreachable!("stack entry must point at a PairOpen event")
-        };
-        state.events[idx] = PairEvent::Unclosed { kind, span };
-        state
-            .diagnostics
-            .push(Diagnostic::unclosed_bracket(span, kind));
+    /// Drain accumulated diagnostics. Should be called after the
+    /// iterator is exhausted (otherwise EOF unclosed-bracket
+    /// diagnostics will not yet have been emitted).
+    pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
+        core::mem::take(&mut self.diagnostics)
     }
 
-    PairOutput {
-        events: state.events,
-        diagnostics: state.diagnostics,
+    /// Borrow accumulated diagnostics in place. Same caveat as
+    /// [`Self::take_diagnostics`]: only complete after exhaustion.
+    #[must_use]
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
+    fn classify_trigger(&mut self, kind: TriggerKind, span: Span) -> PairEvent {
+        if let Some(pair_kind) = open_kind_of(kind) {
+            self.stack.push((pair_kind, span));
+            return PairEvent::PairOpen {
+                kind: pair_kind,
+                span,
+                close_idx: usize::MAX,
+            };
+        }
+
+        if let Some(pair_kind) = close_kind_of(kind) {
+            if self.stack.last().is_some_and(|&(top, _)| top == pair_kind) {
+                self.stack.pop();
+                return PairEvent::PairClose {
+                    kind: pair_kind,
+                    span,
+                    open_idx: usize::MAX,
+                };
+            }
+            self.diagnostics
+                .push(Diagnostic::unmatched_close(span, pair_kind));
+            return PairEvent::Unmatched {
+                kind: pair_kind,
+                span,
+            };
+        }
+
+        // Trigger is neither open nor close (Bar / Hash / RefMark).
+        PairEvent::Solo { kind, span }
     }
 }
 
-/// Handle a single [`Token::Trigger`]: classify as open / close / solo,
-/// update the stack, append the corresponding event, and patch
-/// cross-link indices when a close finds its open.
-fn push_trigger(state: &mut PairState, kind: TriggerKind, span: Span) {
-    if let Some(pair_kind) = open_kind_of(kind) {
-        let open_idx = state.events.len();
-        state.events.push(PairEvent::PairOpen {
-            kind: pair_kind,
-            span,
-            // Patched when the matching close is seen. `usize::MAX` is
-            // a sentinel that must never leak: either it is overwritten
-            // with the real close index, or the event is rewritten to
-            // `Unclosed` at end-of-input.
-            close_idx: usize::MAX,
-        });
-        state.stack.push((pair_kind, open_idx));
-        return;
-    }
+impl<I> Iterator for PairStream<I>
+where
+    I: Iterator<Item = Token>,
+{
+    type Item = PairEvent;
 
-    if let Some(pair_kind) = close_kind_of(kind) {
-        if state.stack.last().is_some_and(|&(top, _)| top == pair_kind) {
-            let (_, open_idx) = state.stack.pop().expect("last() was Some");
-            let close_idx = state.events.len();
-            state.events.push(PairEvent::PairClose {
-                kind: pair_kind,
-                span,
-                open_idx,
-            });
-            let PairEvent::PairOpen {
-                close_idx: slot, ..
-            } = &mut state.events[open_idx]
-            else {
-                // Same invariant as in `pair`'s tail loop: the stack
-                // only points at PairOpen events.
-                unreachable!("stack entry must point at a PairOpen event")
-            };
-            *slot = close_idx;
-        } else {
-            state.events.push(PairEvent::Unmatched {
-                kind: pair_kind,
-                span,
-            });
-            state
-                .diagnostics
-                .push(Diagnostic::unmatched_close(span, pair_kind));
+    fn next(&mut self) -> Option<PairEvent> {
+        if self.finished {
+            return None;
         }
-        return;
-    }
+        if self.eof_drain {
+            // Drain residual stack entries as Unclosed events. We pop
+            // from the BACK so innermost (last-pushed) opens surface
+            // first — same diagnostic order the legacy `pair()` used.
+            if let Some((kind, span)) = self.stack.pop() {
+                self.diagnostics
+                    .push(Diagnostic::unclosed_bracket(span, kind));
+                return Some(PairEvent::Unclosed { kind, span });
+            }
+            self.finished = true;
+            return None;
+        }
 
-    // Trigger is neither open nor close (Bar / Hash / RefMark).
-    state.events.push(PairEvent::Solo { kind, span });
+        match self.tokens.next() {
+            Some(Token::Text { range }) => Some(PairEvent::Text { range }),
+            Some(Token::Newline { pos }) => Some(PairEvent::Newline { pos }),
+            Some(Token::Trigger { kind, span }) => Some(self.classify_trigger(kind, span)),
+            None => {
+                // Upstream exhausted. Switch into EOF-drain mode and
+                // recurse to either yield the first Unclosed or
+                // terminate.
+                self.eof_drain = true;
+                self.next()
+            }
+        }
+    }
 }
 
 /// Map a trigger to the [`PairKind`] it *opens*, if any.
@@ -329,8 +300,12 @@ mod tests {
     use super::*;
     use crate::phase1_events::tokenize;
 
-    fn run(src: &str) -> PairOutput {
-        pair(&tokenize(src))
+    /// Materialise the full stream + diagnostics for tests.
+    fn run(src: &str) -> (Vec<PairEvent>, Vec<Diagnostic>) {
+        let mut stream = pair(tokenize(src));
+        let events: Vec<PairEvent> = (&mut stream).collect();
+        let diagnostics = stream.take_diagnostics();
+        (events, diagnostics)
     }
 
     fn pair_kinds(events: &[PairEvent]) -> Vec<(&'static str, PairKind)> {
@@ -348,166 +323,124 @@ mod tests {
 
     #[test]
     fn empty_input_yields_no_events() {
-        let out = pair(&[]);
-        assert!(out.events.is_empty());
-        assert!(out.diagnostics.is_empty());
+        let (events, diagnostics) = run("");
+        assert!(events.is_empty());
+        assert!(diagnostics.is_empty());
     }
 
     #[test]
     fn plain_text_passes_through_as_text_event() {
-        let out = run("hello");
-        assert_eq!(out.events.len(), 1);
-        assert!(matches!(out.events[0], PairEvent::Text { .. }));
-        assert!(out.diagnostics.is_empty());
+        let (events, diagnostics) = run("hello");
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], PairEvent::Text { .. }));
+        assert!(diagnostics.is_empty());
     }
 
     #[test]
-    fn simple_bracket_pair_cross_links() {
-        let out = run("［body］");
+    fn simple_bracket_pair_emits_open_and_close() {
+        let (events, diagnostics) = run("［body］");
         // Events: PairOpen(Bracket), Text("body"), PairClose(Bracket).
-        assert_eq!(out.events.len(), 3);
-        let PairEvent::PairOpen {
-            kind, close_idx, ..
-        } = out.events[0]
-        else {
-            panic!("expected PairOpen, got {:?}", out.events[0]);
-        };
-        assert_eq!(kind, PairKind::Bracket);
-        assert_eq!(close_idx, 2);
-        let PairEvent::PairClose {
-            kind: c_kind,
-            open_idx,
-            ..
-        } = out.events[2]
-        else {
-            panic!("expected PairClose, got {:?}", out.events[2]);
-        };
-        assert_eq!(c_kind, PairKind::Bracket);
-        assert_eq!(open_idx, 0);
-        assert!(out.diagnostics.is_empty());
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            events[0],
+            PairEvent::PairOpen {
+                kind: PairKind::Bracket,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[2],
+            PairEvent::PairClose {
+                kind: PairKind::Bracket,
+                ..
+            }
+        ));
+        assert!(diagnostics.is_empty());
     }
 
     #[test]
     fn nested_brackets_pair_inner_before_outer() {
-        // Two annotation bodies, one nested inside the other.
-        let out = run("［＃外［＃内］終］");
-        // Expected event sequence (indices):
-        //   0 PairOpen Bracket (outer ［)    close_idx = 8
-        //   1 Solo Hash
-        //   2 Text "外"
-        //   3 PairOpen Bracket (inner ［)    close_idx = 6
-        //   4 Solo Hash
-        //   5 Text "内"
-        //   6 PairClose Bracket (inner ］)   open_idx  = 3
-        //   7 Text "終"
-        //   8 PairClose Bracket (outer ］)   open_idx  = 0
-        assert_eq!(out.events.len(), 9);
-        let PairEvent::PairOpen {
-            close_idx: outer_close,
-            ..
-        } = out.events[0]
-        else {
-            panic!();
-        };
-        let PairEvent::PairOpen {
-            close_idx: inner_close,
-            ..
-        } = out.events[3]
-        else {
-            panic!();
-        };
-        assert_eq!(outer_close, 8);
-        assert_eq!(inner_close, 6);
-        assert!(out.diagnostics.is_empty());
+        let (events, diagnostics) = run("［＃外［＃内］終］");
+        // 0 PairOpen Bracket, 1 Solo Hash, 2 Text "外",
+        // 3 PairOpen Bracket, 4 Solo Hash, 5 Text "内",
+        // 6 PairClose Bracket, 7 Text "終", 8 PairClose Bracket.
+        assert_eq!(events.len(), 9);
+        assert!(matches!(
+            events[0],
+            PairEvent::PairOpen {
+                kind: PairKind::Bracket,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[3],
+            PairEvent::PairOpen {
+                kind: PairKind::Bracket,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[6],
+            PairEvent::PairClose {
+                kind: PairKind::Bracket,
+                ..
+            }
+        ));
+        assert!(matches!(
+            events[8],
+            PairEvent::PairClose {
+                kind: PairKind::Bracket,
+                ..
+            }
+        ));
+        assert!(diagnostics.is_empty());
     }
 
     #[test]
-    fn annotation_body_with_quoted_literal_pairs_correctly() {
-        // The R2-class case: a 「…」 literal inside a ［＃…］ body.
-        let out = run("［＃「青空」に傍点］");
-        // Events: ［ #  「 青空 」 に傍点 ］
-        //   0 PairOpen Bracket
-        //   1 Solo Hash
-        //   2 PairOpen Quote
-        //   3 Text "青空"
-        //   4 PairClose Quote -> open_idx 2
-        //   5 Text "に傍点"
-        //   6 PairClose Bracket -> open_idx 0
-        assert_eq!(out.events.len(), 7);
-        let PairEvent::PairOpen {
-            kind: outer_kind,
-            close_idx: outer_close,
-            ..
-        } = out.events[0]
-        else {
-            panic!();
-        };
-        let PairEvent::PairOpen {
-            kind: inner_kind,
-            close_idx: inner_close,
-            ..
-        } = out.events[2]
-        else {
-            panic!();
-        };
-        assert_eq!(outer_kind, PairKind::Bracket);
-        assert_eq!(inner_kind, PairKind::Quote);
-        assert_eq!(outer_close, 6);
-        assert_eq!(inner_close, 4);
-        assert!(out.diagnostics.is_empty());
-    }
-
-    #[test]
-    fn ruby_pair_links() {
-        let out = run("《かんじ》");
+    fn ruby_pair_emits_ruby_kinds() {
+        let (events, diagnostics) = run("《かんじ》");
         assert_eq!(
-            pair_kinds(&out.events),
+            pair_kinds(&events),
             vec![("open", PairKind::Ruby), ("close", PairKind::Ruby)]
         );
-        assert!(out.diagnostics.is_empty());
+        assert!(diagnostics.is_empty());
     }
 
     #[test]
     fn double_ruby_is_its_own_pair_kind() {
-        let out = run("《《X》》");
+        let (events, _diagnostics) = run("《《X》》");
         assert_eq!(
-            pair_kinds(&out.events),
+            pair_kinds(&events),
             vec![
                 ("open", PairKind::DoubleRuby),
                 ("close", PairKind::DoubleRuby),
             ]
         );
-        assert!(out.diagnostics.is_empty());
     }
 
     #[test]
-    fn tortoise_pair_links() {
-        let out = run("〔e^〕");
+    fn tortoise_pair_emits_tortoise_kinds() {
+        let (events, _) = run("〔e^〕");
         assert_eq!(
-            pair_kinds(&out.events),
+            pair_kinds(&events),
             vec![("open", PairKind::Tortoise), ("close", PairKind::Tortoise)]
         );
-        assert!(out.diagnostics.is_empty());
     }
 
     #[test]
-    fn quote_pair_standalone_links() {
-        let out = run("「台詞」");
+    fn quote_pair_standalone_emits_quote_kinds() {
+        let (events, _) = run("「台詞」");
         assert_eq!(
-            pair_kinds(&out.events),
+            pair_kinds(&events),
             vec![("open", PairKind::Quote), ("close", PairKind::Quote)]
         );
-        assert!(out.diagnostics.is_empty());
     }
 
     #[test]
     fn solo_bar_hash_refmark_remain_solo() {
-        let out = run("｜＃※");
-        // Bar and RefMark are Solo always. Hash is Solo here because it
-        // is not adjacent to a ［ (that binding is a Phase-3 concern; the
-        // pair phase treats every Hash uniformly).
-        assert_eq!(out.events.len(), 3);
-        for ev in &out.events {
+        let (events, _) = run("｜＃※");
+        assert_eq!(events.len(), 3);
+        for ev in &events {
             assert!(
                 matches!(ev, PairEvent::Solo { .. }),
                 "expected all Solo, got {ev:?}"
@@ -517,54 +450,51 @@ mod tests {
 
     #[test]
     fn newline_passes_through_unchanged() {
-        let out = run("a\nb");
-        assert_eq!(out.events.len(), 3);
-        assert!(matches!(out.events[1], PairEvent::Newline { .. }));
+        let (events, _) = run("a\nb");
+        assert_eq!(events.len(), 3);
+        assert!(matches!(events[1], PairEvent::Newline { .. }));
     }
 
     #[test]
-    fn unclosed_bracket_rewrites_event_and_emits_diagnostic() {
-        let out = run("［＃unclosed");
-        // The only trigger is ［; it never closes.
+    fn unclosed_bracket_appends_synthetic_unclosed_event() {
+        let (events, diagnostics) = run("［＃unclosed");
+        // Stream: PairOpen, Solo(Hash), Text, ...then EOF appends Unclosed.
         assert!(
-            out.events.iter().any(|e| matches!(
+            events.iter().any(|e| matches!(
                 e,
                 PairEvent::Unclosed {
                     kind: PairKind::Bracket,
                     ..
                 }
             )),
-            "expected an Unclosed Bracket event in {:?}",
-            out.events
+            "expected an Unclosed Bracket event in {events:?}"
         );
-        assert!(out.diagnostics.iter().any(|d| matches!(
+        assert!(diagnostics.iter().any(|d| matches!(
             d,
             Diagnostic::UnclosedBracket {
                 kind: PairKind::Bracket,
                 ..
             }
-        )),);
+        )));
     }
 
     #[test]
     fn unmatched_close_emits_diagnostic_without_affecting_stack() {
-        let out = run("stray］text");
-        assert!(out.events.iter().any(|e| matches!(
+        let (events, diagnostics) = run("stray］text");
+        assert!(events.iter().any(|e| matches!(
             e,
             PairEvent::Unmatched {
                 kind: PairKind::Bracket,
                 ..
             }
-        )),);
-        assert_eq!(out.diagnostics.len(), 1);
+        )));
+        assert_eq!(diagnostics.len(), 1);
     }
 
     #[test]
     fn mismatched_close_inside_bracket_does_not_pop_outer() {
-        // The stray 》 must not accidentally pop the outer ［.
-        let out = run("［body》more］");
-        // Unmatched Ruby in the middle, but the bracket still closes cleanly.
-        let kinds = pair_kinds(&out.events);
+        let (events, diagnostics) = run("［body》more］");
+        let kinds = pair_kinds(&events);
         assert_eq!(
             kinds,
             vec![
@@ -573,47 +503,25 @@ mod tests {
                 ("close", PairKind::Bracket),
             ]
         );
-        assert_eq!(out.diagnostics.len(), 1);
+        assert_eq!(diagnostics.len(), 1);
     }
 
     #[test]
-    fn every_pair_open_has_close_idx_matching_close_open_idx() {
-        // Covers the cross-link invariant across several shapes.
-        let out = run("［＃「a《b》c」に傍点］");
-        for (i, ev) in out.events.iter().enumerate() {
-            if let PairEvent::PairOpen {
-                kind, close_idx, ..
-            } = *ev
-            {
-                let PairEvent::PairClose {
-                    kind: c_kind,
-                    open_idx,
-                    ..
-                } = out.events[close_idx]
-                else {
-                    panic!("close_idx {close_idx} did not point at a PairClose");
-                };
-                assert_eq!(kind, c_kind, "kind mismatch at open {i}");
-                assert_eq!(open_idx, i, "back-link mismatch at close {close_idx}");
-            }
-        }
-        assert!(out.diagnostics.is_empty());
-    }
-
-    #[test]
-    fn event_count_equals_token_count() {
-        // 1:1 correspondence invariant — important for downstream
-        // position tracking.
+    fn event_count_matches_token_count_plus_eof_unclosed() {
+        // 1:1 correspondence is now per-token + EOF-residual: every
+        // input Token maps to exactly one event, plus one synthetic
+        // Unclosed for each still-open frame at EOF. The sum is the
+        // useful invariant for downstream position tracking.
         let src = "［＃「a」に］plain《b》〔c〕";
-        let toks = tokenize(src);
-        let out = pair(&toks);
-        assert_eq!(out.events.len(), toks.len());
+        let token_count = tokenize(src).count();
+        let (events, _diagnostics) = run(src);
+        assert_eq!(events.len(), token_count, "no unclosed in this src");
     }
 
     #[test]
     fn span_accessor_returns_range_for_text_and_trigger_events() {
-        let out = run("a｜b《c》");
-        for ev in &out.events {
+        let (events, _) = run("a｜b《c》");
+        for ev in &events {
             match ev {
                 PairEvent::Newline { .. } => {
                     assert!(ev.span().is_none(), "Newline must have no span");
@@ -627,197 +535,49 @@ mod tests {
 
     #[test]
     fn span_accessor_returns_none_for_newline() {
-        let out = run("\n");
-        assert_eq!(out.events.len(), 1);
-        assert!(out.events[0].span().is_none());
-    }
-
-    #[test]
-    fn body_events_covers_contents_strictly_between_open_and_close() {
-        let out = run("［＃「青空」］");
-        // Events (indices): 0 ［, 1 ＃, 2 「, 3 "青空", 4 」, 5 ］.
-        let body = out.body_events(0).expect("body events for matched ［");
-        // Body should be indices 1..5 (Solo#, PairOpenQuote, Text, PairCloseQuote).
-        assert_eq!(body.len(), 4);
-        assert!(matches!(body[0], PairEvent::Solo { .. }));
-        assert!(matches!(
-            body[1],
-            PairEvent::PairOpen {
-                kind: PairKind::Quote,
-                ..
-            }
-        ));
-        assert!(matches!(body[2], PairEvent::Text { .. }));
-        assert!(matches!(
-            body[3],
-            PairEvent::PairClose {
-                kind: PairKind::Quote,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn body_events_empty_pair_returns_empty_slice() {
-        let out = run("《》");
-        let body = out.body_events(0).expect("body events for empty pair");
-        assert!(body.is_empty());
-    }
-
-    #[test]
-    fn body_events_returns_none_for_non_pair_open_index() {
-        let out = run("text");
-        // Index 0 is a Text event, not a PairOpen.
-        assert!(out.body_events(0).is_none());
-    }
-
-    #[test]
-    fn body_events_returns_none_for_unclosed_open() {
-        let out = run("［unclosed");
-        // The ［ at idx 0 was rewritten to PairEvent::Unclosed — not a
-        // PairOpen, so body_events returns None.
-        assert!(out.body_events(0).is_none());
-    }
-
-    #[test]
-    fn body_events_returns_none_for_out_of_range_index() {
-        let out = run("text");
-        assert!(out.body_events(9999).is_none());
-    }
-
-    #[test]
-    fn body_byte_span_is_the_range_between_open_and_close_delimiters() {
-        let src = "［ab］";
-        // Byte layout: ［(0..3) a(3..4) b(4..5) ］(5..8).
-        let out = run(src);
-        let span = out.body_byte_span(0).expect("body span for matched ［");
-        assert_eq!(span, Span::new(3, 5));
-        // Sanity: slicing the original source by this span yields the
-        // body text.
-        assert_eq!(span.slice(src), "ab");
-    }
-
-    #[test]
-    fn body_byte_span_returns_none_for_unclosed_open() {
-        let out = run("［unclosed");
-        assert!(out.body_byte_span(0).is_none());
-    }
-
-    #[test]
-    fn body_byte_span_returns_none_for_non_open_index() {
-        let out = run("text");
-        assert!(out.body_byte_span(0).is_none());
-    }
-
-    #[test]
-    fn no_sentinel_close_idx_escapes_from_pair_output() {
-        // Every PairOpen surviving the tail pass must have a real
-        // close_idx; usize::MAX must never leak.
-        let inputs = [
-            "plain",
-            "［＃a］",
-            "［＃外［＃内］終］",
-            "《《《x》》",
-            "［unclosed",
-            "stray］",
-        ];
-        for src in inputs {
-            let out = run(src);
-            for ev in &out.events {
-                if let PairEvent::PairOpen { close_idx, .. } = *ev {
-                    assert_ne!(close_idx, usize::MAX, "sentinel leaked for {src:?}");
-                    assert!(close_idx < out.events.len(), "out-of-range for {src:?}");
-                }
-            }
-        }
+        let (events, _) = run("\n");
+        assert_eq!(events.len(), 1);
+        assert!(events[0].span().is_none());
     }
 
     proptest! {
-        /// Output is a pure function of input — running the same token
-        /// stream twice must produce identical event sequences.
+        /// Output is a pure function of input — running the same source
+        /// twice must produce identical event sequences.
         #[test]
         fn proptest_pair_is_deterministic(src in source_strategy()) {
-            let toks = tokenize(&src);
-            let a = pair(&toks);
-            let b = pair(&toks);
-            prop_assert_eq!(a.events, b.events);
+            let (a, _) = run(&src);
+            let (b, _) = run(&src);
+            prop_assert_eq!(a, b);
         }
 
-        /// 1:1 correspondence: Phase 2 never drops or splits a Phase 1
-        /// token.
+        /// Every PairOpen of `kind` is eventually balanced either by a
+        /// matching PairClose of the same `kind` or by an Unclosed of the
+        /// same `kind`. No "lost" opens.
         #[test]
-        fn proptest_event_count_matches_token_count(src in source_strategy()) {
-            let toks = tokenize(&src);
-            let out = pair(&toks);
-            prop_assert_eq!(out.events.len(), toks.len());
-        }
-
-        /// No PairOpen survives with the `usize::MAX` placeholder — it
-        /// is either cross-linked to a real PairClose or rewritten to
-        /// PairEvent::Unclosed.
-        #[test]
-        fn proptest_no_sentinel_close_idx(src in source_strategy()) {
-            let out = pair(&tokenize(&src));
-            for ev in &out.events {
-                if let PairEvent::PairOpen { close_idx, .. } = *ev {
-                    prop_assert_ne!(close_idx, usize::MAX);
-                    prop_assert!(close_idx < out.events.len());
+        fn proptest_every_open_resolves(src in source_strategy()) {
+            let (events, _) = run(&src);
+            // Replay the stream maintaining a stack: every push must be
+            // matched by a Close or an Unclosed of the same kind.
+            let mut stack: Vec<PairKind> = Vec::new();
+            for ev in &events {
+                match *ev {
+                    PairEvent::PairOpen { kind, .. } => stack.push(kind),
+                    PairEvent::PairClose { kind, .. } => {
+                        let top = stack.pop();
+                        prop_assert_eq!(top, Some(kind));
+                    }
+                    PairEvent::Unclosed { kind, .. } => {
+                        let top = stack.pop();
+                        prop_assert_eq!(top, Some(kind));
+                    }
+                    _ => {}
                 }
             }
-        }
-
-        /// Cross-link consistency: for every matched PairOpen at index
-        /// `i` with close_idx `c`, events[c] is a PairClose with
-        /// matching kind and open_idx back to `i`.
-        #[test]
-        fn proptest_cross_links_are_consistent(src in source_strategy()) {
-            let out = pair(&tokenize(&src));
-            for (i, ev) in out.events.iter().enumerate() {
-                let &PairEvent::PairOpen { kind, close_idx, .. } = ev else {
-                    continue;
-                };
-                let close = &out.events[close_idx];
-                let &PairEvent::PairClose { kind: c_kind, open_idx, .. } = close else {
-                    prop_assert!(
-                        false,
-                        "close_idx {close_idx} at open {i} did not point at a PairClose"
-                    );
-                    unreachable!();
-                };
-                prop_assert_eq!(c_kind, kind);
-                prop_assert_eq!(open_idx, i);
-            }
-        }
-
-        /// body_byte_span for every matched pair is inside the span
-        /// running from the open's start to the close's end, and is a
-        /// valid substring of the source (sliceable without panic).
-        #[test]
-        fn proptest_body_spans_slice_source_safely(src in source_strategy()) {
-            let out = pair(&tokenize(&src));
-            for (i, ev) in out.events.iter().enumerate() {
-                let &PairEvent::PairOpen { span: open, close_idx, .. } = ev else {
-                    continue;
-                };
-                let body = out.body_byte_span(i).expect("matched pair must have body span");
-                let PairEvent::PairClose { span: close, .. } = out.events[close_idx] else {
-                    unreachable!("close_idx must point at PairClose by the cross-link test");
-                };
-                prop_assert!(open.end <= body.start);
-                prop_assert!(body.end <= close.start);
-                // Must round-trip as a valid UTF-8 substring of the
-                // source (i.e. span aligns to char boundaries).
-                prop_assert!(
-                    src.get(body.start as usize..body.end as usize).is_some(),
-                    "body span {body:?} is not a valid str slice of {src:?}"
-                );
-            }
+            prop_assert!(stack.is_empty(), "leftover opens in stack: {stack:?}");
         }
     }
 
     fn source_strategy() -> impl Strategy<Value = String> {
-        // Healthy mix of plain text, every trigger, and newlines. Cap
-        // the character count so shrinking stays fast.
         prop::collection::vec(
             prop_oneof![
                 Just('a'),

@@ -6,6 +6,15 @@
 //! which phase actually dominates wall-clock — replacing speculation
 //! ("phase 3 is probably 30-40% of parse") with measurement.
 //!
+//! NOTE (post I-2 deforestation): the production pipeline fuses
+//! tokenize → pair → classify into a single iterator chain with no
+//! intermediate `Vec` materialisation. This profiling tool deliberately
+//! materialises each phase via `.collect()` so the per-phase numbers
+//! are individually meaningful — the per-phase costs reported here
+//! include the materialisation overhead and are NOT a faithful
+//! reflection of the fused pipeline's instruction-cache / cache-line
+//! behaviour. Use `lex_into_arena` totals for end-to-end numbers.
+//!
 //! Reads `AOZORA_CORPUS_ROOT` (same convention as `profile_corpus`),
 //! walks every `.txt` under it, decodes Shift_JIS, and runs the
 //! six lex phases manually with [`Instant::now`] around each call.
@@ -36,7 +45,9 @@ use std::time::Instant;
 use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
 use aozora_encoding::decode_sjis;
 use aozora_lex::lex_into_arena;
-use aozora_lexer::{classify, pair, sanitize, tokenize};
+use aozora_lexer::{
+    ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
+};
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;
 
@@ -124,14 +135,18 @@ fn measure_one(text: &str) -> PhaseSample {
     let sanitized = sanitize(text);
     let sanitize_ns = t.elapsed().as_nanos() as u64;
 
-    // Phase 1
+    // Phase 1 — collect into a Vec for per-phase isolation. Production
+    // pipeline (`lex_into_arena`) does NOT materialise; see the file
+    // header.
     let t = Instant::now();
-    let tokens = tokenize(&sanitized.text);
+    let tokens: Vec<Token> = tokenize(&sanitized.text).collect();
     let tokenize_ns = t.elapsed().as_nanos() as u64;
 
-    // Phase 2
+    // Phase 2 — same caveat as Phase 1.
     let t = Instant::now();
-    let pair_out = pair(&tokens);
+    let mut pair_stream = pair(tokens.into_iter());
+    let pair_events: Vec<PairEvent> = (&mut pair_stream).collect();
+    let _ = pair_stream.take_diagnostics();
     let pair_ns = t.elapsed().as_nanos() as u64;
 
     // Phase 3 — needs an arena + allocator. The arena is dropped at
@@ -140,7 +155,9 @@ fn measure_one(text: &str) -> PhaseSample {
     let arena = Arena::new();
     let mut alloc = BorrowedAllocator::new(&arena);
     let t = Instant::now();
-    let _classify_out = classify(&pair_out, &sanitized.text, &mut alloc);
+    let mut classify_stream = classify(pair_events.into_iter(), &sanitized.text, &mut alloc);
+    let _classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
+    let _ = classify_stream.take_diagnostics();
     let classify_ns = t.elapsed().as_nanos() as u64;
 
     // Full pipeline (sanitize → arena registry build). Includes the
