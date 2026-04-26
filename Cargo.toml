@@ -4,7 +4,6 @@ members = [
     "crates/aozora-spec",
     "crates/aozora-syntax",
     "crates/aozora-lexer",
-    "crates/aozora-parser",
     "crates/aozora-encoding",
     "crates/aozora-corpus",
     "crates/aozora-cli",
@@ -12,7 +11,6 @@ members = [
     "crates/aozora-veb",
     "crates/aozora-scan",
     "crates/aozora-lex",
-    "crates/aozora-parallel",
     "crates/aozora-render",
     "crates/aozora",
     "crates/aozora-ffi",
@@ -29,7 +27,7 @@ license       = "Apache-2.0 OR MIT"
 description   = "Aozora Bunko notation (青空文庫記法) parser: ruby, bouten, 縦中横, 外字, kaeriten, indent containers, page breaks"
 repository    = "https://github.com/P4suta/aozora"
 homepage      = "https://p4suta.github.io/aozora/"
-documentation = "https://docs.rs/aozora-parser"
+documentation = "https://docs.rs/aozora"
 authors       = ["aozora contributors"]
 readme        = "README.md"
 keywords      = ["aozora", "japanese", "typography", "parser", "ruby"]
@@ -134,7 +132,6 @@ aozora-syntax     = { version = "0.1.0", path = "crates/aozora-syntax" }
 aozora-veb        = { path = "crates/aozora-veb" }
 aozora-scan       = { path = "crates/aozora-scan" }
 aozora-lex        = { version = "0.1.0", path = "crates/aozora-lex" }
-aozora-parallel   = { version = "0.1.0", path = "crates/aozora-parallel" }
 aozora-render     = { version = "0.1.0", path = "crates/aozora-render" }
 aozora            = { version = "0.1.0", path = "crates/aozora" }
 aozora-wasm       = { path = "crates/aozora-wasm" }
@@ -155,7 +152,6 @@ memchr = "2.7"
 # annotation prefix DFA in a future commit).
 aho-corasick = "1.1"
 aozora-lexer      = { version = "0.1.0", path = "crates/aozora-lexer" }
-aozora-parser     = { version = "0.1.0", path = "crates/aozora-parser" }
 aozora-encoding   = { version = "0.1.0", path = "crates/aozora-encoding" }
 aozora-corpus     = { version = "0.1.0", path = "crates/aozora-corpus" }
 aozora-test-utils = { path = "crates/aozora-test-utils" }
@@ -190,9 +186,8 @@ tempfile = "3.27"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
-# Parallelism — workspace-default work-stealing thread pool. Used by
-# `aozora-parser`'s parallel parse path (gated on the `parallel`
-# feature, default on) and by batch tools (corpus_sweep, profile_corpus).
+# Parallelism — workspace-default work-stealing thread pool. Retained
+# for batch tooling (corpus sweeps, doc-parallel benchmark drivers).
 rayon              = "1.11"
 
 # CLI
@@ -206,12 +201,12 @@ pretty_assertions = "1.4.1"
 
 [profile.release]
 # `lto = "fat"` (vs the prior "thin") so cross-crate function calls
-# in the lex pipeline (aozora-parser → aozora-lex → aozora-lexer
-# phase functions) inline across the boundary. Measured 30%+ wall-
-# clock regression on the corpus sweep with thin LTO once the lex
-# orchestrator was split out of aozora-lexer's monolithic `lex()`;
-# fat LTO recovers it. The compile-time cost is acceptable because
-# the workspace already pins `codegen-units = 1` for release.
+# in the lex pipeline (aozora-render → aozora → aozora-lex →
+# aozora-lexer phase functions) inline across the boundary. Measured
+# 30%+ wall-clock regression on the corpus sweep with thin LTO once
+# the lex orchestrator was split out of aozora-lexer's monolithic
+# `lex()`; fat LTO recovers it. The compile-time cost is acceptable
+# because the workspace already pins `codegen-units = 1` for release.
 lto           = "fat"
 codegen-units = 1
 strip         = "symbols"

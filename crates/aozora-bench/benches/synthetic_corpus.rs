@@ -31,7 +31,7 @@ fn bench_synthetic_corpus(c: &mut Criterion) {
             &buf,
             |b, sample| {
                 b.iter(|| {
-                    let doc = Document::new(black_box(sample));
+                    let doc = Document::new(black_box(sample.as_str()));
                     let tree = doc.parse();
                     black_box(tree);
                 });
