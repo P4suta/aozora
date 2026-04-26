@@ -1,11 +1,11 @@
-//! Streaming type-state pipeline (Innovation I-3, post-deforestation).
+//! Type-state lex pipeline (post-R2 / R3 — Vec-passing between phases).
 //!
-//! `Pipeline<'src, 'a, S, I>` makes the lex pipeline's phase order
-//! enforceable at compile time. The state markers
-//! [`Source`], [`Sanitized`], [`Tokenized`], [`Paired`] track which
-//! phases have run; methods consume `self` and return the next
-//! state. Calling `.pair()` on a `Source` is a type error; calling
-//! `.tokenize()` twice is a type error; etc.
+//! `Pipeline<'src, 'a, S>` makes the lex phase order enforceable at
+//! compile time. The state markers [`Source`], [`Sanitized`],
+//! [`Tokenized`], [`Paired`] track which phases have run; methods
+//! consume `self` and return the next state. Calling `.pair()` on a
+//! `Source` is a type error; calling `.tokenize()` twice is a type
+//! error; etc.
 //!
 //! # Two entry shapes
 //!
@@ -15,8 +15,19 @@
 //! - [`Pipeline::new`] → `.sanitize()` → `.tokenize()` → `.pair()` →
 //!   `.build()` — explicit chain. Use for inspection / instrumentation:
 //!   each intermediate state exposes accessors (`.sanitized_text()`,
-//!   `.diagnostics()`) so callers can probe the partial output without
-//!   having to re-run the pipeline.
+//!   `.tokens()`, `.events()`, `.diagnostics()`) so callers can probe
+//!   the partial output without re-running the pipeline.
+//!
+//! # Vec-passing (R2/R3, ADR-0016)
+//!
+//! Every inter-phase boundary now materialises a `Vec<…>` instead of
+//! handing the next phase an `impl Iterator<Item = …>`. Phase 1 emits
+//! `Vec<Token>`; Phase 2 emits `Vec<PairEvent>`; Phase 3 emits the
+//! final `Vec<ClassifiedSpan>` directly into the arena normalizer.
+//!
+//! The `I` generic parameter the pre-R2 pipeline carried (to thread
+//! the iterator type through state transitions) is *gone*. Each state
+//! holds its phase output as a concrete `Option<Vec<…>>` field.
 //!
 //! # Lifetime model
 //!
@@ -25,7 +36,7 @@
 //! `Sanitized` transition (cost: one `arena.alloc_str` of
 //! `sanitize(source).text`), so all downstream phases borrow from the
 //! arena rather than from in-Pipeline storage. This eliminates the
-//! self-referential-struct problem that `Tokenizer<'sanitized>` would
+//! self-referential-struct problem `Tokenizer<'sanitized>` would
 //! otherwise impose.
 //!
 //! # Compile-time phase-order enforcement
@@ -59,7 +70,7 @@
 
 use core::marker::PhantomData;
 
-use aozora_lexer::{PairStream, Token, Tokenizer, classify, pair, sanitize, tokenize};
+use aozora_lexer::{PairEvent, Token, classify, pair_slice, sanitize, tokenize_to_vec};
 use aozora_spec::Diagnostic;
 use aozora_syntax::ContainerKind;
 use aozora_syntax::alloc::BorrowedAllocator;
@@ -81,11 +92,11 @@ pub struct Source;
 #[derive(Debug, Clone, Copy)]
 pub struct Sanitized;
 
-/// Phase 1 has been wired; the iterator produces [`Token`]s.
+/// Phase 1 has run; `tokens: Vec<Token>` materialised.
 #[derive(Debug, Clone, Copy)]
 pub struct Tokenized;
 
-/// Phase 2 has been wired; the iterator produces [`PairEvent`]s.
+/// Phase 2 has run; `events: Vec<PairEvent>` materialised.
 #[derive(Debug, Clone, Copy)]
 pub struct Paired;
 
@@ -93,26 +104,22 @@ pub struct Paired;
 // Pipeline
 // =====================================================================
 
-/// Streaming type-state lex pipeline.
-///
-/// `S` is one of [`Source`], [`Sanitized`], [`Tokenized`], [`Paired`];
-/// `I` is the upstream iterator type carried for the post-Sanitize
-/// states (defaults to `()` for states that haven't wired an iterator
-/// yet). All public construction goes through [`Pipeline::new`] and
-/// the per-state transition methods, never via the struct literal.
-#[allow(
-    missing_debug_implementations,
-    reason = "I parameter is opaque iterator"
-)]
-pub struct Pipeline<'src, 'a, S, I = ()> {
+/// Type-state lex pipeline. Each state's transition method consumes
+/// `self`, materialises its phase output, and returns a new pipeline
+/// in the next state.
+#[derive(Debug)]
+pub struct Pipeline<'src, 'a, S> {
     source: &'src str,
     arena: &'a Arena,
     /// `Some` after Phase 0 has run; arena-allocated. Borrowed by every
     /// downstream phase so the iterators don't refer back into the
     /// Pipeline struct itself.
     sanitized_text: Option<&'a str>,
+    /// `Some` after Phase 1 has materialised the token list (R2).
+    tokens: Option<Vec<Token>>,
+    /// `Some` after Phase 2 has materialised the event list (R2).
+    events: Option<Vec<PairEvent>>,
     diagnostics: Vec<Diagnostic>,
-    iter: I,
     _state: PhantomData<S>,
 }
 
@@ -129,8 +136,9 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
             source,
             arena,
             sanitized_text: None,
+            tokens: None,
+            events: None,
             diagnostics: Vec::new(),
-            iter: (),
             _state: PhantomData,
         }
     }
@@ -164,8 +172,9 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
             source: self.source,
             arena: self.arena,
             sanitized_text: Some(arena_text),
+            tokens: None,
+            events: None,
             diagnostics: self.diagnostics,
-            iter: (),
             _state: PhantomData,
         }
     }
@@ -181,8 +190,7 @@ impl<'src, 'a> Pipeline<'src, 'a, Sanitized> {
     /// # Panics
     ///
     /// Cannot panic in normal use: `sanitized_text` is always `Some`
-    /// after the `Sanitized` state has been reached. The expect is a
-    /// type-state invariant guard, not a runtime branch.
+    /// after the `Sanitized` state has been reached.
     #[must_use]
     pub fn sanitized_text(&self) -> &'a str {
         self.sanitized_text
@@ -195,17 +203,19 @@ impl<'src, 'a> Pipeline<'src, 'a, Sanitized> {
         &self.diagnostics
     }
 
-    /// Run Phase 1 (tokenize). Wraps the sanitized text in a
-    /// [`Tokenizer`] iterator without materialising the token stream.
+    /// Run Phase 1 (tokenize). Materialises the full `Vec<Token>` in
+    /// one pass via [`tokenize_to_vec`] (R2 / ADR-0016).
     #[must_use]
-    pub fn tokenize(self) -> Pipeline<'src, 'a, Tokenized, Tokenizer<'a>> {
+    pub fn tokenize(self) -> Pipeline<'src, 'a, Tokenized> {
         let text = self.sanitized_text();
+        let tokens = tokenize_to_vec(text);
         Pipeline {
             source: self.source,
             arena: self.arena,
             sanitized_text: self.sanitized_text,
+            tokens: Some(tokens),
+            events: None,
             diagnostics: self.diagnostics,
-            iter: tokenize(text),
             _state: PhantomData,
         }
     }
@@ -215,16 +225,44 @@ impl<'src, 'a> Pipeline<'src, 'a, Sanitized> {
 // Tokenized
 // ---------------------------------------------------------------------
 
-impl<'src, 'a> Pipeline<'src, 'a, Tokenized, Tokenizer<'a>> {
-    /// Run Phase 2 (pair). Wraps the token iterator in a [`PairStream`].
+impl<'src, 'a> Pipeline<'src, 'a, Tokenized> {
+    /// Borrow the materialised token list. Useful for instrumentation.
+    ///
+    /// # Panics
+    ///
+    /// Cannot panic in normal use: `tokens` is always `Some` after the
+    /// `Tokenized` state has been reached.
     #[must_use]
-    pub fn pair(self) -> Pipeline<'src, 'a, Paired, PairStream<Tokenizer<'a>>> {
+    pub fn tokens(&self) -> &[Token] {
+        self.tokens
+            .as_deref()
+            .expect("tokens is always Some after Tokenized transition")
+    }
+
+    /// Run Phase 2 (pair). Materialises `Vec<PairEvent>` in one pass
+    /// via [`pair_slice`] (R2 / ADR-0016). Phase 2's diagnostics are
+    /// drained into the pipeline's diagnostic accumulator immediately.
+    ///
+    /// # Panics
+    ///
+    /// Cannot panic in normal use: `tokens` is always `Some` after
+    /// the `Tokenized` state has been reached. The expect is a
+    /// type-state invariant guard.
+    #[must_use]
+    pub fn pair(mut self) -> Pipeline<'src, 'a, Paired> {
+        let tokens = self
+            .tokens
+            .take()
+            .expect("tokens is always Some after Tokenized transition");
+        let out = pair_slice(&tokens);
+        self.diagnostics.extend(out.diagnostics);
         Pipeline {
             source: self.source,
             arena: self.arena,
             sanitized_text: self.sanitized_text,
+            tokens: None,
+            events: Some(out.events),
             diagnostics: self.diagnostics,
-            iter: pair(self.iter),
             _state: PhantomData,
         }
     }
@@ -234,9 +272,23 @@ impl<'src, 'a> Pipeline<'src, 'a, Tokenized, Tokenizer<'a>> {
 // Paired (terminal)
 // ---------------------------------------------------------------------
 
-impl<'a, T: Iterator<Item = Token>> Pipeline<'_, 'a, Paired, PairStream<T>> {
+impl<'a> Pipeline<'_, 'a, Paired> {
+    /// Borrow the materialised pair-event list. Useful for inspection
+    /// before `.build()`.
+    ///
+    /// # Panics
+    ///
+    /// Cannot panic in normal use: `events` is always `Some` after the
+    /// `Paired` state has been reached.
+    #[must_use]
+    pub fn events(&self) -> &[PairEvent] {
+        self.events
+            .as_deref()
+            .expect("events is always Some after Paired transition")
+    }
+
     /// Drive Phase 3 + the arena normalizer fold and return the final
-    /// [`BorrowedLexOutput`]. This is the terminal transition because
+    /// [`BorrowedLexOutput`]. Terminal transition because
     /// `&mut BorrowedAllocator` cannot be safely held across an external
     /// pause without locking the pipeline into a single thread for the
     /// allocator's lifetime.
@@ -244,7 +296,7 @@ impl<'a, T: Iterator<Item = Token>> Pipeline<'_, 'a, Paired, PairStream<T>> {
     /// # Diagnostic order
     ///
     /// Sanitize (Phase 0) → Pair (Phase 2 unclosed/unmatched) →
-    /// Classify (Phase 3 unknown annotations etc.). This matches the
+    /// Classify (Phase 3 unknown annotations etc.). Matches the
     /// pre-Pipeline `lex_into_arena` ordering.
     ///
     /// # Panics
@@ -260,6 +312,11 @@ impl<'a, T: Iterator<Item = Token>> Pipeline<'_, 'a, Paired, PairStream<T>> {
         let sanitized_len =
             u32::try_from(sanitized_text.len()).expect("sanitize asserts source.len() <= u32::MAX");
 
+        let events = self
+            .events
+            .take()
+            .expect("events is always Some after Paired transition");
+
         // Allocator capacity hint: source.len()/32 is a rough upper bound
         // on the number of distinct strings the borrowed pipeline will
         // intern. `BorrowedAllocator::with_capacity` rounds up to the
@@ -268,18 +325,18 @@ impl<'a, T: Iterator<Item = Token>> Pipeline<'_, 'a, Paired, PairStream<T>> {
         let mut alloc = BorrowedAllocator::with_capacity(self.arena, interner_hint);
         let mut builder = ArenaNormalizer::new(sanitized_text, sanitized_text.len() / 64);
 
-        // Inner block scope so the `&mut self.iter` borrow released
-        // before the post-loop `self.iter.take_diagnostics()`.
+        // Phase 3 still consumes an iterator interface in R2 (R3 will
+        // switch it to `&[PairEvent]` + `Vec<ClassifiedSpan>`). Drain
+        // the materialised event list through the existing
+        // ClassifyStream API.
+        let mut events_iter = events.into_iter();
         let classify_diagnostics: Vec<Diagnostic> = {
-            let mut classify_stream = classify(&mut self.iter, sanitized_text, &mut alloc);
+            let mut classify_stream = classify(&mut events_iter, sanitized_text, &mut alloc);
             for span in &mut classify_stream {
                 builder.emit(&span);
             }
             classify_stream.take_diagnostics()
         };
-        // Pair-stream diagnostics are complete only after the classify
-        // pass has fully consumed the pair stream.
-        self.diagnostics.extend(self.iter.take_diagnostics());
         self.diagnostics.extend(classify_diagnostics);
 
         let normalized: &'a str = self.arena.alloc_str(&builder.out);
@@ -346,6 +403,26 @@ mod tests {
         assert_eq!(p.sanitized_text(), "plain text");
         assert!(p.diagnostics().is_empty());
         drop(p.tokenize().pair().build());
+    }
+
+    #[test]
+    fn intermediate_inspection_at_tokenized() {
+        let arena = Arena::new();
+        let p = Pipeline::new("a｜b《c》", &arena).sanitize().tokenize();
+        // Token sanity: at least Text+Trigger+Text+Trigger+Text+Trigger.
+        assert!(p.tokens().len() >= 5);
+        drop(p.pair().build());
+    }
+
+    #[test]
+    fn intermediate_inspection_at_paired() {
+        let arena = Arena::new();
+        let p = Pipeline::new("a｜b《c》", &arena)
+            .sanitize()
+            .tokenize()
+            .pair();
+        assert!(!p.events().is_empty());
+        drop(p.build());
     }
 
     #[test]

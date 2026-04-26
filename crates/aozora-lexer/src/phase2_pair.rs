@@ -134,6 +134,98 @@ where
     PairStream::new(tokens)
 }
 
+/// Output of [`pair_slice`].
+#[derive(Debug, Default)]
+pub struct PairOutput {
+    pub events: Vec<PairEvent>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Materialise every Phase 2 event from a `&[Token]` slice into a
+/// single `PairOutput { events, diagnostics }`.
+///
+/// R2 (ADR-0016) deforestation reversal: this is the production entry
+/// point for Phase 2. The streaming [`pair`] / [`PairStream`] pair is
+/// kept for incremental / FFI consumers and for the existing test
+/// helpers; production drives `pair_slice(&tokens)` after Phase 1
+/// materialised its `Vec<Token>` via
+/// [`crate::tokenize_to_vec`][crate::phase1_events::tokenize_to_vec].
+///
+/// Internally this is the same balanced-stack pass [`PairStream::next`]
+/// runs, flattened into a single `for token in tokens` loop pushing
+/// directly into a pre-sized `Vec<PairEvent>`. Capacity hint:
+/// `tokens.len() + small`. The EOF-drain pass (synthetic `Unclosed`
+/// emission) is appended after the main loop, mirroring the
+/// `eof_drain` state-machine behaviour.
+#[must_use]
+pub fn pair_slice(tokens: &[Token]) -> PairOutput {
+    let mut events: Vec<PairEvent> = Vec::with_capacity(tokens.len() + 4);
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    let mut stack: SmallVec<[(PairKind, Span); 8]> = SmallVec::new();
+
+    for token in tokens {
+        match *token {
+            Token::Text { range } => events.push(PairEvent::Text { range }),
+            Token::Newline { pos } => events.push(PairEvent::Newline { pos }),
+            Token::Trigger { kind, span } => {
+                events.push(classify_trigger_inline(
+                    kind,
+                    span,
+                    &mut stack,
+                    &mut diagnostics,
+                ));
+            }
+        }
+    }
+
+    // Drain the residual stack: emit one synthetic `Unclosed` event
+    // per remaining open frame, in innermost-first order to match
+    // the streaming behaviour.
+    while let Some((kind, span)) = stack.pop() {
+        diagnostics.push(Diagnostic::unclosed_bracket(span, kind));
+        events.push(PairEvent::Unclosed { kind, span });
+    }
+
+    PairOutput {
+        events,
+        diagnostics,
+    }
+}
+
+/// Free-function variant of [`PairStream::classify_trigger`] for
+/// [`pair_slice`]. Mutates the stack + diagnostics in place; same
+/// invariants as the streaming version.
+#[inline]
+fn classify_trigger_inline(
+    kind: TriggerKind,
+    span: Span,
+    stack: &mut SmallVec<[(PairKind, Span); 8]>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> PairEvent {
+    if let Some(pair_kind) = open_kind_of(kind) {
+        stack.push((pair_kind, span));
+        return PairEvent::PairOpen {
+            kind: pair_kind,
+            span,
+        };
+    }
+    if let Some(pair_kind) = close_kind_of(kind) {
+        if stack.last().is_some_and(|&(top, _)| top == pair_kind) {
+            stack.pop();
+            return PairEvent::PairClose {
+                kind: pair_kind,
+                span,
+            };
+        }
+        diagnostics.push(Diagnostic::unmatched_close(span, pair_kind));
+        return PairEvent::Unmatched {
+            kind: pair_kind,
+            span,
+        };
+    }
+    PairEvent::Solo { kind, span }
+}
+
 /// Stream of [`PairEvent`]s produced from an upstream [`Token`]
 /// iterator. Internal state:
 ///
