@@ -44,6 +44,9 @@ extern crate std;
 
 use alloc::vec::Vec;
 
+use bumpalo::Bump;
+use bumpalo::collections::Vec as BumpVec;
+
 mod backends;
 mod naive;
 
@@ -173,6 +176,31 @@ pub fn best_scanner_name() -> &'static str {
     {
         "naive"
     }
+}
+
+/// A0 (ADR-0019 follow-up): scan into an arena-backed [`BumpVec<u32>`]
+/// instead of the heap [`Vec<u32>`] [`TriggerScanner::scan_offsets`]
+/// returns. The drill-down trace surfaced the heap allocation +
+/// `Vec::extend_desugared` chain at 5.85 % inclusive of corpus parse
+/// — A0 lifts that scratch buffer into the per-parse arena the lex
+/// pipeline already owns.
+///
+/// `dyn`-compatibility constraint: `TriggerScanner` is held as a
+/// `&'static dyn` (see [`best_scanner`]) so its trait method cannot
+/// have a lifetime-generic. Instead this is a free function that
+/// (1) calls the scanner's heap entry point, (2) re-homes the
+/// resulting offsets into the caller's arena, (3) drops the heap
+/// `Vec`. Net: one bounded heap alloc per parse (cap-tuned in each
+/// backend at 1.8 % density) + one short memcpy into the arena,
+/// vs the old shape's repeated heap doublings + a heap result that
+/// outlived the parse to the inter-phase boundary.
+#[cfg(feature = "std")]
+#[must_use]
+pub fn scan_offsets_in<'a>(source: &str, arena: &'a Bump) -> BumpVec<'a, u32> {
+    let scratch = best_scanner().scan_offsets(source);
+    let mut out = BumpVec::with_capacity_in(scratch.len(), arena);
+    out.extend_from_slice(&scratch);
+    out
 }
 
 #[cfg(test)]

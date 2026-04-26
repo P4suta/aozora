@@ -88,7 +88,7 @@ impl Default for DfaScanner {
 
 impl TriggerScanner for DfaScanner {
     fn scan_offsets(&self, source: &str) -> Vec<u32> {
-        let mut out = Vec::with_capacity(source.len() / 1000);
+        let mut out = Vec::with_capacity(source.len() / 56);
         for m in self.regex.find_iter(Input::new(source.as_bytes())) {
             #[allow(
                 clippy::cast_possible_truncation,

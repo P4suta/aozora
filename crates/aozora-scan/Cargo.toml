@@ -42,6 +42,7 @@ std = ["dep:aho-corasick", "dep:regex-automata"]
 
 [dependencies]
 aozora-spec    = { workspace = true }
+bumpalo        = { workspace = true }
 memchr         = { workspace = true }
 # Teddy backend (Hyperscan algorithm; see ADR-0015). std-only because
 # `packed::Searcher` does runtime CPU feature detection.

@@ -54,6 +54,7 @@
 use aozora_spec::classify_trigger_bytes;
 use aozora_syntax::Span;
 use aozora_syntax::borrowed::Arena;
+use bumpalo::collections::Vec as BumpVec;
 
 use crate::token::{Token, TokenStream, TriggerKind};
 
@@ -110,8 +111,15 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> TokenStream<'a> {
         source.len()
     );
     let bytes = source.as_bytes();
-    let trigger_offsets = aozora_scan::best_scanner().scan_offsets(source);
-    let mut newline_offsets: Vec<u32> = Vec::with_capacity(bytes.len() / 64);
+    // A0 (ADR-0019 follow-up): scratch buffers for trigger / newline
+    // offsets live in the per-parse arena instead of on the heap.
+    // Step C drill-down attributed `Vec::extend_desugared` 5.85 %
+    // inclusive to these two buffers' grow paths; lifting them into
+    // the arena reuses the parse's already-warm chunks and removes
+    // the heap malloc/free pair per parse.
+    let bump = arena.bump();
+    let trigger_offsets = aozora_scan::scan_offsets_in(source, bump);
+    let mut newline_offsets: BumpVec<'a, u32> = BumpVec::with_capacity_in(bytes.len() / 64, bump);
     for n in memchr::memchr_iter(b'\n', bytes) {
         #[allow(
             clippy::cast_possible_truncation,

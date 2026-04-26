@@ -73,7 +73,7 @@ impl TriggerScanner for StructuralBitmapScanner {
 
 #[target_feature(enable = "avx2")]
 unsafe fn scan_offsets_avx2(bytes: &[u8]) -> Vec<u32> {
-    let mut out: Vec<u32> = Vec::with_capacity(bytes.len() / 1000);
+    let mut out: Vec<u32> = Vec::with_capacity(bytes.len() / 56);
 
     // Splat the six needles into YMMs once, outside the loop.
     let lead0 = _mm256_set1_epi8(TRIGGER_LEADING_BYTES[0] as i8);

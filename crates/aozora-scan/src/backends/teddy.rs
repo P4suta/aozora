@@ -77,10 +77,13 @@ impl TriggerScanner for TeddyScanner {
     fn scan_offsets(&self, source: &str) -> Vec<u32> {
         // Teddy returns every match start (already verified against
         // the trigram bytes internally), so no PHF re-classify is
-        // needed. The capacity heuristic (1 trigger / 1000 bytes)
-        // tracks the corpus median (~1.8 % triggers, but we want to
-        // optimise for the common case rather than the worst).
-        let mut out = Vec::with_capacity(source.len() / 1000);
+        // needed. Capacity heuristic = source.len() / 56 ≈ 1.8 %
+        // trigger density (corpus median, A0 / step C drill-down).
+        // The previous 1/1000 ratio caused the Vec to double-grow
+        // ~16 times per parse on average, surfacing in the rollup as
+        // `Vec::extend_desugared` 5.85 % inclusive — A0 closes that
+        // tap at the source.
+        let mut out = Vec::with_capacity(source.len() / 56);
         for m in self.searcher.find_iter(source.as_bytes()) {
             #[allow(
                 clippy::cast_possible_truncation,

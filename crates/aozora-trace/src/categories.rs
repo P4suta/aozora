@@ -105,11 +105,7 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
         // arena did this go" — the cost we *can* attack with
         // pooling, capacity hints, or chunk-size tuning.
         "alloc_bumpalo_arena",
-        &[
-            r"bumpalo::",
-            r"bumpalo_collections::",
-            r"BumpVec",
-        ],
+        &[r"bumpalo::", r"bumpalo_collections::", r"BumpVec"],
     ),
     (
         // libc malloc/free/realloc family. Hits here are the cost of

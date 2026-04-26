@@ -248,6 +248,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "aozora-spec",
+ "bumpalo",
  "criterion",
  "memchr",
  "proptest",
