@@ -140,16 +140,16 @@ aozora-wasm       = { path = "crates/aozora-wasm" }
 aozora-trace      = { path = "crates/aozora-trace" }
 
 # Memory management
-bumpalo = { version = "3.16", features = ["collections"] }
+bumpalo = { version = "3.20", features = ["collections"] }
 
 # Stack-inline small vectors — Innovation I-8. `smallvec` over
 # `tinyvec` because the workspace's hot-stack payloads (e.g.,
 # `(PairKind, usize)`) lack a meaningful `Default` impl that
 # `tinyvec` would require.
-smallvec = "1.13"
+smallvec = "1.15"
 
 # SIMD-friendly substring scan
-memchr = "2.7"
+memchr = "2.8"
 
 # Multi-pattern search (forward-reference target precedence check;
 # annotation prefix DFA in a future commit). `default-features = false`
@@ -207,7 +207,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Parallelism — workspace-default work-stealing thread pool. Retained
 # for batch tooling (corpus sweeps, doc-parallel benchmark drivers).
-rayon              = "1.11"
+rayon              = "1.12"
 
 # CLI
 clap = { version = "4.6.1", features = ["derive", "wrap_help", "env", "color", "cargo"] }
