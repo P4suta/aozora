@@ -52,6 +52,44 @@
 //! *some* `AozoraNode`, so the Tier-A canary (no bare `［＃` in the
 //! HTML output outside an `afm-annotation` wrapper) holds regardless
 //! of which specialised recogniser claims the bracket.
+//!
+//! ## R1 investigation note (2026-04, negative result)
+//!
+//! `phase3_subsystems` (instrumented) reports 88 % of classify wall in
+//! "iterator-dispatch overhead" and only 9.4 % in actual recogniser
+//! leaves. The straightforward fix — sprinkle `#[inline]` on
+//! `recognize_and_emit` / `try_ruby_emit` / `try_bracket_emit` /
+//! `try_gaiji_emit` / `process_event` / `handle_top_level` /
+//! `handle_stream_event` / `Iterator::next` — was attempted (and
+//! reverted) on jj change `qlyxosyo`.
+//!
+//! Result on the corpus, relative to the T2-pinned baseline:
+//!
+//! | Band            | baseline   | aggressive #[inline]   |
+//! |-----------------|-----------:|-----------------------:|
+//! | <50KB           | 272.1 MB/s | 257.0 MB/s  (-5.5 %)   |
+//! | 50KB-500KB      | 285.6 MB/s | 282.5 MB/s  (-1.1 %)   |
+//! | 500KB-2MB       | 233.0 MB/s | 225.7 MB/s  (-3.1 %)   |
+//! | >2MB            | 135.6 MB/s | 133.3 MB/s  (-1.7 %)   |
+//! | Phase 1 wall    | 910 ms     | 966 ms      (+6 %)     |
+//!
+//! Selective inline (only the *small* helpers `push_output` /
+//! `flush_plain_up_to` / `append_to_frame` / `pending_outputs_pop_front`
+//! plus Phase 1 `flush_text` / `pair_text_then` / `try_merge_double`)
+//! brought it within ±1.3 % of baseline — neutral.
+//!
+//! Conclusion: **LLVM's default inline judgement is already optimal
+//! on this code at -O3 + fat-LTO.** Forcing inline on
+//! recogniser-wrapping dispatchers regresses via i-cache thrash
+//! (the wrappers expand into the per-call hot path and code bloat
+//! dominates the dispatch saving). The 88 % "overhead" reported by
+//! the instrumented build is partly the instrumentation itself
+//! (`Instant::now()` per guard); the production overhead is real but
+//! attacking it with attributes alone doesn't move it.
+//!
+//! The remaining headroom requires a *structural* change — not
+//! attribute hints. ADR-0016 records the architectural pivot
+//! (R2 / R3: Vec-passing between phases, removing iterator chains).
 
 use core::mem;
 use core::ops::Range;
