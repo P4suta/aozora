@@ -30,12 +30,6 @@ memchr          = { workspace = true }
 # aozora-lexer dep drops.
 aozora-lexer    = { workspace = true }
 
-[features]
-default = []
-# Forward of `aozora-lexer/phase3-fsm` (M-3 / ADR-0019). Enabled
-# end-to-end via `cargo build -p aozora-bench --features
-# aozora-lexer/phase3-fsm` when running the comparative measurement.
-phase3-fsm = ["aozora-lexer/phase3-fsm"]
 
 [dev-dependencies]
 proptest          = { workspace = true }

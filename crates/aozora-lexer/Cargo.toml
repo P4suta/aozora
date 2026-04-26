@@ -23,12 +23,6 @@ default = []
 # Default OFF: every guard collapses to dead code at compile time so
 # release builds pay zero cost.
 phase3-instrument = []
-# M-3 / ADR-0019 — opt-in flat state machine dispatcher for Phase 3.
-# When enabled, `ClassifyStream::process_event` delegates to a
-# table-driven (state, event) → ActionList dispatch instead of the
-# default cross-cutting if/match cascade. Comparative measurement
-# only — promotion / revert decision lives in ADR-0019.
-phase3-fsm = []
 
 [dependencies]
 aozora-spec     = { workspace = true }

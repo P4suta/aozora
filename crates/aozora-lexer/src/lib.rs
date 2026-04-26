@@ -84,11 +84,9 @@ pub use phase0_sanitize::{
     scan_for_sentinel_collisions,
 };
 pub use phase1_events::{Tokenizer, tokenize, tokenize_in};
-pub use phase2_pair::{
-    EventTag, PairEvent, PairEventStream, PairKind, PairOutputIn, PairStream, pair, pair_in,
-};
+pub use phase2_pair::{PairEvent, PairKind, PairOutputIn, PairStream, pair, pair_in};
 pub use phase3_classify::{ClassifiedSpan, ClassifyStream, SpanKind, classify};
-pub use token::{Token, TokenStream, TokenTag, TriggerKind};
+pub use token::{Token, TriggerKind};
 
 #[cfg(test)]
 mod tests {

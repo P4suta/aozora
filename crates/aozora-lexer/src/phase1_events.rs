@@ -10,10 +10,10 @@
 //!
 //! - [`tokenize`] — streaming `impl Iterator<Item = Token>`, kept for
 //!   FFI / incremental / pull-based consumers that have no arena.
-//! - [`tokenize_in`] — arena-batch [`TokenStream`] allocated inside
-//!   the caller's [`Arena`]. The 4-column `SoA` layout (M-2 / ADR-0019)
-//!   keeps the tag column dense so Phase 2's hot loop scans 1 cache
-//!   line per 64 tokens instead of 1 per ~5 (the old enum layout).
+//! - [`tokenize_in`] — arena-batch `BumpVec<'a, Token>` allocated
+//!   inside the caller's [`Arena`] (R4-A); the scratch trigger /
+//!   newline offset buffers used during the merge walk also live in
+//!   the arena (A0 / ADR-0019).
 //!
 //! The Aozora pipeline drives `tokenize_in` because it already owns an
 //! arena; benchmarks and FFI shims that want lazy semantics use
@@ -56,7 +56,7 @@ use aozora_syntax::Span;
 use aozora_syntax::borrowed::Arena;
 use bumpalo::collections::Vec as BumpVec;
 
-use crate::token::{Token, TokenStream, TriggerKind};
+use crate::token::{Token, TriggerKind};
 
 /// Streaming tokeniser over sanitized source text.
 ///
@@ -77,24 +77,27 @@ pub fn tokenize(source: &str) -> Tokenizer<'_> {
 }
 
 /// Materialise every Phase 1 token into an arena-backed
-/// [`TokenStream`] (4-column `SoA`) in one pass.
+/// [`bumpalo::collections::Vec`] in one pass.
 ///
-/// M-2 (ADR-0019): the inter-phase token list is stored as
-/// Structure-of-Arrays inside the caller's arena. The hot tag
-/// column (1 byte / token) is scanned dense in Phase 2; payload
-/// columns (`spans`, `trigger_kinds`) are read out-of-band only
-/// when the tag selects them.
+/// R4-A baseline + A0 (ADR-0019 follow-up): the token list lives
+/// inside the caller's arena (R4-A); the scratch trigger/newline
+/// offset buffers used during the merge walk also live in the arena
+/// (A0), removing the heap `Vec<u32>` allocations Step C's drill-
+/// down attributed 5.85 % inclusive to.
+///
+/// M-2's Pure `SoA` `TokenStream` shape was reverted after measurement
+/// (ADR-0019): the per-event 3-4 column pushes cost more than the
+/// tag-density win they bought, even with A0+A applied.
 ///
 /// Internally this is exactly the merge-walk [`Tokenizer::next`] runs,
 /// flattened into a single `for` loop pushing into a pre-sized
-/// [`TokenStream`]. Drops the `pending: Option<Token>` slot (the
-/// streaming buffer for "Text+Trigger emitted together") because
-/// direct pushes can write both events back-to-back.
+/// `BumpVec`. Drops the `pending: Option<Token>` slot (the streaming
+/// buffer for "Text+Trigger emitted together") because direct pushes
+/// can write both events back-to-back.
 ///
 /// Capacity hint: 2 tokens per trigger (text+trigger) + one per
 /// newline + a small fixed overhead. Slight over-estimate is cheap
-/// and avoids the `BumpVec` re-grow path (which moves the previous
-/// allocation forward in the arena, doubling its footprint).
+/// and avoids the `BumpVec` re-grow path.
 ///
 /// # Panics
 ///
@@ -104,19 +107,14 @@ pub fn tokenize(source: &str) -> Tokenizer<'_> {
     clippy::cast_possible_truncation,
     reason = "function entry asserts source.len() <= u32::MAX, so every byte index fits"
 )]
-pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> TokenStream<'a> {
+pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> BumpVec<'a, Token> {
     assert!(
         u32::try_from(source.len()).is_ok(),
         "source too long for u32 span offsets ({} bytes)",
         source.len()
     );
     let bytes = source.as_bytes();
-    // A0 (ADR-0019 follow-up): scratch buffers for trigger / newline
-    // offsets live in the per-parse arena instead of on the heap.
-    // Step C drill-down attributed `Vec::extend_desugared` 5.85 %
-    // inclusive to these two buffers' grow paths; lifting them into
-    // the arena reuses the parse's already-warm chunks and removes
-    // the heap malloc/free pair per parse.
+    // A0 (ADR-0019): scratch buffers in arena instead of on heap.
     let bump = arena.bump();
     let trigger_offsets = aozora_scan::scan_offsets_in(source, bump);
     let mut newline_offsets: BumpVec<'a, u32> = BumpVec::with_capacity_in(bytes.len() / 64, bump);
@@ -129,7 +127,7 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> TokenStream<'a> {
     }
 
     let cap = trigger_offsets.len() * 2 + newline_offsets.len() + 8;
-    let mut out: TokenStream<'a> = TokenStream::with_capacity_in(cap, arena);
+    let mut out: BumpVec<'a, Token> = BumpVec::with_capacity_in(cap, bump);
 
     let mut text_start: u32 = 0;
     let mut t_idx: usize = 0;
@@ -151,9 +149,14 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> TokenStream<'a> {
             let (emit_kind, byte_len, extra) =
                 merge_double(bytes, &trigger_offsets, t_idx, kind, t_pos);
             if t_pos > text_start {
-                out.push_text(Span::new(text_start, t_pos));
+                out.push(Token::Text {
+                    range: Span::new(text_start, t_pos),
+                });
             }
-            out.push_trigger(emit_kind, Span::new(t_pos, t_pos + byte_len));
+            out.push(Token::Trigger {
+                kind: emit_kind,
+                span: Span::new(t_pos, t_pos + byte_len),
+            });
             let after = t_pos + byte_len;
             text_start = after;
             t_idx += 1 + extra;
@@ -163,9 +166,11 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> TokenStream<'a> {
         } else {
             let n_pos = n_offset.expect("checked Some by !next_is_trigger arm");
             if n_pos > text_start {
-                out.push_text(Span::new(text_start, n_pos));
+                out.push(Token::Text {
+                    range: Span::new(text_start, n_pos),
+                });
             }
-            out.push_newline(n_pos);
+            out.push(Token::Newline { pos: n_pos });
             text_start = n_pos + 1;
             n_idx += 1;
         }
@@ -173,7 +178,9 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> TokenStream<'a> {
 
     let total_len = bytes.len() as u32;
     if total_len > text_start {
-        out.push_text(Span::new(text_start, total_len));
+        out.push(Token::Text {
+            range: Span::new(text_start, total_len),
+        });
     }
     out
 }
