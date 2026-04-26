@@ -30,7 +30,7 @@ serde_json  = { workspace = true }
 # discover Python. Enable the feature when running `maturin develop`
 # / `maturin build`.
 [dependencies.pyo3]
-version = "0.26"
+version = "0.28"
 optional = true
 features = ["extension-module"]
 
