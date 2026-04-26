@@ -30,6 +30,19 @@
 //! by a sampling profiler this caused the corpus-load syscalls
 //! (`read` / `__nss_database_lookup` / `__memmove_avx_unaligned`) to
 //! dominate the trace and bury the parser hot path.
+//!
+//! ## Parallel mode (R4-B / ADR-0017)
+//!
+//! Set `AOZORA_PROFILE_PARALLEL=1` to fan per-doc parses across rayon's
+//! work-stealing pool. Each task constructs its own [`Arena`], so
+//! arenas remain `Send` (one per task) without breaking `bumpalo`'s
+//! `!Sync` contract. Output gains a `[parallel: N threads]` header,
+//! the parse wall reflects concurrent wall-clock (not the sum of
+//! per-doc times), and a `scaling` line reports the effective speedup
+//! vs the same per-doc work executed serially. Sequential remains the
+//! default — per-doc latency numbers stay reproducible / variance-stable
+//! and the sampling profiler attaches cleanly to a single-thread call
+//! stack.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -52,8 +65,19 @@ use aozora_bench::{SizeBand, SizeBandedCorpus, corpus_size_bands};
 use aozora_corpus::CorpusItem;
 use aozora_lex::lex_into_arena;
 use aozora_syntax::borrowed::Arena;
+use rayon::prelude::*;
 
 const NS_PER_S: f64 = 1_000_000_000.0;
+
+/// Whether to fan per-doc parses across rayon's work-stealing pool.
+/// Opt-in via `AOZORA_PROFILE_PARALLEL=1` so the default sampling /
+/// profiling workflow stays single-threaded and reproducible.
+fn parallel_mode() -> bool {
+    matches!(
+        env::var("AOZORA_PROFILE_PARALLEL").ok().as_deref(),
+        Some("1" | "true" | "yes")
+    )
+}
 
 fn main() {
     let Some(corpus) = aozora_corpus::from_env() else {
@@ -70,7 +94,10 @@ fn main() {
         .unwrap_or(1)
         .max(1);
 
-    eprintln!("throughput_by_class: starting (limit = {limit:?}, repeat = {repeat})");
+    let parallel = parallel_mode();
+    eprintln!(
+        "throughput_by_class: starting (limit = {limit:?}, repeat = {repeat}, parallel = {parallel})"
+    );
 
     let load_start = Instant::now();
     let items: Vec<CorpusItem> = corpus
@@ -98,17 +125,17 @@ fn main() {
     );
 
     let parse_start = Instant::now();
-    let mut report = measure_all(&banded);
+    let mut report = measure_all(&banded, parallel);
     for _ in 1..repeat {
         // Discard repeats — only the per-doc latencies of the final
         // pass are kept; earlier passes serve to warm caches and
         // (importantly) to give a sampling profiler more parser-bound
         // wall time to attach to.
-        report = measure_all(&banded);
+        report = measure_all(&banded, parallel);
     }
     let parse_secs = parse_start.elapsed().as_secs_f64();
 
-    print_report(&report, &banded, parse_secs, load_secs, repeat);
+    print_report(&report, &banded, parse_secs, load_secs, repeat, parallel);
 }
 
 #[derive(Debug, Default)]
@@ -140,29 +167,40 @@ struct AllReport {
     bands: [BandReport; 4],
 }
 
-fn measure_all(banded: &SizeBandedCorpus) -> AllReport {
+fn measure_all(banded: &SizeBandedCorpus, parallel: bool) -> AllReport {
     let mut report = AllReport::default();
     for (slot, band) in SizeBand::ordered().into_iter().enumerate() {
         let docs = banded.band(band);
-        let mut latencies = Vec::with_capacity(docs.len());
-        let mut sizes = Vec::with_capacity(docs.len());
-        for (_, text) in docs {
-            // Fresh arena per doc — matches `lex_into_arena`'s own
-            // contract and avoids amortising allocator state across
-            // multiple parses.
-            let arena = Arena::new();
-            let t = Instant::now();
-            let _out = lex_into_arena(text, &arena);
-            let ns = t.elapsed().as_nanos() as u64;
-            latencies.push(ns);
-            sizes.push(text.len() as u64);
-        }
-        report.bands[slot] = BandReport {
-            latencies_ns: latencies,
-            sizes_bytes: sizes,
-        };
+        report.bands[slot] = measure_band(docs, parallel);
     }
     report
+}
+
+/// Measure one size-band. Each closure invocation owns a fresh
+/// [`Arena`] (matching `lex_into_arena`'s contract); under `parallel`
+/// the closures run concurrently across rayon's pool — `Arena` is
+/// `Send`, so the per-task arena is moved into each worker thread
+/// without violating `bumpalo`'s `!Sync` contract.
+fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
+    let measure = |text: &str| -> (u64, u64) {
+        let arena = Arena::new();
+        let t = Instant::now();
+        let _out = lex_into_arena(text, &arena);
+        let ns = t.elapsed().as_nanos() as u64;
+        (text.len() as u64, ns)
+    };
+
+    let pairs: Vec<(u64, u64)> = if parallel {
+        docs.par_iter().map(|(_, text)| measure(text)).collect()
+    } else {
+        docs.iter().map(|(_, text)| measure(text)).collect()
+    };
+
+    let (sizes_bytes, latencies_ns) = pairs.into_iter().unzip();
+    BandReport {
+        latencies_ns,
+        sizes_bytes,
+    }
 }
 
 fn print_report(
@@ -171,6 +209,7 @@ fn print_report(
     parse_secs: f64,
     load_secs: f64,
     repeat: usize,
+    parallel: bool,
 ) {
     println!("=== throughput_by_class ===");
     println!();
@@ -183,6 +222,29 @@ fn print_report(
         "Wall:    load {load_secs:.2}s   parse {parse_secs:.2}s ({repeat} pass{plural})",
         plural = if repeat == 1 { "" } else { "es" }
     );
+    if parallel {
+        // Sum of per-doc latencies = the work that would have been
+        // done serially. Concurrent wall = the parse_secs we just
+        // measured (one parse pass = one rayon par_iter). Their ratio
+        // is the achieved scaling factor.
+        let serial_work_ns: u64 = report
+            .bands
+            .iter()
+            .flat_map(|b| b.latencies_ns.iter().copied())
+            .sum();
+        let serial_work_secs = (serial_work_ns as f64) / NS_PER_S;
+        let single_pass_secs = parse_secs / (repeat as f64);
+        let scaling = if single_pass_secs > 0.0 {
+            serial_work_secs / single_pass_secs / (repeat as f64)
+        } else {
+            0.0
+        };
+        let threads = rayon::current_num_threads();
+        println!(
+            "Parallel: {threads} threads   serial-work {serial_work_secs:.2}s   \
+             concurrent-wall {single_pass_secs:.2}s   scaling {scaling:.2}× (ideal {threads}×)"
+        );
+    }
     println!();
     println!(
         "{:<13} {:>6} {:>13} {:>10} {:>10} {:>10} {:>10} {:>11} {:>10}",

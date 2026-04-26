@@ -26,6 +26,12 @@
 //! Optional env vars:
 //! - `AOZORA_PROFILE_LIMIT=N` — cap the sweep to the first N docs
 //!   (useful for spot checks during development)
+//! - `AOZORA_PROFILE_PARALLEL=1` — fan per-doc measurements across
+//!   rayon's pool (R4-B / ADR-0017). Per-doc latencies remain
+//!   meaningful (each closure timing is local), but the wall-clock
+//!   collapses to `serial-work / N`. The progress log is suppressed
+//!   under parallel mode to avoid interleaved output; one summary
+//!   line replaces the per-2k-doc trickle.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -51,6 +57,7 @@ use aozora_lex::lex_into_arena;
 use aozora_lexer::{ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize};
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;
+use rayon::prelude::*;
 
 const NS_PER_MS: f64 = 1_000_000.0;
 const NS_PER_S: f64 = 1_000_000_000.0;
@@ -86,8 +93,9 @@ fn main() {
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")
         .ok()
         .and_then(|s| s.trim().parse().ok());
+    let parallel = parallel_mode();
 
-    eprintln!("phase_breakdown: starting (limit = {limit:?})");
+    eprintln!("phase_breakdown: starting (limit = {limit:?}, parallel = {parallel})");
 
     // Drain the corpus so I/O isn't mixed into per-phase numbers.
     let items: Vec<CorpusItem> = corpus
@@ -98,24 +106,7 @@ fn main() {
     eprintln!("phase_breakdown: loaded {} items, measuring…", items.len());
 
     let wall_start = Instant::now();
-    let mut samples: Vec<PhaseSample> = Vec::with_capacity(items.len());
-    let mut labels: Vec<String> = Vec::with_capacity(items.len());
-    let mut decode_errors = 0usize;
-    for (i, item) in items.iter().enumerate() {
-        let Ok(text) = decode_sjis(&item.bytes) else {
-            decode_errors += 1;
-            continue;
-        };
-        samples.push(measure_one(&text));
-        labels.push(item.label.clone());
-        if (i + 1).is_multiple_of(2_000) {
-            eprintln!(
-                "  …processed {} docs ({:.1}s elapsed)",
-                i + 1,
-                wall_start.elapsed().as_secs_f64()
-            );
-        }
-    }
+    let (samples, labels, decode_errors) = measure_corpus(&items, parallel);
     let wall_elapsed = wall_start.elapsed();
     eprintln!(
         "phase_breakdown: done in {:.2}s, {} decode errors",
@@ -123,7 +114,57 @@ fn main() {
         decode_errors
     );
 
-    print_report(&samples, &labels, wall_elapsed.as_nanos() as u64);
+    print_report(&samples, &labels, wall_elapsed.as_nanos() as u64, parallel);
+}
+
+/// Whether to fan per-doc measurements across rayon's pool. Opt-in
+/// via `AOZORA_PROFILE_PARALLEL=1`.
+fn parallel_mode() -> bool {
+    matches!(
+        env::var("AOZORA_PROFILE_PARALLEL").ok().as_deref(),
+        Some("1" | "true" | "yes")
+    )
+}
+
+/// Per-doc result. `None` flags a Shift-JIS decode error so the
+/// post-collect aggregator can count them instead of using a shared
+/// `AtomicU64`. `par_iter().map(...).collect()` preserves input
+/// order, so the `samples` / `labels` vectors stay aligned with the
+/// original corpus iteration order — `Top-5 by classify` rankings
+/// match between sequential and parallel runs.
+struct DocResult {
+    sample: PhaseSample,
+    label: String,
+}
+
+fn measure_corpus(items: &[CorpusItem], parallel: bool) -> (Vec<PhaseSample>, Vec<String>, usize) {
+    let process = |item: &CorpusItem| -> Option<DocResult> {
+        let text = decode_sjis(&item.bytes).ok()?;
+        Some(DocResult {
+            sample: measure_one(&text),
+            label: item.label.clone(),
+        })
+    };
+
+    let results: Vec<Option<DocResult>> = if parallel {
+        items.par_iter().map(process).collect()
+    } else {
+        items.iter().map(process).collect()
+    };
+
+    let mut samples: Vec<PhaseSample> = Vec::with_capacity(results.len());
+    let mut labels: Vec<String> = Vec::with_capacity(results.len());
+    let mut decode_errors = 0usize;
+    for r in results {
+        match r {
+            Some(d) => {
+                samples.push(d.sample);
+                labels.push(d.label);
+            }
+            None => decode_errors += 1,
+        }
+    }
+    (samples, labels, decode_errors)
 }
 
 fn measure_one(text: &str) -> PhaseSample {
@@ -186,7 +227,7 @@ fn measure_one(text: &str) -> PhaseSample {
     }
 }
 
-fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64) {
+fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64, parallel: bool) {
     if samples.is_empty() {
         println!("No samples processed.");
         return;
@@ -215,6 +256,22 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64) {
         total_bytes as f64 / (1024.0 * 1024.0)
     );
     println!("  wall-clock        : {:.2} s", wall_ns as f64 / NS_PER_S);
+    if parallel {
+        // sum of per-doc full_ns is what serial execution would have
+        // taken; wall_ns is the achieved concurrent wall-clock.
+        let serial_full_ns: u64 = samples.iter().map(|s| s.full_ns).sum();
+        let scaling = if wall_ns > 0 {
+            serial_full_ns as f64 / wall_ns as f64
+        } else {
+            0.0
+        };
+        let threads = rayon::current_num_threads();
+        println!(
+            "  parallel          : {threads} threads, scaling {scaling:.2}× \
+             (serial work {:.2}s)",
+            serial_full_ns as f64 / NS_PER_S
+        );
+    }
     println!();
 
     println!("Per-phase totals (sum across all docs)");

@@ -133,6 +133,7 @@ dependencies = [
  "aozora-syntax",
  "criterion",
  "memchr",
+ "rayon",
 ]
 
 [[package]]
