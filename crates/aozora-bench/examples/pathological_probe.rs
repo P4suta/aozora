@@ -27,7 +27,10 @@ use aozora_lexer::{
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;
 
-const RELATIVE_PATH: &str = "001161/files/43624_ruby_28995/43624_ruby_28995.txt";
+/// Default pathological doc — kaeriten / annotation density extreme.
+/// Override via the `AOZORA_PROBE_DOC` env var (relative to
+/// `AOZORA_CORPUS_ROOT`).
+const DEFAULT_RELATIVE_PATH: &str = "001161/files/43624_ruby_28995/43624_ruby_28995.txt";
 const ITERS: u32 = 100;
 
 fn main() {
@@ -37,7 +40,9 @@ fn main() {
         );
         std::process::exit(2);
     };
-    let path = PathBuf::from(&root).join(RELATIVE_PATH);
+    let relative = env::var("AOZORA_PROBE_DOC")
+        .unwrap_or_else(|_| DEFAULT_RELATIVE_PATH.to_owned());
+    let path = PathBuf::from(&root).join(&relative);
     if !path.is_file() {
         eprintln!(
             "expected pathological doc at {}; if your corpus checkout differs, override the path",
@@ -111,6 +116,38 @@ fn main() {
     println!("  4-PHASE TOTAL  : {:>7.2} ms", avg(standalone));
     println!("  lex_into_arena : {:>7.2} ms", avg(full_total));
     println!("  post-classify ∼: {:>7.2} ms", avg(full_total.saturating_sub(standalone)));
+
+    // When `aozora-lexer/phase3-instrument` is enabled, dump the
+    // per-subsystem call counts for the LAST iteration so callers can
+    // see which subsystem dominates on this specific document.
+    // (Cargo's cross-package feature resolution surfaces it as
+    // `aozora_lexer` having the `instrumentation` module visible —
+    // we test for module visibility via a `cfg(feature = ...)` on
+    // a local stand-in feature defined in this crate's Cargo.toml.)
+    #[cfg(feature = "instrument")]
+    {
+        use aozora_lexer::instrumentation::{Subsystem, TimingTable};
+        TimingTable::reset();
+        {
+            let arena_inst = Arena::new();
+            let _ = lex_into_arena(&text, &arena_inst);
+        }
+        let snap = TimingTable::snapshot();
+        println!();
+        println!("Per-subsystem (single instrumented run):");
+        for sub in Subsystem::ordered() {
+            let calls = snap.counts.get(&sub).copied().unwrap_or(0);
+            let ns = snap.total_ns.get(&sub).copied().unwrap_or(0);
+            let avg_ns = if calls == 0 { 0.0 } else { (ns as f64) / (calls as f64) };
+            println!(
+                "  {:<32}  {:>8} calls  {:>10.3} ms  {:>10.0} ns/call",
+                sub.label(),
+                calls,
+                (ns as f64) / 1_000_000.0,
+                avg_ns,
+            );
+        }
+    }
 
     // Single high-precision parse to dump classify shape (annotation
     // count, gaiji count) for sizing the AC DFA work.

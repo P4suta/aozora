@@ -222,6 +222,10 @@ const FORWARD_QUOTE_BODY_THRESHOLD: usize = 64;
 /// pipeline starts and replaces the legacy event-driven pre-pass that
 /// I-2 deforestation made impossible to keep around.
 fn install_forward_target_index_from_source(source: &str) {
+    #[cfg(feature = "phase3-instrument")]
+    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+        crate::instrumentation::Subsystem::ForwardIndexInstall,
+    );
     use memchr::memmem;
 
     // `「` is U+300C, UTF-8 = E3 80 8C; `」` is U+300D, UTF-8 = E3 80 8D.
@@ -431,6 +435,10 @@ fn classify_annotation_body<'a>(
     body: &str,
     alloc: &mut BorrowedAllocator<'a>,
 ) -> Option<(EmitKind<'a>, Option<&'a borrowed::Annotation<'a>>)> {
+    #[cfg(feature = "phase3-instrument")]
+    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+        crate::instrumentation::Subsystem::BodyDispatcher,
+    );
     if body.is_empty() {
         return None;
     }
@@ -731,6 +739,10 @@ where
     /// that the caller should run recognition on the now-complete
     /// buffer.
     fn append_to_frame(&mut self, event: PairEvent) -> bool {
+        #[cfg(feature = "phase3-instrument")]
+        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+            crate::instrumentation::Subsystem::FrameAppend,
+        );
         let frame = self
             .frame
             .as_mut()
@@ -1180,6 +1192,10 @@ where
     type Item = ClassifiedSpan<'a>;
 
     fn next(&mut self) -> Option<ClassifiedSpan<'a>> {
+        #[cfg(feature = "phase3-instrument")]
+        let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+            crate::instrumentation::Subsystem::IterDispatch,
+        );
         loop {
             if let Some(span) = self.pending_outputs_pop_front() {
                 return Some(span);
@@ -1312,6 +1328,10 @@ fn recognize_ruby<'s, 'a>(
     close_idx: usize,
     alloc: &mut BorrowedAllocator<'a>,
 ) -> Option<RubyMatch<'s, 'a>> {
+    #[cfg(feature = "phase3-instrument")]
+    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+        crate::instrumentation::Subsystem::Ruby,
+    );
     let events = view.events;
     let PairEvent::PairOpen {
         span: open_span, ..
@@ -1448,6 +1468,10 @@ fn build_content_from_body<'a>(
     window: &BodyWindow,
     alloc: &mut BorrowedAllocator<'a>,
 ) -> borrowed::Content<'a> {
+    #[cfg(feature = "phase3-instrument")]
+    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+        crate::instrumentation::Subsystem::BuildContent,
+    );
     debug_assert!(
         window.events.start <= window.events.end,
         "body window event range must be non-inverted",
@@ -1647,6 +1671,10 @@ fn recognize_gaiji<'a>(
     bracket_open_idx: usize,
     alloc: &mut BorrowedAllocator<'a>,
 ) -> Option<GaijiMatch<'a>> {
+    #[cfg(feature = "phase3-instrument")]
+    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+        crate::instrumentation::Subsystem::Gaiji,
+    );
     let events = view.events;
     let &PairEvent::PairOpen {
         kind: PairKind::Bracket,
@@ -1817,6 +1845,10 @@ fn recognize_annotation<'a>(
     close_idx: usize,
     alloc: &mut BorrowedAllocator<'a>,
 ) -> Option<AnnotationMatch<'a>> {
+    #[cfg(feature = "phase3-instrument")]
+    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+        crate::instrumentation::Subsystem::Annotation,
+    );
     let events = view.events;
     let PairEvent::PairOpen {
         span: open_span, ..
@@ -2052,6 +2084,10 @@ fn forward_target_is_preceded(
     open_idx: usize,
     target: &str,
 ) -> bool {
+    #[cfg(feature = "phase3-instrument")]
+    let _phase3_guard = crate::instrumentation::SubsystemGuard::new(
+        crate::instrumentation::Subsystem::ForwardTargetCheck,
+    );
     let Some(PairEvent::PairOpen { span, .. }) = events.get(open_idx) else {
         return false;
     };

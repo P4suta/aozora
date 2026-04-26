@@ -16,6 +16,13 @@ workspace = true
 
 [features]
 default = []
+# Opt-in phase 3 sub-system instrumentation. When enabled, the
+# `phase3_classify` recogniser entry points push their elapsed-ns into
+# a thread-local `instrumentation::TimingTable` keyed by `Subsystem`.
+# The `aozora-bench` `phase3_subsystems` example reads this table.
+# Default OFF: every guard collapses to dead code at compile time so
+# release builds pay zero cost.
+phase3-instrument = []
 
 [dependencies]
 aozora-spec     = { workspace = true }
