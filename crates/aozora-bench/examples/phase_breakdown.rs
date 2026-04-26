@@ -69,11 +69,17 @@ use rayon::prelude::*;
 // mid-call, after which the prior measurement's borrowed output
 // would be invalidated.
 //
+// A (ADR-0019 follow-up): pre-size with 256 KB initial capacity to
+// skip the first-few-docs chunk-grow churn. See the matching
+// constant in `throughput_by_class.rs` for the heuristic rationale.
+//
 // `RefCell` matches `Arena`'s `!Sync` contract (each rayon worker
 // owns its own thread-local cell, never shared across threads).
+const WORKER_ARENA_INITIAL_CAPACITY: usize = 256 * 1024;
+
 thread_local! {
-    static WORKER_ARENA_PHASE3: RefCell<Arena> = RefCell::new(Arena::new());
-    static WORKER_ARENA_FULL: RefCell<Arena> = RefCell::new(Arena::new());
+    static WORKER_ARENA_PHASE3: RefCell<Arena> = RefCell::new(Arena::with_capacity(WORKER_ARENA_INITIAL_CAPACITY));
+    static WORKER_ARENA_FULL: RefCell<Arena> = RefCell::new(Arena::with_capacity(WORKER_ARENA_INITIAL_CAPACITY));
 }
 
 const NS_PER_MS: f64 = 1_000_000.0;

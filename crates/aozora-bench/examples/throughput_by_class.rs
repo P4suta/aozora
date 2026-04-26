@@ -73,15 +73,27 @@ use rayon::prelude::*;
 // allocations without releasing the chunks — saving the per-doc
 // `mmap` syscall that R4-B's per-task `Arena::new()` was paying.
 //
+// A (ADR-0019 follow-up): pre-size the thread-local arena at thread
+// startup so the first few docs each worker sees don't pay the
+// chunk-grow doubling tax (bumpalo's default initial chunk is
+// 512 bytes; the corpus median doc needs ~50 KB of arena space, so
+// without a hint the first ~7 docs each worker sees do
+// 512 → 1 K → 2 K → 4 K → 8 K → 16 K → 32 K → 64 K growth). 256 KB
+// covers >95 % of corpus docs in one chunk; the >2 MB outliers
+// extend once and stay extended across resets, so the cost is paid
+// once per worker per outlier-class instead of once per parse.
+//
 // `RefCell` matches `Arena`'s `!Sync` contract exactly (the rayon
 // pool gives each worker its own thread-local cell, so the cell is
 // never observed from a second thread). The borrow scope must close
 // before the closure returns — which it does, because the closure
 // drops `_out` immediately after timing.
 //
-// M-1 / ADR-0019.
+// M-1 / A / ADR-0019.
+const WORKER_ARENA_INITIAL_CAPACITY: usize = 256 * 1024;
+
 thread_local! {
-    static WORKER_ARENA: RefCell<Arena> = RefCell::new(Arena::new());
+    static WORKER_ARENA: RefCell<Arena> = RefCell::new(Arena::with_capacity(WORKER_ARENA_INITIAL_CAPACITY));
 }
 
 const NS_PER_S: f64 = 1_000_000_000.0;
