@@ -799,10 +799,35 @@ where
     /// the back-shift entirely.
     pending_outputs: VecDeque<ClassifiedSpan<'a>>,
     frame: Option<Frame>,
+    /// Stream-through state for top-level pair kinds that have no
+    /// recogniser (Quote, Tortoise). `None` in normal operation. When
+    /// `Some((kind, depth))`, `process_event` bypasses frame buffering
+    /// — events stream directly through `handle_stream_event` so we
+    /// don't waste an O(N) `SmallVec` push per event followed by an
+    /// O(N) replay walk. The depth counter tracks nested opens of the
+    /// same kind so the outer close is unambiguous.
+    ///
+    /// The N3 optimisation: doc 49178 (corpus outlier) wraps ~24k
+    /// inner events in two top-level Quote pairs. With buffering the
+    /// classify pass paid 24k × (push to body smallvec + read it back
+    /// in replay); with stream-through that becomes a single forward
+    /// walk.
+    streaming: Option<StreamingFrame>,
     pending_plain_start: Option<u32>,
     pending_refmark: Option<Span>,
     diagnostics: Vec<Diagnostic>,
     finished: bool,
+}
+
+/// Active stream-through frame for a top-level Quote / Tortoise pair.
+/// Carries no event buffer — just the outer pair kind and a nested-
+/// open depth counter. Each `PairOpen` of the same kind increments,
+/// each `PairClose` of the same kind decrements; reaching zero ends
+/// stream-through.
+#[derive(Debug, Clone, Copy)]
+struct StreamingFrame {
+    kind: PairKind,
+    depth: u32,
 }
 
 /// Body window passed to recogniser helpers.
@@ -882,6 +907,7 @@ where
             alloc,
             pending_outputs: VecDeque::new(),
             frame: None,
+            streaming: None,
             pending_plain_start: None,
             pending_refmark: None,
             diagnostics: Vec::new(),
@@ -1178,6 +1204,26 @@ where
                 self.pending_refmark = Some(span);
             }
             PairEvent::PairOpen { kind, span, .. } if !replay => {
+                // N3 stream-through: Quote and Tortoise have no
+                // top-level recogniser. Buffering their body events
+                // for an inevitable replay would burn O(N) work for
+                // nothing — instead enter `streaming` mode and let
+                // body events flow straight through. The open's bytes
+                // become the seed of a fresh pending plain run.
+                if matches!(kind, PairKind::Quote | PairKind::Tortoise) {
+                    // Fold any pending refmark into plain first, then
+                    // start the new plain run at the open's first byte.
+                    let pre_open = self
+                        .pending_refmark
+                        .take()
+                        .map_or(span.start, |rm| rm.start);
+                    self.flush_plain_up_to(pre_open);
+                    if self.pending_plain_start.is_none() {
+                        self.pending_plain_start = Some(span.start);
+                    }
+                    self.streaming = Some(StreamingFrame { kind, depth: 1 });
+                    return;
+                }
                 // Opening a top-level pair MAY flush the pending plain
                 // up to (but not including) the open's start. The
                 // refmark, if any and only when this open is a
@@ -1205,6 +1251,79 @@ where
             other => {
                 // Catch-all: every non-Newline event carries a span
                 // and folds into the pending plain run.
+                let Some(span) = other.span() else {
+                    return;
+                };
+                if self.pending_plain_start.is_none() {
+                    self.pending_plain_start = Some(span.start);
+                }
+            }
+        }
+    }
+
+    /// Handle one event while in stream-through mode (top-level
+    /// Quote / Tortoise pair, no recogniser candidate). Mirrors the
+    /// `replay = true` behaviour of [`Self::handle_top_level`] but
+    /// (a) reads from the live event stream rather than a buffered
+    /// `SmallVec`, (b) tracks nested-open depth so the outer close
+    /// unambiguously exits the mode, and (c) skips the inner-frame
+    /// open path (a nested `Bracket` / `Ruby` / `DoubleRuby` inside
+    /// an unrecognised `Quote` folds into the surrounding plain run,
+    /// same as the legacy buffered-replay behaviour).
+    fn handle_stream_event(&mut self, event: PairEvent) {
+        // Defensive — only called when streaming is Some.
+        let stream = self
+            .streaming
+            .as_mut()
+            .expect("handle_stream_event without streaming state");
+        match event {
+            PairEvent::Newline { pos } => {
+                self.flush_plain_up_to(pos);
+                self.push_output(ClassifiedSpan {
+                    kind: SpanKind::Newline,
+                    source_span: Span::new(pos, pos + 1),
+                });
+            }
+            PairEvent::PairOpen { kind, span } if kind == stream.kind => {
+                stream.depth = stream.depth.saturating_add(1);
+                if self.pending_plain_start.is_none() {
+                    self.pending_plain_start = Some(span.start);
+                }
+            }
+            PairEvent::PairClose { kind, span } if kind == stream.kind => {
+                stream.depth = stream.depth.saturating_sub(1);
+                if self.pending_plain_start.is_none() {
+                    self.pending_plain_start = Some(span.start);
+                }
+                if stream.depth == 0 {
+                    self.streaming = None;
+                }
+            }
+            PairEvent::Unclosed { kind, .. } => {
+                // Phase 2 emits synthetic Unclosed events when EOF
+                // arrives mid-frame, one per still-open pair. Each
+                // one's span aliases its original PairOpen — those
+                // bytes were already folded into the plain run when
+                // the PairOpen arrived (or emitted by an intervening
+                // Newline flush). Re-folding here would set
+                // `pending_plain_start` to a position *behind* the
+                // cursor and break the tiling invariant.
+                //
+                // For Unclosed of the streaming kind, decrement depth
+                // so the count mirrors the matching PairOpens (one
+                // increment per open, one Unclosed per still-open).
+                // When depth reaches zero the outer pair is gone, so
+                // exit streaming. Other-kind Unclosed events (a
+                // nested Bracket / Ruby / DoubleRuby that streaming
+                // mode never opened a frame for) are simply ignored.
+                if kind == stream.kind {
+                    stream.depth = stream.depth.saturating_sub(1);
+                    if stream.depth == 0 {
+                        self.streaming = None;
+                    }
+                }
+            }
+            other => {
                 let Some(span) = other.span() else {
                     return;
                 };
@@ -1490,6 +1609,13 @@ where
     }
 
     fn process_event(&mut self, event: PairEvent) {
+        // Stream-through path for top-level Quote / Tortoise — see
+        // `StreamingFrame` for the rationale. Bypasses both frame
+        // buffering AND replay; events flow straight through.
+        if self.streaming.is_some() {
+            self.handle_stream_event(event);
+            return;
+        }
         if self.frame.is_some() {
             // Inside a frame: every event accumulates. A pending
             // refmark cannot exist while a frame is open (frames are
