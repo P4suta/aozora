@@ -56,13 +56,10 @@
 use core::ops::Range;
 
 use aozora_encoding::gaiji as gaiji_resolve;
-use aozora_syntax::owned::{
-    Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, Ruby,
-    Sashie, Segment, TateChuYoko,
-};
+use aozora_syntax::alloc::{NodeAllocator, OwnedAllocator};
+use aozora_syntax::owned::AozoraNode;
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind,
-    Span,
+    AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind, Span,
 };
 
 use crate::diagnostic::Diagnostic;
@@ -82,6 +79,44 @@ pub struct ClassifyOutput {
 pub struct ClassifiedSpan {
     pub kind: SpanKind,
     pub source_span: Span,
+}
+
+/// Generic sibling of [`ClassifyOutput`]. Phase 3's internal helpers
+/// build values of this shape; the public [`classify`] wrapper converts
+/// to the owned [`ClassifyOutput`] for backward compatibility. New
+/// consumers (Commit D's `lex_into_arena`) call [`classify_with`]
+/// directly with a [`aozora_syntax::alloc::BorrowedAllocator`] to
+/// receive arena-backed nodes without a per-node post-pass clone.
+///
+/// `N` is the [`NodeAllocator::Node`] associated type of the allocator
+/// the caller passes — `owned::AozoraNode` for [`OwnedAllocator`],
+/// `borrowed::AozoraNode<'a>` for `BorrowedAllocator<'a>`.
+#[derive(Debug, Clone)]
+pub struct ClassifyOutputGen<N> {
+    pub spans: Vec<ClassifiedSpanGen<N>>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Generic sibling of [`ClassifiedSpan`]. See [`ClassifyOutputGen`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassifiedSpanGen<N> {
+    pub kind: SpanKindGen<N>,
+    pub source_span: Span,
+}
+
+/// Generic sibling of [`SpanKind`]. The `Aozora(N)` variant is *not*
+/// boxed — `borrowed::AozoraNode<'a>` is `Copy` and 16 bytes, the same
+/// size as the boxed owned variant; the legacy `Box` only re-appears
+/// in the [`classify`] wrapper that converts the generic shape back
+/// into the owned [`SpanKind`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SpanKindGen<N> {
+    Plain,
+    Aozora(N),
+    BlockOpen(ContainerKind),
+    BlockClose(ContainerKind),
+    Newline,
 }
 
 /// Classification of a [`ClassifiedSpan`].
@@ -148,8 +183,51 @@ pub enum SpanKind {
 ///
 /// Pure function; no I/O. The output is a byte-contiguous cover of
 /// `source` — see the module-level span-coverage invariant.
+///
+/// This is a thin compatibility wrapper around [`classify_with`] using
+/// the [`OwnedAllocator`]; consumers that already own an allocator
+/// (e.g. an arena-backed `BorrowedAllocator`) should call
+/// [`classify_with`] directly to skip the wrap-as-`Box<AozoraNode>`
+/// translation back to the owned shape.
 #[must_use]
 pub fn classify(pair_output: &PairOutput, source: &str) -> ClassifyOutput {
+    let mut alloc = OwnedAllocator;
+    let generic = classify_with(pair_output, source, &mut alloc);
+    ClassifyOutput {
+        diagnostics: generic.diagnostics,
+        spans: generic
+            .spans
+            .into_iter()
+            .map(|s| ClassifiedSpan {
+                source_span: s.source_span,
+                kind: match s.kind {
+                    SpanKindGen::Plain => SpanKind::Plain,
+                    SpanKindGen::Aozora(n) => SpanKind::Aozora(Box::new(n)),
+                    SpanKindGen::BlockOpen(c) => SpanKind::BlockOpen(c),
+                    SpanKindGen::BlockClose(c) => SpanKind::BlockClose(c),
+                    SpanKindGen::Newline => SpanKind::Newline,
+                },
+            })
+            .collect(),
+    }
+}
+
+/// Allocator-generic Phase 3 entry point.
+///
+/// Drives the same recognition logic as [`classify`] but emits nodes
+/// through the supplied [`NodeAllocator`], so a single classifier body
+/// services both the legacy owned AST and the arena-backed borrowed
+/// AST. Callers using the borrowed pipeline (`lex_into_arena`) pass a
+/// `BorrowedAllocator<'a>`; the resulting [`ClassifyOutputGen`]
+/// contains `borrowed::AozoraNode<'a>` directly, eliminating the
+/// per-span owned→borrowed translation that the legacy pipeline used
+/// to perform.
+#[must_use]
+pub fn classify_with<'a, A: NodeAllocator<'a>>(
+    pair_output: &PairOutput,
+    source: &str,
+    alloc: &mut A,
+) -> ClassifyOutputGen<A::Node> {
     let events = &pair_output.events;
 
     // Pre-pass: collect every forward-reference target in the event
@@ -163,7 +241,7 @@ pub fn classify(pair_output: &PairOutput, source: &str) -> ClassifyOutput {
     // every recursive call in `build_content_from_body`.
     install_forward_target_index(events, source);
 
-    let mut driver = Driver::new(source);
+    let mut driver = Driver::new(source, alloc);
     let mut i = 0;
     while i < events.len() {
         if let Some(consumed) = driver.try_recognize(events, i) {
@@ -503,7 +581,10 @@ fn body_dispatcher() -> &'static AhoCorasick {
     reason = "single match arm per BodyFamily — splitting would scatter \
               the dispatch logic and obscure the intentional 1:1 mapping"
 )]
-fn classify_annotation_body(body: &str) -> Option<EmitKind> {
+fn classify_annotation_body<'a, A: NodeAllocator<'a>>(
+    body: &str,
+    alloc: &mut A,
+) -> Option<(EmitKind<A::Node>, Option<A::Annotation>)> {
     if body.is_empty() {
         return None;
     }
@@ -514,52 +595,67 @@ fn classify_annotation_body(body: &str) -> Option<EmitKind> {
     let exact = match_end == body.len();
     match pat.family {
         // ----- Exact-match families (must consume the entire body) -----
-        BodyFamily::PageBreak if exact => Some(EmitKind::Aozora(AozoraNode::PageBreak)),
-        BodyFamily::SectionChoho if exact => {
-            Some(EmitKind::Aozora(AozoraNode::SectionBreak(SectionKind::Choho)))
-        }
-        BodyFamily::SectionDan if exact => {
-            Some(EmitKind::Aozora(AozoraNode::SectionBreak(SectionKind::Dan)))
-        }
-        BodyFamily::SectionSpread if exact => Some(EmitKind::Aozora(
-            AozoraNode::SectionBreak(SectionKind::Spread),
+        BodyFamily::PageBreak if exact => Some((EmitKind::Aozora(alloc.page_break()), None)),
+        BodyFamily::SectionChoho if exact => Some((
+            EmitKind::Aozora(alloc.section_break(SectionKind::Choho)),
+            None,
         )),
-        BodyFamily::AlignEnd0 if exact => {
-            Some(EmitKind::Aozora(AozoraNode::AlignEnd(AlignEnd { offset: 0 })))
-        }
+        BodyFamily::SectionDan if exact => Some((
+            EmitKind::Aozora(alloc.section_break(SectionKind::Dan)),
+            None,
+        )),
+        BodyFamily::SectionSpread if exact => Some((
+            EmitKind::Aozora(alloc.section_break(SectionKind::Spread)),
+            None,
+        )),
+        BodyFamily::AlignEnd0 if exact => Some((
+            EmitKind::Aozora(alloc.align_end(AlignEnd { offset: 0 })),
+            None,
+        )),
         BodyFamily::KeigakomiOpen if exact => {
-            Some(EmitKind::BlockOpen(ContainerKind::Keigakomi))
+            Some((EmitKind::BlockOpen(ContainerKind::Keigakomi), None))
         }
         BodyFamily::KeigakomiClose if exact => {
-            Some(EmitKind::BlockClose(ContainerKind::Keigakomi))
+            Some((EmitKind::BlockClose(ContainerKind::Keigakomi), None))
         }
-        BodyFamily::IndentBlock1 if exact => {
-            Some(EmitKind::BlockOpen(ContainerKind::Indent { amount: 1 }))
+        BodyFamily::IndentBlock1 if exact => Some((
+            EmitKind::BlockOpen(ContainerKind::Indent { amount: 1 }),
+            None,
+        )),
+        BodyFamily::AlignEndBlock0 if exact => Some((
+            EmitKind::BlockOpen(ContainerKind::AlignEnd { offset: 0 }),
+            None,
+        )),
+        BodyFamily::IndentBlockEnd if exact => Some((
+            EmitKind::BlockClose(ContainerKind::Indent { amount: 0 }),
+            None,
+        )),
+        BodyFamily::AlignEndBlockEnd if exact => Some((
+            EmitKind::BlockClose(ContainerKind::AlignEnd { offset: 0 }),
+            None,
+        )),
+        BodyFamily::WarichuOpen if exact => {
+            let p = alloc.make_annotation("［＃割り注］", AnnotationKind::WarichuOpen);
+            let node = alloc.annotation(p);
+            // Re-build a payload for the segment-wrap case. The
+            // borrowed allocator interns by string content, so the
+            // second call hits the dedup table; the owned allocator
+            // pays a single `Box<str>` clone, which is cheap relative
+            // to the rare nested-Warichu shape this case targets.
+            let p2 = alloc.make_annotation("［＃割り注］", AnnotationKind::WarichuOpen);
+            Some((EmitKind::Aozora(node), Some(p2)))
         }
-        BodyFamily::AlignEndBlock0 if exact => {
-            Some(EmitKind::BlockOpen(ContainerKind::AlignEnd { offset: 0 }))
+        BodyFamily::WarichuClose if exact => {
+            let p =
+                alloc.make_annotation("［＃割り注終わり］", AnnotationKind::WarichuClose);
+            let node = alloc.annotation(p);
+            let p2 =
+                alloc.make_annotation("［＃割り注終わり］", AnnotationKind::WarichuClose);
+            Some((EmitKind::Aozora(node), Some(p2)))
         }
-        BodyFamily::IndentBlockEnd if exact => {
-            Some(EmitKind::BlockClose(ContainerKind::Indent { amount: 0 }))
+        BodyFamily::KaeritenSingle | BodyFamily::KaeritenCompound if exact => {
+            Some((EmitKind::Aozora(alloc.kaeriten(body)), None))
         }
-        BodyFamily::AlignEndBlockEnd if exact => {
-            Some(EmitKind::BlockClose(ContainerKind::AlignEnd { offset: 0 }))
-        }
-        BodyFamily::WarichuOpen if exact => Some(EmitKind::Aozora(AozoraNode::Annotation(
-            Annotation {
-                raw: "［＃割り注］".into(),
-                kind: AnnotationKind::WarichuOpen,
-            },
-        ))),
-        BodyFamily::WarichuClose if exact => Some(EmitKind::Aozora(AozoraNode::Annotation(
-            Annotation {
-                raw: "［＃割り注終わり］".into(),
-                kind: AnnotationKind::WarichuClose,
-            },
-        ))),
-        BodyFamily::KaeritenSingle | BodyFamily::KaeritenCompound if exact => Some(
-            EmitKind::Aozora(AozoraNode::Kaeriten(Kaeriten { mark: body.into() })),
-        ),
 
         // ----- Prefix-with-parameter families -----
         BodyFamily::AlignEndParamPrefix => {
@@ -567,39 +663,39 @@ fn classify_annotation_body(body: &str) -> Option<EmitKind> {
             let rest = &body[match_end..];
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
             (tail == "字上げ" && n >= 1)
-                .then_some(EmitKind::Aozora(AozoraNode::AlignEnd(AlignEnd { offset: n })))
+                .then(|| (EmitKind::Aozora(alloc.align_end(AlignEnd { offset: n })), None))
         }
-        BodyFamily::SashiePrefix => classify_sashie_body(body),
+        BodyFamily::SashiePrefix => classify_sashie_body(body, alloc).map(|e| (e, None)),
         BodyFamily::IndentBlockParamPrefix => {
             // body == ここから{N}字下げ; remainder = body[match_end..]
             let rest = &body[match_end..];
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
-            (tail == "字下げ").then_some(EmitKind::BlockOpen(ContainerKind::Indent {
-                amount: n,
-            }))
+            (tail == "字下げ").then_some((
+                EmitKind::BlockOpen(ContainerKind::Indent { amount: n }),
+                None,
+            ))
         }
         BodyFamily::AlignEndBlockParamPrefix => {
             // body == ここから地から{N}字上げ; remainder = body[match_end..]
             let rest = &body[match_end..];
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
-            (tail == "字上げ").then_some(EmitKind::BlockOpen(ContainerKind::AlignEnd {
-                offset: n,
-            }))
+            (tail == "字上げ").then_some((
+                EmitKind::BlockOpen(ContainerKind::AlignEnd { offset: n }),
+                None,
+            ))
         }
         BodyFamily::OkuriganaPrefix => {
             // The DFA matched `（` at body[0..3]. Defer to the same
             // parens-recognising helper as the legacy code so the
             // length / character-class invariants stay in one place.
-            is_okurigana_body(body).then_some(EmitKind::Aozora(AozoraNode::Kaeriten(
-                Kaeriten { mark: body.into() },
-            )))
+            is_okurigana_body(body).then(|| (EmitKind::Aozora(alloc.kaeriten(body)), None))
         }
         BodyFamily::IndentParamPrefix => {
             // The DFA matched a single digit. Re-parse from body[0]
             // for full multi-digit support.
             let (n, tail) = parse_decimal_u8_prefix(body)?;
             (tail == "字下げ" && n >= 1)
-                .then_some(EmitKind::Aozora(AozoraNode::Indent(Indent { amount: n })))
+                .then(|| (EmitKind::Aozora(alloc.indent(Indent { amount: n })), None))
         }
 
         // Exact-only families that didn't fully consume the body (e.g.
@@ -629,20 +725,26 @@ fn classify_annotation_body(body: &str) -> Option<EmitKind> {
 /// emitted was a Newline or a classified Aozora span (or nothing yet).
 /// Flushing the pending plain span is the only place Plain spans are
 /// produced.
-struct Driver<'s> {
+struct Driver<'s, 'al, 'a, A: NodeAllocator<'a>> {
     source_len: u32,
     source: &'s str,
-    spans: Vec<ClassifiedSpan>,
+    spans: Vec<ClassifiedSpanGen<A::Node>>,
     pending_plain_start: Option<u32>,
+    alloc: &'al mut A,
+    /// Pin the arena lifetime so the compiler keeps the
+    /// `'al mut A: NodeAllocator<'a>` borrow honest. Zero-sized.
+    _arena: core::marker::PhantomData<&'a ()>,
 }
 
-impl<'s> Driver<'s> {
-    fn new(source: &'s str) -> Self {
+impl<'s, 'al, 'a, A: NodeAllocator<'a>> Driver<'s, 'al, 'a, A> {
+    fn new(source: &'s str, alloc: &'al mut A) -> Self {
         Self {
             source_len: u32::try_from(source.len()).expect("sanitize asserts fit in u32"),
             source,
             spans: Vec::new(),
             pending_plain_start: None,
+            alloc,
+            _arena: core::marker::PhantomData,
         }
     }
 
@@ -711,10 +813,12 @@ impl<'s> Driver<'s> {
                 events: open_idx + 1..close_idx,
                 bytes: open_span.end..close_span.start,
             },
+            self.alloc,
         );
         self.flush_plain_up_to(open_span.start);
-        self.spans.push(ClassifiedSpan {
-            kind: SpanKind::Aozora(Box::new(AozoraNode::DoubleRuby(DoubleRuby { content }))),
+        let node = self.alloc.double_ruby(content);
+        self.spans.push(ClassifiedSpanGen {
+            kind: SpanKindGen::Aozora(node),
             source_span: Span::new(open_span.start, close_span.end),
         });
         self.pending_plain_start = None;
@@ -727,18 +831,16 @@ impl<'s> Driver<'s> {
         open_idx: usize,
         close_idx: usize,
     ) -> Option<usize> {
-        let m = recognize_ruby(events, self.source, open_idx, close_idx)?;
+        let m = recognize_ruby(events, self.source, open_idx, close_idx, self.alloc)?;
         // Truncate any in-progress plain run to end exactly where the
         // ruby takes over. If `pending_plain_start >= consume_start`
         // the pending span is empty and dropped — common for explicit
         // ruby right after a newline.
         self.flush_plain_up_to(m.consume_start);
-        self.spans.push(ClassifiedSpan {
-            kind: SpanKind::Aozora(Box::new(AozoraNode::Ruby(Ruby {
-                base: Content::from(m.base),
-                reading: m.reading,
-                delim_explicit: m.explicit,
-            }))),
+        let base_content = self.alloc.content_plain(m.base);
+        let node = self.alloc.ruby(base_content, m.reading, m.explicit);
+        self.spans.push(ClassifiedSpanGen {
+            kind: SpanKindGen::Aozora(node),
             source_span: Span::new(m.consume_start, m.consume_end),
         });
         self.pending_plain_start = None;
@@ -751,14 +853,14 @@ impl<'s> Driver<'s> {
         open_idx: usize,
         close_idx: usize,
     ) -> Option<usize> {
-        let m = recognize_annotation(events, self.source, open_idx, close_idx)?;
+        let m = recognize_annotation(events, self.source, open_idx, close_idx, self.alloc)?;
         self.flush_plain_up_to(m.consume_start);
         let kind = match m.emit {
-            EmitKind::Aozora(node) => SpanKind::Aozora(Box::new(node)),
-            EmitKind::BlockOpen(container) => SpanKind::BlockOpen(container),
-            EmitKind::BlockClose(container) => SpanKind::BlockClose(container),
+            EmitKind::Aozora(node) => SpanKindGen::Aozora(node),
+            EmitKind::BlockOpen(container) => SpanKindGen::BlockOpen(container),
+            EmitKind::BlockClose(container) => SpanKindGen::BlockClose(container),
         };
-        self.spans.push(ClassifiedSpan {
+        self.spans.push(ClassifiedSpanGen {
             kind,
             source_span: Span::new(m.consume_start, m.consume_end),
         });
@@ -781,10 +883,11 @@ impl<'s> Driver<'s> {
         else {
             return None;
         };
-        let m = recognize_gaiji(events, self.source, refmark_span, bracket_open_idx)?;
+        let m = recognize_gaiji(events, self.source, refmark_span, bracket_open_idx, self.alloc)?;
         self.flush_plain_up_to(m.consume_start);
-        self.spans.push(ClassifiedSpan {
-            kind: SpanKind::Aozora(Box::new(m.node)),
+        let node = self.alloc.gaiji(m.payload);
+        self.spans.push(ClassifiedSpanGen {
+            kind: SpanKindGen::Aozora(node),
             source_span: Span::new(m.consume_start, m.consume_end),
         });
         self.pending_plain_start = None;
@@ -798,8 +901,8 @@ impl<'s> Driver<'s> {
             // the newline as its own span. LF is always a single byte
             // in UTF-8, so `pos + 1` is safe.
             self.flush_plain_up_to(pos);
-            self.spans.push(ClassifiedSpan {
-                kind: SpanKind::Newline,
+            self.spans.push(ClassifiedSpanGen {
+                kind: SpanKindGen::Newline,
                 source_span: Span::new(pos, pos + 1),
             });
             return;
@@ -826,16 +929,16 @@ impl<'s> Driver<'s> {
         if let Some(start) = self.pending_plain_start.take()
             && end > start
         {
-            self.spans.push(ClassifiedSpan {
-                kind: SpanKind::Plain,
+            self.spans.push(ClassifiedSpanGen {
+                kind: SpanKindGen::Plain,
                 source_span: Span::new(start, end),
             });
         }
     }
 
-    fn finish(mut self, diagnostics: Vec<Diagnostic>) -> ClassifyOutput {
+    fn finish(mut self, diagnostics: Vec<Diagnostic>) -> ClassifyOutputGen<A::Node> {
         self.flush_plain_up_to(self.source_len);
-        ClassifyOutput {
+        ClassifyOutputGen {
             spans: self.spans,
             diagnostics,
         }
@@ -854,9 +957,9 @@ impl<'s> Driver<'s> {
 /// Phase 4 stamps one PUA sentinel over the whole `｜…《…》` source
 /// span, and the inner gaiji/annotation never reach the top-level
 /// `spans` list or the comrak parse phase.
-struct RubyMatch<'s> {
+struct RubyMatch<'s, C> {
     base: &'s str,
-    reading: Content,
+    reading: C,
     explicit: bool,
     consume_start: u32,
     consume_end: u32,
@@ -882,12 +985,13 @@ struct RubyMatch<'s> {
 ///
 /// Returns `None` if neither shape applies (empty reading, no
 /// preceding Text, no kanji for implicit).
-fn recognize_ruby<'s>(
+fn recognize_ruby<'s, 'a, A: NodeAllocator<'a>>(
     events: &[PairEvent],
     source: &'s str,
     open_idx: usize,
     close_idx: usize,
-) -> Option<RubyMatch<'s>> {
+    alloc: &mut A,
+) -> Option<RubyMatch<'s, A::Content>> {
     let PairEvent::PairOpen {
         span: open_span, ..
     } = events[open_idx]
@@ -922,6 +1026,7 @@ fn recognize_ruby<'s>(
             events: open_idx + 1..close_idx,
             bytes: open_span.end..close_span.start,
         },
+        alloc,
     );
 
     // Explicit form: Solo(Bar) two events before the open, with the
@@ -1016,7 +1121,12 @@ struct BodyWindow {
 /// [`Content::from_segments`], so a slow-path body that turned out to
 /// contain only text (for example because its brackets were malformed
 /// and skipped) still collapses back to [`Content::Plain`].
-fn build_content_from_body(events: &[PairEvent], source: &str, window: &BodyWindow) -> Content {
+fn build_content_from_body<'a, A: NodeAllocator<'a>>(
+    events: &[PairEvent],
+    source: &str,
+    window: &BodyWindow,
+    alloc: &mut A,
+) -> A::Content {
     debug_assert!(
         window.events.start <= window.events.end,
         "body window event range must be non-inverted",
@@ -1029,10 +1139,11 @@ fn build_content_from_body(events: &[PairEvent], source: &str, window: &BodyWind
     let body_events = &events[window.events.start..window.events.end];
     if !has_nested_candidate(body_events) {
         // Fast path: no `※` and no `［` in the body; bytes pass
-        // through verbatim. `Content::from(&str)` maps empty input to
-        // `Content::Segments([])` and otherwise to `Content::Plain`.
+        // through verbatim. `content_plain("")` canonicalises to
+        // empty `Segments(&[])` to match the legacy
+        // `Content::from(&str)` shape exactly.
         let text = &source[window.bytes.start as usize..window.bytes.end as usize];
-        return Content::from(text);
+        return alloc.content_plain(text);
     }
 
     // Slow path: at least one potential nested construct exists.
@@ -1040,7 +1151,7 @@ fn build_content_from_body(events: &[PairEvent], source: &str, window: &BodyWind
     // `Text, Construct, Text, …` plus one trailing Text. Capping at
     // `body_events.len() + 1` is a safe upper bound that is small in
     // practice (ruby readings almost never reach double-digit events).
-    let mut segments: Vec<Segment> = Vec::with_capacity(body_events.len() + 1);
+    let mut segments: Vec<A::Segment> = Vec::with_capacity(body_events.len() + 1);
     let mut text_start: u32 = window.bytes.start;
     let mut i = window.events.start;
 
@@ -1059,15 +1170,10 @@ fn build_content_from_body(events: &[PairEvent], source: &str, window: &BodyWind
                     ..
                 } = events[bracket_idx]
                 && close_idx < window.events.end
-                && let Some(g) = recognize_gaiji(events, source, refmark_span, bracket_idx)
+                && let Some(g) = recognize_gaiji(events, source, refmark_span, bracket_idx, alloc)
             {
-                let AozoraNode::Gaiji(gaiji) = g.node else {
-                    // `recognize_gaiji` always produces an `AozoraNode::Gaiji`; any
-                    // other variant would be a bug in the recogniser itself.
-                    unreachable!("recognize_gaiji returned non-Gaiji AozoraNode");
-                };
-                push_text_segment(&mut segments, source, text_start, g.consume_start);
-                segments.push(Segment::Gaiji(gaiji));
+                push_text_segment(&mut segments, source, text_start, g.consume_start, alloc);
+                segments.push(alloc.seg_gaiji(g.payload));
                 text_start = g.consume_end;
                 i = close_idx + 1;
                 continue;
@@ -1087,7 +1193,7 @@ fn build_content_from_body(events: &[PairEvent], source: &str, window: &BodyWind
             span: open_span,
         } = events[i]
             && close_idx < window.events.end
-            && let Some(a) = recognize_annotation(events, source, i, close_idx)
+            && let Some(a) = recognize_annotation(events, source, i, close_idx, alloc)
         {
             let PairEvent::PairClose {
                 span: close_span, ..
@@ -1097,19 +1203,21 @@ fn build_content_from_body(events: &[PairEvent], source: &str, window: &BodyWind
                 // kind; anything else would be a Phase 2 invariant violation.
                 unreachable!("PairOpen close_idx must target a PairClose");
             };
-            // The emit may be a non-Annotation node (e.g. a nested
-            // block leaf or container marker) which has no home in a
-            // Segment. Downgrade those to `Annotation{Unknown}` so
-            // the Tier-A canary (no bare `［＃` in HTML) still holds.
-            let annotation = match a.emit {
-                EmitKind::Aozora(AozoraNode::Annotation(ann)) => ann,
-                _ => Annotation {
-                    raw: source[open_span.start as usize..close_span.end as usize].into(),
-                    kind: AnnotationKind::Unknown,
-                },
+            // The emit may carry a node we cannot directly use as a
+            // Segment::Annotation payload (e.g. a paired-container
+            // marker). The recogniser hands back a separate
+            // `annotation_payload` slot for the inline-segment case;
+            // when present we use it directly, otherwise we synthesise
+            // an `Annotation{Unknown}` so the Tier-A canary (no bare
+            // `［＃` in HTML output) still holds.
+            let payload = if let Some(p) = a.annotation_payload {
+                p
+            } else {
+                let raw = &source[open_span.start as usize..close_span.end as usize];
+                alloc.make_annotation(raw, AnnotationKind::Unknown)
             };
-            push_text_segment(&mut segments, source, text_start, a.consume_start);
-            segments.push(Segment::Annotation(annotation));
+            push_text_segment(&mut segments, source, text_start, a.consume_start, alloc);
+            segments.push(alloc.seg_annotation(payload));
             text_start = a.consume_end;
             i = close_idx + 1;
             continue;
@@ -1118,8 +1226,8 @@ fn build_content_from_body(events: &[PairEvent], source: &str, window: &BodyWind
         i += 1;
     }
 
-    push_text_segment(&mut segments, source, text_start, window.bytes.end);
-    Content::from_segments(segments)
+    push_text_segment(&mut segments, source, text_start, window.bytes.end, alloc);
+    alloc.content_segments(segments)
 }
 
 /// Whether `body` could host a nested gaiji / annotation. The Phase 2
@@ -1154,15 +1262,26 @@ fn has_nested_candidate(body: &[PairEvent]) -> bool {
 /// `Segments` run" (see `Content::from_segments`) without a second
 /// compaction pass.
 #[inline]
-fn push_text_segment(segments: &mut Vec<Segment>, source: &str, start: u32, end: u32) {
+fn push_text_segment<'a, A: NodeAllocator<'a>>(
+    segments: &mut Vec<A::Segment>,
+    source: &str,
+    start: u32,
+    end: u32,
+    alloc: &mut A,
+) {
     if end > start {
-        segments.push(Segment::Text(source[start as usize..end as usize].into()));
+        segments.push(alloc.seg_text(&source[start as usize..end as usize]));
     }
 }
 
 /// Intermediate result of [`recognize_gaiji`].
-struct GaijiMatch {
-    node: AozoraNode,
+///
+/// Holds the payload (`A::Gaiji`) rather than a wrapped node so the
+/// caller can route it to either `alloc.gaiji(p)` (top-level span) or
+/// `alloc.seg_gaiji(p)` (nested inside a body content) without
+/// re-paying the description / mencode intern cost.
+struct GaijiMatch<G> {
+    payload: G,
     consume_start: u32,
     consume_end: u32,
 }
@@ -1187,12 +1306,13 @@ struct GaijiMatch {
 /// Consume range is from `refmark_span.start` to the bracket close's
 /// end — i.e. the `※` and the entire following `［＃…］` fold into
 /// one Aozora span.
-fn recognize_gaiji(
+fn recognize_gaiji<'a, A: NodeAllocator<'a>>(
     events: &[PairEvent],
     source: &str,
     refmark_span: Span,
     bracket_open_idx: usize,
-) -> Option<GaijiMatch> {
+    alloc: &mut A,
+) -> Option<GaijiMatch<A::Gaiji>> {
     let &PairEvent::PairOpen {
         kind: PairKind::Bracket,
         close_idx: bracket_close_idx,
@@ -1282,12 +1402,9 @@ fn recognize_gaiji(
     // to escaping the raw `description`.
     let ucs = gaiji_resolve::lookup(None, mencode.as_deref(), &description);
 
+    let payload = alloc.make_gaiji(&description, ucs, mencode.as_deref());
     Some(GaijiMatch {
-        node: AozoraNode::Gaiji(Gaiji {
-            description: description.into_boxed_str(),
-            ucs,
-            mencode: mencode.map(String::into_boxed_str),
-        }),
+        payload,
         consume_start: refmark_span.start,
         consume_end: bracket_close_span.end,
     })
@@ -1311,21 +1428,30 @@ fn trailing_kanji_start(text: &str) -> usize {
     start
 }
 
-/// Intermediate result of [`recognize_annotation`]. The `emit`
-/// variant decides which [`SpanKind`] the driver pushes.
-struct AnnotationMatch {
-    emit: EmitKind,
+/// Intermediate result of [`recognize_annotation`].
+///
+/// `emit` decides which [`SpanKindGen`] the driver pushes for the
+/// top-level case. `annotation_payload` is `Some` exactly when the
+/// recogniser produced an `Annotation{…}` payload — the
+/// [`build_content_from_body`] caller uses it to wrap the same payload
+/// as a `Segment::Annotation` without reconstructing it. The emit
+/// variants `BlockOpen` / `BlockClose` and non-`Annotation` `Aozora`
+/// nodes leave `annotation_payload` as `None`, so the body-builder
+/// falls back to its `Annotation{Unknown}` synthesis path.
+struct AnnotationMatch<N, AP> {
+    emit: EmitKind<N>,
+    annotation_payload: Option<AP>,
     consume_start: u32,
     consume_end: u32,
 }
 
 /// What to emit for a matched annotation.
-enum EmitKind {
-    /// Inline or block-leaf — becomes [`SpanKind::Aozora`].
-    Aozora(AozoraNode),
-    /// Paired-container opener — becomes [`SpanKind::BlockOpen`].
+enum EmitKind<N> {
+    /// Inline or block-leaf — becomes [`SpanKindGen::Aozora`].
+    Aozora(N),
+    /// Paired-container opener — becomes [`SpanKindGen::BlockOpen`].
     BlockOpen(ContainerKind),
-    /// Paired-container closer — becomes [`SpanKind::BlockClose`].
+    /// Paired-container closer — becomes [`SpanKindGen::BlockClose`].
     BlockClose(ContainerKind),
 }
 
@@ -1338,12 +1464,13 @@ enum EmitKind {
 /// hash whose keyword no specialised recogniser matches fall through
 /// to the `Annotation { Unknown }` catch-all so the bracket is
 /// always consumed into some `AozoraNode`.
-fn recognize_annotation(
+fn recognize_annotation<'a, A: NodeAllocator<'a>>(
     events: &[PairEvent],
     source: &str,
     open_idx: usize,
     close_idx: usize,
-) -> Option<AnnotationMatch> {
+    alloc: &mut A,
+) -> Option<AnnotationMatch<A::Node, A::Annotation>> {
     let PairEvent::PairOpen {
         span: open_span, ..
     } = events[open_idx]
@@ -1374,34 +1501,72 @@ fn recognize_annotation(
     // such whitespace but the corpus contains stragglers.
     let body = source[hash_end as usize..close_span.start as usize].trim();
 
-    let emit = classify_annotation_body(body)
-        .or_else(|| {
-            classify_forward_bouten(events, source, open_idx, close_idx).map(EmitKind::Aozora)
-        })
-        .or_else(|| classify_forward_tcy(events, source, open_idx, close_idx).map(EmitKind::Aozora))
-        .or_else(|| {
-            classify_forward_heading(events, source, open_idx, close_idx).map(EmitKind::Aozora)
-        })
-        .or_else(|| {
-            // Catch-all fallback for any well-formed `［＃…］` whose body
-            // no specialised recogniser claimed — including empty
-            // bodies (`［＃］`), which real Aozora corpora occasionally
-            // use as illustrative glyphs inside explanatory prose.
-            // Emitting `Annotation { Unknown }` with the raw source
-            // slice keeps the Tier-A canary (no bare `［＃` in HTML
-            // output) intact: the renderer wraps the raw bytes in an
-            // `afm-annotation` hidden span regardless of body shape.
-            // The lexer is the sole owner of this classification —
-            // comrak's parse phase never sees `［＃…］`.
-            let raw = &source[open_span.start as usize..close_span.end as usize];
-            Some(EmitKind::Aozora(AozoraNode::Annotation(Annotation {
-                raw: raw.into(),
-                kind: AnnotationKind::Unknown,
-            })))
-        })?;
+    // Body-keyword classifier. Cannot be `or_else`d with the forward
+    // ones because each step needs the same `&mut alloc` borrow; we
+    // run them sequentially with explicit early returns instead.
+    if let Some((emit, annotation_payload)) = classify_annotation_body(body, alloc) {
+        return Some(AnnotationMatch {
+            emit,
+            // For Warichu open / close the body classifier hands back
+            // a payload alongside the node; the body-builder uses it to
+            // wrap as a `Segment::Annotation` with the correct
+            // `WarichuOpen` / `WarichuClose` kind instead of the
+            // catch-all `Unknown` downgrade. Other body-keyword
+            // families (PageBreak, Indent, …) leave the payload as
+            // `None`, matching the legacy behaviour where the body-
+            // builder fell through to its `Annotation{Unknown}`
+            // synthesis path.
+            annotation_payload,
+            consume_start: open_span.start,
+            consume_end: close_span.end,
+        });
+    }
+    if let Some(node) = classify_forward_bouten(events, source, open_idx, close_idx, alloc) {
+        return Some(AnnotationMatch {
+            emit: EmitKind::Aozora(node),
+            annotation_payload: None,
+            consume_start: open_span.start,
+            consume_end: close_span.end,
+        });
+    }
+    if let Some(node) = classify_forward_tcy(events, source, open_idx, close_idx, alloc) {
+        return Some(AnnotationMatch {
+            emit: EmitKind::Aozora(node),
+            annotation_payload: None,
+            consume_start: open_span.start,
+            consume_end: close_span.end,
+        });
+    }
+    if let Some(node) = classify_forward_heading(events, source, open_idx, close_idx, alloc) {
+        return Some(AnnotationMatch {
+            emit: EmitKind::Aozora(node),
+            annotation_payload: None,
+            consume_start: open_span.start,
+            consume_end: close_span.end,
+        });
+    }
 
+    // Catch-all fallback for any well-formed `［＃…］` whose body no
+    // specialised recogniser claimed — including empty bodies
+    // (`［＃］`), which real Aozora corpora occasionally use as
+    // illustrative glyphs inside explanatory prose. Emitting
+    // `Annotation { Unknown }` with the raw source slice keeps the
+    // Tier-A canary (no bare `［＃` in HTML output) intact: the
+    // renderer wraps the raw bytes in an `afm-annotation` hidden span
+    // regardless of body shape. The lexer is the sole owner of this
+    // classification — comrak's parse phase never sees `［＃…］`.
+    //
+    // Build the annotation payload once and hand it to the caller in
+    // both `emit` and `annotation_payload` so the body-builder can
+    // re-wrap the same payload as a `Segment::Annotation` without
+    // re-interning the raw string.
+    let raw = &source[open_span.start as usize..close_span.end as usize];
+    let payload = alloc.make_annotation(raw, AnnotationKind::Unknown);
+    let node = alloc.annotation(payload);
+    let payload_for_seg = alloc.make_annotation(raw, AnnotationKind::Unknown);
     Some(AnnotationMatch {
-        emit,
+        emit: EmitKind::Aozora(node),
+        annotation_payload: Some(payload_for_seg),
         consume_start: open_span.start,
         consume_end: close_span.end,
     })
@@ -1426,12 +1591,13 @@ fn recognize_annotation(
 /// Q+1..close_idx   suffix events             [usually Text("に…")]
 /// close_idx        PairClose(Bracket)
 /// ```
-fn classify_forward_bouten(
+fn classify_forward_bouten<'a, A: NodeAllocator<'a>>(
     events: &[PairEvent],
     source: &str,
     open_idx: usize,
     close_idx: usize,
-) -> Option<AozoraNode> {
+    alloc: &mut A,
+) -> Option<A::Node> {
     let extracted = extract_forward_quote_targets(events, source, open_idx, close_idx)?;
     // Shape 1: `に<kind>` — default right-side placement.
     // Shape 2: `の左に<kind>` — left-side placement (position flipped).
@@ -1455,11 +1621,8 @@ fn classify_forward_bouten(
             return None;
         }
     }
-    Some(AozoraNode::Bouten(Bouten {
-        kind,
-        target: build_bouten_target(&extracted.targets),
-        position,
-    }))
+    let target = build_bouten_target(&extracted.targets, alloc);
+    Some(alloc.bouten(kind, target, position))
 }
 
 /// Fold a list of forward-bouten target strings into a single
@@ -1476,19 +1639,22 @@ fn classify_forward_bouten(
 /// would ripple through every renderer / serializer). Callers that
 /// need the per-target list can walk `Content::iter` and filter on
 /// `SegmentRef::Text`.
-fn build_bouten_target(targets: &[&str]) -> Content {
+fn build_bouten_target<'a, A: NodeAllocator<'a>>(
+    targets: &[&str],
+    alloc: &mut A,
+) -> A::Content {
     match targets {
-        [] => Content::default(),
-        [only] => Content::from(*only),
+        [] => alloc.content_plain(""),
+        [only] => alloc.content_plain(only),
         many => {
-            let mut segs: Vec<Segment> = Vec::with_capacity(many.len() * 2 - 1);
+            let mut segs: Vec<A::Segment> = Vec::with_capacity(many.len() * 2 - 1);
             for (i, t) in many.iter().enumerate() {
                 if i > 0 {
-                    segs.push(Segment::Text("、".into()));
+                    segs.push(alloc.seg_text("、"));
                 }
-                segs.push(Segment::Text((*t).into()));
+                segs.push(alloc.seg_text(t));
             }
-            Content::from_segments(segs)
+            alloc.content_segments(segs)
         }
     }
 }
@@ -1505,12 +1671,13 @@ fn build_bouten_target(targets: &[&str]) -> Content {
 /// spec; we accept the first target's text and ignore the rest for
 /// robustness rather than failing, so the bracket still consumes via
 /// [`classify_forward_tcy`] instead of leaking to `Annotation{Unknown}`.
-fn classify_forward_tcy(
+fn classify_forward_tcy<'a, A: NodeAllocator<'a>>(
     events: &[PairEvent],
     source: &str,
     open_idx: usize,
     close_idx: usize,
-) -> Option<AozoraNode> {
+    alloc: &mut A,
+) -> Option<A::Node> {
     let extracted = extract_forward_quote_targets(events, source, open_idx, close_idx)?;
     if extracted.suffix != "は縦中横" {
         return None;
@@ -1521,9 +1688,8 @@ fn classify_forward_tcy(
     if !forward_target_is_preceded(events, source, open_idx, first) {
         return None;
     }
-    Some(AozoraNode::TateChuYoko(TateChuYoko {
-        text: Content::from(*first),
-    }))
+    let text = alloc.content_plain(first);
+    Some(alloc.tate_chu_yoko(text))
 }
 
 /// Check whether `target` appears somewhere in the source preceding the
@@ -1700,7 +1866,10 @@ const fn is_okurigana_char(ch: char) -> bool {
 /// (`［＃挿絵（file）「caption」入る］`) needs an event-level caption
 /// recogniser that this pass does not yet perform; the no-caption
 /// shape accounts for the vast majority of corpus occurrences.
-fn classify_sashie_body(body: &str) -> Option<EmitKind> {
+fn classify_sashie_body<'a, A: NodeAllocator<'a>>(
+    body: &str,
+    alloc: &mut A,
+) -> Option<EmitKind<A::Node>> {
     let rest = body.strip_prefix("挿絵（")?;
     // `）` is a full-width right parenthesis (U+FF09). Find its first
     // occurrence — corpus rarely nests `（）` inside a filename.
@@ -1713,10 +1882,7 @@ fn classify_sashie_body(body: &str) -> Option<EmitKind> {
     if tail != "入る" {
         return None;
     }
-    Some(EmitKind::Aozora(AozoraNode::Sashie(Sashie {
-        file: file.into(),
-        caption: None,
-    })))
+    Some(EmitKind::Aozora(alloc.sashie(file, None)))
 }
 
 /// Classify a `［＃「target」は(大|中|小)見出し］` forward-reference
@@ -1739,12 +1905,13 @@ fn classify_sashie_body(body: &str) -> Option<EmitKind> {
 /// paragraph would promote to an empty heading. Falling through lets
 /// the catch-all emit `Annotation { Unknown }` so the reader at least
 /// sees the raw bracket text in diagnostics.
-fn classify_forward_heading(
+fn classify_forward_heading<'a, A: NodeAllocator<'a>>(
     events: &[PairEvent],
     source: &str,
     open_idx: usize,
     close_idx: usize,
-) -> Option<AozoraNode> {
+    alloc: &mut A,
+) -> Option<A::Node> {
     let extracted = extract_forward_quote_targets(events, source, open_idx, close_idx)?;
     let rest = extracted.suffix.strip_prefix("は")?;
     let level = heading_level_from_suffix(rest)?;
@@ -1769,10 +1936,7 @@ fn classify_forward_heading(
         return None;
     }
 
-    Some(AozoraNode::HeadingHint(HeadingHint {
-        level,
-        target: combined.into_boxed_str(),
-    }))
+    Some(alloc.heading_hint(level, &combined))
 }
 
 /// Map the keyword after `は` to a Markdown heading level per the
@@ -1871,6 +2035,19 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
+    // Re-import the owned types the tests pattern-match on. The
+    // production code now goes through `NodeAllocator`, so these
+    // owned-shape constructors / variants are no longer in
+    // `super::*`'s scope.
+    #[allow(
+        unused_imports,
+        reason = "individual tests pattern-match on subsets; bringing them all in keeps the import block stable"
+    )]
+    use aozora_syntax::owned::{
+        Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, Ruby,
+        Sashie, Segment, TateChuYoko,
+    };
+
     use crate::phase1_events::tokenize;
     use crate::phase2_pair::pair;
 

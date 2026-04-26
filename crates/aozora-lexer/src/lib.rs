@@ -88,7 +88,10 @@ pub use phase0_sanitize::{
 };
 pub use phase1_events::tokenize;
 pub use phase2_pair::{PairEvent, PairKind, PairOutput, pair};
-pub use phase3_classify::{ClassifiedSpan, ClassifyOutput, SpanKind, classify};
+pub use phase3_classify::{
+    ClassifiedSpan, ClassifiedSpanGen, ClassifyOutput, ClassifyOutputGen, SpanKind, SpanKindGen,
+    classify, classify_with,
+};
 pub use phase4_normalize::{NormalizeOutput, PlaceholderRegistry, normalize};
 #[doc(hidden)]
 pub use phase4_normalize::is_standalone_block_for_render;
