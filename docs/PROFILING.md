@@ -485,6 +485,45 @@ PairEvent encoding. None ship in R4 (deferred — measure first).
 Commits: TBD (`r4-bumpalo-rayon` bookmark). ADR:
 `docs/adr/0017-bumpalo-arena-vec-and-rayon-parallelism.md`.
 
+### M1-M3: modern algorithmic follow-ups + flat state machine (2026-04-27)
+
+ADR-0017 listed five "modern follow-ups" as out of scope. M1-M3
+ship four of them with measurement-driven verdicts:
+
+- **M-1** (per-thread arena reuse via `thread_local!` + `Bump::reset`):
+  **PROMOTED**. Sequential `throughput_by_class` +6 % to +23 %
+  per band (largest win on 500 K-2 M docs); parallel wall 0.68 s →
+  0.61 s (-10 %). Eliminates the `mmap`/`munmap` serialisation in
+  R4-B's per-task `Arena::new()`.
+- **M-2** (Pure SoA `TokenStream` + `PairEventStream`, 4 columns):
+  **REGRESSION**. -6 % to -16 % across bands. The 3-column-pushes-
+  per-event cost + `iter()` reconstruction in `Pipeline::build`
+  outweighs the cache-density gain. Kept in jj history; production
+  reverts to `BumpVec<Token>` / `BumpVec<PairEvent>` from R4-A.
+- **M-3** (flat-state-machine Phase 3 dispatch, 9-variant action
+  vocabulary, `phase3-fsm` feature): **REGRESSION**, additional
+  -5 % vs M-3 default. Plan-agent's "category error" prediction
+  confirmed by data — rustc-jump-tabled cascade beats the FSM
+  layer on this hot path. Cfg-gated; default off.
+- **BMI2 PEXT**: re-rejected (ADR-0015 conclusion stands; sparse
+  1.79 % candidate density unchanged).
+- **Variable-length PairEvent encoding**: dropped (Pure SoA already
+  addresses the padding concern; SoA itself doesn't pay).
+
+Net for production: M-1 lands; M-2 + M-3 stay as documented
+experiments. Total session win: M-1 alone delivers +6 % to +23 %
+sequential throughput across bands.
+
+Reading: M-2 and M-3 demonstrate two architecturally clean ideas
+that regressed on this specific workload. The ADR preserves the
+implementations for future revisit; the lesson recorded is that
+on this hot path, future Phase 3 work should focus on
+**algorithmic** changes (recogniser-body rewrites) rather than
+**structural** re-shaping (storage layout, dispatch shape).
+
+Commits: TBD (`m1-m4-modern-followups` bookmark). ADR:
+`docs/adr/0019-modern-algorithmic-followups.md`.
+
 ---
 
 ## Workflow recipes
@@ -597,3 +636,4 @@ SIMD, just not aozora-scan's).
 | `docs/adr/0015-aozora-scan-bake-off-and-result.md` | T2 four-backend bake-off + Teddy winner |
 | `docs/adr/0016-deforestation-reversal-investigation.md` | R1/R2/R3 deforestation reversal — Iterator chain re-affirmed, batch APIs added |
 | `docs/adr/0017-bumpalo-arena-vec-and-rayon-parallelism.md` | R4 — bumpalo arena BumpVec for inter-phase materialisation + rayon corpus parallelism |
+| `docs/adr/0019-modern-algorithmic-followups.md` | M1-M3 — per-thread arena reuse (promoted) + Pure SoA + flat-state-machine Phase 3 (both regression, kept in history) |

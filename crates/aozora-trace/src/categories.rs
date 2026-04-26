@@ -94,19 +94,32 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
             r"phf_shared",
         ],
     ),
+    // Step A.2 / ADR-0019 follow-up — split the formerly-monolithic
+    // "allocation" bucket (25.58 % of corpus parse) into hot-path-
+    // attributable sub-buckets. The first-match-wins regex order
+    // matters: more-specific patterns above the generic ones.
     (
-        "allocation",
+        // Bumpalo arena allocator: every `Arena::alloc*`, BumpVec
+        // push/extend, and the underlying Bump chunk-allocation /
+        // chunk-extend helpers. Counts the cost of "where in the
+        // arena did this go" — the cost we *can* attack with
+        // pooling, capacity hints, or chunk-size tuning.
+        "alloc_bumpalo_arena",
         &[
-            r"alloc::vec",
-            r"alloc::raw_vec",
-            r"alloc::string",
-            r"alloc::collections",
-            r"alloc::alloc",
             r"bumpalo::",
-            r"smallvec::",
-            r"__rust_alloc",
-            r"__rust_dealloc",
-            // libc heap (resolved via .dynsym fallback)
+            r"bumpalo_collections::",
+            r"BumpVec",
+        ],
+    ),
+    (
+        // libc malloc/free/realloc family. Hits here are the cost of
+        // bumpalo's chunk-extend `mmap` syscalls, plus any heap-Vec
+        // allocations in Pipeline / diagnostics / interner growth.
+        // Address of attack: per-thread arena reuse (M-1 already
+        // promoted) plus capacity-hint tuning to avoid mid-parse
+        // chunk extends.
+        "alloc_libc_heap",
+        &[
             r"^malloc$",
             r"^realloc$",
             r"^calloc$",
@@ -123,7 +136,17 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
             r"^_int_realloc",
             r"^arena_",
             r"^malloc_consolidate",
-            // libc memory ops
+            r"^__default_morecore",
+        ],
+    ),
+    (
+        // libc memcpy/memmove/memset and their AVX2 dispatch. These
+        // surface inside Vec::push grow paths, BumpVec re-grow
+        // moves, hashmap rehash, and string clone. Separate bucket
+        // so we can tell "the alloc allocator is busy" (heap)
+        // apart from "the move-after-alloc is busy" (memcpy).
+        "alloc_memcpy_memmove",
+        &[
             r"^memmove",
             r"^memcpy",
             r"^memset",
@@ -131,19 +154,27 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
             r"^__memmove",
             r"^__memcpy",
             r"^__memset",
-            r"GlobalAlloc",
-            // libc heap internals — when fuzzy lookup attributes
-            // an address to `__default_morecore+0xNNNN`, that's
-            // really `_int_malloc` / `malloc_consolidate` /
-            // `_int_free` (hidden symbols only resolved with
-            // libc6-dbg). Treat as allocation.
-            r"^__default_morecore",
-            // NSS region in libc happens to share the linker
-            // segment with __memcpy_chk / __memmove_chk and the
-            // optimised string ops — fuzzy hits here in our trace
-            // are not actually NSS calls (we don't do DNS lookups
-            // during corpus parse).
             r"^__nss_database_lookup\+",
+        ],
+    ),
+    (
+        // Rust std heap-Vec / String / HashMap / VecDeque / etc.
+        // These are the heap allocators the *non-arena* code path
+        // uses — Pipeline's `Vec<Diagnostic>`, the corpus iter's
+        // `Vec<CorpusItem>`, the `HashMap<String, u32>` in the
+        // forward-target index. Address of attack: pre-size or move
+        // to arena.
+        "alloc_rust_std",
+        &[
+            r"alloc::vec",
+            r"alloc::raw_vec",
+            r"alloc::string",
+            r"alloc::collections",
+            r"alloc::alloc",
+            r"smallvec::",
+            r"__rust_alloc",
+            r"__rust_dealloc",
+            r"GlobalAlloc",
         ],
     ),
     (

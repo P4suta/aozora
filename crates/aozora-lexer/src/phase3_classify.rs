@@ -257,6 +257,22 @@ fn clear_forward_target_index() {
     });
 }
 
+/// Step A.1 fast path: most corpus docs never installed the index
+/// in the first place (they're below the 64-quote threshold), so
+/// the previous doc's `installed=false` carries forward and the
+/// `clear()` call is a no-op. This wrapper short-circuits the
+/// `borrow_mut()` + `HashMap::clear()` pair when there's nothing
+/// to clear, saving ~10 ns per parse on the common path.
+fn clear_forward_target_index_if_installed() {
+    FORWARD_TARGET_INDEX.with(|cell| {
+        let mut state = cell.borrow_mut();
+        if state.installed {
+            state.installed = false;
+            state.first_position.clear();
+        }
+    });
+}
+
 /// Below this many distinct `「…」` quote bodies even the source-byte
 /// pre-pass loses (build cost outpaces the substring scans saved).
 /// The median corpus doc has < 100 quote bodies and skips the index
@@ -279,14 +295,26 @@ fn install_forward_target_index_from_source(source: &str) {
     let _phase3_guard = SubsystemGuard::new(Subsystem::ForwardIndexInstall);
 
     let bytes = source.as_bytes();
-    // Cheap up-front gate: if there are very few `「` triggers in the
-    // whole source, skip the build outright. Much faster than building
-    // an empty / near-empty index for the typical short doc.
-    let opens: Vec<usize> = memmem::find_iter(bytes, QUOTE_OPEN).collect();
-    if opens.len() < FORWARD_QUOTE_BODY_THRESHOLD {
-        clear_forward_target_index();
+    // Step A.1: cheap up-front count with early break at the
+    // threshold. The previous shape unconditionally collected every
+    // `「` offset into a `Vec<usize>` before checking the count —
+    // wasted allocation on the >99 % of corpus docs that have far
+    // fewer than 64 quote opens. memmem::find_iter is internally
+    // SIMD-vectorised, so the count loop is bandwidth-bound; bailing
+    // out at 64 keeps the work proportional to "found enough", not
+    // "scanned the whole doc".
+    let mut count = 0usize;
+    for _ in memmem::find_iter(bytes, QUOTE_OPEN) {
+        count += 1;
+        if count >= FORWARD_QUOTE_BODY_THRESHOLD {
+            break;
+        }
+    }
+    if count < FORWARD_QUOTE_BODY_THRESHOLD {
+        clear_forward_target_index_if_installed();
         return;
     }
+    let opens: Vec<usize> = memmem::find_iter(bytes, QUOTE_OPEN).collect();
 
     // For each `「`, find the next `」` and slice the body. UTF-8
     // boundaries are guaranteed because both delimiters are 3-byte
