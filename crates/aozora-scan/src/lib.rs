@@ -71,6 +71,19 @@ pub use backends::Avx2Scanner;
 /// scans. The trait is `dyn`-compatible (no generic methods) so the
 /// lex layer can hold a `&'static dyn TriggerScanner` selected at
 /// runtime via CPU feature detection.
+///
+/// ## TODO: streaming variant
+///
+/// The current shape returns `Vec<u32>` eagerly, which on a 2 MB
+/// source allocates ~80 KB of `u32` offsets (assuming ~2 % trigger
+/// density). That is < 1 % of the downstream `Vec<Token>` size and
+/// has not surfaced in any profile to date. If a future workload
+/// pushes either density (annotation-dense docs) or source size
+/// (multi-MB single docs) hard enough that this allocation matters,
+/// add an `Iterator<Item = u32>` variant — note that the AVX2
+/// 32-byte chunked movemask + Kernighan extraction is significantly
+/// more awkward as a coroutine than as a one-shot, so the eager
+/// shape is preferred until measurement disagrees.
 pub trait TriggerScanner {
     /// Scan `source` and return all byte offsets at which a trigger
     /// character begins, in ascending order.
@@ -116,5 +129,28 @@ pub fn best_scanner() -> &'static dyn TriggerScanner {
         &Avx2Scanner
     } else {
         &ScalarScanner
+    }
+}
+
+/// Name of the backend [`best_scanner`] would select on this host,
+/// for diagnostic / logging purposes.
+///
+/// Pure inspection — no SIMD work. Callers that want to confirm the
+/// AVX2 path is firing in production can `eprintln!` or log this
+/// once at startup without needing to add `log` as a dependency to
+/// the lex layer (this crate stays `no_std`-clean).
+#[must_use]
+pub fn best_scanner_name() -> &'static str {
+    #[cfg(all(target_arch = "x86_64", feature = "std"))]
+    {
+        if std::is_x86_feature_detected!("avx2") {
+            "avx2"
+        } else {
+            "scalar"
+        }
+    }
+    #[cfg(any(not(target_arch = "x86_64"), not(feature = "std")))]
+    {
+        "scalar"
     }
 }

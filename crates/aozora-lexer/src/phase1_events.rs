@@ -23,6 +23,45 @@
 //! `［＃` is NOT emitted as a merged trigger: `Hash` after `BracketOpen`
 //! is common but not universal (a stray `［` followed by plain text is
 //! legal). Phase 2 inspects the two tokens together.
+//!
+//! ## T1 investigation note (2026-04, negative result)
+//!
+//! A SIMD-driven rewrite was attempted: replace this char-by-char
+//! walker with an eager `aozora_scan::best_scanner().scan_offsets`
+//! pass to find triggers, plus `memchr::memchr_iter(b'\n')` for
+//! newlines, then merge-walk the two sorted offset streams. The
+//! `aozora-scan` crate (`ScalarScanner` + `Avx2Scanner`) was already
+//! in place for exactly this purpose.
+//!
+//! Result on doc 49178 (232 KB Japanese):
+//!   legacy walker: 0.41 ms tokenize  (570 MB/s)
+//!   SIMD scanner:  1.50 ms tokenize  (155 MB/s)  — 3.7× SLOWER
+//!
+//! Root cause: `0xE3` is the leading UTF-8 byte of *every* Japanese
+//! codepoint (hiragana, katakana, common kanji). The
+//! `memchr3(0xE2, 0xE3, 0xEF)` candidate scan therefore returns
+//! ~every third byte of Japanese-heavy source as a candidate, and
+//! the per-candidate PHF lookup (`classify_trigger_bytes`) costs
+//! roughly the same as the legacy walker's UTF-8 decode + 11-arm
+//! `match`. Two passes (eager scan + merge-walk consume) end up
+//! doing more work than one (fused decode + classify in
+//! `Iterator::next`).
+//!
+//! The aozora-scan design assumed candidate density `< 0.5 %` (the
+//! density of *triggers*), but candidate density is set by the
+//! density of `0xE3` in source, which on Aozora corpora is closer
+//! to 33 %. Same observation applies to `Avx2Scanner` —
+//! `_mm256_cmpeq_epi8` against `0xE3` produces a near-saturated
+//! mask on Japanese, and the per-bit validation loop dominates.
+//!
+//! A follow-up fix is plausible but non-trivial: scan for the
+//! *middle* trigger byte (`0x80` for Ruby/Quote/Tortoise/RefMark,
+//! `0xBC` for Bracket/Hash, `0xBD` for Bar) which is much rarer in
+//! Japanese text than `0xE3`, then validate the surrounding bytes.
+//! That requires a redesign of the `aozora-scan` candidate
+//! discovery primitive (currently locked to leading-byte scans).
+//! Not in scope for T1; deferred until measurement justifies the
+//! ~6 hour redesign + cross-validation cost.
 
 use aozora_syntax::Span;
 

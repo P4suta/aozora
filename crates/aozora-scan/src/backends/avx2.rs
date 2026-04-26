@@ -249,13 +249,22 @@ mod proptests {
     use proptest::prelude::*;
 
     proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
         /// Byte-identical equivalence with the scalar path on
         /// arbitrary aozora-shaped input. This is the load-bearing
         /// property test for the AVX2 backend; a divergence here
-        /// would silently corrupt the lex pipeline.
+        /// would silently corrupt the lex pipeline once `phase1_events`
+        /// switches to the SIMD path.
+        ///
+        /// Strategy spans 0..2400 codepoints which (with random
+        /// CJK / ASCII / trigger mix) tends to land in the 0..16 KiB
+        /// byte range — comfortably past several AVX2 chunk
+        /// boundaries (32 B), so the chunk-loop, mask-extraction,
+        /// and < 32 B tail handover all see traffic.
         #[test]
         fn byte_identical_to_scalar(
-            s in r"(\PC|｜|《|》|［|］|＃|※|〔|〕|「|」){0,300}",
+            s in r"(\PC|｜|《|》|［|］|＃|※|〔|〕|「|」){0,2400}",
         ) {
             if !std::is_x86_feature_detected!("avx2") {
                 return Ok(());
