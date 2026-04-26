@@ -47,6 +47,10 @@ use std::process::{self, Command, ExitStatus};
 
 use clap::{Args, Parser, Subcommand};
 
+mod trace;
+
+pub(crate) use trace::TraceArgs;
+
 const PERF_PARANOID_PATH: &str = "/proc/sys/kernel/perf_event_paranoid";
 const PERF_PARANOID_MAX: i32 = 1;
 const SAMPLY_RATE_HZ: u32 = 4000;
@@ -64,6 +68,8 @@ struct Cli {
 enum Cmd {
     /// Sample-profile a target via `samply`.
     Samply(SamplyArgs),
+    /// Analyse a saved samply `.json.gz` trace via `aozora-trace`.
+    Trace(TraceArgs),
 }
 
 #[derive(Args)]
@@ -130,6 +136,7 @@ fn main() {
             SamplyTarget::Corpus { repeat } => samply_corpus(repeat),
             SamplyTarget::Render { repeat } => samply_render(repeat),
         },
+        Cmd::Trace(args) => trace::dispatch(args),
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");
@@ -265,24 +272,73 @@ fn require_env(key: &str) -> Result<OsString, String> {
 }
 
 /// Refuse to launch samply when `perf_event_paranoid` is too high.
-/// Samply uses `perf_event_open(2)` for sampling; the kernel rejects
-/// it when paranoid > 1 unless you're root. Bailing here produces a
-/// clearer error than letting samply die mid-record.
+///
+/// Samply uses `perf_event_open(2)` to sample the CPU. The Linux
+/// kernel hides that syscall behind `kernel.perf_event_paranoid`,
+/// which on most distros defaults to `2` ("block all unprivileged
+/// perf access") — samply will spawn but record zero samples.
+///
+/// We catch this *before* spawning samply because samply itself
+/// fails late and silently (a half-empty trace looks like "your
+/// program ran too fast"). The error message gives the user a
+/// one-shot fix, a permanent fix, and a "why this is needed"
+/// explanation in 12 lines or less.
 fn require_perf_paranoid() -> Result<(), String> {
-    let raw = fs::read_to_string(PERF_PARANOID_PATH)
-        .map_err(|e| format!("failed to read {PERF_PARANOID_PATH}: {e}"))?;
+    let raw = match fs::read_to_string(PERF_PARANOID_PATH) {
+        Ok(s) => s,
+        Err(e) => {
+            return Err(format!(
+                "\n\
+                 ╭─────────────────────────────────────────────────────────────────╮\n\
+                 │  ❌  Cannot read {PERF_PARANOID_PATH:46}  │\n\
+                 │      ({e:60}) │\n\
+                 │                                                                 │\n\
+                 │      Samply needs perf_event_open(2). Without this file we      │\n\
+                 │      can't tell whether the kernel will allow it. Bailing now.  │\n\
+                 ╰─────────────────────────────────────────────────────────────────╯"
+            ));
+        }
+    };
     let level: i32 = raw
         .trim()
         .parse()
         .map_err(|e| format!("failed to parse {PERF_PARANOID_PATH}={raw:?}: {e}"))?;
     if level > PERF_PARANOID_MAX {
-        return Err(format!(
-            "{PERF_PARANOID_PATH} = {level} (need <= {PERF_PARANOID_MAX} for samply).\n  \
-             Run once per boot:\n      \
-             echo {PERF_PARANOID_MAX} | sudo tee {PERF_PARANOID_PATH}",
-        ));
+        return Err(format_paranoid_blocked(level));
     }
     Ok(())
+}
+
+/// Format the user-facing message shown when `perf_event_paranoid`
+/// is too high. Extracted from [`require_perf_paranoid`] for testing
+/// + so the layout is reviewable in isolation.
+fn format_paranoid_blocked(level: i32) -> String {
+    format!(
+        "\n\
+         ╭──────────────────────────────────────────────────────────────────────╮\n\
+         │  🔒  perf_event_paranoid = {level} — samply CANNOT collect samples here. │\n\
+         ╰──────────────────────────────────────────────────────────────────────╯\n\
+         \n\
+         ▸ One-shot fix (resets at next reboot):\n     \
+             echo {PERF_PARANOID_MAX} | sudo tee {PERF_PARANOID_PATH}\n\
+         \n\
+         ▸ Permanent fix (survives reboots):\n     \
+             echo 'kernel.perf_event_paranoid = {PERF_PARANOID_MAX}' | sudo tee /etc/sysctl.d/99-perf.conf\n     \
+             sudo sysctl --system\n\
+         \n\
+         ▸ Why this is required:\n     \
+             samply uses perf_event_open(2) to sample the CPU at {SAMPLY_RATE_HZ}Hz.\n     \
+             The kernel guards that syscall behind perf_event_paranoid; the\n     \
+             default of 2 blocks all unprivileged use. samply would otherwise\n     \
+             spawn but record zero samples, which looks like 'your program ran\n     \
+             too fast' — much harder to diagnose than this message.\n\
+         \n\
+         ▸ Security note:\n     \
+             Setting paranoid=1 lets unprivileged processes profile their own\n     \
+             children. Lower than the default 2 but still safer than 0 (which\n     \
+             would expose kernel internals). For a single-user dev workstation\n     \
+             this is the standard recommendation.\n"
+    )
 }
 
 /// Rebuild a bench example with debug info preserved so samply can
@@ -473,5 +529,23 @@ mod tests {
     fn secs_to_utc_handles_recent_date() {
         // 2026-01-01 00:00:00 UTC = 1767225600
         assert_eq!(secs_to_utc(1_767_225_600), (2026, 1, 1, 0, 0, 0));
+    }
+
+    #[test]
+    fn paranoid_blocked_message_lists_three_remedies() {
+        let msg = format_paranoid_blocked(2);
+        // The message MUST tell the user what the problem is and
+        // give them at least a one-shot fix + a permanent fix +
+        // an explanation of *why* this is needed.
+        assert!(
+            msg.contains("perf_event_paranoid = 2"),
+            "missing observed value: {msg}"
+        );
+        assert!(msg.contains("One-shot fix"));
+        assert!(msg.contains("Permanent fix"));
+        assert!(msg.contains("/etc/sysctl.d/99-perf.conf"));
+        assert!(msg.contains("Why this is required"));
+        assert!(msg.contains("perf_event_open(2)"));
+        assert!(msg.contains("Security note"));
     }
 }

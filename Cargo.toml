@@ -18,6 +18,7 @@ members = [
     "crates/aozora-py",
     "crates/aozora-bench",
     "crates/aozora-xtask",
+    "crates/aozora-trace",
 ]
 
 [workspace.package]
@@ -136,6 +137,7 @@ aozora-lex        = { version = "0.1.0", path = "crates/aozora-lex" }
 aozora-render     = { version = "0.1.0", path = "crates/aozora-render" }
 aozora            = { version = "0.1.0", path = "crates/aozora" }
 aozora-wasm       = { path = "crates/aozora-wasm" }
+aozora-trace      = { path = "crates/aozora-trace" }
 
 # Memory management
 bumpalo = { version = "3.16", features = ["collections"] }
@@ -150,8 +152,13 @@ smallvec = "1.13"
 memchr = "2.7"
 
 # Multi-pattern search (forward-reference target precedence check;
-# annotation prefix DFA in a future commit).
-aho-corasick = "1.1"
+# annotation prefix DFA in a future commit). `default-features = false`
+# at the workspace level so each consumer (aozora-lexer / aozora-scan)
+# opts into exactly the features it needs.
+aho-corasick = { version = "1.1", default-features = false }
+# Byte-DFA construction (used by aozora-scan's DfaScanner backend;
+# Hoehrmann-style multi-pattern automaton — see ADR-0015).
+regex-automata = { version = "0.4", default-features = false }
 aozora-lexer      = { version = "0.1.0", path = "crates/aozora-lexer" }
 aozora-encoding   = { version = "0.1.0", path = "crates/aozora-encoding" }
 aozora-corpus     = { version = "0.1.0", path = "crates/aozora-corpus" }
@@ -170,6 +177,17 @@ regex                 = "1.12"
 # Serialization / data
 serde      = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+toml       = "1.1"
+flate2     = "1.1"
+
+# DWARF symbolication for samply trace analysis (aozora-trace).
+# `loader` feature pulls in `object` + `memmap2` for in-process ELF
+# parsing — no shell-out to `addr2line(1)`.
+addr2line  = { version = "0.26", default-features = false }
+# ELF / Mach-O / PE parsing — for build-id verification in the
+# symbolicator. addr2line uses object internally; we add it
+# explicitly so we can read .note.gnu.build-id.
+object     = { version = "0.37", default-features = false, features = ["read"] }
 
 # Encoding
 encoding_rs = "0.8.35"

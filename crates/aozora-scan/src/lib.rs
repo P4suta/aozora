@@ -1,50 +1,40 @@
-//! SIMD-friendly trigger-byte scanner for the Aozora notation lexer.
+//! Trigger-byte scanner for the Aozora notation lexer — multi-backend.
 //!
-//! Phase 1 of the legacy [`aozora_lexer`] tokeniser walked the source
-//! one Unicode scalar at a time, calling `match` on every character to
-//! decide whether it was a trigger marker. Per the corpus profile
-//! (2026-04-25), trigger characters appear at < 0.5% density in real
-//! Aozora text — so 99.5% of the work was rejecting non-trigger
-//! characters.
+//! ## What it does
 //!
-//! This crate replaces that hot path with a **bulk byte scan** that
-//! never decodes UTF-8, working entirely on the raw `&[u8]` view of
-//! the source. Every Aozora trigger character (`｜《》［］＃※〔〕「」`)
-//! is a 3-byte UTF-8 sequence whose leading byte falls in the
-//! 3-element set [`aozora_spec::trigger::TRIGGER_LEADING_BYTES`] =
-//! `{0xE2, 0xE3, 0xEF}`. We use [`memchr::memchr3`] to skip ahead to
-//! the next candidate, then validate the 3-byte window via
-//! [`aozora_spec::classify_trigger_bytes`] (a constant `phf::Map` —
-//! see Innovation I-9 of the 0.2.0 plan).
+//! Given a source buffer, finds the byte offsets of every Aozora
+//! trigger character (`｜《》［］＃※〔〕「」`). Each is a 3-byte BMP
+//! UTF-8 codepoint; the scanner returns a sorted `Vec<u32>` of trigram
+//! start offsets, validated by the const-PHF
+//! [`aozora_spec::classify_trigger_bytes`].
 //!
-//! ## Design (current ship + future SIMD)
+//! ## Design (post-T2 / ADR-0015)
 //!
-//! - [`TriggerScanner`] is a trait so multiple backends can coexist.
-//! - [`ScalarScanner`] is the always-available implementation built on
-//!   `memchr::memchr3`. Internally `memchr` already dispatches to AVX2
-//!   on `x86_64` / NEON on aarch64, giving us cache-friendly bulk
-//!   skipping without any `unsafe` of our own.
-//! - Future Move 2 commits will add `Avx2Scanner` / `NeonScanner` /
-//!   `WasmSimdScanner` that build a "structural bitmap" (1 bit per
-//!   source byte indicating "candidate trigger here?") and use BMI2
-//!   `pext` to extract bit positions in batches — the simdjson-style
-//!   Innovation I-1 of the 0.2.0 plan. Those backends fit behind the
-//!   same trait so the lex layer never has to know which one it's
-//!   using.
+//! [`TriggerScanner`] is a `dyn`-compatible trait so multiple backends
+//! coexist behind a single runtime dispatcher [`best_scanner`]. The
+//! v2 bake-off (ADR-0015) measured four published techniques and
+//! shipped three:
+//!
+//! - [`TeddyScanner`] — Hyperscan multi-pattern fingerprint matcher
+//!   via `aho_corasick::packed::Searcher` (Langdale 2015, BurntSushi
+//!   port 2019). Production winner; ~10-20 GiB/s on Japanese.
+//! - [`StructuralBitmapScanner`] (`x86_64`+AVX2) — simdjson-style
+//!   two-byte (lead × middle) AVX2 candidate filter
+//!   (Langdale & Lemire 2019). Production fallback when Teddy can't
+//!   build (no SSSE3).
+//! - [`DfaScanner`] — Hoehrmann-style multi-pattern byte DFA via
+//!   `regex_automata::dfa::dense`. Universal SIMD-free fallback.
+//! - [`NaiveScanner`] (`#[doc(hidden)]`) — brute-force PHF reference
+//!   used by the proptest cross-check in each backend module.
 //!
 //! ## Output shape
 //!
-//! Scanning produces a sorted list of **byte offsets** at which a
-//! trigger character begins. The lex driver walks the offsets, calls
-//! [`aozora_spec::classify_trigger_bytes`] on the 3-byte window at
-//! each one, and weaves them with the surrounding plain text. Double
-//! triggers (`《《`, `》》`) are detected at the lex layer by adjacent
-//! single-trigger offsets, not here.
+//! Scanning produces a sorted `Vec<u32>` of trigger start offsets.
+//! The lex driver weaves them with surrounding plain text and
+//! merges adjacent `《《` / `》》` into the double variants at its
+//! layer (the scanner emits them as two adjacent single-trigger
+//! offsets).
 
-// `unsafe_code = "deny"` is set in Cargo.toml at the crate level so
-// `backends/*.rs` (SIMD intrinsics) can locally `#[allow(unsafe_code)]`
-// while every other module — scalar.rs, dispatch logic — keeps the
-// stricter surface. See the Cargo.toml comment for rationale.
 #![no_std]
 
 extern crate alloc;
@@ -54,15 +44,20 @@ extern crate std;
 
 use alloc::vec::Vec;
 
-mod scalar;
-
-#[cfg(target_arch = "x86_64")]
 mod backends;
+mod naive;
 
-pub use scalar::ScalarScanner;
+#[cfg(feature = "std")]
+pub use backends::TeddyScanner;
+
+#[cfg(feature = "std")]
+pub use backends::DfaScanner;
 
 #[cfg(target_arch = "x86_64")]
-pub use backends::Avx2Scanner;
+pub use backends::StructuralBitmapScanner;
+
+#[doc(hidden)]
+pub use naive::NaiveScanner;
 
 /// A backend that finds trigger-byte candidate positions in a UTF-8
 /// source buffer.
@@ -105,52 +100,112 @@ pub trait TriggerScanner {
 
 /// The runtime-best [`TriggerScanner`] for the current target.
 ///
-/// On `x86_64` hosts the dispatcher checks at runtime for AVX2
-/// support (via `is_x86_feature_detected!`) and prefers
-/// [`Avx2Scanner`] when available. Otherwise — including all
-/// non-`x86_64` targets — falls back to [`ScalarScanner`] (which
-/// internally vectorises through `memchr::memchr3`'s own dispatch).
+/// Dispatch order (best to worst, per ADR-0015's bake-off):
 ///
-/// `is_x86_feature_detected!` itself is a `std`-only macro, so
-/// runtime dispatch only fires under `cfg(target_arch = "x86_64")`
-/// AND the surrounding crate having `std`. The `no_std` build paths
-/// (currently the entire crate) just return [`ScalarScanner`].
-#[cfg(any(not(target_arch = "x86_64"), not(feature = "std")))]
+/// 1. **[`TeddyScanner`]** — built once via `OnceLock` (Hyperscan
+///    Teddy via `aho_corasick::packed`). Returns `None` on hosts
+///    without SSSE3, in which case we fall through.
+/// 2. **[`StructuralBitmapScanner`]** — `x86_64` + AVX2 only;
+///    simdjson-style two-byte (lead × middle) bitmap. Used when
+///    Teddy isn't available but we still have AVX2.
+/// 3. **[`DfaScanner`]** — universal SIMD-free fallback
+///    (`regex_automata` dense byte DFA over the 11 trigger
+///    trigrams). Used on minimal-ISA hosts.
+/// 4. **[`NaiveScanner`]** — `no_std` last resort.
+///
+/// All four are byte-identical to each other (proptest
+/// cross-checked against `NaiveScanner` in each backend module);
+/// callers can blindly trust the dispatcher's choice.
+#[cfg(feature = "std")]
 #[must_use]
 pub fn best_scanner() -> &'static dyn TriggerScanner {
-    &ScalarScanner
+    use std::sync::OnceLock;
+
+    static TEDDY: OnceLock<Option<TeddyScanner>> = OnceLock::new();
+    static DFA: OnceLock<DfaScanner> = OnceLock::new();
+
+    if let Some(t) = TEDDY.get_or_init(TeddyScanner::new) {
+        return t;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if std::is_x86_feature_detected!("avx2") {
+        return &StructuralBitmapScanner;
+    }
+
+    DFA.get_or_init(DfaScanner::new)
 }
 
-/// `x86_64` + std variant: runtime CPU dispatch.
-#[cfg(all(target_arch = "x86_64", feature = "std"))]
+/// `no_std` variant: the only backend that doesn't pull in `alloc`-
+/// hungry searcher infrastructure is the brute-force PHF walker.
+#[cfg(not(feature = "std"))]
 #[must_use]
 pub fn best_scanner() -> &'static dyn TriggerScanner {
-    if std::is_x86_feature_detected!("avx2") {
-        &Avx2Scanner
-    } else {
-        &ScalarScanner
-    }
+    &NaiveScanner
 }
 
 /// Name of the backend [`best_scanner`] would select on this host,
 /// for diagnostic / logging purposes.
 ///
 /// Pure inspection — no SIMD work. Callers that want to confirm the
-/// AVX2 path is firing in production can `eprintln!` or log this
+/// chosen backend is firing in production can `eprintln!` or log this
 /// once at startup without needing to add `log` as a dependency to
 /// the lex layer (this crate stays `no_std`-clean).
 #[must_use]
 pub fn best_scanner_name() -> &'static str {
-    #[cfg(all(target_arch = "x86_64", feature = "std"))]
+    #[cfg(feature = "std")]
     {
+        // Mirror the dispatch order of `best_scanner` so the two
+        // stay in sync. Cheap because TeddyScanner::new is the same
+        // call best_scanner caches via OnceLock — but we don't share
+        // the cache here to keep this fn doc-comment trivially
+        // inspectable as "no allocation, no SIMD".
+        if TeddyScanner::new().is_some() {
+            return "teddy";
+        }
+        #[cfg(target_arch = "x86_64")]
         if std::is_x86_feature_detected!("avx2") {
-            "avx2"
-        } else {
-            "scalar"
+            return "structural_bitmap";
+        }
+        "dfa"
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        "naive"
+    }
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+
+    /// On any modern x86_64 dev/CI host (~2026) the dispatcher
+    /// should land on Teddy. Asserting it directly catches the
+    /// next-most-likely refactor mistake: silently downgrading the
+    /// dispatcher to a slower backend by reordering the cfg branches.
+    #[test]
+    #[cfg(all(feature = "std", target_arch = "x86_64"))]
+    fn dispatcher_picks_teddy_when_supported() {
+        // SSSE3 is universal on `x86_64-v2` and above — every
+        // 2026-era CI runner has it. If this assertion ever fires,
+        // it means TeddyScanner::new is returning None even though
+        // SSSE3 *should* be available, which is a real regression
+        // worth investigating, not a flaky test.
+        if std::is_x86_feature_detected!("ssse3") {
+            assert_eq!(best_scanner_name(), "teddy");
         }
     }
-    #[cfg(any(not(target_arch = "x86_64"), not(feature = "std")))]
-    {
-        "scalar"
+
+    #[test]
+    fn dispatcher_returns_byte_identical_results() {
+        // Whatever backend the dispatcher picks, it must agree
+        // with the brute-force reference on a representative
+        // mixed-Japanese sample (ruby, refmark, square brackets,
+        // hash, corner brackets — 8 triggers).
+        let s = "漢《かん》字、※［＃ここまで］「終わり」";
+        let dispatched = best_scanner().scan_offsets(s);
+        let naive = NaiveScanner.scan_offsets(s);
+        assert_eq!(dispatched, naive);
+        assert_eq!(dispatched.len(), 8, "sample has 8 triggers");
     }
 }

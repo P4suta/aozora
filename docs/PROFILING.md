@@ -340,6 +340,47 @@ would be selected without needing samply.
 
 Commit: `57e0eef`. ADR: `docs/adr/0013-aozora-scan-leading-byte-strategy-loses-on-japanese.md`.
 
+### T2: aozora-scan v2 — published-algorithm bake-off (resolves T1)
+
+After T1 reverted, the user re-framed it as a green-field rebuild
+opportunity: "draw on diverse algorithm + data-structure knowledge,
+propose a modern smart solution, not the obvious next step." A naive
+middle-byte memchr3 swap was rejected. Instead we ran a **four-backend
+bake-off** behind the existing `TriggerScanner` trait:
+
+1. **Teddy** — Hyperscan multi-pattern fingerprint matcher via
+   `aho_corasick::packed::Searcher` (Langdale 2015, BurntSushi port).
+2. **Structural bitmap** — simdjson-style two-byte (lead × middle)
+   filter via AVX2 `_mm256_cmpeq_epi8` + Kernighan extraction
+   (Langdale & Lemire VLDBJ 2019).
+3. **Multi-pattern DFA** — Hoehrmann-style byte DFA via
+   `regex_automata::dfa::dense::DFA::new_many` (SIMD-free baseline).
+4. **Naive** — brute-force PHF over every 3-byte window
+   (`#[doc(hidden)]` ground truth for proptest cross-validation).
+
+Bake-off (64 KiB synthetic, criterion `--quick`):
+
+| Backend | plain_japanese | sparse_triggers | dense_triggers |
+|---|---|---|---|
+| v1 scalar (memchr3 leading-byte) |  108 MiB/s |  110 MiB/s |  277 MiB/s |
+| v1 avx2 (handwritten leading-byte SIMD) |  159 MiB/s |  160 MiB/s |  432 MiB/s |
+| **teddy** (v2 winner) | **19.4 GiB/s** | **10.8 GiB/s** | **776 MiB/s** |
+| structural_bitmap (v2 fallback) | **19.5 GiB/s** |  8.8 GiB/s |  418 MiB/s |
+| dfa (v2 baseline)   |  391 MiB/s |  372 MiB/s |  142 MiB/s |
+
+Teddy is **67-125× faster** than v1 on Japanese-heavy bands.
+Production wired up: `aozora_lexer::tokenize` now consumes
+`aozora_scan::best_scanner()` outputs via merge-walk.
+
+Result: corpus throughput 248-274 MB/s by band (no regression vs
+post-N3 baseline). Doc 49178 tokenize: 0.41 ms → 0.60 ms (~1.5×
+slower on this one outlier — the SIMD scan is ~22 µs at Teddy's
+10 GiB/s rate, but the merge-walk + Token construction in
+`Iterator::next` consume the win on dense-trigger docs). Future
+work: tighten the iterator path to recover the win on outliers too.
+
+Commits: TBD. ADR: `docs/adr/0015-aozora-scan-bake-off-and-result.md`.
+
 ---
 
 ## Workflow recipes
@@ -372,6 +413,37 @@ AOZORA_CORPUS_ROOT=… cargo run --release --example latency_histogram -p aozora
 AOZORA_CORPUS_ROOT=… AOZORA_PROBE_DOC=… \
   cargo run --release --features instrument --example pathological_probe -p aozora-bench
 ```
+
+### "Analyse a saved samply trace from the CLI"
+
+`aozora-xtask trace ...` (and the `just trace-*` shortcuts) load
+saved `.json.gz` traces, symbolicate them via the `aozora-trace`
+crate (DWARF lookup is pure-Rust through `addr2line::Loader`), and
+run the bundled analyses. A sidecar `<trace>.symbols.json` caches
+resolved labels — first call is slow (~100 ms per binary),
+subsequent ones are instant.
+
+```bash
+# 1. One-time per trace: write the symbol cache next to it.
+just trace-cache /tmp/aozora-corpus-<ts>.json.gz
+
+# 2. Analyses (cache is auto-loaded if present):
+just trace-libs    /tmp/aozora-corpus-<ts>.json.gz                  # binary vs libc vs vdso
+just trace-hot     /tmp/aozora-corpus-<ts>.json.gz 25               # top-25 hot leaf frames
+just trace-rollup  /tmp/aozora-corpus-<ts>.json.gz                  # bucketed by aozora's built-in categories
+just trace-stacks  /tmp/aozora-corpus-<ts>.json.gz 'teddy' 5        # full call chains hitting any frame matching `teddy`
+just trace-compare /tmp/before.json.gz /tmp/after.json.gz 25        # before/after diff
+just trace-flame   /tmp/aozora-corpus-<ts>.json.gz | flamegraph.pl > flame.svg
+```
+
+`aozora-trace` (the `crates/aozora-trace/` library) is the substrate
+— each analysis is a typed report (`HotReport`, `LibraryReport`,
+`RollupReport`, `ComparisonReport`, `MatchedStacksReport`, …) with
+its own module docstring that explains the algorithm. The
+`Symbolicator` checks the binary's `gnu-build-id` against the
+trace's `codeId` so rebuilding the binary between recording and
+analysis fails loudly rather than producing wrong symbol names
+(see § Common pitfalls #5).
 
 ### "Take a samply trace I can open in Firefox-Profiler"
 
@@ -412,7 +484,10 @@ SIMD, just not aozora-scan's).
 | `crates/aozora-bench/examples/*.rs` | the 12 probes |
 | `crates/aozora-bench/src/lib.rs` | `corpus_size_bands` + `log_histogram_ns` + `render_bar_row` (probe helpers) |
 | `crates/aozora-xtask/src/main.rs` | `xtask samply <doc | corpus | render>` |
+| `crates/aozora-xtask/src/trace.rs` | `xtask trace <cache | hot | libs | rollup | stacks | compare | flame>` |
+| `crates/aozora-trace/` | pure-Rust trace loader + symbolicator + analyses |
 | `crates/aozora-lexer/src/instrumentation.rs` | the 17 phase-3 subsystem timing buckets |
 | `Justfile` `samply-doc` / `samply-corpus` / `samply-render` | one-line wrappers |
 | `docs/adr/0014-phase-breakdown-findings.md` | original phase 3 outlier finding (`明治人物月旦`) |
-| `docs/adr/0013-aozora-scan-leading-byte-strategy-loses-on-japanese.md` | T1 architectural decision |
+| `docs/adr/0013-aozora-scan-leading-byte-strategy-loses-on-japanese.md` | T1 architectural decision (superseded by 0015) |
+| `docs/adr/0015-aozora-scan-bake-off-and-result.md` | T2 four-backend bake-off + Teddy winner |

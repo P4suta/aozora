@@ -1,14 +1,18 @@
-//! Compare scan-driven vs legacy phase 1 tokenisation.
+//! Phase 1 throughput sentinel.
 //!
-//! Measures the two implementations on three input bands so we can
-//! see where the scan-driven path wins, ties, or loses. Inputs are
-//! synthetic (corpus-free) so the bench is portable.
+//! Pre-T2 (ADR-0013) this bench compared a scan-driven tokeniser
+//! against the legacy character walker — both implementations existed
+//! side-by-side. After T2 (ADR-0015) the production
+//! `aozora_lexer::tokenize` IS the SIMD-scan tokeniser, so the
+//! comparison collapses to a single throughput sentinel.
+//!
+//! Kept as a regression gate: future Phase 1 changes should not slow
+//! this down. Three input bands cover the corpus distribution.
 
 #![allow(clippy::missing_panics_doc, reason = "bench code")]
 
 use std::hint::black_box;
 
-use aozora_lex::tokenize_with_scan;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 fn build_plain(size: usize) -> String {
@@ -42,16 +46,9 @@ fn bench_tokenize(c: &mut Criterion) {
         let mut g = c.benchmark_group(label);
         g.throughput(Throughput::Bytes(sample.len() as u64));
 
-        g.bench_function("legacy_tokenize", |b| {
+        g.bench_function("tokenize", |b| {
             b.iter(|| {
-                let toks = aozora_lexer::tokenize(black_box(sample));
-                black_box(toks);
-            });
-        });
-
-        g.bench_function("scan_tokenize", |b| {
-            b.iter(|| {
-                let toks = tokenize_with_scan(black_box(sample));
+                let toks: Vec<_> = aozora_lexer::tokenize(black_box(sample)).collect();
                 black_box(toks);
             });
         });

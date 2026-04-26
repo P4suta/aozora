@@ -34,11 +34,9 @@
 
 mod borrowed;
 pub mod pipeline;
-mod tokenize;
 
 pub use borrowed::{BorrowedLexOutput, lex_into_arena};
 pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
-pub use tokenize::tokenize_with_scan;
 
 // Public surface — re-exports of the legacy lexer's allocator-agnostic
 // types (Token, SanitizeOutput) the borrowed pipeline still consumes

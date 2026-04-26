@@ -1,68 +1,49 @@
 //! Phase 1 — linear tokenization of sanitized source into a token stream.
 //!
-//! Walks the Phase 0 sanitized text byte-by-byte and exposes a stateful
-//! iterator yielding one [`Token`] per delimiter or contiguous text run.
-//! Triggers are the Aozora notation marker characters listed in
-//! [`TriggerKind`]; everything else flows into [`Token::Text`] runs.
+//! Walks the Phase 0 sanitized text via the SIMD-accelerated
+//! [`aozora_scan`] crate and exposes a stateful iterator yielding one
+//! [`Token`] per delimiter or contiguous text run. Triggers are the
+//! Aozora notation marker characters listed in [`TriggerKind`];
+//! everything else flows into [`Token::Text`] runs.
 //!
-//! After I-2 (deforestation) the public entry point is
-//! [`tokenize`], which returns `impl Iterator<Item = Token>` rather than
-//! a materialised `Vec<Token>`. Downstream phases (`pair`, `classify`)
+//! After I-2 (deforestation) the public entry point is [`tokenize`],
+//! which returns `impl Iterator<Item = Token>` rather than a
+//! materialised `Vec<Token>`. Downstream phases (`pair`, `classify`)
 //! consume that stream directly so source bytes flow through CPU
-//! registers from `&str` input to arena-landed nodes in a single fused
-//! chain — no intermediate `Vec<Token>` allocation between phases.
+//! registers from `&str` input to arena-landed nodes in a single
+//! fused chain — no intermediate `Vec<Token>` allocation between phases.
 //!
-//! ## Multi-character triggers
+//! ## Algorithm (post-T2 / ADR-0015)
 //!
-//! `《《` and `》》` (double-bracket bouten) are emitted as single
-//! [`TriggerKind::DoubleRubyOpen`] / [`TriggerKind::DoubleRubyClose`]
-//! tokens covering both constituent characters. Phase 2 therefore
-//! never has to look ahead past a single `《` to decide whether it was
-//! really a double-bracket opener.
+//! 1. [`aozora_scan::best_scanner`] returns the byte offsets of every
+//!    trigger character in `source`. On `x86_64` this dispatches to
+//!    Teddy (Hyperscan multi-pattern fingerprint matcher); on minimal
+//!    hosts to a SIMD-free DFA. Both produce byte-identical output.
+//! 2. A single [`memchr::memchr_iter`] sweep collects every newline
+//!    offset. Together with step 1, source bytes are touched twice
+//!    (once per scan), both at near memory-bandwidth speed.
+//! 3. [`Iterator::next`] merge-walks the two sorted offset streams
+//!    in event order, emitting `Text` / `Trigger` / `Newline` tokens.
+//! 4. Adjacent `RubyOpen` / `RubyClose` triggers fold into the
+//!    `DoubleRubyOpen` / `DoubleRubyClose` two-character variants
+//!    via single-step look-ahead on the trigger offset list.
 //!
-//! `［＃` is NOT emitted as a merged trigger: `Hash` after `BracketOpen`
-//! is common but not universal (a stray `［` followed by plain text is
-//! legal). Phase 2 inspects the two tokens together.
+//! `［＃` is NOT emitted as a merged trigger: `Hash` after
+//! `BracketOpen` is common but not universal (a stray `［` followed
+//! by plain text is legal). Phase 2 inspects the two tokens together.
 //!
-//! ## T1 investigation note (2026-04, negative result)
+//! ## History
 //!
-//! A SIMD-driven rewrite was attempted: replace this char-by-char
-//! walker with an eager `aozora_scan::best_scanner().scan_offsets`
-//! pass to find triggers, plus `memchr::memchr_iter(b'\n')` for
-//! newlines, then merge-walk the two sorted offset streams. The
-//! `aozora-scan` crate (`ScalarScanner` + `Avx2Scanner`) was already
-//! in place for exactly this purpose.
-//!
-//! Result on doc 49178 (232 KB Japanese):
-//!   legacy walker: 0.41 ms tokenize  (570 MB/s)
-//!   SIMD scanner:  1.50 ms tokenize  (155 MB/s)  — 3.7× SLOWER
-//!
-//! Root cause: `0xE3` is the leading UTF-8 byte of *every* Japanese
-//! codepoint (hiragana, katakana, common kanji). The
-//! `memchr3(0xE2, 0xE3, 0xEF)` candidate scan therefore returns
-//! ~every third byte of Japanese-heavy source as a candidate, and
-//! the per-candidate PHF lookup (`classify_trigger_bytes`) costs
-//! roughly the same as the legacy walker's UTF-8 decode + 11-arm
-//! `match`. Two passes (eager scan + merge-walk consume) end up
-//! doing more work than one (fused decode + classify in
-//! `Iterator::next`).
-//!
-//! The aozora-scan design assumed candidate density `< 0.5 %` (the
-//! density of *triggers*), but candidate density is set by the
-//! density of `0xE3` in source, which on Aozora corpora is closer
-//! to 33 %. Same observation applies to `Avx2Scanner` —
-//! `_mm256_cmpeq_epi8` against `0xE3` produces a near-saturated
-//! mask on Japanese, and the per-bit validation loop dominates.
-//!
-//! A follow-up fix is plausible but non-trivial: scan for the
-//! *middle* trigger byte (`0x80` for Ruby/Quote/Tortoise/RefMark,
-//! `0xBC` for Bracket/Hash, `0xBD` for Bar) which is much rarer in
-//! Japanese text than `0xE3`, then validate the surrounding bytes.
-//! That requires a redesign of the `aozora-scan` candidate
-//! discovery primitive (currently locked to leading-byte scans).
-//! Not in scope for T1; deferred until measurement justifies the
-//! ~6 hour redesign + cross-validation cost.
+//! - **T1 (2026-04, reverted)**: first SIMD attempt used the
+//!   leading-byte filter `{0xE2, 0xE3, 0xEF}`. ADR-0013 records the
+//!   3.7× regression on Japanese caused by `0xE3` saturating the
+//!   candidate stream.
+//! - **T2 (2026-04, this revision)**: ADR-0015 documents the
+//!   four-backend bake-off that picked Teddy. Bake-off measured
+//!   19.4 GiB/s on plain Japanese, 10.8 GiB/s at corpus-median
+//!   trigger density, vs the legacy walker's ~150 MiB/s.
 
+use aozora_spec::classify_trigger_bytes;
 use aozora_syntax::Span;
 
 use crate::token::{Token, TriggerKind};
@@ -85,19 +66,26 @@ pub fn tokenize(source: &str) -> Tokenizer<'_> {
     Tokenizer::new(source)
 }
 
-/// Streaming Phase 1 tokeniser. Maintains a single-byte cursor and a
-/// `text_start` watermark so a Text run is flushed exactly once when
-/// the next Trigger / Newline arrives or at end-of-stream.
+/// Streaming Phase 1 tokeniser over the merge of two pre-collected
+/// offset streams: trigger positions (from the SIMD scanner) and
+/// newline positions (from `memchr`).
 ///
-/// A single-slot `pending` buffer holds a Trigger / Newline that was
-/// produced *together* with a closing Text run on the same `next()`
-/// call: [`Iterator::next`] returns the Text first, then the buffered
-/// trigger on the following call, preserving the legacy Phase 1
+/// The single-slot `pending` buffer holds a Trigger / Newline that
+/// was produced *together* with a closing Text run on the same
+/// `next()` call: [`Iterator::next`] returns the Text first, then
+/// the buffered event on the following call, preserving the legacy
 /// emission order without paying for a `Vec` accumulator.
 #[derive(Debug)]
 pub struct Tokenizer<'s> {
     source: &'s str,
-    cursor: u32,
+    /// Sorted ascending byte offsets where a trigger trigram begins.
+    /// Materialised eagerly because the SIMD scanner is much faster
+    /// than amortising its internal state across `next()` calls.
+    trigger_offsets: Vec<u32>,
+    /// Sorted ascending byte offsets of `\n` characters.
+    newline_offsets: Vec<u32>,
+    t_idx: usize,
+    n_idx: usize,
     text_start: u32,
     pending: Option<Token>,
     finished: bool,
@@ -110,9 +98,25 @@ impl<'s> Tokenizer<'s> {
             "source too long for u32 span offsets ({} bytes)",
             source.len()
         );
+        let trigger_offsets = aozora_scan::best_scanner().scan_offsets(source);
+        let bytes = source.as_bytes();
+        // memchr_iter is internally vectorised (AVX2 on x86_64, NEON on
+        // aarch64) — the same machine code memchr3 uses for trigger
+        // candidates, here narrowed to the single newline byte.
+        let mut newline_offsets: Vec<u32> = Vec::with_capacity(bytes.len() / 64);
+        for n in memchr::memchr_iter(b'\n', bytes) {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "source.len() <= u32::MAX is asserted at function entry"
+            )]
+            newline_offsets.push(n as u32);
+        }
         Self {
             source,
-            cursor: 0,
+            trigger_offsets,
+            newline_offsets,
+            t_idx: 0,
+            n_idx: 0,
             text_start: 0,
             pending: None,
             finished: false,
@@ -128,6 +132,52 @@ impl<'s> Tokenizer<'s> {
             tok
         })
     }
+
+    /// Pair a flushed Text token (if any) with the structural event
+    /// that produced the flush. The Text comes first, the event is
+    /// buffered for the next `next()` call — preserving emission
+    /// order without intermediate allocation.
+    fn pair_text_then(&mut self, text: Option<Token>, event: Token) -> Token {
+        match text {
+            Some(t) => {
+                self.pending = Some(event);
+                t
+            }
+            None => event,
+        }
+    }
+
+    /// Single-step look-ahead for the `《《` / `》》` double-trigger
+    /// merge. Returns `(kind_to_emit, byte_len_in_source, extra_offsets_to_consume)`.
+    ///
+    /// Mirrors the legacy tokenizer's merge contract: when a
+    /// `RubyOpen` / `RubyClose` is *immediately* followed (no gap in
+    /// source bytes) by another of the same kind, fold them into the
+    /// double variant covering 6 source bytes.
+    fn try_merge_double(
+        &self,
+        bytes: &[u8],
+        t_pos: u32,
+        kind: TriggerKind,
+    ) -> (TriggerKind, u32, usize) {
+        let merged_kind = match kind {
+            TriggerKind::RubyOpen => TriggerKind::DoubleRubyOpen,
+            TriggerKind::RubyClose => TriggerKind::DoubleRubyClose,
+            _ => return (kind, 3, 0),
+        };
+        let next_idx = self.t_idx + 1;
+        let Some(&next_pos) = self.trigger_offsets.get(next_idx) else {
+            return (kind, 3, 0);
+        };
+        if next_pos != t_pos + 3 {
+            return (kind, 3, 0);
+        }
+        let next_kind = trigger_kind_at(bytes, next_pos as usize);
+        if next_kind != kind {
+            return (kind, 3, 0);
+        }
+        (merged_kind, 6, 1)
+    }
 }
 
 impl Iterator for Tokenizer<'_> {
@@ -140,103 +190,81 @@ impl Iterator for Tokenizer<'_> {
         if self.finished {
             return None;
         }
+
         let bytes = self.source.as_bytes();
-        loop {
-            if (self.cursor as usize) >= bytes.len() {
+        let t_offset = self.trigger_offsets.get(self.t_idx).copied();
+        let n_offset = self.newline_offsets.get(self.n_idx).copied();
+
+        let next_is_trigger = match (t_offset, n_offset) {
+            (Some(t), Some(n)) => t < n,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => {
+                // No more events: emit any trailing text once, then EOF.
                 self.finished = true;
-                return self.flush_text(self.cursor);
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "source.len() <= u32::MAX is asserted at construction"
+                )]
+                let total_len = bytes.len() as u32;
+                return self.flush_text(total_len);
             }
-            let b = bytes[self.cursor as usize];
+        };
 
-            // ASCII fast path — no Aozora trigger has an ASCII lead
-            // byte; only `\n` is structural here.
-            if b < 0x80 {
-                if b == b'\n' {
-                    let pos = self.cursor;
-                    let text = self.flush_text(pos);
-                    let nl = Token::Newline { pos };
-                    self.cursor = pos + 1;
-                    self.text_start = self.cursor;
-                    return match text {
-                        Some(t) => {
-                            self.pending = Some(nl);
-                            Some(t)
-                        }
-                        None => Some(nl),
-                    };
-                }
-                self.cursor += 1;
-                continue;
+        if next_is_trigger {
+            let t_pos = t_offset.expect("checked Some by next_is_trigger arm");
+            let kind = trigger_kind_at(bytes, t_pos as usize);
+            let (emit_kind, byte_len, extra) = self.try_merge_double(bytes, t_pos, kind);
+            let trigger = Token::Trigger {
+                kind: emit_kind,
+                span: Span::new(t_pos, t_pos + byte_len),
+            };
+            let text = self.flush_text(t_pos);
+            let after = t_pos + byte_len;
+            self.text_start = after;
+            self.t_idx += 1 + extra;
+            // The merged double-trigger may cover newline offsets
+            // (in pathological inputs only — `\n` cannot appear inside
+            // `《《`/`》》` since both are 6 ASCII-foreign bytes — but
+            // we keep the skip loop for defensive symmetry with the
+            // tokenize_with_scan reference implementation).
+            while self.n_idx < self.newline_offsets.len()
+                && self.newline_offsets[self.n_idx] < after
+            {
+                self.n_idx += 1;
             }
-
-            // Multi-byte char: full UTF-8 decode + trigger classify.
-            let rest = &self.source[self.cursor as usize..];
-            let ch = rest.chars().next().expect("not at end");
-            let ch_len = u32::try_from(ch.len_utf8()).expect("char len 1..=4");
-
-            if let Some(kind) = classify_single(ch) {
-                let merged = match kind {
-                    TriggerKind::RubyOpen if rest[ch.len_utf8()..].starts_with('《') => {
-                        Some(TriggerKind::DoubleRubyOpen)
-                    }
-                    TriggerKind::RubyClose if rest[ch.len_utf8()..].starts_with('》') => {
-                        Some(TriggerKind::DoubleRubyClose)
-                    }
-                    _ => None,
-                };
-                let (emit_kind, consumed) = merged.map_or((kind, ch_len), |merged_kind| {
-                    (merged_kind, merged_kind.source_byte_len())
-                });
-
-                let trigger_pos = self.cursor;
-                let text = self.flush_text(trigger_pos);
-                let trigger = Token::Trigger {
-                    kind: emit_kind,
-                    span: Span::new(trigger_pos, trigger_pos + consumed),
-                };
-                self.cursor += consumed;
-                self.text_start = self.cursor;
-                return match text {
-                    Some(t) => {
-                        self.pending = Some(trigger);
-                        Some(t)
-                    }
-                    None => Some(trigger),
-                };
-            }
-
-            self.cursor += ch_len;
+            Some(self.pair_text_then(text, trigger))
+        } else {
+            let n_pos = n_offset.expect("checked Some by !next_is_trigger arm");
+            let text = self.flush_text(n_pos);
+            let nl = Token::Newline { pos: n_pos };
+            self.text_start = n_pos + 1;
+            self.n_idx += 1;
+            Some(self.pair_text_then(text, nl))
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         // Lower bound 0 (we may be at EOF after a final flush). Upper
-        // bound is at most one event per byte (every byte either advances
-        // text or starts a new trigger), plus the pending slot.
-        let remaining = (self.source.len()).saturating_sub(self.text_start as usize);
-        let upper = remaining + usize::from(self.pending.is_some());
+        // bound is at most one event per remaining trigger / newline
+        // plus interleaved text + the pending slot. For consumers this
+        // is mainly a `Vec::with_capacity` hint, so over-estimating
+        // is cheap.
+        let triggers_left = self.trigger_offsets.len().saturating_sub(self.t_idx);
+        let newlines_left = self.newline_offsets.len().saturating_sub(self.n_idx);
+        // Each event contributes at most 2 tokens (text + structural).
+        let upper = (triggers_left + newlines_left) * 2 + usize::from(self.pending.is_some()) + 1;
         (0, Some(upper))
     }
 }
 
-/// Classify a single character into a trigger kind if one applies,
-/// otherwise `None`. Double-character triggers (`《《`) are detected
-/// by the caller looking ahead after this returns `Some(RubyOpen)`.
-const fn classify_single(ch: char) -> Option<TriggerKind> {
-    Some(match ch {
-        '｜' => TriggerKind::Bar,
-        '《' => TriggerKind::RubyOpen,
-        '》' => TriggerKind::RubyClose,
-        '［' => TriggerKind::BracketOpen,
-        '］' => TriggerKind::BracketClose,
-        '＃' => TriggerKind::Hash,
-        '※' => TriggerKind::RefMark,
-        '〔' => TriggerKind::TortoiseOpen,
-        '〕' => TriggerKind::TortoiseClose,
-        '「' => TriggerKind::QuoteOpen,
-        '」' => TriggerKind::QuoteClose,
-        _ => return None,
-    })
+/// Look at the 3-byte window at `pos` and return its [`TriggerKind`].
+/// Caller guarantees `pos + 3 <= bytes.len()` and that the window is
+/// in fact a recognised trigger (the scanner's contract).
+#[inline]
+fn trigger_kind_at(bytes: &[u8], pos: usize) -> TriggerKind {
+    let window: [u8; 3] = [bytes[pos], bytes[pos + 1], bytes[pos + 2]];
+    classify_trigger_bytes(window).expect("scanner only emits classified positions")
 }
 
 #[cfg(test)]

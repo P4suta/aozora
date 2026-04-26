@@ -414,6 +414,53 @@ samply-corpus REPEAT="5":
 samply-render REPEAT="5":
     cargo run --release -p aozora-xtask -- samply render {{REPEAT}}
 
+# --- trace analysis (post-samply) -------------------------------------------
+# `aozora-xtask trace ...` is the analysis half of the samply workflow:
+# load a saved .json.gz, symbolicate it (sidecar cache), then run any of
+# the bundled analyses (hot / libs / rollup / stacks / compare / flame).
+# All commands accept an optional --binary so we can DWARF-resolve the
+# right ELF; the sidecar is invalidated if the binary's gnu-build-id no
+# longer matches the trace.
+
+# Pre-symbolicate a trace: write <trace>.symbols.json next to it. Subsequent
+# `trace hot/rollup/...` calls hit the cache instead of re-walking DWARF.
+# BIN defaults to the throughput_by_class profile binary.
+trace-cache TRACE BIN="target/release/examples/throughput_by_class":
+    cargo run --release -p aozora-xtask -- trace cache {{TRACE}} {{BIN}}
+
+# Top hot leaf frames. TOP controls row count.
+trace-hot TRACE TOP="25":
+    cargo run --release -p aozora-xtask -- trace hot {{TRACE}} --top {{TOP}}
+
+# Inclusive (self + descendants) hot frames — surfaces entry-point
+# functions even when they're not the leaf-most sample.
+trace-hot-inclusive TRACE TOP="25":
+    cargo run --release -p aozora-xtask -- trace hot {{TRACE}} --top {{TOP}} --inclusive
+
+# Per-library distribution of samples (binary / libc / vdso / …).
+trace-libs TRACE:
+    cargo run --release -p aozora-xtask -- trace libs {{TRACE}}
+
+# Categorise function names into named buckets via the built-in aozora
+# categories (Phase 0/1/2/3/4 + corpus_load + intern + alloc + …).
+trace-rollup TRACE:
+    cargo run --release -p aozora-xtask -- trace rollup {{TRACE}}
+
+# Print top-K full call stacks containing any frame matching PATTERN.
+# Pattern is a regex.
+trace-stacks TRACE PATTERN LIMIT="5":
+    cargo run --release -p aozora-xtask -- trace stacks {{TRACE}} --pattern {{PATTERN}} --limit {{LIMIT}}
+
+# Diff two traces (BEFORE vs AFTER): show which functions grew, shrank,
+# appeared, or disappeared.
+trace-compare BEFORE AFTER TOP="25":
+    cargo run --release -p aozora-xtask -- trace compare {{BEFORE}} {{AFTER}} --top {{TOP}}
+
+# Emit folded-stack format suitable for flamegraph.pl / inferno-flamegraph.
+# Pipe into your flamegraph renderer of choice.
+trace-flame TRACE:
+    cargo run --release -p aozora-xtask -- trace flame {{TRACE}}
+
 # Remove lefthook git hook stubs.
 hooks-uninstall:
     {{_dev}} lefthook uninstall

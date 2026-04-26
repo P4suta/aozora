@@ -20,9 +20,9 @@ publish     = false
 # (`std::arch::x86_64::*`, `std::arch::aarch64::*`, etc.) are
 # `unsafe fn`, and the `#[target_feature]` annotations they require
 # are themselves unsafe. The `unsafe` surface is quarantined to the
-# `backends/{avx2,neon,wasm_simd}.rs` files; the rest of the crate
-# stays under `unsafe_code = "deny"` so a stray unsafe block in the
-# scalar / dispatcher code surfaces immediately.
+# `backends/{structural_bitmap,neon,wasm_simd}.rs` files; the rest of
+# the crate stays under `unsafe_code = "deny"` so a stray unsafe
+# block in the dispatcher / wrapper code surfaces immediately.
 [lints.rust]
 unsafe_code = "deny"
 non_ascii_idents = "deny"
@@ -33,16 +33,26 @@ default = ["std"]
 # `std` enables runtime CPU dispatch via `is_x86_feature_detected!`.
 # Without it `best_scanner()` returns the always-available
 # `ScalarScanner` even on x86_64 hosts that have AVX2.
-std = []
+#
+# `std` also unlocks the heavyweight backends (Teddy, DFA) since
+# `aho-corasick`'s `packed` searcher and `regex-automata`'s `dense::DFA`
+# both require `std`. Pure-`no_std` callers see only `NaiveScanner`
+# and `ScalarScanner`.
+std = ["dep:aho-corasick", "dep:regex-automata"]
 
 [dependencies]
-aozora-spec = { workspace = true }
-memchr      = { workspace = true }
+aozora-spec    = { workspace = true }
+memchr         = { workspace = true }
+# Teddy backend (Hyperscan algorithm; see ADR-0015). std-only because
+# `packed::Searcher` does runtime CPU feature detection.
+aho-corasick   = { workspace = true, optional = true, default-features = false, features = ["std"] }
+# DFA backend (Hoehrmann-style byte DFA; see ADR-0015). std-only.
+regex-automata = { workspace = true, optional = true, default-features = false, features = ["std", "syntax", "dfa-build", "dfa-search"] }
 
 [dev-dependencies]
 proptest  = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]
-name    = "scalar_scan"
+name    = "scanner_bakeoff"
 harness = false

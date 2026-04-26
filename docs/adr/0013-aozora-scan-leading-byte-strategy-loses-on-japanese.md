@@ -1,9 +1,19 @@
 # 0013. aozora-scan's leading-byte strategy is not faster than legacy phase 1 on Japanese text
 
-- Status: accepted (negative result)
+- Status: superseded by [ADR-0015](0015-aozora-scan-bake-off-and-result.md)
 - Date: 2026-04-26
 - Deciders: @P4suta
 - Tags: architecture, performance, lex, simd, 0.2.0
+
+## Resolution (2026-04-27)
+
+ADR-0015 records the v2 redesign: a four-backend bake-off (Teddy,
+structural-bitmap AVX2, multi-pattern DFA, naive ground truth) that
+picked Teddy as the production scanner. Measured 67-125× faster
+than the v1 leading-byte approach on Japanese-heavy bands. The
+production Phase 1 tokenizer (`aozora_lexer::tokenize`) is now wired
+to `aozora_scan::best_scanner()`. See ADR-0015 for the bake-off data
+and the architecture choices that backed the decision.
 
 ## Context
 

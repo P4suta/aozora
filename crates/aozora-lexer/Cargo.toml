@@ -28,7 +28,8 @@ phase3-instrument = []
 aozora-spec     = { workspace = true }
 aozora-syntax   = { workspace = true }
 aozora-encoding = { workspace = true }
-aho-corasick = { workspace = true }
+aozora-scan     = { workspace = true }
+aho-corasick = { workspace = true, features = ["std"] }
 memchr       = { workspace = true }
 smallvec     = { workspace = true }
 thiserror    = { workspace = true }

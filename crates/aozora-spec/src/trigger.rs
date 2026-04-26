@@ -136,6 +136,36 @@ pub fn classify_trigger_bytes(window: [u8; 3]) -> Option<TriggerKind> {
 /// running [`classify_trigger_bytes`] for precise classification.
 pub const TRIGGER_LEADING_BYTES: [u8; 3] = [0xE2, 0xE3, 0xEF];
 
+/// Set of UTF-8 *middle* bytes (2nd byte of the trigram) covering
+/// every trigger character.
+///
+/// ADR-0015 found this set is ~4× sparser than [`TRIGGER_LEADING_BYTES`]
+/// on Japanese text and used by the structural-bitmap scan strategy.
+pub const TRIGGER_MIDDLE_BYTES: [u8; 3] = [0x80, 0xBC, 0xBD];
+
+/// All 11 single-character trigger trigrams as raw UTF-8 byte arrays.
+///
+/// In PHF-table iteration order. Consumed by the multi-pattern scan
+/// backends (Teddy, multi-pattern DFA — see ADR-0015) which need the
+/// patterns directly rather than going through `classify_trigger_bytes`.
+///
+/// The accompanying test [`tests::all_trigger_trigrams_match_phf`]
+/// asserts that every entry round-trips through the PHF, so adding /
+/// removing a trigger keeps this list and the PHF in sync.
+pub const ALL_TRIGGER_TRIGRAMS: [[u8; 3]; 11] = [
+    [0xEF, 0xBD, 0x9C], // ｜ Bar
+    [0xE3, 0x80, 0x8A], // 《 RubyOpen
+    [0xE3, 0x80, 0x8B], // 》 RubyClose
+    [0xEF, 0xBC, 0xBB], // ［ BracketOpen
+    [0xEF, 0xBC, 0xBD], // ］ BracketClose
+    [0xEF, 0xBC, 0x83], // ＃ Hash
+    [0xE2, 0x80, 0xBB], // ※ RefMark
+    [0xE3, 0x80, 0x94], // 〔 TortoiseOpen
+    [0xE3, 0x80, 0x95], // 〕 TortoiseClose
+    [0xE3, 0x80, 0x8C], // 「 QuoteOpen
+    [0xE3, 0x80, 0x8D], // 」 QuoteClose
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +246,48 @@ mod tests {
                  which is not in TRIGGER_LEADING_BYTES — \
                  update the SIMD scanner mask",
                 entry_key[0]
+            );
+        }
+    }
+
+    #[test]
+    fn trigger_middle_bytes_are_complete_for_known_triggers() {
+        for entry_key in SINGLE_TRIGGER_TABLE.keys() {
+            assert!(
+                TRIGGER_MIDDLE_BYTES.contains(&entry_key[1]),
+                "trigger {entry_key:?} middle byte {:#04X} not in TRIGGER_MIDDLE_BYTES",
+                entry_key[1]
+            );
+        }
+    }
+
+    #[test]
+    fn trigger_middle_bytes_has_no_redundant_entries() {
+        for &b in &TRIGGER_MIDDLE_BYTES {
+            let used = SINGLE_TRIGGER_TABLE.keys().any(|k| k[1] == b);
+            assert!(used, "middle byte {b:#04X} listed but unused");
+        }
+    }
+
+    #[test]
+    fn all_trigger_trigrams_match_phf() {
+        // ALL_TRIGGER_TRIGRAMS must be the exact set of PHF keys
+        // (no missing entries; no duplicates; no stale entries).
+        // Forward: every PHF key is in the array.
+        for k in SINGLE_TRIGGER_TABLE.keys() {
+            assert!(
+                ALL_TRIGGER_TRIGRAMS.iter().any(|t| t == k),
+                "PHF key {k:?} not in ALL_TRIGGER_TRIGRAMS"
+            );
+        }
+        // Reverse: every array entry classifies via PHF and has the
+        // expected length of 11 — these are the load-bearing
+        // multi-pattern inputs to the Teddy / DFA scanners.
+        assert_eq!(ALL_TRIGGER_TRIGRAMS.len(), SINGLE_TRIGGER_TABLE.len());
+        for trigram in &ALL_TRIGGER_TRIGRAMS {
+            assert!(
+                classify_trigger_bytes(*trigram).is_some(),
+                "ALL_TRIGGER_TRIGRAMS entry {trigram:?} doesn't classify"
             );
         }
     }

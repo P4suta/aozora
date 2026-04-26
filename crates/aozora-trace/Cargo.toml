@@ -1,0 +1,39 @@
+[package]
+name        = "aozora-trace"
+description = "Pure-Rust loader + analyses for samply gecko-format profile traces."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+# Internal — host-side dev tooling only. Not published.
+publish     = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# JSON parse for the gecko-format trace.
+serde      = { workspace = true }
+serde_json = { workspace = true }
+# Trace files are gzipped (`.json.gz`).
+flate2     = { workspace = true }
+# DWARF symbolication. The `loader` feature pulls in `object` + `memmap2`
+# so a single `Loader::new(binary)` call handles both ELF parsing and
+# DWARF traversal — no shell-out to `addr2line(1)`.
+addr2line  = { workspace = true, features = ["loader", "rustc-demangle"] }
+object     = { workspace = true }
+# Function-name + library filtering on the analysis layer.
+regex      = { workspace = true }
+# Optional category-config TOML.
+toml       = { workspace = true }
+# Typed error variants per module.
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest  = { workspace = true }

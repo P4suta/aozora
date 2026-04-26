@@ -20,4 +20,6 @@ name = "xtask"
 path = "src/main.rs"
 
 [dependencies]
-clap = { workspace = true }
+clap         = { workspace = true }
+aozora-trace = { workspace = true }
+regex        = { workspace = true }
