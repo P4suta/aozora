@@ -1,0 +1,46 @@
+---
+source: crates/aozora-lex/tests/diagnostic_ordering.rs
+assertion_line: 98
+expression: "format!(\"{:#?}\", out.diagnostics)"
+---
+[
+    SourceContainsPua {
+        at: SourceSpan {
+            offset: SourceOffset(
+                0,
+            ),
+            length: 3,
+        },
+        codepoint: '\u{e001}',
+        span: Span {
+            start: 0,
+            end: 3,
+        },
+    },
+    UnmatchedClose {
+        at: SourceSpan {
+            offset: SourceOffset(
+                8,
+            ),
+            length: 3,
+        },
+        kind: Bracket,
+        span: Span {
+            start: 8,
+            end: 11,
+        },
+    },
+    UnclosedBracket {
+        at: SourceSpan {
+            offset: SourceOffset(
+                15,
+            ),
+            length: 3,
+        },
+        kind: Bracket,
+        span: Span {
+            start: 15,
+            end: 18,
+        },
+    },
+]

@@ -28,6 +28,23 @@
 //! self-referential-struct problem that `Tokenizer<'sanitized>` would
 //! otherwise impose.
 //!
+//! # Compile-time phase-order enforcement
+//!
+//! Calling `.pair()` on a fresh [`Source`] (without going through
+//! `.sanitize().tokenize()`) is a *type error*: there is no
+//! `impl Pipeline<'_, '_, Source>::pair` method. The compile-fail
+//! doctest below pins this contract — adding such an impl in the
+//! future would silently break the type-state guarantee:
+//!
+//! ```compile_fail
+//! use aozora_lex::Pipeline;
+//! use aozora_syntax::borrowed::Arena;
+//!
+//! let arena = Arena::new();
+//! // .pair() on Source skips Phase 0 + Phase 1 — must not compile.
+//! let _ = Pipeline::new("plain", &arena).pair();
+//! ```
+//!
 //! # Why `build` is the terminal transition
 //!
 //! Phase 3 (classify) requires `&mut BorrowedAllocator<'a>`. The

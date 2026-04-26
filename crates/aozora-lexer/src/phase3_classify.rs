@@ -3993,4 +3993,102 @@ mod tests {
         )
         .prop_map(|chars| chars.into_iter().collect())
     }
+
+    // -----------------------------------------------------------------
+    // Forward-target index threshold smoke tests (G.4 / phase3 mod).
+    //
+    // The forward-reference target index is only built when a source
+    // contains at least `FORWARD_QUOTE_BODY_THRESHOLD` (= 64) distinct
+    // `「…」` quote bodies. Below the threshold we want to confirm the
+    // pipeline still works and the result is identical to a re-run
+    // (stability across the threshold gate).
+    // -----------------------------------------------------------------
+
+    /// Inputs *below* `FORWARD_QUOTE_BODY_THRESHOLD` skip the index
+    /// build altogether. Drive a small input through the full lex
+    /// pipeline twice and pin determinism — proves the gate decision
+    /// (skip the AC index) doesn't itself perturb output.
+    #[test]
+    fn forward_target_index_handles_short_corpus() {
+        // 5 distinct quote bodies — well below the 64-body threshold.
+        let src = "「a」「b」「c」「d」「e」";
+        run!(a, src);
+        run!(b, src);
+        assert_eq!(a.spans.len(), b.spans.len());
+        for (l, r) in a.spans.iter().zip(b.spans.iter()) {
+            assert_eq!(l.source_span, r.source_span);
+            assert_eq!(format!("{:?}", l.kind), format!("{:?}", r.kind));
+        }
+    }
+
+    /// Forward-reference behaviour DEPENDS on whether the cited target
+    /// (`「青空」`) appears earlier in source.
+    ///
+    /// * With a preceding `「青空」`: the bouten classifier sees the
+    ///   prior occurrence and recognises `［＃「青空」に傍点］` as
+    ///   a Bouten span.
+    /// * Without a preceding occurrence: `forward_target_is_preceded`
+    ///   returns `false` and the recogniser falls through to
+    ///   `Annotation { kind: Unknown }` so the renderer doesn't apply
+    ///   styling to a non-existent referent.
+    ///
+    /// The two outcomes must differ observably — this is the public
+    /// behaviour gated on the forward-target lookup. We keep the
+    /// assertion shape behavioural rather than poking at the
+    /// thread-local index (which is non-public).
+    #[test]
+    fn forward_target_lookup_changes_output_for_preceded_vs_absent() {
+        use aozora_syntax::borrowed::AozoraNode;
+
+        // Case A: target exists earlier in source.
+        let with_prior = "「青空」が見える。［＃「青空」に傍点］";
+        run!(a, with_prior);
+        let bouten_in_a = a
+            .spans
+            .iter()
+            .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_))));
+        let unknown_in_a = a.spans.iter().any(|s| {
+            matches!(
+                aozora_node(s),
+                Some(AozoraNode::Annotation(ann)) if ann.kind == aozora_syntax::AnnotationKind::Unknown
+            )
+        });
+
+        // Case B: no prior `「青空」` occurrence.
+        let without_prior = "ただの本文。［＃「青空」に傍点］";
+        run!(b, without_prior);
+        let bouten_in_b = b
+            .spans
+            .iter()
+            .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_))));
+        let unknown_in_b = b.spans.iter().any(|s| {
+            matches!(
+                aozora_node(s),
+                Some(AozoraNode::Annotation(ann)) if ann.kind == aozora_syntax::AnnotationKind::Unknown
+            )
+        });
+
+        assert!(
+            bouten_in_a && !unknown_in_a,
+            "with prior `「青空」`, expected a Bouten span and no Unknown annotation, \
+             got spans={:?}",
+            a.spans
+        );
+        assert!(
+            unknown_in_b && !bouten_in_b,
+            "without prior `「青空」`, expected fallback Annotation{{Unknown}} and no Bouten, \
+             got spans={:?}",
+            b.spans
+        );
+    }
+
+    /// Empty input is the "smallest possible corpus"; the pipeline
+    /// must short-circuit cleanly without installing any thread-local
+    /// state and produce no spans / no diagnostics.
+    #[test]
+    fn forward_target_index_handles_empty_corpus() {
+        run!(out, "");
+        assert!(out.spans.is_empty());
+        assert!(out.diagnostics.is_empty());
+    }
 }

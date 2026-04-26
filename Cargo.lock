@@ -177,6 +177,7 @@ dependencies = [
  "aozora-test-utils",
  "aozora-veb",
  "criterion",
+ "insta",
  "memchr",
  "proptest",
 ]

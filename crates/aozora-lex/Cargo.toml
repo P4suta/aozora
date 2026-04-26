@@ -33,6 +33,7 @@ aozora-lexer    = { workspace = true }
 proptest          = { workspace = true }
 aozora-test-utils = { workspace = true }
 criterion         = { workspace = true }
+insta             = { workspace = true }
 
 [[bench]]
 name    = "tokenize_compare"

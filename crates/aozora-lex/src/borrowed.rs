@@ -383,4 +383,122 @@ mod tests {
             assert!(out.registry.inline.contains_key(pos));
         }
     }
+
+    /// Pin the contract that the explicit Pipeline chain and the
+    /// `lex_into_arena` one-shot agree byte-for-byte on the dense
+    /// corpus shape. (`pipeline.rs` already pins this for the simpler
+    /// ruby input; this case adds container open/close + gaiji +
+    /// bouten coverage.)
+    #[test]
+    fn pipeline_chain_matches_lex_into_arena_byte_for_byte() {
+        let src = "明治の頃｜青梅《おうめ》街道沿いに、※［＃「木＋吶のつくり」、第3水準1-85-54］\n\
+                   なる珍しき木が立つ。［＃ここから2字下げ］\n\
+                   その下で人々は語らひ、［＃「青空」に傍点］\n\
+                   ［＃ここで字下げ終わり］";
+        let arena_chain = Arena::new();
+        let arena_one = Arena::new();
+        let chain = crate::pipeline::Pipeline::new(src, &arena_chain)
+            .sanitize()
+            .tokenize()
+            .pair()
+            .build();
+        let oneshot = lex_into_arena(src, &arena_one);
+
+        assert_eq!(chain.normalized, oneshot.normalized);
+        assert_eq!(chain.sanitized_len, oneshot.sanitized_len);
+        assert_eq!(chain.registry.inline.len(), oneshot.registry.inline.len());
+        assert_eq!(
+            chain.registry.block_leaf.len(),
+            oneshot.registry.block_leaf.len()
+        );
+        assert_eq!(
+            chain.registry.block_open.len(),
+            oneshot.registry.block_open.len()
+        );
+        assert_eq!(
+            chain.registry.block_close.len(),
+            oneshot.registry.block_close.len()
+        );
+        assert_eq!(chain.diagnostics.len(), oneshot.diagnostics.len());
+    }
+
+    /// Phase 0 (sanitize) rewrites CR/LF to LF. Inspect the
+    /// intermediate `Sanitized` state and confirm `sanitized_text()`
+    /// reflects the rewrite — the Pipeline accessor is the supported
+    /// way to peek between phases.
+    #[test]
+    fn pipeline_intermediate_inspection_after_sanitize() {
+        let arena = Arena::new();
+        let src = "line1\r\nline2\rline3\n";
+        let p = crate::pipeline::Pipeline::new(src, &arena).sanitize();
+        // After Phase 0, every CR / CRLF is collapsed to a single LF.
+        assert_eq!(p.sanitized_text(), "line1\nline2\nline3\n");
+        // Drive the rest to make sure the inspection didn't consume
+        // anything required downstream.
+        let final_out = p.tokenize().pair().build();
+        // Plain text → no inline/block entries.
+        assert!(final_out.registry.is_empty());
+    }
+
+    /// Block open/close sentinels carry blank-line padding on both
+    /// sides so comrak treats them as standalone paragraph lines. The
+    /// padding is part of the documented sentinel contract — pin the
+    /// exact `\n\n<sentinel>\n\n` byte sequence.
+    #[test]
+    fn arena_normalizer_block_open_close_padding_is_blank_line_sentinel_blank_line() {
+        let arena = Arena::new();
+        let src = "［＃ここから2字下げ］\nbody\n［＃ここで字下げ終わり］";
+        let out = lex_into_arena(src, &arena);
+
+        // Find the open and close sentinel positions from the registry.
+        let (&open_pos, _) = out
+            .registry
+            .block_open
+            .iter_sorted()
+            .next()
+            .expect("one open entry");
+        let (&close_pos, _) = out
+            .registry
+            .block_close
+            .iter_sorted()
+            .next()
+            .expect("one close entry");
+
+        let bytes = out.normalized.as_bytes();
+        // BLOCK_OPEN_SENTINEL is U+E003 = 3 bytes UTF-8 (EE 80 83).
+        let open_sentinel_bytes = "\u{E003}".as_bytes();
+        let close_sentinel_bytes = "\u{E004}".as_bytes();
+
+        // The two bytes before the sentinel position must be `\n\n`.
+        assert!(open_pos as usize >= 2);
+        assert_eq!(
+            &bytes[(open_pos as usize - 2)..open_pos as usize],
+            b"\n\n",
+            "block_open: expected \\n\\n before sentinel"
+        );
+        // The bytes AT the sentinel position must be the open sentinel.
+        let open_after = open_pos as usize + open_sentinel_bytes.len();
+        assert_eq!(
+            &bytes[open_pos as usize..open_after],
+            open_sentinel_bytes
+        );
+        // Followed by `\n\n`.
+        assert!(open_after + 2 <= bytes.len());
+        assert_eq!(&bytes[open_after..open_after + 2], b"\n\n");
+
+        // Same for close.
+        assert!(close_pos as usize >= 2);
+        assert_eq!(
+            &bytes[(close_pos as usize - 2)..close_pos as usize],
+            b"\n\n",
+            "block_close: expected \\n\\n before sentinel"
+        );
+        let close_after = close_pos as usize + close_sentinel_bytes.len();
+        assert_eq!(
+            &bytes[close_pos as usize..close_after],
+            close_sentinel_bytes
+        );
+        assert!(close_after + 2 <= bytes.len());
+        assert_eq!(&bytes[close_after..close_after + 2], b"\n\n");
+    }
 }
