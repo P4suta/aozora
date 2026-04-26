@@ -198,10 +198,10 @@ mod tests {
     #[test]
     fn arena_grows_with_source_size() {
         let small = Document::new("a");
-        let _ = small.parse();
+        drop(small.parse());
         let big_src = "｜青梅《おうめ》".repeat(100);
         let big = Document::new(big_src);
-        let _ = big.parse();
+        drop(big.parse());
         assert!(big.arena_bytes() > small.arena_bytes());
     }
 }

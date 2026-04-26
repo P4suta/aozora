@@ -34,7 +34,7 @@ use aozora_syntax::{
 /// # Panics
 ///
 /// Does not panic in normal use: `String` cannot fail as a
-/// [`fmt::Write`] sink.
+/// [`Write`] sink.
 #[must_use]
 pub fn serialize(out: &BorrowedLexOutput<'_>) -> String {
     let mut s = NewlineCappedWriter::with_capacity(out.normalized.len().saturating_mul(2));
@@ -52,7 +52,7 @@ pub fn serialize(out: &BorrowedLexOutput<'_>) -> String {
 ///
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited
 /// from the lexer's `Span` width contract; in practice unreachable.
-pub fn serialize_into<W: fmt::Write>(
+pub fn serialize_into<W: Write>(
     out: &BorrowedLexOutput<'_>,
     writer: &mut W,
 ) -> fmt::Result {
@@ -117,7 +117,7 @@ fn sentinel_kind(c: char) -> Option<SentinelKind> {
     }
 }
 
-fn emit_aozora<W: fmt::Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
+fn emit_aozora<W: Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
     match node {
         AozoraNode::Ruby(r) => emit_ruby(r, out),
         AozoraNode::Bouten(b) => emit_bouten(b, out),
@@ -144,7 +144,7 @@ fn emit_aozora<W: fmt::Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result 
     }
 }
 
-fn emit_ruby<W: fmt::Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
+fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
     out.write_char('｜')?;
     emit_content(r.base, out)?;
     out.write_char('《')?;
@@ -152,7 +152,7 @@ fn emit_ruby<W: fmt::Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
     out.write_char('》')
 }
 
-fn emit_bouten<W: fmt::Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {
+fn emit_bouten<W: Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃")?;
     emit_bouten_targets(b.target, out)?;
     match b.position {
@@ -163,7 +163,7 @@ fn emit_bouten<W: fmt::Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {
     out.write_char('］')
 }
 
-fn emit_bouten_targets<W: fmt::Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
+fn emit_bouten_targets<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
     match c {
         Content::Plain(s) => {
             out.write_char('「')?;
@@ -194,13 +194,13 @@ fn emit_bouten_targets<W: fmt::Write>(c: Content<'_>, out: &mut W) -> fmt::Resul
     }
 }
 
-fn emit_tate_chu_yoko<W: fmt::Write>(t: &TateChuYoko<'_>, out: &mut W) -> fmt::Result {
+fn emit_tate_chu_yoko<W: Write>(t: &TateChuYoko<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃「")?;
     emit_content_as_plain(t.text, out)?;
     out.write_str("」は縦中横］")
 }
 
-fn emit_gaiji<W: fmt::Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
+fn emit_gaiji<W: Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
     out.write_char('※')?;
     out.write_str("［＃「")?;
     out.write_str(g.description)?;
@@ -212,17 +212,17 @@ fn emit_gaiji<W: fmt::Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
     out.write_char('］')
 }
 
-fn emit_kaeriten<W: fmt::Write>(k: &Kaeriten<'_>, out: &mut W) -> fmt::Result {
+fn emit_kaeriten<W: Write>(k: &Kaeriten<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃")?;
     out.write_str(k.mark)?;
     out.write_char('］')
 }
 
-fn emit_annotation<W: fmt::Write>(a: &Annotation<'_>, out: &mut W) -> fmt::Result {
+fn emit_annotation<W: Write>(a: &Annotation<'_>, out: &mut W) -> fmt::Result {
     out.write_str(a.raw)
 }
 
-fn emit_double_ruby<W: fmt::Write>(d: &DoubleRuby<'_>, out: &mut W) -> fmt::Result {
+fn emit_double_ruby<W: Write>(d: &DoubleRuby<'_>, out: &mut W) -> fmt::Result {
     out.write_char('《')?;
     out.write_char('《')?;
     emit_content(d.content, out)?;
@@ -230,7 +230,7 @@ fn emit_double_ruby<W: fmt::Write>(d: &DoubleRuby<'_>, out: &mut W) -> fmt::Resu
     out.write_char('》')
 }
 
-fn emit_section_break<W: fmt::Write>(kind: SectionKind, out: &mut W) -> fmt::Result {
+fn emit_section_break<W: Write>(kind: SectionKind, out: &mut W) -> fmt::Result {
     let keyword = match kind {
         SectionKind::Choho => "改丁",
         SectionKind::Dan => "改段",
@@ -242,7 +242,7 @@ fn emit_section_break<W: fmt::Write>(kind: SectionKind, out: &mut W) -> fmt::Res
     out.write_char('］')
 }
 
-fn emit_indent<W: fmt::Write>(i: Indent, out: &mut W) -> fmt::Result {
+fn emit_indent<W: Write>(i: Indent, out: &mut W) -> fmt::Result {
     if i.amount == 1 {
         out.write_str("［＃字下げ］")
     } else {
@@ -250,7 +250,7 @@ fn emit_indent<W: fmt::Write>(i: Indent, out: &mut W) -> fmt::Result {
     }
 }
 
-fn emit_align_end<W: fmt::Write>(a: AlignEnd, out: &mut W) -> fmt::Result {
+fn emit_align_end<W: Write>(a: AlignEnd, out: &mut W) -> fmt::Result {
     if a.offset == 0 {
         out.write_str("［＃地付き］")
     } else {
@@ -258,13 +258,13 @@ fn emit_align_end<W: fmt::Write>(a: AlignEnd, out: &mut W) -> fmt::Result {
     }
 }
 
-fn emit_sashie<W: fmt::Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
+fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃挿絵（")?;
     out.write_str(s.file)?;
     out.write_str("）入る］")
 }
 
-fn emit_heading_hint<W: fmt::Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result {
+fn emit_heading_hint<W: Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃「")?;
     out.write_str(h.target)?;
     out.write_str(match h.level {
@@ -308,7 +308,7 @@ const fn bouten_kind_keyword(kind: BoutenKind) -> &'static str {
     }
 }
 
-fn emit_content<W: fmt::Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
+fn emit_content<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
     for seg in c {
         match seg {
             Segment::Text(t) => out.write_str(t)?,
@@ -320,7 +320,7 @@ fn emit_content<W: fmt::Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
     Ok(())
 }
 
-fn emit_content_as_plain<W: fmt::Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
+fn emit_content_as_plain<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
     for seg in c {
         match seg {
             Segment::Text(t) => out.write_str(t)?,
@@ -384,7 +384,7 @@ impl NewlineCappedWriter {
     }
 }
 
-impl fmt::Write for NewlineCappedWriter {
+impl Write for NewlineCappedWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.push_str_internal(s);
         Ok(())

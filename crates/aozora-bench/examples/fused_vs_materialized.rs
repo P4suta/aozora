@@ -98,7 +98,7 @@ fn main() {
 fn time_fused(text: &str) -> u64 {
     let arena = Arena::new();
     let t = Instant::now();
-    let _ = lex_into_arena(text, &arena);
+    drop(lex_into_arena(text, &arena));
     t.elapsed().as_nanos() as u64
 }
 
@@ -108,12 +108,12 @@ fn time_materialized(text: &str) -> u64 {
     let tokens: Vec<Token> = tokenize(&sanitized.text).collect();
     let mut ps = pair(tokens.into_iter());
     let pe: Vec<PairEvent> = (&mut ps).collect();
-    let _ = ps.take_diagnostics();
+    drop(ps.take_diagnostics());
     let arena = Arena::new();
     let mut alloc = BorrowedAllocator::new(&arena);
     let mut cs = classify(pe.into_iter(), &sanitized.text, &mut alloc);
     let _spans: Vec<ClassifiedSpan<'_>> = (&mut cs).collect();
-    let _ = cs.take_diagnostics();
+    drop(cs.take_diagnostics());
     t.elapsed().as_nanos() as u64
 }
 

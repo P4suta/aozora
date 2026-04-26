@@ -4149,7 +4149,7 @@ mod tests {
         let unknown_in_a = a.spans.iter().any(|s| {
             matches!(
                 aozora_node(s),
-                Some(AozoraNode::Annotation(ann)) if ann.kind == aozora_syntax::AnnotationKind::Unknown
+                Some(AozoraNode::Annotation(ann)) if ann.kind == AnnotationKind::Unknown
             )
         });
 
@@ -4163,7 +4163,7 @@ mod tests {
         let unknown_in_b = b.spans.iter().any(|s| {
             matches!(
                 aozora_node(s),
-                Some(AozoraNode::Annotation(ann)) if ann.kind == aozora_syntax::AnnotationKind::Unknown
+                Some(AozoraNode::Annotation(ann)) if ann.kind == AnnotationKind::Unknown
             )
         });
 

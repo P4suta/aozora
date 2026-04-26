@@ -82,15 +82,15 @@ fn main() {
         let t = Instant::now();
         let mut pair_stream = pair(tokens.into_iter());
         let pair_events: Vec<PairEvent> = (&mut pair_stream).collect();
-        let _ = pair_stream.take_diagnostics();
+        drop(pair_stream.take_diagnostics());
         pair_total += t.elapsed().as_nanos() as u64;
 
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let t = Instant::now();
         let mut classify_stream = classify(pair_events.into_iter(), &sanitized.text, &mut alloc);
-        let _: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
-        let _ = classify_stream.take_diagnostics();
+        let _classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
+        drop(classify_stream.take_diagnostics());
         classify_total += t.elapsed().as_nanos() as u64;
 
         // Full pipeline run, separate arena so the per-doc cost
@@ -134,7 +134,7 @@ fn main() {
         PendingSizeHistogram::reset();
         {
             let arena_inst = Arena::new();
-            let _ = lex_into_arena(&text, &arena_inst);
+            drop(lex_into_arena(&text, &arena_inst));
         }
         let snap = TimingTable::snapshot();
         let yields = YieldCounters::snapshot();
@@ -209,12 +209,12 @@ fn main() {
     let tokens: Vec<Token> = tokenize(&sanitized.text).collect();
     let mut pair_stream = pair(tokens.into_iter());
     let pair_events: Vec<PairEvent> = (&mut pair_stream).collect();
-    let _ = pair_stream.take_diagnostics();
+    drop(pair_stream.take_diagnostics());
     let arena = Arena::new();
     let mut alloc = BorrowedAllocator::new(&arena);
     let mut classify_stream = classify(pair_events.iter().cloned(), &sanitized.text, &mut alloc);
     let classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
-    let _ = classify_stream.take_diagnostics();
+    drop(classify_stream.take_diagnostics());
     let mut aozora_count = 0;
     let mut counts: std::collections::HashMap<&'static str, usize> =
         std::collections::HashMap::new();

@@ -81,7 +81,7 @@ fn main() {
         let t = Instant::now();
         let mut ps = pair(tokens.into_iter());
         let pe: Vec<PairEvent> = (&mut ps).collect();
-        let _ = ps.take_diagnostics();
+        drop(ps.take_diagnostics());
         pair_ns.push(t.elapsed().as_nanos() as u64);
 
         let arena_p3 = Arena::new();
@@ -89,7 +89,7 @@ fn main() {
         let t = Instant::now();
         let mut cs = classify(pe.into_iter(), &sanitized.text, &mut alloc);
         let _spans: Vec<ClassifiedSpan<'_>> = (&mut cs).collect();
-        let _ = cs.take_diagnostics();
+        drop(cs.take_diagnostics());
         classify_ns.push(t.elapsed().as_nanos() as u64);
 
         let arena_full = Arena::new();

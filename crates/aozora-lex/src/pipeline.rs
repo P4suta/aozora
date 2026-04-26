@@ -74,19 +74,19 @@ use crate::borrowed::ArenaNormalizer;
 // =====================================================================
 
 /// Initial state — only `source` and `arena` are set.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Source;
 
 /// Phase 0 has run; sanitized text is materialised in the arena.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Sanitized;
 
 /// Phase 1 has been wired; the iterator produces [`Token`]s.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Tokenized;
 
 /// Phase 2 has been wired; the iterator produces [`PairEvent`]s.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Paired;
 
 // =====================================================================
@@ -221,7 +221,7 @@ impl<'src, 'a> Pipeline<'src, 'a, Tokenized, Tokenizer<'a>> {
 // Paired (terminal)
 // ---------------------------------------------------------------------
 
-impl<'src, 'a, T: Iterator<Item = Token>> Pipeline<'src, 'a, Paired, PairStream<T>> {
+impl<'a, T: Iterator<Item = Token>> Pipeline<'_, 'a, Paired, PairStream<T>> {
     /// Drive Phase 3 + the arena normalizer fold and return the final
     /// [`BorrowedLexOutput`]. This is the terminal transition because
     /// `&mut BorrowedAllocator` cannot be safely held across an external
@@ -286,7 +286,7 @@ impl<'src, 'a, T: Iterator<Item = Token>> Pipeline<'src, 'a, Paired, PairStream<
 // is through the `Registry` field types — the import is still needed for
 // the trait-impl resolution but the analyser doesn't see it.
 const _: fn() = || {
-    let _ = core::mem::size_of::<ContainerKind>();
+    let _ = size_of::<ContainerKind>();
 };
 
 #[cfg(test)]
@@ -325,7 +325,7 @@ mod tests {
         let p = Pipeline::new("plain text", &arena).sanitize();
         assert_eq!(p.sanitized_text(), "plain text");
         assert!(p.diagnostics().is_empty());
-        let _ = p.tokenize().pair().build();
+        drop(p.tokenize().pair().build());
     }
 
     #[test]

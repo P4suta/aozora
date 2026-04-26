@@ -146,7 +146,7 @@ fn measure_one(text: &str) -> PhaseSample {
     let t = Instant::now();
     let mut pair_stream = pair(tokens.into_iter());
     let pair_events: Vec<PairEvent> = (&mut pair_stream).collect();
-    let _ = pair_stream.take_diagnostics();
+    drop(pair_stream.take_diagnostics());
     let pair_ns = t.elapsed().as_nanos() as u64;
 
     // Phase 3 — needs an arena + allocator. The arena is dropped at
@@ -157,7 +157,7 @@ fn measure_one(text: &str) -> PhaseSample {
     let t = Instant::now();
     let mut classify_stream = classify(pair_events.into_iter(), &sanitized.text, &mut alloc);
     let _classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
-    let _ = classify_stream.take_diagnostics();
+    drop(classify_stream.take_diagnostics());
     let classify_ns = t.elapsed().as_nanos() as u64;
 
     // Full pipeline (sanitize → arena registry build). Includes the
