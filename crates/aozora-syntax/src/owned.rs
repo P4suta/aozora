@@ -1,11 +1,15 @@
-//! Owned-AST type definitions (legacy / lex-internal).
+//! Owned-AST type definitions (legacy compat).
 //!
-//! As of Plan B, the canonical user-facing AST is the borrowed-AST
-//! defined in [`crate::borrowed`]. The owned types here remain only
-//! as the lex pipeline's internal output shape:
-//! `aozora-lexer`'s Phase 3 classifier produces these `Box`-allocated
-//! nodes; `aozora_syntax::convert::to_borrowed_with` then converts
-//! them into the arena-backed borrowed shape.
+//! As of Plan B + I-2.2, the canonical user-facing AST is the
+//! borrowed-AST defined in [`crate::borrowed`]; Phase 3 of the lex
+//! pipeline now allocates borrowed nodes directly via
+//! [`crate::alloc::BorrowedAllocator`].
+//!
+//! These owned types survive as the return shape of the legacy
+//! owned-API entries `aozora_lexer::lex` / `aozora_lexer::classify`,
+//! which `aozora-parser`'s parallel / incremental / parse
+//! implementations still consume. They are not used by the public
+//! [`aozora::Document::parse`](https://docs.rs/aozora) entry.
 //!
 //! New consumers SHOULD use `borrowed::AozoraNode<'_>` via the
 //! `aozora::Document::parse` entry rather than constructing or

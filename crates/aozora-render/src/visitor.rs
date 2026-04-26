@@ -153,8 +153,8 @@ pub fn dispatch_node<'src, V: AozoraVisitor<'src>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aozora_syntax::alloc::{BorrowedAllocator, NodeAllocator};
     use aozora_syntax::borrowed::Arena;
-    use aozora_syntax::{convert::to_borrowed, owned};
 
     /// Demonstration visitor: count one tick per node visited. Proves
     /// that adding a new "renderer" via the trait is a one-impl
@@ -198,12 +198,10 @@ mod tests {
     #[test]
     fn counter_visitor_tracks_each_kind() {
         let arena = Arena::new();
-        let owned_ruby = owned::AozoraNode::Ruby(owned::Ruby {
-            base: "x".into(),
-            reading: "y".into(),
-            delim_explicit: false,
-        });
-        let borrowed_ruby = to_borrowed(&owned_ruby, &arena);
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let base = alloc.content_plain("x");
+        let reading = alloc.content_plain("y");
+        let borrowed_ruby = alloc.ruby(base, reading, false);
         let mut counter = Counter::default();
         dispatch_node(borrowed_ruby, true, &mut counter).unwrap();
         dispatch_node(AozoraNode::PageBreak, true, &mut counter).unwrap();

@@ -129,8 +129,6 @@ dependencies = [
  "anyhow",
  "aozora",
  "aozora-encoding",
- "aozora-lexer",
- "aozora-parser",
  "clap",
  "miette",
  "tempfile",
@@ -248,7 +246,6 @@ name = "aozora-render"
 version = "0.1.0"
 dependencies = [
  "aozora-lex",
- "aozora-parser",
  "aozora-spec",
  "aozora-syntax",
  "aozora-test-utils",

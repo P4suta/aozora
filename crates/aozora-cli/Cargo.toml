@@ -20,8 +20,6 @@ path = "src/main.rs"
 
 [dependencies]
 aozora          = { workspace = true }
-aozora-parser   = { workspace = true }
-aozora-lexer    = { workspace = true }
 aozora-encoding = { workspace = true }
 clap            = { workspace = true }
 miette          = { workspace = true }

@@ -1,48 +1,43 @@
-//! Aozora Bunko notation parser.
+//! Aozora Bunko notation parser (legacy owned-AST API).
 //!
-//! Wraps the pure-functional [`aozora_lexer`] pipeline into a single
-//! [`parse`] entry point and pairs it with a registry-driven
-//! [`serialize`] inverse and a generic HTML rendering surface
-//! ([`html::render_to_string`]).
+//! As of I-2.2, the canonical user-facing API lives in the [`aozora`]
+//! meta crate (`Document` + `AozoraTree`) and uses the borrowed AST
+//! exclusively. This crate is now a thin wrapper around the legacy
+//! owned-AST entries (`aozora_lexer::lex`, `aozora_lex::lex` →
+//! [`PlaceholderRegistry`]) that the parallel and incremental
+//! orchestrators still consume internally.
 //!
-//! # Layered API surface
+//! # Public surface (post I-2.2 deletion)
 //!
-//! - [`parse`] — run the lexer over a UTF-8 source, returning a
-//!   [`ParseResult`] carrying the lexer diagnostics and the
-//!   [`ParseArtifacts`] (`normalized` text + `registry`) needed by
-//!   [`serialize`] / [`html::render_to_string`].
-//! - [`serialize`] — invert the pipeline, emitting Aozora source text
-//!   from a [`ParseResult`] via registry-driven PUA-sentinel
-//!   substitution (`O(normalized.len())`, fixed-point after one
-//!   round-trip; see ADR-0005 corpus sweep I3).
-//! - [`html::render_to_string`] — render parsed text to semantic HTML5,
-//!   using the per-node renderer in [`aozora::html::render`] for
-//!   inline/block Aozora nodes and a thin block-level walker for
-//!   paragraph / hard-break / container nesting.
-//! - [`aozora::html::render`] — per-node renderer with a generic
-//!   `&mut dyn core::fmt::Write` writer; the integration point for
-//!   downstream consumers that embed [`aozora_syntax::AozoraNode`]
-//!   into their own document tree (see sibling repo `afm` for the
-//!   CommonMark+GFM Markdown-dialect example).
+//! - [`parse`] — runs the lexer and packages the owned-shape result
+//!   into [`ParseResult`]. Used by [`incremental`] and the parallel
+//!   re-export in `aozora-parallel`.
+//! - [`incremental`] — TextEdit + apply_edits + parse_incremental
+//!   (still owned-AST under the hood).
+//! - [`parallel`] / [`segment`] — paragraph-segmented parallel parse.
+//!   Re-exported by `aozora-parallel`.
+//!
+//! Removed in I-2.2 Commit E (functionality migrated to
+//! [`aozora-render`] which consumes borrowed AST directly):
+//!
+//! - `html::*` — HTML rendering. Replaced by [`aozora_render::html`].
+//! - `serialize::*` — Source-text inverse. Replaced by
+//!   [`aozora_render::serialize`].
+//! - `test_support::*` — Test helpers. Lived only for this crate's
+//!   integration tests, all of which are themselves removed.
+//! - `aozora::{html, bouten, classes}` — Per-node renderer mirror;
+//!   replaced by [`aozora_render::render_node`] + [`aozora_render::bouten`].
 //!
 //! # Architectural invariant
 //!
 //! ADR-0001 (zero parser hooks): all Aozora recognition lives in the
-//! lexer; the parser only consumes the lexer's normalized text + registry.
-//! No state is hidden behind reactive callbacks; every phase is a pure
-//! function from one shape to the next.
+//! lexer; this crate only consumes the lexer's normalized text + registry.
 
 #![forbid(unsafe_code)]
 
-pub mod aozora;
-pub mod html;
 pub mod incremental;
 pub mod parallel;
 pub mod segment;
-pub mod serialize;
-
-#[doc(hidden)]
-pub mod test_support;
 
 pub use aozora_lex::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic, INLINE_SENTINEL,
@@ -50,18 +45,16 @@ pub use aozora_lex::{
 };
 // `aozora_lexer` is still re-exported as `lexer` for backward
 // compatibility with downstream consumers that reach into the legacy
-// phase modules. Move 2's fused engine will absorb those modules and
-// this re-export will deprecate.
+// phase modules.
 pub use aozora_lexer as lexer;
 pub use incremental::{
     EditError, IncrementalDecision, IncrementalOutcome, TextEdit, apply_edits, parse_incremental,
 };
 pub use parallel::{SegmentParse, merge_segments, parse_segment, parse_sequential};
 pub use segment::identify_segments;
-pub use serialize::{serialize, serialize_from_artifacts};
 
 /// Output of [`parse`]: the lexer diagnostics and the
-/// [`ParseArtifacts`] needed to invert the pipeline.
+/// [`ParseArtifacts`] needed by downstream consumers.
 ///
 /// `diagnostics` is always present; it is `Vec::new()` when the
 /// lexer found nothing to complain about. Consumers that want a
@@ -73,27 +66,21 @@ pub struct ParseResult {
     /// Non-fatal observations from the lexer (unclosed opens, stray
     /// triggers, PUA collisions, …). Empty on the happy path.
     pub diagnostics: Vec<Diagnostic>,
-    /// Lexer-side artifacts needed by [`serialize`] and
-    /// [`html::render_to_string`].
+    /// Lexer-side artifacts: normalized text + placeholder registry.
     pub artifacts: ParseArtifacts,
 }
 
-/// Inputs to [`serialize`] / [`html::render_to_string`] that the
-/// lexer computed during [`parse`].
-///
-/// Holds the PUA-sentinel-normalized text and the placeholder
-/// registry that maps every sentinel position back to the originating
-/// [`aozora_syntax::AozoraNode`] / [`aozora_syntax::ContainerKind`].
+/// Inputs needed by downstream consumers — the PUA-sentinel-normalized
+/// text and the placeholder registry that maps every sentinel position
+/// back to the originating [`aozora_syntax::owned::AozoraNode`] /
+/// [`aozora_syntax::ContainerKind`].
 #[derive(Debug, Clone)]
 pub struct ParseArtifacts {
     /// Normalized source text: the original Aozora input with every
     /// recognised span replaced by a PUA sentinel.
     pub normalized: String,
     /// Sentinel-position → originating `AozoraNode` / `ContainerKind`
-    /// lookup. Consumed by [`serialize`] /
-    /// [`html::render_to_string`] via the registry's
-    /// `inline_at` / `block_leaf_at` / `block_open_at` /
-    /// `block_close_at` binary-search accessors.
+    /// lookup.
     pub registry: PlaceholderRegistry,
 }
 
@@ -111,9 +98,7 @@ pub struct ParseArtifacts {
 /// in a rayon thread pool, then merges the per-segment outputs. The
 /// dispatch is transparent: result shape, byte offsets, normalized
 /// text, registry positions, and diagnostic spans are byte-equivalent
-/// to the sequential path. Inputs below the threshold or producing a
-/// single segment go through the sequential path with zero rayon
-/// overhead.
+/// to the sequential path.
 #[must_use]
 pub fn parse(input: &str) -> ParseResult {
     #[cfg(feature = "parallel")]
@@ -150,17 +135,6 @@ mod tests {
             inline_count, 1,
             "expected 1 inline sentinel, got {} (normalized: {:?})",
             inline_count, result.artifacts.normalized
-        );
-    }
-
-    #[test]
-    fn round_trip_is_fixed_point_for_canonical_ruby() {
-        let src = "｜青梅《おうめ》";
-        let first = serialize(&parse(src));
-        let second = serialize(&parse(&first));
-        assert_eq!(
-            first, second,
-            "serialize ∘ parse must be a fixed point after one round-trip"
         );
     }
 }

@@ -223,28 +223,25 @@ const fn html_entity(c: char) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aozora_syntax::borrowed::Arena;
-    use aozora_syntax::convert::to_borrowed;
-    use aozora_syntax::owned::{Annotation, AozoraNode as OwnedNode, Bouten, Ruby as ORuby};
+    use aozora_syntax::alloc::{BorrowedAllocator, NodeAllocator};
+    use aozora_syntax::borrowed::{Arena, AozoraNode};
     use aozora_syntax::{AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, Indent, SectionKind};
 
-    fn render_to_string(arena: &Arena, owner: &OwnedNode) -> String {
-        let borrowed = to_borrowed(owner, arena);
+    fn render_node_to_string(node: AozoraNode<'_>) -> String {
         let mut out = String::new();
-        render(borrowed, true, &mut out).expect("fmt::Write into String never fails");
+        render(node, true, &mut out).expect("fmt::Write into String never fails");
         out
     }
 
     #[test]
     fn ruby_emits_rp_rt_canonical_form() {
         let arena = Arena::new();
-        let r = OwnedNode::Ruby(ORuby {
-            base: "青梅".into(),
-            reading: "おうめ".into(),
-            delim_explicit: true,
-        });
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let base = alloc.content_plain("青梅");
+        let reading = alloc.content_plain("おうめ");
+        let n = alloc.ruby(base, reading, true);
         assert_eq!(
-            render_to_string(&arena, &r),
+            render_node_to_string(n),
             "<ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby>"
         );
     }
@@ -252,12 +249,11 @@ mod tests {
     #[test]
     fn ruby_escapes_structural_characters() {
         let arena = Arena::new();
-        let r = OwnedNode::Ruby(ORuby {
-            base: "<x>".into(),
-            reading: "&y".into(),
-            delim_explicit: true,
-        });
-        let out = render_to_string(&arena, &r);
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let base = alloc.content_plain("<x>");
+        let reading = alloc.content_plain("&y");
+        let n = alloc.ruby(base, reading, true);
+        let out = render_node_to_string(n);
         assert!(out.contains("&lt;x&gt;"));
         assert!(out.contains("&amp;y"));
     }
@@ -265,8 +261,10 @@ mod tests {
     #[test]
     fn page_break_is_self_contained_div() {
         let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.page_break();
         assert_eq!(
-            render_to_string(&arena, &OwnedNode::PageBreak),
+            render_node_to_string(n),
             r#"<div class="afm-page-break"></div>"#
         );
     }
@@ -274,12 +272,11 @@ mod tests {
     #[test]
     fn annotation_unknown_wraps_in_hidden_span() {
         let arena = Arena::new();
-        let n = OwnedNode::Annotation(Annotation {
-            raw: "［＃改ページ］".into(),
-            kind: AnnotationKind::Unknown,
-        });
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let payload = alloc.make_annotation("［＃改ページ］", AnnotationKind::Unknown);
+        let n = alloc.annotation(payload);
         assert_eq!(
-            render_to_string(&arena, &n),
+            render_node_to_string(n),
             r#"<span class="afm-annotation" hidden>［＃改ページ］</span>"#
         );
     }
@@ -287,13 +284,11 @@ mod tests {
     #[test]
     fn bouten_kind_and_position_slug() {
         let arena = Arena::new();
-        let n = OwnedNode::Bouten(Bouten {
-            kind: BoutenKind::Goma,
-            target: "可哀想".into(),
-            position: BoutenPosition::Right,
-        });
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let target = alloc.content_plain("可哀想");
+        let n = alloc.bouten(BoutenKind::Goma, target, BoutenPosition::Right);
         assert_eq!(
-            render_to_string(&arena, &n),
+            render_node_to_string(n),
             r#"<em class="afm-bouten afm-bouten-goma afm-bouten-right">可哀想</em>"#
         );
     }
@@ -301,9 +296,10 @@ mod tests {
     #[test]
     fn indent_emits_marker_with_amount_attr() {
         let arena = Arena::new();
-        let n = OwnedNode::Indent(Indent { amount: 2 });
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.indent(Indent { amount: 2 });
         assert_eq!(
-            render_to_string(&arena, &n),
+            render_node_to_string(n),
             r#"<span class="afm-indent afm-indent-2" data-amount="2"></span>"#
         );
     }
@@ -311,9 +307,10 @@ mod tests {
     #[test]
     fn align_end_zero_omits_numeric_class() {
         let arena = Arena::new();
-        let n = OwnedNode::AlignEnd(AlignEnd { offset: 0 });
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.align_end(AlignEnd { offset: 0 });
         assert_eq!(
-            render_to_string(&arena, &n),
+            render_node_to_string(n),
             r#"<span class="afm-align-end" data-offset="0"></span>"#
         );
     }
@@ -321,9 +318,10 @@ mod tests {
     #[test]
     fn align_end_nonzero_offset_appends_numeric_class() {
         let arena = Arena::new();
-        let n = OwnedNode::AlignEnd(AlignEnd { offset: 2 });
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.align_end(AlignEnd { offset: 2 });
         assert_eq!(
-            render_to_string(&arena, &n),
+            render_node_to_string(n),
             r#"<span class="afm-align-end afm-align-end-2" data-offset="2"></span>"#
         );
     }
@@ -331,14 +329,15 @@ mod tests {
     #[test]
     fn section_break_kinds_use_stable_slugs() {
         let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
         for (kind, slug) in [
             (SectionKind::Choho, "choho"),
             (SectionKind::Dan, "dan"),
             (SectionKind::Spread, "spread"),
         ] {
-            let n = OwnedNode::SectionBreak(kind);
+            let n = alloc.section_break(kind);
             assert_eq!(
-                render_to_string(&arena, &n),
+                render_node_to_string(n),
                 format!(r#"<div class="afm-section-break afm-section-break-{slug}"></div>"#),
             );
         }
@@ -347,14 +346,14 @@ mod tests {
     #[test]
     fn container_open_close_round_trip() {
         let arena = Arena::new();
-        let owned = OwnedNode::Container(Container {
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.container(Container {
             kind: ContainerKind::Indent { amount: 2 },
         });
-        let borrowed = to_borrowed(&owned, &arena);
         let mut open = String::new();
-        render(borrowed, true, &mut open).unwrap();
+        render(n, true, &mut open).unwrap();
         let mut close = String::new();
-        render(borrowed, false, &mut close).unwrap();
+        render(n, false, &mut close).unwrap();
         assert!(open.contains("afm-container-indent afm-container-indent-2"));
         assert!(open.contains(r#"data-amount="2""#));
         assert_eq!(close, "</div>");
@@ -363,10 +362,10 @@ mod tests {
     #[test]
     fn inline_nodes_emit_nothing_on_exit() {
         let arena = Arena::new();
-        let owned = OwnedNode::PageBreak;
-        let borrowed = to_borrowed(&owned, &arena);
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.page_break();
         let mut buf = String::new();
-        render(borrowed, false, &mut buf).unwrap();
+        render(n, false, &mut buf).unwrap();
         assert!(buf.is_empty(), "PageBreak must emit nothing on exit");
     }
 }

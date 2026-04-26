@@ -25,10 +25,6 @@ aozora-syntax = { workspace = true }
 aozora-lex    = { workspace = true }
 
 [dev-dependencies]
-# `aozora-parser` is a dev-only dep so the byte-identical proptest
-# in tests/byte_identical_html.rs can compare borrowed-AST output
-# against the legacy owned renderer.
-aozora-parser     = { workspace = true, features = ["html"] }
 pretty_assertions = { workspace = true }
 proptest          = { workspace = true }
 aozora-test-utils = { workspace = true }

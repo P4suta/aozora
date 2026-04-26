@@ -43,7 +43,7 @@ use std::time::{Duration, Instant};
 
 use aozora_corpus::{CorpusItem, from_env};
 use aozora_encoding::decode_sjis;
-use aozora_parser::{TextEdit, parse, parse_incremental, serialize};
+use aozora_parser::{TextEdit, parse, parse_incremental};
 use rayon::prelude::*;
 
 const NS_PER_MS: f64 = 1_000_000.0;
@@ -56,8 +56,6 @@ struct DocSample {
     chars_in: usize,
     /// Wall-clock parse time.
     parse_ns: u64,
-    /// Wall-clock serialize time (parse → serialize round-trip cost).
-    serialize_ns: u64,
     /// Number of diagnostics produced.
     diagnostics: usize,
     /// Number of registry entries (≈ recognised aozora annotations).
@@ -180,10 +178,6 @@ fn measure_one(text: &str, with_incremental: bool) -> DocSample {
     let parsed = parse(text);
     let parse_ns = t0.elapsed().as_nanos() as u64;
 
-    let t1 = Instant::now();
-    drop(serialize(&parsed));
-    let serialize_ns = t1.elapsed().as_nanos() as u64;
-
     let diagnostics = parsed.diagnostics.len();
     let registry = parsed.artifacts.registry.len();
 
@@ -211,7 +205,6 @@ fn measure_one(text: &str, with_incremental: bool) -> DocSample {
         bytes_in,
         chars_in,
         parse_ns,
-        serialize_ns,
         diagnostics,
         registry,
         incremental_ns,
@@ -234,7 +227,6 @@ fn print_report(
     let total_bytes: u64 = samples.iter().map(|s| s.bytes_in as u64).sum();
     let total_chars: u64 = samples.iter().map(|s| s.chars_in as u64).sum();
     let total_parse_ns: u64 = samples.iter().map(|s| s.parse_ns).sum();
-    let total_serialize_ns: u64 = samples.iter().map(|s| s.serialize_ns).sum();
     let total_diag: u64 = samples.iter().map(|s| s.diagnostics as u64).sum();
     let total_registry: u64 = samples.iter().map(|s| s.registry as u64).sum();
     let docs_with_diag = samples.iter().filter(|s| s.diagnostics > 0).count();
@@ -242,8 +234,6 @@ fn print_report(
 
     let mut parse_ns: Vec<u64> = samples.iter().map(|s| s.parse_ns).collect();
     parse_ns.sort_unstable();
-    let mut serialize_ns: Vec<u64> = samples.iter().map(|s| s.serialize_ns).collect();
-    serialize_ns.sort_unstable();
     let mut bytes: Vec<u64> = samples.iter().map(|s| s.bytes_in as u64).collect();
     bytes.sort_unstable();
     let mut registry: Vec<u64> = samples.iter().map(|s| s.registry as u64).collect();
@@ -299,18 +289,6 @@ fn print_report(
 
     println!("Per-byte parse cost (controls for doc length)");
     print_f64_quantiles("  ns/byte", &ns_per_byte);
-    println!();
-
-    println!("Serialize latency (per doc)");
-    print_ns_quantiles("  serialize", &serialize_ns);
-    println!(
-        "  total serialize  : {:.2} s",
-        total_serialize_ns as f64 / NS_PER_S
-    );
-    println!(
-        "  serialize throughput : {:.2} MB/s",
-        total_bytes as f64 * NS_PER_S / total_serialize_ns as f64 / (1024.0 * 1024.0),
-    );
     println!();
 
     println!("Document size distribution (bytes)");

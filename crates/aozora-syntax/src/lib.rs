@@ -9,10 +9,12 @@
 //! `aozora::Document::parse()` and walk a `borrowed::AozoraNode<'_>`.
 //!
 //! The legacy owned-AST types ([`owned::AozoraNode`] etc., heap-allocated
-//! via `Box<str>` / `Box<AozoraNode>`) live in the [`owned`] submodule
-//! and remain only as the lex pipeline's internal output shape:
-//! `aozora-lexer`'s Phase 3 classifier produces them; the
-//! [`convert::to_borrowed_with`] pass moves them into the arena.
+//! via `Box<str>` / `Box<AozoraNode>`) live in the [`owned`] submodule.
+//! As of I-2.2 they are no longer constructed by the lex pipeline's
+//! borrowed entry ([`alloc::BorrowedAllocator`] feeds Phase 3 directly);
+//! they remain only for the legacy `aozora_lexer::lex` /
+//! `aozora_lexer::classify` owned-API compat layer that
+//! `aozora-parser` (parallel/incremental/parse) still uses internally.
 //! No public surface re-exports them as the canonical entry. New code
 //! SHOULD prefer `borrowed::AozoraNode<'_>`.
 //!
@@ -34,7 +36,6 @@ use thiserror::Error;
 pub mod accent;
 pub mod alloc;
 pub mod borrowed;
-pub mod convert;
 mod extension;
 pub mod owned;
 

@@ -53,10 +53,7 @@ name    = "parallel_parse"
 harness = false
 
 [features]
-default = ["html", "parallel"]
-# HTML renderer. Enabled by default but kept behind a feature so downstream
-# consumers can parse + serialize without pulling in the renderer.
-html = []
+default = ["parallel"]
 # Transparent intra-document parallel parse. With this feature on
 # (default), `parse()` automatically dispatches to the parallel path
 # for inputs above PARALLEL_THRESHOLD; smaller inputs and inputs with
