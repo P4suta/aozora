@@ -1,0 +1,51 @@
+# JIS X 0213:2004 multi-codepoint cells.
+#
+# 25 cells in plane 1 第3水準 whose canonical mapping is a Unicode
+# *combining sequence* (a base character followed by a combining
+# diacritic) rather than a single scalar. They cannot be represented
+# as a single `char` and therefore live in a separate string-valued
+# phf::Map. The lookup API stitches both maps together so callers
+# get a uniform `&str` result.
+#
+# Source: JIS X 0213:2004 standard, Annex F (informative SJIS encoding).
+# Verified against the Python `euc_jis_2004` codec output (the codec
+# emits these as multi-char strings; glibc's charmap omits them
+# because its `<UXXXX>  /xYY/xZZ` format is 1-to-1).
+#
+# Format: plane<TAB>row<TAB>cell<TAB>comma-separated codepoint hex
+# (e.g. `1\t4\t87\t304B,309A` = か + 半濁点 = か゚)
+
+# 半濁点付きひらがな (か゚ き゚ く゚ け゚ こ゚ — Ainu / Tōhoku notation)
+1	4	87	304B,309A
+1	4	88	304D,309A
+1	4	89	304F,309A
+1	4	90	3051,309A
+1	4	91	3053,309A
+
+# 半濁点付きカタカナ (カ゚ キ゚ ク゚ ケ゚ コ゚ セ゚ ツ゚ ト゚ — Ainu)
+1	5	87	30AB,309A
+1	5	88	30AD,309A
+1	5	89	30AF,309A
+1	5	90	30B1,309A
+1	5	91	30B3,309A
+1	5	92	30BB,309A
+1	5	93	30C4,309A
+1	5	94	30C8,309A
+
+# Katakana phonetic extensions: ㇷ゚ (small katakana pu)
+1	6	88	31F7,309A
+
+# 拡張ラテン文字 + 結合濁点 (アクセント記号)
+1	11	36	00E6,0300
+1	11	40	0254,0300
+1	11	41	0254,0301
+1	11	42	028C,0300
+1	11	43	028C,0301
+1	11	44	0259,0300
+1	11	45	0259,0301
+1	11	46	025A,0300
+1	11	47	025A,0301
+
+# 声調記号の組合せ (IPA tone)
+1	11	69	02E9,02E5
+1	11	70	02E5,02E9

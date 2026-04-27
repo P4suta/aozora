@@ -218,6 +218,14 @@ zstd = "0.13"
 # our code.
 blake3 = "1.5"
 
+# Pure-safe-Rust syscall wrapper — used by `xtask corpus uncache`
+# (L-6a of ADR-0020) for `posix_fadvise(POSIX_FADV_DONTNEED)` to
+# evict files from the kernel page cache without sudo. rustix
+# itself uses unsafe internally to invoke syscalls (same shape as
+# encoding_rs / num_cpus / rayon); the API surface we consume is
+# safe.
+rustix = { version = "1.1", features = ["fs"] }
+
 # Test helpers
 tempfile = "3.27"
 

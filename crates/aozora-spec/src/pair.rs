@@ -4,6 +4,8 @@
 //! do not have a corresponding [`PairKind`]; they emit a "solo" event in
 //! the lex pipeline.
 
+use crate::Span;
+
 /// Pair kind. The variants enumerate every balanced delimiter Aozora
 /// notation recognises.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -29,6 +31,31 @@ pub enum PairKind {
     /// `「 … 」` (U+300C / U+300D). Quoted literal inside annotation
     /// bodies (e.g. `［＃「青空」に傍点］`).
     Quote,
+}
+
+/// Resolved open/close pair, as observed by Phase 2.
+///
+/// Both `open` and `close` are byte-spans in the *sanitized* source
+/// (the same coordinate system every other phase-2 / phase-3 `Span`
+/// lives in). Used downstream by editor surfaces such as LSP
+/// `textDocument/linkedEditingRange` and `documentHighlight`.
+///
+/// `Unclosed` opens (no matching close was found before EOF) and stray
+/// `Unmatched` closes are deliberately *not* represented here — they
+/// have no partner span to link to and would only confuse the editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PairLink {
+    pub kind: PairKind,
+    pub open: Span,
+    pub close: Span,
+}
+
+impl PairLink {
+    #[must_use]
+    pub const fn new(kind: PairKind, open: Span, close: Span) -> Self {
+        Self { kind, open, close }
+    }
 }
 
 #[cfg(test)]
@@ -57,5 +84,20 @@ mod tests {
                 assert_ne!(a, b);
             }
         }
+    }
+
+    #[test]
+    fn pair_link_records_kind_and_endpoints() {
+        let link = PairLink::new(PairKind::Bracket, Span::new(0, 3), Span::new(10, 13));
+        assert_eq!(link.kind, PairKind::Bracket);
+        assert_eq!(link.open, Span::new(0, 3));
+        assert_eq!(link.close, Span::new(10, 13));
+    }
+
+    #[test]
+    fn pair_link_is_copy() {
+        let l = PairLink::new(PairKind::Ruby, Span::new(0, 3), Span::new(6, 9));
+        let copy = l;
+        assert_eq!(l.open, copy.open);
     }
 }

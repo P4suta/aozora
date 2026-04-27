@@ -79,7 +79,7 @@
 use core::marker::PhantomData;
 
 use aozora_lexer::{PairEvent, Token, classify, pair_in, sanitize, tokenize_in};
-use aozora_spec::Diagnostic;
+use aozora_spec::{Diagnostic, PairLink};
 use aozora_syntax::ContainerKind;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Registry};
@@ -87,7 +87,7 @@ use aozora_veb::EytzingerMap;
 use bumpalo::collections::Vec as BumpVec;
 
 use crate::BorrowedLexOutput;
-use crate::borrowed::ArenaNormalizer;
+use crate::borrowed::{ArenaNormalizer, SourceNode};
 
 // =====================================================================
 // State markers
@@ -130,6 +130,11 @@ pub struct Pipeline<'src, 'a, S> {
     /// `Some` after Phase 2 has materialised the event list inside
     /// `arena` (R4-A baseline; M-2 `SoA` reverted per ADR-0019).
     events: Option<BumpVec<'a, PairEvent>>,
+    /// `Some` after Phase 2; resolved (open, close) pair side-table
+    /// (ADR-0021 / Phase 1.1 of the editor-integration sprint).
+    /// Drained into the final [`BorrowedLexOutput::pairs`] slice in
+    /// the [`Self::build`] terminal step.
+    links: Option<BumpVec<'a, PairLink>>,
     diagnostics: Vec<Diagnostic>,
     _state: PhantomData<S>,
 }
@@ -149,6 +154,7 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
             sanitized_text: None,
             tokens: None,
             events: None,
+            links: None,
             diagnostics: Vec::new(),
             _state: PhantomData,
         }
@@ -185,6 +191,7 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
             sanitized_text: Some(arena_text),
             tokens: None,
             events: None,
+            links: None,
             diagnostics: self.diagnostics,
             _state: PhantomData,
         }
@@ -227,6 +234,7 @@ impl<'src, 'a> Pipeline<'src, 'a, Sanitized> {
             sanitized_text: self.sanitized_text,
             tokens: Some(tokens),
             events: None,
+            links: None,
             diagnostics: self.diagnostics,
             _state: PhantomData,
         }
@@ -275,6 +283,7 @@ impl<'src, 'a> Pipeline<'src, 'a, Tokenized> {
             sanitized_text: self.sanitized_text,
             tokens: None,
             events: Some(out.events),
+            links: Some(out.links),
             diagnostics: self.diagnostics,
             _state: PhantomData,
         }
@@ -298,6 +307,20 @@ impl<'a> Pipeline<'_, 'a, Paired> {
         self.events
             .as_deref()
             .expect("events is always Some after Paired transition")
+    }
+
+    /// Borrow the resolved (open, close) pair side-table. Useful for
+    /// inspection before `.build()`.
+    ///
+    /// # Panics
+    ///
+    /// Cannot panic in normal use: `links` is always `Some` after the
+    /// `Paired` state has been reached.
+    #[must_use]
+    pub fn links(&self) -> &[PairLink] {
+        self.links
+            .as_deref()
+            .expect("links is always Some after Paired transition")
     }
 
     /// Drive Phase 3 + the arena normalizer fold and return the final
@@ -329,6 +352,10 @@ impl<'a> Pipeline<'_, 'a, Paired> {
             .events
             .take()
             .expect("events is always Some after Paired transition");
+        let links = self
+            .links
+            .take()
+            .expect("links is always Some after Paired transition");
 
         // Allocator capacity hint: source.len()/32 is a rough upper bound
         // on the number of distinct strings the borrowed pipeline will
@@ -360,6 +387,14 @@ impl<'a> Pipeline<'_, 'a, Paired> {
             block_open: EytzingerMap::from_sorted_slice(&builder.block_open),
             block_close: EytzingerMap::from_sorted_slice(&builder.block_close),
         };
+        // Freeze the arena `BumpVec<PairLink>` into a `&'a [PairLink]`.
+        // `BumpVec::into_bump_slice` consumes self and returns a slice
+        // alive for the bump allocator's lifetime, exactly the lifetime
+        // we need on `BorrowedLexOutput::pairs`.
+        let pairs: &'a [PairLink] = links.into_bump_slice();
+        // Move the source-keyed side table out of the heap-backed
+        // `Vec<SourceNode>` and into the arena, in one allocation.
+        let source_nodes: &'a [SourceNode<'a>] = self.arena.alloc_slice_copy(&builder.source_nodes);
         let intern_stats = alloc.into_interner().stats;
 
         BorrowedLexOutput {
@@ -367,6 +402,8 @@ impl<'a> Pipeline<'_, 'a, Paired> {
             registry,
             diagnostics: self.diagnostics,
             sanitized_len,
+            pairs,
+            source_nodes,
             intern_stats,
         }
     }

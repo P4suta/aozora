@@ -32,13 +32,15 @@
 pub mod diagnostic;
 pub mod pair;
 pub mod sentinels;
+pub mod slugs;
 pub mod span;
 pub mod trigger;
 
 pub use diagnostic::Diagnostic;
-pub use pair::PairKind;
+pub use pair::{PairKind, PairLink};
 pub use sentinels::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
 };
+pub use slugs::{SLUGS, SlugEntry, SlugFamily, canonicalise_slug};
 pub use span::Span;
 pub use trigger::{TriggerKind, classify_trigger_bytes};

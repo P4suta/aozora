@@ -16,10 +16,22 @@ workspace = true
 
 [dependencies]
 encoding_rs = { workspace = true }
-phf         = { workspace = true }
+# Runtime PHF — `default-features = false, features = []` strips the
+# proc-macro backend (`phf_macros`) since the gaiji table is now
+# emitted via `phf_codegen` in `build.rs`. The runtime crate carries
+# only the `phf::Map` type + the perfect-hash lookup, no codegen.
+phf         = { version = "0.13", default-features = false }
 thiserror   = { workspace = true }
 miette      = { workspace = true }
 tracing     = { workspace = true }
+
+[build-dependencies]
+# Codegen-time PHF builder — runs in `build.rs` to emit the gaiji
+# tables (~13 k entries) as a Rust source fragment included via
+# `include!()`. Moves the perfect-hash construction out of the
+# rustc proc-macro phase, which on the macro path was ~30–60 s of
+# `cargo check` time on cold caches.
+phf_codegen = "0.13"
 
 [dev-dependencies]
 insta = { workspace = true }

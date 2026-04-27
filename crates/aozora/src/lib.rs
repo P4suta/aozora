@@ -30,10 +30,26 @@
 
 pub use aozora_lex::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, BorrowedLexOutput,
-    INLINE_SENTINEL, lex_into_arena,
+    INLINE_SENTINEL, NodeRef, SourceNode, lex_into_arena,
 };
 pub use aozora_render::{html, serialize};
-pub use aozora_spec::{Diagnostic, PairKind, Span, TriggerKind};
+pub use aozora_spec::{
+    Diagnostic, PairKind, PairLink, SLUGS, SlugEntry, SlugFamily, Span, TriggerKind,
+    canonicalise_slug,
+};
+/// Borrowed-AST node types editor surfaces match against (LSP inlay
+/// hints, hover, completion, code actions, semantic tokens).
+/// Re-exported so external consumers don't have to depend on
+/// `aozora-syntax` directly — `aozora` is the single editor-facing
+/// front door.
+pub use aozora_syntax::{
+    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, ContainerKind, Indent,
+    SectionKind,
+    borrowed::{
+        Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,
+        Kaeriten, Ruby, Sashie, Segment, TateChuYoko, Warichu,
+    },
+};
 
 mod document;
 

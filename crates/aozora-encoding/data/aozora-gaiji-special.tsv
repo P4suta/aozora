@@ -1,0 +1,21 @@
+# Hand-curated description → Unicode entries that are NOT in the
+# upstream 外字注記辞書 (gaiji-chuki dictionary). These are special
+# placeholder / typographic descriptions where the literal text in
+# `※［＃「…」］` *is* the resolved character.
+#
+# The upstream dictionary covers the JIS X 0213 gaiji catalogue;
+# entries here cover the meta cases (no glyph available, iteration
+# marks, etc.) that the dictionary intentionally omits.
+#
+# Format: description<TAB>codepoint_hex
+# (Same format as aozora-gaiji-chuki.tsv so the generator merges
+# both into a single phf::Map.)
+
+# 「〓」(U+3013, GETA MARK) — the standard Japanese typographic
+# fallback for "this character cannot be typeset right now". When
+# the description literally is the geta mark itself, resolve to it.
+〓	3013
+
+# 「〻」(U+303B, VERTICAL IDEOGRAPHIC ITERATION MARK) — sometimes
+# appears as a literal description in source.
+〻	303B

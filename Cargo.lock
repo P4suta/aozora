@@ -172,6 +172,7 @@ dependencies = [
  "insta",
  "miette",
  "phf",
+ "phf_codegen",
  "thiserror",
  "tracing",
 ]
@@ -274,6 +275,7 @@ dependencies = [
 name = "aozora-syntax"
 version = "0.1.0"
 dependencies = [
+ "aozora-encoding",
  "aozora-spec",
  "aozora-veb",
  "bumpalo",
@@ -337,6 +339,8 @@ dependencies = [
  "clap",
  "rayon",
  "regex",
+ "rustix",
+ "walkdir",
  "zstd",
 ]
 
@@ -1017,6 +1021,16 @@ dependencies = [
  "phf_macros",
  "phf_shared",
  "serde",
+]
+
+[[package]]
+name = "phf_codegen"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49aa7f9d80421bca176ca8dbfebe668cc7a2684708594ec9f3c0db0805d5d6e1"
+dependencies = [
+ "phf_generator",
+ "phf_shared",
 ]
 
 [[package]]

@@ -13,6 +13,8 @@
 
 use core::slice;
 
+use aozora_encoding::gaiji::Resolved;
+
 use crate::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container, Indent,
     Keigakomi, SectionKind,
@@ -189,8 +191,12 @@ pub struct TateChuYoko<'src> {
 pub struct Gaiji<'src> {
     /// Free-form description from the source (e.g. "木＋吶のつくり").
     pub description: &'src str,
-    /// Resolved Unicode scalar, if the gaiji maps to one.
-    pub ucs: Option<char>,
+    /// Resolved Unicode value — either a single scalar or a static
+    /// combining sequence (the 25 plane-1 cells like か゚, IPA tone
+    /// marks). `None` when the resolver could not match any path.
+    /// `Resolved` is `Copy`, so the surrounding `Content`-tree's
+    /// `Copy` chain is preserved.
+    pub ucs: Option<Resolved>,
     /// Raw mencode reference (e.g. "第3水準1-85-54", "U+XXXX page-line").
     pub mencode: Option<&'src str>,
 }
@@ -435,13 +441,30 @@ mod tests {
 
     #[test]
     fn gaiji_holds_optional_ucs_and_mencode() {
+        use aozora_encoding::gaiji::Resolved;
         let g = Gaiji {
             description: "木＋吶のつくり",
-            ucs: Some('𠀋'),
+            ucs: Some(Resolved::Char('𠀋')),
             mencode: Some("第3水準1-85-54"),
         };
         assert_eq!(g.description, "木＋吶のつくり");
-        assert_eq!(g.ucs, Some('𠀋'));
+        assert_eq!(g.ucs, Some(Resolved::Char('𠀋')));
         assert_eq!(g.mencode, Some("第3水準1-85-54"));
+    }
+
+    #[test]
+    fn gaiji_can_carry_combining_sequence_resolution() {
+        // The 25 plane-1 combining-sequence cells (か゚, IPA tone marks,
+        // accented Latin) need to round-trip through the Gaiji
+        // structure intact. `Resolved::Multi` carries them; without
+        // this variant the parser would lose precision on the
+        // ~0.6% gaiji corpus that sits on these cells.
+        use aozora_encoding::gaiji::Resolved;
+        let g = Gaiji {
+            description: "か゚",
+            ucs: Some(Resolved::Multi("\u{304B}\u{309A}")),
+            mencode: Some("第3水準1-4-87"),
+        };
+        assert_eq!(g.ucs, Some(Resolved::Multi("か゚")));
     }
 }

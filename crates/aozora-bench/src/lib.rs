@@ -22,12 +22,15 @@
 use std::hint::black_box;
 use std::path::Path;
 
+use core::str;
 use std::cell::RefCell;
 use std::mem;
 use std::path::PathBuf;
 
 use aozora::Document;
-use aozora_corpus::{Archive, CorpusItem, CorpusSource, FilesystemCorpus, with_load_pool};
+use aozora_corpus::{
+    Archive, ArchivePayload, CorpusItem, CorpusSource, FilesystemCorpus, with_load_pool,
+};
 use aozora_encoding::{decode_sjis, decode_sjis_into};
 use rayon::prelude::*;
 
@@ -329,7 +332,6 @@ pub fn archive_size_bands(archive: &Archive) -> SizeBandedCorpus {
 
     let utf8 = archive.is_utf8();
     let entry_count = archive.entries().len();
-    let zstd = archive.is_zstd();
 
     // Per-worker reusable decode buffer (only used for the SJIS
     // archive variants; UTF-8 archives skip the decode path).
@@ -341,41 +343,40 @@ pub fn archive_size_bands(archive: &Archive) -> SizeBandedCorpus {
         (0..entry_count)
             .into_par_iter()
             .fold(SizeBandedCorpus::default, |mut acc, i| {
+                // L-6c (ADR-0020): use the random-access `payload_at`
+                // so raw archives skip the per-entry `to_vec()`
+                // allocation entirely (the payload `&[u8]` slice is
+                // read directly from the archive's in-memory buffer).
+                // zstd archives still allocate per decompression — the
+                // `ArchivePayload::Decompressed` variant carries the
+                // owned Vec. `payload_at(i)` is O(1) — using
+                // `iter_borrowed().nth(i)` here would have been O(n²)
+                // across the parallel loop.
                 let entry_meta = &archive.entries()[i];
-                // Materialise the payload bytes — for raw archives
-                // this borrows from the in-memory archive buffer; for
-                // zstd archives it allocates a fresh decompressed Vec.
-                let payload_bytes: Vec<u8> = if zstd {
-                    use std::io::Read;
-                    use zstd::stream::read::Decoder;
-                    let raw = archive.raw_payload(i);
-                    let mut out = Vec::with_capacity(entry_meta.decoded_len as usize);
-                    let Ok(mut decoder) = Decoder::new(raw) else {
-                        acc.decode_errors += 1;
-                        return acc;
-                    };
-                    if decoder.read_to_end(&mut out).is_err() {
-                        acc.decode_errors += 1;
-                        return acc;
-                    }
-                    out
-                } else {
-                    archive.raw_payload(i).to_vec()
+                let Ok(payload): Result<ArchivePayload<'_>, _> = archive.payload_at(i) else {
+                    acc.decode_errors += 1;
+                    return acc;
                 };
+                let bytes = payload.as_bytes();
 
                 let text = if utf8 {
-                    // Pre-decoded UTF-8: skip decode, just validate.
-                    let Ok(s) = String::from_utf8(payload_bytes) else {
+                    // Pre-decoded UTF-8: skip decode entirely; copy
+                    // the slice into a fresh String (one allocation;
+                    // unavoidable because the band Vec stores owned
+                    // Strings).
+                    let Ok(s) = str::from_utf8(bytes) else {
                         acc.decode_errors += 1;
                         return acc;
                     };
-                    s
+                    s.to_owned()
                 } else {
-                    // Raw SJIS: decode via the buffer-reuse path.
+                    // Raw SJIS: decode via the buffer-reuse path,
+                    // sourcing from the borrowed slice (no
+                    // intermediate Vec).
                     let outcome = DECODE_BUF.with(|cell| {
                         let mut buf = cell.borrow_mut();
                         buf.clear();
-                        match decode_sjis_into(&payload_bytes, &mut buf) {
+                        match decode_sjis_into(bytes, &mut buf) {
                             Ok(()) => Some(mem::take(&mut *buf)),
                             Err(_) => None,
                         }

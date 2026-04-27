@@ -27,4 +27,6 @@ aozora-trace    = { workspace = true }
 blake3          = { workspace = true }
 rayon           = { workspace = true }
 regex           = { workspace = true }
+rustix          = { workspace = true }
+walkdir         = { workspace = true }
 zstd            = { workspace = true }

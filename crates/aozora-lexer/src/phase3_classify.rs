@@ -4009,6 +4009,7 @@ mod tests {
 
     #[test]
     fn gaiji_quoted_description_with_mencode() {
+        use aozora_encoding::gaiji::Resolved;
         run!(out, "※［＃「木＋吶のつくり」、第3水準1-85-54］");
         let gaiji = out
             .spans
@@ -4020,8 +4021,11 @@ mod tests {
             .expect("expected a Gaiji span");
         assert_eq!(gaiji.description, "木＋吶のつくり");
         assert_eq!(gaiji.mencode, Some("第3水準1-85-54"));
-        // The mencode table resolves 第3水準1-85-54 → 榁 (U+6903).
-        assert_eq!(gaiji.ucs, Some('\u{6903}'));
+        // JIS X 0213:2004 plane 1 row 85 cell 54 = 枘 (U+6798).
+        // (Pre-regen seed had U+6903 (椃) — that was a different
+        // character, U+6903 = 木+室. The corrected mapping is sourced
+        // from glibc's EUC-JISX0213 charmap = the spec.)
+        assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{6798}')));
     }
 
     #[test]

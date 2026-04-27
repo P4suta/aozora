@@ -35,7 +35,8 @@
 mod borrowed;
 pub mod pipeline;
 
-pub use borrowed::{BorrowedLexOutput, lex_into_arena};
+pub use aozora_syntax::borrowed::NodeRef;
+pub use borrowed::{BorrowedLexOutput, SourceNode, lex_into_arena};
 pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 
 // Public surface — re-exports of the legacy lexer's allocator-agnostic
@@ -45,7 +46,8 @@ pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 pub use aozora_lexer::{SanitizeOutput, Token};
 pub use aozora_spec::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic, INLINE_SENTINEL,
-    PairKind, Span, TriggerKind, classify_trigger_bytes,
+    PairKind, PairLink, SLUGS, SlugEntry, SlugFamily, Span, TriggerKind, canonicalise_slug,
+    classify_trigger_bytes,
 };
 
 #[cfg(test)]

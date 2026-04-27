@@ -42,6 +42,25 @@ pub type BlockRegistry<'src> = EytzingerMap<u32, AozoraNode<'src>>;
 /// [`ContainerKind`] enum, not a node.
 pub type ContainerRegistry = EytzingerMap<u32, ContainerKind>;
 
+/// Unified view over a registry hit, returned by [`Registry::node_at`].
+///
+/// Hides the four-table structure behind a single enum so editor
+/// surfaces (LSP `textDocument/inlayHint`, `hover`, …) can query a
+/// single position-keyed entry point without caring which sentinel
+/// kind it landed on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum NodeRef<'src> {
+    /// Hit in the inline-sentinel table.
+    Inline(AozoraNode<'src>),
+    /// Hit in the block-leaf-sentinel table.
+    BlockLeaf(AozoraNode<'src>),
+    /// Hit in the block-container-open table.
+    BlockOpen(ContainerKind),
+    /// Hit in the block-container-close table.
+    BlockClose(ContainerKind),
+}
+
 /// Whole-document registry — four `SoA` tables, one per sentinel kind.
 ///
 /// Mirrors the legacy [`crate::PlaceholderRegistry`]'s shape but
@@ -57,7 +76,7 @@ pub struct Registry<'src> {
     pub block_close: ContainerRegistry,
 }
 
-impl Registry<'_> {
+impl<'src> Registry<'src> {
     /// Empty registry — every table is empty. Useful as a starting
     /// point for incremental construction (the lex driver pushes into
     /// builder vecs that later collapse into Eytzinger tables).
@@ -84,6 +103,36 @@ impl Registry<'_> {
     #[must_use]
     pub fn len(&self) -> usize {
         self.inline.len() + self.block_leaf.len() + self.block_open.len() + self.block_close.len()
+    }
+
+    /// Look up the registry entry at the given *normalized-text* byte
+    /// position, querying the four sub-tables in order: inline →
+    /// `block_leaf` → `block_open` → `block_close`. Returns `None` if
+    /// no table holds that position.
+    ///
+    /// The four tables address disjoint positions by construction (a
+    /// single PUA byte position carries exactly one sentinel kind), so
+    /// the order matters only for the empty-table fast paths.
+    ///
+    /// Coordinates here are **normalized**, not source: editor surfaces
+    /// that hold a source byte offset must first translate via
+    /// `BorrowedLexOutput::node_at_source` (which walks a source-keyed
+    /// side-table built during the lex pipeline).
+    #[must_use]
+    pub fn node_at(&self, pos: u32) -> Option<NodeRef<'src>> {
+        if let Some(node) = self.inline.get(&pos).copied() {
+            return Some(NodeRef::Inline(node));
+        }
+        if let Some(node) = self.block_leaf.get(&pos).copied() {
+            return Some(NodeRef::BlockLeaf(node));
+        }
+        if let Some(kind) = self.block_open.get(&pos).copied() {
+            return Some(NodeRef::BlockOpen(kind));
+        }
+        if let Some(kind) = self.block_close.get(&pos).copied() {
+            return Some(NodeRef::BlockClose(kind));
+        }
+        None
     }
 }
 
@@ -129,6 +178,37 @@ mod tests {
         let got = r.inline.get(&20u32).copied();
         assert!(matches!(got, Some(AozoraNode::PageBreak)));
         assert!(r.inline.get(&15).is_none());
+    }
+
+    #[test]
+    fn node_at_dispatches_to_correct_table() {
+        let inline = EytzingerMap::from_sorted_slice(&[(10u32, AozoraNode::PageBreak)]);
+        let block_leaf = EytzingerMap::from_sorted_slice(&[(20u32, AozoraNode::PageBreak)]);
+        let block_open = EytzingerMap::from_sorted_slice(&[(30u32, ContainerKind::Keigakomi)]);
+        let block_close = EytzingerMap::from_sorted_slice(&[(40u32, ContainerKind::Keigakomi)]);
+        let r: Registry<'static> = Registry {
+            inline,
+            block_leaf,
+            block_open,
+            block_close,
+        };
+        assert!(matches!(
+            r.node_at(10),
+            Some(NodeRef::Inline(AozoraNode::PageBreak))
+        ));
+        assert!(matches!(
+            r.node_at(20),
+            Some(NodeRef::BlockLeaf(AozoraNode::PageBreak))
+        ));
+        assert!(matches!(
+            r.node_at(30),
+            Some(NodeRef::BlockOpen(ContainerKind::Keigakomi))
+        ));
+        assert!(matches!(
+            r.node_at(40),
+            Some(NodeRef::BlockClose(ContainerKind::Keigakomi))
+        ));
+        assert!(r.node_at(99).is_none());
     }
 
     #[test]

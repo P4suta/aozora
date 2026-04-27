@@ -23,9 +23,9 @@
 
 use core::fmt;
 
-use aozora_lex::{BorrowedLexOutput, lex_into_arena};
+use aozora_lex::{BorrowedLexOutput, NodeRef, SourceNode, lex_into_arena};
 use aozora_render::{html as borrowed_html, serialize as borrowed_serialize};
-use aozora_spec::Diagnostic;
+use aozora_spec::{Diagnostic, PairLink};
 use aozora_syntax::borrowed::Arena;
 
 /// Pre-size the document arena as `source.len() * ARENA_CAPACITY_FACTOR`
@@ -134,10 +134,53 @@ impl<'a> AozoraTree<'a> {
         &self.inner.diagnostics
     }
 
+    /// Resolved (open, close) delimiter pairs as observed by Phase 2.
+    /// One entry per matched pair, in close order. Unmatched closes
+    /// and unclosed opens are excluded — they have no partner span and
+    /// would only confuse editor surfaces.
+    ///
+    /// Spans use the same coordinate system as
+    /// [`Self::diagnostics`]: byte offsets in the *sanitized* source
+    /// (which equals the original source on every input that did not
+    /// trigger BOM/CRLF/accent rewriting in Phase 0). Editor-facing
+    /// LSP requests like `textDocument/linkedEditingRange` and
+    /// `textDocument/documentHighlight` consume this directly.
+    #[must_use]
+    pub fn pairs(&self) -> &'a [PairLink] {
+        self.inner.pairs
+    }
+
     /// Borrow the underlying [`BorrowedLexOutput`].
     #[must_use]
     pub fn lex_output(&self) -> &BorrowedLexOutput<'a> {
         &self.inner
+    }
+
+    /// Find the node whose source span covers `src_off` (a sanitized
+    /// source byte offset). `None` if the offset falls inside a
+    /// `SpanKind::Plain` run between Aozora constructs.
+    ///
+    /// `O(log n)` over the source-keyed side-table.
+    #[must_use]
+    pub fn node_at_source(&self, src_off: u32) -> Option<&SourceNode<'a>> {
+        self.inner.node_at_source(src_off)
+    }
+
+    /// Find the registry entry at `normalized_off` (a byte offset into
+    /// the normalized PUA-rewritten text). For LSP requests against
+    /// the original source text, prefer [`Self::node_at_source`].
+    #[must_use]
+    pub fn node_at_normalized(&self, normalized_off: u32) -> Option<NodeRef<'a>> {
+        self.inner.registry.node_at(normalized_off)
+    }
+
+    /// Borrow the source-keyed side table directly. Sorted by
+    /// `source_span.start`; useful for editor surfaces that want to
+    /// iterate every classified node (semantic tokens, document
+    /// symbols, …).
+    #[must_use]
+    pub fn source_nodes(&self) -> &'a [SourceNode<'a>] {
+        self.inner.source_nodes
     }
 
     /// Render the tree to a semantic-HTML5 string.
@@ -192,6 +235,87 @@ mod tests {
         let first = Document::new(s).parse().serialize();
         let second = Document::new(first.clone()).parse().serialize();
         assert_eq!(first, second, "round-trip must be a fixed point");
+    }
+
+    #[test]
+    fn pairs_records_simple_ruby() {
+        // 《 … 》 produces one Ruby pair.
+        let d = Document::new("｜青梅《おうめ》");
+        let t = d.parse();
+        let pairs = t.pairs();
+        assert_eq!(pairs.len(), 1);
+        let link = pairs[0];
+        assert_eq!(link.kind, aozora_spec::PairKind::Ruby);
+        // The open span begins at the `《` byte, the close at the `》` byte.
+        let src = t.source();
+        let open_byte = src.find('《').expect("source contains 《");
+        let close_byte = src.find('》').expect("source contains 》");
+        assert_eq!(link.open.start as usize, open_byte);
+        assert_eq!(link.close.start as usize, close_byte);
+    }
+
+    #[test]
+    fn pairs_records_multiple_brackets_in_close_order() {
+        // Nested brackets — inner closes first.
+        let d = Document::new("［＃外［＃内］終］");
+        let t = d.parse();
+        let pairs = t.pairs();
+        assert_eq!(pairs.len(), 2);
+        // Inner pair closes first; its open must come AFTER the outer's open.
+        assert!(pairs[0].open.start > pairs[1].open.start);
+        assert!(pairs[0].close.start < pairs[1].close.start);
+    }
+
+    #[test]
+    fn pairs_excludes_unclosed_open() {
+        // No matching `］`. Diagnostic fires; pairs stays empty.
+        let d = Document::new("［＃orphan");
+        let t = d.parse();
+        assert!(t.pairs().is_empty());
+        assert!(!t.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn pairs_excludes_unmatched_close() {
+        // Stray close on an empty stack.
+        let d = Document::new("orphan］");
+        let t = d.parse();
+        assert!(t.pairs().is_empty());
+    }
+
+    #[test]
+    fn node_at_source_finds_inline_ruby() {
+        let src = "前｜青梅《おうめ》後";
+        let d = Document::new(src);
+        let t = d.parse();
+        // Find the byte offset of `｜` — that's where the ruby span starts.
+        let bar_off =
+            u32::try_from(src.find('｜').expect("source contains ｜")).expect("offset fits in u32");
+        let entry = t.node_at_source(bar_off).expect("ruby span at | offset");
+        // The retrieved span must cover the whole `｜青梅《おうめ》` run.
+        assert_eq!(entry.source_span.start, bar_off);
+        assert!(entry.source_span.end > bar_off);
+        assert!(matches!(entry.node, NodeRef::Inline(_)));
+    }
+
+    #[test]
+    fn node_at_source_returns_none_for_plain_run() {
+        let src = "前｜青梅《おうめ》後";
+        let d = Document::new(src);
+        let t = d.parse();
+        // Offset 0 is inside the leading "前" plain run — no node.
+        assert!(t.node_at_source(0).is_none());
+    }
+
+    #[test]
+    fn source_nodes_are_sorted_by_source_start() {
+        let src = "｜青梅《おうめ》街道沿いに、※［＃「木＋吶のつくり」、第3水準1-85-54］";
+        let d = Document::new(src);
+        let t = d.parse();
+        let nodes = t.source_nodes();
+        for window in nodes.windows(2) {
+            assert!(window[0].source_span.start <= window[1].source_span.start);
+        }
     }
 
     #[test]

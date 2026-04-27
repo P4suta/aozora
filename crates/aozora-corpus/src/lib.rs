@@ -36,7 +36,7 @@ mod in_memory;
 mod parallel;
 mod vendored;
 
-pub use archive::{Archive, ArchiveBuilder, ArchiveError, EntryMeta};
+pub use archive::{Archive, ArchiveBuilder, ArchiveError, ArchivePayload, EntryMeta};
 pub use error::CorpusError;
 pub use filesystem::FilesystemCorpus;
 pub use in_memory::InMemoryCorpus;

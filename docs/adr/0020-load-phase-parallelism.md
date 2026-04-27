@@ -1,6 +1,6 @@
 # 0020. Load-phase parallelism + decode buffer reuse + mmap (L-1 → L-4)
 
-- Status: accepted (L-1, L-2, L-3, L-4-bis, L-5 promoted; L-4 DROPPED — `unsafe` non-negotiable per project policy)
+- Status: accepted (L-1, L-2, L-3, L-4-bis, L-5, L-6 promoted; L-4 DROPPED — `unsafe` non-negotiable per project policy)
 - Date: 2026-04-27
 - Deciders: @P4suta
 - Tags: architecture, performance, io, encoding, corpus, 0.2.0
@@ -37,10 +37,12 @@ records the L-1 → L-4 sprint that targeted it.
 | L-3 | `decode_sjis_into(&mut String)` + thread-local buffer | API ships, perf-neutral | 1.38 s (no change) |
 | ~~L-4~~ | ~~`memmap2`-backed `read_item`~~ | **DROPPED** — `unsafe` is non-negotiable | n/a |
 | L-4-bis | Physical-core rayon pool for load phase (`num_cpus::get_physical()`) | **PROMOTED** | 0.91 s (3.85× vs serial) |
-| L-5 | Single-file binary archive (4 variants) + xtask pack + incremental | **PROMOTED** (zstd UTF-8) | **0.73 s (4.79× vs serial)** |
+| L-5 | Single-file binary archive (4 variants) + xtask pack + incremental | **PROMOTED** (zstd UTF-8) | 0.73 s (4.79× vs serial) |
+| L-6 | `posix_fadvise(DONTNEED)` uncache + stat enhancements + zero-copy `iter_borrowed` | **PROMOTED** (cold-cache validated) | warm 0.78 s / **cold 0.82 s** (4.27× vs serial cold) |
 
-Final corpus load wall: **3.50 s sequential → 0.73 s parallel = 4.79×**
-(zstd-compressed pre-decoded UTF-8 archive; pure-safe Rust throughout).
+Final corpus load wall: **3.50 s sequential → 0.73 s warm / 0.82 s cold
+= 4.79× warm / 4.27× cold** (zstd-compressed pre-decoded UTF-8
+archive; pure-safe Rust throughout).
 
 ## L-1 — per-phase split + isolated decode benchmark
 
@@ -549,6 +551,156 @@ the default for users who don't want a build step. The
 `xtask corpus pack` command produces all four variants; the
 incremental path makes daily re-pack cheap.
 
+## L-6 — Cold-cache eviction + stat dashboard + zero-copy iter (PROMOTED)
+
+Three composable improvements built on top of the L-5 archive:
+
+### L-6a — `posix_fadvise(POSIX_FADV_DONTNEED)` page-cache uncache
+
+`xtask corpus uncache <PATH>` evicts a file (or every regular file
+under a directory tree) from the kernel page cache via
+`posix_fadvise(2)`. Crucial for L-4-style cold-cache benchmarks:
+unlike `sudo drop_caches` (which flushes the *entire* page cache
+system-wide and breaks anything else running), `posix_fadvise` is
+per-file and per-fd — works without elevated privileges for files
+the user owns.
+
+Implementation: `rustix::fs::fadvise(&fd, 0, None, Advice::DontNeed)`.
+`rustix` is the modern pure-safe-Rust syscall wrapper (the unsafe
+is internal to the crate, same shape as `encoding_rs` / `rayon` /
+`zstd` / `num_cpus`). Workspace `forbid(unsafe_code)` preserved.
+
+Cost: 0.10 s to evict a 264 MB archive, 1.5 s to evict the entire
+17 k-file directory tree.
+
+### L-6b — `xtask corpus stat` per-band dashboard
+
+The previous stat output (5 sample labels, header summary) is
+replaced by:
+
+- Per-band breakdown: count, total decoded MB, total on-disk MB,
+  mean / median / max bytes per entry, **per-band compression
+  ratio** for zstd archives.
+- mtime distribution histogram (year-binned, with bar chart) — at
+  a glance "what era of corpus is this" answer + sanity check
+  that `source_mtime_ns` is being recorded for the L-5c
+  incremental-pack diff.
+- Top-K largest entries by decoded bytes (default `--top 10`) —
+  spots pathological docs at a glance.
+
+Sample output (zstd UTF-8 archive):
+
+```
+  per-band breakdown (by decoded byte length):
+    band           docs  tot dec MB   tot on MB    mean dec  median dec     max dec    ratio
+    <50KB         14288      219.61       85.44       15.7K       11.5K       50.0K    2.57×
+    50KB-500KB     2893      378.16      120.85      133.9K       86.9K      499.5K    3.13×
+    500KB-2MB       251      184.08       53.10      751.0K      653.3K     1977.0K    3.47×
+    >2MB              4        9.93        2.70     2540.9K     2538.5K     3097.0K    3.67×
+```
+
+Notably: **per-band compression ratio rises with file size**
+(2.57× small → 3.67× pathological). zstd's long-range repetition
+detection finds more redundancy in bigger files; the pathological
+3 MB Aozora doc compresses 3.67× while the median 16 KB doc only
+2.57×. Future tuning (e.g. zstd dictionaries) could push the
+small-band ratio up.
+
+### L-6c — `Archive::iter_borrowed` + `payload_at` (zero-copy raw)
+
+Adds:
+
+```rust
+pub enum ArchivePayload<'a> {
+    Borrowed(&'a [u8]),       // raw archives — zero-copy slice
+    Decompressed(Vec<u8>),    // zstd archives — owned vec
+}
+impl ArchivePayload<'_> {
+    pub fn as_bytes(&self) -> &[u8];     // borrow regardless of variant
+    pub fn into_owned(self) -> Vec<u8>;  // copy if Borrowed
+}
+pub fn iter_borrowed(&self) -> impl Iterator<Item = (&str, ArchivePayload<'_>)>;
+pub fn payload_at(&self, i: usize) -> Result<ArchivePayload<'_>, ArchiveError>;
+```
+
+The bench `archive_size_bands` switched from `archive.raw_payload(i).to_vec()`
++ inline zstd boilerplate to `archive.payload_at(i)`. Saves one
+`Vec<u8>` allocation per entry on raw archives (17 435 fewer
+mallocs); zstd archives still allocate per decompress (intrinsic).
+
+`payload_at(i)` is the random-access counterpart — using
+`iter_borrowed().nth(i)` inside the parallel `(0..len).into_par_iter()`
+fold would have been O(n²); `payload_at` is O(1).
+
+Existing `Archive::iter()` is preserved as a one-line wrapper
+around `iter_borrowed` + `into_owned` for callers that need
+ownership (legacy compatibility).
+
+### Measured deltas — warm + cold cache, all 4 archive variants
+
+5-run mean warm cache (with `iter_borrowed`/`payload_at`) /
+3-run mean cold cache (`xtask corpus uncache <archive>` between
+each):
+
+| variant | disk size | warm load wall | cold load wall | warm vs L-1 |
+|---|---:|---:|---:|---:|
+| L-1 baseline (sequential dir) | 532 MB | 3.50 s | n/a | 1.00× |
+| Raw SJIS archive | 534 MB | 1.01 s | 1.26 s | 3.46× |
+| Raw UTF-8 archive | 794 MB | 1.20 s | 1.55 s | 2.92× |
+| zstd SJIS archive | 241 MB | 1.04 s | 1.04 s | 3.37× |
+| **zstd UTF-8 archive** | **264 MB** | **0.78 s** | **0.82 s** | **4.49×** |
+
+Two key findings:
+
+1. **zstd archives barely degrade on cold cache.** The zstd UTF-8
+   archive's load wall stays inside its own warm-cache noise band
+   (warm 0.73-0.88 s, cold 0.79-0.86 s). Reading 264 MB at the
+   ~1 GB/s warm-cache bound vs the ~250-300 MB/s typical SSD bound
+   gives 0.26 s vs 1.0 s — but the bench's load wall is dominated
+   by parallel decode work (decompress + bucket), not raw I/O.
+   zstd's 3× disk-size reduction makes the cold-cache I/O
+   penalty fall below the decode ceiling.
+2. **Raw archives degrade meaningfully.** Raw UTF-8 cold-cache
+   wall 1.55 s vs warm 1.20 s = 30 % cold penalty. The 794 MB
+   sequential read at SSD bound dominates the wall; no decode
+   cost to mask it. zstd UTF-8's 0.82 s cold wins by **1.9×**
+   over raw UTF-8 cold — a real, reproducible cold-cache
+   advantage.
+
+L-6c's zero-copy `iter_borrowed` shows up as ~no measurable warm-
+cache delta (0.78 s vs 0.73 s in the L-5 measurement is noise),
+but the architectural clean-up matters: 17 k fewer per-entry
+mallocs, and the API surface is reusable for future arena-backed
+or rkyv-style consumers.
+
+### Files
+
+- `Cargo.toml` (workspace `rustix = "1.1"` + `walkdir` already
+  present)
+- `crates/aozora-xtask/Cargo.toml` (`rustix`, `walkdir` deps)
+- `crates/aozora-xtask/src/corpus.rs`
+  - `CorpusTarget::Stat { archive, top }` — per-band, mtime, top-K
+  - `CorpusTarget::Uncache { path }` — fadvise(DONTNEED)
+- `crates/aozora-corpus/src/archive.rs`
+  - `pub enum ArchivePayload<'a>`
+  - `pub fn payload_at(i)` — O(1) random access, decompress-on-demand
+  - `pub fn iter_borrowed()` — built on `payload_at`
+  - 5 new tests (zero-copy slice identity check, decompress check,
+    `as_bytes` / `into_owned` uniformity, `iter` ↔ `iter_borrowed`
+    equality)
+- `crates/aozora-corpus/src/lib.rs` (re-export `ArchivePayload`)
+- `crates/aozora-bench/src/lib.rs` (`archive_size_bands` switched
+  to `payload_at`)
+
+### Verdict: **PROMOTED**
+
+L-6a (uncache), L-6b (stat dashboard) are pure-additive features.
+L-6c (zero-copy iter) is a perf-neutral architectural refactor
+that ships for the API surface (callers that don't need ownership
+now have it; the existing `iter()` is preserved as a wrapper).
+Cold-cache validation confirms the zstd UTF-8 variant is the
+right default recommendation for end-users.
+
 ## Cuts (justified)
 
 ### Custom SIMD SJIS decoder — SKIP this sprint
@@ -580,17 +732,18 @@ bound on wins.
 
 Every step gets a row; ADR-0017 / ADR-0019 style.
 
-| Gate | L-1 | L-2 | L-3 | L-4-bis | L-5 |
-|---|---|---|---|---|---|
-| `cargo test --workspace --no-fail-fast --all-features` | 556 / 0 | 564 / 0 | 564 / 0 | 564 / 0 | 577 / 0 |
-| `cargo test -p aozora-lex --test property_borrowed_arena` | 12 / 0 | 12 / 0 | 12 / 0 | 12 / 0 | 12 / 0 |
-| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | clean | clean | clean | clean | clean |
-| `cargo fmt --all -- --check` | clean | clean | clean | clean | clean |
-| Per-phase split sums to load wall (±5 %) | ±0.3 % ✓ | n/a (parallel) | n/a (parallel) | n/a | n/a (single read) |
-| Load wall (parallel mode) | 3.50 s baseline | 1.38 s (2.5×) | 1.38 s (2.5×) | 0.91 s (3.85×) | **0.73 s (4.79×)** |
-| Decode MB/s (parallel, isolated) | 2375 | unchanged | unchanged | unchanged | n/a (skipped via UTF-8 archive) |
-| AST node-count diff vs main | n/a | = 0 | = 0 | = 0 | = 0 |
-| `unsafe_code` in our code | forbid | forbid | forbid | forbid | forbid |
+| Gate | L-1 | L-2 | L-3 | L-4-bis | L-5 | L-6 |
+|---|---|---|---|---|---|---|
+| `cargo test --workspace --no-fail-fast --all-features` | 556 / 0 | 564 / 0 | 564 / 0 | 564 / 0 | 577 / 0 | 582 / 0 |
+| `cargo test -p aozora-lex --test property_borrowed_arena` | 12 / 0 | 12 / 0 | 12 / 0 | 12 / 0 | 12 / 0 | 12 / 0 |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | clean | clean | clean | clean | clean | clean |
+| `cargo fmt --all -- --check` | clean | clean | clean | clean | clean | clean |
+| Per-phase split sums to load wall (±5 %) | ±0.3 % ✓ | n/a (parallel) | n/a (parallel) | n/a | n/a (single read) | n/a |
+| Load wall (parallel, warm) | 3.50 s baseline | 1.38 s (2.5×) | 1.38 s (2.5×) | 0.91 s (3.85×) | 0.73 s (4.79×) | 0.78 s (4.49×) |
+| Load wall (parallel, **cold**) | not measured | not measured | not measured | not measured | not measured | **0.82 s (4.27×)** |
+| Decode MB/s (parallel, isolated) | 2375 | unchanged | unchanged | unchanged | n/a (skipped via UTF-8 archive) | n/a |
+| AST node-count diff vs main | n/a | = 0 | = 0 | = 0 | = 0 | = 0 |
+| `unsafe_code` in our code | forbid | forbid | forbid | forbid | forbid | forbid |
 
 ## Decision
 
@@ -612,6 +765,12 @@ Every step gets a row; ADR-0017 / ADR-0019 style.
   incremental rebuild. zstd UTF-8 is the recommended variant:
   **0.73 s load wall = 4.79× vs L-1 sequential, 5.0× end-to-end.**
   All `pure-safe Rust`. Architectural shift, not local optimisation.
+- **L-6**: ship `xtask corpus uncache` + per-band stat dashboard
+  + `Archive::iter_borrowed` / `payload_at` / `ArchivePayload<'a>`
+  zero-copy iter. Cold-cache validation: zstd UTF-8 archive
+  **0.82 s cold = 4.27× vs L-1 sequential**, **1.9× over raw UTF-8
+  cold**. Stat dashboard reveals zstd compression ratio scales
+  with file size (2.57× small → 3.67× pathological).
 
 ## Lesson recorded
 
@@ -661,15 +820,22 @@ End-to-end corpus-sweep wall improvement vs the pre-sprint
 sequential baseline:
 
 - Parse: ~3.18 s → ~0.60 s parallel (B'-2 + R4-B parse parallelism).
-- Load: ~3.50 s → ~0.73 s parallel (this sprint, L-1 → L-5 zstd UTF-8).
-- **Total wall: ~6.68 s → ~1.33 s = 5.0× end-to-end.**
+- Load: ~3.50 s → ~0.73 s warm / ~0.82 s cold (zstd UTF-8 archive,
+  this sprint L-1 → L-6).
+- **Total wall warm: ~6.68 s → ~1.33 s = 5.0× end-to-end.**
+- **Total wall cold: ~6.68 s → ~1.42 s = 4.7× end-to-end.**
 
-The 5× target is met. Plan A (simdjson-style 1-pass parser) remains
-the only candidate for ≥ 6× *parse* improvement, per ADR-0019's
-order-of-magnitude analysis. With L-5 shipped, parse 0.60 s now
-exceeds load 0.73 s by less than the noise envelope; the corpus
-sweep is roughly equally balanced between the two phases for the
-first time in the project's history.
+The 5× target is met for warm cache and within reach for cold
+cache. Plan A (simdjson-style 1-pass parser) remains the only
+candidate for ≥ 6× *parse* improvement, per ADR-0019's
+order-of-magnitude analysis. With L-5/L-6 shipped, parse 0.60 s
+now exceeds load 0.78 s by less than the noise envelope; the
+corpus sweep is roughly equally balanced between the two phases
+for the first time in the project's history. Cold-cache wins
+specifically demonstrate that the **architectural** choice (zstd
++ pre-decoded UTF-8 archive) decouples the load wall from disk
+I/O bandwidth — exactly the property a "modern smart data
+structure" should deliver.
 
 Plan A (simdjson-style 1-pass parser) remains the only candidate for
 ≥ 6× end-to-end, per ADR-0019's order-of-magnitude analysis. Load is

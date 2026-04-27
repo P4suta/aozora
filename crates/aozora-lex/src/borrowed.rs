@@ -35,9 +35,9 @@ use aozora_lexer::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, ClassifiedSpan,
     INLINE_SENTINEL, SpanKind,
 };
-use aozora_spec::Diagnostic;
+use aozora_spec::{Diagnostic, PairLink, Span};
 use aozora_syntax::ContainerKind;
-use aozora_syntax::borrowed::{self, Arena, InternStats, Registry};
+use aozora_syntax::borrowed::{self, Arena, InternStats, NodeRef, Registry};
 
 /// Borrowed-AST analogue of [`crate::LexOutput`].
 ///
@@ -61,11 +61,71 @@ pub struct BorrowedLexOutput<'a> {
     /// Byte length of the Phase 0 sanitized buffer. Same semantics as
     /// the owned [`crate::LexOutput::sanitized_len`].
     pub sanitized_len: u32,
+    /// Resolved (open, close) pair side-table from Phase 2 (in close
+    /// order — the order matches close events as the stack drains).
+    /// Built by [`aozora_lexer::pair_in`] and forwarded verbatim. Lives
+    /// in the same arena as `normalized`. Editor surfaces (LSP
+    /// `linkedEditingRange` / `documentHighlight`) consume this
+    /// directly; the four registries above only carry sentinel-position
+    /// information, which is the wrong coordinate system for a source
+    /// editor.
+    pub pairs: &'a [PairLink],
+    /// Source-keyed node side-table: one entry per emitted Aozora /
+    /// container span, in source order. Built during the Phase 3 →
+    /// arena-normalize fold so editor surfaces can answer "what node
+    /// is at this source byte offset?" without re-walking the
+    /// registries.
+    ///
+    /// Entries are sorted by `source_span.start` (the classifier tiles
+    /// spans contiguously, so the sort comes for free). Use
+    /// [`Self::node_at_source`] for a binary-searched lookup.
+    ///
+    /// Coordinates are in **sanitized-source** bytes — for the typical
+    /// document (no BOM, only LF, no `〔...〕` accent spans, no long
+    /// decorative rule lines) sanitized == source byte-for-byte.
+    /// Editor callers that produce raw-source offsets and run against
+    /// a sanitization-rewriting input must do their own translation.
+    pub source_nodes: &'a [SourceNode<'a>],
     /// Counters from the [`Interner`] used during conversion.
     /// Exposed so benchmarks can measure dedup ratio
     /// (`(cache_hits + table_hits) / calls`) and average probe length
     /// without re-running the lex.
     pub intern_stats: InternStats,
+}
+
+/// Source-keyed registry entry — pairs a source-byte span with the
+/// classified node landed there. Lives in the bumpalo arena.
+#[derive(Debug, Clone, Copy)]
+pub struct SourceNode<'a> {
+    pub source_span: Span,
+    pub node: NodeRef<'a>,
+}
+
+impl<'a> BorrowedLexOutput<'a> {
+    /// Find the [`SourceNode`] whose `source_span` covers `src_off`,
+    /// where `src_off` is a sanitized-source byte offset.
+    ///
+    /// Spans are half-open: `start <= src_off < end`. Returns `None` if
+    /// no entry covers the position (typically because the offset lies
+    /// in a Plain run between Aozora constructs).
+    ///
+    /// Lookup is `O(log n)` via binary search on the source-sorted
+    /// `source_nodes` slice.
+    #[must_use]
+    pub fn node_at_source(&self, src_off: u32) -> Option<&SourceNode<'a>> {
+        // Binary search by source_span.start; the run we want either
+        // starts at or before src_off. partition_point returns the
+        // first index whose start > src_off, so subtracting one gives
+        // the candidate.
+        let idx = self
+            .source_nodes
+            .partition_point(|entry| entry.source_span.start <= src_off);
+        if idx == 0 {
+            return None;
+        }
+        let candidate = &self.source_nodes[idx - 1];
+        (src_off < candidate.source_span.end).then_some(candidate)
+    }
 }
 
 /// Run the lex pipeline and collect the result into `arena`.
@@ -115,6 +175,12 @@ pub(crate) struct ArenaNormalizer<'src, 'a> {
     pub(crate) block_leaf: Vec<(u32, borrowed::AozoraNode<'a>)>,
     pub(crate) block_open: Vec<(u32, ContainerKind)>,
     pub(crate) block_close: Vec<(u32, ContainerKind)>,
+    /// Source-keyed (`source_span`, `NodeRef`) parallel to the four
+    /// per-kind tables above. Drained into the arena
+    /// `&'a [SourceNode]` at pipeline-build time. Naturally sorted by
+    /// `source_span.start` because the classifier emits spans in
+    /// source order.
+    pub(crate) source_nodes: Vec<SourceNode<'a>>,
 }
 
 impl<'src, 'a> ArenaNormalizer<'src, 'a> {
@@ -133,6 +199,9 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
             block_leaf: Vec::with_capacity(span_capacity_hint / 10),
             block_open: Vec::with_capacity(span_capacity_hint / 20),
             block_close: Vec::with_capacity(span_capacity_hint / 20),
+            // source_nodes mirrors the union of the four tables above.
+            // Sum of the per-kind hints is a tight upper bound.
+            source_nodes: Vec::with_capacity(span_capacity_hint),
         }
     }
 
@@ -164,10 +233,18 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     self.out.push(BLOCK_LEAF_SENTINEL);
                     self.out.push_str("\n\n");
                     self.block_leaf.push((pos, *node));
+                    self.source_nodes.push(SourceNode {
+                        source_span: span.source_span,
+                        node: NodeRef::BlockLeaf(*node),
+                    });
                 } else {
                     let pos = self.current_pos();
                     self.out.push(INLINE_SENTINEL);
                     self.inline.push((pos, *node));
+                    self.source_nodes.push(SourceNode {
+                        source_span: span.source_span,
+                        node: NodeRef::Inline(*node),
+                    });
                 }
             }
             SpanKind::BlockOpen(container) => {
@@ -176,6 +253,10 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 self.out.push(BLOCK_OPEN_SENTINEL);
                 self.out.push_str("\n\n");
                 self.block_open.push((pos, *container));
+                self.source_nodes.push(SourceNode {
+                    source_span: span.source_span,
+                    node: NodeRef::BlockOpen(*container),
+                });
             }
             SpanKind::BlockClose(container) => {
                 self.out.push_str("\n\n");
@@ -183,6 +264,10 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 self.out.push(BLOCK_CLOSE_SENTINEL);
                 self.out.push_str("\n\n");
                 self.block_close.push((pos, *container));
+                self.source_nodes.push(SourceNode {
+                    source_span: span.source_span,
+                    node: NodeRef::BlockClose(*container),
+                });
             }
             // `SpanKind` is `#[non_exhaustive]`; new variants land
             // here as no-op until the normalizer adds a dedicated arm.

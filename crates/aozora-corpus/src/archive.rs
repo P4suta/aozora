@@ -355,6 +355,34 @@ impl Archive {
         &self.entries
     }
 
+    /// Random-access counterpart to [`Self::iter_borrowed`] — yield
+    /// the payload at `index` directly, no iteration cost (L-6c).
+    ///
+    /// Used by parallel callers that fan out via `(0..len).into_par_iter()`
+    /// — calling `iter_borrowed().nth(i)` inside the parallel body
+    /// would be O(n) per item and turn the whole loop O(n²);
+    /// `payload_at(i)` is O(1).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArchiveError::Decompress`] if the entry is
+    /// zstd-compressed and decompression fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.len()`.
+    pub fn payload_at(&self, index: usize) -> Result<ArchivePayload<'_>, ArchiveError> {
+        let entry = &self.entries[index];
+        let raw = self.raw_payload(index);
+        if self.is_zstd() {
+            let bytes = decompress_payload(raw, entry.decoded_len as usize)
+                .map_err(ArchiveError::Decompress)?;
+            Ok(ArchivePayload::Decompressed(bytes))
+        } else {
+            Ok(ArchivePayload::Borrowed(raw))
+        }
+    }
+
     /// Borrow the raw payload slice for a given entry — without
     /// decompression. Returns the on-disk bytes (potentially
     /// zstd-compressed). For the high-level reader use [`Self::iter`].
@@ -371,9 +399,12 @@ impl Archive {
     }
 
     /// Iterate entries, decompressing each payload on the fly if
-    /// needed. Yields `(label, bytes)` pairs where `bytes` is owned —
-    /// for raw archives it is a `to_vec` of the slice; for
-    /// zstd-compressed archives it is the freshly decompressed bytes.
+    /// needed. Yields owned `(label, bytes)` pairs — for raw
+    /// archives the bytes are a `to_vec` of the in-memory slice;
+    /// for zstd archives they are the freshly decompressed bytes.
+    ///
+    /// Use [`Self::iter_borrowed`] (L-6c) when the caller does not
+    /// need to take ownership — zero-copy on raw archives.
     ///
     /// # Errors
     ///
@@ -381,17 +412,94 @@ impl Archive {
     /// decompression fails. Failures do not abort iteration; each
     /// item is yielded as `Result`.
     pub fn iter(&self) -> impl Iterator<Item = Result<(String, Vec<u8>), ArchiveError>> + '_ {
-        let zstd = self.is_zstd();
-        self.entries.iter().enumerate().map(move |(i, entry)| {
-            let raw = self.raw_payload(i);
-            let bytes = if zstd {
-                decompress_payload(raw, entry.decoded_len as usize)
-                    .map_err(ArchiveError::Decompress)?
-            } else {
-                raw.to_vec()
-            };
-            Ok((entry.label.clone(), bytes))
+        self.iter_borrowed().map(|item| {
+            let (label, payload) = item?;
+            Ok((label.to_owned(), payload.into_owned()))
         })
+    }
+
+    /// Zero-copy iterator (L-6c, ADR-0020).
+    ///
+    /// Yields `(label_borrow, payload_borrow_or_decompress)` pairs
+    /// where:
+    ///
+    /// - `label_borrow: &'a str` borrows directly from the archive's
+    ///   in-memory index — no allocation per entry.
+    /// - `payload` is an [`ArchivePayload<'a>`]: for raw archives it
+    ///   borrows the in-memory payload slice (zero-copy); for zstd
+    ///   archives it materialises the decompressed bytes into a fresh
+    ///   `Vec<u8>` (decompression intrinsically allocates, so there
+    ///   is no zero-copy path for compressed payloads — the
+    ///   `ArchivePayload` enum exposes both shapes uniformly).
+    ///
+    /// Saves one `Vec<u8>` allocation + memcpy per entry on raw
+    /// archives compared to [`Self::iter`]. On a 17 k-entry corpus
+    /// this is a measurable allocator-pressure improvement.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::iter`] — per-entry zstd decompression failures
+    /// surface as `Err` items.
+    pub fn iter_borrowed(
+        &self,
+    ) -> impl Iterator<Item = Result<(&str, ArchivePayload<'_>), ArchiveError>> + '_ {
+        self.entries.iter().enumerate().map(move |(i, entry)| {
+            let payload = self.payload_at(i)?;
+            Ok((entry.label.as_str(), payload))
+        })
+    }
+}
+
+/// Per-entry payload yielded by [`Archive::iter_borrowed`] (L-6c).
+///
+/// Unifies the two shapes the archive can produce — a borrowed slice
+/// into the in-memory archive (raw variants) or a freshly
+/// decompressed owned `Vec<u8>` (zstd variants) — behind one type so
+/// callers don't have to switch on `archive.is_zstd()` themselves.
+///
+/// Both variants implement [`Self::as_bytes`] for borrow-only use,
+/// and [`Self::into_owned`] for the cases where ownership is required
+/// (e.g. building a `String` via `String::from_utf8`).
+#[derive(Debug)]
+pub enum ArchivePayload<'a> {
+    /// Raw payload — slice into the archive's in-memory bytes. No
+    /// per-entry allocation; lifetime tied to the [`Archive`].
+    Borrowed(&'a [u8]),
+    /// Freshly decompressed payload. Owned because zstd
+    /// decompression intrinsically allocates a destination buffer.
+    Decompressed(Vec<u8>),
+}
+
+impl ArchivePayload<'_> {
+    /// Borrow the payload bytes irrespective of variant.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Borrowed(s) => s,
+            Self::Decompressed(v) => v,
+        }
+    }
+
+    /// Take ownership — copies the bytes if this is a `Borrowed`
+    /// variant, returns the `Vec` directly if `Decompressed`.
+    #[must_use]
+    pub fn into_owned(self) -> Vec<u8> {
+        match self {
+            Self::Borrowed(s) => s.to_vec(),
+            Self::Decompressed(v) => v,
+        }
+    }
+
+    /// Length of the payload in bytes.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.as_bytes().len()
+    }
+
+    /// Whether the payload is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.as_bytes().is_empty()
     }
 }
 
@@ -651,6 +759,8 @@ impl ArchiveBuilder {
 
 #[cfg(test)]
 mod tests {
+    use core::ptr;
+
     use super::*;
 
     fn roundtrip(flags: u32, entries: &[(&str, &[u8])]) -> Archive {
@@ -715,6 +825,80 @@ mod tests {
         );
         let items: Vec<_> = arc.iter().filter_map(Result::ok).collect();
         assert_eq!(items[0].1, big.as_bytes());
+    }
+
+    #[test]
+    fn iter_borrowed_returns_zero_copy_slice_for_raw_archive() {
+        // For a raw archive (no zstd), iter_borrowed must yield the
+        // payload as `Borrowed(&[u8])` whose pointer is *inside* the
+        // archive's in-memory buffer — confirming zero-copy.
+        let arc = roundtrip(0, &[("a.txt", b"hello world")]);
+        let items: Vec<_> = arc.iter_borrowed().filter_map(Result::ok).collect();
+        assert_eq!(items.len(), 1);
+        let (label, payload) = &items[0];
+        assert_eq!(*label, "a.txt");
+        match payload {
+            ArchivePayload::Borrowed(slice) => {
+                assert_eq!(*slice, b"hello world");
+                // The slice's pointer must lie inside `arc.bytes`'s
+                // buffer (i.e. the archive's in-memory mmap-equivalent).
+                let archive_payload_ptr = arc.raw_payload(0).as_ptr();
+                assert!(
+                    ptr::eq(archive_payload_ptr, slice.as_ptr()),
+                    "iter_borrowed must yield the archive's own buffer slice (zero-copy)"
+                );
+            }
+            ArchivePayload::Decompressed(_) => panic!("raw archive must yield Borrowed"),
+        }
+    }
+
+    #[test]
+    fn iter_borrowed_decompresses_zstd_payload() {
+        let big = "あ".repeat(2_000);
+        let arc = roundtrip(FLAG_ZSTD | FLAG_UTF8, &[("big.txt", big.as_bytes())]);
+        let items: Vec<_> = arc.iter_borrowed().filter_map(Result::ok).collect();
+        let (label, payload) = &items[0];
+        assert_eq!(*label, "big.txt");
+        match payload {
+            ArchivePayload::Decompressed(v) => assert_eq!(v, big.as_bytes()),
+            ArchivePayload::Borrowed(_) => panic!("zstd archive must yield Decompressed"),
+        }
+    }
+
+    #[test]
+    fn archive_payload_as_bytes_is_uniform_across_variants() {
+        let body = b"some bytes".to_vec();
+        let raw_payload = ArchivePayload::Borrowed(&body);
+        let owned_payload = ArchivePayload::Decompressed(body.clone());
+        assert_eq!(raw_payload.as_bytes(), owned_payload.as_bytes());
+        assert_eq!(raw_payload.len(), 10);
+        assert!(!raw_payload.is_empty());
+    }
+
+    #[test]
+    fn archive_payload_into_owned_returns_vec_for_both_variants() {
+        let raw_payload = ArchivePayload::Borrowed(b"abc");
+        let owned_payload = ArchivePayload::Decompressed(b"def".to_vec());
+        assert_eq!(raw_payload.into_owned(), b"abc");
+        assert_eq!(owned_payload.into_owned(), b"def");
+    }
+
+    #[test]
+    fn iter_and_iter_borrowed_yield_byte_equal_outputs() {
+        // Owned `iter` is now built on top of `iter_borrowed`; a
+        // round-trip equality check pins that the convenience wrapper
+        // produces byte-for-byte the same payload.
+        let arc = roundtrip(
+            FLAG_UTF8,
+            &[("a.txt", "あおい".as_bytes()), ("b.txt", "そら".as_bytes())],
+        );
+        let owned: Vec<_> = arc.iter().filter_map(Result::ok).collect();
+        let borrowed: Vec<_> = arc
+            .iter_borrowed()
+            .filter_map(Result::ok)
+            .map(|(label, payload)| (label.to_owned(), payload.into_owned()))
+            .collect();
+        assert_eq!(owned, borrowed);
     }
 
     #[test]

@@ -104,9 +104,10 @@ fn render_content<W: Write>(content: Content<'_>, writer: &mut W) -> fmt::Result
 
 fn render_gaiji<W: Write>(g: &Gaiji<'_>, writer: &mut W) -> fmt::Result {
     writer.write_str(r#"<span class="afm-gaiji">"#)?;
-    if let Some(c) = g.ucs {
-        let mut buf = [0u8; 4];
-        writer.write_str(c.encode_utf8(&mut buf))?;
+    if let Some(resolved) = g.ucs {
+        // Resolved::write_to handles both single-codepoint and the
+        // 25 combining-sequence cells uniformly.
+        resolved.write_to(writer)?;
     } else {
         escape_text(g.description, writer)?;
     }

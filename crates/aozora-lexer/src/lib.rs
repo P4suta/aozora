@@ -64,7 +64,8 @@
 // working through the 0.1 → 0.2 transition (Move 1.2 compatibility
 // shim).
 pub use aozora_spec::{
-    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
+    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL, SLUGS,
+    SlugEntry, SlugFamily, canonicalise_slug,
 };
 
 pub mod diagnostic;

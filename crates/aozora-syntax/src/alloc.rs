@@ -39,6 +39,8 @@
 //! proptests in `aozora-lex/tests/property_borrowed_arena.rs` honest
 //! across edits.
 
+use aozora_encoding::gaiji::Resolved;
+
 use crate::borrowed::{self, Arena, Interner};
 use crate::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container, Indent,
@@ -164,7 +166,7 @@ impl<'a> BorrowedAllocator<'a> {
     pub fn make_gaiji(
         &mut self,
         description: &str,
-        ucs: Option<char>,
+        ucs: Option<Resolved>,
         mencode: Option<&str>,
     ) -> &'a borrowed::Gaiji<'a> {
         let g = borrowed::Gaiji {
@@ -406,12 +408,16 @@ mod tests {
     fn gaiji_full_metadata() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let g = a.make_gaiji("木＋吶のつくり", Some('𠀋'), Some("第3水準1-85-54"));
+        let g = a.make_gaiji(
+            "木＋吶のつくり",
+            Some(Resolved::Char('𠀋')),
+            Some("第3水準1-85-54"),
+        );
         let n = a.gaiji(g);
         match n {
             borrowed::AozoraNode::Gaiji(gn) => {
                 assert_eq!(gn.description, "木＋吶のつくり");
-                assert_eq!(gn.ucs, Some('𠀋'));
+                assert_eq!(gn.ucs, Some(Resolved::Char('𠀋')));
                 assert_eq!(gn.mencode, Some("第3水準1-85-54"));
             }
             other => panic!("expected Gaiji, got {other:?}"),

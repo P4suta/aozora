@@ -90,6 +90,19 @@ pub const fn has_utf8_bom(input: &[u8]) -> bool {
 }
 
 pub mod gaiji;
+/// PHF tables (single, combo, description) emitted by `build.rs`
+/// at compile time via `phf_codegen`. Lives in `OUT_DIR` so it's
+/// regenerated automatically when any input TSV changes; the
+/// committed source tree carries only the data, not the perfect-
+/// hash output. See `build.rs` for the generator.
+#[allow(
+    clippy::unreadable_literal,
+    reason = "phf_codegen emits 64-bit perfect-hash keys without separators; \
+              we cannot reformat them without forking the codegen crate"
+)]
+mod jisx0213_table {
+    include!(concat!(env!("OUT_DIR"), "/jisx0213_table.rs"));
+}
 
 #[cfg(test)]
 mod tests {
@@ -347,7 +360,7 @@ mod tests {
     fn gaiji_lookup_echoes_existing_ucs_when_set() {
         assert_eq!(
             gaiji::lookup(Some('吶'), Some("第3水準1-85-54"), "木＋吶のつくり"),
-            Some('吶')
+            Some(gaiji::Resolved::Char('吶'))
         );
     }
 
