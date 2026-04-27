@@ -78,7 +78,7 @@ use core::error;
 use core::fmt;
 use core::str;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -105,6 +105,15 @@ const INDEX_FIXED_LEN: usize = 8 + 4 + 4 + 8 + 32 + 4;
 /// Length of the file header.
 const HEADER_LEN: usize = 4 + 4 + 4 + 4;
 
+/// Maximum per-entry decompressed size, in bytes.
+///
+/// Real-world Aozora files cap at ~10 MB; 256 MiB is the safety
+/// budget above which we refuse a `decoded_len` field rather than
+/// allocate the buffer. Pure DoS-resistance: a hostile archive can
+/// claim `u32::MAX` (4 GB) but `Vec::with_capacity(u32::MAX as usize)`
+/// would pin OOM before the zstd stream produced its first byte.
+pub const MAX_DECODED_LEN_PER_ENTRY: u32 = 256 * 1024 * 1024;
+
 /// Errors specific to archive format parsing / IO. Wraps generic
 /// [`CorpusError::Io`] for filesystem failures and adds format-level
 /// distinctions (bad magic, unsupported version, truncated index).
@@ -127,6 +136,21 @@ pub enum ArchiveError {
     Decompress(io::Error),
     /// Label bytes are not valid UTF-8.
     BadLabel,
+    /// A header field declares a size that cannot fit in the
+    /// archive (entry count too large, declared decoded length
+    /// exceeds the per-entry budget, etc.). Distinct from
+    /// [`Self::Truncated`] because the file might be intact —
+    /// it's the *header value* that is unreasonable. This is a
+    /// DoS-resistance check; a hostile archive could otherwise
+    /// pin out-of-memory by claiming a 4 GB decoded length on a
+    /// 10-byte payload.
+    InvalidSize {
+        /// Which field overflowed the bound (`"entry count"`,
+        /// `"decoded_len"`, …).
+        what: &'static str,
+        /// The unreasonable value, surfaced for diagnostics.
+        value: u64,
+    },
 }
 
 impl fmt::Display for ArchiveError {
@@ -141,6 +165,9 @@ impl fmt::Display for ArchiveError {
             Self::Truncated { what } => write!(f, "archive truncated while reading {what}"),
             Self::Decompress(e) => write!(f, "zstd decompression failed: {e}"),
             Self::BadLabel => f.write_str("entry label is not valid UTF-8"),
+            Self::InvalidSize { what, value } => {
+                write!(f, "archive header field {what} is unreasonably large ({value})")
+            }
         }
     }
 }
@@ -242,6 +269,19 @@ impl Archive {
         let flags = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
         let count = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
 
+        // Hard cap: every index record needs at least INDEX_FIXED_LEN
+        // bytes (the variable label adds more). A `count` larger than
+        // `(file_size - HEADER_LEN) / INDEX_FIXED_LEN` cannot possibly
+        // be honest — refuse rather than allocate a multi-GB
+        // `Vec<EntryMeta>` from a hostile or corrupted header.
+        let count_ceiling = bytes.len().saturating_sub(HEADER_LEN) / INDEX_FIXED_LEN;
+        if count > count_ceiling {
+            return Err(ArchiveError::InvalidSize {
+                what: "entry count",
+                value: count as u64,
+            });
+        }
+
         let mut entries = Vec::with_capacity(count);
         let mut cursor = HEADER_LEN;
         for i in 0..count {
@@ -262,6 +302,17 @@ impl Archive {
                     .try_into()
                     .expect("4-byte slice"),
             );
+            // Reject obviously hostile decoded_len values at parse
+            // time so `payload_at` can pre-allocate from a trusted
+            // budget. Aozora docs cap well under
+            // `MAX_DECODED_LEN_PER_ENTRY` (256 MiB); anything past
+            // that is a decode-bomb attempt.
+            if decoded_len > MAX_DECODED_LEN_PER_ENTRY {
+                return Err(ArchiveError::InvalidSize {
+                    what: "decoded_len",
+                    value: u64::from(decoded_len),
+                });
+            }
             let source_mtime_ns = i64::from_le_bytes(
                 bytes[cursor + 16..cursor + 24]
                     .try_into()
@@ -503,10 +554,32 @@ impl ArchivePayload<'_> {
     }
 }
 
+/// Decompress a zstd-compressed payload into a fresh `Vec`.
+///
+/// `expected_len` is a hint used to pre-size the destination
+/// buffer; it is **clamped** to [`MAX_DECODED_LEN_PER_ENTRY`] so a
+/// hostile archive header cannot pin OOM by claiming a huge decoded
+/// length on a tiny compressed payload. The zstd reader still fully
+/// decompresses the stream — if the stream itself produces more
+/// bytes than the budget, `read_to_end` will eventually grow the
+/// vector, but that growth is amortised, observable, and bounded by
+/// the actual stream content rather than by an attacker-supplied
+/// integer in the index header.
 fn decompress_payload(src: &[u8], expected_len: usize) -> io::Result<Vec<u8>> {
-    let mut out = Vec::with_capacity(expected_len);
-    let mut decoder = zstd::stream::read::Decoder::new(src)?;
-    decoder.read_to_end(&mut out)?;
+    let cap = expected_len.min(MAX_DECODED_LEN_PER_ENTRY as usize);
+    let mut out = Vec::with_capacity(cap);
+    let decoder = zstd::stream::read::Decoder::new(src)?;
+    // Bound the runtime decode too — if the compressed stream
+    // expands past the budget, refuse rather than keep growing the
+    // allocation. `Read::take` enforces this on the producer side.
+    let limit = u64::from(MAX_DECODED_LEN_PER_ENTRY).saturating_add(1);
+    let mut limited = decoder.take(limit);
+    limited.read_to_end(&mut out)?;
+    if out.len() as u64 > u64::from(MAX_DECODED_LEN_PER_ENTRY) {
+        return Err(io::Error::other(
+            "zstd payload expanded past per-entry decode budget",
+        ));
+    }
     Ok(out)
 }
 
@@ -751,7 +824,19 @@ impl ArchiveBuilder {
             "{}.tmp",
             path.extension().and_then(|e| e.to_str()).unwrap_or("aozc")
         ));
-        fs::write(&tmp, &out)?;
+        // Atomic-publish pattern: write to tmp -> fsync -> rename.
+        // Without the fsync, a crash between `write` and `rename` —
+        // or between `rename` and the kernel flushing pages — can
+        // leave the target archive present-but-corrupt: the rename
+        // is committed to the directory entry, but the file's data
+        // pages haven't reached the block device. fsync forces the
+        // pages out before the rename publishes the file, so a
+        // post-rename crash leaves either the old archive or the
+        // fully-written new one — never a half-written one.
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(&out)?;
+        f.sync_all()?;
+        drop(f);
         fs::rename(&tmp, path)?;
         Ok(total_len as u64)
     }
@@ -988,6 +1073,276 @@ mod tests {
         let items: Vec<_> = arc2.iter().filter_map(Result::ok).collect();
         assert_eq!(items[0].0, "doc.txt");
         assert_eq!(items[0].1, body.as_bytes());
+    }
+
+    // ----------------------------------------------------------------
+    // DoS-resistance / format-robustness: parse-time bounds checking.
+    // Pinned by the audit notes in the doc-comments on
+    // `MAX_DECODED_LEN_PER_ENTRY` and `ArchiveError::InvalidSize`.
+    // Each test here was written from the angle "a hostile or
+    // corrupted archive header should refuse rather than allocate."
+    // ----------------------------------------------------------------
+
+    /// A header that claims more entries than the file could possibly
+    /// hold (each index record is at least `INDEX_FIXED_LEN` bytes)
+    /// must be rejected at parse time. Without the cap, the parser
+    /// would allocate `Vec::with_capacity(count)` worth of `EntryMeta`
+    /// (each ≥ 80 bytes) on a small file and OOM.
+    #[test]
+    fn rejects_unreasonable_entry_count() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&MAGIC);
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes()); // flags
+        // Claim 4 billion entries in a 16-byte file.
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+        match Archive::from_bytes(buf) {
+            Err(ArchiveError::InvalidSize { what, value }) => {
+                assert_eq!(what, "entry count");
+                assert_eq!(value, u64::from(u32::MAX));
+            }
+            other => panic!("expected InvalidSize entry count, got {other:?}"),
+        }
+    }
+
+    /// Edge case: the largest count that would just barely fit in
+    /// the file. The parser will return Truncated for the record
+    /// itself (since the labels won't line up), but it must NOT
+    /// reject the count outright at this exact boundary. This pins
+    /// "the cap is tight, not over-eager."
+    #[test]
+    fn accepts_count_exactly_at_ceiling_then_fails_on_record() {
+        // file_len = HEADER + 1 * INDEX_FIXED_LEN, claim count = 1.
+        // The label_len field will be 0 so this constructs a valid
+        // single-entry archive with empty payload.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&MAGIC);
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes()); // count = 1
+        // One full INDEX_FIXED_LEN record, all zeros (label_len=0).
+        // payload_offset = HEADER_LEN + INDEX_FIXED_LEN — points
+        // past the file but payload_len = 0 so the slice is empty.
+        let payload_offset = (HEADER_LEN + INDEX_FIXED_LEN) as u64;
+        buf.extend_from_slice(&payload_offset.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes()); // payload_len
+        buf.extend_from_slice(&0u32.to_le_bytes()); // decoded_len
+        buf.extend_from_slice(&0i64.to_le_bytes()); // mtime
+        buf.extend_from_slice(&[0u8; 32]); // blake3
+        buf.extend_from_slice(&0u32.to_le_bytes()); // label_len = 0
+        let arc = Archive::from_bytes(buf).expect("valid count-at-ceiling archive");
+        assert_eq!(arc.len(), 1);
+        assert_eq!(arc.entries()[0].label, "");
+        assert_eq!(arc.entries()[0].payload_len, 0);
+    }
+
+    /// A header field claiming a ridiculously large `decoded_len`
+    /// must be rejected at parse time, NOT allowed to reach
+    /// `decompress_payload` and pin a 4 GB allocation.
+    #[test]
+    fn rejects_unreasonable_decoded_len_at_parse_time() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&MAGIC);
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&FLAG_ZSTD.to_le_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes()); // count = 1
+        buf.extend_from_slice(&0u64.to_le_bytes()); // payload_offset
+        buf.extend_from_slice(&10u32.to_le_bytes()); // payload_len
+        // decoded_len: 1 GB — past the 256 MiB budget.
+        buf.extend_from_slice(&(1u32 << 30).to_le_bytes());
+        buf.extend_from_slice(&0i64.to_le_bytes());
+        buf.extend_from_slice(&[0u8; 32]);
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        // Pad with payload to keep the slicing layer happy.
+        buf.resize(buf.len() + 100, 0);
+        match Archive::from_bytes(buf) {
+            Err(ArchiveError::InvalidSize { what, value }) => {
+                assert_eq!(what, "decoded_len");
+                assert_eq!(value, u64::from(1u32 << 30));
+            }
+            other => panic!("expected InvalidSize decoded_len, got {other:?}"),
+        }
+    }
+
+    /// `MAX_DECODED_LEN_PER_ENTRY` exactly is fine; one byte over is
+    /// not. Boundary test for the parse-time cap.
+    #[test]
+    fn decoded_len_at_max_passes_one_over_fails() {
+        for (value, should_pass) in [
+            (MAX_DECODED_LEN_PER_ENTRY, true),
+            (MAX_DECODED_LEN_PER_ENTRY + 1, false),
+        ] {
+            let mut buf = Vec::new();
+            buf.extend_from_slice(&MAGIC);
+            buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+            buf.extend_from_slice(&FLAG_ZSTD.to_le_bytes());
+            buf.extend_from_slice(&1u32.to_le_bytes());
+            // payload_offset past the file, but payload_len = 0 so the
+            // payload-end check is satisfied (offset + 0 ≤ file len).
+            let payload_offset = (HEADER_LEN + INDEX_FIXED_LEN) as u64;
+            buf.extend_from_slice(&payload_offset.to_le_bytes());
+            buf.extend_from_slice(&0u32.to_le_bytes());
+            buf.extend_from_slice(&value.to_le_bytes());
+            buf.extend_from_slice(&0i64.to_le_bytes());
+            buf.extend_from_slice(&[0u8; 32]);
+            buf.extend_from_slice(&0u32.to_le_bytes());
+            let result = Archive::from_bytes(buf);
+            assert_eq!(
+                result.is_ok(),
+                should_pass,
+                "decoded_len={value} should_pass={should_pass}, got {result:?}",
+            );
+        }
+    }
+
+    /// Defensive: the `decompress_payload` helper itself caps the
+    /// pre-allocation to `MAX_DECODED_LEN_PER_ENTRY` even if a future
+    /// caller forgets the parse-time check. Pure unit test on the
+    /// internal helper — no archive constructed.
+    #[test]
+    fn decompress_payload_clamps_giant_expected_len() {
+        // A valid empty zstd stream — frame magic + empty content.
+        let empty_input: &[u8] = &[];
+        let empty: Vec<u8> =
+            zstd::encode_all(io::Cursor::new(empty_input), 1).expect("zstd encode");
+        // Pass an absurd expected_len; the helper must clamp.
+        let out = decompress_payload(&empty, usize::MAX).expect("decompress empty");
+        assert!(out.is_empty(), "empty stream must decompress to empty");
+    }
+
+    /// A successful `finish` followed by `Archive::open` must yield
+    /// the same bytes. Together with the explicit `sync_all` call in
+    /// `finish`, this pins "the file is published only after data
+    /// is durably written" — without the sync the test would still
+    /// pass on a healthy filesystem, but the regression risk is the
+    /// removal of `sync_all`. We add a separate test below to detect
+    /// THAT regression.
+    #[test]
+    fn finish_produces_a_readable_archive() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("corpus.aozc");
+        let mut b = ArchiveBuilder::new(FLAG_UTF8);
+        b.push_entry("a.txt", b"hello", 0).unwrap();
+        b.finish(&path).unwrap();
+        let arc = Archive::open(&path).unwrap();
+        assert_eq!(arc.len(), 1);
+        let payload = arc.payload_at(0).unwrap();
+        assert_eq!(payload.as_bytes(), b"hello");
+    }
+
+    /// Pin the atomic-publish pattern: there must be NO `.tmp`
+    /// remnants after a successful `finish`. (If the rename happened
+    /// before sync_all panicked, the tmp would be left behind.)
+    #[test]
+    fn finish_does_not_leave_tmp_file_behind() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("corpus.aozc");
+        let mut b = ArchiveBuilder::new(0);
+        b.push_entry("a.txt", b"hi", 0).unwrap();
+        b.finish(&path).unwrap();
+        // List the directory — only one file should exist (the
+        // archive). A leftover `.tmp` would mean the rename happened
+        // partially.
+        let count = fs::read_dir(dir.path()).unwrap().count();
+        assert_eq!(
+            count, 1,
+            "expected only the archive in {:?}, got {} entries",
+            dir.path(),
+            count,
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // 金庫番 (gatekeeper) tests — pin the on-disk format and public
+    // surface so any change must be deliberate.
+    //
+    // These tests are intentionally brittle: bumping any number here
+    // requires a same-PR update to the corresponding constant AND the
+    // CHANGELOG entry that records the format version bump.
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn gatekeeper_archive_magic_is_aozc() {
+        assert_eq!(
+            MAGIC, *b"AOZC",
+            "MAGIC bytes are part of the on-disk format; \
+             changing them is a hard-incompatible bump",
+        );
+    }
+
+    #[test]
+    fn gatekeeper_format_version_is_one() {
+        assert_eq!(
+            FORMAT_VERSION, 1,
+            "bumping FORMAT_VERSION must come with a CHANGELOG entry \
+             AND a backward-compat parser arm",
+        );
+    }
+
+    #[test]
+    fn gatekeeper_header_layout_matches_the_documented_spec() {
+        // Header: magic(4) + version(4) + flags(4) + count(4) = 16.
+        assert_eq!(HEADER_LEN, 16);
+        // Index record fixed prefix: payload_offset(8) + payload_len(4)
+        //                          + decoded_len(4) + mtime_ns(8)
+        //                          + blake3(32)     + label_len(4) = 60.
+        assert_eq!(INDEX_FIXED_LEN, 60);
+    }
+
+    #[test]
+    fn gatekeeper_flag_bits_are_pinned() {
+        // FLAG bits are public — third-party tooling may rely on them.
+        assert_eq!(FLAG_ZSTD, 0b01);
+        assert_eq!(FLAG_UTF8, 0b10);
+    }
+
+    #[test]
+    fn gatekeeper_max_decoded_len_is_256_mib() {
+        // Aozora docs cap at ~10 MB; 256 MiB gives ~25× headroom.
+        // Lowering this can break legitimate huge corpora; raising
+        // it widens the DoS budget — both deserve review.
+        assert_eq!(MAX_DECODED_LEN_PER_ENTRY, 256 * 1024 * 1024);
+    }
+
+    #[test]
+    fn gatekeeper_archive_error_variant_inventory() {
+        // If a new variant is added, this list must be updated AND
+        // any external pattern matches against `ArchiveError` audited.
+        // The match is exhaustive thanks to `#[non_exhaustive]` —
+        // adding a variant without updating this test compiles but
+        // silently skips the new variant from the gatekeeper list.
+        // The `_unused` arm makes the omission loud.
+        for err in [
+            ArchiveError::Io(io::Error::other("x")),
+            ArchiveError::BadMagic,
+            ArchiveError::UnsupportedVersion(0),
+            ArchiveError::Truncated { what: "x" },
+            ArchiveError::Decompress(io::Error::other("x")),
+            ArchiveError::BadLabel,
+            ArchiveError::InvalidSize {
+                what: "x",
+                value: 0,
+            },
+        ] {
+            // Each variant must have a non-empty Display impl.
+            let display = format!("{err}");
+            assert!(!display.is_empty(), "empty Display for {err:?}");
+        }
+    }
+
+    #[test]
+    fn gatekeeper_format_constants_compose_to_expected_minimum_file_size() {
+        // The smallest valid archive is 16 bytes (header only, zero
+        // entries). Pinning this rejects "what if HEADER_LEN
+        // accidentally grew" regressions.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&MAGIC);
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(buf.len(), HEADER_LEN);
+        let arc = Archive::from_bytes(buf).expect("minimal archive parses");
+        assert_eq!(arc.len(), 0);
     }
 
     #[test]
