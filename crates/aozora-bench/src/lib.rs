@@ -175,20 +175,37 @@ pub fn corpus_size_bands(items: Vec<CorpusItem>) -> SizeBandedCorpus {
         let label = item.label;
         let bytes = item.bytes;
         match decode_sjis(&bytes) {
-            Ok(text) => {
-                let band = SizeBand::from_bytes(text.len());
-                let entry = (label, text);
-                match band {
-                    SizeBand::Small => out.small.push(entry),
-                    SizeBand::Medium => out.medium.push(entry),
-                    SizeBand::Large => out.large.push(entry),
-                    SizeBand::Pathological => out.pathological.push(entry),
-                }
-            }
+            Ok(text) => bucket_one(&mut out, (label, text)),
             Err(_) => out.decode_errors += 1,
         }
     }
     out
+}
+
+/// Bucket pre-decoded `(label, text)` pairs by post-decode byte length.
+///
+/// Used by per-phase load-split benchmarks (L-1) to time the decode
+/// step in isolation from the bucketing step. The two-step shape lets
+/// callers measure `decode_secs` as just-the-decode work and
+/// `bucket_secs` as just-the-bucketing work, without one polluting the
+/// other.
+#[must_use]
+pub fn corpus_size_bands_from_decoded(items: Vec<(String, String)>) -> SizeBandedCorpus {
+    let mut out = SizeBandedCorpus::default();
+    for entry in items {
+        bucket_one(&mut out, entry);
+    }
+    out
+}
+
+fn bucket_one(out: &mut SizeBandedCorpus, entry: (String, String)) {
+    let band = SizeBand::from_bytes(entry.1.len());
+    match band {
+        SizeBand::Small => out.small.push(entry),
+        SizeBand::Medium => out.medium.push(entry),
+        SizeBand::Large => out.large.push(entry),
+        SizeBand::Pathological => out.pathological.push(entry),
+    }
 }
 
 /// Logarithmic-bucket histogram over an `&[u64]` of nanosecond durations.

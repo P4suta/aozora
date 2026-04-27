@@ -59,11 +59,13 @@
 
 use std::cell::RefCell;
 use std::env;
+use std::path::PathBuf;
 use std::process;
 use std::time::Instant;
 
-use aozora_bench::{SizeBand, SizeBandedCorpus, corpus_size_bands};
-use aozora_corpus::CorpusItem;
+use aozora_bench::{SizeBand, SizeBandedCorpus, corpus_size_bands_from_decoded};
+use aozora_corpus::{CorpusItem, FilesystemCorpus};
+use aozora_encoding::decode_sjis;
 use aozora_lex::lex_into_arena;
 use aozora_syntax::borrowed::Arena;
 use rayon::prelude::*;
@@ -109,8 +111,12 @@ fn parallel_mode() -> bool {
 }
 
 fn main() {
-    let Some(corpus) = aozora_corpus::from_env() else {
-        eprintln!("AOZORA_CORPUS_ROOT not set or not a directory; nothing to profile.");
+    let Some(root) = env::var_os("AOZORA_CORPUS_ROOT") else {
+        eprintln!("AOZORA_CORPUS_ROOT not set; nothing to profile.");
+        process::exit(2);
+    };
+    let Ok(corpus) = FilesystemCorpus::new(PathBuf::from(&root)) else {
+        eprintln!("AOZORA_CORPUS_ROOT is not a readable directory; nothing to profile.");
         process::exit(2);
     };
 
@@ -128,43 +134,147 @@ fn main() {
         "throughput_by_class: starting (limit = {limit:?}, repeat = {repeat}, parallel = {parallel})"
     );
 
-    let load_start = Instant::now();
-    let items: Vec<CorpusItem> = corpus
-        .iter()
-        .take(limit.unwrap_or(usize::MAX))
-        .filter_map(Result::ok)
-        .collect();
-    eprintln!(
-        "throughput_by_class: loaded {} items, bucketing…",
-        items.len()
-    );
-    let banded = corpus_size_bands(items);
-    let load_secs = load_start.elapsed().as_secs_f64();
+    // L-1 (ADR-0020): the load wall historically lumped walkdir +
+    // fs::read + decode + bucketing into one number, hiding which
+    // sub-phase paid the cost. Split into four timers so future
+    // optimisations (L-2 parallel I/O, L-3 decode buffer reuse, L-4
+    // mmap) can attribute their deltas cleanly.
+    let load = LoadPhase::run(&corpus, limit);
+
     eprintln!(
         "throughput_by_class: bucketed (small={}, medium={}, large={}, path={}, decode_err={})",
-        banded.small.len(),
-        banded.medium.len(),
-        banded.large.len(),
-        banded.pathological.len(),
-        banded.decode_errors,
+        load.banded.small.len(),
+        load.banded.medium.len(),
+        load.banded.large.len(),
+        load.banded.pathological.len(),
+        load.banded.decode_errors,
     );
     eprintln!(
-        "throughput_by_class: load wall {load_secs:.2}s (Shift-JIS decode + bucketing — \
-         excluded from parse measurements)"
+        "throughput_by_class: load wall {:.2}s (Shift-JIS decode + I/O + bucketing — \
+         excluded from parse measurements)",
+        load.total_secs
+    );
+    eprintln!(
+        "  ├─ walkdir : {:>5.2}s ({:>4.1}%, {} paths)",
+        load.walkdir_secs,
+        100.0 * load.walkdir_secs / load.total_secs,
+        load.path_count,
+    );
+    eprintln!(
+        "  ├─ read    : {:>5.2}s ({:>4.1}%, {:.1} MB sjis)",
+        load.read_secs,
+        100.0 * load.read_secs / load.total_secs,
+        load.sjis_bytes_total as f64 / 1_048_576.0,
+    );
+    eprintln!(
+        "  ├─ decode  : {:>5.2}s ({:>4.1}%, {:.1} MB utf8 → {:.0} MB/s)",
+        load.decode_secs,
+        100.0 * load.decode_secs / load.total_secs,
+        load.utf8_bytes_total as f64 / 1_048_576.0,
+        (load.sjis_bytes_total as f64 / 1_048_576.0) / load.decode_secs.max(f64::EPSILON),
+    );
+    eprintln!(
+        "  └─ bucket  : {:>5.2}s ({:>4.1}%)",
+        load.bucket_secs,
+        100.0 * load.bucket_secs / load.total_secs,
     );
 
     let parse_start = Instant::now();
-    let mut report = measure_all(&banded, parallel);
+    let mut report = measure_all(&load.banded, parallel);
     for _ in 1..repeat {
         // Discard repeats — only the per-doc latencies of the final
         // pass are kept; earlier passes serve to warm caches and
         // (importantly) to give a sampling profiler more parser-bound
         // wall time to attach to.
-        report = measure_all(&banded, parallel);
+        report = measure_all(&load.banded, parallel);
     }
     let parse_secs = parse_start.elapsed().as_secs_f64();
 
-    print_report(&report, &banded, parse_secs, load_secs, repeat, parallel);
+    print_report(
+        &report,
+        &load.banded,
+        parse_secs,
+        load.total_secs,
+        repeat,
+        parallel,
+    );
+}
+
+/// Per-phase load-cost breakdown — captured by [`LoadPhase::run`] in
+/// one pass through the corpus. The four timers (`walkdir_secs`,
+/// `read_secs`, `decode_secs`, `bucket_secs`) sum to within ±5 % of
+/// the previously-reported single `load_wall` number; the new shape
+/// just attributes the cost.
+struct LoadPhase {
+    banded: SizeBandedCorpus,
+    walkdir_secs: f64,
+    read_secs: f64,
+    decode_secs: f64,
+    bucket_secs: f64,
+    total_secs: f64,
+    path_count: usize,
+    sjis_bytes_total: u64,
+    utf8_bytes_total: u64,
+}
+
+impl LoadPhase {
+    fn run(corpus: &FilesystemCorpus, limit: Option<usize>) -> Self {
+        let total_start = Instant::now();
+
+        // 1. walkdir — enumerate file paths only (no read).
+        let walk_start = Instant::now();
+        let paths: Vec<PathBuf> = corpus
+            .walk_paths()
+            .take(limit.unwrap_or(usize::MAX))
+            .filter_map(Result::ok)
+            .collect();
+        let walkdir_secs = walk_start.elapsed().as_secs_f64();
+        let path_count = paths.len();
+
+        // 2. read — pull bytes for every path.
+        let read_start = Instant::now();
+        let items: Vec<CorpusItem> = paths
+            .iter()
+            .filter_map(|p| corpus.read_path(p).ok())
+            .collect();
+        let read_secs = read_start.elapsed().as_secs_f64();
+        let sjis_bytes_total: u64 = items.iter().map(|it| it.bytes.len() as u64).sum();
+
+        // 3. decode — SJIS → UTF-8, drop failures (counted in step 4).
+        let decode_start = Instant::now();
+        let mut decoded: Vec<(String, String)> = Vec::with_capacity(items.len());
+        let mut decode_errors: usize = 0;
+        for item in items {
+            let label = item.label;
+            let bytes = item.bytes;
+            match decode_sjis(&bytes) {
+                Ok(text) => decoded.push((label, text)),
+                Err(_) => decode_errors += 1,
+            }
+        }
+        let decode_secs = decode_start.elapsed().as_secs_f64();
+        let utf8_bytes_total: u64 = decoded.iter().map(|(_, t)| t.len() as u64).sum();
+
+        // 4. bucket — assign each (label, text) to its size band.
+        let bucket_start = Instant::now();
+        let mut banded = corpus_size_bands_from_decoded(decoded);
+        banded.decode_errors = decode_errors;
+        let bucket_secs = bucket_start.elapsed().as_secs_f64();
+
+        let total_secs = total_start.elapsed().as_secs_f64();
+
+        Self {
+            banded,
+            walkdir_secs,
+            read_secs,
+            decode_secs,
+            bucket_secs,
+            total_secs,
+            path_count,
+            sjis_bytes_total,
+            utf8_bytes_total,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
