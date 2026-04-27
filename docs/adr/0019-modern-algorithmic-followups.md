@@ -592,6 +592,201 @@ planned for B'-2/B'-3.
 - `crates/aozora-syntax/src/alloc.rs` — `*_unique` builders + tests
 - `crates/aozora-lexer/src/phase3_classify.rs` — 4 call-site switches + `is_valid_gaiji_description` helper extraction (the latter would have been a clean refactor on its own merit, but its only motivation was making the unique-builder call fit inside `recognize_gaiji`'s 80-line clippy budget; reverted along with the rest)
 
+## B'-2 — `Arena::reset_with_hint` per source size (PROMOTED)
+
+### What
+
+`Arena::reset_with_hint(target_capacity: usize)` resets the bump and
+ensures the retained chunk capacity is at least `target_capacity`
+bytes before returning. Two branches:
+
+- **Fast path**: when the existing chunk capacity already meets the
+  target, behaves identically to [`Arena::reset`] — no syscall, no
+  fresh allocation. Steady-state (corpus sweep on similar-sized
+  docs) hits this branch after the first big doc per worker thread.
+- **Grow path**: when the target exceeds current capacity, replaces
+  the underlying bump with a freshly-allocated one of at least
+  `target_capacity` bytes. The previous chunks are released; the
+  new bump mmaps one chunk at the requested size.
+
+The bench `WORKER_ARENA` reset call switched from
+`arena.reset()` to `arena.reset_with_hint(text.len() * 4)`. The
+factor matches the production `Document::new` path (which has used
+`source.len() * 4` since N6) and covers borrowed-AST shape on
+every observed corpus doc.
+
+### Why it works
+
+The plan's hypothesis was: `brk` 5.95 % on doc 50685 = arena
+chunk-grow doublings paying mmap cost *during* the parse hot loop
+because the bench's 256 KB initial capacity (A) is too small for a
+3 MB doc's AST. `reset_with_hint` doesn't reduce the **count** of
+mmaps — same number of growth events — but moves them out of the
+parse hot path. The kernel work is identical; the variance and
+intra-parse latency disturbance vanish.
+
+The fast path is critical: small docs ask for, say, 60 KB hint,
+the worker arena is already at 256 KB or more, no growth happens,
+zero syscall cost. The win is concentrated on the one or two big
+docs per worker that pre-grow.
+
+### Measured delta
+
+Same machine, same session, B'-1 reverted, 5-run mean per band:
+
+| band | baseline | B'-2 | delta |
+|---|---:|---:|---:|
+| < 50 KB | 257.3 MB/s | 261.2 | **+1.5 %** |
+| 50 K-500 K | 262.9 | 270.8 | **+3.0 %** |
+| 500 K-2 M | 235.1 | 240.1 | **+2.1 %** |
+| > 2 M | 117.9 | 121.6 | **+3.1 %** |
+
+The > 2 MB band's +3.1 % is the largest because that band is
+dominated by 4 docs whose AST exceeds the 256 KB initial chunk —
+exactly the docs that paid the chunk-grow `mmap` mid-parse before.
+After `reset_with_hint`, each worker sees the mmap once on the
+first big doc and the grown chunk is retained across resets.
+
+Doc 50685 single-doc timing showed the same trend within the
+pathological_probe's amortised-100-iteration noise floor (no
+clean signal because the 100 iterations dilute the per-parse
+chunk-grow cost into a single ~1 % share). The corpus throughput
+delta is the load-bearing measurement: the per-band signal is
+above the noise envelope.
+
+### Architecture notes
+
+- `&mut self` enforces at compile time that no live borrow into
+  the arena exists at reset time — same contract as
+  `Arena::reset`, just with the additional pre-sizing semantic.
+- The replace-on-grow path drops the old bump's chunks before
+  allocating new ones; momentary peak RSS is bounded by
+  `max(old_chunk_total, target_capacity)` rather than by their
+  sum. The plan's RSS-bloat risk is therefore controlled by the
+  steady-state worker-arena size, not by transient growth.
+- `pathological_probe` was switched to the same arena-reuse +
+  hint pattern so single-doc measurements reflect production
+  arena cost rather than the unrealistic fresh-arena cost.
+
+### Files
+
+- `crates/aozora-syntax/src/borrowed/arena.rs` — added
+  `Arena::reset_with_hint` + 2 round-trip tests (grow path,
+  no-shrink fast path)
+- `crates/aozora-bench/examples/throughput_by_class.rs` — bench
+  `measure_band` switched
+- `crates/aozora-bench/examples/phase_breakdown.rs` — both Phase 3
+  and full-pipeline thread-locals switched
+- `crates/aozora-bench/examples/pathological_probe.rs` — single-doc
+  probe now uses arena reuse + `reset_with_hint`
+
+### Verdict: **PROMOTE**
+
+Genuinely improves throughput on every band, no regression
+anywhere, no behaviour change, two-line API addition with
+two round-trip tests. Lands on default.
+
+## B'-3 — `LazyAozoraNode` + on-demand materialisation (DEFERRED)
+
+### Plan as proposed
+
+The hand-off plan called for a cfg-gated `lazy-ast` feature:
+emit a slim handle (`LazyAozoraNode<'a>` = source span +
+recogniser tag, ~12-16 bytes) instead of the full struct;
+materialise into the eager `AozoraNode<'a>` shape on-demand at
+render time. Target: `core::ptr::write` 15.71 % → < 5 % on
+doc 50685; corpus aggregate +5-10 %; render path ±2 % no
+regression.
+
+### Why deferred
+
+A scoping pass on the existing surface area exposed two
+fundamental blockers that make the plan's 2-3 week estimate
+optimistic by an order of magnitude:
+
+**1. `AozoraNode<'src>` is `Copy` — incompatible with lazy
+materialisation.**
+
+The borrowed AST is built around `Copy` semantics: every variant
+holds a `&'src Payload<'src>` to an arena cell, and visitors /
+serialisers walk the tree without `&mut` ceremony. A lazy handle
+needs interior mutability (a `OnceCell` or atomic-pointer cache
+to avoid re-running the recogniser on every visit), which is not
+`Copy`. Either:
+
+- Drop `Copy` from the entire AST (≈ touches every visitor
+  signature in `aozora-render`'s 1500+ lines), or
+- Accept un-cached re-recognition on every node visit (defeats
+  the lazy-skip win for any consumer that walks the tree more
+  than once — including the `serialize` ↔ `html` two-pass shape).
+
+**2. Every consumer in the workspace materialises every node.**
+
+The render layer (`serialize.rs`, `html.rs`) walks the
+normalised text byte-for-byte and on each sentinel calls
+`registry.inline.get(&pos)` → `emit_aozora(node, writer)`. There
+is no consumer that skips the materialisation today, so lazy
+parse would never recoup the deferred work — total work stays
+identical, just moved to render time. The plan's "5-10 % corpus
+aggregate" assumed `lex_into_arena` benchmarks measure work that
+the production consumer would skip; in fact the bench is the
+consumer (it never walks the AST), so a lazy-mode bench would
+under-count work the production renderer always does.
+
+The only consumer pattern where lazy genuinely pays is "parse
+just to get the normalised text + diagnostics, never visit the
+AST" — which is the simdjson Stage 4 cursor case (plan A), not
+plan B'.
+
+**3. `core::ptr::write 15.71 %` self-share is partly a
+categoriser artefact.**
+
+Doing the arithmetic: doc 50685 has 62 636 nodes, parse wall
+~52 ms, so 15.71 % × 52 ms ÷ 62 636 ≈ 130 ns per node *attributed*
+to `ptr::write`. Each node's struct is 24-40 bytes; raw write
+cost is 2-3 cycles ≈ 1 ns. The ~129 ns gap is shared with cache
+misses on the arena cell touch + the surrounding `bumpalo` cursor
+update + spurious frame-merge artefacts (ADR-0019 lesson 2: the
+categoriser is a first-pass triage tool). The actual reducible
+cost from going lazy is much smaller than the headline number.
+
+### Recommendation
+
+The lazy-AST shape is a fundamental architectural concern that
+deserves its own design pass, not an incremental sprint. The
+clean home for it is **plan A Stage 4** (`AozoraCursor<'a>` —
+position into the structural index that materialises the AST node
+on demand), which is naturally lazy because the simdjson 1-pass
+parser doesn't build an eager AST in the first place. Stage 4
+also resolves the `Copy`-vs-cache tension by simply not having
+an eager AST type to mirror.
+
+Defer B'-3. The next architectural lever is **plan A** — the
+simdjson-style 1-pass parser — for which the lazy-walk pattern
+is a stage of the architecture rather than a retrofit.
+
+### What to take from B'-1, B'-2, B'-3
+
+The B' sprint set out to deliver +30-40 % on the pathological
+doc and +5-10 % on the corpus. Ship reality:
+
+- **B'-1**: −0.3 to −3.4 % (regression, abandoned).
+- **B'-2**: +1.5 to +3.1 % corpus (PROMOTED).
+- **B'-3**: deferred to plan A (architectural mismatch).
+
+Net B' delivery: **+1.5 to +3.1 % corpus**, well below the
+plan's +5-10 % target. The B'-1 and B'-3 outcomes both reinforce
+the same lesson: the existing intern + arena + Copy-AST layer is
+already well-tuned for the corpus access pattern; in-architecture
+optimisations are bounded at a few percent. The remaining
+order-of-magnitude headroom (40-100× per the bandwidth ceiling
+analysis above) requires the full simdjson rewrite, not
+incremental retrofits.
+
+The next session should open with plan A — the
+`aozora-scan2` crate with a Stage 1+2 structural index +
+SIMD validation pre-pass — as the load-bearing item.
+
 ## Lesson recorded
 
 Two architecturally clean ideas (M-2's Pure SoA, M-3's flat state
