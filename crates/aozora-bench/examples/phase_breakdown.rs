@@ -214,10 +214,12 @@ fn measure_one(text: &str) -> PhaseSample {
 
     // Phase 3 — needs an arena + allocator. Borrows the per-worker
     // reusable arena (M-1) and resets it before parsing so the prior
-    // doc's allocations don't bloat this measurement.
+    // doc's allocations don't bloat this measurement. B'-2 pre-sizes
+    // to `text.len() * 4` so the chunk-grow `mmap` fires before the
+    // per-phase timer rather than inside it.
     let classify_ns = WORKER_ARENA_PHASE3.with(|cell| {
         let mut arena = cell.borrow_mut();
-        arena.reset();
+        arena.reset_with_hint(text.len().saturating_mul(4));
         let mut alloc = BorrowedAllocator::new(&arena);
         let t = Instant::now();
         let mut classify_stream = classify(pair_events, &sanitized.text, &mut alloc);
@@ -236,7 +238,7 @@ fn measure_one(text: &str) -> PhaseSample {
     // share one arena and reset mid-call.
     let full_ns = WORKER_ARENA_FULL.with(|cell| {
         let mut arena = cell.borrow_mut();
-        arena.reset();
+        arena.reset_with_hint(text.len().saturating_mul(4));
         let t = Instant::now();
         let _full = lex_into_arena(text, &arena);
         t.elapsed().as_nanos() as u64

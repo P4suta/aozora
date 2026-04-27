@@ -214,10 +214,21 @@ fn measure_all(banded: &SizeBandedCorpus, parallel: bool) -> AllReport {
 /// `RefCell` is never observed from a second thread (matches
 /// `Arena`'s `!Sync` contract).
 fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
+    // B'-2 (ADR-0019 follow-up): pre-size the per-thread arena to
+    // `source.len() * 4` before each parse. The factor matches the
+    // production `Document::new` path (which has used `source.len() * 4`
+    // since N6) and covers borrowed-AST shape on every observed corpus
+    // doc. When the worker's arena is already at least that large
+    // (steady state after the first big doc), `reset_with_hint`
+    // degrades to plain `reset()` — no syscall. The growth path
+    // moves the chunk-extend `mmap` from inside the parse hot loop
+    // to before it, removing a source of intra-parse latency variance
+    // and pre-paying the `brk` cost ADR-0019 § "True hot path"
+    // identified at 5.95 % self on doc 50685.
     let measure = |text: &str| -> (u64, u64) {
         WORKER_ARENA.with(|cell| {
             let mut arena = cell.borrow_mut();
-            arena.reset();
+            arena.reset_with_hint(text.len().saturating_mul(4));
             let t = Instant::now();
             let _out = lex_into_arena(text, &arena);
             let ns = t.elapsed().as_nanos() as u64;

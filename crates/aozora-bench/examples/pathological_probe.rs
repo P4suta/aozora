@@ -80,6 +80,19 @@ fn main() {
     // NOTE: post-I-2 the production pipeline fuses tokenize → pair
     // → classify with no `Vec` materialisation; this probe still
     // collects each phase to a Vec for individual timing.
+    //
+    // B'-2 (ADR-0019 follow-up): the two arenas live across all
+    // iterations and are reset-with-hint to `text.len() * 4` before
+    // each parse. This mirrors the bench harness's `WORKER_ARENA`
+    // reuse pattern so the probe's per-iteration timing reflects the
+    // production arena cost (chunk-grow `mmap` paid once per growth
+    // event, not per parse) instead of the unrealistic fresh-arena
+    // cost. Two separate arenas because the standalone classify and
+    // the full pipeline are timed back-to-back inside the same loop
+    // iteration; sharing one would force a reset between them.
+    let mut arena = Arena::new();
+    let mut arena_full = Arena::new();
+    let arena_hint = text.len().saturating_mul(4);
     for _ in 0..ITERS {
         let t = Instant::now();
         let sanitized = sanitize(&text);
@@ -95,7 +108,7 @@ fn main() {
         drop(pair_stream.take_diagnostics());
         pair_total += t.elapsed().as_nanos() as u64;
 
-        let arena = Arena::new();
+        arena.reset_with_hint(arena_hint);
         let mut alloc = BorrowedAllocator::new(&arena);
         let t = Instant::now();
         let mut classify_stream = classify(pair_events, &sanitized.text, &mut alloc);
@@ -105,7 +118,7 @@ fn main() {
 
         // Full pipeline run, separate arena so the per-doc cost
         // includes the post-classify ArenaNormalizer walk.
-        let arena_full = Arena::new();
+        arena_full.reset_with_hint(arena_hint);
         let t = Instant::now();
         let _full = lex_into_arena(&text, &arena_full);
         full_total += t.elapsed().as_nanos() as u64;

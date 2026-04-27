@@ -119,6 +119,41 @@ impl Arena {
     pub fn reset(&mut self) {
         self.bump.reset();
     }
+
+    /// Reset and pre-size: drop every allocation, then ensure the
+    /// retained chunk capacity is at least `target_capacity` bytes
+    /// before returning.
+    ///
+    /// Behaviour:
+    /// - When the arena's existing chunk capacity already meets the
+    ///   target, this is identical to [`Arena::reset`] — no syscall,
+    ///   no fresh allocation.
+    /// - When the target exceeds current capacity, the underlying
+    ///   bump is replaced with a freshly-allocated one of at least
+    ///   `target_capacity` bytes. The previous chunks are released
+    ///   to the system allocator; the new bump mmaps one chunk at
+    ///   the requested size.
+    ///
+    /// The replace path costs one `mmap` per *growth event*, not per
+    /// parse. Steady-state workloads (corpus sweep on similar-sized
+    /// docs) hit the no-op fast path after the first parse on each
+    /// worker thread; only docs whose AST exceeds the high-water mark
+    /// pay the syscall. Compared to plain [`Arena::reset`] +
+    /// chunk-grow-on-demand, the cost is identical (same number of
+    /// mmaps) but moved out of the parse hot path: the syscall fires
+    /// before `lex_into_arena` rather than inside it, removing one
+    /// source of intra-parse latency variance.
+    ///
+    /// Used by long-running workers (rayon corpus sweep, LSP daemon)
+    /// that have a per-source size hint available — typically
+    /// `source.len() * 4` for the borrowed AST shape.
+    pub fn reset_with_hint(&mut self, target_capacity: usize) {
+        if self.bump.allocated_bytes() >= target_capacity {
+            self.bump.reset();
+        } else {
+            self.bump = Bump::with_capacity(target_capacity);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -183,6 +218,41 @@ mod tests {
             let expected = u32::try_from(i).expect("loop bound fits in u32");
             assert_eq!(**p, expected);
         }
+    }
+
+    #[test]
+    fn reset_with_hint_grows_when_target_exceeds_current_capacity() {
+        let mut a = Arena::with_capacity(4096);
+        let before = a.allocated_bytes();
+        // Request 10× the current capacity. The bump must be replaced
+        // with a freshly-allocated one large enough to hold the hint.
+        let target = before.saturating_mul(10).max(64 * 1024);
+        a.reset_with_hint(target);
+        let after = a.allocated_bytes();
+        assert!(
+            after >= target,
+            "capacity must grow to at least target (target={target}, after={after})"
+        );
+
+        // Arena is reusable after the grow.
+        let v: &u32 = a.alloc(7u32);
+        assert_eq!(*v, 7);
+    }
+
+    #[test]
+    fn reset_with_hint_is_a_plain_reset_when_target_already_met() {
+        // Pre-size large; ask for a smaller hint. The arena must not
+        // shrink: bumpalo's reset retains chunks, and reset_with_hint's
+        // fast path takes the same plain-reset branch when the hint
+        // is below current capacity.
+        let mut a = Arena::with_capacity(64 * 1024);
+        for i in 0..256u32 {
+            let _ = a.alloc(i);
+        }
+        let before = a.allocated_bytes();
+        a.reset_with_hint(1024);
+        let after = a.allocated_bytes();
+        assert_eq!(after, before, "small-target hint must not shrink the arena");
     }
 
     #[test]
