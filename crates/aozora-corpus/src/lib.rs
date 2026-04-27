@@ -38,7 +38,7 @@ mod vendored;
 pub use error::CorpusError;
 pub use filesystem::FilesystemCorpus;
 pub use in_memory::InMemoryCorpus;
-pub use parallel::par_load_decoded;
+pub use parallel::{par_load_decoded, with_load_pool};
 pub use vendored::VendoredCorpus;
 
 /// Environment variable name consulted by [`from_env`]. Exposed so

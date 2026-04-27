@@ -198,6 +198,13 @@ phf = { version = "0.13", features = ["macros"] }
 # Filesystem walking — used by aozora-corpus to iterate test corpora
 walkdir = "2.5"
 
+# Physical-core count detection — used by aozora-corpus's
+# parallel-load helper (L-4-bis of ADR-0020) to size the rayon thread
+# pool to physical cores rather than logical (hyperthreaded) ones.
+# Mainstream pure-Rust crate; `#[forbid(unsafe_code)]` in our code is
+# preserved.
+num_cpus = "1.16"
+
 # Test helpers
 tempfile = "3.27"
 

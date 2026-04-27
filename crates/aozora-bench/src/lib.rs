@@ -27,7 +27,7 @@ use std::mem;
 use std::path::PathBuf;
 
 use aozora::Document;
-use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
+use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus, with_load_pool};
 use aozora_encoding::{decode_sjis, decode_sjis_into};
 use rayon::prelude::*;
 
@@ -261,36 +261,37 @@ pub fn parallel_size_bands(corpus: &FilesystemCorpus) -> SizeBandedCorpus {
     // the parallel read+decode work that follows.
     let paths: Vec<PathBuf> = corpus.walk_paths().filter_map(Result::ok).collect();
 
-    // Step 2: parallel fold — each rayon worker reads / decodes /
-    // buckets its slice of paths into its own SizeBandedCorpus
-    // accumulator. No cross-thread sharing during the fold body, so
-    // no allocator-cache or atomic-counter contention. Decode goes
-    // through the buffer-reuse `decode_sjis_into` path so each
-    // iteration's String allocation is exactly post-decode-sized.
-    paths
-        .par_iter()
-        .fold(SizeBandedCorpus::default, |mut acc, path| {
-            let Ok(item) = corpus.read_path(path) else {
-                return acc;
-            };
-            let outcome = DECODE_BUF.with(|cell| {
-                let mut buf = cell.borrow_mut();
-                buf.clear();
-                match decode_sjis_into(&item.bytes, &mut buf) {
-                    Ok(()) => Some(mem::take(&mut *buf)),
-                    Err(_) => None,
+    // Step 2 + Step 3: parallel fold + reduce on the shared
+    // physical-core pool (L-4-bis). Each rayon worker reads /
+    // decodes / buckets its slice of paths into its own
+    // SizeBandedCorpus accumulator; reduce merges the per-thread
+    // shards. The pool is sized to physical cores (not logical /
+    // hyperthreaded) so memory-bound decode work doesn't
+    // over-subscribe the cores; warm-thread reuse keeps DECODE_BUF
+    // hot across consecutive sweeps.
+    with_load_pool(|| {
+        paths
+            .par_iter()
+            .fold(SizeBandedCorpus::default, |mut acc, path| {
+                let Ok(item) = corpus.read_path(path) else {
+                    return acc;
+                };
+                let outcome = DECODE_BUF.with(|cell| {
+                    let mut buf = cell.borrow_mut();
+                    buf.clear();
+                    match decode_sjis_into(&item.bytes, &mut buf) {
+                        Ok(()) => Some(mem::take(&mut *buf)),
+                        Err(_) => None,
+                    }
+                });
+                match outcome {
+                    Some(text) => bucket_one(&mut acc, (item.label, text)),
+                    None => acc.decode_errors += 1,
                 }
-            });
-            match outcome {
-                Some(text) => bucket_one(&mut acc, (item.label, text)),
-                None => acc.decode_errors += 1,
-            }
-            acc
-        })
-        // Step 3: merge per-thread shards. `reduce` runs serial after
-        // the parallel fold; each merge appends one shard's bands
-        // into the running aggregate via `Vec::extend`.
-        .reduce(SizeBandedCorpus::default, merge_banded)
+                acc
+            })
+            .reduce(SizeBandedCorpus::default, merge_banded)
+    })
 }
 
 fn merge_banded(mut a: SizeBandedCorpus, b: SizeBandedCorpus) -> SizeBandedCorpus {

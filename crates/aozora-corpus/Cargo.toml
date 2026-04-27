@@ -17,6 +17,7 @@ categories.workspace   = true
 workspace = true
 
 [dependencies]
+num_cpus  = { workspace = true }
 rayon     = { workspace = true }
 thiserror = { workspace = true }
 walkdir   = { workspace = true }

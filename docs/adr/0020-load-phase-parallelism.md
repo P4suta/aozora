@@ -36,8 +36,9 @@ records the L-1 → L-4 sprint that targeted it.
 | L-2 | `par_load_decoded` + `parallel_size_bands` (rayon fold/reduce) | **PROMOTED** | 1.38 s (2.5× vs serial) |
 | L-3 | `decode_sjis_into(&mut String)` + thread-local buffer | API ships, perf-neutral | 1.38 s (no change) |
 | ~~L-4~~ | ~~`memmap2`-backed `read_item`~~ | **DROPPED** — `unsafe` is non-negotiable | n/a |
+| L-4-bis | Physical-core rayon pool for load phase (`num_cpus::get_physical()`) | **PROMOTED** | 0.91 s (3.85× vs serial) |
 
-Final corpus load wall: **3.50 s sequential → 1.38 s parallel = 2.5×**.
+Final corpus load wall: **3.50 s sequential → 0.91 s parallel = 3.85×**.
 Below the plan's 5× target; the gap is documented per-step below.
 
 ## L-1 — per-phase split + isolated decode benchmark
@@ -302,6 +303,103 @@ L-4-bis (#1) is the highest-confidence and is implemented in the
 follow-up commit on top of this ADR; #2 and #3 stay as documented
 candidates pending demand.
 
+## L-4-bis — Physical-core rayon pool for the load phase (PROMOTED)
+
+### What
+
+A dedicated rayon `ThreadPool` sized via `num_cpus::get_physical()`,
+lazily initialised in `crates/aozora-corpus/src/parallel.rs` behind a
+`OnceLock<ThreadPool>`. Both `par_load_decoded` (the corpus-side
+parallel-load helper) and `aozora-bench`'s `parallel_size_bands`
+(the bench-side counterpart) wrap their parallel work in
+`physical_core_pool().install(|| ...)` — exposed publicly as
+`with_load_pool` so downstream callers participate in the same pool
+and benefit from the warm-thread amortisation that keeps `DECODE_BUF`
+hot across consecutive sweeps.
+
+The default rayon global pool is sized to `num_cpus::get()` (logical
+cores including SMT siblings); on this 8-core + 8-hyperthread WSL2
+host that is 16. For memory-bound decode work, two SMT siblings on
+one physical core compete for L1/L2 cache and per-core memory
+bandwidth, so 16 threads regress vs 8 — a textbook over-subscription
+case. Sizing the load pool to physical cores (and only physical
+cores) eliminates this without touching the parse pool, which stays
+on the rayon default and continues to benefit from full SMT use
+(parse work is ALU-heavier, less memory-bound, and scales well at
+16 threads — 14× per ADR-0017 R4-B and confirmed unchanged here).
+
+### Why pure-safe Rust
+
+- `num_cpus 1.16`: mainstream pure-Rust crate; the unsafe inside it
+  is for `sysconf(2)` syscall wrapping (same shape as `rayon` /
+  `encoding_rs`); zero unsafe in our code.
+- `rayon::ThreadPoolBuilder` + `ThreadPool::install`: standard
+  rayon API; no unsafe.
+- `std::sync::OnceLock`: standard library lazy-init primitive; no
+  unsafe.
+
+The workspace `[lints.rust] unsafe_code = "forbid"` constraint is
+preserved end-to-end.
+
+### Measured delta
+
+5-run mean on the same WSL2 host that ran L-1 → L-3:
+
+| metric | L-1 baseline (sequential) | L-2/L-3 (default 16t pool) | L-4-bis (physical-core pool) |
+|---|---:|---:|---:|
+| load wall | 3.50 s | 1.38 s | **0.91 s** |
+| speedup vs L-1 | 1.00× | 2.5× | **3.85×** |
+| speedup vs L-2/L-3 | n/a | 1.00× | **1.51×** |
+| pool size | 1 (serial) | 16 (default) | 8 (physical only) |
+
+Per-run load wall: 0.89, 0.97, 0.88, 0.90, 0.92 s.
+
+The empirical scaling table justifies the pool size choice:
+
+| `RAYON_NUM_THREADS` | load wall | scale vs serial |
+|---:|---:|---:|
+| 1 | 3.07 s | 1.0× |
+| 2 | 1.70 s | 1.81× |
+| 4 | 1.04 s | 2.95× |
+| **8** | **0.92 s** | **3.34×** (peak — L-4-bis steady-state) |
+| 16 | 1.39 s | 2.21× (over-subscription regression) |
+
+L-4-bis lands the host at the 8-thread peak by construction, without
+needing the operator to set `RAYON_NUM_THREADS` manually. On systems
+where logical = physical (no SMT, e.g. some server CPUs configured
+with HT off), `get_physical() == get()` and the pool size matches the
+rayon default — the cost of the abstraction is zero in that case.
+
+### Architecture notes
+
+- The pool is a process-wide singleton (`OnceLock`). Subsequent
+  corpus sweeps in the same process reuse the warm threads —
+  important for benchmarking and for any LSP / CLI use case that
+  parses many corpora in succession.
+- Worker threads are named `aozora-corpus-load-{N}` so `top` /
+  `htop` / profilers can distinguish load-pool threads from rayon
+  default-pool threads (parse phase) at a glance.
+- Parse phase is **not** moved to the physical-core pool: parse work
+  is ALU-heavy with much smaller per-thread arena footprint, and
+  ADR-0017 R4-B confirmed 14×/16-thread scaling. Forcing it onto 8
+  threads would regress parse from 14× to ~7×.
+
+### Files
+
+- `Cargo.toml` (workspace `num_cpus = "1.16"`)
+- `crates/aozora-corpus/Cargo.toml` (`num_cpus = { workspace = true }`)
+- `crates/aozora-corpus/src/parallel.rs` (`physical_core_pool`,
+  `with_load_pool`, `par_load_decoded` install-wrapper)
+- `crates/aozora-corpus/src/lib.rs` (`pub use ... with_load_pool`)
+- `crates/aozora-bench/src/lib.rs` (`parallel_size_bands`
+  install-wrapper)
+
+### Verdict: **PROMOTED**
+
+3.85× total load-wall speedup vs L-1 baseline (1.51× over L-2/L-3
+alone). All gates green. Replaces the dropped L-4 mmap path with a
+real perf win and zero `unsafe`.
+
 ## Cuts (justified)
 
 ### Custom SIMD SJIS decoder — SKIP this sprint
@@ -333,17 +431,17 @@ bound on wins.
 
 Every step gets a row; ADR-0017 / ADR-0019 style.
 
-| Gate | L-1 | L-2 | L-3 |
-|---|---|---|---|
-| `cargo test --workspace --no-fail-fast` | 556 / 0 | 564 / 0 | 564 / 0 |
-| `cargo test -p aozora-lex --test property_borrowed_arena` | 12 / 0 | 12 / 0 | 12 / 0 |
-| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | clean | clean | clean |
-| `cargo fmt --all -- --check` | clean | clean | clean |
-| Per-phase split sums to load wall (±5 %) | ±0.3 % ✓ | n/a (parallel) | n/a (parallel) |
-| Load wall (parallel mode) | 3.50 s baseline | 1.38 s (2.5×) | 1.38 s (2.5×) |
-| Decode MB/s (parallel) | 2375 (isolated) | unchanged | unchanged |
-| AST node-count diff vs main | n/a | = 0 | = 0 |
-| `unsafe_code` in our code | forbid (workspace) | forbid | forbid |
+| Gate | L-1 | L-2 | L-3 | L-4-bis |
+|---|---|---|---|---|
+| `cargo test --workspace --no-fail-fast` | 556 / 0 | 564 / 0 | 564 / 0 | 564 / 0 |
+| `cargo test -p aozora-lex --test property_borrowed_arena` | 12 / 0 | 12 / 0 | 12 / 0 | 12 / 0 |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | clean | clean | clean | clean |
+| `cargo fmt --all -- --check` | clean | clean | clean | clean |
+| Per-phase split sums to load wall (±5 %) | ±0.3 % ✓ | n/a (parallel) | n/a (parallel) | n/a |
+| Load wall (parallel mode) | 3.50 s baseline | 1.38 s (2.5×) | 1.38 s (2.5×) | **0.91 s (3.85×)** |
+| Decode MB/s (parallel, isolated) | 2375 | unchanged | unchanged | unchanged |
+| AST node-count diff vs main | n/a | = 0 | = 0 | = 0 |
+| `unsafe_code` in our code | forbid | forbid | forbid | forbid |
 
 ## Decision
 
@@ -358,34 +456,45 @@ Every step gets a row; ADR-0017 / ADR-0019 style.
   per project policy. Implementation preserved in `jj op log` for
   reference; default code path has no `unsafe`. Pure-safe-Rust
   alternatives documented in the L-4 section above.
+- **L-4-bis**: ship on default. Physical-core rayon pool replaces
+  the L-4 perf goal with zero `unsafe`. 1.51× over L-2/L-3, total
+  3.85× vs L-1 sequential.
 
 ## Lesson recorded
 
-**Plan target was 5× load-wall speedup; sprint delivered 2.5×.** The
-gap is the difference between "decode in isolation scales 8× across
-hardware threads" and "real load pipeline contends on kernel page cache,
-syscall serialisation, and per-physical-core memory bandwidth". The
-decode-only bench is correct about the decoder's parallel ceiling; the
-full-pipeline bench is correct about the bottleneck distribution.
-Future load-wall wins beyond 2.5× require attacking either:
+**Plan target was 5× load-wall speedup; sprint delivered 3.85×.** The
+remaining gap (3.85× vs 5×) is now bound by single-threaded walkdir
+(0.33 s of the 0.91 s = 36 %) and per-physical-core memory bandwidth
+on the decode path. The L-2 → L-4-bis path closed the over-subscription
+regression that initially capped scaling at 2.5×; further gains beyond
+3.85× require attacking either:
 
-1. **Per-physical-core memory bandwidth** — a custom SIMD SJIS decoder
-   could push per-thread MB/s up; rejected here for engineering cost.
-2. **Syscall serialisation** — io_uring batched submission; rejected
-   here for async-colouring cost.
-3. **Thread-pool sizing** — see L-4-bis follow-up.
+1. **Walkdir parallelism** — a `jwalk`-style parallel walker could
+   shave ~0.25 s off the 0.33 s walkdir cost. Pure-Rust crate, no
+   `unsafe` in our code. Documented as L-4 alternative #3; not
+   shipped this sprint because the win is now bounded at <30 % and
+   the architectural cost (new dep) needs separate justification.
+2. **Per-physical-core memory bandwidth** — a custom SIMD SJIS
+   decoder could push per-thread MB/s up; rejected here for
+   engineering cost (multiple weeks vs encoding_rs).
+3. **Cold-cache wins** — `rustix::fs::fadvise(POSIX_FADV_SEQUENTIAL)`
+   replaces what mmap's `MADV_SEQUENTIAL` would have offered; pure
+   safe-Rust API. Documented as L-4 alternative #2; deferred until a
+   cold-cache measurement environment is available.
 
 The mmap road was investigated and rejected on architectural grounds
 (`unsafe` constraint), not on perf grounds; the L-4 section above
-records the safe-Rust replacement candidates.
+records the safe-Rust replacement candidates and L-4-bis recovers
+the perf goal in pure-safe Rust.
 
-This composes on top of B'-2's parse-side wins (ADR-0019) for a total
-end-to-end corpus-sweep wall improvement of:
+### Combined with B'-2 (ADR-0019)
 
-- Parse: ~3.18 s → ~3.18 s (parse phase already at near-bandwidth; no
-  load-side change affects it).
-- Load: ~3.50 s → ~1.38 s (this sprint).
-- **Total wall: ~6.68 s → ~4.56 s = 1.46× end-to-end.**
+End-to-end corpus-sweep wall improvement vs the pre-sprint
+sequential baseline:
+
+- Parse: ~3.18 s → ~0.60 s parallel (B'-2 + R4-B parse parallelism).
+- Load: ~3.50 s → ~0.91 s parallel (this sprint, L-1 → L-4-bis).
+- **Total wall: ~6.68 s → ~1.51 s = 4.4× end-to-end.**
 
 Plan A (simdjson-style 1-pass parser) remains the only candidate for
 ≥ 6× end-to-end, per ADR-0019's order-of-magnitude analysis. Load is

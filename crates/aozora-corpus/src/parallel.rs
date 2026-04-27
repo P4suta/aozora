@@ -1,10 +1,23 @@
-//! Parallel I/O + decode helpers (L-2, ADR-0020).
+//! Parallel I/O + decode helpers (L-2 + L-4-bis, ADR-0020).
 //!
 //! The default [`FilesystemCorpus::iter`] returns a streaming iterator
 //! that fuses walkdir + read; this module exposes a path-first
 //! variant that splits the two so the read step can be fanned out
 //! across rayon workers while walkdir runs once on the calling
 //! thread.
+//!
+//! ## Physical-core thread pool (L-4-bis)
+//!
+//! [`par_load_decoded`] runs its parallel pass on a dedicated rayon
+//! pool sized to **physical** cores (`num_cpus::get_physical()`)
+//! rather than rayon's default logical-core (hyperthreaded) count.
+//! Empirical measurement on this corpus showed scaling **regressing**
+//! from 0.92 s @ 8 threads to 1.38 s @ 16 threads on an 8-core +
+//! 8-hyperthread WSL2 host — classic over-subscription on
+//! memory-bound decode work where two SMT siblings on one core
+//! contend for the same L1/L2 cache and per-core memory bandwidth.
+//! On systems where logical = physical (no SMT), the pool size
+//! matches rayon's default and the cost is zero.
 //!
 //! ## Why "collect paths then parallel-read"
 //!
@@ -32,10 +45,49 @@
 //! closure shape lets the caller participate in the parallel pass.
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use rayon::prelude::*;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::{CorpusError, CorpusItem, FilesystemCorpus};
+
+/// Process-wide rayon pool sized to physical cores. Lazily constructed
+/// the first time it is requested; subsequent calls reuse the same
+/// pool so the worker threads stay warm across multiple corpus
+/// sweeps. `OnceLock` is the standard-library lazy-init primitive;
+/// no `unsafe` in our code.
+fn physical_core_pool() -> &'static ThreadPool {
+    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let n = num_cpus::get_physical().max(1);
+        ThreadPoolBuilder::new()
+            .num_threads(n)
+            .thread_name(|i| format!("aozora-corpus-load-{i}"))
+            .build()
+            .expect("rayon pool construction must not fail under reasonable settings")
+    })
+}
+
+/// Run `f` on the physical-core load pool (L-4-bis).
+///
+/// Lets downstream callers (e.g. `aozora-bench`'s
+/// `parallel_size_bands`) share the same pool that
+/// [`par_load_decoded`] uses — important for the warm-thread
+/// amortisation that keeps the decode-buffer thread-locals hot
+/// across consecutive corpus sweeps. Without this, callers that
+/// build their own rayon work would spin up a second pool of the
+/// default (logical-cores) size and re-introduce the
+/// over-subscription regression L-4-bis exists to fix.
+///
+/// `f` runs synchronously; the function returns when `f` returns.
+pub fn with_load_pool<R, F>(f: F) -> R
+where
+    F: FnOnce() -> R + Send,
+    R: Send,
+{
+    physical_core_pool().install(f)
+}
 
 /// Walk the corpus, read every file, and apply `per_item` to each
 /// `CorpusItem` in parallel via rayon.
@@ -71,17 +123,20 @@ where
     // path); not parallelisable because walkdir is `!Sync`.
     let paths: Vec<Result<PathBuf, CorpusError>> = corpus.walk_paths().collect();
 
-    // Step 2: parallel read + decode + caller closure. Each rayon
-    // worker pulls a `Result<PathBuf, _>`, propagates walkdir errors
-    // unchanged, otherwise reads the bytes and runs the closure.
-    paths
-        .into_par_iter()
-        .map(|path_result| {
-            let path = path_result?;
-            let item = corpus.read_path(&path)?;
-            Ok(per_item(item))
-        })
-        .collect()
+    // Step 2: parallel read + decode + caller closure on the
+    // physical-core pool (L-4-bis). Each worker pulls a
+    // `Result<PathBuf, _>`, propagates walkdir errors unchanged,
+    // otherwise reads the bytes and runs the closure.
+    physical_core_pool().install(|| {
+        paths
+            .into_par_iter()
+            .map(|path_result| {
+                let path = path_result?;
+                let item = corpus.read_path(&path)?;
+                Ok(per_item(item))
+            })
+            .collect()
+    })
 }
 
 #[cfg(test)]
