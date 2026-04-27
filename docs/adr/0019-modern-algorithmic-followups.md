@@ -404,6 +404,101 @@ reduces baseline noise) rather than **structural** re-shaping of
 the dispatch / storage layout. The ceiling on structural changes
 for this hot path is now well-bounded by data.
 
+## Post-A0+A drill-down (Step C continued)
+
+After M-2/M-3 revert + A0/A ship, deeper profiling on pathological
+docs (49178 = 232 KB, 50685 = 3.17 MB) revealed the **true** hot path:
+
+| metric | doc 49178 | doc 50685 |
+|---|---:|---:|
+| `core::ptr::write` (self) | high | **15.71 %** |
+| libc memory primitives (NSS-region attributed) | ~22 % | ~17.78 % |
+| `Interner::intern` (self) | ~2 % | **5.75 %** |
+| `brk` (chunk extend syscall) | ~3 % | **5.95 %** |
+| Phase 3 leaf (`recognize_ruby` etc.) | < 1 % | < 1 % |
+
+`memcpy + ptr_ops = 46.42 % / 43.44 %` of pathological doc wall.
+
+### B (zero-copy gaiji body rebuild)
+
+The `recognize_and_emit` Bracket+refmark branch was previously
+rebuilding `body + links` into `SmallVec`s just to prepend a
+synthetic `Solo(RefMark)` at index 0 (so `recognize_gaiji` could
+read the bracket open at index 1). But `recognize_gaiji` already
+parameterises the bracket entry point via `bracket_open_idx` and
+takes `refmark_span` as a separate argument — the synthetic prefix
+was never consumed. B eliminates the rebuild and passes the
+original body+links with `bracket_open_idx = 0`.
+
+**Hypothesis tested (and falsified)**: B was expected to close the
+pathological doc memcpy 25 % bucket. Measurement: doc 50685
+`alloc_memcpy_memmove` 25.13 % → 25.82 % (no change). The
+synthetic rebuild **was not the source of the memcpy hot path**.
+
+**Why B still ships**: architectural cleanness. The synthetic vec
+construction was dead operation in the data sense (the result was
+read at most one `bracket_open_idx` into) — removing it shrinks
+the recogniser dispatcher by ~25 LoC and makes the data flow
+honest. Net perf delta: 0 ± noise; net architectural delta:
+positive.
+
+### True hot path (post-B drill-down)
+
+`xtask trace hot --top 25` on doc 50685 surfaced:
+
+- **`core::ptr::write` 15.71 % self** — every `BorrowedAllocator::ruby
+  / gaiji / annotation` call writes the AST node struct into the
+  arena via `ptr::write`. Pathological doc has thousands of such
+  calls; the per-call write cost is irreducible without changing
+  the AST node shape.
+- **libc memory primitives 17.78 %** attributed to
+  `__nss_database_lookup+0xXXX` — these are categoriser fuzzy-lookup
+  artefacts. The libc memory primitives (`__memmove_avx_unaligned_erms`
+  etc.) physically share the linker segment with the NSS region, so
+  fuzzy address lookup attributes them to whichever symbol's address
+  range happens to span the offset. Categoriser quirk, not real NSS
+  calls. The actual cost is `memcpy`/`memmove` invoked by Vec grow
+  paths and AST string clones.
+- **`Interner::intern` 5.75 % + `siphash` 1.87 % + `fx_hash` 1.00 %
+  ≈ 8.6 %** — string deduplication. Pathological annotation docs
+  reuse the same keywords (`「青空」に傍点` etc.) thousands of times;
+  the intern walk is hot.
+- **`brk` 5.95 %** — arena chunk-extend syscall. The pathological
+  doc's arena exceeds the per-thread initial capacity (256 KB from A);
+  the first chunk extends drive `brk`. Future tuning: per-doc
+  capacity hint based on source size (production `Document::new`
+  uses `source.len() * 4`; bench thread_local does not).
+
+### Order-of-magnitude analysis
+
+| ceiling | value |
+|---|---:|
+| Memory bandwidth (DDR4 single core) | ~25 GB/s |
+| Current corpus throughput | 253 MB/s |
+| Current / bandwidth | **1.0 %** |
+| Theoretical 1-pass-byte-touch ceiling | **40-100×** |
+| simdjson achieved (vs serde-json on JSON) | 10× |
+
+In-architecture optimisations (B' AST lazy construction, Interner
+bypass for one-shot strings, arena pre-grow) cap at **2-3×
+combined**. The only realistic order-of-magnitude (≥ 6×) candidate
+is the Stage 1-4 simdjson model adapted to Aozora syntax — see
+the next-session plan file
+`/home/yasunobu/.claude/plans/jazzy-jingling-gizmo.md` for the
+detailed roadmap.
+
+### Decision (post-drill-down)
+
+- **B**: ship (architectural cleanness; perf neutral).
+- **B'** (AST lazy construction + Interner bypass + arena
+  pre-grow): pursue as **near-term** sprint (3-4 weeks),
+  pathological doc target +30-40 %.
+- **A** (simdjson-style 1-pass parser): pursue as **long-term**
+  moonshot (1-2 months), corpus target 6-10× (only
+  order-of-magnitude candidate).
+- **C / D** (GPU offload, lazy/skeleton parser): re-evaluate
+  after A measurement; may obviate or compose.
+
 ## Lesson recorded
 
 Two architecturally clean ideas (M-2's Pure SoA, M-3's flat state
