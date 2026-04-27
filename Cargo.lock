@@ -173,6 +173,7 @@ dependencies = [
  "miette",
  "phf",
  "phf_codegen",
+ "proptest",
  "thiserror",
  "tracing",
 ]

@@ -34,4 +34,5 @@ tracing     = { workspace = true }
 phf_codegen = "0.13"
 
 [dev-dependencies]
-insta = { workspace = true }
+insta    = { workspace = true }
+proptest = { workspace = true }
