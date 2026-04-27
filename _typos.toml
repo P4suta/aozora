@@ -32,6 +32,12 @@ extend-exclude = [
     "spec/aozora/fixtures/", # Aozora Bunko source files
     "spec/sources/",         # vendored upstream spec sources (CommonMark/GFM)
     "spec/*.json",           # generated from spec/sources/
+    # Vendored JIS X 0213 / Unicode standard tables — kanji codepoint
+    # rows like `4-7B6E    U+96BA    # <cjk>` trip the dictionary on
+    # uppercase 2-letter hex spans like `BA` → `BY/BE`.
+    "crates/aozora-encoding/data/",
+    "crates/aozora-encoding/build/",
+    "crates/aozora-encoding/src/jisx0213_table.rs",  # generated from data/
     "target/",
     "coverage/",
     "*.html",
