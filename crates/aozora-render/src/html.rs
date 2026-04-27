@@ -300,7 +300,11 @@ fn escape_text_chunk<W: fmt::Write>(chunk: &str, out: &mut W) -> fmt::Result {
             b'>' => "&gt;",
             b'&' => "&amp;",
             b'"' => "&quot;",
-            b'\'' => "&#39;",
+            // Hex form `&#x27;` matches the canonical entity used by
+            // `render_node::escape_text` so the streaming and the
+            // per-node renderers produce byte-identical output for
+            // every text chunk. Pinned by `tests/byte_identical_html.rs`.
+            b'\'' => "&#x27;",
             // The match is exhaustive over the bytes the three
             // memchr scans yield — if we ever hit this branch,
             // either memchr returned a position outside its needle
@@ -380,7 +384,10 @@ mod tests {
     #[test]
     fn html_unsafe_chars_in_plain_text_are_escaped() {
         let html = render("a<b>&\"'");
-        assert!(html.contains("a&lt;b&gt;&amp;&quot;&#39;"));
+        assert!(
+            html.contains("a&lt;b&gt;&amp;&quot;&#x27;"),
+            "expected byte-identical entities (incl. `&#x27;` for apostrophe), got: {html}",
+        );
     }
 
     #[test]
