@@ -58,3 +58,7 @@ fuzz/artifacts/
 
 # macOS junk in WSL mounts
 :2e*
+
+# Claude Code harness state — per-session scheduled-task locks etc.
+# These are local-tooling artifacts, never project-tracked content.
+.claude/
