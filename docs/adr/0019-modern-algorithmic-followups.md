@@ -499,6 +499,99 @@ detailed roadmap.
 - **C / D** (GPU offload, lazy/skeleton parser): re-evaluate
   after A measurement; may obviate or compose.
 
+## B'-1 — Caller-driven Interner bypass (REGRESSION; abandoned)
+
+### What was tried
+
+The plan-file roadmap proposed `BorrowedAllocator::alloc_str_unique`:
+a per-call-site bypass for strings the caller knows are
+per-occurrence so the hash + probe walk would not be amortised. The
+implementation added:
+
+- `Interner::alloc_unique(&mut self, s) -> &'a str` skipping the
+  table walk and inline cache, with `stats.caller_bypass` for
+  diagnostic visibility.
+- `BorrowedAllocator::alloc_str_unique`,
+  `content_plain_unique`, `make_annotation_with_unique_raw`,
+  `make_gaiji_with_unique_desc` — explicit per-site policy.
+
+Switched call sites in `phase3_classify.rs`:
+
+- Annotation `Unknown` raw (3 sites: line 2085, 2447, 2449) — 686 calls/parse on doc 50685.
+- Gaiji description (1 site: line 2284) — 152 calls/parse on doc 50685.
+
+### Why it regressed
+
+Compared to baseline (post-revert + A0 + A) on the same machine in
+the same session:
+
+| metric | baseline | B'-1 (annot+gaiji) | delta |
+|---|---:|---:|---:|
+| doc 50685 `lex_into_arena` (mean of 5) | 52.52 ms | 53.06 ms | +1.0 % |
+| Crime and Punishment `lex_into_arena` (mean of 5) | 4.91 ms | 4.90 ms | -0.2 % |
+| corpus < 50 KB (mean of 3-5) | 256.9 MB/s | 256.1 MB/s | -0.3 % |
+| corpus 50 K-500 K | 265.9 | 260.3 | -2.1 % |
+| corpus 500 K-2 M | 241.2 | 232.9 | -3.4 % |
+| corpus > 2 M | 116.1 | 117.0 | +0.8 % |
+
+The `intern_dedup_ratio` corpus sweep (post-B'-1) shows the
+dominant access shape:
+
+```
+intern() calls            : 5,901,871
+  cache hits              :    27,606 (0.5 %)
+  table hits              : 2,231,730 (37.8 %)
+  fresh allocs            : 3,642,535 (61.7 %)
+  long-bypass allocs      :     2,077 (0.0 %)
+dedup ratio (reuses/total): 38.3 %
+```
+
+Two reasons the data falsified the plan's hypothesis:
+
+1. **Annotation `Unknown` raw is not actually one-shot in
+   practice.** Real corpus annotations like `［＃改ページ］`,
+   `［＃ここから一字下げ］`, `［＃見出し］` recur many times
+   per document and across documents; the ~38 % corpus dedup ratio
+   is partly carried by these. Bypassing throws away the dedup
+   savings (each call now allocates fresh arena bytes) for a CPU
+   win that is already small (the existing table walk is healthy
+   at avg 1.09 probes).
+2. **The intervention is too narrow to move the bands' total.**
+   686 + 152 = 838 bypass-eligible calls on doc 50685 = 0.7 % of
+   the doc's intern traffic; on the corpus median doc it's
+   typically 0-5 calls. The expected throughput delta is below
+   the noise floor.
+
+A pre-experiment extension to also bypass Ruby `base` (the
+dominant call site at 61 043 / parse on doc 50685) was tried and
+regressed worse (-2.8 % on `lex_into_arena`): Ruby base text
+*does* dedup well in Japanese fiction (proper nouns, recurring
+vocabulary). Reverted before promotion.
+
+### Verdict: **REGRESSION, abandoned**
+
+No measurable upside; small consistent regression on one corpus
+band; lost dedup savings for sites that genuinely benefit from
+deduplication. The implementation is recoverable from
+`jj op log` (the `xolxqkqz` commit), but kept off the default
+chain because there is no callable surface for an API with no
+winning sites.
+
+The wider lesson reinforces ADR-0019's M-2/M-3 verdict: the
+existing intern path (inline cache + 1-probe table) is
+well-tuned for the corpus access pattern. Future intern-related
+wins would need either (a) a fundamentally different hash family
+(N4 already explored xxHash-style avalanche and reverted), or
+(b) an SoA-style change to the Interner's table layout that lets
+multiple table walks share the same memory line. Neither is
+planned for B'-2/B'-3.
+
+### Files touched (abandoned)
+
+- `crates/aozora-syntax/src/borrowed/intern.rs` — `alloc_unique` + `caller_bypass` stat
+- `crates/aozora-syntax/src/alloc.rs` — `*_unique` builders + tests
+- `crates/aozora-lexer/src/phase3_classify.rs` — 4 call-site switches + `is_valid_gaiji_description` helper extraction (the latter would have been a clean refactor on its own merit, but its only motivation was making the unique-builder call fit inside `recognize_gaiji`'s 80-line clippy budget; reverted along with the rest)
+
 ## Lesson recorded
 
 Two architecturally clean ideas (M-2's Pure SoA, M-3's flat state
