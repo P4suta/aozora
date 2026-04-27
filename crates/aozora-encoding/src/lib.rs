@@ -7,7 +7,7 @@
 
 #![forbid(unsafe_code)]
 
-use encoding_rs::{Encoding, SHIFT_JIS};
+use encoding_rs::{DecoderResult, SHIFT_JIS};
 use miette::Diagnostic;
 use thiserror::Error;
 
@@ -29,8 +29,52 @@ pub enum DecodeError {
 /// sequence. Lossy replacement is deliberately not offered — callers need to know
 /// when they're looking at corrupted source material rather than silently absorbing
 /// the damage.
+///
+/// Allocates a fresh `String` per call. For workloads that decode many
+/// documents in succession, prefer [`decode_sjis_into`] with a reusable
+/// buffer to avoid the per-call allocation.
 pub fn decode_sjis(input: &[u8]) -> Result<String, DecodeError> {
-    decode_strict(SHIFT_JIS, input)
+    let mut out = String::new();
+    decode_sjis_into(input, &mut out)?;
+    Ok(out)
+}
+
+/// Decode a `Shift_JIS` byte slice into the caller-owned `dst` buffer (L-3, ADR-0020).
+///
+/// Pre-sizes `dst` exactly via
+/// `encoding_rs::Decoder::max_utf8_buffer_length_without_replacement`
+/// so the decode inner loop does no growth-realloc. The buffer is
+/// **not** cleared first — callers that want a fresh decode should
+/// `dst.clear()` before calling. This is intentional so the same
+/// buffer can be reused across many decodes in a thread-local /
+/// per-worker pool without paying the allocator per iteration.
+///
+/// Strict — same error contract as [`decode_sjis`]. Bypasses
+/// `encoding_rs`'s public `decode` shape, which always allocates a
+/// worst-case-sized `String` internally and `Cow::into_owned`s the
+/// result; this entry point goes straight through the
+/// `Decoder::decode_to_string_without_replacement` API the bench
+/// pipeline (L-2 / L-3) needs.
+///
+/// # Errors
+///
+/// Returns [`DecodeError::ShiftJisInvalid`] on malformed input or if
+/// the encoder reports overflow (which `max_utf8_buffer_length_…`
+/// should make unreachable, but is still surfaced rather than
+/// silently truncated).
+pub fn decode_sjis_into(input: &[u8], dst: &mut String) -> Result<(), DecodeError> {
+    let mut decoder = SHIFT_JIS.new_decoder_without_bom_handling();
+    let needed = decoder
+        .max_utf8_buffer_length_without_replacement(input.len())
+        .ok_or(DecodeError::ShiftJisInvalid)?;
+    dst.reserve(needed);
+    let (result, _read) = decoder.decode_to_string_without_replacement(input, dst, true);
+    match result {
+        DecoderResult::InputEmpty => Ok(()),
+        DecoderResult::Malformed(_, _) | DecoderResult::OutputFull => {
+            Err(DecodeError::ShiftJisInvalid)
+        }
+    }
 }
 
 /// Whether the byte slice carries a UTF-8 BOM (`EF BB BF`).
@@ -43,14 +87,6 @@ pub fn decode_sjis(input: &[u8]) -> Result<String, DecodeError> {
 #[must_use]
 pub const fn has_utf8_bom(input: &[u8]) -> bool {
     matches!(input, [0xEF, 0xBB, 0xBF, ..])
-}
-
-fn decode_strict(encoding: &'static Encoding, input: &[u8]) -> Result<String, DecodeError> {
-    let (cow, _used, had_errors) = encoding.decode(input);
-    if had_errors {
-        return Err(DecodeError::ShiftJisInvalid);
-    }
-    Ok(cow.into_owned())
 }
 
 pub mod gaiji;
@@ -124,6 +160,96 @@ mod tests {
         // １２３ — fullwidth digits are common in Aozora ruby delimiters.
         let bytes = &[0x82, 0x4F, 0x82, 0x50, 0x82, 0x51];
         assert_eq!(decode_sjis(bytes).unwrap(), "０１２");
+    }
+
+    // ------------------------------------------------------------------
+    // decode_sjis_into — buffer-reuse path equivalence (L-3)
+    // ------------------------------------------------------------------
+    //
+    // Every test below the section header verifies the contract that
+    // `decode_sjis(b) == decode_sjis_into(b, &mut buf)` byte-for-byte
+    // (and for the strict-error case, returns the same `Err`). The
+    // L-3 sprint (ADR-0020) added `decode_sjis_into` as a buffer-reuse
+    // entry point used by the bench `parallel_size_bands` thread-local
+    // pool; the production `decode_sjis` is now a thin wrapper that
+    // calls `decode_sjis_into` with a fresh `String`.
+
+    fn check_equivalent(input: &[u8]) {
+        let owned = decode_sjis(input);
+        let mut buf = String::new();
+        let into_result = decode_sjis_into(input, &mut buf);
+        match (owned, into_result) {
+            (Ok(s), Ok(())) => assert_eq!(s, buf, "decode_sjis output != decode_sjis_into output"),
+            (Err(_), Err(_)) => {} // both fail — identical strict error contract
+            (Ok(s), Err(e)) => panic!("owned succeeded ({s:?}) but _into failed ({e:?})"),
+            (Err(e), Ok(())) => panic!("owned failed ({e:?}) but _into succeeded ({buf:?})"),
+        }
+    }
+
+    #[test]
+    fn into_equivalent_on_ascii() {
+        check_equivalent(b"hello world");
+    }
+
+    #[test]
+    fn into_equivalent_on_japanese() {
+        check_equivalent(&[0x90, 0xC2, 0x8B, 0xF3, 0x95, 0xB6, 0x8C, 0xC9]);
+    }
+
+    #[test]
+    fn into_equivalent_on_empty() {
+        check_equivalent(b"");
+    }
+
+    #[test]
+    fn into_equivalent_on_halfwidth_katakana() {
+        check_equivalent(&[0xB1, 0xB2, 0xB3, 0xB4, 0xB5]);
+    }
+
+    #[test]
+    fn into_equivalent_on_invalid_lead_byte() {
+        check_equivalent(&[0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn into_equivalent_on_lone_lead_byte() {
+        check_equivalent(&[b'o', b'k', 0x82]);
+    }
+
+    #[test]
+    fn into_reuses_buffer_capacity_across_calls() {
+        // The buffer-reuse contract: a `dst` String that already has
+        // enough capacity should not allocate again on the second
+        // decode. We verify this by asserting capacity is preserved
+        // across `clear() + decode_sjis_into` cycles. (Pinning the
+        // exact byte count would couple the test to bumpalo /
+        // encoding_rs internals; the load-bearing invariant is "no
+        // shrink".)
+        let mut buf = String::with_capacity(4096);
+        let cap_before = buf.capacity();
+        decode_sjis_into(b"hello", &mut buf).unwrap();
+        let cap_after_first = buf.capacity();
+        assert!(
+            cap_after_first >= cap_before,
+            "capacity must not shrink on small decode"
+        );
+        buf.clear();
+        decode_sjis_into(b"world", &mut buf).unwrap();
+        assert!(
+            buf.capacity() >= cap_after_first,
+            "capacity must not shrink on a buffer-reuse cycle"
+        );
+    }
+
+    #[test]
+    fn into_appends_when_dst_not_cleared() {
+        // Documented contract: callers must `clear()` before each
+        // decode if they want a fresh result. This test pins that
+        // shape so future "convenience clear inside the function"
+        // changes break loudly.
+        let mut buf = String::from("PRE:");
+        decode_sjis_into(b"hi", &mut buf).unwrap();
+        assert_eq!(buf, "PRE:hi");
     }
 
     // ------------------------------------------------------------------

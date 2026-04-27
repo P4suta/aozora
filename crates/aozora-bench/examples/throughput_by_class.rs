@@ -63,7 +63,9 @@ use std::path::PathBuf;
 use std::process;
 use std::time::Instant;
 
-use aozora_bench::{SizeBand, SizeBandedCorpus, corpus_size_bands_from_decoded};
+use aozora_bench::{
+    SizeBand, SizeBandedCorpus, corpus_size_bands_from_decoded, parallel_size_bands,
+};
 use aozora_corpus::{CorpusItem, FilesystemCorpus};
 use aozora_encoding::decode_sjis;
 use aozora_lex::lex_into_arena;
@@ -139,7 +141,17 @@ fn main() {
     // sub-phase paid the cost. Split into four timers so future
     // optimisations (L-2 parallel I/O, L-3 decode buffer reuse, L-4
     // mmap) can attribute their deltas cleanly.
-    let load = LoadPhase::run(&corpus, limit);
+    //
+    // L-2 (ADR-0020): when parallel mode is enabled, the load phase
+    // also fans out via rayon (via `parallel_size_bands`) — the
+    // headline ≥5× win. The per-phase split is suppressed in that
+    // path because rayon overlaps read/decode and the per-phase
+    // serial timers no longer attribute meaningfully.
+    let load = if parallel {
+        LoadPhase::run_parallel(&corpus)
+    } else {
+        LoadPhase::run(&corpus, limit)
+    };
 
     eprintln!(
         "throughput_by_class: bucketed (small={}, medium={}, large={}, path={}, decode_err={})",
@@ -154,30 +166,37 @@ fn main() {
          excluded from parse measurements)",
         load.total_secs
     );
-    eprintln!(
-        "  ├─ walkdir : {:>5.2}s ({:>4.1}%, {} paths)",
-        load.walkdir_secs,
-        100.0 * load.walkdir_secs / load.total_secs,
-        load.path_count,
-    );
-    eprintln!(
-        "  ├─ read    : {:>5.2}s ({:>4.1}%, {:.1} MB sjis)",
-        load.read_secs,
-        100.0 * load.read_secs / load.total_secs,
-        load.sjis_bytes_total as f64 / 1_048_576.0,
-    );
-    eprintln!(
-        "  ├─ decode  : {:>5.2}s ({:>4.1}%, {:.1} MB utf8 → {:.0} MB/s)",
-        load.decode_secs,
-        100.0 * load.decode_secs / load.total_secs,
-        load.utf8_bytes_total as f64 / 1_048_576.0,
-        (load.sjis_bytes_total as f64 / 1_048_576.0) / load.decode_secs.max(f64::EPSILON),
-    );
-    eprintln!(
-        "  └─ bucket  : {:>5.2}s ({:>4.1}%)",
-        load.bucket_secs,
-        100.0 * load.bucket_secs / load.total_secs,
-    );
+    if let Some(split) = &load.split {
+        eprintln!(
+            "  ├─ walkdir : {:>5.2}s ({:>4.1}%, {} paths)",
+            split.walkdir_secs,
+            100.0 * split.walkdir_secs / load.total_secs,
+            split.path_count,
+        );
+        eprintln!(
+            "  ├─ read    : {:>5.2}s ({:>4.1}%, {:.1} MB sjis)",
+            split.read_secs,
+            100.0 * split.read_secs / load.total_secs,
+            split.sjis_bytes_total as f64 / 1_048_576.0,
+        );
+        eprintln!(
+            "  ├─ decode  : {:>5.2}s ({:>4.1}%, {:.1} MB utf8 → {:.0} MB/s)",
+            split.decode_secs,
+            100.0 * split.decode_secs / load.total_secs,
+            split.utf8_bytes_total as f64 / 1_048_576.0,
+            (split.sjis_bytes_total as f64 / 1_048_576.0) / split.decode_secs.max(f64::EPSILON),
+        );
+        eprintln!(
+            "  └─ bucket  : {:>5.2}s ({:>4.1}%)",
+            split.bucket_secs,
+            100.0 * split.bucket_secs / load.total_secs,
+        );
+    } else {
+        eprintln!(
+            "  └─ parallel mode (rayon): walkdir + per-file read+decode+bucket fanned across workers; \
+             sub-phase timers do not attribute"
+        );
+    }
 
     let parse_start = Instant::now();
     let mut report = measure_all(&load.banded, parallel);
@@ -200,18 +219,23 @@ fn main() {
     );
 }
 
-/// Per-phase load-cost breakdown — captured by [`LoadPhase::run`] in
-/// one pass through the corpus. The four timers (`walkdir_secs`,
-/// `read_secs`, `decode_secs`, `bucket_secs`) sum to within ±5 % of
-/// the previously-reported single `load_wall` number; the new shape
-/// just attributes the cost.
+/// Load-phase result — total wall time plus, in sequential mode, the
+/// per-sub-phase split from [`LoadPhase::run`]. Parallel mode sets
+/// `split = None` because rayon overlaps the read/decode sub-phases
+/// and the per-phase serial timers no longer attribute meaningfully.
 struct LoadPhase {
     banded: SizeBandedCorpus,
+    total_secs: f64,
+    split: Option<LoadSplit>,
+}
+
+/// Per-sub-phase numbers — only populated by [`LoadPhase::run`]
+/// (sequential mode).
+struct LoadSplit {
     walkdir_secs: f64,
     read_secs: f64,
     decode_secs: f64,
     bucket_secs: f64,
-    total_secs: f64,
     path_count: usize,
     sjis_bytes_total: u64,
     utf8_bytes_total: u64,
@@ -265,14 +289,27 @@ impl LoadPhase {
 
         Self {
             banded,
-            walkdir_secs,
-            read_secs,
-            decode_secs,
-            bucket_secs,
             total_secs,
-            path_count,
-            sjis_bytes_total,
-            utf8_bytes_total,
+            split: Some(LoadSplit {
+                walkdir_secs,
+                read_secs,
+                decode_secs,
+                bucket_secs,
+                path_count,
+                sjis_bytes_total,
+                utf8_bytes_total,
+            }),
+        }
+    }
+
+    fn run_parallel(corpus: &FilesystemCorpus) -> Self {
+        let total_start = Instant::now();
+        let banded = parallel_size_bands(corpus);
+        let total_secs = total_start.elapsed().as_secs_f64();
+        Self {
+            banded,
+            total_secs,
+            split: None,
         }
     }
 }

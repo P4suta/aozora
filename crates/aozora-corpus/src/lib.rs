@@ -32,11 +32,13 @@ use std::path::PathBuf;
 mod error;
 mod filesystem;
 mod in_memory;
+mod parallel;
 mod vendored;
 
 pub use error::CorpusError;
 pub use filesystem::FilesystemCorpus;
 pub use in_memory::InMemoryCorpus;
+pub use parallel::par_load_decoded;
 pub use vendored::VendoredCorpus;
 
 /// Environment variable name consulted by [`from_env`]. Exposed so

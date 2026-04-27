@@ -22,9 +22,14 @@
 use std::hint::black_box;
 use std::path::Path;
 
+use std::cell::RefCell;
+use std::mem;
+use std::path::PathBuf;
+
 use aozora::Document;
 use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
-use aozora_encoding::decode_sjis;
+use aozora_encoding::{decode_sjis, decode_sjis_into};
+use rayon::prelude::*;
 
 /// Iterate the corpus rooted at `root`, decode SJIS bytes to UTF-8,
 /// and parse each document.
@@ -166,16 +171,25 @@ impl SizeBandedCorpus {
 /// [`SizeBandedCorpus::decode_errors`] but never raised; this matches
 /// the philosophy of the other probes ("exercise as much as possible,
 /// surface the error counts at the end").
+///
+/// Uses a single function-local decode buffer and the
+/// [`decode_sjis_into`] L-3 entry point so per-call growth-realloc is
+/// avoided. Each successful decode hands its text to the band entry
+/// via `mem::take`; the buffer's previous capacity is dropped in
+/// exchange for the next decode's `reserve` to allocate exactly the
+/// next doc's needed size.
 #[must_use]
 pub fn corpus_size_bands(items: Vec<CorpusItem>) -> SizeBandedCorpus {
     let mut out = SizeBandedCorpus::default();
+    let mut buf = String::with_capacity(128 * 1024);
     for item in items {
         // CorpusItem is `#[non_exhaustive]`; bind the two fields by
         // name without the destructuring sugar.
         let label = item.label;
         let bytes = item.bytes;
-        match decode_sjis(&bytes) {
-            Ok(text) => bucket_one(&mut out, (label, text)),
+        buf.clear();
+        match decode_sjis_into(&bytes, &mut buf) {
+            Ok(()) => bucket_one(&mut out, (label, mem::take(&mut buf))),
             Err(_) => out.decode_errors += 1,
         }
     }
@@ -206,6 +220,86 @@ fn bucket_one(out: &mut SizeBandedCorpus, entry: (String, String)) {
         SizeBand::Large => out.large.push(entry),
         SizeBand::Pathological => out.pathological.push(entry),
     }
+}
+
+/// Parallel I/O + decode + bucket (L-2 fast path).
+///
+/// The fast-path counterpart to [`corpus_size_bands`]: each rayon
+/// worker reads, decodes, and buckets its share of the corpus into a
+/// per-thread [`SizeBandedCorpus`] accumulator; rayon's
+/// `fold().reduce()` shape merges those shards into a single result
+/// after the parallel pass completes. No intermediate
+/// `Vec<Result<...>>` allocation — the per-thread accumulator IS the
+/// destination, so each band entry lands in its final home in one
+/// step instead of being moved twice.
+///
+/// The merge step preserves all decoded entries; intra-band order is
+/// **not** stable across runs (rayon's work-stealing reorders shards).
+/// Callers that need deterministic ordering should sort each band by
+/// label after this returns.
+///
+/// Decode failures land in `decode_errors` exactly as
+/// [`corpus_size_bands`] reports them. Walkdir / `fs::read` failures
+/// are silently dropped (matching the sequential path's "skip and
+/// continue" philosophy).
+#[must_use]
+pub fn parallel_size_bands(corpus: &FilesystemCorpus) -> SizeBandedCorpus {
+    // L-3: per-worker reusable decode buffer. 128 KB initial capacity
+    // covers the corpus median doc in one allocation; pathological
+    // (>2 MB UTF-8) docs grow the buffer once per worker — the same
+    // amortisation pattern `WORKER_ARENA` uses in the parse path.
+    // `mem::take` hands the filled buffer to the band entry; the
+    // thread-local gets an empty `String` for the next iteration to
+    // re-`reserve` to exact size (no growth-realloc inside the
+    // decoder loop).
+    thread_local! {
+        static DECODE_BUF: RefCell<String> = RefCell::new(String::with_capacity(128 * 1024));
+    }
+
+    // Step 1: serial walkdir to a Vec<PathBuf>. Walkdir is `!Sync`;
+    // its cost (~0.3 s on the 17 k-file corpus) is small relative to
+    // the parallel read+decode work that follows.
+    let paths: Vec<PathBuf> = corpus.walk_paths().filter_map(Result::ok).collect();
+
+    // Step 2: parallel fold — each rayon worker reads / decodes /
+    // buckets its slice of paths into its own SizeBandedCorpus
+    // accumulator. No cross-thread sharing during the fold body, so
+    // no allocator-cache or atomic-counter contention. Decode goes
+    // through the buffer-reuse `decode_sjis_into` path so each
+    // iteration's String allocation is exactly post-decode-sized.
+    paths
+        .par_iter()
+        .fold(SizeBandedCorpus::default, |mut acc, path| {
+            let Ok(item) = corpus.read_path(path) else {
+                return acc;
+            };
+            let outcome = DECODE_BUF.with(|cell| {
+                let mut buf = cell.borrow_mut();
+                buf.clear();
+                match decode_sjis_into(&item.bytes, &mut buf) {
+                    Ok(()) => Some(mem::take(&mut *buf)),
+                    Err(_) => None,
+                }
+            });
+            match outcome {
+                Some(text) => bucket_one(&mut acc, (item.label, text)),
+                None => acc.decode_errors += 1,
+            }
+            acc
+        })
+        // Step 3: merge per-thread shards. `reduce` runs serial after
+        // the parallel fold; each merge appends one shard's bands
+        // into the running aggregate via `Vec::extend`.
+        .reduce(SizeBandedCorpus::default, merge_banded)
+}
+
+fn merge_banded(mut a: SizeBandedCorpus, b: SizeBandedCorpus) -> SizeBandedCorpus {
+    a.small.extend(b.small);
+    a.medium.extend(b.medium);
+    a.large.extend(b.large);
+    a.pathological.extend(b.pathological);
+    a.decode_errors += b.decode_errors;
+    a
 }
 
 /// Logarithmic-bucket histogram over an `&[u64]` of nanosecond durations.

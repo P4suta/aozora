@@ -17,6 +17,7 @@ categories.workspace   = true
 workspace = true
 
 [dependencies]
+rayon     = { workspace = true }
 thiserror = { workspace = true }
 walkdir   = { workspace = true }
 
