@@ -205,6 +205,19 @@ walkdir = "2.5"
 # preserved.
 num_cpus = "1.16"
 
+# zstd compression — used by `aozora-corpus::archive` (L-5 of ADR-0020)
+# for the compressed archive variant and by `xtask corpus pack` for
+# the build-time pack. Pure-Rust API; underlying libzstd is C, but
+# the boundary is hidden behind the `zstd` crate's safe API (same
+# shape as encoding_rs / num_cpus / rayon).
+zstd = "0.13"
+
+# Content-addressed hashing — used by `aozora-corpus::archive` for
+# per-entry source hashes (incremental pack diff). blake3 is the
+# modern fast-and-secure default; pure-Rust SIMD impl, no unsafe in
+# our code.
+blake3 = "1.5"
+
 # Test helpers
 tempfile = "3.27"
 

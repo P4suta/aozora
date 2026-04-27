@@ -47,9 +47,11 @@ use std::process::{self, Command, ExitStatus};
 
 use clap::{Args, Parser, Subcommand};
 
+mod corpus;
 mod deps;
 mod trace;
 
+pub(crate) use corpus::CorpusArgs;
 pub(crate) use deps::DepsArgs;
 pub(crate) use trace::TraceArgs;
 
@@ -77,6 +79,13 @@ enum Cmd {
     /// weekly. Replaces the dependabot / GitHub-Actions pattern with
     /// a host-side pure-Rust mechanism (ADR-0018).
     Deps(DepsArgs),
+    /// Build / inspect aozora-corpus binary archives (L-5 of ADR-0020).
+    /// Replaces the directory-of-17-k-small-files load shape with a
+    /// single packed file that can be raw SJIS, pre-decoded UTF-8,
+    /// and/or zstd-compressed. The pack step is incremental — entries
+    /// whose source `mtime` and `blake3` hash match the previous
+    /// archive are copied verbatim.
+    Corpus(CorpusArgs),
 }
 
 #[derive(Args)]
@@ -145,6 +154,7 @@ fn main() {
         },
         Cmd::Trace(args) => trace::dispatch(args),
         Cmd::Deps(args) => deps::dispatch(&args),
+        Cmd::Corpus(args) => corpus::dispatch(&args),
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");

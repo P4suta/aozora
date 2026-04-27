@@ -59,14 +59,16 @@
 
 use std::cell::RefCell;
 use std::env;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Instant;
 
 use aozora_bench::{
-    SizeBand, SizeBandedCorpus, corpus_size_bands_from_decoded, parallel_size_bands,
+    SizeBand, SizeBandedCorpus, archive_size_bands, corpus_size_bands_from_decoded,
+    parallel_size_bands,
 };
-use aozora_corpus::{CorpusItem, FilesystemCorpus};
+use aozora_corpus::{Archive, CorpusItem, FilesystemCorpus};
 use aozora_encoding::decode_sjis;
 use aozora_lex::lex_into_arena;
 use aozora_syntax::borrowed::Arena;
@@ -113,14 +115,14 @@ fn parallel_mode() -> bool {
 }
 
 fn main() {
-    let Some(root) = env::var_os("AOZORA_CORPUS_ROOT") else {
-        eprintln!("AOZORA_CORPUS_ROOT not set; nothing to profile.");
+    let archive_path = env::var_os("AOZORA_CORPUS_ARCHIVE");
+    let root = env::var_os("AOZORA_CORPUS_ROOT");
+    if archive_path.is_none() && root.is_none() {
+        eprintln!(
+            "neither AOZORA_CORPUS_ARCHIVE nor AOZORA_CORPUS_ROOT is set; nothing to profile."
+        );
         process::exit(2);
-    };
-    let Ok(corpus) = FilesystemCorpus::new(PathBuf::from(&root)) else {
-        eprintln!("AOZORA_CORPUS_ROOT is not a readable directory; nothing to profile.");
-        process::exit(2);
-    };
+    }
 
     let limit: Option<usize> = env::var("AOZORA_PROFILE_LIMIT")
         .ok()
@@ -136,22 +138,40 @@ fn main() {
         "throughput_by_class: starting (limit = {limit:?}, repeat = {repeat}, parallel = {parallel})"
     );
 
-    // L-1 (ADR-0020): the load wall historically lumped walkdir +
-    // fs::read + decode + bucketing into one number, hiding which
-    // sub-phase paid the cost. Split into four timers so future
-    // optimisations (L-2 parallel I/O, L-3 decode buffer reuse, L-4
-    // mmap) can attribute their deltas cleanly.
-    //
-    // L-2 (ADR-0020): when parallel mode is enabled, the load phase
-    // also fans out via rayon (via `parallel_size_bands`) — the
-    // headline ≥5× win. The per-phase split is suppressed in that
-    // path because rayon overlaps read/decode and the per-phase
-    // serial timers no longer attribute meaningfully.
-    let load = if parallel {
-        LoadPhase::run_parallel(&corpus)
-    } else {
-        LoadPhase::run(&corpus, limit)
-    };
+    // L-5 (ADR-0020): if AOZORA_CORPUS_ARCHIVE is set, load from a
+    // packed binary archive (single fs::read of the whole archive +
+    // parallel iter over its index) instead of walking 17 k small
+    // files. Skips walkdir + per-file syscalls entirely; for the
+    // pre-decoded UTF-8 + zstd variant also skips the per-doc
+    // decode. AOZORA_CORPUS_ROOT path stays as the fallback so
+    // existing workflows remain unchanged.
+    let load = archive_path.as_ref().map_or_else(
+        || {
+            // Safe to unwrap: we returned exit(2) above if both were unset.
+            let root = root.expect("AOZORA_CORPUS_ROOT must be set when ARCHIVE is not");
+            let Ok(corpus) = FilesystemCorpus::new(PathBuf::from(&root)) else {
+                eprintln!("AOZORA_CORPUS_ROOT is not a readable directory; nothing to profile.");
+                process::exit(2);
+            };
+            // L-1 (ADR-0020): the load wall historically lumped walkdir +
+            // fs::read + decode + bucketing into one number, hiding which
+            // sub-phase paid the cost. Split into four timers so future
+            // optimisations (L-2 parallel I/O, L-3 decode buffer reuse, L-4
+            // mmap) can attribute their deltas cleanly.
+            //
+            // L-2 (ADR-0020): when parallel mode is enabled, the load phase
+            // also fans out via rayon (via `parallel_size_bands`) — the
+            // headline ≥5× win. The per-phase split is suppressed in that
+            // path because rayon overlaps read/decode and the per-phase
+            // serial timers no longer attribute meaningfully.
+            if parallel {
+                LoadPhase::run_parallel(&corpus)
+            } else {
+                LoadPhase::run(&corpus, limit)
+            }
+        },
+        |archive_path| LoadPhase::run_archive(Path::new(archive_path)),
+    );
 
     eprintln!(
         "throughput_by_class: bucketed (small={}, medium={}, large={}, path={}, decode_err={})",
@@ -305,6 +325,30 @@ impl LoadPhase {
     fn run_parallel(corpus: &FilesystemCorpus) -> Self {
         let total_start = Instant::now();
         let banded = parallel_size_bands(corpus);
+        let total_secs = total_start.elapsed().as_secs_f64();
+        Self {
+            banded,
+            total_secs,
+            split: None,
+        }
+    }
+
+    /// Load from a packed binary archive (L-5). One `fs::read` of
+    /// the archive file, then parallel iter (decompress / decode /
+    /// bucket) on the physical-core pool.
+    fn run_archive(path: &Path) -> Self {
+        let total_start = Instant::now();
+        let archive =
+            Archive::open(path).unwrap_or_else(|err| panic!("open {}: {err}", path.display()));
+        eprintln!(
+            "throughput_by_class: archive {} ({} entries, {}{}, {:.1} MB on disk)",
+            path.display(),
+            archive.len(),
+            if archive.is_utf8() { "UTF8 " } else { "SJIS " },
+            if archive.is_zstd() { "ZSTD" } else { "RAW" },
+            fs::metadata(path).map_or(0, |m| m.len()) as f64 / 1_048_576.0,
+        );
+        let banded = archive_size_bands(&archive);
         let total_secs = total_start.elapsed().as_secs_f64();
         Self {
             banded,

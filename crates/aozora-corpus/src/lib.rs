@@ -29,12 +29,14 @@
 use std::env;
 use std::path::PathBuf;
 
+pub mod archive;
 mod error;
 mod filesystem;
 mod in_memory;
 mod parallel;
 mod vendored;
 
+pub use archive::{Archive, ArchiveBuilder, ArchiveError, EntryMeta};
 pub use error::CorpusError;
 pub use filesystem::FilesystemCorpus;
 pub use in_memory::InMemoryCorpus;

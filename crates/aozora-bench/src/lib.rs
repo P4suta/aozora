@@ -27,7 +27,7 @@ use std::mem;
 use std::path::PathBuf;
 
 use aozora::Document;
-use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus, with_load_pool};
+use aozora_corpus::{Archive, CorpusItem, CorpusSource, FilesystemCorpus, with_load_pool};
 use aozora_encoding::{decode_sjis, decode_sjis_into};
 use rayon::prelude::*;
 
@@ -301,6 +301,96 @@ fn merge_banded(mut a: SizeBandedCorpus, b: SizeBandedCorpus) -> SizeBandedCorpu
     a.pathological.extend(b.pathological);
     a.decode_errors += b.decode_errors;
     a
+}
+
+/// Bucket a packed binary archive into [`SizeBandedCorpus`] (L-5).
+///
+/// Three archive flavours are handled uniformly:
+///
+/// - `RAW SJIS`: per-entry payload is raw SJIS; decode via the
+///   `decode_sjis_into` buffer-reuse path inside the parallel fold.
+/// - `RAW UTF-8`: per-entry payload is already UTF-8; skip decode
+///   entirely, just `String::from_utf8` the bytes (which is O(n)
+///   validation; for trusted archives this could go to
+///   `String::from_utf8_unchecked` but `unsafe` is non-negotiable
+///   per ADR-0020 § L-4 — the validation cost is small relative to
+///   the load wall and worth keeping safe).
+/// - `ZSTD …`: the archive iter handles the per-entry zstd
+///   decompression; the bench just consumes whatever bytes the iter
+///   yields and runs the same decode-or-skip choice as above.
+///
+/// All flavours fan out across the physical-core pool ([L-4-bis](
+/// crate::with_load_pool)) for the same reasons `parallel_size_bands`
+/// does.
+#[must_use]
+pub fn archive_size_bands(archive: &Archive) -> SizeBandedCorpus {
+    use std::cell::RefCell;
+    use std::mem;
+
+    let utf8 = archive.is_utf8();
+    let entry_count = archive.entries().len();
+    let zstd = archive.is_zstd();
+
+    // Per-worker reusable decode buffer (only used for the SJIS
+    // archive variants; UTF-8 archives skip the decode path).
+    thread_local! {
+        static DECODE_BUF: RefCell<String> = RefCell::new(String::with_capacity(128 * 1024));
+    }
+
+    with_load_pool(|| {
+        (0..entry_count)
+            .into_par_iter()
+            .fold(SizeBandedCorpus::default, |mut acc, i| {
+                let entry_meta = &archive.entries()[i];
+                // Materialise the payload bytes — for raw archives
+                // this borrows from the in-memory archive buffer; for
+                // zstd archives it allocates a fresh decompressed Vec.
+                let payload_bytes: Vec<u8> = if zstd {
+                    use std::io::Read;
+                    use zstd::stream::read::Decoder;
+                    let raw = archive.raw_payload(i);
+                    let mut out = Vec::with_capacity(entry_meta.decoded_len as usize);
+                    let Ok(mut decoder) = Decoder::new(raw) else {
+                        acc.decode_errors += 1;
+                        return acc;
+                    };
+                    if decoder.read_to_end(&mut out).is_err() {
+                        acc.decode_errors += 1;
+                        return acc;
+                    }
+                    out
+                } else {
+                    archive.raw_payload(i).to_vec()
+                };
+
+                let text = if utf8 {
+                    // Pre-decoded UTF-8: skip decode, just validate.
+                    let Ok(s) = String::from_utf8(payload_bytes) else {
+                        acc.decode_errors += 1;
+                        return acc;
+                    };
+                    s
+                } else {
+                    // Raw SJIS: decode via the buffer-reuse path.
+                    let outcome = DECODE_BUF.with(|cell| {
+                        let mut buf = cell.borrow_mut();
+                        buf.clear();
+                        match decode_sjis_into(&payload_bytes, &mut buf) {
+                            Ok(()) => Some(mem::take(&mut *buf)),
+                            Err(_) => None,
+                        }
+                    });
+                    let Some(text) = outcome else {
+                        acc.decode_errors += 1;
+                        return acc;
+                    };
+                    text
+                };
+                bucket_one(&mut acc, (entry_meta.label.clone(), text));
+                acc
+            })
+            .reduce(SizeBandedCorpus::default, merge_banded)
+    })
 }
 
 /// Logarithmic-bucket histogram over an `&[u64]` of nanosecond durations.
