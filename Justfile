@@ -246,9 +246,12 @@ strict-code:
     # ---- println! / eprintln! in library crates ----------------------------
     # Library crates emit observability via `tracing`, not raw print.
     # CLI crates (aozora-cli) and tests/examples/fuzz are exempt.
+    # `build.rs` is also exempt: `println!("cargo:rerun-if-changed=...")`
+    # is the documented cargo build-script protocol, not a stray
+    # debug print — see https://doc.rust-lang.org/cargo/reference/build-scripts.html
     lib_files=(crates/aozora-syntax/**/*.rs crates/aozora-lexer/**/*.rs crates/aozora-parser/**/*.rs crates/aozora-encoding/**/*.rs)
     print_hits=$(grep -nE '(^|[^[:alnum:]_])e?print(ln)?!\s*\(' "${lib_files[@]}" 2>/dev/null \
-        | grep -vE '/(tests|benches|examples|fuzz_targets)/' || true)
+        | grep -vE '/(tests|benches|examples|fuzz_targets)/|/build\.rs:' || true)
     if [[ -n "$print_hits" ]]; then
         echo '==> forbidden: println! / eprintln! in library crates (use tracing instead)' >&2
         echo "$print_hits" >&2
