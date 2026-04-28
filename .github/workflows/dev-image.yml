@@ -1,0 +1,86 @@
+# Build and publish the aozora dev container image to GHCR.
+#
+# This workflow exists so the main CI pipeline (ci.yml) can `docker
+# pull ghcr.io/p4suta/aozora-dev:latest` instead of rebuilding the
+# image from scratch on every commit. The image carries the Rust
+# toolchain, nightly toolchain (for cargo-fuzz / cargo-udeps), all
+# cargo dev tools (cargo-nextest, cargo-llvm-cov, cargo-deny,
+# cargo-audit, cargo-cliff, cargo-semver-checks, cargo-mutants, mold
+# linker, sccache, …) — building it from source on every CI run takes
+# 30-40 minutes which dominates total wall-clock.
+#
+# Trigger conditions are deliberately narrow: the image only needs
+# rebuild when the Dockerfile, docker-compose.yml, or rust-toolchain
+# pin actually change. Routine source / Cargo.toml / workflow churn
+# does NOT republish.
+#
+# The workflow tags both `:latest` (mutable, used by ci.yml's pull
+# step) and `:<commit-sha>` (immutable, useful for git-bisect across
+# image-affecting changes).
+
+name: dev-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/dev-image.yml'
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/dev-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: dev-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    name: build & push (ghcr.io/p4suta/aozora-dev)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        # PR builds from forks must not have GHCR credentials — we still
+        # build to verify but skip the login + push there.
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/p4suta/aozora-dev
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,format=long
+
+      - name: Build and push (ci stage)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: ci
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=dev-image
+          cache-to: type=gha,mode=max,scope=dev-image
+          provenance: false
