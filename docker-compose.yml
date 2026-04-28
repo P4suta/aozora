@@ -60,7 +60,13 @@ services:
       <<: *common-env
       CI: "true"
     volumes:
-      - .:/workspace:ro
+      # `:cached` (not `:ro`): a `:ro` bind mount HIDES `/workspace/{target,
+      # .cargo,.sccache}` that were `mkdir -p`-ed in the image (overlayfs
+      # bind-mount semantics — the source dir replaces image contents),
+      # which then blocks the named-volume mountpoints below from
+      # attaching at runtime ("mkdirat ... read-only file system"). The
+      # runner is ephemeral; `:cached` is safe and the canonical CI mode.
+      - .:/workspace:cached
       - cargo-registry:/workspace/.cargo/registry
       - cargo-git:/workspace/.cargo/git
       - cargo-target:/workspace/target
