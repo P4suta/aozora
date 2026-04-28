@@ -22,7 +22,7 @@ members = [
 ]
 
 [workspace.package]
-version       = "0.2.0"
+version       = "0.2.1"
 edition       = "2024"
 rust-version  = "1.95.0"
 license       = "Apache-2.0 OR MIT"
@@ -136,15 +136,15 @@ large_enum_variant      = "allow"
 
 [workspace.dependencies]
 # Internal crates — paths within this workspace.
-aozora-spec       = { version = "0.2.0", path = "crates/aozora-spec" }
-aozora-syntax     = { version = "0.2.0", path = "crates/aozora-syntax" }
-aozora-veb        = { version = "0.2.0", path = "crates/aozora-veb" }
-aozora-scan       = { version = "0.2.0", path = "crates/aozora-scan" }
-aozora-lex        = { version = "0.2.0", path = "crates/aozora-lex" }
-aozora-render     = { version = "0.2.0", path = "crates/aozora-render" }
-aozora            = { version = "0.2.0", path = "crates/aozora" }
-aozora-wasm       = { version = "0.2.0", path = "crates/aozora-wasm" }
-aozora-trace      = { version = "0.2.0", path = "crates/aozora-trace" }
+aozora-spec       = { version = "0.2.1", path = "crates/aozora-spec" }
+aozora-syntax     = { version = "0.2.1", path = "crates/aozora-syntax" }
+aozora-veb        = { version = "0.2.1", path = "crates/aozora-veb" }
+aozora-scan       = { version = "0.2.1", path = "crates/aozora-scan" }
+aozora-lex        = { version = "0.2.1", path = "crates/aozora-lex" }
+aozora-render     = { version = "0.2.1", path = "crates/aozora-render" }
+aozora            = { version = "0.2.1", path = "crates/aozora" }
+aozora-wasm       = { version = "0.2.1", path = "crates/aozora-wasm" }
+aozora-trace      = { version = "0.2.1", path = "crates/aozora-trace" }
 
 # Memory management
 bumpalo = { version = "3.20", features = ["collections"] }
@@ -166,10 +166,10 @@ aho-corasick = { version = "1.1", default-features = false }
 # Byte-DFA construction (used by aozora-scan's DfaScanner backend;
 # Hoehrmann-style multi-pattern automaton — see ADR-0015).
 regex-automata = { version = "0.4", default-features = false }
-aozora-lexer      = { version = "0.2.0", path = "crates/aozora-lexer" }
-aozora-encoding   = { version = "0.2.0", path = "crates/aozora-encoding" }
-aozora-corpus     = { version = "0.2.0", path = "crates/aozora-corpus" }
-aozora-test-utils = { version = "0.2.0", path = "crates/aozora-test-utils" }
+aozora-lexer      = { version = "0.2.1", path = "crates/aozora-lexer" }
+aozora-encoding   = { version = "0.2.1", path = "crates/aozora-encoding" }
+aozora-corpus     = { version = "0.2.1", path = "crates/aozora-corpus" }
+aozora-test-utils = { version = "0.2.1", path = "crates/aozora-test-utils" }
 
 # Error handling
 thiserror = "2.0.18"

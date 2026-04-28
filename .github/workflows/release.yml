@@ -1,21 +1,20 @@
-# Release workflow for Aozora Flavored Markdown (afm).
+# Release workflow for aozora.
 #
 # Trigger on: annotated tags matching `v*`, plus manual `workflow_dispatch`
-# for dry runs. Builds the `afm` CLI on five target triples and uploads
+# for dry runs. Builds the `aozora` CLI on five target triples and uploads
 # the archives + SHA256SUMS to the GitHub Release.
 #
 # ADR-0002 scope exception: release builds run on native GitHub Actions
 # runners with the matching stable rustc, *not* inside the dev Docker
 # image. The Docker-only rule applies to development and CI; release
 # artefacts need to match each runner OS exactly, so we use the native
-# toolchain here. See CONTRIBUTING.md "How to release" for the full
-# rationale.
+# toolchain here.
 #
 # Action pinning: we use `@v<major>` tags below rather than commit SHAs
-# because Dependabot (`.github/dependabot.yml`) only discovers and
-# SHA-pins new workflow files on its weekly sweep. Once that sweep has
-# run, the pins will be upgraded automatically and this file will align
-# with `ci.yml`'s commit-SHA convention.
+# because Dependabot only discovers and SHA-pins new workflow files on
+# its weekly sweep. Once that sweep has run, the pins will be upgraded
+# automatically and this file will align with `ci.yml`'s commit-SHA
+# convention.
 
 name: release
 
@@ -71,8 +70,8 @@ jobs:
         with:
           key: release-${{ matrix.target }}
 
-      - name: Build afm
-        run: cargo build --release --target ${{ matrix.target }} --package afm-cli
+      - name: Build aozora
+        run: cargo build --release --target ${{ matrix.target }} --package aozora-cli
 
       - name: Assemble archive
         id: archive
@@ -89,13 +88,13 @@ jobs:
               tag="${GITHUB_REF_NAME}"
           fi
 
-          name="afm-${tag}-${{ matrix.target }}"
+          name="aozora-${tag}-${{ matrix.target }}"
           staging="${RUNNER_TEMP}/${name}"
           mkdir -p "${staging}"
 
           bin_suffix=""
           [[ "${{ matrix.archive }}" == "zip" ]] && bin_suffix=".exe"
-          cp "target/${{ matrix.target }}/release/afm${bin_suffix}" "${staging}/"
+          cp "target/${{ matrix.target }}/release/aozora${bin_suffix}" "${staging}/"
 
           cp LICENSE-APACHE LICENSE-MIT NOTICE README.md "${staging}/"
 
@@ -144,7 +143,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: afm-*
+          pattern: aozora-*
           merge-multiple: true
           path: artefacts
 
@@ -155,7 +154,7 @@ jobs:
           cd artefacts
           # Produce a single SHA256SUMS file for the whole release so
           # users can `sha256sum --check SHA256SUMS` in one go.
-          sha256sum afm-*.tar.gz afm-*.zip 2>/dev/null | sort > SHA256SUMS
+          sha256sum aozora-*.tar.gz aozora-*.zip 2>/dev/null | sort > SHA256SUMS
           cat SHA256SUMS
 
       - name: Generate release notes with git-cliff
@@ -173,8 +172,8 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            artefacts/afm-*.tar.gz
-            artefacts/afm-*.zip
+            artefacts/aozora-*.tar.gz
+            artefacts/aozora-*.zip
             artefacts/*.sha256
             artefacts/SHA256SUMS
           body_path: CHANGES.md
