@@ -1,0 +1,46 @@
+# Composite action: install `just` on the runner and provision the
+# aozora dev image (pulled from GHCR or, if pull fails, built locally
+# from the in-tree Dockerfile).
+#
+# Used by every ci.yml job that invokes `just <target>`. Pulling the
+# pre-built image from ghcr.io/p4suta/aozora-dev cuts ~30 minutes off
+# the wall-clock relative to building the image inline; falling back
+# to `docker compose build` keeps CI self-bootstrapping when GHCR is
+# unavailable (first push, registry outage, fork PR without packages
+# read).
+
+name: setup-dev-image
+description: Pull (or build) the aozora dev image and install `just` on the runner.
+
+runs:
+  using: composite
+  steps:
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: just
+
+    # docker/login-action authenticates the runner against GHCR using
+    # the standard GITHUB_TOKEN. Skipped on fork PRs where the token
+    # lacks `packages: read` — those runs go through the build
+    # fallback below. Same-repo runs always log in.
+    - name: Log in to GHCR (same-repo runs only)
+      if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    - name: Pull dev image (GHCR) or fall back to local build
+      shell: bash
+      run: |
+        set -euo pipefail
+        if docker pull ghcr.io/p4suta/aozora-dev:latest; then
+          docker tag ghcr.io/p4suta/aozora-dev:latest aozora-dev:local
+          docker tag ghcr.io/p4suta/aozora-dev:latest aozora-ci:local
+          echo "::notice title=dev image::Pulled aozora-dev:latest from GHCR"
+        else
+          echo "::warning title=dev image::GHCR pull failed; falling back to local Dockerfile build"
+          docker compose build dev
+          docker tag aozora-dev:local aozora-ci:local
+        fi

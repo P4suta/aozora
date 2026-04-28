@@ -1,13 +1,23 @@
-# afm CI
+# aozora CI
 #
-# Every job is `docker compose run ci just <target>`. CI and local dev invoke the same
-# Justfile through the same image, so "works on my machine" is structurally impossible.
+# Architecture:
+#   - The dev container image is built and published by `dev-image.yml`
+#     to ghcr.io/p4suta/aozora-dev:latest on Dockerfile / compose
+#     changes.
+#   - This workflow PULLS that image (via the `setup-dev-image`
+#     composite action) and invokes `just <target>` on the runner host.
+#     `just` recipes wrap each command in `docker compose run dev cargo
+#     ...` (Justfile policy: never invoke cargo on the host directly).
+#     Running `just` on the runner — instead of `docker compose run ci
+#     just <target>` — avoids Docker-in-Docker: the previous nested
+#     pattern hit `bash: docker: command not found` because the `ci`
+#     container has no docker client.
+#   - If the GHCR image is unavailable (first run before dev-image.yml
+#     publishes, or transient registry outage), the composite action
+#     falls back to `docker compose build` against the local Dockerfile.
+#     Slower path but the same correctness guarantee.
 #
-# Actions are pinned by commit SHA with the human-readable tag in a trailing comment.
-# Dependabot (`.github/dependabot.yml`) bumps these weekly.
-#
-# Deliberately no `on.schedule`. Dependabot handles recurring maintenance; see
-# memory note "No cron/schedule in repos".
+# Action SHAs are pinned; Dependabot bumps weekly.
 
 name: ci
 
@@ -23,135 +33,33 @@ concurrency:
 
 permissions:
   contents: read
+  packages: read
 
 env:
   DOCKER_BUILDKIT: "1"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
 
 jobs:
-  image:
-    name: build-image
-    runs-on: ubuntu-latest
-    outputs:
-      image-digest: ${{ steps.build.outputs.digest }}
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
-      - id: build
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
-        with:
-          context: .
-          target: ci
-          tags: afm-ci:local
-          push: false
-          load: true
-          cache-from: type=gha,scope=ci
-          cache-to: type=gha,mode=max,scope=ci
-
-  lint:
-    needs: image
+  msrv:
+    # Verify that the pinned MSRV (1.95.0) still builds. ADR-0002
+    # scope exception: native runner toolchain rather than dev image —
+    # the point is exercising a clean rustc 1.95.0 install, which the
+    # image has no mechanism to downgrade to.
+    name: msrv (rust 1.95.0)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
-      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+      - name: Install Rust 1.95.0 (MSRV)
+        uses: dtolnay/rust-toolchain@stable
         with:
-          context: .
-          target: ci
-          tags: afm-ci:local
-          load: true
-          cache-from: type=gha,scope=ci
-      - run: docker compose run --rm --no-TTY ci just lint
-
-  build-and-test:
-    needs: image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
-      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@v2
         with:
-          context: .
-          target: ci
-          tags: afm-ci:local
-          load: true
-          cache-from: type=gha,scope=ci
-      - run: docker compose run --rm --no-TTY ci just build
-      - run: docker compose run --rm --no-TTY ci just test
-
-  spec:
-    needs: image
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - spec-commonmark
-          - spec-gfm
-          - spec-aozora
-          - spec-golden-56656
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
-      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
-        with:
-          context: .
-          target: ci
-          tags: afm-ci:local
-          load: true
-          cache-from: type=gha,scope=ci
-      - run: docker compose run --rm --no-TTY ci just ${{ matrix.target }}
-
-  upstream-diff:
-    needs: image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
-      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
-        with:
-          context: .
-          target: ci
-          tags: afm-ci:local
-          load: true
-          cache-from: type=gha,scope=ci
-      - run: docker compose run --rm --no-TTY ci just upstream-diff
-
-  coverage:
-    needs: image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
-      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
-        with:
-          context: .
-          target: ci
-          tags: afm-ci:local
-          load: true
-          cache-from: type=gha,scope=ci
-      - run: docker compose run --rm --no-TTY ci just coverage
-
-  audit:
-    needs: image
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [deny, audit, udeps]
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
-      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
-        with:
-          context: .
-          target: ci
-          tags: afm-ci:local
-          load: true
-          cache-from: type=gha,scope=ci
-      - run: docker compose run --rm --no-TTY ci just ${{ matrix.target }}
+          key: msrv
+      - run: cargo check --workspace --all-targets
 
   commitlint:
-    # Light-weight check; runs without the big CI image.
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
@@ -168,27 +76,55 @@ jobs:
             fi
           done < <(git log --format='%H %s' "$range")
 
-  msrv:
-    # Verify that the pinned MSRV (1.95.0, see `rust-toolchain.toml` and
-    # the `rust-version` in `Cargo.toml`) still builds the workspace.
-    # ADR-0002 scope exception: this job uses a native runner toolchain
-    # rather than the dev Docker image — the point of the check is to
-    # exercise a clean install of rustc 1.95.0 specifically, which the
-    # image has no mechanism to downgrade to.
-    name: msrv (rust 1.95.0)
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - name: Install Rust 1.95.0 (MSRV)
-        # NB: dtolnay/rust-toolchain uses the action ref tag AS the
-        # Rust toolchain version (e.g. @1.95.0 installs Rust 1.95.0).
-        # Pin to @stable and pass the explicit MSRV via `with:` so
-        # Dependabot version bumps don't accidentally march the MSRV
-        # forward — see .github/dependabot.yml ignore entry.
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.95.0
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: msrv
-      - run: cargo check --workspace --all-targets
+      - uses: ./.github/actions/setup-dev-image
+      - run: just lint
+
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ./.github/actions/setup-dev-image
+      - run: just build
+      - run: just test
+
+  spec:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - spec-aozora
+          - spec-golden-56656
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ./.github/actions/setup-dev-image
+      - run: just ${{ matrix.target }}
+
+  upstream-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ./.github/actions/setup-dev-image
+      - run: just upstream-diff
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ./.github/actions/setup-dev-image
+      - run: just coverage
+
+  audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [deny, audit, udeps]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ./.github/actions/setup-dev-image
+      - run: just ${{ matrix.target }}
