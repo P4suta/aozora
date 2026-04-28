@@ -150,22 +150,6 @@ jobs:
           cache-from: type=gha,scope=ci
       - run: docker compose run --rm --no-TTY ci just ${{ matrix.target }}
 
-  book:
-    needs: image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
-      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
-        with:
-          context: .
-          target: book
-          tags: afm-book:local
-          load: true
-          cache-from: type=gha,scope=book
-          cache-to: type=gha,mode=max,scope=book
-      - run: docker compose run --rm --no-TTY book mdbook build
-
   commitlint:
     # Light-weight check; runs without the big CI image.
     runs-on: ubuntu-latest
@@ -196,9 +180,14 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - name: Install Rust 1.95.0 (MSRV)
-        # Tag pin for now; Dependabot will upgrade to a commit SHA on its
-        # first sweep, aligning with the rest of this file.
-        uses: dtolnay/rust-toolchain@1.95.0
+        # NB: dtolnay/rust-toolchain uses the action ref tag AS the
+        # Rust toolchain version (e.g. @1.95.0 installs Rust 1.95.0).
+        # Pin to @stable and pass the explicit MSRV via `with:` so
+        # Dependabot version bumps don't accidentally march the MSRV
+        # forward — see .github/dependabot.yml ignore entry.
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           key: msrv

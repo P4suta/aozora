@@ -23,6 +23,12 @@ updates:
     groups:
       actions-sha-bumps:
         patterns: ["*"]
+    ignore:
+      # `dtolnay/rust-toolchain`'s action ref tag IS the Rust toolchain
+      # version (e.g. @1.95.0 installs Rust 1.95.0). Letting Dependabot
+      # bump it advances the MSRV unintentionally. We pin @stable + pass
+      # the toolchain via `with:` instead — see ci.yml `msrv` job.
+      - dependency-name: "dtolnay/rust-toolchain"
 
   - package-ecosystem: docker
     # Bumps Dockerfile FROM pins (rust, node, playwright).

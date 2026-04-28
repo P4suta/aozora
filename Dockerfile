@@ -107,6 +107,14 @@ ENV CARGO_HOME=/workspace/.cargo \
     SCCACHE_DIR=/workspace/.sccache \
     RUST_BACKTRACE=1
 
+# Pre-create cache mount targets so the runtime volume mounts at
+# /workspace/{target,.cargo,.sccache} can attach without docker
+# needing to mkdirat() into a read-only `/workspace`. Without these
+# the `:ro` bind mount of the source tree blocks volume attachment
+# and `docker compose run --rm ci ...` fails at container start with
+# "read-only file system" during mountpoint creation.
+RUN mkdir -p /workspace/target /workspace/.cargo /workspace/.sccache
+
 WORKDIR /workspace
 
 # Default shell friendly for interactive dev sessions
