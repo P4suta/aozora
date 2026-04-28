@@ -70,7 +70,7 @@ pub use naive::NaiveScanner;
 /// lex layer can hold a `&'static dyn TriggerScanner` selected at
 /// runtime via CPU feature detection.
 ///
-/// ## TODO: streaming variant
+/// ## Streaming variant (deferred — see ADR-0015 §future-work)
 ///
 /// The current shape returns `Vec<u32>` eagerly, which on a 2 MB
 /// source allocates ~80 KB of `u32` offsets (assuming ~2 % trigger

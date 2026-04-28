@@ -307,7 +307,6 @@ dependencies = [
 name = "aozora-veb"
 version = "0.2.5"
 dependencies = [
- "criterion",
  "proptest",
 ]
 

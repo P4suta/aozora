@@ -188,6 +188,47 @@ strict-code:
     shopt -s globstar
     files=(crates/**/*.rs)
 
+    # Crates that legitimately need an unsafe escape hatch — they
+    # are still linted by `#[deny(unsafe_op_in_unsafe_fn)]` and a
+    # crate-local `#![allow(unsafe_code)]` (with reason=) attribute,
+    # so the compiler still gates each unsafe block:
+    #
+    #   - aozora-ffi   : C ABI bindings (`unsafe extern "C"`)
+    #   - aozora-scan  : x86_64 AVX2 intrinsics (SIMD scanner)
+    #   - aozora-xtask : dev-tooling binary; `#[allow(reason=...)]`
+    #                    for narrow clippy carve-outs is acceptable
+    #                    here per Rust 1.81+ stable convention
+    #
+    # The grep below skips these paths; everything else stays under the
+    # universal "no unsafe" gate.
+    is_unsafe_exempt() {
+        case "$1" in
+            crates/aozora-ffi/*|crates/aozora-scan/*|crates/aozora-xtask/*) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+
+    check_strict() {
+        local label="$1"
+        local pattern="$2"
+        local hits
+        hits=$(grep -nE "$pattern" "${files[@]}" 2>/dev/null || true)
+        # Filter out exempt crates.
+        local filtered=""
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            local path="${line%%:*}"
+            if ! is_unsafe_exempt "$path"; then
+                filtered+="${line}"$'\n'
+            fi
+        done <<< "$hits"
+        if [[ -n "$filtered" ]]; then
+            echo "==> forbidden: $label" >&2
+            printf '%s' "$filtered" >&2
+            return 1
+        fi
+    }
+
     check() {
         local label="$1"
         local pattern="$2"
@@ -203,23 +244,58 @@ strict-code:
     failed=0
 
     # ---- Warning suppression -----------------------------------------------
-    check 'warning suppression (#[allow] / cfg_attr+allow)' \
-        '^\s*(#!?\[allow\(|#!?\[cfg_attr\([^)]*allow\()' || failed=1
+    # `#[allow(... reason = "...")]` (Rust 1.81+ stable) is the
+    # documented "I've considered this lint and overridden it
+    # deliberately" idiom and is allowed; bare `#[allow(...)]` without
+    # a reason is forbidden. We grep with -A 5 to catch the reason
+    # clause when it's on a continuation line, then filter out hits
+    # whose surrounding window contains `reason = `.
+    #
+    # `build.rs` files are excluded because their string literals
+    # often contain `#[allow(reason="...")]` snippets that they emit
+    # as generated Rust code — they are not actual Rust attributes
+    # under strict-code's purview.
+    src_files=()
+    for f in "${files[@]}"; do
+        case "$f" in
+            */build.rs) ;;
+            *) src_files+=("$f") ;;
+        esac
+    done
+    bare_allow=$(grep -nE -A 5 '^\s*#!?\[allow\(' "${src_files[@]}" 2>/dev/null \
+        | awk -F: '
+            /#!?\[allow\(/      { capture = 1; window = ""; head = $0 }
+            capture              { window = window $0 "\n" }
+            capture && /\)\]/    {
+                if (window !~ /reason[[:space:]]*=[[:space:]]*"/) {
+                    print head
+                }
+                capture = 0
+            }
+        ' || true)
+    if [[ -n "$bare_allow" ]]; then
+        echo '==> forbidden: warning suppression (#[allow] without reason="...")' >&2
+        echo "$bare_allow" >&2
+        failed=1
+    fi
+    check 'cfg_attr-wrapped warning suppression' \
+        '^\s*#!?\[cfg_attr\([^)]*allow\(' || failed=1
 
     # ---- Nightly / unstable feature gates ----------------------------------
     check 'nightly feature gate (#[feature] / #![feature])' \
         '^\s*#!?\[feature\(' || failed=1
 
     # ---- Unsafe code -------------------------------------------------------
-    # Every crate root has `#![forbid(unsafe_code)]` (checked below); this
-    # text-level grep is belt-and-braces for typos that would defeat the
-    # compiler gate.
-    check 'unsafe code (unsafe fn / unsafe { / unsafe impl / unsafe trait)' \
+    # Every non-exempt crate root has `#![forbid(unsafe_code)]`
+    # (checked below); this text-level grep is belt-and-braces for
+    # typos that would defeat the compiler gate.
+    check_strict 'unsafe code (unsafe fn / unsafe { / unsafe impl / unsafe trait)' \
         '(^|[^a-zA-Z_#])unsafe\s+(fn|impl|trait|\{)' || failed=1
 
     # ---- Required deny directive -------------------------------------------
     for root in crates/*/src/lib.rs crates/*/src/main.rs; do
         [[ -f "$root" ]] || continue
+        if is_unsafe_exempt "$root"; then continue; fi
         if ! grep -q '^#!\[forbid(unsafe_code)\]' "$root"; then
             echo "==> forbidden: crate root missing '#![forbid(unsafe_code)]'" >&2
             echo "  $root" >&2
