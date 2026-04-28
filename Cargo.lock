@@ -112,7 +112,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "aozora"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aozora-lex",
  "aozora-render",
@@ -122,7 +122,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-bench"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aozora",
  "aozora-corpus",
@@ -139,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "aozora",
@@ -152,7 +152,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-corpus"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "insta",
@@ -166,7 +166,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-encoding"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "encoding_rs",
  "insta",
@@ -180,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-ffi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aozora",
  "serde",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-lex"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aozora-encoding",
  "aozora-lexer",
@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-lexer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aho-corasick",
  "aozora-encoding",
@@ -228,7 +228,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-py"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aozora",
  "aozora-wasm",
@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aozora-lex",
  "aozora-spec",
@@ -251,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-scan"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aho-corasick",
  "aozora-spec",
@@ -264,7 +264,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-spec"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "miette",
  "phf",
@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-syntax"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aozora-encoding",
  "aozora-spec",
@@ -290,14 +290,14 @@ dependencies = [
 
 [[package]]
 name = "aozora-test-utils"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "aozora-trace"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "addr2line 0.26.1",
  "flate2",
@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-veb"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "proptest",
@@ -320,7 +320,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-wasm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aozora",
  "serde",
@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aozora-corpus",
  "aozora-encoding",
