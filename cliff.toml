@@ -1,4 +1,4 @@
-# git-cliff configuration for Aozora Flavored Markdown (afm).
+# git-cliff configuration for aozora.
 #
 # Generates CHANGELOG.md and GitHub release notes from the Conventional
 # Commits history enforced by lefthook. Used by:
@@ -14,7 +14,7 @@
 header = """
 # Changelog
 
-All notable changes to Aozora Flavored Markdown (afm) are recorded in
+All notable changes to aozora are recorded in
 this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -66,4 +66,4 @@ sort_commits   = "newest"
 
 [remote.github]
 owner = "P4suta"
-repo  = "afm"
+repo  = "aozora"
