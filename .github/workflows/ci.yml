@@ -198,7 +198,7 @@ jobs:
       - name: Install Rust 1.95.0 (MSRV)
         # Tag pin for now; Dependabot will upgrade to a commit SHA on its
         # first sweep, aligning with the rest of this file.
-        uses: dtolnay/rust-toolchain@1.95.0
+        uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
         with:
           key: msrv
