@@ -131,13 +131,13 @@ large_enum_variant      = "allow"
 # Internal crates — paths within this workspace.
 aozora-spec       = { version = "0.1.0", path = "crates/aozora-spec" }
 aozora-syntax     = { version = "0.1.0", path = "crates/aozora-syntax" }
-aozora-veb        = { path = "crates/aozora-veb" }
-aozora-scan       = { path = "crates/aozora-scan" }
+aozora-veb        = { version = "0.1.0", path = "crates/aozora-veb" }
+aozora-scan       = { version = "0.1.0", path = "crates/aozora-scan" }
 aozora-lex        = { version = "0.1.0", path = "crates/aozora-lex" }
 aozora-render     = { version = "0.1.0", path = "crates/aozora-render" }
 aozora            = { version = "0.1.0", path = "crates/aozora" }
-aozora-wasm       = { path = "crates/aozora-wasm" }
-aozora-trace      = { path = "crates/aozora-trace" }
+aozora-wasm       = { version = "0.1.0", path = "crates/aozora-wasm" }
+aozora-trace      = { version = "0.1.0", path = "crates/aozora-trace" }
 
 # Memory management
 bumpalo = { version = "3.20", features = ["collections"] }
@@ -162,7 +162,7 @@ regex-automata = { version = "0.4", default-features = false }
 aozora-lexer      = { version = "0.1.0", path = "crates/aozora-lexer" }
 aozora-encoding   = { version = "0.1.0", path = "crates/aozora-encoding" }
 aozora-corpus     = { version = "0.1.0", path = "crates/aozora-corpus" }
-aozora-test-utils = { path = "crates/aozora-test-utils" }
+aozora-test-utils = { version = "0.1.0", path = "crates/aozora-test-utils" }
 
 # Error handling
 thiserror = "2.0.18"
