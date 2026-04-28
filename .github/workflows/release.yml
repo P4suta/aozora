@@ -42,25 +42,14 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
             archive: tar.gz
-          - target: x86_64-unknown-linux-musl
-            runner: ubuntu-latest
-            archive: tar.gz
-            extra-deps: musl-tools
           - target: aarch64-apple-darwin
             runner: macos-latest
-            archive: tar.gz
-          - target: x86_64-apple-darwin
-            runner: macos-13
             archive: tar.gz
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
             archive: zip
     steps:
       - uses: actions/checkout@v6
-
-      - name: Install musl toolchain (linux-musl only)
-        if: matrix.extra-deps == 'musl-tools'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - uses: dtolnay/rust-toolchain@stable
 
