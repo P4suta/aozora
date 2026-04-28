@@ -20,10 +20,9 @@ encoding_rs = { workspace = true }
 # proc-macro backend (`phf_macros`) since the gaiji table is now
 # emitted via `phf_codegen` in `build.rs`. The runtime crate carries
 # only the `phf::Map` type + the perfect-hash lookup, no codegen.
-phf         = { version = "0.13", default-features = false }
-thiserror   = { workspace = true }
-miette      = { workspace = true }
-tracing     = { workspace = true }
+phf       = { version = "0.13", default-features = false }
+thiserror = { workspace = true }
+miette    = { workspace = true }
 
 [build-dependencies]
 # Codegen-time PHF builder — runs in `build.rs` to emit the gaiji
@@ -34,5 +33,4 @@ tracing     = { workspace = true }
 phf_codegen = "0.13"
 
 [dev-dependencies]
-insta    = { workspace = true }
 proptest = { workspace = true }

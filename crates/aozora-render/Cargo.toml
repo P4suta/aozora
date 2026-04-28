@@ -28,4 +28,3 @@ memchr        = { workspace = true }
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 proptest          = { workspace = true }
-aozora-test-utils = { workspace = true }

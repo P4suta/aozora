@@ -57,7 +57,10 @@ fn gatekeeper_table_sizes_match_jisx0213_2004_spec() {
     // re-verifying against the upstream source; do NOT update them
     // to make a failing test pass.
     let (single, combo, description) = table_sizes();
-    assert_eq!(single, 4329, "JIS X 0213 plane-1 + plane-2 single-char count");
+    assert_eq!(
+        single, 4329,
+        "JIS X 0213 plane-1 + plane-2 single-char count"
+    );
     assert_eq!(combo, 25, "JIS X 0213 plane-1 combining-sequence cells");
     assert!(
         description >= 8_000,
@@ -87,9 +90,8 @@ fn gatekeeper_every_combo_entry_is_exactly_two_scalars() {
         "第3水準1-5-88", // キ゚
     ];
     for mencode in representative {
-        let r = lookup(None, Some(mencode), "").unwrap_or_else(|| {
-            panic!("combo mencode {mencode} must resolve")
-        });
+        let r = lookup(None, Some(mencode), "")
+            .unwrap_or_else(|| panic!("combo mencode {mencode} must resolve"));
         let s = match r {
             Resolved::Multi(s) => s,
             Resolved::Char(c) => panic!("expected Multi for {mencode}, got Char({c:?})"),

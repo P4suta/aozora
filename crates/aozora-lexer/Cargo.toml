@@ -38,7 +38,6 @@ miette       = { workspace = true }
 phf          = { workspace = true }
 
 [dev-dependencies]
-insta     = { workspace = true }
 proptest  = { workspace = true }
 criterion = { workspace = true }
 # The classify_kaeriten bench drives the public borrowed-pipeline

@@ -46,7 +46,10 @@ fn main() {
     for (desc, men) in failing {
         let r = lookup(None, men, desc);
         match r {
-            Some(Resolved::Char(c)) => eprintln!("  desc={desc:?} men={men:?} → CHAR '{c}' (U+{:04X})", c as u32),
+            Some(Resolved::Char(c)) => eprintln!(
+                "  desc={desc:?} men={men:?} → CHAR '{c}' (U+{:04X})",
+                c as u32
+            ),
             Some(Resolved::Multi(s)) => eprintln!("  desc={desc:?} men={men:?} → MULTI {s:?}"),
             None => eprintln!("  desc={desc:?} men={men:?} → NONE"),
         }

@@ -67,10 +67,8 @@ fn main() {
     // Hand-curated specials win on conflict — same precedence as
     // the previous `xtask gaiji-gen` path.
     let mut description: Vec<DescriptionEntry> = special.clone();
-    let seen: std::collections::HashSet<String> = description
-        .iter()
-        .map(|e| e.description.clone())
-        .collect();
+    let seen: std::collections::HashSet<String> =
+        description.iter().map(|e| e.description.clone()).collect();
     for entry in dict {
         if !seen.contains(&entry.description) {
             description.push(entry);
@@ -213,8 +211,8 @@ struct DescriptionEntry {
 }
 
 fn parse_single_tsv(path: &std::path::Path) -> Vec<SingleEntry> {
-    let text = fs::read_to_string(path)
-        .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+    let text =
+        fs::read_to_string(path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
     let mut out = Vec::new();
     for (lineno, line) in text.lines().enumerate() {
         let trimmed = line.trim();
@@ -244,8 +242,8 @@ fn parse_single_tsv(path: &std::path::Path) -> Vec<SingleEntry> {
 }
 
 fn parse_combo_tsv(path: &std::path::Path) -> Vec<ComboEntry> {
-    let text = fs::read_to_string(path)
-        .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+    let text =
+        fs::read_to_string(path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
     let mut out = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim();
@@ -272,8 +270,8 @@ fn parse_combo_tsv(path: &std::path::Path) -> Vec<ComboEntry> {
 }
 
 fn parse_description_tsv(path: &std::path::Path) -> Vec<DescriptionEntry> {
-    let text = fs::read_to_string(path)
-        .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+    let text =
+        fs::read_to_string(path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
     let mut out = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim_end();
@@ -295,4 +293,3 @@ fn mencode(plane: u8, row: u8, cell: u8) -> String {
     let level = if plane == 1 { 3 } else { 4 };
     format!("第{level}水準{plane}-{row}-{cell}")
 }
-

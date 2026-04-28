@@ -238,7 +238,9 @@ mod tests {
         // 2-codepoint sequence (6 UTF-8 bytes for か + handakuten).
         let resolved = lookup(None, Some("第3水準1-4-87"), "").expect("combo resolves");
         let mut s = String::new();
-        resolved.write_to(&mut s).expect("write to String never fails");
+        resolved
+            .write_to(&mut s)
+            .expect("write to String never fails");
         assert_eq!(s, "\u{304B}\u{309A}");
         assert_eq!(s.chars().count(), 2);
     }
@@ -282,10 +284,7 @@ mod tests {
 
     #[test]
     fn lookup_via_description_fallback_when_mencode_absent() {
-        assert_eq!(
-            lookup(None, None, "〓"),
-            Some(Resolved::Char('\u{3013}'))
-        );
+        assert_eq!(lookup(None, None, "〓"), Some(Resolved::Char('\u{3013}')));
     }
 
     #[test]

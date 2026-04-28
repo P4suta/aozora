@@ -35,5 +35,5 @@ toml       = { workspace = true }
 # Typed error variants per module.
 thiserror  = { workspace = true }
 
-[dev-dependencies]
-proptest  = { workspace = true }
+# dev-dependencies removed: proptest was unused per cargo-udeps
+# (post-v0.2.0 split moved property tests into aozora-lex / aozora-render).

@@ -18,8 +18,8 @@
 //! * The smart "single-char description" fallback never resolves to
 //!   a different scalar than the description itself contains.
 
-use aozora_encoding::{DecodeError, decode_sjis, decode_sjis_into, has_utf8_bom};
 use aozora_encoding::gaiji::{Resolved, lookup};
+use aozora_encoding::{DecodeError, decode_sjis, decode_sjis_into, has_utf8_bom};
 use proptest::collection::vec as prop_vec;
 use proptest::option::of as prop_option_of;
 use proptest::prelude::*;
@@ -163,7 +163,8 @@ fn write_to_yields_utf8_len_bytes() {
         let mut s = String::new();
         r.write_to(&mut s).unwrap();
         assert_eq!(
-            s.len(), r.utf8_len(),
+            s.len(),
+            r.utf8_len(),
             "write_to byte count != utf8_len() for {r:?}",
         );
     }

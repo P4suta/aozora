@@ -37,12 +37,18 @@ fn gatekeeper_html_entity_table_is_canonical() {
     assert!(render_html("<").contains("&lt;"), "< must escape to &lt;");
     assert!(render_html(">").contains("&gt;"), "> must escape to &gt;");
     assert!(render_html("&").contains("&amp;"), "& must escape to &amp;");
-    assert!(render_html("\"").contains("&quot;"), "\" must escape to &quot;");
+    assert!(
+        render_html("\"").contains("&quot;"),
+        "\" must escape to &quot;"
+    );
     // Apostrophe MUST be the hex form `&#x27;`. The decimal form
     // `&#39;` is forbidden — both renderer paths agreed on hex
     // after the html.rs vs render_node.rs unification.
     let html = render_html("'");
-    assert!(html.contains("&#x27;"), "apostrophe must be &#x27;, got: {html}");
+    assert!(
+        html.contains("&#x27;"),
+        "apostrophe must be &#x27;, got: {html}"
+    );
     assert!(!html.contains("&#39;"), "decimal &#39; leaked, got: {html}");
 }
 
@@ -86,7 +92,10 @@ fn gatekeeper_single_newline_becomes_br_double_closes_paragraph() {
     // be a deliberate change.
     let single = render_html("a\nb");
     assert!(single.contains("a<br />\nb"), "got: {single}");
-    assert!(!single.contains("</p>\n<p>"), "single \\n must NOT close para");
+    assert!(
+        !single.contains("</p>\n<p>"),
+        "single \\n must NOT close para"
+    );
 
     let double = render_html("a\n\nb");
     assert!(double.contains("<p>a</p>\n"), "got: {double}");

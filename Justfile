@@ -60,17 +60,16 @@ prop-deep:
 # Unit-test-only predicate pinning — runs every `invariant_unit_` test
 # in `aozora_parser::test_support`. Narrow target for regression hunts
 # that don't need the full proptest sweep.
-invariants:
-    {{_dev}} cargo nextest run --package aozora-parser --lib -E 'test(invariant_unit_)'
-
-# Aozora annotation fixtures (hand-written, ~40 cases)
-spec-aozora:
-    {{_dev}} cargo nextest run --package aozora-parser --test aozora_spec
-
-# Golden fixture: 罪と罰 (card 56656) — Tier-A acceptance gate
-# (panic-free + zero unconsumed ［＃ markers in the rendered HTML).
-spec-golden-56656:
-    {{_dev}} cargo nextest run --package aozora-parser --test golden_56656
+# NB: the `invariants`, `spec-aozora`, and `spec-golden-56656`
+# recipes were retired in the v0.2.0 split. They referenced
+# `--package aozora-parser`, a crate that no longer exists — its
+# functionality moved into `aozora-render` (renderer) and `aozora`
+# (top-level facade), and the spec/golden fixture coverage now lives
+# in per-crate integration tests (aozora-render::byte_identical_html,
+# aozora-lex::diagnostic_ordering, aozora-corpus tests). The
+# `aozora_spec` and `golden_56656` test binaries have not been
+# rewired against the new crates yet — they will return as `just
+# spec-aozora-v2` / `just spec-golden-v2` once the new harnesses land.
 
 # Property-based sweep over whatever directory `AOZORA_CORPUS_ROOT` points at.
 # Bind-mounts the corpus dir into the container at a stable path so the

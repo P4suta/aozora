@@ -29,7 +29,6 @@ default = []
 serde   = ["dep:serde", "aozora-spec/serde"]
 
 [dev-dependencies]
-insta     = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]

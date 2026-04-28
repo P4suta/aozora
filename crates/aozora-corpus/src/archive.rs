@@ -166,7 +166,10 @@ impl fmt::Display for ArchiveError {
             Self::Decompress(e) => write!(f, "zstd decompression failed: {e}"),
             Self::BadLabel => f.write_str("entry label is not valid UTF-8"),
             Self::InvalidSize { what, value } => {
-                write!(f, "archive header field {what} is unreasonably large ({value})")
+                write!(
+                    f,
+                    "archive header field {what} is unreasonably large ({value})"
+                )
             }
         }
     }
@@ -1245,7 +1248,8 @@ mod tests {
         // partially.
         let count = fs::read_dir(dir.path()).unwrap().count();
         assert_eq!(
-            count, 1,
+            count,
+            1,
             "expected only the archive in {:?}, got {} entries",
             dir.path(),
             count,
