@@ -28,7 +28,7 @@ use crate::{
 ///
 /// `'src` is the lifetime of the arena (and of source-text slices the
 /// arena does not own). Mirrors the variant set of the legacy owned
-/// [`crate::AozoraNode`] type 1:1.
+/// [`aozora_syntax owned API (no longer present)`] type 1:1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AozoraNode<'src> {
@@ -249,7 +249,7 @@ pub struct DoubleRuby<'src> {
 }
 
 /// [`AozoraNode`] classifier methods. Mirror the inherent methods on
-/// the legacy owned [`crate::AozoraNode`] 1:1 so a renderer compiled
+/// the legacy owned [`aozora_syntax owned API (no longer present)`] 1:1 so a renderer compiled
 /// against either AST takes the same code path and the same XML
 /// snapshot string.
 impl AozoraNode<'_> {
@@ -291,7 +291,7 @@ impl AozoraNode<'_> {
 
     /// Stable XML/element-style node name used by HTML / serialiser /
     /// snapshot tests. Identical to the legacy
-    /// [`crate::AozoraNode::xml_node_name`] return values to keep
+    /// [`aozora_syntax owned API (no longer present)::xml_node_name`] return values to keep
     /// snapshot tests cross-compatible.
     #[must_use]
     pub const fn xml_node_name(&self) -> &'static str {

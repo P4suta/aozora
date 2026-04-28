@@ -34,13 +34,13 @@ use crate::render_node;
 const SENTINEL_LEAD_BYTE: u8 = 0xEE;
 /// Second UTF-8 byte shared by every PUA sentinel.
 const SENTINEL_MID_BYTE: u8 = 0x80;
-/// Third UTF-8 byte of [`INLINE_SENTINEL`] (U+E001).
+/// Third UTF-8 byte of `aozora_lex::INLINE_SENTINEL` (U+E001).
 const INLINE_SENTINEL_TAIL: u8 = 0x81;
-/// Third UTF-8 byte of [`BLOCK_LEAF_SENTINEL`] (U+E002).
+/// Third UTF-8 byte of `aozora_lex::BLOCK_LEAF_SENTINEL` (U+E002).
 const BLOCK_LEAF_SENTINEL_TAIL: u8 = 0x82;
-/// Third UTF-8 byte of [`BLOCK_OPEN_SENTINEL`] (U+E003).
+/// Third UTF-8 byte of `aozora_lex::BLOCK_OPEN_SENTINEL` (U+E003).
 const BLOCK_OPEN_SENTINEL_TAIL: u8 = 0x83;
-/// Third UTF-8 byte of [`BLOCK_CLOSE_SENTINEL`] (U+E004).
+/// Third UTF-8 byte of `aozora_lex::BLOCK_CLOSE_SENTINEL` (U+E004).
 const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
 
 /// Render a `BorrowedLexOutput` into a fresh `String`.

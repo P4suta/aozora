@@ -1,8 +1,8 @@
 //! WASM driver for the aozora parser.
 //!
 //! Compiles to a `wasm32-unknown-unknown` artifact suitable for
-//! `wasm-pack build --target web`, exposing [`Document`] /
-//! [`AozoraTree`] equivalents that JS / TypeScript consumers can
+//! `wasm-pack build --target web`, exposing `aozora::Document` /
+//! `aozora::AozoraTree` equivalents that JS / TypeScript consumers can
 //! `import { Document } from "aozora-wasm"`.
 //!
 //! ## Move 4 status
