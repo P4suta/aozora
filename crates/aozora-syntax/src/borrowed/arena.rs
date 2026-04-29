@@ -10,20 +10,8 @@
 //!
 //! - Allocate-only: parses produce trees, never mutate them in place.
 //!   Bump's drop-everything-at-once model matches that exactly.
-//! - Comrak (which the workspace also uses, ADR-0001) already depends
-//!   on bumpalo, so adding it here adds no new transitive dependency.
-//! - Single-threaded by default; the parallel parse path (Move 3 in
-//!   `aozora-parallel`) uses one arena per worker, then merges.
-//!
-//! ## Future: interner
-//!
-//! Innovation I-7 of the 0.2.0 plan calls for a string interner that
-//! deduplicates repeated readings (`の`, `に`, etc.) into a single
-//! arena allocation. The interner is intentionally deferred to a
-//! follow-up commit because (a) Move 1.4 is purely a type-shape
-//! change with no runtime consumer yet — Move 2 builds the lex layer
-//! that will exercise the interner — and (b) the interner can be
-//! added to [`Arena`] without touching the AST type signatures.
+//! - Single-threaded by default; parallel parse paths use one arena
+//!   per worker, then merge.
 
 use bumpalo::Bump;
 

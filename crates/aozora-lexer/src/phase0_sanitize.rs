@@ -10,29 +10,19 @@
 //! 3. **Accent decomposition inside `〔...〕`** — ASCII accent digraphs
 //!    (`fune`+grave-accent → funèbre, `cafe`+apostrophe → café, …) are
 //!    rewritten to their Unicode-combined form before any later phase
-//!    sees them. ADR-0004 motivates this: comrak's CommonMark inline
-//!    parser would otherwise open a code span on a bare backtick and
-//!    swallow adjacent `［＃…］` annotations. Scope is deliberately
-//!    restricted to tortoiseshell-bracket spans; the function is the
-//!    identity outside them.
+//!    sees them. Scope is deliberately restricted to tortoiseshell-
+//!    bracket spans; the function is the identity outside them.
 //! 4. **Decorative rule isolation** — lines composed entirely of 10 or
 //!    more `-`, `=`, or `_` characters (a very common visual separator
 //!    in Aozora Bunko prose) are forced to sit on their own stanza by
-//!    inserting a blank line before them. This defeats CommonMark's
-//!    setext-heading rule (paragraph followed by `---` → H2), which
-//!    would otherwise turn the preceding prose into a spurious heading
-//!    whenever an Aozora text drops a `---...` row right after the
-//!    front-matter. The intervention is semantics-preserving for
-//!    CommonMark: inserting a blank line before what would otherwise
-//!    be a setext underline yields the same AST as if the author had
-//!    written the blank line themselves. Short (≤ 9 char) `---` /
-//!    `===` runs are untouched so the genuine setext-heading idiom
-//!    keeps working verbatim.
+//!    inserting a blank line before them, so downstream Markdown
+//!    layers (e.g. the sibling `afm` repo's CommonMark integration)
+//!    do not promote the preceding paragraph into a setext heading.
 //! 5. **PUA sentinel collision scan** — the lexer will shortly inject
 //!    [`crate::INLINE_SENTINEL`] / [`crate::BLOCK_LEAF_SENTINEL`] /
 //!    [`crate::BLOCK_OPEN_SENTINEL`] / [`crate::BLOCK_CLOSE_SENTINEL`] into
 //!    the normalized text (Phase 4). If the source already uses any of
-//!    those codepoints, post-comrak splice can't tell source from marker.
+//!    those codepoints, post-process splice can't tell source from marker.
 //!    This phase emits a [`crate::Diagnostic::SourceContainsPua`] for
 //!    each occurrence so the problem surfaces, while still passing the
 //!    text through verbatim. A future enhancement can switch to
@@ -53,7 +43,7 @@ use crate::diagnostic::Diagnostic;
 use crate::{BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL};
 
 /// Tortoiseshell-bracket open character — delimits accent-decomposition
-/// spans per ADR-0004.
+/// spans.
 const TORTOISE_OPEN: char = '〔';
 /// UTF-8 byte encoding of [`TORTOISE_OPEN`] for `memmem`-based scans.
 /// `'〔'` (U+3014) → `0xE3 0x80 0x94`.
@@ -322,11 +312,9 @@ pub fn normalize_line_endings(input: &str) -> String {
 /// through the source at memory-bandwidth speed and only pays per-
 /// candidate validation cost on actual hits.
 ///
-/// Replaces a previous character-by-character `text.chars()` walk
-/// that ran the predicate on every codepoint in the source — the
-/// dominant cost in phase 0 (~23% of corpus parse wall-clock per
-/// ADR-0014). The new path runs at ~580 MB/s on the corpus profile,
-/// down from ~75 MB/s for the chars()-based version.
+/// The byte-level scan runs at ~580 MB/s on the corpus profile, vs
+/// ~75 MB/s for a character-by-character `text.chars()` walk that
+/// ran the predicate on every codepoint.
 #[doc(hidden)]
 #[must_use]
 pub fn scan_for_sentinel_collisions(text: &str) -> Vec<Diagnostic> {
@@ -478,7 +466,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Accent-decomposition inside 〔...〕 (ADR-0004).
+    // Accent-decomposition inside 〔...〕.
     // -----------------------------------------------------------------
 
     #[test]
@@ -500,7 +488,7 @@ mod tests {
     #[test]
     fn accent_digraph_inside_tortoiseshell_is_decomposed() {
         // The 罪と罰 canary: the grave-accent digraph `e`` must collapse
-        // to `è` inside the span so comrak never sees the lone backtick.
+        // to `è` inside the span so the parser never sees the lone backtick.
         let input = "〔oraison fune`bre〕";
         let out = sanitize(input);
         assert_eq!(out.text.as_ref(), "〔oraison funèbre〕");
@@ -632,7 +620,7 @@ mod tests {
     fn short_hyphen_setext_underline_is_not_split() {
         // The genuine setext-heading idiom uses `---` or `===` rows
         // of modest length (typically < 10 chars). Those must reach
-        // comrak unmodified so the H1/H2 promotion still fires.
+        // unmodified so the H1/H2 promotion still fires.
         let input = "Heading\n---\nbody";
         let out = sanitize(input);
         assert_eq!(
@@ -729,7 +717,7 @@ mod tests {
         // front-matter: a prose paragraph (here condensed) immediately
         // followed by a 55-char `-` row. The promotion would otherwise
         // turn the prose into a setext H2; the isolation pass must
-        // separate them so the paragraph reaches comrak as a
+        // separate them so the paragraph reaches the parser as a
         // paragraph.
         let rule: String = "-".repeat(55);
         let input = format!("凡例です。\n{rule}\n本文");

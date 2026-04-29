@@ -1,8 +1,8 @@
 # rustfmt configuration — STABLE options only.
 #
-# Rationale: rust-toolchain.toml pins a stable channel (see ADR-0001 tool
-# policy). nightly-only options (`group_imports`, `imports_granularity`,
-# `wrap_comments`, `format_strings`, `normalize_doc_attributes`, …) would
+# Rationale: rust-toolchain.toml pins a stable channel. Nightly-only
+# options (`group_imports`, `imports_granularity`, `wrap_comments`,
+# `format_strings`, `normalize_doc_attributes`, …) would
 # tie this repo to nightly rustfmt just for formatting. That's a bad
 # trade: we don't need them badly enough to pay the toolchain cost.
 #

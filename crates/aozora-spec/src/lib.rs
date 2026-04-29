@@ -18,7 +18,7 @@
 //! and `aozora-lexer` (`Diagnostic`, sentinels, `TriggerKind`,
 //! `PairKind`). The result: any crate that wanted a [`Diagnostic`] had
 //! to depend on the full lexer, which transitively dragged in the
-//! 7-phase pipeline. The new layered architecture (ADR-0009) requires
+//! 7-phase pipeline. The new layered architecture requires
 //! `aozora-syntax`, `aozora-scan`, `aozora-lex`, `aozora-render`,
 //! `aozora-parallel`, and `aozora` itself to all reference these
 //! shared types without depending on the engine.

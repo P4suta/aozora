@@ -1,6 +1,6 @@
 # aozora workspace task runner.
 # The ONE entry point for every development operation. Every target runs inside Docker;
-# never invoke cargo, mdbook, or playwright on the host directly.
+# never invoke cargo on the host directly.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 set dotenv-load := false
@@ -57,43 +57,17 @@ prop:
 prop-deep:
     {{_dev}} bash -c 'AOZORA_PROPTEST_CASES=4096 cargo nextest run --workspace --all-features --test "property_*" --run-ignored default'
 
-# Unit-test-only predicate pinning — runs every `invariant_unit_` test
-# in `aozora_parser::test_support`. Narrow target for regression hunts
-# that don't need the full proptest sweep.
-# NB: the `invariants`, `spec-aozora`, and `spec-golden-56656`
-# recipes were retired in the v0.2.0 split. They referenced
-# `--package aozora-parser`, a crate that no longer exists — its
-# functionality moved into `aozora-render` (renderer) and `aozora`
-# (top-level facade), and the spec/golden fixture coverage now lives
-# in per-crate integration tests (aozora-render::byte_identical_html,
-# aozora-lex::diagnostic_ordering, aozora-corpus tests). The
-# `aozora_spec` and `golden_56656` test binaries have not been
-# rewired against the new crates yet — they will return as `just
-# spec-aozora-v2` / `just spec-golden-v2` once the new harnesses land.
-
-# Property-based sweep over whatever directory `AOZORA_CORPUS_ROOT` points at.
-# Bind-mounts the corpus dir into the container at a stable path so the
-# test binary reads it from the same location regardless of the host path.
-# Runtime-skips with an informational message if the env var is unset —
-# this is *not* a failure, just an indication that no corpus is configured.
+# Walk every document under `AOZORA_CORPUS_ROOT` and check parse +
+# round-trip invariants on the public `aozora::Document` surface.
+# Bind-mounts the corpus directory into the container at a stable
+# path so the test binary reads it from the same location regardless
+# of the host path. Runtime-skips with an informational message if
+# the env var is unset — this is *not* a failure, just an indication
+# that no corpus is configured.
 #
 # Usage:
 #   export AOZORA_CORPUS_ROOT=$HOME/aozora-corpus
 #   just corpus-sweep
-#
-# Invariants checked (report/enforcement split documented in the test
-# itself at crates/aozora-parser/tests/corpus_sweep.rs, and in ADR-0005):
-#   I1 — no panic on any input (hard).
-#   I2 — no unconsumed ［＃ markers (hard).
-#   I3 — serialize ∘ parse fixed point (hard).
-#   I4 — emitted HTML is tag-balanced (hard).
-#   I5 — SJIS decode stable (report-only).
-#   I6 — no PUA sentinel U+E001–U+E004 in HTML (hard, budget=0).
-#   I7 — every afm-* class is in AFM_CLASSES (hard, budget=0).
-#   I8 — no <script / javascript: / on<event>= markers (hard, budget=0).
-#   I9 — afm-annotation wrapper shape is well-formed (hard, budget=0).
-#   I10 — no afm-indent / afm-annotation inside <h1>-<h6> (hard, budget=0).
-# Per-invariant budget overrides via AOZORA_CORPUS_I{2,3,4,6,7,8,9,10}_BUDGET.
 corpus-sweep:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -111,11 +85,7 @@ corpus-sweep:
     docker compose run --rm \
         -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
         -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo nextest run --package aozora-parser --test corpus_sweep --no-capture
-
-# Fuzz smoke (60s per harness) — runs the registered cargo-fuzz harnesses
-fuzz *ARGS:
-    {{_dev}} bash -c 'cd crates/aozora-parser && cargo +nightly fuzz run {{ARGS}}'
+        dev cargo nextest run --package aozora --test corpus_sweep --no-capture
 
 # Benchmarks (criterion)
 bench *ARGS:
@@ -141,12 +111,11 @@ bench *ARGS:
 # Scope excludes:
 # - `target/` — build artefacts.
 # - `**/main.rs` — CLI binary entrypoints (`aozora-cli`). Thin shells
-#   over their crate libraries; wiring integration tests against the
-#   process entry is follow-up work.
+#   over their crate libraries.
 #
-# `_COV_FLOOR` is the enforced minimum today, not the goal. The
-# stated goal (ADR-0004 §coverage) is 100% on production code. The
-# floor ratchets upward in follow-up commits that close specific gaps.
+# `_COV_FLOOR` is the enforced minimum, not the goal. The workspace
+# policy targets 100% on production code; the floor ratchets upward
+# in follow-up commits that close specific gaps.
 _COV_FLOOR := "0"
 _COV_IGNORE := "(target/|/main\\.rs$)"
 
@@ -312,7 +281,7 @@ strict-code:
 
     # ---- TODO/FIXME/XXX without an issue reference -------------------------
     todo_hits=$(grep -nE '(^|[^[:alnum:]_])(TODO|FIXME|XXX)([^[:alnum:]_]|$)' "${files[@]}" 2>/dev/null \
-        | grep -vE '(#[0-9]+|M[0-9]|issue|ADR-[0-9]+)' || true)
+        | grep -vE '(#[0-9]+|M[0-9]|issue)' || true)
     if [[ -n "$todo_hits" ]]; then
         echo '==> forbidden: bare TODO/FIXME/XXX without an issue or milestone reference' >&2
         echo "$todo_hits" >&2
@@ -325,7 +294,7 @@ strict-code:
     # `build.rs` is also exempt: `println!("cargo:rerun-if-changed=...")`
     # is the documented cargo build-script protocol, not a stray
     # debug print — see https://doc.rust-lang.org/cargo/reference/build-scripts.html
-    lib_files=(crates/aozora-syntax/**/*.rs crates/aozora-lexer/**/*.rs crates/aozora-parser/**/*.rs crates/aozora-encoding/**/*.rs)
+    lib_files=(crates/aozora-syntax/**/*.rs crates/aozora-lexer/**/*.rs crates/aozora-lex/**/*.rs crates/aozora-render/**/*.rs crates/aozora-encoding/**/*.rs)
     print_hits=$(grep -nE '(^|[^[:alnum:]_])e?print(ln)?!\s*\(' "${lib_files[@]}" 2>/dev/null \
         | grep -vE '/(tests|benches|examples|fuzz_targets)/|/build\.rs:' || true)
     if [[ -n "$print_hits" ]]; then
@@ -396,9 +365,8 @@ semver:
 # `just deps-check` runs the full dependency-health gate (outdated +
 # audit + deny), `just upgrade` bumps Cargo.toml to the latest
 # compatible versions, and a systemd user timer (see
-# `scripts/install-deps-timer.sh`) runs `just deps-check` weekly so
-# new advisories surface even on quiet branches. ADR-0018 records
-# the policy + cadence rationale.
+# `deps-timer-install`) runs `just deps-check` weekly so new advisories
+# surface even on quiet branches.
 
 # `target/.deps-check.timestamp` is the last-success marker that
 # `deps-status` reads. Written under `target/` (Docker-volume-mounted
@@ -430,7 +398,7 @@ upgrade-incompat:
     {{_dev}} cargo update --workspace
     @echo "Lockfile updated WITH incompatible bumps. Review 'git diff Cargo.toml' before committing."
 
-# Full dependency-health gate: outdated + audit + deny + udeps. Marks
+# Full dependency-health gate: outdated + audit + deny. Marks
 # `target/.deps-check.timestamp` on success so `deps-status` can
 # report freshness. Designed to be runnable from a systemd user timer
 # (no TTY requirement, no destructive side effects).
@@ -490,21 +458,11 @@ pgo:
     bash scripts/pgo-build.sh
 
 # C ABI smoke test — builds aozora-ffi as cdylib, compiles the C
-# harness against it, runs end-to-end. The 11-check harness exercises
-# every public C entry point on the happy path plus three error
-# cases (null input, invalid UTF-8, PUA collision).
+# harness against it, runs end-to-end.
 smoke-ffi:
     bash crates/aozora-ffi/tests/c_smoke/run.sh
 
-# --- corpus / spec helpers ---------------------------------------------------
-
-# New Architecture Decision Record (MADR template)
-adr TITLE:
-    {{_dev}} cargo run --package xtask --quiet -- new-adr {{TITLE}}
-
-# Refresh the Aozora corpus lockfile (re-pins works by current SHA256)
-corpus-refresh:
-    {{_dev}} cargo run --package xtask --quiet -- corpus-refresh
+# --- changelog ---------------------------------------------------------------
 
 # Regenerate CHANGELOG.md from Conventional-Commits history (see cliff.toml).
 changelog:
@@ -518,8 +476,6 @@ ci:
     just build
     just test
     just prop
-    just spec-aozora
-    just spec-golden-56656
     just deny
     just audit
     just udeps

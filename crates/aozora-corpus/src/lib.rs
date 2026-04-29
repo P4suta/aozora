@@ -1,4 +1,4 @@
-//! Corpus source abstraction for afm parser sweep tests.
+//! Corpus source abstraction for aozora parser sweep tests.
 //!
 //! A [`CorpusSource`] yields a stream of candidate input texts for
 //! property-based sweep tests: each item carries raw bytes plus a
@@ -7,7 +7,7 @@
 //! directory, or a filesystem root supplied by the developer via the
 //! `AOZORA_CORPUS_ROOT` environment variable.
 //!
-//! See ADR-0007 for the design rationale. Key design points:
+//! Key design points:
 //!
 //! - **Metadata-free items.** No titles, no tiers, no SHA256. The sweep
 //!   harness checks invariants (no panic, no leaked markers, well-formed
@@ -53,7 +53,7 @@ pub const ENV_CORPUS_ROOT: &str = "AOZORA_CORPUS_ROOT";
 /// `bytes` is the file content as read from its source, in its original
 /// encoding (typically Shift_JIS for aozora-format texts). Encoding
 /// detection and decoding is the caller's responsibility (see
-/// `afm-encoding`).
+/// `aozora-encoding`).
 ///
 /// `label` is a human-readable identifier used only in diagnostic output
 /// when an invariant fails. For filesystem sources this is conventionally

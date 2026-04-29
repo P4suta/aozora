@@ -1,5 +1,4 @@
-//! Arena-emitting lex API (Plan B.2 + I-7 interner + I-2.2 native
-//! borrowed Phase 3).
+//! Arena-emitting lex API.
 //!
 //! Produces a [`BorrowedLexOutput<'a>`] whose normalized text and
 //! placeholder registry live entirely inside an external [`Arena`].
@@ -8,21 +7,19 @@
 //! step — no per-node `Drop` ever runs, no scattered `Box::drop`
 //! malloc traffic on the way out.
 //!
-//! ## Pipeline (post I-2.2)
+//! ## Pipeline
 //!
 //! 1. Phases 0-2 (sanitize / tokenize / pair) run as owned-data
 //!    helpers operating on byte spans and event indices — they never
 //!    construct AST.
 //! 2. Phase 3 [`aozora_lexer::classify_with`] is invoked with a
 //!    [`BorrowedAllocator`] backed by `arena`. Borrowed AST nodes
-//!    land directly in the arena; strings flow through the I-7
+//!    land directly in the arena; strings flow through the
 //!    [`aozora_syntax::borrowed::Interner`] owned by the allocator
 //!    so byte-equal content (ruby readings, container labels,
 //!    kaeriten marks, …) shares a single allocation.
 //! 3. A single fused walk emits the PUA-rewritten text into the arena
-//!    and builds the four borrowed-registry tables. Replaces the
-//!    legacy two-pass pipeline (owned classify → per-span
-//!    `convert::to_borrowed_with` deep-clone) entirely.
+//!    and builds the four borrowed-registry tables.
 //! 4. Each per-kind position list is wrapped in an
 //!    [`aozora_veb::EytzingerMap`] for cache-friendly lookup.
 //!
@@ -135,39 +132,32 @@ impl<'a> BorrowedLexOutput<'a> {
 /// lives, then drop the arena to free the entire allocation in one
 /// `Bump::reset`-equivalent step.
 ///
-/// Pipeline (post I-2.2):
+/// Pipeline:
 ///
-/// 1. Sanitize / tokenize / pair (Phases 0-2) — unchanged owned-data
-///    helpers operating on byte spans and event indices.
+/// 1. Sanitize / tokenize / pair (Phases 0-2) — owned-data helpers
+///    operating on byte spans and event indices.
 /// 2. `classify_with::<BorrowedAllocator>` — Phase 3 builds borrowed
 ///    `AozoraNode<'a>` directly into `arena`, with strings interned
-///    through the I-7 `Interner` owned by the allocator. No owned-AST
-///    intermediate is constructed; `convert::to_borrowed_with` is
-///    not called.
+///    through the `Interner` owned by the allocator.
 /// 3. Single fused normalize walk: build the four borrowed-registry
 ///    tables and stream the PUA-rewritten text into `arena` in one
-///    pass. Mirrors `aozora_lexer::phase4_normalize::Normalizer`'s
-///    sentinel / padding contract byte-for-byte, so the output is
-///    proptest-pinned for determinism + sentinel-alignment in
+///    pass. Determinism + sentinel-alignment is proptest-pinned in
 ///    `tests/property_borrowed_arena.rs`.
 #[must_use]
 pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'a> {
-    // Thin wrapper around the canonical Pipeline (Innovation I-3,
-    // post-deforestation). The Pipeline owns the type-state machine
-    // that enforces phase order at compile time; this function exists
-    // for API compatibility and is what `Document::parse` calls.
+    // Thin wrapper around the canonical Pipeline. The Pipeline owns
+    // the type-state machine that enforces phase order at compile
+    // time; this function exists for API compatibility and is what
+    // `Document::parse` calls.
     crate::pipeline::Pipeline::run_to_completion(source, arena)
 }
 
-/// Single-pass arena-emitting normalizer (Plan I-2.1 + I-2.2).
+/// Single-pass arena-emitting normalizer.
 ///
-/// Mirrors `aozora_lexer::phase4_normalize::Normalizer`'s sentinel /
-/// padding contract byte-for-byte, but pushes into per-kind
-/// `Vec<(u32, borrowed::AozoraNode<'a>)>` tables. The nodes are
-/// allocated upstream by [`BorrowedAllocator`] during
-/// [`classify_with`] (I-2.2); this walker is now strictly the
-/// PUA-rewriter + position-recorder, doing zero AST allocation of
-/// its own.
+/// Pushes into per-kind `Vec<(u32, borrowed::AozoraNode<'a>)>`
+/// tables. The nodes are allocated upstream by [`BorrowedAllocator`]
+/// during [`classify_with`]; this walker is strictly the PUA-rewriter
+/// + position-recorder, doing zero AST allocation of its own.
 pub(crate) struct ArenaNormalizer<'src, 'a> {
     pub(crate) out: String,
     source: &'src str,
@@ -226,7 +216,7 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     // Block-leaf padding: blank-line / sentinel /
                     // blank-line. Mirrors
                     // `aozora_lexer::phase4_normalize::Normalizer::emit_block_leaf`
-                    // byte-for-byte so comrak still sees the standalone
+                    // byte-for-byte so the parser still sees the standalone
                     // paragraph shape.
                     self.out.push_str("\n\n");
                     let pos = self.current_pos();
@@ -523,7 +513,7 @@ mod tests {
     }
 
     /// Block open/close sentinels carry blank-line padding on both
-    /// sides so comrak treats them as standalone paragraph lines. The
+    /// sides so the parser treats them as standalone paragraph lines. The
     /// padding is part of the documented sentinel contract — pin the
     /// exact `\n\n<sentinel>\n\n` byte sequence.
     #[test]

@@ -1,13 +1,8 @@
 //! Phase 1 throughput sentinel.
 //!
-//! Pre-T2 (ADR-0013) this bench compared a scan-driven tokeniser
-//! against the legacy character walker — both implementations existed
-//! side-by-side. After T2 (ADR-0015) the production
-//! `aozora_lexer::tokenize` IS the SIMD-scan tokeniser, so the
-//! comparison collapses to a single throughput sentinel.
-//!
-//! Kept as a regression gate: future Phase 1 changes should not slow
-//! this down. Three input bands cover the corpus distribution.
+//! Single-shape throughput regression gate over `aozora_lexer::tokenize`
+//! (the SIMD-scan tokeniser). Three input bands cover the corpus
+//! distribution.
 
 #![allow(clippy::missing_panics_doc, reason = "bench code")]
 

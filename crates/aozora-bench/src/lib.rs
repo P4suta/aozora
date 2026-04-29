@@ -2,11 +2,10 @@
 //!
 //! This crate hosts criterion benchmarks shared across the workspace
 //! and is also the **canonical PGO profile source**: when the
-//! release pipeline is configured to do PGO + BOLT
-//! (`docs/adr/0009-clean-layered-architecture.md` Move 4 verification
-//! plan), the profile collection step runs
-//! `cargo run --release --bin aozora_pgo_train` against the full
-//! corpus to gather an even sample of real-world parse work.
+//! release pipeline is configured to do PGO + BOLT, the profile
+//! collection step runs `cargo run --release --bin aozora_pgo_train`
+//! against the full corpus to gather an even sample of real-world
+//! parse work.
 //!
 //! ## Why a separate crate?
 //!
@@ -176,7 +175,7 @@ impl SizeBandedCorpus {
 /// surface the error counts at the end").
 ///
 /// Uses a single function-local decode buffer and the
-/// [`decode_sjis_into`] L-3 entry point so per-call growth-realloc is
+/// [`decode_sjis_into`] entry point so per-call growth-realloc is
 /// avoided. Each successful decode hands its text to the band entry
 /// via `mem::take`; the buffer's previous capacity is dropped in
 /// exchange for the next decode's `reserve` to allocate exactly the
@@ -201,7 +200,7 @@ pub fn corpus_size_bands(items: Vec<CorpusItem>) -> SizeBandedCorpus {
 
 /// Bucket pre-decoded `(label, text)` pairs by post-decode byte length.
 ///
-/// Used by per-phase load-split benchmarks (L-1) to time the decode
+/// Used by per-phase load-split benchmarks to time the decode
 /// step in isolation from the bucketing step. The two-step shape lets
 /// callers measure `decode_secs` as just-the-decode work and
 /// `bucket_secs` as just-the-bucketing work, without one polluting the
@@ -225,7 +224,7 @@ fn bucket_one(out: &mut SizeBandedCorpus, entry: (String, String)) {
     }
 }
 
-/// Parallel I/O + decode + bucket (L-2 fast path).
+/// Parallel I/O + decode + bucket (rayon fast path).
 ///
 /// The fast-path counterpart to [`corpus_size_bands`]: each rayon
 /// worker reads, decodes, and buckets its share of the corpus into a
@@ -247,7 +246,6 @@ fn bucket_one(out: &mut SizeBandedCorpus, entry: (String, String)) {
 /// continue" philosophy).
 #[must_use]
 pub fn parallel_size_bands(corpus: &FilesystemCorpus) -> SizeBandedCorpus {
-    // L-3: per-worker reusable decode buffer. 128 KB initial capacity
     // covers the corpus median doc in one allocation; pathological
     // (>2 MB UTF-8) docs grow the buffer once per worker — the same
     // amortisation pattern `WORKER_ARENA` uses in the parse path.
@@ -265,7 +263,7 @@ pub fn parallel_size_bands(corpus: &FilesystemCorpus) -> SizeBandedCorpus {
     let paths: Vec<PathBuf> = corpus.walk_paths().filter_map(Result::ok).collect();
 
     // Step 2 + Step 3: parallel fold + reduce on the shared
-    // physical-core pool (L-4-bis). Each rayon worker reads /
+    // physical-core pool. Each rayon worker reads /
     // decodes / buckets its slice of paths into its own
     // SizeBandedCorpus accumulator; reduce merges the per-thread
     // shards. The pool is sized to physical cores (not logical /
@@ -306,7 +304,7 @@ fn merge_banded(mut a: SizeBandedCorpus, b: SizeBandedCorpus) -> SizeBandedCorpu
     a
 }
 
-/// Bucket a packed binary archive into [`SizeBandedCorpus`] (L-5).
+/// Bucket a packed binary archive into [`SizeBandedCorpus`].
 ///
 /// Three archive flavours are handled uniformly:
 ///
@@ -315,16 +313,16 @@ fn merge_banded(mut a: SizeBandedCorpus, b: SizeBandedCorpus) -> SizeBandedCorpu
 /// - `RAW UTF-8`: per-entry payload is already UTF-8; skip decode
 ///   entirely, just `String::from_utf8` the bytes (which is O(n)
 ///   validation; for trusted archives this could go to
-///   `String::from_utf8_unchecked` but `unsafe` is non-negotiable
-///   per ADR-0020 § L-4 — the validation cost is small relative to
-///   the load wall and worth keeping safe).
+///   `String::from_utf8_unchecked` but the workspace forbids `unsafe`
+///   here — the validation cost is small relative to the load wall
+///   and worth keeping safe).
 /// - `ZSTD …`: the archive iter handles the per-entry zstd
 ///   decompression; the bench just consumes whatever bytes the iter
 ///   yields and runs the same decode-or-skip choice as above.
 ///
-/// All flavours fan out across the physical-core pool ([L-4-bis](
-/// crate::with_load_pool)) for the same reasons `parallel_size_bands`
-/// does.
+/// All flavours fan out across the physical-core pool
+/// ([`crate::with_load_pool`]) for the same reasons
+/// `parallel_size_bands` does.
 #[must_use]
 pub fn archive_size_bands(archive: &Archive) -> SizeBandedCorpus {
     use std::cell::RefCell;
@@ -343,11 +341,11 @@ pub fn archive_size_bands(archive: &Archive) -> SizeBandedCorpus {
         (0..entry_count)
             .into_par_iter()
             .fold(SizeBandedCorpus::default, |mut acc, i| {
-                // L-6c (ADR-0020): use the random-access `payload_at`
-                // so raw archives skip the per-entry `to_vec()`
-                // allocation entirely (the payload `&[u8]` slice is
-                // read directly from the archive's in-memory buffer).
-                // zstd archives still allocate per decompression — the
+                // Use the random-access `payload_at` so raw archives
+                // skip the per-entry `to_vec()` allocation entirely
+                // (the payload `&[u8]` slice is read directly from the
+                // archive's in-memory buffer). zstd archives still
+                // allocate per decompression — the
                 // `ArchivePayload::Decompressed` variant carries the
                 // owned Vec. `payload_at(i)` is O(1) — using
                 // `iter_borrowed().nth(i)` here would have been O(n²)

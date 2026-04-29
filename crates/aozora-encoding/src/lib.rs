@@ -1,6 +1,6 @@
 //! Encoding utilities for Aozora Bunko source material.
 //!
-//! `afm-parser` itself is strictly UTF-8. Anything that decodes `Shift_JIS` or
+//! The `aozora` parser itself is strictly UTF-8. Anything that decodes `Shift_JIS` or
 //! resolves gaiji (外字) mappings lives here, so the parser stays free of encoding
 //! concerns and the same logic is available to CLI, editor integrations, or
 //! downstream tools.
@@ -16,7 +16,7 @@ use thiserror::Error;
 #[non_exhaustive]
 pub enum DecodeError {
     #[error("Shift_JIS からの変換に失敗しました (不正なバイト列)")]
-    #[diagnostic(code(afm::encoding::sjis_invalid))]
+    #[diagnostic(code(aozora::encoding::sjis_invalid))]
     ShiftJisInvalid,
 }
 
@@ -39,7 +39,7 @@ pub fn decode_sjis(input: &[u8]) -> Result<String, DecodeError> {
     Ok(out)
 }
 
-/// Decode a `Shift_JIS` byte slice into the caller-owned `dst` buffer (L-3, ADR-0020).
+/// Decode a `Shift_JIS` byte slice into the caller-owned `dst` buffer.
 ///
 /// Pre-sizes `dst` exactly via
 /// `encoding_rs::Decoder::max_utf8_buffer_length_without_replacement`
@@ -54,7 +54,7 @@ pub fn decode_sjis(input: &[u8]) -> Result<String, DecodeError> {
 /// worst-case-sized `String` internally and `Cow::into_owned`s the
 /// result; this entry point goes straight through the
 /// `Decoder::decode_to_string_without_replacement` API the bench
-/// pipeline (L-2 / L-3) needs.
+/// pipeline needs.
 ///
 /// # Errors
 ///
@@ -176,16 +176,16 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // decode_sjis_into — buffer-reuse path equivalence (L-3)
+    // decode_sjis_into — buffer-reuse path equivalence
     // ------------------------------------------------------------------
     //
     // Every test below the section header verifies the contract that
     // `decode_sjis(b) == decode_sjis_into(b, &mut buf)` byte-for-byte
-    // (and for the strict-error case, returns the same `Err`). The
-    // L-3 sprint (ADR-0020) added `decode_sjis_into` as a buffer-reuse
-    // entry point used by the bench `parallel_size_bands` thread-local
-    // pool; the production `decode_sjis` is now a thin wrapper that
-    // calls `decode_sjis_into` with a fresh `String`.
+    // (and for the strict-error case, returns the same `Err`).
+    // `decode_sjis_into` is the buffer-reuse entry point used by the
+    // bench `parallel_size_bands` thread-local pool; the production
+    // `decode_sjis` is a thin wrapper that calls `decode_sjis_into`
+    // with a fresh `String`.
 
     fn check_equivalent(input: &[u8]) {
         let owned = decode_sjis(input);

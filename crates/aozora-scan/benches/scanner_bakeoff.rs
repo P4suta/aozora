@@ -1,7 +1,6 @@
 //! Bake-off bench: every shipped [`TriggerScanner`] backend × four
-//! corpus shapes. Drives the scanner-selection decision recorded in
-//! ADR-0015 and serves as the regression sentinel for future scanner
-//! changes.
+//! corpus shapes. Serves as the regression sentinel for future
+//! scanner changes.
 //!
 //! ## Backends measured
 //!

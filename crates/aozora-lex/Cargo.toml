@@ -1,6 +1,6 @@
 [package]
 name        = "aozora-lex"
-description = "Aozora notation lexer — fused streaming pipeline (Move 2 of the 0.2.0 plan)"
+description = "Aozora notation lexer — fused streaming pipeline producing a borrowed-arena AST"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -23,11 +23,9 @@ aozora-veb      = { workspace = true }
 bumpalo         = { workspace = true }
 memchr          = { workspace = true }
 
-# Phase migration in progress: we now own phase 1 (tokenize) via
-# aozora-scan, and orchestrate the rest by calling aozora-lexer's
-# phase 0 / 2 / 3 / 4 / 6 functions. Each subsequent commit folds
-# one more phase into this crate; once all of them are absorbed the
-# aozora-lexer dep drops.
+# This crate orchestrates phases 0 / 2 / 3 / 4 / 6 by calling the
+# matching functions from `aozora-lexer`; phase 1 (tokenize) is
+# owned directly by `aozora-scan` above.
 aozora-lexer    = { workspace = true }
 
 

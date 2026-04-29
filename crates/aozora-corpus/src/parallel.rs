@@ -1,4 +1,4 @@
-//! Parallel I/O + decode helpers (L-2 + L-4-bis, ADR-0020).
+//! Parallel I/O + decode helpers.
 //!
 //! The default [`FilesystemCorpus::iter`] returns a streaming iterator
 //! that fuses walkdir + read; this module exposes a path-first
@@ -6,7 +6,7 @@
 //! across rayon workers while walkdir runs once on the calling
 //! thread.
 //!
-//! ## Physical-core thread pool (L-4-bis)
+//! ## Physical-core thread pool
 //!
 //! [`par_load_decoded`] runs its parallel pass on a dedicated rayon
 //! pool sized to **physical** cores (`num_cpus::get_physical()`)
@@ -40,7 +40,7 @@
 //! module return `Vec<CorpusItem>` directly — would force the caller
 //! to walk the vec a second time to do its own work, doubling the
 //! read+decode amortisation cost from the rayon pool's per-worker
-//! arena warmth that the closure can capture (e.g. an L-3
+//! arena warmth that the closure can capture (e.g. a
 //! [`thread_local!`] decode buffer) into a per-call cold one. The
 //! closure shape lets the caller participate in the parallel pass.
 
@@ -69,7 +69,7 @@ fn physical_core_pool() -> &'static ThreadPool {
     })
 }
 
-/// Run `f` on the physical-core load pool (L-4-bis).
+/// Run `f` on the physical-core load pool.
 ///
 /// Lets downstream callers (e.g. `aozora-bench`'s
 /// `parallel_size_bands`) share the same pool that
@@ -78,7 +78,7 @@ fn physical_core_pool() -> &'static ThreadPool {
 /// across consecutive corpus sweeps. Without this, callers that
 /// build their own rayon work would spin up a second pool of the
 /// default (logical-cores) size and re-introduce the
-/// over-subscription regression L-4-bis exists to fix.
+/// over-subscription regression this pool exists to fix.
 ///
 /// `f` runs synchronously; the function returns when `f` returns.
 pub fn with_load_pool<R, F>(f: F) -> R
@@ -124,7 +124,7 @@ where
     let paths: Vec<Result<PathBuf, CorpusError>> = corpus.walk_paths().collect();
 
     // Step 2: parallel read + decode + caller closure on the
-    // physical-core pool (L-4-bis). Each worker pulls a
+    // physical-core pool. Each worker pulls a
     // `Result<PathBuf, _>`, propagates walkdir errors unchanged,
     // otherwise reads the bytes and runs the closure.
     physical_core_pool().install(|| {

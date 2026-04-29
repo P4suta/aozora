@@ -5,170 +5,161 @@
   <a href="https://github.com/P4suta/aozora/actions/workflows/docs.yml"><img alt="docs deploy" src="https://github.com/P4suta/aozora/actions/workflows/docs.yml/badge.svg"></a>
   <a href="https://github.com/P4suta/aozora/releases/latest"><img alt="latest release" src="https://img.shields.io/github/v/release/P4suta/aozora?display_name=tag&sort=semver"></a>
   <a href="./LICENSE-APACHE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue"></a>
-  <a href="./rust-toolchain.toml"><img alt="msrv" src="https://img.shields.io/badge/rust-1.95%2B-orange"></a>
+  <a href="./rust-toolchain.toml"><img alt="msrv" src="https://img.shields.io/badge/rust-1.95-orange"></a>
 </p>
 
 <p align="center">
   📖 <a href="https://p4suta.github.io/aozora/"><strong>API reference (rustdoc)</strong></a>
   · 📦 <a href="https://github.com/P4suta/aozora/releases"><strong>Releases &amp; binaries</strong></a>
-  · 🧱 <a href="./docs/adr/"><strong>ADRs</strong></a>
+  · 🏛️ <a href="./docs/ARCHITECTURE.md"><strong>Architecture</strong></a>
+  · 🚀 <a href="./docs/USAGE.md"><strong>Usage guide</strong></a>
 </p>
 
 Pure-functional Rust parser for **青空文庫記法** (Aozora Bunko notation):
 ruby (`｜青梅《おうめ》`), bouten (`［＃「X」に傍点］`), 縦中横, 外字
 references (`※［＃…、第3水準1-85-54］`), kunten / kaeriten,
 indent / align-end containers (`［＃ここから2字下げ］… ［＃ここで字下げ終わり］`),
-page and section breaks.
+and page / section breaks.
 
-The parser is **comrak-free, CommonMark-free, and Markdown-free** —
-this repo deals only with the 青空文庫 notation itself. The
-CommonMark+GFM Markdown dialect that layers on top of it lives in
-[`P4suta/afm`](https://github.com/P4suta/afm); the authoring
-environment (formatter, LSP, VS Code extension) lives in
-[`P4suta/aozora-tools`](https://github.com/P4suta/aozora-tools).
+The parser is **CommonMark-free, Markdown-free** — this repository deals
+only with the 青空文庫 notation itself. The renderer emits semantic HTML5;
+the lexer reports structured diagnostics; the AST is a borrowed-arena
+tree that can be walked in O(n) without copying source bytes.
+
+## Installation
+
+### Pre-built CLI
+
+Pre-built `aozora` CLI binaries for **Linux x86_64**, **macOS arm64**,
+and **Windows x86_64** are attached to every GitHub Release —
+[the releases page](https://github.com/P4suta/aozora/releases) carries
+`aozora-vX.Y.Z-<target>.{tar.gz,zip}` archives with `SHA256SUMS`.
+
+### Build from source
+
+```sh
+cargo install --git https://github.com/P4suta/aozora --tag v0.2.5 --locked aozora-cli
+```
+
+### As a Rust library
+
+```toml
+[dependencies]
+aozora          = { git = "https://github.com/P4suta/aozora.git", tag = "v0.2.5" }
+aozora-encoding = { git = "https://github.com/P4suta/aozora.git", tag = "v0.2.5" }
+```
+
+(crates.io publication tracks the 1.0 API freeze.)
+
+For WASM / C ABI / Python bindings see [`docs/USAGE.md`](./docs/USAGE.md).
+
+## Quickstart
+
+```rust
+use aozora::Document;
+
+let source = "｜青梅《おうめ》".to_owned();
+let doc = Document::new(source);
+let tree = doc.parse();
+
+let html: String = tree.to_html();
+let canonical: String = tree.serialize();
+let diagnostics = tree.diagnostics();
+
+assert_eq!(canonical, "｜青梅《おうめ》");
+```
+
+`Document` owns a [`bumpalo`](https://docs.rs/bumpalo) arena; `tree`
+borrows from it for the lifetime of the `Document`. Dropping the
+`Document` releases every node in a single `Bump::reset` step.
+
+## CLI
+
+```sh
+aozora check FILE.txt           # lex + report diagnostics
+aozora fmt --check FILE.txt     # round-trip parse ∘ serialize check
+aozora render FILE.txt          # render to HTML on stdout
+aozora check -E sjis FILE.txt   # Shift_JIS source from Aozora Bunko
+```
+
+All subcommands accept `-` (or no path argument) to read from stdin.
+See [`docs/USAGE.md`](./docs/USAGE.md) for full subcommand reference.
 
 ## Crate layout
 
 | Crate | Purpose |
 |---|---|
-| `crates/aozora` | Top-level facade — `Document::parse() → AozoraTree<'_>`, structured `Diagnostic`s, `PairLink` side-table, `SLUGS` catalogue, `canonicalise_slug`, `node_at_source`. The single front door. |
-| `crates/aozora-syntax` | AST types (`AozoraNode` borrowed-arena variants, accent table, `ContainerKind`, `Bouten*`). |
-| `crates/aozora-lex` | Fused streaming lexer — emits the `BorrowedLexOutput` consumed by the renderer. |
-| `crates/aozora-lexer` | Original 7-phase classifier (still used for legacy paths and as the spec backbone). |
-| `crates/aozora-render` | HTML and serialise renderers — `html::render_to_string`, `serialize::serialize` (single O(n) walker). |
-| `crates/aozora-encoding` | Shift_JIS decoding + 外字 lookup (compile-time PHF table, JIS X 0213 + UCS resolution). |
-| `crates/aozora-spec` | Spec slugs, kaeriten / bouten / indent canonical form, accent digraph table. |
-| `crates/aozora-scan` | SIMD-friendly multi-pattern scanner backends (memchr / regex-automata / teddy / structural-bitmap; chosen per ADR-0015 bake-off). |
-| `crates/aozora-veb` | Sorted slot-map (van Emde Boas-style) for placeholder registry lookup. |
-| `crates/aozora-corpus` | Corpus source abstraction for sweep tests (dev-only, set `AOZORA_CORPUS_ROOT`). |
-| `crates/aozora-test-utils` | Shared proptest strategies (dev-only). |
-| `crates/aozora-cli` | `aozora` binary: `check` / `fmt` / `render`. |
-| `crates/aozora-bench` | criterion + corpus-driven bench harness (PGO profile source). |
-| `crates/aozora-trace` | DWARF symbolicator for samply traces of the bench binary. |
-| `crates/aozora-ffi` | C ABI bindings (work in progress). |
-| `crates/aozora-wasm` | `wasm32-unknown-unknown` target for `wasm-pack build --target web`. |
-| `crates/aozora-py` | PyO3 bindings (work in progress). |
-| `crates/aozora-xtask` | Repo automation (corpus pack/unpack, sanitizers harness). |
+| [`crates/aozora`](./crates/aozora) | Top-level facade. `Document::parse() → AozoraTree<'_>`, structured `Diagnostic`s, `SLUGS` catalogue, `canonicalise_slug`. The single front door. |
+| [`crates/aozora-spec`](./crates/aozora-spec) | Single source of truth for shared types: `Span`, `TriggerKind`, `PairKind`, `Diagnostic`, PUA sentinel codepoints. No internal dependency. |
+| [`crates/aozora-syntax`](./crates/aozora-syntax) | AST types (`AozoraNode` borrowed-arena variants, `ContainerKind`, `BoutenKind`, `Indent`). |
+| [`crates/aozora-encoding`](./crates/aozora-encoding) | Shift_JIS decoding + 外字 lookup (compile-time PHF, JIS X 0213 + UCS resolution). |
+| [`crates/aozora-scan`](./crates/aozora-scan) | SIMD-friendly multi-pattern scanner backends (Teddy, structural-bitmap, DFA fallback). |
+| [`crates/aozora-veb`](./crates/aozora-veb) | Eytzinger-layout sorted-set lookup (cache-friendly binary search). |
+| [`crates/aozora-lexer`](./crates/aozora-lexer) | 7-phase classifier pipeline. |
+| [`crates/aozora-lex`](./crates/aozora-lex) | Fused streaming orchestrator — pure `fn(&str) -> AozoraTree<'_>`. |
+| [`crates/aozora-render`](./crates/aozora-render) | HTML and serialise renderers — `html::render_to_string`, `serialize::serialize`. |
+| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` binary: `check` / `fmt` / `render`. |
+| [`crates/aozora-wasm`](./crates/aozora-wasm) | `wasm32-unknown-unknown` target for `wasm-pack build --target web`. |
+| [`crates/aozora-ffi`](./crates/aozora-ffi) | C ABI driver (opaque handle, JSON-encoded structured data). |
+| [`crates/aozora-py`](./crates/aozora-py) | PyO3 bindings, distributed via `maturin`. |
+| [`crates/aozora-bench`](./crates/aozora-bench) | Criterion + corpus-driven probes (PGO profile source). |
+| [`crates/aozora-corpus`](./crates/aozora-corpus) | Corpus source abstraction for sweep tests (dev-only, set `AOZORA_CORPUS_ROOT`). |
+| [`crates/aozora-test-utils`](./crates/aozora-test-utils) | Shared proptest strategies (dev-only). |
+| [`crates/aozora-trace`](./crates/aozora-trace) | DWARF symbolicator for samply traces. |
+| [`crates/aozora-xtask`](./crates/aozora-xtask) | Repo automation (samply wrapper, trace analysis, corpus pack/unpack). |
 
-## Quickstart
+See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the layered
+design and the dependency graph between these crates.
 
-Everything runs inside Docker — host toolchain is never invoked. Bring
-up the dev image once, then drive every operation through `just`:
+## Development
 
-```sh
-just                    # list targets
-just build              # cargo build --workspace
-just test               # cargo nextest run --workspace
-just spec-aozora        # hand-written annotation fixtures
-just spec-golden-56656  # 罪と罰 (card 56656) Tier-A acceptance gate
-just lint               # fmt + clippy + typos + strict-code purity check
-just deny               # cargo-deny licenses + advisories + bans
-just audit              # cargo-audit RustSec advisory scan
-just ci                 # full CI replica (gates on all of the above)
-```
-
-Use `just run` to invoke the CLI:
+Everything runs inside Docker — the host toolchain is never invoked.
+Bring up the dev image once, then drive every operation through `just`:
 
 ```sh
-just run check FILE.txt           # lex + report diagnostics
-just run fmt --check FILE.txt     # round-trip parse ∘ serialize check
-just run render FILE.txt          # render to HTML on stdout
-just run check -E sjis FILE.txt   # Shift_JIS source from Aozora Bunko
+just                # list targets
+just build          # cargo build --workspace --all-targets
+just test           # cargo nextest run --workspace
+just prop           # property-based sweep (128 cases per block)
+just lint           # fmt + clippy pedantic+nursery + typos + strict-code
+just deny           # cargo-deny licenses + advisories + bans
+just coverage       # cargo llvm-cov branch coverage
+just ci             # full CI replica
 ```
 
-## Public API contract
+Use `just run` to invoke the CLI inside the container:
 
-The library surface is the top-level [`aozora`](./crates/aozora) crate;
-both `aozora-tools` and `afm` consume only its re-exports.
-
-```rust
-use aozora::{Document, AozoraTree, Diagnostic, SLUGS, canonicalise_slug};
-use aozora::html;
-use aozora_encoding::gaiji;
-
-let arena = bumpalo::Bump::new();
-let doc = Document::new("｜青梅《おうめ》", &arena);
-let tree: AozoraTree<'_> = doc.parse();
-let diagnostics: &[Diagnostic] = tree.diagnostics();
-let html_string: String = html::render_to_string("｜青梅《おうめ》");
+```sh
+just run check FILE.txt
+just run render -E sjis FILE.txt > out.html
 ```
 
-ADR-0001 (zero parser hooks) is the architectural thesis: every Aozora
-recogniser is a pure function in the lexer's 7-phase pipeline. The
-renderer only consumes the lexer's output. ADR-0010 covers the
-borrowed-arena AST (`AozoraNode<'src>` shares lifetimes with the source
-buffer), and ADRs 0014–0020 document the perf/algorithmic milestones
-since v0.1.0 — see [`docs/adr/`](./docs/adr/) for the full chain.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the contribution flow,
+testing strategy, and lint policy.
 
-## Three-layer ecosystem
+## Documentation
 
-```
-┌─────────────────────────────────────────┐
-│ aozora-tools  (authoring environment)    │
-│   crates/aozora-fmt    formatter CLI     │
-│   crates/aozora-lsp    LSP server        │
-│   editors/vscode/      TS client         │
-└──────────────┬──────────────────────────┘
-               │ depends on aozora via git tag
-               ▼
-┌─────────────────────────────────────────┐
-│ afm  (CommonMark + GFM + aozora dialect) │
-│   crates/afm-markdown  Markdown layer    │
-│   crates/afm-cli       afm render/check  │
-│   upstream/comrak/     vendored fork     │
-└──────────────┬──────────────────────────┘
-               │ depends on aozora via git tag
-               ▼
-┌─────────────────────────────────────────┐
-│ aozora  (this repo — pure 青空文庫記法)   │
-└─────────────────────────────────────────┘
-```
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — crate layers,
+  borrowed-arena AST, SIMD scan strategy, lint and safety policy.
+- [`docs/USAGE.md`](./docs/USAGE.md) — CLI / Rust library / WASM /
+  C ABI / Python usage, environment variables.
+- [`docs/PROFILING.md`](./docs/PROFILING.md) — how to take a samply
+  profile, the bench probes, and common pitfalls.
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — dev setup, TDD flow,
+  PR rules.
+- [`SECURITY.md`](./SECURITY.md) — vulnerability disclosure.
+- [API reference (rustdoc)](https://p4suta.github.io/aozora/) — auto-deployed.
 
-See [`docs/adr/0006-authoring-tools-live-in-sibling-repositories.md`](docs/adr/0006-authoring-tools-live-in-sibling-repositories.md)
-for the split rationale.
-
-## Sibling repositories
+## Related projects
 
 | Repo | What it is |
 |---|---|
 | [`P4suta/afm`](https://github.com/P4suta/afm) | CommonMark + GFM + 青空文庫記法 integrated Markdown dialect, built on top of this parser. |
-| [`P4suta/aozora-tools`](https://github.com/P4suta/aozora-tools) | Authoring tools: `aozora-fmt`, `aozora-lsp` (LSP server), tree-sitter grammar, VS Code extension. |
-
-## Install
-
-Pre-built `aozora` CLI binaries for **Linux x86_64**, **macOS arm64**,
-and **Windows x86_64** are attached to every GitHub Release — see
-[the releases page](https://github.com/P4suta/aozora/releases) and pick
-a `aozora-vX.Y.Z-<target>.{tar.gz,zip}`. SHA256 sums are published as
-`SHA256SUMS` next to the archives.
-
-Or build from source:
-
-```sh
-cargo install --git https://github.com/P4suta/aozora --tag v0.2.4 --locked aozora-cli
-```
-
-## Use as a Rust library
-
-In your `Cargo.toml`:
-
-```toml
-[dependencies]
-aozora          = { version = "0.2.4", git = "https://github.com/P4suta/aozora.git", tag = "v0.2.4" }
-aozora-encoding = { version = "0.2.4", git = "https://github.com/P4suta/aozora.git", tag = "v0.2.4" }
-```
-
-(crates.io publication is on the roadmap once the public API stabilises
-to the 1.0 contract.)
-
-## Security
-
-Vulnerabilities go through GitHub Security Advisories — see
-[`SECURITY.md`](./SECURITY.md) for the disclosure flow.
+| [`P4suta/aozora-tools`](https://github.com/P4suta/aozora-tools) | Authoring tools: formatter, LSP server, tree-sitter grammar, VS Code extension. |
 
 ## License
 
 Dual-licensed under [Apache-2.0](./LICENSE-APACHE) OR [MIT](./LICENSE-MIT)
 at your option, matching Rust community convention. See
-[`NOTICE`](./NOTICE) for third-party attribution (JIS X 0213 tables,
-Aozora Bunko fixtures used in tests).
+[`NOTICE`](./NOTICE) for third-party attribution (Aozora Bunko spec
+snapshots and public-domain sample works used in tests).

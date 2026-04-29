@@ -9,7 +9,7 @@
 //! * `decode_sjis` and `decode_sjis_into` are output-equivalent on
 //!   every input (the buffer-reuse contract).
 //! * `decode_sjis_into` never shrinks the destination buffer's
-//!   capacity (the L-3 reuse invariant).
+//!   capacity (the buffer-reuse invariant).
 //! * Gaiji `Resolved::write_to` outputs a string whose UTF-8 byte
 //!   length matches `Resolved::utf8_len`.
 //! * `parse_u_plus` accepts every valid Unicode scalar via the
@@ -256,7 +256,7 @@ proptest! {
     }
 
     /// `decode_sjis_into` and `decode_sjis` produce the same string
-    /// (or both fail) for every byte input — the L-3 buffer-reuse
+    /// (or both fail) for every byte input — the buffer-reuse
     /// equivalence contract.
     #[test]
     fn into_and_owned_are_output_equivalent_on_arbitrary_bytes(

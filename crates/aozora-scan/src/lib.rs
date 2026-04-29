@@ -8,12 +8,11 @@
 //! start offsets, validated by the const-PHF
 //! [`aozora_spec::classify_trigger_bytes`].
 //!
-//! ## Design (post-T2 / ADR-0015)
+//! ## Design
 //!
 //! [`TriggerScanner`] is a `dyn`-compatible trait so multiple backends
-//! coexist behind a single runtime dispatcher [`best_scanner`]. The
-//! v2 bake-off (ADR-0015) measured four published techniques and
-//! shipped three:
+//! coexist behind a single runtime dispatcher [`best_scanner`]. Three
+//! backends ship in production:
 //!
 //! - [`TeddyScanner`] — Hyperscan multi-pattern fingerprint matcher
 //!   via `aho_corasick::packed::Searcher` (Langdale 2015, BurntSushi
@@ -70,7 +69,7 @@ pub use naive::NaiveScanner;
 /// lex layer can hold a `&'static dyn TriggerScanner` selected at
 /// runtime via CPU feature detection.
 ///
-/// ## Streaming variant (deferred — see ADR-0015 §future-work)
+/// ## Streaming variant (deferred)
 ///
 /// The current shape returns `Vec<u32>` eagerly, which on a 2 MB
 /// source allocates ~80 KB of `u32` offsets (assuming ~2 % trigger
@@ -103,7 +102,7 @@ pub trait TriggerScanner {
 
 /// The runtime-best [`TriggerScanner`] for the current target.
 ///
-/// Dispatch order (best to worst, per ADR-0015's bake-off):
+/// Dispatch order (best to worst):
 ///
 /// 1. **[`TeddyScanner`]** — built once via `OnceLock` (Hyperscan
 ///    Teddy via `aho_corasick::packed`). Returns `None` on hosts
@@ -178,12 +177,11 @@ pub fn best_scanner_name() -> &'static str {
     }
 }
 
-/// A0 (ADR-0019 follow-up): scan into an arena-backed [`BumpVec<u32>`]
-/// instead of the heap [`Vec<u32>`] [`TriggerScanner::scan_offsets`]
-/// returns. The drill-down trace surfaced the heap allocation +
-/// `Vec::extend_desugared` chain at 5.85 % inclusive of corpus parse
-/// — A0 lifts that scratch buffer into the per-parse arena the lex
-/// pipeline already owns.
+/// Arena-backed variant: scan into a [`BumpVec<u32>`] instead of the
+/// heap [`Vec<u32>`] [`TriggerScanner::scan_offsets`] returns. Lifts
+/// the scratch buffer into the per-parse arena the lex pipeline
+/// already owns, avoiding the heap allocation + `Vec::extend_desugared`
+/// chain on the trigger-offset path.
 ///
 /// `dyn`-compatibility constraint: `TriggerScanner` is held as a
 /// `&'static dyn` (see [`best_scanner`]) so its trait method cannot

@@ -1,4 +1,4 @@
-//! Proptest generator strategies for afm property-based tests.
+//! Proptest generator strategies for aozora property-based tests.
 //!
 //! These strategies are intentionally *stratified*: each one targets a
 //! specific shape of input that exercises a particular class of
@@ -199,7 +199,7 @@ pub fn commonmark_adversarial() -> impl Strategy<Value = String> {
 /// Includes straight `<script>` tags, attribute-style event handlers,
 /// URL-encoded bypasses (which must *not* be decoded by the pipeline —
 /// they become plain text), and full-width analogs of angle brackets
-/// (since afm already deals with full-width `［` for Aozora markup).
+/// (since aozora already deals with full-width `［` for Aozora markup).
 pub fn xss_payload() -> impl Strategy<Value = String> {
     prop_oneof![
         Just("<script>alert(1)</script>".to_owned()),
@@ -222,7 +222,7 @@ pub fn xss_payload() -> impl Strategy<Value = String> {
         // Mixed content with Aozora markup on either side.
         Just("｜漢字《かんじ》<script>x()</script>".to_owned()),
         Just("［＃「<script>」は大見出し］".to_owned()),
-        // CDATA wrapper (comrak's raw-HTML passthrough).
+        // CDATA wrapper (the parser's raw-HTML passthrough).
         Just("<![CDATA[<script>bad()</script>]]>".to_owned()),
         // HTML comment smuggling.
         Just("<!--<script>x()</script>-->".to_owned()),

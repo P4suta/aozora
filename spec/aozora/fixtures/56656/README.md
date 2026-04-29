@@ -18,7 +18,7 @@ translation copyright expired).
 
 ## Why this text
 
-Single-fixture coverage of the edge cases afm must handle for the 100% Aozora
+Single-fixture coverage of the edge cases aozora must handle for the 100% Aozora
 compatibility promise:
 
 - **1044 ruby annotations** — both explicit (`｜...《...》`) and implicit delimiter forms

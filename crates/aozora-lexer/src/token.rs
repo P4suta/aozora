@@ -7,17 +7,8 @@
 //! this stream and applies balanced-stack pairing to build
 //! structured events.
 //!
-//! M-2 (ADR-0019) attempted a Pure `SoA` replacement (`TokenStream`
-//! with separate `tags` / `spans` / `trigger_kinds` columns); the
-//! comparative measurement showed -7 to -16 % corpus throughput vs
-//! the enum-in-BumpVec layout, even after A0 (Phase 1 scratch
-//! buffers in arena) and A (initial arena capacity) were applied.
-//! M-2 is reverted; ADR-0019 records the negative result and
-//! preserves the `SoA` implementation in jj history.
-//!
-//! [`TriggerKind`] now lives in [`aozora_spec::TriggerKind`]; it is
-//! re-exported here for backward compatibility through the 0.1 → 0.2
-//! transition.
+//! [`TriggerKind`] lives in [`aozora_spec::TriggerKind`] and is
+//! re-exported here for downstream consumers.
 
 use aozora_syntax::Span;
 

@@ -2,30 +2,21 @@
 //!
 //! Compiles to a `wasm32-unknown-unknown` artifact suitable for
 //! `wasm-pack build --target web`, exposing `aozora::Document` /
-//! `aozora::AozoraTree` equivalents that JS / TypeScript consumers can
-//! `import { Document } from "aozora-wasm"`.
+//! `aozora::AozoraTree` equivalents that JS / TypeScript consumers
+//! can `import { Document } from "aozora-wasm"`.
 //!
-//! ## Move 4 status
+//! ## Build targeting
 //!
 //! The wasm-bindgen exports below are gated on
 //! `cfg(target_arch = "wasm32")` so host builds of the cargo
-//! workspace (`x86_64`, `aarch64`) skip them entirely — the `wasm32`
-//! target is not currently installed in the development environment,
-//! and we do not want host CI runs to be blocked on `rustup target
-//! add wasm32-unknown-unknown`.
+//! workspace (`x86_64`, `aarch64`) skip them entirely. Add
+//! `wasm32-unknown-unknown` via `rustup target add` before invoking
+//! `wasm-pack build --target web --release crates/aozora-wasm`.
 //!
-//! When the wasm pipeline is wired in CI (`just bench-wasm`), this
-//! crate's binding surface compiles into a `pkg/` directory that
-//! `npm publish` ships under the `aozora-wasm` package name.
-//!
-//! ## Innovation I-1 hook
-//!
-//! When Move 2's fused engine grows `wasm_simd` backend support in
-//! `aozora-scan`, this crate's release build automatically picks it
-//! up via `-Ctarget-feature=+simd128`. The size budget for the
-//! resulting `.wasm` artifact (post `wasm-opt -O3 --enable-simd`) is
-//! ≤ 500 KiB per the verification plan in
-//! `/home/yasunobu/.claude/plans/jazzy-jingling-gizmo.md`.
+//! When `aozora-scan` grows `wasm_simd` backend support, this crate's
+//! release build picks it up via `-Ctarget-feature=+simd128`. The
+//! size budget for the resulting `.wasm` artifact (post `wasm-opt
+//! -O3 --enable-simd`) is ≤ 500 KiB.
 
 #![forbid(unsafe_code)]
 

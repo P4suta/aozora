@@ -1,16 +1,15 @@
 //! Empirical byte-density probe — measures the distribution of
 //! trigger-leading vs trigger-middle bytes across the corpus.
 //!
-//! Drives the design choice in ADR-0015: the leading-byte set
-//! `{0xE2, 0xE3, 0xEF}` is dominated on Japanese text by the ~33 %
-//! 0xE3 density (every hiragana / katakana / many CJK starts with
-//! it). The middle-byte set `{0x80, 0xBC, 0xBD}` is several × sparser
-//! and the more useful candidate filter — which informed the bake-off
-//! conclusion to use Teddy / structural-bitmap over leading-byte
-//! memchr3.
+//! On Japanese text the leading-byte set `{0xE2, 0xE3, 0xEF}` is
+//! dominated by ~33 % 0xE3 density (every hiragana / katakana / many
+//! CJK starts with it). The middle-byte set `{0x80, 0xBC, 0xBD}` is
+//! several × sparser and the more useful candidate filter — which is
+//! why `aozora-scan` ships Teddy / structural-bitmap rather than a
+//! leading-byte memchr3 scan.
 //!
 //! Output is intentionally `println!`-formatted with raw counts +
-//! percentages so the data lands directly in the ADR.
+//! percentages.
 
 #![allow(
     clippy::cast_precision_loss,

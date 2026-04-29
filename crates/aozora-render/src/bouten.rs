@@ -1,9 +1,7 @@
-//! Bouten CSS-class slug tables (mirror of `aozora_parser::aozora::bouten`).
+//! Bouten CSS-class slug tables.
 //!
-//! Same exhaustive map of [`BoutenKind`]/[`BoutenPosition`] enum values
-//! to the stable CSS slugs used by the bundled stylesheets. Lives here
-//! so the borrowed-AST renderer (Plan B.3) does not need to depend on
-//! `aozora-parser`'s internal `aozora` module.
+//! Exhaustive map of [`BoutenKind`] / [`BoutenPosition`] enum values
+//! to the stable CSS slugs used by the bundled stylesheets.
 
 use aozora_syntax::{BoutenKind, BoutenPosition};
 

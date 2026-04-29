@@ -77,16 +77,16 @@ fn main() {
     let mut classify_total = 0u64;
     let mut full_total = 0u64;
 
-    // NOTE: post-I-2 the production pipeline fuses tokenize → pair
-    // → classify with no `Vec` materialisation; this probe still
-    // collects each phase to a Vec for individual timing.
+    // The production pipeline fuses tokenize → pair → classify with
+    // no `Vec` materialisation; this probe still collects each phase
+    // to a Vec for individual timing.
     //
-    // B'-2 (ADR-0019 follow-up): the two arenas live across all
-    // iterations and are reset-with-hint to `text.len() * 4` before
-    // each parse. This mirrors the bench harness's `WORKER_ARENA`
-    // reuse pattern so the probe's per-iteration timing reflects the
-    // production arena cost (chunk-grow `mmap` paid once per growth
-    // event, not per parse) instead of the unrealistic fresh-arena
+    // The two arenas live across all iterations and are
+    // reset-with-hint to `text.len() * 4` before each parse. This
+    // mirrors the bench harness's `WORKER_ARENA` reuse pattern so the
+    // probe's per-iteration timing reflects the production arena cost
+    // (chunk-grow `mmap` paid once per growth event, not per parse)
+    // instead of the unrealistic fresh-arena
     // cost. Two separate arenas because the standalone classify and
     // the full pipeline are timed back-to-back inside the same loop
     // iteration; sharing one would force a reset between them.

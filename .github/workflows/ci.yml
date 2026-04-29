@@ -42,9 +42,9 @@ env:
 
 jobs:
   msrv:
-    # Verify that the pinned MSRV (1.95.0) still builds. ADR-0002
-    # scope exception: native runner toolchain rather than dev image —
-    # the point is exercising a clean rustc 1.95.0 install, which the
+    # Verify that the pinned MSRV (1.95.0) still builds. Uses the
+    # native runner toolchain rather than the dev image, because the
+    # point is exercising a clean rustc 1.95.0 install, which the
     # image has no mechanism to downgrade to.
     name: msrv (rust 1.95.0)
     runs-on: ubuntu-latest
@@ -91,16 +91,6 @@ jobs:
       - run: just build
       - run: just test
 
-  # Note: `spec` and `upstream-diff` jobs were dropped after the
-  # v0.2.0 split. spec-aozora / spec-golden-56656 referenced
-  # `--package aozora-parser`, which the split retired in favour of
-  # the new `aozora-render` + `aozora` facade — the equivalent
-  # coverage now lives in per-crate integration tests
-  # (aozora-render::byte_identical_html, aozora-lex::diagnostic_ordering,
-  # etc.) which `build-and-test` already runs. `upstream-diff` was
-  # afm-specific (vendored comrak budget enforcement); aozora has no
-  # vendored upstream so the recipe never applied.
-
   coverage:
     runs-on: ubuntu-latest
     steps:
@@ -118,3 +108,54 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - uses: ./.github/actions/setup-dev-image
       - run: just ${{ matrix.target }}
+
+  # C ABI smoke test — build aozora-ffi as a cdylib, link the C
+  # harness against it, run end-to-end. Validates that
+  # `cargo build -p aozora-ffi` produces a working library AND that
+  # the cbindgen build script generates `aozora.h` cleanly.
+  smoke-ffi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: smoke-ffi
+      - run: bash crates/aozora-ffi/tests/c_smoke/run.sh
+
+  # WASM build verification — install wasm32 target + wasm-pack, run
+  # `wasm-pack build crates/aozora-wasm --target web --release`.
+  # Build-only: no npm publish.
+  wasm-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build wasm-pack package
+        run: wasm-pack build --target web --release crates/aozora-wasm
+
+  # Python wheel build verification — install maturin, build the
+  # `aozora-py` wheel against the runner's stock Python. Build-only:
+  # no PyPI publish.
+  python-wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: maturin
+      - name: Install maturin
+        run: pip install --upgrade maturin
+      - name: Build wheel
+        run: maturin build --release -F extension-module --manifest-path crates/aozora-py/Cargo.toml

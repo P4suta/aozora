@@ -1,4 +1,4 @@
-//! Single-file binary corpus archive (L-5, ADR-0020).
+//! Single-file binary corpus archive.
 //!
 //! Replaces "directory of 17 435 small files + walkdir + per-file
 //! `read(2)` + `decode_sjis` per call" with **one** binary file that
@@ -54,9 +54,9 @@
 //!
 //! # Lifetime model
 //!
-//! [`Archive::open`] mmaps would be ideal for zero-copy reads, but
-//! `unsafe` is non-negotiable here (ADR-0020 § L-4). Instead, the
-//! whole file is read into a single `Vec<u8>` (one `fs::read`
+//! [`Archive::open`] would benefit from `mmap` for zero-copy reads,
+//! but the workspace forbids `unsafe` here. Instead, the whole file
+//! is read into a single `Vec<u8>` (one `fs::read`
 //! syscall, kernel does one page-cache → vec memcpy). [`ArchiveEntry`]
 //! borrows from the archive's payload, so iterators yield zero-copy
 //! `&[u8]` slices for raw payloads. zstd-decompressed entries
@@ -410,7 +410,7 @@ impl Archive {
     }
 
     /// Random-access counterpart to [`Self::iter_borrowed`] — yield
-    /// the payload at `index` directly, no iteration cost (L-6c).
+    /// the payload at `index` directly, no iteration cost.
     ///
     /// Used by parallel callers that fan out via `(0..len).into_par_iter()`
     /// — calling `iter_borrowed().nth(i)` inside the parallel body
@@ -457,7 +457,7 @@ impl Archive {
     /// archives the bytes are a `to_vec` of the in-memory slice;
     /// for zstd archives they are the freshly decompressed bytes.
     ///
-    /// Use [`Self::iter_borrowed`] (L-6c) when the caller does not
+    /// Use [`Self::iter_borrowed`] when the caller does not
     /// need to take ownership — zero-copy on raw archives.
     ///
     /// # Errors
@@ -472,7 +472,7 @@ impl Archive {
         })
     }
 
-    /// Zero-copy iterator (L-6c, ADR-0020).
+    /// Zero-copy iterator.
     ///
     /// Yields `(label_borrow, payload_borrow_or_decompress)` pairs
     /// where:
@@ -504,7 +504,7 @@ impl Archive {
     }
 }
 
-/// Per-entry payload yielded by [`Archive::iter_borrowed`] (L-6c).
+/// Per-entry payload yielded by [`Archive::iter_borrowed`].
 ///
 /// Unifies the two shapes the archive can produce — a borrowed slice
 /// into the in-memory archive (raw variants) or a freshly
@@ -610,7 +610,7 @@ pub fn ns_to_system_time(ns: i64) -> SystemTime {
 }
 
 // ---------------------------------------------------------------------
-// Builder — used by `xtask corpus pack` (L-5b) at build time only.
+// Builder — used by `xtask corpus pack` at build time only.
 // ---------------------------------------------------------------------
 
 /// Streaming archive builder.

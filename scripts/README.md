@@ -85,7 +85,7 @@ component on first run. Nothing else is global state.
 Install / inspect / remove a systemd **user** timer that runs `just
 deps-check` weekly. Replaces the dependabot / renovate / GitHub
 Actions pattern with an entirely-local mechanism — there is no
-remote CI involved at any point. ADR-0018 records the policy.
+remote CI involved at any point.
 
 The implementation lives in `crates/aozora-xtask/src/deps.rs` and
 is invoked through `just`:
@@ -118,9 +118,9 @@ developer sees the report whenever they pull.
 ## `corpus_sweep.sh` (planned)
 
 Reserved name for an opt-in 17 K aozora-corpus sweep that takes
-2–5 min. Not yet implemented; see `aozora-parser/tests/corpus_sweep.rs`
-for the existing in-band test that runs when `AOZORA_CORPUS_ROOT` is
-set.
+2–5 min. Not yet implemented; `just corpus-sweep` (which loads the
+corpus through `aozora-corpus` and walks every document) covers the
+same invariants today.
 
 ## Profiling (samply)
 

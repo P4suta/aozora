@@ -139,14 +139,14 @@ pub const TRIGGER_LEADING_BYTES: [u8; 3] = [0xE2, 0xE3, 0xEF];
 /// Set of UTF-8 *middle* bytes (2nd byte of the trigram) covering
 /// every trigger character.
 ///
-/// ADR-0015 found this set is ~4× sparser than [`TRIGGER_LEADING_BYTES`]
-/// on Japanese text and used by the structural-bitmap scan strategy.
+/// Empirically ~4× sparser than [`TRIGGER_LEADING_BYTES`] on Japanese
+/// text; used by the structural-bitmap scan strategy.
 pub const TRIGGER_MIDDLE_BYTES: [u8; 3] = [0x80, 0xBC, 0xBD];
 
 /// All 11 single-character trigger trigrams as raw UTF-8 byte arrays.
 ///
 /// In PHF-table iteration order. Consumed by the multi-pattern scan
-/// backends (Teddy, multi-pattern DFA — see ADR-0015) which need the
+/// backends (Teddy, multi-pattern DFA) which need the
 /// patterns directly rather than going through `classify_trigger_bytes`.
 ///
 /// The accompanying test [`tests::all_trigger_trigrams_match_phf`]

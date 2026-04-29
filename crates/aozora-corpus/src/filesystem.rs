@@ -57,8 +57,8 @@ impl FilesystemCorpus {
 
     /// Enumerate every `.txt` file under the root WITHOUT reading its
     /// bytes. Useful for splitting walkdir cost from read cost in
-    /// per-phase load benchmarks (L-1) and for fanning the read step
-    /// across rayon workers (L-2). The returned iterator yields
+    /// per-phase load benchmarks and for fanning the read step
+    /// across rayon workers. The returned iterator yields
     /// absolute paths in walkdir's lexicographic-per-directory order.
     ///
     /// Uses `DirEntry::file_type()` for the file-vs-directory check —
@@ -89,7 +89,7 @@ impl FilesystemCorpus {
     }
 
     /// Read a single file's bytes into a fresh `CorpusItem`. Public
-    /// helper used by the parallel-load path (L-2) so each rayon worker
+    /// helper used by the parallel-load path so each rayon worker
     /// can call this on a path it dequeued from the shared work queue
     /// without re-running walkdir.
     ///

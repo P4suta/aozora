@@ -1,22 +1,12 @@
 //! Python (`PyO3`) driver for the aozora parser.
 //!
-//! Distributed via [`maturin`](https://www.maturin.rs/) as a wheel:
-//!
-//! ```bash
-//! maturin develop -F extension-module           # build + install in venv
-//! maturin build --release -F extension-module   # produce wheel
-//! ```
-//!
-//! ## Move 4 status
-//!
+//! Distributed via [`maturin`](https://www.maturin.rs/) as a wheel.
 //! The `PyO3` binding surface is gated behind the `extension-module`
-//! cargo feature so a plain `cargo build --workspace` on the dev
-//! environment (which currently lacks Python development headers)
-//! still succeeds. Building the actual wheel requires the feature
-//! flag and either:
+//! cargo feature so a plain `cargo build --workspace` (without
+//! Python dev headers installed) still succeeds. Building the actual
+//! wheel requires the feature flag plus either:
 //!
-//! - `maturin develop -F extension-module` from inside an active
-//!   Python virtualenv, OR
+//! - `maturin develop -F extension-module` from inside a Python venv, or
 //! - `maturin build --release -F extension-module` against a chosen
 //!   Python interpreter.
 //!

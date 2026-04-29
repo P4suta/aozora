@@ -6,7 +6,7 @@
 //! Downstream renderers walk the normalized text, encounter a
 //! sentinel, and `get(pos)` to recover the structured node.
 //!
-//! ## Layout decision (Innovation I-5)
+//! ## Layout decision
 //!
 //! Stored as **`SoA`** (struct-of-arrays) with keys laid out via
 //! [`aozora_veb::EytzingerMap`] for cache-friendly binary search at
@@ -22,8 +22,7 @@
 //! ## Coexistence
 //!
 //! This is the borrowed-AST registry. The legacy
-//! [`crate::PlaceholderRegistry`] is the owned-AST equivalent and
-//! continues to ship until Move 2 finishes the lex layer migration.
+//! [`crate::PlaceholderRegistry`] is the owned-AST equivalent.
 
 use crate::extension::ContainerKind;
 

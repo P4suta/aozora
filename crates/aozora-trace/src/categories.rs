@@ -94,10 +94,10 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
             r"phf_shared",
         ],
     ),
-    // Step A.2 / ADR-0019 follow-up — split the formerly-monolithic
-    // "allocation" bucket (25.58 % of corpus parse) into hot-path-
-    // attributable sub-buckets. The first-match-wins regex order
-    // matters: more-specific patterns above the generic ones.
+    // Allocation buckets — split the monolithic "allocation" category
+    // into hot-path-attributable sub-buckets. The first-match-wins
+    // regex order matters: more-specific patterns above the generic
+    // ones.
     (
         // Bumpalo arena allocator: every `Arena::alloc*`, BumpVec
         // push/extend, and the underlying Bump chunk-allocation /
@@ -111,9 +111,6 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
         // libc malloc/free/realloc family. Hits here are the cost of
         // bumpalo's chunk-extend `mmap` syscalls, plus any heap-Vec
         // allocations in Pipeline / diagnostics / interner growth.
-        // Address of attack: per-thread arena reuse (M-1 already
-        // promoted) plus capacity-hint tuning to avoid mid-parse
-        // chunk extends.
         "alloc_libc_heap",
         &[
             r"^malloc$",

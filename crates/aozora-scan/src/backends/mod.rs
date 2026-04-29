@@ -1,7 +1,6 @@
 //! Trigger-scan backends for [`crate::TriggerScanner`].
 //!
-//! ADR-0015 (the v2 bake-off result) settles on the three-backend
-//! production set:
+//! The production set is three backends:
 //!
 //! - **Teddy** (`teddy.rs`) — Hyperscan multi-pattern fingerprint
 //!   matcher via `aho_corasick::packed::Searcher`. The bake-off

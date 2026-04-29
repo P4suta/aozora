@@ -31,7 +31,7 @@
 //! (`read` / `__nss_database_lookup` / `__memmove_avx_unaligned`) to
 //! dominate the trace and bury the parser hot path.
 //!
-//! ## Parallel mode (R4-B / ADR-0017)
+//! ## Parallel mode
 //!
 //! Set `AOZORA_PROFILE_PARALLEL=1` to fan per-doc parses across rayon's
 //! work-stealing pool. Each task constructs its own [`Arena`], so
@@ -77,11 +77,11 @@ use rayon::prelude::*;
 // One Arena per worker thread, reused across the docs that worker
 // processes. `Bump::reset()` between docs drops the prior parse's
 // allocations without releasing the chunks — saving the per-doc
-// `mmap` syscall that R4-B's per-task `Arena::new()` was paying.
+// `mmap` syscall a per-task `Arena::new()` would pay.
 //
-// A (ADR-0019 follow-up): pre-size the thread-local arena at thread
-// startup so the first few docs each worker sees don't pay the
-// chunk-grow doubling tax (bumpalo's default initial chunk is
+// Pre-size the thread-local arena at thread startup so the first
+// few docs each worker sees don't pay the chunk-grow doubling tax
+// (bumpalo's default initial chunk is
 // 512 bytes; the corpus median doc needs ~50 KB of arena space, so
 // without a hint the first ~7 docs each worker sees do
 // 512 → 1 K → 2 K → 4 K → 8 K → 16 K → 32 K → 64 K growth). 256 KB
@@ -94,8 +94,6 @@ use rayon::prelude::*;
 // never observed from a second thread). The borrow scope must close
 // before the closure returns — which it does, because the closure
 // drops `_out` immediately after timing.
-//
-// M-1 / A / ADR-0019.
 const WORKER_ARENA_INITIAL_CAPACITY: usize = 256 * 1024;
 
 thread_local! {
@@ -138,13 +136,12 @@ fn main() {
         "throughput_by_class: starting (limit = {limit:?}, repeat = {repeat}, parallel = {parallel})"
     );
 
-    // L-5 (ADR-0020): if AOZORA_CORPUS_ARCHIVE is set, load from a
-    // packed binary archive (single fs::read of the whole archive +
-    // parallel iter over its index) instead of walking 17 k small
-    // files. Skips walkdir + per-file syscalls entirely; for the
-    // pre-decoded UTF-8 + zstd variant also skips the per-doc
-    // decode. AOZORA_CORPUS_ROOT path stays as the fallback so
-    // existing workflows remain unchanged.
+    // If AOZORA_CORPUS_ARCHIVE is set, load from a packed binary
+    // archive (single fs::read of the whole archive + parallel iter
+    // over its index) instead of walking 17 k small files. Skips
+    // walkdir + per-file syscalls entirely; for the pre-decoded
+    // UTF-8 + zstd variant also skips the per-doc decode.
+    // AOZORA_CORPUS_ROOT remains the fallback when ARCHIVE is unset.
     let load = archive_path.as_ref().map_or_else(
         || {
             // Safe to unwrap: we returned exit(2) above if both were unset.
@@ -153,17 +150,13 @@ fn main() {
                 eprintln!("AOZORA_CORPUS_ROOT is not a readable directory; nothing to profile.");
                 process::exit(2);
             };
-            // L-1 (ADR-0020): the load wall historically lumped walkdir +
-            // fs::read + decode + bucketing into one number, hiding which
-            // sub-phase paid the cost. Split into four timers so future
-            // optimisations (L-2 parallel I/O, L-3 decode buffer reuse, L-4
-            // mmap) can attribute their deltas cleanly.
-            //
-            // L-2 (ADR-0020): when parallel mode is enabled, the load phase
-            // also fans out via rayon (via `parallel_size_bands`) — the
-            // headline ≥5× win. The per-phase split is suppressed in that
-            // path because rayon overlaps read/decode and the per-phase
-            // serial timers no longer attribute meaningfully.
+
+            // The serial path splits I/O + decode + bucketing into
+            // four timers so each sub-phase's wall is visible. The
+            // parallel path fans out via rayon (`parallel_size_bands`)
+            // and overlaps read/decode, so the per-phase serial split
+            // is suppressed there — the per-phase timers no longer
+            // attribute meaningfully under concurrent dispatch.
             if parallel {
                 LoadPhase::run_parallel(&corpus)
             } else {
@@ -333,7 +326,7 @@ impl LoadPhase {
         }
     }
 
-    /// Load from a packed binary archive (L-5). One `fs::read` of
+    /// Load from a packed binary archive. One `fs::read` of
     /// the archive file, then parallel iter (decompress / decode /
     /// bucket) on the physical-core pool.
     fn run_archive(path: &Path) -> Self {
@@ -405,17 +398,16 @@ fn measure_all(banded: &SizeBandedCorpus, parallel: bool) -> AllReport {
 /// `RefCell` is never observed from a second thread (matches
 /// `Arena`'s `!Sync` contract).
 fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
-    // B'-2 (ADR-0019 follow-up): pre-size the per-thread arena to
-    // `source.len() * 4` before each parse. The factor matches the
-    // production `Document::new` path (which has used `source.len() * 4`
-    // since N6) and covers borrowed-AST shape on every observed corpus
-    // doc. When the worker's arena is already at least that large
+    // Pre-size the per-thread arena to `source.len() * 4` before each
+    // parse. The factor matches the production `Document::new` path
+    // and covers borrowed-AST shape on every observed corpus doc.
+    // When the worker's arena is already at least that large
     // (steady state after the first big doc), `reset_with_hint`
     // degrades to plain `reset()` — no syscall. The growth path
     // moves the chunk-extend `mmap` from inside the parse hot loop
     // to before it, removing a source of intra-parse latency variance
-    // and pre-paying the `brk` cost ADR-0019 § "True hot path"
-    // identified at 5.95 % self on doc 50685.
+    // and pre-paying the `brk` cost that profiling identified as a
+    // hot-path contributor.
     let measure = |text: &str| -> (u64, u64) {
         WORKER_ARENA.with(|cell| {
             let mut arena = cell.borrow_mut();

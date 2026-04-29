@@ -1,8 +1,8 @@
 # Aozora Bunko specification snapshot
 
 Archived from <https://www.aozora.gr.jp/> on **2026-04-23** for offline
-reference during afm development. Updated with `make refresh-aozora-specs`
-(to be wired) or by re-running the fetch loop in this directory.
+reference during aozora development. Re-run the fetch loop in this
+directory to refresh.
 
 | File | Section | Upstream URL |
 |---|---|---|

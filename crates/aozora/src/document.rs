@@ -2,8 +2,6 @@
 //! buffer, and `AozoraTree<'a>` — borrowed view a caller walks for
 //! output rendering.
 //!
-//! ## Plan B.4 / B.5 — borrowed AST production surface
-//!
 //! `Document` owns both the source buffer and a [`bumpalo`]-backed
 //! [`Arena`]; [`Document::parse`] returns an [`AozoraTree<'_>`]
 //! that borrows from the arena via the `&self` lifetime. Owning
@@ -13,13 +11,8 @@
 //!
 //! Every borrowed-AST allocation lives inside the arena, with the
 //! [`Interner`](aozora_syntax::borrowed::Interner) deduplicating
-//! repeated string content (Innovation I-7). Dropping the `Document`
-//! frees the entire tree in a single `Bump::reset` step; no per-node
-//! `Drop` runs.
-//!
-//! Plan B.5 has retired the legacy owned-AST `ParseResult` path that
-//! pre-Plan-B `Document::parse_owned` exposed; the borrowed
-//! [`Document::parse`] is now the only public entry.
+//! repeated string content. Dropping the `Document` frees the entire
+//! tree in a single `Bump::reset` step; no per-node `Drop` runs.
 
 use core::fmt;
 
@@ -29,11 +22,11 @@ use aozora_spec::{Diagnostic, PairLink};
 use aozora_syntax::borrowed::Arena;
 
 /// Pre-size the document arena as `source.len() * ARENA_CAPACITY_FACTOR`
-/// bytes. Picked from the full-corpus `allocator_pressure` probe (N6
-/// finding, 17435 docs): the median AST footprint is 3.4× the source
-/// size, p99 is 8.25×, max 15.4×. Factor 4 covers the median + a
-/// margin while keeping small-doc overhead minimal (a 1 KB doc gets
-/// a 4 KB arena, the bumpalo default chunk size).
+/// bytes. Picked from the full-corpus `allocator_pressure` probe over
+/// 17 435 docs: the median AST footprint is 3.4× the source size, p99
+/// is 8.25×, max 15.4×. Factor 4 covers the median + a margin while
+/// keeping small-doc overhead minimal (a 1 KB doc gets a 4 KB arena,
+/// the bumpalo default chunk size).
 const ARENA_CAPACITY_FACTOR: usize = 4;
 
 /// Single owning handle to a parsed Aozora source.
@@ -53,12 +46,11 @@ impl Document {
     /// (no external lifetime).
     ///
     /// The arena is pre-sized to `source.len() * ARENA_CAPACITY_FACTOR`
-    /// bytes (a corpus-profile-driven estimate of the AST footprint).
-    /// N6 finding (full-corpus `allocator_pressure` probe): p50 arena/source
-    /// ratio is 3.4×, p99 is 8.25×; pre-sizing eliminates the early
-    /// chunk-grow churn that hits large docs hardest. Callers that
-    /// know the AST is unusually small can fall back to
-    /// [`Self::with_arena_capacity`] with a smaller hint.
+    /// bytes (a corpus-profile-driven estimate of the AST footprint:
+    /// p50 arena/source ratio is 3.4×, p99 is 8.25×). Pre-sizing
+    /// eliminates the early chunk-grow churn that hits large docs
+    /// hardest. Callers that know the AST is unusually small can fall
+    /// back to [`Self::with_arena_capacity`] with a smaller hint.
     #[must_use]
     pub fn new(source: impl Into<Box<str>>) -> Self {
         let source: Box<str> = source.into();
@@ -110,7 +102,7 @@ impl fmt::Debug for Document {
     }
 }
 
-/// Borrowed view into a parsed Aozora document (Plan B.4).
+/// Borrowed view into a parsed Aozora document.
 ///
 /// Wraps a [`BorrowedLexOutput`] whose normalized text and registry
 /// borrow from the parent [`Document`]'s arena. Renderer methods

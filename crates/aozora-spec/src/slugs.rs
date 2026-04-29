@@ -30,8 +30,6 @@
 //! treats as a one-keystroke-quick-fix. Any input that is already
 //! canonical short-circuits with `Some(canonical)` so callers can
 //! always trust the return value.
-//!
-//! See ADR-0021 (planned) for the editor-integration design.
 
 use crate::PairKind;
 

@@ -11,9 +11,11 @@ readme.workspace       = true
 keywords.workspace     = true
 categories.workspace   = true
 
-# Driver crate — published to PyPI via maturin once Move 4's Python
-# pipeline is wired in CI. Host (cargo workspace) builds skip the
-# pyo3 dep unless the `extension-module` feature is enabled.
+# Driver crate — built into a wheel via `maturin build -F
+# extension-module`. Host (cargo workspace) builds skip the pyo3 dep
+# unless the `extension-module` feature is enabled, so a plain
+# `cargo build --workspace` (without Python dev headers) still
+# succeeds.
 publish     = false
 
 [lints]

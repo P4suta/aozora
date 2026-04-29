@@ -4,9 +4,8 @@
 //!
 //! The scheme encodes accented Latin letters using a base ASCII letter followed
 //! by a one-character marker. The full 118-entry table from the spec is
-//! encoded here as a compile-time slice so both afm-parser (for pre-parse
-//! rewriting, see ADR-0004) and downstream tools share the same authoritative
-//! lookup.
+//! encoded here as a compile-time slice so the lexer (for pre-parse
+//! rewriting) and downstream tools share the same authoritative lookup.
 //!
 //! ```
 //! use aozora_syntax::accent::decompose_fragment;
@@ -27,8 +26,8 @@
 //!
 //! # Scope of use
 //!
-//! The function is **only safe to call on the body of a `〔...〕` span**: per
-//! ADR-0004, afm restricts accent decomposition to that convention to avoid
+//! The function is **only safe to call on the body of a `〔...〕` span**:
+//! aozora restricts accent decomposition to that convention to avoid
 //! false-matching English text like `text,` (which would otherwise be
 //! decomposed to `texţ` via the legitimate-in-Polish `t,` = ţ entry).
 
@@ -366,8 +365,8 @@ const _: () = {
 
 /// Decompose Aozora accent digraphs anywhere inside `fragment`.
 ///
-/// Call this on the **body of a `〔...〕` span** only; ADR-0004 restricts the
-/// transform to that convention so English text (`isn't`, `text,`, `word's`)
+/// Call this on the **body of a `〔...〕` span** only; the transform is
+/// restricted to that convention so English text (`isn't`, `text,`, `word's`)
 /// doesn't false-match legitimate spec entries (`n'`=ń, `t,`=ţ, and friends).
 ///
 /// Guarantees:
@@ -563,8 +562,8 @@ mod tests {
     #[test]
     fn isolated_markers_not_preceded_by_table_base_are_preserved() {
         // A marker that lands without a valid base letter preceding it stays
-        // intact. The call site is the inside of a 〔〕 span (per ADR-0004),
-        // where these cases represent author typos or genuine punctuation.
+        // intact. The call site is the inside of a 〔〕 span, where
+        // these cases represent author typos or genuine punctuation.
         assert_eq!(decompose_fragment("'tis"), "'tis"); // leading apostrophe
         assert_eq!(decompose_fragment("5^2"), "5^2"); // digit base not in spec
         assert_eq!(decompose_fragment("q^"), "q^"); // q not in spec table

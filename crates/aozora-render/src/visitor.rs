@@ -1,4 +1,4 @@
-//! Visitor trait for borrowed-AST tree walking (Innovation I-10).
+//! Visitor trait for borrowed-AST tree walking.
 //!
 //! The HTML and Aozora-source renderers in this crate share an
 //! identical *traversal* — walk the normalized text, dispatch each

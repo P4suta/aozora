@@ -1,87 +1,33 @@
-afm — Aozora Flavored Markdown
-Copyright (c) the afm contributors
+aozora — 青空文庫記法 (Aozora Bunko notation) parser
+Copyright (c) the aozora contributors
 
 This NOTICE file is a convenience index of third-party material
-incorporated into the afm source repository. It does not replace the
+incorporated into the aozora source repository. It does not replace the
 individual license files and source-level attributions; those remain the
 authoritative record. Unless specified otherwise in one of the sections
-below, everything else in this repository is original afm code and is
+below, everything in this repository is original aozora code and is
 dual-licensed under Apache-2.0 OR MIT (see LICENSE-APACHE and LICENSE-MIT).
 
 
 ================================================================================
-1. Vendored comrak (BSD-2-Clause, with embedded MIT / BSD-2 / CC-BY-SA 4.0)
-================================================================================
-
-The directory upstream/comrak/ is a vendored fork of comrak v0.52.0
-(https://github.com/kivikakk/comrak), originally authored by Asherah Connor
-("kivikakk") and the Comrak contributors, 2017-2025. The upstream is
-distributed under the BSD-2-Clause license.
-
-comrak itself incorporates code derived from several upstream projects:
-
-  - cmark-gfm (BSD-2-Clause, (c) John MacFarlane, 2014)
-  - houdini (MIT, (c) Vicent Marti, 2012)
-  - buffer / chunk helpers (MIT, (c) GitHub, Inc., 2012)
-  - utf8proc (MIT, (c) Public Software Group e. V., 2009)
-  - the normalize.py helper (MIT, (c) Karl Dubost, 2013)
-  - the CommonMark spec text under test/ (CC-BY-SA 4.0, (c) John MacFarlane,
-    2014-2015)
-  - the comrak test suite (BSD-2-Clause, (c) John MacFarlane, 2014)
-
-See upstream/comrak/COPYING for the full and authoritative text of each of
-these notices. afm's modifications to the vendored tree are kept within the
-200-line diff budget documented in ADR-0001 (docs/adr/0001-*.md) and
-upstream/comrak/UPSTREAM_DIFF.md.
-
-
-================================================================================
-2. CommonMark and GFM specifications (CC-BY-SA 4.0)
-================================================================================
-
-The conformance test fixtures under spec/ are derived from:
-
-  - CommonMark Spec 0.31.2
-      spec/commonmark-0.31.2.json
-      spec/sources/commonmark-0.31.2.txt
-    Copyright (c) 2014-2022 John MacFarlane.
-    Licensed under Creative Commons Attribution-ShareAlike 4.0 International
-    (https://creativecommons.org/licenses/by-sa/4.0/).
-
-  - GitHub Flavored Markdown Spec 0.29-gfm
-      spec/gfm-0.29-gfm.json
-      spec/sources/gfm-0.29-gfm.txt
-    Copyright (c) GitHub, Inc.
-    Licensed under Creative Commons Attribution-ShareAlike 4.0 International
-    (https://creativecommons.org/licenses/by-sa/4.0/).
-
-These fixtures are used for test-time conformance validation only. They
-are not part of the compiled afm binary or library distribution, but they
-are shipped in the source repository as evidence that afm respects the
-upstream specifications. The JSON files are generated from the adjacent
-.txt sources via `just spec-refresh`; both sources and generated fixtures
-are committed verbatim.
-
-
-================================================================================
-3. Aozora Bunko annotation specification snapshots (fair use / quotation)
+1. Aozora Bunko annotation specification snapshots (fair use / quotation)
 ================================================================================
 
 HTML snapshots of the Aozora Bunko (青空文庫) annotation specification
 are reproduced under docs/specs/aozora/ verbatim for offline technical
-reference during afm development. The material is (c) Aozora Bunko
-volunteers and remains their property; afm includes the snapshots under a
-limited fair-use / quotation exception grounded in the fact that the text
-is short, stable, and central to an interoperability effort.
+reference during aozora development. The material is (c) Aozora Bunko
+volunteers and remains their property; aozora includes the snapshots
+under a limited fair-use / quotation exception grounded in the fact that
+the text is short, stable, and central to an interoperability effort.
 
 See docs/specs/aozora/README.md for the full list of upstream URLs, the
 snapshot date, and the rights-holder removal policy: if a rights-holder
 requests removal, the files will be dropped and offline access will fall
-back to `WebFetch` against the live site.
+back to fetching against the live site.
 
 
 ================================================================================
-4. Aozora Bunko sample works (public domain)
+2. Aozora Bunko sample works (public domain)
 ================================================================================
 
 Sample works under spec/aozora/fixtures/ are sourced from Aozora Bunko
@@ -99,11 +45,10 @@ copyright has lapsed under Japanese law.
 
 
 ================================================================================
-5. afm (Apache-2.0 OR MIT)
+3. aozora (Apache-2.0 OR MIT)
 ================================================================================
 
-All original afm source code — everything outside upstream/comrak/ and
-spec/ — is dual-licensed under Apache-2.0 OR MIT at the user's option.
-See LICENSE-APACHE and LICENSE-MIT for the full license texts. By
-contributing to afm you agree that your contribution is dual-licensed
-under the same terms (see CONTRIBUTING.md).
+All original aozora source code is dual-licensed under Apache-2.0 OR MIT
+at the user's option. See LICENSE-APACHE and LICENSE-MIT for the full
+license texts. By contributing to aozora you agree that your contribution
+is dual-licensed under the same terms (see CONTRIBUTING.md).

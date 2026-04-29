@@ -1,4 +1,4 @@
-//! Arena-backed string interner (Plan B / Innovation I-7).
+//! Arena-backed string interner.
 //!
 //! Open-addressing hash table over `&'a str` slots whose payloads
 //! point into a paired [`Arena`]. The first call to [`Interner::intern`]
@@ -86,12 +86,12 @@ pub struct Interner<'a> {
     /// Inline cache: last successfully-interned string. Long runs of
     /// identical interns short-circuit on this single pointer compare.
     ///
-    /// **N4 investigation note**: a 2-slot LRU cache (intended to
-    /// catch Ruby's alternating `(base, reading, base, reading, …)`
-    /// access pattern) was tried and reverted. Corpus dedup ratio
-    /// stayed at p50 0.275 / mean 0.308 (identical to the 1-slot
-    /// baseline), throughput moved within noise. The pattern that
-    /// would benefit — consecutive rubies sharing a base or reading
+    /// A 2-slot LRU cache (intended to catch Ruby's alternating
+    /// `(base, reading, base, reading, …)` access pattern) was tried
+    /// and reverted. Corpus dedup ratio stayed at p50 0.275 /
+    /// mean 0.308 (identical to the 1-slot baseline), throughput
+    /// moved within noise. The pattern that would benefit —
+    /// consecutive rubies sharing a base or reading
     /// — is rarer than the design assumed; distinct rubies on
     /// distinct words dominate.
     last: Option<&'a str>,
@@ -273,8 +273,8 @@ impl<'a> Interner<'a> {
 /// case for Aozora ruby readings); avoids the per-call state setup
 /// cost of std `SipHash`.
 ///
-/// **N4 investigation note**: an 8-byte-chunk fast path with an
-/// xxHash-style avalanche was tried and reverted. For the typical
+/// An 8-byte-chunk fast path with an xxHash-style avalanche was
+/// tried and reverted. For the typical
 /// 3-byte single-codepoint reading the avalanche's two extra
 /// multiplications cost more than the per-byte loop saves; corpus
 /// throughput moved within noise (-4 % to +2 % depending on band).
