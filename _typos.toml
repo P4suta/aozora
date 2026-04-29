@@ -8,30 +8,22 @@ extend-ignore-identifiers-re = [
 ]
 
 [default.extend-words]
-# Intentional. Japanese transliteration shouldn't trigger English typo heuristics.
+# Sibling repository name (P4suta/afm) referenced in README / ARCHITECTURE.
 afm = "afm"
 # French fragments embedded in Aozora accent-decomposition examples.
-# "fune`bre" (funèbre) and siblings appear in doc comments + ADR prose.
+# "fune`bre" (funèbre) and siblings appear in source text and tests.
 bre = "bre"
 # Proper names surfaced in NOTICE / docs. Listed here rather than
 # suppressed so typos still catches typos *around* them.
-kivikakk    = "kivikakk"
-Asherah     = "Asherah"
-Connor      = "Connor"
-MacFarlane  = "MacFarlane"
 Dostoyevsky = "Dostoyevsky"
 Fyodor      = "Fyodor"
 Yonekawa    = "Yonekawa"
 Masao       = "Masao"
-Dubost      = "Dubost"
 Yasunobu    = "Yasunobu"
 
 [files]
 extend-exclude = [
-    "upstream/",             # vendored comrak owns its own spelling
     "spec/aozora/fixtures/", # Aozora Bunko source files
-    "spec/sources/",         # vendored upstream spec sources (CommonMark/GFM)
-    "spec/*.json",           # generated from spec/sources/
     # Vendored JIS X 0213 / Unicode standard tables — kanji codepoint
     # rows like `4-7B6E    U+96BA    # <cjk>` trip the dictionary on
     # uppercase 2-letter hex spans like `BA` → `BY/BE`.
