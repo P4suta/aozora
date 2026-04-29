@@ -8,9 +8,9 @@
 #   https://p4suta.github.io/aozora/          ← redirect to /aozora/aozora/
 #   https://p4suta.github.io/aozora/aozora/   ← cargo doc landing for the top-level facade
 #
-# ADR-0002 scope exception (matching release.yml): docs builds use the
-# native runner toolchain rather than the dev Docker image, because the
-# Pages deploy actions expect artefacts on the runner filesystem.
+# Docs builds use the native runner toolchain rather than the dev
+# Docker image, because the Pages deploy actions expect artefacts on
+# the runner filesystem.
 
 name: docs
 

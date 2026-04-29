@@ -1,14 +1,15 @@
 # Release workflow for aozora.
 #
 # Trigger on: annotated tags matching `v*`, plus manual `workflow_dispatch`
-# for dry runs. Builds the `aozora` CLI on five target triples and uploads
-# the archives + SHA256SUMS to the GitHub Release.
+# for dry runs. Builds the `aozora` CLI on three target triples
+# (linux-gnu x86_64, macos arm64, windows-msvc x86_64) and uploads the
+# archives + SHA256SUMS to the GitHub Release.
 #
-# ADR-0002 scope exception: release builds run on native GitHub Actions
-# runners with the matching stable rustc, *not* inside the dev Docker
-# image. The Docker-only rule applies to development and CI; release
-# artefacts need to match each runner OS exactly, so we use the native
-# toolchain here.
+# Release builds run on native GitHub Actions runners with the
+# matching stable rustc, *not* inside the dev Docker image. The
+# Docker-only rule applies to development and CI; release artefacts
+# need to match each runner OS exactly, so we use the native toolchain
+# here.
 #
 # Action pinning: we use `@v<major>` tags below rather than commit SHAs
 # because Dependabot only discovers and SHA-pins new workflow files on

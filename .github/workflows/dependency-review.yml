@@ -1,10 +1,9 @@
 # Dependency review on pull requests.
 #
-# Complements the ADR-0001 / cargo-deny local gate: `cargo deny` runs
-# inside the dev image and checks the full workspace against our
-# licence + advisory rules, while dependency-review focuses on
-# *changes* a PR introduces and comments the diff directly in the
-# review UI.
+# Complements the cargo-deny local gate: `cargo deny` runs inside the
+# dev image and checks the full workspace against our licence +
+# advisory rules, while dependency-review focuses on *changes* a PR
+# introduces and comments the diff directly in the review UI.
 #
 # Action pinning: @v<major> tags for now; Dependabot will upgrade to
 # commit SHA pins on its first sweep.
@@ -35,23 +34,18 @@ jobs:
           # Mirror deny.toml's license allow-list. Keep this in sync
           # with the full cargo-deny policy; dependency-review is a
           # PR-time canary, not the source of truth.
-          #
-          # BSD-2-Clause is required for the vendored comrak tree.
-          # CC-BY-SA-4.0 is present because spec/*.json fixtures
-          # inherit that licence from the CommonMark / GFM specs,
-          # even though those fixtures ship as test data rather than
-          # runtime dependencies.
           allow-licenses: >-
             Apache-2.0,
+            Apache-2.0 WITH LLVM-exception,
             MIT,
             BSD-2-Clause,
             BSD-3-Clause,
             ISC,
-            Unicode-DFS-2016,
             Unicode-3.0,
+            Unicode-DFS-2016,
             CC0-1.0,
             MPL-2.0,
-            CC-BY-SA-4.0
+            Zlib
 
           # Post a summary comment only on failure so clean PRs don't
           # get a no-op drive-by from the bot.
