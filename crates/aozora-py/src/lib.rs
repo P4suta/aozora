@@ -93,9 +93,12 @@ mod bindings {
         }
     }
 
-    /// Module entry point — registered as `aozora` in Python.
+    /// Module entry point — registered as `aozora_py` in Python.
+    /// Function name must match the cdylib's lib name; see the
+    /// `[lib] name` override in Cargo.toml for why we can't call it
+    /// `aozora` (hyphenated crate name conflict).
     #[pymodule]
-    fn aozora(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    fn aozora_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<Document>()?;
         m.add_function(wrap_pyfunction!(parse_to_html, m)?)?;
         Ok(())
