@@ -4,8 +4,6 @@
 //! Contract: for every input that the lexer can ingest, running
 //! `serialize ∘ parse` once produces a string `s`. A second pass —
 //! `serialize ∘ parse(s)` — must produce the same `s` byte-for-byte.
-//! This is workspace invariant I3 (see `serialize.rs` doc comment +
-//! ADR-0005).
 
 use aozora_lex::lex_into_arena;
 use aozora_render::serialize::serialize;

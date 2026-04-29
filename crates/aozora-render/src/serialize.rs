@@ -1,14 +1,11 @@
 //! Borrowed-AST Aozora-source serializer.
 //!
-//! Mirror of `aozora_parser::serialize`, ported to consume
-//! [`aozora_lex::BorrowedLexOutput`] directly. The walk algorithm is
-//! identical — single forward `match_indices` over the normalized
-//! text, dispatch each PUA sentinel through the borrowed registry,
-//! bulk-copy plain runs between hits — and the emitted bytes match
-//! the legacy serializer byte-for-byte.
+//! Single forward `match_indices` over the normalized text, dispatch
+//! each PUA sentinel through the borrowed registry, bulk-copy plain
+//! runs between hits.
 //!
-//! Pinned by the `byte_identical_serialize` proptest in
-//! `tests/byte_identical_serialize.rs`.
+//! Round-trip fixed-point pinned by the `byte_identical_serialize`
+//! proptest in `tests/byte_identical_serialize.rs`.
 
 use core::fmt::{self, Write};
 
@@ -39,7 +36,7 @@ const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
 ///
 /// The output is a fixed point of `serialize ∘ parse` after one
 /// pass: a second cycle returns the same bytes. This is the
-/// load-bearing corpus-sweep invariant I3 (ADR-0005), preserved in
+/// load-bearing corpus-sweep invariant I3, preserved in
 /// borrowed form.
 ///
 /// # Panics

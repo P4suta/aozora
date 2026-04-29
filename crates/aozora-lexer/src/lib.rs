@@ -1,18 +1,17 @@
 //! Aozora-first lexer — pure-functional pre-pass that extracts every Aozora
 //! Bunko construct from source text before the CommonMark parser sees it.
 //!
-//! See ADR-0008 for the architectural rationale. In summary:
+//! Architectural summary:
 //!
-//! - **No parser hooks in the upstream CommonMark parser**. The lexer runs
-//!   first, produces a normalized text with Private-Use-Area sentinel
-//!   characters at Aozora construct positions, plus a side registry mapping
-//!   sentinel positions back to pre-classified
-//!   [`aozora_syntax::borrowed::AozoraNode`] values. The CommonMark parser
-//!   sees only plain CommonMark + GFM.
-//! - **Post-comrak AST walk** substitutes sentinels with the registry's
-//!   borrowed-AST values. That walk lives in `afm-parser`.
-//! - **Pure-functional pipeline**: every phase is `fn(input) -> output` with
-//!   no shared mutable state. Unit-testable and deterministic.
+//! - **No external parser hooks.** The lexer runs first, produces a
+//!   normalized text with Private-Use-Area sentinel characters at
+//!   Aozora construct positions, plus a side registry mapping sentinel
+//!   positions back to pre-classified
+//!   [`aozora_syntax::borrowed::AozoraNode`] values.
+//! - **Post-process AST walk** substitutes sentinels with the registry's
+//!   borrowed-AST values. That walk lives in `aozora`.
+//! - **Pure-functional pipeline**: every phase is `fn(input) -> output`
+//!   with no shared mutable state. Unit-testable and deterministic.
 //!
 //! ## Pipeline (4 phases)
 //!
@@ -36,7 +35,7 @@
 //! Aozora spans are replaced with single characters in the [`U+E000..U+F8FF`]
 //! Private Use Area. Block-level markers become single-character lines so
 //! the CommonMark parser treats them as isolated paragraphs that
-//! `afm-parser::post_process` later pairs and collapses.
+//! `aozora::post_process` later pairs and collapses.
 //!
 //! | Sentinel       | Role                                                       |
 //! |----------------|------------------------------------------------------------|
@@ -59,10 +58,9 @@
 
 #![forbid(unsafe_code)]
 
-// PUA sentinel constants moved to `aozora-spec`. Re-exported here so
-// the existing `aozora_lexer::INLINE_SENTINEL` etc. import paths keep
-// working through the 0.1 → 0.2 transition (Move 1.2 compatibility
-// shim).
+// PUA sentinel constants live in `aozora-spec` and are re-exported
+// here so the existing `aozora_lexer::INLINE_SENTINEL` etc. import
+// paths keep working.
 pub use aozora_spec::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL, SLUGS,
     SlugEntry, SlugFamily, canonicalise_slug,

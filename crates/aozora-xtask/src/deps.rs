@@ -22,7 +22,7 @@
 //! tooling that touches the host kernel / init system runs on the
 //! host, not in the container.
 //!
-//! ADR-0018 records the policy + cadence rationale.
+//!
 //!
 //! ## Layout
 //!
@@ -224,7 +224,7 @@ fn render_service_unit(repo_root: &Path, log_file: &Path) -> String {
         "\
 [Unit]
 Description=Weekly aozora workspace dependency-health check (just deps-check)
-Documentation=file://{repo}/docs/adr/0018-local-dependency-follow-up.md
+Documentation=file://{repo}/CONTRIBUTING.md
 ConditionPathExists={repo}/Justfile
 ConditionPathExists=/var/run/docker.sock
 
@@ -250,7 +250,7 @@ fn render_timer_unit(repo_root: &Path) -> String {
         "\
 [Unit]
 Description=Run aozora deps-check weekly (Sunday 03:30 local)
-Documentation=file://{repo}/docs/adr/0018-local-dependency-follow-up.md
+Documentation=file://{repo}/CONTRIBUTING.md
 
 [Timer]
 # Sunday at 03:30 local time, with Persistent=true so a missed run

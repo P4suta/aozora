@@ -1,6 +1,5 @@
-//! Smoke test: load the T2 trace captured during the bake-off,
-//! symbolicate it, and verify the analyses return non-empty,
-//! sensible reports.
+//! Smoke test: load a sample samply trace, symbolicate it, and
+//! verify the analyses return non-empty, sensible reports.
 //!
 //! Skipped when the trace file isn't available — required only on
 //! the host that just ran `just samply-corpus`.
@@ -115,7 +114,7 @@ fn cache_round_trip_t2_trace() {
 fn category_compile_round_trips() {
     let cfg = RollupConfig::aozora_defaults();
     let cat = cfg.compile().expect("compile");
-    // Spot-check a known function name from the T2 trace.
+    // Spot-check a known function name from the trace.
     assert_eq!(
         cat.classify("aho_corasick::packed::teddy::generic::Slim<V,3_usize>::find"),
         "phase1_scan"

@@ -1,4 +1,4 @@
-//! Type-state lex pipeline (post-R4-A — arena `BumpVec` between phases).
+//! Type-state lex pipeline.
 //!
 //! `Pipeline<'src, 'a, S>` makes the lex phase order enforceable at
 //! compile time. The state markers [`Source`], [`Sanitized`],
@@ -18,24 +18,19 @@
 //!   `.tokens()`, `.events()`, `.diagnostics()`) so callers can probe
 //!   the partial output without re-running the pipeline.
 //!
-//! # Arena-batch passing (R4-A, ADR-0017)
+//! # Arena-batch passing
 //!
 //! Every inter-phase boundary materialises a [`bumpalo::collections::Vec`]
 //! inside the pipeline's [`Arena`]. Phase 1 emits `BumpVec<'a, Token>`;
 //! Phase 2 emits `BumpVec<'a, PairEvent>`; Phase 3 streams its
 //! `ClassifiedSpan`s through the [`crate::borrowed::ArenaNormalizer`]
-//! callback (no third Vec materialisation — R3 measured the streaming
-//! `classify` Iterator path as the cheapest shape on the corpus).
+//! callback (no third Vec materialisation — the streaming `classify`
+//! Iterator path is the cheapest shape on the corpus).
 //!
-//! Net effect on the corpus profile: the per-parse `malloc`/`free`
-//! traffic that R2 introduced (allocation bucket = 25.7 % of corpus
-//! parse) collapses into a single bump-pointer advance per element.
-//! Allocation drops to <15 % and the remaining cost is recovered by
-//! the rayon-parallel bench harness (R4-B).
-//!
-//! The `I` generic parameter the pre-R2 pipeline carried (to thread
-//! the iterator type through state transitions) is *gone*. Each state
-//! holds its phase output as a concrete `Option<BumpVec<'a, …>>` field.
+//! Net effect on the corpus profile: per-parse `malloc`/`free`
+//! traffic collapses into a single bump-pointer advance per element.
+//! Each state holds its phase output as a concrete
+//! `Option<BumpVec<'a, …>>` field.
 //!
 //! # Lifetime model
 //!
@@ -125,15 +120,15 @@ pub struct Pipeline<'src, 'a, S> {
     /// Pipeline struct itself.
     sanitized_text: Option<&'a str>,
     /// `Some` after Phase 1 has materialised the token list inside
-    /// `arena` (R4-A baseline; M-2 `SoA` reverted per ADR-0019).
+    /// `arena`.
     tokens: Option<BumpVec<'a, Token>>,
     /// `Some` after Phase 2 has materialised the event list inside
-    /// `arena` (R4-A baseline; M-2 `SoA` reverted per ADR-0019).
+    /// `arena`.
     events: Option<BumpVec<'a, PairEvent>>,
     /// `Some` after Phase 2; resolved (open, close) pair side-table
-    /// (ADR-0021 / Phase 1.1 of the editor-integration sprint).
-    /// Drained into the final [`BorrowedLexOutput::pairs`] slice in
-    /// the [`Self::build`] terminal step.
+    /// for editor surfaces. Drained into the final
+    /// [`BorrowedLexOutput::pairs`] slice in the [`Self::build`]
+    /// terminal step.
     links: Option<BumpVec<'a, PairLink>>,
     diagnostics: Vec<Diagnostic>,
     _state: PhantomData<S>,
@@ -223,7 +218,7 @@ impl<'src, 'a> Pipeline<'src, 'a, Sanitized> {
 
     /// Run Phase 1 (tokenize). Materialises the full
     /// `BumpVec<'a, Token>` inside `arena` via [`tokenize_in`]
-    /// (R4-A / ADR-0017).
+    ///.
     #[must_use]
     pub fn tokenize(self) -> Pipeline<'src, 'a, Tokenized> {
         let text = self.sanitized_text();
@@ -260,7 +255,7 @@ impl<'src, 'a> Pipeline<'src, 'a, Tokenized> {
     }
 
     /// Run Phase 2 (pair). Materialises [`PairEventStream<'a>`]
-    /// inside `arena` via [`pair_in`] (M-2 / ADR-0019). Phase 2's
+    /// inside `arena` via [`pair_in`]. Phase 2's
     /// diagnostics are drained into the pipeline's diagnostic
     /// accumulator immediately.
     ///
@@ -365,11 +360,8 @@ impl<'a> Pipeline<'_, 'a, Paired> {
         let mut alloc = BorrowedAllocator::with_capacity(self.arena, interner_hint);
         let mut builder = ArenaNormalizer::new(sanitized_text, sanitized_text.len() / 64);
 
-        // R3 (ADR-0016) → R4-A (ADR-0017): drain the arena-allocated
-        // `BumpVec<PairEvent>` through the streaming `classify`
-        // Iterator path. M-2 (Pure SoA) was reverted per ADR-0019
-        // measurement; the production path stays on
-        // `BumpVec<PairEvent>::into_iter()` that R3 settled on.
+        // Drain the arena-allocated `BumpVec<PairEvent>` through the
+        // streaming `classify` Iterator path.
         let mut events_iter = events.into_iter();
         let classify_diagnostics: Vec<Diagnostic> = {
             let mut classify_stream = classify(&mut events_iter, sanitized_text, &mut alloc);

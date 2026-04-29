@@ -1,5 +1,5 @@
 //! `xtask corpus pack` — build / refresh a single-file corpus archive
-//! (L-5b of ADR-0020).
+//!.
 //!
 //! The pack step walks a directory tree of `.txt` Aozora source files
 //! and writes a single binary archive. Four variants:
@@ -11,7 +11,7 @@
 //! xtask corpus pack <SRC> <OUT> --utf8 --zstd  # the trifecta
 //! ```
 //!
-//! ## Incremental rebuild (L-5c)
+//! ## Incremental rebuild
 //!
 //! If `<OUT>` already exists and parses as a valid archive with the
 //! same flags, the pack is **incremental**: each source file's
@@ -519,8 +519,8 @@ fn bar(count: usize, total: usize, width: usize) -> String {
 }
 
 /// Evict a path (file or directory tree) from the kernel page cache
-/// via `posix_fadvise(POSIX_FADV_DONTNEED)` (L-6a). Safe-API rustix
-/// wrapper; works without sudo for files the caller can open.
+/// via `posix_fadvise(POSIX_FADV_DONTNEED)`. Safe-API rustix wrapper;
+/// works without sudo for files the caller can open.
 fn uncache(path: &Path) -> Result<(), String> {
     let total_start = Instant::now();
     let metadata =

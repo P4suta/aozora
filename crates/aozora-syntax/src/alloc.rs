@@ -1,20 +1,9 @@
-//! Arena-backed AST construction (Plan I-2.2 / Phase F.4).
+//! Arena-backed AST construction.
 //!
 //! [`BorrowedAllocator<'a>`] is the sole AST builder for the
-//! [`crate::borrowed`] AST. It owns an [`Interner`] (Innovation I-7)
-//! so byte-equal strings (ruby readings, container labels, kaeriten
-//! marks) share a single arena allocation.
-//!
-//! ## End state of the I-2.2 migration
-//!
-//! Until F.4 this module also exposed a `NodeAllocator<'a>` trait and
-//! an `OwnedAllocator` impl that produced legacy heap-allocated AST
-//! nodes; phase3 of the lex pipeline was generic over the trait so a
-//! single classifier body served both backends through the migration.
-//! With every owned-AST consumer removed (aozora-parser deleted in
-//! F.1, the `aozora_lex` / `aozora_lexer` owned API removed in F.2-F.3),
-//! the trait gymnastics no longer earn their keep — phase3 now calls
-//! `BorrowedAllocator`'s inherent methods directly.
+//! [`crate::borrowed`] AST. It owns an [`Interner`] so byte-equal
+//! strings (ruby readings, container labels, kaeriten marks) share a
+//! single arena allocation.
 //!
 //! ## Naming convention
 //!

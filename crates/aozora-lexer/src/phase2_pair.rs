@@ -10,13 +10,7 @@
 //!
 //! - [`pair`] — streaming `PairStream` for FFI / incremental consumers.
 //! - [`pair_in`] — arena-batch [`PairOutputIn<'a>`] whose `events` is
-//!   a `BumpVec<'a, PairEvent>` allocated inside the caller's [`Arena`]
-//!   (R4-A baseline).
-//!
-//! M-2's Pure `SoA` `PairEventStream` shape was reverted after
-//! measurement (ADR-0019): the per-event 4-column pushes cost more
-//! than the tag-density win they bought, even with A0+A applied.
-//! M-2's commit is preserved in jj history.
+//!   a `BumpVec<'a, PairEvent>` allocated inside the caller's [`Arena`].
 //!
 //! Diagnostics stay heap-allocated. The corpus-median doc emits ~0.1
 //! diagnostics; per-arena allocation would cost more than it saves and
@@ -36,8 +30,7 @@
 //! A naïve "find the next `］`" scan hits the *first* `］` even when it
 //! closes an inner bracket, yielding a truncated body. This phase runs
 //! a proper balanced stack so a body's extent is fixed before any
-//! classifier tries to parse it — eliminating the R2 leak class from
-//! the 17 k-work corpus sweep (ADR-0007).
+//! classifier tries to parse it.
 //!
 //! ## Mismatch policy (current)
 //!
@@ -167,7 +160,7 @@ pub struct PairOutputIn<'a> {
 /// Materialise every Phase 2 event from a `&[Token]` slice into a
 /// single arena-backed `PairOutputIn { events: BumpVec, diagnostics }`.
 ///
-/// R4-A baseline (ADR-0017): production entry point for Phase 2.
+/// Production entry point for Phase 2.
 /// The borrowed pipeline owns the [`Arena`] and forwards it here;
 /// the resulting `BumpVec<'a, PairEvent>` lives next to the AST it
 /// will be folded into.
@@ -258,7 +251,7 @@ fn classify_trigger_inline(kind: TriggerKind, span: Span, ctx: &mut PairCtx<'_>)
 /// * `tokens`: upstream token producer; tokens are pulled lazily.
 /// * `stack`: smallvec of open `PairKind`s with their open spans.
 ///   Inline capacity 8 covers the 99th-percentile bracket nesting in
-///   real Aozora text (Innovation I-8 corpus profile).
+///   real Aozora text (corpus profile).
 /// * `pending`: single-slot output buffer for the case where one
 ///   token resolves into a `Solo` event AND a follow-on synthetic
 ///   `Unclosed` from a now-impossible earlier open. Currently unused

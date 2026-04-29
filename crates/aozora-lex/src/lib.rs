@@ -1,10 +1,9 @@
 //! Aozora notation lexer — borrowed-AST front door.
 //!
-//! The 0.2.0 architecture (ADR-0009) splits the legacy 7-phase
-//! [`aozora_lexer`] into:
+//! The pipeline splits into:
 //!
 //! - [`aozora_scan`] — the SIMD-friendly trigger-byte scanner that
-//!   replaces phase 1's char-by-char loop with a `memchr3` candidate
+//!   replaces a char-by-char loop with a multi-pattern candidate
 //!   sweep + const-PHF precise classify.
 //! - **this crate** — the orchestrator that drives the borrowed-AST
 //!   pipeline. The single public entry [`lex_into_arena`] runs every
@@ -15,20 +14,16 @@
 //!
 //! The trigger scan is cleanly factor-able and benefits enormously
 //! from SIMD: shipping it as a standalone `no_std` crate lets us
-//! benchmark backends (`memchr3` scalar today; AVX2 / NEON /
-//! `wasm-simd` later) in isolation, and lets the FFI / WASM driver
-//! crates link only what they need.
+//! benchmark backends (Teddy / structural-bitmap / DFA) in isolation,
+//! and lets the FFI / WASM driver crates link only what they need.
 //!
 //! ## Observable equivalence
 //!
-//! ADR-0010 codifies the "observable equivalence" purity contract for
-//! this crate: [`lex_into_arena`] is a pure function from source text
-//! to [`BorrowedLexOutput`] *as observed externally*, even though the
+//! [`lex_into_arena`] is a pure function from source text to
+//! [`BorrowedLexOutput`] *as observed externally*, even though the
 //! internal pipeline mutates the bumpalo arena and runs SIMD scratch
 //! buffers. The determinism + sentinel-alignment proptests in
-//! `tests/property_borrowed_arena.rs` pin the property in the absence
-//! of an owned-AST reference (the reference was retired with the rest
-//! of the owned API in I-2.2 Phase F).
+//! `tests/property_borrowed_arena.rs` pin the contract.
 
 #![forbid(unsafe_code)]
 
@@ -39,10 +34,9 @@ pub use aozora_syntax::borrowed::NodeRef;
 pub use borrowed::{BorrowedLexOutput, SourceNode, lex_into_arena};
 pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 
-// Public surface — re-exports of the legacy lexer's allocator-agnostic
-// types (Token, SanitizeOutput) the borrowed pipeline still consumes
-// internally. Phase F.3 collapses these into definitions local to this
-// crate (or moves them to `aozora-spec`).
+// Re-exports of the legacy lexer's allocator-agnostic types
+// (`Token`, `SanitizeOutput`) the borrowed pipeline consumes
+// internally.
 pub use aozora_lexer::{SanitizeOutput, Token};
 pub use aozora_spec::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic, INLINE_SENTINEL,

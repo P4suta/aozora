@@ -1,9 +1,6 @@
 //! Borrowed-AST HTML rendering.
 //!
-//! Mirrors `aozora_parser::html::render_from_artifacts_to_writer` but
-//! consumes a [`BorrowedLexOutput`] (Plan B.2 output) directly. The
-//! algorithm and emitted bytes are identical; only the input shape and
-//! per-node renderer change.
+//! Consumes a [`BorrowedLexOutput`] directly and emits semantic HTML5.
 //!
 //! # Algorithm
 //!
@@ -45,8 +42,7 @@ const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
 
 /// Render a `BorrowedLexOutput` into a fresh `String`.
 ///
-/// Allocates roughly `2 × normalized.len()` upfront — the same growth
-/// strategy as `aozora_parser::html::render_to_string`. For streaming
+/// Allocates roughly `2 × normalized.len()` upfront. For streaming
 /// consumers prefer [`render_into`] to avoid the intermediate `String`.
 ///
 /// # Panics
@@ -200,9 +196,9 @@ fn sentinel_for_tail_byte(b: u8) -> Option<Structural> {
     }
 }
 
-/// Block-level walker state — mirrors the owned renderer's state
-/// machine 1:1 so the emitted bytes match. See
-/// `aozora_parser::html::RenderState` for the design rationale.
+/// Block-level walker state. Tracks paragraph and block-separator
+/// boundaries so consecutive inline runs collapse into one paragraph
+/// and adjacent block-leaf nodes get the right inter-block whitespace.
 #[derive(Debug, Default)]
 struct RenderState {
     in_paragraph: bool,

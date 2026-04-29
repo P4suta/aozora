@@ -77,14 +77,14 @@ enum Cmd {
     /// Local-only dependency-follow-up tooling — install / inspect /
     /// remove the systemd user timer that runs `just deps-check`
     /// weekly. Replaces the dependabot / GitHub-Actions pattern with
-    /// a host-side pure-Rust mechanism (ADR-0018).
+    /// a host-side pure-Rust mechanism.
     Deps(DepsArgs),
-    /// Build / inspect aozora-corpus binary archives (L-5 of ADR-0020).
-    /// Replaces the directory-of-17-k-small-files load shape with a
-    /// single packed file that can be raw SJIS, pre-decoded UTF-8,
-    /// and/or zstd-compressed. The pack step is incremental — entries
-    /// whose source `mtime` and `blake3` hash match the previous
-    /// archive are copied verbatim.
+    /// Build / inspect aozora-corpus binary archives. Replaces the
+    /// directory-of-17-k-small-files load shape with a single packed
+    /// file that can be raw SJIS, pre-decoded UTF-8, and/or zstd-
+    /// compressed. The pack step is incremental — entries whose source
+    /// `mtime` and `blake3` hash match the previous archive are copied
+    /// verbatim.
     Corpus(CorpusArgs),
 }
 

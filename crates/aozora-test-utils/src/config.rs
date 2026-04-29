@@ -1,6 +1,6 @@
 //! Shared proptest configuration.
 //!
-//! Every property test in the afm workspace should use
+//! Every property test in the aozora workspace should use
 //! [`default_config`] so `AOZORA_PROPTEST_CASES` tunes the whole sweep
 //! consistently. The default of 128 cases is a deliberate compromise
 //! between catching regressions quickly during `just test` and keeping
@@ -17,7 +17,7 @@ use std::env;
 use proptest::prelude::ProptestConfig;
 use proptest::test_runner::FileFailurePersistence;
 
-/// Default [`ProptestConfig`] used across every afm property test.
+/// Default [`ProptestConfig`] used across every aozora property test.
 ///
 /// * `cases` defaults to 128 and can be overridden via the
 ///   `AOZORA_PROPTEST_CASES` environment variable; values that fail to
@@ -30,7 +30,7 @@ use proptest::test_runner::FileFailurePersistence;
 /// * `failure_persistence` writes regressions into each test's
 ///   `proptest-regressions/` directory so a failure replays instantly
 ///   on the next run. The existing repo convention is to commit these
-///   files alongside the tests; `afm-test-utils` does not deviate.
+///   files alongside the tests; `aozora-test-utils` does not deviate.
 #[must_use]
 pub fn default_config() -> ProptestConfig {
     ProptestConfig {

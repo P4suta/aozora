@@ -1,10 +1,7 @@
-//! HTML / Aozora-source renderers (Plan B.5 — borrowed-only).
+//! HTML / Aozora-source renderers — borrowed-only.
 //!
 //! Consumes [`aozora_lex::BorrowedLexOutput`] directly and emits
-//! semantic HTML5 or canonical Aozora source text. The legacy
-//! owned-AST `aozora_parser` renderers were retired in Plan B.5; the
-//! `aozora-parser` crate remains as an internal-test artifact and is
-//! not re-exported through any public surface here.
+//! semantic HTML5 or canonical Aozora source text.
 //!
 //! # Public surface
 //!

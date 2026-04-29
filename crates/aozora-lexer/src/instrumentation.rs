@@ -236,8 +236,8 @@ thread_local! {
 
 /// Histogram of `pending_outputs.len()` measured at every
 /// `pending_outputs_pop_front()` call. Bucket boundaries chosen to
-/// catch the "tiny vs large" distinction relevant to the N2 outlier
-/// investigation.
+/// catch the "tiny vs large" distinction relevant to the outlier
+/// docs in the corpus.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PendingSizeHistogram {
     pub size_0: u64,

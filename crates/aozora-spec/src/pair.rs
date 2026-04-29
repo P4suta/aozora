@@ -24,8 +24,7 @@ pub enum PairKind {
     /// independent kind (a stray inner `》` never closes a `《《`).
     DoubleRuby,
 
-    /// `〔 … 〕` (U+3014 / U+3015). Accent-decomposition segment per
-    /// ADR-0004.
+    /// `〔 … 〕` (U+3014 / U+3015). Accent-decomposition segment.
     Tortoise,
 
     /// `「 … 」` (U+300C / U+300D). Quoted literal inside annotation

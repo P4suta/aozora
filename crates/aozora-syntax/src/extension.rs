@@ -1,23 +1,11 @@
-//! Extension-seam type that the forked comrak parser still needs.
+//! Paired-container classifier tags.
 //!
-//! The only afm seam inside comrak is a render-side `fn` pointer on
-//! `comrak::ExtensionOptions::render_aozora`. There is no trait object,
-//! no extension trait, and no parse-side hook. The `AozoraNode` variant
-//! on `NodeValue::Aozora` is carried by the lexer and
-//! `afm-parser::post_process` splice step, and the render callback
-//! simply writes an `AozoraNode` into a formatter.
-//!
-//! This module carries [`ContainerKind`] — the paired-container
-//! classifier's tag — produced by the lexer's Phase 3 classification
-//! and consumed by `afm-parser::post_process`'s paired-container
-//! splice.
+//! [`ContainerKind`] is the tag the lexer's classify phase emits on
+//! every paired open / close marker (e.g. `［＃ここから2字下げ］ … ［＃ここで字下げ終わり］`).
+//! The renderer reads it when wrapping the enclosed sibling nodes
+//! into an `AozoraNode::Container`.
 
 /// The kinds of Aozora container blocks the lexer classifies.
-///
-/// Carried on `afm-lexer::phase3_classify::SpanKind::{BlockOpen,
-/// BlockClose}` and on `afm-lexer::PlaceholderRegistry`'s paired-container
-/// entries. `afm-parser::post_process` reads these when wrapping
-/// sibling blocks into an `AozoraNode::Container` node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]

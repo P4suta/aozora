@@ -15,11 +15,11 @@
 //! 5. Iterate set bits via Kernighan's `mask &= mask - 1` and PHF-
 //!    validate the 3-byte window starting at each candidate.
 //!
-//! At ~1.8 % trigger density (corpus measurement, T2.0), the
+//! At ~1.8 % trigger density, the
 //! candidate density after the two-byte filter is low enough that
 //! per-bit Kernighan extraction is faster than the BMI2 `_pext_u64`
 //! batch-compaction simdjson uses. PEXT was therefore evaluated and
-//! rejected for *this* workload — see ADR-0015.
+//! rejected for *this* workload.
 //!
 //! ## Citation
 //!

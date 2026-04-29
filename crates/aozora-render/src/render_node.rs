@@ -1,12 +1,7 @@
 //! HTML rendering for individual borrowed-AST nodes.
 //!
-//! Mirror of `aozora_parser::aozora::html::render`, ported to the
-//! borrowed-AST shape parameterised by the source/arena lifetime
-//! `'src`. Every method emits the SAME bytes as the owned-AST
-//! renderer; the proptest in `tests/byte_identical_html.rs` pins
-//! that equivalence across the corpus generators.
-//!
-//! Public entry point: [`render`].
+//! Per-node renderer parameterised over the source/arena lifetime
+//! `'src`. Public entry point: [`render`].
 
 use core::fmt::{self, Write};
 
@@ -225,8 +220,8 @@ fn fallback<W: Write>(node: AozoraNode<'_>, writer: &mut W) -> fmt::Result {
 }
 
 /// Minimal HTML5 text escape — five structural ASCII characters.
-/// Apostrophe uses the hex form `&#x27;` to match the contract pinned
-/// by the integration tests in aozora-parser/tests/html_escape_invariants.rs.
+/// Apostrophe uses the hex form `&#x27;`; the contract is pinned by
+/// the integration tests in this crate.
 pub(crate) fn escape_text<W: Write>(text: &str, writer: &mut W) -> fmt::Result {
     let mut cursor = 0;
     for (pos, m) in text.match_indices(HTML_UNSAFE_CHARS) {

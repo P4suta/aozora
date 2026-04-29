@@ -11,17 +11,15 @@
 //! - [`tokenize`] — streaming `impl Iterator<Item = Token>`, kept for
 //!   FFI / incremental / pull-based consumers that have no arena.
 //! - [`tokenize_in`] — arena-batch `BumpVec<'a, Token>` allocated
-//!   inside the caller's [`Arena`] (R4-A); the scratch trigger /
+//!   inside the caller's [`Arena`]; the scratch trigger /
 //!   newline offset buffers used during the merge walk also live in
-//!   the arena (A0 / ADR-0019).
+//!   the arena.
 //!
 //! The Aozora pipeline drives `tokenize_in` because it already owns an
 //! arena; benchmarks and FFI shims that want lazy semantics use
-//! `tokenize`. There is no third "heap-batch" entry point — R2 added
-//! one (`tokenize_to_vec`); R4-A removed it once the arena migration
-//! made it dead code.
+//! `tokenize`. There is no third "heap-batch" entry point.
 //!
-//! ## Algorithm (post-T2 / ADR-0015)
+//! ## Algorithm
 //!
 //! 1. [`aozora_scan::best_scanner`] returns the byte offsets of every
 //!    trigger character in `source`. On `x86_64` this dispatches to
@@ -40,16 +38,13 @@
 //! `BracketOpen` is common but not universal (a stray `［` followed
 //! by plain text is legal). Phase 2 inspects the two tokens together.
 //!
-//! ## History
+//! ## Backend
 //!
-//! - **T1 (2026-04, reverted)**: first SIMD attempt used the
-//!   leading-byte filter `{0xE2, 0xE3, 0xEF}`. ADR-0013 records the
-//!   3.7× regression on Japanese caused by `0xE3` saturating the
-//!   candidate stream.
-//! - **T2 (2026-04, this revision)**: ADR-0015 documents the
-//!   four-backend bake-off that picked Teddy. Bake-off measured
-//!   19.4 GiB/s on plain Japanese, 10.8 GiB/s at corpus-median
-//!   trigger density, vs the legacy walker's ~150 MiB/s.
+//! Trigger detection uses Teddy (the [Hyperscan](https://intel.github.io/hyperscan/)
+//! short-string algorithm via `aho-corasick::packed`); see
+//! [`aozora_scan`] for the full backend selection. The previous naive
+//! per-codepoint walker ran at ~150 MiB/s; Teddy reaches 10–20 GiB/s
+//! on Japanese text.
 
 use aozora_spec::classify_trigger_bytes;
 use aozora_syntax::Span;
@@ -68,7 +63,7 @@ use crate::token::{Token, TriggerKind};
 /// # Panics
 ///
 /// Panics on construction if `source.len()` exceeds [`u32::MAX`]
-/// (≈ 4 GiB). All afm spans use `u32` offsets per the
+/// (≈ 4 GiB). All aozora spans use `u32` offsets per the
 /// `aozora-syntax::Span` contract; inputs that large are rejected
 /// loudly rather than silently truncated.
 #[must_use]
@@ -79,15 +74,10 @@ pub fn tokenize(source: &str) -> Tokenizer<'_> {
 /// Materialise every Phase 1 token into an arena-backed
 /// [`bumpalo::collections::Vec`] in one pass.
 ///
-/// R4-A baseline + A0 (ADR-0019 follow-up): the token list lives
-/// inside the caller's arena (R4-A); the scratch trigger/newline
-/// offset buffers used during the merge walk also live in the arena
-/// (A0), removing the heap `Vec<u32>` allocations Step C's drill-
-/// down attributed 5.85 % inclusive to.
-///
-/// M-2's Pure `SoA` `TokenStream` shape was reverted after measurement
-/// (ADR-0019): the per-event 3-4 column pushes cost more than the
-/// tag-density win they bought, even with A0+A applied.
+/// The token list lives inside the caller's arena; the scratch
+/// trigger / newline offset buffers used during the merge walk also
+/// live in the arena, avoiding heap `Vec<u32>` allocations on every
+/// parse.
 ///
 /// Internally this is exactly the merge-walk [`Tokenizer::next`] runs,
 /// flattened into a single `for` loop pushing into a pre-sized
@@ -114,7 +104,7 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> BumpVec<'a, Token> {
         source.len()
     );
     let bytes = source.as_bytes();
-    // A0 (ADR-0019): scratch buffers in arena instead of on heap.
+    // Scratch buffers in arena instead of on heap.
     let bump = arena.bump();
     let trigger_offsets = aozora_scan::scan_offsets_in(source, bump);
     let mut newline_offsets: BumpVec<'a, u32> = BumpVec::with_capacity_in(bytes.len() / 64, bump);

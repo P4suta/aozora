@@ -1,4 +1,4 @@
-//! Isolated Shift-JIS decode benchmark (L-1, ADR-0020).
+//! Isolated Shift-JIS decode benchmark.
 //!
 //! Measures `aozora_encoding::decode_sjis` throughput in isolation
 //! from filesystem I/O. The corpus is fully read into memory before
@@ -10,8 +10,8 @@
 //! - `AOZORA_CORPUS_ROOT` (required) — corpus root directory.
 //! - `AOZORA_PROFILE_LIMIT=N` — cap the sweep to the first N docs.
 //! - `AOZORA_PROFILE_PARALLEL=1` — also run a rayon-parallel decode
-//!   pass so the L-2 / L-3 sprint deltas are visible side-by-side
-//!   with the sequential baseline.
+//!   pass so its delta against the sequential baseline is visible
+//!   side-by-side.
 //!
 //! Output columns (one row per size band, plus an aggregate row):
 //!

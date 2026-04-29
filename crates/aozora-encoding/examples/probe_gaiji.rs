@@ -1,6 +1,6 @@
 //! Data-driven probe for the gaiji-resolution path.
 //!
-//! Walks every `※[#…]` entry in `aozora-tools/samples/gaiji-full.afm`
+//! Walks every `※[#…]` entry in a sibling-repo gaiji sample file
 //! and reports which lookup tier (existing / mencode-to-str /
 //! mencode-to-char / U+xxxx / description) resolved it (or that no
 //! tier hit). Plus runs a fixed-list smoke probe of entries the user

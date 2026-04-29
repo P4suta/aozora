@@ -78,11 +78,10 @@ impl TriggerScanner for TeddyScanner {
         // Teddy returns every match start (already verified against
         // the trigram bytes internally), so no PHF re-classify is
         // needed. Capacity heuristic = source.len() / 56 ≈ 1.8 %
-        // trigger density (corpus median, A0 / step C drill-down).
-        // The previous 1/1000 ratio caused the Vec to double-grow
-        // ~16 times per parse on average, surfacing in the rollup as
-        // `Vec::extend_desugared` 5.85 % inclusive — A0 closes that
-        // tap at the source.
+        // trigger density (the corpus median). A smaller pre-sized
+        // capacity caused the Vec to double-grow many times per parse
+        // and showed up as a non-trivial `Vec::extend_desugared`
+        // contribution in the rollup.
         let mut out = Vec::with_capacity(source.len() / 56);
         for m in self.searcher.find_iter(source.as_bytes()) {
             #[allow(

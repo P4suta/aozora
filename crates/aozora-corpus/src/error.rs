@@ -45,12 +45,12 @@ mod tests {
     #[test]
     fn io_error_display_includes_path_and_cause() {
         let err = CorpusError::Io {
-            path: PathBuf::from("/tmp/afm-corpus-missing"),
+            path: PathBuf::from("/tmp/aozora-corpus-missing"),
             source: Error::from(ErrorKind::NotFound),
         };
         let display = format!("{err}");
         assert!(
-            display.contains("/tmp/afm-corpus-missing"),
+            display.contains("/tmp/aozora-corpus-missing"),
             "display should mention path: {display}"
         );
     }

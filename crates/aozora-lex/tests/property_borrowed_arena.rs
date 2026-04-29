@@ -1,17 +1,10 @@
 //! Determinism + structural invariants for `lex_into_arena`.
 //!
-//! Pre-I-2.2 / pre-Phase-F this file pinned an equivalence between the
-//! borrowed arena pipeline and the owned reference (`aozora_lex::lex`).
-//! The owned API is gone (Phase F.2 deletes the wrapper, Phase F.3
-//! deletes the legacy backend), so the load-bearing property switches
-//! to *determinism* and *self-consistency* of the borrowed pipeline:
-//!
 //! 1. Two independent runs over the same source produce byte-identical
 //!    normalised text and identical registry shape (positions + node
 //!    kinds + container kinds + diagnostic count).
 //! 2. Every PUA sentinel in the normalised text has a registry entry,
-//!    and every registry entry's position points at a PUA sentinel
-//!    (V1/V2 lex invariants, but observed from outside).
+//!    and every registry entry's position points at a PUA sentinel.
 //!
 //! Together these gate any future change to `lex_into_arena` from
 //! introducing nondeterminism (e.g. iteration order over a `HashMap`)

@@ -50,30 +50,19 @@
 //!
 //! The catch-all makes every well-formed `［＃…］` bracket produce
 //! *some* `AozoraNode`, so the Tier-A canary (no bare `［＃` in the
-//! HTML output outside an `afm-annotation` wrapper) holds regardless
+//! HTML output outside an `aozora-annotation` wrapper) holds regardless
 //! of which specialised recogniser claims the bracket.
 //!
-//! ## R1 investigation note (2026-04, negative result)
+//! ## Inlining note (negative result)
 //!
 //! `phase3_subsystems` (instrumented) reports 88 % of classify wall in
 //! "iterator-dispatch overhead" and only 9.4 % in actual recogniser
 //! leaves. The straightforward fix — sprinkle `#[inline]` on
 //! `recognize_and_emit` / `try_ruby_emit` / `try_bracket_emit` /
 //! `try_gaiji_emit` / `process_event` / `handle_top_level` /
-//! `handle_stream_event` / `Iterator::next` — was attempted (and
-//! reverted) on jj change `qlyxosyo`.
-//!
-//! Result on the corpus, relative to the T2-pinned baseline:
-//!
-//! | Band            | baseline   | aggressive #[inline]   |
-//! |-----------------|-----------:|-----------------------:|
-//! | <50KB           | 272.1 MB/s | 257.0 MB/s  (-5.5 %)   |
-//! | 50KB-500KB      | 285.6 MB/s | 282.5 MB/s  (-1.1 %)   |
-//! | 500KB-2MB       | 233.0 MB/s | 225.7 MB/s  (-3.1 %)   |
-//! | >2MB            | 135.6 MB/s | 133.3 MB/s  (-1.7 %)   |
-//! | Phase 1 wall    | 910 ms     | 966 ms      (+6 %)     |
-//!
-//! Selective inline (only the *small* helpers `push_output` /
+//! `handle_stream_event` / `Iterator::next` — was tried and reverted:
+//! aggressive inlining regressed throughput by 1–6 % across all
+//! bands. Selective inline (only the *small* helpers `push_output` /
 //! `flush_plain_up_to` / `append_to_frame` / `pending_outputs_pop_front`
 //! plus Phase 1 `flush_text` / `pair_text_then` / `try_merge_double`)
 //! brought it within ±1.3 % of baseline — neutral.
@@ -87,9 +76,9 @@
 //! (`Instant::now()` per guard); the production overhead is real but
 //! attacking it with attributes alone doesn't move it.
 //!
-//! The remaining headroom requires a *structural* change — not
-//! attribute hints. ADR-0016 records the architectural pivot
-//! (R2 / R3: Vec-passing between phases, removing iterator chains).
+//! The remaining headroom requires *structural* changes (Vec-passing
+//! between phases, removing iterator chains) rather than attribute
+//! hints.
 
 use core::mem;
 use core::ops::Range;
@@ -132,7 +121,7 @@ pub struct ClassifiedSpan<'a> {
 /// |----------------|-----------------------|-------------------|
 /// | `Plain`        | verbatim source bytes | — |
 /// | `Newline`      | verbatim `\n`         | — |
-/// | `Aozora(n)`    | `E001` if inline, `E002` if block-leaf | splice Aozora node into comrak AST |
+/// | `Aozora(n)`    | `E001` if inline, `E002` if block-leaf | splice Aozora node into the AST |
 /// | `BlockOpen`    | `E003`                | pair with matching `BlockClose` |
 /// | `BlockClose`   | `E004`                | close nearest unclosed `BlockOpen` |
 ///
@@ -140,7 +129,7 @@ pub struct ClassifiedSpan<'a> {
 /// containers (`ここから字下げ` … `ここで字下げ終わり`) span arbitrary
 /// content between the two markers. The lexer emits both markers as
 /// independent spans and lets `post_process` walk the AST to wrap
-/// sibling nodes in the container — see ADR-0008.
+/// sibling nodes in the container.
 ///
 /// # Memory layout
 ///
@@ -163,7 +152,7 @@ pub enum SpanKind<'a> {
     /// Paired-container opener — `［＃ここから字下げ］`, `［＃罫囲み］`,
     /// etc. The normalizer emits an `E003` sentinel line; `post_process`
     /// matches it to the corresponding `BlockClose` via a balanced
-    /// stack walk of the comrak AST.
+    /// stack walk of the AST.
     BlockOpen(ContainerKind),
     /// Paired-container closer — `［＃ここで字下げ終わり］`,
     /// `［＃罫囲み終わり］`, etc. The normalizer emits an `E004`
@@ -872,8 +861,8 @@ where
     /// O(N) replay walk. The depth counter tracks nested opens of the
     /// same kind so the outer close is unambiguous.
     ///
-    /// The N3 optimisation: doc 49178 (corpus outlier) wraps ~24k
-    /// inner events in two top-level Quote pairs. With buffering the
+    /// Optimisation: doc 49178 (corpus outlier) wraps ~24k inner
+    /// events in two top-level Quote pairs. With buffering the
     /// classify pass paid 24k × (push to body smallvec + read it back
     /// in replay); with stream-through that becomes a single forward
     /// walk.
@@ -1257,7 +1246,7 @@ where
                 self.pending_refmark = Some(span);
             }
             PairEvent::PairOpen { kind, span, .. } if !replay => {
-                // N3 stream-through: Quote and Tortoise have no
+                // Stream-through: Quote and Tortoise have no
                 // top-level recogniser. Buffering their body events
                 // for an inevitable replay would burn O(N) work for
                 // nothing — instead enter `streaming` mode and let
@@ -1651,8 +1640,8 @@ where
     fn pending_outputs_pop_front(&mut self) -> Option<ClassifiedSpan<'a>> {
         #[cfg(feature = "phase3-instrument")]
         {
-            // Record pending_outputs.len() BEFORE the pop to keep the
-            // pre-N2 distribution histogram comparable.
+            // Record pending_outputs.len() BEFORE the pop so the
+            // distribution histogram tracks pre-pop sizes.
             let len = self.pending_outputs.len() as u64;
             if len > 0 {
                 record_pending_size(len);
@@ -1723,7 +1712,7 @@ where
 /// the renderer) keeps the [`AozoraNode`] payload self-contained:
 /// Phase 4 stamps one PUA sentinel over the whole `｜…《…》` source
 /// span, and the inner gaiji/annotation never reach the top-level
-/// `spans` list or the comrak parse phase.
+/// `spans` list or downstream consumers.
 struct RubyMatch<'s, 'a> {
     base: &'s str,
     reading: borrowed::Content<'a>,
@@ -2047,7 +2036,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     /// synthetic `Unknown` payload built from the raw source bytes
     /// when the recogniser left `annotation_payload` unset). The
     /// fallback synthesis preserves the Tier-A canary: no bare `［＃`
-    /// ever leaks outside an `afm-annotation` wrapper.
+    /// ever leaks outside an `aozora-annotation` wrapper.
     fn try_emit_annotation_at(
         &mut self,
         body: BodyWalkCtx<'_>,
@@ -2265,17 +2254,17 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // sequence `［＃`. Pathological shapes like `※［＃［＃改］］`
         // produce a description string that *contains* `［＃`, which the
         // gaiji renderer would emit verbatim inside `<span class=
-        // "afm-gaiji">…</span>` — leaking a bare `［＃` outside the
-        // `afm-annotation` wrapper and violating the Tier A canary.
+        // "aozora-gaiji">…</span>` — leaking a bare `［＃` outside the
+        // `aozora-annotation` wrapper and violating the Tier A canary.
         // Falling through here lets the outer bracket be claimed by
         // `Annotation{Unknown}`, which is rendered inside an
-        // `afm-annotation` wrapper as the canary requires.
+        // `aozora-annotation` wrapper as the canary requires.
         if description.contains("［＃") {
             return None;
         }
 
         // Resolve the Unicode scalar at lex time via the static table in
-        // afm-encoding so the downstream AST / renderer never has to
+        // aozora-encoding so the downstream AST / renderer never has to
         // re-probe. `None` stays `None` when the mencode has no mapping
         // entry and no `U+XXXX` shape matches — the renderer falls back
         // to escaping the raw `description`.
@@ -2435,9 +2424,9 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // illustrative glyphs inside explanatory prose. Emitting
         // `Annotation { Unknown }` with the raw source slice keeps the
         // Tier-A canary (no bare `［＃` in HTML output) intact: the
-        // renderer wraps the raw bytes in an `afm-annotation` hidden span
+        // renderer wraps the raw bytes in an `aozora-annotation` hidden span
         // regardless of body shape. The lexer is the sole owner of this
-        // classification — comrak's parse phase never sees `［＃…］`.
+        // classification — the parse phase never sees `［＃…］`.
         //
         // Build the annotation payload once and hand it to the caller in
         // both `emit` and `annotation_payload` so the body-builder can
@@ -2790,9 +2779,9 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
 /// (unlike bouten's `に`), and the keyword selects the Markdown heading
 /// level: `大見出し` → 1, `中見出し` → 2, `小見出し` → 3.
 ///
-/// The docs in [`crate`] and ADR-0008 call out that 大/中/小 headings are
-/// promoted to `comrak::NodeValue::Heading` by `afm-parser::post_process`;
-/// this classifier only marks the position. 窓見出し / 副見出し remain
+/// The crate docs call out that 大/中/小 headings are promoted to
+/// `aozora_syntax::AozoraHeading` by `aozora::post_process`; this
+/// classifier only marks the position. 窓見出し / 副見出し remain
 /// first-class on [`AozoraNode::AozoraHeading`] via a separate path.
 ///
 /// Same `forward_target_is_preceded` gate as forward bouten: a heading
@@ -2951,10 +2940,9 @@ mod tests {
     /// Test-only materialised classify output: collects `spans` from
     /// the streaming iterator and merges its post-exhaustion
     /// diagnostics with the upstream pair stream's diagnostics.
-    /// Phase F and I-2 retired the public `ClassifyOutput` struct;
-    /// this is the per-test convenience shape that tests use to assert
-    /// on the full pipeline result without building it inline at every
-    /// site.
+    /// Per-test convenience shape so tests can assert on the full
+    /// pipeline result without rebuilding the collection inline at
+    /// every site.
     #[derive(Debug)]
     struct TestClassifyOutput<'a> {
         spans: Vec<ClassifiedSpan<'a>>,
@@ -3180,7 +3168,7 @@ mod tests {
     fn ruby_reading_with_embedded_gaiji_produces_segments() {
         // `※［＃「ほ」、第3水準1-85-54］` inside the reading must fold
         // into a `Segment::Gaiji` between Text segments so the renderer
-        // can wrap it in `<span class="afm-gaiji">` without leaking the
+        // can wrap it in `<span class="aozora-gaiji">` without leaking the
         // bare `［＃` marker (Tier A).
         run!(out, "｜日本《に※［＃「ほ」、第3水準1-85-54］ん》");
         let r = only_ruby(&out);
@@ -3227,7 +3215,7 @@ mod tests {
     fn ruby_reading_with_trailing_annotation_produces_annotation_segment() {
         // `［＃ママ］` inside a reading indicates editorial "sic" —
         // must fold as `Segment::Annotation` so the renderer wraps it
-        // in the hidden `afm-annotation` span (Tier A compliance).
+        // in the hidden `aozora-annotation` span (Tier A compliance).
         run!(out, "｜日本《にほん［＃ママ］》");
         let r = only_ruby(&out);
         let Content::Segments(segs) = r.reading else {
@@ -3395,7 +3383,7 @@ mod tests {
     fn unknown_annotation_keyword_is_promoted_to_annotation_unknown() {
         // The lexer claims every well-formed `［＃…］`: if no specialised
         // recogniser matches, the `Annotation{Unknown}` fallback wraps
-        // the raw source so the renderer can emit an `afm-annotation`
+        // the raw source so the renderer can emit an `aozora-annotation`
         // hidden span instead of leaking the brackets as plain text.
         run!(out, "［＃未知のキーワード］");
         let ann = out
@@ -3468,7 +3456,7 @@ mod tests {
         // 300 > 255, doesn't fit in u8 — the `N字下げ` recogniser
         // declines. The `Annotation { Unknown }` catch-all then
         // claims the bracket so the renderer wraps the body in an
-        // afm-annotation span instead of leaking raw brackets.
+        // aozora-annotation span instead of leaking raw brackets.
         run!(out, "［＃300字下げ］");
         let ann = out
             .spans
@@ -3771,7 +3759,7 @@ mod tests {
     fn forward_bouten_without_preceding_target_falls_through() {
         // Target 可哀想 never appears before the bracket — refusing to
         // promote to Bouten lets the generic Annotation classifier
-        // wrap the raw `［＃…］` in an afm-annotation span instead of
+        // wrap the raw `［＃…］` in an aozora-annotation span instead of
         // styling a non-existent referent.
         run!(out, "［＃「可哀想」に傍点］後");
         assert!(
@@ -4367,7 +4355,7 @@ mod tests {
     #[test]
     fn warichu_open_close_are_inline_annotations() {
         // Aozora spec: `［＃割り注］…［＃割り注終わり］` is inline
-        // (`<span class="afm-warichu">…</span>`). The legacy block
+        // (`<span class="aozora-warichu">…</span>`). The legacy block
         // form (`ここから割り注` / `ここで割り注終わり`) is deprecated
         // and not classified here.
         use aozora_syntax::AnnotationKind;

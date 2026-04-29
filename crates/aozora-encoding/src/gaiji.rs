@@ -8,7 +8,7 @@
 //!   ※［＃「description」、U+XXXX、page-line］ ← explicit Unicode codepoint
 //! ```
 //!
-//! The lexer's Phase 3 recogniser (`afm-lexer::phase3_classify::recognize_gaiji`)
+//! The lexer's Phase 3 recogniser (`aozora-lexer::phase3_classify::recognize_gaiji`)
 //! captures `description` and `mencode` verbatim and leaves `ucs = None`;
 //! this module turns that reference into a concrete [`Resolved`] by
 //! consulting two `phf::Map`s compiled into the binary

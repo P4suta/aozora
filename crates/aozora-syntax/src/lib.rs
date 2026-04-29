@@ -1,15 +1,12 @@
 //! AST type definitions for the aozora parser.
 //!
-//! # End state (post I-2.2 / Phase F)
+//! # AST shape
 //!
 //! The **sole AST** is the borrowed-AST defined in [`borrowed`]:
 //! arena-allocated, `Copy`-able, deduplicated through
-//! [`borrowed::Interner`] (Innovation I-7). Public consumers
-//! (`aozora` meta crate, FFI / WASM / Python drivers, CLI) parse via
+//! [`borrowed::Interner`]. Public consumers (`aozora` meta crate,
+//! FFI / WASM / Python drivers, CLI) parse via
 //! `aozora::Document::parse()` and walk a `borrowed::AozoraNode<'_>`.
-//! The legacy owned (`Box<str>` / `Box<AozoraNode>`) AST and its
-//! `OwnedAllocator` / `NodeAllocator` trait abstraction were removed
-//! in Phase F.4.
 //!
 //! # Top-level surface
 //!
@@ -40,7 +37,7 @@ pub use aozora_spec::Span;
 
 /// Paired block container payload: carries only the kind descriptor.
 ///
-/// Children live in the comrak AST as the container node's children
+/// Children live in the AST as the container node's children
 /// (the `post_process` paired-container splice reparents them).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -148,7 +145,7 @@ pub enum AnnotationKind {
 #[non_exhaustive]
 pub enum SyntaxError {
     #[error("未知のノード種別です: {kind}")]
-    #[diagnostic(code(afm::syntax::unknown_kind))]
+    #[diagnostic(code(aozora::syntax::unknown_kind))]
     UnknownKind { kind: Box<str> },
 }
 

@@ -22,9 +22,10 @@
 //! lifetime returned by [`Document::parse`]. Every per-node
 //! allocation lives inside the arena, with the
 //! [`Interner`](aozora_syntax::borrowed::Interner) deduplicating
-//! repeated string content (Innovation I-7); dropping the
-//! `Document` releases the entire tree in a single `Bump::reset`
-//! step. ADR-0009 / ADR-0010 cover the design rationale.
+//! repeated string content; dropping the `Document` releases the
+//! entire tree in a single `Bump::reset` step. See
+//! [`docs/ARCHITECTURE.md`](https://github.com/P4suta/aozora/blob/main/docs/ARCHITECTURE.md)
+//! for the layered design.
 
 #![forbid(unsafe_code)]
 

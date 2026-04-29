@@ -11,9 +11,10 @@ readme.workspace       = true
 keywords.workspace     = true
 categories.workspace   = true
 
-# Driver crate — published to npm via wasm-pack once Move 4's WASM
-# pipeline is wired in CI. Host (cargo workspace) builds skip it
-# unless the wasm32 target is selected.
+# Driver crate — built into a `pkg/` directory via `wasm-pack build
+# --target web --release crates/aozora-wasm`. Host (cargo workspace)
+# builds skip the wasm-bindgen exports unless the wasm32 target is
+# selected.
 publish     = false
 
 [lints]

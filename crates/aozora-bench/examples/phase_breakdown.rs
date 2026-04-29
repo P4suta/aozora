@@ -27,7 +27,7 @@
 //! - `AOZORA_PROFILE_LIMIT=N` — cap the sweep to the first N docs
 //!   (useful for spot checks during development)
 //! - `AOZORA_PROFILE_PARALLEL=1` — fan per-doc measurements across
-//!   rayon's pool (R4-B / ADR-0017). Per-doc latencies remain
+//!   rayon's pool. Per-doc latencies remain
 //!   meaningful (each closure timing is local), but the wall-clock
 //!   collapses to `serial-work / N`. The progress log is suppressed
 //!   under parallel mode to avoid interleaved output; one summary
@@ -62,14 +62,14 @@ use aozora_syntax::borrowed::Arena;
 use rayon::prelude::*;
 
 // One arena per worker thread per measurement role. Reused across
-// docs by resetting between parses (M-1 / ADR-0019). The two arenas
+// docs by resetting between parses. The two arenas
 // are kept separate because the Phase 3 measurement and the full
 // pipeline measurement run back-to-back inside a single
 // `measure_one` call — sharing one arena would force a reset
 // mid-call, after which the prior measurement's borrowed output
 // would be invalidated.
 //
-// A (ADR-0019 follow-up): pre-size with 256 KB initial capacity to
+// A: pre-size with 256 KB initial capacity to
 // skip the first-few-docs chunk-grow churn. See the matching
 // constant in `throughput_by_class.rs` for the heuristic rationale.
 //
@@ -213,10 +213,10 @@ fn measure_one(text: &str) -> PhaseSample {
     let pair_ns = t.elapsed().as_nanos() as u64;
 
     // Phase 3 — needs an arena + allocator. Borrows the per-worker
-    // reusable arena (M-1) and resets it before parsing so the prior
-    // doc's allocations don't bloat this measurement. B'-2 pre-sizes
-    // to `text.len() * 4` so the chunk-grow `mmap` fires before the
-    // per-phase timer rather than inside it.
+    // reusable arena and resets it before parsing so the prior doc's
+    // allocations don't bloat this measurement. The arena is
+    // pre-sized to `text.len() * 4` so the chunk-grow `mmap` fires
+    // before the per-phase timer rather than inside it.
     let classify_ns = WORKER_ARENA_PHASE3.with(|cell| {
         let mut arena = cell.borrow_mut();
         arena.reset_with_hint(text.len().saturating_mul(4));
