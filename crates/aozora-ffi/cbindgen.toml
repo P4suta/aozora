@@ -1,0 +1,23 @@
+# cbindgen configuration for aozora-ffi.
+#
+# Generates a single C header `aozora.h` covering every `#[no_mangle]
+# extern "C"` item, the `AozoraStatus` enum, and the `AozoraBytes`
+# struct. Picked up by `build.rs` at compile time.
+
+language        = "C"
+header          = "/* aozora-ffi — Aozora Bunko notation parser C ABI.\n   Dual-licensed: Apache-2.0 OR MIT. */"
+include_guard   = "AOZORA_FFI_H"
+pragma_once     = true
+no_includes     = false
+sys_includes    = ["stdint.h", "stddef.h"]
+documentation   = true
+documentation_style = "doxy"
+style           = "type"
+cpp_compat      = true
+
+[parse]
+parse_deps = false
+
+[enum]
+prefix_with_name = false
+rename_variants  = "ScreamingSnakeCase"
