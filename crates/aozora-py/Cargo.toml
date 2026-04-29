@@ -41,4 +41,8 @@ default = []
 extension-module = ["dep:pyo3"]
 
 [lib]
+# Hyphenated crate name (`aozora-py`) is not a valid Python module
+# name. Override the lib name so the wheel imports as `aozora_py`,
+# matching the `#[pymodule] fn aozora_py(...)` entry in src/lib.rs.
+name       = "aozora_py"
 crate-type = ["lib", "cdylib"]
