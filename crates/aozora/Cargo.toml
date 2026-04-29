@@ -15,10 +15,15 @@ categories.workspace   = true
 workspace = true
 
 [dependencies]
-# Borrowed-AST native surface (Plan B + I-2.2 complete).
 # Document wraps `aozora_lex::lex_into_arena` and AozoraTree borrows
 # from a `bumpalo`-backed arena owned by Document.
 aozora-render   = { workspace = true }
 aozora-lex      = { workspace = true }
 aozora-syntax   = { workspace = true }
 aozora-spec     = { workspace = true }
+
+[dev-dependencies]
+# Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and
+# verify parse + round-trip invariants on every document.
+aozora-corpus   = { workspace = true }
+aozora-encoding = { workspace = true }
