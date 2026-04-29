@@ -34,3 +34,17 @@ serde_json = { workspace = true }
 
 [lib]
 crate-type = ["lib", "cdylib"]
+
+# wasm-pack metadata.
+#
+# We bypass wasm-pack's bundled wasm-opt because the version it
+# downloads (binaryen pre-119) cannot validate the bulk-memory
+# opcodes (memory.copy / memory.fill) that Rust 1.95+ emits for the
+# core::ptr / Vec primitives this crate transitively pulls in. The
+# Dockerfile's `wasm-builder` stage runs a fresh `wasm-opt -O3
+# --enable-bulk-memory --enable-mutable-globals` over the artifact
+# before it lands at /aozora.wasm, so the size optimisation still
+# happens — just with a current binaryen build instead of the stale
+# bundle.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

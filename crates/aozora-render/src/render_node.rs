@@ -36,14 +36,14 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
         AozoraNode::Ruby(r) => render_ruby(r, writer),
         AozoraNode::Bouten(b) => render_bouten(b, writer),
         AozoraNode::TateChuYoko(t) => {
-            writer.write_str(r#"<span class="afm-tcy">"#)?;
+            writer.write_str(r#"<span class="aozora-tcy">"#)?;
             render_content(t.text, writer)?;
             writer.write_str("</span>")
         }
         AozoraNode::Gaiji(g) => render_gaiji(g, writer),
         AozoraNode::Indent(i) => render_indent(i, writer),
         AozoraNode::AlignEnd(a) => render_align_end(a, writer),
-        AozoraNode::PageBreak => writer.write_str(r#"<div class="afm-page-break"></div>"#),
+        AozoraNode::PageBreak => writer.write_str(r#"<div class="aozora-page-break"></div>"#),
         AozoraNode::SectionBreak(k) => {
             let slug = match k {
                 SectionKind::Choho => "choho",
@@ -53,7 +53,7 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
             };
             write!(
                 writer,
-                r#"<div class="afm-section-break afm-section-break-{slug}"></div>"#,
+                r#"<div class="aozora-section-break aozora-section-break-{slug}"></div>"#,
             )
         }
         AozoraNode::Annotation(a) => render_annotation(a, writer),
@@ -79,7 +79,7 @@ fn render_ruby<W: Write>(r: &Ruby<'_>, writer: &mut W) -> fmt::Result {
 fn render_bouten<W: Write>(b: &Bouten<'_>, writer: &mut W) -> fmt::Result {
     write!(
         writer,
-        r#"<em class="afm-bouten afm-bouten-{kind} afm-bouten-{pos}">"#,
+        r#"<em class="aozora-bouten aozora-bouten-{kind} aozora-bouten-{pos}">"#,
         kind = bouten::kind_slug(b.kind),
         pos = bouten::position_slug(b.position),
     )?;
@@ -103,12 +103,47 @@ fn render_content<W: Write>(content: Content<'_>, writer: &mut W) -> fmt::Result
 }
 
 fn render_gaiji<W: Write>(g: &Gaiji<'_>, writer: &mut W) -> fmt::Result {
-    writer.write_str(r#"<span class="afm-gaiji">"#)?;
+    // The renderer exposes two data attributes so downstream HTML
+    // consumers (aozora-obsidian, afm sibling plugins, themed
+    // sites) can switch gaiji presentation between
+    // image / description / codepoint at view time without a second
+    // parser pass:
+    //
+    //   - `data-codepoint` lists the resolved Unicode scalar(s) as
+    //     space-separated `U+XXXX` entries (single-char cells emit
+    //     one entry; 25 JIS X 0213 combining-sequence cells emit
+    //     one per scalar).
+    //   - `data-description` carries the raw 注記 text when the
+    //     gaiji could not be resolved to Unicode and the renderer
+    //     fell back to the description payload.
+    //
+    // The `<span class="aozora-gaiji">…</span>` wrapper plus the
+    // displayed text content stay byte-for-byte equivalent to the
+    // pre-Plan-B.5 shape — the data attributes are additive.
     if let Some(resolved) = g.ucs {
-        // Resolved::write_to handles both single-codepoint and the
-        // 25 combining-sequence cells uniformly.
+        writer.write_str(r#"<span class="aozora-gaiji" data-codepoint=""#)?;
+        // Round-trip Resolved through a tiny String buffer so we
+        // can iterate its scalars without re-implementing the
+        // Char/Multi enum split. `write_to` is the public
+        // accessor and never fails into a String.
+        let mut buf = String::with_capacity(8);
+        resolved
+            .write_to(&mut buf)
+            .expect("Resolved::write_to into String never fails");
+        let mut first = true;
+        for c in buf.chars() {
+            if !first {
+                writer.write_char(' ')?;
+            }
+            first = false;
+            write!(writer, "U+{:04X}", c as u32)?;
+        }
+        writer.write_str(r#"">"#)?;
         resolved.write_to(writer)?;
     } else {
+        writer.write_str(r#"<span class="aozora-gaiji" data-description=""#)?;
+        escape_text(g.description, writer)?;
+        writer.write_str(r#"">"#)?;
         escape_text(g.description, writer)?;
     }
     writer.write_str("</span>")
@@ -116,17 +151,17 @@ fn render_gaiji<W: Write>(g: &Gaiji<'_>, writer: &mut W) -> fmt::Result {
 
 fn render_annotation<W: Write>(a: &Annotation<'_>, writer: &mut W) -> fmt::Result {
     match a.kind {
-        AnnotationKind::WarichuOpen => return writer.write_str(r#"<span class="afm-warichu">"#),
+        AnnotationKind::WarichuOpen => return writer.write_str(r#"<span class="aozora-warichu">"#),
         AnnotationKind::WarichuClose => return writer.write_str("</span>"),
         _ => {}
     }
-    writer.write_str(r#"<span class="afm-annotation" hidden>"#)?;
+    writer.write_str(r#"<span class="aozora-annotation" hidden>"#)?;
     escape_text(a.raw, writer)?;
     writer.write_str("</span>")
 }
 
 fn render_kaeriten<W: Write>(k: &Kaeriten<'_>, writer: &mut W) -> fmt::Result {
-    writer.write_str(r#"<sup class="afm-kaeriten">"#)?;
+    writer.write_str(r#"<sup class="aozora-kaeriten">"#)?;
     escape_text(k.mark, writer)?;
     writer.write_str("</sup>")
 }
@@ -137,22 +172,22 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
             ContainerKind::Indent { amount } => {
                 write!(
                     writer,
-                    r#"<div class="afm-container afm-container-indent afm-container-indent-{amount}" data-amount="{amount}">"#,
+                    r#"<div class="aozora-container aozora-container-indent aozora-container-indent-{amount}" data-amount="{amount}">"#,
                 )
             }
             ContainerKind::AlignEnd { offset } => {
                 write!(
                     writer,
-                    r#"<div class="afm-container afm-container-align-end" data-offset="{offset}">"#,
+                    r#"<div class="aozora-container aozora-container-align-end" data-offset="{offset}">"#,
                 )
             }
             ContainerKind::Keigakomi => {
-                writer.write_str(r#"<div class="afm-container afm-container-keigakomi">"#)
+                writer.write_str(r#"<div class="aozora-container aozora-container-keigakomi">"#)
             }
             ContainerKind::Warichu => {
-                writer.write_str(r#"<div class="afm-container afm-container-warichu">"#)
+                writer.write_str(r#"<div class="aozora-container aozora-container-warichu">"#)
             }
-            _ => writer.write_str(r#"<div class="afm-container">"#),
+            _ => writer.write_str(r#"<div class="aozora-container">"#),
         }
     } else {
         writer.write_str("</div>")
@@ -160,7 +195,7 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
 }
 
 fn render_double_ruby<W: Write>(d: &DoubleRuby<'_>, writer: &mut W) -> fmt::Result {
-    writer.write_str(r#"<span class="afm-double-ruby">≪"#)?;
+    writer.write_str(r#"<span class="aozora-double-ruby">≪"#)?;
     render_content(d.content, writer)?;
     writer.write_str("≫</span>")
 }
@@ -168,18 +203,18 @@ fn render_double_ruby<W: Write>(d: &DoubleRuby<'_>, writer: &mut W) -> fmt::Resu
 fn render_indent<W: Write>(i: Indent, writer: &mut W) -> fmt::Result {
     write!(
         writer,
-        r#"<span class="afm-indent afm-indent-{n}" data-amount="{n}"></span>"#,
+        r#"<span class="aozora-indent aozora-indent-{n}" data-amount="{n}"></span>"#,
         n = i.amount,
     )
 }
 
 fn render_align_end<W: Write>(a: AlignEnd, writer: &mut W) -> fmt::Result {
     if a.offset == 0 {
-        writer.write_str(r#"<span class="afm-align-end" data-offset="0"></span>"#)
+        writer.write_str(r#"<span class="aozora-align-end" data-offset="0"></span>"#)
     } else {
         write!(
             writer,
-            r#"<span class="afm-align-end afm-align-end-{n}" data-offset="{n}"></span>"#,
+            r#"<span class="aozora-align-end aozora-align-end-{n}" data-offset="{n}"></span>"#,
             n = a.offset,
         )
     }
@@ -264,7 +299,7 @@ mod tests {
         let n = alloc.page_break();
         assert_eq!(
             render_node_to_string(n),
-            r#"<div class="afm-page-break"></div>"#
+            r#"<div class="aozora-page-break"></div>"#
         );
     }
 
@@ -276,7 +311,7 @@ mod tests {
         let n = alloc.annotation(payload);
         assert_eq!(
             render_node_to_string(n),
-            r#"<span class="afm-annotation" hidden>［＃改ページ］</span>"#
+            r#"<span class="aozora-annotation" hidden>［＃改ページ］</span>"#
         );
     }
 
@@ -288,7 +323,7 @@ mod tests {
         let n = alloc.bouten(BoutenKind::Goma, target, BoutenPosition::Right);
         assert_eq!(
             render_node_to_string(n),
-            r#"<em class="afm-bouten afm-bouten-goma afm-bouten-right">可哀想</em>"#
+            r#"<em class="aozora-bouten aozora-bouten-goma aozora-bouten-right">可哀想</em>"#
         );
     }
 
@@ -299,7 +334,7 @@ mod tests {
         let n = alloc.indent(Indent { amount: 2 });
         assert_eq!(
             render_node_to_string(n),
-            r#"<span class="afm-indent afm-indent-2" data-amount="2"></span>"#
+            r#"<span class="aozora-indent aozora-indent-2" data-amount="2"></span>"#
         );
     }
 
@@ -310,7 +345,7 @@ mod tests {
         let n = alloc.align_end(AlignEnd { offset: 0 });
         assert_eq!(
             render_node_to_string(n),
-            r#"<span class="afm-align-end" data-offset="0"></span>"#
+            r#"<span class="aozora-align-end" data-offset="0"></span>"#
         );
     }
 
@@ -321,7 +356,7 @@ mod tests {
         let n = alloc.align_end(AlignEnd { offset: 2 });
         assert_eq!(
             render_node_to_string(n),
-            r#"<span class="afm-align-end afm-align-end-2" data-offset="2"></span>"#
+            r#"<span class="aozora-align-end aozora-align-end-2" data-offset="2"></span>"#
         );
     }
 
@@ -337,7 +372,7 @@ mod tests {
             let n = alloc.section_break(kind);
             assert_eq!(
                 render_node_to_string(n),
-                format!(r#"<div class="afm-section-break afm-section-break-{slug}"></div>"#),
+                format!(r#"<div class="aozora-section-break aozora-section-break-{slug}"></div>"#),
             );
         }
     }
@@ -353,7 +388,7 @@ mod tests {
         render(n, true, &mut open).unwrap();
         let mut close = String::new();
         render(n, false, &mut close).unwrap();
-        assert!(open.contains("afm-container-indent afm-container-indent-2"));
+        assert!(open.contains("aozora-container-indent aozora-container-indent-2"));
         assert!(open.contains(r#"data-amount="2""#));
         assert_eq!(close, "</div>");
     }

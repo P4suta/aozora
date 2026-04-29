@@ -357,14 +357,14 @@ mod tests {
     #[test]
     fn page_break_inside_text_emits_div() {
         let html = render("前\n\n［＃改ページ］\n\n後");
-        assert!(html.contains(r#"<div class="afm-page-break"></div>"#));
+        assert!(html.contains(r#"<div class="aozora-page-break"></div>"#));
         assert!(!html.contains("［＃"), "［＃ leaked: {html}");
     }
 
     #[test]
     fn paired_container_open_close_renders_div_pair() {
         let html = render("［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］");
-        assert!(html.contains("afm-container-indent afm-container-indent-2"));
+        assert!(html.contains("aozora-container-indent aozora-container-indent-2"));
         assert!(html.contains("</div>"));
     }
 
