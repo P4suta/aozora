@@ -2,26 +2,26 @@
   {
     "name": "double_ruby_plain_body_renders_with_academic_brackets",
     "markdown": "前《《強調》》後\n",
-    "html": "<p>前<span class=\"afm-double-ruby\">≪強調≫</span>後</p>\n"
+    "html": "<p>前<span class=\"aozora-double-ruby\">≪強調≫</span>後</p>\n"
   },
   {
     "name": "double_ruby_with_embedded_gaiji_lifts_content_segments",
     "markdown": "《《※［＃「ほ」、第3水準9-99-99］》》\n",
-    "html": "<p><span class=\"afm-double-ruby\">≪<span class=\"afm-gaiji\">ほ</span>≫</span></p>\n"
+    "html": "<p><span class=\"aozora-double-ruby\">≪<span class=\"aozora-gaiji\">ほ</span>≫</span></p>\n"
   },
   {
     "name": "double_ruby_html_escape_of_payload",
     "markdown": "《《<&>\"'》》\n",
-    "html": "<p><span class=\"afm-double-ruby\">≪&lt;&amp;&gt;&quot;&#x27;≫</span></p>\n"
+    "html": "<p><span class=\"aozora-double-ruby\">≪&lt;&amp;&gt;&quot;&#x27;≫</span></p>\n"
   },
   {
     "name": "double_ruby_empty_body_still_renders_brackets",
     "markdown": "《《》》\n",
-    "html": "<p><span class=\"afm-double-ruby\">≪≫</span></p>\n"
+    "html": "<p><span class=\"aozora-double-ruby\">≪≫</span></p>\n"
   },
   {
     "name": "double_ruby_does_not_consume_single_ruby_surroundings",
     "markdown": "｜青梅《おうめ》と《《強調》》を\n",
-    "html": "<p><ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby>と<span class=\"afm-double-ruby\">≪強調≫</span>を</p>\n"
+    "html": "<p><ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby>と<span class=\"aozora-double-ruby\">≪強調≫</span>を</p>\n"
   }
 ]

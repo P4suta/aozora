@@ -2,27 +2,27 @@
   {
     "name": "ruby_reading_with_embedded_gaiji",
     "markdown": "｜日本《に※［＃「ほ」、第3水準9-99-99］ん》\n",
-    "html": "<p><ruby>日本<rp>(</rp><rt>に<span class=\"afm-gaiji\">ほ</span>ん</rt><rp>)</rp></ruby></p>\n"
+    "html": "<p><ruby>日本<rp>(</rp><rt>に<span class=\"aozora-gaiji\">ほ</span>ん</rt><rp>)</rp></ruby></p>\n"
   },
   {
     "name": "ruby_reading_wholly_gaiji",
     "markdown": "｜日本《※［＃「にほん」、第3水準9-99-99］》\n",
-    "html": "<p><ruby>日本<rp>(</rp><rt><span class=\"afm-gaiji\">にほん</span></rt><rp>)</rp></ruby></p>\n"
+    "html": "<p><ruby>日本<rp>(</rp><rt><span class=\"aozora-gaiji\">にほん</span></rt><rp>)</rp></ruby></p>\n"
   },
   {
     "name": "ruby_reading_with_trailing_mama_annotation",
     "markdown": "｜日本《にほん［＃ママ］》\n",
-    "html": "<p><ruby>日本<rp>(</rp><rt>にほん<span class=\"afm-annotation\" hidden>［＃ママ］</span></rt><rp>)</rp></ruby></p>\n"
+    "html": "<p><ruby>日本<rp>(</rp><rt>にほん<span class=\"aozora-annotation\" hidden>［＃ママ］</span></rt><rp>)</rp></ruby></p>\n"
   },
   {
     "name": "ruby_reading_with_gaiji_and_annotation_mixed",
     "markdown": "｜日本《に※［＃「ほ」、第3水準9-99-99］ん［＃ママ］》\n",
-    "html": "<p><ruby>日本<rp>(</rp><rt>に<span class=\"afm-gaiji\">ほ</span>ん<span class=\"afm-annotation\" hidden>［＃ママ］</span></rt><rp>)</rp></ruby></p>\n"
+    "html": "<p><ruby>日本<rp>(</rp><rt>に<span class=\"aozora-gaiji\">ほ</span>ん<span class=\"aozora-annotation\" hidden>［＃ママ］</span></rt><rp>)</rp></ruby></p>\n"
   },
   {
     "name": "implicit_ruby_reading_with_embedded_gaiji",
     "markdown": "日本《に※［＃「ほ」、第3水準9-99-99］ん》\n",
-    "html": "<p><ruby>日本<rp>(</rp><rt>に<span class=\"afm-gaiji\">ほ</span>ん</rt><rp>)</rp></ruby></p>\n"
+    "html": "<p><ruby>日本<rp>(</rp><rt>に<span class=\"aozora-gaiji\">ほ</span>ん</rt><rp>)</rp></ruby></p>\n"
   },
   {
     "name": "ruby_plain_reading_still_collapses_to_plain_content",

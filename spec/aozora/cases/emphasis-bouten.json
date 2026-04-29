@@ -2,86 +2,86 @@
   {
     "name": "forward_ref_goma_default_kind",
     "markdown": "可哀想［＃「可哀想」に傍点］という気\n",
-    "html": "<p>可哀想<em class=\"afm-bouten afm-bouten-goma afm-bouten-right\">可哀想</em>という気</p>\n"
+    "html": "<p>可哀想<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">可哀想</em>という気</p>\n"
   },
   {
     "name": "forward_ref_circle",
     "markdown": "責［＃「責」に丸傍点］めて\n",
-    "html": "<p>責<em class=\"afm-bouten afm-bouten-circle afm-bouten-right\">責</em>めて</p>\n"
+    "html": "<p>責<em class=\"aozora-bouten aozora-bouten-circle aozora-bouten-right\">責</em>めて</p>\n"
   },
   {
     "name": "forward_ref_white_circle",
     "markdown": "責［＃「責」に白丸傍点］めて\n",
-    "html": "<p>責<em class=\"afm-bouten afm-bouten-white-circle afm-bouten-right\">責</em>めて</p>\n"
+    "html": "<p>責<em class=\"aozora-bouten aozora-bouten-white-circle aozora-bouten-right\">責</em>めて</p>\n"
   },
   {
     "name": "forward_ref_double_circle",
     "markdown": "責［＃「責」に二重丸傍点］めて\n",
-    "html": "<p>責<em class=\"afm-bouten afm-bouten-double-circle afm-bouten-right\">責</em>めて</p>\n"
+    "html": "<p>責<em class=\"aozora-bouten aozora-bouten-double-circle aozora-bouten-right\">責</em>めて</p>\n"
   },
   {
     "name": "forward_ref_janome",
     "markdown": "責［＃「責」に蛇の目傍点］めて\n",
-    "html": "<p>責<em class=\"afm-bouten afm-bouten-janome afm-bouten-right\">責</em>めて</p>\n"
+    "html": "<p>責<em class=\"aozora-bouten aozora-bouten-janome aozora-bouten-right\">責</em>めて</p>\n"
   },
   {
     "name": "forward_ref_wavy_line",
     "markdown": "責［＃「責」に波線］めて\n",
-    "html": "<p>責<em class=\"afm-bouten afm-bouten-wavy-line afm-bouten-right\">責</em>めて</p>\n"
+    "html": "<p>責<em class=\"aozora-bouten aozora-bouten-wavy-line aozora-bouten-right\">責</em>めて</p>\n"
   },
   {
     "name": "forward_ref_under_line",
     "markdown": "責［＃「責」に傍線］めて\n",
-    "html": "<p>責<em class=\"afm-bouten afm-bouten-under-line afm-bouten-right\">責</em>めて</p>\n"
+    "html": "<p>責<em class=\"aozora-bouten aozora-bouten-under-line aozora-bouten-right\">責</em>めて</p>\n"
   },
   {
     "name": "forward_ref_without_preceding_target_falls_back_to_annotation",
     "markdown": "［＃「X」に傍点］あと\n",
-    "html": "<p><span class=\"afm-annotation\" hidden>［＃「X」に傍点］</span>あと</p>\n"
+    "html": "<p><span class=\"aozora-annotation\" hidden>［＃「X」に傍点］</span>あと</p>\n"
   },
   {
     "name": "forward_ref_white_sesame_resolves",
     "markdown": "責［＃「責」に白ゴマ傍点］めて\n",
-    "html": "<p>責<em class=\"afm-bouten afm-bouten-white-sesame afm-bouten-right\">責</em>めて</p>\n"
+    "html": "<p>責<em class=\"aozora-bouten aozora-bouten-white-sesame aozora-bouten-right\">責</em>めて</p>\n"
   },
   {
     "name": "forward_ref_white_triangle_resolves",
     "markdown": "責［＃「責」に白三角傍点］めて\n",
-    "html": "<p>責<em class=\"afm-bouten afm-bouten-white-triangle afm-bouten-right\">責</em>めて</p>\n"
+    "html": "<p>責<em class=\"aozora-bouten aozora-bouten-white-triangle aozora-bouten-right\">責</em>めて</p>\n"
   },
   {
     "name": "forward_ref_cross_resolves",
     "markdown": "責［＃「責」にばつ傍点］めて\n",
-    "html": "<p>責<em class=\"afm-bouten afm-bouten-cross afm-bouten-right\">責</em>めて</p>\n"
+    "html": "<p>責<em class=\"aozora-bouten aozora-bouten-cross aozora-bouten-right\">責</em>めて</p>\n"
   },
   {
     "name": "forward_ref_double_under_line_resolves",
     "markdown": "責［＃「責」に二重傍線］めて\n",
-    "html": "<p>責<em class=\"afm-bouten afm-bouten-double-under-line afm-bouten-right\">責</em>めて</p>\n"
+    "html": "<p>責<em class=\"aozora-bouten aozora-bouten-double-under-line aozora-bouten-right\">責</em>めて</p>\n"
   },
   {
     "name": "forward_ref_left_side_goma",
     "markdown": "可哀想［＃「可哀想」の左に傍点］という気\n",
-    "html": "<p>可哀想<em class=\"afm-bouten afm-bouten-goma afm-bouten-left\">可哀想</em>という気</p>\n"
+    "html": "<p>可哀想<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-left\">可哀想</em>という気</p>\n"
   },
   {
     "name": "forward_ref_left_side_under_line",
     "markdown": "責［＃「責」の左に傍線］めて\n",
-    "html": "<p>責<em class=\"afm-bouten afm-bouten-under-line afm-bouten-left\">責</em>めて</p>\n"
+    "html": "<p>責<em class=\"aozora-bouten aozora-bouten-under-line aozora-bouten-left\">責</em>めて</p>\n"
   },
   {
     "name": "forward_ref_multi_quote_targets_concat_with_punctuation",
     "markdown": "AとB［＃「A」「B」に傍点］だ\n",
-    "html": "<p>AとB<em class=\"afm-bouten afm-bouten-goma afm-bouten-right\">A、B</em>だ</p>\n"
+    "html": "<p>AとB<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">A、B</em>だ</p>\n"
   },
   {
     "name": "forward_ref_unknown_suffix_falls_back_to_annotation",
     "markdown": "責［＃「責」に謎傍点］めて\n",
-    "html": "<p>責<span class=\"afm-annotation\" hidden>［＃「責」に謎傍点］</span>めて</p>\n"
+    "html": "<p>責<span class=\"aozora-annotation\" hidden>［＃「責」に謎傍点］</span>めて</p>\n"
   },
   {
     "name": "forward_ref_multi_kanji_target_resolves",
     "markdown": "一寸先［＃「一寸先」に傍点］は闇\n",
-    "html": "<p>一寸先<em class=\"afm-bouten afm-bouten-goma afm-bouten-right\">一寸先</em>は闇</p>\n"
+    "html": "<p>一寸先<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">一寸先</em>は闇</p>\n"
   }
 ]

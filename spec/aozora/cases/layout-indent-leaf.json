@@ -2,36 +2,36 @@
   {
     "name": "leaf_indent_fullwidth_two",
     "markdown": "［＃２字下げ］本文\n",
-    "html": "<p><span class=\"afm-indent afm-indent-2\" data-amount=\"2\"></span>本文</p>\n"
+    "html": "<p><span class=\"aozora-indent aozora-indent-2\" data-amount=\"2\"></span>本文</p>\n"
   },
   {
     "name": "leaf_indent_fullwidth_seven",
     "markdown": "［＃７字下げ］七字下げの本文\n",
-    "html": "<p><span class=\"afm-indent afm-indent-7\" data-amount=\"7\"></span>七字下げの本文</p>\n"
+    "html": "<p><span class=\"aozora-indent aozora-indent-7\" data-amount=\"7\"></span>七字下げの本文</p>\n"
   },
   {
     "name": "leaf_indent_ascii_digit",
     "markdown": "［＃2字下げ］本文\n",
-    "html": "<p><span class=\"afm-indent afm-indent-2\" data-amount=\"2\"></span>本文</p>\n"
+    "html": "<p><span class=\"aozora-indent aozora-indent-2\" data-amount=\"2\"></span>本文</p>\n"
   },
   {
     "name": "leaf_jitsuki_no_offset",
     "markdown": "［＃地付き］末尾\n",
-    "html": "<p><span class=\"afm-align-end\" data-offset=\"0\"></span>末尾</p>\n"
+    "html": "<p><span class=\"aozora-align-end\" data-offset=\"0\"></span>末尾</p>\n"
   },
   {
     "name": "leaf_chikara_n_ji_age",
     "markdown": "［＃地から２字上げ］末尾\n",
-    "html": "<p><span class=\"afm-align-end afm-align-end-2\" data-offset=\"2\"></span>末尾</p>\n"
+    "html": "<p><span class=\"aozora-align-end aozora-align-end-2\" data-offset=\"2\"></span>末尾</p>\n"
   },
   {
     "name": "leaf_chikara_nine_ji_age",
     "markdown": "［＃地から９字上げ］末尾\n",
-    "html": "<p><span class=\"afm-align-end afm-align-end-9\" data-offset=\"9\"></span>末尾</p>\n"
+    "html": "<p><span class=\"aozora-align-end aozora-align-end-9\" data-offset=\"9\"></span>末尾</p>\n"
   },
   {
     "name": "leaf_indent_zero_digit_falls_back_to_annotation",
     "markdown": "［＃０字下げ］本文\n",
-    "html": "<p><span class=\"afm-annotation\" hidden>［＃０字下げ］</span>本文</p>\n"
+    "html": "<p><span class=\"aozora-annotation\" hidden>［＃０字下げ］</span>本文</p>\n"
   }
 ]

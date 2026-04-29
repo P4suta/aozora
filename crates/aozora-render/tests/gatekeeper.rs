@@ -128,9 +128,9 @@ fn gatekeeper_pua_sentinel_codepoints_in_source_dont_emit_block_tags() {
     // pins "PUA collision tolerance".
     for sentinel in ["\u{E001}", "\u{E002}", "\u{E003}", "\u{E004}"] {
         let html = render_html(sentinel);
-        // No `<div class="afm-...">` should appear from a stray PUA.
+        // No `<div class="aozora-...">` should appear from a stray PUA.
         assert!(
-            !html.contains(r#"<div class="afm-page-break""#),
+            !html.contains(r#"<div class="aozora-page-break""#),
             "PUA {sentinel:?} accidentally produced a structural block: {html}",
         );
     }
