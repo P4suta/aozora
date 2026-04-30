@@ -20,6 +20,10 @@ members = [
     "crates/aozora-xtask",
     "crates/aozora-trace",
 ]
+# `aozora-book` is the mdbook source tree; it has no Cargo manifest of its
+# own. Listed in `exclude` so `cargo` ignores it during workspace globbing
+# even if a stray `Cargo.toml` is added to the directory by accident.
+exclude = ["crates/aozora-book"]
 
 [workspace.package]
 version       = "0.2.6"
@@ -163,8 +167,11 @@ memchr = "2.8"
 # at the workspace level so each consumer (aozora-lexer / aozora-scan)
 # opts into exactly the features it needs.
 aho-corasick = { version = "1.1", default-features = false }
-# Byte-DFA construction (used by aozora-scan's DfaScanner backend;
-# Hoehrmann-style multi-pattern automaton — see ADR-0015).
+# Byte-DFA construction (used by aozora-scan's DfaScanner backend).
+# Compiled to a Hoehrmann-style multi-pattern automaton: O(1) byte
+# transitions, no backtracking, table-driven — the right shape for
+# the lexer's mixed-trigger search where Teddy's SIMD prefilter
+# alone would still need a follow-up confirmation pass.
 regex-automata = { version = "0.4", default-features = false }
 aozora-lexer      = { version = "0.2.6", path = "crates/aozora-lexer" }
 aozora-encoding   = { version = "0.2.6", path = "crates/aozora-encoding" }
@@ -206,17 +213,21 @@ phf = { version = "0.13", features = ["macros"] }
 walkdir = "2.5"
 
 # Physical-core count detection — used by aozora-corpus's
-# parallel-load helper (L-4-bis of ADR-0020) to size the rayon thread
-# pool to physical cores rather than logical (hyperthreaded) ones.
-# Mainstream pure-Rust crate; `#[forbid(unsafe_code)]` in our code is
-# preserved.
+# parallel-load helper to size the rayon thread pool to *physical*
+# cores rather than logical (hyperthreaded) ones, since the parser is
+# memory-bandwidth bound and SMT siblings starve each other on the
+# corpus-load throughput. Mainstream pure-Rust crate;
+# `#[forbid(unsafe_code)]` in our code is preserved.
 num_cpus = "1.16"
 
-# zstd compression — used by `aozora-corpus::archive` (L-5 of ADR-0020)
-# for the compressed archive variant and by `xtask corpus pack` for
-# the build-time pack. Pure-Rust API; underlying libzstd is C, but
-# the boundary is hidden behind the `zstd` crate's safe API (same
-# shape as encoding_rs / num_cpus / rayon).
+# zstd compression — used by `aozora-corpus::archive` for the
+# compressed archive variant and by `xtask corpus pack` for the
+# build-time pack. zstd over gzip / xz: 5-10× faster decompression
+# at comparable ratios, dictionary support for small-file corpora,
+# and frame-level random access matters for sweep parallelism.
+# Pure-Rust API; underlying libzstd is C, but the boundary is hidden
+# behind the `zstd` crate's safe API (same shape as encoding_rs /
+# num_cpus / rayon).
 zstd = "0.13"
 
 # Content-addressed hashing — used by `aozora-corpus::archive` for
@@ -226,11 +237,12 @@ zstd = "0.13"
 blake3 = "1.5"
 
 # Pure-safe-Rust syscall wrapper — used by `xtask corpus uncache`
-# (L-6a of ADR-0020) for `posix_fadvise(POSIX_FADV_DONTNEED)` to
-# evict files from the kernel page cache without sudo. rustix
-# itself uses unsafe internally to invoke syscalls (same shape as
-# encoding_rs / num_cpus / rayon); the API surface we consume is
-# safe.
+# for `posix_fadvise(POSIX_FADV_DONTNEED)` to evict corpus files
+# from the kernel page cache without sudo, so cold-cache benchmark
+# runs measure honest disk-bound throughput instead of warm reread.
+# rustix itself uses unsafe internally to invoke syscalls (same
+# shape as encoding_rs / num_cpus / rayon); the API surface we
+# consume is safe.
 rustix = { version = "1.1", features = ["fs"] }
 
 # Test helpers
