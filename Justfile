@@ -494,11 +494,42 @@ book-serve:
 # Crawl every internal + external link in the rendered handbook.
 # Run after `book-build`; lychee uses the generated HTML, not the source
 # Markdown, so cross-page anchors are validated post-render.
-# `book/404.html` is skipped because mdbook injects `/aozora/` site-root
-# links there that only resolve under the real Pages deploy.
+# Concurrency / retries / 404-skip / accept policy live in
+# `crates/aozora-book/lychee.toml` so the same config applies to
+# `just book-linkcheck` and the `book` CI job.
 book-linkcheck:
     {{_book}} mdbook build
-    {{_book}} lychee --no-progress --max-concurrency 8 --exclude-path book/404.html 'book/**/*.html'
+    {{_book}} lychee --config lychee.toml 'book/**/*.html'
+
+# --- ci instrumentation (host-only — uses gh CLI auth) ----------------
+# `aozora-xtask ci …` is the data-driven CI surface: profile a finished
+# workflow run, run every CI job locally before pushing, or replay a
+# job through nektos/act. Three reasons these are host-only:
+#   - `gh` CLI auth lives on the host (1Password SSH agent etc.).
+#   - `act` itself orchestrates Docker; running it inside a Docker dev
+#     container means Docker-in-Docker, which is fragile.
+#   - The precheck variant *itself* dispatches `docker compose run`, so
+#     it must be on the host side of the boundary.
+# Skip docker; invoke the binary directly.
+
+# Profile a finished workflow run and rank jobs / steps by wall time.
+# Default: latest completed `ci.yml` run on `main`. Pass --run-id to
+# pin to a specific run (the value comes from
+# `gh run list --branch main --workflow ci`).
+ci-profile *ARGS:
+    cargo run -q --release -p aozora-xtask -- ci profile {{ARGS}}
+
+# Run every CI job locally and emit a per-job wall-time table.
+# Push-time confidence loop. Pass `--list` to see available jobs.
+ci-precheck *ARGS:
+    cargo run -q --release -p aozora-xtask -- ci precheck {{ARGS}}
+
+# Replay a workflow job through `nektos/act`.
+# Heavier than `ci-precheck`; reach for it when the workflow YAML
+# itself is the suspect. Requires `act` on PATH (mise can install it
+# via `mise use -g github:nektos/act@latest`).
+ci-act *ARGS:
+    cargo run -q --release -p aozora-xtask -- ci act {{ARGS}}
 
 # --- aggregate ----------------------------------------------------------------
 
