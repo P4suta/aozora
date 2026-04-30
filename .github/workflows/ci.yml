@@ -178,6 +178,13 @@ jobs:
           load: true
           cache-from: type=gha,scope=book
           cache-to: type=gha,mode=max,scope=book
+      - name: Install mermaid assets into the book directory
+        # `mermaid.min.js` + `mermaid-init.js` are .gitignored vendor JS
+        # that mdbook-mermaid regenerates from its own embedded copy.
+        # `book.toml` lists them as `additional-js`, so `mdbook build`
+        # fails with "failed to open mermaid.min.js for hashing" unless
+        # we install them first.
+        run: docker run --rm -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook-mermaid install .
       - name: mdbook build
         run: docker run --rm -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook build
       - name: lychee link verification (internal + external)
