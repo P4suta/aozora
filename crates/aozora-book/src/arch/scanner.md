@@ -25,7 +25,7 @@ fast path and a portable fallback.
 ## Backend 1: Teddy (Hyperscan-style packed)
 
 Teddy is the small-string multi-pattern algorithm from Intel's
-[Hyperscan](https://intel.github.io/hyperscan/). The
+[Hyperscan](https://github.com/intel/hyperscan). The
 `aho-corasick` crate ships a `packed::teddy` implementation that
 aozora calls into directly.
 
