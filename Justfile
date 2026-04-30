@@ -465,8 +465,40 @@ smoke-ffi:
 # --- changelog ---------------------------------------------------------------
 
 # Regenerate CHANGELOG.md from Conventional-Commits history (see cliff.toml).
+# `--unreleased` keeps the file pinned to a Keep-a-Changelog "Unreleased"
+# section between tags; the `release.yml` pipeline replaces it with the
+# tagged release notes at version-cut time.
 changelog:
+    {{_dev}} git-cliff --unreleased --prepend CHANGELOG.md
+
+# Regenerate CHANGELOG.md from scratch (full history). Rarely needed —
+# the in-place `changelog` recipe is the canonical update path.
+changelog-full:
     {{_dev}} git-cliff -o CHANGELOG.md
+
+# --- mdbook handbook ---------------------------------------------------------
+# `crates/aozora-book` is rendered by mdbook with the `mdbook-mermaid`
+# preprocessor (architecture pipeline / arena lifetime diagrams). Link
+# verification uses `lychee` rather than `mdbook-linkcheck`, because the
+# latter chronically lags upstream mdbook's RenderContext schema.
+_book := "docker compose run --rm book"
+
+# Build the handbook into crates/aozora-book/book/.
+book-build:
+    {{_book}} mdbook build
+
+# Live-preview at http://localhost:3000. Re-renders on every save.
+book-serve:
+    docker compose up book
+
+# Crawl every internal + external link in the rendered handbook.
+# Run after `book-build`; lychee uses the generated HTML, not the source
+# Markdown, so cross-page anchors are validated post-render.
+# `book/404.html` is skipped because mdbook injects `/aozora/` site-root
+# links there that only resolve under the real Pages deploy.
+book-linkcheck:
+    {{_book}} mdbook build
+    {{_book}} lychee --no-progress --max-concurrency 8 --exclude-path book/404.html 'book/**/*.html'
 
 # --- aggregate ----------------------------------------------------------------
 
@@ -480,6 +512,7 @@ ci:
     just audit
     just udeps
     just coverage
+    just book-build
 
 # --- developer workflow helpers ----------------------------------------------
 

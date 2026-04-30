@@ -1,16 +1,21 @@
-# Publish the aozora rustdoc API reference to GitHub Pages.
+# Publish the aozora handbook + rustdoc to GitHub Pages.
 #
 # aozora does not currently publish to crates.io, so docs.rs is not an
-# option for the API reference. Instead we build rustdoc on the runner
-# and deploy it directly to GitHub Pages.
+# option for the API reference. Instead we build rustdoc on the runner,
+# build the mdbook handbook from `crates/aozora-book/`, layer them at
+# `/aozora/` (handbook root) and `/aozora/api/aozora/` (rustdoc), and
+# deploy the whole site to GitHub Pages.
 #
 # Layout produced:
-#   https://p4suta.github.io/aozora/          ← redirect to /aozora/aozora/
-#   https://p4suta.github.io/aozora/aozora/   ← cargo doc landing for the top-level facade
+#   https://p4suta.github.io/aozora/                ← mdbook handbook
+#   https://p4suta.github.io/aozora/api/            ← rustdoc landing redirect
+#   https://p4suta.github.io/aozora/api/aozora/     ← cargo doc landing for the top-level facade
 #
 # Docs builds use the native runner toolchain rather than the dev
 # Docker image, because the Pages deploy actions expect artefacts on
-# the runner filesystem.
+# the runner filesystem. mdbook is installed via the upstream
+# `peaceiris/actions-mdbook` action; the mermaid preprocessor is
+# installed manually since the action does not bundle preprocessors.
 
 name: docs
 
@@ -43,16 +48,28 @@ jobs:
         with:
           key: docs
 
+      - uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: latest
+
+      - name: Install mdbook-mermaid
+        run: cargo install --locked mdbook-mermaid
+
       - name: Build rustdoc
         run: cargo doc --workspace --no-deps --document-private-items
+
+      - name: Build mdbook handbook
+        run: mdbook build crates/aozora-book
 
       - name: Assemble site
         run: |
           set -euo pipefail
           mkdir -p site
-          cp -r target/doc/. site/
-          # Default landing redirects to the top-level facade crate's docs.
-          cat > site/index.html <<'HTML'
+          cp -r crates/aozora-book/book/. site/
+          mkdir -p site/api
+          cp -r target/doc/. site/api/
+          # /api/ landing redirects to the top-level facade crate's docs.
+          cat > site/api/index.html <<'HTML'
           <!doctype html>
           <meta charset="utf-8">
           <title>aozora — rustdoc</title>

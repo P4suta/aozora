@@ -159,3 +159,28 @@ jobs:
         run: pip install --upgrade maturin
       - name: Build wheel
         run: maturin build --release -F extension-module --manifest-path crates/aozora-py/Cargo.toml
+
+  # mdbook handbook build verification — builds `crates/aozora-book/`
+  # in a lean container so a missing chapter, broken include, or
+  # SUMMARY desync surfaces on PR rather than at deploy time.
+  # Independent buildx cache scope (`book`) keeps this job decoupled
+  # from the heavier dev image.
+  book:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: book
+          tags: aozora-book:local
+          load: true
+          cache-from: type=gha,scope=book
+          cache-to: type=gha,mode=max,scope=book
+      - name: mdbook build
+        run: docker run --rm -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook build
+      - name: lychee link verification (internal + external)
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local \
+            lychee --no-progress --max-concurrency 8 --exclude-path book/404.html 'book/**/*.html'

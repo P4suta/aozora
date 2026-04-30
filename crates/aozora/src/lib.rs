@@ -24,7 +24,7 @@
 //! [`Interner`](aozora_syntax::borrowed::Interner) deduplicating
 //! repeated string content; dropping the `Document` releases the
 //! entire tree in a single `Bump::reset` step. See
-//! [`docs/ARCHITECTURE.md`](https://github.com/P4suta/aozora/blob/main/docs/ARCHITECTURE.md)
+//! the [Architecture chapter of the handbook](https://p4suta.github.io/aozora/arch/pipeline.html)
 //! for the layered design.
 
 #![forbid(unsafe_code)]

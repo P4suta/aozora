@@ -9,10 +9,10 @@
 </p>
 
 <p align="center">
-  📖 <a href="https://p4suta.github.io/aozora/"><strong>API reference (rustdoc)</strong></a>
+  📚 <a href="https://p4suta.github.io/aozora/"><strong>Handbook (mdbook)</strong></a>
+  · 📖 <a href="https://p4suta.github.io/aozora/api/aozora/"><strong>API reference (rustdoc)</strong></a>
   · 📦 <a href="https://github.com/P4suta/aozora/releases"><strong>Releases &amp; binaries</strong></a>
-  · 🏛️ <a href="./docs/ARCHITECTURE.md"><strong>Architecture</strong></a>
-  · 🚀 <a href="./docs/USAGE.md"><strong>Usage guide</strong></a>
+  · 🇯🇵 <a href="./README.ja.md"><strong>日本語</strong></a>
 </p>
 
 Pure-functional Rust parser for **青空文庫記法** (Aozora Bunko notation):
@@ -51,7 +51,9 @@ aozora-encoding = { git = "https://github.com/P4suta/aozora.git", tag = "v0.2.5"
 
 (crates.io publication tracks the 1.0 API freeze.)
 
-For WASM / C ABI / Python bindings see [`docs/USAGE.md`](./docs/USAGE.md).
+For WASM / C ABI / Python bindings see the
+[Bindings chapters](https://p4suta.github.io/aozora/bindings/rust.html) of
+the handbook.
 
 ## Quickstart
 
@@ -83,7 +85,8 @@ aozora check -E sjis FILE.txt   # Shift_JIS source from Aozora Bunko
 ```
 
 All subcommands accept `-` (or no path argument) to read from stdin.
-See [`docs/USAGE.md`](./docs/USAGE.md) for full subcommand reference.
+See the [CLI reference chapter](https://p4suta.github.io/aozora/ref/cli.html)
+for the full subcommand reference.
 
 ## Crate layout
 
@@ -108,8 +111,10 @@ See [`docs/USAGE.md`](./docs/USAGE.md) for full subcommand reference.
 | [`crates/aozora-trace`](./crates/aozora-trace) | DWARF symbolicator for samply traces. |
 | [`crates/aozora-xtask`](./crates/aozora-xtask) | Repo automation (samply wrapper, trace analysis, corpus pack/unpack). |
 
-See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the layered
-design and the dependency graph between these crates.
+See the [Architecture chapter](https://p4suta.github.io/aozora/arch/pipeline.html)
+of the handbook for the layered design, the borrowed-arena AST, the
+SIMD scanner backends, and the dependency graph between these
+crates.
 
 ## Development
 
@@ -125,6 +130,8 @@ just lint           # fmt + clippy pedantic+nursery + typos + strict-code
 just deny           # cargo-deny licenses + advisories + bans
 just coverage       # cargo llvm-cov branch coverage
 just ci             # full CI replica
+just book-build     # render the mdbook handbook
+just book-serve     # live-preview the handbook at localhost:3000
 ```
 
 Use `just run` to invoke the CLI inside the container:
@@ -139,16 +146,17 @@ testing strategy, and lint policy.
 
 ## Documentation
 
-- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — crate layers,
-  borrowed-arena AST, SIMD scan strategy, lint and safety policy.
-- [`docs/USAGE.md`](./docs/USAGE.md) — CLI / Rust library / WASM /
-  C ABI / Python usage, environment variables.
-- [`docs/PROFILING.md`](./docs/PROFILING.md) — how to take a samply
-  profile, the bench probes, and common pitfalls.
+- 📚 [**Handbook**](https://p4suta.github.io/aozora/) — the mdbook
+  site: notation reference, architecture (borrowed-arena AST,
+  SIMD scanner backends, encoding), bindings (Rust / WASM / C ABI /
+  Python), performance (samply / bench / corpus sweep), CLI / API /
+  env reference, and the contributor guide.
+- 📖 [**API reference (rustdoc)**](https://p4suta.github.io/aozora/api/aozora/)
+  — auto-deployed alongside the handbook.
 - [`CONTRIBUTING.md`](./CONTRIBUTING.md) — dev setup, TDD flow,
   PR rules.
 - [`SECURITY.md`](./SECURITY.md) — vulnerability disclosure.
-- [API reference (rustdoc)](https://p4suta.github.io/aozora/) — auto-deployed.
+- [`CHANGELOG.md`](./CHANGELOG.md) — release history.
 
 ## Related projects
 

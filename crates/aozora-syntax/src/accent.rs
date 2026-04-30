@@ -456,7 +456,7 @@ mod tests {
         // (archived at docs/specs/aozora/accent_separation.html) by enumerating
         // every ASCII digraph and ligature in the 【a..z】, 【A..Z】, and 【合字】
         // groups. A drop below this number means a merge lost table entries;
-        // a rise means the spec added entries and the ADR should be revisited.
+        // a rise means the spec added entries and the table needs to grow.
         const EXPECTED: usize = 114;
         assert_eq!(
             ACCENT_TABLE.len(),

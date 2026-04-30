@@ -1,0 +1,39 @@
+[book]
+title    = "aozora — 青空文庫記法 Parser Handbook"
+authors  = ["aozora contributors"]
+language = "en"
+src      = "src"
+
+[rust]
+edition = "2024"
+
+[output.html]
+default-theme        = "light"
+preferred-dark-theme = "ayu"
+git-repository-url   = "https://github.com/P4suta/aozora"
+edit-url-template    = "https://github.com/P4suta/aozora/edit/main/crates/aozora-book/{path}"
+site-url             = "/aozora/"
+additional-css       = []
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+[output.html.fold]
+enable = true
+level  = 1
+
+[output.html.search]
+enable          = true
+use-boolean-and = true
+
+# mdbook-mermaid renders ```mermaid blocks as SVG. Used in arch/* chapters
+# for pipeline / arena lifetime / scanner topology diagrams.
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html.playground]
+runnable = false
+
+# `mdbook-linkcheck` is intentionally NOT wired in: the upstream
+# `mdbook-linkcheck` releases lag the `RenderContext` schema in recent
+# `mdbook` versions and the integration breaks. Internal + external link
+# verification is performed by `lychee` instead — invoked via
+# `just book-linkcheck` and the `book` job in `.github/workflows/ci.yml`.
