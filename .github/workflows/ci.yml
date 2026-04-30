@@ -188,6 +188,9 @@ jobs:
       - name: mdbook build
         run: docker run --rm -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook build
       - name: lychee link verification (internal + external)
+        # Configuration (concurrency, retries, accept codes, exclude
+        # paths) lives in `crates/aozora-book/lychee.toml` — same file
+        # `just book-linkcheck` reads, so local + CI behaviour match.
         run: |
           docker run --rm -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local \
-            lychee --no-progress --max-concurrency 8 --exclude-path book/404.html 'book/**/*.html'
+            lychee --config lychee.toml 'book/**/*.html'
