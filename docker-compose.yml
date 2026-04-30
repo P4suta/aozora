@@ -1,8 +1,9 @@
 # aozora workspace compose file. Every `just` target runs a command here.
 #
 # Services:
-#   dev — interactive development (VS Code Dev Containers attaches here)
-#   ci  — identical to dev; used by CI and `just ci` for provenance separation
+#   dev  — interactive development (VS Code Dev Containers attaches here)
+#   ci   — identical to dev; used by CI and `just ci` for provenance separation
+#   book — lean mdbook serve / build container (port 3000)
 #
 # Volumes are named so cargo registry + target + sccache persist between runs.
 
@@ -71,6 +72,22 @@ services:
       - cargo-git:/workspace/.cargo/git
       - cargo-target:/workspace/target
       - sccache:/workspace/.sccache
+
+  book:
+    # Lean container with just `mdbook` / `mdbook-mermaid` / `lychee` —
+    # no Rust toolchain, no sccache. Use `just book-serve` for live
+    # preview at http://localhost:3000, `just book-build` for one-shot
+    # rendering, `just book-linkcheck` for lychee.
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: book
+    image: aozora-book:local
+    working_dir: /workspace/crates/aozora-book
+    volumes:
+      - .:/workspace:cached
+    ports:
+      - "3000:3000"
 
 volumes:
   cargo-registry:

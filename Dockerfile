@@ -62,6 +62,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         cargo-outdated \
         cargo-fuzz \
         typos-cli \
+        mdbook \
+        mdbook-mermaid \
         sccache
 
 # bacon is intentionally installed in its own layer so version bumps don't
@@ -78,6 +80,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/tmp/cargo-build \
     CARGO_TARGET_DIR=/tmp/cargo-build \
     cargo install --locked --root /usr/local git-cliff
+
+# lychee replaces mdbook-linkcheck for book link verification: a single
+# binary that crawls both internal cross-references and external URLs,
+# is async + multi-host concurrent, and tracks the mdbook RenderContext
+# schema independently (mdbook-linkcheck has chronically lagged that
+# schema, which is why we don't depend on it).
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/tmp/cargo-build \
+    CARGO_TARGET_DIR=/tmp/cargo-build \
+    cargo install --locked --root /usr/local lychee
 
 # just (task runner) installed separately; upstream provides an install script
 RUN curl -fsSL https://just.systems/install.sh \
@@ -124,3 +136,26 @@ CMD ["bash"]
 # Stage: ci — same image as dev; named separately so CI pins an explicit target
 ########################################################################
 FROM dev AS ci
+
+########################################################################
+# Stage: book — lean image for `mdbook build` / `mdbook serve` only.
+# No Rust toolchain, no sccache: copies in the prebuilt mdbook +
+# mdbook-mermaid + lychee binaries from `cargo-tools` and stops there.
+########################################################################
+FROM debian:bookworm-slim AS book
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=cargo-tools /usr/local/bin/mdbook         /usr/local/bin/mdbook
+COPY --from=cargo-tools /usr/local/bin/mdbook-mermaid /usr/local/bin/mdbook-mermaid
+COPY --from=cargo-tools /usr/local/bin/lychee         /usr/local/bin/lychee
+
+WORKDIR /workspace/crates/aozora-book
+EXPOSE 3000
+CMD ["mdbook", "serve", "--hostname", "0.0.0.0", "--port", "3000"]
