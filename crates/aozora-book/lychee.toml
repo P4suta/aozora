@@ -1,0 +1,56 @@
+# lychee configuration for the aozora-book handbook.
+#
+# Used by:
+#   - `just book-linkcheck`              (host-side via Docker book service)
+#   - `.github/workflows/ci.yml` `book` job (Docker book stage on the runner)
+#
+# Two design goals:
+#
+#   1. Be tight enough to catch real link rot (Hyperscan docs 404 etc.).
+#   2. Be loose enough to absorb transient network glitches that only
+#      happen on the GitHub Actions runner (random connection drops on
+#      pyo3.rs etc.). A single transient failure must NOT fail the gate
+#      — that is the smell of CI-as-discovery, the opposite of how the
+#      pipeline should work.
+
+# --- output ------------------------------------------------------------
+no_progress = true
+verbose     = "info"
+
+# --- concurrency / timing ---------------------------------------------
+# 16 simultaneous requests: lychee defaults to a per-host throttle, so
+# raising the global concurrency does not flood any single domain. The
+# rendered handbook has ~750 unique URLs across ~20 distinct hosts;
+# 16-way parallelism cuts wall time roughly 2× over the previous 8.
+max_concurrency = 16
+
+# Per-request timeout. The default 20 s lets the dragnet pull through
+# slow upstreams (docs.rs etc.) without hanging indefinitely.
+timeout = 20
+
+# Retry transient failures (connection reset, DNS hiccup, 5xx) up to
+# 3 times with exponential backoff. The pyo3.rs failure that cost us a
+# CI run was a single 302→connection-failed bounce — exactly this case.
+max_retries     = 3
+retry_wait_time = 2
+
+# Follow up to 5 redirects per URL. lychee defaults to 5, but pin it
+# here so the policy is documented next to the "why we retry" notes.
+max_redirects = 5
+
+# --- HTTP behaviour ----------------------------------------------------
+# Pretend to be a real browser; some sites (pyo3.rs, certain CDN front
+# pages) gate on User-Agent and respond 403 or hang for "unknown".
+user_agent = "lychee/aozora-book"
+
+# Accept HTTP 200..=299 (the default) plus 429 (rate-limited but
+# reachable — counts as "the link works") and 999 (LinkedIn's
+# anti-bot sentinel that lychee documents specifically).
+accept = ["200..=299", "429", "999"]
+
+# --- exclusions --------------------------------------------------------
+# `book/404.html` is mdbook's auto-generated 404 page; it carries
+# `/aozora/` site-root absolute links that only resolve under the live
+# Pages deploy. Skip the file entirely rather than maintaining a URL
+# allow-list.
+exclude_path = ["book/404.html"]

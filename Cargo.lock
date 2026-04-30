@@ -336,6 +336,8 @@ dependencies = [
  "rayon",
  "regex",
  "rustix",
+ "serde",
+ "serde_json",
  "walkdir",
  "zstd",
 ]

@@ -44,12 +44,54 @@ RUN mkdir -p /root/.cargo && printf '%s\n' \
 ########################################################################
 # Stage: cargo-tools — install Rust dev utilities (cached layer)
 ########################################################################
+# Every tool below ships a prebuilt binary on its GitHub Releases page.
+# Install them via `cargo-binstall`, which downloads those binaries
+# directly instead of falling through `cargo install` (= source build).
+#
+# Numbers from a cold-cache `dev-image.yml` run on `ubuntu-latest`:
+#   - source-build path (`cargo install --locked` × 17 tools): ~30-40 min
+#   - binstall path (this stage):                               ~30-60 sec
+#
+# Source build is what burned 44 minutes on the first `book` CI job
+# (commit 1e70b60), and would burn it again on any cache eviction.
+# Binstall removes that failure mode at its root.
 FROM toolchain AS cargo-tools
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/tmp/cargo-build \
-    CARGO_TARGET_DIR=/tmp/cargo-build \
-    cargo install --locked --root /usr/local \
+# cargo-binstall itself ships as a single static binary. Pull the
+# prebuilt tarball straight from the release page rather than
+# `cargo install cargo-binstall` (which would itself be a multi-minute
+# source build of the very tool we're using to *avoid* source builds).
+ARG BINSTALL_VERSION=1.10.22
+RUN curl -L --proto '=https' --tlsv1.2 -fsSL \
+    "https://github.com/cargo-bins/cargo-binstall/releases/download/v${BINSTALL_VERSION}/cargo-binstall-x86_64-unknown-linux-musl.tgz" \
+    | tar -xz -C /usr/local/cargo/bin/ cargo-binstall \
+    && chmod +x /usr/local/cargo/bin/cargo-binstall
+
+# Install every dev tool via prebuilt binaries.
+#
+# - `--no-confirm`: skip the y/N prompt (we're in a Dockerfile).
+# - `--no-symlinks`: copy binaries instead of symlinking; safer
+#   across docker overlayfs and image export.
+# - `--locked`: respects the `Cargo.lock` of each crate when binstall
+#   does fall back to a source build.
+# - The default `--strategies crate-meta-data,quick-install,compile`
+#   chain is left intact: most tools resolve through the binary
+#   fetchers in seconds; the few crates without a prebuilt artifact
+#   on a given target (bacon's QuickInstall mirror is currently
+#   flaky, for instance) silently fall back to `cargo install`.
+#   The fallback is acceptable because it's now the exception, not
+#   the rule — the cargo-install hot path is gone.
+#
+# All tools land in /usr/local/cargo/bin (cargo's default install root).
+# The single-RUN form is intentional: with binstall the whole batch
+# completes in under a minute, so the previous "split bacon /
+# git-cliff / lychee into separate layers" trick (which existed
+# purely to keep tool-version bumps from invalidating the
+# multi-hour source-build layer) is no longer needed. One layer is
+# simpler and the build-time cost is now tiny either way.
+RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
+    cargo binstall --no-confirm --no-symlinks --locked \
+        --root /usr/local \
         cargo-nextest \
         cargo-llvm-cov \
         cargo-deny \
@@ -64,32 +106,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         typos-cli \
         mdbook \
         mdbook-mermaid \
+        bacon \
+        git-cliff \
+        lychee \
         sccache
-
-# bacon is intentionally installed in its own layer so version bumps don't
-# invalidate the expensive 14-tool install above (cargo-udeps / semver-checks
-# alone take >15 min from scratch because they transitively depend on cargo).
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/tmp/cargo-build \
-    CARGO_TARGET_DIR=/tmp/cargo-build \
-    cargo install --locked --root /usr/local bacon
-
-# git-cliff for CHANGELOG generation. Same-reasoning as bacon: kept
-# in its own layer so version bumps don't invalidate the big install.
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/tmp/cargo-build \
-    CARGO_TARGET_DIR=/tmp/cargo-build \
-    cargo install --locked --root /usr/local git-cliff
-
-# lychee replaces mdbook-linkcheck for book link verification: a single
-# binary that crawls both internal cross-references and external URLs,
-# is async + multi-host concurrent, and tracks the mdbook RenderContext
-# schema independently (mdbook-linkcheck has chronically lagged that
-# schema, which is why we don't depend on it).
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/tmp/cargo-build \
-    CARGO_TARGET_DIR=/tmp/cargo-build \
-    cargo install --locked --root /usr/local lychee
 
 # just (task runner) installed separately; upstream provides an install script
 RUN curl -fsSL https://just.systems/install.sh \

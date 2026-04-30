@@ -47,10 +47,12 @@ use std::process::{self, Command, ExitStatus};
 
 use clap::{Args, Parser, Subcommand};
 
+mod ci;
 mod corpus;
 mod deps;
 mod trace;
 
+pub(crate) use ci::CiArgs;
 pub(crate) use corpus::CorpusArgs;
 pub(crate) use deps::DepsArgs;
 pub(crate) use trace::TraceArgs;
@@ -86,6 +88,10 @@ enum Cmd {
     /// `mtime` and `blake3` hash match the previous archive are copied
     /// verbatim.
     Corpus(CorpusArgs),
+    /// CI / GitHub Actions instrumentation: profile a finished run,
+    /// run every CI job locally before pushing, or replay a workflow
+    /// job through `nektos/act`.
+    Ci(CiArgs),
 }
 
 #[derive(Args)]
@@ -155,6 +161,7 @@ fn main() {
         Cmd::Trace(args) => trace::dispatch(args),
         Cmd::Deps(args) => deps::dispatch(&args),
         Cmd::Corpus(args) => corpus::dispatch(&args),
+        Cmd::Ci(args) => ci::run(&args),
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");

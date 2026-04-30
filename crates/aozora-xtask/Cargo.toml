@@ -28,5 +28,7 @@ blake3          = { workspace = true }
 rayon           = { workspace = true }
 regex           = { workspace = true }
 rustix          = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
 walkdir         = { workspace = true }
 zstd            = { workspace = true }
