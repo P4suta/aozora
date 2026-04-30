@@ -55,6 +55,14 @@ jobs:
       - name: Install mdbook-mermaid
         run: cargo install --locked mdbook-mermaid
 
+      - name: Install mermaid assets into the book directory
+        # Writes `mermaid.min.js` + `mermaid-init.js` next to `book.toml`
+        # so the `additional-js = [...]` declaration in book.toml resolves.
+        # Those files are .gitignored in the source tree (vendor JS that
+        # the preprocessor regenerates), so CI has to install them on the
+        # runner before `mdbook build` runs.
+        run: mdbook-mermaid install crates/aozora-book
+
       - name: Build rustdoc
         run: cargo doc --workspace --no-deps --document-private-items
 
