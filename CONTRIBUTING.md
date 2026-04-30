@@ -129,8 +129,8 @@ respectively. CI runs all of these in `just ci`.
   an unusual choice. Multi-paragraph docstrings are reserved for
   public API surfaces.
 
-See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the layered
-crate boundaries this implies.
+See the [Architecture chapter of the handbook](https://p4suta.github.io/aozora/arch/pipeline.html)
+for the layered crate boundaries this implies.
 
 ## Adding a new 青空文庫 notation
 
