@@ -21,11 +21,17 @@ services:
   dev:
     environment:
       SCCACHE_GHA_ENABLED: "true"
-      ACTIONS_CACHE_URL: "${ACTIONS_CACHE_URL:-}"
+      # GitHub Actions cache service v2 env vars. The legacy
+      # ACTIONS_CACHE_URL is no longer set on hosted runners; the v2
+      # service uses ACTIONS_RESULTS_URL instead and signals itself with
+      # ACTIONS_CACHE_SERVICE_V2=on. sccache 0.15+ honours both pairs.
+      ACTIONS_RESULTS_URL: "${ACTIONS_RESULTS_URL:-}"
       ACTIONS_RUNTIME_TOKEN: "${ACTIONS_RUNTIME_TOKEN:-}"
+      ACTIONS_CACHE_SERVICE_V2: "${ACTIONS_CACHE_SERVICE_V2:-}"
 
   ci:
     environment:
       SCCACHE_GHA_ENABLED: "true"
-      ACTIONS_CACHE_URL: "${ACTIONS_CACHE_URL:-}"
+      ACTIONS_RESULTS_URL: "${ACTIONS_RESULTS_URL:-}"
       ACTIONS_RUNTIME_TOKEN: "${ACTIONS_RUNTIME_TOKEN:-}"
+      ACTIONS_CACHE_SERVICE_V2: "${ACTIONS_CACHE_SERVICE_V2:-}"
