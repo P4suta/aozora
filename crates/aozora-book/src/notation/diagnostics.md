@@ -155,6 +155,9 @@ that diagnostics survive refactors and translation.
 
 ## See also
 
+- [Architecture → Error recovery](../arch/error-recovery.md) —
+  what the parser *does* after each diagnostic fires (preserved
+  output, dropped tokens, where the bytes go).
 - [Library Quickstart → Diagnostics](../getting-started/library.md)
 - [CLI Quickstart → Diagnostics format](../getting-started/cli.md)
 - [Architecture → Seven-phase lexer](../arch/lexer.md) — which

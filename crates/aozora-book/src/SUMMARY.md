@@ -31,6 +31,7 @@
 - [Eytzinger sorted-set lookup](arch/veb.md)
 - [Shift_JIS + 外字 resolver](arch/encoding.md)
 - [HTML renderer & canonical serialiser](arch/renderer.md)
+- [Error recovery](arch/error-recovery.md)
 - [Crate map](arch/crates.md)
 
 # Bindings
