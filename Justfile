@@ -58,6 +58,35 @@ render-gate:
 render-gate-update:
     {{_dev}} env UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test render_gate
 
+# Phase L1 — regenerate the wire JSON Schema artefacts under
+# crates/aozora-book/src/wire/. Run after touching any wire struct
+# or `aozora::wire::SCHEMA_VERSION`; commit the resulting diff so
+# `schema-check` (drift gate) stays green.
+schema:
+    {{_dev}} cargo run -p aozora-xtask -q -- schema dump
+
+# Phase L1 / L4 — drift gate: fail if the on-disk wire schemas
+# disagree with the live wire structs. Wired into the `drift-gate`
+# CI job; run locally before pushing if you touched wire types.
+schema-check:
+    {{_dev}} cargo run -p aozora-xtask -q -- schema check
+
+# Phase L2 — regenerate crates/aozora-wasm/types/aozora_types.d.ts
+# from the live enums + wire structs. Commit the diff so
+# `types-check` stays green.
+types:
+    {{_dev}} cargo run -p aozora-xtask -q -- types ts
+
+# Phase L2 / L4 — drift gate: fail if the committed
+# aozora_types.d.ts disagrees with fresh codegen. Wired into the
+# `drift-gate` CI job.
+types-check:
+    {{_dev}} cargo run -p aozora-xtask -q -- types check
+
+# Phase L4 — bundled drift gate. Equivalent to the CI `drift-gate`
+# job: schema + types in one shot. Use locally before pushing.
+drift-gate: schema-check types-check
+
 # Property-based tests only. Default 128 cases per proptest block
 # (AOZORA_PROPTEST_CASES override via aozora-test-utils::config). Fast
 # enough to live in `just ci` — see `just prop-deep` for a stress run.

@@ -109,6 +109,22 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just ${{ matrix.target }}
 
+  # Phase L4 — wire-format / TS-types drift gate.
+  #
+  # Both artefacts are committed to the repo (`crates/aozora-book/src/wire/
+  # schema-*.json` and `crates/aozora-wasm/types/aozora_types.d.ts`)
+  # and must stay in sync with the live Rust types they're generated
+  # from. This job re-runs codegen and `git diff`-style asserts the
+  # output is byte-identical to what's checked in. Forgetting to
+  # regenerate after touching `aozora::wire::*` or any `pub const ALL`
+  # array now fails CI rather than landing silently.
+  drift-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ./.github/actions/setup-dev-image
+      - run: just drift-gate
+
   # C ABI smoke test — build aozora-ffi as a cdylib, link the C
   # harness against it, run end-to-end. Validates that
   # `cargo build -p aozora-ffi` produces a working library AND that
