@@ -34,11 +34,37 @@ fn pua_collision_diagnostic_byte_shape() {
     // Envelope present.
     assert!(json.starts_with(r#"{"schema_version":1,"data":["#));
     assert!(json.ends_with("]}"));
-    // Variant tag + span shape.
+    // Variant tag + severity / source axis + span shape.
     assert!(json.contains(r#""kind":"source_contains_pua""#));
+    assert!(json.contains(r#""severity":"warning""#));
+    assert!(json.contains(r#""source":"source""#));
     assert!(json.contains(r#""span":{"start":1,"end":4}"#));
     // codepoint field is present (escaped JSON form).
     assert!(json.contains(r#""codepoint":"#));
+}
+
+/// Severity / source axes are present and correctly classified.
+#[test]
+fn diagnostic_wire_has_severity_and_source_axes() {
+    let doc = Document::new("a\u{E001}b");
+    let tree = doc.parse();
+    let json = wire::serialize_diagnostics(tree.diagnostics());
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+    let entry = parsed
+        .get("data")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+        .expect("at least one diagnostic");
+    assert_eq!(
+        entry.get("severity").and_then(|v| v.as_str()),
+        Some("warning"),
+        "PUA collision is a warning: {entry}"
+    );
+    assert_eq!(
+        entry.get("source").and_then(|v| v.as_str()),
+        Some("source"),
+        "PUA collision is source-side: {entry}"
+    );
 }
 
 /// Ruby span shape (nodes channel), byte-pinned.

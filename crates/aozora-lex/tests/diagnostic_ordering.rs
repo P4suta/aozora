@@ -18,29 +18,30 @@
 //! end-to-end.
 
 use aozora_lex::lex_into_arena;
-use aozora_spec::Diagnostic;
+use aozora_spec::{Diagnostic, DiagnosticSource, codes};
 use aozora_syntax::borrowed::Arena;
 
-/// Ordinal position of a diagnostic variant in the documented pipeline
-/// order (Phase 0 → Phase 2 → Phase 3 → "later").
+/// Ordinal position of a diagnostic in the documented pipeline order
+/// (Phase 0 → Phase 2 → Phase 3 → "later").
 ///
-/// `RegistryOutOfOrder`, `RegistryPositionMismatch`,
-/// `UnregisteredSentinel`, `ResidualAnnotationMarker` are post-build
-/// validators (after Phase 3) so they sort last.
+/// Post-Phase-C the four legacy `Registry*` / `Unregistered*` /
+/// `ResidualAnnotationMarker` variants are folded into
+/// [`Diagnostic::Internal`] with a stable `code` payload — they
+/// remain post-Phase-3 validators and still sort last.
 fn phase_ordinal(d: &Diagnostic) -> u8 {
-    match d {
-        // Phase 0: sanitize.
-        Diagnostic::SourceContainsPua { .. } => 0,
-        // Phase 2: pair.
-        Diagnostic::UnclosedBracket { .. } | Diagnostic::UnmatchedClose { .. } => 2,
-        // Validators that run after Phase 3.
-        Diagnostic::ResidualAnnotationMarker { .. }
-        | Diagnostic::UnregisteredSentinel { .. }
-        | Diagnostic::RegistryOutOfOrder { .. }
-        | Diagnostic::RegistryPositionMismatch { .. } => 4,
-        // `Diagnostic` is `#[non_exhaustive]`. Any future variant that
-        // lands without an updated ordinal slot will fall through to
-        // the catch-all and surface here.
+    match d.source() {
+        // Source-side diagnostics — match by stable code.
+        DiagnosticSource::Source => match d.code() {
+            // Phase 0: sanitize.
+            codes::SOURCE_CONTAINS_PUA => 0,
+            // Phase 2: pair.
+            codes::UNCLOSED_BRACKET | codes::UNMATCHED_CLOSE => 2,
+            _ => 99,
+        },
+        // Pipeline-internal validators run after Phase 3.
+        DiagnosticSource::Internal => 4,
+        // `DiagnosticSource` is `#[non_exhaustive]`. Any future
+        // category lands here until classified explicitly.
         _ => 99,
     }
 }

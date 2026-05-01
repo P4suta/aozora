@@ -32,8 +32,9 @@
 pub use aozora_lex::{BorrowedLexOutput, NodeRef, SourceNode, lex_into_arena};
 pub use aozora_render::{html, serialize};
 pub use aozora_spec::{
-    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic, INLINE_SENTINEL,
-    PairKind, PairLink, SLUGS, SlugEntry, SlugFamily, Span, TriggerKind, canonicalise_slug,
+    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic, DiagnosticSource,
+    INLINE_SENTINEL, PairKind, PairLink, SLUGS, Severity, SlugEntry, SlugFamily, Span, TriggerKind,
+    canonicalise_slug, codes,
 };
 /// Borrowed-AST node types editor surfaces match against (LSP inlay
 /// hints, hover, completion, code actions, semantic tokens).

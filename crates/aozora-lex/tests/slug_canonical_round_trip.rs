@@ -6,8 +6,8 @@
 //! forward-reference families like Bouten / `TateChuYoko`, in
 //! `［＃「対象」に…］` / `［＃「対象」は…］`) and assert that:
 //!
-//! 1. Parsing produces no
-//!    [`Diagnostic::ResidualAnnotationMarker`] — i.e. the slug landed
+//! 1. Parsing produces no `Internal` diagnostic with code
+//!    [`codes::RESIDUAL_ANNOTATION_MARKER`] — i.e. the slug landed
 //!    in the placeholder registry rather than leaking through as plain
 //!    text. That is the closest signal we have to "the parser
 //!    recognised this slug" without depending on the (non-public)
@@ -27,7 +27,7 @@ use aozora_lex::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL, SLUGS,
     SlugFamily, lex_into_arena,
 };
-use aozora_spec::Diagnostic;
+use aozora_spec::codes;
 use aozora_syntax::borrowed::Arena;
 
 /// Substitute placeholder tokens in a slug's canonical text with a
@@ -79,12 +79,12 @@ fn every_canonical_slug_parses_without_residual_marker() {
         let arena = Arena::new();
         let out = lex_into_arena(&source, &arena);
         for diag in &out.diagnostics {
-            if let Diagnostic::ResidualAnnotationMarker { .. } = diag {
-                panic!(
-                    "canonical slug {} (instantiated: {}) leaked through as residual annotation marker; source = {source}",
-                    entry.canonical, body
-                );
-            }
+            assert!(
+                diag.code() != codes::RESIDUAL_ANNOTATION_MARKER,
+                "canonical slug {} (instantiated: {}) leaked through as residual annotation marker; source = {source}",
+                entry.canonical,
+                body
+            );
         }
     }
 }

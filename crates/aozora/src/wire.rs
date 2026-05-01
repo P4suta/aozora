@@ -33,7 +33,9 @@
 
 use serde::Serialize;
 
-use crate::{AozoraNode, AozoraTree, Diagnostic, NodeRef, PairKind, Span};
+use crate::{
+    AozoraNode, AozoraTree, Diagnostic, DiagnosticSource, NodeRef, PairKind, Severity, Span,
+};
 
 /// Wire-format schema version. Bumped on any breaking change to the
 /// serialised shape (variant additions, field renames, envelope
@@ -193,6 +195,8 @@ impl From<Span> for SpanWire {
 #[derive(Serialize)]
 struct DiagnosticWire {
     kind: &'static str,
+    severity: &'static str,
+    source: &'static str,
     span: SpanWire,
     #[serde(skip_serializing_if = "Option::is_none")]
     codepoint: Option<char>,
@@ -200,52 +204,51 @@ struct DiagnosticWire {
 
 impl From<&Diagnostic> for DiagnosticWire {
     fn from(d: &Diagnostic) -> Self {
-        match d {
-            Diagnostic::SourceContainsPua {
-                codepoint, span, ..
-            } => Self {
-                kind: "source_contains_pua",
-                span: (*span).into(),
-                codepoint: Some(*codepoint),
-            },
-            Diagnostic::UnclosedBracket { span, .. } => Self {
-                kind: "unclosed_bracket",
-                span: (*span).into(),
-                codepoint: None,
-            },
-            Diagnostic::UnmatchedClose { span, .. } => Self {
-                kind: "unmatched_close",
-                span: (*span).into(),
-                codepoint: None,
-            },
-            Diagnostic::ResidualAnnotationMarker { span, .. } => Self {
-                kind: "residual_annotation_marker",
-                span: (*span).into(),
-                codepoint: None,
-            },
-            Diagnostic::UnregisteredSentinel {
-                codepoint, span, ..
-            } => Self {
-                kind: "unregistered_sentinel",
-                span: (*span).into(),
-                codepoint: Some(*codepoint),
-            },
-            Diagnostic::RegistryOutOfOrder { span, .. } => Self {
-                kind: "registry_out_of_order",
-                span: (*span).into(),
-                codepoint: None,
-            },
-            Diagnostic::RegistryPositionMismatch { expected, span, .. } => Self {
-                kind: "registry_position_mismatch",
-                span: (*span).into(),
-                codepoint: Some(*expected),
-            },
-            _ => Self {
-                kind: "unknown",
-                span: Span::new(0, 0).into(),
-                codepoint: None,
-            },
+        // Pull the codepoint payload off the variants that carry one.
+        // The accessors collapse the Internal/Source distinction for
+        // severity/source/code; the codepoint is the only payload that
+        // survives variant-by-variant.
+        let codepoint = match d {
+            Diagnostic::SourceContainsPua { codepoint, .. } => Some(*codepoint),
+            _ => None,
+        };
+        // Strip the `aozora::lex::` / `aozora::internal` prefix so the
+        // wire `kind` stays terse — this matches the prior wire layout
+        // where the tag was the trailing token (e.g. "source_contains_pua",
+        // "unclosed_bracket"). Internal codes get the same trailing-token
+        // treatment so the wire `kind` is uniform across the user-facing
+        // and internal axes; consumers that need the full namespaced ID
+        // can still rely on `Diagnostic::code()`.
+        let kind = d.code().rsplit("::").next().unwrap_or("unknown");
+        Self {
+            kind,
+            severity: severity_str(d.severity()),
+            source: source_str(d.source()),
+            span: d.span().into(),
+            codepoint,
         }
+    }
+}
+
+const fn severity_str(s: Severity) -> &'static str {
+    // `Severity` is `#[non_exhaustive]` upstream — the wildcard arm
+    // covers any future variant by defaulting to "error" so consumers
+    // err on the side of surfacing it until they upgrade.
+    match s {
+        Severity::Warning => "warning",
+        Severity::Note => "note",
+        Severity::Error | _ => "error",
+    }
+}
+
+const fn source_str(s: DiagnosticSource) -> &'static str {
+    // `DiagnosticSource` is `#[non_exhaustive]` upstream — the
+    // wildcard arm covers any future variant by defaulting to
+    // "internal" so consumers filtering library-bug diagnostics
+    // catch it until they upgrade.
+    match s {
+        DiagnosticSource::Source => "source",
+        DiagnosticSource::Internal | _ => "internal",
     }
 }
 
