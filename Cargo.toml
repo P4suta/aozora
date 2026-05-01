@@ -202,9 +202,6 @@ serde_json = "1.0"
 # PairWire / ContainerPairWire — the artefacts ship in
 # `crates/aozora-book/src/wire/` and are CI drift-gated.
 schemars   = { version = "1.0", features = ["preserve_order"] }
-# JSON Schema validator used by the wire-roundtrip proptest
-# (validates serialised wire JSON against the generated schema).
-jsonschema = { version = "0.30", default-features = false }
 toml       = "1.1"
 flate2     = "1.1"
 

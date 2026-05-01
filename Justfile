@@ -582,10 +582,19 @@ ci-act *ARGS:
 
 # --- aggregate ----------------------------------------------------------------
 
-# Local replica of the full CI pipeline — everything must pass before push
+# Local replica of the full CI pipeline — everything must pass before push.
+#
+# Order is roughly cheapest-to-most-expensive so a fix-and-retry loop
+# fails fast on the early gates. Mirrors every job in ci.yml that does
+# not need an external runtime (pandoc, wasm-pack, maturin) which the
+# dev image deliberately omits — those three CI-only jobs stay
+# unreachable from local.
 ci:
     just lint
     just build
+    just drift-gate
+    just conformance
+    just smoke-ffi
     just test
     just prop
     just deny

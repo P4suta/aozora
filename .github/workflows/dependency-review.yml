@@ -34,10 +34,18 @@ jobs:
           # Mirror deny.toml's license allow-list. Keep this in sync
           # with the full cargo-deny policy; dependency-review is a
           # PR-time canary, not the source of truth.
+          #
+          # MIT-0 ("MIT No Attribution") is the OSI-approved no-
+          # attribution variant of MIT — strictly more permissive
+          # than MIT and compatible with our `Apache-2.0 OR MIT`
+          # workspace licence. Listed defensively so a future
+          # transitive dep on an MIT-0 crate (the recent crates.io
+          # micro-utility trend) does not require a re-review.
           allow-licenses: >-
             Apache-2.0,
             Apache-2.0 WITH LLVM-exception,
             MIT,
+            MIT-0,
             BSD-2-Clause,
             BSD-3-Clause,
             ISC,

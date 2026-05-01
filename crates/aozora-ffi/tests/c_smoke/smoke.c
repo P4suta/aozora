@@ -81,12 +81,20 @@ int main(void) {
     free(html_str);
     aozora_bytes_free(html);
 
-    /* 3. diagnostics — empty JSON array for clean input */
+    /* 3. diagnostics — envelope-shaped JSON for clean input.
+     *    Phase A+B / L1 standardised every wire endpoint on
+     *    `{"schema_version": 1, "data": [...]}`; clean parse →
+     *    `data: []`. We assert the canonical bytes verbatim. */
     AozoraBytes diag = {NULL, 0, 0};
     status = aozora_document_diagnostics_json(doc, &diag);
     failures += check("aozora_document_diagnostics_json returns Ok", status == 0);
-    failures += check("diagnostics JSON is exactly \"[]\"",
-                      diag.len == 2 && diag.ptr[0] == '[' && diag.ptr[1] == ']');
+    {
+        const char expected[] = "{\"schema_version\":1,\"data\":[]}";
+        size_t expected_len = sizeof(expected) - 1;
+        failures += check("diagnostics JSON is the empty envelope",
+                          diag.len == expected_len &&
+                          memcmp(diag.ptr, expected, expected_len) == 0);
+    }
     aozora_bytes_free(diag);
 
     /* 4. free the document */

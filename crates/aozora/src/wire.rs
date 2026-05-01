@@ -162,9 +162,8 @@ struct Envelope<'a, T> {
 /// [`serialize_diagnostics`] envelope output.
 ///
 /// Schema-feature only. Used by `xtask schema dump` to commit the
-/// schema artefact under `crates/aozora-book/src/wire/`, by the
-/// `aozora schema` CLI subcommand for ad-hoc introspection, and by
-/// the `tests/wire_schema.rs` round-trip property test.
+/// schema artefact under `crates/aozora-book/src/wire/`, and by the
+/// `aozora schema` CLI subcommand for ad-hoc introspection.
 #[cfg(feature = "schema")]
 #[must_use]
 pub fn schema_diagnostics() -> serde_json::Value {

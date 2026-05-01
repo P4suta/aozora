@@ -12,10 +12,17 @@ ignore = []
 version = 2
 # Our crates are Apache-2.0 OR MIT. The list below is the union of
 # allowed licenses across the transitive dep graph.
+#
+# MIT-0 (MIT No Attribution) is OSI-approved and strictly more
+# permissive than MIT. Listed defensively so a future transitive
+# dep on an MIT-0 crate (a growing convention for tiny
+# micro-utility crates on crates.io) lands without a policy
+# decision in the moment.
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "MIT",
+    "MIT-0",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",

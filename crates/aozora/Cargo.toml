@@ -81,6 +81,3 @@ query = ["cst", "dep:aozora-query"]
 # Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and
 # verify parse + round-trip invariants on every document.
 aozora-corpus = { workspace = true }
-# Validate serialised wire JSON against the generated JSON Schema
-# in `tests/wire_schema.rs` — round-trip property test.
-jsonschema = { workspace = true }
