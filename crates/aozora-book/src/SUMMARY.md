@@ -53,6 +53,7 @@
 - [HTML renderer & canonical serialiser](arch/renderer.md)
 - [Concrete syntax tree](arch/cst.md)
 - [Error recovery](arch/error-recovery.md)
+- [tree-sitter reference grammar](arch/grammar-tree-sitter.md)
 - [Crate map](arch/crates.md)
 
 # Bindings

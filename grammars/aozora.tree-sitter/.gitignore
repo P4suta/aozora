@@ -1,0 +1,13 @@
+# tree-sitter generated artefacts. The canonical source lives
+# in grammar.js; parser.c / src/ are reproducible via
+# `tree-sitter generate`. Same convention every published
+# tree-sitter grammar uses on github.com.
+src/
+build/
+node_modules/
+package-lock.json
+binding.gyp
+bindings/
+*.so
+*.dylib
+*.dll
