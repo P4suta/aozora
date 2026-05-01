@@ -32,6 +32,11 @@ aozora-encoding = { workspace = true }
 # aozora-py) enable `aozora/wire` to project the AST into JSON.
 serde      = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+# JSON Schema generation for the wire format. Optional, enabled by
+# the `schema` feature only — most wire consumers don't need
+# `schema_*()` functions and shouldn't pull schemars into their
+# dep tree.
+schemars = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -40,8 +45,16 @@ default = []
 # `serialize_nodes` / `serialize_pairs` and the `SCHEMA_VERSION`
 # constant — the single authority for cross-language wire output.
 wire = ["dep:serde", "dep:serde_json"]
+# JSON Schema introspection for the wire format. Enables
+# `aozora::wire::schema_diagnostics` / `schema_nodes` /
+# `schema_pairs` / `schema_container_pairs` (one per envelope).
+# Used by `xtask schema dump` and the introspection CLI subcommand.
+schema = ["wire", "dep:schemars"]
 
 [dev-dependencies]
 # Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and
 # verify parse + round-trip invariants on every document.
-aozora-corpus   = { workspace = true }
+aozora-corpus = { workspace = true }
+# Validate serialised wire JSON against the generated JSON Schema
+# in `tests/wire_schema.rs` — round-trip property test.
+jsonschema = { workspace = true }

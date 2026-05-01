@@ -191,6 +191,14 @@ regex                 = "1.12"
 # Serialization / data
 serde      = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# JSON Schema generation for the wire format. Used by aozora's
+# `schema` feature to dump schemas of DiagnosticWire / NodeWire /
+# PairWire / ContainerPairWire — the artefacts ship in
+# `crates/aozora-book/src/wire/` and are CI drift-gated.
+schemars   = { version = "1.0", features = ["preserve_order"] }
+# JSON Schema validator used by the wire-roundtrip proptest
+# (validates serialised wire JSON against the generated schema).
+jsonschema = { version = "0.30", default-features = false }
 toml       = "1.1"
 flate2     = "1.1"
 

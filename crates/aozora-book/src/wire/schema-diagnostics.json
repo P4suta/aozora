@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AozoraDiagnosticsEnvelope",
+  "description": "Envelope returned by aozora::wire::serialize_diagnostics.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "data"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Wire schema version. See aozora::wire::SCHEMA_VERSION.",
+      "type": "integer",
+      "const": 1
+    },
+    "data": {
+      "description": "Per-entry payload array; one item per emitted diagnostic / node / pair.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "span": {
+            "$ref": "#/$defs/SpanWire"
+          },
+          "codepoint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 1
+          }
+        },
+        "required": [
+          "kind",
+          "severity",
+          "source",
+          "span"
+        ],
+        "title": "DiagnosticWire",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {
+          "SpanWire": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              },
+              "end": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "start",
+              "end"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

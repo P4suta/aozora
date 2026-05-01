@@ -154,6 +154,92 @@ struct Envelope<'a, T> {
     data: &'a [T],
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Phase L1 — JSON Schema introspection
+// ────────────────────────────────────────────────────────────────────
+
+/// JSON Schema (draft 2020-12) describing the
+/// [`serialize_diagnostics`] envelope output.
+///
+/// Schema-feature only. Used by `xtask schema dump` to commit the
+/// schema artefact under `crates/aozora-book/src/wire/`, by the
+/// `aozora schema` CLI subcommand for ad-hoc introspection, and by
+/// the `tests/wire_schema.rs` round-trip property test.
+#[cfg(feature = "schema")]
+#[must_use]
+pub fn schema_diagnostics() -> serde_json::Value {
+    envelope_schema(
+        "AozoraDiagnosticsEnvelope",
+        "Envelope returned by aozora::wire::serialize_diagnostics.",
+        schemars::schema_for!(DiagnosticWire),
+    )
+}
+
+/// JSON Schema for the [`serialize_nodes`] envelope output.
+#[cfg(feature = "schema")]
+#[must_use]
+pub fn schema_nodes() -> serde_json::Value {
+    envelope_schema(
+        "AozoraNodesEnvelope",
+        "Envelope returned by aozora::wire::serialize_nodes.",
+        schemars::schema_for!(NodeWire),
+    )
+}
+
+/// JSON Schema for the [`serialize_pairs`] envelope output.
+#[cfg(feature = "schema")]
+#[must_use]
+pub fn schema_pairs() -> serde_json::Value {
+    envelope_schema(
+        "AozoraPairsEnvelope",
+        "Envelope returned by aozora::wire::serialize_pairs.",
+        schemars::schema_for!(PairWire),
+    )
+}
+
+/// JSON Schema for the [`serialize_container_pairs`] envelope output.
+#[cfg(feature = "schema")]
+#[must_use]
+pub fn schema_container_pairs() -> serde_json::Value {
+    envelope_schema(
+        "AozoraContainerPairsEnvelope",
+        "Envelope returned by aozora::wire::serialize_container_pairs.",
+        schemars::schema_for!(ContainerPairWire),
+    )
+}
+
+/// Wrap the per-entry schema in the canonical
+/// `{schema_version, data: […]}` envelope. The envelope shape is
+/// shared by all four wire functions; only the inner item schema
+/// varies.
+#[cfg(feature = "schema")]
+fn envelope_schema(
+    title: &str,
+    description: &str,
+    item_schema: schemars::Schema,
+) -> serde_json::Value {
+    serde_json::json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": title,
+        "description": description,
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schema_version", "data"],
+        "properties": {
+            "schema_version": {
+                "description": "Wire schema version. See aozora::wire::SCHEMA_VERSION.",
+                "type": "integer",
+                "const": SCHEMA_VERSION,
+            },
+            "data": {
+                "description": "Per-entry payload array; one item per emitted diagnostic / node / pair.",
+                "type": "array",
+                "items": item_schema.to_value(),
+            },
+        },
+    })
+}
+
 fn serialize_envelope<T: Serialize>(data: &[T]) -> String {
     let env = Envelope {
         schema_version: SCHEMA_VERSION,
@@ -164,6 +250,7 @@ fn serialize_envelope<T: Serialize>(data: &[T]) -> String {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 struct SpanWire {
     start: u32,
     end: u32,
@@ -179,6 +266,7 @@ impl From<Span> for SpanWire {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 struct DiagnosticWire {
     kind: &'static str,
     severity: &'static str,
@@ -239,12 +327,14 @@ const fn source_str(s: DiagnosticSource) -> &'static str {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 struct NodeWire {
     kind: &'static str,
     span: SpanWire,
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 struct PairWire {
     kind: &'static str,
     open: SpanWire,
@@ -252,6 +342,7 @@ struct PairWire {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 struct ContainerPairWire {
     kind: &'static str,
     open: OffsetWire,
@@ -259,6 +350,7 @@ struct ContainerPairWire {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 struct OffsetWire {
     offset: u32,
 }

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AozoraContainerPairsEnvelope",
+  "description": "Envelope returned by aozora::wire::serialize_container_pairs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "data"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Wire schema version. See aozora::wire::SCHEMA_VERSION.",
+      "type": "integer",
+      "const": 1
+    },
+    "data": {
+      "description": "Per-entry payload array; one item per emitted diagnostic / node / pair.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "open": {
+            "$ref": "#/$defs/OffsetWire"
+          },
+          "close": {
+            "$ref": "#/$defs/OffsetWire"
+          }
+        },
+        "required": [
+          "kind",
+          "open",
+          "close"
+        ],
+        "title": "ContainerPairWire",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {
+          "OffsetWire": {
+            "type": "object",
+            "properties": {
+              "offset": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "offset"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

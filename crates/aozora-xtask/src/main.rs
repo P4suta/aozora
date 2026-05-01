@@ -50,6 +50,7 @@ use clap::{Args, Parser, Subcommand};
 mod ci;
 mod corpus;
 mod deps;
+mod schema;
 mod trace;
 
 pub(crate) use ci::CiArgs;
@@ -92,6 +93,29 @@ enum Cmd {
     /// run every CI job locally before pushing, or replay a workflow
     /// job through `nektos/act`.
     Ci(CiArgs),
+    /// JSON Schema artefact dump / drift gate for the `aozora::wire`
+    /// envelopes. Generates schema files under
+    /// `crates/aozora-book/src/wire/schema-*.json` and CI-checks
+    /// that they stay in sync with the live wire shape.
+    Schema(SchemaArgs),
+}
+
+#[derive(Args)]
+struct SchemaArgs {
+    #[command(subcommand)]
+    op: SchemaOp,
+}
+
+#[derive(Subcommand)]
+enum SchemaOp {
+    /// Generate the four wire-format schemas and write them to
+    /// `crates/aozora-book/src/wire/schema-*.json`. Overwrites
+    /// existing files; commit the diff.
+    Dump,
+    /// Compare on-disk schemas against freshly-generated ones; exit
+    /// non-zero on drift. Used as a CI gate so renamed fields /
+    /// added variants force the artefact regeneration step.
+    Check,
 }
 
 #[derive(Args)]
@@ -162,6 +186,7 @@ fn main() {
         Cmd::Deps(args) => deps::dispatch(&args),
         Cmd::Corpus(args) => corpus::dispatch(&args),
         Cmd::Ci(args) => ci::run(&args),
+        Cmd::Schema(args) => schema::dispatch(&args),
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");
