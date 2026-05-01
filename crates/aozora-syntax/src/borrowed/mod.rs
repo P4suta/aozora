@@ -42,7 +42,7 @@ mod types;
 
 pub use arena::Arena;
 pub use intern::{InternStats, Interner};
-pub use non_empty::NonEmpty;
+pub use non_empty::{NonEmpty, NonEmptyStr};
 pub use registry::{ContainerPair, NodeRef, Registry};
 pub use types::{
     Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,

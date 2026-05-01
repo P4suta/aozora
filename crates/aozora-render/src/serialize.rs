@@ -230,12 +230,12 @@ fn emit_gaiji<W: Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
 
 fn emit_kaeriten<W: Write>(k: &Kaeriten<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃")?;
-    out.write_str(k.mark)?;
+    out.write_str(k.mark.as_str())?;
     out.write_char('］')
 }
 
 fn emit_annotation<W: Write>(a: &Annotation<'_>, out: &mut W) -> fmt::Result {
-    out.write_str(a.raw)
+    out.write_str(a.raw.as_str())
 }
 
 fn emit_double_ruby<W: Write>(d: &DoubleRuby<'_>, out: &mut W) -> fmt::Result {
@@ -276,13 +276,13 @@ fn emit_align_end<W: Write>(a: AlignEnd, out: &mut W) -> fmt::Result {
 
 fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃挿絵（")?;
-    out.write_str(s.file)?;
+    out.write_str(s.file.as_str())?;
     out.write_str("）入る］")
 }
 
 fn emit_heading_hint<W: Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃「")?;
-    out.write_str(h.target)?;
+    out.write_str(h.target.as_str())?;
     out.write_str(match h.level {
         1 => "」は大見出し］",
         2 => "」は中見出し］",
@@ -341,7 +341,7 @@ fn emit_content_as_plain<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
         match seg {
             Segment::Text(t) => out.write_str(t)?,
             Segment::Gaiji(g) => out.write_str(g.description)?,
-            Segment::Annotation(a) => out.write_str(a.raw)?,
+            Segment::Annotation(a) => out.write_str(a.raw.as_str())?,
             _ => {}
         }
     }

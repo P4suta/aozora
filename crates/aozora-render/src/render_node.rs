@@ -151,13 +151,13 @@ fn render_annotation<W: Write>(a: &Annotation<'_>, writer: &mut W) -> fmt::Resul
         _ => {}
     }
     writer.write_str(r#"<span class="aozora-annotation" hidden>"#)?;
-    escape_text(a.raw, writer)?;
+    escape_text(a.raw.as_str(), writer)?;
     writer.write_str("</span>")
 }
 
 fn render_kaeriten<W: Write>(k: &Kaeriten<'_>, writer: &mut W) -> fmt::Result {
     writer.write_str(r#"<sup class="aozora-kaeriten">"#)?;
-    escape_text(k.mark, writer)?;
+    escape_text(k.mark.as_str(), writer)?;
     writer.write_str("</sup>")
 }
 

@@ -229,30 +229,41 @@ pub struct AozoraHeading<'src> {
 }
 
 /// Forward-reference heading hint. See [`crate::HeadingHint`].
+///
+/// `target` is [`super::NonEmptyStr`] — Phase 3 only emits the hint
+/// after a `「対象」` quoted target landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadingHint<'src> {
     pub level: u8,
-    pub target: &'src str,
+    pub target: super::NonEmptyStr<'src>,
 }
 
 /// Illustration metadata. See [`crate::Sashie`].
+///
+/// `file` is [`super::NonEmptyStr`] — `［＃挿絵（）入る］` with empty
+/// path is a parse bug, not a valid state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sashie<'src> {
-    pub file: &'src str,
+    pub file: super::NonEmptyStr<'src>,
     pub caption: Option<Content<'src>>,
 }
 
 /// Generic annotation. See [`crate::Annotation`].
+///
+/// `raw` is [`super::NonEmptyStr`] — annotation always carries the
+/// raw bytes between `［＃` and `］`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Annotation<'src> {
-    pub raw: &'src str,
+    pub raw: super::NonEmptyStr<'src>,
     pub kind: AnnotationKind,
 }
 
 /// Chinese-reading-order mark (`返り点`). See [`crate::Kaeriten`].
+///
+/// `mark` is [`super::NonEmptyStr`] — empty kaeriten is a parse bug.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Kaeriten<'src> {
-    pub mark: &'src str,
+    pub mark: super::NonEmptyStr<'src>,
 }
 
 /// Double angle-bracket payload. See [`crate::DoubleRuby`].
@@ -446,7 +457,9 @@ mod tests {
         // Spot-check a couple of variants — exhaustive coverage lives
         // in the legacy AozoraNode test suite. Our concern here is
         // that the borrowed mirror returns the SAME strings.
-        let kaeriten = Kaeriten { mark: "x" };
+        let kaeriten = Kaeriten {
+            mark: super::super::NonEmptyStr::new("x").unwrap(),
+        };
         let n = AozoraNode::Kaeriten(&kaeriten);
         assert_eq!(n.xml_node_name(), "aozora_kaeriten");
         assert!(!n.contains_inlines());
@@ -470,7 +483,9 @@ mod tests {
         };
         assert!(!AozoraNode::Ruby(&ruby).is_block());
 
-        let kaeriten = Kaeriten { mark: "x" };
+        let kaeriten = Kaeriten {
+            mark: super::super::NonEmptyStr::new("x").unwrap(),
+        };
         assert!(!AozoraNode::Kaeriten(&kaeriten).is_block());
     }
 

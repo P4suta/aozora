@@ -168,15 +168,21 @@ impl<'a> BorrowedAllocator<'a> {
 
     /// Build an `Annotation` payload. Use [`Self::seg_annotation`] to
     /// wrap as a segment, or [`Self::annotation`] to wrap as a node.
+    ///
+    /// `raw` carries the [`borrowed::NonEmptyStr`] invariant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `raw` is empty. Phase 3 emits annotation only after
+    /// at least one byte landed in the bracket body.
     pub fn make_annotation(
         &mut self,
         raw: &str,
         kind: AnnotationKind,
     ) -> &'a borrowed::Annotation<'a> {
-        let a = borrowed::Annotation {
-            raw: self.interner.intern(raw),
-            kind,
-        };
+        let raw = borrowed::NonEmptyStr::new(self.interner.intern(raw))
+            .expect("Phase 3 must emit Annotation with non-empty raw bytes");
+        let a = borrowed::Annotation { raw, kind };
         self.arena.alloc(a)
     }
 
@@ -322,30 +328,48 @@ impl<'a> BorrowedAllocator<'a> {
     }
 
     /// `AozoraNode::HeadingHint(HeadingHint { level, target })`.
+    ///
+    /// `target` carries the [`borrowed::NonEmptyStr`] invariant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `target` is empty. Phase 3 emits the hint only
+    /// after the forward-reference target lands non-empty; an empty
+    /// payload here signals a classifier bug.
     pub fn heading_hint(&mut self, level: u8, target: &str) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::HeadingHint(self.arena.alloc(borrowed::HeadingHint {
-            level,
-            target: self.interner.intern(target),
-        }))
+        let target = borrowed::NonEmptyStr::new(self.interner.intern(target))
+            .expect("Phase 3 must emit HeadingHint with non-empty target");
+        borrowed::AozoraNode::HeadingHint(self.arena.alloc(borrowed::HeadingHint { level, target }))
     }
 
     /// `AozoraNode::Sashie(Sashie { file, caption })`.
+    ///
+    /// `file` carries the [`borrowed::NonEmptyStr`] invariant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `file` is empty.
     pub fn sashie(
         &mut self,
         file: &str,
         caption: Option<borrowed::Content<'a>>,
     ) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::Sashie(self.arena.alloc(borrowed::Sashie {
-            file: self.interner.intern(file),
-            caption,
-        }))
+        let file = borrowed::NonEmptyStr::new(self.interner.intern(file))
+            .expect("Phase 3 must emit Sashie with non-empty file path");
+        borrowed::AozoraNode::Sashie(self.arena.alloc(borrowed::Sashie { file, caption }))
     }
 
     /// `AozoraNode::Kaeriten(Kaeriten { mark })`.
+    ///
+    /// `mark` carries the [`borrowed::NonEmptyStr`] invariant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mark` is empty.
     pub fn kaeriten(&mut self, mark: &str) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::Kaeriten(self.arena.alloc(borrowed::Kaeriten {
-            mark: self.interner.intern(mark),
-        }))
+        let mark = borrowed::NonEmptyStr::new(self.interner.intern(mark))
+            .expect("Phase 3 must emit Kaeriten with non-empty mark");
+        borrowed::AozoraNode::Kaeriten(self.arena.alloc(borrowed::Kaeriten { mark }))
     }
 
     /// `AozoraNode::Annotation(a)`.
@@ -571,7 +595,7 @@ mod tests {
         match n {
             borrowed::AozoraNode::HeadingHint(h) => {
                 assert_eq!(h.level, 2);
-                assert_eq!(h.target, "対象");
+                assert_eq!(h.target.as_str(), "対象");
             }
             other => panic!("expected HeadingHint, got {other:?}"),
         }
@@ -585,7 +609,7 @@ mod tests {
         let n = a.sashie("fig01.png", Some(caption));
         match n {
             borrowed::AozoraNode::Sashie(s) => {
-                assert_eq!(s.file, "fig01.png");
+                assert_eq!(s.file.as_str(), "fig01.png");
                 assert_eq!(
                     s.caption.and_then(borrowed::Content::as_plain),
                     Some("挿絵キャプション")
@@ -602,7 +626,7 @@ mod tests {
         let n = a.sashie("fig02.png", None);
         match n {
             borrowed::AozoraNode::Sashie(s) => {
-                assert_eq!(s.file, "fig02.png");
+                assert_eq!(s.file.as_str(), "fig02.png");
                 assert!(s.caption.is_none());
             }
             other => panic!("expected Sashie, got {other:?}"),
@@ -615,7 +639,7 @@ mod tests {
         let mut a = fresh_alloc(&arena);
         let n = a.kaeriten("一");
         match n {
-            borrowed::AozoraNode::Kaeriten(k) => assert_eq!(k.mark, "一"),
+            borrowed::AozoraNode::Kaeriten(k) => assert_eq!(k.mark.as_str(), "一"),
             other => panic!("expected Kaeriten, got {other:?}"),
         }
     }
@@ -628,7 +652,7 @@ mod tests {
         let n = a.annotation(payload);
         match n {
             borrowed::AozoraNode::Annotation(an) => {
-                assert_eq!(an.raw, "［＃X］");
+                assert_eq!(an.raw.as_str(), "［＃X］");
                 assert_eq!(an.kind, AnnotationKind::Unknown);
             }
             other => panic!("expected Annotation, got {other:?}"),

@@ -91,6 +91,52 @@ impl<'src> NonEmpty<Content<'src>> {
     }
 }
 
+/// Non-empty `&'src str` newtype.
+///
+/// Used by AST fields where an empty string would never represent a
+/// valid input — e.g. [`super::Sashie::file`] (illustration path),
+/// [`super::HeadingHint::target`] (forward-reference target),
+/// [`super::Annotation::raw`] (annotation body bytes), and
+/// [`super::Kaeriten::mark`] (kanbun mark text).
+///
+/// Constructable through [`Self::new`] (returns `Option`) or
+/// [`Self::new_unchecked`] (caller-asserted). Auto-derefs to `str`
+/// for read access — `s.len()` / `s.starts_with(...)` etc. work
+/// unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NonEmptyStr<'src>(&'src str);
+
+impl<'src> NonEmptyStr<'src> {
+    /// Construct, returning `None` if `s` is empty.
+    #[must_use]
+    pub const fn new(s: &'src str) -> Option<Self> {
+        if s.is_empty() { None } else { Some(Self(s)) }
+    }
+
+    /// Construct without checking. Caller must guarantee the string
+    /// is non-empty. Marked `#[doc(hidden)]` to discourage casual use;
+    /// the typed constructor [`Self::new`] is the supported path.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new_unchecked(s: &'src str) -> Self {
+        Self(s)
+    }
+
+    /// Underlying `&str`. Equivalent to dereferencing through
+    /// [`Deref`].
+    #[must_use]
+    pub const fn as_str(self) -> &'src str {
+        self.0
+    }
+}
+
+impl Deref for NonEmptyStr<'_> {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::types::Segment;

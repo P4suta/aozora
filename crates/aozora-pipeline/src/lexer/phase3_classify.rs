@@ -3250,7 +3250,7 @@ mod tests {
         let Segment::Annotation(a) = segs[1] else {
             panic!("segment 1 should be Annotation, got {:?}", segs[1]);
         };
-        assert_eq!(a.raw, "［＃ママ］");
+        assert_eq!(a.raw.as_str(), "［＃ママ］");
     }
 
     #[test]
@@ -3335,7 +3335,7 @@ mod tests {
         let Segment::Annotation(a) = last else {
             panic!("final segment should be Annotation, got {last:?}");
         };
-        assert_eq!(a.raw, "［＃改ページ］");
+        assert_eq!(a.raw.as_str(), "［＃改ページ］");
         assert_eq!(a.kind, AnnotationKind::Unknown);
     }
 
@@ -3415,7 +3415,7 @@ mod tests {
             })
             .expect("unknown keyword must promote to Annotation{Unknown}");
         assert_eq!(ann.kind, AnnotationKind::Unknown);
-        assert_eq!(ann.raw, "［＃未知のキーワード］");
+        assert_eq!(ann.raw.as_str(), "［＃未知のキーワード］");
     }
 
     #[test]
@@ -3448,7 +3448,7 @@ mod tests {
             })
             .expect("empty body must still wrap as Annotation{Unknown}");
         assert_eq!(ann.kind, AnnotationKind::Unknown);
-        assert_eq!(ann.raw, "［＃］");
+        assert_eq!(ann.raw.as_str(), "［＃］");
     }
 
     #[test]
@@ -3487,7 +3487,7 @@ mod tests {
             })
             .expect("overflow should fall back to Annotation{Unknown}");
         assert_eq!(ann.kind, AnnotationKind::Unknown);
-        assert_eq!(ann.raw, "［＃300字下げ］");
+        assert_eq!(ann.raw.as_str(), "［＃300字下げ］");
         // The specialised Indent recogniser MUST NOT claim it.
         assert!(
             !out.spans
@@ -3891,7 +3891,7 @@ mod tests {
         run!(out, "第一篇［＃「第一篇」は大見出し］");
         let h = find_heading_hint(&out).expect("expected HeadingHint");
         assert_eq!(h.level, 1);
-        assert_eq!(h.target, "第一篇");
+        assert_eq!(h.target.as_str(), "第一篇");
     }
 
     #[test]
@@ -3900,7 +3900,7 @@ mod tests {
         run!(out, "一［＃「一」は中見出し］");
         let h = find_heading_hint(&out).expect("expected HeadingHint");
         assert_eq!(h.level, 2);
-        assert_eq!(h.target, "一");
+        assert_eq!(h.target.as_str(), "一");
     }
 
     #[test]
@@ -3909,7 +3909,7 @@ mod tests {
         run!(out, "小題［＃「小題」は小見出し］");
         let h = find_heading_hint(&out).expect("expected HeadingHint");
         assert_eq!(h.level, 3);
-        assert_eq!(h.target, "小題");
+        assert_eq!(h.target.as_str(), "小題");
     }
 
     #[test]
@@ -3978,7 +3978,7 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Sashie span");
-        assert_eq!(sashie.file, "fig01.png");
+        assert_eq!(sashie.file.as_str(), "fig01.png");
         assert!(sashie.caption.is_none());
     }
 
@@ -4112,7 +4112,7 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Kaeriten span");
-        assert_eq!(kaeriten.mark, "一");
+        assert_eq!(kaeriten.mark.as_str(), "一");
     }
 
     #[test]
@@ -4128,7 +4128,7 @@ mod tests {
             }) else {
                 panic!("no Kaeriten span for mark {mark:?}");
             };
-            assert_eq!(k.mark, mark);
+            assert_eq!(k.mark.as_str(), mark);
         }
     }
 
@@ -4160,7 +4160,7 @@ mod tests {
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("no Kaeriten span for mark {mark:?}"));
-            assert_eq!(k.mark, mark, "mark={mark:?}");
+            assert_eq!(k.mark.as_str(), mark, "mark={mark:?}");
         }
     }
 
@@ -4187,7 +4187,7 @@ mod tests {
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("no Kaeriten for okurigana {mark:?}"));
-            assert_eq!(k.mark, mark, "mark={mark:?}");
+            assert_eq!(k.mark.as_str(), mark, "mark={mark:?}");
         }
     }
 
@@ -4390,7 +4390,7 @@ mod tests {
             );
         };
         assert_eq!(open.kind, AnnotationKind::WarichuOpen);
-        assert_eq!(open.raw, "［＃割り注］");
+        assert_eq!(open.raw.as_str(), "［＃割り注］");
 
         let Some(AozoraNode::Annotation(close)) = aozora_node(&out.spans[2]) else {
             panic!(
@@ -4399,7 +4399,7 @@ mod tests {
             );
         };
         assert_eq!(close.kind, AnnotationKind::WarichuClose);
-        assert_eq!(close.raw, "［＃割り注終わり］");
+        assert_eq!(close.raw.as_str(), "［＃割り注終わり］");
     }
 
     #[test]
