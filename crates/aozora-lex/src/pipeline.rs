@@ -78,7 +78,6 @@ use aozora_spec::{Diagnostic, PairLink};
 use aozora_syntax::ContainerKind;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Registry};
-use aozora_veb::EytzingerMap;
 use bumpalo::collections::Vec as BumpVec;
 
 use crate::BorrowedLexOutput;
@@ -373,12 +372,10 @@ impl<'a> Pipeline<'_, 'a, Paired> {
         self.diagnostics.extend(classify_diagnostics);
 
         let normalized: &'a str = self.arena.alloc_str(&builder.out);
-        let registry = Registry {
-            inline: EytzingerMap::from_sorted_slice(&builder.inline),
-            block_leaf: EytzingerMap::from_sorted_slice(&builder.block_leaf),
-            block_open: EytzingerMap::from_sorted_slice(&builder.block_open),
-            block_close: EytzingerMap::from_sorted_slice(&builder.block_close),
-        };
+        // Single-table Registry: classifier emits in source order so
+        // `entries` is already sorted by position; from_sorted_slice
+        // skips the redundant sort pass.
+        let registry = Registry::from_sorted_slice(&builder.entries);
         // Freeze the arena `BumpVec<PairLink>` into a `&'a [PairLink]`.
         // `BumpVec::into_bump_slice` consumes self and returns a slice
         // alive for the bump allocator's lifetime, exactly the lifetime
@@ -436,7 +433,10 @@ mod tests {
         let oneshot = Pipeline::run_to_completion("｜青梅《おうめ》", &arena2);
         assert_eq!(chain.normalized, oneshot.normalized);
         assert_eq!(chain.sanitized_len, oneshot.sanitized_len);
-        assert_eq!(chain.registry.inline.len(), oneshot.registry.inline.len());
+        assert_eq!(
+            chain.registry.count_kind(aozora_spec::Sentinel::Inline),
+            oneshot.registry.count_kind(aozora_spec::Sentinel::Inline)
+        );
     }
 
     #[test]

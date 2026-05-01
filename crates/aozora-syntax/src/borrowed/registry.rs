@@ -1,137 +1,169 @@
-//! Sentinel-position → [`AozoraNode`] lookup tables, in `SoA` layout.
+//! Sentinel-position → [`AozoraNode`] lookup table.
 //!
 //! The registry pairs every PUA sentinel position written into the
 //! lexer's normalized text with the [`AozoraNode`] (or
 //! [`crate::extension::ContainerKind`]) that originated it.
 //! Downstream renderers walk the normalized text, encounter a
-//! sentinel, and `get(pos)` to recover the structured node.
+//! sentinel, and `node_at(pos)` to recover the structured node.
 //!
-//! ## Layout decision
+//! # Layout decision
 //!
-//! Stored as **`SoA`** (struct-of-arrays) with keys laid out via
-//! [`aozora_veb::EytzingerMap`] for cache-friendly binary search at
-//! sizes ≥ L1 (~16k entries). The Eytzinger key array dwarfs the L1
-//! footprint of `std::Vec::binary_search` at all sizes ≥ a few
-//! thousand entries; payload arrays are accessed only on dispatch,
-//! so they don't need the same layout optimisation.
+//! Stored as **one** [`aozora_veb::EytzingerMap`] keyed by normalized
+//! byte position. Every entry's payload is a [`NodeRef`] enum that
+//! discriminates inline / block-leaf / block-open / block-close
+//! hits — pre-Phase-D the four sentinel kinds lived in four
+//! independent tables and `node_at` did a 4-way linear sweep. The
+//! single-table layout means one binary search per lookup; renderers
+//! pattern-match on the `NodeRef` variant inline.
 //!
 //! Entries are inserted in monotonically increasing position order
-//! during the lex pipeline, so construction can short-circuit the
-//! sort step that a general-purpose builder would need.
+//! during the lex pipeline (the classifier emits spans in source
+//! order, every sentinel position is therefore strictly greater than
+//! the previous), so construction can short-circuit the sort step
+//! that a general-purpose builder would need.
 //!
-//! ## Coexistence
+//! # Coexistence
 //!
 //! This is the borrowed-AST registry. The legacy
 //! [`crate::PlaceholderRegistry`] is the owned-AST equivalent.
 
 use crate::extension::ContainerKind;
 
+use aozora_spec::Sentinel;
 use aozora_veb::EytzingerMap;
 
 use super::types::AozoraNode;
 
-/// Inline [`AozoraNode`] lookup keyed by normalized byte position.
-pub type InlineRegistry<'src> = EytzingerMap<u32, AozoraNode<'src>>;
-
-/// Block-leaf [`AozoraNode`] lookup keyed by normalized byte position.
-pub type BlockRegistry<'src> = EytzingerMap<u32, AozoraNode<'src>>;
-
-/// Container-kind lookup keyed by normalized byte position. Used by
-/// paired-container open / close sentinel positions; the value is the
-/// [`ContainerKind`] enum, not a node.
-pub type ContainerRegistry = EytzingerMap<u32, ContainerKind>;
-
 /// Unified view over a registry hit, returned by [`Registry::node_at`].
 ///
-/// Hides the four-table structure behind a single enum so editor
-/// surfaces (LSP `textDocument/inlayHint`, `hover`, …) can query a
-/// single position-keyed entry point without caring which sentinel
-/// kind it landed on.
+/// Each variant tags the sentinel kind that fired; renderers
+/// pattern-match the variant once, then handle the inline payload
+/// (a borrowed [`AozoraNode`]) or the container payload (a
+/// [`ContainerKind`] enum) accordingly.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum NodeRef<'src> {
-    /// Hit in the inline-sentinel table.
+    /// Hit on an inline-sentinel position
+    /// ([`Sentinel::Inline`](aozora_spec::Sentinel::Inline)).
     Inline(AozoraNode<'src>),
-    /// Hit in the block-leaf-sentinel table.
+    /// Hit on a block-leaf-sentinel position
+    /// ([`Sentinel::BlockLeaf`](aozora_spec::Sentinel::BlockLeaf)).
     BlockLeaf(AozoraNode<'src>),
-    /// Hit in the block-container-open table.
+    /// Hit on a block-container-open position
+    /// ([`Sentinel::BlockOpen`](aozora_spec::Sentinel::BlockOpen)).
     BlockOpen(ContainerKind),
-    /// Hit in the block-container-close table.
+    /// Hit on a block-container-close position
+    /// ([`Sentinel::BlockClose`](aozora_spec::Sentinel::BlockClose)).
     BlockClose(ContainerKind),
 }
 
-/// Whole-document registry — four `SoA` tables, one per sentinel kind.
+impl NodeRef<'_> {
+    /// Sentinel kind that produced this entry.
+    ///
+    /// Useful for tests / tooling that want to bucket registry
+    /// entries by sentinel kind without depending on the variant
+    /// payload shape.
+    #[must_use]
+    pub const fn sentinel_kind(self) -> Sentinel {
+        match self {
+            Self::Inline(_) => Sentinel::Inline,
+            Self::BlockLeaf(_) => Sentinel::BlockLeaf,
+            Self::BlockOpen(_) => Sentinel::BlockOpen,
+            Self::BlockClose(_) => Sentinel::BlockClose,
+        }
+    }
+}
+
+/// Whole-document registry — single Eytzinger-keyed table.
 ///
-/// Mirrors the legacy [`crate::PlaceholderRegistry`]'s shape but
-/// substitutes `Vec<(K, V)>` with [`EytzingerMap<K, V>`] for
-/// cache-friendly lookup. The `inline` / `block_leaf` tables hold
-/// [`AozoraNode`] payloads borrowed from the arena; the `block_open` /
-/// `block_close` tables hold container kinds (no arena allocation).
+/// Pre-Phase-D this carried four independent tables (`inline`,
+/// `block_leaf`, `block_open`, `block_close`) and `node_at` swept
+/// them in declaration order. The new single-table layout means
+/// `node_at` is one binary search, and every entry's sentinel kind is
+/// encoded by the [`NodeRef`] variant — renderers pattern-match the
+/// hit inline rather than dispatching across tables.
 #[derive(Debug, Clone)]
 pub struct Registry<'src> {
-    pub inline: InlineRegistry<'src>,
-    pub block_leaf: BlockRegistry<'src>,
-    pub block_open: ContainerRegistry,
-    pub block_close: ContainerRegistry,
+    /// Single `SoA` lookup table keyed by normalized byte position.
+    /// Built once at pipeline-build time from the classifier's emit
+    /// stream; entries arrive in strictly increasing position order
+    /// because the classifier tiles spans contiguously.
+    table: EytzingerMap<u32, NodeRef<'src>>,
 }
 
 impl<'src> Registry<'src> {
-    /// Empty registry — every table is empty. Useful as a starting
-    /// point for incremental construction (the lex driver pushes into
-    /// builder vecs that later collapse into Eytzinger tables).
+    /// Construct a registry from a position-sorted slice of
+    /// `(position, NodeRef)` entries.
+    ///
+    /// # Panics
+    ///
+    /// Inherits [`EytzingerMap::from_sorted_slice`]'s precondition:
+    /// the slice must be sorted by key. The lex pipeline always emits
+    /// in source order, so this is satisfied by construction.
+    #[must_use]
+    pub fn from_sorted_slice(entries: &[(u32, NodeRef<'src>)]) -> Self {
+        Self {
+            table: EytzingerMap::from_sorted_slice(entries),
+        }
+    }
+
+    /// Empty registry. Useful as a starting point for incremental
+    /// construction (the lex driver pushes into a builder vec that
+    /// later collapses into the Eytzinger table).
     #[must_use]
     pub const fn empty() -> Self {
         Self {
-            inline: EytzingerMap::new(),
-            block_leaf: EytzingerMap::new(),
-            block_open: EytzingerMap::new(),
-            block_close: EytzingerMap::new(),
+            table: EytzingerMap::new(),
         }
     }
 
-    /// True iff every table is empty.
+    /// True iff the registry holds no entries.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.inline.is_empty()
-            && self.block_leaf.is_empty()
-            && self.block_open.is_empty()
-            && self.block_close.is_empty()
+        self.table.is_empty()
     }
 
-    /// Total number of entries across all four tables. O(1).
+    /// Total number of entries across all sentinel kinds. O(1).
     #[must_use]
     pub fn len(&self) -> usize {
-        self.inline.len() + self.block_leaf.len() + self.block_open.len() + self.block_close.len()
+        self.table.len()
     }
 
     /// Look up the registry entry at the given *normalized-text* byte
-    /// position, querying the four sub-tables in order: inline →
-    /// `block_leaf` → `block_open` → `block_close`. Returns `None` if
-    /// no table holds that position.
+    /// position. Returns `None` if no sentinel landed at that
+    /// position.
     ///
-    /// The four tables address disjoint positions by construction (a
-    /// single PUA byte position carries exactly one sentinel kind), so
-    /// the order matters only for the empty-table fast paths.
-    ///
-    /// Coordinates here are **normalized**, not source: editor surfaces
-    /// that hold a source byte offset must first translate via
-    /// `BorrowedLexOutput::node_at_source` (which walks a source-keyed
-    /// side-table built during the lex pipeline).
+    /// Coordinates here are **normalized**, not source: editor
+    /// surfaces that hold a source byte offset must first translate
+    /// via `BorrowedLexOutput::node_at_source` (which walks a
+    /// source-keyed side-table built during the lex pipeline).
     #[must_use]
     pub fn node_at(&self, pos: u32) -> Option<NodeRef<'src>> {
-        if let Some(node) = self.inline.get(&pos).copied() {
-            return Some(NodeRef::Inline(node));
-        }
-        if let Some(node) = self.block_leaf.get(&pos).copied() {
-            return Some(NodeRef::BlockLeaf(node));
-        }
-        if let Some(kind) = self.block_open.get(&pos).copied() {
-            return Some(NodeRef::BlockOpen(kind));
-        }
-        if let Some(kind) = self.block_close.get(&pos).copied() {
-            return Some(NodeRef::BlockClose(kind));
-        }
-        None
+        self.table.get(&pos).copied()
+    }
+
+    /// Iterate over `(position, NodeRef)` entries in ascending
+    /// position order. Useful for tests and tooling that want to
+    /// enumerate everything the registry holds.
+    pub fn iter_sorted(&self) -> impl Iterator<Item = (u32, NodeRef<'src>)> + '_ {
+        self.table.iter_sorted().map(|(&p, &nr)| (p, nr))
+    }
+
+    /// Iterate over entries whose [`NodeRef::sentinel_kind`] matches
+    /// `kind`. O(n) but the filter is a constant-time variant
+    /// discriminant compare.
+    pub fn iter_kind(&self, kind: Sentinel) -> impl Iterator<Item = (u32, NodeRef<'src>)> + '_ {
+        self.iter_sorted()
+            .filter(move |(_, nr)| nr.sentinel_kind() == kind)
+    }
+
+    /// Count entries whose [`NodeRef::sentinel_kind`] matches `kind`.
+    ///
+    /// O(n) over the table. Cardinality assertions in unit tests
+    /// drive this; production lookups go through [`Self::node_at`].
+    #[must_use]
+    pub fn count_kind(&self, kind: Sentinel) -> usize {
+        self.iter_kind(kind).count()
     }
 }
 
@@ -160,37 +192,33 @@ mod tests {
     }
 
     #[test]
-    fn inline_registry_lookup_returns_node() {
-        let inline = EytzingerMap::from_sorted_slice(&[
-            (10u32, AozoraNode::Indent(Indent { amount: 1 })),
-            (20u32, AozoraNode::PageBreak),
-            (30u32, AozoraNode::Indent(Indent { amount: 3 })),
+    fn node_at_returns_inline_payload_for_inline_sentinel_position() {
+        let r: Registry<'static> = Registry::from_sorted_slice(&[
+            (
+                10u32,
+                NodeRef::Inline(AozoraNode::Indent(Indent { amount: 1 })),
+            ),
+            (20u32, NodeRef::Inline(AozoraNode::PageBreak)),
+            (
+                30u32,
+                NodeRef::Inline(AozoraNode::Indent(Indent { amount: 3 })),
+            ),
         ]);
-        let r: Registry<'static> = Registry {
-            inline,
-            block_leaf: EytzingerMap::new(),
-            block_open: EytzingerMap::new(),
-            block_close: EytzingerMap::new(),
-        };
         assert!(!r.is_empty());
         assert_eq!(r.len(), 3);
-        let got = r.inline.get(&20u32).copied();
-        assert!(matches!(got, Some(AozoraNode::PageBreak)));
-        assert!(r.inline.get(&15).is_none());
+        let got = r.node_at(20);
+        assert!(matches!(got, Some(NodeRef::Inline(AozoraNode::PageBreak))));
+        assert!(r.node_at(15).is_none());
     }
 
     #[test]
-    fn node_at_dispatches_to_correct_table() {
-        let inline = EytzingerMap::from_sorted_slice(&[(10u32, AozoraNode::PageBreak)]);
-        let block_leaf = EytzingerMap::from_sorted_slice(&[(20u32, AozoraNode::PageBreak)]);
-        let block_open = EytzingerMap::from_sorted_slice(&[(30u32, ContainerKind::Keigakomi)]);
-        let block_close = EytzingerMap::from_sorted_slice(&[(40u32, ContainerKind::Keigakomi)]);
-        let r: Registry<'static> = Registry {
-            inline,
-            block_leaf,
-            block_open,
-            block_close,
-        };
+    fn node_at_dispatches_to_correct_variant() {
+        let r: Registry<'static> = Registry::from_sorted_slice(&[
+            (10u32, NodeRef::Inline(AozoraNode::PageBreak)),
+            (20u32, NodeRef::BlockLeaf(AozoraNode::PageBreak)),
+            (30u32, NodeRef::BlockOpen(ContainerKind::Keigakomi)),
+            (40u32, NodeRef::BlockClose(ContainerKind::Keigakomi)),
+        ]);
         assert!(matches!(
             r.node_at(10),
             Some(NodeRef::Inline(AozoraNode::PageBreak))
@@ -211,25 +239,31 @@ mod tests {
     }
 
     #[test]
-    fn container_registry_carries_kind() {
-        let block_open = EytzingerMap::from_sorted_slice(&[
-            (5u32, ContainerKind::Indent { amount: 2 }),
-            (10u32, ContainerKind::Keigakomi),
+    fn count_kind_buckets_entries_by_sentinel() {
+        let r: Registry<'static> = Registry::from_sorted_slice(&[
+            (
+                5u32,
+                NodeRef::BlockOpen(ContainerKind::Indent { amount: 2 }),
+            ),
+            (10u32, NodeRef::BlockOpen(ContainerKind::Keigakomi)),
+            (15u32, NodeRef::Inline(AozoraNode::PageBreak)),
+            (20u32, NodeRef::BlockClose(ContainerKind::Keigakomi)),
         ]);
-        let r = Registry::<'static> {
-            inline: EytzingerMap::new(),
-            block_leaf: EytzingerMap::new(),
-            block_open,
-            block_close: EytzingerMap::new(),
-        };
-        assert_eq!(r.len(), 2);
-        assert_eq!(
-            r.block_open.get(&5).copied(),
-            Some(ContainerKind::Indent { amount: 2 })
-        );
-        assert_eq!(
-            r.block_open.get(&10).copied(),
-            Some(ContainerKind::Keigakomi)
-        );
+        assert_eq!(r.count_kind(Sentinel::BlockOpen), 2);
+        assert_eq!(r.count_kind(Sentinel::Inline), 1);
+        assert_eq!(r.count_kind(Sentinel::BlockClose), 1);
+        assert_eq!(r.count_kind(Sentinel::BlockLeaf), 0);
+    }
+
+    #[test]
+    fn node_ref_sentinel_kind_round_trips() {
+        let inline = NodeRef::Inline(AozoraNode::PageBreak);
+        let block_leaf = NodeRef::BlockLeaf(AozoraNode::PageBreak);
+        let block_open = NodeRef::BlockOpen(ContainerKind::Keigakomi);
+        let block_close = NodeRef::BlockClose(ContainerKind::Keigakomi);
+        assert_eq!(inline.sentinel_kind(), Sentinel::Inline);
+        assert_eq!(block_leaf.sentinel_kind(), Sentinel::BlockLeaf);
+        assert_eq!(block_open.sentinel_kind(), Sentinel::BlockOpen);
+        assert_eq!(block_close.sentinel_kind(), Sentinel::BlockClose);
     }
 }

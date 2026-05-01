@@ -36,8 +36,8 @@ pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 
 pub use aozora_spec::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic, INLINE_SENTINEL,
-    PairKind, PairLink, SLUGS, SlugEntry, SlugFamily, Span, TriggerKind, canonicalise_slug,
-    classify_trigger_bytes,
+    PairKind, PairLink, SLUGS, Sentinel, SlugEntry, SlugFamily, Span, TriggerKind,
+    canonicalise_slug, classify_trigger_bytes,
 };
 
 #[cfg(test)]
@@ -62,7 +62,7 @@ mod tests {
             .filter(|c| *c == INLINE_SENTINEL)
             .count();
         assert_eq!(inline_count, 1, "normalized: {:?}", out.normalized);
-        assert_eq!(out.registry.inline.len(), 1);
+        assert_eq!(out.registry.count_kind(Sentinel::Inline), 1);
     }
 
     #[test]

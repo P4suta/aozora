@@ -25,6 +25,7 @@
 //! consistency is the load-bearing assertion.
 
 use aozora_lex::lex_into_arena;
+use aozora_spec::Sentinel;
 use aozora_syntax::borrowed::Arena;
 
 /// Build `［＃` × depth followed by `］` × depth.
@@ -49,15 +50,15 @@ fn nested_annotations_16_levels_lex_without_panic() {
     // produces exactly one inline `Annotation` registry entry. No
     // diagnostics (every `［＃` has a matching `］`).
     assert_eq!(
-        out.registry.inline.len(),
+        out.registry.count_kind(Sentinel::Inline),
         1,
         "16-deep nested annotation must yield one outer inline entry, \
          got {}",
-        out.registry.inline.len()
+        out.registry.count_kind(Sentinel::Inline)
     );
-    assert!(out.registry.block_leaf.is_empty());
-    assert!(out.registry.block_open.is_empty());
-    assert!(out.registry.block_close.is_empty());
+    assert_eq!(out.registry.count_kind(Sentinel::BlockLeaf), 0);
+    assert_eq!(out.registry.count_kind(Sentinel::BlockOpen), 0);
+    assert_eq!(out.registry.count_kind(Sentinel::BlockClose), 0);
     assert!(
         out.diagnostics.is_empty(),
         "balanced nesting must not emit diagnostics, got {:?}",
@@ -73,10 +74,10 @@ fn nested_annotations_64_levels_spill_to_heap_unchanged() {
     let src = nested_annotation(64);
     let arena = Arena::new();
     let out = lex_into_arena(&src, &arena);
-    assert_eq!(out.registry.inline.len(), 1);
-    assert!(out.registry.block_leaf.is_empty());
-    assert!(out.registry.block_open.is_empty());
-    assert!(out.registry.block_close.is_empty());
+    assert_eq!(out.registry.count_kind(Sentinel::Inline), 1);
+    assert_eq!(out.registry.count_kind(Sentinel::BlockLeaf), 0);
+    assert_eq!(out.registry.count_kind(Sentinel::BlockOpen), 0);
+    assert_eq!(out.registry.count_kind(Sentinel::BlockClose), 0);
     assert!(out.diagnostics.is_empty());
 }
 
@@ -91,10 +92,10 @@ fn nested_annotations_256_levels_do_not_overflow_stack() {
     let src = nested_annotation(256);
     let arena = Arena::new();
     let out = lex_into_arena(&src, &arena);
-    assert_eq!(out.registry.inline.len(), 1);
-    assert!(out.registry.block_leaf.is_empty());
-    assert!(out.registry.block_open.is_empty());
-    assert!(out.registry.block_close.is_empty());
+    assert_eq!(out.registry.count_kind(Sentinel::Inline), 1);
+    assert_eq!(out.registry.count_kind(Sentinel::BlockLeaf), 0);
+    assert_eq!(out.registry.count_kind(Sentinel::BlockOpen), 0);
+    assert_eq!(out.registry.count_kind(Sentinel::BlockClose), 0);
     assert!(out.diagnostics.is_empty());
 }
 
@@ -114,8 +115,8 @@ fn nested_annotations_asymmetric_bodies_classify_consistently() {
     let b = lex_into_arena(src, &arena_b);
 
     // One outer inline entry, identical across runs.
-    assert_eq!(a.registry.inline.len(), 1);
-    assert_eq!(b.registry.inline.len(), 1);
+    assert_eq!(a.registry.count_kind(Sentinel::Inline), 1);
+    assert_eq!(b.registry.count_kind(Sentinel::Inline), 1);
     assert_eq!(
         a.normalized, b.normalized,
         "asymmetric nesting must be deterministic"
@@ -134,10 +135,10 @@ fn mixed_solo_and_nested_annotations_yield_expected_registry_entries() {
     let arena = Arena::new();
     let out = lex_into_arena(src, &arena);
     assert_eq!(
-        out.registry.inline.len(),
+        out.registry.count_kind(Sentinel::Inline),
         2,
         "expected 2 outer inline entries, got {}",
-        out.registry.inline.len()
+        out.registry.count_kind(Sentinel::Inline)
     );
     assert!(
         out.diagnostics.is_empty(),

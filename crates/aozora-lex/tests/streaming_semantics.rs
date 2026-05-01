@@ -23,7 +23,7 @@
 
 use aozora_lex::{Pipeline, lex_into_arena};
 use aozora_lexer::{PairEvent, PairKind, classify, pair, tokenize};
-use aozora_spec::Diagnostic;
+use aozora_spec::{Diagnostic, Sentinel};
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;
 
@@ -75,7 +75,11 @@ fn classify_stream_drop_partway_does_not_corrupt_global_state() {
     // identically to a never-interrupted run.
     let arena2 = Arena::new();
     let oneshot = lex_into_arena(src, &arena2);
-    assert_eq!(oneshot.registry.inline.len(), 1, "ruby span survived");
+    assert_eq!(
+        oneshot.registry.count_kind(Sentinel::Inline),
+        1,
+        "ruby span survived"
+    );
 }
 
 // =====================================================================
@@ -246,23 +250,23 @@ fn pipeline_chain_matches_lex_into_arena_for_corpus_shapes() {
             "diagnostic count drift for input {src:?}"
         );
         assert_eq!(
-            chain.registry.inline.len(),
-            oneshot.registry.inline.len(),
+            chain.registry.count_kind(Sentinel::Inline),
+            oneshot.registry.count_kind(Sentinel::Inline),
             "inline registry drift for input {src:?}"
         );
         assert_eq!(
-            chain.registry.block_leaf.len(),
-            oneshot.registry.block_leaf.len(),
+            chain.registry.count_kind(Sentinel::BlockLeaf),
+            oneshot.registry.count_kind(Sentinel::BlockLeaf),
             "block_leaf registry drift for input {src:?}"
         );
         assert_eq!(
-            chain.registry.block_open.len(),
-            oneshot.registry.block_open.len(),
+            chain.registry.count_kind(Sentinel::BlockOpen),
+            oneshot.registry.count_kind(Sentinel::BlockOpen),
             "block_open registry drift for input {src:?}"
         );
         assert_eq!(
-            chain.registry.block_close.len(),
-            oneshot.registry.block_close.len(),
+            chain.registry.count_kind(Sentinel::BlockClose),
+            oneshot.registry.count_kind(Sentinel::BlockClose),
             "block_close registry drift for input {src:?}"
         );
     }

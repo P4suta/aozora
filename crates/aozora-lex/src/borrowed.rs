@@ -154,22 +154,25 @@ pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'
 
 /// Single-pass arena-emitting normalizer.
 ///
-/// Pushes into per-kind `Vec<(u32, borrowed::AozoraNode<'a>)>`
-/// tables. The nodes are allocated upstream by [`BorrowedAllocator`]
-/// during [`classify_with`]; this walker is strictly the PUA-rewriter
-/// + position-recorder, doing zero AST allocation of its own.
+/// Pushes into a single position-keyed
+/// `Vec<(u32, borrowed::NodeRef<'a>)>` table. The classifier emits
+/// spans in source order, every sentinel position is therefore
+/// strictly greater than the previous, and the [`Registry`] consumes
+/// the slice via `from_sorted_slice` without re-sorting. The nodes
+/// themselves are allocated upstream by [`BorrowedAllocator`] during
+/// [`classify_with`]; this walker is strictly the PUA-rewriter +
+/// position-recorder, doing zero AST allocation of its own.
 pub(crate) struct ArenaNormalizer<'src, 'a> {
     pub(crate) out: String,
     source: &'src str,
-    pub(crate) inline: Vec<(u32, borrowed::AozoraNode<'a>)>,
-    pub(crate) block_leaf: Vec<(u32, borrowed::AozoraNode<'a>)>,
-    pub(crate) block_open: Vec<(u32, ContainerKind)>,
-    pub(crate) block_close: Vec<(u32, ContainerKind)>,
-    /// Source-keyed (`source_span`, `NodeRef`) parallel to the four
-    /// per-kind tables above. Drained into the arena
-    /// `&'a [SourceNode]` at pipeline-build time. Naturally sorted by
-    /// `source_span.start` because the classifier emits spans in
-    /// source order.
+    /// Position-keyed registry entries (one per emitted sentinel),
+    /// pre-Phase-D split across four per-kind vecs. The single-vec
+    /// layout drops the 4-way dispatch in the renderer hot path.
+    pub(crate) entries: Vec<(u32, NodeRef<'a>)>,
+    /// Source-keyed (`source_span`, `NodeRef`) parallel to
+    /// `entries`. Drained into the arena `&'a [SourceNode]` at
+    /// pipeline-build time. Naturally sorted by `source_span.start`
+    /// because the classifier emits spans in source order.
     pub(crate) source_nodes: Vec<SourceNode<'a>>,
 }
 
@@ -181,16 +184,10 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
             // `source.len()` is a safe upper bound.
             out: String::with_capacity(source.len()),
             source,
-            // Per-kind table capacities are educated guesses from
-            // corpus profiling: inline dominates (~80% of spans),
-            // block_leaf ~10%, containers ~5% each. Conservative
-            // splits keep early `push`es alloc-free.
-            inline: Vec::with_capacity(span_capacity_hint.saturating_mul(4) / 5),
-            block_leaf: Vec::with_capacity(span_capacity_hint / 10),
-            block_open: Vec::with_capacity(span_capacity_hint / 20),
-            block_close: Vec::with_capacity(span_capacity_hint / 20),
-            // source_nodes mirrors the union of the four tables above.
-            // Sum of the per-kind hints is a tight upper bound.
+            // Single registry table; capacity hint is the union of
+            // sentinel emissions. Source-keyed table mirrors the same
+            // count.
+            entries: Vec::with_capacity(span_capacity_hint),
             source_nodes: Vec::with_capacity(span_capacity_hint),
         }
     }
@@ -222,18 +219,20 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     let pos = self.current_pos();
                     self.out.push(BLOCK_LEAF_SENTINEL);
                     self.out.push_str("\n\n");
-                    self.block_leaf.push((pos, *node));
+                    let nref = NodeRef::BlockLeaf(*node);
+                    self.entries.push((pos, nref));
                     self.source_nodes.push(SourceNode {
                         source_span: span.source_span,
-                        node: NodeRef::BlockLeaf(*node),
+                        node: nref,
                     });
                 } else {
                     let pos = self.current_pos();
                     self.out.push(INLINE_SENTINEL);
-                    self.inline.push((pos, *node));
+                    let nref = NodeRef::Inline(*node);
+                    self.entries.push((pos, nref));
                     self.source_nodes.push(SourceNode {
                         source_span: span.source_span,
-                        node: NodeRef::Inline(*node),
+                        node: nref,
                     });
                 }
             }
@@ -242,10 +241,11 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 let pos = self.current_pos();
                 self.out.push(BLOCK_OPEN_SENTINEL);
                 self.out.push_str("\n\n");
-                self.block_open.push((pos, *container));
+                let nref = NodeRef::BlockOpen(*container);
+                self.entries.push((pos, nref));
                 self.source_nodes.push(SourceNode {
                     source_span: span.source_span,
-                    node: NodeRef::BlockOpen(*container),
+                    node: nref,
                 });
             }
             SpanKind::BlockClose(container) => {
@@ -253,10 +253,11 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 let pos = self.current_pos();
                 self.out.push(BLOCK_CLOSE_SENTINEL);
                 self.out.push_str("\n\n");
-                self.block_close.push((pos, *container));
+                let nref = NodeRef::BlockClose(*container);
+                self.entries.push((pos, nref));
                 self.source_nodes.push(SourceNode {
                     source_span: span.source_span,
-                    node: NodeRef::BlockClose(*container),
+                    node: nref,
                 });
             }
             // `SpanKind` is `#[non_exhaustive]`; new variants land
@@ -293,6 +294,8 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aozora_spec::Sentinel;
+
     #[test]
     fn empty_source_round_trips() {
         let arena = Arena::new();
@@ -317,10 +320,17 @@ mod tests {
         let arena = Arena::new();
         let out = lex_into_arena("｜青梅《おうめ》", &arena);
         // Exactly one inline sentinel emitted by the normalizer.
-        assert_eq!(out.registry.inline.len(), 1);
+        assert_eq!(out.registry.count_kind(Sentinel::Inline), 1);
         // The borrowed AozoraNode behind it must be a Ruby.
-        let (pos, node) = out.registry.inline.iter_sorted().next().expect("one entry");
-        assert!(out.normalized.as_bytes()[*pos as usize..].starts_with(&[0xEE, 0x80, 0x81]));
+        let (pos, nr) = out
+            .registry
+            .iter_kind(Sentinel::Inline)
+            .next()
+            .expect("one entry");
+        assert!(out.normalized.as_bytes()[pos as usize..].starts_with(&[0xEE, 0x80, 0x81]));
+        let NodeRef::Inline(node) = nr else {
+            panic!("expected NodeRef::Inline, got {nr:?}");
+        };
         assert!(matches!(node, borrowed::AozoraNode::Ruby(_)));
     }
 
@@ -329,13 +339,15 @@ mod tests {
         let arena = Arena::new();
         let out = lex_into_arena("text［＃改ページ］more", &arena);
         // Page break is a standalone block, lands in block_leaf.
-        assert_eq!(out.registry.block_leaf.len(), 1);
-        let (_pos, node) = out
+        assert_eq!(out.registry.count_kind(Sentinel::BlockLeaf), 1);
+        let (_pos, nr) = out
             .registry
-            .block_leaf
-            .iter_sorted()
+            .iter_kind(Sentinel::BlockLeaf)
             .next()
             .expect("one entry");
+        let NodeRef::BlockLeaf(node) = nr else {
+            panic!("expected NodeRef::BlockLeaf, got {nr:?}");
+        };
         assert!(matches!(node, borrowed::AozoraNode::PageBreak));
     }
 
@@ -346,9 +358,12 @@ mod tests {
             "［＃ここから2字下げ］\nbody\n［＃ここで字下げ終わり］",
             &arena,
         );
-        assert_eq!(out.registry.block_open.len(), 1);
-        assert_eq!(out.registry.block_close.len(), 1);
-        let (_, kind) = out.registry.block_open.iter_sorted().next().unwrap();
+        assert_eq!(out.registry.count_kind(Sentinel::BlockOpen), 1);
+        assert_eq!(out.registry.count_kind(Sentinel::BlockClose), 1);
+        let (_, nr) = out.registry.iter_kind(Sentinel::BlockOpen).next().unwrap();
+        let NodeRef::BlockOpen(kind) = nr else {
+            panic!("expected NodeRef::BlockOpen, got {nr:?}");
+        };
         assert!(matches!(kind, ContainerKind::Indent { amount: 2 }));
     }
 
@@ -390,8 +405,11 @@ mod tests {
         };
         // out is still usable
         assert!(out.normalized.contains('\u{E001}'));
-        assert_eq!(out.registry.inline.len(), 1);
-        let (_, node) = out.registry.inline.iter_sorted().next().unwrap();
+        assert_eq!(out.registry.count_kind(Sentinel::Inline), 1);
+        let (_, nr) = out.registry.iter_kind(Sentinel::Inline).next().unwrap();
+        let NodeRef::Inline(node) = nr else {
+            panic!("expected NodeRef::Inline, got {nr:?}");
+        };
         assert!(
             matches!(node, borrowed::AozoraNode::Ruby(r) if r.reading.as_plain() == Some("おうめ"))
         );
@@ -404,12 +422,11 @@ mod tests {
         // monotonic source order.
         let src = "a｜A《a》b｜B《b》c｜C《c》d｜D《d》e｜E《e》";
         let out = lex_into_arena(src, &arena);
-        assert_eq!(out.registry.inline.len(), 5);
+        assert_eq!(out.registry.count_kind(Sentinel::Inline), 5);
         let positions: Vec<u32> = out
             .registry
-            .inline
-            .iter_sorted()
-            .map(|(pos, _)| *pos)
+            .iter_kind(Sentinel::Inline)
+            .map(|(pos, _)| pos)
             .collect();
         let mut sorted = positions.clone();
         sorted.sort_unstable();
@@ -424,9 +441,12 @@ mod tests {
             &arena,
         );
         // Pin Indent amount survives the arena round-trip.
-        let (_, kind) = out.registry.block_open.iter_sorted().next().unwrap();
+        let (_, nr) = out.registry.iter_kind(Sentinel::BlockOpen).next().unwrap();
+        let NodeRef::BlockOpen(kind) = nr else {
+            panic!("expected NodeRef::BlockOpen, got {nr:?}");
+        };
         match kind {
-            ContainerKind::Indent { amount } => assert_eq!(*amount, 3),
+            ContainerKind::Indent { amount } => assert_eq!(amount, 3),
             other => panic!("expected Indent {{ amount: 3 }}, got {other:?}"),
         }
     }
@@ -446,13 +466,13 @@ mod tests {
         let out = lex_into_arena(src, &arena);
         // Inline: ruby + gaiji + bouten ⇒ 3 entries. Block container
         // open/close ⇒ 1 each. No leaves.
-        assert_eq!(out.registry.inline.len(), 3);
-        assert_eq!(out.registry.block_leaf.len(), 0);
-        assert_eq!(out.registry.block_open.len(), 1);
-        assert_eq!(out.registry.block_close.len(), 1);
+        assert_eq!(out.registry.count_kind(Sentinel::Inline), 3);
+        assert_eq!(out.registry.count_kind(Sentinel::BlockLeaf), 0);
+        assert_eq!(out.registry.count_kind(Sentinel::BlockOpen), 1);
+        assert_eq!(out.registry.count_kind(Sentinel::BlockClose), 1);
         // Every registered position must round-trip via lookup.
-        for (pos, _) in out.registry.inline.iter_sorted() {
-            assert!(out.registry.inline.contains_key(pos));
+        for (pos, _) in out.registry.iter_kind(Sentinel::Inline) {
+            assert!(out.registry.node_at(pos).is_some());
         }
     }
 
@@ -478,19 +498,13 @@ mod tests {
 
         assert_eq!(chain.normalized, oneshot.normalized);
         assert_eq!(chain.sanitized_len, oneshot.sanitized_len);
-        assert_eq!(chain.registry.inline.len(), oneshot.registry.inline.len());
-        assert_eq!(
-            chain.registry.block_leaf.len(),
-            oneshot.registry.block_leaf.len()
-        );
-        assert_eq!(
-            chain.registry.block_open.len(),
-            oneshot.registry.block_open.len()
-        );
-        assert_eq!(
-            chain.registry.block_close.len(),
-            oneshot.registry.block_close.len()
-        );
+        for kind in Sentinel::ALL {
+            assert_eq!(
+                chain.registry.count_kind(kind),
+                oneshot.registry.count_kind(kind),
+                "{kind:?} registry length differs between chain and oneshot"
+            );
+        }
         assert_eq!(chain.diagnostics.len(), oneshot.diagnostics.len());
     }
 
@@ -523,16 +537,14 @@ mod tests {
         let out = lex_into_arena(src, &arena);
 
         // Find the open and close sentinel positions from the registry.
-        let (&open_pos, _) = out
+        let (open_pos, _) = out
             .registry
-            .block_open
-            .iter_sorted()
+            .iter_kind(Sentinel::BlockOpen)
             .next()
             .expect("one open entry");
-        let (&close_pos, _) = out
+        let (close_pos, _) = out
             .registry
-            .block_close
-            .iter_sorted()
+            .iter_kind(Sentinel::BlockClose)
             .next()
             .expect("one close entry");
 

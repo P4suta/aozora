@@ -39,7 +39,8 @@ pub mod trigger;
 pub use diagnostic::{Diagnostic, DiagnosticSource, Severity, codes};
 pub use pair::{PairKind, PairLink};
 pub use sentinels::{
-    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
+    ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
+    Sentinel,
 };
 pub use slugs::{SLUGS, SlugEntry, SlugFamily, canonicalise_slug};
 pub use span::Span;

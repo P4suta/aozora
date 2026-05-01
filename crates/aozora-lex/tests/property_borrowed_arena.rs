@@ -10,7 +10,8 @@
 //! introducing nondeterminism (e.g. iteration order over a `HashMap`)
 //! or from desynchronising the registry from the normalised text.
 
-use aozora_syntax::borrowed::Arena;
+use aozora_spec::Sentinel;
+use aozora_syntax::borrowed::{Arena, NodeRef};
 use aozora_test_utils::config::default_config;
 use aozora_test_utils::generators::*;
 use proptest::prelude::*;
@@ -38,74 +39,42 @@ fn assert_deterministic(source: &str) {
         b.diagnostics.len(),
         "diagnostic count non-deterministic for input {source:?}"
     );
-    assert_eq!(
-        a.registry.inline.len(),
-        b.registry.inline.len(),
-        "inline registry length non-deterministic for input {source:?}"
-    );
-    assert_eq!(
-        a.registry.block_leaf.len(),
-        b.registry.block_leaf.len(),
-        "block_leaf registry length non-deterministic for input {source:?}"
-    );
-    assert_eq!(
-        a.registry.block_open.len(),
-        b.registry.block_open.len(),
-        "block_open registry length non-deterministic for input {source:?}"
-    );
-    assert_eq!(
-        a.registry.block_close.len(),
-        b.registry.block_close.len(),
-        "block_close registry length non-deterministic for input {source:?}"
-    );
-
-    // Per-position node kind equivalence across the two runs. Cheap +
-    // exhaustive across the AST surface.
-    for ((pos_a, node_a), (pos_b, node_b)) in a
-        .registry
-        .inline
-        .iter_sorted()
-        .zip(b.registry.inline.iter_sorted())
-    {
-        assert_eq!(*pos_a, *pos_b, "inline[{pos_a}] position drift");
+    for kind in Sentinel::ALL {
         assert_eq!(
-            node_a.xml_node_name(),
-            node_b.xml_node_name(),
-            "inline[{pos_a}] kind drift"
+            a.registry.count_kind(kind),
+            b.registry.count_kind(kind),
+            "{kind:?} registry length non-deterministic for input {source:?}"
         );
     }
 
-    for ((pos_a, node_a), (pos_b, node_b)) in a
-        .registry
-        .block_leaf
-        .iter_sorted()
-        .zip(b.registry.block_leaf.iter_sorted())
-    {
-        assert_eq!(*pos_a, *pos_b, "block_leaf[{pos_a}] position drift");
+    // Per-position node kind equivalence across the two runs. Walk
+    // every entry in the unified registry, in position order; both
+    // runs must see the same sequence of (position, NodeRef-variant,
+    // payload-shape) triples.
+    for ((pos_a, nr_a), (pos_b, nr_b)) in a.registry.iter_sorted().zip(b.registry.iter_sorted()) {
+        assert_eq!(pos_a, pos_b, "registry[{pos_a}] position drift");
         assert_eq!(
-            node_a.xml_node_name(),
-            node_b.xml_node_name(),
-            "block_leaf[{pos_a}] kind drift"
+            nr_a.sentinel_kind(),
+            nr_b.sentinel_kind(),
+            "registry[{pos_a}] sentinel kind drift"
         );
-    }
-
-    for ((pos_a, kind_a), (pos_b, kind_b)) in a
-        .registry
-        .block_open
-        .iter_sorted()
-        .zip(b.registry.block_open.iter_sorted())
-    {
-        assert_eq!(*pos_a, *pos_b, "block_open[{pos_a}] position drift");
-        assert_eq!(kind_a, kind_b, "block_open[{pos_a}] container kind drift");
-    }
-    for ((pos_a, kind_a), (pos_b, kind_b)) in a
-        .registry
-        .block_close
-        .iter_sorted()
-        .zip(b.registry.block_close.iter_sorted())
-    {
-        assert_eq!(*pos_a, *pos_b, "block_close[{pos_a}] position drift");
-        assert_eq!(kind_a, kind_b, "block_close[{pos_a}] container kind drift");
+        match (nr_a, nr_b) {
+            (NodeRef::Inline(node_a), NodeRef::Inline(node_b))
+            | (NodeRef::BlockLeaf(node_a), NodeRef::BlockLeaf(node_b)) => {
+                assert_eq!(
+                    node_a.xml_node_name(),
+                    node_b.xml_node_name(),
+                    "registry[{pos_a}] inline / block-leaf payload kind drift"
+                );
+            }
+            (NodeRef::BlockOpen(kind_a), NodeRef::BlockOpen(kind_b))
+            | (NodeRef::BlockClose(kind_a), NodeRef::BlockClose(kind_b)) => {
+                assert_eq!(kind_a, kind_b, "registry[{pos_a}] container kind drift");
+            }
+            _ => {
+                panic!("registry[{pos_a}] cross-variant drift: {nr_a:?} vs {nr_b:?}");
+            }
+        }
     }
 }
 
@@ -123,34 +92,31 @@ fn assert_registry_aligned_with_sentinels(source: &str) {
     // so the normalized text legitimately holds sentinel-shaped bytes
     // that the registry has not registered. The forward direction
     // alone catches every ordering / build-time bug we care about.
-    for (pos, _) in out.registry.inline.iter_sorted() {
-        let bytes = &out.normalized.as_bytes()[*pos as usize..];
+    for (pos, nr) in out.registry.iter_sorted() {
+        let bytes = &out.normalized.as_bytes()[pos as usize..];
+        let kind = nr.sentinel_kind();
+        // The classifier emits one of the four PUA sentinels; map
+        // back to the UTF-8 byte triple so we can byte-match in the
+        // normalized buffer. Computing this from the `Sentinel` char
+        // representation avoids the wildcard `_ => panic!()` arm
+        // that clippy reads as unreachable for an exhaustive enum.
+        let expected_utf8 = utf8_bytes_for_sentinel(kind);
         assert!(
-            bytes.starts_with(&[0xEE, 0x80, 0x81]),
-            "inline registry position {pos} is not at INLINE_SENTINEL for input {source:?}"
+            bytes.starts_with(&expected_utf8),
+            "{kind:?} registry position {pos} is not at the matching sentinel for input {source:?}"
         );
     }
-    for (pos, _) in out.registry.block_leaf.iter_sorted() {
-        let bytes = &out.normalized.as_bytes()[*pos as usize..];
-        assert!(
-            bytes.starts_with(&[0xEE, 0x80, 0x82]),
-            "block_leaf registry position {pos} is not at BLOCK_LEAF_SENTINEL for input {source:?}"
-        );
-    }
-    for (pos, _) in out.registry.block_open.iter_sorted() {
-        let bytes = &out.normalized.as_bytes()[*pos as usize..];
-        assert!(
-            bytes.starts_with(&[0xEE, 0x80, 0x83]),
-            "block_open registry position {pos} is not at BLOCK_OPEN_SENTINEL for input {source:?}"
-        );
-    }
-    for (pos, _) in out.registry.block_close.iter_sorted() {
-        let bytes = &out.normalized.as_bytes()[*pos as usize..];
-        assert!(
-            bytes.starts_with(&[0xEE, 0x80, 0x84]),
-            "block_close registry position {pos} is not at BLOCK_CLOSE_SENTINEL for input {source:?}"
-        );
-    }
+}
+
+/// UTF-8 byte triple for a [`Sentinel`]'s codepoint. PUA sentinels all
+/// encode as 3 bytes; we encode through `char::encode_utf8` once so
+/// new variants don't need a hand-maintained byte table.
+fn utf8_bytes_for_sentinel(kind: Sentinel) -> [u8; 3] {
+    let mut buf = [0u8; 4];
+    let s = kind.as_char().encode_utf8(&mut buf);
+    let bytes = s.as_bytes();
+    debug_assert_eq!(bytes.len(), 3, "PUA sentinels are always 3 UTF-8 bytes");
+    [bytes[0], bytes[1], bytes[2]]
 }
 
 fn check(source: &str) {

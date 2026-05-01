@@ -19,7 +19,7 @@ use core::fmt;
 
 use aozora_lex::BorrowedLexOutput;
 use aozora_syntax::Container;
-use aozora_syntax::borrowed::AozoraNode;
+use aozora_syntax::borrowed::{AozoraNode, NodeRef};
 use memchr::{memchr_iter, memchr3_iter};
 
 use crate::render_node;
@@ -123,39 +123,44 @@ pub fn render_into<W: fmt::Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -
         let byte_pos = u32::try_from(cand_pos).expect("normalized fits u32 per Phase 0 cap");
 
         match kind {
-            Structural::Inline => {
-                if let Some(&node) = registry.inline.get(&byte_pos) {
+            Structural::Newline => match bytes.get(cand_pos + 1) {
+                Some(&b'\n') => state.close_paragraph(writer)?,
+                Some(_) if state.in_paragraph => writer.write_str("<br />\n")?,
+                Some(_) | None => {}
+            },
+            // The four sentinel kinds funnel through one registry
+            // lookup; the `NodeRef` variant tells us which structural
+            // role this hit plays. Pre-Phase-D this was a 4-way
+            // dispatch across separate per-kind tables.
+            _ => match (kind, registry.node_at(byte_pos)) {
+                (Structural::Inline, Some(NodeRef::Inline(node))) => {
                     state.ensure_in_paragraph(writer)?;
                     render_node::render(node, true, writer)?;
                 }
-            }
-            Structural::BlockLeaf => {
-                if let Some(&node) = registry.block_leaf.get(&byte_pos) {
+                (Structural::BlockLeaf, Some(NodeRef::BlockLeaf(node))) => {
                     state.before_block_emit(writer)?;
                     render_node::render(node, true, writer)?;
                     state.after_block_emit();
                 }
-            }
-            Structural::BlockOpen => {
-                if let Some(&kind) = registry.block_open.get(&byte_pos) {
+                (Structural::BlockOpen, Some(NodeRef::BlockOpen(kind))) => {
                     state.before_block_emit(writer)?;
                     let node = AozoraNode::Container(Container { kind });
                     render_node::render(node, true, writer)?;
                     state.after_block_emit();
                 }
-            }
-            Structural::BlockClose => {
-                if let Some(&kind) = registry.block_close.get(&byte_pos) {
+                (Structural::BlockClose, Some(NodeRef::BlockClose(kind))) => {
                     state.before_block_emit(writer)?;
                     let node = AozoraNode::Container(Container { kind });
                     render_node::render(node, false, writer)?;
                     state.after_block_emit();
                 }
-            }
-            Structural::Newline => match bytes.get(cand_pos + 1) {
-                Some(&b'\n') => state.close_paragraph(writer)?,
-                Some(_) if state.in_paragraph => writer.write_str("<br />\n")?,
-                Some(_) | None => {}
+                // Sentinel without a registry hit is a pipeline bug.
+                // Pre-Phase-D the per-table lookups silently dropped
+                // these; the unified dispatch keeps the same
+                // best-effort policy (skip the sentinel, render the
+                // surrounding text) so downstream invariants do not
+                // regress on a half-baked emit.
+                _ => {}
             },
         }
         cursor = cand_pos + len;
