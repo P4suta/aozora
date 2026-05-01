@@ -33,6 +33,17 @@ pub enum PairKind {
 }
 
 impl PairKind {
+    /// Every variant in declaration order. Used by codegen so
+    /// downstream artefacts (TypeScript types, CLI tables) track the
+    /// enum without a hand-maintained parallel.
+    pub const ALL: [Self; 5] = [
+        Self::Bracket,
+        Self::Ruby,
+        Self::DoubleRuby,
+        Self::Tortoise,
+        Self::Quote,
+    ];
+
     /// Stable camelCase string identifier used by the driver wire
     /// formats. Centralised here so every driver agrees on the wire
     /// spelling without hand-maintaining a parallel match.

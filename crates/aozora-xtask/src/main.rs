@@ -52,6 +52,7 @@ mod corpus;
 mod deps;
 mod schema;
 mod trace;
+mod types;
 
 pub(crate) use ci::CiArgs;
 pub(crate) use corpus::CorpusArgs;
@@ -98,6 +99,12 @@ enum Cmd {
     /// `crates/aozora-book/src/wire/schema-*.json` and CI-checks
     /// that they stay in sync with the live wire shape.
     Schema(SchemaArgs),
+    /// TypeScript types artefact dump / drift gate. Generates
+    /// `crates/aozora-wasm/pkg/aozora_types.d.ts` from the live
+    /// enums (`NodeKind` / `PairKind` / `Severity` /
+    /// `DiagnosticSource` / `InternalCheckCode`) and wire structs.
+    /// Drift-gated like `xtask schema`.
+    Types(TypesArgs),
 }
 
 #[derive(Args)]
@@ -115,6 +122,23 @@ enum SchemaOp {
     /// Compare on-disk schemas against freshly-generated ones; exit
     /// non-zero on drift. Used as a CI gate so renamed fields /
     /// added variants force the artefact regeneration step.
+    Check,
+}
+
+#[derive(Args)]
+struct TypesArgs {
+    #[command(subcommand)]
+    op: TypesOp,
+}
+
+#[derive(Subcommand)]
+enum TypesOp {
+    /// Generate `aozora_types.d.ts` from the live enums + wire
+    /// structs and write it under `crates/aozora-wasm/pkg/`.
+    /// Overwrites the existing file; commit the diff.
+    Ts,
+    /// Compare on-disk `aozora_types.d.ts` against fresh codegen;
+    /// exit non-zero on drift. CI gate.
     Check,
 }
 
@@ -187,6 +211,7 @@ fn main() {
         Cmd::Corpus(args) => corpus::dispatch(&args),
         Cmd::Ci(args) => ci::run(&args),
         Cmd::Schema(args) => schema::dispatch(&args),
+        Cmd::Types(args) => types::dispatch(&args),
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");

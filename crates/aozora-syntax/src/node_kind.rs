@@ -75,6 +75,33 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
+    /// Every variant in declaration order.
+    ///
+    /// Used by `aozora kinds` (CLI introspection) and the
+    /// TypeScript / JSON-Schema codegen so the artefact list
+    /// tracks the enum without a hand-maintained parallel.
+    pub const ALL: [Self; 19] = [
+        Self::Ruby,
+        Self::Bouten,
+        Self::TateChuYoko,
+        Self::Gaiji,
+        Self::Indent,
+        Self::AlignEnd,
+        Self::Warichu,
+        Self::Keigakomi,
+        Self::PageBreak,
+        Self::SectionBreak,
+        Self::AozoraHeading,
+        Self::HeadingHint,
+        Self::Sashie,
+        Self::Kaeriten,
+        Self::Annotation,
+        Self::DoubleRuby,
+        Self::Container,
+        Self::ContainerOpen,
+        Self::ContainerClose,
+    ];
+
     /// Stable camelCase string identifier for this kind.
     ///
     /// Driver crates (`aozora-ffi` / `aozora-wasm` / `aozora-py`) all

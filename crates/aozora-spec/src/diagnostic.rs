@@ -109,6 +109,24 @@ pub enum Severity {
     Note,
 }
 
+impl Severity {
+    /// Every variant in declaration order. Used by codegen so
+    /// downstream artefacts track the enum without drift.
+    pub const ALL: [Self; 3] = [Self::Error, Self::Warning, Self::Note];
+
+    /// Stable lowercase wire-format identifier ("error" / "warning"
+    /// / "note"). The same string the driver wire format emits in
+    /// the `severity` field of `DiagnosticWire`.
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warning => "warning",
+            Self::Note => "note",
+        }
+    }
+}
+
 /// Origin of a [`Diagnostic`] — distinguishes user-input issues from
 /// library-internal sanity-check failures.
 ///
@@ -124,6 +142,21 @@ pub enum DiagnosticSource {
     /// bug; the parse is still completed best-effort but downstream
     /// tooling should surface this distinctly.
     Internal,
+}
+
+impl DiagnosticSource {
+    /// Every variant in declaration order.
+    pub const ALL: [Self; 2] = [Self::Source, Self::Internal];
+
+    /// Stable lowercase wire-format identifier ("source" /
+    /// "internal"). Matches the `source` field of `DiagnosticWire`.
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::Source => "source",
+            Self::Internal => "internal",
+        }
+    }
 }
 
 /// Identifier of a specific pipeline-internal sanity check.
