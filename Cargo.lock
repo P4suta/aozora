@@ -133,6 +133,7 @@ dependencies = [
  "aozora-encoding",
  "aozora-pipeline",
  "aozora-proptest",
+ "aozora-query",
  "aozora-render",
  "aozora-spec",
  "aozora-syntax",
@@ -272,6 +273,16 @@ version = "0.2.6"
 dependencies = [
  "aozora",
  "pyo3",
+]
+
+[[package]]
+name = "aozora-query"
+version = "0.2.6"
+dependencies = [
+ "aozora",
+ "aozora-cst",
+ "rowan",
+ "thiserror",
 ]
 
 [[package]]

@@ -47,6 +47,10 @@ proptest        = { workspace = true, optional = true }
 # the `cst` feature so library-only consumers don't pull in rowan
 # unless they want the editor-grade surface.
 aozora-cst      = { workspace = true, optional = true }
+# Phase N5 — tree-sitter-flavoured query DSL over the CST.
+# Optional, enabled by the `query` feature; pulls aozora-cst (and
+# transitively rowan) into the dep tree.
+aozora-query    = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -68,6 +72,10 @@ proptest = ["dep:proptest", "dep:aozora-proptest"]
 # surface for source-faithful refactoring / formatters / LSP
 # servers. Pulls rowan into the dep tree.
 cst = ["dep:aozora-cst"]
+# Tree-sitter-flavoured query DSL (`aozora::query::*`) over the
+# CST. Implies `cst` (queries run against `SyntaxNode`); pulls
+# aozora-query (and transitively rowan) into the dep tree.
+query = ["cst", "dep:aozora-query"]
 
 [dev-dependencies]
 # Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and

@@ -152,6 +152,27 @@ pub mod cst {
     }
 }
 
+/// Tree-sitter-flavoured pattern queries over the CST (Phase N5).
+///
+/// Re-export of [`aozora_query`] under the `query` feature.
+/// Editor surfaces (`textDocument/documentHighlight`, "find all
+/// ruby annotations") compose against the DSL instead of
+/// re-implementing tree walks.
+///
+/// ```rust,ignore
+/// use aozora::Document;
+/// use aozora::query::compile;
+///
+/// let doc = Document::new("｜青梅《おうめ》");
+/// let cst = aozora::cst::from_tree(&doc.parse());
+/// let q = compile("(Construct @ruby)").unwrap();
+/// let captures = q.captures(&cst);
+/// ```
+#[cfg(feature = "query")]
+pub mod query {
+    pub use aozora_query::*;
+}
+
 /// Aozora-shaped `proptest` strategies (Phase N4).
 ///
 /// Downstream renderer / visitor authors writing their own property

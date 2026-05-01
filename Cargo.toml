@@ -21,6 +21,7 @@ members = [
     "crates/aozora-trace",
     "crates/aozora-pandoc",
     "crates/aozora-cst",
+    "crates/aozora-query",
 ]
 # `aozora-book` is the mdbook source tree; it has no Cargo manifest of its
 # own. Listed in `exclude` so `cargo` ignores it during workspace globbing
@@ -180,6 +181,7 @@ aozora-corpus       = { version = "0.2.6", path = "crates/aozora-corpus" }
 aozora-conformance  = { version = "0.2.6", path = "crates/aozora-conformance" }
 aozora-pandoc       = { version = "0.2.6", path = "crates/aozora-pandoc" }
 aozora-cst          = { version = "0.2.6", path = "crates/aozora-cst" }
+aozora-query        = { version = "0.2.6", path = "crates/aozora-query" }
 aozora-proptest = { version = "0.2.6", path = "crates/aozora-proptest" }
 
 # Error handling
