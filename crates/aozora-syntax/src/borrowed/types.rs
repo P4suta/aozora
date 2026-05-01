@@ -257,13 +257,12 @@ pub struct Kaeriten<'src> {
 
 /// Double angle-bracket payload. See [`crate::DoubleRuby`].
 ///
-/// `content` is plain [`Content`] — pathological inputs (`《《》》`)
-/// produce empty payloads, so we cannot strengthen this to
-/// [`super::NonEmpty`] without re-running the classifier with a
-/// pre-filter. Tracked as a follow-up.
+/// `content` is [`super::NonEmpty`] — Phase 3 pre-filters empty
+/// `《《》》` to plain text before allocation, so a `DoubleRuby`
+/// node is never emitted with empty content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DoubleRuby<'src> {
-    pub content: Content<'src>,
+    pub content: super::NonEmpty<Content<'src>>,
 }
 
 /// [`AozoraNode`] classifier methods. Mirror the inherent methods on

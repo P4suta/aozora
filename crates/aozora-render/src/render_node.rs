@@ -191,7 +191,7 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
 
 fn render_double_ruby<W: Write>(d: &DoubleRuby<'_>, writer: &mut W) -> fmt::Result {
     writer.write_str(r#"<span class="aozora-double-ruby">≪"#)?;
-    render_content(d.content, writer)?;
+    render_content(d.content.get(), writer)?;
     writer.write_str("≫</span>")
 }
 

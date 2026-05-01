@@ -355,8 +355,19 @@ impl<'a> BorrowedAllocator<'a> {
     }
 
     /// `AozoraNode::DoubleRuby(DoubleRuby { content })`.
+    ///
+    /// `content` carries the [`borrowed::NonEmpty`] invariant — Phase 3
+    /// pre-filters `《《》》` with empty body into plain text so this
+    /// path is never reached with an empty payload.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `content` is empty. Phase 3's pre-filter is the
+    /// gate; an empty payload here signals a classifier bug.
     #[must_use]
     pub fn double_ruby(&self, content: borrowed::Content<'a>) -> borrowed::AozoraNode<'a> {
+        let content = borrowed::NonEmpty::new(content)
+            .expect("Phase 3 pre-filters empty DoubleRuby into plain");
         borrowed::AozoraNode::DoubleRuby(self.arena.alloc(borrowed::DoubleRuby { content }))
     }
 

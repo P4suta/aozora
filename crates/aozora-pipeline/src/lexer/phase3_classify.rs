@@ -1129,9 +1129,12 @@ where
                 }
             }
             PairKind::DoubleRuby => {
-                let span = self.emit_double_ruby(view, open_idx, close_idx);
-                self.push_output(span);
-                return;
+                if let Some(span) = self.try_double_ruby_emit(view, open_idx, close_idx) {
+                    self.push_output(span);
+                    return;
+                }
+                // Empty `《《》》` falls through to `replay_unrecognised_body`
+                // so the bytes flow back into the pending plain run.
             }
             PairKind::Bracket => {
                 let refmark = frame.gaiji_refmark;
@@ -1495,12 +1498,20 @@ where
         })
     }
 
-    fn emit_double_ruby(
+    /// Attempt to classify the buffered body as a `DoubleRuby` node.
+    ///
+    /// Returns `None` when the body content is empty (`《《》》` with
+    /// no payload) — the caller falls through to plain replay so the
+    /// bytes show up as literal source. Pre-Phase-K1 the function
+    /// always emitted a `DoubleRuby` span, leaving the AST with an
+    /// empty `Content` payload that violated the
+    /// [`borrowed::NonEmpty`] invariant carried elsewhere.
+    fn try_double_ruby_emit(
         &mut self,
         body: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> ClassifiedSpan<'a> {
+    ) -> Option<ClassifiedSpan<'a>> {
         let PairEvent::PairOpen {
             span: open_span, ..
         } = body.events[open_idx]
@@ -1524,13 +1535,22 @@ where
                 bytes: open_span.end..close_span.start,
             },
         );
+        // Phase K1: empty `《《》》` is not a valid DoubleRuby — let
+        // the bytes flow through as plain text. The caller's
+        // fall-through path (`replay_unrecognised_body`) handles the
+        // plain emission.
+        if matches!(content, borrowed::Content::Plain(s) if s.is_empty())
+            || matches!(content, borrowed::Content::Segments(segs) if segs.is_empty())
+        {
+            return None;
+        }
         self.flush_plain_up_to(open_span.start);
         let node = self.alloc.double_ruby(content);
         self.pending_plain_start = None;
-        ClassifiedSpan {
+        Some(ClassifiedSpan {
             kind: SpanKind::Aozora(node),
             source_span: Span::new(open_span.start, close_span.end),
-        }
+        })
     }
 
     fn try_bracket_emit(
@@ -4266,18 +4286,20 @@ mod tests {
         let AozoraNode::DoubleRuby(d) = aozora else {
             panic!("expected DoubleRuby, got {aozora:?}");
         };
-        let Content::Segments(segs) = &d.content else {
-            panic!("expected Segments, got {:?}", d.content);
+        let Content::Segments(segs) = &d.content.get() else {
+            panic!("expected Segments, got {:?}", d.content.get());
         };
         assert_eq!(segs.len(), 1);
         assert!(matches!(&segs[0], Segment::Gaiji(_)));
     }
 
     #[test]
-    fn double_ruby_empty_body_still_consumed() {
-        // `《《》》` with no body: we still consume the double brackets
-        // into a DoubleRuby span so no stray `《` leaks as plain text.
-        // The content is empty `Content::Segments([])`.
+    fn double_ruby_empty_body_falls_through_to_plain() {
+        // Phase K1: `《《》》` with no body is no longer classified as
+        // DoubleRuby. The empty payload would violate the
+        // `borrowed::NonEmpty<Content>` invariant; instead the bytes
+        // flow through as plain text (the catch-all `replay_unrecognised_body`
+        // fold). No Aozora span is emitted for the empty case.
         run!(out, "A《《》》B");
         let aozora_count = out
             .spans
@@ -4285,8 +4307,9 @@ mod tests {
             .filter(|s| matches!(s.kind, SpanKind::Aozora(_)))
             .count();
         assert_eq!(
-            aozora_count, 1,
-            "empty double-ruby must still emit one span"
+            aozora_count, 0,
+            "empty double-ruby must not emit a DoubleRuby span — \
+             empty content violates Phase E6/K1 NonEmpty invariant"
         );
     }
 

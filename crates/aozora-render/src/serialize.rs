@@ -241,7 +241,7 @@ fn emit_annotation<W: Write>(a: &Annotation<'_>, out: &mut W) -> fmt::Result {
 fn emit_double_ruby<W: Write>(d: &DoubleRuby<'_>, out: &mut W) -> fmt::Result {
     out.write_char('《')?;
     out.write_char('《')?;
-    emit_content(d.content, out)?;
+    emit_content(d.content.get(), out)?;
     out.write_char('》')?;
     out.write_char('》')
 }
