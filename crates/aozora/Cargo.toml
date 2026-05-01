@@ -16,11 +16,15 @@ workspace = true
 
 [dependencies]
 # Document wraps `aozora_pipeline::lex_into_arena` and AozoraTree
-# borrows from a `bumpalo`-backed arena owned by Document.
+# borrows from a `bumpalo`-backed arena owned by Document. The five
+# internal crates below are `publish = false`; this meta crate is the
+# single front door, exposing them via the `aozora::pipeline` /
+# `aozora::syntax` / `aozora::render` / `aozora::encoding` modules.
 aozora-render   = { workspace = true }
 aozora-pipeline = { workspace = true }
 aozora-syntax   = { workspace = true }
 aozora-spec     = { workspace = true }
+aozora-encoding = { workspace = true }
 
 # Driver-shared wire format (see `aozora::wire`). Optional so library
 # consumers that only use the borrowed-AST surface do not have to
@@ -41,4 +45,3 @@ wire = ["dep:serde", "dep:serde_json"]
 # Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and
 # verify parse + round-trip invariants on every document.
 aozora-corpus   = { workspace = true }
-aozora-encoding = { workspace = true }

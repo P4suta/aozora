@@ -58,6 +58,50 @@ pub mod wire;
 
 pub use document::{AozoraTree, Document};
 
+/// Re-export of [`aozora_pipeline`] under a stable name.
+///
+/// Editor integrations that want per-phase access
+/// (`pipeline::lexer::*` for the phase functions, `pipeline::Pipeline`
+/// for the type-state machine) reach through this module so the
+/// wider workspace can keep [`aozora`] as the single front door.
+///
+/// Pre-Phase-G consumers depended on the `aozora-pipeline` crate
+/// directly; that crate is now `publish = false` and only callable
+/// via this re-export.
+pub mod pipeline {
+    pub use aozora_pipeline::*;
+}
+
+/// Re-export of [`aozora_syntax`] — AST node types, arena, interner.
+///
+/// External callers normally reach through [`Document`] /
+/// [`AozoraTree`] for the borrowed-AST surface; this module exposes
+/// the underlying types when they need to construct nodes directly
+/// (visitor implementations, custom renderers).
+pub mod syntax {
+    pub use aozora_syntax::*;
+}
+
+/// Re-export of [`aozora_render`] — HTML / serialize emitters and
+/// the visitor trait.
+///
+/// Custom downstream renderers (EPUB, plain text, LaTeX, …)
+/// implement [`syntax::borrowed::AozoraVisitor`](crate::syntax::borrowed)
+/// and route through this module.
+pub mod render {
+    pub use aozora_render::*;
+}
+
+/// Re-export of [`aozora_encoding`] — Shift_JIS decoding and gaiji
+/// resolution.
+///
+/// Phase 0 of the lex pipeline runs encoding detection first;
+/// callers that want to drive encoding without parsing can reach
+/// through this module.
+pub mod encoding {
+    pub use aozora_encoding::*;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
