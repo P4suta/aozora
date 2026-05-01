@@ -56,7 +56,7 @@ mod document;
 #[cfg(feature = "wire")]
 pub mod wire;
 
-pub use document::{AozoraTree, Document};
+pub use document::{AozoraTree, DiagnosticPolicy, Document, ParseOptions};
 
 /// Re-export of [`aozora_pipeline`] under a stable name.
 ///

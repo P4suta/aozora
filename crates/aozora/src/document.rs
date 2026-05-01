@@ -29,6 +29,87 @@ use aozora_syntax::borrowed::{Arena, ContainerPair};
 /// the bumpalo default chunk size).
 const ARENA_CAPACITY_FACTOR: usize = 4;
 
+/// Diagnostic policy applied at parse time.
+///
+/// Diagnostics are always collected best-effort — the lexer never
+/// aborts mid-stream — but the policy controls whether the
+/// returned [`AozoraTree::diagnostics`] slice retains every entry,
+/// drops library-internal sanity-check failures, or short-circuits
+/// after the first source-side error.
+///
+/// `#[non_exhaustive]` — future policies (e.g. severity-only filters)
+/// land here as minor releases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum DiagnosticPolicy {
+    /// Default. Every diagnostic the lexer emits surfaces in the
+    /// returned tree, with no filtering or ordering changes. Editor
+    /// integrations that decorate the buffer typically want this.
+    #[default]
+    CollectAll,
+    /// Drop diagnostics whose [`Diagnostic::source`] is
+    /// [`DiagnosticSource::Internal`](aozora_spec::DiagnosticSource::Internal).
+    /// Library bugs (the four legacy "Phase 6" sanity checks) are
+    /// hidden from the result; CLI / batch consumers that prefer a
+    /// terser stream can opt in.
+    DropInternal,
+}
+
+/// Builder for the [`Document::parse`] entry point.
+///
+/// Pre-Phase-I `Document::new(source)` was the only construction
+/// path and offered no way to tune arena capacity, encoding choice,
+/// or diagnostic policy. [`ParseOptions`] is the single tunable
+/// surface; [`Document::new`] is now equivalent to
+/// [`ParseOptions::new().build(source)`].
+///
+/// The builder methods consume `self` and return the next stage so
+/// the chain reads top-to-bottom and so unused options never leave a
+/// dangling builder around.
+#[derive(Debug, Clone, Copy, Default)]
+#[must_use]
+pub struct ParseOptions {
+    arena_capacity: Option<usize>,
+    diagnostic_policy: DiagnosticPolicy,
+}
+
+impl ParseOptions {
+    /// Default options: arena capacity is computed from
+    /// [`ARENA_CAPACITY_FACTOR`], every diagnostic is collected.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Override the arena capacity hint. Useful when the caller
+    /// already knows the AST footprint (e.g. from a previous parse of
+    /// a similar document).
+    pub fn arena_capacity(mut self, capacity: usize) -> Self {
+        self.arena_capacity = Some(capacity);
+        self
+    }
+
+    /// Override the [`DiagnosticPolicy`].
+    pub fn diagnostic_policy(mut self, policy: DiagnosticPolicy) -> Self {
+        self.diagnostic_policy = policy;
+        self
+    }
+
+    /// Build a [`Document`] from `source`, applying the configured
+    /// arena hint and diagnostic policy. The policy is recorded on
+    /// the document and applied during [`Document::parse`].
+    pub fn build(self, source: impl Into<Box<str>>) -> Document {
+        let source: Box<str> = source.into();
+        let capacity = self
+            .arena_capacity
+            .unwrap_or_else(|| source.len().saturating_mul(ARENA_CAPACITY_FACTOR));
+        Document {
+            source,
+            arena: Arena::with_capacity(capacity),
+            diagnostic_policy: self.diagnostic_policy,
+        }
+    }
+}
+
 /// Single owning handle to a parsed Aozora source.
 ///
 /// Owns both the source buffer and a [`bumpalo`]-backed [`Arena`].
@@ -38,36 +119,47 @@ const ARENA_CAPACITY_FACTOR: usize = 4;
 pub struct Document {
     source: Box<str>,
     arena: Arena,
+    diagnostic_policy: DiagnosticPolicy,
 }
 
 impl Document {
-    /// Wrap a source string in a `Document`. The source is copied
-    /// into a `Box<str>` so the document is fully self-contained
-    /// (no external lifetime).
+    /// Wrap a source string in a `Document` with default options.
+    /// Equivalent to `ParseOptions::new().build(source)`.
     ///
     /// The arena is pre-sized to `source.len() * ARENA_CAPACITY_FACTOR`
     /// bytes (a corpus-profile-driven estimate of the AST footprint:
     /// p50 arena/source ratio is 3.4×, p99 is 8.25×). Pre-sizing
     /// eliminates the early chunk-grow churn that hits large docs
-    /// hardest. Callers that know the AST is unusually small can fall
-    /// back to [`Self::with_arena_capacity`] with a smaller hint.
+    /// hardest. Callers that want to override the arena hint or
+    /// diagnostic policy reach for [`Document::options`] /
+    /// [`ParseOptions::build`] instead.
     #[must_use]
     pub fn new(source: impl Into<Box<str>>) -> Self {
-        let source: Box<str> = source.into();
-        let capacity = source.len().saturating_mul(ARENA_CAPACITY_FACTOR);
-        Self {
-            source,
-            arena: Arena::with_capacity(capacity),
-        }
+        ParseOptions::new().build(source)
+    }
+
+    /// Construct a fresh [`ParseOptions`] for the builder chain.
+    /// `Document::options().arena_capacity(N).diagnostic_policy(P).build(s)`
+    /// is the canonical configuration entry point.
+    pub fn options() -> ParseOptions {
+        ParseOptions::new()
     }
 
     /// Wrap a source string with a pre-sized arena.
+    ///
+    /// `Document::options().arena_capacity(n).build(source)` is the
+    /// preferred path since the builder composes naturally with the
+    /// diagnostic policy; this constructor remains for source-level
+    /// compatibility with pre-Phase-I callers.
+    #[deprecated(
+        since = "0.3.0",
+        note = "use Document::options().arena_capacity(n).build(source)"
+    )]
     #[must_use]
     pub fn with_arena_capacity(source: impl Into<Box<str>>, capacity_hint: usize) -> Self {
-        Self {
-            source: source.into(),
-            arena: Arena::with_capacity(capacity_hint),
-        }
+        ParseOptions::new()
+            .arena_capacity(capacity_hint)
+            .build(source)
     }
 
     /// The source text owned by this document.
@@ -86,9 +178,15 @@ impl Document {
     /// `&self`'s lifetime.
     #[must_use]
     pub fn parse(&self) -> AozoraTree<'_> {
+        let mut inner = lex_into_arena(&self.source, &self.arena);
+        if self.diagnostic_policy == DiagnosticPolicy::DropInternal {
+            inner
+                .diagnostics
+                .retain(|d| d.source() != aozora_spec::DiagnosticSource::Internal);
+        }
         AozoraTree {
             source: &self.source,
-            inner: lex_into_arena(&self.source, &self.arena),
+            inner,
         }
     }
 }
@@ -98,6 +196,7 @@ impl fmt::Debug for Document {
         f.debug_struct("Document")
             .field("source_len", &self.source.len())
             .field("arena_bytes", &self.arena.allocated_bytes())
+            .field("diagnostic_policy", &self.diagnostic_policy)
             .finish()
     }
 }
