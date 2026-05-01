@@ -46,6 +46,7 @@
 - [Profiling with samply](perf/samply.md)
 - [Benchmarks (criterion)](perf/bench.md)
 - [Corpus sweeps](perf/corpus.md)
+- [Phase D results — single-table registry](perf/phase-d-results.md)
 
 # Reference
 
