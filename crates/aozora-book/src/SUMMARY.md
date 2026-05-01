@@ -39,6 +39,7 @@
 - [WASM (wasm-pack)](bindings/wasm.md)
 - [C ABI](bindings/c.md)
 - [Python (PyO3 / maturin)](bindings/python.md)
+- [Pandoc AST projection](bindings/pandoc.md)
 
 # Performance
 

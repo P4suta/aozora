@@ -163,6 +163,7 @@ dependencies = [
  "anyhow",
  "aozora",
  "aozora-encoding",
+ "aozora-pandoc",
  "clap",
  "comfy-table",
  "miette",
@@ -210,6 +211,15 @@ version = "0.2.6"
 dependencies = [
  "aozora",
  "cbindgen",
+]
+
+[[package]]
+name = "aozora-pandoc"
+version = "0.2.6"
+dependencies = [
+ "aozora",
+ "pandoc_ast",
+ "serde_json",
 ]
 
 [[package]]
@@ -1345,6 +1355,17 @@ checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "pandoc_ast"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1ff7a92f9fb2cac7cb4b8b697efaf3a30abcb64003d4cd34a67cc1ae35194ce"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "serde_json",
 ]
 
 [[package]]

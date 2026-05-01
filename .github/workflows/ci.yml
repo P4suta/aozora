@@ -125,6 +125,35 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just drift-gate
 
+  # Phase M1 — Pandoc end-to-end smoke. Builds the CLI, runs
+  # `aozora pandoc input.txt --format html` against a tiny ruby
+  # fixture, and checks the resulting HTML carries the expected
+  # Span class. Catches regressions in either the
+  # `AozoraTree → pandoc_ast::Pandoc` projection or the JSON
+  # round-trip through `pandoc -f json -t html`.
+  pandoc-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pandoc-smoke
+      - name: Install pandoc
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pandoc
+      - name: Build aozora CLI
+        run: cargo build --release -p aozora-cli
+      - name: Pandoc round-trip smoke
+        shell: bash
+        run: |
+          set -euxo pipefail
+          input='｜青梅《おうめ》'
+          html=$(printf '%s' "$input" | ./target/release/aozora pandoc --format html)
+          echo "$html"
+          echo "$html" | grep -F 'aozora-ruby' > /dev/null
+          echo "$html" | grep -F '青梅' > /dev/null
+          echo "$html" | grep -F 'おうめ' > /dev/null
+
   # C ABI smoke test — build aozora-ffi as a cdylib, link the C
   # harness against it, run end-to-end. Validates that
   # `cargo build -p aozora-ffi` produces a working library AND that

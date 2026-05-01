@@ -39,7 +39,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command as Process, ExitCode, Stdio};
 
 use aozora::Document;
 
@@ -76,6 +76,11 @@ enum Command {
     Schema(SchemaArgs),
     /// Print short prose for a `NodeKind` camelCase tag.
     Explain(ExplainArgs),
+    /// Project the parsed document to a Pandoc AST.
+    /// Without `--format`, prints Pandoc JSON to stdout (consumable
+    /// by `pandoc -f json -t <FORMAT>`); with `--format`, spawns
+    /// pandoc and pipes the JSON through it.
+    Pandoc(PandocArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -126,6 +131,24 @@ struct RenderArgs {
     encoding: Encoding,
 }
 
+#[derive(Debug, Parser)]
+struct PandocArgs {
+    /// Input path; pass `-` (or omit) to read from stdin.
+    #[arg(default_value = "-")]
+    file: PathBuf,
+
+    /// Source encoding.
+    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Utf8)]
+    encoding: Encoding,
+
+    /// Pandoc output format (e.g. `html`, `epub`, `latex`, `docx`).
+    /// When set, the binary spawns `pandoc -f json -t <FORMAT>` and
+    /// pipes the generated JSON through it; otherwise the Pandoc
+    /// JSON itself goes to stdout.
+    #[arg(long, short = 't')]
+    format: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum Encoding {
     Utf8,
@@ -143,6 +166,7 @@ fn main() -> ExitCode {
         Command::Kinds(opts) => introspect::run_kinds(&opts),
         Command::Schema(opts) => introspect::run_schema(&opts),
         Command::Explain(opts) => introspect::run_explain(&opts),
+        Command::Pandoc(opts) => run_pandoc(&opts),
     };
 
     match result {
@@ -223,6 +247,47 @@ fn run_render(args: &RenderArgs) -> Result<ExitCode> {
         .write_all(html.as_bytes())
         .context("failed to write to stdout")?;
     Ok(ExitCode::SUCCESS)
+}
+
+fn run_pandoc(args: &PandocArgs) -> Result<ExitCode> {
+    let source = read_source(&args.file, args.encoding)?;
+    let doc = Document::new(source);
+    let pandoc = aozora_pandoc::to_pandoc(&doc.parse());
+    let json = serde_json::to_string(&pandoc).context("serialize Pandoc AST")?;
+
+    let Some(format) = args.format.as_deref() else {
+        // No --format: emit Pandoc JSON. Downstream invocations
+        // ( `aozora pandoc input.txt | pandoc -f json -t epub` )
+        // pick up the bytes verbatim.
+        let mut stdout = io::stdout().lock();
+        stdout
+            .write_all(json.as_bytes())
+            .context("write Pandoc JSON to stdout")?;
+        return Ok(ExitCode::SUCCESS);
+    };
+
+    // --format set: pipe through `pandoc -f json -t <format>`.
+    let mut child = Process::new("pandoc")
+        .args(["-f", "json", "-t", format])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| {
+            "failed to spawn `pandoc`; install it from https://pandoc.org or omit \
+             --format to emit Pandoc JSON instead"
+        })?;
+    let mut stdin = child.stdin.take().context("piped stdin")?;
+    stdin
+        .write_all(json.as_bytes())
+        .context("write Pandoc JSON to pandoc stdin")?;
+    drop(stdin);
+    let status = child.wait().context("wait for pandoc")?;
+    Ok(if status.success() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 fn read_source(path: &Path, encoding: Encoding) -> Result<String> {
