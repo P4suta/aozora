@@ -55,8 +55,10 @@ use std::cell::RefCell;
 
 use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
 use aozora_encoding::decode_sjis;
-use aozora_lex::lex_into_arena;
-use aozora_lexer::{ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize};
+use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lexer::{
+    ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
+};
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;
 use rayon::prelude::*;
@@ -232,7 +234,7 @@ fn measure_one(text: &str) -> PhaseSample {
     // post-classify ArenaNormalizer walk (the work that the legacy
     // phases 4–6 used to perform). Subtracting the four standalone
     // phases from `full_ns` gives an estimate of the post-classify
-    // cost without us having to reach into `aozora-lex`'s private
+    // cost without us having to reach into `aozora-pipeline`'s private
     // builder. Same per-worker arena reuse as the Phase 3 block —
     // separate cell because the two measurements would otherwise
     // share one arena and reset mid-call.
@@ -279,7 +281,7 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64, parall
     );
     let (sanitize, tokenize, pair_, classify_, post_classify_, full_, total) = sums;
 
-    println!("=== aozora-lex phase breakdown ===");
+    println!("=== aozora-pipeline phase breakdown ===");
     println!();
     println!("Corpus");
     println!("  docs              : {n}");

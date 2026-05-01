@@ -68,7 +68,7 @@ accent decomposition edge cases.
 ## Layer 2: property tests
 
 [`proptest`](https://docs.rs/proptest) generators in
-`crates/aozora-test-utils` drive parse / render / round-trip
+`crates/aozora-proptest` drive parse / render / round-trip
 invariants. Default 128 cases per `proptest!` block (CI budget);
 `just prop-deep` runs 4096 per block (release-cut budget).
 
@@ -88,7 +88,7 @@ AOZORA_PROPTEST_CASES=10000 cargo nextest run --workspace --test 'property_*'
   every reproduced failure becomes a permanent regression test.
   Quickcheck has nothing like this.
 
-**Why a separate generator crate (`aozora-test-utils`):**
+**Why a separate generator crate (`aozora-proptest`):**
 
 The generators are non-trivial (they have to produce *valid*
 青空文庫 source — random byte streams would just stress the parser's

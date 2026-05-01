@@ -30,16 +30,19 @@
 #![forbid(unsafe_code)]
 
 pub mod diagnostic;
+pub mod offset;
 pub mod pair;
 pub mod sentinels;
 pub mod slugs;
 pub mod span;
 pub mod trigger;
 
-pub use diagnostic::Diagnostic;
+pub use diagnostic::{Diagnostic, DiagnosticSource, InternalCheckCode, Severity, codes};
+pub use offset::{NormalizedOffset, SourceOffset};
 pub use pair::{PairKind, PairLink};
 pub use sentinels::{
-    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
+    ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
+    Sentinel,
 };
 pub use slugs::{SLUGS, SlugEntry, SlugFamily, canonicalise_slug};
 pub use span::Span;

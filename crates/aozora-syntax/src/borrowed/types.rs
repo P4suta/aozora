@@ -165,25 +165,36 @@ impl<'src> IntoIterator for Content<'src> {
 // ----------------------------------------------------------------------
 
 /// Ruby (furigana). See [`crate::Ruby`] for field semantics.
+///
+/// `base` and `reading` are [`super::NonEmpty`] — Phase 3 only emits
+/// a Ruby node once both have content. The wrapper makes the
+/// invariant a build-time fact so renderers never see an empty
+/// payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ruby<'src> {
-    pub base: Content<'src>,
-    pub reading: Content<'src>,
+    pub base: super::NonEmpty<Content<'src>>,
+    pub reading: super::NonEmpty<Content<'src>>,
     pub delim_explicit: bool,
 }
 
 /// Emphasis dots / sidelines. See [`crate::Bouten`].
+///
+/// `target` is [`super::NonEmpty`] — Phase 3 resolves the forward
+/// reference (`［＃「対象」に傍点］`) before emitting the node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bouten<'src> {
     pub kind: BoutenKind,
-    pub target: Content<'src>,
+    pub target: super::NonEmpty<Content<'src>>,
     pub position: BoutenPosition,
 }
 
 /// Tate-chu-yoko (horizontal embedding). See [`crate::TateChuYoko`].
+///
+/// `text` is [`super::NonEmpty`] — empty TCY is a parse bug, not a
+/// valid state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TateChuYoko<'src> {
-    pub text: Content<'src>,
+    pub text: super::NonEmpty<Content<'src>>,
 }
 
 /// Gaiji (out-of-character-range glyph). See [`crate::Gaiji`].
@@ -209,43 +220,60 @@ pub struct Warichu<'src> {
 }
 
 /// Aozora heading (窓見出し / 副見出し). See [`crate::AozoraHeading`].
+///
+/// `text` is [`super::NonEmpty`] — every heading carries a label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AozoraHeading<'src> {
     pub kind: AozoraHeadingKind,
-    pub text: Content<'src>,
+    pub text: super::NonEmpty<Content<'src>>,
 }
 
 /// Forward-reference heading hint. See [`crate::HeadingHint`].
+///
+/// `target` is [`super::NonEmptyStr`] — Phase 3 only emits the hint
+/// after a `「対象」` quoted target landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadingHint<'src> {
     pub level: u8,
-    pub target: &'src str,
+    pub target: super::NonEmptyStr<'src>,
 }
 
 /// Illustration metadata. See [`crate::Sashie`].
+///
+/// `file` is [`super::NonEmptyStr`] — `［＃挿絵（）入る］` with empty
+/// path is a parse bug, not a valid state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sashie<'src> {
-    pub file: &'src str,
+    pub file: super::NonEmptyStr<'src>,
     pub caption: Option<Content<'src>>,
 }
 
 /// Generic annotation. See [`crate::Annotation`].
+///
+/// `raw` is [`super::NonEmptyStr`] — annotation always carries the
+/// raw bytes between `［＃` and `］`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Annotation<'src> {
-    pub raw: &'src str,
+    pub raw: super::NonEmptyStr<'src>,
     pub kind: AnnotationKind,
 }
 
 /// Chinese-reading-order mark (`返り点`). See [`crate::Kaeriten`].
+///
+/// `mark` is [`super::NonEmptyStr`] — empty kaeriten is a parse bug.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Kaeriten<'src> {
-    pub mark: &'src str,
+    pub mark: super::NonEmptyStr<'src>,
 }
 
 /// Double angle-bracket payload. See [`crate::DoubleRuby`].
+///
+/// `content` is [`super::NonEmpty`] — Phase 3 pre-filters empty
+/// `《《》》` to plain text before allocation, so a `DoubleRuby`
+/// node is never emitted with empty content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DoubleRuby<'src> {
-    pub content: Content<'src>,
+    pub content: super::NonEmpty<Content<'src>>,
 }
 
 /// [`AozoraNode`] classifier methods. Mirror the inherent methods on
@@ -313,6 +341,36 @@ impl AozoraNode<'_> {
             Self::Annotation(_) => "aozora_annotation",
             Self::DoubleRuby(_) => "aozora_double_ruby",
             Self::Container(_) => "aozora_container",
+        }
+    }
+
+    /// Cross-cutting [`crate::NodeKind`] tag for this node.
+    ///
+    /// Driver wire formats (`aozora-ffi` / `aozora-wasm` / `aozora-py`)
+    /// project to the camelCase string via
+    /// [`NodeKind::as_camel_case`](crate::NodeKind::as_camel_case);
+    /// internal consumers can `match` on the typed enum directly.
+    #[must_use]
+    pub const fn kind(&self) -> crate::NodeKind {
+        use crate::NodeKind;
+        match self {
+            Self::Ruby(_) => NodeKind::Ruby,
+            Self::Bouten(_) => NodeKind::Bouten,
+            Self::TateChuYoko(_) => NodeKind::TateChuYoko,
+            Self::Gaiji(_) => NodeKind::Gaiji,
+            Self::Indent(_) => NodeKind::Indent,
+            Self::AlignEnd(_) => NodeKind::AlignEnd,
+            Self::Warichu(_) => NodeKind::Warichu,
+            Self::Keigakomi(_) => NodeKind::Keigakomi,
+            Self::PageBreak => NodeKind::PageBreak,
+            Self::SectionBreak(_) => NodeKind::SectionBreak,
+            Self::AozoraHeading(_) => NodeKind::AozoraHeading,
+            Self::HeadingHint(_) => NodeKind::HeadingHint,
+            Self::Sashie(_) => NodeKind::Sashie,
+            Self::Kaeriten(_) => NodeKind::Kaeriten,
+            Self::Annotation(_) => NodeKind::Annotation,
+            Self::DoubleRuby(_) => NodeKind::DoubleRuby,
+            Self::Container(_) => NodeKind::Container,
         }
     }
 }
@@ -399,7 +457,9 @@ mod tests {
         // Spot-check a couple of variants — exhaustive coverage lives
         // in the legacy AozoraNode test suite. Our concern here is
         // that the borrowed mirror returns the SAME strings.
-        let kaeriten = Kaeriten { mark: "x" };
+        let kaeriten = Kaeriten {
+            mark: super::super::NonEmptyStr::new("x").unwrap(),
+        };
         let n = AozoraNode::Kaeriten(&kaeriten);
         assert_eq!(n.xml_node_name(), "aozora_kaeriten");
         assert!(!n.contains_inlines());
@@ -417,21 +477,23 @@ mod tests {
     #[test]
     fn inline_variants_are_not_block() {
         let ruby = Ruby {
-            base: Content::Plain("x"),
-            reading: Content::Plain("x"),
+            base: super::super::NonEmpty::new(Content::Plain("x")).unwrap(),
+            reading: super::super::NonEmpty::new(Content::Plain("x")).unwrap(),
             delim_explicit: false,
         };
         assert!(!AozoraNode::Ruby(&ruby).is_block());
 
-        let kaeriten = Kaeriten { mark: "x" };
+        let kaeriten = Kaeriten {
+            mark: super::super::NonEmptyStr::new("x").unwrap(),
+        };
         assert!(!AozoraNode::Kaeriten(&kaeriten).is_block());
     }
 
     #[test]
     fn ruby_carries_both_base_and_reading() {
         let r = Ruby {
-            base: Content::Plain("青梅"),
-            reading: Content::Plain("おうめ"),
+            base: super::super::NonEmpty::new(Content::Plain("青梅")).unwrap(),
+            reading: super::super::NonEmpty::new(Content::Plain("おうめ")).unwrap(),
             delim_explicit: true,
         };
         assert_eq!(r.base.as_plain(), Some("青梅"));

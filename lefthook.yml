@@ -38,19 +38,25 @@ commit-msg:
             || { echo 'Commit message must follow Conventional Commits (https://www.conventionalcommits.org/)'; exit 1; }"
 
 pre-push:
-  parallel: true
+  # `just ci` runs gates sequentially in cheap-to-expensive order so
+  # the early ones fail fast. Parallelising at the lefthook level
+  # would let coverage start before lint catches a typo.
+  parallel: false
   skip:
     - rebase
   commands:
-    test:
-      run: just test
-    deny:
-      run: just deny
-    # RustSec advisory scan — paired with `deny` so a published CVE
-    # in any transitive dep blocks the push, not just a license /
-    # ban-list violation.
-    audit:
-      run: just audit
+    # Mirror every CI job that's reachable from inside the dev image
+    # (lint / build / test / prop / drift-gate / conformance /
+    # smoke-ffi / deny / audit / udeps / coverage / book-build). The
+    # three CI-only jobs that need extra runtime (pandoc-smoke /
+    # wasm-build / python-wheel) stay unreachable here — the dev
+    # image deliberately omits pandoc / wasm-pack / maturin.
+    #
+    # Push budget: ~6-8 minutes cold cache; ~2-3 minutes warm. The
+    # alternative is "ship a PR, watch GitHub fail, re-push" which
+    # is the failure mode this hook exists to eliminate.
+    ci:
+      run: just ci
 
 # After `git pull` / `git merge` (i.e. when Cargo.lock or Cargo.toml
 # may have moved underneath us), surface dependency freshness so the

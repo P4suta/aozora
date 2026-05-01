@@ -22,9 +22,11 @@ publish     = false
 workspace = true
 
 [dependencies]
-aozora      = { workspace = true }
-aozora-wasm = { workspace = true }
-serde_json  = { workspace = true }
+# Driver consumes the wire format via `aozora::wire::*`; serde +
+# serde_json transitive-only via the `wire` feature. The previous
+# layout reached into `aozora-wasm` for the JSON projection — that
+# coupling is gone now that `aozora::wire` is the single authority.
+aozora = { workspace = true, features = ["wire"] }
 
 # pyo3 + python dev headers are not installed in the default dev
 # environment; expose the actual Python binding behind an opt-in

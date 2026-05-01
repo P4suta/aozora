@@ -35,8 +35,10 @@ use std::time::Instant;
 
 use aozora_bench::{SizeBand, corpus_size_bands};
 use aozora_corpus::CorpusItem;
-use aozora_lex::lex_into_arena;
-use aozora_lexer::{ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize};
+use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lexer::{
+    ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
+};
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;
 

@@ -48,9 +48,12 @@ use std::process::{self, Command, ExitStatus};
 use clap::{Args, Parser, Subcommand};
 
 mod ci;
+mod conformance;
 mod corpus;
 mod deps;
+mod schema;
 mod trace;
+mod types;
 
 pub(crate) use ci::CiArgs;
 pub(crate) use corpus::CorpusArgs;
@@ -92,6 +95,72 @@ enum Cmd {
     /// run every CI job locally before pushing, or replay a workflow
     /// job through `nektos/act`.
     Ci(CiArgs),
+    /// JSON Schema artefact dump / drift gate for the `aozora::wire`
+    /// envelopes. Generates schema files under
+    /// `crates/aozora-book/src/wire/schema-*.json` and CI-checks
+    /// that they stay in sync with the live wire shape.
+    Schema(SchemaArgs),
+    /// TypeScript types artefact dump / drift gate. Generates
+    /// `crates/aozora-wasm/pkg/aozora_types.d.ts` from the live
+    /// enums (`NodeKind` / `PairKind` / `Severity` /
+    /// `DiagnosticSource` / `InternalCheckCode`) and wire structs.
+    /// Drift-gated like `xtask schema`.
+    Types(TypesArgs),
+    /// WPT-style conformance suite runner. Walks every
+    /// fixture under `crates/aozora-conformance/fixtures/render/`,
+    /// runs the parser, and reports pass/fail counts per
+    /// `(feature, level)` pair declared in each fixture's
+    /// `meta.toml`. Exits non-zero on any `must`-tier failure.
+    Conformance(ConformanceArgs),
+}
+
+#[derive(Args)]
+struct SchemaArgs {
+    #[command(subcommand)]
+    op: SchemaOp,
+}
+
+#[derive(Subcommand)]
+enum SchemaOp {
+    /// Generate the four wire-format schemas and write them to
+    /// `crates/aozora-book/src/wire/schema-*.json`. Overwrites
+    /// existing files; commit the diff.
+    Dump,
+    /// Compare on-disk schemas against freshly-generated ones; exit
+    /// non-zero on drift. Used as a CI gate so renamed fields /
+    /// added variants force the artefact regeneration step.
+    Check,
+}
+
+#[derive(Args)]
+struct ConformanceArgs {
+    #[command(subcommand)]
+    op: ConformanceOp,
+}
+
+#[derive(Subcommand)]
+enum ConformanceOp {
+    /// Run every fixture, write a per-case results.json under
+    /// `crates/aozora-book/src/conformance-results.json`, and
+    /// exit non-zero on any `must`-tier failure.
+    Run,
+}
+
+#[derive(Args)]
+struct TypesArgs {
+    #[command(subcommand)]
+    op: TypesOp,
+}
+
+#[derive(Subcommand)]
+enum TypesOp {
+    /// Generate `aozora_types.d.ts` from the live enums + wire
+    /// structs and write it under `crates/aozora-wasm/pkg/`.
+    /// Overwrites the existing file; commit the diff.
+    Ts,
+    /// Compare on-disk `aozora_types.d.ts` against fresh codegen;
+    /// exit non-zero on drift. CI gate.
+    Check,
 }
 
 #[derive(Args)]
@@ -162,6 +231,9 @@ fn main() {
         Cmd::Deps(args) => deps::dispatch(&args),
         Cmd::Corpus(args) => corpus::dispatch(&args),
         Cmd::Ci(args) => ci::run(&args),
+        Cmd::Schema(args) => schema::dispatch(&args),
+        Cmd::Types(args) => types::dispatch(&args),
+        Cmd::Conformance(args) => conformance::dispatch(&args),
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");

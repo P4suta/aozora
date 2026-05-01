@@ -9,7 +9,7 @@
 //! contract is: for any plain-text input (no Aozora markup), both
 //! renderers MUST produce byte-identical HTML.
 
-use aozora_lex::lex_into_arena;
+use aozora_pipeline::lex_into_arena;
 use aozora_render::html;
 use aozora_syntax::borrowed::Arena;
 use proptest::prelude::*;

@@ -9,10 +9,10 @@
 
 use core::fmt::{self, Write};
 
-use aozora_lex::BorrowedLexOutput;
+use aozora_pipeline::BorrowedLexOutput;
 use aozora_syntax::borrowed::{
-    Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, Ruby,
-    Sashie, Segment, TateChuYoko,
+    Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, NodeRef,
+    Ruby, Sashie, Segment, TateChuYoko,
 };
 use aozora_syntax::{AlignEnd, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind};
 use memchr::memchr_iter;
@@ -82,27 +82,28 @@ pub fn serialize_into<W: Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -> 
 
         writer.write_str(&normalized[cursor..cand_pos])?;
         let byte_pos = u32::try_from(cand_pos).expect("normalized fits u32 per Phase 0 cap");
-        match kind {
-            SentinelKind::Inline => {
-                if let Some(&node) = registry.inline.get(&byte_pos) {
-                    emit_aozora(node, writer)?;
-                }
+        // One registry lookup per sentinel hit; the `NodeRef` variant
+        // tells us which sentinel kind landed (and pattern-matching
+        // the `(SentinelKind, NodeRef)` cross-product flags any
+        // mismatch as a no-op rather than rendering the wrong shape).
+        match (
+            kind,
+            registry.node_at(aozora_spec::NormalizedOffset::new(byte_pos)),
+        ) {
+            (SentinelKind::Inline, Some(NodeRef::Inline(node))) => emit_aozora(node, writer)?,
+            (SentinelKind::BlockLeaf, Some(NodeRef::BlockLeaf(node))) => {
+                emit_aozora(node, writer)?;
             }
-            SentinelKind::BlockLeaf => {
-                if let Some(&node) = registry.block_leaf.get(&byte_pos) {
-                    emit_aozora(node, writer)?;
-                }
+            (SentinelKind::BlockOpen, Some(NodeRef::BlockOpen(kind))) => {
+                writer.write_str(container_open_marker(kind))?;
             }
-            SentinelKind::BlockOpen => {
-                if let Some(&kind) = registry.block_open.get(&byte_pos) {
-                    writer.write_str(container_open_marker(kind))?;
-                }
+            (SentinelKind::BlockClose, Some(NodeRef::BlockClose(kind))) => {
+                writer.write_str(container_close_marker(kind))?;
             }
-            SentinelKind::BlockClose => {
-                if let Some(&kind) = registry.block_close.get(&byte_pos) {
-                    writer.write_str(container_close_marker(kind))?;
-                }
-            }
+            // Sentinel hit without a corresponding registry entry, or
+            // a kind/variant mismatch — pre-Phase-D the per-table
+            // lookups silently dropped these too. Best-effort policy.
+            _ => {}
         }
         cursor = cand_pos + 3;
     }
@@ -161,15 +162,15 @@ fn emit_aozora<W: Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
 
 fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
     out.write_char('｜')?;
-    emit_content(r.base, out)?;
+    emit_content(r.base.get(), out)?;
     out.write_char('《')?;
-    emit_content(r.reading, out)?;
+    emit_content(r.reading.get(), out)?;
     out.write_char('》')
 }
 
 fn emit_bouten<W: Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃")?;
-    emit_bouten_targets(b.target, out)?;
+    emit_bouten_targets(b.target.get(), out)?;
     match b.position {
         BoutenPosition::Left => out.write_str("の左に")?,
         _ => out.write_char('に')?,
@@ -211,7 +212,7 @@ fn emit_bouten_targets<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
 
 fn emit_tate_chu_yoko<W: Write>(t: &TateChuYoko<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃「")?;
-    emit_content_as_plain(t.text, out)?;
+    emit_content_as_plain(t.text.get(), out)?;
     out.write_str("」は縦中横］")
 }
 
@@ -229,18 +230,18 @@ fn emit_gaiji<W: Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
 
 fn emit_kaeriten<W: Write>(k: &Kaeriten<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃")?;
-    out.write_str(k.mark)?;
+    out.write_str(k.mark.as_str())?;
     out.write_char('］')
 }
 
 fn emit_annotation<W: Write>(a: &Annotation<'_>, out: &mut W) -> fmt::Result {
-    out.write_str(a.raw)
+    out.write_str(a.raw.as_str())
 }
 
 fn emit_double_ruby<W: Write>(d: &DoubleRuby<'_>, out: &mut W) -> fmt::Result {
     out.write_char('《')?;
     out.write_char('《')?;
-    emit_content(d.content, out)?;
+    emit_content(d.content.get(), out)?;
     out.write_char('》')?;
     out.write_char('》')
 }
@@ -275,13 +276,13 @@ fn emit_align_end<W: Write>(a: AlignEnd, out: &mut W) -> fmt::Result {
 
 fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃挿絵（")?;
-    out.write_str(s.file)?;
+    out.write_str(s.file.as_str())?;
     out.write_str("）入る］")
 }
 
 fn emit_heading_hint<W: Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃「")?;
-    out.write_str(h.target)?;
+    out.write_str(h.target.as_str())?;
     out.write_str(match h.level {
         1 => "」は大見出し］",
         2 => "」は中見出し］",
@@ -340,7 +341,7 @@ fn emit_content_as_plain<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
         match seg {
             Segment::Text(t) => out.write_str(t)?,
             Segment::Gaiji(g) => out.write_str(g.description)?,
-            Segment::Annotation(a) => out.write_str(a.raw)?,
+            Segment::Annotation(a) => out.write_str(a.raw.as_str())?,
             _ => {}
         }
     }
@@ -426,7 +427,7 @@ mod tests {
 
     fn ser(src: &str) -> String {
         let arena = Arena::new();
-        let out = aozora_lex::lex_into_arena(src, &arena);
+        let out = aozora_pipeline::lex_into_arena(src, &arena);
         serialize(&out)
     }
 

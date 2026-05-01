@@ -1,0 +1,28 @@
+[package]
+name        = "aozora-pandoc"
+description = "Pandoc AST projection for the aozora parser — emit Pandoc JSON consumable by every Pandoc output format"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+# Phase M1 — workspace member, not yet on crates.io. The library is
+# usable today via the path dependency in `aozora-cli`'s `aozora
+# pandoc` subcommand. We bump publishability after the API has
+# absorbed at least one downstream consumer's feedback.
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+aozora     = { workspace = true }
+pandoc_ast = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

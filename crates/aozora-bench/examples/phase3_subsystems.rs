@@ -1,8 +1,8 @@
 //! Phase 3 sub-system per-recogniser breakdown.
 //!
-//! Requires the `aozora-lexer/phase3-instrument` feature (enforced via
+//! Requires the `aozora-pipeline/phase3-instrument` feature (enforced via
 //! `required-features` in `aozora-bench/Cargo.toml`). When the feature
-//! is on, each recogniser entry inside [`aozora_lexer::phase3_classify`]
+//! is on, each recogniser entry inside [`aozora_pipeline::lexer::phase3_classify`]
 //! emits an [`instrumentation::SubsystemGuard`] that records elapsed
 //! nanoseconds into a thread-local table. This probe drains the table
 //! per document, accumulates totals across the corpus, and reports
@@ -27,7 +27,7 @@
 //!
 //! ```text
 //! AOZORA_CORPUS_ROOT=… cargo run --release --example phase3_subsystems \
-//!   -p aozora-bench --features 'aozora-lexer/phase3-instrument'
+//!   -p aozora-bench --features 'aozora-pipeline/phase3-instrument'
 //! ```
 
 #![allow(
@@ -49,8 +49,8 @@ use std::time::Instant;
 
 use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_sjis;
-use aozora_lex::lex_into_arena;
-use aozora_lexer::instrumentation::{Subsystem, TimingTable};
+use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lexer::instrumentation::{Subsystem, TimingTable};
 use aozora_syntax::borrowed::Arena;
 
 const NS_PER_MS: f64 = 1_000_000.0;

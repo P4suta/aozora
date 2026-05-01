@@ -30,7 +30,7 @@ use std::time::Instant;
 
 use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_sjis;
-use aozora_lex::lex_into_arena;
+use aozora_pipeline::lex_into_arena;
 use aozora_syntax::borrowed::Arena;
 
 const NS_PER_MS: f64 = 1_000_000.0;

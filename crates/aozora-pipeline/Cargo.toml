@@ -1,0 +1,57 @@
+[package]
+name        = "aozora-pipeline"
+description = "Aozora notation lex pipeline — orchestrator + 4-phase lexer producing a borrowed-arena AST"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+publish     = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Opt-in phase 3 sub-system instrumentation. When enabled, the
+# `phase3_classify` recogniser entry points push their elapsed-ns
+# into a thread-local `instrumentation::TimingTable` keyed by
+# `Subsystem`. The `aozora-bench` `phase3_subsystems` example reads
+# this table. Default OFF: every guard collapses to dead code at
+# compile time so release builds pay zero cost.
+phase3-instrument = []
+
+[dependencies]
+aozora-spec     = { workspace = true }
+aozora-syntax   = { workspace = true }
+aozora-encoding = { workspace = true }
+aozora-scan     = { workspace = true }
+aozora-veb      = { workspace = true }
+
+# Phase 1 build-time tooling — unchanged from the legacy aozora-lexer
+# crate's deps.
+aho-corasick = { workspace = true, features = ["std"] }
+bumpalo      = { workspace = true }
+memchr       = { workspace = true }
+smallvec     = { workspace = true }
+thiserror    = { workspace = true }
+miette       = { workspace = true }
+phf          = { workspace = true }
+
+[dev-dependencies]
+proptest          = { workspace = true }
+aozora-proptest   = { workspace = true }
+criterion         = { workspace = true }
+insta             = { workspace = true }
+
+[[bench]]
+name    = "tokenize_compare"
+harness = false
+
+[[bench]]
+name    = "classify_kaeriten"
+harness = false

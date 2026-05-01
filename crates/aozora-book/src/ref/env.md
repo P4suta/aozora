@@ -19,7 +19,7 @@ container plumbing.
 | `AOZORA_PROFILE_LIMIT` | `aozora-bench` probes | Cap the number of corpus documents per probe. Useful for fast iteration; set to `100` for a sub-second sweep. |
 | `AOZORA_PROFILE_REPEAT` | `samply-corpus`, `samply-render` | Number of parse / render passes per document after the one-time corpus load. Default `5`; raise to give samply enough parser-bound wall time to attach to. |
 | `AOZORA_PROBE_DOC` | `pathological_probe` | Single corpus path to probe in tight per-call mode. Path is relative to `$AOZORA_CORPUS_ROOT`. |
-| `AOZORA_PROPTEST_CASES` | `aozora-test-utils::config` | Override default proptest case count (default `128` per block). `4096` for `just prop-deep`. |
+| `AOZORA_PROPTEST_CASES` | `aozora-proptest::config` | Override default proptest case count (default `128` per block). `4096` for `just prop-deep`. |
 
 ## Container plumbing
 

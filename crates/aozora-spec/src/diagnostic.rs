@@ -9,12 +9,200 @@
 //! Every variant carries a byte-range [`Span`] in the *original source*
 //! (pre-normalization), so miette's snippet renderer points at the
 //! right characters regardless of which phase detected the issue.
+//!
+//! # Severity and source axes
+//!
+//! Diagnostics split along two orthogonal axes:
+//!
+//! - **[`Severity`]** — `Error` / `Warning` / `Note`. Determines how
+//!   strictly a host (CLI, LSP, editor decorator) should treat the
+//!   observation. Defaults to `Error` for genuine syntax issues and
+//!   `Warning` for input that the parser can carry around but the
+//!   user should be told about.
+//! - **[`DiagnosticSource`]** — `Source` (problem traces back to
+//!   user input) vs. `Internal` (a pipeline-invariant violation;
+//!   appearance indicates a library bug). Hosts that filter by
+//!   `Internal` get a clear "library bug" channel without having to
+//!   match on individual variants.
+//!
+//! Each variant exposes both axes through accessors
+//! ([`Diagnostic::severity`] / [`Diagnostic::source`]).
+//!
+//! # Internal variant
+//!
+//! The four library-bug sanity checks
+//! (`ResidualAnnotationMarker`, `UnregisteredSentinel`,
+//! `RegistryOutOfOrder`, `RegistryPositionMismatch`) live as a single
+//! [`Diagnostic::Internal`] variant whose `code` field
+//! ([`InternalCheckCode`]) tags the specific check. Tests and tooling
+//! match on that code via [`codes`]. Consumers that want to filter
+//! library-bug diagnostics out of the [`crate::Diagnostic`] stream
+//! reach for [`Diagnostic::source`].
 
 use miette::Diagnostic as MietteDiagnostic;
 use thiserror::Error;
 
 use crate::PairKind;
 use crate::Span;
+
+/// Stable identifier strings for known [`Diagnostic`] variants.
+///
+/// [`Diagnostic::code`] returns one of these for any production
+/// diagnostic. They are guaranteed stable across patch and minor
+/// releases; major-release variant additions land new constants here
+/// without touching existing ones.
+pub mod codes {
+    /// Source contains a lexer PUA sentinel codepoint.
+    pub const SOURCE_CONTAINS_PUA: &str = "aozora::lex::source_contains_pua";
+
+    /// Open delimiter reached end-of-input with no matching close.
+    pub const UNCLOSED_BRACKET: &str = "aozora::lex::unclosed_bracket";
+
+    /// Close delimiter saw an empty stack or a mismatched stack top.
+    pub const UNMATCHED_CLOSE: &str = "aozora::lex::unmatched_close";
+
+    /// Pipeline-internal: an `［＃` digraph survived classification
+    /// into the normalized text. Indicates a missing recogniser for
+    /// the keyword.
+    pub const RESIDUAL_ANNOTATION_MARKER: &str = "aozora::lex::residual_annotation_marker";
+
+    /// Pipeline-internal: a PUA sentinel codepoint is present in the
+    /// normalized text at a position that is not recorded in the
+    /// placeholder registry.
+    ///
+    /// Source-side PUA collisions emit [`SOURCE_CONTAINS_PUA`]
+    /// upstream; this code is distinct.
+    pub const UNREGISTERED_SENTINEL: &str = "aozora::lex::unregistered_sentinel";
+
+    /// Pipeline-internal: a placeholder-registry vector is not
+    /// strictly ordered by position. Indicates a normalizer driver
+    /// bug.
+    pub const REGISTRY_OUT_OF_ORDER: &str = "aozora::lex::registry_out_of_order";
+
+    /// Pipeline-internal: a registry entry references a normalized
+    /// byte position whose character does not match the expected
+    /// sentinel kind.
+    pub const REGISTRY_POSITION_MISMATCH: &str = "aozora::lex::registry_position_mismatch";
+}
+
+/// Severity of a [`Diagnostic`].
+///
+/// Hosts route diagnostics by severity: `Error` blocks downstream
+/// rendering or fails CI, `Warning` decorates the editor surface,
+/// `Note` is informational. The `aozora` library never panics on a
+/// `Diagnostic` — the parser produces a best-effort output and
+/// surfaces this enum as the host's policy hook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Severity {
+    /// Genuine error; downstream consumers should treat the parse as
+    /// suspect.
+    Error,
+    /// Recoverable observation; parse continues and output is
+    /// preserved, but the user should know.
+    Warning,
+    /// Informational note; editor surfaces may show it as a tooltip
+    /// or annotation but it does not affect CI / build status.
+    Note,
+}
+
+impl Severity {
+    /// Every variant in declaration order. Used by codegen so
+    /// downstream artefacts track the enum without drift.
+    pub const ALL: [Self; 3] = [Self::Error, Self::Warning, Self::Note];
+
+    /// Stable lowercase wire-format identifier ("error" / "warning"
+    /// / "note"). The same string the driver wire format emits in
+    /// the `severity` field of `DiagnosticWire`.
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warning => "warning",
+            Self::Note => "note",
+        }
+    }
+}
+
+/// Origin of a [`Diagnostic`] — distinguishes user-input issues from
+/// library-internal sanity-check failures.
+///
+/// Production parses on well-formed input never emit `Internal`
+/// diagnostics. An `Internal` diagnostic indicates a bug in
+/// `aozora-pipeline` and SHOULD be reported upstream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DiagnosticSource {
+    /// Issue traces back to the user-provided source text.
+    Source,
+    /// Pipeline-internal invariant violation. Indicates a library
+    /// bug; the parse is still completed best-effort but downstream
+    /// tooling should surface this distinctly.
+    Internal,
+}
+
+impl DiagnosticSource {
+    /// Every variant in declaration order.
+    pub const ALL: [Self; 2] = [Self::Source, Self::Internal];
+
+    /// Stable lowercase wire-format identifier ("source" /
+    /// "internal"). Matches the `source` field of `DiagnosticWire`.
+    #[must_use]
+    pub const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::Source => "source",
+            Self::Internal => "internal",
+        }
+    }
+}
+
+/// Identifier of a specific pipeline-internal sanity check.
+///
+/// Carried by the [`Diagnostic::Internal`] variant. Tooling that
+/// wants per-check assertions matches on this enum; legacy callers
+/// (logs, regex grep) can still reach for the stable
+/// `aozora::lex::*` string via [`Self::as_code`].
+///
+/// `#[non_exhaustive]` so adding a new check variant is a minor
+/// release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum InternalCheckCode {
+    /// An `［＃` digraph survived classification into the normalized
+    /// text. Indicates a missing recogniser for the keyword.
+    ResidualAnnotationMarker,
+    /// A PUA sentinel codepoint is present in the normalized text at
+    /// a position that is not recorded in the placeholder registry.
+    UnregisteredSentinel,
+    /// A placeholder-registry vector is not strictly ordered by
+    /// position. Indicates a normalizer driver bug.
+    RegistryOutOfOrder,
+    /// A registry entry references a normalized byte position whose
+    /// character does not match the expected sentinel kind.
+    RegistryPositionMismatch,
+}
+
+impl InternalCheckCode {
+    /// All known internal check codes in declaration order.
+    pub const ALL: [Self; 4] = [
+        Self::ResidualAnnotationMarker,
+        Self::UnregisteredSentinel,
+        Self::RegistryOutOfOrder,
+        Self::RegistryPositionMismatch,
+    ];
+
+    /// Stable `aozora::lex::*` string identifier for this check.
+    /// Equivalent to the corresponding [`codes`] constant.
+    #[must_use]
+    pub const fn as_code(self) -> &'static str {
+        match self {
+            Self::ResidualAnnotationMarker => codes::RESIDUAL_ANNOTATION_MARKER,
+            Self::UnregisteredSentinel => codes::UNREGISTERED_SENTINEL,
+            Self::RegistryOutOfOrder => codes::REGISTRY_OUT_OF_ORDER,
+            Self::RegistryPositionMismatch => codes::REGISTRY_POSITION_MISMATCH,
+        }
+    }
+}
 
 /// Observation emitted by any lexer phase.
 #[derive(Debug, Clone, Error, MietteDiagnostic)]
@@ -30,6 +218,7 @@ pub enum Diagnostic {
     #[error("source contains lexer PUA sentinel codepoint {codepoint:?}")]
     #[diagnostic(
         code("aozora::lex::source_contains_pua"),
+        severity(Warning),
         help(
             "the lexer reserves U+E001..U+E004 as inline/block markers; \
              a source-side occurrence will confuse the placeholder registry"
@@ -81,82 +270,41 @@ pub enum Diagnostic {
         span: Span,
     },
 
-    /// Phase 6 V1 — a `［＃` digraph survived normalization into the
-    /// final text. Indicates an annotation escaped classification.
-    #[error("residual `［＃` annotation marker in normalized text")]
+    /// Pipeline-internal sanity-check failure — production parses on
+    /// well-formed input never emit this. The [`check`](Self::Internal)
+    /// payload identifies the specific check via the typed
+    /// [`InternalCheckCode`] enum; tooling that prefers the stable
+    /// string identifier reaches via
+    /// [`Self::code`](Self::code). Library consumers that just want
+    /// to filter "library bugs" out of the stream check
+    /// [`source`](Self::source) instead.
+    #[error("internal aozora pipeline check failed: {}", check.as_code())]
     #[diagnostic(
-        code("aozora::lex::residual_annotation_marker"),
+        code("aozora::internal"),
         help(
-            "a `［＃…］` pair reached the normalizer unclassified — \
-             most likely a missing recognizer for the keyword"
+            "this is a pipeline-internal sanity check; appearance \
+             indicates a bug in aozora — please report at \
+             https://github.com/P4suta/aozora/issues with the source \
+             that triggered it"
         )
     )]
-    ResidualAnnotationMarker {
-        #[label("leaked here")]
+    Internal {
+        #[label("at this position")]
         at: miette::SourceSpan,
-        /// Byte-range within the normalized text.
-        span: Span,
-    },
-
-    /// Phase 6 V2 — a PUA sentinel codepoint was found in the
-    /// normalized text at a position that is not recorded in the
-    /// placeholder registry. Source-side PUA collisions already emitted
-    /// `SourceContainsPua` upstream; a violation here is distinct: a
-    /// sentinel landed but the registry does not know about it, which
-    /// would break post-process splicing.
-    #[error("unregistered PUA sentinel {codepoint:?} in normalized text")]
-    #[diagnostic(
-        code("aozora::lex::unregistered_sentinel"),
-        help(
-            "the normalizer wrote this sentinel but the placeholder registry \
-             has no matching entry; post_process cannot resolve it"
-        )
-    )]
-    UnregisteredSentinel {
-        #[label("unregistered here")]
-        at: miette::SourceSpan,
-        codepoint: char,
-        /// Byte-range within the normalized text.
-        span: Span,
-    },
-
-    /// Phase 6 V3 — a placeholder-registry vector is not strictly
-    /// ordered by position. Indicates a normalizer driver bug.
-    #[error("placeholder registry entries are not strictly sorted")]
-    #[diagnostic(
-        code("aozora::lex::registry_out_of_order"),
-        help(
-            "the normalizer is expected to emit registry entries in ascending \
-             byte-position order; a violation here breaks binary-search lookups"
-        )
-    )]
-    RegistryOutOfOrder {
-        #[label("out-of-order pair")]
-        at: miette::SourceSpan,
-        /// Span covering the two offending entries' positions.
-        span: Span,
-    },
-
-    /// Phase 6 V3 — a registry entry references a normalized byte
-    /// position whose character does not match the expected sentinel
-    /// kind.
-    #[error("placeholder registry points at {expected:?} but byte there is different")]
-    #[diagnostic(
-        code("aozora::lex::registry_position_mismatch"),
-        help(
-            "the normalized byte at this position is not the PUA sentinel \
-             the registry claims — the registry and the string drifted"
-        )
-    )]
-    RegistryPositionMismatch {
-        #[label("mismatch here")]
-        at: miette::SourceSpan,
-        expected: char,
-        /// Byte-range within the normalized text.
+        /// Typed identifier for the specific check that fired. Pin
+        /// per-check assertions on this rather than the stringly-typed
+        /// [`code`](Self::code) accessor so the compiler enforces
+        /// match exhaustiveness at the call site.
+        check: InternalCheckCode,
+        /// Byte-range covering the violation site.
         span: Span,
     },
 }
 
+#[allow(
+    clippy::same_name_method,
+    reason = "intentional: our inherent severity() / code() return strongly-typed (Severity enum, &'static str) values that mirror miette::Diagnostic's loosely-typed defaults — callers prefer the inherent method"
+)]
 impl Diagnostic {
     /// Constructor for [`Diagnostic::SourceContainsPua`].
     #[must_use]
@@ -191,45 +339,69 @@ impl Diagnostic {
         }
     }
 
-    /// Constructor for [`Diagnostic::ResidualAnnotationMarker`].
+    /// Constructor for [`Diagnostic::Internal`]. Takes a typed
+    /// [`InternalCheckCode`] — the compiler enforces that every
+    /// production emit-site classifies the check correctly.
     #[must_use]
-    pub fn residual_annotation_marker(at: Span) -> Self {
+    pub fn internal(at: Span, check: InternalCheckCode) -> Self {
         let (offset, length) = span_to_miette_parts(at);
-        Self::ResidualAnnotationMarker {
+        Self::Internal {
             at: miette::SourceSpan::new(offset.into(), length),
+            check,
             span: at,
         }
     }
 
-    /// Constructor for [`Diagnostic::UnregisteredSentinel`].
+    /// Severity routing axis. See [`Severity`].
+    ///
+    /// `#[non_exhaustive]` puts the responsibility on every match
+    /// here for adding-new-variant time, not on a catch-all arm —
+    /// the compiler will refuse to build until the new variant is
+    /// classified.
     #[must_use]
-    pub fn unregistered_sentinel(at: Span, codepoint: char) -> Self {
-        let (offset, length) = span_to_miette_parts(at);
-        Self::UnregisteredSentinel {
-            at: miette::SourceSpan::new(offset.into(), length),
-            codepoint,
-            span: at,
+    pub fn severity(&self) -> Severity {
+        match self {
+            Self::SourceContainsPua { .. } => Severity::Warning,
+            Self::UnclosedBracket { .. } | Self::UnmatchedClose { .. } | Self::Internal { .. } => {
+                Severity::Error
+            }
         }
     }
 
-    /// Constructor for [`Diagnostic::RegistryOutOfOrder`].
+    /// Origin axis: user input vs. pipeline-internal. See
+    /// [`DiagnosticSource`].
     #[must_use]
-    pub fn registry_out_of_order(at: Span) -> Self {
-        let (offset, length) = span_to_miette_parts(at);
-        Self::RegistryOutOfOrder {
-            at: miette::SourceSpan::new(offset.into(), length),
-            span: at,
+    pub fn source(&self) -> DiagnosticSource {
+        match self {
+            Self::SourceContainsPua { .. }
+            | Self::UnclosedBracket { .. }
+            | Self::UnmatchedClose { .. } => DiagnosticSource::Source,
+            Self::Internal { .. } => DiagnosticSource::Internal,
         }
     }
 
-    /// Constructor for [`Diagnostic::RegistryPositionMismatch`].
+    /// Byte-range covering the diagnostic.
     #[must_use]
-    pub fn registry_position_mismatch(at: Span, expected: char) -> Self {
-        let (offset, length) = span_to_miette_parts(at);
-        Self::RegistryPositionMismatch {
-            at: miette::SourceSpan::new(offset.into(), length),
-            expected,
-            span: at,
+    pub fn span(&self) -> Span {
+        match self {
+            Self::SourceContainsPua { span, .. }
+            | Self::UnclosedBracket { span, .. }
+            | Self::UnmatchedClose { span, .. }
+            | Self::Internal { span, .. } => *span,
+        }
+    }
+
+    /// Stable string identifier for this diagnostic. Returns one of
+    /// the constants from [`codes`] for production variants, or the
+    /// `Internal` payload's [`InternalCheckCode::as_code`] for
+    /// pipeline-internal checks.
+    #[must_use]
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::SourceContainsPua { .. } => codes::SOURCE_CONTAINS_PUA,
+            Self::UnclosedBracket { .. } => codes::UNCLOSED_BRACKET,
+            Self::UnmatchedClose { .. } => codes::UNMATCHED_CLOSE,
+            Self::Internal { check, .. } => check.as_code(),
         }
     }
 }
@@ -259,6 +431,14 @@ mod tests {
     }
 
     #[test]
+    fn source_contains_pua_is_warning_severity() {
+        let diag = Diagnostic::source_contains_pua(Span::new(0, 3), '\u{E002}');
+        assert_eq!(diag.severity(), Severity::Warning);
+        assert_eq!(diag.source(), DiagnosticSource::Source);
+        assert_eq!(diag.code(), codes::SOURCE_CONTAINS_PUA);
+    }
+
+    #[test]
     fn source_contains_pua_display_mentions_codepoint() {
         let diag = Diagnostic::source_contains_pua(Span::new(0, 3), '\u{E002}');
         let rendered = format!("{diag}");
@@ -282,6 +462,14 @@ mod tests {
     }
 
     #[test]
+    fn unclosed_bracket_is_error_severity_from_source() {
+        let diag = Diagnostic::unclosed_bracket(Span::new(0, 3), PairKind::Bracket);
+        assert_eq!(diag.severity(), Severity::Error);
+        assert_eq!(diag.source(), DiagnosticSource::Source);
+        assert_eq!(diag.code(), codes::UNCLOSED_BRACKET);
+    }
+
+    #[test]
     fn unmatched_close_round_trips_span_and_kind() {
         let diag = Diagnostic::unmatched_close(Span::new(7, 10), PairKind::Ruby);
         match diag {
@@ -291,6 +479,14 @@ mod tests {
             }
             other => panic!("expected UnmatchedClose, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn unmatched_close_is_error_severity_from_source() {
+        let diag = Diagnostic::unmatched_close(Span::new(0, 3), PairKind::Quote);
+        assert_eq!(diag.severity(), Severity::Error);
+        assert_eq!(diag.source(), DiagnosticSource::Source);
+        assert_eq!(diag.code(), codes::UNMATCHED_CLOSE);
     }
 
     #[test]
@@ -306,81 +502,94 @@ mod tests {
     }
 
     #[test]
-    fn residual_annotation_marker_round_trips_span() {
-        let diag = Diagnostic::residual_annotation_marker(Span::new(4, 6));
-        let Diagnostic::ResidualAnnotationMarker { span, .. } = diag else {
-            panic!("expected ResidualAnnotationMarker, got {diag:?}");
+    fn internal_round_trips_check_and_span() {
+        let diag = Diagnostic::internal(Span::new(2, 5), InternalCheckCode::RegistryOutOfOrder);
+        let Diagnostic::Internal { check, span, .. } = diag else {
+            panic!("expected Internal, got {diag:?}");
         };
-        assert_eq!(span, Span::new(4, 6));
-    }
-
-    #[test]
-    fn residual_annotation_marker_display_mentions_marker() {
-        let diag = Diagnostic::residual_annotation_marker(Span::new(0, 2));
-        assert!(format!("{diag}").contains("［＃"));
-    }
-
-    #[test]
-    fn unregistered_sentinel_round_trips_span_and_codepoint() {
-        let diag = Diagnostic::unregistered_sentinel(Span::new(1, 4), '\u{E003}');
-        let Diagnostic::UnregisteredSentinel {
-            codepoint, span, ..
-        } = diag
-        else {
-            panic!("expected UnregisteredSentinel, got {diag:?}");
-        };
-        assert_eq!(codepoint, '\u{E003}');
-        assert_eq!(span, Span::new(1, 4));
-    }
-
-    #[test]
-    fn unregistered_sentinel_display_mentions_codepoint() {
-        let diag = Diagnostic::unregistered_sentinel(Span::new(0, 3), '\u{E004}');
-        let rendered = format!("{diag}");
-        assert!(
-            rendered.contains("E004")
-                || rendered.contains("\\u{e004}")
-                || rendered.contains('\u{E004}')
-        );
-    }
-
-    #[test]
-    fn registry_out_of_order_round_trips_span() {
-        let diag = Diagnostic::registry_out_of_order(Span::new(10, 20));
-        let Diagnostic::RegistryOutOfOrder { span, .. } = diag else {
-            panic!("expected RegistryOutOfOrder, got {diag:?}");
-        };
-        assert_eq!(span, Span::new(10, 20));
-    }
-
-    #[test]
-    fn registry_out_of_order_display_is_descriptive() {
-        let diag = Diagnostic::registry_out_of_order(Span::new(0, 5));
-        let rendered = format!("{diag}");
-        assert!(
-            rendered.contains("sort") || rendered.contains("order"),
-            "registry out-of-order diagnostic must describe the shape, got {rendered:?}"
-        );
-    }
-
-    #[test]
-    fn registry_position_mismatch_round_trips_span_and_expected() {
-        let diag = Diagnostic::registry_position_mismatch(Span::new(2, 5), '\u{E001}');
-        let Diagnostic::RegistryPositionMismatch { expected, span, .. } = diag else {
-            panic!("expected RegistryPositionMismatch, got {diag:?}");
-        };
-        assert_eq!(expected, '\u{E001}');
+        assert_eq!(check, InternalCheckCode::RegistryOutOfOrder);
         assert_eq!(span, Span::new(2, 5));
     }
 
     #[test]
-    fn registry_position_mismatch_display_mentions_expected_codepoint() {
-        let diag = Diagnostic::registry_position_mismatch(Span::new(0, 1), '\u{E002}');
+    fn internal_classified_as_internal_source() {
+        let diag = Diagnostic::internal(Span::new(0, 1), InternalCheckCode::UnregisteredSentinel);
+        assert_eq!(diag.severity(), Severity::Error);
+        assert_eq!(diag.source(), DiagnosticSource::Internal);
+        assert_eq!(diag.code(), codes::UNREGISTERED_SENTINEL);
+    }
+
+    #[test]
+    fn internal_display_mentions_code() {
+        let diag =
+            Diagnostic::internal(Span::new(0, 1), InternalCheckCode::ResidualAnnotationMarker);
         let rendered = format!("{diag}");
         assert!(
-            rendered.contains("E002")
-                || rendered.contains("\\u{e002}")
-                || rendered.contains('\u{E002}')
+            rendered.contains(codes::RESIDUAL_ANNOTATION_MARKER),
+            "Internal Display should print the code; got {rendered:?}"
         );
+    }
+
+    #[test]
+    fn internal_check_code_as_code_round_trips_constants() {
+        for kind in InternalCheckCode::ALL {
+            let diag = Diagnostic::internal(Span::new(0, 0), kind);
+            assert_eq!(
+                diag.code(),
+                kind.as_code(),
+                "code() must agree with as_code() for {kind:?}"
+            );
+        }
+    }
+
+    /// Codes are stable identifiers — pin every constant so accidental
+    /// rename of one breaks this test rather than silently breaking
+    /// downstream tooling that grep-matches on the string.
+    #[test]
+    fn code_constants_are_stable() {
+        assert_eq!(
+            codes::SOURCE_CONTAINS_PUA,
+            "aozora::lex::source_contains_pua"
+        );
+        assert_eq!(codes::UNCLOSED_BRACKET, "aozora::lex::unclosed_bracket");
+        assert_eq!(codes::UNMATCHED_CLOSE, "aozora::lex::unmatched_close");
+        assert_eq!(
+            codes::RESIDUAL_ANNOTATION_MARKER,
+            "aozora::lex::residual_annotation_marker"
+        );
+        assert_eq!(
+            codes::UNREGISTERED_SENTINEL,
+            "aozora::lex::unregistered_sentinel"
+        );
+        assert_eq!(
+            codes::REGISTRY_OUT_OF_ORDER,
+            "aozora::lex::registry_out_of_order"
+        );
+        assert_eq!(
+            codes::REGISTRY_POSITION_MISMATCH,
+            "aozora::lex::registry_position_mismatch"
+        );
+    }
+
+    /// Severity / source axes are independent — pin the cross-product
+    /// for the four production variants so a future variant addition
+    /// has to think about both axes deliberately.
+    #[test]
+    fn severity_source_cross_product_is_pinned() {
+        let pua = Diagnostic::source_contains_pua(Span::new(0, 3), '\u{E001}');
+        assert_eq!(pua.severity(), Severity::Warning);
+        assert_eq!(pua.source(), DiagnosticSource::Source);
+
+        let unclosed = Diagnostic::unclosed_bracket(Span::new(0, 3), PairKind::Bracket);
+        assert_eq!(unclosed.severity(), Severity::Error);
+        assert_eq!(unclosed.source(), DiagnosticSource::Source);
+
+        let unmatched = Diagnostic::unmatched_close(Span::new(0, 3), PairKind::Bracket);
+        assert_eq!(unmatched.severity(), Severity::Error);
+        assert_eq!(unmatched.source(), DiagnosticSource::Source);
+
+        let internal = Diagnostic::internal(Span::new(0, 3), InternalCheckCode::RegistryOutOfOrder);
+        assert_eq!(internal.severity(), Severity::Error);
+        assert_eq!(internal.source(), DiagnosticSource::Internal);
     }
 }

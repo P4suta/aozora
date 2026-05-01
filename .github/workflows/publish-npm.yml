@@ -1,0 +1,65 @@
+# npm publish workflow for `aozora-wasm`.
+#
+# Phase P2 — capability ships in 0.4.0; live publish requires both
+# `dry_run: false` and the `NPM_TOKEN` repo secret. Manual trigger
+# only.
+#
+# How to run a real publish:
+#   gh workflow run publish-npm.yml -f dry_run=false
+#
+# wasm-pack publishes to the npm registry the JS shim + .wasm bundle
+# emitted by `wasm-pack build --target web`. The crate's
+# `[package.metadata.wasm-pack.profile]` controls the bundle name.
+
+name: publish-npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run wasm-pack publish in --dry-run mode (no upload)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: publish-npm
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build wasm-pack package
+        run: wasm-pack build --target web --release crates/aozora-wasm
+
+      - name: Dry-run npm publish
+        working-directory: crates/aozora-wasm/pkg
+        run: npm publish --dry-run
+
+      - name: Publish to npm (live)
+        if: inputs.dry_run == false
+        working-directory: crates/aozora-wasm/pkg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public

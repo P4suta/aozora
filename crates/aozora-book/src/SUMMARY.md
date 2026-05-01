@@ -12,6 +12,26 @@
 
 # 青空文庫記法 Reference
 
+- [Node reference](nodes/index.md)
+  - [Ruby](nodes/ruby.md)
+  - [Bouten](nodes/bouten.md)
+  - [TateChuYoko](nodes/tate-chu-yoko.md)
+  - [Gaiji](nodes/gaiji.md)
+  - [Indent](nodes/indent.md)
+  - [AlignEnd](nodes/align-end.md)
+  - [Warichu](nodes/warichu.md)
+  - [Keigakomi](nodes/keigakomi.md)
+  - [PageBreak](nodes/page-break.md)
+  - [SectionBreak](nodes/section-break.md)
+  - [AozoraHeading](nodes/aozora-heading.md)
+  - [HeadingHint](nodes/heading-hint.md)
+  - [Sashie](nodes/sashie.md)
+  - [Kaeriten](nodes/kaeriten.md)
+  - [Annotation](nodes/annotation.md)
+  - [DoubleRuby](nodes/double-ruby.md)
+  - [Container](nodes/container.md)
+  - [ContainerOpen](nodes/container-open.md)
+  - [ContainerClose](nodes/container-close.md)
 - [Notation overview](notation/overview.md)
 - [Ruby (｜青梅《おうめ》)](notation/ruby.md)
 - [Bouten / bousen (傍点・傍線)](notation/bouten.md)
@@ -31,6 +51,9 @@
 - [Eytzinger sorted-set lookup](arch/veb.md)
 - [Shift_JIS + 外字 resolver](arch/encoding.md)
 - [HTML renderer & canonical serialiser](arch/renderer.md)
+- [Concrete syntax tree](arch/cst.md)
+- [Error recovery](arch/error-recovery.md)
+- [tree-sitter reference grammar](arch/grammar-tree-sitter.md)
 - [Crate map](arch/crates.md)
 
 # Bindings
@@ -39,6 +62,7 @@
 - [WASM (wasm-pack)](bindings/wasm.md)
 - [C ABI](bindings/c.md)
 - [Python (PyO3 / maturin)](bindings/python.md)
+- [Pandoc AST projection](bindings/pandoc.md)
 
 # Performance
 
@@ -46,12 +70,16 @@
 - [Profiling with samply](perf/samply.md)
 - [Benchmarks (criterion)](perf/bench.md)
 - [Corpus sweeps](perf/corpus.md)
+- [Phase D results — single-table registry](perf/phase-d-results.md)
 
 # Reference
 
 - [CLI reference](ref/cli.md)
 - [API reference (rustdoc)](ref/api.md)
 - [Environment variables](ref/env.md)
+- [Conformance suite](conformance.md)
+- [Query DSL](query.md)
+- [Wire format](wire/overview.md)
 
 ---
 

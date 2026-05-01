@@ -22,32 +22,22 @@ aozora          = { workspace = true }
 aozora-corpus   = { workspace = true }
 aozora-encoding = { workspace = true }
 aozora-syntax   = { workspace = true }
-aozora-lex      = { workspace = true }
+aozora-pipeline = { workspace = true }
 aozora-scan     = { workspace = true }
 memchr          = { workspace = true }
 rayon           = { workspace = true }
 zstd            = { workspace = true }
-# phase_breakdown example reaches into the legacy phases directly
-# for per-phase wall measurement; the fused engine in `aozora-lex`
-# does not expose them as separate steps.
-aozora-lexer    = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-# Direct dep so the `phase3_subsystems` example can pull in the
-# `aozora-lexer/phase3-instrument` feature on demand. Default builds
-# inherit `default-features = false` here purely to keep the dep graph
-# minimal — `aozora-lexer` is already in `[dependencies]`, so the
-# default feature set is unchanged.
-aozora-lexer = { workspace = true, features = [] }
 
 [features]
 default = []
-# Activate the upstream `aozora-lexer/phase3-instrument` so examples
+# Activate the upstream `aozora-pipeline/phase3-instrument` so examples
 # (notably `pathological_probe`) can dump per-subsystem timings.
 # Use: `cargo run --release --example pathological_probe -p aozora-bench
 #       --features instrument`
-instrument = ["aozora-lexer/phase3-instrument"]
+instrument = ["aozora-pipeline/phase3-instrument"]
 
 [[bench]]
 name    = "crime_and_punishment"
@@ -58,9 +48,9 @@ name    = "synthetic_corpus"
 harness = false
 
 # `phase3_subsystems` requires the opt-in instrumentation feature on
-# `aozora-lexer`. Run with:
+# `aozora-pipeline`. Run with:
 # `cargo run --release --example phase3_subsystems -p aozora-bench \
-#    --features 'aozora-lexer/phase3-instrument'`
+#    --features 'aozora-pipeline/phase3-instrument'`
 [[example]]
 name             = "phase3_subsystems"
-required-features = ["aozora-lexer/phase3-instrument"]
+required-features = ["aozora-pipeline/phase3-instrument"]

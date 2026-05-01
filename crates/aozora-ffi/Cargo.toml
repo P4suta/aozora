@@ -30,9 +30,9 @@ missing_debug_implementations = "warn"
 missing_copy_implementations = "warn"
 
 [dependencies]
-aozora     = { workspace = true }
-serde      = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+# Drivers consume the wire format via `aozora::wire::*`; serde +
+# serde_json transitive-only via the `wire` feature.
+aozora = { workspace = true, features = ["wire"] }
 
 [build-dependencies]
 # Generates `aozora.h` from `#[no_mangle] extern "C"` items in

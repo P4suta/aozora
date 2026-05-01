@@ -14,7 +14,7 @@
 //! * `serialize` is a fixed point after one pass for canonical
 //!   markup shapes (inline ruby, page break, kaeriten, gaiji).
 
-use aozora_lex::lex_into_arena;
+use aozora_pipeline::lex_into_arena;
 use aozora_render::{html, serialize};
 use aozora_syntax::borrowed::Arena;
 

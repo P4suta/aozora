@@ -46,6 +46,55 @@ test *ARGS:
 test-doc:
     {{_dev}} cargo test --workspace --doc
 
+# Phase K3 — byte-identical render gate. Loads aozora-conformance
+# fixtures and asserts current parse → render output matches golden
+# files. Set UPDATE_GOLDEN=1 to refresh after intentional output
+# change.
+render-gate:
+    {{_dev}} cargo test -p aozora-conformance --test render_gate
+
+# Refresh aozora-conformance golden files. Use after intentional
+# renderer output changes; commit the resulting fixture diff.
+render-gate-update:
+    {{_dev}} env UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test render_gate
+
+# Phase L1 — regenerate the wire JSON Schema artefacts under
+# crates/aozora-book/src/wire/. Run after touching any wire struct
+# or `aozora::wire::SCHEMA_VERSION`; commit the resulting diff so
+# `schema-check` (drift gate) stays green.
+schema:
+    {{_dev}} cargo run -p aozora-xtask -q -- schema dump
+
+# Phase L1 / L4 — drift gate: fail if the on-disk wire schemas
+# disagree with the live wire structs. Wired into the `drift-gate`
+# CI job; run locally before pushing if you touched wire types.
+schema-check:
+    {{_dev}} cargo run -p aozora-xtask -q -- schema check
+
+# Phase L2 — regenerate crates/aozora-wasm/types/aozora_types.d.ts
+# from the live enums + wire structs. Commit the diff so
+# `types-check` stays green.
+types:
+    {{_dev}} cargo run -p aozora-xtask -q -- types ts
+
+# Phase L2 / L4 — drift gate: fail if the committed
+# aozora_types.d.ts disagrees with fresh codegen. Wired into the
+# `drift-gate` CI job.
+types-check:
+    {{_dev}} cargo run -p aozora-xtask -q -- types check
+
+# Phase L4 — bundled drift gate. Equivalent to the CI `drift-gate`
+# job: schema + types in one shot. Use locally before pushing.
+drift-gate: schema-check types-check
+
+# Phase O4 — WPT-style conformance runner. Walks every fixture
+# under aozora-conformance/fixtures/render/, runs the parser, and
+# fails non-zero if any `must`-tier case regresses. Writes a
+# per-case results.json into the handbook source tree so readers
+# can see the latest tier breakdown.
+conformance:
+    {{_dev}} cargo run -p aozora-xtask -q -- conformance run
+
 # Property-based tests only. Default 128 cases per proptest block
 # (AOZORA_PROPTEST_CASES override via aozora-test-utils::config). Fast
 # enough to live in `just ci` — see `just prop-deep` for a stress run.
@@ -533,17 +582,31 @@ ci-act *ARGS:
 
 # --- aggregate ----------------------------------------------------------------
 
-# Local replica of the full CI pipeline — everything must pass before push
+# Local replica of the full CI pipeline — everything must pass before push.
+#
+# Order is roughly cheapest-to-most-expensive so a fix-and-retry loop
+# fails fast on the early gates. Mirrors every job in ci.yml that does
+# not need an external runtime (pandoc, wasm-pack, maturin) which the
+# dev image deliberately omits — those three CI-only jobs stay
+# unreachable from local.
+#
+# `book-linkcheck` ends the chain because lychee's network probes are
+# the slowest gate and the only one that depends on external availability;
+# putting it last means a transient pyo3.rs / docs.rs hiccup doesn't
+# delay the deterministic gates' failure signal.
 ci:
     just lint
     just build
+    just drift-gate
+    just conformance
+    just smoke-ffi
     just test
     just prop
     just deny
     just audit
     just udeps
     just coverage
-    just book-build
+    just book-linkcheck
 
 # --- developer workflow helpers ----------------------------------------------
 

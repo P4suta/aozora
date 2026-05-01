@@ -10,15 +10,16 @@ authors.workspace      = true
 readme.workspace       = true
 keywords.workspace     = true
 categories.workspace   = true
+publish     = false
 
 [lints]
 workspace = true
 
 [dependencies]
-aozora-spec   = { workspace = true }
-aozora-syntax = { workspace = true }
-aozora-lex    = { workspace = true }
-memchr        = { workspace = true }
+aozora-spec     = { workspace = true }
+aozora-syntax   = { workspace = true }
+aozora-pipeline = { workspace = true }
+memchr          = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

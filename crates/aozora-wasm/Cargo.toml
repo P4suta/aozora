@@ -29,8 +29,13 @@ wasm-bindgen          = "0.2"
 serde-wasm-bindgen    = "0.6"
 
 [dependencies]
-aozora     = { workspace = true }
-serde      = { workspace = true, features = ["derive"] }
+# Drivers consume the wire format via `aozora::wire::*`; serde +
+# serde_json transitive-only via the `wire` feature.
+aozora = { workspace = true, features = ["wire"] }
+
+[dev-dependencies]
+# Tests parse the wire-format JSON to assert structure; production
+# code emits but never reads the JSON.
 serde_json = { workspace = true }
 
 [lib]

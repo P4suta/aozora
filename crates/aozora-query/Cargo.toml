@@ -1,0 +1,28 @@
+[package]
+name        = "aozora-query"
+description = "tree-sitter-flavoured pattern queries over the aozora concrete syntax tree."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+# Phase N5 — internal until the DSL surface stabilises. Ergonomic
+# entry today is `aozora::query::*` behind the `query` feature on
+# the meta crate.
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+aozora-cst = { workspace = true }
+rowan      = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+aozora = { workspace = true }

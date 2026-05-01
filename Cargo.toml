@@ -3,14 +3,14 @@ resolver = "3"
 members = [
     "crates/aozora-spec",
     "crates/aozora-syntax",
-    "crates/aozora-lexer",
     "crates/aozora-encoding",
     "crates/aozora-corpus",
     "crates/aozora-cli",
-    "crates/aozora-test-utils",
+    "crates/aozora-proptest",
     "crates/aozora-veb",
     "crates/aozora-scan",
-    "crates/aozora-lex",
+    "crates/aozora-conformance",
+    "crates/aozora-pipeline",
     "crates/aozora-render",
     "crates/aozora",
     "crates/aozora-ffi",
@@ -19,6 +19,9 @@ members = [
     "crates/aozora-bench",
     "crates/aozora-xtask",
     "crates/aozora-trace",
+    "crates/aozora-pandoc",
+    "crates/aozora-cst",
+    "crates/aozora-query",
 ]
 # `aozora-book` is the mdbook source tree; it has no Cargo manifest of its
 # own. Listed in `exclude` so `cargo` ignores it during workspace globbing
@@ -144,7 +147,7 @@ aozora-spec       = { version = "0.2.6", path = "crates/aozora-spec" }
 aozora-syntax     = { version = "0.2.6", path = "crates/aozora-syntax" }
 aozora-veb        = { version = "0.2.6", path = "crates/aozora-veb" }
 aozora-scan       = { version = "0.2.6", path = "crates/aozora-scan" }
-aozora-lex        = { version = "0.2.6", path = "crates/aozora-lex" }
+aozora-pipeline   = { version = "0.2.6", path = "crates/aozora-pipeline" }
 aozora-render     = { version = "0.2.6", path = "crates/aozora-render" }
 aozora            = { version = "0.2.6", path = "crates/aozora" }
 aozora-wasm       = { version = "0.2.6", path = "crates/aozora-wasm" }
@@ -173,10 +176,13 @@ aho-corasick = { version = "1.1", default-features = false }
 # the lexer's mixed-trigger search where Teddy's SIMD prefilter
 # alone would still need a follow-up confirmation pass.
 regex-automata = { version = "0.4", default-features = false }
-aozora-lexer      = { version = "0.2.6", path = "crates/aozora-lexer" }
 aozora-encoding   = { version = "0.2.6", path = "crates/aozora-encoding" }
-aozora-corpus     = { version = "0.2.6", path = "crates/aozora-corpus" }
-aozora-test-utils = { version = "0.2.6", path = "crates/aozora-test-utils" }
+aozora-corpus       = { version = "0.2.6", path = "crates/aozora-corpus" }
+aozora-conformance  = { version = "0.2.6", path = "crates/aozora-conformance" }
+aozora-pandoc       = { version = "0.2.6", path = "crates/aozora-pandoc" }
+aozora-cst          = { version = "0.2.6", path = "crates/aozora-cst" }
+aozora-query        = { version = "0.2.6", path = "crates/aozora-query" }
+aozora-proptest = { version = "0.2.6", path = "crates/aozora-proptest" }
 
 # Error handling
 thiserror = "2.0.18"
@@ -191,6 +197,11 @@ regex                 = "1.12"
 # Serialization / data
 serde      = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# JSON Schema generation for the wire format. Used by aozora's
+# `schema` feature to dump schemas of DiagnosticWire / NodeWire /
+# PairWire / ContainerPairWire — the artefacts ship in
+# `crates/aozora-book/src/wire/` and are CI drift-gated.
+schemars   = { version = "1.0", features = ["preserve_order"] }
 toml       = "1.1"
 flate2     = "1.1"
 
@@ -211,6 +222,29 @@ phf = { version = "0.13", features = ["macros"] }
 
 # Filesystem walking — used by aozora-corpus to iterate test corpora
 walkdir = "2.5"
+
+# Lossless syntax tree backbone for `aozora-cst` (Phase N1).
+# rowan over cstree: 86 reverse deps vs ~3, maintained by the
+# rust-analyzer team, established as the rust-language-tooling
+# default. The bumpalo-arena vs Arc-tree dual-allocator overhead is
+# acceptable: the AST stays the perf-critical path; the CST is the
+# editor-grade lossless surface.
+rowan = "0.16"
+
+# Pandoc AST serde for the Phase M1 `aozora-pandoc` integration.
+# `pandoc_ast` over `pandoc_types`: 3× more downloads (3k+/mo vs
+# ~900/mo), more recently updated, and explicitly designed for
+# writing filters. Both crates serialize the same JSON ABI Pandoc
+# emits via `--to json`, so we get round-trip compatibility either
+# way; we pick the more active one.
+pandoc_ast = "0.8"
+
+# Unicode-width-aware terminal table rendering — used by `aozora kinds`
+# (CLI introspection) to lay out the per-enum tables. Hand-rolled
+# alignment would mis-handle the East-Asian-Wide camelCase tags some
+# `NodeKind` rows carry; comfy-table is the maintained mainstream
+# choice (1.5M+ downloads/mo, used by sqlx / cargo-edit / lazygit-ui).
+comfy-table = { version = "7.2", default-features = false }
 
 # Physical-core count detection — used by aozora-corpus's
 # parallel-load helper to size the rayon thread pool to *physical*

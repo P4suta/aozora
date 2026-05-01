@@ -42,15 +42,21 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
             r"core::core_arch::x86::avx2::_mm256_alignr",
         ],
     ),
-    ("phase1_walker", &[r"aozora_lexer::phase1_events"]),
+    ("phase1_walker", &[r"aozora_pipeline::lexer::phase1_events"]),
     (
         "phase0_sanitize",
-        &[r"aozora_lexer::sanitize", r"aozora_lexer::phase0"],
+        &[
+            r"aozora_pipeline::lexer::sanitize",
+            r"aozora_pipeline::lexer::phase0",
+        ],
     ),
-    ("phase2_pair", &[r"aozora_lexer::phase2_pair"]),
+    ("phase2_pair", &[r"aozora_pipeline::lexer::phase2_pair"]),
     (
         "phase3_classify",
-        &[r"aozora_lexer::phase3", r"aozora_lexer::recognise"],
+        &[
+            r"aozora_pipeline::lexer::phase3",
+            r"aozora_pipeline::lexer::recognise",
+        ],
     ),
     (
         "phase4_intern",
@@ -79,8 +85,8 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
     (
         "pipeline_orchestration",
         &[
-            r"aozora_lex::pipeline",
-            r"aozora_lex::borrowed",
+            r"aozora_pipeline::pipeline",
+            r"aozora_pipeline::borrowed",
             r"run_to_completion",
         ],
     ),

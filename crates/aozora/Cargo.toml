@@ -15,15 +15,69 @@ categories.workspace   = true
 workspace = true
 
 [dependencies]
-# Document wraps `aozora_lex::lex_into_arena` and AozoraTree borrows
-# from a `bumpalo`-backed arena owned by Document.
+# Document wraps `aozora_pipeline::lex_into_arena` and AozoraTree
+# borrows from a `bumpalo`-backed arena owned by Document. The five
+# internal crates below are `publish = false`; this meta crate is the
+# single front door, exposing them via the `aozora::pipeline` /
+# `aozora::syntax` / `aozora::render` / `aozora::encoding` modules.
 aozora-render   = { workspace = true }
-aozora-lex      = { workspace = true }
+aozora-pipeline = { workspace = true }
 aozora-syntax   = { workspace = true }
 aozora-spec     = { workspace = true }
+aozora-encoding = { workspace = true }
+
+# Driver-shared wire format (see `aozora::wire`). Optional so library
+# consumers that only use the borrowed-AST surface do not have to
+# compile serde / serde_json. Drivers (aozora-ffi / aozora-wasm /
+# aozora-py) enable `aozora/wire` to project the AST into JSON.
+serde      = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+# JSON Schema generation for the wire format. Optional, enabled by
+# the `schema` feature only — most wire consumers don't need
+# `schema_*()` functions and shouldn't pull schemars into their
+# dep tree.
+schemars = { workspace = true, optional = true }
+# Phase N4 — Aozora-shaped proptest generators. Optional, enabled
+# only by the `proptest` feature so library consumers don't pay
+# the proptest dep cost unless they're writing property tests
+# themselves.
+aozora-proptest = { workspace = true, optional = true }
+proptest        = { workspace = true, optional = true }
+# Phase N1 — lossless concrete syntax tree. Optional, enabled by
+# the `cst` feature so library-only consumers don't pull in rowan
+# unless they want the editor-grade surface.
+aozora-cst      = { workspace = true, optional = true }
+# Phase N5 — tree-sitter-flavoured query DSL over the CST.
+# Optional, enabled by the `query` feature; pulls aozora-cst (and
+# transitively rowan) into the dep tree.
+aozora-query    = { workspace = true, optional = true }
+
+[features]
+default = []
+# JSON wire format projection used by FFI / WASM / PyO3 drivers.
+# Enables `aozora::wire::serialize_diagnostics` /
+# `serialize_nodes` / `serialize_pairs` and the `SCHEMA_VERSION`
+# constant — the single authority for cross-language wire output.
+wire = ["dep:serde", "dep:serde_json"]
+# JSON Schema introspection for the wire format. Enables
+# `aozora::wire::schema_diagnostics` / `schema_nodes` /
+# `schema_pairs` / `schema_container_pairs` (one per envelope).
+# Used by `xtask schema dump` and the introspection CLI subcommand.
+schema = ["wire", "dep:schemars"]
+# Aozora-shaped proptest generators (`aozora::proptest::*`).
+# Downstream renderer authors enable this when writing property
+# tests over their own `AozoraVisitor` impls.
+proptest = ["dep:proptest", "dep:aozora-proptest"]
+# Lossless concrete syntax tree (`aozora::cst::*`). Editor-grade
+# surface for source-faithful refactoring / formatters / LSP
+# servers. Pulls rowan into the dep tree.
+cst = ["dep:aozora-cst"]
+# Tree-sitter-flavoured query DSL (`aozora::query::*`) over the
+# CST. Implies `cst` (queries run against `SyntaxNode`); pulls
+# aozora-query (and transitively rowan) into the dep tree.
+query = ["cst", "dep:aozora-query"]
 
 [dev-dependencies]
 # Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and
 # verify parse + round-trip invariants on every document.
-aozora-corpus   = { workspace = true }
-aozora-encoding = { workspace = true }
+aozora-corpus = { workspace = true }
