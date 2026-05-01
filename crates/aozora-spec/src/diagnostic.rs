@@ -126,6 +126,54 @@ pub enum DiagnosticSource {
     Internal,
 }
 
+/// Identifier of a specific pipeline-internal sanity check.
+///
+/// Carried by the [`Diagnostic::Internal`] variant. Tooling that
+/// wants per-check assertions matches on this enum; legacy callers
+/// (logs, regex grep) can still reach for the stable
+/// `aozora::lex::*` string via [`Self::as_code`].
+///
+/// `#[non_exhaustive]` so adding a new check variant is a minor
+/// release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum InternalCheckCode {
+    /// An `［＃` digraph survived classification into the normalized
+    /// text. Indicates a missing recogniser for the keyword.
+    ResidualAnnotationMarker,
+    /// A PUA sentinel codepoint is present in the normalized text at
+    /// a position that is not recorded in the placeholder registry.
+    UnregisteredSentinel,
+    /// A placeholder-registry vector is not strictly ordered by
+    /// position. Indicates a normalizer driver bug.
+    RegistryOutOfOrder,
+    /// A registry entry references a normalized byte position whose
+    /// character does not match the expected sentinel kind.
+    RegistryPositionMismatch,
+}
+
+impl InternalCheckCode {
+    /// All known internal check codes in declaration order.
+    pub const ALL: [Self; 4] = [
+        Self::ResidualAnnotationMarker,
+        Self::UnregisteredSentinel,
+        Self::RegistryOutOfOrder,
+        Self::RegistryPositionMismatch,
+    ];
+
+    /// Stable `aozora::lex::*` string identifier for this check.
+    /// Equivalent to the corresponding [`codes`] constant.
+    #[must_use]
+    pub const fn as_code(self) -> &'static str {
+        match self {
+            Self::ResidualAnnotationMarker => codes::RESIDUAL_ANNOTATION_MARKER,
+            Self::UnregisteredSentinel => codes::UNREGISTERED_SENTINEL,
+            Self::RegistryOutOfOrder => codes::REGISTRY_OUT_OF_ORDER,
+            Self::RegistryPositionMismatch => codes::REGISTRY_POSITION_MISMATCH,
+        }
+    }
+}
+
 /// Observation emitted by any lexer phase.
 #[derive(Debug, Clone, Error, MietteDiagnostic)]
 #[non_exhaustive]
@@ -193,13 +241,14 @@ pub enum Diagnostic {
     },
 
     /// Pipeline-internal sanity-check failure — production parses on
-    /// well-formed input never emit this. The [`code`](Self::code)
-    /// accessor returns the specific check identifier (one of the
-    /// constants in [`codes`]) so test harnesses and tooling can still
-    /// match on the precise variety, while library consumers that just
-    /// want to filter "library bugs" out of the stream can reach for
+    /// well-formed input never emit this. The [`check`](Self::Internal)
+    /// payload identifies the specific check via the typed
+    /// [`InternalCheckCode`] enum; tooling that prefers the stable
+    /// string identifier reaches via
+    /// [`Self::code`](Self::code). Library consumers that just want
+    /// to filter "library bugs" out of the stream check
     /// [`source`](Self::source) instead.
-    #[error("internal aozora pipeline check failed: {code}")]
+    #[error("internal aozora pipeline check failed: {}", check.as_code())]
     #[diagnostic(
         code("aozora::internal"),
         help(
@@ -212,10 +261,11 @@ pub enum Diagnostic {
     Internal {
         #[label("at this position")]
         at: miette::SourceSpan,
-        /// Stable identifier for the specific check (one of the
-        /// constants in [`codes`]). Tooling matches on this for
-        /// per-check assertions.
-        code: &'static str,
+        /// Typed identifier for the specific check that fired. Pin
+        /// per-check assertions on this rather than the stringly-typed
+        /// [`code`](Self::code) accessor so the compiler enforces
+        /// match exhaustiveness at the call site.
+        check: InternalCheckCode,
         /// Byte-range covering the violation site.
         span: Span,
     },
@@ -259,17 +309,15 @@ impl Diagnostic {
         }
     }
 
-    /// Constructor for [`Diagnostic::Internal`].
-    ///
-    /// `code` SHOULD be one of the constants from [`codes`]; passing
-    /// an arbitrary string is supported for forward-compatibility but
-    /// loses the cross-cutting documentation guarantee.
+    /// Constructor for [`Diagnostic::Internal`]. Takes a typed
+    /// [`InternalCheckCode`] — the compiler enforces that every
+    /// production emit-site classifies the check correctly.
     #[must_use]
-    pub fn internal(at: Span, code: &'static str) -> Self {
+    pub fn internal(at: Span, check: InternalCheckCode) -> Self {
         let (offset, length) = span_to_miette_parts(at);
         Self::Internal {
             at: miette::SourceSpan::new(offset.into(), length),
-            code,
+            check,
             span: at,
         }
     }
@@ -315,14 +363,15 @@ impl Diagnostic {
 
     /// Stable string identifier for this diagnostic. Returns one of
     /// the constants from [`codes`] for production variants, or the
-    /// `Internal { code }` payload as-is.
+    /// `Internal` payload's [`InternalCheckCode::as_code`] for
+    /// pipeline-internal checks.
     #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
             Self::SourceContainsPua { .. } => codes::SOURCE_CONTAINS_PUA,
             Self::UnclosedBracket { .. } => codes::UNCLOSED_BRACKET,
             Self::UnmatchedClose { .. } => codes::UNMATCHED_CLOSE,
-            Self::Internal { code, .. } => code,
+            Self::Internal { check, .. } => check.as_code(),
         }
     }
 }
@@ -423,18 +472,18 @@ mod tests {
     }
 
     #[test]
-    fn internal_round_trips_code_and_span() {
-        let diag = Diagnostic::internal(Span::new(2, 5), codes::REGISTRY_OUT_OF_ORDER);
-        let Diagnostic::Internal { code, span, .. } = diag else {
+    fn internal_round_trips_check_and_span() {
+        let diag = Diagnostic::internal(Span::new(2, 5), InternalCheckCode::RegistryOutOfOrder);
+        let Diagnostic::Internal { check, span, .. } = diag else {
             panic!("expected Internal, got {diag:?}");
         };
-        assert_eq!(code, codes::REGISTRY_OUT_OF_ORDER);
+        assert_eq!(check, InternalCheckCode::RegistryOutOfOrder);
         assert_eq!(span, Span::new(2, 5));
     }
 
     #[test]
     fn internal_classified_as_internal_source() {
-        let diag = Diagnostic::internal(Span::new(0, 1), codes::UNREGISTERED_SENTINEL);
+        let diag = Diagnostic::internal(Span::new(0, 1), InternalCheckCode::UnregisteredSentinel);
         assert_eq!(diag.severity(), Severity::Error);
         assert_eq!(diag.source(), DiagnosticSource::Internal);
         assert_eq!(diag.code(), codes::UNREGISTERED_SENTINEL);
@@ -442,12 +491,25 @@ mod tests {
 
     #[test]
     fn internal_display_mentions_code() {
-        let diag = Diagnostic::internal(Span::new(0, 1), codes::RESIDUAL_ANNOTATION_MARKER);
+        let diag =
+            Diagnostic::internal(Span::new(0, 1), InternalCheckCode::ResidualAnnotationMarker);
         let rendered = format!("{diag}");
         assert!(
             rendered.contains(codes::RESIDUAL_ANNOTATION_MARKER),
             "Internal Display should print the code; got {rendered:?}"
         );
+    }
+
+    #[test]
+    fn internal_check_code_as_code_round_trips_constants() {
+        for kind in InternalCheckCode::ALL {
+            let diag = Diagnostic::internal(Span::new(0, 0), kind);
+            assert_eq!(
+                diag.code(),
+                kind.as_code(),
+                "code() must agree with as_code() for {kind:?}"
+            );
+        }
     }
 
     /// Codes are stable identifiers — pin every constant so accidental
@@ -496,7 +558,7 @@ mod tests {
         assert_eq!(unmatched.severity(), Severity::Error);
         assert_eq!(unmatched.source(), DiagnosticSource::Source);
 
-        let internal = Diagnostic::internal(Span::new(0, 3), codes::REGISTRY_OUT_OF_ORDER);
+        let internal = Diagnostic::internal(Span::new(0, 3), InternalCheckCode::RegistryOutOfOrder);
         assert_eq!(internal.severity(), Severity::Error);
         assert_eq!(internal.source(), DiagnosticSource::Internal);
     }
