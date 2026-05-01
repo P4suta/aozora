@@ -51,7 +51,7 @@ use aozora_syntax::Span;
 use aozora_syntax::borrowed::Arena;
 use bumpalo::collections::Vec as BumpVec;
 
-use crate::token::{Token, TriggerKind};
+use super::token::{Token, TriggerKind};
 
 /// Streaming tokeniser over sanitized source text.
 ///

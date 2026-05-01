@@ -8,6 +8,7 @@
 
 use std::hint::black_box;
 
+use aozora_pipeline::lexer;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 fn build_plain(size: usize) -> String {
@@ -43,7 +44,7 @@ fn bench_tokenize(c: &mut Criterion) {
 
         g.bench_function("tokenize", |b| {
             b.iter(|| {
-                let toks: Vec<_> = aozora_lexer::tokenize(black_box(sample)).collect();
+                let toks: Vec<_> = lexer::tokenize(black_box(sample)).collect();
                 black_box(toks);
             });
         });

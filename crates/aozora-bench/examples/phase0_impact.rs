@@ -11,7 +11,7 @@
 //!
 //! The doc-hidden phase 0 helpers (`normalize_line_endings`,
 //! `has_long_rule_line`, `isolate_decorative_rules`,
-//! `rewrite_accent_spans`) are re-exported by `aozora_lexer`; this probe
+//! `rewrite_accent_spans`) are re-exported by `aozora_pipeline::lexer`; this probe
 //! drives them directly so the gating decisions match the production
 //! `sanitize` function exactly.
 //!
@@ -40,7 +40,7 @@ use memchr::memmem;
 
 use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_sjis;
-use aozora_lexer::{
+use aozora_pipeline::lexer::{
     has_long_rule_line, isolate_decorative_rules, normalize_line_endings, rewrite_accent_spans,
     tokenize,
 };

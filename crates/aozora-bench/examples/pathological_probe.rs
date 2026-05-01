@@ -31,8 +31,8 @@ use std::process;
 use std::time::Instant;
 
 use aozora_encoding::decode_sjis;
-use aozora_lex::lex_into_arena;
-use aozora_lexer::{
+use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, SpanKind, Token, classify, pair, sanitize, tokenize,
 };
 use aozora_syntax::alloc::BorrowedAllocator;
@@ -158,16 +158,16 @@ fn main() {
         avg(full_total.saturating_sub(standalone))
     );
 
-    // When `aozora-lexer/phase3-instrument` is enabled, dump the
+    // When `aozora-pipeline/phase3-instrument` is enabled, dump the
     // per-subsystem call counts for the LAST iteration so callers can
     // see which subsystem dominates on this specific document.
     // (Cargo's cross-package feature resolution surfaces it as
-    // `aozora_lexer` having the `instrumentation` module visible —
+    // `aozora_pipeline::lexer` having the `instrumentation` module visible —
     // we test for module visibility via a `cfg(feature = ...)` on
     // a local stand-in feature defined in this crate's Cargo.toml.)
     #[cfg(feature = "instrument")]
     {
-        use aozora_lexer::instrumentation::{
+        use aozora_pipeline::lexer::instrumentation::{
             PendingSizeHistogram, Subsystem, TimingTable, YieldCounters,
         };
         TimingTable::reset();
@@ -274,7 +274,7 @@ fn main() {
         pp("64-255", phist.size_64_255);
         pp("256+", phist.size_256_plus);
 
-        let replay_sizes = aozora_lexer::instrumentation::snapshot_replay_sizes();
+        let replay_sizes = aozora_pipeline::lexer::instrumentation::snapshot_replay_sizes();
         if !replay_sizes.is_empty() {
             let mut sorted = replay_sizes.clone();
             sorted.sort_unstable();
@@ -287,7 +287,7 @@ fn main() {
             );
             println!("  body sizes (sorted): {:?}", sorted);
         }
-        aozora_lexer::instrumentation::reset_replay_sizes();
+        aozora_pipeline::lexer::instrumentation::reset_replay_sizes();
     }
 
     // Single high-precision parse to dump classify shape (annotation
@@ -349,10 +349,10 @@ fn main() {
     for ev in &pair_events {
         if let PairEvent::PairOpen { kind, .. } = ev {
             match kind {
-                aozora_lexer::PairKind::Bracket => {
+                aozora_pipeline::lexer::PairKind::Bracket => {
                     bracket_pair_count += 1;
                 }
-                aozora_lexer::PairKind::Quote => quote_open_count += 1,
+                aozora_pipeline::lexer::PairKind::Quote => quote_open_count += 1,
                 _ => {}
             }
         }

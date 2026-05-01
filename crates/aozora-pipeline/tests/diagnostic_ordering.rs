@@ -17,7 +17,7 @@
 //! slot in. The insta snapshot freezes the multi-diagnostic shape
 //! end-to-end.
 
-use aozora_lex::lex_into_arena;
+use aozora_pipeline::lex_into_arena;
 use aozora_spec::{Diagnostic, DiagnosticSource, codes};
 use aozora_syntax::borrowed::Arena;
 

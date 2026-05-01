@@ -56,11 +56,9 @@
 //! direct consumers of this crate should be limited to `aozora-lex` and
 //! benchmarks; everything else goes through `aozora-lex`.
 
-#![forbid(unsafe_code)]
-
 // PUA sentinel constants live in `aozora-spec` and are re-exported
-// here so the existing `aozora_lexer::INLINE_SENTINEL` etc. import
-// paths keep working.
+// here so the post-Phase-F `crate::lexer::INLINE_SENTINEL` etc.
+// import paths inside this crate keep working unchanged.
 pub use aozora_spec::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL, SLUGS,
     SlugEntry, SlugFamily, canonicalise_slug,

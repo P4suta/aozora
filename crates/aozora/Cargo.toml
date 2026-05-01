@@ -15,10 +15,10 @@ categories.workspace   = true
 workspace = true
 
 [dependencies]
-# Document wraps `aozora_lex::lex_into_arena` and AozoraTree borrows
-# from a `bumpalo`-backed arena owned by Document.
+# Document wraps `aozora_pipeline::lex_into_arena` and AozoraTree
+# borrows from a `bumpalo`-backed arena owned by Document.
 aozora-render   = { workspace = true }
-aozora-lex      = { workspace = true }
+aozora-pipeline = { workspace = true }
 aozora-syntax   = { workspace = true }
 aozora-spec     = { workspace = true }
 

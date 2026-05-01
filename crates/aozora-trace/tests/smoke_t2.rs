@@ -120,7 +120,7 @@ fn category_compile_round_trips() {
         "phase1_scan"
     );
     assert_eq!(
-        cat.classify("aozora_lexer::phase1_events::trigger_kind_at"),
+        cat.classify("aozora_pipeline::lexer::phase1_events::trigger_kind_at"),
         "phase1_walker"
     );
     assert_eq!(

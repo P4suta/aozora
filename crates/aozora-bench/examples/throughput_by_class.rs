@@ -70,7 +70,7 @@ use aozora_bench::{
 };
 use aozora_corpus::{Archive, CorpusItem, FilesystemCorpus};
 use aozora_encoding::decode_sjis;
-use aozora_lex::lex_into_arena;
+use aozora_pipeline::lex_into_arena;
 use aozora_syntax::borrowed::Arena;
 use rayon::prelude::*;
 

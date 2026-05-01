@@ -9,7 +9,7 @@
 
 use core::fmt::{self, Write};
 
-use aozora_lex::BorrowedLexOutput;
+use aozora_pipeline::BorrowedLexOutput;
 use aozora_syntax::borrowed::{
     Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, NodeRef,
     Ruby, Sashie, Segment, TateChuYoko,
@@ -427,7 +427,7 @@ mod tests {
 
     fn ser(src: &str) -> String {
         let arena = Arena::new();
-        let out = aozora_lex::lex_into_arena(src, &arena);
+        let out = aozora_pipeline::lex_into_arena(src, &arena);
         serialize(&out)
     }
 

@@ -1,4 +1,4 @@
-//! Streaming-API semantics for [`aozora_lex::Pipeline`] and the
+//! Streaming-API semantics for [`aozora_pipeline::Pipeline`] and the
 //! [`aozora_lexer`] streaming building blocks (`tokenize` / `pair` /
 //! `classify`).
 //!
@@ -21,8 +21,8 @@
 //! (Pipeline is intentionally opaque past the public surface), only
 //! the behaviour visible to a real downstream caller.
 
-use aozora_lex::{Pipeline, lex_into_arena};
-use aozora_lexer::{PairEvent, PairKind, classify, pair, tokenize};
+use aozora_pipeline::lexer::{PairEvent, PairKind, classify, pair, tokenize};
+use aozora_pipeline::{Pipeline, lex_into_arena};
 use aozora_spec::{Diagnostic, Sentinel};
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;

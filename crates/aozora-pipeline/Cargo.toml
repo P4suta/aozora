@@ -1,6 +1,6 @@
 [package]
-name        = "aozora-lexer"
-description = "Pure-functional 7-phase lexer for Aozora Bunko notation"
+name        = "aozora-pipeline"
+description = "Aozora notation lex pipeline — orchestrator + 4-phase lexer producing a borrowed-arena AST"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -17,11 +17,11 @@ workspace = true
 [features]
 default = []
 # Opt-in phase 3 sub-system instrumentation. When enabled, the
-# `phase3_classify` recogniser entry points push their elapsed-ns into
-# a thread-local `instrumentation::TimingTable` keyed by `Subsystem`.
-# The `aozora-bench` `phase3_subsystems` example reads this table.
-# Default OFF: every guard collapses to dead code at compile time so
-# release builds pay zero cost.
+# `phase3_classify` recogniser entry points push their elapsed-ns
+# into a thread-local `instrumentation::TimingTable` keyed by
+# `Subsystem`. The `aozora-bench` `phase3_subsystems` example reads
+# this table. Default OFF: every guard collapses to dead code at
+# compile time so release builds pay zero cost.
 phase3-instrument = []
 
 [dependencies]
@@ -29,6 +29,10 @@ aozora-spec     = { workspace = true }
 aozora-syntax   = { workspace = true }
 aozora-encoding = { workspace = true }
 aozora-scan     = { workspace = true }
+aozora-veb      = { workspace = true }
+
+# Phase 1 build-time tooling — unchanged from the legacy aozora-lexer
+# crate's deps.
 aho-corasick = { workspace = true, features = ["std"] }
 bumpalo      = { workspace = true }
 memchr       = { workspace = true }
@@ -38,13 +42,14 @@ miette       = { workspace = true }
 phf          = { workspace = true }
 
 [dev-dependencies]
-proptest  = { workspace = true }
-criterion = { workspace = true }
-# The classify_kaeriten bench drives the public borrowed-pipeline
-# entry point so its measurement covers what production callers
-# actually run.
-aozora-lex    = { workspace = true }
-aozora-syntax = { workspace = true }
+proptest          = { workspace = true }
+aozora-test-utils = { workspace = true }
+criterion         = { workspace = true }
+insta             = { workspace = true }
+
+[[bench]]
+name    = "tokenize_compare"
+harness = false
 
 [[bench]]
 name    = "classify_kaeriten"

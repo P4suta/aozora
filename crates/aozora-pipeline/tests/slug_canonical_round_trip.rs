@@ -23,7 +23,7 @@
 //!
 //! Variant resolutions are covered by the tests in `aozora-spec`.
 
-use aozora_lex::{
+use aozora_pipeline::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL, SLUGS,
     SlugFamily, lex_into_arena,
 };

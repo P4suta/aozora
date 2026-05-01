@@ -16,7 +16,7 @@
 
 use core::fmt;
 
-use aozora_lex::{BorrowedLexOutput, NodeRef, SourceNode, lex_into_arena};
+use aozora_pipeline::{BorrowedLexOutput, NodeRef, SourceNode, lex_into_arena};
 use aozora_render::{html as borrowed_html, serialize as borrowed_serialize};
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset};
 use aozora_syntax::borrowed::{Arena, ContainerPair};

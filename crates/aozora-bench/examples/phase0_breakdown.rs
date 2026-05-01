@@ -40,7 +40,7 @@ use memchr::memmem;
 
 use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
 use aozora_encoding::decode_sjis;
-use aozora_lexer::{
+use aozora_pipeline::lexer::{
     has_long_rule_line, isolate_decorative_rules, normalize_line_endings, rewrite_accent_spans,
     scan_for_sentinel_collisions,
 };

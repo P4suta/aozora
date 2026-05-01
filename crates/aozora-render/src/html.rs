@@ -17,7 +17,7 @@
 
 use core::fmt;
 
-use aozora_lex::BorrowedLexOutput;
+use aozora_pipeline::BorrowedLexOutput;
 use aozora_syntax::Container;
 use aozora_syntax::borrowed::{AozoraNode, NodeRef};
 use memchr::{memchr_iter, memchr3_iter};
@@ -31,13 +31,13 @@ use crate::render_node;
 const SENTINEL_LEAD_BYTE: u8 = 0xEE;
 /// Second UTF-8 byte shared by every PUA sentinel.
 const SENTINEL_MID_BYTE: u8 = 0x80;
-/// Third UTF-8 byte of `aozora_lex::INLINE_SENTINEL` (U+E001).
+/// Third UTF-8 byte of `aozora_pipeline::INLINE_SENTINEL` (U+E001).
 const INLINE_SENTINEL_TAIL: u8 = 0x81;
-/// Third UTF-8 byte of `aozora_lex::BLOCK_LEAF_SENTINEL` (U+E002).
+/// Third UTF-8 byte of `aozora_pipeline::BLOCK_LEAF_SENTINEL` (U+E002).
 const BLOCK_LEAF_SENTINEL_TAIL: u8 = 0x82;
-/// Third UTF-8 byte of `aozora_lex::BLOCK_OPEN_SENTINEL` (U+E003).
+/// Third UTF-8 byte of `aozora_pipeline::BLOCK_OPEN_SENTINEL` (U+E003).
 const BLOCK_OPEN_SENTINEL_TAIL: u8 = 0x83;
-/// Third UTF-8 byte of `aozora_lex::BLOCK_CLOSE_SENTINEL` (U+E004).
+/// Third UTF-8 byte of `aozora_pipeline::BLOCK_CLOSE_SENTINEL` (U+E004).
 const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
 
 /// Render a `BorrowedLexOutput` into a fresh `String`.
@@ -342,7 +342,7 @@ mod tests {
 
     fn render(src: &str) -> String {
         let arena = Arena::new();
-        let out = aozora_lex::lex_into_arena(src, &arena);
+        let out = aozora_pipeline::lex_into_arena(src, &arena);
         render_to_string(&out)
     }
 

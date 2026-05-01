@@ -54,7 +54,7 @@ use aozora_syntax::borrowed::Arena;
 use bumpalo::collections::Vec as BumpVec;
 use smallvec::SmallVec;
 
-use crate::token::{Token, TriggerKind};
+use super::token::{Token, TriggerKind};
 use aozora_spec::Diagnostic;
 
 // `PairKind` lives in `aozora-spec`; re-exported here for backward
@@ -418,7 +418,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::phase1_events::tokenize;
+    use crate::lexer::phase1_events::tokenize;
 
     /// Materialise the full stream + diagnostics for tests.
     fn run(src: &str) -> (Vec<PairEvent>, Vec<Diagnostic>) {

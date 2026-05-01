@@ -3,14 +3,13 @@ resolver = "3"
 members = [
     "crates/aozora-spec",
     "crates/aozora-syntax",
-    "crates/aozora-lexer",
     "crates/aozora-encoding",
     "crates/aozora-corpus",
     "crates/aozora-cli",
     "crates/aozora-test-utils",
     "crates/aozora-veb",
     "crates/aozora-scan",
-    "crates/aozora-lex",
+    "crates/aozora-pipeline",
     "crates/aozora-render",
     "crates/aozora",
     "crates/aozora-ffi",
@@ -144,7 +143,7 @@ aozora-spec       = { version = "0.2.6", path = "crates/aozora-spec" }
 aozora-syntax     = { version = "0.2.6", path = "crates/aozora-syntax" }
 aozora-veb        = { version = "0.2.6", path = "crates/aozora-veb" }
 aozora-scan       = { version = "0.2.6", path = "crates/aozora-scan" }
-aozora-lex        = { version = "0.2.6", path = "crates/aozora-lex" }
+aozora-pipeline   = { version = "0.2.6", path = "crates/aozora-pipeline" }
 aozora-render     = { version = "0.2.6", path = "crates/aozora-render" }
 aozora            = { version = "0.2.6", path = "crates/aozora" }
 aozora-wasm       = { version = "0.2.6", path = "crates/aozora-wasm" }
@@ -173,7 +172,6 @@ aho-corasick = { version = "1.1", default-features = false }
 # the lexer's mixed-trigger search where Teddy's SIMD prefilter
 # alone would still need a follow-up confirmation pass.
 regex-automata = { version = "0.4", default-features = false }
-aozora-lexer      = { version = "0.2.6", path = "crates/aozora-lexer" }
 aozora-encoding   = { version = "0.2.6", path = "crates/aozora-encoding" }
 aozora-corpus     = { version = "0.2.6", path = "crates/aozora-corpus" }
 aozora-test-utils = { version = "0.2.6", path = "crates/aozora-test-utils" }

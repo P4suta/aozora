@@ -1,23 +1,27 @@
-//! Aozora notation lexer — borrowed-AST front door.
+//! Aozora notation lex pipeline — borrowed-AST front door.
 //!
-//! The pipeline splits into:
+//! Pre-Phase-F this functionality lived split across two crates,
+//! `aozora-lex` (orchestrator) and `aozora-lexer` (4-phase pipeline
+//! impl). The names differed by one letter and the layering was hard
+//! to follow from outside. Phase F dissolved both into this single
+//! `aozora-pipeline` crate:
 //!
-//! - [`aozora_scan`] — the SIMD-friendly trigger-byte scanner that
-//!   replaces a char-by-char loop with a multi-pattern candidate
-//!   sweep + const-PHF precise classify.
-//! - **this crate** — the orchestrator that drives the borrowed-AST
-//!   pipeline. The single public entry [`lex_into_arena`] runs every
-//!   phase and lands the resulting borrowed AST inside an
+//! - The orchestrator (`pipeline` / `borrowed` modules at the crate
+//!   root) drives the borrowed-AST pipeline through its 4 phase
+//!   stages. The single public entry [`lex_into_arena`] runs the
+//!   whole thing and lands the resulting borrowed AST inside an
 //!   `aozora_syntax::borrowed::Arena` provided by the caller.
+//! - The phase implementations live under [`lexer`] (`lexer::phase0`
+//!   through `lexer::phase3`). External consumers should reach for
+//!   [`lex_into_arena`] or the [`Pipeline`] state machine; the
+//!   per-phase functions are exposed for benchmarks and the
+//!   instrumentation feature.
 //!
-//! ## Why two crates?
+//! [`aozora_scan`] still ships as a separate `no_std` crate — the
+//! SIMD trigger scan is independently swappable, benchmarkable, and
+//! consumed by `lexer::phase1` directly.
 //!
-//! The trigger scan is cleanly factor-able and benefits enormously
-//! from SIMD: shipping it as a standalone `no_std` crate lets us
-//! benchmark backends (Teddy / structural-bitmap / DFA) in isolation,
-//! and lets the FFI / WASM driver crates link only what they need.
-//!
-//! ## Observable equivalence
+//! # Observable equivalence
 //!
 //! [`lex_into_arena`] is a pure function from source text to
 //! [`BorrowedLexOutput`] *as observed externally*, even though the
@@ -28,6 +32,7 @@
 #![forbid(unsafe_code)]
 
 mod borrowed;
+pub mod lexer;
 pub mod pipeline;
 
 pub use aozora_syntax::borrowed::NodeRef;

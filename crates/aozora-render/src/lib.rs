@@ -1,12 +1,12 @@
 //! HTML / Aozora-source renderers — borrowed-only.
 //!
-//! Consumes [`aozora_lex::BorrowedLexOutput`] directly and emits
+//! Consumes [`aozora_pipeline::BorrowedLexOutput`] directly and emits
 //! semantic HTML5 or canonical Aozora source text.
 //!
 //! # Public surface
 //!
 //! - [`html::render_to_string`] / [`html::render_into`] — borrowed-AST
-//!   HTML rendering. Pair with [`aozora_lex::lex_into_arena`].
+//!   HTML rendering. Pair with [`aozora_pipeline::lex_into_arena`].
 //! - [`serialize::serialize`] / [`serialize::serialize_into`] —
 //!   round-trip the parsed tree back to Aozora source text.
 //! - [`render_node::render`] — per-node HTML renderer; usually
@@ -31,7 +31,7 @@ mod tests {
     #[test]
     fn html_renders_plain_text_in_paragraph() {
         let arena = Arena::new();
-        let out = aozora_lex::lex_into_arena("hello, world", &arena);
+        let out = aozora_pipeline::lex_into_arena("hello, world", &arena);
         let html = html::render_to_string(&out);
         assert!(html.contains("hello, world"), "html: {html}");
     }
@@ -39,7 +39,7 @@ mod tests {
     #[test]
     fn serialize_round_trips_plain_text() {
         let arena = Arena::new();
-        let out = aozora_lex::lex_into_arena("plain text", &arena);
+        let out = aozora_pipeline::lex_into_arena("plain text", &arena);
         let s = serialize::serialize(&out);
         assert_eq!(s, "plain text");
     }

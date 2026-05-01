@@ -85,7 +85,7 @@ use core::ops::Range;
 use std::collections::VecDeque;
 
 #[cfg(feature = "phase3-instrument")]
-use crate::instrumentation::{
+use super::instrumentation::{
     Subsystem, SubsystemGuard, YieldKind, record_pending_size, record_replay_body_size,
     record_yield,
 };
@@ -100,8 +100,8 @@ use aozora_syntax::{
     AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind, Span,
 };
 
-use crate::phase2_pair::{PairEvent, PairKind};
-use crate::token::TriggerKind;
+use super::phase2_pair::{PairEvent, PairKind};
+use super::token::TriggerKind;
 use aozora_spec::Diagnostic;
 
 /// One classified slice of the sanitized source.
@@ -2934,8 +2934,8 @@ mod tests {
         Ruby, Sashie, Segment, TateChuYoko,
     };
 
-    use crate::phase1_events::tokenize;
-    use crate::phase2_pair::pair;
+    use crate::lexer::phase1_events::tokenize;
+    use crate::lexer::phase2_pair::pair;
 
     /// Test-only materialised classify output: collects `spans` from
     /// the streaming iterator and merges its post-exhaustion

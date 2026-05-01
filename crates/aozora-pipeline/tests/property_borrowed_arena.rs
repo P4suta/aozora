@@ -23,8 +23,8 @@ use proptest::prelude::*;
 fn assert_deterministic(source: &str) {
     let arena_a = Arena::new();
     let arena_b = Arena::new();
-    let a = aozora_lex::lex_into_arena(source, &arena_a);
-    let b = aozora_lex::lex_into_arena(source, &arena_b);
+    let a = aozora_pipeline::lex_into_arena(source, &arena_a);
+    let b = aozora_pipeline::lex_into_arena(source, &arena_b);
 
     assert_eq!(
         a.normalized, b.normalized,
@@ -80,7 +80,7 @@ fn assert_deterministic(source: &str) {
 
 fn assert_registry_aligned_with_sentinels(source: &str) {
     let arena = Arena::new();
-    let out = aozora_lex::lex_into_arena(source, &arena);
+    let out = aozora_pipeline::lex_into_arena(source, &arena);
 
     // Every registry entry's position must land on the matching
     // sentinel byte in `normalized`.

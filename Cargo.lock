@@ -116,7 +116,7 @@ version = "0.2.6"
 dependencies = [
  "aozora-corpus",
  "aozora-encoding",
- "aozora-lex",
+ "aozora-pipeline",
  "aozora-render",
  "aozora-spec",
  "aozora-syntax",
@@ -131,8 +131,7 @@ dependencies = [
  "aozora",
  "aozora-corpus",
  "aozora-encoding",
- "aozora-lex",
- "aozora-lexer",
+ "aozora-pipeline",
  "aozora-scan",
  "aozora-syntax",
  "criterion",
@@ -188,11 +187,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aozora-lex"
+name = "aozora-pipeline"
 version = "0.2.6"
 dependencies = [
+ "aho-corasick",
  "aozora-encoding",
- "aozora-lexer",
  "aozora-scan",
  "aozora-spec",
  "aozora-syntax",
@@ -201,22 +200,6 @@ dependencies = [
  "bumpalo",
  "criterion",
  "insta",
- "memchr",
- "proptest",
-]
-
-[[package]]
-name = "aozora-lexer"
-version = "0.2.6"
-dependencies = [
- "aho-corasick",
- "aozora-encoding",
- "aozora-lex",
- "aozora-scan",
- "aozora-spec",
- "aozora-syntax",
- "bumpalo",
- "criterion",
  "memchr",
  "miette",
  "phf",
@@ -237,7 +220,7 @@ dependencies = [
 name = "aozora-render"
 version = "0.2.6"
 dependencies = [
- "aozora-lex",
+ "aozora-pipeline",
  "aozora-spec",
  "aozora-syntax",
  "memchr",

@@ -73,7 +73,7 @@
 
 use core::marker::PhantomData;
 
-use aozora_lexer::{PairEvent, Token, classify, pair_in, sanitize, tokenize_in};
+use crate::lexer::{PairEvent, Token, classify, pair_in, sanitize, tokenize_in};
 use aozora_spec::{Diagnostic, PairLink};
 use aozora_syntax::ContainerKind;
 use aozora_syntax::alloc::BorrowedAllocator;

@@ -24,7 +24,7 @@
 //! stays the same regardless of nesting depth, so structure
 //! consistency is the load-bearing assertion.
 
-use aozora_lex::lex_into_arena;
+use aozora_pipeline::lex_into_arena;
 use aozora_spec::Sentinel;
 use aozora_syntax::borrowed::Arena;
 

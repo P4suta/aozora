@@ -28,7 +28,7 @@
 //! so callers and benchmarks can measure dedup effectiveness without
 //! re-running the conversion.
 
-use aozora_lexer::{
+use crate::lexer::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, ClassifiedSpan,
     INLINE_SENTINEL, SpanKind,
 };
@@ -314,9 +314,6 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     });
                 }
             }
-            // `SpanKind` is `#[non_exhaustive]`; new variants land
-            // here as no-op until the normalizer adds a dedicated arm.
-            _ => {}
         }
     }
 }
