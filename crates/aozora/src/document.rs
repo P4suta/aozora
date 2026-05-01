@@ -174,6 +174,59 @@ impl Document {
         self.arena.allocated_bytes()
     }
 
+    /// Apply an in-place text edit and return a fresh [`Document`].
+    ///
+    /// `span` is a byte range in the *current* source (`self.source`);
+    /// `replacement` is the new text to splice in. The result is a
+    /// new `Document` whose source equals
+    /// `self.source[..span.start] + replacement + self.source[span.end..]`.
+    /// The arena is rebuilt — incremental re-parse over the unchanged
+    /// region is a future improvement (see the architecture handbook
+    /// chapter on incremental parse).
+    ///
+    /// The signature is the supported entry point for editor surfaces
+    /// implementing `textDocument/didChange`. Even with a full reparse
+    /// inside, callers get a stable API today and a transparent
+    /// upgrade path to subtree-aware reuse later.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `span.start > span.end`, if `span.end > source.len()`,
+    /// or if `span.start` / `span.end` does not lie on a UTF-8
+    /// codepoint boundary in `self.source`. These are programmer
+    /// errors — editor integrations should clamp the span via the
+    /// existing `aozora::Span` constructor's bounds checking.
+    #[must_use]
+    pub fn edit(&self, span: aozora_spec::Span, replacement: &str) -> Self {
+        let start = span.start as usize;
+        let end = span.end as usize;
+        assert!(start <= end, "edit: span start ({start}) > end ({end})");
+        assert!(
+            end <= self.source.len(),
+            "edit: span end ({end}) past source length ({len})",
+            len = self.source.len(),
+        );
+        // Boundary-validate by slicing — `&str` indexing panics on
+        // mid-codepoint, which is the exact error mode we want to
+        // surface to the caller as a precondition violation.
+        let prefix = &self.source[..start];
+        let suffix = &self.source[end..];
+
+        let mut new_source = String::with_capacity(
+            prefix
+                .len()
+                .saturating_add(replacement.len())
+                .saturating_add(suffix.len()),
+        );
+        new_source.push_str(prefix);
+        new_source.push_str(replacement);
+        new_source.push_str(suffix);
+
+        ParseOptions::new()
+            .diagnostic_policy(self.diagnostic_policy)
+            .build(new_source.into_boxed_str())
+    }
+
     /// Parse the document, returning a borrowed-AST view bound to
     /// `&self`'s lifetime.
     #[must_use]
@@ -343,6 +396,68 @@ mod tests {
         let d = Document::new("contains \u{E001} sentinel");
         let t = d.parse();
         assert!(!t.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn edit_splices_source_at_span() {
+        // Replace "world" with "Aozora" in "hello world!".
+        let d = Document::new("hello world!");
+        let span = aozora_spec::Span::new(6, 11);
+        let edited = d.edit(span, "Aozora");
+        assert_eq!(edited.source(), "hello Aozora!");
+    }
+
+    #[test]
+    fn edit_at_start_and_end_boundaries() {
+        let d = Document::new("middle");
+        // Insert at start (zero-length span at offset 0).
+        let head = d.edit(aozora_spec::Span::new(0, 0), "PRE-");
+        assert_eq!(head.source(), "PRE-middle");
+        // Append at end (zero-length span at len()).
+        let len = u32::try_from(d.source().len()).expect("test source fits u32");
+        let tail = d.edit(aozora_spec::Span::new(len, len), "-POST");
+        assert_eq!(tail.source(), "middle-POST");
+    }
+
+    #[test]
+    fn edit_equivalence_full_reparse() {
+        // The edited document parses to the same AozoraTree shape as
+        // re-parsing the spliced source from scratch — this is the
+        // observable property `Document::edit` ships under, and the
+        // future incremental implementation will preserve.
+        let original = Document::new("｜青梅《おうめ》です。");
+        // Replace 《おうめ》 with 《せいばい》.
+        let span_start = original.source().find('《').expect("《 present");
+        let span_end = original.source().find('》').expect("》 present") + '》'.len_utf8();
+        let edited = original.edit(
+            aozora_spec::Span::new(
+                u32::try_from(span_start).expect("test span fits u32"),
+                u32::try_from(span_end).expect("test span fits u32"),
+            ),
+            "《せいばい》",
+        );
+
+        let spliced_source = format!(
+            "{prefix}{replacement}{suffix}",
+            prefix = &original.source()[..span_start],
+            replacement = "《せいばい》",
+            suffix = &original.source()[span_end..],
+        );
+        let from_scratch = Document::new(spliced_source);
+
+        assert_eq!(edited.source(), from_scratch.source());
+        // Same serialize output → AST shape is equivalent.
+        assert_eq!(
+            edited.parse().serialize(),
+            from_scratch.parse().serialize(),
+            "edit() must be equivalent to splice + reparse"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "span start")]
+    fn edit_rejects_inverted_span() {
+        drop(Document::new("ok").edit(aozora_spec::Span::new(2, 1), ""));
     }
 
     #[test]
