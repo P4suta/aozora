@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::ConformanceArgs;
@@ -131,35 +132,42 @@ fn collect_cases(root: &Path) -> Result<Vec<CaseResult>, String> {
         .collect();
     entries.sort_by_key(fs::DirEntry::file_name);
 
-    let mut cases = Vec::new();
-    for entry in &entries {
-        let case_dir = entry.path();
-        let case_name = case_dir
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| format!("non-utf8 fixture name {}", case_dir.display()))?
-            .to_owned();
+    // Rayon's `par_iter()` preserves the input order on `collect()`,
+    // so the alphabetised fixture sequence above carries through to
+    // the resulting `Vec<CaseResult>`. `run_case` reads the fixture
+    // files and parses them through the aozora pipeline; both are
+    // pure with no shared mutable state, so the parallelisation is
+    // safe by construction.
+    entries
+        .par_iter()
+        .map(|entry| -> Result<CaseResult, String> {
+            let case_dir = entry.path();
+            let case_name = case_dir
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| format!("non-utf8 fixture name {}", case_dir.display()))?
+                .to_owned();
 
-        let meta_path = case_dir.join("meta.toml");
-        let meta_str = fs::read_to_string(&meta_path)
-            .map_err(|err| format!("read {}: {err}", meta_path.display()))?;
-        let meta: Meta = toml::from_str(&meta_str)
-            .map_err(|err| format!("parse {}: {err}", meta_path.display()))?;
-        let level = Level::parse(&meta.level)?;
+            let meta_path = case_dir.join("meta.toml");
+            let meta_str = fs::read_to_string(&meta_path)
+                .map_err(|err| format!("read {}: {err}", meta_path.display()))?;
+            let meta: Meta = toml::from_str(&meta_str)
+                .map_err(|err| format!("parse {}: {err}", meta_path.display()))?;
+            let level = Level::parse(&meta.level)?;
 
-        let (passed, message) = match run_case(&case_dir) {
-            Ok(()) => (true, None),
-            Err(msg) => (false, Some(msg)),
-        };
-        cases.push(CaseResult {
-            case: case_name,
-            feature: meta.feature,
-            level,
-            passed,
-            message,
-        });
-    }
-    Ok(cases)
+            let (passed, message) = match run_case(&case_dir) {
+                Ok(()) => (true, None),
+                Err(msg) => (false, Some(msg)),
+            };
+            Ok(CaseResult {
+                case: case_name,
+                feature: meta.feature,
+                level,
+                passed,
+                message,
+            })
+        })
+        .collect()
 }
 
 fn build_summary(cases: Vec<CaseResult>) -> Summary {
