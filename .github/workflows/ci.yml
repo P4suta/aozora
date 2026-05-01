@@ -83,14 +83,12 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just lint
 
-  build-and-test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - uses: ./.github/actions/setup-dev-image
-      - run: just build
-      - run: just test
-
+  # Single Rust build-test-coverage gate. `just coverage` calls
+  # `cargo llvm-cov nextest run --workspace`, which compiles every test
+  # binary and runs it once — exactly what a separate `just build &&
+  # just test` pair would have done, plus the region-coverage report.
+  # Splitting them into two jobs duplicated the workspace cargo build
+  # for ~3 extra wall-clock minutes per push without adding signal.
   coverage:
     runs-on: ubuntu-latest
     steps:

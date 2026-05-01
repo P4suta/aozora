@@ -1,0 +1,37 @@
+# CI-only overlay merged in via `COMPOSE_FILE=docker-compose.yml:docker-compose.ci.yml`.
+#
+# The base compose file's sccache backend is the on-disk `cargo-target` /
+# `sccache` named volumes — perfect for local dev where the volumes
+# persist across `docker compose run` invocations, useless on GitHub
+# Actions where every job starts on a fresh ephemeral runner with empty
+# named volumes. This overlay flips the in-container sccache to the
+# GitHub Actions cache backend instead, so the same sccache that already
+# wraps every workspace cargo build now reads / writes the run-shared
+# Actions cache, and the second job onward sees a warm cache.
+#
+# `mozilla-actions/sccache-action` (added in
+# `.github/actions/setup-dev-image`) installs the sccache CLI on the
+# runner host and exports ACTIONS_CACHE_URL + ACTIONS_RUNTIME_TOKEN.
+# This overlay forwards those two GHA-magic env vars into the
+# dev / ci containers; the in-image sccache picks them up via
+# SCCACHE_GHA_ENABLED=true and routes its cache traffic over the
+# Actions Cache API.
+
+services:
+  dev:
+    environment:
+      SCCACHE_GHA_ENABLED: "true"
+      # GitHub Actions cache service v2 env vars. The legacy
+      # ACTIONS_CACHE_URL is no longer set on hosted runners; the v2
+      # service uses ACTIONS_RESULTS_URL instead and signals itself with
+      # ACTIONS_CACHE_SERVICE_V2=on. sccache 0.15+ honours both pairs.
+      ACTIONS_RESULTS_URL: "${ACTIONS_RESULTS_URL:-}"
+      ACTIONS_RUNTIME_TOKEN: "${ACTIONS_RUNTIME_TOKEN:-}"
+      ACTIONS_CACHE_SERVICE_V2: "${ACTIONS_CACHE_SERVICE_V2:-}"
+
+  ci:
+    environment:
+      SCCACHE_GHA_ENABLED: "true"
+      ACTIONS_RESULTS_URL: "${ACTIONS_RESULTS_URL:-}"
+      ACTIONS_RUNTIME_TOKEN: "${ACTIONS_RUNTIME_TOKEN:-}"
+      ACTIONS_CACHE_SERVICE_V2: "${ACTIONS_CACHE_SERVICE_V2:-}"
