@@ -7,8 +7,8 @@ borrowed-arena AST exposed directly.
 
 ```toml
 [dependencies]
-aozora          = { git = "https://github.com/P4suta/aozora.git", tag = "v0.2.6" }
-aozora-encoding = { git = "https://github.com/P4suta/aozora.git", tag = "v0.2.6" }
+aozora          = { git = "https://github.com/P4suta/aozora.git", tag = "v0.3.0" }
+aozora-encoding = { git = "https://github.com/P4suta/aozora.git", tag = "v0.3.0" }
 ```
 
 crates.io publication tracks the v1.0 API freeze; until then, use a

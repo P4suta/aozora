@@ -32,7 +32,7 @@ silently change inlining behaviour).
 
 ```sh
 cargo install --git https://github.com/P4suta/aozora \
-              --tag v0.2.6 --locked aozora-cli
+              --tag v0.3.0 --locked aozora-cli
 ```
 
 ## Rust library
@@ -42,8 +42,8 @@ freeze. Until then, depend on a tagged commit:
 
 ```toml
 [dependencies]
-aozora          = { git = "https://github.com/P4suta/aozora.git", tag = "v0.2.6" }
-aozora-encoding = { git = "https://github.com/P4suta/aozora.git", tag = "v0.2.6" }
+aozora          = { git = "https://github.com/P4suta/aozora.git", tag = "v0.3.0" }
+aozora-encoding = { git = "https://github.com/P4suta/aozora.git", tag = "v0.3.0" }
 ```
 
 Ship-it pattern: pin the tag in `Cargo.toml`, let Dependabot bump it
