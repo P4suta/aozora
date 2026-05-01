@@ -32,9 +32,9 @@ use aozora_lexer::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, ClassifiedSpan,
     INLINE_SENTINEL, SpanKind,
 };
-use aozora_spec::{Diagnostic, PairLink, SourceOffset, Span};
+use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset, Span};
 use aozora_syntax::ContainerKind;
-use aozora_syntax::borrowed::{self, Arena, InternStats, NodeRef, Registry};
+use aozora_syntax::borrowed::{self, Arena, ContainerPair, InternStats, NodeRef, Registry};
 
 /// Borrowed-AST analogue of [`crate::LexOutput`].
 ///
@@ -83,6 +83,21 @@ pub struct BorrowedLexOutput<'a> {
     /// Editor callers that produce raw-source offsets and run against
     /// a sanitization-rewriting input must do their own translation.
     pub source_nodes: &'a [SourceNode<'a>],
+    /// Resolved container open/close pairs in normalized
+    /// coordinates. Built during the Phase 3 → arena-normalize fold
+    /// from a stack the normalizer maintains. One entry per balanced
+    /// pair; if the input is well-formed (every block-open has a
+    /// matching block-close) the entry count equals the number of
+    /// container open events. Mismatched events fall through to
+    /// `Diagnostic::Internal { code: codes::REGISTRY_OUT_OF_ORDER }`
+    /// territory but are otherwise dropped.
+    ///
+    /// Editor surfaces (LSP `linkedEditingRange` /
+    /// `documentHighlight` against container markers, "find matching
+    /// close" in a code action) consume this directly instead of
+    /// re-deriving the pairing from independent
+    /// [`NodeRef::BlockOpen`] / [`NodeRef::BlockClose`] entries.
+    pub container_pairs: &'a [ContainerPair],
     /// Counters from the [`Interner`] used during conversion.
     /// Exposed so benchmarks can measure dedup ratio
     /// (`(cache_hits + table_hits) / calls`) and average probe length
@@ -178,6 +193,16 @@ pub(crate) struct ArenaNormalizer<'src, 'a> {
     /// pipeline-build time. Naturally sorted by `source_span.start`
     /// because the classifier emits spans in source order.
     pub(crate) source_nodes: Vec<SourceNode<'a>>,
+    /// Stack of in-flight container opens awaiting their matching
+    /// close. Each entry is the (open `NormalizedOffset`,
+    /// `ContainerKind`) pushed by [`SpanKind::BlockOpen`] emission;
+    /// [`SpanKind::BlockClose`] pops and emits a [`ContainerPair`]
+    /// into [`Self::container_pairs`].
+    open_stack: Vec<(NormalizedOffset, ContainerKind)>,
+    /// Resolved container open/close pairs in close order. Drained
+    /// into the arena `&'a [ContainerPair]` at pipeline-build time.
+    /// One entry per balanced pair.
+    pub(crate) container_pairs: Vec<ContainerPair>,
 }
 
 impl<'src, 'a> ArenaNormalizer<'src, 'a> {
@@ -193,6 +218,11 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
             // count.
             entries: Vec::with_capacity(span_capacity_hint),
             source_nodes: Vec::with_capacity(span_capacity_hint),
+            // Container open/close pairs: corpus profile says ~5%
+            // of sentinel emissions are containers (open + close
+            // each); resolved pair count is half of that.
+            open_stack: Vec::with_capacity(span_capacity_hint / 40),
+            container_pairs: Vec::with_capacity(span_capacity_hint / 40),
         }
     }
 
@@ -251,6 +281,13 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     source_span: span.source_span,
                     node: nref,
                 });
+                // Track this open for later pairing with its close.
+                // The kind is captured from the open marker; the
+                // close marker re-emits the same kind, but we trust
+                // the open-side payload as authoritative when
+                // building the pair.
+                self.open_stack
+                    .push((NormalizedOffset::new(pos), *container));
             }
             SpanKind::BlockClose(container) => {
                 self.out.push_str("\n\n");
@@ -263,6 +300,19 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     source_span: span.source_span,
                     node: nref,
                 });
+                // Pop the matching open. Phase 2 already balanced
+                // the bracket stream so an empty stack here would
+                // signal a pipeline-internal mismatch; we degrade
+                // gracefully by skipping the pair (the close marker
+                // still lands in `entries` via the push above so
+                // renderer correctness is unchanged).
+                if let Some((open_pos, open_kind)) = self.open_stack.pop() {
+                    self.container_pairs.push(ContainerPair {
+                        kind: open_kind,
+                        open: open_pos,
+                        close: NormalizedOffset::new(pos),
+                    });
+                }
             }
             // `SpanKind` is `#[non_exhaustive]`; new variants land
             // here as no-op until the normalizer adds a dedicated arm.
@@ -476,11 +526,7 @@ mod tests {
         assert_eq!(out.registry.count_kind(Sentinel::BlockClose), 1);
         // Every registered position must round-trip via lookup.
         for (pos, _) in out.registry.iter_kind(Sentinel::Inline) {
-            assert!(
-                out.registry
-                    .node_at(aozora_spec::NormalizedOffset::new(pos))
-                    .is_some()
-            );
+            assert!(out.registry.node_at(NormalizedOffset::new(pos)).is_some());
         }
     }
 

@@ -19,7 +19,7 @@ use core::fmt;
 use aozora_lex::{BorrowedLexOutput, NodeRef, SourceNode, lex_into_arena};
 use aozora_render::{html as borrowed_html, serialize as borrowed_serialize};
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset};
-use aozora_syntax::borrowed::Arena;
+use aozora_syntax::borrowed::{Arena, ContainerPair};
 
 /// Pre-size the document arena as `source.len() * ARENA_CAPACITY_FACTOR`
 /// bytes. Picked from the full-corpus `allocator_pressure` probe over
@@ -179,6 +179,25 @@ impl<'a> AozoraTree<'a> {
     #[must_use]
     pub fn source_nodes(&self) -> &'a [SourceNode<'a>] {
         self.inner.source_nodes
+    }
+
+    /// Resolved container open/close pairs in normalized coordinates.
+    ///
+    /// One entry per balanced
+    /// `［＃ここから…］`/`［＃ここで…終わり］` pair, in close order.
+    /// Editor surfaces can ask "where is the close for this open?"
+    /// directly off this slice; renderers that want to recurse
+    /// through container bodies use the open/close offsets to slice
+    /// the normalized text.
+    ///
+    /// Coordinates are [`NormalizedOffset`] — they index the
+    /// PUA-rewritten text, not the original source. Pre-Phase-E5
+    /// this side-table did not exist; consumers re-derived pairing
+    /// from the linear walk over `block_open` / `block_close`
+    /// registry entries.
+    #[must_use]
+    pub fn container_pairs(&self) -> &'a [ContainerPair] {
+        self.inner.container_pairs
     }
 
     /// Render the tree to a semantic-HTML5 string.

@@ -95,6 +95,55 @@ pub fn serialize_pairs(tree: &AozoraTree<'_>) -> String {
     serialize_envelope(&entries)
 }
 
+/// Project an [`AozoraTree`]'s container open/close pair table into a
+/// `{ schema_version, data }` JSON envelope.
+///
+/// Each entry has the shape
+/// `{ kind, open: { offset }, close: { offset } }` where `kind` is
+/// the [`crate::ContainerKind`] discriminant (one of `"indent"` /
+/// `"warichu"` / `"keigakomi"` / `"alignEnd"`) and the offsets are
+/// **normalized-coordinate** byte positions that index the PUA
+/// sentinel positions — not the source span the user wrote.
+///
+/// Coordinate-system distinction matters: editor surfaces that want
+/// source-coordinate container pairs must translate through
+/// [`AozoraTree::source_nodes`]. Pre-Phase-E5 this table did not
+/// exist; downstream tooling re-derived pairing from independent
+/// `block_open` / `block_close` registry entries.
+///
+/// Empty parse → `{"schema_version":1,"data":[]}`.
+#[must_use]
+pub fn serialize_container_pairs(tree: &AozoraTree<'_>) -> String {
+    let entries: Vec<ContainerPairWire> = tree
+        .container_pairs()
+        .iter()
+        .map(|pair| ContainerPairWire {
+            kind: container_kind_str(pair.kind),
+            open: OffsetWire {
+                offset: pair.open.get(),
+            },
+            close: OffsetWire {
+                offset: pair.close.get(),
+            },
+        })
+        .collect();
+    serialize_envelope(&entries)
+}
+
+const fn container_kind_str(kind: aozora_syntax::ContainerKind) -> &'static str {
+    use aozora_syntax::ContainerKind;
+    // `ContainerKind` is `#[non_exhaustive]` upstream — the wildcard
+    // arm covers any future variant by emitting `"unknown"` so wire
+    // consumers err on the side of surfacing it until they upgrade.
+    match kind {
+        ContainerKind::Indent { .. } => "indent",
+        ContainerKind::Warichu => "warichu",
+        ContainerKind::Keigakomi => "keigakomi",
+        ContainerKind::AlignEnd { .. } => "alignEnd",
+        _ => "unknown",
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────
 // Internal: envelope + wire structs
 // ────────────────────────────────────────────────────────────────────
@@ -200,6 +249,18 @@ struct PairWire {
     kind: &'static str,
     open: SpanWire,
     close: SpanWire,
+}
+
+#[derive(Serialize)]
+struct ContainerPairWire {
+    kind: &'static str,
+    open: OffsetWire,
+    close: OffsetWire,
+}
+
+#[derive(Serialize)]
+struct OffsetWire {
+    offset: u32,
 }
 
 #[cfg(test)]

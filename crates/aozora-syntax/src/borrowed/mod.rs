@@ -41,7 +41,7 @@ mod types;
 
 pub use arena::Arena;
 pub use intern::{InternStats, Interner};
-pub use registry::{NodeRef, Registry};
+pub use registry::{ContainerPair, NodeRef, Registry};
 pub use types::{
     Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,
     Kaeriten, Ruby, Sashie, Segment, TateChuYoko, Warichu,

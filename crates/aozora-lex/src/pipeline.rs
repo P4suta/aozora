@@ -77,7 +77,7 @@ use aozora_lexer::{PairEvent, Token, classify, pair_in, sanitize, tokenize_in};
 use aozora_spec::{Diagnostic, PairLink};
 use aozora_syntax::ContainerKind;
 use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::{Arena, Registry};
+use aozora_syntax::borrowed::{Arena, ContainerPair, Registry};
 use bumpalo::collections::Vec as BumpVec;
 
 use crate::BorrowedLexOutput;
@@ -384,6 +384,10 @@ impl<'a> Pipeline<'_, 'a, Paired> {
         // Move the source-keyed side table out of the heap-backed
         // `Vec<SourceNode>` and into the arena, in one allocation.
         let source_nodes: &'a [SourceNode<'a>] = self.arena.alloc_slice_copy(&builder.source_nodes);
+        // Same dance for the container-pair side table — close-order
+        // (matches the close events as the open-stack drains).
+        let container_pairs: &'a [ContainerPair] =
+            self.arena.alloc_slice_copy(&builder.container_pairs);
         let intern_stats = alloc.into_interner().stats;
 
         BorrowedLexOutput {
@@ -393,6 +397,7 @@ impl<'a> Pipeline<'_, 'a, Paired> {
             sanitized_len,
             pairs,
             source_nodes,
+            container_pairs,
             intern_stats,
         }
     }

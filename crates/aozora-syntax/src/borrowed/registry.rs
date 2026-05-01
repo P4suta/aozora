@@ -192,6 +192,48 @@ impl Default for Registry<'_> {
     }
 }
 
+/// Resolved (open, close) container-marker pair, in normalized
+/// coordinates.
+///
+/// Pre-Phase-E5 the registry held independent
+/// [`NodeRef::BlockOpen`] / [`NodeRef::BlockClose`] entries with no
+/// type-level link between them. The pipeline knew which close
+/// matched which open (it tracks an open-stack while it walks the
+/// classifier output) but never surfaced that knowledge — renderers
+/// re-derived the pairing implicitly from the linear walk over
+/// normalized text.
+///
+/// `ContainerPair` carries the same information explicitly. Editor
+/// surfaces and renderers that want to ask "where is the close
+/// marker for this open?" can index this slice directly instead of
+/// re-running the matching logic.
+///
+/// Coordinates are [`NormalizedOffset`] — they index the
+/// `BorrowedLexOutput::normalized` text, the same coordinate space
+/// the [`Registry`] uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContainerPair {
+    /// The container kind. Pre-Phase-E5 this lived in two places
+    /// (`block_open`'s payload and `block_close`'s payload) with no
+    /// guarantee they agreed; the builder now constructs the pair
+    /// from the open-stack pop, so `kind` reflects the open marker
+    /// authoritatively.
+    pub kind: ContainerKind,
+    /// Normalized byte offset of the open sentinel (`U+E003`).
+    pub open: NormalizedOffset,
+    /// Normalized byte offset of the close sentinel (`U+E004`).
+    pub close: NormalizedOffset,
+}
+
+impl ContainerPair {
+    /// Construct a pair. Helper for builder tests; in production the
+    /// pipeline emits these directly.
+    #[must_use]
+    pub const fn new(kind: ContainerKind, open: NormalizedOffset, close: NormalizedOffset) -> Self {
+        Self { kind, open, close }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
