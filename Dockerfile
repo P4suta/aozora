@@ -34,12 +34,30 @@ ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8 \
     RUSTUP_PERMIT_COPY_RENAME=1
 
-# Use mold as the default linker for faster builds
+# Use mold as the default linker for faster builds.
+# Note: docker-compose.yml sets RUSTFLAGS / CARGO_TARGET_*_LINKER directly
+# in the container env, which is what actually drives mold for compose
+# runs (the env override beats this config.toml because cargo's config
+# discovery is rooted at $CARGO_HOME=/workspace/.cargo, never reading
+# $HOME/.cargo). This file is kept as a safety net for any direct
+# `docker run` invocation that does NOT go through compose.
 RUN mkdir -p /root/.cargo && printf '%s\n' \
     '[target.x86_64-unknown-linux-gnu]' \
     'linker = "clang"' \
     'rustflags = ["-C", "link-arg=-fuse-ld=mold"]' \
     > /root/.cargo/config.toml
+
+# Pre-install every component rust-toolchain.toml + cargo-llvm-cov
+# require, so the rustup channel-sync that fires on every container
+# start finds nothing to download.
+#
+# Without this, each CI job spends ~22-30 s on `info: downloading
+# 3 components` (rustfmt + clippy + rust-src per workspace
+# rust-toolchain.toml) plus an extra ~30 s on `info: downloading
+# component llvm-tools` in the coverage job, all of which is pure
+# overhead before any cargo work can begin. Baking the components
+# into the image flattens that to a sub-second rustup metadata check.
+RUN rustup component add rustfmt clippy rust-src llvm-tools-preview
 
 ########################################################################
 # Stage: cargo-tools — install Rust dev utilities (cached layer)
