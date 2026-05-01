@@ -51,6 +51,7 @@
 - [Eytzinger sorted-set lookup](arch/veb.md)
 - [Shift_JIS + 外字 resolver](arch/encoding.md)
 - [HTML renderer & canonical serialiser](arch/renderer.md)
+- [Concrete syntax tree](arch/cst.md)
 - [Error recovery](arch/error-recovery.md)
 - [Crate map](arch/crates.md)
 

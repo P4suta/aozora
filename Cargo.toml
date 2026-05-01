@@ -20,6 +20,7 @@ members = [
     "crates/aozora-xtask",
     "crates/aozora-trace",
     "crates/aozora-pandoc",
+    "crates/aozora-cst",
 ]
 # `aozora-book` is the mdbook source tree; it has no Cargo manifest of its
 # own. Listed in `exclude` so `cargo` ignores it during workspace globbing
@@ -178,6 +179,7 @@ aozora-encoding   = { version = "0.2.6", path = "crates/aozora-encoding" }
 aozora-corpus       = { version = "0.2.6", path = "crates/aozora-corpus" }
 aozora-conformance  = { version = "0.2.6", path = "crates/aozora-conformance" }
 aozora-pandoc       = { version = "0.2.6", path = "crates/aozora-pandoc" }
+aozora-cst          = { version = "0.2.6", path = "crates/aozora-cst" }
 aozora-proptest = { version = "0.2.6", path = "crates/aozora-proptest" }
 
 # Error handling
@@ -221,6 +223,14 @@ phf = { version = "0.13", features = ["macros"] }
 
 # Filesystem walking — used by aozora-corpus to iterate test corpora
 walkdir = "2.5"
+
+# Lossless syntax tree backbone for `aozora-cst` (Phase N1).
+# rowan over cstree: 86 reverse deps vs ~3, maintained by the
+# rust-analyzer team, established as the rust-language-tooling
+# default. The bumpalo-arena vs Arc-tree dual-allocator overhead is
+# acceptable: the AST stays the perf-critical path; the CST is the
+# editor-grade lossless surface.
+rowan = "0.16"
 
 # Pandoc AST serde for the Phase M1 `aozora-pandoc` integration.
 # `pandoc_ast` over `pandoc_types`: 3× more downloads (3k+/mo vs

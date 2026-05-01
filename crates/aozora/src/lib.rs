@@ -121,6 +121,37 @@ pub mod encoding {
     pub use aozora_encoding::*;
 }
 
+/// Lossless concrete syntax tree (Phase N1).
+///
+/// Re-export of [`aozora_cst`] under the `cst` feature. Enables
+/// editor-grade surfaces (LSP servers, source-faithful
+/// refactoring / formatting tools) without pulling rowan into the
+/// dep tree of plain library consumers.
+///
+/// ```rust,ignore
+/// use aozora::Document;
+/// let doc = Document::new("｜青梅《おうめ》");
+/// let cst = aozora::cst::from_tree(&doc.parse());
+/// // Walk the rowan SyntaxNode tree …
+/// ```
+#[cfg(feature = "cst")]
+pub mod cst {
+    pub use aozora_cst::*;
+
+    /// Convenience wrapper over [`aozora_cst::build_cst`].
+    ///
+    /// Runs Phase 0 sanitize internally — `source_nodes` coordinates
+    /// live in sanitized bytes, so we re-derive that text here rather
+    /// than asking callers to thread it through. Sanitize is a pure
+    /// function; calling it again is cheap.
+    #[must_use]
+    pub fn from_tree(tree: &crate::AozoraTree<'_>) -> SyntaxNode {
+        use crate::pipeline::lexer::sanitize;
+        let sanitized = sanitize(tree.source());
+        build_cst(&sanitized.text, tree.source_nodes())
+    }
+}
+
 /// Aozora-shaped `proptest` strategies (Phase N4).
 ///
 /// Downstream renderer / visitor authors writing their own property

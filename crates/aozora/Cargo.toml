@@ -43,6 +43,10 @@ schemars = { workspace = true, optional = true }
 # themselves.
 aozora-proptest = { workspace = true, optional = true }
 proptest        = { workspace = true, optional = true }
+# Phase N1 — lossless concrete syntax tree. Optional, enabled by
+# the `cst` feature so library-only consumers don't pull in rowan
+# unless they want the editor-grade surface.
+aozora-cst      = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -60,6 +64,10 @@ schema = ["wire", "dep:schemars"]
 # Downstream renderer authors enable this when writing property
 # tests over their own `AozoraVisitor` impls.
 proptest = ["dep:proptest", "dep:aozora-proptest"]
+# Lossless concrete syntax tree (`aozora::cst::*`). Editor-grade
+# surface for source-faithful refactoring / formatters / LSP
+# servers. Pulls rowan into the dep tree.
+cst = ["dep:aozora-cst"]
 
 [dev-dependencies]
 # Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and
