@@ -1,7 +1,8 @@
 //! `aozora` command-line frontend.
 //!
-//! Three subcommands:
+//! Subcommands fall into two groups:
 //!
+//! Document-level (consume input, produce output):
 //! - `aozora check FILE [--strict]` — run the lexer over `FILE` and
 //!   report diagnostics. Exit 0 when no diagnostics; exit 1 otherwise
 //!   if `--strict`, else exit 0 with diagnostics on stderr.
@@ -11,11 +12,27 @@
 //!   is print-to-stdout.
 //! - `aozora render FILE` — render `FILE` to HTML on stdout.
 //!
-//! All subcommands accept `-` (or no path argument) to read from stdin.
-//! Encoding defaults to UTF-8; pass `--encoding sjis` (or `-E sjis`)
-//! to decode a Shift_JIS Aozora Bunko file before parsing.
+//! Introspection (no input required, prints typed contracts —
+//! Phase L3):
+//! - `aozora kinds` — table of every `NodeKind` / `PairKind` /
+//!   `Severity` / `DiagnosticSource` / `Sentinel` /
+//!   `InternalCheckCode` variant with its wire tag and a one-line
+//!   summary.
+//! - `aozora schema {diagnostics|nodes|pairs|container-pairs}` —
+//!   pretty-prints the JSON Schema for one of the four wire
+//!   envelopes. Sourced from `aozora::wire::schema_*` (`schema`
+//!   feature on the `aozora` crate).
+//! - `aozora explain <kind>` — short prose for a `NodeKind` tag.
+//!   The full handbook chapter lands in Phase O1.
+//!
+//! All document-level subcommands accept `-` (or no path argument)
+//! to read from stdin. Encoding defaults to UTF-8; pass
+//! `--encoding sjis` (or `-E sjis`) to decode a Shift_JIS Aozora
+//! Bunko file before parsing.
 
 #![forbid(unsafe_code)]
+
+mod introspect;
 
 use std::env;
 use std::ffi::OsString;
@@ -28,6 +45,8 @@ use aozora::Document;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+
+use crate::introspect::{ExplainArgs, KindsArgs, SchemaArgs};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -49,6 +68,14 @@ enum Command {
     Fmt(FmtArgs),
     /// Render Aozora notation to HTML on stdout.
     Render(RenderArgs),
+    /// Tabulate every `NodeKind` / `PairKind` / `Severity` /
+    /// `DiagnosticSource` / `Sentinel` / `InternalCheckCode`
+    /// variant with its wire tag.
+    Kinds(KindsArgs),
+    /// Pretty-print the JSON Schema for one of the four wire envelopes.
+    Schema(SchemaArgs),
+    /// Print short prose for a `NodeKind` camelCase tag.
+    Explain(ExplainArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -113,6 +140,9 @@ fn main() -> ExitCode {
         Command::Check(opts) => run_check(&opts),
         Command::Fmt(opts) => run_fmt(&opts),
         Command::Render(opts) => run_render(&opts),
+        Command::Kinds(opts) => introspect::run_kinds(&opts),
+        Command::Schema(opts) => introspect::run_schema(&opts),
+        Command::Explain(opts) => introspect::run_explain(&opts),
     };
 
     match result {

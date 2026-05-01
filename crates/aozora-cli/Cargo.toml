@@ -19,12 +19,18 @@ name = "aozora"
 path = "src/main.rs"
 
 [dependencies]
-aozora          = { workspace = true }
+# `schema` enables `aozora::wire::schema_*()` and pulls schemars in for
+# the `aozora schema` introspection subcommand. CLI is the only
+# binary that needs schema runtime, so feature-gating here keeps the
+# library `aozora` crate light for plain library consumers.
+aozora          = { workspace = true, features = ["schema"] }
 aozora-encoding = { workspace = true }
 clap            = { workspace = true }
+comfy-table     = { workspace = true }
 miette          = { workspace = true }
 anyhow          = { workspace = true }
 thiserror       = { workspace = true }
+serde_json      = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
