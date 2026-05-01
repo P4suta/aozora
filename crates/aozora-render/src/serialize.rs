@@ -86,7 +86,10 @@ pub fn serialize_into<W: Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -> 
         // tells us which sentinel kind landed (and pattern-matching
         // the `(SentinelKind, NodeRef)` cross-product flags any
         // mismatch as a no-op rather than rendering the wrong shape).
-        match (kind, registry.node_at(byte_pos)) {
+        match (
+            kind,
+            registry.node_at(aozora_spec::NormalizedOffset::new(byte_pos)),
+        ) {
             (SentinelKind::Inline, Some(NodeRef::Inline(node))) => emit_aozora(node, writer)?,
             (SentinelKind::BlockLeaf, Some(NodeRef::BlockLeaf(node))) => {
                 emit_aozora(node, writer)?;

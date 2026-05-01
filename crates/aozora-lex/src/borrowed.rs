@@ -32,7 +32,7 @@ use aozora_lexer::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, ClassifiedSpan,
     INLINE_SENTINEL, SpanKind,
 };
-use aozora_spec::{Diagnostic, PairLink, Span};
+use aozora_spec::{Diagnostic, PairLink, SourceOffset, Span};
 use aozora_syntax::ContainerKind;
 use aozora_syntax::borrowed::{self, Arena, InternStats, NodeRef, Registry};
 
@@ -100,28 +100,32 @@ pub struct SourceNode<'a> {
 
 impl<'a> BorrowedLexOutput<'a> {
     /// Find the [`SourceNode`] whose `source_span` covers `src_off`,
-    /// where `src_off` is a sanitized-source byte offset.
+    /// where `src_off` is a [`SourceOffset`] (sanitized-source byte
+    /// offset). The newtype prevents accidental cross-coordinate
+    /// queries — pass a [`aozora_spec::NormalizedOffset`] and the
+    /// type system rejects the call.
     ///
-    /// Spans are half-open: `start <= src_off < end`. Returns `None` if
-    /// no entry covers the position (typically because the offset lies
-    /// in a Plain run between Aozora constructs).
+    /// Spans are half-open: `start <= src_off.get() < end`. Returns
+    /// `None` if no entry covers the position (typically because the
+    /// offset lies in a Plain run between Aozora constructs).
     ///
     /// Lookup is `O(log n)` via binary search on the source-sorted
     /// `source_nodes` slice.
     #[must_use]
-    pub fn node_at_source(&self, src_off: u32) -> Option<&SourceNode<'a>> {
+    pub fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNode<'a>> {
         // Binary search by source_span.start; the run we want either
         // starts at or before src_off. partition_point returns the
         // first index whose start > src_off, so subtracting one gives
         // the candidate.
+        let raw = src_off.get();
         let idx = self
             .source_nodes
-            .partition_point(|entry| entry.source_span.start <= src_off);
+            .partition_point(|entry| entry.source_span.start <= raw);
         if idx == 0 {
             return None;
         }
         let candidate = &self.source_nodes[idx - 1];
-        (src_off < candidate.source_span.end).then_some(candidate)
+        (raw < candidate.source_span.end).then_some(candidate)
     }
 }
 
@@ -472,7 +476,11 @@ mod tests {
         assert_eq!(out.registry.count_kind(Sentinel::BlockClose), 1);
         // Every registered position must round-trip via lookup.
         for (pos, _) in out.registry.iter_kind(Sentinel::Inline) {
-            assert!(out.registry.node_at(pos).is_some());
+            assert!(
+                out.registry
+                    .node_at(aozora_spec::NormalizedOffset::new(pos))
+                    .is_some()
+            );
         }
     }
 

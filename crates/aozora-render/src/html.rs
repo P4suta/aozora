@@ -132,7 +132,10 @@ pub fn render_into<W: fmt::Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -
             // lookup; the `NodeRef` variant tells us which structural
             // role this hit plays. Pre-Phase-D this was a 4-way
             // dispatch across separate per-kind tables.
-            _ => match (kind, registry.node_at(byte_pos)) {
+            _ => match (
+                kind,
+                registry.node_at(aozora_spec::NormalizedOffset::new(byte_pos)),
+            ) {
                 (Structural::Inline, Some(NodeRef::Inline(node))) => {
                     state.ensure_in_paragraph(writer)?;
                     render_node::render(node, true, writer)?;

@@ -18,7 +18,7 @@ use core::fmt;
 
 use aozora_lex::{BorrowedLexOutput, NodeRef, SourceNode, lex_into_arena};
 use aozora_render::{html as borrowed_html, serialize as borrowed_serialize};
-use aozora_spec::{Diagnostic, PairLink};
+use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset};
 use aozora_syntax::borrowed::Arena;
 
 /// Pre-size the document arena as `source.len() * ARENA_CAPACITY_FACTOR`
@@ -148,21 +148,27 @@ impl<'a> AozoraTree<'a> {
         &self.inner
     }
 
-    /// Find the node whose source span covers `src_off` (a sanitized
-    /// source byte offset). `None` if the offset falls inside a
-    /// `SpanKind::Plain` run between Aozora constructs.
+    /// Find the node whose source span covers `src_off` — a
+    /// sanitized-source byte offset, typed as
+    /// [`SourceOffset`](aozora_spec::SourceOffset) so callers cannot
+    /// accidentally mix up source and normalized coordinates.
+    /// Returns `None` if the offset falls inside a `SpanKind::Plain`
+    /// run between Aozora constructs.
     ///
     /// `O(log n)` over the source-keyed side-table.
     #[must_use]
-    pub fn node_at_source(&self, src_off: u32) -> Option<&SourceNode<'a>> {
+    pub fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNode<'a>> {
         self.inner.node_at_source(src_off)
     }
 
-    /// Find the registry entry at `normalized_off` (a byte offset into
-    /// the normalized PUA-rewritten text). For LSP requests against
-    /// the original source text, prefer [`Self::node_at_source`].
+    /// Find the registry entry at `normalized_off` — a byte offset
+    /// into the normalized PUA-rewritten text, typed as
+    /// [`NormalizedOffset`](aozora_spec::NormalizedOffset) so callers
+    /// cannot pass a source-coordinate offset by mistake. For LSP
+    /// requests against the original source text, prefer
+    /// [`Self::node_at_source`].
     #[must_use]
-    pub fn node_at_normalized(&self, normalized_off: u32) -> Option<NodeRef<'a>> {
+    pub fn node_at_normalized(&self, normalized_off: NormalizedOffset) -> Option<NodeRef<'a>> {
         self.inner.registry.node_at(normalized_off)
     }
 
@@ -283,7 +289,9 @@ mod tests {
         // Find the byte offset of `｜` — that's where the ruby span starts.
         let bar_off =
             u32::try_from(src.find('｜').expect("source contains ｜")).expect("offset fits in u32");
-        let entry = t.node_at_source(bar_off).expect("ruby span at | offset");
+        let entry = t
+            .node_at_source(SourceOffset::new(bar_off))
+            .expect("ruby span at | offset");
         // The retrieved span must cover the whole `｜青梅《おうめ》` run.
         assert_eq!(entry.source_span.start, bar_off);
         assert!(entry.source_span.end > bar_off);
@@ -296,7 +304,7 @@ mod tests {
         let d = Document::new(src);
         let t = d.parse();
         // Offset 0 is inside the leading "前" plain run — no node.
-        assert!(t.node_at_source(0).is_none());
+        assert!(t.node_at_source(SourceOffset::new(0)).is_none());
     }
 
     #[test]

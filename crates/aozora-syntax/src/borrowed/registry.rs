@@ -29,7 +29,7 @@
 
 use crate::extension::ContainerKind;
 
-use aozora_spec::Sentinel;
+use aozora_spec::{NormalizedOffset, Sentinel};
 use aozora_veb::EytzingerMap;
 
 use super::types::AozoraNode;
@@ -133,13 +133,15 @@ impl<'src> Registry<'src> {
     /// position. Returns `None` if no sentinel landed at that
     /// position.
     ///
-    /// Coordinates here are **normalized**, not source: editor
-    /// surfaces that hold a source byte offset must first translate
-    /// via `BorrowedLexOutput::node_at_source` (which walks a
-    /// source-keyed side-table built during the lex pipeline).
+    /// The argument is a [`NormalizedOffset`] newtype rather than a
+    /// raw `u32` — editor surfaces that hold a source-coordinate byte
+    /// offset must first translate via
+    /// `BorrowedLexOutput::node_at_source` (which walks a
+    /// source-keyed side-table built during the lex pipeline) instead
+    /// of casting between the two coordinate spaces.
     #[must_use]
-    pub fn node_at(&self, pos: u32) -> Option<NodeRef<'src>> {
-        self.table.get(&pos).copied()
+    pub fn node_at(&self, pos: NormalizedOffset) -> Option<NodeRef<'src>> {
+        self.table.get(&pos.get()).copied()
     }
 
     /// Iterate over `(position, NodeRef)` entries in ascending
@@ -206,9 +208,9 @@ mod tests {
         ]);
         assert!(!r.is_empty());
         assert_eq!(r.len(), 3);
-        let got = r.node_at(20);
+        let got = r.node_at(NormalizedOffset::new(20));
         assert!(matches!(got, Some(NodeRef::Inline(AozoraNode::PageBreak))));
-        assert!(r.node_at(15).is_none());
+        assert!(r.node_at(NormalizedOffset::new(15)).is_none());
     }
 
     #[test]
@@ -220,22 +222,22 @@ mod tests {
             (40u32, NodeRef::BlockClose(ContainerKind::Keigakomi)),
         ]);
         assert!(matches!(
-            r.node_at(10),
+            r.node_at(NormalizedOffset::new(10)),
             Some(NodeRef::Inline(AozoraNode::PageBreak))
         ));
         assert!(matches!(
-            r.node_at(20),
+            r.node_at(NormalizedOffset::new(20)),
             Some(NodeRef::BlockLeaf(AozoraNode::PageBreak))
         ));
         assert!(matches!(
-            r.node_at(30),
+            r.node_at(NormalizedOffset::new(30)),
             Some(NodeRef::BlockOpen(ContainerKind::Keigakomi))
         ));
         assert!(matches!(
-            r.node_at(40),
+            r.node_at(NormalizedOffset::new(40)),
             Some(NodeRef::BlockClose(ContainerKind::Keigakomi))
         ));
-        assert!(r.node_at(99).is_none());
+        assert!(r.node_at(NormalizedOffset::new(99)).is_none());
     }
 
     #[test]
