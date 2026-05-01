@@ -165,25 +165,36 @@ impl<'src> IntoIterator for Content<'src> {
 // ----------------------------------------------------------------------
 
 /// Ruby (furigana). See [`crate::Ruby`] for field semantics.
+///
+/// `base` and `reading` are [`super::NonEmpty`] — Phase 3 only emits
+/// a Ruby node once both have content. The wrapper makes the
+/// invariant a build-time fact so renderers never see an empty
+/// payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ruby<'src> {
-    pub base: Content<'src>,
-    pub reading: Content<'src>,
+    pub base: super::NonEmpty<Content<'src>>,
+    pub reading: super::NonEmpty<Content<'src>>,
     pub delim_explicit: bool,
 }
 
 /// Emphasis dots / sidelines. See [`crate::Bouten`].
+///
+/// `target` is [`super::NonEmpty`] — Phase 3 resolves the forward
+/// reference (`［＃「対象」に傍点］`) before emitting the node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bouten<'src> {
     pub kind: BoutenKind,
-    pub target: Content<'src>,
+    pub target: super::NonEmpty<Content<'src>>,
     pub position: BoutenPosition,
 }
 
 /// Tate-chu-yoko (horizontal embedding). See [`crate::TateChuYoko`].
+///
+/// `text` is [`super::NonEmpty`] — empty TCY is a parse bug, not a
+/// valid state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TateChuYoko<'src> {
-    pub text: Content<'src>,
+    pub text: super::NonEmpty<Content<'src>>,
 }
 
 /// Gaiji (out-of-character-range glyph). See [`crate::Gaiji`].
@@ -209,10 +220,12 @@ pub struct Warichu<'src> {
 }
 
 /// Aozora heading (窓見出し / 副見出し). See [`crate::AozoraHeading`].
+///
+/// `text` is [`super::NonEmpty`] — every heading carries a label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AozoraHeading<'src> {
     pub kind: AozoraHeadingKind,
-    pub text: Content<'src>,
+    pub text: super::NonEmpty<Content<'src>>,
 }
 
 /// Forward-reference heading hint. See [`crate::HeadingHint`].
@@ -243,6 +256,11 @@ pub struct Kaeriten<'src> {
 }
 
 /// Double angle-bracket payload. See [`crate::DoubleRuby`].
+///
+/// `content` is plain [`Content`] — pathological inputs (`《《》》`)
+/// produce empty payloads, so we cannot strengthen this to
+/// [`super::NonEmpty`] without re-running the classifier with a
+/// pre-filter. Tracked as a follow-up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DoubleRuby<'src> {
     pub content: Content<'src>,
@@ -447,8 +465,8 @@ mod tests {
     #[test]
     fn inline_variants_are_not_block() {
         let ruby = Ruby {
-            base: Content::Plain("x"),
-            reading: Content::Plain("x"),
+            base: super::super::NonEmpty::new(Content::Plain("x")).unwrap(),
+            reading: super::super::NonEmpty::new(Content::Plain("x")).unwrap(),
             delim_explicit: false,
         };
         assert!(!AozoraNode::Ruby(&ruby).is_block());
@@ -460,8 +478,8 @@ mod tests {
     #[test]
     fn ruby_carries_both_base_and_reading() {
         let r = Ruby {
-            base: Content::Plain("青梅"),
-            reading: Content::Plain("おうめ"),
+            base: super::super::NonEmpty::new(Content::Plain("青梅")).unwrap(),
+            reading: super::super::NonEmpty::new(Content::Plain("おうめ")).unwrap(),
             delim_explicit: true,
         };
         assert_eq!(r.base.as_plain(), Some("青梅"));

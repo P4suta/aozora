@@ -162,15 +162,15 @@ fn emit_aozora<W: Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
 
 fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
     out.write_char('｜')?;
-    emit_content(r.base, out)?;
+    emit_content(r.base.get(), out)?;
     out.write_char('《')?;
-    emit_content(r.reading, out)?;
+    emit_content(r.reading.get(), out)?;
     out.write_char('》')
 }
 
 fn emit_bouten<W: Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃")?;
-    emit_bouten_targets(b.target, out)?;
+    emit_bouten_targets(b.target.get(), out)?;
     match b.position {
         BoutenPosition::Left => out.write_str("の左に")?,
         _ => out.write_char('に')?,
@@ -212,7 +212,7 @@ fn emit_bouten_targets<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
 
 fn emit_tate_chu_yoko<W: Write>(t: &TateChuYoko<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃「")?;
-    emit_content_as_plain(t.text, out)?;
+    emit_content_as_plain(t.text.get(), out)?;
     out.write_str("」は縦中横］")
 }
 

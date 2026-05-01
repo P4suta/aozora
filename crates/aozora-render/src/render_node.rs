@@ -32,7 +32,7 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
         AozoraNode::Bouten(b) => render_bouten(b, writer),
         AozoraNode::TateChuYoko(t) => {
             writer.write_str(r#"<span class="aozora-tcy">"#)?;
-            render_content(t.text, writer)?;
+            render_content(t.text.get(), writer)?;
             writer.write_str("</span>")
         }
         AozoraNode::Gaiji(g) => render_gaiji(g, writer),
@@ -65,9 +65,9 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
 
 fn render_ruby<W: Write>(r: &Ruby<'_>, writer: &mut W) -> fmt::Result {
     writer.write_str("<ruby>")?;
-    render_content(r.base, writer)?;
+    render_content(r.base.get(), writer)?;
     writer.write_str("<rp>(</rp><rt>")?;
-    render_content(r.reading, writer)?;
+    render_content(r.reading.get(), writer)?;
     writer.write_str("</rt><rp>)</rp></ruby>")
 }
 
@@ -78,7 +78,7 @@ fn render_bouten<W: Write>(b: &Bouten<'_>, writer: &mut W) -> fmt::Result {
         kind = bouten::kind_slug(b.kind),
         pos = bouten::position_slug(b.position),
     )?;
-    render_content(b.target, writer)?;
+    render_content(b.target.get(), writer)?;
     writer.write_str("</em>")
 }
 

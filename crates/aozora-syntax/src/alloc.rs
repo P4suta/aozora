@@ -185,6 +185,18 @@ impl<'a> BorrowedAllocator<'a> {
     // ---------------------------------------------------------------------
 
     /// `AozoraNode::Ruby(Ruby { base, reading, delim_explicit })`.
+    ///
+    /// `base` and `reading` carry the [`borrowed::NonEmpty`]
+    /// invariant. Phase 3 only emits Ruby once both are non-empty,
+    /// so this `expect` is a contract-check; an empty payload here
+    /// signals a classifier bug.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `base` or `reading` is empty. Phase 3 emit-sites
+    /// classify only after the body is populated, so the panic
+    /// represents a pipeline-internal bug — Phase E6 surfaced this
+    /// invariant at the type level.
     #[must_use]
     pub fn ruby(
         &self,
@@ -192,6 +204,10 @@ impl<'a> BorrowedAllocator<'a> {
         reading: borrowed::Content<'a>,
         delim_explicit: bool,
     ) -> borrowed::AozoraNode<'a> {
+        let base =
+            borrowed::NonEmpty::new(base).expect("Phase 3 must emit Ruby with non-empty base");
+        let reading = borrowed::NonEmpty::new(reading)
+            .expect("Phase 3 must emit Ruby with non-empty reading");
         borrowed::AozoraNode::Ruby(self.arena.alloc(borrowed::Ruby {
             base,
             reading,
@@ -200,6 +216,15 @@ impl<'a> BorrowedAllocator<'a> {
     }
 
     /// `AozoraNode::Bouten(Bouten { kind, target, position })`.
+    ///
+    /// `target` carries the [`borrowed::NonEmpty`] invariant —
+    /// Phase 3 resolves the forward reference before emitting.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `target` is empty. The forward-reference resolver
+    /// in Phase 3 always lands a non-empty target before emit; an
+    /// empty payload here signals a classifier bug.
     #[must_use]
     pub fn bouten(
         &self,
@@ -207,6 +232,8 @@ impl<'a> BorrowedAllocator<'a> {
         target: borrowed::Content<'a>,
         position: BoutenPosition,
     ) -> borrowed::AozoraNode<'a> {
+        let target = borrowed::NonEmpty::new(target)
+            .expect("Phase 3 must emit Bouten with a resolved non-empty target");
         borrowed::AozoraNode::Bouten(self.arena.alloc(borrowed::Bouten {
             kind,
             target,
@@ -215,8 +242,16 @@ impl<'a> BorrowedAllocator<'a> {
     }
 
     /// `AozoraNode::TateChuYoko(TateChuYoko { text })`.
+    ///
+    /// `text` carries the [`borrowed::NonEmpty`] invariant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `text` is empty.
     #[must_use]
     pub fn tate_chu_yoko(&self, text: borrowed::Content<'a>) -> borrowed::AozoraNode<'a> {
+        let text = borrowed::NonEmpty::new(text)
+            .expect("Phase 3 must emit TateChuYoko with non-empty text");
         borrowed::AozoraNode::TateChuYoko(self.arena.alloc(borrowed::TateChuYoko { text }))
     }
 
@@ -267,12 +302,20 @@ impl<'a> BorrowedAllocator<'a> {
     }
 
     /// `AozoraNode::AozoraHeading(AozoraHeading { kind, text })`.
+    ///
+    /// `text` carries the [`borrowed::NonEmpty`] invariant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `text` is empty.
     #[must_use]
     pub fn aozora_heading(
         &self,
         kind: AozoraHeadingKind,
         text: borrowed::Content<'a>,
     ) -> borrowed::AozoraNode<'a> {
+        let text = borrowed::NonEmpty::new(text)
+            .expect("Phase 3 must emit AozoraHeading with non-empty text");
         borrowed::AozoraNode::AozoraHeading(
             self.arena.alloc(borrowed::AozoraHeading { kind, text }),
         )

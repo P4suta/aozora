@@ -3173,7 +3173,7 @@ mod tests {
         run!(out, "｜日本《に※［＃「ほ」、第3水準1-85-54］ん》");
         let r = only_ruby(&out);
         assert_eq!(r.base.as_plain(), Some("日本"));
-        let Content::Segments(segs) = r.reading else {
+        let Content::Segments(segs) = r.reading.get() else {
             panic!("expected Segments, got {:?}", r.reading);
         };
         assert_eq!(segs.len(), 3);
@@ -3201,7 +3201,7 @@ mod tests {
         // trailing empty Text on either side).
         run!(out, "｜日本《※［＃「にほん」、第3水準1-85-54］》");
         let r = only_ruby(&out);
-        let Content::Segments(segs) = r.reading else {
+        let Content::Segments(segs) = r.reading.get() else {
             panic!("expected Segments, got {:?}", r.reading);
         };
         assert_eq!(segs.len(), 1);
@@ -3218,7 +3218,7 @@ mod tests {
         // in the hidden `aozora-annotation` span (Tier A compliance).
         run!(out, "｜日本《にほん［＃ママ］》");
         let r = only_ruby(&out);
-        let Content::Segments(segs) = r.reading else {
+        let Content::Segments(segs) = r.reading.get() else {
             panic!("expected Segments, got {:?}", r.reading);
         };
         assert_eq!(segs.len(), 2);
@@ -3240,7 +3240,7 @@ mod tests {
         // `text_start` advancement correctly spans each gap.
         run!(out, "｜日本《に※［＃「ほ」、第3水準1-85-54］ん［＃ママ］》");
         let r = only_ruby(&out);
-        let Content::Segments(segs) = r.reading else {
+        let Content::Segments(segs) = r.reading.get() else {
             panic!("expected Segments, got {:?}", r.reading);
         };
         assert_eq!(segs.len(), 4);
@@ -3259,7 +3259,7 @@ mod tests {
         let r = only_ruby(&out);
         assert_eq!(r.base.as_plain(), Some("日本"));
         assert!(!r.delim_explicit);
-        let Content::Segments(segs) = r.reading else {
+        let Content::Segments(segs) = r.reading.get() else {
             panic!("expected Segments, got {:?}", r.reading);
         };
         assert_eq!(segs.len(), 3);
@@ -3307,7 +3307,7 @@ mod tests {
         // `Segment::Text` channel (Tier A canary).
         run!(out, "｜日本《にほん［＃改ページ］》");
         let r = only_ruby(&out);
-        let Content::Segments(segs) = r.reading else {
+        let Content::Segments(segs) = r.reading.get() else {
             panic!("expected Segments, got {:?}", r.reading);
         };
         // Last segment must be an Annotation carrying the raw bytes.

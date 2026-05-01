@@ -36,11 +36,13 @@
 
 mod arena;
 mod intern;
+mod non_empty;
 mod registry;
 mod types;
 
 pub use arena::Arena;
 pub use intern::{InternStats, Interner};
+pub use non_empty::NonEmpty;
 pub use registry::{ContainerPair, NodeRef, Registry};
 pub use types::{
     Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,
