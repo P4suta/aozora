@@ -33,19 +33,42 @@ runs:
       shell: bash
       run: echo "COMPOSE_FILE=docker-compose.yml:docker-compose.ci.yml" >> "$GITHUB_ENV"
 
+    # Cache the dev image tar on the runner host. Each CI job otherwise
+    # spends ~32 s pulling aozora-dev:latest from GHCR; with six docker
+    # compose jobs in ci.yml that's ~190 s of pure network overhead per
+    # workflow run. The cache key is keyed off Dockerfile +
+    # docker-compose.yml so a real image rebuild invalidates it
+    # automatically.
+    - name: Cache dev image tar
+      id: dev-image-cache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/aozora-dev.tar
+        key: aozora-dev-image-${{ hashFiles('Dockerfile', 'docker-compose.yml') }}
+
+    - name: Load dev image from cache (cache hit)
+      if: steps.dev-image-cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        docker load -i /tmp/aozora-dev.tar
+        docker tag aozora-dev:local aozora-ci:local
+        echo "::notice title=dev image::Loaded aozora-dev:local from runner cache"
+
     # docker/login-action authenticates the runner against GHCR using
     # the standard GITHUB_TOKEN. Skipped on fork PRs where the token
     # lacks `packages: read` — those runs go through the build
     # fallback below. Same-repo runs always log in.
-    - name: Log in to GHCR (same-repo runs only)
-      if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    - name: Log in to GHCR (cache miss only, same-repo runs only)
+      if: ${{ steps.dev-image-cache.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ github.token }}
 
-    - name: Pull dev image (GHCR) or fall back to local build
+    - name: Pull dev image (GHCR) or fall back to local build (cache miss)
+      if: steps.dev-image-cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
         set -euo pipefail
@@ -58,3 +81,5 @@ runs:
           docker compose build dev
           docker tag aozora-dev:local aozora-ci:local
         fi
+        # Save the tar so actions/cache picks it up on the post-action.
+        docker save aozora-dev:local -o /tmp/aozora-dev.tar
