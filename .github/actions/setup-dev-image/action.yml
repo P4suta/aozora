@@ -19,6 +19,20 @@ runs:
       with:
         tool: just
 
+    # Install the sccache CLI on the runner host and export
+    # ACTIONS_CACHE_URL + ACTIONS_RUNTIME_TOKEN so the in-container
+    # sccache (compose env: RUSTC_WRAPPER=sccache, SCCACHE_GHA_ENABLED=true
+    # via docker-compose.ci.yml) can route its cache traffic over the
+    # GitHub Actions Cache API. The on-disk `sccache` named volume in
+    # docker-compose.yml is fine for local dev where it persists across
+    # invocations, but every CI runner starts with empty named volumes,
+    # so on Actions we steer sccache at the run-shared GHA cache instead.
+    - uses: mozilla-actions/sccache-action@v0.0.10
+
+    - name: Enable docker-compose CI overlay
+      shell: bash
+      run: echo "COMPOSE_FILE=docker-compose.yml:docker-compose.ci.yml" >> "$GITHUB_ENV"
+
     # docker/login-action authenticates the runner against GHCR using
     # the standard GITHUB_TOKEN. Skipped on fork PRs where the token
     # lacks `packages: read` — those runs go through the build
