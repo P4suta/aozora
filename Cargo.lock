@@ -112,7 +112,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "aozora"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aozora-corpus",
  "aozora-cst",
@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-bench"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aozora",
  "aozora-corpus",
@@ -147,7 +147,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-cli"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "aozora",
@@ -163,7 +163,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-conformance"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aozora",
  "pretty_assertions",
@@ -171,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-corpus"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "num_cpus",
@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-cst"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aozora",
  "aozora-pipeline",
@@ -196,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-encoding"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "encoding_rs",
  "miette",
@@ -208,7 +208,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-ffi"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aozora",
  "cbindgen",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-pandoc"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aozora",
  "pandoc_ast",
@@ -225,7 +225,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-pipeline"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aho-corasick",
  "aozora-encoding",
@@ -247,14 +247,14 @@ dependencies = [
 
 [[package]]
 name = "aozora-proptest"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "aozora-py"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aozora",
  "pyo3",
@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-query"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aozora",
  "aozora-cst",
@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-render"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aozora-pipeline",
  "aozora-spec",
@@ -284,7 +284,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-scan"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aho-corasick",
  "aozora-spec",
@@ -297,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-spec"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "miette",
  "phf",
@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-syntax"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aozora-encoding",
  "aozora-spec",
@@ -322,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-trace"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "addr2line 0.26.1",
  "flate2",
@@ -336,14 +336,14 @@ dependencies = [
 
 [[package]]
 name = "aozora-veb"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "aozora-wasm"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aozora",
  "serde-wasm-bindgen",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "aozora-xtask"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "aozora",
  "aozora-corpus",

@@ -29,7 +29,7 @@ members = [
 exclude = ["crates/aozora-book"]
 
 [workspace.package]
-version       = "0.2.6"
+version       = "0.3.0"
 edition       = "2024"
 rust-version  = "1.95.0"
 license       = "Apache-2.0 OR MIT"
@@ -143,15 +143,15 @@ large_enum_variant      = "allow"
 
 [workspace.dependencies]
 # Internal crates — paths within this workspace.
-aozora-spec       = { version = "0.2.6", path = "crates/aozora-spec" }
-aozora-syntax     = { version = "0.2.6", path = "crates/aozora-syntax" }
-aozora-veb        = { version = "0.2.6", path = "crates/aozora-veb" }
-aozora-scan       = { version = "0.2.6", path = "crates/aozora-scan" }
-aozora-pipeline   = { version = "0.2.6", path = "crates/aozora-pipeline" }
-aozora-render     = { version = "0.2.6", path = "crates/aozora-render" }
-aozora            = { version = "0.2.6", path = "crates/aozora" }
-aozora-wasm       = { version = "0.2.6", path = "crates/aozora-wasm" }
-aozora-trace      = { version = "0.2.6", path = "crates/aozora-trace" }
+aozora-spec       = { version = "0.3.0", path = "crates/aozora-spec" }
+aozora-syntax     = { version = "0.3.0", path = "crates/aozora-syntax" }
+aozora-veb        = { version = "0.3.0", path = "crates/aozora-veb" }
+aozora-scan       = { version = "0.3.0", path = "crates/aozora-scan" }
+aozora-pipeline   = { version = "0.3.0", path = "crates/aozora-pipeline" }
+aozora-render     = { version = "0.3.0", path = "crates/aozora-render" }
+aozora            = { version = "0.3.0", path = "crates/aozora" }
+aozora-wasm       = { version = "0.3.0", path = "crates/aozora-wasm" }
+aozora-trace      = { version = "0.3.0", path = "crates/aozora-trace" }
 
 # Memory management
 bumpalo = { version = "3.20", features = ["collections"] }
@@ -176,13 +176,13 @@ aho-corasick = { version = "1.1", default-features = false }
 # the lexer's mixed-trigger search where Teddy's SIMD prefilter
 # alone would still need a follow-up confirmation pass.
 regex-automata = { version = "0.4", default-features = false }
-aozora-encoding   = { version = "0.2.6", path = "crates/aozora-encoding" }
-aozora-corpus       = { version = "0.2.6", path = "crates/aozora-corpus" }
-aozora-conformance  = { version = "0.2.6", path = "crates/aozora-conformance" }
-aozora-pandoc       = { version = "0.2.6", path = "crates/aozora-pandoc" }
-aozora-cst          = { version = "0.2.6", path = "crates/aozora-cst" }
-aozora-query        = { version = "0.2.6", path = "crates/aozora-query" }
-aozora-proptest = { version = "0.2.6", path = "crates/aozora-proptest" }
+aozora-encoding   = { version = "0.3.0", path = "crates/aozora-encoding" }
+aozora-corpus       = { version = "0.3.0", path = "crates/aozora-corpus" }
+aozora-conformance  = { version = "0.3.0", path = "crates/aozora-conformance" }
+aozora-pandoc       = { version = "0.3.0", path = "crates/aozora-pandoc" }
+aozora-cst          = { version = "0.3.0", path = "crates/aozora-cst" }
+aozora-query        = { version = "0.3.0", path = "crates/aozora-query" }
+aozora-proptest = { version = "0.3.0", path = "crates/aozora-proptest" }
 
 # Error handling
 thiserror = "2.0.18"
