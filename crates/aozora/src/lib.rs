@@ -15,7 +15,20 @@
 //! println!("{html}");
 //! ```
 //!
-//! ## Architecture
+//! Tunable parses go through the builder chain:
+//!
+//! ```
+//! use aozora::{Document, DiagnosticPolicy};
+//!
+//! let doc = Document::options()
+//!     .arena_capacity(64 * 1024)
+//!     .diagnostic_policy(DiagnosticPolicy::DropInternal)
+//!     .build("｜青梅《おうめ》");
+//! let tree = doc.parse();
+//! assert!(!tree.serialize().is_empty());
+//! ```
+//!
+//! # Architecture
 //!
 //! [`Document`] owns the source buffer plus a [`bumpalo`]-backed
 //! arena. [`AozoraTree`] borrows from that arena via the `&self`
@@ -23,8 +36,14 @@
 //! allocation lives inside the arena, with the
 //! [`Interner`](aozora_syntax::borrowed::Interner) deduplicating
 //! repeated string content; dropping the `Document` releases the
-//! entire tree in a single `Bump::reset` step. See
-//! the [Architecture chapter of the handbook](https://p4suta.github.io/aozora/arch/pipeline.html)
+//! entire tree in a single `Bump::reset` step.
+//!
+//! Internal build-block crates (`aozora-spec`, `aozora-syntax`,
+//! `aozora-pipeline`, `aozora-render`, `aozora-encoding`) are
+//! `publish = false` and reachable only through this meta crate's
+//! [`pipeline`] / [`syntax`] / [`render`] / [`encoding`] / [`wire`]
+//! modules. Depend on `aozora` alone; see the
+//! [Architecture chapter of the handbook](https://p4suta.github.io/aozora/arch/pipeline.html)
 //! for the layered design.
 
 #![forbid(unsafe_code)]

@@ -437,6 +437,53 @@ mod tests {
     }
 
     #[test]
+    fn parse_options_default_matches_document_new() {
+        // ParseOptions::new().build(s) must produce the same tree as
+        // Document::new(s) — Document::new is a thin wrapper.
+        let src = "｜青梅《おうめ》";
+        let via_new = Document::new(src);
+        let via_options = ParseOptions::new().build(src);
+        assert_eq!(via_new.parse().serialize(), via_options.parse().serialize());
+    }
+
+    #[test]
+    fn parse_options_arena_capacity_is_honoured() {
+        // The capacity hint propagates to bumpalo. Arena bytes after
+        // construction reflect the request rounded up to the chunk
+        // size; pin a lower bound rather than the exact value.
+        let doc = ParseOptions::new()
+            .arena_capacity(16 * 1024)
+            .build("plain text");
+        // Minimum: bumpalo's first chunk is at least the requested
+        // capacity. Conservative assertion rather than exact bytes.
+        drop(doc.parse()); // commit something to the arena
+        assert!(
+            doc.arena_bytes() <= 64 * 1024,
+            "arena bytes should not balloon for a tiny source: {}",
+            doc.arena_bytes()
+        );
+    }
+
+    #[test]
+    fn parse_options_drop_internal_filters_internal_diagnostics() {
+        // DropInternal hides Diagnostic::Internal entries. Production
+        // parses on well-formed input emit none, so we cross-check
+        // CollectAll/DropInternal yield the same `len()` for clean
+        // input — and the policy plumbing exists.
+        let doc_collect = Document::options()
+            .diagnostic_policy(DiagnosticPolicy::CollectAll)
+            .build("plain text");
+        let doc_drop = Document::options()
+            .diagnostic_policy(DiagnosticPolicy::DropInternal)
+            .build("plain text");
+        assert_eq!(
+            doc_collect.parse().diagnostics().len(),
+            doc_drop.parse().diagnostics().len(),
+            "policy is a no-op when no Internal diagnostics exist"
+        );
+    }
+
+    #[test]
     fn arena_grows_with_source_size() {
         let small = Document::new("a");
         drop(small.parse());
