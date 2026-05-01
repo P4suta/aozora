@@ -54,8 +54,8 @@ use aozora_syntax::borrowed::Arena;
 use bumpalo::collections::Vec as BumpVec;
 use smallvec::SmallVec;
 
-use crate::diagnostic::Diagnostic;
 use crate::token::{Token, TriggerKind};
+use aozora_spec::Diagnostic;
 
 // `PairKind` lives in `aozora-spec`; re-exported here for backward
 // compatibility through the 0.1 → 0.2 transition. `PairLink` is the

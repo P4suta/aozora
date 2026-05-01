@@ -34,10 +34,6 @@ pub use aozora_syntax::borrowed::NodeRef;
 pub use borrowed::{BorrowedLexOutput, SourceNode, lex_into_arena};
 pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 
-// Re-exports of the legacy lexer's allocator-agnostic types
-// (`Token`, `SanitizeOutput`) the borrowed pipeline consumes
-// internally.
-pub use aozora_lexer::{SanitizeOutput, Token};
 pub use aozora_spec::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic, INLINE_SENTINEL,
     PairKind, PairLink, SLUGS, SlugEntry, SlugFamily, Span, TriggerKind, canonicalise_slug,

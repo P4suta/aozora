@@ -120,6 +120,8 @@ dependencies = [
  "aozora-render",
  "aozora-spec",
  "aozora-syntax",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -183,8 +185,6 @@ version = "0.2.6"
 dependencies = [
  "aozora",
  "cbindgen",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -230,9 +230,7 @@ name = "aozora-py"
 version = "0.2.6"
 dependencies = [
  "aozora",
- "aozora-wasm",
  "pyo3",
- "serde_json",
 ]
 
 [[package]]
@@ -318,7 +316,6 @@ name = "aozora-wasm"
 version = "0.2.6"
 dependencies = [
  "aozora",
- "serde",
  "serde-wasm-bindgen",
  "serde_json",
  "wasm-bindgen",

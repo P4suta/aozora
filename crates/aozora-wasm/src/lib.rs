@@ -17,11 +17,25 @@
 //! release build picks it up via `-Ctarget-feature=+simd128`. The
 //! size budget for the resulting `.wasm` artifact (post `wasm-opt
 //! -O3 --enable-simd`) is ≤ 500 KiB.
+//!
+//! ## Wire format
+//!
+//! Every JSON-returning method delegates to [`aozora::wire`], the
+//! single authority for the cross-driver wire shape. `aozora-ffi` /
+//! `aozora-wasm` / `aozora-py` emit byte-identical envelopes:
+//!
+//! ```json
+//! { "schema_version": 1, "data": [ … ] }
+//! ```
+//!
+//! [`wire::SCHEMA_VERSION`] bumps on any breaking change to
+//! that shape.
 
 #![forbid(unsafe_code)]
 
 #[cfg(target_arch = "wasm32")]
 mod bindings {
+    use aozora::{Document as AozoraDoc, wire};
     use wasm_bindgen::prelude::*;
 
     /// JS-facing handle to a parsed Aozora document.
@@ -31,7 +45,7 @@ mod bindings {
     /// automatic when the JS-side handle is GC'd.
     #[wasm_bindgen]
     pub struct Document {
-        inner: aozora::Document,
+        inner: AozoraDoc,
     }
 
     #[wasm_bindgen]
@@ -43,7 +57,7 @@ mod bindings {
         #[must_use]
         pub fn new(source: String) -> Self {
             Self {
-                inner: aozora::Document::new(source),
+                inner: AozoraDoc::new(source),
             }
         }
 
@@ -61,11 +75,45 @@ mod bindings {
             self.inner.parse().serialize()
         }
 
-        /// Diagnostics as a JSON string. Empty parse → `"[]"`.
+        /// Diagnostics as JSON. Empty parse →
+        /// `{"schema_version":1,"data":[]}`. Wire format defined in
+        /// [`aozora::wire`].
         #[wasm_bindgen]
         #[must_use]
         pub fn diagnostics_json(&self) -> String {
-            crate::diagnostics_json_view(self.inner.parse().diagnostics())
+            wire::serialize_diagnostics(self.inner.parse().diagnostics())
+        }
+
+        /// Source-keyed Aozora-node spans as JSON. Each entry is
+        /// `{ kind, span: { start, end } }` where `kind` is the
+        /// camelCase [`aozora::AozoraNode`] discriminant
+        /// (`"ruby"` / `"bouten"` / `"gaiji"` / …) plus
+        /// `"containerOpen"` / `"containerClose"` for container
+        /// open / close markers. `span` covers source bytes, sorted
+        /// by `span.start`.
+        ///
+        /// Stream-friendly for the aozora-obsidian Lezer-Tree builder
+        /// — the underlying `source_nodes` table tiles spans
+        /// contiguously by construction.
+        #[wasm_bindgen]
+        #[must_use]
+        pub fn nodes_json(&self) -> String {
+            wire::serialize_nodes(&self.inner.parse())
+        }
+
+        /// Matched open/close pair links as JSON. Each entry is
+        /// `{ kind, open: { start, end }, close: { start, end } }` in
+        /// sanitized-source coordinates. Useful for LSP requests like
+        /// `textDocument/linkedEditingRange` and
+        /// `textDocument/documentHighlight`.
+        ///
+        /// Unmatched closes and unclosed opens are excluded — they
+        /// have no partner span and would only confuse editor
+        /// surfaces.
+        #[wasm_bindgen]
+        #[must_use]
+        pub fn pairs_json(&self) -> String {
+            wire::serialize_pairs(&self.inner.parse())
         }
 
         /// Source byte length. Useful for JS-side progress UI.
@@ -77,117 +125,121 @@ mod bindings {
     }
 }
 
-/// Diagnostic projection mirrored from `aozora-ffi` so both drivers
-/// emit identical JSON shapes. Public so the WASM bindings can call
-/// it; useful in unit tests too.
-#[must_use]
-pub fn diagnostics_json_view(diagnostics: &[aozora::Diagnostic]) -> String {
-    #[derive(serde::Serialize)]
-    struct DiagnosticView<'a> {
-        kind: &'static str,
-        span_start: u32,
-        span_end: u32,
-        codepoint: Option<char>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        _phantom: Option<&'a ()>,
-    }
-
-    let views: Vec<DiagnosticView<'_>> = diagnostics
-        .iter()
-        .map(|d| match d {
-            aozora::Diagnostic::SourceContainsPua {
-                codepoint, span, ..
-            } => DiagnosticView {
-                kind: "source_contains_pua",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: Some(*codepoint),
-                _phantom: None,
-            },
-            aozora::Diagnostic::UnclosedBracket { span, .. } => DiagnosticView {
-                kind: "unclosed_bracket",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: None,
-                _phantom: None,
-            },
-            aozora::Diagnostic::UnmatchedClose { span, .. } => DiagnosticView {
-                kind: "unmatched_close",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: None,
-                _phantom: None,
-            },
-            aozora::Diagnostic::ResidualAnnotationMarker { span, .. } => DiagnosticView {
-                kind: "residual_annotation_marker",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: None,
-                _phantom: None,
-            },
-            aozora::Diagnostic::UnregisteredSentinel {
-                codepoint, span, ..
-            } => DiagnosticView {
-                kind: "unregistered_sentinel",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: Some(*codepoint),
-                _phantom: None,
-            },
-            aozora::Diagnostic::RegistryOutOfOrder { span, .. } => DiagnosticView {
-                kind: "registry_out_of_order",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: None,
-                _phantom: None,
-            },
-            aozora::Diagnostic::RegistryPositionMismatch { expected, span, .. } => DiagnosticView {
-                kind: "registry_position_mismatch",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: Some(*expected),
-                _phantom: None,
-            },
-            _ => DiagnosticView {
-                kind: "unknown",
-                span_start: 0,
-                span_end: 0,
-                codepoint: None,
-                _phantom: None,
-            },
-        })
-        .collect();
-
-    serde_json::to_string(&views).unwrap_or_else(|_| "[]".to_owned())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use aozora::{Document, wire};
 
+    /// Diagnostics for plain input is the empty envelope.
     #[test]
-    fn diagnostics_json_view_emits_empty_array_for_no_diagnostics() {
-        let json = diagnostics_json_view(&[]);
-        assert_eq!(json, "[]");
+    fn diagnostics_json_is_empty_envelope_for_clean_input() {
+        let doc = Document::new("plain".to_owned());
+        let json = wire::serialize_diagnostics(doc.parse().diagnostics());
+        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
     }
 
+    /// PUA collision shows up as a `kind:"source_contains_pua"` entry
+    /// inside the envelope.
     #[test]
-    fn diagnostics_json_view_emits_pua_diagnostic() {
-        let doc = aozora::Document::new("abc\u{E001}def".to_owned());
-        let json = diagnostics_json_view(doc.parse().diagnostics());
+    fn diagnostics_json_emits_pua_diagnostic() {
+        let doc = Document::new("abc\u{E001}def".to_owned());
+        let json = wire::serialize_diagnostics(doc.parse().diagnostics());
         assert!(
-            json.contains("source_contains_pua"),
+            json.contains(r#""kind":"source_contains_pua""#),
             "json missing diag kind: {json}"
+        );
+        assert!(
+            json.contains(r#""schema_version":1"#),
+            "json missing schema_version: {json}"
         );
     }
 
+    /// Round-trip JSON parse: every wire output must be valid JSON
+    /// that decodes to a `{ schema_version, data }` object.
     #[test]
-    fn diagnostics_json_view_is_valid_json() {
-        let doc = aozora::Document::new("abc\u{E001}def".to_owned());
-        let json = diagnostics_json_view(doc.parse().diagnostics());
-        // Round-trip parse via serde_json — fails the test if the
-        // produced string isn't valid JSON.
-        let parsed_json: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
-        assert!(parsed_json.is_array(), "diagnostics JSON must be an array");
+    fn diagnostics_json_round_trips_envelope() {
+        let doc = Document::new("abc\u{E001}def".to_owned());
+        let json = wire::serialize_diagnostics(doc.parse().diagnostics());
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert!(parsed.is_object(), "wire root must be object");
+        assert_eq!(
+            parsed
+                .get("schema_version")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert!(parsed.get("data").is_some_and(serde_json::Value::is_array));
+    }
+
+    /// Plain input has no Aozora-classified spans → empty envelope.
+    #[test]
+    fn nodes_json_is_empty_envelope_for_plain_text() {
+        let doc = Document::new("hello, world".to_owned());
+        let json = wire::serialize_nodes(&doc.parse());
+        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
+    }
+
+    /// Ruby span emits a `kind:"ruby"` entry.
+    #[test]
+    fn nodes_json_classifies_ruby() {
+        let doc = Document::new("｜青梅《おうめ》".to_owned());
+        let json = wire::serialize_nodes(&doc.parse());
+        assert!(
+            json.contains(r#""kind":"ruby""#),
+            "json should mark ruby: {json}"
+        );
+    }
+
+    /// Round-trip: every wire output is valid JSON with the expected
+    /// envelope shape.
+    #[test]
+    fn nodes_json_round_trips_as_envelope() {
+        let doc = Document::new("｜山《やま》や［＃改ページ］\n《《秘密》》".to_owned());
+        let json = wire::serialize_nodes(&doc.parse());
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        let arr = parsed
+            .get("data")
+            .and_then(|v| v.as_array())
+            .expect("data is array");
+        assert!(!arr.is_empty(), "should have classified at least one node");
+        for entry in arr {
+            assert!(entry.get("kind").is_some(), "entry missing kind");
+            let span = entry.get("span").expect("entry missing span");
+            assert!(span.get("start").is_some(), "span missing start");
+            assert!(span.get("end").is_some(), "span missing end");
+        }
+    }
+
+    /// Source-order property: `data` entries are sorted by
+    /// `span.start` ascending.
+    #[test]
+    fn nodes_json_spans_are_in_source_order() {
+        let doc = Document::new("｜山《やま》。｜川《かわ》。｜空《そら》。".to_owned());
+        let json = wire::serialize_nodes(&doc.parse());
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        let arr = parsed
+            .get("data")
+            .and_then(|v| v.as_array())
+            .expect("data is array");
+        let starts: Vec<u64> = arr
+            .iter()
+            .filter_map(|v| {
+                v.get("span")
+                    .and_then(|s| s.get("start"))
+                    .and_then(serde_json::Value::as_u64)
+            })
+            .collect();
+        let mut sorted = starts.clone();
+        sorted.sort_unstable();
+        assert_eq!(starts, sorted, "spans must be emitted in source order");
+    }
+
+    /// Ruby pair appears in `pairs_json`.
+    #[test]
+    fn pairs_json_emits_ruby_pair() {
+        let doc = Document::new("｜青梅《おうめ》".to_owned());
+        let json = wire::serialize_pairs(&doc.parse());
+        assert!(json.contains(r#""kind":"ruby""#), "pairs json: {json}");
+        assert!(json.contains(r#""open":"#), "pairs json: {json}");
+        assert!(json.contains(r#""close":"#), "pairs json: {json}");
     }
 }

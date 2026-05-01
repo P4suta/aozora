@@ -23,7 +23,7 @@
 //!    [`crate::BLOCK_OPEN_SENTINEL`] / [`crate::BLOCK_CLOSE_SENTINEL`] into
 //!    the normalized text (Phase 4). If the source already uses any of
 //!    those codepoints, post-process splice can't tell source from marker.
-//!    This phase emits a [`crate::Diagnostic::SourceContainsPua`] for
+//!    This phase emits a [`aozora_spec::Diagnostic::SourceContainsPua`] for
 //!    each occurrence so the problem surfaces, while still passing the
 //!    text through verbatim. A future enhancement can switch to
 //!    Unicode-noncharacter sentinels when a collision is detected.
@@ -39,8 +39,8 @@ use memchr::memmem;
 use aozora_syntax::Span;
 use aozora_syntax::accent::decompose_fragment;
 
-use crate::diagnostic::Diagnostic;
 use crate::{BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL};
+use aozora_spec::Diagnostic;
 
 /// Tortoiseshell-bracket open character — delimits accent-decomposition
 /// spans.

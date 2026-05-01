@@ -66,7 +66,6 @@ pub use aozora_spec::{
     SlugEntry, SlugFamily, canonicalise_slug,
 };
 
-pub mod diagnostic;
 #[cfg(feature = "phase3-instrument")]
 pub mod instrumentation;
 mod phase0_sanitize;
@@ -75,7 +74,6 @@ pub mod phase2_pair;
 pub mod phase3_classify;
 pub mod token;
 
-pub use diagnostic::Diagnostic;
 pub use phase0_sanitize::{SanitizeOutput, sanitize};
 #[doc(hidden)]
 pub use phase0_sanitize::{

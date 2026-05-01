@@ -13,17 +13,10 @@
 //! The exposed Python API mirrors the C-ABI surface of `aozora-ffi`
 //! (Document handle + `to_html` / `serialize` / `diagnostics`) so a
 //! polyglot project can switch between FFI and `PyO3` with no
-//! semantic change.
+//! semantic change. JSON output goes through [`aozora::wire`], the
+//! single authority for the cross-driver wire shape.
 
 #![forbid(unsafe_code)]
-
-/// Diagnostic projection mirrored from `aozora-ffi` so both drivers
-/// (and the WASM driver) emit identical schemas. Public so the
-/// `PyO3` bindings can call it; useful in unit tests as well.
-#[must_use]
-pub fn diagnostics_json_view(diagnostics: &[aozora::Diagnostic]) -> String {
-    aozora_wasm::diagnostics_json_view(diagnostics)
-}
 
 #[cfg(feature = "extension-module")]
 #[allow(
@@ -31,12 +24,13 @@ pub fn diagnostics_json_view(diagnostics: &[aozora::Diagnostic]) -> String {
     reason = "the #[pyfunction] / #[pymethods] macros expand each fn into a Python ABI wrapper that PyO3 fills with extra context args (Python token, args, kwargs, …). The warning fires on the macro-generated signature, not on user code; per-item allow doesn't reach inside the macro expansion."
 )]
 mod bindings {
+    use aozora::{Document as AozoraDoc, wire};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
 
     /// `PyO3`-facing handle to a parsed Aozora document.
     ///
-    /// `unsendable` because [`::aozora::Document`] owns a `bumpalo` arena
+    /// `unsendable` because [`AozoraDoc`] owns a `bumpalo` arena
     /// with interior `Cell` state — `Send` but not `Sync`. Pinning the
     /// `PyO3` handle to its constructing Python thread reflects the
     /// underlying ownership contract; concurrent access from other
@@ -44,7 +38,7 @@ mod bindings {
     #[pyclass(unsendable)]
     #[derive(Debug)]
     pub struct Document {
-        inner: ::aozora::Document,
+        inner: AozoraDoc,
     }
 
     #[pymethods]
@@ -53,7 +47,7 @@ mod bindings {
         #[new]
         fn new(source: &str) -> Self {
             Self {
-                inner: ::aozora::Document::new(source.to_owned()),
+                inner: AozoraDoc::new(source.to_owned()),
             }
         }
 
@@ -73,18 +67,42 @@ mod bindings {
             self.inner.parse().serialize()
         }
 
-        /// Diagnostics as JSON. Returns `PyResult<String>` for `PyO3`
-        /// signature uniformity even though this method cannot fail —
-        /// future expansion (per-diagnostic schema validation) is the
-        /// natural place to surface fallible behaviour.
+        /// Diagnostics as JSON. Empty parse →
+        /// `{"schema_version":1,"data":[]}`. Wire format defined in
+        /// [`aozora::wire`].
+        ///
+        /// Returns `PyResult<String>` for `PyO3` signature uniformity
+        /// even though this method cannot fail — future expansion
+        /// (per-diagnostic schema validation) is the natural place to
+        /// surface fallible behaviour.
         #[allow(
             clippy::unnecessary_wraps,
             reason = "PyO3 method signatures stay uniform in PyResult so future fallible expansion doesn't break the Python ABI"
         )]
         fn diagnostics(&self) -> PyResult<String> {
-            Ok(crate::diagnostics_json_view(
+            Ok(wire::serialize_diagnostics(
                 self.inner.parse().diagnostics(),
             ))
+        }
+
+        /// Source-keyed Aozora-node spans as JSON. See
+        /// [`aozora::wire::serialize_nodes`] for the schema.
+        #[allow(
+            clippy::unnecessary_wraps,
+            reason = "PyO3 method signatures stay uniform in PyResult so future fallible expansion doesn't break the Python ABI"
+        )]
+        fn nodes(&self) -> PyResult<String> {
+            Ok(wire::serialize_nodes(&self.inner.parse()))
+        }
+
+        /// Matched open/close pair links as JSON. See
+        /// [`aozora::wire::serialize_pairs`] for the schema.
+        #[allow(
+            clippy::unnecessary_wraps,
+            reason = "PyO3 method signatures stay uniform in PyResult so future fallible expansion doesn't break the Python ABI"
+        )]
+        fn pairs(&self) -> PyResult<String> {
+            Ok(wire::serialize_pairs(&self.inner.parse()))
         }
 
         /// Source byte length.
@@ -118,19 +136,21 @@ mod bindings {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use aozora::{Document as AozoraDoc, wire};
 
+    /// Smoke: PUA collision shows up via `aozora::wire`.
     #[test]
-    fn diagnostics_json_view_works_through_aozora_wasm() {
-        let doc = ::aozora::Document::new("abc\u{E001}def".to_owned());
-        let json = diagnostics_json_view(doc.parse().diagnostics());
-        assert!(json.contains("source_contains_pua"));
+    fn diagnostics_through_wire_emits_pua_kind() {
+        let doc = AozoraDoc::new("abc\u{E001}def".to_owned());
+        let json = wire::serialize_diagnostics(doc.parse().diagnostics());
+        assert!(json.contains("source_contains_pua"), "json: {json}");
     }
 
+    /// Smoke: clean parse → empty envelope, identical across drivers.
     #[test]
-    fn diagnostics_json_view_emits_empty_array_for_clean_input() {
-        let doc = ::aozora::Document::new("plain text".to_owned());
-        let json = diagnostics_json_view(doc.parse().diagnostics());
-        assert_eq!(json, "[]");
+    fn diagnostics_through_wire_is_empty_envelope_for_clean_input() {
+        let doc = AozoraDoc::new("plain text".to_owned());
+        let json = wire::serialize_diagnostics(doc.parse().diagnostics());
+        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
     }
 }

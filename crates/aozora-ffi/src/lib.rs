@@ -41,7 +41,6 @@
 
 use core::ffi::c_int;
 use core::slice;
-use std::ffi::CString;
 
 /// Status code returned by every `aozora_*` function.
 ///
@@ -157,8 +156,12 @@ pub unsafe extern "C" fn aozora_document_to_html(
 /// Render the document's diagnostics as a JSON byte buffer.
 ///
 /// On success, writes the bytes to `*out_json` and returns
-/// [`AozoraStatus::Ok`]. Empty document → `"[]"`. The caller MUST
-/// call [`aozora_bytes_free`] on the returned [`AozoraBytes`].
+/// [`AozoraStatus::Ok`]. Empty document →
+/// `{"schema_version":1,"data":[]}`. The caller MUST call
+/// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
+///
+/// Wire format is defined in [`aozora::wire`] and shared bit-for-bit
+/// with the WASM and PyO3 drivers.
 ///
 /// # Safety
 ///
@@ -176,22 +179,89 @@ pub unsafe extern "C" fn aozora_document_diagnostics_json(
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let tree = doc_ref.inner.parse();
-    // The diagnostics include miette::SourceSpan fields that don't
-    // implement Serialize; we project to a plain shape first.
-    let diags: Vec<DiagnosticView> = tree
-        .diagnostics()
-        .iter()
-        .map(DiagnosticView::from)
-        .collect();
-    match serde_json::to_vec(&diags) {
-        Ok(bytes) => {
-            let owned = into_owned_bytes(bytes);
-            // SAFETY: caller guarantees out_json is writable.
-            unsafe { out_json.write(owned) };
-            AozoraStatus::Ok as c_int
-        }
-        Err(_) => AozoraStatus::SerializeFailed as c_int,
+    let json = aozora::wire::serialize_diagnostics(tree.diagnostics());
+    let owned = into_owned_bytes(json.into_bytes());
+    // SAFETY: caller guarantees out_json is writable.
+    unsafe { out_json.write(owned) };
+    AozoraStatus::Ok as c_int
+}
+
+/// Render the document's source-keyed Aozora nodes as a JSON byte
+/// buffer.
+///
+/// Each entry has the shape `{ kind, span: { start, end } }` in source
+/// coordinates, sorted by `span.start`. Useful for editor integrations
+/// (semantic tokens, document symbols, Lezer-Tree builders).
+///
+/// On success, writes the bytes to `*out_json` and returns
+/// [`AozoraStatus::Ok`]. Empty parse →
+/// `{"schema_version":1,"data":[]}`. The caller MUST call
+/// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
+///
+/// Wire format is defined in [`aozora::wire`] and shared bit-for-bit
+/// with the WASM and PyO3 drivers.
+///
+/// # Safety
+///
+/// - `doc` must be a non-null handle produced by
+///   [`aozora_document_new`] and not yet freed.
+/// - `out_json` must point to a writable [`AozoraBytes`] slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aozora_document_nodes_json(
+    doc: *const AozoraDocument,
+    out_json: *mut AozoraBytes,
+) -> c_int {
+    if doc.is_null() || out_json.is_null() {
+        return AozoraStatus::NullInput as c_int;
     }
+    // SAFETY: caller guarantees doc is a valid handle.
+    let doc_ref: &AozoraDocument = unsafe { &*doc };
+    let tree = doc_ref.inner.parse();
+    let json = aozora::wire::serialize_nodes(&tree);
+    let owned = into_owned_bytes(json.into_bytes());
+    // SAFETY: caller guarantees out_json is writable.
+    unsafe { out_json.write(owned) };
+    AozoraStatus::Ok as c_int
+}
+
+/// Render the document's matched open/close pair links as a JSON byte
+/// buffer.
+///
+/// Each entry has the shape
+/// `{ kind, open: { start, end }, close: { start, end } }` in
+/// sanitized-source coordinates. Useful for LSP requests like
+/// `textDocument/linkedEditingRange` and
+/// `textDocument/documentHighlight`.
+///
+/// On success, writes the bytes to `*out_json` and returns
+/// [`AozoraStatus::Ok`]. Empty parse →
+/// `{"schema_version":1,"data":[]}`. The caller MUST call
+/// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
+///
+/// Wire format is defined in [`aozora::wire`] and shared bit-for-bit
+/// with the WASM and PyO3 drivers.
+///
+/// # Safety
+///
+/// - `doc` must be a non-null handle produced by
+///   [`aozora_document_new`] and not yet freed.
+/// - `out_json` must point to a writable [`AozoraBytes`] slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aozora_document_pairs_json(
+    doc: *const AozoraDocument,
+    out_json: *mut AozoraBytes,
+) -> c_int {
+    if doc.is_null() || out_json.is_null() {
+        return AozoraStatus::NullInput as c_int;
+    }
+    // SAFETY: caller guarantees doc is a valid handle.
+    let doc_ref: &AozoraDocument = unsafe { &*doc };
+    let tree = doc_ref.inner.parse();
+    let json = aozora::wire::serialize_pairs(&tree);
+    let owned = into_owned_bytes(json.into_bytes());
+    // SAFETY: caller guarantees out_json is writable.
+    unsafe { out_json.write(owned) };
+    AozoraStatus::Ok as c_int
 }
 
 /// Free a document handle returned by [`aozora_document_new`].
@@ -247,94 +317,6 @@ fn into_owned_bytes(mut v: Vec<u8>) -> AozoraBytes {
     AozoraBytes { ptr, len, cap }
 }
 
-/// Plain-shape projection of [`aozora::Diagnostic`] for JSON
-/// serialisation. The upstream type holds non-Serialize miette
-/// fields; this view picks only the offsets, the codepoint (where
-/// applicable), and the variant tag.
-#[derive(Debug, serde::Serialize)]
-struct DiagnosticView {
-    kind: &'static str,
-    span_start: u32,
-    span_end: u32,
-    codepoint: Option<char>,
-}
-
-impl From<&aozora::Diagnostic> for DiagnosticView {
-    fn from(d: &aozora::Diagnostic) -> Self {
-        // Each variant projects its (kind, span, optional codepoint)
-        // triplet. The catch-all `_` arm keeps the impl total against
-        // the upstream `#[non_exhaustive]` contract.
-        match d {
-            aozora::Diagnostic::SourceContainsPua {
-                codepoint, span, ..
-            } => Self {
-                kind: "source_contains_pua",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: Some(*codepoint),
-            },
-            aozora::Diagnostic::UnclosedBracket { span, .. } => Self {
-                kind: "unclosed_bracket",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: None,
-            },
-            aozora::Diagnostic::UnmatchedClose { span, .. } => Self {
-                kind: "unmatched_close",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: None,
-            },
-            aozora::Diagnostic::ResidualAnnotationMarker { span, .. } => Self {
-                kind: "residual_annotation_marker",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: None,
-            },
-            aozora::Diagnostic::UnregisteredSentinel {
-                codepoint, span, ..
-            } => Self {
-                kind: "unregistered_sentinel",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: Some(*codepoint),
-            },
-            aozora::Diagnostic::RegistryOutOfOrder { span, .. } => Self {
-                kind: "registry_out_of_order",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: None,
-            },
-            aozora::Diagnostic::RegistryPositionMismatch { expected, span, .. } => Self {
-                kind: "registry_position_mismatch",
-                span_start: span.start,
-                span_end: span.end,
-                codepoint: Some(*expected),
-            },
-            // `#[non_exhaustive]` upstream — future variants land here
-            // until added explicitly above.
-            _ => Self {
-                kind: "unknown",
-                span_start: 0,
-                span_end: 0,
-                codepoint: None,
-            },
-        }
-    }
-}
-
-// ----------------------------------------------------------------------
-// Suppress unused-import warning for serde_json under cfg test paths.
-// ----------------------------------------------------------------------
-
-// Anchor a CString reference to keep the dep present in case we add
-// an `aozora_version_string()` accessor in the next commit (it's a
-// natural fit for cstr-bridged metadata).
-#[doc(hidden)]
-pub fn _link_cstring() -> Option<CString> {
-    CString::new("aozora").ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,9 +352,75 @@ mod tests {
         assert_eq!(status, AozoraStatus::Ok as c_int);
         let json = unsafe { core::str::from_utf8(slice::from_raw_parts(diag.ptr, diag.len)) }
             .expect("json is utf8");
-        assert_eq!(json, "[]"); // no diagnostics for plain text
+        // Envelope shape — wire format is {"schema_version":N,"data":[…]}.
+        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
         unsafe { aozora_bytes_free(diag) };
 
+        unsafe { aozora_document_free(doc) };
+    }
+
+    /// Smoke: nodes JSON for plain input is the empty envelope.
+    #[test]
+    fn nodes_json_is_empty_envelope_for_plain_input() {
+        let src = b"plain";
+        let mut doc: *mut AozoraDocument = core::ptr::null_mut();
+        let status = unsafe { aozora_document_new(src.as_ptr(), src.len(), &mut doc) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let mut nodes = AozoraBytes {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        };
+        let status = unsafe { aozora_document_nodes_json(doc, &mut nodes) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let json = unsafe { core::str::from_utf8(slice::from_raw_parts(nodes.ptr, nodes.len)) }
+            .expect("json is utf8");
+        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
+        unsafe { aozora_bytes_free(nodes) };
+        unsafe { aozora_document_free(doc) };
+    }
+
+    /// Smoke: ruby span emits a `kind:"ruby"` entry in nodes JSON.
+    #[test]
+    fn nodes_json_emits_ruby_kind_for_ruby_input() {
+        let src = "｜青梅《おうめ》".as_bytes();
+        let mut doc: *mut AozoraDocument = core::ptr::null_mut();
+        let status = unsafe { aozora_document_new(src.as_ptr(), src.len(), &mut doc) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let mut nodes = AozoraBytes {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        };
+        let status = unsafe { aozora_document_nodes_json(doc, &mut nodes) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let json = unsafe { core::str::from_utf8(slice::from_raw_parts(nodes.ptr, nodes.len)) }
+            .expect("json is utf8");
+        assert!(json.contains(r#""kind":"ruby""#), "nodes json: {json}");
+        unsafe { aozora_bytes_free(nodes) };
+        unsafe { aozora_document_free(doc) };
+    }
+
+    /// Smoke: ruby pair emits a `kind:"ruby"` entry in pairs JSON.
+    #[test]
+    fn pairs_json_emits_ruby_pair_for_ruby_input() {
+        let src = "｜青梅《おうめ》".as_bytes();
+        let mut doc: *mut AozoraDocument = core::ptr::null_mut();
+        let status = unsafe { aozora_document_new(src.as_ptr(), src.len(), &mut doc) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let mut pairs = AozoraBytes {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        };
+        let status = unsafe { aozora_document_pairs_json(doc, &mut pairs) };
+        assert_eq!(status, AozoraStatus::Ok as c_int);
+        let json = unsafe { core::str::from_utf8(slice::from_raw_parts(pairs.ptr, pairs.len)) }
+            .expect("json is utf8");
+        assert!(json.contains(r#""kind":"ruby""#), "pairs json: {json}");
+        assert!(json.contains(r#""open":"#), "pairs json: {json}");
+        assert!(json.contains(r#""close":"#), "pairs json: {json}");
+        unsafe { aozora_bytes_free(pairs) };
         unsafe { aozora_document_free(doc) };
     }
 
@@ -416,11 +464,5 @@ mod tests {
     #[test]
     fn freeing_null_handle_is_safe_noop() {
         unsafe { aozora_document_free(core::ptr::null_mut()) };
-    }
-
-    #[test]
-    fn link_cstring_returns_some() {
-        // Anchor for the std::ffi::CString import.
-        assert!(_link_cstring().is_some());
     }
 }

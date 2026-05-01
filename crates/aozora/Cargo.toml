@@ -22,6 +22,21 @@ aozora-lex      = { workspace = true }
 aozora-syntax   = { workspace = true }
 aozora-spec     = { workspace = true }
 
+# Driver-shared wire format (see `aozora::wire`). Optional so library
+# consumers that only use the borrowed-AST surface do not have to
+# compile serde / serde_json. Drivers (aozora-ffi / aozora-wasm /
+# aozora-py) enable `aozora/wire` to project the AST into JSON.
+serde      = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[features]
+default = []
+# JSON wire format projection used by FFI / WASM / PyO3 drivers.
+# Enables `aozora::wire::serialize_diagnostics` /
+# `serialize_nodes` / `serialize_pairs` and the `SCHEMA_VERSION`
+# constant — the single authority for cross-language wire output.
+wire = ["dep:serde", "dep:serde_json"]
+
 [dev-dependencies]
 # Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and
 # verify parse + round-trip invariants on every document.

@@ -100,9 +100,9 @@ use aozora_syntax::{
     AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind, Span,
 };
 
-use crate::diagnostic::Diagnostic;
 use crate::phase2_pair::{PairEvent, PairKind};
 use crate::token::TriggerKind;
+use aozora_spec::Diagnostic;
 
 /// One classified slice of the sanitized source.
 #[derive(Debug, Clone, PartialEq, Eq)]
