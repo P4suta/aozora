@@ -72,6 +72,23 @@ impl NodeRef<'_> {
             Self::BlockClose(_) => Sentinel::BlockClose,
         }
     }
+
+    /// Cross-cutting [`crate::NodeKind`] tag for this entry.
+    ///
+    /// Inline / block-leaf hits project to the underlying
+    /// [`AozoraNode::kind`] tag; container open / close hits flatten
+    /// into [`NodeKind::ContainerOpen`](crate::NodeKind::ContainerOpen)
+    /// / [`ContainerClose`](crate::NodeKind::ContainerClose) because
+    /// the wire format places container kind detail in the inline
+    /// span rather than on the open/close marker.
+    #[must_use]
+    pub const fn kind(self) -> crate::NodeKind {
+        match self {
+            Self::Inline(node) | Self::BlockLeaf(node) => node.kind(),
+            Self::BlockOpen(_) => crate::NodeKind::ContainerOpen,
+            Self::BlockClose(_) => crate::NodeKind::ContainerClose,
+        }
+    }
 }
 
 /// Whole-document registry — single Eytzinger-keyed table.

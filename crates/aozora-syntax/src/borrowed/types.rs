@@ -315,6 +315,36 @@ impl AozoraNode<'_> {
             Self::Container(_) => "aozora_container",
         }
     }
+
+    /// Cross-cutting [`crate::NodeKind`] tag for this node.
+    ///
+    /// Driver wire formats (`aozora-ffi` / `aozora-wasm` / `aozora-py`)
+    /// project to the camelCase string via
+    /// [`NodeKind::as_camel_case`](crate::NodeKind::as_camel_case);
+    /// internal consumers can `match` on the typed enum directly.
+    #[must_use]
+    pub const fn kind(&self) -> crate::NodeKind {
+        use crate::NodeKind;
+        match self {
+            Self::Ruby(_) => NodeKind::Ruby,
+            Self::Bouten(_) => NodeKind::Bouten,
+            Self::TateChuYoko(_) => NodeKind::TateChuYoko,
+            Self::Gaiji(_) => NodeKind::Gaiji,
+            Self::Indent(_) => NodeKind::Indent,
+            Self::AlignEnd(_) => NodeKind::AlignEnd,
+            Self::Warichu(_) => NodeKind::Warichu,
+            Self::Keigakomi(_) => NodeKind::Keigakomi,
+            Self::PageBreak => NodeKind::PageBreak,
+            Self::SectionBreak(_) => NodeKind::SectionBreak,
+            Self::AozoraHeading(_) => NodeKind::AozoraHeading,
+            Self::HeadingHint(_) => NodeKind::HeadingHint,
+            Self::Sashie(_) => NodeKind::Sashie,
+            Self::Kaeriten(_) => NodeKind::Kaeriten,
+            Self::Annotation(_) => NodeKind::Annotation,
+            Self::DoubleRuby(_) => NodeKind::DoubleRuby,
+            Self::Container(_) => NodeKind::Container,
+        }
+    }
 }
 
 #[cfg(test)]

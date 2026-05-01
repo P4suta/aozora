@@ -44,7 +44,7 @@ pub use aozora_spec::{
 /// front door.
 pub use aozora_syntax::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, ContainerKind, Indent,
-    SectionKind,
+    NodeKind, SectionKind,
     borrowed::{
         Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,
         Kaeriten, Ruby, Sashie, Segment, TateChuYoko, Warichu,

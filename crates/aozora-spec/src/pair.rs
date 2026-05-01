@@ -32,6 +32,22 @@ pub enum PairKind {
     Quote,
 }
 
+impl PairKind {
+    /// Stable camelCase string identifier used by the driver wire
+    /// formats. Centralised here so every driver agrees on the wire
+    /// spelling without hand-maintaining a parallel match.
+    #[must_use]
+    pub const fn as_camel_case(self) -> &'static str {
+        match self {
+            Self::Bracket => "bracket",
+            Self::Ruby => "ruby",
+            Self::DoubleRuby => "doubleRuby",
+            Self::Tortoise => "tortoise",
+            Self::Quote => "quote",
+        }
+    }
+}
+
 /// Resolved open/close pair, as observed by Phase 2.
 ///
 /// Both `open` and `close` are byte-spans in the *sanitized* source

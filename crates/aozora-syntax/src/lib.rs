@@ -26,8 +26,10 @@ pub mod accent;
 pub mod alloc;
 pub mod borrowed;
 mod extension;
+pub mod node_kind;
 
 pub use extension::ContainerKind;
+pub use node_kind::NodeKind;
 
 /// Byte-range span into the original source document.
 ///

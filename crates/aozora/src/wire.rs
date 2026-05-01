@@ -33,9 +33,7 @@
 
 use serde::Serialize;
 
-use crate::{
-    AozoraNode, AozoraTree, Diagnostic, DiagnosticSource, NodeRef, PairKind, Severity, Span,
-};
+use crate::{AozoraTree, Diagnostic, DiagnosticSource, Severity, Span};
 
 /// Wire-format schema version. Bumped on any breaking change to the
 /// serialised shape (variant additions, field renames, envelope
@@ -65,7 +63,7 @@ pub fn serialize_nodes(tree: &AozoraTree<'_>) -> String {
         .source_nodes()
         .iter()
         .map(|sn| NodeWire {
-            kind: node_ref_kind_str(sn.node),
+            kind: sn.node.kind().as_camel_case(),
             span: sn.source_span.into(),
         })
         .collect();
@@ -89,73 +87,12 @@ pub fn serialize_pairs(tree: &AozoraTree<'_>) -> String {
         .pairs()
         .iter()
         .map(|link| PairWire {
-            kind: pair_kind_str(link.kind),
+            kind: link.kind.as_camel_case(),
             open: link.open.into(),
             close: link.close.into(),
         })
         .collect();
     serialize_envelope(&entries)
-}
-
-/// Stable camelCase tag for an [`AozoraNode`] variant. Centralised
-/// here so every driver agrees on the wire spelling.
-///
-/// Forward-compatible with `#[non_exhaustive]` upstream — unknown
-/// variants fall through to `"unknown"`. [`SCHEMA_VERSION`] is bumped
-/// whenever a new variant lands in the wire.
-#[must_use]
-pub fn node_kind_str(node: &AozoraNode<'_>) -> &'static str {
-    match node {
-        AozoraNode::Ruby(_) => "ruby",
-        AozoraNode::Bouten(_) => "bouten",
-        AozoraNode::TateChuYoko(_) => "tateChuYoko",
-        AozoraNode::Gaiji(_) => "gaiji",
-        AozoraNode::Indent(_) => "indent",
-        AozoraNode::AlignEnd(_) => "alignEnd",
-        AozoraNode::Warichu(_) => "warichu",
-        AozoraNode::Keigakomi(_) => "keigakomi",
-        AozoraNode::PageBreak => "pageBreak",
-        AozoraNode::SectionBreak(_) => "sectionBreak",
-        AozoraNode::AozoraHeading(_) => "heading",
-        AozoraNode::HeadingHint(_) => "headingHint",
-        AozoraNode::Sashie(_) => "sashie",
-        AozoraNode::Kaeriten(_) => "kaeriten",
-        AozoraNode::Annotation(_) => "annotation",
-        AozoraNode::DoubleRuby(_) => "doubleRuby",
-        AozoraNode::Container(_) => "container",
-        _ => "unknown",
-    }
-}
-
-/// Stable camelCase tag for a [`NodeRef`].
-///
-/// Inline / block-leaf hits project to the underlying [`AozoraNode`]
-/// variant via [`node_kind_str`]; container open / close hits are
-/// flattened into `"containerOpen"` / `"containerClose"` because the
-/// wire format places container kind detail in the inline span, not
-/// in the open/close marker.
-#[must_use]
-pub fn node_ref_kind_str(noderef: NodeRef<'_>) -> &'static str {
-    match noderef {
-        NodeRef::Inline(node) | NodeRef::BlockLeaf(node) => node_kind_str(&node),
-        NodeRef::BlockOpen(_) => "containerOpen",
-        NodeRef::BlockClose(_) => "containerClose",
-        _ => "unknown",
-    }
-}
-
-/// Stable camelCase tag for a [`PairKind`]. `non_exhaustive` upstream;
-/// unknown pair kinds fall through to `"unknown"`.
-#[must_use]
-pub fn pair_kind_str(kind: PairKind) -> &'static str {
-    match kind {
-        PairKind::Bracket => "bracket",
-        PairKind::Ruby => "ruby",
-        PairKind::DoubleRuby => "doubleRuby",
-        PairKind::Tortoise => "tortoise",
-        PairKind::Quote => "quote",
-        _ => "unknown",
-    }
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -327,11 +264,12 @@ mod tests {
     }
 
     #[test]
-    fn pair_kind_str_covers_all_known_kinds() {
-        assert_eq!(pair_kind_str(PairKind::Bracket), "bracket");
-        assert_eq!(pair_kind_str(PairKind::Ruby), "ruby");
-        assert_eq!(pair_kind_str(PairKind::DoubleRuby), "doubleRuby");
-        assert_eq!(pair_kind_str(PairKind::Tortoise), "tortoise");
-        assert_eq!(pair_kind_str(PairKind::Quote), "quote");
+    fn pair_kind_camel_case_covers_all_known_kinds() {
+        use crate::PairKind;
+        assert_eq!(PairKind::Bracket.as_camel_case(), "bracket");
+        assert_eq!(PairKind::Ruby.as_camel_case(), "ruby");
+        assert_eq!(PairKind::DoubleRuby.as_camel_case(), "doubleRuby");
+        assert_eq!(PairKind::Tortoise.as_camel_case(), "tortoise");
+        assert_eq!(PairKind::Quote.as_camel_case(), "quote");
     }
 }
