@@ -67,3 +67,36 @@ accept = ["200..=299", "429", "999"]
 # Pages deploy. Skip the file entirely rather than maintaining a URL
 # allow-list.
 exclude_path = ["book/404.html"]
+
+# URL-level exclusions for chronically flaky external hosts. The
+# tradeoff: we don't catch genuine 404s on these targets, but the
+# alternative is a green-then-red-then-green oscillation that turns
+# CI signal into noise. Re-evaluate if the host's reachability
+# improves; until then, the link is documentation-only and a
+# manual click during release review is the verification path.
+#
+# pyo3.rs: connection-reset bounces about 1-in-20 lychee runs even
+# with max_retries=5 + 3s backoff + per-run cache. The host gates
+# on certain User-Agent shapes and intermittently drops handshakes;
+# excluding here while keeping max_retries high for every other host.
+exclude = [
+    "^https?://pyo3\\.rs(/|$)",
+
+    # docs.rs renders the *latest published* version of a crate. The
+    # handbook references APIs added in a release that's still
+    # in-flight — every such page returns 404 until the tag is cut
+    # and crates.io has indexed the new build (typically several
+    # minutes after `cargo publish`). Excluding the `aozora*`
+    # namespace skips the false negatives without losing coverage of
+    # external references (`docs.rs/serde`, `docs.rs/rowan`, etc.).
+    # Verification of our own rustdoc URLs happens in the
+    # `release.yml` workflow once the publish step lands.
+    "^https?://docs\\.rs/aozora",
+
+    # README / source links into our own repo at `main` resolve only
+    # *after* the PR that introduces them is merged. Pre-merge
+    # lychee runs see them as 404 because the file genuinely doesn't
+    # exist on `main` yet. We trust the link — it's a relative path
+    # within the same repo — and skip the network probe.
+    "^https?://github\\.com/[^/]+/aozora/(blob|edit|tree)/main/",
+]

@@ -82,10 +82,8 @@ pub use document::{AozoraTree, DiagnosticPolicy, Document, ParseOptions};
 /// Editor integrations that want per-phase access
 /// (`pipeline::lexer::*` for the phase functions, `pipeline::Pipeline`
 /// for the type-state machine) reach through this module so the
-/// wider workspace can keep [`aozora`] as the single front door.
-///
-/// Pre-Phase-G consumers depended on the `aozora-pipeline` crate
-/// directly; that crate is now `publish = false` and only callable
+/// wider workspace can keep [`aozora`] as the single front door. The
+/// `aozora-pipeline` crate is `publish = false` and only callable
 /// via this re-export.
 pub mod pipeline {
     pub use aozora_pipeline::*;
@@ -121,7 +119,7 @@ pub mod encoding {
     pub use aozora_encoding::*;
 }
 
-/// Lossless concrete syntax tree (Phase N1).
+/// Lossless concrete syntax tree.
 ///
 /// Re-export of [`aozora_cst`] under the `cst` feature. Enables
 /// editor-grade surfaces (LSP servers, source-faithful
@@ -152,7 +150,7 @@ pub mod cst {
     }
 }
 
-/// Tree-sitter-flavoured pattern queries over the CST (Phase N5).
+/// Tree-sitter-flavoured pattern queries over the CST.
 ///
 /// Re-export of [`aozora_query`] under the `query` feature.
 /// Editor surfaces (`textDocument/documentHighlight`, "find all
@@ -173,7 +171,7 @@ pub mod query {
     pub use aozora_query::*;
 }
 
-/// Aozora-shaped `proptest` strategies (Phase N4).
+/// Aozora-shaped `proptest` strategies.
 ///
 /// Downstream renderer / visitor authors writing their own property
 /// tests reach through this module instead of pulling

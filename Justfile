@@ -589,6 +589,11 @@ ci-act *ARGS:
 # not need an external runtime (pandoc, wasm-pack, maturin) which the
 # dev image deliberately omits — those three CI-only jobs stay
 # unreachable from local.
+#
+# `book-linkcheck` ends the chain because lychee's network probes are
+# the slowest gate and the only one that depends on external availability;
+# putting it last means a transient pyo3.rs / docs.rs hiccup doesn't
+# delay the deterministic gates' failure signal.
 ci:
     just lint
     just build
@@ -601,7 +606,7 @@ ci:
     just audit
     just udeps
     just coverage
-    just book-build
+    just book-linkcheck
 
 # --- developer workflow helpers ----------------------------------------------
 

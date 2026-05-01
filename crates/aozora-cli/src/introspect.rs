@@ -1,19 +1,18 @@
-//! Phase L3 — `aozora kinds` / `aozora schema` / `aozora explain`.
+//! `aozora kinds` / `aozora schema` / `aozora explain` — shell-level
+//! introspection of the parser's typed contracts.
 //!
-//! Three thin subcommands that surface the parser's typed contracts
-//! at the shell. No parsing happens here — the goal is to make
-//! "what tags can the wire format produce?" / "what is the JSON
-//! envelope shape?" / "what does `bouten` mean?" answerable without
-//! reading source.
+//! No parsing happens here — the goal is to make "what tags can the
+//! wire format produce?" / "what is the JSON envelope shape?" /
+//! "what does `bouten` mean?" answerable without reading source.
 //!
-//! `aozora kinds` walks every `pub const ALL: [Self; N]` declared on
-//! the spec / syntax enums and tabulates them. `aozora schema`
-//! pretty-prints the generated JSON Schema for one of the four wire
-//! envelopes (delegated to `aozora::wire::schema_*` behind the
-//! `schema` Cargo feature). `aozora explain <kind>` prints a one-line
-//! stub today; the full markdown prose lands once `nodes/<kind>.md`
-//! pages exist (Phase O1) — at which point this command will
-//! `include_str!` them.
+//! - `aozora kinds` walks every `pub const ALL: [Self; N]` on the
+//!   spec / syntax enums and tabulates them.
+//! - `aozora schema` pretty-prints the generated JSON Schema for
+//!   one of the four wire envelopes (delegated to
+//!   `aozora::wire::schema_*` behind the `schema` Cargo feature).
+//! - `aozora explain <kind>` prints the embedded handbook chapter
+//!   for that `NodeKind` — the same `nodes/<kind>.md` rendered by
+//!   mdbook, surfaced in the terminal via `include_str!`.
 //!
 //! Output goes to stdout; non-zero exit only on argument errors.
 
@@ -175,12 +174,10 @@ where
 
 // ---- per-variant prose ---------------------------------------------
 //
-// Short, single-line summaries used by both `aozora kinds` and
-// `aozora explain`. The full multi-paragraph prose for each
-// `NodeKind` lives in `crates/aozora-book/src/nodes/<kind>.md`
-// once Phase O1 lands; at that point `run_explain` will switch to
-// `include_str!`-ing those pages and these stubs collapse to
-// section keys.
+// Short, single-line summaries used by `aozora kinds` rows. The full
+// multi-paragraph prose for each `NodeKind` lives in
+// `crates/aozora-book/src/nodes/<kind>.md` and is surfaced verbatim
+// by `aozora explain <kind>` via `include_str!`.
 
 fn describe_node(k: NodeKind) -> &'static str {
     match k {
@@ -255,7 +252,7 @@ fn sentinel_label(s: Sentinel) -> &'static str {
 
 fn describe_internal(c: InternalCheckCode) -> &'static str {
     // Stable namespaced codes — keep prose terse. The handbook
-    // `arch/error-recovery.md` (Phase N3) has the full reasoning.
+    // chapter `arch/error-recovery.md` carries the full reasoning.
     match c {
         InternalCheckCode::ResidualAnnotationMarker => "［＃ digraph survived classification",
         InternalCheckCode::UnregisteredSentinel => "PUA sentinel without registry entry",
@@ -269,8 +266,8 @@ fn describe_internal(c: InternalCheckCode) -> &'static str {
 
 /// Embedded handbook pages for `aozora explain <tag>`. Index keyed
 /// by camelCase wire tag → file slug; the markdown body is loaded
-/// at compile time via `include_str!` (Phase O1's handbook chapters
-/// under `crates/aozora-book/src/nodes/`).
+/// at compile time via `include_str!` from the handbook chapters
+/// under `crates/aozora-book/src/nodes/`.
 const NODE_PAGES: &[(&str, &str)] = &[
     ("ruby", include_str!("../../aozora-book/src/nodes/ruby.md")),
     (

@@ -2,8 +2,7 @@
 //!
 //! AST variants like [`Ruby`](super::Ruby) and [`Bouten`](super::Bouten)
 //! semantically require non-empty content payloads (an empty ruby base
-//! is a parse bug, not a valid state). Pre-Phase-E6 the field types
-//! were plain `Content` and the invariant lived in prose comments.
+//! is a parse bug, not a valid state).
 //!
 //! [`NonEmpty<Content<'src>>`] makes the invariant a build-time fact:
 //! the `NonEmpty::new` constructor returns `Option`, so empty content

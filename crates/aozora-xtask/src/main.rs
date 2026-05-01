@@ -106,7 +106,7 @@ enum Cmd {
     /// `DiagnosticSource` / `InternalCheckCode`) and wire structs.
     /// Drift-gated like `xtask schema`.
     Types(TypesArgs),
-    /// WPT-style conformance suite runner (Phase O4). Walks every
+    /// WPT-style conformance suite runner. Walks every
     /// fixture under `crates/aozora-conformance/fixtures/render/`,
     /// runs the parser, and reports pass/fail counts per
     /// `(feature, level)` pair declared in each fixture's

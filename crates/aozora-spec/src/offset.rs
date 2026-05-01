@@ -19,12 +19,10 @@
 //!    occupies one PUA codepoint here regardless of its source
 //!    width.
 //!
-//! Pre-Phase-E2 every offset was a bare `u32` and the compiler had no
-//! way to catch a "I passed a normalized offset where the API
-//! expected a source offset" mistake. The newtypes [`SourceOffset`]
-//! and [`NormalizedOffset`] make those mismatches a build error
-//! without paying any runtime cost — both compile to a `u32` field
-//! access.
+//! The newtypes [`SourceOffset`] and [`NormalizedOffset`] make
+//! cross-space mismatches ("I passed a normalized offset where the
+//! API expected a source offset") a build error without paying any
+//! runtime cost — both compile to a `u32` field access.
 //!
 //! # Conversion policy
 //!

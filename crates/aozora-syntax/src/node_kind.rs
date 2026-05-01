@@ -7,12 +7,10 @@
 //! **driver wire format** ([`crate`]'s host crate `aozora` projects
 //! the tag to a stable camelCase string via [`Self::as_camel_case`]).
 //!
-//! Pre-Phase-E4 these tags lived as a hand-maintained `&'static str`
-//! match deep inside `aozora-wasm`, then duplicated in
-//! `aozora::wire`. Promoting the union to a typed enum lets every
-//! consumer pattern-match the tag exhaustively (the compiler points
-//! out a new variant landing without a wire mapping) and lets the
-//! camelCase string come from a single authority.
+//! The typed enum (rather than a `&'static str` constant) lets every
+//! consumer pattern-match the tag exhaustively — the compiler points
+//! out a new variant landing without a wire mapping — and concentrates
+//! the camelCase string in a single authority.
 
 /// Cross-cutting tag for an AST node or `NodeRef` projection.
 ///

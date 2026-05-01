@@ -1,21 +1,21 @@
 # Phase D — Sentinel enum + single-table registry results
 
-Phase D collapsed four per-kind sentinel position tables into a
-single position-keyed [`EytzingerMap`] dispatched through a
-[`NodeRef`] enum. Pre-Phase-D the registry held independent
+The single-table registry collapsed four per-kind sentinel position
+tables into one position-keyed [`EytzingerMap`] dispatched through a
+[`NodeRef`] enum. Before the refactor the registry held independent
 `inline` / `block_leaf` / `block_open` / `block_close` `EytzingerMap`s
 and `Registry::node_at(pos)` swept them in declaration order with
-four `if let Some(...) = table.get(&pos)` chains; the post-Phase-D
-shape is one binary search per lookup, with the variant tag carried
-on the entry itself.
+four `if let Some(...) = table.get(&pos)` chains; the current shape
+is one binary search per lookup, with the variant tag carried on the
+entry itself.
 
 ## Structural changes
 
 ```
-pre  : Registry { inline, block_leaf, block_open, block_close }   // 4× EytzingerMap
+old  : Registry { inline, block_leaf, block_open, block_close }   // 4× EytzingerMap
        node_at(pos) → 4-way if-let chain, ~4 binary searches worst-case
 
-post : Registry { table: EytzingerMap<u32, NodeRef<'src>> }       // 1× EytzingerMap
+now  : Registry { table: EytzingerMap<u32, NodeRef<'src>> }       // 1× EytzingerMap
        node_at(pos) → one binary search, NodeRef variant tags the kind
 ```
 
@@ -31,9 +31,9 @@ Theoretical: per-lookup binary search count drops from ≤ 4 to 1.
 Render hot path is dominated by registry lookups inside the
 `memchr2_iter` loop in `html::render_into` (one lookup per PUA
 sentinel hit), so the savings scale with sentinel density. Aozora
-corpus profiling pre-Phase-D showed registry lookups at ~12 % of
-render time on bouten-heavy documents; the unified dispatch should
-absorb roughly that fraction.
+corpus profiling against the four-table layout showed registry
+lookups at ~12 % of render time on bouten-heavy documents; the
+unified dispatch should absorb roughly that fraction.
 
 ## Measurement procedure
 
@@ -54,7 +54,7 @@ xtask trace compare before.json.gz after.json.gz
 
 Numbers go in the table below at release time:
 
-| Metric | Pre-Phase-D | Post-Phase-D | Δ |
+| Metric | Four-table | Single-table | Δ |
 |---|---|---|---|
 | Render hot path (corpus median, ns/doc) | _to fill_ | _to fill_ | _to fill_ |
 | Registry lookup CPU share (%) | _to fill_ | _to fill_ | _to fill_ |

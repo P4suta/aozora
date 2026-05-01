@@ -1,4 +1,4 @@
-//! Phase L1 — JSON Schema artefact dump / drift gate.
+//! JSON Schema artefact dump / drift gate.
 //!
 //! Bridges `aozora::wire::schema_*` → `crates/aozora-book/src/wire/schema-*.json`.
 //! `xtask schema dump` regenerates the four schema files; `xtask
@@ -6,9 +6,8 @@
 //! drifted from the live wire types.
 //!
 //! The artefact lives in the handbook source tree so external
-//! consumers (`Obsidian` / `VSCode` / Pandoc filter writers) can fetch
-//! the schema from a stable URL once GitHub Pages publishes the
-//! handbook.
+//! consumers (downstream filter / plugin authors) can fetch the
+//! schema from a stable URL once GitHub Pages publishes the handbook.
 
 use std::fs;
 use std::path::{Path, PathBuf};

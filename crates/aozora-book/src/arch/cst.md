@@ -1,11 +1,10 @@
 # Concrete syntax tree (CST)
 
-Phase N1 introduces a [rowan][rowan]-backed lossless syntax tree
-under the `cst` Cargo feature on the `aozora` crate. The CST is a
-**pure projection** over the existing parse output — Phase 3
-classification is unchanged, the AST stays the perf-critical path,
-and the CST adds zero overhead for consumers that don't enable the
-feature.
+A [rowan][rowan]-backed lossless syntax tree lives under the `cst`
+Cargo feature on the `aozora` crate. The CST is a **pure projection**
+over the existing parse output — Phase 3 classification is unchanged,
+the AST stays the perf-critical path, and the CST adds zero overhead
+for consumers that don't enable the feature.
 
 ## Why a CST exists
 
@@ -77,26 +76,18 @@ re-construction:
 | `Plain`           | Plain text run between classifications                 |
 
 Finer per-token granularity (individual punctuation, kana runs, …)
-is a 0.5+ extension once a concrete consumer needs it. The lossless
-property holds at any granularity, so widening the leaf set later is
+can land later once a concrete consumer needs it. The lossless
+property holds at any granularity, so widening the leaf set is
 non-breaking for downstream tooling that walks `preorder_with_tokens`.
 
-## Smarter than naive
+## Why rowan, not Phase 3 integration
 
-Routes considered and rejected:
-
-1. **Build a CST inside Phase 3** — would couple the perf-critical
-   classification path to the lossless-tree concern. The
-   bumpalo-arena AST stays the hot path; CST is the editor surface
-   stacked on top.
-2. **cstree over rowan** — cstree has 1 individual maintainer and
-   ~3 reverse deps; rowan has 86 reverse deps and is maintained by
-   the rust-analyzer team. The bumpalo / Arc dual-allocator
-   overhead the rowan choice carries is acceptable: the AST stays
-   perf-critical, the CST is the editor-grade convenience layer.
-3. **Tile the source with one `Construct` per byte** — would
-   produce huge trees; the existing classifier output already tiles
-   the source and is the natural granularity to project from.
+The bumpalo-arena AST stays the hot path; the CST sits on top as an
+editor-grade convenience layer rather than coupling lossless-tree
+concerns into the perf-critical classifier. rowan (over cstree)
+gives the lossless tree a maintained home — rust-analyzer's tree
+infrastructure with 86 reverse deps — and the bumpalo / Arc
+dual-allocator overhead is the price for keeping the AST untouched.
 
 ## Cross-references
 
@@ -105,6 +96,6 @@ Routes considered and rejected:
 - [Architecture → Seven-phase lexer](lexer.md) — where Phase 0
   sanitize and Phase 3 classify do their work.
 - [`Document::edit`](https://docs.rs/aozora/latest/aozora/struct.Document.html#method.edit)
-  — the incremental-parse counterpart added in Phase N2.
+  — the incremental-parse counterpart that reuses the same CST.
 
 [rowan]: https://docs.rs/rowan

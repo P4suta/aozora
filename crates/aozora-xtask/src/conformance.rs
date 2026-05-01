@@ -1,4 +1,4 @@
-//! Phase O4 — WPT-style conformance runner.
+//! WPT-style conformance runner.
 //!
 //! Walks the fixture set under
 //! `crates/aozora-conformance/fixtures/render/<case>/`, reads each
@@ -16,11 +16,11 @@
 //! | `should`| Recommended but not strictly required.           | A failure here logs a warning. |
 //! | `may`   | Optional; implementations decide.                | Pure information, never fails. |
 //!
-//! For 0.4.0 the canonical implementation under test is the Rust
-//! parser itself; the runner emits a `results.json` file so other
-//! implementations (the tree-sitter reference grammar from O3, or
-//! third-party ports) can publish their own per-case pass / fail
-//! ratio against the same manifest.
+//! The canonical implementation under test is the Rust parser
+//! itself; the runner emits a `results.json` file so other
+//! implementations (the tree-sitter reference grammar, third-party
+//! ports) can publish their own per-case pass / fail ratio against
+//! the same manifest.
 
 use std::collections::BTreeMap;
 use std::fs;

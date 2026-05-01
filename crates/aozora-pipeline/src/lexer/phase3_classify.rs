@@ -1502,10 +1502,9 @@ where
     ///
     /// Returns `None` when the body content is empty (`《《》》` with
     /// no payload) — the caller falls through to plain replay so the
-    /// bytes show up as literal source. Pre-Phase-K1 the function
-    /// always emitted a `DoubleRuby` span, leaving the AST with an
-    /// empty `Content` payload that violated the
-    /// [`borrowed::NonEmpty`] invariant carried elsewhere.
+    /// bytes show up as literal source. Emitting a `DoubleRuby` span
+    /// here would violate the [`borrowed::NonEmpty`] invariant on the
+    /// `Content` payload.
     fn try_double_ruby_emit(
         &mut self,
         body: BodyView<'_>,
@@ -1535,10 +1534,9 @@ where
                 bytes: open_span.end..close_span.start,
             },
         );
-        // Phase K1: empty `《《》》` is not a valid DoubleRuby — let
-        // the bytes flow through as plain text. The caller's
-        // fall-through path (`replay_unrecognised_body`) handles the
-        // plain emission.
+        // Empty `《《》》` is not a valid DoubleRuby — let the bytes
+        // flow through as plain text. The caller's fall-through path
+        // (`replay_unrecognised_body`) handles the plain emission.
         if matches!(content, borrowed::Content::Plain(s) if s.is_empty())
             || matches!(content, borrowed::Content::Segments(segs) if segs.is_empty())
         {
@@ -4295,8 +4293,8 @@ mod tests {
 
     #[test]
     fn double_ruby_empty_body_falls_through_to_plain() {
-        // Phase K1: `《《》》` with no body is no longer classified as
-        // DoubleRuby. The empty payload would violate the
+        // `《《》》` with no body is not classified as DoubleRuby.
+        // The empty payload would violate the
         // `borrowed::NonEmpty<Content>` invariant; instead the bytes
         // flow through as plain text (the catch-all `replay_unrecognised_body`
         // fold). No Aozora span is emitted for the empty case.
@@ -4309,7 +4307,7 @@ mod tests {
         assert_eq!(
             aozora_count, 0,
             "empty double-ruby must not emit a DoubleRuby span — \
-             empty content violates Phase E6/K1 NonEmpty invariant"
+             empty content violates the NonEmpty<Content> invariant"
         );
     }
 

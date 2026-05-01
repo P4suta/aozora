@@ -93,12 +93,9 @@ impl NodeRef<'_> {
 
 /// Whole-document registry — single Eytzinger-keyed table.
 ///
-/// Pre-Phase-D this carried four independent tables (`inline`,
-/// `block_leaf`, `block_open`, `block_close`) and `node_at` swept
-/// them in declaration order. The new single-table layout means
 /// `node_at` is one binary search, and every entry's sentinel kind is
 /// encoded by the [`NodeRef`] variant — renderers pattern-match the
-/// hit inline rather than dispatching across tables.
+/// hit inline rather than dispatching across per-kind tables.
 #[derive(Debug, Clone)]
 pub struct Registry<'src> {
     /// Single `SoA` lookup table keyed by normalized byte position.
@@ -195,29 +192,21 @@ impl Default for Registry<'_> {
 /// Resolved (open, close) container-marker pair, in normalized
 /// coordinates.
 ///
-/// Pre-Phase-E5 the registry held independent
-/// [`NodeRef::BlockOpen`] / [`NodeRef::BlockClose`] entries with no
-/// type-level link between them. The pipeline knew which close
-/// matched which open (it tracks an open-stack while it walks the
-/// classifier output) but never surfaced that knowledge — renderers
-/// re-derived the pairing implicitly from the linear walk over
-/// normalized text.
-///
-/// `ContainerPair` carries the same information explicitly. Editor
-/// surfaces and renderers that want to ask "where is the close
-/// marker for this open?" can index this slice directly instead of
-/// re-running the matching logic.
+/// The pipeline tracks an open-stack while it walks the classifier
+/// output; `ContainerPair` surfaces that pairing explicitly so editor
+/// surfaces and renderers asking "where is the close marker for this
+/// open?" can index this slice directly instead of re-running the
+/// matching logic over the registry's
+/// [`NodeRef::BlockOpen`] / [`NodeRef::BlockClose`] entries.
 ///
 /// Coordinates are [`NormalizedOffset`] — they index the
 /// `BorrowedLexOutput::normalized` text, the same coordinate space
 /// the [`Registry`] uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContainerPair {
-    /// The container kind. Pre-Phase-E5 this lived in two places
-    /// (`block_open`'s payload and `block_close`'s payload) with no
-    /// guarantee they agreed; the builder now constructs the pair
-    /// from the open-stack pop, so `kind` reflects the open marker
-    /// authoritatively.
+    /// The container kind. The builder constructs the pair from the
+    /// open-stack pop, so `kind` reflects the open marker
+    /// authoritatively (rather than the close-side payload).
     pub kind: ContainerKind,
     /// Normalized byte offset of the open sentinel (`U+E003`).
     pub open: NormalizedOffset,

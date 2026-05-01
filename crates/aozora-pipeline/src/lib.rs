@@ -1,10 +1,7 @@
 //! Aozora notation lex pipeline — borrowed-AST front door.
 //!
-//! Pre-Phase-F this functionality lived split across two crates,
-//! `aozora-lex` (orchestrator) and `aozora-lexer` (4-phase pipeline
-//! impl). The names differed by one letter and the layering was hard
-//! to follow from outside. Phase F dissolved both into this single
-//! `aozora-pipeline` crate:
+//! Both the orchestrator and the per-phase pipeline impl live in
+//! this single crate:
 //!
 //! - The orchestrator (`pipeline` / `borrowed` modules at the crate
 //!   root) drives the borrowed-AST pipeline through its 4 phase

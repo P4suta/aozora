@@ -30,17 +30,14 @@
 //!
 //! # Internal variant
 //!
-//! Pre-Phase-C the enum carried four "Phase 6 V1/V2/V3" sanity-check
-//! variants (`ResidualAnnotationMarker`, `UnregisteredSentinel`,
-//! `RegistryOutOfOrder`, `RegistryPositionMismatch`). They were never
-//! emitted from production parses and were structurally identical
-//! apart from a label. Phase C collapses them into a single
-//! [`Diagnostic::Internal`] variant whose `code` field carries the
-//! same identifying string so existing tests and tooling can still
-//! match on the specific check via [`codes`]. Library consumers that
-//! want to filter library-bug diagnostics out of the
-//! [`crate::Diagnostic`] stream should reach for
-//! [`Diagnostic::source`].
+//! The four library-bug sanity checks
+//! (`ResidualAnnotationMarker`, `UnregisteredSentinel`,
+//! `RegistryOutOfOrder`, `RegistryPositionMismatch`) live as a single
+//! [`Diagnostic::Internal`] variant whose `code` field
+//! ([`InternalCheckCode`]) tags the specific check. Tests and tooling
+//! match on that code via [`codes`]. Consumers that want to filter
+//! library-bug diagnostics out of the [`crate::Diagnostic`] stream
+//! reach for [`Diagnostic::source`].
 
 use miette::Diagnostic as MietteDiagnostic;
 use thiserror::Error;

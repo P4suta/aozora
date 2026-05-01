@@ -40,9 +40,8 @@
 //! can collapse / expand a paired indent / keigakomi region.
 //!
 //! Finer per-token granularity (individual punctuation, kana
-//! runs, …) is a Phase 0.5+ extension once we have a concrete
-//! consumer asking for it. The lossless property holds at any
-//! granularity.
+//! runs, …) can land later once a concrete consumer asks for it.
+//! The lossless property holds at any granularity.
 //!
 //! [rowan]: https://docs.rs/rowan
 

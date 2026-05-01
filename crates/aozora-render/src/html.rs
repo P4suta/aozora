@@ -130,8 +130,7 @@ pub fn render_into<W: fmt::Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -
             },
             // The four sentinel kinds funnel through one registry
             // lookup; the `NodeRef` variant tells us which structural
-            // role this hit plays. Pre-Phase-D this was a 4-way
-            // dispatch across separate per-kind tables.
+            // role this hit plays.
             _ => match (
                 kind,
                 registry.node_at(aozora_spec::NormalizedOffset::new(byte_pos)),
@@ -158,10 +157,8 @@ pub fn render_into<W: fmt::Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -
                     state.after_block_emit();
                 }
                 // Sentinel without a registry hit is a pipeline bug.
-                // Pre-Phase-D the per-table lookups silently dropped
-                // these; the unified dispatch keeps the same
-                // best-effort policy (skip the sentinel, render the
-                // surrounding text) so downstream invariants do not
+                // Best-effort policy: skip the sentinel and render the
+                // surrounding text so downstream invariants do not
                 // regress on a half-baked emit.
                 _ => {}
             },

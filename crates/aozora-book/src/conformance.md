@@ -42,12 +42,12 @@ The runner checks two outputs per fixture:
 Both goldens regenerate via
 `UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test render_gate`
 after intentional output changes. The runner does *not* yet compare
-diagnostics or wire-format output; layering those in is a 0.5.0+
-extension of the same manifest.
+diagnostics or wire-format output; both are future extensions of the
+same manifest.
 
 ## Implementations
 
-For 0.4.0 the runner targets a single implementation — the Rust
+The runner currently targets a single implementation — the Rust
 parser itself. The results.json format carries an `implementation`
 field so external runs can append their own results without
 disturbing the canonical Rust pass-rate.

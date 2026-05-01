@@ -5,9 +5,9 @@ on its own page with source examples, the rendered HTML, the
 serialize round-trip output, the in-memory AST shape, and the
 diagnostics it can fire alongside.
 
-The page layout matches the `aozora explain <kind>` CLI subcommand
-(Phase L3): once you find the variant in the table, the deep dive is
-one click — or one shell invocation — away.
+The page layout matches the `aozora explain <kind>` CLI subcommand:
+once you find the variant in the table, the deep dive is one click —
+or one shell invocation — away.
 
 | Variant | Wire tag | Notation |
 | --- | --- | --- |

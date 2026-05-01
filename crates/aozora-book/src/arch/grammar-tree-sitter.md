@@ -59,11 +59,10 @@ table prematurely.
 ## Status
 
 The grammar covers approximately 40 % of the canonical parser's
-constructs as measured by an unweighted variant count. The
-"80 % completeness target" from the original 0.4.0 plan is
-**not** met for 0.4.0; the gap is documented and a future release
-either narrows it (via `scanner.c`) or accepts the lower
-ceiling as the cost of staying declarative.
+constructs as measured by an unweighted variant count. The gap to
+full coverage is documented; closing it would require a `scanner.c`
+extension, which trades the declarative-reference framing for a
+higher ceiling.
 
 ## Cross-references
 

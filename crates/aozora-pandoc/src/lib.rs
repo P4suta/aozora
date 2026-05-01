@@ -22,19 +22,6 @@
 //! markup (`<ruby><rt>…</rt></ruby>` instead of `<span>`) hook in
 //! a Pandoc filter that pattern-matches on these CSS classes.
 //!
-//! ## Smarter-than-naive choice
-//!
-//! Naive routes considered and rejected:
-//!
-//! 1. **`RawInline("html", "<ruby>…</ruby>")`** — fast for HTML but
-//!    every other output format strips the raw HTML, defeating the
-//!    point of going through Pandoc.
-//! 2. **`Plain` blocks of bare text** — loses every semantic
-//!    distinction (ruby reading collapses into base text).
-//! 3. **One Pandoc filter per output format** — multiplies surface
-//!    area; the format-agnostic span representation lets a single
-//!    filter (or none, with CSS) handle every format.
-//!
 //! The Span-with-class projection is the same pattern Pandoc itself
 //! uses for `[content]{.smallcaps}` and what HTML5/EPUB authors
 //! use to attach semantic meaning that CSS / XSL can transform

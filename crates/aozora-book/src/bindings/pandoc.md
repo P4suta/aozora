@@ -72,22 +72,6 @@ filters. That's the same pattern Pandoc itself uses for
 `[content]{.smallcaps}` — semantic in the AST, format-specific in the
 writer.
 
-## Smarter than naive — recap
-
-Routes considered and rejected:
-
-1. **`RawInline("html", …)` everywhere** — fast for HTML, useless
-   for every other format.
-2. **`Plain` blocks of bare text** — collapses ruby reading into base
-   text; loses every semantic distinction.
-3. **One filter per output format** — multiplies surface area; the
-   class-based representation lets one filter (or none, with CSS)
-   handle every format.
-
-The Span-with-class projection ships in 0.4.0 because it is
-format-agnostic and stable enough that downstream tooling can build
-on it without our crate dictating the rendering policy.
-
 ## Architecture
 
 The library entry point is [`aozora_pandoc::to_pandoc`][lib]:

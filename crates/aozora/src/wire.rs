@@ -107,9 +107,7 @@ pub fn serialize_pairs(tree: &AozoraTree<'_>) -> String {
 ///
 /// Coordinate-system distinction matters: editor surfaces that want
 /// source-coordinate container pairs must translate through
-/// [`AozoraTree::source_nodes`]. Pre-Phase-E5 this table did not
-/// exist; downstream tooling re-derived pairing from independent
-/// `block_open` / `block_close` registry entries.
+/// [`AozoraTree::source_nodes`].
 ///
 /// Empty parse → `{"schema_version":1,"data":[]}`.
 #[must_use]
@@ -155,7 +153,7 @@ struct Envelope<'a, T> {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Phase L1 — JSON Schema introspection
+// JSON Schema introspection
 // ────────────────────────────────────────────────────────────────────
 
 /// JSON Schema (draft 2020-12) describing the

@@ -7,7 +7,7 @@
 //! refactoring filters) compose against the DSL instead of
 //! re-implementing tree walks.
 //!
-//! ## DSL grammar (0.4.0)
+//! ## DSL grammar
 //!
 //! ```text
 //! query   := pattern ('\n' pattern)* '\n'?
@@ -26,15 +26,15 @@
 //! - Multiple patterns separated by newlines run as an OR — every
 //!   matching node yields one capture per pattern that hits.
 //!
-//! ## Smarter than naive
+//! ## Execution model
 //!
 //! Patterns compile once into a [`Query`] (a vector of pattern
 //! atoms), then `Query::captures` walks the CST in preorder
 //! invoking the cheap `kind` match at every node. The DSL is
-//! intentionally tiny in 0.4.0 — predicates (`#eq?`,
-//! `#match?`), field accessors, and quantifiers wait until a
-//! concrete consumer asks for them. The API shape (compile-once,
-//! iterate captures) is forward-compatible with that growth.
+//! intentionally tiny — predicates (`#eq?`, `#match?`), field
+//! accessors, and quantifiers wait until a concrete consumer asks
+//! for them. The API shape (compile-once, iterate captures) is
+//! forward-compatible with that growth.
 //!
 //! [ts-query]: https://tree-sitter.github.io/tree-sitter/using-parsers/queries
 

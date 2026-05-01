@@ -18,9 +18,10 @@
 //! UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test render_gate
 //! ```
 //!
-//! This scaffolding is shared between Phase K3 (byte-identical render
-//! gate over a small representative set) and Phase O2 (hand-curated
-//! reference corpus, 25-30 fixtures spanning every `NodeKind`).
+//! This scaffolding backs both the byte-identical render gate over a
+//! small representative set and the hand-curated reference corpus
+//! (25-30 fixtures spanning every `NodeKind`) used by the WPT-style
+//! conformance runner.
 
 #![forbid(unsafe_code)]
 

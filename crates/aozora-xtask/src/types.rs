@@ -1,9 +1,8 @@
-//! Phase L2 — TypeScript types artefact dump / drift gate.
+//! TypeScript types artefact dump / drift gate.
 //!
 //! Generates `crates/aozora-wasm/types/aozora_types.d.ts` directly
 //! from the live Rust enums and wire structs. The output is a
-//! discriminated-union `.d.ts` consumable by `Obsidian` / `VSCode` /
-//! plugin authors via:
+//! discriminated-union `.d.ts` for downstream TypeScript consumers:
 //!
 //! ```text
 //! import type { NodeKind, DiagnosticWire } from "aozora-wasm/aozora_types";
@@ -12,9 +11,6 @@
 //! The source of truth lives outside `pkg/` because `wasm-pack`
 //! wipes that directory on rebuild. A future packaging step copies
 //! this file into `pkg/` before `npm publish`.
-//!
-//! Drift-gated by `xtask types check`. The `Obsidian` / `VSCode` /
-//! Pandoc plugin authors are the primary consumers.
 //!
 //! Drift-gated by `xtask types check` so a new `NodeKind` variant
 //! lands as a build-time CI failure if the artefact regen step is

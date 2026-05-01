@@ -57,11 +57,9 @@ pub enum DiagnosticPolicy {
 
 /// Builder for the [`Document::parse`] entry point.
 ///
-/// Pre-Phase-I `Document::new(source)` was the only construction
-/// path and offered no way to tune arena capacity, encoding choice,
-/// or diagnostic policy. [`ParseOptions`] is the single tunable
-/// surface; [`Document::new`] is now equivalent to
-/// [`ParseOptions::new().build(source)`].
+/// [`ParseOptions`] is the single tunable surface for arena capacity,
+/// encoding choice, and diagnostic policy. [`Document::new`] is
+/// equivalent to [`ParseOptions::new().build(source)`].
 ///
 /// The builder methods consume `self` and return the next stage so
 /// the chain reads top-to-bottom and so unused options never leave a
@@ -343,10 +341,7 @@ impl<'a> AozoraTree<'a> {
     /// the normalized text.
     ///
     /// Coordinates are [`NormalizedOffset`] — they index the
-    /// PUA-rewritten text, not the original source. Pre-Phase-E5
-    /// this side-table did not exist; consumers re-derived pairing
-    /// from the linear walk over `block_open` / `block_close`
-    /// registry entries.
+    /// PUA-rewritten text, not the original source.
     #[must_use]
     pub fn container_pairs(&self) -> &'a [ContainerPair] {
         self.inner.container_pairs

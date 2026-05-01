@@ -12,8 +12,7 @@
 //!   is print-to-stdout.
 //! - `aozora render FILE` — render `FILE` to HTML on stdout.
 //!
-//! Introspection (no input required, prints typed contracts —
-//! Phase L3):
+//! Introspection (no input required, prints typed contracts):
 //! - `aozora kinds` — table of every `NodeKind` / `PairKind` /
 //!   `Severity` / `DiagnosticSource` / `Sentinel` /
 //!   `InternalCheckCode` variant with its wire tag and a one-line
@@ -22,8 +21,8 @@
 //!   pretty-prints the JSON Schema for one of the four wire
 //!   envelopes. Sourced from `aozora::wire::schema_*` (`schema`
 //!   feature on the `aozora` crate).
-//! - `aozora explain <kind>` — short prose for a `NodeKind` tag.
-//!   The full handbook chapter lands in Phase O1.
+//! - `aozora explain <kind>` — embedded handbook chapter for the
+//!   given `NodeKind`, surfaced via `include_str!`.
 //!
 //! All document-level subcommands accept `-` (or no path argument)
 //! to read from stdin. Encoding defaults to UTF-8; pass

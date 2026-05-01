@@ -201,8 +201,9 @@ impl<'a> BorrowedAllocator<'a> {
     ///
     /// Panics if `base` or `reading` is empty. Phase 3 emit-sites
     /// classify only after the body is populated, so the panic
-    /// represents a pipeline-internal bug — Phase E6 surfaced this
-    /// invariant at the type level.
+    /// represents a pipeline-internal bug — the
+    /// [`borrowed::NonEmpty`] payload encodes this invariant at the
+    /// type level.
     #[must_use]
     pub fn ruby(
         &self,
