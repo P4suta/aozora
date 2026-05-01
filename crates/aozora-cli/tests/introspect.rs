@@ -95,9 +95,11 @@ fn explain_known_kind_succeeds() {
     let (status, stdout, _) = run(&["explain", "ruby"]);
     assert!(status.success(), "explain ruby must succeed");
     assert!(stdout.contains("NodeKind::Ruby"), "missing tag: {stdout:?}");
+    // The embedded handbook page (Phase O1) carries the Source
+    // examples / Rendered HTML / AST shape sections.
     assert!(
-        stdout.contains("Phase O1"),
-        "missing forward pointer: {stdout:?}"
+        stdout.contains("## Source examples"),
+        "missing handbook section: {stdout:?}"
     );
 }
 

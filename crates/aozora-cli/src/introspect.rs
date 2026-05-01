@@ -267,17 +267,89 @@ fn describe_internal(c: InternalCheckCode) -> &'static str {
     }
 }
 
+/// Embedded handbook pages for `aozora explain <tag>`. Index keyed
+/// by camelCase wire tag → file slug; the markdown body is loaded
+/// at compile time via `include_str!` (Phase O1's handbook chapters
+/// under `crates/aozora-book/src/nodes/`).
+const NODE_PAGES: &[(&str, &str)] = &[
+    ("ruby", include_str!("../../aozora-book/src/nodes/ruby.md")),
+    (
+        "bouten",
+        include_str!("../../aozora-book/src/nodes/bouten.md"),
+    ),
+    (
+        "tateChuYoko",
+        include_str!("../../aozora-book/src/nodes/tate-chu-yoko.md"),
+    ),
+    (
+        "gaiji",
+        include_str!("../../aozora-book/src/nodes/gaiji.md"),
+    ),
+    (
+        "indent",
+        include_str!("../../aozora-book/src/nodes/indent.md"),
+    ),
+    (
+        "alignEnd",
+        include_str!("../../aozora-book/src/nodes/align-end.md"),
+    ),
+    (
+        "warichu",
+        include_str!("../../aozora-book/src/nodes/warichu.md"),
+    ),
+    (
+        "keigakomi",
+        include_str!("../../aozora-book/src/nodes/keigakomi.md"),
+    ),
+    (
+        "pageBreak",
+        include_str!("../../aozora-book/src/nodes/page-break.md"),
+    ),
+    (
+        "sectionBreak",
+        include_str!("../../aozora-book/src/nodes/section-break.md"),
+    ),
+    (
+        "heading",
+        include_str!("../../aozora-book/src/nodes/aozora-heading.md"),
+    ),
+    (
+        "headingHint",
+        include_str!("../../aozora-book/src/nodes/heading-hint.md"),
+    ),
+    (
+        "sashie",
+        include_str!("../../aozora-book/src/nodes/sashie.md"),
+    ),
+    (
+        "kaeriten",
+        include_str!("../../aozora-book/src/nodes/kaeriten.md"),
+    ),
+    (
+        "annotation",
+        include_str!("../../aozora-book/src/nodes/annotation.md"),
+    ),
+    (
+        "doubleRuby",
+        include_str!("../../aozora-book/src/nodes/double-ruby.md"),
+    ),
+    (
+        "container",
+        include_str!("../../aozora-book/src/nodes/container.md"),
+    ),
+    (
+        "containerOpen",
+        include_str!("../../aozora-book/src/nodes/container-open.md"),
+    ),
+    (
+        "containerClose",
+        include_str!("../../aozora-book/src/nodes/container-close.md"),
+    ),
+];
+
 fn explain_kind(tag: &str) -> Option<String> {
-    let descend = |k: NodeKind| {
-        format!(
-            "NodeKind::{:?} ({tag})\n  {}\n  Full prose: handbook chapter `nodes/{tag}.md` (Phase O1).",
-            k,
-            describe_node(k)
-        )
-    };
-    NodeKind::ALL
+    NODE_PAGES
         .iter()
-        .copied()
-        .find(|k| k.as_camel_case() == tag)
-        .map(descend)
+        .find(|(t, _)| *t == tag)
+        .map(|(_, body)| (*body).to_owned())
 }
