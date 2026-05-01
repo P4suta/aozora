@@ -1,0 +1,73 @@
+# cargo publish workflow for `aozora` + `aozora-cli`.
+#
+# Phase P1 — capability ships in 0.4.0; live publish is `dry_run: false`,
+# manual trigger only. Default `dry_run: true` so a stray
+# `Run workflow` click cannot accidentally push to crates.io.
+#
+# How to run a real publish:
+#   gh workflow run publish-crates.yml -f dry_run=false
+# (also requires the `CARGO_TOKEN` repo secret to be populated)
+#
+# Drift gate: PR CI's `lint` job already runs `cargo publish --dry-run`
+# implicitly via `cargo package` semantics. This workflow is the
+# manual-trigger surface; the PR-time check catches metadata drift
+# before it can land on main.
+
+name: publish-crates
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run cargo publish in --dry-run mode (no upload)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize publishes — crates.io accepts versions linearly and a
+  # second concurrent run would just waste tokens.
+  group: publish-crates
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: publish-crates
+
+      # Always run --dry-run first so the metadata is verified even
+      # when the user dispatches a "live" publish — failing here
+      # before flipping the flag would still surface metadata drift.
+      - name: Dry-run package metadata (aozora)
+        run: cargo publish --dry-run -p aozora --locked
+
+      - name: Dry-run package metadata (aozora-cli)
+        run: cargo publish --dry-run -p aozora-cli --locked
+
+      - name: Publish aozora (live)
+        if: inputs.dry_run == false
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+        run: cargo publish -p aozora --locked
+
+      # `aozora-cli` depends on the freshly-published `aozora`; the
+      # crates.io index sometimes lags by a few seconds after
+      # `cargo publish`. Sleep before the second publish so the
+      # dependency lookup hits the new version. Five minutes is
+      # generous; crates.io's typical propagation is under 30 s.
+      - name: Wait for crates.io index propagation
+        if: inputs.dry_run == false
+        run: sleep 60
+
+      - name: Publish aozora-cli (live)
+        if: inputs.dry_run == false
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+        run: cargo publish -p aozora-cli --locked

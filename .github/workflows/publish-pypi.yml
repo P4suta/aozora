@@ -1,0 +1,99 @@
+# PyPI publish workflow for `aozora-py` wheels.
+#
+# Phase P3 — capability ships in 0.4.0; live publish is `dry_run: false`.
+# Builds wheels for the runner triples × supported Python versions
+# matrix, then either dry-runs (`twine check`) or uploads to PyPI.
+#
+# How to run a real publish:
+#   gh workflow run publish-pypi.yml -f dry_run=false
+#
+# Multi-platform strategy: maturin's stock matrix per-platform-per-pyver
+# is enough for 0.4.0; `cibuildwheel` is a 0.5.0+ upgrade once the
+# matrix needs more granular wheel tags (manylinux2_28 + musllinux,
+# pypy, free-threaded 3.13t, etc.).
+
+name: publish-pypi
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build wheels + twine check; do not upload to PyPI"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-pypi
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build wheels (${{ matrix.os }} / py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pypi-${{ matrix.os }}-${{ matrix.python }}
+
+      - name: Install maturin + twine
+        run: pip install --upgrade "maturin>=1.9" twine
+
+      - name: Build wheel
+        # `--manylinux=auto` lets maturin pick the most compatible
+        # tag the runner's glibc supports; on macOS / Windows the
+        # flag is harmlessly ignored.
+        run: |
+          maturin build --release --strip \
+            --manifest-path crates/aozora-py/Cargo.toml \
+            --interpreter "python${{ matrix.python }}" \
+            --manylinux=auto
+
+      - name: Verify metadata with twine check
+        run: twine check target/wheels/*.whl
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.os }}-py${{ matrix.python }}
+          path: target/wheels/*.whl
+          retention-days: 7
+
+  publish:
+    name: upload to PyPI
+    if: inputs.dry_run == false
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      # Trusted publishing: PyPI verifies via OIDC, no API token in
+      # the secrets store. The PyPI project must opt in via its
+      # "publisher" settings before this works; until then, fall
+      # back by setting `secrets.PYPI_TOKEN` and replacing the
+      # `id-token` permission with `password: ${{ secrets.PYPI_TOKEN }}`
+      # on the `gh-action-pypi-publish` step.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheel-*
+          merge-multiple: true
+          path: dist
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true

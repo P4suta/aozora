@@ -63,8 +63,17 @@ jobs:
         with:
           key: release-${{ matrix.target }}
 
-      - name: Build aozora
+      - name: Build aozora CLI
         run: cargo build --release --target ${{ matrix.target }} --package aozora-cli
+
+      # Phase P4 — C ABI shared library + auto-generated header.
+      # `aozora-ffi`'s `build.rs` writes `aozora.h` into
+      # `target/<profile>/aozora.h` via cbindgen, alongside the
+      # cdylib `libaozora.{so,dylib}` / `aozora.dll`. Both ship in
+      # the Release archive so C/C++ consumers can link without
+      # building from source.
+      - name: Build aozora-ffi (C ABI)
+        run: cargo build --release --target ${{ matrix.target }} --package aozora-ffi
 
       - name: Assemble archive
         id: archive
@@ -88,6 +97,19 @@ jobs:
           bin_suffix=""
           [[ "${{ matrix.archive }}" == "zip" ]] && bin_suffix=".exe"
           cp "target/${{ matrix.target }}/release/aozora${bin_suffix}" "${staging}/"
+
+          # C ABI shared library + header. The library file extension
+          # varies per platform; collect all candidate names and copy
+          # whatever cargo produced.
+          target_dir="target/${{ matrix.target }}/release"
+          for libname in libaozora.so libaozora.dylib aozora.dll; do
+              if [[ -f "${target_dir}/${libname}" ]]; then
+                  cp "${target_dir}/${libname}" "${staging}/"
+              fi
+          done
+          if [[ -f "${target_dir}/aozora.h" ]]; then
+              cp "${target_dir}/aozora.h" "${staging}/"
+          fi
 
           cp LICENSE-APACHE LICENSE-MIT NOTICE README.md "${staging}/"
 

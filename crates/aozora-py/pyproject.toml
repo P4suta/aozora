@@ -1,0 +1,54 @@
+# Phase P3 — maturin-driven Python wheel build for aozora-py.
+#
+# Local build:    maturin build --release -F extension-module
+# Local install:  maturin develop -F extension-module
+# CI:             .github/workflows/publish-pypi.yml (workflow_dispatch)
+#
+# Python module name: `aozora_py` (matches `#[pymodule] fn aozora_py`
+# in src/lib.rs and the `[lib] name = "aozora_py"` override in
+# Cargo.toml). PyPI distribution name is the same so users do
+# `pip install aozora_py` then `import aozora_py`.
+
+[build-system]
+requires      = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name            = "aozora_py"
+description     = "Aozora Bunko notation parser — Python bindings (PyO3)."
+readme          = "../../README.md"
+requires-python = ">=3.9"
+license         = { text = "MIT OR Apache-2.0" }
+authors         = [{ name = "Yasunobu" }]
+keywords        = ["aozora", "parser", "japanese", "ruby"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Rust",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Text Processing :: Markup",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage   = "https://github.com/P4suta/aozora"
+Repository = "https://github.com/P4suta/aozora"
+Issues     = "https://github.com/P4suta/aozora/issues"
+
+[tool.maturin]
+manifest-path  = "Cargo.toml"
+features       = ["extension-module"]
+module-name    = "aozora_py"
+strip          = true
+# `auditwheel` post-processing is handled in the publish workflow's
+# Linux job via maturin's `--manylinux=auto`; macOS / Windows wheels
+# need no extra fixup.
