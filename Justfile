@@ -87,6 +87,14 @@ types-check:
 # job: schema + types in one shot. Use locally before pushing.
 drift-gate: schema-check types-check
 
+# Phase O4 — WPT-style conformance runner. Walks every fixture
+# under aozora-conformance/fixtures/render/, runs the parser, and
+# fails non-zero if any `must`-tier case regresses. Writes a
+# per-case results.json into the handbook source tree so readers
+# can see the latest tier breakdown.
+conformance:
+    {{_dev}} cargo run -p aozora-xtask -q -- conformance run
+
 # Property-based tests only. Default 128 cases per proptest block
 # (AOZORA_PROPTEST_CASES override via aozora-test-utils::config). Fast
 # enough to live in `just ci` — see `just prop-deep` for a stress run.

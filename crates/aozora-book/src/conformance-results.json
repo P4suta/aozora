@@ -1,0 +1,186 @@
+{
+  "implementation": "rust",
+  "total": 23,
+  "passed": 23,
+  "failed": 0,
+  "by_level": {
+    "may": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    "must": {
+      "total": 18,
+      "passed": 18,
+      "failed": 0
+    },
+    "should": {
+      "total": 4,
+      "passed": 4,
+      "failed": 0
+    }
+  },
+  "cases": [
+    {
+      "case": "align_end_container",
+      "feature": "container",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "annotation",
+      "feature": "annotation",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "bouten",
+      "feature": "bouten",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "double_ruby",
+      "feature": "ruby",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "gaiji",
+      "feature": "gaiji",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "heading",
+      "feature": "heading",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "heading_hint",
+      "feature": "heading",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "indent_container",
+      "feature": "container",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "kaeriten",
+      "feature": "kaeriten",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "keigakomi_container",
+      "feature": "container",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "mixed_ruby_bouten",
+      "feature": "composite",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "nested_containers",
+      "feature": "composite",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "page_break",
+      "feature": "break",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "pageful",
+      "feature": "composite",
+      "level": "may",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "plain_text",
+      "feature": "plain",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "pua_collision",
+      "feature": "recovery",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_explicit",
+      "feature": "ruby",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_implicit",
+      "feature": "ruby",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "sashie",
+      "feature": "sashie",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "section_break",
+      "feature": "break",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "tate_chu_yoko",
+      "feature": "tcy",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "unclosed_bracket",
+      "feature": "recovery",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "warichu_inline",
+      "feature": "warichu",
+      "level": "must",
+      "passed": true,
+      "message": null
+    }
+  ]
+}

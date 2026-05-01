@@ -1,0 +1,3 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+feature = "tcy"
+level   = "must"

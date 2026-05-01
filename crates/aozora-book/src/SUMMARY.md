@@ -75,6 +75,7 @@
 - [CLI reference](ref/cli.md)
 - [API reference (rustdoc)](ref/api.md)
 - [Environment variables](ref/env.md)
+- [Conformance suite](conformance.md)
 
 ---
 

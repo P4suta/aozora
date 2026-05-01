@@ -125,6 +125,15 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just drift-gate
 
+  # Phase O4 — WPT-style conformance suite. Runs every fixture
+  # through the parser and asserts every `must`-tier case passes.
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ./.github/actions/setup-dev-image
+      - run: just conformance
+
   # Phase M1 — Pandoc end-to-end smoke. Builds the CLI, runs
   # `aozora pandoc input.txt --format html` against a tiny ruby
   # fixture, and checks the resulting HTML carries the expected

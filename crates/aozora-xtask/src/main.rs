@@ -48,6 +48,7 @@ use std::process::{self, Command, ExitStatus};
 use clap::{Args, Parser, Subcommand};
 
 mod ci;
+mod conformance;
 mod corpus;
 mod deps;
 mod schema;
@@ -105,6 +106,12 @@ enum Cmd {
     /// `DiagnosticSource` / `InternalCheckCode`) and wire structs.
     /// Drift-gated like `xtask schema`.
     Types(TypesArgs),
+    /// WPT-style conformance suite runner (Phase O4). Walks every
+    /// fixture under `crates/aozora-conformance/fixtures/render/`,
+    /// runs the parser, and reports pass/fail counts per
+    /// `(feature, level)` pair declared in each fixture's
+    /// `meta.toml`. Exits non-zero on any `must`-tier failure.
+    Conformance(ConformanceArgs),
 }
 
 #[derive(Args)]
@@ -123,6 +130,20 @@ enum SchemaOp {
     /// non-zero on drift. Used as a CI gate so renamed fields /
     /// added variants force the artefact regeneration step.
     Check,
+}
+
+#[derive(Args)]
+struct ConformanceArgs {
+    #[command(subcommand)]
+    op: ConformanceOp,
+}
+
+#[derive(Subcommand)]
+enum ConformanceOp {
+    /// Run every fixture, write a per-case results.json under
+    /// `crates/aozora-book/src/conformance-results.json`, and
+    /// exit non-zero on any `must`-tier failure.
+    Run,
 }
 
 #[derive(Args)]
@@ -212,6 +233,7 @@ fn main() {
         Cmd::Ci(args) => ci::run(&args),
         Cmd::Schema(args) => schema::dispatch(&args),
         Cmd::Types(args) => types::dispatch(&args),
+        Cmd::Conformance(args) => conformance::dispatch(&args),
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");
