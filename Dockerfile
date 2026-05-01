@@ -92,13 +92,18 @@ RUN curl -L --proto '=https' --tlsv1.2 -fsSL \
 #   across docker overlayfs and image export.
 # - `--locked`: respects the `Cargo.lock` of each crate when binstall
 #   does fall back to a source build.
-# - The default `--strategies crate-meta-data,quick-install,compile`
-#   chain is left intact: most tools resolve through the binary
-#   fetchers in seconds; the few crates without a prebuilt artifact
-#   on a given target (bacon's QuickInstall mirror is currently
-#   flaky, for instance) silently fall back to `cargo install`.
-#   The fallback is acceptable because it's now the exception, not
-#   the rule — the cargo-install hot path is gone.
+# - `--strategies crate-meta-data,quick-install` (NO `compile`):
+#   binstall's default chain ends with `compile`, which on a missing
+#   prebuilt silently falls through to `cargo install --from-source`.
+#   That fallback turned this RUN into a 40-minute disaster on a
+#   recent dev-image rebuild (PR #17 first run) when several crates
+#   came back compile-only at the same moment. By dropping `compile`
+#   here, binstall instead exits non-zero — making the failure
+#   surface immediately so we can react with a one-line PR (re-add
+#   `compile`, pin a version, swap a tool) instead of paying tens
+#   of minutes per affected build. Both `crate-meta-data` (GitHub
+#   Releases) and `quick-install` (community mirror) are kept, so
+#   the path is still resilient to one of the two going dark.
 #
 # All tools land in /usr/local/cargo/bin (cargo's default install root).
 # The single-RUN form is intentional: with binstall the whole batch
@@ -109,6 +114,7 @@ RUN curl -L --proto '=https' --tlsv1.2 -fsSL \
 # simpler and the build-time cost is now tiny either way.
 RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
     cargo binstall --no-confirm --no-symlinks --locked \
+        --strategies crate-meta-data,quick-install \
         --root /usr/local \
         cargo-nextest \
         cargo-llvm-cov \
