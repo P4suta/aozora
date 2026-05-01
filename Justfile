@@ -20,13 +20,22 @@ default:
 
 # --- build/shell --------------------------------------------------------------
 
-# Build all workspace crates
+# Build all workspace crates.
+#
+# `aozora-bench` is excluded from every workspace-wide CI gate
+# (build / test / coverage / clippy / udeps) because it's a
+# bench-only harness whose dep tree pulls in `zstd-sys`,
+# `criterion`, `addr2line`, `gimli`, `object`, and `ruzstd` —
+# adding ~100 s of cold-cache compile time that no other crate in
+# the workspace needs. Bench runs go through `just bench`, which
+# explicitly invokes `cargo bench --workspace` and gets the full
+# tree on demand.
 build:
-    {{_dev}} cargo build --workspace --all-targets
+    {{_dev}} cargo build --workspace --exclude aozora-bench --all-targets
 
 # Build release binaries
 build-release:
-    {{_dev}} cargo build --release --workspace
+    {{_dev}} cargo build --release --workspace --exclude aozora-bench
 
 # Drop into an interactive dev shell
 shell:
@@ -38,9 +47,10 @@ run *ARGS:
 
 # --- tests --------------------------------------------------------------------
 
-# Run the full test suite (unit + integration + snapshot)
+# Run the full test suite (unit + integration + snapshot).
+# `aozora-bench` is excluded — see `build` above for rationale.
 test *ARGS:
-    {{_dev}} cargo nextest run --workspace --all-targets {{ARGS}}
+    {{_dev}} cargo nextest run --workspace --exclude aozora-bench --all-targets {{ARGS}}
 
 # Run doctests (nextest skips these by design)
 test-doc:
@@ -85,7 +95,16 @@ types-check:
 
 # Phase L4 — bundled drift gate. Equivalent to the CI `drift-gate`
 # job: schema + types in one shot. Use locally before pushing.
-drift-gate: schema-check types-check
+#
+# Inlined as a single `docker compose run` rather than a recipe-deps
+# chain (`drift-gate: schema-check types-check`) so both checks share
+# one container start. The previous form burned a full container
+# bootstrap (rustup channel sync + components download, ~22 s) twice
+# per CI invocation; the bash -c form runs the second xtask invocation
+# against an already-warm container with the xtask binary cached in
+# `target/`.
+drift-gate:
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check'
 
 # Phase O4 — WPT-style conformance runner. Walks every fixture
 # under aozora-conformance/fixtures/render/, runs the parser, and
@@ -170,7 +189,7 @@ _COV_IGNORE := "(target/|/main\\.rs$)"
 
 coverage:
     {{_dev}} cargo llvm-cov nextest \
-        --workspace \
+        --workspace --exclude aozora-bench \
         --ignore-filename-regex '{{_COV_IGNORE}}' \
         --fail-under-regions {{_COV_FLOOR}}
 
@@ -178,7 +197,7 @@ coverage:
 # for opening `coverage/html/index.html` in a browser.
 coverage-html:
     {{_dev}} cargo llvm-cov nextest \
-        --workspace \
+        --workspace --exclude aozora-bench \
         --ignore-filename-regex '{{_COV_IGNORE}}' \
         --html --output-dir coverage/html
 
@@ -188,7 +207,7 @@ coverage-html:
 coverage-branch:
     {{_dev}} cargo +nightly llvm-cov nextest \
         --branch \
-        --workspace \
+        --workspace --exclude aozora-bench \
         --ignore-filename-regex '{{_COV_IGNORE}}'
 
 # --- lint / static analysis ---------------------------------------------------
@@ -387,7 +406,7 @@ fmt:
 # per-lint allow carve-outs (e.g. `redundant_pub_crate`). Keep the CLI
 # surface to `-D warnings` only.
 clippy:
-    {{_dev}} cargo clippy --workspace --all-targets --all-features -- -D warnings
+    {{_dev}} cargo clippy --workspace --exclude aozora-bench --all-targets --all-features -- -D warnings
 
 # Typo check
 typos:
@@ -401,9 +420,18 @@ deny:
 audit:
     {{_dev}} cargo audit
 
-# Unused dependency scan (requires nightly)
+# Unused dependency scan (requires nightly).
+# `aozora-bench` is excluded for the same reason build / test / clippy
+# exclude it (heavy bench dep tree). The bench crate gets its own
+# udeps run through `just udeps-bench` when needed.
 udeps:
-    {{_dev}} cargo +nightly udeps --workspace --all-targets
+    {{_dev}} cargo +nightly udeps --workspace --exclude aozora-bench --all-targets
+
+# Unused-dep scan limited to the bench crate. Run before cutting a
+# release if `aozora-bench` had dep changes; not part of the per-PR
+# CI gate (cf. `just udeps`).
+udeps-bench:
+    {{_dev}} cargo +nightly udeps -p aozora-bench --all-targets
 
 # Semver break detection (runs against published baseline once crates are on crates.io)
 semver:
