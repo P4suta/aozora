@@ -179,8 +179,16 @@ FROM dev AS ci
 # Stage: book — lean image for `mdbook build` / `mdbook serve` only.
 # No Rust toolchain, no sccache: copies in the prebuilt mdbook +
 # mdbook-mermaid + lychee binaries from `cargo-tools` and stops there.
+#
+# Base is ubuntu:24.04 (glibc 2.39) rather than debian:bookworm-slim
+# (glibc 2.36) because lychee's prebuilt binaries on its GitHub
+# Releases page have been built against newer glibc since 0.20.x —
+# they fail at runtime on bookworm with `GLIBC_2.38 / 2.39 not found`.
+# The mdbook / mdbook-mermaid binaries from cargo-tools (built on
+# debian:bookworm) keep working here because glibc is forwards-
+# compatible: an older-glibc-built ELF runs fine on a newer glibc.
 ########################################################################
-FROM debian:bookworm-slim AS book
+FROM ubuntu:24.04 AS book
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
