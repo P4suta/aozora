@@ -21,6 +21,17 @@ x-common-env: &common-env
   CARGO_INCREMENTAL: "0"
   SCCACHE_CACHE_SIZE: "10G"
   RUST_BACKTRACE: "1"
+  # Use mold (already apt-installed in the Dockerfile toolchain stage).
+  # The Dockerfile also writes a /root/.cargo/config.toml with the same
+  # intent, but CARGO_HOME=/workspace/.cargo above means cargo never
+  # reads it; cargo's own config-discovery is rooted at $CARGO_HOME and
+  # only walks ancestor `.cargo/config.toml` files from the project
+  # directory upward. Setting these two env vars short-circuits the
+  # whole config-file dance and is the documented override path:
+  # cargo's RUSTFLAGS / CARGO_TARGET_<TARGET>_LINKER take precedence
+  # over any config.toml entries.
+  RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: "clang"
   TERM: ${TERM:-xterm-256color}
   # /workspace is bind-mounted from the host as a non-root UID, but the
   # container runs as root. Git otherwise refuses operations with
