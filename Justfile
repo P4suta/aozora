@@ -405,8 +405,16 @@ fmt:
 # here would re-enable the whole group at CLI priority and silently undo
 # per-lint allow carve-outs (e.g. `redundant_pub_crate`). Keep the CLI
 # surface to `-D warnings` only.
+# `--lib --bins --tests` instead of `--all-targets` skips the
+# example / bench targets. Several crates (aozora-pipeline,
+# aozora-syntax, aozora-scan) declare `[[bench]]` entries that pull
+# `criterion`'s entire dep tree (zstd / object / addr2line / gimli)
+# into the clippy build for no real lint signal — clippy on a bench
+# harness almost never fires anything that wouldn't fire on the lib
+# it benches. Bench breakage gets caught the moment you actually
+# run `just bench`, where it should.
 clippy:
-    {{_dev}} cargo clippy --workspace --exclude aozora-bench --all-targets --all-features -- -D warnings
+    {{_dev}} cargo clippy --workspace --exclude aozora-bench --lib --bins --tests --all-features -- -D warnings
 
 # Typo check
 typos:
