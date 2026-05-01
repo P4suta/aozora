@@ -20,9 +20,15 @@ pre-commit:
       glob: "*.rs"
       run: just fmt
       stage_fixed: true
+    # `clippy-strict` runs the full `--all-targets --all-features`
+    # surface (incl. bench / example targets and aozora-bench) which
+    # the CI `lint (clippy)` job deliberately skips for build-time
+    # reasons. Catching bench / example regressions in pre-commit
+    # is the trade-off — the dev pays a slightly slower commit, in
+    # return CI does not.
     clippy:
       glob: "*.{rs,toml}"
-      run: just clippy
+      run: just clippy-strict
     typos:
       run: just typos
 

@@ -320,6 +320,29 @@ debug    = 1
 
 [profile.dev]
 split-debuginfo = "unpacked"
+# `debug = "line-tables-only"` keeps backtraces (line + file + symbol
+# names) but drops the local-variable / parameter DWARF that doubles
+# rustc's link-stage memory and time. The dev workflow goes through
+# `docker compose run dev cargo nextest run`; nobody attaches gdb
+# inside the container. The variable-inspect side of full debug info
+# is therefore paying for nothing on every workspace cargo invocation.
+# `mold` (the linker we already use, see docker-compose.yml) compounds
+# the win because it spends a non-trivial fraction of its runtime in
+# the debug-info section it now no longer has to merge.
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
-opt-level = 1
+# `opt-level = 2` for every transitive dep (proc-macros and otherwise).
+# Two effects:
+#   1. proc macros (syn, serde_derive, clap_derive, schemars_derive,
+#      zerocopy_derive) execute faster, which speeds up the host
+#      crate's compile that consumes their `TokenStream` output.
+#   2. dependency object code that gets linked into test binaries
+#      runs faster, shrinking the test step in the coverage job.
+# The cold-cache cost is +10-20 % on the dependency build itself, but
+# sccache's GHA backend (see docker-compose.ci.yml) pulls those
+# objects from the run-shared cache on subsequent runs, so the
+# amortised cost is negligible. Workspace crates stay at the default
+# opt-level=0 so iteration on aozora-* code keeps full incremental
+# rebuild speed.
+opt-level = 2

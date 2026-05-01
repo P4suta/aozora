@@ -76,12 +76,24 @@ jobs:
             fi
           done < <(git log --format='%H %s' "$range")
 
+  # `just lint` is a recipe-deps chain (fmt-check → clippy → typos →
+  # strict-code) that ran serially in a single job, so its wall time
+  # was the sum of the four sub-recipes. Split into a matrix so each
+  # sub-recipe runs in parallel; the wall time collapses to whichever
+  # one is slowest (clippy in practice). The dev image cache and the
+  # GHA-backed sccache make the per-job container start near-free
+  # after the first cache-miss run.
   lint:
+    name: lint (${{ matrix.target }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [fmt-check, clippy, typos, strict-code]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - uses: ./.github/actions/setup-dev-image
-      - run: just lint
+      - run: just ${{ matrix.target }}
 
   # Single Rust build-test-coverage gate. `just coverage` calls
   # `cargo llvm-cov nextest run --workspace`, which compiles every test

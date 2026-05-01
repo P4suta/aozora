@@ -405,8 +405,25 @@ fmt:
 # here would re-enable the whole group at CLI priority and silently undo
 # per-lint allow carve-outs (e.g. `redundant_pub_crate`). Keep the CLI
 # surface to `-D warnings` only.
+# `--lib --bins --tests` instead of `--all-targets` skips the
+# example / bench targets. Several crates (aozora-pipeline,
+# aozora-syntax, aozora-scan) declare `[[bench]]` entries that pull
+# `criterion`'s entire dep tree (zstd / object / addr2line / gimli)
+# into the clippy build for no real lint signal — clippy on a bench
+# harness almost never fires anything that wouldn't fire on the lib
+# it benches. Bench breakage gets caught the moment you actually
+# run `just bench`, where it should.
 clippy:
-    {{_dev}} cargo clippy --workspace --exclude aozora-bench --all-targets --all-features -- -D warnings
+    {{_dev}} cargo clippy --workspace --exclude aozora-bench --lib --bins --tests --all-features -- -D warnings
+
+# Strict variant: full `--all-targets` (lib + bins + tests + examples
+# + benches), and the bench crate is no longer excluded. Used by
+# lefthook pre-commit so the bench / example targets that the CI
+# `clippy` recipe skips still get a lint pass before the commit
+# lands. Slower per-commit, but the matrix-split CI lint job is
+# correspondingly leaner.
+clippy-strict:
+    {{_dev}} cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Typo check
 typos:
@@ -623,6 +640,26 @@ ci-act *ARGS:
 # putting it last means a transient pyo3.rs / docs.rs hiccup doesn't
 # delay the deterministic gates' failure signal.
 ci:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The three independent gates that don't share cargo's `target/`
+    # lock — `cargo deny` / `cargo audit` are metadata-only and
+    # `book-linkcheck` is a lychee network probe — run in the
+    # background so their wall-time hides behind the cargo chain
+    # below instead of stacking on top of it. Verified
+    # non-contending against the foreground cargo recipes by manual
+    # `just ci` runs; cargo metadata holds an advisory file lock
+    # only, never the build write lock.
+    just deny           > /tmp/aozora-ci-bg-deny.log 2>&1 &
+    deny_pid=$!
+    just audit          > /tmp/aozora-ci-bg-audit.log 2>&1 &
+    audit_pid=$!
+    just book-linkcheck > /tmp/aozora-ci-bg-book.log 2>&1 &
+    book_pid=$!
+
+    # Foreground cargo chain in the same cheap-to-expensive order
+    # that the original sequential `ci` used, so an early failure
+    # still short-circuits before the heavy gates.
     just lint
     just build
     just drift-gate
@@ -630,11 +667,29 @@ ci:
     just smoke-ffi
     just test
     just prop
-    just deny
-    just audit
     just udeps
     just coverage
-    just book-linkcheck
+
+    # Reap the background trio. Print their captured output (so
+    # failure detail is preserved) and propagate non-zero status.
+    failed=0
+    if ! wait $deny_pid; then
+        echo "::error title=deny::just deny failed (output below)"
+        cat /tmp/aozora-ci-bg-deny.log
+        failed=1
+    fi
+    if ! wait $audit_pid; then
+        echo "::error title=audit::just audit failed (output below)"
+        cat /tmp/aozora-ci-bg-audit.log
+        failed=1
+    fi
+    if ! wait $book_pid; then
+        echo "::error title=book-linkcheck::just book-linkcheck failed (output below)"
+        cat /tmp/aozora-ci-bg-book.log
+        failed=1
+    fi
+    rm -f /tmp/aozora-ci-bg-{deny,audit,book}.log
+    [[ $failed -eq 0 ]] || exit 1
 
 # --- developer workflow helpers ----------------------------------------------
 
