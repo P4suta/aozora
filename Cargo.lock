@@ -154,6 +154,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aozora-conformance"
+version = "0.2.6"
+dependencies = [
+ "aozora",
+ "pretty_assertions",
+]
+
+[[package]]
 name = "aozora-corpus"
 version = "0.2.6"
 dependencies = [

@@ -46,6 +46,18 @@ test *ARGS:
 test-doc:
     {{_dev}} cargo test --workspace --doc
 
+# Phase K3 — byte-identical render gate. Loads aozora-conformance
+# fixtures and asserts current parse → render output matches golden
+# files. Set UPDATE_GOLDEN=1 to refresh after intentional output
+# change.
+render-gate:
+    {{_dev}} cargo test -p aozora-conformance --test render_gate
+
+# Refresh aozora-conformance golden files. Use after intentional
+# renderer output changes; commit the resulting fixture diff.
+render-gate-update:
+    {{_dev}} env UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test render_gate
+
 # Property-based tests only. Default 128 cases per proptest block
 # (AOZORA_PROPTEST_CASES override via aozora-test-utils::config). Fast
 # enough to live in `just ci` — see `just prop-deep` for a stress run.

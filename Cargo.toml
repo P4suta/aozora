@@ -9,6 +9,7 @@ members = [
     "crates/aozora-test-utils",
     "crates/aozora-veb",
     "crates/aozora-scan",
+    "crates/aozora-conformance",
     "crates/aozora-pipeline",
     "crates/aozora-render",
     "crates/aozora",
@@ -173,7 +174,8 @@ aho-corasick = { version = "1.1", default-features = false }
 # alone would still need a follow-up confirmation pass.
 regex-automata = { version = "0.4", default-features = false }
 aozora-encoding   = { version = "0.2.6", path = "crates/aozora-encoding" }
-aozora-corpus     = { version = "0.2.6", path = "crates/aozora-corpus" }
+aozora-corpus       = { version = "0.2.6", path = "crates/aozora-corpus" }
+aozora-conformance  = { version = "0.2.6", path = "crates/aozora-conformance" }
 aozora-test-utils = { version = "0.2.6", path = "crates/aozora-test-utils" }
 
 # Error handling
