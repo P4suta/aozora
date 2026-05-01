@@ -37,6 +37,12 @@ serde_json = { workspace = true, optional = true }
 # `schema_*()` functions and shouldn't pull schemars into their
 # dep tree.
 schemars = { workspace = true, optional = true }
+# Phase N4 — Aozora-shaped proptest generators. Optional, enabled
+# only by the `proptest` feature so library consumers don't pay
+# the proptest dep cost unless they're writing property tests
+# themselves.
+aozora-proptest = { workspace = true, optional = true }
+proptest        = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -50,6 +56,10 @@ wire = ["dep:serde", "dep:serde_json"]
 # `schema_pairs` / `schema_container_pairs` (one per envelope).
 # Used by `xtask schema dump` and the introspection CLI subcommand.
 schema = ["wire", "dep:schemars"]
+# Aozora-shaped proptest generators (`aozora::proptest::*`).
+# Downstream renderer authors enable this when writing property
+# tests over their own `AozoraVisitor` impls.
+proptest = ["dep:proptest", "dep:aozora-proptest"]
 
 [dev-dependencies]
 # Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and

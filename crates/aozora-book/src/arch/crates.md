@@ -108,7 +108,7 @@ flowchart TD
 |---|---|
 | `aozora-bench` | Criterion + corpus-driven probes. Source of the PGO training data. |
 | `aozora-corpus` | Corpus source abstraction (zstd-archived, blake3-pinned). Dev-only. |
-| `aozora-test-utils` | Shared proptest strategies. Dev-only. |
+| `aozora-proptest` | Shared proptest strategies. Dev-only. |
 | `aozora-trace` | DWARF symbolicator + samply gecko-trace loader. Dev-only. |
 | `aozora-xtask` | Host-side dev tooling (samply wrapper, trace analysis, corpus pack/unpack). Not on the `just build` path. |
 

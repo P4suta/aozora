@@ -121,6 +121,23 @@ pub mod encoding {
     pub use aozora_encoding::*;
 }
 
+/// Aozora-shaped `proptest` strategies (Phase N4).
+///
+/// Downstream renderer / visitor authors writing their own property
+/// tests reach through this module instead of pulling
+/// `aozora-proptest` directly. Enabled by the `proptest` Cargo
+/// feature on the `aozora` crate; both `aozora::proptest::*` and
+/// the `proptest` crate itself are then in scope for the consumer.
+///
+/// The generators here cover the same shapes the workspace's
+/// `tests/property_*` suites rely on, so any regression noticed
+/// inside the parser also surfaces inside the consumer's test
+/// harness.
+#[cfg(feature = "proptest")]
+pub mod proptest {
+    pub use aozora_proptest::*;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

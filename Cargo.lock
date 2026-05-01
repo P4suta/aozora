@@ -131,10 +131,12 @@ dependencies = [
  "aozora-corpus",
  "aozora-encoding",
  "aozora-pipeline",
+ "aozora-proptest",
  "aozora-render",
  "aozora-spec",
  "aozora-syntax",
  "jsonschema",
+ "proptest",
  "schemars",
  "serde",
  "serde_json",
@@ -228,10 +230,10 @@ version = "0.2.6"
 dependencies = [
  "aho-corasick",
  "aozora-encoding",
+ "aozora-proptest",
  "aozora-scan",
  "aozora-spec",
  "aozora-syntax",
- "aozora-test-utils",
  "aozora-veb",
  "bumpalo",
  "criterion",
@@ -242,6 +244,13 @@ dependencies = [
  "proptest",
  "smallvec",
  "thiserror",
+]
+
+[[package]]
+name = "aozora-proptest"
+version = "0.2.6"
+dependencies = [
+ "proptest",
 ]
 
 [[package]]
@@ -300,13 +309,6 @@ dependencies = [
  "phf",
  "serde",
  "thiserror",
-]
-
-[[package]]
-name = "aozora-test-utils"
-version = "0.2.6"
-dependencies = [
- "proptest",
 ]
 
 [[package]]

@@ -10,10 +10,10 @@
 //! introducing nondeterminism (e.g. iteration order over a `HashMap`)
 //! or from desynchronising the registry from the normalised text.
 
+use aozora_proptest::config::default_config;
+use aozora_proptest::generators::*;
 use aozora_spec::Sentinel;
 use aozora_syntax::borrowed::{Arena, NodeRef};
-use aozora_test_utils::config::default_config;
-use aozora_test_utils::generators::*;
 use proptest::prelude::*;
 
 #[allow(

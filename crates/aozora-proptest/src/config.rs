@@ -30,7 +30,7 @@ use proptest::test_runner::FileFailurePersistence;
 /// * `failure_persistence` writes regressions into each test's
 ///   `proptest-regressions/` directory so a failure replays instantly
 ///   on the next run. The existing repo convention is to commit these
-///   files alongside the tests; `aozora-test-utils` does not deviate.
+///   files alongside the tests; `aozora-proptest` does not deviate.
 #[must_use]
 pub fn default_config() -> ProptestConfig {
     ProptestConfig {

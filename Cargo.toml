@@ -6,7 +6,7 @@ members = [
     "crates/aozora-encoding",
     "crates/aozora-corpus",
     "crates/aozora-cli",
-    "crates/aozora-test-utils",
+    "crates/aozora-proptest",
     "crates/aozora-veb",
     "crates/aozora-scan",
     "crates/aozora-conformance",
@@ -178,7 +178,7 @@ aozora-encoding   = { version = "0.2.6", path = "crates/aozora-encoding" }
 aozora-corpus       = { version = "0.2.6", path = "crates/aozora-corpus" }
 aozora-conformance  = { version = "0.2.6", path = "crates/aozora-conformance" }
 aozora-pandoc       = { version = "0.2.6", path = "crates/aozora-pandoc" }
-aozora-test-utils = { version = "0.2.6", path = "crates/aozora-test-utils" }
+aozora-proptest = { version = "0.2.6", path = "crates/aozora-proptest" }
 
 # Error handling
 thiserror = "2.0.18"

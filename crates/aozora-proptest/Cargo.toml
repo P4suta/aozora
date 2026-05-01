@@ -1,0 +1,23 @@
+[package]
+name        = "aozora-proptest"
+description = "Proptest strategies for the aozora parser — Aozora-shaped input generators downstream renderer authors can plug into their own proptest blocks."
+
+# Phase N4 — internal-only for 0.4.0. The strategies are stable in
+# this repo's tests but the API has not yet absorbed downstream
+# usage; we ship publishable in a later release after the surface
+# soaks. Consumers reach this crate today through `aozora` with
+# feature `proptest` enabled (see `aozora::proptest`).
+publish = false
+
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+
+[lints]
+workspace = true
+
+[dependencies]
+proptest = { workspace = true }

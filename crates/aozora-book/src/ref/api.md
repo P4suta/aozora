@@ -40,7 +40,7 @@ runs on every `main` push regardless.
 | `/aozora/api/aozora_py/` | Python binding |
 | `/aozora/api/aozora_bench/` | Bench probes |
 | `/aozora/api/aozora_corpus/` | Corpus runner |
-| `/aozora/api/aozora_test_utils/` | Proptest strategies |
+| `/aozora/api/aozora_proptest/` | Proptest strategies |
 | `/aozora/api/aozora_trace/` | Samply trace loader |
 | `/aozora/api/aozora_xtask/` | Dev tooling |
 
