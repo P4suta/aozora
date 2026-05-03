@@ -38,18 +38,19 @@ and **Windows x86_64** are attached to every GitHub Release —
 ### Build from source
 
 ```sh
-cargo install --git https://github.com/P4suta/aozora --tag v0.2.5 --locked aozora-cli
+cargo install --git https://github.com/P4suta/aozora --locked aozora-cli
 ```
+
+(builds the latest `main`; pin to a release tag for reproducible builds —
+see [the install chapter](https://p4suta.github.io/aozora/getting-started/install.html)
+for the tag-pinned form.)
 
 ### As a Rust library
 
-```toml
-[dependencies]
-aozora          = { git = "https://github.com/P4suta/aozora.git", tag = "v0.2.5" }
-aozora-encoding = { git = "https://github.com/P4suta/aozora.git", tag = "v0.2.5" }
-```
-
-(crates.io publication tracks the 1.0 API freeze.)
+The `Cargo.toml` snippet (with the current release tag) lives in the
+[install chapter](https://p4suta.github.io/aozora/getting-started/install.html#as-a-rust-library) —
+keeping it in one place avoids version-pin drift across multiple READMEs.
+crates.io publication tracks the 1.0 API freeze.
 
 For WASM / C ABI / Python bindings see the
 [Bindings chapters](https://p4suta.github.io/aozora/bindings/rust.html) of

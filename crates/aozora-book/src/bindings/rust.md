@@ -5,14 +5,13 @@ borrowed-arena AST exposed directly.
 
 ## Adding to a project
 
-```toml
-[dependencies]
-aozora          = { git = "https://github.com/P4suta/aozora.git", tag = "v0.2.6" }
-aozora-encoding = { git = "https://github.com/P4suta/aozora.git", tag = "v0.2.6" }
-```
+The recommended `Cargo.toml` snippet (with the current release tag)
+lives in the [install chapter](../getting-started/install.html#rust-library).
+Keeping the pin in one place avoids drift between this doc and the
+install page when a new release lands.
 
-crates.io publication tracks the v1.0 API freeze; until then, use a
-git tag.
+crates.io publication tracks the v1.0 API freeze; until then, the git
+tag form documented there is the canonical entry point.
 
 ## Surface
 
