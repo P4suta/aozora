@@ -25,3 +25,5 @@ aozora = { workspace = true }
 [dev-dependencies]
 # Used by render_gate tests for clean diff display on golden mismatch.
 pretty_assertions = { workspace = true }
+proptest          = { workspace = true }
+aozora-proptest   = { workspace = true }

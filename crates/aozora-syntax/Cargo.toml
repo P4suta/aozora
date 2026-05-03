@@ -30,7 +30,9 @@ default = []
 serde   = ["dep:serde", "aozora-spec/serde"]
 
 [dev-dependencies]
-criterion = { workspace = true }
+proptest        = { workspace = true }
+aozora-proptest = { workspace = true }
+criterion       = { workspace = true }
 
 [[bench]]
 name    = "accent_decompose"

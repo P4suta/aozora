@@ -24,4 +24,5 @@ workspace = true
 # (none) — core algorithm is no_std + alloc only.
 
 [dev-dependencies]
-proptest = { workspace = true }
+proptest        = { workspace = true }
+aozora-proptest = { workspace = true }

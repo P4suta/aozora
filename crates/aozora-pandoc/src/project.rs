@@ -11,6 +11,7 @@ use aozora::{
     AlignEnd, Annotation, AnnotationKind, AozoraHeading, AozoraHeadingKind, AozoraTree, Bouten,
     BoutenKind, BoutenPosition, ContainerKind, DoubleRuby, Gaiji, HeadingHint, Indent, Kaeriten,
     NodeRef, Ruby, Sashie, SectionKind, Segment, SourceNode, Span, TateChuYoko, Warichu,
+    pipeline::lexer::sanitize,
     syntax::borrowed::{AozoraNode, Content},
 };
 use pandoc_ast::{Attr, Block, Inline, Pandoc};
@@ -22,7 +23,15 @@ use crate::AOZORA_CLASS_PREFIX;
 /// See the crate-level docs for the projection rules.
 #[must_use]
 pub fn to_pandoc(tree: &AozoraTree<'_>) -> Pandoc {
-    let mut converter = Converter::new(tree.source(), tree.source_nodes());
+    // `source_nodes` indexes into Phase 0's sanitized buffer, not the
+    // raw user-supplied source. For typical input the two are
+    // byte-identical (no BOM, only LF, no `〔..〕` accent rewrites),
+    // but adversarial input that triggers a sanitize rewrite leaves
+    // the offsets pointing into a buffer that no longer matches
+    // `tree.source()`. Re-running sanitize here aligns the slice
+    // base with the source-node coordinate system.
+    let sanitized = sanitize(tree.source());
+    let mut converter = Converter::new(&sanitized.text, tree.source_nodes());
     converter.run();
     Pandoc {
         meta: pandoc_ast::Map::new(),
@@ -224,7 +233,16 @@ impl<'src> Converter<'src> {
     }
 
     fn close_container(&mut self) {
-        let frame = self.stack.pop().expect("close without matching open");
+        // Adversarial / malformed input can emit a BlockClose without
+        // a matching open (the lex pipeline emits a diagnostic but
+        // still surfaces the close in `source_nodes`). Popping the
+        // root frame would leave the converter with an empty stack
+        // and panic on the next `current_frame_mut`. Bottom-of-stack
+        // is the document root, so we keep at least one frame.
+        if self.stack.len() <= 1 {
+            return;
+        }
+        let frame = self.stack.pop().expect("len > 1 above ⇒ pop yields Some");
         self.close_frame(frame);
     }
 

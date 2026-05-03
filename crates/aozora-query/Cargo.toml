@@ -25,4 +25,6 @@ rowan      = { workspace = true }
 thiserror  = { workspace = true }
 
 [dev-dependencies]
-aozora = { workspace = true }
+aozora          = { workspace = true, features = ["cst", "query"] }
+proptest        = { workspace = true }
+aozora-proptest = { workspace = true }

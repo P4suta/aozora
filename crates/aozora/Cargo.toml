@@ -80,4 +80,6 @@ query = ["cst", "dep:aozora-query"]
 [dev-dependencies]
 # Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and
 # verify parse + round-trip invariants on every document.
-aozora-corpus = { workspace = true }
+aozora-corpus   = { workspace = true }
+proptest        = { workspace = true }
+aozora-proptest = { workspace = true }
