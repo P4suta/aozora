@@ -23,7 +23,7 @@
 //! Every inter-phase boundary materialises a [`bumpalo::collections::Vec`]
 //! inside the pipeline's [`Arena`]. Phase 1 emits `BumpVec<'a, Token>`;
 //! Phase 2 emits `BumpVec<'a, PairEvent>`; Phase 3 streams its
-//! `ClassifiedSpan`s through the [`crate::borrowed::ArenaNormalizer`]
+//! `ClassifiedSpan`s through the `ArenaNormalizer`
 //! callback (no third Vec materialisation — the streaming `classify`
 //! Iterator path is the cheapest shape on the corpus).
 //!
@@ -66,7 +66,7 @@
 //! it `!Sync`; threading `&mut alloc` through Pipeline states would
 //! force the allocator to live as long as the pipeline, blocking any
 //! external pause-and-inspect between Phase 2 and Phase 3. We
-//! collapse Phase 3 + the [`crate::borrowed::ArenaNormalizer`] fold
+//! collapse Phase 3 + the `ArenaNormalizer` fold
 //! into a single terminal `.build()` call instead — inspection up
 //! through `Paired` works freely; the final allocation pass is
 //! atomic.
@@ -253,7 +253,7 @@ impl<'src, 'a> Pipeline<'src, 'a, Tokenized> {
             .expect("tokens is always Some after Tokenized transition")
     }
 
-    /// Run Phase 2 (pair). Materialises [`PairEventStream<'a>`]
+    /// Run Phase 2 (pair). Materialises a paired-event stream
     /// inside `arena` via [`pair_in`]. Phase 2's
     /// diagnostics are drained into the pipeline's diagnostic
     /// accumulator immediately.

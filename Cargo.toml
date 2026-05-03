@@ -77,14 +77,7 @@ dead_code = "deny"
 rust_2024_compatibility = { level = "warn", priority = -1 }
 
 [workspace.lints.rustdoc]
-# Demoted from "deny" during the v0.1.0 → v0.2.0 split: AozoraNode
-# moved from crate root into `aozora_syntax::borrowed`, which left
-# ~80 `[crate::AozoraNode]`-style links pointing at stale paths
-# across the workspace. They're harmless link-text issues, not
-# correctness ones, but blocking docs build on them stalls the public
-# Pages deploy. Re-tighten to "deny" once the doc-link cleanup pass
-# lands (tracked issue: re-introduce after publication transition).
-broken_intra_doc_links       = "warn"
+broken_intra_doc_links       = "deny"
 private_intra_doc_links      = "warn"
 invalid_codeblock_attributes = "warn"
 invalid_html_tags            = "warn"

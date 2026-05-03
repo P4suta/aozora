@@ -2,7 +2,7 @@
 //!
 //! `aozora-cst` builds a [rowan][rowan]-backed `SyntaxNode` tree as
 //! a **pure projection** over the public surface of
-//! [`aozora::AozoraTree`] — no changes to the lex pipeline are
+//! `aozora::AozoraTree` — no changes to the lex pipeline are
 //! required. The decoupled architecture means the CST stays
 //! reproducible from source bytes alone, and adding/removing CST
 //! consumers does not perturb the AST's perf-critical path.
@@ -32,7 +32,7 @@
 //! ## Granularity
 //!
 //! aozora's classifier emits per-construct spans
-//! ([`aozora::SourceNode`]). The CST projection treats each span
+//! (`aozora::SourceNode`). The CST projection treats each span
 //! as a `Construct` node containing one `Text` token whose bytes
 //! equal the source slice; bytes between spans become standalone
 //! `Plain` text tokens. Container open / close events nest the

@@ -2,7 +2,7 @@
 //! buffer, and `AozoraTree<'a>` — borrowed view a caller walks for
 //! output rendering.
 //!
-//! `Document` owns both the source buffer and a [`bumpalo`]-backed
+//! `Document` owns both the source buffer and a `bumpalo`-backed
 //! [`Arena`]; [`Document::parse`] returns an [`AozoraTree<'_>`]
 //! that borrows from the arena via the `&self` lifetime. Owning
 //! source removes the self-referential-struct problem that would
@@ -59,7 +59,7 @@ pub enum DiagnosticPolicy {
 ///
 /// [`ParseOptions`] is the single tunable surface for arena capacity,
 /// encoding choice, and diagnostic policy. [`Document::new`] is
-/// equivalent to [`ParseOptions::new().build(source)`].
+/// equivalent to `ParseOptions::new().build(source)`.
 ///
 /// The builder methods consume `self` and return the next stage so
 /// the chain reads top-to-bottom and so unused options never leave a
@@ -73,7 +73,7 @@ pub struct ParseOptions {
 
 impl ParseOptions {
     /// Default options: arena capacity is computed from
-    /// [`ARENA_CAPACITY_FACTOR`], every diagnostic is collected.
+    /// `ARENA_CAPACITY_FACTOR`, every diagnostic is collected.
     pub fn new() -> Self {
         Self::default()
     }
@@ -110,7 +110,7 @@ impl ParseOptions {
 
 /// Single owning handle to a parsed Aozora source.
 ///
-/// Owns both the source buffer and a [`bumpalo`]-backed [`Arena`].
+/// Owns both the source buffer and a `bumpalo`-backed [`Arena`].
 /// The `&self` lifetime parameterises every borrowed-AST view
 /// returned from [`Document::parse`]; consumers hold the tree only
 /// as long as they hold a `&Document` reference.
@@ -300,7 +300,7 @@ impl<'a> AozoraTree<'a> {
 
     /// Find the node whose source span covers `src_off` — a
     /// sanitized-source byte offset, typed as
-    /// [`SourceOffset`](aozora_spec::SourceOffset) so callers cannot
+    /// [`aozora_spec::SourceOffset`] so callers cannot
     /// accidentally mix up source and normalized coordinates.
     /// Returns `None` if the offset falls inside a `SpanKind::Plain`
     /// run between Aozora constructs.
@@ -313,7 +313,7 @@ impl<'a> AozoraTree<'a> {
 
     /// Find the registry entry at `normalized_off` — a byte offset
     /// into the normalized PUA-rewritten text, typed as
-    /// [`NormalizedOffset`](aozora_spec::NormalizedOffset) so callers
+    /// [`aozora_spec::NormalizedOffset`] so callers
     /// cannot pass a source-coordinate offset by mistake. For LSP
     /// requests against the original source text, prefer
     /// [`Self::node_at_source`].

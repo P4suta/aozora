@@ -67,9 +67,9 @@ pub use aozora_spec::{PairKind, PairLink};
 /// `PairOpen` and `PairClose` carry only their `kind` and `span`.
 /// Body cross-link information (which `PairOpen` matches which
 /// `PairClose` inside a body buffer) is maintained out-of-band by
-/// Phase 3 in a parallel `pair_links` side-table — see
-/// [`crate::phase3_classify::BodyView`]. This keeps `PairEvent`'s API
-/// clean (no dual-meaning fields between phase 2 emission and phase 3
+/// Phase 3 in a parallel `pair_links` side-table inside the
+/// classifier's `BodyView`. This keeps `PairEvent`'s API clean (no
+/// dual-meaning fields between phase 2 emission and phase 3
 /// internal patching).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]

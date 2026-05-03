@@ -57,9 +57,9 @@
 //! [`Archive::open`] would benefit from `mmap` for zero-copy reads,
 //! but the workspace forbids `unsafe` here. Instead, the whole file
 //! is read into a single `Vec<u8>` (one `fs::read`
-//! syscall, kernel does one page-cache → vec memcpy). [`ArchiveEntry`]
-//! borrows from the archive's payload, so iterators yield zero-copy
-//! `&[u8]` slices for raw payloads. zstd-decompressed entries
+//! syscall, kernel does one page-cache → vec memcpy).
+//! [`Archive::iter_borrowed`] yields zero-copy `&[u8]` slices into
+//! the archive's payload for raw entries; zstd-decompressed entries
 //! materialise into a fresh `Vec<u8>` per call (decompression
 //! intrinsically allocates).
 
@@ -241,8 +241,8 @@ pub struct Archive {
 
 impl Archive {
     /// Open and fully load an archive from disk. Reads the file in
-    /// one [`fs::read`] call; subsequent [`Self::iter`] / [`Self::get`]
-    /// calls slice into the in-memory buffer.
+    /// one [`fs::read`] call; subsequent [`Self::iter`] /
+    /// [`Self::iter_borrowed`] calls slice into the in-memory buffer.
     ///
     /// # Errors
     ///

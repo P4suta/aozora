@@ -112,7 +112,7 @@ pub struct InternStats {
     /// Calls that allocated a new entry into the arena.
     pub allocs: u64,
     /// Calls that bypassed the table because the string exceeded
-    /// [`INTERN_LENGTH_LIMIT`] — counted as an alloc as well.
+    /// `INTERN_LENGTH_LIMIT` — counted as an alloc as well.
     pub long_bypass: u64,
     /// Total resize events the table performed.
     pub resizes: u64,
@@ -124,7 +124,7 @@ pub struct InternStats {
 
 impl<'a> Interner<'a> {
     /// Empty interner backed by `arena`. Initial capacity is
-    /// [`INITIAL_CAPACITY`].
+    /// `INITIAL_CAPACITY`.
     #[must_use]
     pub fn new_in(arena: &'a Arena) -> Self {
         Self::with_capacity_in(INITIAL_CAPACITY, arena)

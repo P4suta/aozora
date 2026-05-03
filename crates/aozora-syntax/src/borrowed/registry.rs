@@ -22,10 +22,9 @@
 //! the previous), so construction can short-circuit the sort step
 //! that a general-purpose builder would need.
 //!
-//! # Coexistence
-//!
-//! This is the borrowed-AST registry. The legacy
-//! [`crate::PlaceholderRegistry`] is the owned-AST equivalent.
+//! Position-keyed map from `NormalizedOffset` to AST node, backed by
+//! [`aozora_veb::EytzingerMap`] for cache-friendly lookups during
+//! render-time traversal.
 
 use crate::extension::ContainerKind;
 
@@ -44,16 +43,16 @@ use super::types::AozoraNode;
 #[non_exhaustive]
 pub enum NodeRef<'src> {
     /// Hit on an inline-sentinel position
-    /// ([`Sentinel::Inline`](aozora_spec::Sentinel::Inline)).
+    /// ([`aozora_spec::Sentinel::Inline`]).
     Inline(AozoraNode<'src>),
     /// Hit on a block-leaf-sentinel position
-    /// ([`Sentinel::BlockLeaf`](aozora_spec::Sentinel::BlockLeaf)).
+    /// ([`aozora_spec::Sentinel::BlockLeaf`]).
     BlockLeaf(AozoraNode<'src>),
     /// Hit on a block-container-open position
-    /// ([`Sentinel::BlockOpen`](aozora_spec::Sentinel::BlockOpen)).
+    /// ([`aozora_spec::Sentinel::BlockOpen`]).
     BlockOpen(ContainerKind),
     /// Hit on a block-container-close position
-    /// ([`Sentinel::BlockClose`](aozora_spec::Sentinel::BlockClose)).
+    /// ([`aozora_spec::Sentinel::BlockClose`]).
     BlockClose(ContainerKind),
 }
 

@@ -30,7 +30,7 @@
 //!
 //! # Architecture
 //!
-//! [`Document`] owns the source buffer plus a [`bumpalo`]-backed
+//! [`Document`] owns the source buffer plus a `bumpalo`-backed
 //! arena. [`AozoraTree`] borrows from that arena via the `&self`
 //! lifetime returned by [`Document::parse`]. Every per-node
 //! allocation lives inside the arena, with the
@@ -82,7 +82,7 @@ pub use document::{AozoraTree, DiagnosticPolicy, Document, ParseOptions};
 /// Editor integrations that want per-phase access
 /// (`pipeline::lexer::*` for the phase functions, `pipeline::Pipeline`
 /// for the type-state machine) reach through this module so the
-/// wider workspace can keep [`aozora`] as the single front door. The
+/// wider workspace can keep `aozora` as the single front door. The
 /// `aozora-pipeline` crate is `publish = false` and only callable
 /// via this re-export.
 pub mod pipeline {

@@ -8,10 +8,10 @@
 //! text, capturing every PUA sentinel + `\n` in O(n). Plain text
 //! between matches flows through the bulk-copy escape pass; sentinels
 //! dispatch into [`crate::render_node::render`] via the borrowed
-//! registry's [`EytzingerMap::get`] lookup.
+//! registry's `EytzingerMap::get` lookup.
 //!
 //! Block structure mirrors the legacy walker: a two-state machine
-//! [`RenderState::ensure_in_paragraph`] / [`RenderState::close_paragraph`]
+//! `RenderState::ensure_in_paragraph` / `RenderState::close_paragraph`
 //! emits `<p>` / `</p>` symmetrically; standalone block nodes (and
 //! container open/close events) flush the current paragraph first.
 

@@ -8,7 +8,7 @@
 //! Convention: a function `foo(trace, …)` produces a `FooReport`
 //! whose `render_table()` yields the human form. Splits along these
 //! lines so the CLI is a thin shell, and so cross-trace pipelines
-//! (e.g. [`compare`]) can re-use the typed reports.
+//! (e.g. [`compare()`]) can re-use the typed reports.
 
 mod compare;
 mod flame;

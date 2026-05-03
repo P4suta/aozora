@@ -12,9 +12,9 @@
 //! captures `description` and `mencode` verbatim and leaves `ucs = None`;
 //! this module turns that reference into a concrete [`Resolved`] by
 //! consulting two `phf::Map`s compiled into the binary
-//! ([`JISX0213_MENCODE_TO_CHAR`] for the single-codepoint majority and
-//! [`JISX0213_MENCODE_TO_STR`] for the 25 combining-sequence cells)
-//! and, for `U+XXXX` shaped mencodes, parsing the hex digits directly.
+//! (one for the single-codepoint majority and one for the 25
+//! combining-sequence cells) and, for `U+XXXX` shaped mencodes,
+//! parsing the hex digits directly.
 //!
 //! ## Why a `Resolved` enum
 //!
@@ -24,8 +24,8 @@
 //! carry them, so the resolved value is either a [`char`] (the
 //! ~99.4% common path) or a `&'static str` borrowed from the
 //! generated combo table. Both variants are `Copy`, so embedding
-//! `Option<Resolved>` in [`crate::Gaiji`] does not perturb the
-//! parser's `Copy`-able tree.
+//! `Option<Resolved>` in the parser's `Gaiji` payload does not
+//! perturb its `Copy`-able tree.
 //!
 //! ## Lookup order
 //!

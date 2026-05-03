@@ -1,4 +1,4 @@
-//! CST build path: project [`aozora::AozoraTree`] into a rowan
+//! CST build path: project `aozora::AozoraTree` into a rowan
 //! `SyntaxNode` tree using the public source-node + container-pair
 //! surface only.
 
