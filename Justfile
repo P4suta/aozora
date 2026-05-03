@@ -172,6 +172,28 @@ corpus-sweep:
 bench *ARGS:
     {{_dev}} cargo bench --workspace {{ARGS}}
 
+# Save the current bench output as a named baseline that
+# `bench-compare` can diff against later. Use before a refactor to
+# pin "as-of" perf, then run `bench-compare <name>` post-change to
+# get criterion's statistical comparison (mean change ± p-value)
+# against the same baseline.
+#
+# Manual / release-cut workflow only — `just ci` does NOT call this.
+# Bench drift gating in CI is intentionally avoided: shared GHA
+# runners have too much per-job noise for a 5%-threshold to be
+# trustworthy without a self-hosted runner. Local runs on the
+# author's machine give a stable signal at the cost of being
+# discretionary.
+bench-baseline NAME="main":
+    {{_dev}} cargo bench --workspace -- --save-baseline {{NAME}}
+
+# Re-run benches and compare against an earlier saved baseline.
+# Criterion prints mean / stddev / p-value per bench; a regression
+# > 5% with `change.p_value < 0.05` is a meaningful signal worth
+# investigating before cutting a release.
+bench-compare NAME="main":
+    {{_dev}} cargo bench --workspace -- --baseline {{NAME}}
+
 # --- coverage -----------------------------------------------------------------
 
 # Coverage gate. Fails when region coverage drops below `_COV_FLOOR`.
@@ -196,8 +218,11 @@ bench *ARGS:
 #
 # `_COV_FLOOR` is the enforced minimum, not the goal. The workspace
 # policy targets 100% on production code; the floor ratchets upward
-# in follow-up commits that close specific gaps.
-_COV_FLOOR := "0"
+# in follow-up commits that close specific gaps. Today's measurement
+# (73.93%) sets the floor at 73 with a 1-point margin so a borderline
+# refactor doesn't trip the gate spuriously — push it up by hand
+# whenever a coverage-closing PR lands.
+_COV_FLOOR := "73"
 _COV_IGNORE := "(target/|/main\\.rs$)"
 
 coverage:
@@ -716,6 +741,13 @@ ci:
     just prop
     just udeps
     just coverage
+    # No-op when AOZORA_CORPUS_ROOT is unset (the recipe prints an
+    # informational line and exits 0). On a developer machine that
+    # has a corpus checkout exported in the environment, this gives
+    # `just ci` an additional adversarial-input pass over real
+    # documents — surfacing parse panics / round-trip diverge that
+    # the synthetic proptests don't reach.
+    just corpus-sweep
 
     # Reap the background trio. Print their captured output (so
     # failure detail is preserved) and propagate non-zero status.
