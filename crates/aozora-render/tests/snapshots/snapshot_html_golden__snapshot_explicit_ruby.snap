@@ -1,0 +1,5 @@
+---
+source: crates/aozora-render/tests/snapshot_html_golden.rs
+expression: "render(\"｜青梅《おうめ》\")"
+---
+<p><ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby></p>

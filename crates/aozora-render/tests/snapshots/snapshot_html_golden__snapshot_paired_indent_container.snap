@@ -1,0 +1,7 @@
+---
+source: crates/aozora-render/tests/snapshot_html_golden.rs
+expression: "render(\"［＃ここから2字下げ］\\nbody\\n［＃ここで字下げ終わり］\")"
+---
+<div class="aozora-container aozora-container-indent aozora-container-indent-2" data-amount="2">
+<p>body</p>
+</div>

@@ -1,0 +1,5 @@
+---
+source: crates/aozora-render/tests/snapshot_html_golden.rs
+expression: "render(\"Hello, world.\")"
+---
+<p>Hello, world.</p>

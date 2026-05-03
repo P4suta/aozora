@@ -1,0 +1,20 @@
+---
+source: crates/aozora-cli/tests/snapshot_cli.rs
+expression: "run(&[\"fmt\", \"--help\"])"
+---
+Round-trip parse ∘ serialize and emit the canonical form
+
+Usage: aozora fmt [OPTIONS] [FILE]
+
+Arguments:
+  [FILE]  Input path; pass `-` (or omit) to read from stdin [default: -]
+
+Options:
+      --check                Exit non-zero if the formatted output differs from the input (after the
+                             lexer's sanitize phase: BOM strip, CRLF→LF). Mutually exclusive with
+                             `--write`
+      --write                Overwrite the input file with the formatted output. Ignored when
+                             reading from stdin
+  -E, --encoding <ENCODING>  Source encoding [default: utf8] [possible values: utf8, sjis]
+  -h, --help                 Print help
+  -V, --version              Print version

@@ -56,6 +56,19 @@ test *ARGS:
 test-doc:
     {{_dev}} cargo test --workspace --doc
 
+# Refresh insta snapshot files in place. Used after an intentional
+# change to a snapshot-tested surface (rendered HTML, AST `Debug`,
+# CLI `--help`). Sets `INSTA_UPDATE=always` so the test runner
+# overwrites the on-disk `.snap` files instead of failing on the
+# diff. Review `git diff` afterwards before committing — accepting a
+# snapshot is reviewing a public surface change.
+#
+# CLI tool (`cargo insta`) is intentionally not used; the
+# `INSTA_UPDATE` env knob is the same surface and stays inside the
+# already-vendored `insta` workspace dep.
+snapshot-update:
+    {{_dev}} env INSTA_UPDATE=always cargo nextest run --workspace --all-targets
+
 # Phase K3 — byte-identical render gate. Loads aozora-conformance
 # fixtures and asserts current parse → render output matches golden
 # files. Set UPDATE_GOLDEN=1 to refresh after intentional output

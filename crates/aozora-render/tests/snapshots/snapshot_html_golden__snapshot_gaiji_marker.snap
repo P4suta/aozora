@@ -1,0 +1,5 @@
+---
+source: crates/aozora-render/tests/snapshot_html_golden.rs
+expression: "render(\"※［＃「木＋吶のつくり」、第3水準1-85-54］\")"
+---
+<p><span class="aozora-gaiji" data-codepoint="U+6798">枘</span></p>
