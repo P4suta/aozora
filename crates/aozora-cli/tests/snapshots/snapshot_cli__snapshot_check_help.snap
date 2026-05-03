@@ -1,0 +1,16 @@
+---
+source: crates/aozora-cli/tests/snapshot_cli.rs
+expression: "run(&[\"check\", \"--help\"])"
+---
+Run the lexer over a file and report diagnostics
+
+Usage: aozora check [OPTIONS] [FILE]
+
+Arguments:
+  [FILE]  Input path; pass `-` (or omit) to read from stdin [default: -]
+
+Options:
+  -s, --strict               Exit non-zero on any diagnostic
+  -E, --encoding <ENCODING>  Source encoding [default: utf8] [possible values: utf8, sjis]
+  -h, --help                 Print help
+  -V, --version              Print version

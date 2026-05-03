@@ -32,6 +32,7 @@ serde   = ["dep:serde", "aozora-spec/serde"]
 [dev-dependencies]
 proptest        = { workspace = true }
 aozora-proptest = { workspace = true }
+insta           = { workspace = true }
 criterion       = { workspace = true }
 
 [[bench]]

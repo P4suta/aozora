@@ -1,0 +1,5 @@
+---
+source: crates/aozora-cli/tests/snapshot_cli.rs
+expression: "run(&[\"--version\"])"
+---
+aozora [VERSION]

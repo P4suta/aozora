@@ -1,0 +1,138 @@
+---
+source: crates/aozora-syntax/tests/snapshot_ast_pretty.rs
+expression: "format!(\"{nodes:#?}\")"
+---
+[
+    Ruby(
+        Ruby {
+            base: NonEmpty(
+                Plain(
+                    "base",
+                ),
+            ),
+            reading: NonEmpty(
+                Plain(
+                    "よみ",
+                ),
+            ),
+            delim_explicit: true,
+        },
+    ),
+    Bouten(
+        Bouten {
+            kind: Goma,
+            target: NonEmpty(
+                Plain(
+                    "base",
+                ),
+            ),
+            position: Right,
+        },
+    ),
+    TateChuYoko(
+        TateChuYoko {
+            text: NonEmpty(
+                Plain(
+                    "base",
+                ),
+            ),
+        },
+    ),
+    Gaiji(
+        Gaiji {
+            description: "木＋吶",
+            ucs: Some(
+                Char(
+                    'A',
+                ),
+            ),
+            mencode: Some(
+                "第3水準",
+            ),
+        },
+    ),
+    Indent(
+        Indent {
+            amount: 2,
+        },
+    ),
+    AlignEnd(
+        AlignEnd {
+            offset: 2,
+        },
+    ),
+    Warichu(
+        Warichu {
+            upper: Plain(
+                "up",
+            ),
+            lower: Plain(
+                "lo",
+            ),
+        },
+    ),
+    Keigakomi(
+        Keigakomi,
+    ),
+    PageBreak,
+    SectionBreak(
+        Choho,
+    ),
+    AozoraHeading(
+        AozoraHeading {
+            kind: Window,
+            text: NonEmpty(
+                Plain(
+                    "base",
+                ),
+            ),
+        },
+    ),
+    HeadingHint(
+        HeadingHint {
+            level: 2,
+            target: NonEmptyStr(
+                "対象",
+            ),
+        },
+    ),
+    Sashie(
+        Sashie {
+            file: NonEmptyStr(
+                "file.png",
+            ),
+            caption: None,
+        },
+    ),
+    Kaeriten(
+        Kaeriten {
+            mark: NonEmptyStr(
+                "一",
+            ),
+        },
+    ),
+    Annotation(
+        Annotation {
+            raw: NonEmptyStr(
+                "annotation",
+            ),
+            kind: Unknown,
+        },
+    ),
+    DoubleRuby(
+        DoubleRuby {
+            content: NonEmpty(
+                Plain(
+                    "base",
+                ),
+            ),
+        },
+    ),
+    Container(
+        Container {
+            kind: Indent {
+                amount: 1,
+            },
+        },
+    ),
+]

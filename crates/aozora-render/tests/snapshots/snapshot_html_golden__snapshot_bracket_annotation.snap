@@ -1,0 +1,7 @@
+---
+source: crates/aozora-render/tests/snapshot_html_golden.rs
+expression: "render(\"text［＃改ページ］more text\")"
+---
+<p>text</p>
+<div class="aozora-page-break"></div>
+<p>more text</p>

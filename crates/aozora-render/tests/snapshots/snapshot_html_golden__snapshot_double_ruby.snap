@@ -1,0 +1,5 @@
+---
+source: crates/aozora-render/tests/snapshot_html_golden.rs
+expression: "render(\"《《重要》》\")"
+---
+<p><span class="aozora-double-ruby">≪重要≫</span></p>
