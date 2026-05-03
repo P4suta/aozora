@@ -29,8 +29,17 @@
 //!
 //! Net effect on the corpus profile: per-parse `malloc`/`free`
 //! traffic collapses into a single bump-pointer advance per element.
-//! Each state holds its phase output as a concrete
-//! `Option<BumpVec<'a, …>>` field.
+//!
+//! # State carries its own payload
+//!
+//! Each state marker is a field-bound struct holding exactly the
+//! phase outputs it has produced (`Sanitized` carries the arena
+//! `&'a str`; `Tokenized` adds the token `BumpVec`; …). Reading
+//! `.sanitized_text()` from `Pipeline<'_, '_, Sanitized>` is a
+//! field projection on the state struct — no `Option::expect`
+//! lives in production code. The compiler enforces "you cannot
+//! ask for tokens unless you are in `Tokenized`" via method
+//! resolution alone.
 //!
 //! # Lifetime model
 //!
@@ -84,53 +93,55 @@ use crate::BorrowedLexOutput;
 use crate::borrowed::{ArenaNormalizer, SourceNode};
 
 // =====================================================================
-// State markers
+// State markers (field-bound — each state carries the phase output it
+// is responsible for. No `Option` / `expect` chain in production code:
+// the type system guarantees the field is present whenever the state
+// type can be named).
 // =====================================================================
 
-/// Initial state — only `source` and `arena` are set.
+/// Initial state — no phase has run yet.
 #[derive(Debug, Clone, Copy)]
 pub struct Source;
 
 /// Phase 0 has run; sanitized text is materialised in the arena.
 #[derive(Debug, Clone, Copy)]
-pub struct Sanitized;
+pub struct Sanitized<'a> {
+    sanitized_text: &'a str,
+}
 
-/// Phase 1 has run; `tokens: BumpVec<'a, Token>` materialised in arena.
-#[derive(Debug, Clone, Copy)]
-pub struct Tokenized;
+/// Phase 1 has run; the token list is materialised inside the arena.
+#[derive(Debug)]
+pub struct Tokenized<'a> {
+    sanitized_text: &'a str,
+    tokens: BumpVec<'a, Token>,
+}
 
-/// Phase 2 has run; `events: BumpVec<'a, PairEvent>` materialised in arena.
-#[derive(Debug, Clone, Copy)]
-pub struct Paired;
+/// Phase 2 has run; the event list and the resolved (open, close)
+/// link side-table are materialised inside the arena.
+#[derive(Debug)]
+pub struct Paired<'a> {
+    sanitized_text: &'a str,
+    events: BumpVec<'a, PairEvent>,
+    links: BumpVec<'a, PairLink>,
+}
 
 // =====================================================================
 // Pipeline
 // =====================================================================
 
 /// Type-state lex pipeline. Each state's transition method consumes
-/// `self`, materialises its phase output, and returns a new pipeline
-/// in the next state.
+/// `self`, materialises its phase output into the next state struct,
+/// and returns a new pipeline in the next state.
 #[derive(Debug)]
 pub struct Pipeline<'src, 'a, S> {
     source: &'src str,
     arena: &'a Arena,
-    /// `Some` after Phase 0 has run; arena-allocated. Borrowed by every
-    /// downstream phase so the iterators don't refer back into the
-    /// Pipeline struct itself.
-    sanitized_text: Option<&'a str>,
-    /// `Some` after Phase 1 has materialised the token list inside
-    /// `arena`.
-    tokens: Option<BumpVec<'a, Token>>,
-    /// `Some` after Phase 2 has materialised the event list inside
-    /// `arena`.
-    events: Option<BumpVec<'a, PairEvent>>,
-    /// `Some` after Phase 2; resolved (open, close) pair side-table
-    /// for editor surfaces. Drained into the final
-    /// [`BorrowedLexOutput::pairs`] slice in the [`Self::build`]
-    /// terminal step.
-    links: Option<BumpVec<'a, PairLink>>,
     diagnostics: Vec<Diagnostic>,
-    _state: PhantomData<S>,
+    state: S,
+    // Tie the unused `'a` lifetime to the struct so the compiler
+    // accepts state structs that reference the arena even when the
+    // current state marker (`Source`) doesn't. Zero size at runtime.
+    _arena: PhantomData<&'a Arena>,
 }
 
 // ---------------------------------------------------------------------
@@ -145,12 +156,9 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
         Self {
             source,
             arena,
-            sanitized_text: None,
-            tokens: None,
-            events: None,
-            links: None,
             diagnostics: Vec::new(),
-            _state: PhantomData,
+            state: Source,
+            _arena: PhantomData,
         }
     }
 
@@ -175,19 +183,18 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
     /// arena so downstream phases borrow from the arena, not from the
     /// Pipeline struct (which would be self-referential).
     #[must_use]
-    pub fn sanitize(mut self) -> Pipeline<'src, 'a, Sanitized> {
+    pub fn sanitize(mut self) -> Pipeline<'src, 'a, Sanitized<'a>> {
         let out = sanitize(self.source);
         self.diagnostics.extend(out.diagnostics);
         let arena_text: &'a str = self.arena.alloc_str(&out.text);
         Pipeline {
             source: self.source,
             arena: self.arena,
-            sanitized_text: Some(arena_text),
-            tokens: None,
-            events: None,
-            links: None,
             diagnostics: self.diagnostics,
-            _state: PhantomData,
+            state: Sanitized {
+                sanitized_text: arena_text,
+            },
+            _arena: PhantomData,
         }
     }
 }
@@ -196,17 +203,11 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
 // Sanitized
 // ---------------------------------------------------------------------
 
-impl<'src, 'a> Pipeline<'src, 'a, Sanitized> {
+impl<'src, 'a> Pipeline<'src, 'a, Sanitized<'a>> {
     /// Sanitized text (arena-allocated).
-    ///
-    /// # Panics
-    ///
-    /// Cannot panic in normal use: `sanitized_text` is always `Some`
-    /// after the `Sanitized` state has been reached.
     #[must_use]
     pub fn sanitized_text(&self) -> &'a str {
-        self.sanitized_text
-            .expect("sanitized_text is always Some after Sanitized transition")
+        self.state.sanitized_text
     }
 
     /// Diagnostics accumulated through Phase 0.
@@ -216,21 +217,20 @@ impl<'src, 'a> Pipeline<'src, 'a, Sanitized> {
     }
 
     /// Run Phase 1 (tokenize). Materialises the full
-    /// `BumpVec<'a, Token>` inside `arena` via [`tokenize_in`]
-    ///.
+    /// `BumpVec<'a, Token>` inside `arena` via [`tokenize_in`].
     #[must_use]
-    pub fn tokenize(self) -> Pipeline<'src, 'a, Tokenized> {
-        let text = self.sanitized_text();
-        let tokens = tokenize_in(text, self.arena);
+    pub fn tokenize(self) -> Pipeline<'src, 'a, Tokenized<'a>> {
+        let sanitized_text = self.state.sanitized_text;
+        let tokens = tokenize_in(sanitized_text, self.arena);
         Pipeline {
             source: self.source,
             arena: self.arena,
-            sanitized_text: self.sanitized_text,
-            tokens: Some(tokens),
-            events: None,
-            links: None,
             diagnostics: self.diagnostics,
-            _state: PhantomData,
+            state: Tokenized {
+                sanitized_text,
+                tokens,
+            },
+            _arena: PhantomData,
         }
     }
 }
@@ -239,47 +239,35 @@ impl<'src, 'a> Pipeline<'src, 'a, Sanitized> {
 // Tokenized
 // ---------------------------------------------------------------------
 
-impl<'src, 'a> Pipeline<'src, 'a, Tokenized> {
+impl<'src, 'a> Pipeline<'src, 'a, Tokenized<'a>> {
     /// Borrow the materialised token list. Useful for instrumentation.
-    ///
-    /// # Panics
-    ///
-    /// Cannot panic in normal use: `tokens` is always `Some` after the
-    /// `Tokenized` state has been reached.
     #[must_use]
     pub fn tokens(&self) -> &[Token] {
-        self.tokens
-            .as_deref()
-            .expect("tokens is always Some after Tokenized transition")
+        &self.state.tokens
     }
 
     /// Run Phase 2 (pair). Materialises a paired-event stream
     /// inside `arena` via [`pair_in`]. Phase 2's
     /// diagnostics are drained into the pipeline's diagnostic
     /// accumulator immediately.
-    ///
-    /// # Panics
-    ///
-    /// Cannot panic in normal use: `tokens` is always `Some` after
-    /// the `Tokenized` state has been reached. The expect is a
-    /// type-state invariant guard.
     #[must_use]
-    pub fn pair(mut self) -> Pipeline<'src, 'a, Paired> {
-        let tokens = self
-            .tokens
-            .take()
-            .expect("tokens is always Some after Tokenized transition");
+    pub fn pair(mut self) -> Pipeline<'src, 'a, Paired<'a>> {
+        let Tokenized {
+            sanitized_text,
+            tokens,
+        } = self.state;
         let out = pair_in(&tokens, self.arena);
         self.diagnostics.extend(out.diagnostics);
         Pipeline {
             source: self.source,
             arena: self.arena,
-            sanitized_text: self.sanitized_text,
-            tokens: None,
-            events: Some(out.events),
-            links: Some(out.links),
             diagnostics: self.diagnostics,
-            _state: PhantomData,
+            state: Paired {
+                sanitized_text,
+                events: out.events,
+                links: out.links,
+            },
+            _arena: PhantomData,
         }
     }
 }
@@ -288,33 +276,19 @@ impl<'src, 'a> Pipeline<'src, 'a, Tokenized> {
 // Paired (terminal)
 // ---------------------------------------------------------------------
 
-impl<'a> Pipeline<'_, 'a, Paired> {
+impl<'a> Pipeline<'_, 'a, Paired<'a>> {
     /// Borrow the materialised pair-event list. Useful for inspection
     /// before `.build()`.
-    ///
-    /// # Panics
-    ///
-    /// Cannot panic in normal use: `events` is always `Some` after the
-    /// `Paired` state has been reached.
     #[must_use]
     pub fn events(&self) -> &[PairEvent] {
-        self.events
-            .as_deref()
-            .expect("events is always Some after Paired transition")
+        &self.state.events
     }
 
     /// Borrow the resolved (open, close) pair side-table. Useful for
     /// inspection before `.build()`.
-    ///
-    /// # Panics
-    ///
-    /// Cannot panic in normal use: `links` is always `Some` after the
-    /// `Paired` state has been reached.
     #[must_use]
     pub fn links(&self) -> &[PairLink] {
-        self.links
-            .as_deref()
-            .expect("links is always Some after Paired transition")
+        &self.state.links
     }
 
     /// Drive Phase 3 + the arena normalizer fold and return the final
@@ -336,20 +310,13 @@ impl<'a> Pipeline<'_, 'a, Paired> {
     /// Phase 0 caps source length at the same boundary.
     #[must_use]
     pub fn build(mut self) -> BorrowedLexOutput<'a> {
-        let sanitized_text = self
-            .sanitized_text
-            .expect("sanitized_text is always Some after Sanitized transition");
+        let Paired {
+            sanitized_text,
+            events,
+            links,
+        } = self.state;
         let sanitized_len =
             u32::try_from(sanitized_text.len()).expect("sanitize asserts source.len() <= u32::MAX");
-
-        let events = self
-            .events
-            .take()
-            .expect("events is always Some after Paired transition");
-        let links = self
-            .links
-            .take()
-            .expect("links is always Some after Paired transition");
 
         // Allocator capacity hint: source.len()/32 is a rough upper bound
         // on the number of distinct strings the borrowed pipeline will

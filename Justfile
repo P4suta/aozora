@@ -407,22 +407,25 @@ strict-code:
         failed=1
     fi
 
-    # ---- expect() in production pipeline code (calibration gate) ----------
-    # Pipeline state-transition code carries 58 `expect()` calls
-    # today, all on `Option<T>` fields whose `Some`-ness is in fact
-    # guaranteed by the surrounding type-state. PR 4 of the
-    # quality-hardening plan replaces the runtime assertion with a
-    # field-bound state struct that makes the invariant a type-level
-    # fact; this gate is a calibration baseline so any *new* `expect`
-    # in pipeline source fails the build before the refactor lands.
-    # Tests / benches / examples are exempt — the rule is about
-    # production paths only.
+    # ---- expect() in pipeline source files (regression gate) ----------
+    # Counts every `.expect(` in `crates/aozora-pipeline/src/**` —
+    # including test-module bodies, since this is a coarse "no
+    # regression" tripwire, not a precise audit. PR 4 of the
+    # quality-hardening plan replaced pipeline.rs's state-transition
+    # `Option::expect` chain (13 calls) with a field-bound type-state
+    # struct, dropping the workspace total from 58 to 50; the
+    # remaining 50 are split across genuine bounds checks
+    # (`u32::try_from(len).expect("fits per Phase 0 cap")`),
+    # locally-justified `next().expect()` after a length check, and
+    # in-source `#[cfg(test)] mod tests` assertions. The baseline
+    # gates against new state-assertion-style expects landing in
+    # production paths.
     expect_files=(crates/aozora-pipeline/src/**/*.rs)
     expect_count=$(grep -hcE '\.expect\(' "${expect_files[@]}" 2>/dev/null \
         | awk '{s+=$1} END {print s+0}')
-    expect_baseline=58
+    expect_baseline=50
     if [[ "$expect_count" -gt "$expect_baseline" ]]; then
-        echo "==> forbidden: expect() count in aozora-pipeline production code grew" >&2
+        echo "==> forbidden: expect() count in aozora-pipeline source grew" >&2
         echo "    baseline: $expect_baseline, found: $expect_count" >&2
         echo "    Add a property test or refactor to lift the invariant into the type" >&2
         echo "    instead of pushing it to runtime. See PR 4 of the hardening plan." >&2
