@@ -283,3 +283,69 @@ pub fn unicode_adversarial() -> impl Strategy<Value = String> {
 pub fn sjis_bytes(max_len: usize) -> impl Strategy<Value = Vec<u8>> {
     prop::collection::vec(any::<u8>(), 0..=max_len)
 }
+
+/// Generate byte sequences biased toward SJIS lead-byte / trail-byte
+/// boundaries.
+///
+/// SJIS uses two ranges of lead bytes (`0x81..=0x9F` + `0xE0..=0xEF`)
+/// followed by trail bytes (`0x40..=0x7E` + `0x80..=0xFC`); a decoder
+/// that mishandles the boundary between them (e.g. accepts an
+/// out-of-range trail or runs off the end with an unpaired lead) is
+/// the most common SJIS bug class.
+///
+/// The generator emits one of: a valid lead+trail pair, an unpaired
+/// lead at end-of-input, an out-of-range trail, or filler ASCII.
+/// Inputs are deliberately short (≤ 64 bytes) so the shrinker can
+/// pinpoint the offending boundary cleanly.
+pub fn sjis_boundary_bytes() -> impl Strategy<Value = Vec<u8>> {
+    let atoms = prop_oneof![
+        // Valid lead-byte ranges followed by an in-range trail.
+        Just(vec![0x81_u8, 0x40]),
+        Just(vec![0x9F_u8, 0xFC]),
+        Just(vec![0xE0_u8, 0x80]),
+        Just(vec![0xEF_u8, 0xFC]),
+        // Unpaired lead at end-of-input (decoder must error, not panic).
+        Just(vec![0x81_u8]),
+        Just(vec![0xE0_u8]),
+        // Out-of-range trail after a valid lead.
+        Just(vec![0x81_u8, 0x39]),
+        Just(vec![0x81_u8, 0xFD]),
+        // Plain ASCII filler.
+        Just(b"abc".to_vec()),
+        Just(b"012".to_vec()),
+        // Lead immediately followed by another lead.
+        Just(vec![0x81_u8, 0x81_u8, 0x40]),
+    ];
+    prop::collection::vec(atoms, 0..=16).prop_map(|chunks| chunks.into_iter().flatten().collect())
+}
+
+/// Generate deeply nested paired delimiters up to `max_depth` nesting
+/// levels.
+///
+/// `《`/`》` and `［＃`/`］` open/close pairs nested without any
+/// content between. Drives the parser's stack-based pairing logic
+/// against pathological depth — a regression that would slip past
+/// the workhorse `aozora_fragment` generator (which spreads atoms
+/// thin) but still corrupt the parser's frame stack.
+///
+/// `max_depth` is an upper bound; the generator draws a nesting depth
+/// in `0..=max_depth` so shrinking can report the smallest failing
+/// depth.
+pub fn nested_pairs(max_depth: usize) -> impl Strategy<Value = String> {
+    (0_usize..=max_depth, 0_usize..=3).prop_map(|(depth, shape)| {
+        let (open, close) = match shape {
+            0 => ("《", "》"),
+            1 => ("［＃", "］"),
+            2 => ("｜", "》"),
+            _ => ("〔", "〕"),
+        };
+        let mut s = String::with_capacity((open.len() + close.len()) * depth);
+        for _ in 0..depth {
+            s.push_str(open);
+        }
+        for _ in 0..depth {
+            s.push_str(close);
+        }
+        s
+    })
+}

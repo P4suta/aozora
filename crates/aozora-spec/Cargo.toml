@@ -21,6 +21,10 @@ miette    = { workspace = true }
 phf       = { workspace = true }
 serde     = { workspace = true, optional = true }
 
+[dev-dependencies]
+proptest        = { workspace = true }
+aozora-proptest = { workspace = true }
+
 [features]
 default = []
 serde   = ["dep:serde"]

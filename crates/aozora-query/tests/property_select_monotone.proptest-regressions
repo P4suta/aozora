@@ -1,0 +1,12 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e614079b9a340f4db792347f98af6dc566f524bfb98c935a496f3450d422081b # shrinks to s = ""
+cc ecd7acb764c93e5690a949ab18a466d6dcce6cd15a652f9ce63b0f71cef227e1 # shrinks to s = ""
+cc a12d7f881385c912f5d1e6813a0efb6df10cf7286a2890e0f27e01603ba9607b # shrinks to s = ""
+cc 0291a76d6d4408ee66ac9887254936011d11f79df8175258275bf6551a235b8e # shrinks to s = "［＃ここから字下げ］"
+cc 4dca649a0d0e686977dddd614a209e2dfe181d139da4dc3916889512c492068d # shrinks to s = "［＃《［＃｜》］》］改丁｜｜"
+cc 0585794089c6cf184e54b7036ee5c0fc6bbb60237e8246e08592e51ff9a9b5d4 # shrinks to s = "［＃］｜\n｜"

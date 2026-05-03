@@ -25,4 +25,6 @@ aozora     = { workspace = true }
 pandoc_ast = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
+serde_json      = { workspace = true }
+proptest        = { workspace = true }
+aozora-proptest = { workspace = true }

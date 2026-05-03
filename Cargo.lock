@@ -166,7 +166,9 @@ name = "aozora-conformance"
 version = "0.3.0"
 dependencies = [
  "aozora",
+ "aozora-proptest",
  "pretty_assertions",
+ "proptest",
 ]
 
 [[package]]
@@ -219,7 +221,9 @@ name = "aozora-pandoc"
 version = "0.3.0"
 dependencies = [
  "aozora",
+ "aozora-proptest",
  "pandoc_ast",
+ "proptest",
  "serde_json",
 ]
 
@@ -266,6 +270,8 @@ version = "0.3.0"
 dependencies = [
  "aozora",
  "aozora-cst",
+ "aozora-proptest",
+ "proptest",
  "rowan",
  "thiserror",
 ]
@@ -275,6 +281,7 @@ name = "aozora-render"
 version = "0.3.0"
 dependencies = [
  "aozora-pipeline",
+ "aozora-proptest",
  "aozora-spec",
  "aozora-syntax",
  "memchr",
@@ -287,6 +294,7 @@ name = "aozora-scan"
 version = "0.3.0"
 dependencies = [
  "aho-corasick",
+ "aozora-proptest",
  "aozora-spec",
  "bumpalo",
  "criterion",
@@ -299,8 +307,10 @@ dependencies = [
 name = "aozora-spec"
 version = "0.3.0"
 dependencies = [
+ "aozora-proptest",
  "miette",
  "phf",
+ "proptest",
  "serde",
  "thiserror",
 ]
@@ -310,12 +320,14 @@ name = "aozora-syntax"
 version = "0.3.0"
 dependencies = [
  "aozora-encoding",
+ "aozora-proptest",
  "aozora-spec",
  "aozora-veb",
  "bumpalo",
  "criterion",
  "miette",
  "phf",
+ "proptest",
  "serde",
  "thiserror",
 ]
@@ -338,6 +350,7 @@ dependencies = [
 name = "aozora-veb"
 version = "0.3.0"
 dependencies = [
+ "aozora-proptest",
  "proptest",
 ]
 

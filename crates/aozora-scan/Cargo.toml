@@ -51,8 +51,9 @@ aho-corasick   = { workspace = true, optional = true, default-features = false, 
 regex-automata = { workspace = true, optional = true, default-features = false, features = ["std", "syntax", "dfa-build", "dfa-search"] }
 
 [dev-dependencies]
-proptest  = { workspace = true }
-criterion = { workspace = true }
+proptest        = { workspace = true }
+aozora-proptest = { workspace = true }
+criterion       = { workspace = true }
 
 [[bench]]
 name    = "scanner_bakeoff"
