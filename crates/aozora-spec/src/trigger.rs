@@ -149,7 +149,7 @@ pub const TRIGGER_MIDDLE_BYTES: [u8; 3] = [0x80, 0xBC, 0xBD];
 /// backends (Teddy, multi-pattern DFA) which need the
 /// patterns directly rather than going through `classify_trigger_bytes`.
 ///
-/// The accompanying test [`tests::all_trigger_trigrams_match_phf`]
+/// The accompanying `tests::all_trigger_trigrams_match_phf` test
 /// asserts that every entry round-trips through the PHF, so adding /
 /// removing a trigger keeps this list and the PHF in sync.
 pub const ALL_TRIGGER_TRIGRAMS: [[u8; 3]; 11] = [

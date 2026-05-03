@@ -32,10 +32,10 @@
 //!   names.
 //! - There is **no** cross-conversion between [`SourceOffset`] and
 //!   [`NormalizedOffset`]. Translating between coordinate spaces
-//!   requires a side-table (the `source_nodes` slice on
-//!   [`BorrowedLexOutput`]), and the lack of `From` impls forces
-//!   callers to go through that table rather than reinterpret a
-//!   `u32` they already have.
+//!   requires a side-table (the `source_nodes` slice on the lex
+//!   output), and the lack of `From` impls forces callers to go
+//!   through that table rather than reinterpret a `u32` they
+//!   already have.
 //! - Both newtypes expose a [`get`](SourceOffset::get) accessor for
 //!   internal arithmetic.
 

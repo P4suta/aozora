@@ -1,4 +1,4 @@
-//! Phase 3 — classify the Phase 2 event stream into [`AozoraNode`] spans.
+//! Phase 3 — classify the Phase 2 event stream into [`borrowed::AozoraNode`] spans.
 //!
 //! Walks the cross-linked [`PairEvent`] stream produced by Phase 2 and
 //! produces a contiguous vector of [`ClassifiedSpan`] whose
@@ -12,7 +12,7 @@
 //!   unclosed opens, unmatched closes) are merged into one span so
 //!   Phase 4 can emit them verbatim in a single write.
 //! * [`SpanKind::Aozora`] — a classified Aozora construct, carrying the
-//!   concrete [`AozoraNode`] that Phase 4 will replace with a PUA
+//!   concrete [`borrowed::AozoraNode`] that Phase 4 will replace with a PUA
 //!   placeholder sentinel (see [`crate::INLINE_SENTINEL`] and friends).
 //! * [`SpanKind::Newline`] — a `\n` in the sanitized text, kept as its
 //!   own span kind because block-level annotations (Phase 4 block
@@ -35,7 +35,7 @@
 //!
 //! Every recogniser is a narrow function that inspects a
 //! `&[PairEvent]` slice (often one pair's `body_events`) plus the
-//! sanitized source. The driver loop's [`Classifier::try_recognize`]
+//! sanitized source. The driver loop's `Classifier::try_recognize`
 //! dispatches based on the leading event kind:
 //!
 //! * Ruby (`｜X《Y》` explicit, trailing-kanji implicit)
@@ -1203,7 +1203,7 @@ where
     /// synthetic EOF markers carrying the same span as the original
     /// `PairOpen` (which is also in `body`), and re-adding their span
     /// to the pending plain run would double-count bytes already
-    /// covered by the open's body[0] entry.
+    /// covered by the open's `body[0]` entry.
     fn replay_unrecognised_body(
         &mut self,
         body: smallvec::SmallVec<[PairEvent; 16]>,
@@ -1719,15 +1719,15 @@ where
     }
 }
 
-/// Intermediate result of [`recognize_ruby`]. `base` stays borrowed
+/// Intermediate result of `recognize_ruby`. `base` stays borrowed
 /// (the two forms we handle — explicit `｜X《Y》` and implicit
 /// trailing-kanji — both come from a single [`PairEvent::Text`] event
 /// with no nested structure). `reading`, on the other hand, can carry
 /// embedded gaiji (`※［＃…］`) or annotations (`［＃ママ］`), so it is
-/// already resolved into a [`Content`] via [`build_content_from_body`].
+/// already resolved into a `Content` via `build_content_from_body`.
 ///
 /// Collapsing inside the lexer (rather than leaving the splitting to
-/// the renderer) keeps the [`AozoraNode`] payload self-contained:
+/// the renderer) keeps the [`borrowed::AozoraNode`] payload self-contained:
 /// Phase 4 stamps one PUA sentinel over the whole `｜…《…》` source
 /// span, and the inner gaiji/annotation never reach the top-level
 /// `spans` list or downstream consumers.
@@ -1751,11 +1751,11 @@ struct RubyMatch<'s, 'a> {
 ///   a run of ideographs. The base is the trailing kanji run of that
 ///   Text; any non-kanji prefix remains plain.
 ///
-/// The `《…》` reading body is walked with [`build_content_from_body`]
+/// The `《…》` reading body is walked with `build_content_from_body`
 /// so nested `※［＃…］` gaiji and `［＃…］` annotations fold into the
 /// returned `Content` as `Segment::Gaiji` / `Segment::Annotation`.
-/// Pure-text readings collapse back to [`Content::Plain`] via
-/// [`Content::from_segments`].
+/// Pure-text readings collapse back to `Content::Plain` via
+/// `Content::from_segments`.
 ///
 /// Returns `None` if neither shape applies (empty reading, no
 /// preceding Text, no kanji for implicit).
@@ -1843,7 +1843,7 @@ impl<'a, 's> RecogniseCtx<'_, 'a, 's> {
 
 /// Half-open window into a [`PairEvent`] stream. Bundles the event-
 /// index range with the matching byte-offset range so
-/// [`build_content_from_body`] can flush text segments using source
+/// `build_content_from_body` can flush text segments using source
 /// byte slices without re-derefing event spans on every iteration.
 ///
 /// The two ranges are redundant in principle — `bytes.start` always
@@ -1856,14 +1856,14 @@ struct BodyWindow {
 }
 
 /// Walk `window` over `events` and build the corresponding
-/// [`Content`].
+/// `Content`.
 ///
 /// Each nested `※［＃description、mencode］` reduces to a
-/// [`Segment::Gaiji`] via [`recognize_gaiji`]; each standalone
-/// `［＃…］` reduces to a [`Segment::Annotation`] via
-/// [`recognize_annotation`]. Every other byte (plain text, stray
+/// `Segment::Gaiji` via `recognize_gaiji`; each standalone
+/// `［＃…］` reduces to a `Segment::Annotation` via
+/// `recognize_annotation`. Every other byte (plain text, stray
 /// triggers, unmatched delimiters) is captured into adjacent
-/// [`Segment::Text`] runs by tracking a single "outstanding text
+/// `Segment::Text` runs by tracking a single "outstanding text
 /// start" byte offset and flushing only when a recognisable construct
 /// consumes the intervening bytes.
 ///
@@ -1894,11 +1894,11 @@ struct BodyWindow {
 /// of nesting depth.
 ///
 /// The returned value is always normalised via
-/// [`Content::from_segments`], so a slow-path body that turned out to
+/// `Content::from_segments`, so a slow-path body that turned out to
 /// contain only text (for example because its brackets were malformed
-/// and skipped) still collapses back to [`Content::Plain`].
+/// and skipped) still collapses back to `Content::Plain`.
 /// Immutable per-call body-walk context shared across the
-/// [`build_content_from_body`] orchestrator and its per-shape helpers
+/// `build_content_from_body` orchestrator and its per-shape helpers
 /// (`try_emit_gaiji_at` / `try_emit_annotation_at`). Bundling `view`
 /// and `window` together prevents the per-helper signatures from
 /// exceeding the project's 4-arg threshold without losing positional
@@ -1909,7 +1909,7 @@ struct BodyWalkCtx<'b> {
     window: &'b BodyWindow,
 }
 
-/// Mutable per-call build state for [`build_content_from_body`].
+/// Mutable per-call build state for `build_content_from_body`.
 /// Tracks the under-construction segment vector and the byte position
 /// where the current pending Text run started. Threading these through
 /// per-shape helpers as a single `&mut` field keeps the helper
@@ -2000,7 +2000,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     /// flush the pending Text run, push a `Segment::Gaiji`, advance
     /// `text_start`, and return the index of the first event past the
     /// bracket close. Returns `None` if the shape doesn't match or if
-    /// the inner [`recognize_gaiji`](Self::recognize_gaiji) bails.
+    /// the inner [`Self::recognize_gaiji`] bails.
     fn try_emit_gaiji_at(
         &mut self,
         body: BodyWalkCtx<'_>,
@@ -2111,7 +2111,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 ///
 /// So the absence of both event shapes in the body is sufficient proof
 /// that no nested construct can be recognised, allowing
-/// [`build_content_from_body`] to take the allocation-free fast path.
+/// `build_content_from_body` to take the allocation-free fast path.
 fn has_nested_candidate(body: &[PairEvent]) -> bool {
     body.iter().any(|e| {
         matches!(
@@ -2146,7 +2146,7 @@ fn push_text_segment<'a>(
     }
 }
 
-/// Intermediate result of [`recognize_gaiji`].
+/// Intermediate result of `recognize_gaiji`.
 ///
 /// Holds the payload (`&'a borrowed::Gaiji<'a>`) rather than a wrapped
 /// node so the caller can route it to either `alloc.gaiji(p)`
@@ -2165,7 +2165,7 @@ struct GaijiMatch<'a> {
 /// appear bare. `<mencode>` is the mencode reference (`第3水準1-85-54`,
 /// `U+XXXX`, etc.) appearing after a `、` separator.
 ///
-/// The UCS resolution column of [`Gaiji`] is populated by
+/// The UCS resolution column of `Gaiji` is populated by
 /// `aozora_encoding::gaiji::lookup` before the recogniser returns, so
 /// downstream consumers receive a resolved `Option<char>` without
 /// having to re-probe the mencode table.
@@ -2315,12 +2315,12 @@ fn trailing_kanji_start(text: &str) -> usize {
     start
 }
 
-/// Intermediate result of [`recognize_annotation`].
+/// Intermediate result of `recognize_annotation`.
 ///
 /// `emit` decides which [`SpanKind`] the driver pushes for the
 /// top-level case. `annotation_payload` is `Some` exactly when the
 /// recogniser produced an `Annotation{…}` payload — the
-/// [`build_content_from_body`] caller uses it to wrap the same payload
+/// `build_content_from_body` caller uses it to wrap the same payload
 /// as a `Segment::Annotation` without reconstructing it. The emit
 /// variants `BlockOpen` / `BlockClose` and non-`Annotation` `Aozora`
 /// nodes leave `annotation_payload` as `None`, so the body-builder
@@ -2518,7 +2518,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 }
 
 /// Fold a list of forward-bouten target strings into a single
-/// [`Content`]. A one-element list takes the `Content::from(&str)`
+/// `Content`. A one-element list takes the `Content::from(&str)`
 /// fast path (the overwhelmingly common case); multi-target lists
 /// build a `Segments` run where inter-target separators are modelled
 /// as `Segment::Text("、")` so the renderer emits
@@ -2562,7 +2562,7 @@ fn build_bouten_target<'a>(
 /// Multi-quote `［＃「A」「B」は縦中横］` bodies are not standard Aozora
 /// spec; we accept the first target's text and ignore the rest for
 /// robustness rather than failing, so the bracket still consumes via
-/// [`classify_forward_tcy`] instead of leaking to `Annotation{Unknown}`.
+/// `classify_forward_tcy` instead of leaking to `Annotation{Unknown}`.
 impl<'a> RecogniseCtx<'_, 'a, '_> {
     fn classify_forward_tcy(
         &mut self,
@@ -2791,7 +2791,7 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
 /// Classify a `［＃「target」は(大|中|小)見出し］` forward-reference
 /// heading annotation.
 ///
-/// Shares the event-stream extraction helper with [`classify_forward_bouten`]
+/// Shares the event-stream extraction helper with `classify_forward_bouten`
 /// — the quote-delimited target and the trailing keyword live in the same
 /// `［＃「X」…］` shape. The suffix after the target must start with `は`
 /// (unlike bouten's `に`), and the keyword selects the Markdown heading
@@ -2800,7 +2800,7 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
 /// The crate docs call out that 大/中/小 headings are promoted to
 /// `aozora_syntax::AozoraHeading` by `aozora::post_process`; this
 /// classifier only marks the position. 窓見出し / 副見出し remain
-/// first-class on [`AozoraNode::AozoraHeading`] via a separate path.
+/// first-class on `AozoraNode::AozoraHeading` via a separate path.
 ///
 /// Same `forward_target_is_preceded` gate as forward bouten: a heading
 /// hint that names a target which does not appear in the preceding

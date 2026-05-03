@@ -12,7 +12,7 @@
 //! non-empty, and an empty payload at allocation time signals a
 //! pipeline-internal bug rather than valid input.
 //!
-//! Read access is via [`Deref`](core::ops::Deref) so existing
+//! Read access is via [`Deref`] so existing
 //! consumers of [`Content`] inherent methods (`as_plain`, `iter`)
 //! work unchanged on `NonEmpty<Content>`.
 

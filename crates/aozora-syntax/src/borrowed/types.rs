@@ -76,9 +76,9 @@ pub enum AozoraNode<'src> {
 /// Body content for nodes whose textual payload may carry nested
 /// Aozora constructs.
 ///
-/// See [`crate::Content`] for the design rationale — this is the
-/// borrowed mirror, with the same `Plain` fast path and `Segments`
-/// general case.
+/// Two-tier representation: `Plain` is the fast path for plain
+/// strings; `Segments` is the general case for content carrying
+/// nested aozora nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Content<'src> {
@@ -164,7 +164,7 @@ impl<'src> IntoIterator for Content<'src> {
 // Per-variant payload structs
 // ----------------------------------------------------------------------
 
-/// Ruby (furigana). See [`crate::Ruby`] for field semantics.
+/// Ruby (furigana).
 ///
 /// `base` and `reading` are [`super::NonEmpty`] — Phase 3 only emits
 /// a Ruby node once both have content. The wrapper makes the
@@ -177,7 +177,7 @@ pub struct Ruby<'src> {
     pub delim_explicit: bool,
 }
 
-/// Emphasis dots / sidelines. See [`crate::Bouten`].
+/// Emphasis dots / sidelines.
 ///
 /// `target` is [`super::NonEmpty`] — Phase 3 resolves the forward
 /// reference (`［＃「対象」に傍点］`) before emitting the node.
@@ -188,7 +188,7 @@ pub struct Bouten<'src> {
     pub position: BoutenPosition,
 }
 
-/// Tate-chu-yoko (horizontal embedding). See [`crate::TateChuYoko`].
+/// Tate-chu-yoko (horizontal embedding).
 ///
 /// `text` is [`super::NonEmpty`] — empty TCY is a parse bug, not a
 /// valid state.
@@ -197,7 +197,7 @@ pub struct TateChuYoko<'src> {
     pub text: super::NonEmpty<Content<'src>>,
 }
 
-/// Gaiji (out-of-character-range glyph). See [`crate::Gaiji`].
+/// Gaiji (out-of-character-range glyph).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gaiji<'src> {
     /// Free-form description from the source (e.g. "木＋吶のつくり").
@@ -212,14 +212,14 @@ pub struct Gaiji<'src> {
     pub mencode: Option<&'src str>,
 }
 
-/// Warichu (split annotation). See [`crate::Warichu`].
+/// Warichu (split annotation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Warichu<'src> {
     pub upper: Content<'src>,
     pub lower: Content<'src>,
 }
 
-/// Aozora heading (窓見出し / 副見出し). See [`crate::AozoraHeading`].
+/// Aozora heading (窓見出し / 副見出し).
 ///
 /// `text` is [`super::NonEmpty`] — every heading carries a label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,7 +228,7 @@ pub struct AozoraHeading<'src> {
     pub text: super::NonEmpty<Content<'src>>,
 }
 
-/// Forward-reference heading hint. See [`crate::HeadingHint`].
+/// Forward-reference heading hint.
 ///
 /// `target` is [`super::NonEmptyStr`] — Phase 3 only emits the hint
 /// after a `「対象」` quoted target landed.
@@ -238,7 +238,7 @@ pub struct HeadingHint<'src> {
     pub target: super::NonEmptyStr<'src>,
 }
 
-/// Illustration metadata. See [`crate::Sashie`].
+/// Illustration metadata.
 ///
 /// `file` is [`super::NonEmptyStr`] — `［＃挿絵（）入る］` with empty
 /// path is a parse bug, not a valid state.
@@ -248,7 +248,7 @@ pub struct Sashie<'src> {
     pub caption: Option<Content<'src>>,
 }
 
-/// Generic annotation. See [`crate::Annotation`].
+/// Generic annotation.
 ///
 /// `raw` is [`super::NonEmptyStr`] — annotation always carries the
 /// raw bytes between `［＃` and `］`.
@@ -258,7 +258,7 @@ pub struct Annotation<'src> {
     pub kind: AnnotationKind,
 }
 
-/// Chinese-reading-order mark (`返り点`). See [`crate::Kaeriten`].
+/// Chinese-reading-order mark (`返り点`).
 ///
 /// `mark` is [`super::NonEmptyStr`] — empty kaeriten is a parse bug.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,7 +266,7 @@ pub struct Kaeriten<'src> {
     pub mark: super::NonEmptyStr<'src>,
 }
 
-/// Double angle-bracket payload. See [`crate::DoubleRuby`].
+/// Double angle-bracket payload.
 ///
 /// `content` is [`super::NonEmpty`] — Phase 3 pre-filters empty
 /// `《《》》` to plain text before allocation, so a `DoubleRuby`

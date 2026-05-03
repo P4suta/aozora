@@ -28,7 +28,7 @@
 //! { "schema_version": 1, "data": [ … ] }
 //! ```
 //!
-//! [`wire::SCHEMA_VERSION`] bumps on any breaking change to
+//! [`aozora::wire::SCHEMA_VERSION`] bumps on any breaking change to
 //! that shape.
 
 #![forbid(unsafe_code)]

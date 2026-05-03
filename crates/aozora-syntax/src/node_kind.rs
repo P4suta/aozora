@@ -5,7 +5,7 @@
 //! ([`AozoraNode::kind`](crate::borrowed::AozoraNode::kind),
 //! [`NodeRef::kind`](crate::borrowed::NodeRef::kind)) and for the
 //! **driver wire format** ([`crate`]'s host crate `aozora` projects
-//! the tag to a stable camelCase string via [`Self::as_camel_case`]).
+//! the tag to a stable camelCase string via [`NodeKind::as_camel_case`]).
 //!
 //! The typed enum (rather than a `&'static str` constant) lets every
 //! consumer pattern-match the tag exhaustively — the compiler points

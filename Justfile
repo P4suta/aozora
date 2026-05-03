@@ -212,8 +212,17 @@ coverage-branch:
 
 # --- lint / static analysis ---------------------------------------------------
 
-# Run all lints (fmt + clippy + typos + strict-code)
-lint: fmt-check clippy typos strict-code
+# Run all lints (fmt + clippy + typos + strict-code + doc)
+lint: fmt-check clippy typos strict-code doc
+
+# Build rustdoc with `-D warnings`. Mirrors the `docs` workflow's
+# `Build rustdoc` step so a doc-link or rustdoc-lint regression fails
+# locally before it reaches the Pages deploy. Stays scoped to the
+# workspace lint config (`broken_intra_doc_links = "deny"` in
+# `[workspace.lints.rustdoc]` plus the `RUSTDOCFLAGS` env to lift the
+# remaining warn-level lints to errors).
+doc:
+    {{_dev}} env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
 
 # Forbid patterns that hide bugs or introduce unstable/unsafe surface in our
 # own crates. Every check is defensive — each represents a pattern we have
@@ -385,12 +394,34 @@ strict-code:
         failed=1
     fi
 
+    # ---- expect() in production pipeline code (calibration gate) ----------
+    # Pipeline state-transition code carries 58 `expect()` calls
+    # today, all on `Option<T>` fields whose `Some`-ness is in fact
+    # guaranteed by the surrounding type-state. PR 4 of the
+    # quality-hardening plan replaces the runtime assertion with a
+    # field-bound state struct that makes the invariant a type-level
+    # fact; this gate is a calibration baseline so any *new* `expect`
+    # in pipeline source fails the build before the refactor lands.
+    # Tests / benches / examples are exempt — the rule is about
+    # production paths only.
+    expect_files=(crates/aozora-pipeline/src/**/*.rs)
+    expect_count=$(grep -hcE '\.expect\(' "${expect_files[@]}" 2>/dev/null \
+        | awk '{s+=$1} END {print s+0}')
+    expect_baseline=58
+    if [[ "$expect_count" -gt "$expect_baseline" ]]; then
+        echo "==> forbidden: expect() count in aozora-pipeline production code grew" >&2
+        echo "    baseline: $expect_baseline, found: $expect_count" >&2
+        echo "    Add a property test or refactor to lift the invariant into the type" >&2
+        echo "    instead of pushing it to runtime. See PR 4 of the hardening plan." >&2
+        failed=1
+    fi
+
     if [[ $failed -ne 0 ]]; then
         echo "" >&2
         echo "strict-code check failed. Refactor the offending sites; do not silence." >&2
         exit 1
     fi
-    echo "strict-code: clean"
+    echo "strict-code: clean (expect-count $expect_count / baseline $expect_baseline)"
 
 # Format check (no-write)
 fmt-check:

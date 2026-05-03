@@ -3,7 +3,7 @@
 //! Exposes `spec/aozora/fixtures/<card-id>/input.sjis.txt` files as a
 //! [`CorpusSource`] without picking up the sibling `input.utf8.txt` /
 //! `golden.html` that would otherwise show up in a plain
-//! [`FilesystemCorpus`] walk of the same directory.
+//! [`crate::FilesystemCorpus`] walk of the same directory.
 //!
 //! Dedicated to the "sweep the goldens themselves" use case — applying
 //! sweep invariants to Tier A fixtures to catch regressions without
@@ -25,7 +25,7 @@ const FIXTURE_INPUT_FILENAME: &str = "input.sjis.txt";
 ///
 /// Each immediate subdirectory of `root` is treated as one fixture.
 /// A fixture contributes an item iff it contains a file named
-/// [`FIXTURE_INPUT_FILENAME`]; missing the file means the fixture is
+/// `FIXTURE_INPUT_FILENAME`; missing the file means the fixture is
 /// skipped silently (it may be a Tier-A-candidate that hasn't been
 /// vendored yet, or a scratch dir).
 #[derive(Debug, Clone)]

@@ -54,7 +54,7 @@ pub enum HotMode {
 pub struct HotRow {
     pub label: String,
     /// Display annotation: `[entry]`, `[trampoline]`, `[unresolved]`,
-    /// or empty for a normal function. Computed by [`classify_row_kind`].
+    /// or empty for a normal function. Computed by `classify_row_kind`.
     pub kind: RowKind,
     /// Inclusive: the frame appears anywhere on the stack.
     pub incl_samples: u64,

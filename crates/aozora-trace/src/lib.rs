@@ -42,8 +42,8 @@
 //! ## Sidecar cache
 //!
 //! Symbolication via [`addr2line`] is the slowest step (~seconds per
-//! binary on a multi-MB ELF). [`Symbolicator::write_cache`] /
-//! [`Symbolicator::load_cache`] persist resolved (lib, address) →
+//! binary on a multi-MB ELF). [`SymbolCache::write`] /
+//! [`SymbolCache::load`] persist resolved (lib, address) →
 //! function-name mappings to a sidecar JSON next to the trace, so
 //! repeated analyses cost milliseconds.
 

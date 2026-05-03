@@ -64,6 +64,8 @@ jobs:
         run: mdbook-mermaid install crates/aozora-book
 
       - name: Build rustdoc
+        env:
+          RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --workspace --no-deps --document-private-items
 
       - name: Build mdbook handbook

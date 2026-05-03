@@ -20,22 +20,20 @@
 //! | 0 sanitize | BOM strip, CR/LF → LF, PUA collision pre-scan |
 //! | 1 events   | Linear tokenize — emit trigger events (`｜《》［］※〔〕「」`) |
 //! | 2 pair     | Balanced-stack pairing across all delimiters |
-//! | 3 classify | Full-spec Aozora classification into [`borrowed::AozoraNode`] |
+//! | 3 classify | Full-spec Aozora classification into [`aozora_syntax::borrowed::AozoraNode`] |
 //!
 //! After F.3, the legacy phases 4 (normalize) / 5 (registry) /
 //! 6 (validate) live as a fused walk inside
-//! [`aozora_lex::lex_into_arena`][lex_into_arena] — they no longer have
-//! standalone phase functions in this crate.
-//!
-//! [borrowed::AozoraNode]: aozora_syntax::borrowed::AozoraNode
-//! [lex_into_arena]: ../aozora_lex/fn.lex_into_arena.html
+//! [`crate::lex_into_arena`] — they no longer have standalone phase
+//! functions in this crate.
 //!
 //! ## PUA sentinel scheme
 //!
-//! Aozora spans are replaced with single characters in the [`U+E000..U+F8FF`]
-//! Private Use Area. Block-level markers become single-character lines so
-//! the CommonMark parser treats them as isolated paragraphs that
-//! `aozora::post_process` later pairs and collapses.
+//! Aozora spans are replaced with single characters in the
+//! `U+E000..U+F8FF` Private Use Area. Block-level markers become
+//! single-character lines so the CommonMark parser treats them as
+//! isolated paragraphs that `aozora::post_process` later pairs and
+//! collapses.
 //!
 //! | Sentinel       | Role                                                       |
 //! |----------------|------------------------------------------------------------|
@@ -49,12 +47,13 @@
 //!
 //! ## Public surface
 //!
-//! After F.3, `aozora-lexer` is a build-block crate exposing only the
-//! per-phase functions used internally by `aozora-lex`. The "package
+//! After F.3, the lexer module exposes only the per-phase functions
+//! used internally by [`crate::lex_into_arena`]. The "package
 //! result" (the legacy `LexOutput`) is replaced by
-//! [`aozora_lex::lex_into_arena`]'s `BorrowedLexOutput<'a>`. External
-//! direct consumers of this crate should be limited to `aozora-lex` and
-//! benchmarks; everything else goes through `aozora-lex`.
+//! [`crate::lex_into_arena`]'s `BorrowedLexOutput<'a>`. External
+//! direct consumers of this module should be limited to the
+//! pipeline driver and benchmarks; everything else goes through
+//! [`crate::lex_into_arena`].
 
 // PUA sentinel constants live in `aozora-spec` and are re-exported
 // here so the post-Phase-F `crate::lexer::INLINE_SENTINEL` etc.

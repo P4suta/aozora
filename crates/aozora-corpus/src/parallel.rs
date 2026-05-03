@@ -1,6 +1,7 @@
 //! Parallel I/O + decode helpers.
 //!
-//! The default [`FilesystemCorpus::iter`] returns a streaming iterator
+//! The default [`crate::CorpusSource::iter`] impl on [`crate::FilesystemCorpus`]
+//! returns a streaming iterator
 //! that fuses walkdir + read; this module exposes a path-first
 //! variant that splits the two so the read step can be fanned out
 //! across rayon workers while walkdir runs once on the calling

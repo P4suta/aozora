@@ -12,12 +12,12 @@
 //! 1. Phases 0-2 (sanitize / tokenize / pair) run as owned-data
 //!    helpers operating on byte spans and event indices — they never
 //!    construct AST.
-//! 2. Phase 3 [`aozora_lexer::classify_with`] is invoked with a
-//!    [`BorrowedAllocator`] backed by `arena`. Borrowed AST nodes
-//!    land directly in the arena; strings flow through the
-//!    [`aozora_syntax::borrowed::Interner`] owned by the allocator
-//!    so byte-equal content (ruby readings, container labels,
-//!    kaeriten marks, …) shares a single allocation.
+//! 2. Phase 3 classification is invoked with an
+//!    [`aozora_syntax::alloc::BorrowedAllocator`] backed by `arena`.
+//!    Borrowed AST nodes land directly in the arena; strings flow
+//!    through the [`aozora_syntax::borrowed::Interner`] owned by
+//!    the allocator so byte-equal content (ruby readings, container
+//!    labels, kaeriten marks, …) shares a single allocation.
 //! 3. A single fused walk emits the PUA-rewritten text into the arena
 //!    and builds the four borrowed-registry tables.
 //! 4. Each per-kind position list is wrapped in an
@@ -36,7 +36,7 @@ use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset, Span};
 use aozora_syntax::ContainerKind;
 use aozora_syntax::borrowed::{self, Arena, ContainerPair, InternStats, NodeRef, Registry};
 
-/// Borrowed-AST analogue of [`crate::LexOutput`].
+/// Borrowed-AST output of the lex pipeline.
 ///
 /// The normalized text and registry payloads borrow from `arena`;
 /// diagnostics stay on the heap (they own non-`Copy`
@@ -55,12 +55,11 @@ pub struct BorrowedLexOutput<'a> {
     /// rare (typically 0–3 per document) so the small heap allocation
     /// is negligible.
     pub diagnostics: Vec<Diagnostic>,
-    /// Byte length of the Phase 0 sanitized buffer. Same semantics as
-    /// the owned [`crate::LexOutput::sanitized_len`].
+    /// Byte length of the Phase 0 sanitized buffer.
     pub sanitized_len: u32,
     /// Resolved (open, close) pair side-table from Phase 2 (in close
     /// order — the order matches close events as the stack drains).
-    /// Built by [`aozora_lexer::pair_in`] and forwarded verbatim. Lives
+    /// Built by [`crate::lexer::pair_in`] and forwarded verbatim. Lives
     /// in the same arena as `normalized`. Editor surfaces (LSP
     /// `linkedEditingRange` / `documentHighlight`) consume this
     /// directly; the four registries above only carry sentinel-position
@@ -98,10 +97,10 @@ pub struct BorrowedLexOutput<'a> {
     /// re-deriving the pairing from independent
     /// [`NodeRef::BlockOpen`] / [`NodeRef::BlockClose`] entries.
     pub container_pairs: &'a [ContainerPair],
-    /// Counters from the [`Interner`] used during conversion.
-    /// Exposed so benchmarks can measure dedup ratio
-    /// (`(cache_hits + table_hits) / calls`) and average probe length
-    /// without re-running the lex.
+    /// Counters from the [`aozora_syntax::borrowed::Interner`] used
+    /// during conversion. Exposed so benchmarks can measure dedup
+    /// ratio (`(cache_hits + table_hits) / calls`) and average probe
+    /// length without re-running the lex.
     pub intern_stats: InternStats,
 }
 
@@ -178,9 +177,10 @@ pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'
 /// spans in source order, every sentinel position is therefore
 /// strictly greater than the previous, and the [`Registry`] consumes
 /// the slice via `from_sorted_slice` without re-sorting. The nodes
-/// themselves are allocated upstream by [`BorrowedAllocator`] during
-/// [`classify_with`]; this walker is strictly the PUA-rewriter +
-/// position-recorder, doing zero AST allocation of its own.
+/// themselves are allocated upstream by
+/// [`aozora_syntax::alloc::BorrowedAllocator`] during Phase 3; this
+/// walker is strictly the PUA-rewriter + position-recorder, doing
+/// zero AST allocation of its own.
 pub(crate) struct ArenaNormalizer<'src, 'a> {
     pub(crate) out: String,
     source: &'src str,
@@ -318,11 +318,10 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
     }
 }
 
-/// Borrowed-AST mirror of
-/// [`aozora_lexer::is_standalone_block_for_render`]. Pinned by variant
-/// kind, not payload, so it stays in sync trivially with the owned
-/// helper (any new standalone-block variant must be added in both
-/// places — caught by the byte-identical proptest).
+/// Whether a borrowed AST node is a standalone block (renders on its
+/// own line, no surrounding plain-text context required). Pinned by
+/// variant kind so adding a new standalone-block variant only needs
+/// updating here.
 fn is_standalone_block_for_render_borrowed(node: borrowed::AozoraNode<'_>) -> bool {
     matches!(
         node,

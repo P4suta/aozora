@@ -37,7 +37,7 @@ use std::borrow::Cow;
 ///
 /// Public for downstream iteration (tests, doc-builders, corpus
 /// tooling). For runtime lookup, `decompose_fragment` uses the
-/// perfect-hash split tables ([`ACCENT_DIGRAPHS`] for the 110 two-byte
+/// perfect-hash split tables (`ACCENT_DIGRAPHS` for the 110 two-byte
 /// entries; a 4-arm match for the four three-byte ligatures) — the
 /// linear `ACCENT_TABLE` scan is no longer on the hot path.
 pub const ACCENT_TABLE: &[(&str, char)] = &[
@@ -198,7 +198,7 @@ pub const ACCENT_TABLE: &[(&str, char)] = &[
 ///
 /// Kept as a `&[u8]` slice for downstream consumers that want to
 /// enumerate the marker bytes; runtime membership checks go through
-/// the `u128` bitmap [`ACCENT_MARKER_MASK`] instead, which lowers to a
+/// the `u128` bitmap `ACCENT_MARKER_MASK` instead, which lowers to a
 /// single shift + AND.
 pub const ACCENT_MARKERS: &[u8] = b"'`^:~&,/_";
 
@@ -427,7 +427,7 @@ pub fn decompose_fragment(fragment: &str) -> Cow<'_, str> {
 /// - **3-byte path**: a 4-arm `match` against the four ligatures
 ///   (`ae&`, `AE&`, `oe&`, `OE&`). `match_ligature` lowers to a tight
 ///   jump-table-or-direct-compares form.
-/// - **2-byte path**: O(1) lookup in [`ACCENT_DIGRAPHS`], a `phf::Map`
+/// - **2-byte path**: O(1) lookup in `ACCENT_DIGRAPHS`, a `phf::Map`
 ///   built at compile time over all 110 spec digraph entries.
 ///
 /// Returns `(consumed_bytes, replacement_char)` on match.

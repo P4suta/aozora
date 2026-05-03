@@ -2,7 +2,7 @@
 //!
 //! `SyntaxKind` is the discriminant carried by every node + token
 //! in the CST. It is intentionally coarser than
-//! [`aozora::NodeKind`]: the AST kind names every classified
+//! `aozora::NodeKind`: the AST kind names every classified
 //! construct, while CST kinds organise the tree shape (root,
 //! containers, plain text, classified spans).
 
