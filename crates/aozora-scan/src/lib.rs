@@ -48,6 +48,9 @@ use bumpalo::collections::Vec as BumpVec;
 
 mod backends;
 mod naive;
+mod trait_def;
+
+pub use trait_def::{CountSink, OffsetSink};
 
 #[cfg(feature = "std")]
 pub use backends::TeddyScanner;
