@@ -2,7 +2,13 @@
 //!
 //! Prepares the raw source text for the downstream lexer phases:
 //!
-//! 1. **BOM strip** — a leading `U+FEFF` (UTF-8 BOM, 3 bytes) is consumed.
+//! 1. **BOM strip** — every leading `U+FEFF` (UTF-8 BOM, 3 bytes each)
+//!    is consumed. Both single (`U+FEFF`) and stacked (`U+FEFF`+
+//!    `U+FEFF`+…) leading sequences resolve to the same empty prefix
+//!    so that `serialize(serialize(x))` round-trips byte-equal — a
+//!    single-strip would peel off one BOM per pass and break I3
+//!    fixed-point on inputs that carry more than one. Interior
+//!    `U+FEFF` (zero-width no-break space) is still preserved.
 //! 2. **CR/LF normalization** — `\r\n` → `\n`, lone `\r` → `\n`. Aozora
 //!    source comes from a variety of encoders; downstream phases assume
 //!    `\n` as the one line terminator so they don't have to handle three
@@ -70,7 +76,16 @@ pub struct SanitizeOutput<'s> {
 /// documentation for the step order and rationale.
 #[must_use]
 pub fn sanitize(source: &str) -> SanitizeOutput<'_> {
-    let after_bom = source.strip_prefix('\u{FEFF}').unwrap_or(source);
+    // Strip every leading `U+FEFF`. CommonMark / WHATWG-text-encoding
+    // both consider only one BOM, but the `serialize` round-trip would
+    // peel one off per pass without this loop, breaking the I3
+    // fixed-point invariant `serialize(serialize(x)) == serialize(x)`
+    // on inputs that carry stacked BOMs (e.g. `\u{feff}\u{feff}` →
+    // first pass yields `\u{feff}`, second yields `""`).
+    let mut after_bom = source;
+    while let Some(rest) = after_bom.strip_prefix('\u{FEFF}') {
+        after_bom = rest;
+    }
 
     let line_normalized: Cow<'_, str> = if after_bom.contains('\r') {
         Cow::Owned(normalize_line_endings(after_bom))
@@ -380,6 +395,27 @@ mod tests {
         // Only a *leading* BOM gets stripped; interior U+FEFF is left as
         // zero-width no-break space (the other meaning of the codepoint).
         assert_eq!(out.text.as_ref(), input);
+    }
+
+    #[test]
+    fn stacked_leading_boms_are_all_stripped() {
+        // I3 fixed-point regression: `serialize(serialize(x))` must
+        // byte-equal `serialize(x)`. Stacked leading BOMs would
+        // otherwise peel off one per round-trip pass, so the strip
+        // loop has to consume every leading `U+FEFF`.
+        let input = "\u{FEFF}\u{FEFF}\u{FEFF}hello";
+        let out = sanitize(input);
+        assert_eq!(out.text.as_ref(), "hello");
+    }
+
+    #[test]
+    fn leading_boms_only_resolve_to_empty() {
+        // Edge case: an input that is *nothing but* leading BOMs
+        // resolves to the empty string. The previous single-strip
+        // behaviour produced `""` for one BOM and `"\u{feff}"` for
+        // two — the source of the I3 fuzz crash.
+        let out = sanitize("\u{FEFF}\u{FEFF}");
+        assert_eq!(out.text.as_ref(), "");
     }
 
     #[test]
