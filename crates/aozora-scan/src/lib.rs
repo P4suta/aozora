@@ -47,6 +47,7 @@ use bumpalo::Bump;
 use bumpalo::collections::Vec as BumpVec;
 
 mod backends;
+mod kernel;
 mod naive;
 mod trait_def;
 
