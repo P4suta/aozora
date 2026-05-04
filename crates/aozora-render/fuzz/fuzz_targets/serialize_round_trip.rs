@@ -19,6 +19,22 @@ fuzz_target!(|data: &[u8]| {
     let Ok(src) = core::str::from_utf8(data) else {
         return;
     };
+    // Sources that carry the parser-reserved PUA sentinel range
+    // (U+E001..U+E004) trigger `Diagnostic::SourceContainsPua` and the
+    // lexer is free to consume those codepoints — they are reserved
+    // markers, not user content. The serialize round-trip therefore
+    // can't promise idempotency on such inputs: round 1's lex strips
+    // them, leaving a different line shape for round 2's Phase 0
+    // decorative-rule isolator to classify (see the
+    // `crash-dcbadd08c7424e68f0820311a2cd78274aa87e52` regression
+    // case). I3 is a contract over user-meaningful aozora source,
+    // not over inputs that smuggle in lexer-internal markers.
+    if src
+        .chars()
+        .any(|c| matches!(c, '\u{E001}'..='\u{E004}'))
+    {
+        return;
+    }
     let arena1 = Arena::new();
     let lex1 = lex_into_arena(src, &arena1);
     let first = serialize(&lex1);
