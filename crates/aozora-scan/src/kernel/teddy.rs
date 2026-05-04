@@ -46,13 +46,6 @@
 //!
 //! [Hyperscan]: https://github.com/intel/hyperscan
 
-#![allow(
-    dead_code,
-    reason = "production wiring lands in the next step (G5-S3 \
-              BackendChoice dispatcher); each item here is exercised \
-              by the proptest oracle below until then"
-)]
-
 use aozora_spec::trigger::ALL_TRIGGER_TRIGRAMS;
 
 use crate::trait_def::OffsetSink;
@@ -85,11 +78,11 @@ const fn build_lead_lut(nibble_high: bool) -> [u16; 16] {
 
 /// Per-pattern bucket bitmap of patterns whose lead byte's hi
 /// nibble equals the index.
-const LEAD_HI_LUT: [u16; 16] = build_lead_lut(true);
+pub(crate) const LEAD_HI_LUT: [u16; 16] = build_lead_lut(true);
 
 /// Per-pattern bucket bitmap of patterns whose lead byte's lo
 /// nibble equals the index.
-const LEAD_LO_LUT: [u16; 16] = build_lead_lut(false);
+pub(crate) const LEAD_LO_LUT: [u16; 16] = build_lead_lut(false);
 
 /// Per-byte lead-candidate bitmap for a single source byte.
 ///

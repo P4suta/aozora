@@ -46,11 +46,14 @@ use alloc::vec::Vec;
 use bumpalo::Bump;
 use bumpalo::collections::Vec as BumpVec;
 
+mod arch;
 mod backends;
+mod dispatch;
 mod kernel;
 mod naive;
 mod trait_def;
 
+pub use dispatch::BackendChoice;
 pub use trait_def::{CountSink, OffsetSink};
 
 #[cfg(feature = "std")]
@@ -199,9 +202,20 @@ pub fn best_scanner_name() -> &'static str {
 #[cfg(feature = "std")]
 #[must_use]
 pub fn scan_offsets_in<'a>(source: &str, arena: &'a Bump) -> BumpVec<'a, u32> {
-    let scratch = best_scanner().scan_offsets(source);
-    let mut out = BumpVec::with_capacity_in(scratch.len(), arena);
-    out.extend_from_slice(&scratch);
+    use std::sync::OnceLock;
+    static CHOICE: OnceLock<BackendChoice> = OnceLock::new();
+    let mut out = BumpVec::new_in(arena);
+    CHOICE
+        .get_or_init(BackendChoice::detect)
+        .scan(source, &mut out);
+    out
+}
+
+#[cfg(not(feature = "std"))]
+#[must_use]
+pub fn scan_offsets_in<'a>(source: &str, arena: &'a Bump) -> BumpVec<'a, u32> {
+    let mut out = BumpVec::new_in(arena);
+    BackendChoice::ScalarTeddy.scan(source, &mut out);
     out
 }
 
