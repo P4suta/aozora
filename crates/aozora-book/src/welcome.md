@@ -33,7 +33,7 @@ A practical tour and a deep reference, in one document.
   authors get them subtly wrong.
 - **Architecture** — what makes aozora *fast and small*: the
   [borrowed-arena AST](arch/arena.md), the
-  [seven-phase lexer](arch/lexer.md), the
+  [four-phase lexer](arch/lexer.md), the
   [SIMD scanner backends](arch/scanner.md) (Teddy, structural
   bitmaps, Hoehrmann-style multi-pattern DFA),
   [Eytzinger-layout sorted-set lookup](arch/veb.md), and the

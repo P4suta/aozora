@@ -78,13 +78,13 @@ rust_2024_compatibility = { level = "warn", priority = -1 }
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links       = "deny"
-private_intra_doc_links      = "warn"
-invalid_codeblock_attributes = "warn"
-invalid_html_tags            = "warn"
-invalid_rust_codeblocks      = "warn"
-bare_urls                    = "warn"
-redundant_explicit_links     = "warn"
-unescaped_backticks          = "warn"
+private_intra_doc_links      = "deny"
+invalid_codeblock_attributes = "deny"
+invalid_html_tags            = "deny"
+invalid_rust_codeblocks      = "deny"
+bare_urls                    = "deny"
+redundant_explicit_links     = "deny"
+unescaped_backticks          = "deny"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

@@ -34,16 +34,27 @@ parse it.
 
 ## What gets compared
 
-The runner checks two outputs per fixture:
+The runner pins six axes per fixture:
 
 1. `tree.to_html()` byte-identical to `expected.html`.
 2. `tree.serialize()` byte-identical to `expected.serialize.txt`.
+3. `aozora::wire::serialize_diagnostics(tree.diagnostics())`
+   byte-identical to `expected.diagnostics.json`.
+4. `aozora::wire::serialize_nodes(&tree)` byte-identical to
+   `expected.nodes.json`.
+5. `aozora::wire::serialize_pairs(&tree)` byte-identical to
+   `expected.pairs.json`.
+6. `aozora::wire::serialize_container_pairs(&tree)` byte-identical to
+   `expected.container_pairs.json`.
 
-Both goldens regenerate via
+Axes 1–2 anchor the human-readable surface; axes 3–6 pin the JSON
+projections that drivers (FFI / WASM / PyO3) consume in production,
+so a regression that survives the renderer gate but breaks a wire
+client lights up here.
+
+All six goldens regenerate via
 `UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test render_gate`
-after intentional output changes. The runner does *not* yet compare
-diagnostics or wire-format output; both are future extensions of the
-same manifest.
+after intentional output changes.
 
 ## Implementations
 

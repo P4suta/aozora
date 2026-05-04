@@ -9,7 +9,7 @@ container plumbing.
 | Variable | Read by | Effect |
 |---|---|---|
 | `NO_COLOR` | `aozora-cli` | If set (any value), disable ANSI colour output. Same as `--no-color`. Standard convention from <https://no-color.org>. |
-| `AOZORA_LOG` | `aozora-cli`, library opt-in | `tracing-subscriber` filter directive (e.g. `aozora_lex=debug,aozora_render=info`). For internal debugging; not part of the stable surface. |
+| `AOZORA_LOG` | `aozora-cli`, library opt-in | `tracing-subscriber` filter directive (e.g. `aozora_pipeline=debug,aozora_render=info`). For internal debugging; not part of the stable surface. |
 
 ## Dev / bench harness
 
