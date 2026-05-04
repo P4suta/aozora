@@ -705,14 +705,16 @@ ci-act *ARGS:
 test-aarch64:
     cross test --target aarch64-unknown-linux-gnu -p aozora-scan
 
-# Cross-compile aozora-scan to wasm32-wasip1 + run the proptest
-# suite inside wasmtime. Verifies the WASM SIMD128 Teddy inner
-# kernel matches NaiveScanner byte-identically. Requires
-# `wasmtime` on PATH and `rustup target add wasm32-wasip1`;
-# mirrors the `wasm-test` job in ci.yml.
+# Cross-compile aozora-scan to wasm32-wasip1 to verify the WASM
+# SIMD128 kernel codegen. Build-only: `cargo test` is structurally
+# impossible on wasm32 because proptest's transitive deps
+# (rusty-fork / wait-timeout) require Unix fork() APIs the target
+# lacks. The native `cargo nextest run -p aozora-scan` already
+# exercises the chunk-level proptests against ScalarTeddyKernel.
+# Mirrors the `wasm-test` job in ci.yml; requires `rustup target
+# add wasm32-wasip1` once.
 test-wasm:
-    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime run --dir=. --" \
-        cargo test --target wasm32-wasip1 -p aozora-scan
+    cargo build --target wasm32-wasip1 -p aozora-scan
 
 # --- aggregate ----------------------------------------------------------------
 

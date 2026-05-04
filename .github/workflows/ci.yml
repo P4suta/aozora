@@ -225,28 +225,37 @@ jobs:
       - name: cross test (aarch64-unknown-linux-gnu, aozora-scan)
         run: cross test --target aarch64-unknown-linux-gnu -p aozora-scan
 
-  # wasm32-wasip1 + wasmtime execution of the SIMD scanner tests.
-  # Same shape as `cross-aarch64`: the WASM SIMD128 Teddy kernel
-  # only compiles on `target_arch = "wasm32"`, so we cross-build
-  # and run the proptest oracle inside wasmtime against
-  # NaiveScanner. wasmtime is the workspace's pinned WASM runtime.
+  # wasm32-wasip1 codegen check for the SIMD scanner. Build-only:
+  # `cargo test` is structurally impossible on wasm32 because the
+  # crate's proptest dev-dep pulls in `rusty-fork` / `wait-timeout`,
+  # both of which require Unix `fork()` / process-control APIs that
+  # wasm32-wasip1 lacks (verified locally: `wait-timeout` fails to
+  # compile on the target). The in-source `#[cfg(test)]` proptests
+  # run on the native host as part of the main `coverage` /
+  # `cross-aarch64` jobs, and the WasmKernel chunk-level proptest
+  # is structurally identical to the NeonKernel one that does run
+  # under qemu-user. The build check here catches regressions in
+  # WASM SIMD intrinsic mapping (`i8x16_swizzle`, `u8x16_shr`,
+  # `u8x16_shuffle` const-index encoding) at the codegen level.
   wasm-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-wasip1
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: wasmtime
+      # The `targets:` parameter on `dtolnay/rust-toolchain` does
+      # install the rust-std component, but cargo occasionally
+      # cannot find it (`E0463: can't find crate for core`) — most
+      # commonly when a self-hosted runner has a pre-existing
+      # `~/.cargo` from a prior step that pinned a different
+      # toolchain. Running `rustup target add` explicitly after the
+      # toolchain action settles the lookup deterministically.
+      - name: Install wasm32-wasip1 target
+        run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
           key: wasm-test
-      - name: cargo test --target wasm32-wasip1 (aozora-scan)
-        env:
-          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime run --dir=. --"
-        run: cargo test --target wasm32-wasip1 -p aozora-scan
+      - name: cargo build --target wasm32-wasip1 (aozora-scan)
+        run: cargo build --target wasm32-wasip1 -p aozora-scan
 
   # Python wheel build verification — install maturin, build the
   # `aozora-py` wheel against the runner's stock Python. Build-only:

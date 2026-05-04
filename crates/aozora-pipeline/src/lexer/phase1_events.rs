@@ -21,7 +21,7 @@
 //!
 //! ## Algorithm
 //!
-//! 1. [`aozora_scan::best_scanner`] returns the byte offsets of every
+//! 1. [`aozora_scan::scan_offsets`] returns the byte offsets of every
 //!    trigger character in `source`. On `x86_64` this dispatches to
 //!    Teddy (Hyperscan multi-pattern fingerprint matcher); on minimal
 //!    hosts to a SIMD-free DFA. Both produce byte-identical output.
@@ -240,7 +240,7 @@ impl<'s> Tokenizer<'s> {
             "source too long for u32 span offsets ({} bytes)",
             source.len()
         );
-        let trigger_offsets = aozora_scan::best_scanner().scan_offsets(source);
+        let trigger_offsets = aozora_scan::scan_offsets(source);
         let bytes = source.as_bytes();
         // memchr_iter is internally vectorised (AVX2 on x86_64, NEON on
         // aarch64) — the same machine code memchr3 uses for trigger

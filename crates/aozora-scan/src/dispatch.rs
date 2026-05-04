@@ -8,12 +8,12 @@
 //! through the outer driver into the call site (the `phase1_events`
 //! tokeniser).
 //!
-//! The dispatcher intentionally does not go through a trait object:
-//! `&dyn TriggerScanner` cannot carry a generic `S: OffsetSink`
-//! method, which would force a per-call heap `Vec<u32>` allocation
-//! the redesign exists to remove. Holding the choice as a `Copy`
-//! enum and `match`-ing in `scan` gives us the static dispatch we
-//! want without surrendering the runtime CPU detection that lets a
+//! Static dispatch is the whole point of the design: a trait object
+//! cannot carry a generic `S: OffsetSink` method, so a `&dyn`-based
+//! dispatcher would force a per-call heap `Vec<u32>` allocation the
+//! redesign exists to remove. Holding the choice as a `Copy` enum
+//! and `match`-ing in `scan` gives us the static dispatch we want
+//! without surrendering the runtime CPU detection that lets a
 //! single binary adapt to its host.
 
 use crate::kernel::teddy::{ScalarTeddyKernel, teddy_outer};
@@ -102,9 +102,9 @@ impl BackendChoice {
     /// trigger byte offset into `sink`.
     ///
     /// Static dispatch: the `match` arm collapses to a direct call
-    /// into the appropriate inner kernel's monomorphised
-    /// [`teddy_outer`] instantiation, leaving no virtual call on
-    /// the hot path.
+    /// into the appropriate inner kernel's monomorphised Teddy
+    /// outer driver instantiation, leaving no virtual call on the
+    /// hot path.
     #[inline]
     pub fn scan<S: OffsetSink>(self, source: &str, sink: &mut S) {
         match self {
@@ -137,7 +137,6 @@ impl BackendChoice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TriggerScanner;
     use crate::naive::NaiveScanner;
     use alloc::vec::Vec;
 

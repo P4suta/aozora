@@ -235,7 +235,6 @@ pub(crate) fn teddy_outer<I: TeddyInner, S: OffsetSink>(source: &str, sink: &mut
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TriggerScanner;
     use crate::naive::NaiveScanner;
     use alloc::vec::Vec;
 

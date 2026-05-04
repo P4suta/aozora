@@ -1,22 +1,19 @@
 //! Output channel abstraction for trigger-byte scanners.
 //!
-//! Replaces the previous `Vec<u32>` eager-allocation shape with a
-//! visitor-style sink so backends can write trigger offsets directly
+//! Replaces an eager `Vec<u32>`-returning entry shape with a
+//! visitor-style sink so kernels can write trigger offsets directly
 //! into the caller's preferred buffer (heap `Vec`, bumpalo arena
 //! `BumpVec`, or a counting sink that records nothing) without the
-//! per-call heap → arena memcpy that the dyn-trait API forced on
-//! every parse.
+//! heap → arena memcpy a returned `Vec<u32>` would force on every
+//! parse.
 //!
-//! The sink trait stays generic-method on purpose: every backend's
+//! The sink trait stays generic-method on purpose: every kernel's
 //! scan loop monomorphises against the concrete sink type, which
 //! lets the LLVM inliner fold the `push` call into the SIMD inner
-//! loop with no virtual dispatch overhead. Dispatching from a
-//! `&dyn TriggerScanner` is preserved by holding the legacy
-//! `scan_offsets` -> `Vec<u32>` shape on the trait; the new sink
-//! path lives as `inherent` methods on each backend, called either
-//! through the runtime [`crate::BackendChoice`] dispatcher (added
-//! in a follow-up step) or directly when the backend is statically
-//! known.
+//! loop with no virtual dispatch overhead. The runtime
+//! [`crate::BackendChoice`] dispatcher routes calls into the
+//! monomorphised paths via a `match`, preserving runtime CPU
+//! adaptation without sacrificing static dispatch.
 
 use alloc::vec::Vec;
 
@@ -24,7 +21,7 @@ use alloc::vec::Vec;
 use bumpalo::collections::Vec as BumpVec;
 
 /// Sink for trigger byte offsets emitted by a
-/// [`crate::TriggerScanner`].
+/// [`crate::BackendChoice`] kernel.
 ///
 /// Implementations decide where each offset lives — heap `Vec`,
 /// arena `BumpVec`, a count-only [`CountSink`], or a custom buffer

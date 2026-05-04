@@ -31,10 +31,11 @@
 //!
 //! ## Verification
 //!
-//! Cross-validated by proptest in [`crate::tests::property_backend_equiv`]
-//! against the [`crate::naive::NaiveScanner`] reference. Each kernel
-//! is exercised end-to-end through [`crate::kernel::teddy::teddy_outer`]
-//! over `aozora_fragment` / `pathological_aozora` /
+//! Cross-validated by proptest in
+//! `tests/property_backend_equiv.rs` against the
+//! [`crate::NaiveScanner`] reference. Each kernel is exercised
+//! end-to-end through the Teddy outer driver over
+//! `aozora_fragment` / `pathological_aozora` /
 //! `unicode_adversarial` strategies, with the runner also asserting
 //! per-kernel byte-identical agreement.
 

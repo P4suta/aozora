@@ -117,16 +117,16 @@ binutils. We don't because:
 
 ```rust
 // In any binary or test
-println!("{}", aozora_scan::best_scanner_name());
-// "teddy" | "structural-bitmap" | "dfa" | "naive"
+println!("{}", aozora_scan::BackendChoice::detect().name());
+// "teddy-avx2" | "teddy-ssse3" | "teddy-neon" | "teddy-wasm" | "scalar-teddy"
 ```
 
-Or under samply, look for `aozora_scan::backends::teddy::scan_offsets`
+Or under samply, look for `aozora_scan::arch::x86_64::lead_mask_chunk_avx2`
 in the trace's call tree. If the trace shows
-`aozora_scan::backends::structural_bitmap::*` instead, the AVX2
-fallback is firing because the host failed Teddy's SSSE3 build;
-`aozora_scan::backends::dfa::*` indicates the universal Hoehrmann
-DFA fallback fired.
+`aozora_scan::arch::x86_64::lead_mask_chunk_ssse3` instead, the
+SSSE3 fallback is firing because the host lacked AVX2;
+`aozora_scan::kernel::teddy::ScalarTeddyKernel::lead_mask_chunk`
+indicates the pure-Rust last resort fired.
 
 ## Workflow recipes
 
