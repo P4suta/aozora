@@ -252,14 +252,15 @@ fn classify_trigger_inline(kind: TriggerKind, span: Span, ctx: &mut PairCtx<'_>)
 /// * `stack`: smallvec of open `PairKind`s with their open spans.
 ///   Inline capacity 8 covers the 99th-percentile bracket nesting in
 ///   real Aozora text (corpus profile).
-/// * `pending`: single-slot output buffer for the case where one
-///   token resolves into a `Solo` event AND a follow-on synthetic
-///   `Unclosed` from a now-impossible earlier open. Currently unused
-///   — the streaming policy emits at most one event per input token —
-///   but kept for future extension.
 /// * `diagnostics`: collected non-fatal observations.
+/// * `links`: resolved `(open, close)` pairs accumulated as the
+///   stack matches; mirrors `PairOutputIn::links` for streaming
+///   callers that don't go through `pair_in`.
 /// * `eof_drain`: cursor through the residual stack at end-of-input
 ///   used to emit one `Unclosed` event per remaining open frame.
+/// * `finished`: terminal flag set after the eof drain completes,
+///   so subsequent `next()` calls return `None` without re-walking
+///   the stack.
 #[derive(Debug)]
 pub struct PairStream<I>
 where
