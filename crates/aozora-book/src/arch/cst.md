@@ -93,7 +93,7 @@ dual-allocator overhead is the price for keeping the AST untouched.
 
 - [Architecture → Borrowed-arena AST](arena.md) — the underlying
   perf-critical tree.
-- [Architecture → Seven-phase lexer](lexer.md) — where Phase 0
+- [Architecture → Four-phase lexer](lexer.md) — where Phase 0
   sanitize and Phase 3 classify do their work.
 - [`Document::edit`](https://docs.rs/aozora/latest/aozora/struct.Document.html#method.edit)
   — the incremental-parse counterpart that reuses the same CST.

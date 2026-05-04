@@ -91,26 +91,33 @@ for the full subcommand reference.
 
 ## Crate layout
 
+aozora is a 21-crate workspace.
+[`crates/aozora`](./crates/aozora) is the public facade — library
+consumers usually import only this one.
+
 | Crate | Purpose |
 |---|---|
 | [`crates/aozora`](./crates/aozora) | Top-level facade. `Document::parse() → AozoraTree<'_>`, structured `Diagnostic`s, `SLUGS` catalogue, `canonicalise_slug`. The single front door. |
-| [`crates/aozora-spec`](./crates/aozora-spec) | Single source of truth for shared types: `Span`, `TriggerKind`, `PairKind`, `Diagnostic`, PUA sentinel codepoints. No internal dependency. |
+| [`crates/aozora-spec`](./crates/aozora-spec) | Single source of truth for shared types: `Span`, `TriggerKind`, `PairKind`, `Diagnostic`, PUA sentinel codepoints, `SLUGS` dispatch table. No internal dependency. |
 | [`crates/aozora-syntax`](./crates/aozora-syntax) | AST types (`AozoraNode` borrowed-arena variants, `ContainerKind`, `BoutenKind`, `Indent`). |
 | [`crates/aozora-encoding`](./crates/aozora-encoding) | Shift_JIS decoding + 外字 lookup (compile-time PHF, JIS X 0213 + UCS resolution). |
-| [`crates/aozora-scan`](./crates/aozora-scan) | SIMD-friendly multi-pattern scanner backends (Teddy, structural-bitmap, DFA fallback). |
+| [`crates/aozora-scan`](./crates/aozora-scan) | SIMD-friendly multi-pattern scanner backends (Teddy / structural-bitmap / Hoehrmann DFA / naive fallback). |
 | [`crates/aozora-veb`](./crates/aozora-veb) | Eytzinger-layout sorted-set lookup (cache-friendly binary search). |
-| [`crates/aozora-lexer`](./crates/aozora-lexer) | 7-phase classifier pipeline. |
-| [`crates/aozora-lex`](./crates/aozora-lex) | Fused streaming orchestrator — pure `fn(&str) -> AozoraTree<'_>`. |
+| [`crates/aozora-pipeline`](./crates/aozora-pipeline) | 4-phase lexer (sanitize → events → pair → classify) plus the `lex_into_arena` orchestrator — pure `fn(&str, &Arena) -> BorrowedLexOutput<'_>`. |
 | [`crates/aozora-render`](./crates/aozora-render) | HTML and serialise renderers — `html::render_to_string`, `serialize::serialize`. |
-| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` binary: `check` / `fmt` / `render`. |
+| [`crates/aozora-cst`](./crates/aozora-cst) | rowan-backed lossless concrete syntax tree. Editor/formatter surface. |
+| [`crates/aozora-query`](./crates/aozora-query) | Tree-sitter-style pattern DSL (`SyntaxKind` + capture) for queries over the CST. |
+| [`crates/aozora-pandoc`](./crates/aozora-pandoc) | Pandoc AST projection (`AozoraTree` → `pandoc_ast::Pandoc`); unlocks 50+ output formats via Pandoc writers. |
+| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` binary: `check` / `fmt` / `schema` / `kinds` / `explain` / `pandoc`. |
 | [`crates/aozora-wasm`](./crates/aozora-wasm) | `wasm32-unknown-unknown` target for `wasm-pack build --target web`. |
 | [`crates/aozora-ffi`](./crates/aozora-ffi) | C ABI driver (opaque handle, JSON-encoded structured data). |
 | [`crates/aozora-py`](./crates/aozora-py) | PyO3 bindings, distributed via `maturin`. |
 | [`crates/aozora-bench`](./crates/aozora-bench) | Criterion + corpus-driven probes (PGO profile source). |
+| [`crates/aozora-conformance`](./crates/aozora-conformance) | WPT-style conformance fixture runner (golden HTML / serialize / diagnostics / wire across 23 fixtures). |
 | [`crates/aozora-corpus`](./crates/aozora-corpus) | Corpus source abstraction for sweep tests (dev-only, set `AOZORA_CORPUS_ROOT`). |
-| [`crates/aozora-test-utils`](./crates/aozora-test-utils) | Shared proptest strategies (dev-only). |
+| [`crates/aozora-proptest`](./crates/aozora-proptest) | Shared proptest strategies (`aozora_fragment` / `pathological_aozora` / `unicode_adversarial` and friends; dev-only). |
 | [`crates/aozora-trace`](./crates/aozora-trace) | DWARF symbolicator for samply traces. |
-| [`crates/aozora-xtask`](./crates/aozora-xtask) | Repo automation (samply wrapper, trace analysis, corpus pack/unpack). |
+| [`crates/aozora-xtask`](./crates/aozora-xtask) | Repo automation (samply wrapper, trace analysis, corpus pack/unpack, schema dumps). |
 
 See the [Architecture chapter](https://p4suta.github.io/aozora/arch/pipeline.html)
 of the handbook for the layered design, the borrowed-arena AST, the

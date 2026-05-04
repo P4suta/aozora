@@ -94,30 +94,33 @@ aozora check -E sjis FILE.txt   # Shift_JIS ソース (青空文庫の標準)
 
 ## クレート構成
 
-aozora は18クレートの workspace です。
+aozora は21クレートの workspace です。
 [`crates/aozora`](./crates/aozora) が公開ファサードで、ライブラリ
 利用者は通常このひとつだけインポートします。
 
 | クレート | 役割 |
 |---|---|
 | [`crates/aozora`](./crates/aozora) | 公開ファサード。`Document::parse() → AozoraTree<'_>` と `Diagnostic` 型、`SLUGS` カタログを提供。 |
-| [`crates/aozora-spec`](./crates/aozora-spec) | 共有型の単一の出所: `Span`, `TriggerKind`, `PairKind`, `Diagnostic`, PUA センチネル。内部依存なし。 |
+| [`crates/aozora-spec`](./crates/aozora-spec) | 共有型の単一の出所: `Span`, `TriggerKind`, `PairKind`, `Diagnostic`, PUA センチネル、`SLUGS` ディスパッチテーブル。内部依存なし。 |
 | [`crates/aozora-syntax`](./crates/aozora-syntax) | AST ノード型 (`AozoraNode` 借用アリーナ variants, `ContainerKind`, `BoutenKind`, `Indent`)。 |
 | [`crates/aozora-encoding`](./crates/aozora-encoding) | Shift_JIS デコード + 外字解決 (PHF テーブル、JIS X 0213 + UCS フォールバック)。 |
-| [`crates/aozora-scan`](./crates/aozora-scan) | SIMD 対応マルチパターンスキャナ (Teddy / Hoehrmann-DFA / memchr フォールバック)。 |
+| [`crates/aozora-scan`](./crates/aozora-scan) | SIMD 対応マルチパターンスキャナ (Teddy / structural-bitmap / Hoehrmann-DFA / naive フォールバック)。 |
 | [`crates/aozora-veb`](./crates/aozora-veb) | Eytzinger 配置の sorted-set 検索 (キャッシュ親和的二分探索)。 |
-| [`crates/aozora-lexer`](./crates/aozora-lexer) | 7-phase 字句解析パイプライン。 |
-| [`crates/aozora-lex`](./crates/aozora-lex) | 融合ストリーミング・オーケストレータ ―― 純粋関数 `fn(&str) -> AozoraTree<'_>`。 |
+| [`crates/aozora-pipeline`](./crates/aozora-pipeline) | 4-phase 字句解析 (sanitize → events → pair → classify) + `lex_into_arena` オーケストレータ。 |
 | [`crates/aozora-render`](./crates/aozora-render) | HTML / canonical シリアライザ ―― `html::render_to_string`, `serialize::serialize`。 |
-| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` バイナリ本体: `check` / `fmt` / `render`。 |
+| [`crates/aozora-cst`](./crates/aozora-cst) | rowan ベースのロスレス具象構文木 (CST)。エディタ/フォーマッタ向け。 |
+| [`crates/aozora-query`](./crates/aozora-query) | tree-sitter 風パターン DSL (`SyntaxKind` + capture)。CST に対するクエリ。 |
+| [`crates/aozora-pandoc`](./crates/aozora-pandoc) | Pandoc AST への射影 (`AozoraTree` → `pandoc_ast::Pandoc`)。50+ 出力フォーマットに繋がる。 |
+| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` バイナリ本体: `check` / `fmt` / `schema` / `kinds` / `explain` / `pandoc`。 |
 | [`crates/aozora-wasm`](./crates/aozora-wasm) | `wasm32-unknown-unknown` ターゲット (`wasm-pack build --target web`)。 |
 | [`crates/aozora-ffi`](./crates/aozora-ffi) | C ABI ドライバ (オペーク・ハンドル + JSON 構造化データ)。 |
 | [`crates/aozora-py`](./crates/aozora-py) | PyO3 バインディング、`maturin` で配布。 |
 | [`crates/aozora-bench`](./crates/aozora-bench) | Criterion + コーパス駆動プローブ (PGO トレーニング元)。 |
+| [`crates/aozora-conformance`](./crates/aozora-conformance) | WPT 形式の準拠スイートランナー (HTML / serialize / diagnostics / wire を 4 軸でゴールデン比較)。 |
 | [`crates/aozora-corpus`](./crates/aozora-corpus) | コーパス抽象化 (sweep テスト用、dev 限定。`AOZORA_CORPUS_ROOT` で参照)。 |
-| [`crates/aozora-test-utils`](./crates/aozora-test-utils) | proptest 用ストラテジ共有 (dev 限定)。 |
+| [`crates/aozora-proptest`](./crates/aozora-proptest) | proptest 用ストラテジ共有 (`aozora_fragment` / `pathological_aozora` / `unicode_adversarial` ほか、 dev 限定)。 |
 | [`crates/aozora-trace`](./crates/aozora-trace) | samply トレース用 DWARF シンボリケータ。 |
-| [`crates/aozora-xtask`](./crates/aozora-xtask) | リポジトリ自動化 (samply ラッパ、トレース解析、コーパス pack/unpack)。 |
+| [`crates/aozora-xtask`](./crates/aozora-xtask) | リポジトリ自動化 (samply ラッパ、トレース解析、コーパス pack/unpack、 schema dumps)。 |
 
 クレート間の階層構造の詳細は
 [Architecture → Crate map](https://p4suta.github.io/aozora/arch/crates.html)

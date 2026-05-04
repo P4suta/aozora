@@ -113,11 +113,12 @@ In practice this rarely matters — consumers either:
 - Hold the `Document` itself across function boundaries and re-derive
   the tree on the inside.
 
-For consumers that genuinely need an owned tree, `aozora::owned`
-(planned for v0.3) will provide a `walk` helper that builds a
-`Vec<OwnedNode>` from a tree pass. We resist shipping it pre-1.0
-because the conversion is trivial and shipping a built-in owned
-version would push consumers toward it even when they don't need it.
+For consumers that genuinely need an owned tree, the visitor trait
+on `AozoraTree` makes the conversion trivial — walk the tree once
+and emit your own owned IR. We resist shipping a built-in
+`aozora::owned` because doing so would push consumers toward it
+even when an immediate `to_html()` or per-walk transcription would
+serve them better.
 
 ## Lifetime safety
 
@@ -136,4 +137,6 @@ Borrow-checker enforcement; no runtime `Drop` ordering bugs possible.
 
 - [Pipeline overview](pipeline.md) — where the arena is created.
 - [Crate map](crates.md) — `aozora-syntax` defines the node types;
-  `aozora-lex` does the allocation.
+  `aozora-pipeline` does the allocation via [`lex_into_arena`].
+
+[`lex_into_arena`]: https://docs.rs/aozora-pipeline/latest/aozora_pipeline/fn.lex_into_arena.html

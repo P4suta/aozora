@@ -2,9 +2,10 @@
 
 aozora ships two layers of perf measurement:
 
-- **Criterion microbenchmarks** in `crates/aozora-lex/benches/` and
-  `crates/aozora-render/benches/`. Reproducible per-function timings
-  with statistical confidence intervals.
+- **Criterion microbenchmarks** in `crates/aozora-pipeline/benches/`,
+  `crates/aozora-syntax/benches/`, `crates/aozora-scan/benches/`,
+  and `crates/aozora-bench/benches/`. Reproducible per-function
+  timings with statistical confidence intervals.
 - **Corpus probes** in `crates/aozora-bench/examples/`. Each probe is
   a `cargo run --release --example <name>` binary that reports
   per-band statistics across a real corpus.
@@ -14,8 +15,12 @@ aozora ships two layers of perf measurement:
 Run a specific bench:
 
 ```sh
-cargo bench -p aozora-lex --bench tokenize_compare
-cargo bench -p aozora-render --bench html_emit
+cargo bench -p aozora-pipeline --bench tokenize_compare
+cargo bench -p aozora-pipeline --bench classify_kaeriten
+cargo bench -p aozora-syntax   --bench accent_decompose
+cargo bench -p aozora-scan     --bench scanner_bakeoff
+cargo bench -p aozora-bench    --bench crime_and_punishment
+cargo bench -p aozora-bench    --bench synthetic_corpus
 ```
 
 Criterion writes HTML reports under `target/criterion/`. Each bench
@@ -47,7 +52,7 @@ slice of the workload. All read `AOZORA_CORPUS_ROOT`; most accept
 | Probe | Question it answers | Output shape |
 |---|---|---|
 | `throughput_by_class` | Per-band MB/s for `lex_into_arena` | 4-band table + p50 / p90 / p99 / max + ns/byte |
-| `phase_breakdown` | Per-phase ms for sanitize / tokenize / pair / classify | per-doc latencies + top-5 worst classify / sanitize |
+| `phase_breakdown` | Per-phase ms for sanitize / events / pair / classify | per-doc latencies + top-5 worst classify / sanitize |
 | `latency_histogram` | Log-bucketed latency distribution per phase | bar histogram, 10 buckets, 1 µs … 1 s |
 | `pathological_probe` | Single-doc 100-iter avg per phase | tight per-call numbers; takes `AOZORA_PROBE_DOC` for any corpus path |
 | `phase0_breakdown` | Per-sub-pass cost inside Phase 0 sanitize | bom_strip / crlf / rule_isolate / accent / pua_scan |
@@ -112,8 +117,8 @@ just trace-rollup /tmp/aozora-corpus-<ts>.json.gz
 ```
 
 The `trace-rollup` analysis groups samples into aozora's built-in
-categories (Phase 0/1/2/3/4 + corpus_load + intern + alloc + …) so
-a regression's category jumps out at a glance.
+categories (Phase 0/1/2/3 + corpus_load + intern + alloc + …) so a
+regression's category jumps out at a glance.
 
 ## See also
 

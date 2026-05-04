@@ -9,7 +9,7 @@ web-tree-sitter / CodeMirror) and to serve as a teaching artefact.
 
 ## Why a separate grammar at all
 
-The Rust parser is a seven-phase pipeline with a hand-rolled
+The Rust parser is a four-phase pipeline with a hand-rolled
 classifier; reading it tells you *how* the canonical
 implementation works but not *what* the spec accepts. A
 declarative grammar is the language community's preferred form

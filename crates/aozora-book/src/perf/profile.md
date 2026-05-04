@@ -20,11 +20,12 @@ every crate's IR into one module before optimisation, so the
 inliner can see across the whole pipeline.
 
 For aozora that pays off because the lex pipeline is *deep*:
-`aozora-render` → `aozora` → `aozora-lex` → `aozora-lexer` Phase
-functions, each in its own crate. A function call across that depth
-under thin LTO costs four indirect calls and four stack frames; the
-fat LTO build folds the chain into ~40 inlined instructions on the
-hot per-byte path.
+`aozora-render` → `aozora` → `aozora-pipeline::lex_into_arena` →
+per-phase functions, each living behind a crate boundary or a
+module boundary that LLVM treats the same way under thin LTO. A
+function call across that depth under thin LTO costs several
+indirect calls and stack frames; the fat LTO build folds the chain
+into ~40 inlined instructions on the hot per-byte path.
 
 Measured on the corpus sweep: fat LTO is 30%+ faster than thin LTO
 once the lex orchestrator is split across crates. Compile-time cost
