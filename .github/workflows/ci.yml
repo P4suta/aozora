@@ -205,6 +205,26 @@ jobs:
       - name: Build wasm-pack package
         run: wasm-pack build --target web --release crates/aozora-wasm
 
+  # aarch64 cross-compile + qemu-user execution of the SIMD scanner
+  # tests. The NEON Teddy kernel only builds on `target_arch =
+  # "aarch64"`; this job runs the proptest cross-validation against
+  # NaiveScanner inside qemu so a broken intrinsic mapping lights
+  # up on PR. Build-only on x86 hosts wouldn't catch correctness
+  # regressions.
+  cross-aarch64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cross-aarch64
+      - name: cross test (aarch64-unknown-linux-gnu, aozora-scan)
+        run: cross test --target aarch64-unknown-linux-gnu -p aozora-scan
+
   # Python wheel build verification — install maturin, build the
   # `aozora-py` wheel against the runner's stock Python. Build-only:
   # no PyPI publish.

@@ -19,6 +19,8 @@
 use crate::kernel::teddy::{ScalarTeddyKernel, teddy_outer};
 use crate::trait_def::OffsetSink;
 
+#[cfg(target_arch = "aarch64")]
+use crate::arch::aarch64::NeonKernel;
 #[cfg(target_arch = "x86_64")]
 use crate::arch::x86_64::{Avx2Kernel, Ssse3Kernel};
 
@@ -36,8 +38,11 @@ pub enum BackendChoice {
     /// SSSE3 16-byte Teddy. x86_64 only; the fallback when AVX2 is
     /// missing but SSSE3 is available (every `x86_64-v2` host).
     TeddySsse3,
+    /// NEON 16-byte Teddy. aarch64 only; always available there
+    /// since the ABI mandates NEON.
+    TeddyNeon,
     /// Pure-Rust Teddy reference. Always available; the dispatch
-    /// target on non-x86_64 hosts and the `no_std` last resort.
+    /// target on non-SIMD hosts and the `no_std` last resort.
     ScalarTeddy,
 }
 
@@ -60,6 +65,12 @@ impl BackendChoice {
                 return Self::TeddySsse3;
             }
         }
+        // aarch64 ABI mandates NEON; no runtime check needed.
+        #[cfg(target_arch = "aarch64")]
+        {
+            return Self::TeddyNeon;
+        }
+        #[cfg(not(target_arch = "aarch64"))]
         Self::ScalarTeddy
     }
 
@@ -70,6 +81,7 @@ impl BackendChoice {
         match self {
             Self::TeddyAvx2 => "teddy-avx2",
             Self::TeddySsse3 => "teddy-ssse3",
+            Self::TeddyNeon => "teddy-neon",
             Self::ScalarTeddy => "scalar-teddy",
         }
     }
@@ -88,14 +100,19 @@ impl BackendChoice {
             Self::TeddyAvx2 => teddy_outer::<Avx2Kernel, _>(source, sink),
             #[cfg(target_arch = "x86_64")]
             Self::TeddySsse3 => teddy_outer::<Ssse3Kernel, _>(source, sink),
-            // On non-x86_64 the SIMD variants are unreachable from
-            // `detect()`, but the `match` must still be exhaustive;
-            // collapse them to the scalar reference so a directly-
-            // constructed value still scans correctly.
+            #[cfg(target_arch = "aarch64")]
+            Self::TeddyNeon => teddy_outer::<NeonKernel, _>(source, sink),
+            // SIMD variants the active target can't run are
+            // unreachable from `detect()`, but the `match` must
+            // still be exhaustive; collapse them to the scalar
+            // reference so a directly-constructed value still
+            // scans correctly.
             #[cfg(not(target_arch = "x86_64"))]
             Self::TeddyAvx2 | Self::TeddySsse3 => {
                 teddy_outer::<ScalarTeddyKernel, _>(source, sink);
             }
+            #[cfg(not(target_arch = "aarch64"))]
+            Self::TeddyNeon => teddy_outer::<ScalarTeddyKernel, _>(source, sink),
             Self::ScalarTeddy => teddy_outer::<ScalarTeddyKernel, _>(source, sink),
         }
     }
@@ -117,9 +134,19 @@ mod tests {
     #[test]
     fn detect_returns_a_variant_compiled_into_the_build() {
         // A literal sanity check: detect() must return one of the
-        // three named variants, regardless of host.
+        // four named variants, regardless of host.
         let choice = BackendChoice::detect();
         let _ = choice.name(); // exercises the match arms
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn detect_picks_neon_on_aarch64() {
+        // The aarch64 ABI mandates NEON, so the dispatcher must
+        // always pick the NEON kernel on this target. Catches
+        // dispatch-table edits that accidentally collapse the
+        // aarch64 path into ScalarTeddy.
+        assert_eq!(BackendChoice::detect(), BackendChoice::TeddyNeon);
     }
 
     #[test]
@@ -129,10 +156,11 @@ mod tests {
         for choice in [
             BackendChoice::TeddyAvx2,
             BackendChoice::TeddySsse3,
+            BackendChoice::TeddyNeon,
             BackendChoice::ScalarTeddy,
         ] {
             // Skip variants the host doesn't actually support to
-            // keep the test runnable on non-AVX2 / non-SSSE3 CI.
+            // keep the test runnable on non-x86 / non-aarch64 CI.
             #[cfg(target_arch = "x86_64")]
             {
                 if matches!(choice, BackendChoice::TeddyAvx2)

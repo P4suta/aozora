@@ -52,28 +52,10 @@ use core::arch::x86_64::{
     _mm256_unpacklo_epi8,
 };
 
-use crate::kernel::teddy::{LEAD_HI_LUT, LEAD_LO_LUT, TeddyInner};
-
-/// Split a 16-entry `u16` LUT into low / high byte planes so a
-/// byte-wise shuffle can index it.
-const fn lut_byte_plane(lut: [u16; 16], high_byte: bool) -> [u8; 16] {
-    let mut out = [0u8; 16];
-    let mut i = 0;
-    while i < 16 {
-        out[i] = if high_byte {
-            (lut[i] >> 8) as u8
-        } else {
-            (lut[i] & 0xFF) as u8
-        };
-        i += 1;
-    }
-    out
-}
-
-const LEAD_HI_LUT_LO_BYTES: [u8; 16] = lut_byte_plane(LEAD_HI_LUT, false);
-const LEAD_HI_LUT_HI_BYTES: [u8; 16] = lut_byte_plane(LEAD_HI_LUT, true);
-const LEAD_LO_LUT_LO_BYTES: [u8; 16] = lut_byte_plane(LEAD_LO_LUT, false);
-const LEAD_LO_LUT_HI_BYTES: [u8; 16] = lut_byte_plane(LEAD_LO_LUT, true);
+use crate::kernel::teddy::{
+    LEAD_HI_LUT_HI_BYTES, LEAD_HI_LUT_LO_BYTES, LEAD_LO_LUT_HI_BYTES, LEAD_LO_LUT_LO_BYTES,
+    TeddyInner,
+};
 
 /// SSSE3 (16-byte chunk) inner kernel.
 ///
@@ -319,6 +301,7 @@ mod tests {
     fn lead_mask_const_table_round_trips_through_byte_planes() {
         // The 4 byte-planes the SIMD kernels consume must reconstruct
         // the original 16-entry u16 LUTs they were derived from.
+        use crate::kernel::teddy::{LEAD_HI_LUT, LEAD_LO_LUT};
         for i in 0..16 {
             let hi = u16::from(LEAD_HI_LUT_HI_BYTES[i]) << 8 | u16::from(LEAD_HI_LUT_LO_BYTES[i]);
             let lo = u16::from(LEAD_LO_LUT_HI_BYTES[i]) << 8 | u16::from(LEAD_LO_LUT_LO_BYTES[i]);

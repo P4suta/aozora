@@ -84,6 +84,35 @@ pub(crate) const LEAD_HI_LUT: [u16; 16] = build_lead_lut(true);
 /// nibble equals the index.
 pub(crate) const LEAD_LO_LUT: [u16; 16] = build_lead_lut(false);
 
+/// Split a 16-entry `u16` LUT into low / high byte planes so a
+/// byte-wise SIMD shuffle (pshufb / vqtbl1q_u8 / i8x16_swizzle)
+/// can index it. Each platform's inner kernel runs four shuffles
+/// (LEAD_HI low / high byte, LEAD_LO low / high byte) and ANDs
+/// the results plane-by-plane.
+const fn lut_byte_plane(lut: [u16; 16], high_byte: bool) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    let mut i = 0;
+    while i < 16 {
+        out[i] = if high_byte {
+            (lut[i] >> 8) as u8
+        } else {
+            (lut[i] & 0xFF) as u8
+        };
+        i += 1;
+    }
+    out
+}
+
+/// Low byte of every entry in [`LEAD_HI_LUT`], packed into a
+/// 16-byte array so a byte-wise SIMD shuffle can index it.
+pub(crate) const LEAD_HI_LUT_LO_BYTES: [u8; 16] = lut_byte_plane(LEAD_HI_LUT, false);
+/// High byte of every entry in [`LEAD_HI_LUT`].
+pub(crate) const LEAD_HI_LUT_HI_BYTES: [u8; 16] = lut_byte_plane(LEAD_HI_LUT, true);
+/// Low byte of every entry in [`LEAD_LO_LUT`].
+pub(crate) const LEAD_LO_LUT_LO_BYTES: [u8; 16] = lut_byte_plane(LEAD_LO_LUT, false);
+/// High byte of every entry in [`LEAD_LO_LUT`].
+pub(crate) const LEAD_LO_LUT_HI_BYTES: [u8; 16] = lut_byte_plane(LEAD_LO_LUT, true);
+
 /// Per-byte lead-candidate bitmap for a single source byte.
 ///
 /// `LEAD_HI[hi(b)] & LEAD_LO[lo(b)]` returns the bitmap of patterns

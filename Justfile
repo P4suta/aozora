@@ -697,6 +697,14 @@ ci-precheck *ARGS:
 ci-act *ARGS:
     cargo run -q --release -p aozora-xtask -- ci act {{ARGS}}
 
+# Cross-compile aozora-scan to aarch64 + run the proptest suite
+# under qemu-user via cross-rs. Verifies the NEON Teddy inner kernel
+# matches NaiveScanner byte-identically. Requires `cross` and Docker
+# on the host (`cargo install cross` once); mirrors the
+# `cross-aarch64` job in ci.yml.
+test-aarch64:
+    cross test --target aarch64-unknown-linux-gnu -p aozora-scan
+
 # --- aggregate ----------------------------------------------------------------
 
 # Local replica of the full CI pipeline — everything must pass before push.
