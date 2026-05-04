@@ -235,6 +235,7 @@ dependencies = [
  "aho-corasick",
  "aozora-encoding",
  "aozora-proptest",
+ "aozora-render",
  "aozora-scan",
  "aozora-spec",
  "aozora-syntax",
