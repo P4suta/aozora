@@ -63,6 +63,13 @@ pre-push:
     # is the failure mode this hook exists to eliminate.
     ci:
       run: just ci
+    # Deep proptest sweep (4096 cases vs the CI baseline 128) — runs
+    # after `just ci`'s 128-case `prop` step so a regression that
+    # needs many cases to surface is caught here instead of on a
+    # downstream PR. Fuzz is deliberately not wired in: libfuzzer's
+    # nightly + corpus + cold start budget overshoots a pre-push hook.
+    prop-deep:
+      run: just prop-deep
 
 # After `git pull` / `git merge` (i.e. when Cargo.lock or Cargo.toml
 # may have moved underneath us), surface dependency freshness so the

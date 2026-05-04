@@ -45,6 +45,7 @@ phf          = { workspace = true }
 [dev-dependencies]
 proptest          = { workspace = true }
 aozora-proptest   = { workspace = true }
+aozora-render     = { workspace = true }
 criterion         = { workspace = true }
 insta             = { workspace = true }
 
