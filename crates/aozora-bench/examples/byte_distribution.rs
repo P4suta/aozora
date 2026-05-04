@@ -22,7 +22,7 @@ use std::process::ExitCode;
 
 use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_sjis;
-use aozora_scan::{NaiveScanner, TriggerScanner};
+use aozora_scan::NaiveScanner;
 
 const DEFAULT_LIMIT: usize = 2000;
 

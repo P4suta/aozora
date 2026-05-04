@@ -16,31 +16,47 @@ use alloc::vec::Vec;
 
 use aozora_spec::classify_trigger_bytes;
 
-use crate::TriggerScanner;
+use crate::trait_def::OffsetSink;
 
 /// Test-only brute-force reference scanner.
+///
+/// `pub` so the in-crate proptests and the cross-validation tests
+/// in `tests/` can reach it without a `bench-baselines` feature
+/// flag, but `#[doc(hidden)]` because external callers should
+/// always pick a real backend (`BackendChoice`).
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NaiveScanner;
 
-impl TriggerScanner for NaiveScanner {
-    fn scan_offsets(&self, source: &str) -> Vec<u32> {
+impl NaiveScanner {
+    /// Scan `source` and return every trigger byte offset.
+    ///
+    /// Convenience wrapper around [`Self::scan`] that allocates a
+    /// fresh `Vec<u32>`. Test paths use this; production paths go
+    /// through [`crate::scan_offsets_in`] / [`crate::BackendChoice`].
+    #[doc(hidden)]
+    #[must_use]
+    pub fn scan_offsets(self, source: &str) -> Vec<u32> {
+        let mut sink = Vec::new();
+        self.scan(source, &mut sink);
+        sink
+    }
+
+    /// Sink-based variant: write every trigger byte offset into
+    /// `sink` in source order.
+    #[doc(hidden)]
+    pub fn scan<S: OffsetSink>(self, source: &str, sink: &mut S) {
         let bytes = source.as_bytes();
-        let mut out = Vec::new();
         if bytes.len() < 3 {
-            return out;
+            return;
         }
         for i in 0..=bytes.len() - 3 {
             let window: [u8; 3] = [bytes[i], bytes[i + 1], bytes[i + 2]];
             if classify_trigger_bytes(window).is_some() {
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    reason = "lex pipeline asserts source ≤ u32::MAX upstream"
-                )]
-                out.push(i as u32);
+                let offset = u32::try_from(i).expect("source longer than u32::MAX is unsupported");
+                sink.push(offset);
             }
         }
-        out
     }
 }
 

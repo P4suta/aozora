@@ -30,25 +30,17 @@ missing_debug_implementations = "warn"
 
 [features]
 default = ["std"]
-# `std` enables runtime CPU dispatch via `is_x86_feature_detected!`.
-# Without it `best_scanner()` returns the always-available
-# `ScalarScanner` even on x86_64 hosts that have AVX2.
-#
-# `std` also unlocks the heavyweight backends (Teddy, DFA) since
-# `aho-corasick`'s `packed` searcher and `regex-automata`'s `dense::DFA`
-# both require `std`. Pure-`no_std` callers see only `NaiveScanner`
-# and `ScalarScanner`.
-std = ["dep:aho-corasick", "dep:regex-automata"]
+# `std` enables runtime CPU dispatch via `is_x86_feature_detected!`
+# (the `BackendChoice::detect` path) and the `OnceLock` cache that
+# memoises the dispatcher's choice across parses. Without `std`,
+# `BackendChoice::ScalarTeddy` is the only kernel reachable from
+# `scan_offsets_in`.
+std = []
 
 [dependencies]
-aozora-spec    = { workspace = true }
-bumpalo        = { workspace = true }
-memchr         = { workspace = true }
-# Teddy backend (Hyperscan algorithm). std-only because
-# `packed::Searcher` does runtime CPU feature detection.
-aho-corasick   = { workspace = true, optional = true, default-features = false, features = ["std"] }
-# DFA backend (Hoehrmann-style byte DFA). std-only.
-regex-automata = { workspace = true, optional = true, default-features = false, features = ["std", "syntax", "dfa-build", "dfa-search"] }
+aozora-spec = { workspace = true }
+bumpalo     = { workspace = true }
+memchr      = { workspace = true }
 
 [dev-dependencies]
 proptest        = { workspace = true }

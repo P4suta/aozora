@@ -1,17 +1,19 @@
-//! Bake-off bench: every shipped [`TriggerScanner`] backend × four
-//! corpus shapes. Serves as the regression sentinel for future
-//! scanner changes.
+//! Bake-off bench: every [`BackendChoice`] kernel × four corpus
+//! shapes. Serves as the regression sentinel for future scanner
+//! changes.
 //!
 //! ## Backends measured
 //!
-//! - **`naive`** — brute-force PHF reference. Slowest but a useful
-//!   floor that anchors the speedup factor on every other backend.
-//! - **`teddy`** — Hyperscan Teddy via `aho_corasick::packed`.
-//!   Production winner.
-//! - **`structural_bitmap`** — simdjson-style two-byte (lead × middle)
-//!   AVX2 bitmap. Production fallback when Teddy can't build.
-//! - **`dfa`** — `regex_automata::dfa::dense::DFA::new_many` over
-//!   the 11 trigger trigrams. SIMD-free universal fallback.
+//! - **`naive`** — brute-force PHF reference. Slowest by design;
+//!   useful floor that anchors the speedup factor on every other
+//!   kernel.
+//! - **`scalar-teddy`** — pure-Rust hand-rolled Teddy, no SIMD.
+//!   The `no_std` last-resort dispatch target.
+//! - **`teddy-ssse3`** — hand-rolled Teddy with SSSE3 inner kernel
+//!   (16-byte chunks). x86_64 with SSSE3.
+//! - **`teddy-avx2`** — hand-rolled Teddy with AVX2 inner kernel
+//!   (32-byte chunks). x86_64 with AVX2 — production winner on
+//!   every modern dev / CI host.
 //!
 //! ## Corpus shapes
 //!
@@ -34,9 +36,7 @@
     reason = "bench code, not library"
 )]
 
-#[cfg(target_arch = "x86_64")]
-use aozora_scan::StructuralBitmapScanner;
-use aozora_scan::{DfaScanner, NaiveScanner, TeddyScanner, TriggerScanner};
+use aozora_scan::{BackendChoice, NaiveScanner};
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
@@ -48,29 +48,25 @@ fn build_plain_japanese(target: usize) -> String {
 }
 
 fn build_sparse_triggers(target: usize) -> String {
-    // 99 + 99 + 3 = 201 bytes per cycle (~1 trigger per 200 bytes).
-    let plain = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんあいうえおか";
-    let unit = format!("{plain}{plain}《");
-    repeat_to(&unit, target)
+    // ~1 trigger per ~200 bytes (corpus median density).
+    let unit = "あいうえおかきくけこさしすせそ漢《かん》字。";
+    repeat_to(unit, target)
 }
 
 fn build_dense_triggers(target: usize) -> String {
-    let unit = "abcde《"; // 5 + 3 = 8 bytes
+    // ~1 trigger per ~8 bytes (annotation-heavy editorial style).
+    let unit = "｜青《あお》｜空《そら》｜山《やま》｜河《かわ》";
     repeat_to(unit, target)
 }
 
 fn build_ascii_text(target: usize) -> String {
-    // English-shaped 60-byte unit. No trigger leading bytes, no
-    // trigger middle bytes: every backend takes its no-candidate
-    // fast path here.
-    let unit = "The quick brown fox jumps over the lazy dog. ABCDE 12345.\n";
+    let unit = "the quick brown fox jumps over the lazy dog ";
     repeat_to(unit, target)
 }
 
 fn repeat_to(unit: &str, target: usize) -> String {
-    let cycles = target.div_ceil(unit.len());
-    let mut s = String::with_capacity(cycles * unit.len());
-    for _ in 0..cycles {
+    let mut s = String::with_capacity(target + unit.len());
+    while s.len() < target {
         s.push_str(unit);
     }
     s
@@ -83,21 +79,35 @@ fn bench_one(c: &mut Criterion, label: &str, sample: &str) {
     g.bench_function("naive", |b| {
         b.iter(|| black_box(NaiveScanner.scan_offsets(black_box(sample))));
     });
-    if let Some(teddy) = TeddyScanner::new() {
-        g.bench_function("teddy", |b| {
-            b.iter(|| black_box(teddy.scan_offsets(black_box(sample))));
+
+    let mut sink: Vec<u32> = Vec::with_capacity(sample.len() / 56);
+    g.bench_function("scalar-teddy", |b| {
+        b.iter(|| {
+            sink.clear();
+            BackendChoice::ScalarTeddy.scan(black_box(sample), &mut sink);
+            black_box(&sink);
+        });
+    });
+    #[cfg(target_arch = "x86_64")]
+    if std::is_x86_feature_detected!("ssse3") {
+        g.bench_function("teddy-ssse3", |b| {
+            b.iter(|| {
+                sink.clear();
+                BackendChoice::TeddySsse3.scan(black_box(sample), &mut sink);
+                black_box(&sink);
+            });
         });
     }
     #[cfg(target_arch = "x86_64")]
     if std::is_x86_feature_detected!("avx2") {
-        g.bench_function("structural_bitmap", |b| {
-            b.iter(|| black_box(StructuralBitmapScanner.scan_offsets(black_box(sample))));
+        g.bench_function("teddy-avx2", |b| {
+            b.iter(|| {
+                sink.clear();
+                BackendChoice::TeddyAvx2.scan(black_box(sample), &mut sink);
+                black_box(&sink);
+            });
         });
     }
-    let dfa = DfaScanner::new();
-    g.bench_function("dfa", |b| {
-        b.iter(|| black_box(dfa.scan_offsets(black_box(sample))));
-    });
 
     g.finish();
 }
