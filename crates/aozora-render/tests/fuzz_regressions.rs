@@ -20,6 +20,11 @@ const PUA_SENTINELS: [char; 4] = ['\u{E001}', '\u{E002}', '\u{E003}', '\u{E004}'
 #[test]
 fn render_html_regressions_replay_cleanly() {
     replay_each("render_html", |src| {
+        // Mirror the fuzz target's PUA-sentinel skip: source-supplied
+        // U+E001..U+E004 falls outside the no-leak invariant.
+        if src.chars().any(|c| PUA_SENTINELS.contains(&c)) {
+            return;
+        }
         let arena = Arena::new();
         let lex_out = lex_into_arena(src, &arena);
         let html = render_to_string(&lex_out);
@@ -35,6 +40,12 @@ fn render_html_regressions_replay_cleanly() {
 #[test]
 fn serialize_round_trip_regressions_replay_cleanly() {
     replay_each("serialize_round_trip", |src| {
+        // Mirror the fuzz target's PUA-sentinel skip: sources carrying
+        // U+E001..U+E004 are out of contract for I3 (the lexer
+        // consumes them as reserved markers).
+        if src.chars().any(|c| matches!(c, '\u{E001}'..='\u{E004}')) {
+            return;
+        }
         let arena1 = Arena::new();
         let lex1 = lex_into_arena(src, &arena1);
         let first = serialize(&lex1);

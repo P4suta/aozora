@@ -9,7 +9,7 @@
 
 use core::fmt::{self, Write};
 
-use aozora_pipeline::BorrowedLexOutput;
+use aozora_pipeline::{BorrowedLexOutput, has_long_rule_line, isolate_decorative_rules};
 use aozora_syntax::borrowed::{
     Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, NodeRef,
     Ruby, Sashie, Segment, TateChuYoko,
@@ -39,6 +39,20 @@ const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
 /// load-bearing corpus-sweep invariant I3, preserved in
 /// borrowed form.
 ///
+/// To preserve the fixed point across the parser's
+/// [`isolate_decorative_rules`] pre-pass, we run the **same isolator**
+/// over the serialized output once before returning. Without that, an
+/// inline annotation (e.g. an unmatched ruby trigger `｜...`) sitting
+/// directly above a decorative-rule line would emit
+/// `…\n----------\n========…` here while the next cycle's Phase 0
+/// would inject a blank to produce `…\n----------\n\n========…`,
+/// peeling one extra blank in per round-trip and breaking I3. Running
+/// the isolator once at serialize time aligns serialize's output with
+/// what Phase 0 will produce on the next cycle, so a second cycle
+/// observes a no-op isolator and the byte sequence converges. The
+/// `has_long_rule_line` fast-path keeps the cost O(1) for
+/// rule-line-free outputs (the dominant case).
+///
 /// # Panics
 ///
 /// Does not panic in normal use: `String` cannot fail as a
@@ -47,7 +61,12 @@ const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
 pub fn serialize(out: &BorrowedLexOutput<'_>) -> String {
     let mut s = NewlineCappedWriter::with_capacity(out.normalized.len().saturating_mul(2));
     serialize_into(out, &mut s).expect("writing to NewlineCappedWriter never fails");
-    s.into_string()
+    let raw = s.into_string();
+    if has_long_rule_line(&raw) {
+        isolate_decorative_rules(&raw)
+    } else {
+        raw
+    }
 }
 
 /// Serialize into the given writer.

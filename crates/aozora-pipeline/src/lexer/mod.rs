@@ -65,7 +65,8 @@ pub use aozora_spec::{
 
 #[cfg(feature = "phase3-instrument")]
 pub mod instrumentation;
-mod phase0_sanitize;
+#[doc(hidden)]
+pub mod phase0_sanitize;
 mod phase1_events;
 pub mod phase2_pair;
 pub mod phase3_classify;

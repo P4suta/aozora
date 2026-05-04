@@ -36,6 +36,13 @@ pub use aozora_syntax::borrowed::NodeRef;
 pub use borrowed::{BorrowedLexOutput, SourceNode, lex_into_arena};
 pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 
+/// Re-exports of the Phase 0 decorative-rule isolator, surfaced so
+/// downstream `aozora-render::serialize` can run the same idempotent
+/// blank-line-injection pass on its output and converge to a parser
+/// fixed point in one cycle. The helpers are otherwise pipeline
+/// internals — keep the public surface narrow.
+pub use lexer::phase0_sanitize::{has_long_rule_line, isolate_decorative_rules};
+
 pub use aozora_spec::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic, INLINE_SENTINEL,
     PairKind, PairLink, SLUGS, Sentinel, SlugEntry, SlugFamily, Span, TriggerKind,
