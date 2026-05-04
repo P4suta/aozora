@@ -20,7 +20,12 @@ publish = false
 workspace = true
 
 [dependencies]
-aozora = { workspace = true }
+# `wire` feature pulls in the JSON projections (serialize_diagnostics
+# / serialize_nodes / serialize_pairs / serialize_container_pairs)
+# used by the four-axis golden gate. Conformance is the single
+# in-tree consumer that pins all four axes; drivers (FFI / WASM /
+# PyO3) consume the same projections in production.
+aozora = { workspace = true, features = ["wire"] }
 
 [dev-dependencies]
 # Used by render_gate tests for clean diff display on golden mismatch.

@@ -697,6 +697,25 @@ ci-precheck *ARGS:
 ci-act *ARGS:
     cargo run -q --release -p aozora-xtask -- ci act {{ARGS}}
 
+# Cross-compile aozora-scan to aarch64 + run the proptest suite
+# under qemu-user via cross-rs. Verifies the NEON Teddy inner kernel
+# matches NaiveScanner byte-identically. Requires `cross` and Docker
+# on the host (`cargo install cross` once); mirrors the
+# `cross-aarch64` job in ci.yml.
+test-aarch64:
+    cross test --target aarch64-unknown-linux-gnu -p aozora-scan
+
+# Cross-compile aozora-scan to wasm32-wasip1 to verify the WASM
+# SIMD128 kernel codegen. Build-only: `cargo test` is structurally
+# impossible on wasm32 because proptest's transitive deps
+# (rusty-fork / wait-timeout) require Unix fork() APIs the target
+# lacks. The native `cargo nextest run -p aozora-scan` already
+# exercises the chunk-level proptests against ScalarTeddyKernel.
+# Mirrors the `wasm-test` job in ci.yml; requires `rustup target
+# add wasm32-wasip1` once.
+test-wasm:
+    cargo build --target wasm32-wasip1 -p aozora-scan
+
 # --- aggregate ----------------------------------------------------------------
 
 # Local replica of the full CI pipeline — everything must pass before push.

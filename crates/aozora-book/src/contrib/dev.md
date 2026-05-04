@@ -158,9 +158,9 @@ End-to-end TDD flow:
 2. **AST variant.** Add a borrowed-arena variant to `AozoraNode` in
    `crates/aozora-syntax/src/borrowed.rs`.
 3. **Lexer test (red).** Add a case to the relevant phase test
-   under `crates/aozora-lexer/tests/`.
+   under `crates/aozora-pipeline/tests/`.
 4. **Lexer impl (green).** Wire the recogniser into the appropriate
-   phase (sanitize → tokenize → pair → classify).
+   phase (sanitize → events → pair → classify).
 5. **Renderer.** Emit the new HTML shape in
    `crates/aozora-render/src/html.rs` and the canonical
    serialisation in `crates/aozora-render/src/serialize.rs`.

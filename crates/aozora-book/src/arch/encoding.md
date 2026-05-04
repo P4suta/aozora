@@ -18,7 +18,7 @@ flowchart TD
     raw["raw bytes<br/>(SJIS-encoded .txt from Aozora Bunko)"]
     sjis["encoding_rs::SHIFT_JIS<br/>or aozora-specific JIS X 0213 patch"]
     utf8["UTF-8 String"]
-    sanitize["Phase 0 sanitize<br/>(in aozora-lexer)"]
+    sanitize["Phase 0 sanitize<br/>(in aozora-pipeline)"]
     pua["PUA assignment for 外字"]
     classified["normalised &str ready for Phase 1 scan"]
 
@@ -148,5 +148,5 @@ update surface predictable.
 
 - [Notation → Gaiji](../notation/gaiji.md) — author-facing notation
   reference.
-- [Seven-phase lexer → Phase 0](lexer.md#phase-0-sanitize) — where
+- [Four-phase lexer → Phase 0](lexer.md#phase-0-sanitize) — where
   the resolver is invoked.

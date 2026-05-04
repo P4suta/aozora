@@ -117,15 +117,16 @@ binutils. We don't because:
 
 ```rust
 // In any binary or test
-println!("{}", aozora_scan::best_scanner_name());
-// "teddy" | "hoehrmann-dfa" | "memchr-multi"
+println!("{}", aozora_scan::BackendChoice::detect().name());
+// "teddy-avx2" | "teddy-ssse3" | "teddy-neon" | "teddy-wasm" | "scalar-teddy"
 ```
 
-Or under samply, look for `aozora_scan::backends::teddy::scan_offsets`
+Or under samply, look for `aozora_scan::arch::x86_64::lead_mask_chunk_avx2`
 in the trace's call tree. If the trace shows
-`memchr::arch::x86_64::avx2::*` instead, you're on the scalar
-fallback (which uses memchr's own SIMD dispatch internally — still
-SIMD, just not aozora-scan's).
+`aozora_scan::arch::x86_64::lead_mask_chunk_ssse3` instead, the
+SSSE3 fallback is firing because the host lacked AVX2;
+`aozora_scan::kernel::teddy::ScalarTeddyKernel::lead_mask_chunk`
+indicates the pure-Rust last resort fired.
 
 ## Workflow recipes
 
@@ -133,7 +134,7 @@ SIMD, just not aozora-scan's).
 
 ```sh
 # Microbench the per-band tokenizer throughput
-cargo bench -p aozora-lex --bench tokenize_compare
+cargo bench -p aozora-pipeline --bench tokenize_compare
 
 # Macrobench the full pipeline end-to-end
 AOZORA_CORPUS_ROOT=… cargo run --release --example throughput_by_class -p aozora-bench

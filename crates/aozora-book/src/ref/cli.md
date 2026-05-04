@@ -106,7 +106,7 @@ for the class-name reference.
 | Variable | Effect |
 |---|---|
 | `NO_COLOR` | If set (any value), disable ANSI colour output. Same as `--no-color`. |
-| `AOZORA_LOG` | `tracing-subscriber` filter (e.g. `aozora_lex=debug`). For internal debugging; not part of the stable surface. |
+| `AOZORA_LOG` | `tracing-subscriber` filter (e.g. `aozora_pipeline=debug`). For internal debugging; not part of the stable surface. |
 
 See [Reference → Environment variables](env.md) for the full env
 matrix (which includes the bench / profiling vars).

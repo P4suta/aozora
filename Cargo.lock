@@ -295,14 +295,12 @@ dependencies = [
 name = "aozora-scan"
 version = "0.3.0"
 dependencies = [
- "aho-corasick",
  "aozora-proptest",
  "aozora-spec",
  "bumpalo",
  "criterion",
  "memchr",
  "proptest",
- "regex-automata",
 ]
 
 [[package]]

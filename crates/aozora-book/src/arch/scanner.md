@@ -1,158 +1,117 @@
 # SIMD scanner backends
 
 Phase 1 of the lexer is a multi-pattern byte scan: find every
-occurrence of the seven trigger bytes (`｜《》※［］　`) in the
-source. On a typical Japanese corpus document — where every
-codepoint is a 3-byte UTF-8 sequence and no trigger byte appears
-more than once per kilobyte — the *scan* dominates the *interpretation*
-by an order of magnitude. So this is the place where SIMD pays for
-itself.
+occurrence of the 11 Aozora trigger characters (`｜《》＃※［］〔〕「」`)
+in the source. On a typical Japanese corpus document — where every
+codepoint is a 3-byte UTF-8 sequence and trigger characters appear
+on the order of 1–2 % of bytes — the *scan* dominates the
+*interpretation* by an order of magnitude. So this is the place
+where SIMD pays for itself.
 
-`aozora-scan` ships three backends, one of which is selected per
-target at compile time:
+## Architecture: outer driver × inner kernel
 
-| Backend | Target | Throughput (corpus) | Selection |
+`aozora-scan` ships a single algorithm — Hyperscan-style Teddy with
+nibble LUTs — implemented once as a platform-agnostic outer driver
+and plugged into per-ISA inner kernels. The split is the spine of
+the crate:
+
+- `crate::kernel::teddy` — algorithm side. Defines the const-built
+  bucket LUTs (one bit per pattern; the 11 triggers fit comfortably
+  in the 16-bit mask), the verify table, the `TeddyInner` trait
+  every kernel implements, and `teddy_outer` — the platform-
+  agnostic chunk loop + verify pass.
+- `crate::arch::*` — platform side. One file per ISA; each
+  implements `TeddyInner::lead_mask_chunk` using the appropriate
+  16-byte LUT shuffle: `pshufb` on x86 SSSE3, `_mm256_shuffle_epi8`
+  on AVX2, `vqtbl1q_u8` on NEON, `i8x16_swizzle` on WASM SIMD.
+
+Adding a new SIMD ISA is one file under `arch/`. Adding a new
+algorithm (e.g. SHIFT-OR baseline, AVX-512 64-byte chunk) is one
+file under `kernel/`. The two axes never tangle.
+
+## BackendChoice + static dispatch
+
+[`BackendChoice`](https://docs.rs/aozora-scan/latest/aozora_scan/enum.BackendChoice.html)
+is a `Copy` enum carrying one variant per inner kernel currently
+compiled into the build. `BackendChoice::detect()` runs once at
+process start, picks the fastest variant the host CPU supports
+(cached in `OnceLock`), and the `match`-based
+`BackendChoice::scan` gives **static dispatch** straight into the
+monomorphised `teddy_outer<I>` instantiation. No `&dyn`, no virtual
+call on the hot path.
+
+Static dispatch is the whole point: a trait object cannot carry a
+generic `S: OffsetSink` method, so a `&dyn`-based dispatcher would
+force every parse to allocate a heap `Vec<u32>` and memcpy it into
+the lex pipeline's bumpalo arena. The enum-and-match shape gives
+us the same runtime-CPU adaptation a single binary needs without
+that detour.
+
+## Backends compiled into the build
+
+| Variant | Target gate | Kernel size | Notes |
 |---|---|---|---|
-| Teddy | x86_64 + AVX2 | ~12 GB/s | first choice when AVX2 is available |
-| Hoehrmann DFA | portable | ~3.5 GB/s | x86_64 fallback, native arm64, etc. |
-| Memchr-multi | wasm32 | ~1.2 GB/s | wasm32 until the SIMD proposal lands |
+| `TeddyAvx2` | `x86_64` | 32-byte chunk | Production winner on every modern dev / CI host. `_mm256_shuffle_epi8` per-lane LUT shuffle. |
+| `TeddySsse3` | `x86_64` | 16-byte chunk | Selected when AVX2 is unavailable but SSSE3 is. `_mm_shuffle_epi8` (`pshufb`). |
+| `TeddyNeon` | `aarch64` | 16-byte chunk | aarch64 ABI mandates NEON, so always selected on that target. `vqtbl1q_u8`. |
+| `TeddyWasm` | `wasm32` | 16-byte chunk | WASM SIMD128 baseline since 2022. `i8x16_swizzle`. |
+| `ScalarTeddy` | always | 16-byte chunk, no SIMD | Pure-Rust reference; the `no_std` last-resort dispatch target and the proptest oracle for SIMD ports. |
 
-Each backend produces the same `(offset, TriggerKind)` stream; the
-lexer cannot tell which one ran. Selection happens behind a
-runtime-dispatched trait so a single binary can carry both the SIMD
-fast path and a portable fallback.
+[`NaiveScanner`](https://docs.rs/aozora-scan/latest/aozora_scan/struct.NaiveScanner.html)
+(brute-force PHF walker) is `#[doc(hidden)]` — kept reachable for
+the integration proptests and the bake-off bench, never the
+dispatch target.
 
-## Backend 1: Teddy (Hyperscan-style packed)
+## Why a self-rolled Teddy
 
-Teddy is the small-string multi-pattern algorithm from Intel's
-[Hyperscan](https://github.com/intel/hyperscan). The
-`aho-corasick` crate ships a `packed::teddy` implementation that
-aozora calls into directly.
+The previous production stack drove three external crates —
+`aho_corasick::packed::teddy` (SSSE3-only), `regex_automata` (DFA),
+hand-rolled simdjson-style structural bitmap (AVX2). Coverage gaps
+forced redundant fallback code on every commit and the trio carried
+~1.4 MB of compiled dependency surface.
 
-**Why Teddy here:**
+Switching to a self-rolled Teddy:
 
-- The trigger set is small (7 patterns) and short (1 char each in
-  full-width form, 3 bytes in UTF-8). Teddy's regime is *exactly*
-  N small patterns where N ≤ 64 — ours has 7.
-- The patterns share no common prefix structure (they're distinct
-  full-width punctuation), so a Boyer-Moore-style suffix table
-  doesn't help.
-- AVX2 lets Teddy compare 32 bytes per cycle against the packed
-  shuffle table, and our patterns fit cleanly into that lane width.
+- **One algorithm, four ISAs.** The outer driver is ~120 LOC; each
+  ISA inner kernel is ~30 LOC. NEON / WASM SIMD ports compile
+  natively rather than waiting on upstream `aho_corasick`.
+- **No external SIMD deps.** `aho_corasick` and `regex_automata`
+  are gone from the default dep tree. The `aozora-scan` build no
+  longer pulls in `regex-automata`'s ~600 KB of state-table code.
+- **One-bit-per-pattern bucket layout.** The 11 triggers fit in
+  the lower 11 bits of a `u16`; we don't pay for the
+  collision-verify pass Hyperscan's "fat-finger" packing requires.
+- **`OffsetSink` visitor.** Every kernel writes through the same
+  generic sink, so the lex pipeline's `BumpVec<'_, u32>` receives
+  offsets directly from the SIMD inner loop — the legacy
+  heap-allocate-then-memcpy detour is gone.
 
-**Why not just memchr-multi (the obvious upgrade):**
-
-`memchr3` does scan for up to 3 bytes simultaneously — but our
-trigger set is 7 patterns × 3 bytes = 21 raw bytes, which would
-require seven separate `memchr` passes (one per pattern). Each pass
-streams the whole source. Teddy does one pass for all seven
-patterns. The arithmetic favours Teddy by ~3.5×.
-
-**Why not memchr's own packed-pattern path:**
-
-`memchr` does have a packed multi-pattern API now, but it tops out
-at ~5 GB/s on our workload because it goes through a generic 16-byte
-SSE2 lane. Teddy's AVX2 32-byte lane — combined with `aho-corasick`'s
-shuffle-table compilation — wins on the corpus by 2.5×.
-
-## Backend 2: Hoehrmann-style multi-pattern DFA
-
-For targets that lack AVX2 (older x86_64, native arm64 on some
-runners, Alpine builds) the fallback is a byte-DFA built by
-`regex-automata`'s `dense::Builder`. Hoehrmann's design — single-byte
-transitions, no backtracking, table-driven — gives `O(1)` per byte
-with no SIMD requirement.
-
-**Why Hoehrmann-style over Aho-Corasick textbook NFA:**
-
-Aho-Corasick at runtime is an NFA with failure transitions; each
-mismatched byte may walk a chain of failure links before consuming
-the next input byte. Hoehrmann compiles those failure links into
-the dense table at build time, so every byte consumes exactly one
-table lookup. For a small pattern set that fits in cache, the dense
-table is faster than the NFA representation by 2×.
-
-**Why a DFA over a hand-rolled state machine:**
-
-`regex-automata` gives us a battle-tested table compiler with
-correctness guarantees (panics from malformed transitions are
-impossible) and the same crate handles the build-time DFA →
-serialised-table flow if we ever want to ship the table as a static
-asset. Hand-rolling buys nothing here — the patterns are small
-enough that the compiler-emitted code generation isn't the bottleneck.
-
-## Backend 3: memchr-multi (wasm32)
-
-`wasm32-unknown-unknown` doesn't yet have AVX2 (and even after
-`wasm-simd` lands, the lane width is 16 bytes — which would put it
-between Teddy and the DFA). Until the workspace targets `wasm-simd`,
-the wasm build uses `memchr`'s portable multi-pattern path:
-
-- `memchr3` for the three single-byte open / close triggers,
-- a follow-up scan for the multi-byte `｜《》※［］` UTF-8
-  sequences (these expand to 3-byte each).
-
-Throughput is lower (~1.2 GB/s) but the WASM bundle stays small —
-no need to ship a Teddy table or a `regex-automata` DFA in the
-500 KiB-budgeted wasm artifact.
-
-## Backend selection
-
-```rust
-pub fn best_scanner_name() -> &'static str {
-    if is_x86_feature_detected!("avx2") {
-        "teddy"
-    } else if cfg!(target_arch = "wasm32") {
-        "memchr-multi"
-    } else {
-        "hoehrmann-dfa"
-    }
-}
-```
-
-Runtime detection (not compile-time `cfg!`) so a single x86_64
-binary works on AVX2-less CPUs without recompilation.
-
-The dispatch goes through a `&'static dyn Scanner` trait object;
-the indirect call is hoisted out of the inner loop in the lexer's
-Phase 2, so the trait dispatch is paid once per `Document::parse`,
-not per byte.
-
-## Why a runtime dispatch over per-target binaries?
-
-Two reasons.
-
-1. **Distribution.** Shipping one binary that adapts to its host is
-   simpler than shipping `aozora-x86_64-avx2` and `aozora-x86_64`
-   separately. The release pipeline only has to manage three
-   archives (linux-gnu, darwin-arm64, windows-msvc), not six.
-2. **Container portability.** `docker run --platform linux/amd64`
-   on an arm64 Mac (Rosetta) lands on x86_64 *without* AVX2 —
-   runtime detection picks the DFA backend silently. A
-   compile-time-only build would crash with `SIGILL` on first
-   trigger byte.
-
-The cost is a single indirect call per parse; the win is that the
-distribution surface stays minimal.
+Every kernel cross-validates byte-identically against `NaiveScanner`
+in proptest, both in-source (chunk-level) and in
+[`tests/property_backend_equiv.rs`](https://github.com/P4suta/aozora/blob/main/crates/aozora-scan/tests/property_backend_equiv.rs)
+(end-to-end across the workhorse fragment / pathological /
+unicode-adversarial distributions).
 
 ## Verifying the scanner is firing
 
 ```rust
-println!("{}", aozora_scan::best_scanner_name());
-// "teddy" | "hoehrmann-dfa" | "memchr-multi"
+println!("{}", aozora_scan::BackendChoice::detect().name());
+// "teddy-avx2" | "teddy-ssse3" | "teddy-neon" | "teddy-wasm" | "scalar-teddy"
 ```
 
-Or under samply, look for one of:
+Or under samply, look for one of the per-ISA inner kernels:
 
-- `aozora_scan::backends::teddy::scan_offsets` — Teddy is firing.
-- `aozora_scan::backends::dfa::scan_offsets` — Hoehrmann fallback.
-- `memchr::arch::*::scan` — memchr's own internal SIMD; the
-  scalar / wasm path is firing.
+- `aozora_scan::arch::x86_64::lead_mask_chunk_avx2`
+- `aozora_scan::arch::x86_64::lead_mask_chunk_ssse3`
+- `aozora_scan::arch::aarch64::lead_mask_chunk_neon`
+- `aozora_scan::arch::wasm32::lead_mask_chunk_wasm`
+- `aozora_scan::kernel::teddy::ScalarTeddyKernel::lead_mask_chunk`
 
-See [Performance → Profiling with samply](../perf/samply.md) for
-the full workflow.
+Their parent in the call tree is always
+`aozora_scan::kernel::teddy::teddy_outer`, where the chunk loop
+lives.
 
 ## See also
 
 - [Pipeline overview](pipeline.md)
-- [Seven-phase lexer](lexer.md) — Phase 1 fits in here.
+- [Four-phase lexer](lexer.md) — Phase 1 events fits in here.

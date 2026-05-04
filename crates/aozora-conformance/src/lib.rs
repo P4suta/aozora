@@ -7,21 +7,35 @@
 //! and contains:
 //!
 //! - `source.txt` — input bytes (UTF-8) for the parser
-//! - `expected.html` — golden HTML output from `tree.to_html()`
-//! - `expected.serialize.txt` — golden text output from `tree.serialize()`
+//! - `expected.html` — golden output from `tree.to_html()`
+//! - `expected.serialize.txt` — golden output from `tree.serialize()`
+//! - `expected.diagnostics.json` — golden output from
+//!   `aozora::wire::serialize_diagnostics(tree.diagnostics())`
+//! - `expected.nodes.json` — golden output from
+//!   `aozora::wire::serialize_nodes(&tree)`
+//! - `expected.pairs.json` — golden output from
+//!   `aozora::wire::serialize_pairs(&tree)`
+//! - `expected.container_pairs.json` — golden output from
+//!   `aozora::wire::serialize_container_pairs(&tree)`
 //!
-//! Tests load a fixture, parse it, and assert the rendered output
-//! matches the golden byte-for-byte. To regenerate goldens after an
+//! The two source-text axes (`html`, `serialize`) anchor the
+//! human-readable surface; the four wire-format axes pin the JSON
+//! projections that drivers (FFI / WASM / `PyO3`) consume — every
+//! cross-language wire byte is exercised against the same fixture
+//! set, so a regression that survives the renderer gate but breaks
+//! a wire client lights up here.
+//!
+//! Tests load a fixture, parse it, and assert each rendered output
+//! matches its golden byte-for-byte. To regenerate goldens after an
 //! intentional output change, run with `UPDATE_GOLDEN=1`:
 //!
 //! ```text
 //! UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test render_gate
 //! ```
 //!
-//! This scaffolding backs both the byte-identical render gate over a
-//! small representative set and the hand-curated reference corpus
-//! (25-30 fixtures spanning every `NodeKind`) used by the WPT-style
-//! conformance runner.
+//! This scaffolding backs the byte-identical render gate over the
+//! representative `render` group as well as the hand-curated
+//! reference corpus used by the WPT-style conformance runner.
 
 #![forbid(unsafe_code)]
 
@@ -44,6 +58,15 @@ pub struct RenderFixture {
     pub expected_html: Option<String>,
     /// Expected serialize output from `expected.serialize.txt`.
     pub expected_serialize: Option<String>,
+    /// Expected diagnostics-wire JSON from `expected.diagnostics.json`.
+    pub expected_diagnostics: Option<String>,
+    /// Expected nodes-wire JSON from `expected.nodes.json`.
+    pub expected_nodes: Option<String>,
+    /// Expected pairs-wire JSON from `expected.pairs.json`.
+    pub expected_pairs: Option<String>,
+    /// Expected container-pairs-wire JSON from
+    /// `expected.container_pairs.json`.
+    pub expected_container_pairs: Option<String>,
 }
 
 impl RenderFixture {
@@ -87,12 +110,21 @@ impl RenderFixture {
             .unwrap_or_else(|_| panic!("missing source.txt in fixture {group}/{case}"));
         let expected_html = fs::read_to_string(dir.join("expected.html")).ok();
         let expected_serialize = fs::read_to_string(dir.join("expected.serialize.txt")).ok();
+        let expected_diagnostics = fs::read_to_string(dir.join("expected.diagnostics.json")).ok();
+        let expected_nodes = fs::read_to_string(dir.join("expected.nodes.json")).ok();
+        let expected_pairs = fs::read_to_string(dir.join("expected.pairs.json")).ok();
+        let expected_container_pairs =
+            fs::read_to_string(dir.join("expected.container_pairs.json")).ok();
         Self {
             name: format!("{group}/{case}"),
             dir: dir.to_path_buf(),
             source,
             expected_html,
             expected_serialize,
+            expected_diagnostics,
+            expected_nodes,
+            expected_pairs,
+            expected_container_pairs,
         }
     }
 
@@ -115,6 +147,50 @@ impl RenderFixture {
             kind: "serialize",
             filename: "expected.serialize.txt",
             existing: self.expected_serialize.as_ref(),
+            actual,
+        })
+    }
+
+    /// Write `expected.diagnostics.json` if `UPDATE_GOLDEN=1` is set.
+    #[must_use]
+    pub fn diagnostics_golden(&self, actual: &str) -> String {
+        self.golden_for(&GoldenSpec {
+            kind: "diagnostics",
+            filename: "expected.diagnostics.json",
+            existing: self.expected_diagnostics.as_ref(),
+            actual,
+        })
+    }
+
+    /// Write `expected.nodes.json` if `UPDATE_GOLDEN=1` is set.
+    #[must_use]
+    pub fn nodes_golden(&self, actual: &str) -> String {
+        self.golden_for(&GoldenSpec {
+            kind: "nodes",
+            filename: "expected.nodes.json",
+            existing: self.expected_nodes.as_ref(),
+            actual,
+        })
+    }
+
+    /// Write `expected.pairs.json` if `UPDATE_GOLDEN=1` is set.
+    #[must_use]
+    pub fn pairs_golden(&self, actual: &str) -> String {
+        self.golden_for(&GoldenSpec {
+            kind: "pairs",
+            filename: "expected.pairs.json",
+            existing: self.expected_pairs.as_ref(),
+            actual,
+        })
+    }
+
+    /// Write `expected.container_pairs.json` if `UPDATE_GOLDEN=1` is set.
+    #[must_use]
+    pub fn container_pairs_golden(&self, actual: &str) -> String {
+        self.golden_for(&GoldenSpec {
+            kind: "container_pairs",
+            filename: "expected.container_pairs.json",
+            existing: self.expected_container_pairs.as_ref(),
             actual,
         })
     }
