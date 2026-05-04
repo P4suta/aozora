@@ -225,6 +225,29 @@ jobs:
       - name: cross test (aarch64-unknown-linux-gnu, aozora-scan)
         run: cross test --target aarch64-unknown-linux-gnu -p aozora-scan
 
+  # wasm32-wasip1 + wasmtime execution of the SIMD scanner tests.
+  # Same shape as `cross-aarch64`: the WASM SIMD128 Teddy kernel
+  # only compiles on `target_arch = "wasm32"`, so we cross-build
+  # and run the proptest oracle inside wasmtime against
+  # NaiveScanner. wasmtime is the workspace's pinned WASM runtime.
+  wasm-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasmtime
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-test
+      - name: cargo test --target wasm32-wasip1 (aozora-scan)
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime run --dir=. --"
+        run: cargo test --target wasm32-wasip1 -p aozora-scan
+
   # Python wheel build verification — install maturin, build the
   # `aozora-py` wheel against the runner's stock Python. Build-only:
   # no PyPI publish.

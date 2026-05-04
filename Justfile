@@ -705,6 +705,15 @@ ci-act *ARGS:
 test-aarch64:
     cross test --target aarch64-unknown-linux-gnu -p aozora-scan
 
+# Cross-compile aozora-scan to wasm32-wasip1 + run the proptest
+# suite inside wasmtime. Verifies the WASM SIMD128 Teddy inner
+# kernel matches NaiveScanner byte-identically. Requires
+# `wasmtime` on PATH and `rustup target add wasm32-wasip1`;
+# mirrors the `wasm-test` job in ci.yml.
+test-wasm:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime run --dir=. --" \
+        cargo test --target wasm32-wasip1 -p aozora-scan
+
 # --- aggregate ----------------------------------------------------------------
 
 # Local replica of the full CI pipeline — everything must pass before push.

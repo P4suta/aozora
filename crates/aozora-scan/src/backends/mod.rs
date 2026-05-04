@@ -1,30 +1,25 @@
-//! Trigger-scan backends for [`crate::TriggerScanner`].
-//!
-//! The production set is three backends:
+//! Legacy trigger-scan backends — pre-Teddy-redesign implementations
+//! that the runtime dispatcher used to fan out to via
+//! `&'static dyn TriggerScanner`. The new dispatch path
+//! ([`crate::BackendChoice`]) goes through the hand-rolled Teddy
+//! kernels under `crate::kernel` + `crate::arch`; these modules are
+//! retained because:
 //!
 //! - **Teddy** (`teddy.rs`) — Hyperscan multi-pattern fingerprint
-//!   matcher via `aho_corasick::packed::Searcher`. The bake-off
-//!   winner; primary production scanner on every modern x86_64 host.
+//!   matcher via `aho_corasick::packed::Searcher`. Bake-off baseline
+//!   for the new self-rolled Teddy.
 //! - **Structural bitmap** (`structural_bitmap.rs`, `x86_64` only) —
 //!   simdjson-style two-byte (lead × middle) AVX2 candidate filter.
-//!   Production fallback when Teddy can't build (no SSSE3) but AVX2
-//!   is still available.
+//!   Cross-validation oracle for the new Teddy on AVX2 hosts.
 //! - **DFA** (`dfa.rs`) — Hoehrmann-style multi-pattern byte DFA via
-//!   `regex_automata::dfa::dense`. Universal SIMD-free fallback;
-//!   also serves as a correctness-by-construction baseline for
-//!   `[crate::NaiveScanner]` cross-validation.
-//! - **NEON / wasm-simd** are placeholder scaffolds for future
-//!   non-x86 ports.
+//!   `regex_automata::dfa::dense`. Reference for "what an
+//!   SIMD-free implementation looks like".
 //!
-//! All backends produce **byte-identical output**, validated by the
-//! cross-backend proptests in each module that compare against
+//! All three remain `proptest`-validated against
 //! [`crate::NaiveScanner`] (the brute-force PHF reference).
-
-#[cfg(target_arch = "aarch64")]
-mod neon;
-
-#[cfg(target_arch = "wasm32")]
-mod wasm_simd;
+//! Subsequent G5-S6 cleanup moves them under a `bench-baselines`
+//! Cargo feature so default builds stop pulling
+//! `aho_corasick` / `regex_automata` into the dep tree.
 
 #[cfg(feature = "std")]
 mod teddy;
@@ -34,12 +29,6 @@ mod dfa;
 
 #[cfg(target_arch = "x86_64")]
 mod structural_bitmap;
-
-#[cfg(target_arch = "aarch64")]
-pub use neon::NeonScanner;
-
-#[cfg(target_arch = "wasm32")]
-pub use wasm_simd::WasmSimdScanner;
 
 #[cfg(feature = "std")]
 pub use teddy::TeddyScanner;

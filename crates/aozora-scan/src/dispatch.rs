@@ -21,6 +21,8 @@ use crate::trait_def::OffsetSink;
 
 #[cfg(target_arch = "aarch64")]
 use crate::arch::aarch64::NeonKernel;
+#[cfg(target_arch = "wasm32")]
+use crate::arch::wasm32::WasmKernel;
 #[cfg(target_arch = "x86_64")]
 use crate::arch::x86_64::{Avx2Kernel, Ssse3Kernel};
 
@@ -41,6 +43,10 @@ pub enum BackendChoice {
     /// NEON 16-byte Teddy. aarch64 only; always available there
     /// since the ABI mandates NEON.
     TeddyNeon,
+    /// SIMD128 16-byte Teddy. wasm32 only; the dispatcher selects
+    /// it whenever the binary was compiled for wasm32 (engine-side
+    /// SIMD support is mandated by the modern WASM baseline).
+    TeddyWasm,
     /// Pure-Rust Teddy reference. Always available; the dispatch
     /// target on non-SIMD hosts and the `no_std` last resort.
     ScalarTeddy,
@@ -70,7 +76,12 @@ impl BackendChoice {
         {
             return Self::TeddyNeon;
         }
-        #[cfg(not(target_arch = "aarch64"))]
+        // wasm32 builds enable simd128 statically.
+        #[cfg(target_arch = "wasm32")]
+        {
+            return Self::TeddyWasm;
+        }
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "wasm32")))]
         Self::ScalarTeddy
     }
 
@@ -82,6 +93,7 @@ impl BackendChoice {
             Self::TeddyAvx2 => "teddy-avx2",
             Self::TeddySsse3 => "teddy-ssse3",
             Self::TeddyNeon => "teddy-neon",
+            Self::TeddyWasm => "teddy-wasm",
             Self::ScalarTeddy => "scalar-teddy",
         }
     }
@@ -102,6 +114,8 @@ impl BackendChoice {
             Self::TeddySsse3 => teddy_outer::<Ssse3Kernel, _>(source, sink),
             #[cfg(target_arch = "aarch64")]
             Self::TeddyNeon => teddy_outer::<NeonKernel, _>(source, sink),
+            #[cfg(target_arch = "wasm32")]
+            Self::TeddyWasm => teddy_outer::<WasmKernel, _>(source, sink),
             // SIMD variants the active target can't run are
             // unreachable from `detect()`, but the `match` must
             // still be exhaustive; collapse them to the scalar
@@ -113,6 +127,8 @@ impl BackendChoice {
             }
             #[cfg(not(target_arch = "aarch64"))]
             Self::TeddyNeon => teddy_outer::<ScalarTeddyKernel, _>(source, sink),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::TeddyWasm => teddy_outer::<ScalarTeddyKernel, _>(source, sink),
             Self::ScalarTeddy => teddy_outer::<ScalarTeddyKernel, _>(source, sink),
         }
     }
@@ -149,6 +165,14 @@ mod tests {
         assert_eq!(BackendChoice::detect(), BackendChoice::TeddyNeon);
     }
 
+    #[cfg(target_arch = "wasm32")]
+    #[test]
+    fn detect_picks_wasm_simd_on_wasm32() {
+        // The wasm32 build profile pins simd128 statically; the
+        // dispatcher should always select the WASM SIMD kernel.
+        assert_eq!(BackendChoice::detect(), BackendChoice::TeddyWasm);
+    }
+
     #[test]
     fn every_variant_matches_naive_on_handcrafted_sample() {
         let s = "漢《かん》字、※［＃ここまで］「終わり」";
@@ -157,6 +181,7 @@ mod tests {
             BackendChoice::TeddyAvx2,
             BackendChoice::TeddySsse3,
             BackendChoice::TeddyNeon,
+            BackendChoice::TeddyWasm,
             BackendChoice::ScalarTeddy,
         ] {
             // Skip variants the host doesn't actually support to
