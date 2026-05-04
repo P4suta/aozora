@@ -1,0 +1,1 @@
+{"schema_version":1,"data":[{"kind":"ruby","span":{"start":12,"end":36}},{"kind":"gaiji","span":{"start":54,"end":113}},{"kind":"containerOpen","span":{"start":143,"end":174}},{"kind":"containerClose","span":{"start":207,"end":243}},{"kind":"pageBreak","span":{"start":243,"end":264}}]}
