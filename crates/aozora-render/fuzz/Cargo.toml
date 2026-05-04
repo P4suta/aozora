@@ -1,0 +1,34 @@
+[package]
+name = "aozora-render-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+aozora-render   = { path = ".." }
+aozora-pipeline = { path = "../../aozora-pipeline" }
+aozora-syntax   = { path = "../../aozora-syntax" }
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "render_html"
+path = "fuzz_targets/render_html.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "serialize_round_trip"
+path = "fuzz_targets/serialize_round_trip.rs"
+test = false
+doc = false
+bench = false

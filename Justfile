@@ -168,6 +168,162 @@ corpus-sweep:
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo nextest run --package aozora --test corpus_sweep --no-capture
 
+# --- fuzzing -----------------------------------------------------------------
+#
+# cargo-fuzz harnesses live under `crates/<crate>/fuzz/` as
+# nightly-only sub-crates outside the main workspace (so the workspace
+# build doesn't pull libfuzzer-sys). Targets currently registered:
+#
+#   aozora-pipeline / lex_into_arena
+#   aozora-render   / render_html
+#   aozora-render   / serialize_round_trip
+#   aozora-encoding / decode_sjis
+#
+# Workflow:
+#   1. `just fuzz-quick CRATE TARGET`    (60 s) — inner-loop smoke
+#   2. `just fuzz-deep  CRATE TARGET`    (5 min) — release pre-flight
+#   3. `just fuzz-marathon CRATE TARGET` (15 min) — strongest soak
+#   4. On crash, `just fuzz-triage CRATE TARGET` prints just the panic
+#      block (panic line + diagnostic context) for every artifact under
+#      crates/<crate>/fuzz/artifacts/<target>/. No manual repro loop.
+#   5. `just fuzz-promote CRATE TARGET ARTIFACT` lifts an artifact into
+#      crates/<crate>/tests/fuzz_regressions/<target>/ so the
+#      `tests/fuzz_regressions.rs` integration test replays it on every
+#      `just test` run — no nightly required for the regression case.
+#   6. `just fuzz-status` is the at-a-glance count of pending crashes
+#      vs pinned regressions per target.
+#
+# See `docs/fuzz-workflow.md` for the long-form description.
+
+# Run an arbitrary fuzz target with arbitrary args (escape hatch).
+fuzz CRATE *ARGS:
+    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run {{ARGS}}'
+
+# 60-second smoke fuzz — fits inside a development inner loop.
+fuzz-quick CRATE TARGET:
+    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run {{TARGET}} -- -max_total_time=60'
+
+# 5-minute deep fuzz — the gate to clear before tagging a release.
+fuzz-deep CRATE TARGET:
+    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run {{TARGET}} -- -max_total_time=300'
+
+# 15-minute marathon fuzz — the strongest single-target soak we run by
+# hand. Reach for this after a clean fuzz-deep cycle when you want to
+# push the corpus another order of magnitude.
+fuzz-marathon CRATE TARGET:
+    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run {{TARGET}} -- -max_total_time=900'
+
+# Run every registered fuzz target in turn for 60 s each.
+fuzz-all-quick:
+    just fuzz-quick aozora-pipeline lex_into_arena
+    just fuzz-quick aozora-render render_html
+    just fuzz-quick aozora-render serialize_round_trip
+    just fuzz-quick aozora-encoding decode_sjis
+
+# Run every registered fuzz target in turn for 5 min each — the
+# release pre-flight gate.
+fuzz-all-deep:
+    just fuzz-deep aozora-pipeline lex_into_arena
+    just fuzz-deep aozora-render render_html
+    just fuzz-deep aozora-render serialize_round_trip
+    just fuzz-deep aozora-encoding decode_sjis
+
+# Reproduce every artifact under crates/<crate>/fuzz/artifacts/<target>/
+# and print the panic block (panicked-at line + diagnostic context the
+# fuzz target embeds in the panic message). Exit status is the count of
+# artifacts that still crash so it can drive a CI gate.
+fuzz-triage CRATE TARGET:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    crate="{{CRATE}}"
+    target="{{TARGET}}"
+    art_dir="crates/${crate}/fuzz/artifacts/${target}"
+    if [[ ! -d "$art_dir" ]]; then
+        echo "fuzz-triage: no artifacts for ${crate} / ${target}"
+        exit 0
+    fi
+    failed=0
+    for art in $(find "$art_dir" -type f \( -name 'crash-*' -o -name 'leak-*' -o -name 'oom-*' \) | sort); do
+        # `cargo fuzz run` resolves relative paths against the fuzz
+        # crate's own directory (we cd into crates/<crate>/fuzz before
+        # invoking it), so strip the prefix accordingly.
+        rel="${art#crates/${crate}/fuzz/}"
+        echo "==> ${art}"
+        out=$({{_dev}} bash -c "cd crates/${crate}/fuzz && cargo +nightly fuzz run ${target} ${rel} 2>&1" || true)
+        # Slice out the panic block: from `thread … panicked at`
+        # through the line just before the stack trace begins. That's
+        # exactly where the fuzz target's panic message prints its
+        # diagnostic context. Falls back to the tail of the output so
+        # we never go silent.
+        panic_block=$(awk '
+            /^thread .* panicked at/ { capturing = 1 }
+            capturing {
+                if (/^stack backtrace:/ || /^=================/) exit
+                print
+            }
+        ' <<<"$out")
+        if [[ -n "$panic_block" ]]; then
+            printf "%s\n" "$panic_block"
+        else
+            tail -5 <<<"$out"
+        fi
+        if grep -q "exit status: 77" <<<"$out"; then
+            failed=$((failed + 1))
+        fi
+        echo
+    done
+    if (( failed > 0 )); then
+        echo "fuzz-triage: ${failed} artifact(s) still crash" >&2
+        exit "${failed}"
+    fi
+    echo "fuzz-triage: every artifact replays cleanly"
+
+# Lift a fuzz artifact into the permanent regression set so the
+# `tests/fuzz_regressions.rs` integration test pins it on every
+# `just test` run. The mv goes through the dev container because the
+# artifact was written by libFuzzer running as root inside it — host
+# permissions can't unlink it.
+fuzz-promote CRATE TARGET ARTIFACT:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    src="crates/{{CRATE}}/fuzz/artifacts/{{TARGET}}/{{ARTIFACT}}"
+    dst_dir="crates/{{CRATE}}/tests/fuzz_regressions/{{TARGET}}"
+    if [[ ! -f "$src" ]]; then
+        echo "fuzz-promote: artifact not found: $src" >&2
+        exit 1
+    fi
+    {{_dev}} bash -c "mkdir -p '$dst_dir' && mv '$src' '$dst_dir/{{ARTIFACT}}'"
+    echo "promoted ${src} -> ${dst_dir}/{{ARTIFACT}}"
+
+# At-a-glance health: per-target pending crashes vs pinned regressions.
+# Nothing here invokes nightly so it stays cheap and shell-friendly.
+fuzz-status:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    targets=(
+        "aozora-pipeline lex_into_arena"
+        "aozora-render render_html"
+        "aozora-render serialize_round_trip"
+        "aozora-encoding decode_sjis"
+    )
+    printf "%-22s  %-22s  %-10s  %-12s\n" crate target pending_crashes pinned_regressions
+    printf "%-22s  %-22s  %-10s  %-12s\n" ---------------------- ---------------------- ---------- ------------
+    for entry in "${targets[@]}"; do
+        crate="${entry% *}"
+        target="${entry#* }"
+        crashes=0
+        regressions=0
+        art_dir="crates/${crate}/fuzz/artifacts/${target}"
+        reg_dir="crates/${crate}/tests/fuzz_regressions/${target}"
+        if [[ -d "$art_dir" ]]; then
+            crashes=$(find "$art_dir" -maxdepth 1 -type f \( -name 'crash-*' -o -name 'leak-*' -o -name 'oom-*' \) 2>/dev/null | wc -l | tr -d ' ')
+        fi
+        if [[ -d "$reg_dir" ]]; then
+            regressions=$(find "$reg_dir" -maxdepth 1 -type f ! -name '*.txt' ! -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
+        fi
+        printf "%-22s  %-22s  %-10s  %-12s\n" "$crate" "$target" "$crashes" "$regressions"
+    done
+
 # Benchmarks (criterion)
 bench *ARGS:
     {{_dev}} cargo bench --workspace {{ARGS}}

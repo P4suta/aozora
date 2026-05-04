@@ -40,10 +40,16 @@ yarn-error.log*
 playwright-report/
 test-results/
 
-# Fuzz
+# Fuzz — libFuzzer corpora and artifacts are working state, not source.
+# See `docs/fuzz-workflow.md` and `crates/<crate>/tests/fuzz_regressions/`
+# (the permanent regression set is committed; the rolling corpus is not).
 fuzz/target/
 fuzz/corpus/
 fuzz/artifacts/
+crates/*/fuzz/target/
+crates/*/fuzz/corpus/
+crates/*/fuzz/artifacts/
+crates/*/fuzz/Cargo.lock
 
 # Criterion
 /target/criterion/

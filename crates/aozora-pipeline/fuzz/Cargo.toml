@@ -1,0 +1,29 @@
+[package]
+name = "aozora-pipeline-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+aozora-pipeline = { path = ".." }
+aozora-syntax   = { path = "../../aozora-syntax" }
+
+# Prevent this crate from joining the aozora workspace.
+# Each fuzz target needs libfuzzer-sys (nightly-gated), which the
+# workspace-wide `cargo build --workspace` should not pick up.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "lex_into_arena"
+path = "fuzz_targets/lex_into_arena.rs"
+test = false
+doc = false
+bench = false
