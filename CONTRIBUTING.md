@@ -30,8 +30,29 @@ below only hold when every contribution respects them.
 
 ```sh
 docker compose build dev       # ~5 min first time, cached afterward
+just hooks                     # install lefthook git hooks (fmt / clippy / typos / playground-typecheck on commit, just ci on push)
 just test                      # confirm green
 ```
+
+The `just hooks` step is **mandatory**: without it, `cargo fmt --check`
+/ clippy / typos / playground TypeScript regressions only surface in CI
+after a PR has been pushed. With it, the same checks run locally (in
+the dev container) on every `git commit` / `git push` and fail-fast on
+the developer's machine.
+
+Commit signing is enforced as a **three-layer defense**, all
+intentional:
+
+1. `.git/hooks/post-commit` re-amends any unsigned `HEAD` through the
+   SSH/GPG signer (rolls back if the signer is unavailable, so the
+   working tree never lands as "unsigned commit on HEAD")
+2. `scripts/check-signed-commits.sh` runs as a lefthook pre-push
+   command — blocks any unsigned commit that slipped through locally
+   (e.g. merges from another machine)
+3. GitHub repository ruleset "Require signed commits" is the
+   server-side authority
+
+Do **not** weaken any of these layers; the redundancy is deliberate.
 
 ## Development loop
 

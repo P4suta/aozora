@@ -916,6 +916,14 @@ ci:
     just prop
     just udeps
     just coverage
+    # Playground gates — TypeScript typecheck + vitest unit tests.
+    # `docs.yml` workflow runs the same two commands; failing here
+    # means failing on CI. Build is intentionally NOT in `just ci`
+    # because it triggers wasm-pack again (already covered by
+    # `wasm-build`-style host gates) — run `just playground-build`
+    # explicitly if needed.
+    just playground-typecheck
+    just playground-test
     # No-op when AOZORA_CORPUS_ROOT is unset (the recipe prints an
     # informational line and exits 0). On a developer machine that
     # has a corpus checkout exported in the environment, this gives
@@ -976,6 +984,39 @@ watch-headless JOB="check":
 # Idempotent — re-run safely after lefthook.yml edits or to repair stubs.
 hooks:
     {{_dev}} lefthook install
+
+# --- playground (Solid + Vite + WASM frontend) -------------------------------
+#
+# The playground lives under `playground/` and is its own Bun project,
+# but every gate runs through the dev / playground containers — never
+# directly on the host — so contributors don't need to install bun /
+# wasm-pack locally. `_pg` points at the `playground` service whose
+# working_dir is already `/workspace/playground` and whose
+# `node_modules` / `dist` live in named volumes (no host bleed).
+
+_pg := "docker compose run --rm --no-TTY playground"
+
+# Build the WASM `pkg/` that `vite.config.ts`'s alias targets. Must run
+# before `playground-build` (when `.d.ts` is missing or stale).
+playground-wasm:
+    {{_dev}} wasm-pack build --target web --release crates/aozora-wasm
+
+# Type-check playground TypeScript sources.
+playground-typecheck:
+    {{_pg}} bun run typecheck
+
+# Run vitest unit tests for the playground
+# (share / storage / parserState / utils — see src/__tests__/).
+playground-test:
+    {{_pg}} bun run test
+
+# Production build of the playground. Regenerates the WASM bundle
+# first so the vite alias target is always fresh.
+playground-build: playground-wasm
+    {{_pg}} bun run build
+
+# All playground gates in one shot — typecheck + test + build.
+playground-all: playground-typecheck playground-test playground-build
 
 # --- profiling (samply, host-only) -------------------------------------------
 # samply uses perf_event_open(2) which Docker's seccomp profile blocks; the

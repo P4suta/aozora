@@ -31,6 +31,12 @@ pre-commit:
       run: just clippy-strict
     typos:
       run: just typos
+    # Playground frontend type-check. Fast (< 2 s) and runs only when
+    # TS / TSX / JSON files under `playground/` actually changed.
+    # `vite.config.ts` / `vitest.config.ts` count too.
+    playground-typecheck:
+      glob: "playground/**/*.{ts,tsx,json}"
+      run: just playground-typecheck
 
 commit-msg:
   commands:
@@ -47,16 +53,32 @@ pre-push:
   # `just ci` runs gates sequentially in cheap-to-expensive order so
   # the early ones fail fast. Parallelising at the lefthook level
   # would let coverage start before lint catches a typo.
+  #
+  # Signing defense is layered: post-commit (re-amends unsigned HEAD),
+  # this signing-check (blocks any unsigned commit at push time), and
+  # GitHub's server-side "Require signed commits" ruleset. All three
+  # are intentional — keep them.
   parallel: false
   skip:
     - rebase
   commands:
+    # Refuse to push when the about-to-be-pushed range contains an
+    # unsigned commit. Runs first so cheap rejection happens before
+    # the multi-minute `just ci`. The script lives in `scripts/`
+    # (git-tracked) so a fresh `lefthook install` no longer clobbers
+    # the policy. Derives the push range from git refs (no stdin
+    # dependence, see the comment in the script).
+    signing-check:
+      run: scripts/check-signed-commits.sh
     # Mirror every CI job that's reachable from inside the dev image
     # (lint / build / test / prop / drift-gate / conformance /
-    # smoke-ffi / deny / audit / udeps / coverage / book-build). The
-    # three CI-only jobs that need extra runtime (pandoc-smoke /
-    # wasm-build / python-wheel) stay unreachable here — the dev
-    # image deliberately omits pandoc / wasm-pack / maturin.
+    # smoke-ffi / deny / audit / udeps / coverage / book-build /
+    # playground-typecheck / playground-test). The three CI-only jobs
+    # that need extra runtime (pandoc-smoke / wasm-build /
+    # python-wheel) stay unreachable here — the dev image
+    # deliberately omits pandoc / maturin (wasm-pack is now baked in
+    # but `just ci` skips the wasm-bundle build to keep the push
+    # under a typical attention budget).
     #
     # Push budget: ~6-8 minutes cold cache; ~2-3 minutes warm. The
     # alternative is "ship a PR, watch GitHub fail, re-push" which
