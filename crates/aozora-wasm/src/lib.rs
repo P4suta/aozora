@@ -392,11 +392,7 @@ mod bindings {
 
     /// Build the JSON resolution object for a `※［＃…］` span at
     /// `[start..end)`. Returns `None` if the body cannot be parsed.
-    fn build_resolution_value(
-        source: &str,
-        start: usize,
-        end: usize,
-    ) -> Option<serde_json::Value> {
+    fn build_resolution_value(source: &str, start: usize, end: usize) -> Option<serde_json::Value> {
         // Defensive: `end` should always come from the same scan, but
         // out-of-band callers could pass arbitrary offsets, so
         // validate boundaries.
