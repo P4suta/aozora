@@ -1,21 +1,24 @@
-# Publish the aozora handbook + rustdoc to GitHub Pages.
+# Publish the aozora handbook + rustdoc + playground to GitHub Pages.
 #
 # aozora does not currently publish to crates.io, so docs.rs is not an
 # option for the API reference. Instead we build rustdoc on the runner,
-# build the mdbook handbook from `crates/aozora-book/`, layer them at
-# `/aozora/` (handbook root) and `/aozora/api/aozora/` (rustdoc), and
-# deploy the whole site to GitHub Pages.
+# build the mdbook handbook from `crates/aozora-book/`, build the
+# Solid + Vite + WASM playground from `playground/`, layer them under
+# `/aozora/`, and deploy the whole site to GitHub Pages.
 #
 # Layout produced:
 #   https://p4suta.github.io/aozora/                ← mdbook handbook
 #   https://p4suta.github.io/aozora/api/            ← rustdoc landing redirect
 #   https://p4suta.github.io/aozora/api/aozora/     ← cargo doc landing for the top-level facade
+#   https://p4suta.github.io/aozora/playground/     ← interactive Aozora notation playground
 #
 # Docs builds use the native runner toolchain rather than the dev
 # Docker image, because the Pages deploy actions expect artefacts on
 # the runner filesystem. mdbook is installed via the upstream
 # `peaceiris/actions-mdbook` action; the mermaid preprocessor is
 # installed manually since the action does not bundle preprocessors.
+# `wasm-pack` is needed for the playground's WASM bundle and lands via
+# the rustwasm installer script.
 
 name: docs
 
@@ -43,10 +46,19 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
         with:
           key: docs
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - uses: peaceiris/actions-mdbook@v2
         with:
@@ -71,6 +83,20 @@ jobs:
       - name: Build mdbook handbook
         run: mdbook build crates/aozora-book
 
+      - name: Build aozora-wasm
+        run: wasm-pack build --target web --release crates/aozora-wasm
+
+      - name: Build playground
+        working-directory: playground
+        run: |
+          set -euo pipefail
+          if [ -f bun.lock ]; then
+            bun install --frozen-lockfile
+          else
+            bun install
+          fi
+          bun run build
+
       - name: Assemble site
         run: |
           set -euo pipefail
@@ -78,6 +104,8 @@ jobs:
           cp -r crates/aozora-book/book/. site/
           mkdir -p site/api
           cp -r target/doc/. site/api/
+          mkdir -p site/playground
+          cp -r playground/dist/. site/playground/
           # /api/ landing redirects to the top-level facade crate's docs.
           cat > site/api/index.html <<'HTML'
           <!doctype html>

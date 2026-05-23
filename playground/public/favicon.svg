@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="aozora">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b8336a" />
+      <stop offset="1" stop-color="#7e2249" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" ry="14" fill="url(#bg)" />
+  <text
+    x="32"
+    y="46"
+    font-family="'Hiragino Mincho ProN', 'Yu Mincho', serif"
+    font-size="42"
+    font-weight="700"
+    text-anchor="middle"
+    fill="#ffffff"
+  >青</text>
+</svg>

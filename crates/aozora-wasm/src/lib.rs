@@ -35,8 +35,77 @@
 
 #[cfg(target_arch = "wasm32")]
 mod bindings {
-    use aozora::{Document as AozoraDoc, wire};
+    use aozora::{Document as AozoraDoc, SLUGS, SlugFamily, encoding::gaiji, wire};
     use wasm_bindgen::prelude::*;
+
+    /// All canonical slugs from the spec, packaged in the standard
+    /// wire envelope so JS completion menus can drive a
+    /// `［＃...］` catalogue without re-implementing the table.
+    ///
+    /// Each `data[]` entry: `{ canonical, family, accepts_param, doc, partner }`.
+    /// `family` is the camelCase form of the Rust enum variant.
+    #[wasm_bindgen]
+    #[must_use]
+    pub fn slugs_json() -> String {
+        let entries: Vec<serde_json::Value> = SLUGS
+            .iter()
+            .map(|s| {
+                let family = match s.family {
+                    SlugFamily::PageBreak => "pageBreak",
+                    SlugFamily::Section => "section",
+                    SlugFamily::BlockContainerOpen => "blockContainerOpen",
+                    SlugFamily::BlockContainerClose => "blockContainerClose",
+                    SlugFamily::LeafAlign => "leafAlign",
+                    SlugFamily::Bouten => "bouten",
+                    SlugFamily::Sashie => "sashie",
+                    SlugFamily::Keigakomi => "keigakomi",
+                    SlugFamily::Warichu => "warichu",
+                    SlugFamily::TateChuYoko => "tateChuYoko",
+                    SlugFamily::KaeritenSingle => "kaeritenSingle",
+                    SlugFamily::KaeritenCompound => "kaeritenCompound",
+                    // SlugFamily is `#[non_exhaustive]`: any family
+                    // added in a newer spec version surfaces as
+                    // "unknown" so JS clients can ignore unfamiliar
+                    // entries without crashing.
+                    _ => "unknown",
+                };
+                serde_json::json!({
+                    "canonical": s.canonical,
+                    "family": family,
+                    "accepts_param": s.accepts_param,
+                    "doc": s.doc,
+                    "partner": s.partner,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "schema_version": 1,
+            "data": entries,
+        })
+        .to_string()
+    }
+
+    const GAIJI_OPEN: &str = "※［＃";
+    const GAIJI_CLOSE: &str = "］";
+    // Bounded window for the cursor-pinned hover variant. A real
+    // ※［＃...］ span is at most a few hundred bytes; capping the
+    // search makes per-keystroke resolution O(window) rather than
+    // O(doc).
+    const MAX_GAIJI_SPAN_LEN: usize = 512;
+
+    /// High-resolution wall-clock for the profile helper. Returns
+    /// milliseconds (f64) using the browser `performance.now()` so
+    /// sub-millisecond precision is preserved. Falls back to 0.0 if
+    /// the host has no `Performance` interface (e.g. a Worker that
+    /// hasn't been told to expose one) — the deltas come out as
+    /// constant 0 in that case, which is the least-surprising
+    /// fallback for the profile UI.
+    fn now_ms() -> f64 {
+        web_sys::window()
+            .and_then(|w| w.performance())
+            .map(|p| p.now())
+            .unwrap_or(0.0)
+    }
 
     /// JS-facing handle to a parsed Aozora document.
     ///
@@ -122,6 +191,239 @@ mod bindings {
         pub fn source_byte_len(&self) -> usize {
             self.inner.source().len()
         }
+
+        /// Per-method timing snapshot for the current source.
+        ///
+        /// Each entry is `{ "name": string, "duration_ms": number }`.
+        /// Timings are taken via `performance.now()` on the host
+        /// (`Instant::now()` panics on `wasm32-unknown-unknown`).
+        ///
+        /// `parse` is the cost of `Document::parse()` alone
+        /// (constructing the borrowed AST). The render entries
+        /// (`to_html`, `serialize`, `*_json`) are wall-clock for
+        /// that single method call against the already-built tree —
+        /// so summing them is the cost of "produce every output JS
+        /// might want", and `parse` shows how much of the work
+        /// happens up-front in the parser core itself.
+        #[wasm_bindgen]
+        #[must_use]
+        pub fn profile_json(&self) -> String {
+            let p0 = now_ms();
+            let tree = self.inner.parse();
+            let p1 = now_ms();
+
+            let h0 = now_ms();
+            let _html = tree.to_html();
+            let h1 = now_ms();
+
+            let s0 = now_ms();
+            let _serialized = tree.serialize();
+            let s1 = now_ms();
+
+            let d0 = now_ms();
+            let _diag = wire::serialize_diagnostics(tree.diagnostics());
+            let d1 = now_ms();
+
+            let n0 = now_ms();
+            let _nodes = wire::serialize_nodes(&tree);
+            let n1 = now_ms();
+
+            let pa0 = now_ms();
+            let _pairs = wire::serialize_pairs(&tree);
+            let pa1 = now_ms();
+
+            // gaiji_resolutions_json scans the source string directly
+            // (not the parse tree), so we time it separately by
+            // invoking the same code path the JS-side method uses.
+            let g0 = now_ms();
+            let _gaiji = self.gaiji_resolutions_json();
+            let g1 = now_ms();
+
+            let entries = serde_json::json!([
+                { "name": "parse",             "duration_ms": p1  - p0  },
+                { "name": "to_html",           "duration_ms": h1  - h0  },
+                { "name": "serialize",         "duration_ms": s1  - s0  },
+                { "name": "diagnostics_json",  "duration_ms": d1  - d0  },
+                { "name": "nodes_json",        "duration_ms": n1  - n0  },
+                { "name": "pairs_json",        "duration_ms": pa1 - pa0 },
+                { "name": "gaiji_resolutions", "duration_ms": g1  - g0  },
+            ]);
+            serde_json::json!({
+                "schema_version": 1,
+                "byte_len": self.inner.source().len(),
+                "data": entries,
+            })
+            .to_string()
+        }
+
+        /// Resolve the gaiji reference at `byte_offset` (if any) and
+        /// return a JSON object describing it. Returns the literal
+        /// string `"null"` if the offset is not inside a gaiji span
+        /// or the body cannot be parsed.
+        ///
+        /// JSON shape on hit:
+        /// ```json
+        /// { "span": { "start": u, "end": u },
+        ///   "description": string,
+        ///   "mencode": string | null,
+        ///   "codepoint": u32 | null,
+        ///   "resolved": string | null }
+        /// ```
+        ///
+        /// Locality: the scan is bounded to a 512-byte window either
+        /// side of `byte_offset`, so the cost is independent of
+        /// document size. Editors call this on every cursor move.
+        #[wasm_bindgen]
+        #[must_use]
+        pub fn resolve_gaiji_at(&self, byte_offset: usize) -> String {
+            let source = self.inner.source();
+            find_gaiji_span_local(source, byte_offset)
+                .and_then(|span| build_resolution_value(source, span.0, span.1))
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "null".to_owned())
+        }
+
+        /// All gaiji resolutions found in the document, packaged in
+        /// the standard `{schema_version, data:[...]}` wire envelope.
+        /// Powers inlay-hint UIs that show `→GLYPH` after every
+        /// `※［＃…］` span.
+        ///
+        /// Walks the source linearly once; cost is `O(source)`.
+        #[wasm_bindgen]
+        #[must_use]
+        pub fn gaiji_resolutions_json(&self) -> String {
+            let source = self.inner.source();
+            let mut entries: Vec<serde_json::Value> = Vec::new();
+            let mut cursor = 0usize;
+            while let Some(rel) = source[cursor..].find(GAIJI_OPEN) {
+                let span_start = cursor + rel;
+                let body_start = span_start + GAIJI_OPEN.len();
+                let Some(close_rel) = source[body_start..].find(GAIJI_CLOSE) else {
+                    break;
+                };
+                let span_end = body_start + close_rel + GAIJI_CLOSE.len();
+                if let Some(val) = build_resolution_value(source, span_start, span_end) {
+                    entries.push(val);
+                }
+                cursor = span_end;
+            }
+            serde_json::json!({
+                "schema_version": 1,
+                "data": entries,
+            })
+            .to_string()
+        }
+    }
+
+    /// Find the byte-range of the `※［＃…］` span containing
+    /// `byte_offset`, scanning only a bounded window around the
+    /// cursor (kept independent of document size).
+    fn find_gaiji_span_local(source: &str, byte_offset: usize) -> Option<(usize, usize)> {
+        if source.is_empty() {
+            return None;
+        }
+        let win_start =
+            snap_to_char_boundary_left(source, byte_offset.saturating_sub(MAX_GAIJI_SPAN_LEN));
+        let win_end = snap_to_char_boundary_right(
+            source,
+            byte_offset
+                .saturating_add(MAX_GAIJI_SPAN_LEN)
+                .min(source.len()),
+        );
+        let window = &source[win_start..win_end];
+        let win_offset = byte_offset.saturating_sub(win_start);
+
+        for (start_in_win, _) in window.match_indices(GAIJI_OPEN) {
+            let after_open = start_in_win + GAIJI_OPEN.len();
+            let Some(end_rel) = window.get(after_open..).and_then(|s| s.find(GAIJI_CLOSE)) else {
+                continue;
+            };
+            let end_in_win = after_open + end_rel + GAIJI_CLOSE.len();
+            if (start_in_win..end_in_win).contains(&win_offset) {
+                return Some((win_start + start_in_win, win_start + end_in_win));
+            }
+        }
+        None
+    }
+
+    const fn snap_to_char_boundary_left(s: &str, mut idx: usize) -> usize {
+        while idx > 0 && !s.is_char_boundary(idx) {
+            idx -= 1;
+        }
+        idx
+    }
+
+    const fn snap_to_char_boundary_right(s: &str, mut idx: usize) -> usize {
+        let len = s.len();
+        while idx < len && !s.is_char_boundary(idx) {
+            idx += 1;
+        }
+        idx
+    }
+
+    /// Split a gaiji body (`「description」、mencode[、page-line]`)
+    /// into `(description, mencode?)`. Tail fields after the mencode
+    /// (page-line refs) are informational only — drop them.
+    fn parse_gaiji_body(body: &str) -> (String, Option<String>) {
+        let body = body.trim();
+        let (description, rest) = body.find('「').map_or_else(
+            || (body.to_owned(), ""),
+            |open_idx| {
+                let after_open = &body[open_idx + '「'.len_utf8()..];
+                after_open.find('」').map_or_else(
+                    || (body.to_owned(), ""),
+                    |close_rel| {
+                        let desc = after_open[..close_rel].to_owned();
+                        let rest = &after_open[close_rel + '」'.len_utf8()..];
+                        (desc, rest)
+                    },
+                )
+            },
+        );
+        let rest = rest.trim_start_matches('、').trim();
+        let mencode = rest
+            .split('、')
+            .next()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+        (description, mencode)
+    }
+
+    /// Build the JSON resolution object for a `※［＃…］` span at
+    /// `[start..end)`. Returns `None` if the body cannot be parsed.
+    fn build_resolution_value(
+        source: &str,
+        start: usize,
+        end: usize,
+    ) -> Option<serde_json::Value> {
+        // Defensive: `end` should always come from the same scan, but
+        // out-of-band callers could pass arbitrary offsets, so
+        // validate boundaries.
+        let body_start = start.checked_add(GAIJI_OPEN.len())?;
+        let body_end = end.checked_sub(GAIJI_CLOSE.len())?;
+        if body_end <= body_start || body_end > source.len() {
+            return None;
+        }
+        let body = source.get(body_start..body_end)?;
+        let (description, mencode) = parse_gaiji_body(body);
+        let resolved = gaiji::lookup(None, mencode.as_deref(), &description);
+        let (resolved_str, codepoint) = match resolved {
+            Some(r) => {
+                let mut s = String::new();
+                _ = r.write_to(&mut s);
+                let cp = r.as_char().map(|c| c as u32);
+                (Some(s), cp)
+            }
+            None => (None, None),
+        };
+        Some(serde_json::json!({
+            "span": { "start": start, "end": end },
+            "description": description,
+            "mencode": mencode,
+            "codepoint": codepoint,
+            "resolved": resolved_str,
+        }))
     }
 }
 
