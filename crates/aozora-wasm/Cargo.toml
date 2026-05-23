@@ -27,11 +27,23 @@ workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen          = "0.2"
 serde-wasm-bindgen    = "0.6"
+# `web-sys` is needed only for the `profile_json` helper, which uses
+# `performance.now()` to time per-method work. `std::time::Instant`
+# panics on `wasm32-unknown-unknown`, so we cannot use it for the
+# profile readings. The `Performance` + `Window` features are tiny
+# (each opens up one JS-bound interface) and add ~1 KB gzip.
+web-sys               = { version = "0.3", features = ["Performance", "Window"] }
 
 [dependencies]
 # Drivers consume the wire format via `aozora::wire::*`; serde +
 # serde_json transitive-only via the `wire` feature.
 aozora = { workspace = true, features = ["wire"] }
+# Direct use for the gaiji-resolution helpers: hand-rolling JSON
+# escaping for arbitrary Unicode descriptions would re-implement
+# what serde_json already does well. The `wire` feature above
+# already pulls serde_json into the dependency graph, so this is
+# effectively zero additional cost on the bundle side.
+serde_json = { workspace = true }
 
 [dev-dependencies]
 # Tests parse the wire-format JSON to assert structure; production

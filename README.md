@@ -9,7 +9,8 @@
 </p>
 
 <p align="center">
-  📚 <a href="https://p4suta.github.io/aozora/"><strong>Handbook (mdbook)</strong></a>
+  🎮 <a href="https://p4suta.github.io/aozora/playground/"><strong>Playground</strong></a>
+  · 📚 <a href="https://p4suta.github.io/aozora/"><strong>Handbook (mdbook)</strong></a>
   · 📖 <a href="https://p4suta.github.io/aozora/api/aozora/"><strong>API reference (rustdoc)</strong></a>
   · 📦 <a href="https://github.com/P4suta/aozora/releases"><strong>Releases &amp; binaries</strong></a>
   · 🇯🇵 <a href="./README.ja.md"><strong>日本語</strong></a>

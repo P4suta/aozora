@@ -59,6 +59,12 @@ RUN mkdir -p /root/.cargo && printf '%s\n' \
 # into the image flattens that to a sub-second rustup metadata check.
 RUN rustup component add rustfmt clippy rust-src llvm-tools-preview
 
+# Add wasm32-unknown-unknown so `wasm-pack build --target web
+# crates/aozora-wasm` (the playground build step) runs without a host
+# rustup install. The target lives in the same cached layer as the
+# components above.
+RUN rustup target add wasm32-unknown-unknown
+
 ########################################################################
 # Stage: cargo-tools — install Rust dev utilities (cached layer)
 ########################################################################
@@ -133,7 +139,8 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
         bacon \
         git-cliff \
         lychee \
-        sccache
+        sccache \
+        wasm-pack
 
 # just (task runner) installed separately; upstream provides an install script
 RUN curl -fsSL https://just.systems/install.sh \
@@ -156,6 +163,18 @@ COPY --from=cargo-tools /usr/local/bin/ /usr/local/bin/
 
 # nightly toolchain is needed for cargo-udeps and cargo-fuzz harnesses
 RUN rustup toolchain install nightly --component rust-src --profile minimal
+
+# Bun for the playground frontend. The upstream installer drops the
+# binary under $HOME/.bun; move it into /usr/local/bin so any user
+# (root or non-root) finds it on PATH without sourcing a shell rc
+# file. Pinned to a recent stable release so cache invalidation only
+# happens on intentional bumps.
+ARG BUN_VERSION=1.3.14
+RUN curl -fsSL https://bun.sh/install \
+    | bash -s -- "bun-v${BUN_VERSION}" \
+    && mv /root/.bun/bin/bun /usr/local/bin/bun \
+    && chmod +x /usr/local/bin/bun \
+    && rm -rf /root/.bun
 
 ENV CARGO_HOME=/workspace/.cargo \
     CARGO_TARGET_DIR=/workspace/target \
