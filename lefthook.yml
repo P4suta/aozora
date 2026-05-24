@@ -5,6 +5,37 @@
 # Disable:             `just hooks-uninstall`
 #
 # Reference: https://lefthook.dev/configuration/
+#
+# Status icons in the summary
+# ---------------------------
+# Lefthook prints one of three markers next to each command in its
+# summary line:
+#   ✔️  success (exit 0)
+#   🗙  failed
+#   🥊  also a failure path — typically when the command exited
+#       non-zero but lefthook fell back to its branding icon because
+#       the underlying tooling (docker compose run, `just`) buried
+#       the status. Treat 🥊 the same as 🗙 — see the actual command
+#       output above the summary to find the real error.
+#
+# `fail_text` on each command below is the explicit human hint that
+# lefthook displays on failure so it's obvious what to fix without
+# scrolling back through hundreds of lines of cargo output.
+
+# Make the summary noisier on failures — show what command was
+# executing, its stdout, the stderr, and the skip reasons (default
+# already lists most of these, this is the explicit form so it
+# survives lefthook version bumps that change the default set).
+output:
+  - meta
+  - summary
+  - success
+  - failure
+  - execution
+  - execution_info
+  - execution_out
+  - skips
+  - empty_summary
 
 pre-commit:
   parallel: true
@@ -20,6 +51,9 @@ pre-commit:
       glob: "*.rs"
       run: just fmt
       stage_fixed: true
+      fail_text: |
+        `cargo fmt` failed. Run `just fmt` manually to see the error.
+        Common cause: rustfmt edition mismatch with rust-toolchain.toml.
     # `clippy-strict` runs the full `--all-targets --all-features`
     # surface (incl. bench / example targets and aozora-bench) which
     # the CI `lint (clippy)` job deliberately skips for build-time
@@ -29,14 +63,25 @@ pre-commit:
     clippy:
       glob: "*.{rs,toml}"
       run: just clippy-strict
+      fail_text: |
+        clippy reported an error. Re-run `just clippy-strict` for the
+        full diagnostic. `[workspace.lints]` in Cargo.toml controls
+        which lints fire — fix the code rather than silencing the lint.
     typos:
       run: just typos
+      fail_text: |
+        `typos` found a probable typo. Re-run `just typos` to see the
+        candidate fixes, or add an exception to `.typos.toml` if the
+        flagged token is intentional (proper noun, identifier, etc.).
     # Playground frontend type-check. Fast (< 2 s) and runs only when
     # TS / TSX / JSON files under `playground/` actually changed.
     # `vite.config.ts` / `vitest.config.ts` count too.
     playground-typecheck:
       glob: "playground/**/*.{ts,tsx,json}"
       run: just playground-typecheck
+      fail_text: |
+        Playground TypeScript failed to compile. Re-run
+        `just playground-typecheck` for the full tsc output.
 
 commit-msg:
   commands:
@@ -70,6 +115,13 @@ pre-push:
     # dependence, see the comment in the script).
     signing-check:
       run: scripts/check-signed-commits.sh
+      fail_text: |
+        Push refused: one or more commits in the range are not signed.
+        Sign with:
+          git commit --amend -S --no-edit                # last commit only
+          git rebase --exec 'git commit --amend --no-edit -S' <base>   # a range
+        Re-run `scripts/check-signed-commits.sh` manually to see which
+        commit failed verification.
     # Mirror every CI job that's reachable from inside the dev image
     # (lint / build / test / prop / drift-gate / conformance /
     # smoke-ffi / deny / audit / udeps / coverage / book-build /
@@ -85,6 +137,24 @@ pre-push:
     # is the failure mode this hook exists to eliminate.
     ci:
       run: just ci
+      fail_text: |
+        `just ci` failed. The error message is the last `error: recipe
+        \`<name>\` failed ...` line above this summary — that tells you
+        which sub-recipe (lint / build / test / coverage / playground-* /
+        book-linkcheck / corpus-sweep …) bombed.
+
+        Common causes:
+        - book-linkcheck needs `crates/aozora-book/mermaid.min.js` —
+          `just mermaid-install` regenerates it (or just re-run, the
+          `mermaid-install` prereq runs automatically now).
+        - typos / clippy regressed → run the individual gate (`just typos`,
+          `just clippy-strict`) for a cleaner repro.
+        - background trio (deny / audit / book-linkcheck) gets reaped at
+          the end of `just ci` — its captured log file path is printed
+          alongside `::error title=...`.
+
+        Re-run `just ci` directly (not via lefthook) for the unwrapped
+        output if the lefthook summary truncates anything important.
     # Deep proptest sweep (4096 cases vs the CI baseline 128) — runs
     # after `just ci`'s 128-case `prop` step so a regression that
     # needs many cases to surface is caught here instead of on a
@@ -92,6 +162,28 @@ pre-push:
     # nightly + corpus + cold start budget overshoots a pre-push hook.
     prop-deep:
       run: just prop-deep
+      # Tag for opt-out via `SKIP_TAGS=deep git push`. Deep
+      # proptest sweeps occasionally surface pre-existing bugs in
+      # aozora's core (parse / serialize / round-trip). When the
+      # current sweep hits one of those, the contributor needs a
+      # narrow escape hatch that does NOT disable the whole hook
+      # stack (LEFTHOOK=0 would also skip signing-check, which we
+      # never want to skip). `SKIP_TAGS=deep` keeps everything else
+      # honest while letting the unrelated PR through. The known
+      # regression is then tracked as a normal issue against
+      # aozora-pipeline.
+      tags:
+        - deep
+      fail_text: |
+        Deep proptest regression. Re-run `just prop-deep` to reproduce.
+        The seed for the failing case is printed in nextest's PASS/FAIL
+        line; pass it via `AOZORA_PROPTEST_SEED=<n>` to shrink locally.
+
+        If the failure is in aozora's CORE (parse / render / pipeline)
+        and is unrelated to your change, you may opt out with
+          `SKIP_TAGS=deep git push`
+        and file an issue against the failing crate.
+        Do NOT use `LEFTHOOK=0` — that would also skip signing-check.
 
 # After `git pull` / `git merge` (i.e. when Cargo.lock or Cargo.toml
 # may have moved underneath us), surface dependency freshness so the

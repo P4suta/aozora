@@ -805,12 +805,25 @@ changelog-full:
 # latter chronically lags upstream mdbook's RenderContext schema.
 _book := "docker compose run --rm book"
 
+# Install the mdbook-mermaid preprocessor assets (mermaid.min.js +
+# mermaid-init.js) next to `crates/aozora-book/book.toml`. The files
+# are .gitignored (vendor JS that the preprocessor regenerates), so
+# every local dev / CI invocation has to drop them in before mdbook
+# can render the book — `book.toml`'s `additional-js = [...]` would
+# otherwise fail on a "file not found" at render time.
+#
+# Idempotent — re-running just overwrites the same two files. Ships
+# from the `book` service so the host doesn't need `mdbook-mermaid`
+# installed locally.
+mermaid-install:
+    {{_book}} mdbook-mermaid install .
+
 # Build the handbook into crates/aozora-book/book/.
-book-build:
+book-build: mermaid-install
     {{_book}} mdbook build
 
 # Live-preview at http://localhost:3000. Re-renders on every save.
-book-serve:
+book-serve: mermaid-install
     docker compose up book
 
 # Crawl every internal + external link in the rendered handbook.
@@ -819,7 +832,7 @@ book-serve:
 # Concurrency / retries / 404-skip / accept policy live in
 # `crates/aozora-book/lychee.toml` so the same config applies to
 # `just book-linkcheck` and the `book` CI job.
-book-linkcheck:
+book-linkcheck: mermaid-install
     {{_book}} mdbook build
     {{_book}} lychee --config lychee.toml 'book/**/*.html'
 

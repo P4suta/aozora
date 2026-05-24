@@ -54,6 +54,36 @@ intentional:
 
 Do **not** weaken any of these layers; the redundancy is deliberate.
 
+### Reading lefthook output
+
+Lefthook prints one of three icons next to each command in the
+post-run summary:
+
+| Icon | Meaning |
+|---|---|
+| ✔️ | Success (exit 0) |
+| 🗙 | Failure (explicit non-zero exit) |
+| 🥊 | Also a failure — lefthook fell back to its branding glyph because the underlying tooling (docker compose run, multi-step `just` recipes with background jobs) buried the exit status. Treat 🥊 identically to 🗙 and scroll up to find the real error line. |
+
+Every command in `lefthook.yml` carries a `fail_text:` block with a
+plain-Japanese / English explanation of what to fix when that gate
+trips, so a failing push prints both the raw tooling output _and_ a
+hint pointing at the recipe responsible.
+
+### Tagged opt-outs
+
+The pre-push `prop-deep` command (4096-case proptest sweep) is
+tagged `deep`. If a deep-sweep regression in aozora core blocks
+your push and is unrelated to your change, you can opt out with:
+
+```sh
+SKIP_TAGS=deep git push
+```
+
+Use this instead of `LEFTHOOK=0` so that signing-check / ci / etc.
+still run. File an issue against the failing crate so the
+regression doesn't stay hidden.
+
 ## Development loop
 
 ```sh

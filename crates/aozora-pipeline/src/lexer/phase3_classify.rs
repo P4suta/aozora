@@ -2245,16 +2245,11 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             _ => None,
         });
 
-        let (description, mencode) = quoted.unwrap_or_else(|| {
-            // Bare-description fallback: split body at the first `、`.
-            // Whole body after `＃` becomes the description if there's no `、`.
-            let body = self.source[hash_end as usize..bracket_close_span.start as usize].trim();
-            if let Some((desc, men)) = body.split_once('、') {
-                (desc.trim().to_owned(), Some(men.trim().to_owned()))
-            } else {
-                (body.to_owned(), None)
-            }
-        });
+        let (description, mencode) = if let Some(pair) = quoted {
+            pair
+        } else {
+            self.extract_bare_gaiji_body(hash_end, bracket_close_span.start)?
+        };
 
         if description.is_empty() {
             return None;
@@ -2294,6 +2289,100 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             consume_start: refmark_span.start,
             consume_end: bracket_close_span.end,
         })
+    }
+
+    /// Bare-form `※［＃DESC、MENCODE］` body extraction. Kept to
+    /// accommodate the historical form `※［＃二の字点、1-2-23］` (no
+    /// `「…」` quotes) that some Aozora source uses, but tightened
+    /// so the I3 idempotency property holds:
+    ///
+    ///   - body must split on `、` (description-only bodies like
+    ///     `※［＃ 1234《...］` are ambiguous: the serializer would
+    ///     wrap them in `「…」`, and the re-parse would lift them to
+    ///     a quoted Gaiji, drifting the annotation count)
+    ///   - the mencode portion must look like a real JIS X 0213
+    ///     reference (`N-N-N` / `第N水準N-N-N`) or a `U+XXXX`
+    ///     codepoint. Random tail bytes (`》` etc.) get rejected,
+    ///     the whole bracket falls through to `Annotation::Unknown`,
+    ///     and the raw bytes round-trip byte-identical.
+    fn extract_bare_gaiji_body(
+        &self,
+        hash_end: u32,
+        bracket_close_start: u32,
+    ) -> Option<(String, Option<String>)> {
+        let body = self.source[hash_end as usize..bracket_close_start as usize].trim();
+        let (desc, men) = body.split_once('、')?;
+        let men = men.trim();
+        if !is_mencode_shaped(men) {
+            return None;
+        }
+        Some((desc.trim().to_owned(), Some(men.to_owned())))
+    }
+}
+
+/// Loose validator for a bare-form gaiji mencode field.
+///
+/// Accepts:
+///   - `N-N-N` (plain JIS X 0213 row-cell, digits + ASCII hyphens)
+///   - `第N水準N-N-N` (same with the explicit `水準` label)
+///   - `U+XXXX` (1–6 ASCII hex digits)
+///
+/// Anything else — random kanji, half-/full-width punctuation, etc.
+/// — is rejected so the bare-description bracket falls through to
+/// `Annotation::Unknown` instead of getting serializer-promoted into
+/// a quoted Gaiji. See `recognize_gaiji` for the I3-idempotency
+/// rationale.
+fn is_mencode_shaped(s: &str) -> bool {
+    if let Some(hex) = s.strip_prefix("U+") {
+        return !hex.is_empty() && hex.len() <= 6 && hex.chars().all(|c| c.is_ascii_hexdigit());
+    }
+    // Optional `第N水準` prefix: skip past the digits + `水準` token
+    // if present, then validate the remainder as `N-N-N` (digits and
+    // ASCII hyphens only, must contain at least one digit).
+    let rest = s
+        .strip_prefix('第')
+        .and_then(|after_dai| {
+            let nondigit = after_dai.find(|c: char| !c.is_ascii_digit())?;
+            let (_digits, tail) = after_dai.split_at(nondigit);
+            tail.strip_prefix("水準")
+        })
+        .unwrap_or(s);
+    !rest.is_empty()
+        && rest.chars().all(|c| c.is_ascii_digit() || c == '-')
+        && rest.chars().any(|c| c.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod is_mencode_shaped_tests {
+    use super::is_mencode_shaped;
+
+    #[test]
+    fn jis_x_0213_row_cell_passes() {
+        assert!(is_mencode_shaped("1-2-23"));
+        assert!(is_mencode_shaped("1-85-54"));
+    }
+
+    #[test]
+    fn dai_n_suijun_prefix_passes() {
+        assert!(is_mencode_shaped("第3水準1-85-54"));
+        assert!(is_mencode_shaped("第4水準2-1-2"));
+    }
+
+    #[test]
+    fn u_plus_codepoint_passes() {
+        assert!(is_mencode_shaped("U+304B"));
+        assert!(is_mencode_shaped("U+1F94A"));
+    }
+
+    #[test]
+    fn random_garbage_rejected() {
+        assert!(!is_mencode_shaped("》"));
+        assert!(!is_mencode_shaped("abc"));
+        assert!(!is_mencode_shaped("漢字"));
+        assert!(!is_mencode_shaped(""));
+        assert!(!is_mencode_shaped("U+"));
+        assert!(!is_mencode_shaped("U+ZZZZ"));
+        assert!(!is_mencode_shaped("第3水準"));
     }
 }
 
