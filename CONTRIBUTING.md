@@ -54,6 +54,22 @@ intentional:
 
 Do **not** weaken any of these layers; the redundancy is deliberate.
 
+### Reading lefthook output
+
+Lefthook prints one of three icons next to each command in the
+post-run summary:
+
+| Icon | Meaning |
+|---|---|
+| ✔️ | Success (exit 0) |
+| 🗙 | Failure (explicit non-zero exit) |
+| 🥊 | Also a failure — lefthook fell back to its branding glyph because the underlying tooling (docker compose run, multi-step `just` recipes with background jobs) buried the exit status. Treat 🥊 identically to 🗙 and scroll up to find the real error line. |
+
+Every command in `lefthook.yml` carries a `fail_text:` block with a
+plain-Japanese / English explanation of what to fix when that gate
+trips, so a failing push prints both the raw tooling output _and_ a
+hint pointing at the recipe responsible.
+
 ## Development loop
 
 ```sh
