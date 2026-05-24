@@ -222,10 +222,17 @@ impl<'a> BorrowedAllocator<'a> {
         }))
     }
 
-    /// `AozoraNode::Bouten(Bouten { kind, target, position })`.
+    /// `AozoraNode::Bouten(Bouten { kind, target, position,
+    /// consumed_predecessor })`.
     ///
     /// `target` carries the [`borrowed::NonEmpty`] invariant —
     /// Phase 3 resolves the forward reference before emitting.
+    ///
+    /// `consumed_predecessor` is `true` when the classifier pulled
+    /// the node's source span back over the literal occurrence of
+    /// `target` that sits immediately before the `［`. See the field
+    /// docstring on [`borrowed::Bouten`] for the serializer
+    /// round-trip contract that depends on this flag.
     ///
     /// # Panics
     ///
@@ -233,11 +240,16 @@ impl<'a> BorrowedAllocator<'a> {
     /// in Phase 3 always lands a non-empty target before emit; an
     /// empty payload here signals a classifier bug.
     #[must_use]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "every parameter is part of the public bouten contract — kind / target / position / consumed_predecessor each carry independent semantics and grouping them into a builder would add a layer without saving the caller anything"
+    )]
     pub fn bouten(
         &self,
         kind: BoutenKind,
         target: borrowed::Content<'a>,
         position: BoutenPosition,
+        consumed_predecessor: bool,
     ) -> borrowed::AozoraNode<'a> {
         let target = borrowed::NonEmpty::new(target)
             .expect("Phase 3 must emit Bouten with a resolved non-empty target");
@@ -245,21 +257,31 @@ impl<'a> BorrowedAllocator<'a> {
             kind,
             target,
             position,
+            consumed_predecessor,
         }))
     }
 
-    /// `AozoraNode::TateChuYoko(TateChuYoko { text })`.
+    /// `AozoraNode::TateChuYoko(TateChuYoko { text,
+    /// consumed_predecessor })`.
     ///
     /// `text` carries the [`borrowed::NonEmpty`] invariant.
+    /// `consumed_predecessor` mirrors [`Self::bouten`]'s flag.
     ///
     /// # Panics
     ///
     /// Panics if `text` is empty.
     #[must_use]
-    pub fn tate_chu_yoko(&self, text: borrowed::Content<'a>) -> borrowed::AozoraNode<'a> {
+    pub fn tate_chu_yoko(
+        &self,
+        text: borrowed::Content<'a>,
+        consumed_predecessor: bool,
+    ) -> borrowed::AozoraNode<'a> {
         let text = borrowed::NonEmpty::new(text)
             .expect("Phase 3 must emit TateChuYoko with non-empty text");
-        borrowed::AozoraNode::TateChuYoko(self.arena.alloc(borrowed::TateChuYoko { text }))
+        borrowed::AozoraNode::TateChuYoko(self.arena.alloc(borrowed::TateChuYoko {
+            text,
+            consumed_predecessor,
+        }))
     }
 
     /// `AozoraNode::Gaiji(g)`.
@@ -447,12 +469,13 @@ mod tests {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
         let target = a.content_plain("青空");
-        let n = a.bouten(BoutenKind::Goma, target, BoutenPosition::Right);
+        let n = a.bouten(BoutenKind::Goma, target, BoutenPosition::Right, false);
         match n {
             borrowed::AozoraNode::Bouten(b) => {
                 assert_eq!(b.kind, BoutenKind::Goma);
                 assert_eq!(b.target.as_plain(), Some("青空"));
                 assert_eq!(b.position, BoutenPosition::Right);
+                assert!(!b.consumed_predecessor);
             }
             other => panic!("expected Bouten, got {other:?}"),
         }
@@ -463,7 +486,7 @@ mod tests {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
         let text = a.content_plain("12");
-        let n = a.tate_chu_yoko(text);
+        let n = a.tate_chu_yoko(text, false);
         match n {
             borrowed::AozoraNode::TateChuYoko(t) => {
                 assert_eq!(t.text.as_plain(), Some("12"));
