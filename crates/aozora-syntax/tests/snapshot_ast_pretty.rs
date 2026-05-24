@@ -32,8 +32,8 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a
 
     vec![
         alloc.ruby(base, reading, true),
-        alloc.bouten(BoutenKind::Goma, base, BoutenPosition::Right),
-        alloc.tate_chu_yoko(base),
+        alloc.bouten(BoutenKind::Goma, base, BoutenPosition::Right, false),
+        alloc.tate_chu_yoko(base, false),
         alloc.gaiji(g),
         alloc.indent(Indent { amount: 2 }),
         alloc.align_end(AlignEnd { offset: 2 }),

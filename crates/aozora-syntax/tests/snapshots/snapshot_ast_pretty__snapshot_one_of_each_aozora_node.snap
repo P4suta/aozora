@@ -27,6 +27,7 @@ expression: "format!(\"{nodes:#?}\")"
                 ),
             ),
             position: Right,
+            consumed_predecessor: false,
         },
     ),
     TateChuYoko(
@@ -36,6 +37,7 @@ expression: "format!(\"{nodes:#?}\")"
                     "base",
                 ),
             ),
+            consumed_predecessor: false,
         },
     ),
     Gaiji(

@@ -315,7 +315,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let target = alloc.content_plain("可哀想");
-        let n = alloc.bouten(BoutenKind::Goma, target, BoutenPosition::Right);
+        let n = alloc.bouten(BoutenKind::Goma, target, BoutenPosition::Right, false);
         assert_eq!(
             render_node_to_string(n),
             r#"<em class="aozora-bouten aozora-bouten-goma aozora-bouten-right">可哀想</em>"#

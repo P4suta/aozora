@@ -188,6 +188,14 @@ fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
 }
 
 fn emit_bouten<W: Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {
+    if b.consumed_predecessor {
+        // Phase 3 pulled this node's source span back over the literal
+        // occurrence of `target` that sat immediately before the `［`.
+        // Re-emit the literal so the serialized output round-trips back
+        // to the original source: `<target>［＃「<target>」に傍点］`
+        // becomes the canonical fixed-point shape.
+        emit_content_as_plain(b.target.get(), out)?;
+    }
     out.write_str("［＃")?;
     emit_bouten_targets(b.target.get(), out)?;
     match b.position {
@@ -230,6 +238,11 @@ fn emit_bouten_targets<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
 }
 
 fn emit_tate_chu_yoko<W: Write>(t: &TateChuYoko<'_>, out: &mut W) -> fmt::Result {
+    if t.consumed_predecessor {
+        // Same back-ref re-emit as `emit_bouten` — see that function's
+        // comment for the round-trip rationale.
+        emit_content_as_plain(t.text.get(), out)?;
+    }
     out.write_str("［＃「")?;
     emit_content_as_plain(t.text.get(), out)?;
     out.write_str("」は縦中横］")

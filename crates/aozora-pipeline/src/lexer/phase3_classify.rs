@@ -1281,12 +1281,25 @@ where
                 // `pending_plain_start` here so `try_ruby_emit` can
                 // walk the preceding source bytes and decide how much
                 // of the plain run the ruby actually swallows.
+                //
+                // Bracket joins the same list: forward-reference
+                // `［＃「X」に傍点］` / `…は縦中横］` classifiers need
+                // the chance to pull `consume_start` back over the
+                // preceding target literal. `try_bracket_emit` then
+                // calls `flush_plain_up_to(consume_start)` itself,
+                // with the same effect for recognised brackets and a
+                // single fused Plain run (literal + raw bracket bytes)
+                // for the unrecognised path's replay — visually
+                // identical to the pre-defer two-span shape.
                 let gaiji_refmark = if matches!(kind, PairKind::Bracket) {
                     self.pending_refmark.take()
                 } else {
                     None
                 };
-                let preserve_pending_plain = matches!(kind, PairKind::Ruby | PairKind::DoubleRuby);
+                let preserve_pending_plain = matches!(
+                    kind,
+                    PairKind::Ruby | PairKind::DoubleRuby | PairKind::Bracket
+                );
                 if !preserve_pending_plain {
                     let truncate_to = gaiji_refmark.map_or(span.start, |rm| rm.start);
                     self.flush_plain_up_to(truncate_to);
@@ -2500,19 +2513,20 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 consume_end: close_span.end,
             });
         }
-        if let Some(node) = self.classify_forward_bouten(view, open_idx, close_idx) {
+        if let Some((node, consume_start)) = self.classify_forward_bouten(view, open_idx, close_idx)
+        {
             return Some(AnnotationMatch {
                 emit: EmitKind::Aozora(node),
                 annotation_payload: None,
-                consume_start: open_span.start,
+                consume_start,
                 consume_end: close_span.end,
             });
         }
-        if let Some(node) = self.classify_forward_tcy(view, open_idx, close_idx) {
+        if let Some((node, consume_start)) = self.classify_forward_tcy(view, open_idx, close_idx) {
             return Some(AnnotationMatch {
                 emit: EmitKind::Aozora(node),
                 annotation_payload: None,
-                consume_start: open_span.start,
+                consume_start,
                 consume_end: close_span.end,
             });
         }
@@ -2577,7 +2591,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<borrowed::AozoraNode<'a>> {
+    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // Shape 1: `に<kind>` — default right-side placement.
         // Shape 2: `の左に<kind>` — left-side placement (position flipped).
@@ -2601,8 +2615,44 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 return None;
             }
         }
+        // Pull the consume span back to swallow the preceding literal
+        // target when the (single) target sits *immediately* before the
+        // `［`. Without this the canonical
+        //     <target>［＃「<target>」に傍点］
+        // renders as `<target><em class="bouten">…<target>…</em>` —
+        // the surrounding plain run still carries the raw literal and
+        // the renderer faithfully emits the bouten's own content,
+        // producing the visible duplication that bit the playground
+        // welcome page. Letting `try_bracket_emit::flush_plain_up_to`
+        // see the earlier `consume_start` is the same trick Ruby has
+        // always used to claim its base text (see `try_ruby_emit`).
+        //
+        // Multi-target (`「A」「B」`) deliberately stays on the legacy
+        // `open_span.start` consume — the targets are non-contiguous
+        // in the source (e.g. `AとB`) and the current truncating
+        // `flush_plain_up_to` API cannot splice a hole in the middle
+        // of a pending plain run. That shape is the rarer corpus
+        // pattern; we accept the duplication there until a future
+        // change teaches the lexer to splice rather than truncate.
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        let consume_start = if let [only] = extracted.targets.as_slice() {
+            find_immediate_predecessor_target_position(view.events, self.source, open_idx, only)
+                .unwrap_or(open_span.start)
+        } else {
+            open_span.start
+        };
+        let consumed_predecessor = consume_start < open_span.start;
         let target = build_bouten_target(&extracted.targets, self.alloc);
-        Some(self.alloc.bouten(kind, target, position))
+        Some((
+            self.alloc
+                .bouten(kind, target, position, consumed_predecessor),
+            consume_start,
+        ))
     }
 }
 
@@ -2658,7 +2708,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<borrowed::AozoraNode<'a>> {
+    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         if extracted.suffix != "は縦中横" {
             return None;
@@ -2669,8 +2719,25 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         if !forward_target_is_preceded(view.events, self.source, open_idx, first) {
             return None;
         }
+        // Same `consume_start` shrink as `classify_forward_bouten`: pull
+        // the span back to swallow the immediately-preceding literal so
+        // `昭和64［＃「64」は縦中横］年` renders as `昭和<span
+        // class="tcy">64</span>年` instead of doubling the digits.
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        let consume_start =
+            find_immediate_predecessor_target_position(view.events, self.source, open_idx, first)
+                .unwrap_or(open_span.start);
+        let consumed_predecessor = consume_start < open_span.start;
         let text = self.alloc.content_plain(first);
-        Some(self.alloc.tate_chu_yoko(text))
+        Some((
+            self.alloc.tate_chu_yoko(text, consumed_predecessor),
+            consume_start,
+        ))
     }
 }
 
@@ -2713,6 +2780,46 @@ fn forward_target_is_preceded(
     // targets to make the AC build worthwhile. Pay the legacy
     // substring scan instead.
     source[..cutoff as usize].contains(target)
+}
+
+/// Like [`forward_target_is_preceded`] but stricter: returns the byte
+/// position where `target` begins **only if** that target's end butts
+/// directly against the `［` event at `open_idx`. Used by the
+/// `classify_forward_*` family to compute the `consume_start` they
+/// hand back to `try_bracket_emit`, so the flush truncates the
+/// pending plain run *just past* the matched literal and the styled
+/// span becomes its sole rendered copy.
+///
+/// Returns `None` when:
+/// - the event at `open_idx` is not a `PairOpen` (defensive),
+/// - the bracket sits at byte offset < `target.len()` (no room),
+/// - or the bytes immediately before the bracket differ from
+///   `target` (the target lives mid-sentence or is not preceded at
+///   all — leave the legacy duplicating behaviour in place rather
+///   than splicing a hole into the middle of the plain run).
+fn find_immediate_predecessor_target_position(
+    events: &[PairEvent],
+    source: &str,
+    open_idx: usize,
+    target: &str,
+) -> Option<u32> {
+    let &PairEvent::PairOpen { span, .. } = events.get(open_idx)? else {
+        return None;
+    };
+    let cutoff = span.start as usize;
+    let len = target.len();
+    if cutoff < len {
+        return None;
+    }
+    let candidate_start = cutoff - len;
+    // Compare bytes; `target` is already canonical UTF-8 (extracted
+    // from `extract_forward_quote_targets`), so equality of byte
+    // slices is equivalent to equality of strings.
+    if &source.as_bytes()[candidate_start..cutoff] == target.as_bytes() {
+        Some(u32::try_from(candidate_start).ok()?)
+    } else {
+        None
+    }
 }
 
 /// Result of walking the `［＃「…」「…」…<particle><keyword>］`
@@ -3667,6 +3774,95 @@ mod tests {
             .expect("expected a Bouten span");
         assert_eq!(bouten.kind, BoutenKind::Goma);
         assert_eq!(bouten.target.as_plain(), Some("青空"));
+    }
+
+    #[test]
+    fn forward_bouten_consumes_immediate_predecessor_literal() {
+        // The fix for forward-ref text duplication: when the target
+        // literal sits *immediately* before the `［`, the classifier
+        // hands back a `consume_start` that pulls the bouten span back
+        // to swallow it, so the preceding plain run flushes only up to
+        // the literal's start. Without this, the renderer would emit
+        // both the raw literal and the bouten's own content, producing
+        // `<text>青空<em>...青空</em>` — the playground welcome-page bug.
+        //
+        // Concretely we expect two spans:
+        //   [0] Plain("前置きの")     — the prefix up to (but not
+        //                               including) the consumed literal
+        //   [1] Aozora(Bouten { … })  — covers "青空［＃「青空」に傍点］"
+        //   [2] Plain("後ろ")         — the trailing prefix
+        run!(out, "前置きの青空［＃「青空」に傍点］後ろ");
+        let classified: Vec<_> = out
+            .spans
+            .iter()
+            .map(|s| {
+                let kind_str = match s.kind {
+                    SpanKind::Plain => "Plain",
+                    SpanKind::Aozora(AozoraNode::Bouten(_)) => "Bouten",
+                    _ => "Other",
+                };
+                let slice = &"前置きの青空［＃「青空」に傍点］後ろ"
+                    [s.source_span.start as usize..s.source_span.end as usize];
+                (kind_str, slice)
+            })
+            .collect();
+        // The legacy bug-state would have produced ["Plain('前置きの青空')",
+        // "Bouten('［＃「青空」に傍点］')", "Plain('後ろ')"]. The fix
+        // shrinks the Plain prefix and grows the Bouten span backwards.
+        assert_eq!(
+            classified.as_slice(),
+            &[
+                ("Plain", "前置きの"),
+                ("Bouten", "青空［＃「青空」に傍点］"),
+                ("Plain", "後ろ"),
+            ],
+            "spans drift from the consume_start=literal_start contract",
+        );
+        // The classifier must also flip the per-node consumed flag so the
+        // serializer round-trips the literal back into place.
+        let bouten_flag = out.spans.iter().find_map(|s| match s.kind {
+            SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b.consumed_predecessor),
+            _ => None,
+        });
+        assert_eq!(
+            bouten_flag,
+            Some(true),
+            "consume_start shrunk → consumed_predecessor must be true",
+        );
+    }
+
+    #[test]
+    fn forward_bouten_with_intervening_text_keeps_legacy_consume() {
+        // Edge case: target appears earlier in the paragraph but NOT
+        // immediately before the bracket. We deliberately leave the
+        // legacy duplicating behaviour in that case rather than
+        // splice a hole into the middle of the pending plain run
+        // (the `flush_plain_up_to` API is truncate-only). The Bouten
+        // is still emitted with its own target content.
+        run!(out, "青空の下を歩く［＃「青空」に傍点］");
+        let mut saw_bouten = false;
+        let mut saw_plain_with_aozora = false;
+        for s in &out.spans {
+            match &s.kind {
+                SpanKind::Aozora(AozoraNode::Bouten(_)) => saw_bouten = true,
+                SpanKind::Plain => {
+                    let slice = &"青空の下を歩く［＃「青空」に傍点］"
+                        [s.source_span.start as usize..s.source_span.end as usize];
+                    if slice.contains("青空") {
+                        saw_plain_with_aozora = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            saw_bouten,
+            "Bouten must still promote with non-adjacent target"
+        );
+        assert!(
+            saw_plain_with_aozora,
+            "non-adjacent target stays in preceding Plain (legacy behaviour preserved)"
+        );
     }
 
     #[test]

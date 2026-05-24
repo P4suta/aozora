@@ -181,20 +181,39 @@ pub struct Ruby<'src> {
 ///
 /// `target` is [`super::NonEmpty`] — Phase 3 resolves the forward
 /// reference (`［＃「対象」に傍点］`) before emitting the node.
+///
+/// `consumed_predecessor` records whether the Phase 3 classifier
+/// pulled this node's source span back over an immediately-preceding
+/// literal of `target` (the canonical `target［＃「target」に傍点］`
+/// shape). When true, the renderer's `<em class="bouten">target</em>`
+/// is the *sole* visible copy of the literal — the surrounding plain
+/// run was truncated to make room. The serializer reads this flag to
+/// re-emit the literal before `［＃「target」に傍点］`, preserving
+/// the parse∘serialize fixed-point invariant. When false (target
+/// appears earlier in the paragraph but not immediately before the
+/// bracket), the literal stays in the preceding plain run and the
+/// serializer emits only the bracket form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bouten<'src> {
     pub kind: BoutenKind,
     pub target: super::NonEmpty<Content<'src>>,
     pub position: BoutenPosition,
+    pub consumed_predecessor: bool,
 }
 
 /// Tate-chu-yoko (horizontal embedding).
 ///
 /// `text` is [`super::NonEmpty`] — empty TCY is a parse bug, not a
 /// valid state.
+///
+/// `consumed_predecessor` mirrors [`Bouten::consumed_predecessor`] —
+/// see that docstring. Forward-reference TCY (`text［＃「text」は縦
+/// 中横］`) follows the same back-ref consume model and the same
+/// round-trip contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TateChuYoko<'src> {
     pub text: super::NonEmpty<Content<'src>>,
+    pub consumed_predecessor: bool,
 }
 
 /// Gaiji (out-of-character-range glyph).
