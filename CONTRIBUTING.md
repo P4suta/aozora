@@ -70,6 +70,20 @@ plain-Japanese / English explanation of what to fix when that gate
 trips, so a failing push prints both the raw tooling output _and_ a
 hint pointing at the recipe responsible.
 
+### Tagged opt-outs
+
+The pre-push `prop-deep` command (4096-case proptest sweep) is
+tagged `deep`. If a deep-sweep regression in aozora core blocks
+your push and is unrelated to your change, you can opt out with:
+
+```sh
+SKIP_TAGS=deep git push
+```
+
+Use this instead of `LEFTHOOK=0` so that signing-check / ci / etc.
+still run. File an issue against the failing crate so the
+regression doesn't stay hidden.
+
 ## Development loop
 
 ```sh

@@ -162,10 +162,28 @@ pre-push:
     # nightly + corpus + cold start budget overshoots a pre-push hook.
     prop-deep:
       run: just prop-deep
+      # Tag for opt-out via `SKIP_TAGS=deep git push`. Deep
+      # proptest sweeps occasionally surface pre-existing bugs in
+      # aozora's core (parse / serialize / round-trip). When the
+      # current sweep hits one of those, the contributor needs a
+      # narrow escape hatch that does NOT disable the whole hook
+      # stack (LEFTHOOK=0 would also skip signing-check, which we
+      # never want to skip). `SKIP_TAGS=deep` keeps everything else
+      # honest while letting the unrelated PR through. The known
+      # regression is then tracked as a normal issue against
+      # aozora-pipeline.
+      tags:
+        - deep
       fail_text: |
         Deep proptest regression. Re-run `just prop-deep` to reproduce.
         The seed for the failing case is printed in nextest's PASS/FAIL
         line; pass it via `AOZORA_PROPTEST_SEED=<n>` to shrink locally.
+
+        If the failure is in aozora's CORE (parse / render / pipeline)
+        and is unrelated to your change, you may opt out with
+          `SKIP_TAGS=deep git push`
+        and file an issue against the failing crate.
+        Do NOT use `LEFTHOOK=0` — that would also skip signing-check.
 
 # After `git pull` / `git merge` (i.e. when Cargo.lock or Cargo.toml
 # may have moved underneath us), surface dependency freshness so the
