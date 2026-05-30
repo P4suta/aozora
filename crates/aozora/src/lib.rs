@@ -49,6 +49,16 @@
 #![forbid(unsafe_code)]
 
 pub use aozora_pipeline::{BorrowedLexOutput, NodeRef, SourceNode, lex_into_arena};
+/// Per-node HTML writer: `render_node::render(node, entering, &mut w)`.
+///
+/// The sanctioned surface for sibling composition layers — notably
+/// `afm` (Aozora Flavored Markdown, ADR-0010) — that splice individual
+/// Aozora spans into a host document at sentinel positions rather than
+/// rendering a whole [`Document`] through [`html`]. Whole-document
+/// callers should still use [`html`] / [`serialize`]; this promotes the
+/// per-node tier to the curated front door so siblings need not reach
+/// through the `render::*` wildcard module.
+pub use aozora_render::render_node;
 pub use aozora_render::{html, serialize};
 pub use aozora_spec::{
     ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic,
@@ -56,6 +66,15 @@ pub use aozora_spec::{
     SLUGS, Sentinel, Severity, SlugEntry, SlugFamily, SourceOffset, Span, TriggerKind,
     canonicalise_slug, codes,
 };
+/// Bump-allocator arena that owns all borrowed-AST node storage.
+///
+/// Sibling composition layers (notably `afm`, ADR-0010) that drive
+/// [`lex_into_arena`] directly construct the arena themselves via this
+/// re-export, instead of going through [`Document`] (which owns its own
+/// arena internally). Promoted to the curated front door alongside the
+/// per-node [`render_node`] path so the two have matching entry points
+/// without reaching through the `syntax::*` wildcard module.
+pub use aozora_syntax::borrowed::Arena;
 /// Borrowed-AST node types editor surfaces match against (LSP inlay
 /// hints, hover, completion, code actions, semantic tokens).
 /// Re-exported so external consumers don't have to depend on
