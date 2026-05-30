@@ -10,10 +10,19 @@
 name: aozora
 
 x-common-env: &common-env
-  CARGO_HOME: /workspace/.cargo
-  CARGO_TARGET_DIR: /workspace/target
+  # Cargo caches live at /cargo/* — OUTSIDE the /workspace bind mount — on
+  # purpose. Nesting a named volume inside the bind mount (the old
+  # /workspace/target etc.) makes the Docker daemon create the host-side
+  # mountpoint (./target, ./.cargo, ./.sccache) as **root**, which then
+  # blocks host-side cargo — the `smoke-ffi` / `pgo` recipes build on the
+  # host — with "failed to create directory ... Permission denied", and
+  # litters the working tree with root-owned junk. Keeping the caches at
+  # /cargo/* leaves the host's own ./target free for host builds and keeps
+  # the checkout clean. The named volumes still persist them between runs.
+  CARGO_HOME: /cargo/home
+  CARGO_TARGET_DIR: /cargo/target
   RUSTC_WRAPPER: sccache
-  SCCACHE_DIR: /workspace/.sccache
+  SCCACHE_DIR: /cargo/sccache
   # sccache cannot cache crates compiled with cargo's incremental mode.
   # Cargo defaults incremental=true for workspace members in dev/test profiles,
   # which silently bypasses sccache for the very crates we build most often.
@@ -23,7 +32,7 @@ x-common-env: &common-env
   RUST_BACKTRACE: "1"
   # Use mold (already apt-installed in the Dockerfile toolchain stage).
   # The Dockerfile also writes a /root/.cargo/config.toml with the same
-  # intent, but CARGO_HOME=/workspace/.cargo above means cargo never
+  # intent, but CARGO_HOME=/cargo/home above means cargo never
   # reads it; cargo's own config-discovery is rooted at $CARGO_HOME and
   # only walks ancestor `.cargo/config.toml` files from the project
   # directory upward. Setting target-scoped env vars short-circuits the
@@ -59,10 +68,10 @@ services:
     environment: *common-env
     volumes:
       - .:/workspace:cached
-      - cargo-registry:/workspace/.cargo/registry
-      - cargo-git:/workspace/.cargo/git
-      - cargo-target:/workspace/target
-      - sccache:/workspace/.sccache
+      - cargo-registry:/cargo/home/registry
+      - cargo-git:/cargo/home/git
+      - cargo-target:/cargo/target
+      - sccache:/cargo/sccache
     init: true
     tty: true
     stdin_open: true
@@ -78,17 +87,16 @@ services:
       <<: *common-env
       CI: "true"
     volumes:
-      # `:cached` (not `:ro`): a `:ro` bind mount HIDES `/workspace/{target,
-      # .cargo,.sccache}` that were `mkdir -p`-ed in the image (overlayfs
-      # bind-mount semantics — the source dir replaces image contents),
-      # which then blocks the named-volume mountpoints below from
-      # attaching at runtime ("mkdirat ... read-only file system"). The
-      # runner is ephemeral; `:cached` is safe and the canonical CI mode.
+      # `:cached` (writable): CI steps emit artifacts back into the tree
+      # (wasm `pkg/`, generated docs, coverage reports), so the source
+      # mount stays writable. The cargo caches now live at /cargo/*
+      # (outside this bind mount), so the old ":ro hides the nested
+      # /workspace/{target,.cargo,.sccache} mountpoints" hazard is gone.
       - .:/workspace:cached
-      - cargo-registry:/workspace/.cargo/registry
-      - cargo-git:/workspace/.cargo/git
-      - cargo-target:/workspace/target
-      - sccache:/workspace/.sccache
+      - cargo-registry:/cargo/home/registry
+      - cargo-git:/cargo/home/git
+      - cargo-target:/cargo/target
+      - sccache:/cargo/sccache
 
   book:
     # Lean container with just `mdbook` / `mdbook-mermaid` / `lychee` —
@@ -139,9 +147,9 @@ services:
       # native bun cache) bleeding into a non-Linux host.
       - playground-node-modules:/workspace/playground/node_modules
       - playground-dist:/workspace/playground/dist
-      - cargo-registry:/workspace/.cargo/registry
-      - cargo-git:/workspace/.cargo/git
-      - cargo-target:/workspace/target
+      - cargo-registry:/cargo/home/registry
+      - cargo-git:/cargo/home/git
+      - cargo-target:/cargo/target
     ports:
       - "5173:5173"
     init: true
