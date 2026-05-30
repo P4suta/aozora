@@ -33,6 +33,21 @@ runs:
       shell: bash
       run: echo "COMPOSE_FILE=docker-compose.yml:docker-compose.ci.yml" >> "$GITHUB_ENV"
 
+    # Run the compose containers as root on CI. The image defaults to a
+    # non-root user (UID 1000) so local bind-mount writes are host-owned,
+    # but the runner's checkout is owned by a different UID — a non-root
+    # container can't create files (wasm pkg/, generated docs, coverage
+    # reports) inside runner-owned tree directories. Ownership is throwaway
+    # on the ephemeral runner, so root is the simplest correct choice. Read
+    # by `user:` in docker-compose.yml via the AOZORA_UID/AOZORA_GID defaults.
+    - name: Run compose containers as root on CI
+      shell: bash
+      run: |
+        {
+          echo "AOZORA_UID=0"
+          echo "AOZORA_GID=0"
+        } >> "$GITHUB_ENV"
+
     # Cache the dev image tar on the runner host. Each CI job otherwise
     # spends ~32 s pulling aozora-dev:latest from GHCR; with six docker
     # compose jobs in ci.yml that's ~190 s of pure network overhead per

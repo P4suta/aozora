@@ -187,9 +187,30 @@ ENV CARGO_HOME=/cargo/home \
 # on purpose (see docker-compose.yml): nesting them under /workspace
 # made the daemon create root-owned ./target / ./.cargo / ./.sccache
 # on the host, which broke host-side cargo (`smoke-ffi` / `pgo`).
-RUN mkdir -p /cargo/target /cargo/home/registry /cargo/home/git /cargo/sccache
+RUN mkdir -p /cargo/target /cargo/home/registry /cargo/home/git /cargo/sccache \
+    /workspace/playground/node_modules /workspace/playground/dist
+
+# Run as a non-root user so files written into the /workspace bind mount
+# (wasm pkg/, generated docs, coverage reports, playground node_modules/
+# dist) are owned by the host developer, not root — the classic bind-mount
+# footgun. UID/GID default to the conventional first-user 1000; override
+# with `--build-arg UID=$(id -u) --build-arg GID=$(id -g)` on hosts that
+# differ. Debian bookworm's base leaves 1000 free (the `book` stage's
+# ubuntu base does not — it reuses the existing `ubuntu` user). The cache
+# dirs at /cargo/* and the playground mountpoints are chowned so a fresh
+# named volume initialises dev-owned. CI flips the runtime UID back to
+# root via `user:` in docker-compose.yml (AOZORA_UID=0, set by
+# setup-dev-image): the runner's checkout is owned by a different UID and
+# ownership is throwaway on the ephemeral runner.
+ARG UID=1000
+ARG GID=1000
+RUN groupadd --gid "${GID}" dev \
+    && useradd --uid "${UID}" --gid "${GID}" --create-home --shell /bin/bash dev \
+    && chown -R "${UID}:${GID}" /cargo /workspace
+ENV HOME=/home/dev
 
 WORKDIR /workspace
+USER dev
 
 # Default shell friendly for interactive dev sessions
 CMD ["bash"]
@@ -226,6 +247,15 @@ COPY --from=cargo-tools /usr/local/bin/mdbook         /usr/local/bin/mdbook
 COPY --from=cargo-tools /usr/local/bin/mdbook-mermaid /usr/local/bin/mdbook-mermaid
 COPY --from=cargo-tools /usr/local/bin/lychee         /usr/local/bin/lychee
 
+# Run mdbook as non-root so book output written into the /workspace bind
+# mount is host-owned, not root. The ubuntu:24.04 base already ships a
+# UID/GID-1000 `ubuntu` user, so reuse it (matches the dev stage's UID
+# 1000) rather than creating a colliding `dev` user. The CI `book` job
+# invokes this image via raw `docker run --user 0:0` (root) because its
+# checkout is runner-owned; local `docker compose run book` keeps 1000.
+ENV HOME=/home/ubuntu
+
 WORKDIR /workspace/crates/aozora-book
+USER ubuntu
 EXPOSE 3000
 CMD ["mdbook", "serve", "--hostname", "0.0.0.0", "--port", "3000"]
