@@ -44,8 +44,8 @@ pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 pub use lexer::phase0_sanitize::{has_long_rule_line, isolate_decorative_rules};
 
 pub use aozora_spec::{
-    BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic, INLINE_SENTINEL,
-    PairKind, PairLink, SLUGS, Sentinel, SlugEntry, SlugFamily, Span, TriggerKind,
+    ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic,
+    INLINE_SENTINEL, PairKind, PairLink, SLUGS, Sentinel, SlugEntry, SlugFamily, Span, TriggerKind,
     canonicalise_slug, classify_trigger_bytes,
 };
 

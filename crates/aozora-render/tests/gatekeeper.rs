@@ -14,7 +14,7 @@
 //! * `serialize` is a fixed point after one pass for canonical
 //!   markup shapes (inline ruby, page break, kaeriten, gaiji).
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::{ALL_SENTINELS, lex_into_arena};
 use aozora_render::{html, serialize};
 use aozora_syntax::borrowed::Arena;
 
@@ -126,8 +126,8 @@ fn gatekeeper_pua_sentinel_codepoints_in_source_dont_emit_block_tags() {
     // U+E004 from input, so they must flow through as PLAIN text
     // and never accidentally trigger structural rendering. This
     // pins "PUA collision tolerance".
-    for sentinel in ["\u{E001}", "\u{E002}", "\u{E003}", "\u{E004}"] {
-        let html = render_html(sentinel);
+    for sentinel in ALL_SENTINELS {
+        let html = render_html(&sentinel.to_string());
         // No `<div class="aozora-...">` should appear from a stray PUA.
         assert!(
             !html.contains(r#"<div class="aozora-page-break""#),
