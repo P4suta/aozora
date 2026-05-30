@@ -431,8 +431,19 @@ lint: fmt-check clippy typos strict-code doc
 # workspace lint config (`broken_intra_doc_links = "deny"` in
 # `[workspace.lints.rustdoc]` plus the `RUSTDOCFLAGS` env to lift the
 # remaining warn-level lints to errors).
+# `--jobs 1` serialises rustdoc. `cargo doc --workspace` otherwise spawns
+# one rustdoc per crate in parallel, and those processes race on rustdoc's
+# *shared* output infrastructure under `target/doc` (`static.files/`,
+# `trait.impl/`, `type.impl/`, the cross-crate search index). The race
+# surfaces intermittently as `No such file or directory (os error 2)` /
+# `failed to create or modify file: I/O error` while documenting the
+# umbrella `aozora` crate's re-export pages (e.g. `aozora/pipeline/…`) — it
+# bit the `doc` CI job once and needed a rerun. Serialising removes the
+# concurrency that is the race's precondition, making the gate
+# deterministic; doc generation is fast enough that the throughput cost is
+# negligible against not having to rerun a flaky required check.
 doc:
-    {{_dev}} env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
+    {{_dev}} env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --jobs 1
 
 # Forbid patterns that hide bugs or introduce unstable/unsafe surface in our
 # own crates. Every check is defensive — each represents a pattern we have
