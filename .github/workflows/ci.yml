@@ -108,6 +108,19 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just coverage
 
+  # PR-time rustdoc gate. `docs.yml` builds the API docs with
+  # `RUSTDOCFLAGS=-D warnings` at DEPLOY time, but the workspace denies
+  # all rustdoc lints, so a broken intra-doc link / bad codeblock would
+  # only surface AFTER merge — blocking the Pages deploy — rather than
+  # failing the PR. Run `just doc` here too so doc regressions are caught
+  # at review time. Mirrors the sibling afm repo's `doc` job.
+  doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ./.github/actions/setup-dev-image
+      - run: just doc
+
   audit:
     runs-on: ubuntu-latest
     strategy:
