@@ -55,10 +55,17 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # Pinned to the Dockerfile's BUN_VERSION so the Pages deploy and
+          # the dev/CI containers resolve the same bun (was `latest`).
+          bun-version: '1.3.14'
 
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        # Pinned action + version (was an unpinned `curl … | sh`) so the
+        # auto-fetched wasm-bindgen-cli is deterministic. Mirrors the
+        # sibling afm repo's docs workflow.
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: 'v0.13.1'
 
       - uses: peaceiris/actions-mdbook@v2
         with:
@@ -78,7 +85,12 @@ jobs:
       - name: Build rustdoc
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --workspace --no-deps --document-private-items
+        # `--jobs 1` serialises rustdoc: `cargo doc --workspace` otherwise
+        # races concurrent rustdoc processes on the shared target/doc
+        # output (static.files/, trait.impl/, search index), which fails
+        # intermittently while documenting the umbrella `aozora` crate's
+        # re-export pages. Matches the `just doc` recipe's fix.
+        run: cargo doc --workspace --no-deps --document-private-items --jobs 1
 
       - name: Build mdbook handbook
         run: mdbook build crates/aozora-book
