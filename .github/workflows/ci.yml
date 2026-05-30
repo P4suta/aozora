@@ -313,13 +313,13 @@ jobs:
         # `book.toml` lists them as `additional-js`, so `mdbook build`
         # fails with "failed to open mermaid.min.js for hashing" unless
         # we install them first.
-        run: docker run --rm -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook-mermaid install .
+        run: docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook-mermaid install .
       - name: mdbook build
-        run: docker run --rm -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook build
+        run: docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook build
       - name: lychee link verification (internal + external)
         # Configuration (concurrency, retries, accept codes, exclude
         # paths) lives in `crates/aozora-book/lychee.toml` — same file
         # `just book-linkcheck` reads, so local + CI behaviour match.
         run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local \
+          docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local \
             lychee --config lychee.toml 'book/**/*.html'
