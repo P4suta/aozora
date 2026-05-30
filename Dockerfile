@@ -38,7 +38,7 @@ ENV LANG=en_US.UTF-8 \
 # Note: docker-compose.yml sets RUSTFLAGS / CARGO_TARGET_*_LINKER directly
 # in the container env, which is what actually drives mold for compose
 # runs (the env override beats this config.toml because cargo's config
-# discovery is rooted at $CARGO_HOME=/workspace/.cargo, never reading
+# discovery is rooted at $CARGO_HOME=/cargo/home, never reading
 # $HOME/.cargo). This file is kept as a safety net for any direct
 # `docker run` invocation that does NOT go through compose.
 RUN mkdir -p /root/.cargo && printf '%s\n' \
@@ -176,19 +176,18 @@ RUN curl -fsSL https://bun.sh/install \
     && chmod +x /usr/local/bin/bun \
     && rm -rf /root/.bun
 
-ENV CARGO_HOME=/workspace/.cargo \
-    CARGO_TARGET_DIR=/workspace/target \
+ENV CARGO_HOME=/cargo/home \
+    CARGO_TARGET_DIR=/cargo/target \
     RUSTC_WRAPPER=sccache \
-    SCCACHE_DIR=/workspace/.sccache \
+    SCCACHE_DIR=/cargo/sccache \
     RUST_BACKTRACE=1
 
-# Pre-create cache mount targets so the runtime volume mounts at
-# /workspace/{target,.cargo,.sccache} can attach without docker
-# needing to mkdirat() into a read-only `/workspace`. Without these
-# the `:ro` bind mount of the source tree blocks volume attachment
-# and `docker compose run --rm ci ...` fails at container start with
-# "read-only file system" during mountpoint creation.
-RUN mkdir -p /workspace/target /workspace/.cargo /workspace/.sccache
+# Pre-create the cache mount targets at /cargo/* so the named volume
+# mounts attach cleanly. These live OUTSIDE the /workspace bind mount
+# on purpose (see docker-compose.yml): nesting them under /workspace
+# made the daemon create root-owned ./target / ./.cargo / ./.sccache
+# on the host, which broke host-side cargo (`smoke-ffi` / `pgo`).
+RUN mkdir -p /cargo/target /cargo/home/registry /cargo/home/git /cargo/sccache
 
 WORKDIR /workspace
 

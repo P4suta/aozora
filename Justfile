@@ -1014,13 +1014,24 @@ _pg := "docker compose run --rm --no-TTY playground"
 playground-wasm:
     {{_dev}} wasm-pack build --target web --release crates/aozora-wasm
 
+# Ensure the playground's prerequisites exist before typecheck / test:
+# the wasm `pkg/` that tsc + vite alias `aozora-wasm` to, and the bun
+# `node_modules`. `pkg/` persists in the tree and `node_modules` in a
+# named volume, so on a warm checkout the wasm build is skipped and
+# `bun install` is a fast lockfile check. A FRESH checkout now
+# self-initialises here instead of failing `just ci` with
+# "cannot find module 'aozora-wasm'" / "tsc: command not found".
+_playground-ensure:
+    [ -d crates/aozora-wasm/pkg ] || just playground-wasm
+    {{_pg}} bun install
+
 # Type-check playground TypeScript sources.
-playground-typecheck:
+playground-typecheck: _playground-ensure
     {{_pg}} bun run typecheck
 
 # Run vitest unit tests for the playground
 # (share / storage / parserState / utils — see src/__tests__/).
-playground-test:
+playground-test: _playground-ensure
     {{_pg}} bun run test
 
 # Production build of the playground. Regenerates the WASM bundle
