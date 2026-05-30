@@ -119,6 +119,22 @@ types-check:
 drift-gate:
     {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check'
 
+# Scaffold a new ADR under docs/adr/ from the template: picks the next
+# 4-digit number, slugifies the title, stamps today's date, and writes a
+# skeleton. Pure host-side file templating — no container needed.
+#   just new-adr "Make the lexer streaming"
+new-adr TITLE:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    last=$(ls docs/adr/ | grep -oE '^[0-9]{4}' | sort -n | tail -1)
+    n=$(printf '%04d' $((10#$last + 1)))
+    slug=$(printf '%s' "{{TITLE}}" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-')
+    f="docs/adr/${n}-${slug}.md"
+    [[ -e "$f" ]] && { echo "$f already exists" >&2; exit 1; }
+    cp docs/adr/0000-template.md "$f"
+    sed -i -e "s/^# NNNN. TITLE_HERE/# ${n}. {{TITLE}}/" -e "s/YYYY-MM-DD/$(date +%F)/" "$f"
+    echo "Created $f"
+
 # Phase O4 — WPT-style conformance runner. Walks every fixture
 # under aozora-conformance/fixtures/render/, runs the parser, and
 # fails non-zero if any `must`-tier case regresses. Writes a
