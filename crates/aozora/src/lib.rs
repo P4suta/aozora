@@ -96,6 +96,31 @@ pub mod wire;
 
 pub use document::{AozoraTree, DiagnosticPolicy, Document, ParseOptions};
 
+/// Eagerly initialise the parser's process-global lazy tables.
+///
+/// The *first* [`Document::parse`] then does not pay the one-time build
+/// cost on its critical path.
+///
+/// Parsing is lazy by default: a consumer that never parses — or parses
+/// no annotations — pays nothing. `prewarm` is **opt-in**. Call it once,
+/// early, from a latency-sensitive front end (e.g. a WASM editor warming
+/// the parser before the first keystroke). It is idempotent and
+/// thread-safe; redundant calls are effectively free.
+///
+/// It warms the SIMD trigger-scan backend selection (Phase 1) and the
+/// annotation-classifier Aho-Corasick DFA (Phase 3) — the latter is the
+/// bulk of the cost (~150 microseconds; the `aozora-pipeline` `boot`
+/// bench measures it).
+///
+/// ```
+/// aozora::prewarm();
+/// let doc = aozora::Document::new("｜青梅《おうめ》");
+/// let _ = doc.parse().to_html();
+/// ```
+pub fn prewarm() {
+    aozora_pipeline::prewarm();
+}
+
 /// Re-export of [`aozora_pipeline`] under a stable name.
 ///
 /// Editor integrations that want per-phase access

@@ -637,18 +637,39 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     },
 ];
 
+/// Build the annotation-body Aho-Corasick automaton from `BODY_PATTERNS`.
+///
+/// This DFA build is the bulk of parser boot cost (~150 microseconds, as
+/// the `boot` bench measures). It is exposed under `#[doc(hidden)]` so
+/// that bench can build it in isolation without making `BODY_PATTERNS`
+/// public — the same pattern as `aozora-scan`'s hidden `NaiveScanner`
+/// export. The process-lifetime cache lives in `body_dispatcher`;
+/// `prewarm` warms it.
+#[doc(hidden)]
+#[must_use]
+pub fn build_body_dispatcher() -> AhoCorasick {
+    AhoCorasickBuilder::new()
+        .match_kind(MatchKind::LeftmostLongest)
+        .start_kind(StartKind::Anchored)
+        .build(BODY_PATTERNS.iter().map(|p| p.needle))
+        .expect("BODY_PATTERNS is a static, non-empty, valid set")
+}
+
 /// One-time DFA build, amortised across the entire process lifetime.
-/// AC build cost is ~tens of microseconds; lookup cost is a few ns
-/// per call so the build pays back in under a thousand annotations.
+/// Lookup cost is a few ns per call so the build pays back in under a
+/// thousand annotations.
 fn body_dispatcher() -> &'static AhoCorasick {
     static DFA: OnceLock<AhoCorasick> = OnceLock::new();
-    DFA.get_or_init(|| {
-        AhoCorasickBuilder::new()
-            .match_kind(MatchKind::LeftmostLongest)
-            .start_kind(StartKind::Anchored)
-            .build(BODY_PATTERNS.iter().map(|p| p.needle))
-            .expect("BODY_PATTERNS is a static, non-empty, valid set")
-    })
+    DFA.get_or_init(build_body_dispatcher)
+}
+
+/// Force the one-time Aho-Corasick DFA build now.
+///
+/// This is the bulk of parser boot cost. Idempotent — the `OnceLock` is
+/// set at most once per process. `body_dispatcher` stays private; this
+/// only triggers its init.
+pub(crate) fn prewarm() {
+    let _ = body_dispatcher();
 }
 
 /// Single-pass classification of `body` (the trimmed bytes between

@@ -36,6 +36,20 @@ pub use aozora_syntax::borrowed::NodeRef;
 pub use borrowed::{BorrowedLexOutput, SourceNode, lex_into_arena};
 pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 
+/// Eagerly initialise every lazily-built parser table.
+///
+/// Forces the Phase-1 SIMD backend choice (`aozora_scan`) and the
+/// Phase-3 annotation-classifier Aho-Corasick DFA, so the first
+/// [`lex_into_arena`] does not pay the one-time build cost on its
+/// critical path. Idempotent and cheap to call repeatedly.
+///
+/// Lexing stays lazy by default; this is opt-in for latency-sensitive
+/// front ends — the umbrella `aozora::prewarm` is the public entry point.
+pub fn prewarm() {
+    aozora_scan::prewarm();
+    lexer::phase3_classify::prewarm();
+}
+
 /// Re-exports of the Phase 0 decorative-rule isolator, surfaced so
 /// downstream `aozora-render::serialize` can run the same idempotent
 /// blank-line-injection pass on its output and converge to a parser

@@ -68,16 +68,52 @@ pub use trait_def::{CountSink, OffsetSink};
 #[doc(hidden)]
 pub use naive::NaiveScanner;
 
+/// Process-wide cached backend choice (std builds).
+///
+/// Runtime CPU-feature detection runs at most once per process and the
+/// result caches in a `OnceLock`; later calls dispatch through the
+/// cached enum without touching `is_x86_feature_detected!` again.
+/// Lifting it here — rather than a function-local `static` buried in one
+/// entry point — lets the hot path, the convenience entry, and `prewarm`
+/// share the *same* lock, so warming is honest and no entry re-detects.
+#[cfg(feature = "std")]
+fn cached_choice() -> BackendChoice {
+    use std::sync::OnceLock;
+    static CHOICE: OnceLock<BackendChoice> = OnceLock::new();
+    *CHOICE.get_or_init(BackendChoice::detect)
+}
+
+/// Force the one-time runtime CPU-feature detection now.
+///
+/// The first [`scan_offsets_in`] then dispatches through the
+/// already-cached backend choice instead of paying
+/// `is_x86_feature_detected!` on the hot path. Idempotent and
+/// sub-microsecond.
+///
+/// `no_std` builds dispatch straight to `ScalarTeddy` with no `OnceLock`
+/// to populate, so this is a documented no-op there.
+#[cfg(feature = "std")]
+pub fn prewarm() {
+    let _ = cached_choice();
+}
+
+/// `no_std` no-op counterpart of [`prewarm`] — there is no `OnceLock` to
+/// populate when runtime detection is unavailable.
+#[cfg(not(feature = "std"))]
+pub fn prewarm() {}
+
 /// Scan `source` and return every trigger byte offset.
 ///
-/// Convenience entry that allocates a fresh `Vec<u32>` and dispatches
-/// to the host's fastest backend via [`BackendChoice::detect`].
-/// Callers with a `bumpalo` arena should reach for
-/// [`scan_offsets_in`] instead — it writes directly into the arena
-/// without the heap roundtrip this entry pays for.
+/// Convenience entry that allocates a fresh `Vec<u32>` and dispatches to
+/// the host's fastest backend. Callers with a `bumpalo` arena should
+/// reach for [`scan_offsets_in`] instead — it writes directly into the
+/// arena without the heap roundtrip this entry pays for.
 #[must_use]
 pub fn scan_offsets(source: &str) -> alloc::vec::Vec<u32> {
     let mut sink = alloc::vec::Vec::new();
+    #[cfg(feature = "std")]
+    cached_choice().scan(source, &mut sink);
+    #[cfg(not(feature = "std"))]
     BackendChoice::detect().scan(source, &mut sink);
     sink
 }
@@ -86,18 +122,14 @@ pub fn scan_offsets(source: &str) -> alloc::vec::Vec<u32> {
 /// caller-provided [`BumpVec<u32>`] living in the lex pipeline's
 /// per-parse [`Bump`] arena. No heap allocation, no memcpy.
 ///
-/// Backend selection runs once per process via [`BackendChoice::detect`]
-/// and caches in a `OnceLock`; subsequent calls dispatch through the
-/// cached enum without touching `is_x86_feature_detected!` again.
+/// Backend selection uses the process-wide cached choice; the first
+/// call (or an explicit [`prewarm`]) runs detection once, and every
+/// later call dispatches through the cached enum.
 #[cfg(feature = "std")]
 #[must_use]
 pub fn scan_offsets_in<'a>(source: &str, arena: &'a Bump) -> BumpVec<'a, u32> {
-    use std::sync::OnceLock;
-    static CHOICE: OnceLock<BackendChoice> = OnceLock::new();
     let mut out = BumpVec::new_in(arena);
-    CHOICE
-        .get_or_init(BackendChoice::detect)
-        .scan(source, &mut out);
+    cached_choice().scan(source, &mut out);
     out
 }
 
