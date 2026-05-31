@@ -23,6 +23,23 @@
   --token-gaiji-border: rgba(138, 79, 175, 0.55);
   --token-section: var(--fg-muted);
   --token-heading: var(--accent);
+
+  /*
+   * Font roles. Role names (ui / mono / serif) are shared with the
+   * sibling afm playground (afm uses the `--afm-pg-font-*` prefix);
+   * the *values* stay brand-specific. Each role keeps the widest
+   * stack we use anywhere so a single token serves every site:
+   *   - mono keeps the CJK fallbacks the editor needs (code with 日本語).
+   *   - serif keeps the vertical-writing mincho stack.
+   */
+  --font-ui:
+    'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', 'Source Han Serif JP',
+    system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono:
+    'Menlo', 'Consolas', 'Yu Gothic Mono', 'Noto Sans Mono CJK JP', monospace;
+  --font-serif:
+    'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Noto Serif JP',
+    'Source Han Serif JP', 'BIZ UDPMincho', serif;
 }
 
 /* dark mode は `<html data-theme="dark">` で適用する。
@@ -240,7 +257,7 @@ body {
 }
 
 .error-banner-detail {
-  font-family: 'Menlo', 'Consolas', monospace;
+  font-family: var(--font-mono);
   font-size: 0.85rem;
   color: var(--fg);
 }
@@ -365,7 +382,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  font-family: 'Menlo', 'Consolas', monospace;
+  font-family: var(--font-mono);
   font-size: 0.8rem;
   color: var(--fg);
   background: var(--accent-bg);
@@ -399,7 +416,7 @@ body {
   border-radius: 8px;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
   padding: 0.5rem 0;
-  font-family: var(--font-sans, inherit);
+  font-family: var(--font-ui);
 }
 
 .perf-popover-header {
@@ -443,7 +460,7 @@ body {
 }
 
 .perf-table td code {
-  font-family: 'Menlo', 'Consolas', monospace;
+  font-family: var(--font-mono);
   font-size: 0.78rem;
   background: var(--bg-code);
   padding: 0.05rem 0.35rem;
@@ -451,7 +468,7 @@ body {
 }
 
 .perf-num {
-  font-family: 'Menlo', 'Consolas', monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   text-align: right !important;
   color: var(--fg);
@@ -527,7 +544,7 @@ body {
   padding: 1rem;
   background: var(--bg-code);
   color: var(--fg);
-  font-family: 'Menlo', 'Consolas', monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -925,7 +942,7 @@ body {
   padding: 0.1em 0.3em;
   border-radius: 3px;
   font-size: 0.92em;
-  font-family: 'Menlo', 'Consolas', monospace;
+  font-family: var(--font-mono);
 }
 
 .notation-guide-body pre {
