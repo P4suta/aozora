@@ -52,9 +52,7 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
-#[cfg(feature = "std")]
 use bumpalo::Bump;
-#[cfg(feature = "std")]
 use bumpalo::collections::Vec as BumpVec;
 
 mod naive;
@@ -135,16 +133,9 @@ pub fn scan_offsets(source: &str) -> alloc::vec::Vec<u32> {
 /// Arena-backed variant: scan trigger byte offsets directly into a
 /// caller-provided [`BumpVec<u32>`] living in the lex pipeline's
 /// per-parse [`Bump`] arena. No heap allocation, no memcpy.
-#[cfg(feature = "std")]
-#[must_use]
-pub fn scan_offsets_in<'a>(source: &str, arena: &'a Bump) -> BumpVec<'a, u32> {
-    let mut out = BumpVec::new_in(arena);
-    scan_into(source, &mut out);
-    out
-}
-
-/// `no_std` variant of [`scan_offsets_in`].
-#[cfg(not(feature = "std"))]
+///
+/// `scan_into` is what differs across `std` / `no_std` (packed matcher
+/// vs the safe naive walker); this entry point is the same on both.
 #[must_use]
 pub fn scan_offsets_in<'a>(source: &str, arena: &'a Bump) -> BumpVec<'a, u32> {
     let mut out = BumpVec::new_in(arena);
