@@ -23,11 +23,14 @@ Hard guarantees:
   are `publish = false` and reachable only through `aozora`'s curated
   re-exports + the `pipeline` / `syntax` / `render` / `encoding` / `wire`
   modules.
-- **`#![forbid(unsafe_code)]` everywhere — the tree has no `unsafe`.**
-  The trigger scanner (`aozora-scan`) used to be the sole exception (a
+- **`#![forbid(unsafe_code)]` across the parser core.** The trigger
+  scanner (`aozora-scan`) used to be the sole core exception (a
   hand-rolled per-ISA SIMD Teddy); it now delegates to the safe,
-  portable `aho-corasick` packed matcher and is differentially tested
-  against a naive backend.
+  portable `aho-corasick` packed matcher (differentially tested against
+  a naive backend), so the whole parsing/rendering path is unsafe-free.
+  The only `unsafe` left is at the FFI boundary (`aozora-ffi`'s C ABI,
+  `#[unsafe(no_mangle)]` + raw-pointer handling) — unavoidable there and
+  quarantined under `unsafe_code = "deny"`.
 - **Single binary, no runtime process dependencies** for the `aozora` CLI.
 
 ## Architecture
@@ -157,9 +160,10 @@ homed here; afm keeps redirect stubs pointing at these.
 - **Do not bypass the umbrella crate.** Downstream code (incl. afm)
   consumes `aozora::…`, not `aozora-syntax` / `aozora-render` directly —
   that keeps the surface tested and versioned in one place.
-- **Do not add `unsafe` anywhere.** The whole tree is
-  `forbid(unsafe_code)`; reach for a safe, audited crate (as
-  `aozora-scan` does with `aho-corasick`) before hand-rolling SIMD.
+- **Do not add `unsafe` outside the FFI boundary.** The parser core is
+  `forbid(unsafe_code)`; only `aozora-ffi`'s C ABI may carry `unsafe`.
+  Reach for a safe, audited crate (as `aozora-scan` does with
+  `aho-corasick`) before hand-rolling SIMD.
 - **Do not suppress warnings** (`#[allow(...)]`, `continue-on-error`)
   without a `reason = "…"` and a `strict-code` exemption.
 - **Do not run cargo / wasm-pack / mdbook on the host.** `just` + Docker

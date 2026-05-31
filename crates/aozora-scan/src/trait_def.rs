@@ -15,7 +15,6 @@
 
 use alloc::vec::Vec;
 
-#[cfg(feature = "std")]
 use bumpalo::collections::Vec as BumpVec;
 
 /// Sink for trigger byte offsets emitted by the production scanner
@@ -53,7 +52,6 @@ impl OffsetSink for Vec<u32> {
     }
 }
 
-#[cfg(feature = "std")]
 impl OffsetSink for BumpVec<'_, u32> {
     #[inline]
     fn push(&mut self, offset: u32) {
