@@ -222,9 +222,9 @@ fn samples_from(v: &Value) -> Result<Vec<Sample>, TraceLoadError> {
         .get("samples")
         .ok_or(TraceLoadError::BadSchema { field: "samples" })?;
     let stacks = column_usize_opt(s, "stack")?;
-    let times = column_f64_opt(s, "time")?;
-    let weights = column_u64_opt(s, "weight");
     let n = stacks.len();
+    let times = sample_times(s, n)?;
+    let weights = column_u64_opt(s, "weight");
     if times.len() != n {
         return Err(TraceLoadError::BadSchema {
             field: "samples.time length mismatch",
@@ -232,11 +232,43 @@ fn samples_from(v: &Value) -> Result<Vec<Sample>, TraceLoadError> {
     }
     Ok((0..n)
         .map(|i| Sample {
-            time_ms: times[i].unwrap_or(0.0),
+            time_ms: times[i],
             stack_idx: stacks[i],
             weight: weights.get(i).copied().flatten().unwrap_or(1),
         })
         .collect())
+}
+
+/// Resolve per-sample timestamps across the two version-skewed shapes
+/// samply emits:
+///
+/// - older builds carry `time` — absolute milliseconds per sample;
+/// - newer builds carry `timeDeltas` — per-sample deltas whose running
+///   prefix-sum reconstructs the absolute timeline.
+///
+/// `time` wins when both are present. When neither is (e.g. the empty
+/// `samply` control thread), every sample gets `0.0`: timestamps are
+/// not load-bearing for the sample-counting analyses (hot / inclusive /
+/// rollup / libs / stacks / flame all weight by sample, never by time),
+/// so a missing timeline is a degraded-but-usable trace, not a load
+/// failure.
+fn sample_times(s: &Value, n: usize) -> Result<Vec<f64>, TraceLoadError> {
+    if s.get("time").is_some() {
+        let times = column_f64_opt(s, "time")?;
+        return Ok(times.into_iter().map(|t| t.unwrap_or(0.0)).collect());
+    }
+    if s.get("timeDeltas").is_some() {
+        let deltas = column_f64_opt(s, "timeDeltas")?;
+        let mut acc = 0.0;
+        return Ok(deltas
+            .into_iter()
+            .map(|d| {
+                acc += d.unwrap_or(0.0);
+                acc
+            })
+            .collect());
+    }
+    Ok(vec![0.0; n])
 }
 
 // ---- column helpers -------------------------------------------------
@@ -303,4 +335,74 @@ fn column_f64_opt(v: &Value, key: &'static str) -> Result<Vec<Option<f64>>, Trac
         .iter()
         .map(|x| if x.is_null() { None } else { x.as_f64() })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn approx(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    /// Minimal single-thread gecko profile whose `samples` object is
+    /// supplied by the caller, so each test pins exactly one
+    /// timestamp-column shape against the real loader.
+    fn trace_with_samples(samples: &Value) -> Trace {
+        let json = json!({
+            "libs": [],
+            "threads": [{
+                "name": "t",
+                "stringArray": ["leaf"],
+                "stackTable": { "prefix": [null], "frame": [0] },
+                "frameTable": { "address": [0], "func": [0] },
+                "funcTable": { "name": [0], "resource": [0] },
+                "resourceTable": { "lib": [null] },
+                "samples": samples,
+            }],
+        });
+        Trace::from_json(&json, PathBuf::from("test")).expect("load")
+    }
+
+    #[test]
+    fn loads_legacy_absolute_time_column() {
+        // Older samply: `time` holds absolute milliseconds per sample.
+        let t = trace_with_samples(&json!({
+            "stack": [0, 0, 0],
+            "time": [0.0, 1.5, 3.0],
+        }));
+        let s = &t.threads[0].samples;
+        assert_eq!(s.len(), 3);
+        assert!(approx(s[2].time_ms, 3.0), "got {}", s[2].time_ms);
+    }
+
+    #[test]
+    fn loads_timedeltas_via_prefix_sum() {
+        // Current samply emits per-sample deltas, not absolute `time`;
+        // the running prefix-sum reconstructs the absolute timeline.
+        let t = trace_with_samples(&json!({
+            "stack": [0, 0, 0],
+            "timeDeltas": [1.0, 2.0, 0.5],
+        }));
+        let s = &t.threads[0].samples;
+        assert_eq!(s.len(), 3);
+        assert!(approx(s[0].time_ms, 1.0), "got {}", s[0].time_ms);
+        assert!(approx(s[1].time_ms, 3.0), "got {}", s[1].time_ms);
+        assert!(approx(s[2].time_ms, 3.5), "got {}", s[2].time_ms);
+    }
+
+    #[test]
+    fn loads_when_no_timestamp_column_present() {
+        // The empty `samply` control thread carries neither `time` nor
+        // `timeDeltas`. A missing timeline degrades to zeros — timestamps
+        // are not load-bearing for the sample-counting analyses — rather
+        // than failing the whole trace load.
+        let t = trace_with_samples(&json!({
+            "stack": [0, 0],
+        }));
+        let s = &t.threads[0].samples;
+        assert_eq!(s.len(), 2);
+        assert!(s.iter().all(|x| approx(x.time_ms, 0.0)));
+    }
 }
