@@ -22,8 +22,8 @@ use crate::trait_def::OffsetSink;
 ///
 /// `pub` so the in-crate proptests and the cross-validation tests
 /// in `tests/` can reach it without a `bench-baselines` feature
-/// flag, but `#[doc(hidden)]` because external callers should
-/// always pick a real backend (`BackendChoice`).
+/// flag, but `#[doc(hidden)]` because external callers should go
+/// through the production [`crate::scan_offsets`] entry points.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NaiveScanner;
@@ -33,7 +33,7 @@ impl NaiveScanner {
     ///
     /// Convenience wrapper around [`Self::scan`] that allocates a
     /// fresh `Vec<u32>`. Test paths use this; production paths go
-    /// through [`crate::scan_offsets_in`] / [`crate::BackendChoice`].
+    /// through [`crate::scan_offsets`] / [`crate::scan_offsets_in`].
     #[doc(hidden)]
     #[must_use]
     pub fn scan_offsets(self, source: &str) -> Vec<u32> {

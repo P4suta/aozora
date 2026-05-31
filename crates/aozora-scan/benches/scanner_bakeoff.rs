@@ -1,19 +1,13 @@
-//! Bake-off bench: every [`BackendChoice`] kernel × four corpus
-//! shapes. Serves as the regression sentinel for future scanner
-//! changes.
+//! Bake-off bench: the production scanner vs the naive reference,
+//! across four corpus shapes. Serves as the regression sentinel for
+//! future scanner changes.
 //!
 //! ## Backends measured
 //!
-//! - **`naive`** — brute-force PHF reference. Slowest by design;
-//!   useful floor that anchors the speedup factor on every other
-//!   kernel.
-//! - **`scalar-teddy`** — pure-Rust hand-rolled Teddy, no SIMD.
-//!   The `no_std` last-resort dispatch target.
-//! - **`teddy-ssse3`** — hand-rolled Teddy with SSSE3 inner kernel
-//!   (16-byte chunks). x86_64 with SSSE3.
-//! - **`teddy-avx2`** — hand-rolled Teddy with AVX2 inner kernel
-//!   (32-byte chunks). x86_64 with AVX2 — production winner on
-//!   every modern dev / CI host.
+//! - **`naive`** — brute-force `classify`-per-byte reference. Slowest
+//!   by design; the floor that anchors the speedup factor.
+//! - **`production`** — [`aozora_scan::scan_offsets`], the shipping
+//!   `aho-corasick`-backed packed matcher.
 //!
 //! ## Corpus shapes
 //!
@@ -36,7 +30,7 @@
     reason = "bench code, not library"
 )]
 
-use aozora_scan::{BackendChoice, NaiveScanner};
+use aozora_scan::{NaiveScanner, scan_offsets};
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
@@ -80,34 +74,9 @@ fn bench_one(c: &mut Criterion, label: &str, sample: &str) {
         b.iter(|| black_box(NaiveScanner.scan_offsets(black_box(sample))));
     });
 
-    let mut sink: Vec<u32> = Vec::with_capacity(sample.len() / 56);
-    g.bench_function("scalar-teddy", |b| {
-        b.iter(|| {
-            sink.clear();
-            BackendChoice::ScalarTeddy.scan(black_box(sample), &mut sink);
-            black_box(&sink);
-        });
+    g.bench_function("production", |b| {
+        b.iter(|| black_box(scan_offsets(black_box(sample))));
     });
-    #[cfg(target_arch = "x86_64")]
-    if std::is_x86_feature_detected!("ssse3") {
-        g.bench_function("teddy-ssse3", |b| {
-            b.iter(|| {
-                sink.clear();
-                BackendChoice::TeddySsse3.scan(black_box(sample), &mut sink);
-                black_box(&sink);
-            });
-        });
-    }
-    #[cfg(target_arch = "x86_64")]
-    if std::is_x86_feature_detected!("avx2") {
-        g.bench_function("teddy-avx2", |b| {
-            b.iter(|| {
-                sink.clear();
-                BackendChoice::TeddyAvx2.scan(black_box(sample), &mut sink);
-                black_box(&sink);
-            });
-        });
-    }
 
     g.finish();
 }

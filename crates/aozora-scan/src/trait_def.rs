@@ -7,21 +7,19 @@
 //! heap → arena memcpy a returned `Vec<u32>` would force on every
 //! parse.
 //!
-//! The sink trait stays generic-method on purpose: every kernel's
-//! scan loop monomorphises against the concrete sink type, which
-//! lets the LLVM inliner fold the `push` call into the SIMD inner
-//! loop with no virtual dispatch overhead. The runtime
-//! [`crate::BackendChoice`] dispatcher routes calls into the
-//! monomorphised paths via a `match`, preserving runtime CPU
-//! adaptation without sacrificing static dispatch.
+//! The sink trait stays generic-method on purpose: the scan loop
+//! monomorphises against the concrete sink type, which lets the LLVM
+//! inliner fold the `push` call into the match-emit loop with no
+//! virtual dispatch overhead — so [`crate::scan_offsets_in`] writes
+//! straight into the lex arena with no heap round-trip.
 
 use alloc::vec::Vec;
 
 #[cfg(feature = "std")]
 use bumpalo::collections::Vec as BumpVec;
 
-/// Sink for trigger byte offsets emitted by a
-/// [`crate::BackendChoice`] kernel.
+/// Sink for trigger byte offsets emitted by the production scanner
+/// ([`crate::scan_offsets_in`]).
 ///
 /// Implementations decide where each offset lives — heap `Vec`,
 /// arena `BumpVec`, a count-only [`CountSink`], or a custom buffer

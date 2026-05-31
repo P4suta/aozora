@@ -1,6 +1,6 @@
 [package]
 name        = "aozora-scan"
-description = "SIMD-friendly trigger-byte scanner for the Aozora notation lexer"
+description = "Safe trigger-byte scanner for the Aozora notation lexer (aho-corasick-backed)"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -15,32 +15,26 @@ categories.workspace   = true
 # on crates.io.
 publish     = false
 
-# NOTE: aozora-scan does NOT inherit the workspace
-# `unsafe_code = "forbid"` lint. SIMD intrinsics
-# (`std::arch::x86_64::*`, `std::arch::aarch64::*`, etc.) are
-# `unsafe fn`, and the `#[target_feature]` annotations they require
-# are themselves unsafe. The `unsafe` surface is quarantined to the
-# `backends/{structural_bitmap,neon,wasm_simd}.rs` files; the rest of
-# the crate stays under `unsafe_code = "deny"` so a stray unsafe
-# block in the dispatcher / wrapper code surfaces immediately.
+# The scanner used to carry the tree's only `unsafe` (hand-rolled SIMD
+# Teddy kernels). It now delegates to `aho-corasick`, so the crate is
+# fully `forbid(unsafe_code)` like every other.
 [lints.rust]
-unsafe_code = "deny"
+unsafe_code = "forbid"
 non_ascii_idents = "deny"
 missing_debug_implementations = "warn"
 
 [features]
 default = ["std"]
-# `std` enables runtime CPU dispatch via `is_x86_feature_detected!`
-# (the `BackendChoice::detect` path) and the `OnceLock` cache that
-# memoises the dispatcher's choice across parses. Without `std`,
-# `BackendChoice::ScalarTeddy` is the only kernel reachable from
-# `scan_offsets_in`.
-std = []
+# `std` pulls `aho-corasick`'s packed (SIMD) backend, which needs
+# runtime CPU-feature detection, plus the `OnceLock` automaton cache.
+# Without `std`, `scan_offsets_in` falls back to the safe `NaiveScanner`
+# (no packed backend, no cache) — correct, just slower.
+std = ["dep:aho-corasick", "aho-corasick/std", "aho-corasick/perf-literal"]
 
 [dependencies]
-aozora-spec = { workspace = true }
-bumpalo     = { workspace = true }
-memchr      = { workspace = true }
+aozora-spec  = { workspace = true }
+aho-corasick = { workspace = true, optional = true }
+bumpalo      = { workspace = true }
 
 [dev-dependencies]
 proptest        = { workspace = true }
