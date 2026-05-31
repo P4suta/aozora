@@ -50,7 +50,7 @@ use clap::{Args, Subcommand};
 use rayon::prelude::*;
 
 use aozora_corpus::{Archive, ArchiveBuilder, EntryMeta, FilesystemCorpus, archive};
-use aozora_encoding::decode_sjis;
+use aozora_encoding::decode_auto;
 use std::cmp::Reverse;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -645,11 +645,14 @@ fn classify_entry(
     }
 
     // No previous archive, or label unseen, or content drifted —
-    // re-encode the payload (decode SJIS → UTF-8 here for utf8
-    // archives) but keep `source_blake3` pinned to the raw source
-    // bytes so the next incremental pack can match identity.
+    // re-encode the payload (normalise to UTF-8 here for utf8
+    // archives, auto-detecting Shift_JIS vs already-UTF-8 source) but
+    // keep `source_blake3` pinned to the raw source bytes so the next
+    // incremental pack can match identity.
     let payload_bytes = if utf8 {
-        decode_sjis(&bytes).map(String::into_bytes).unwrap_or(bytes)
+        decode_auto(&bytes)
+            .map(|text| text.into_owned().into_bytes())
+            .unwrap_or(bytes)
     } else {
         bytes
     };

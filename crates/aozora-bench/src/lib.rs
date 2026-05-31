@@ -30,11 +30,11 @@ use aozora::Document;
 use aozora_corpus::{
     Archive, ArchivePayload, CorpusItem, CorpusSource, FilesystemCorpus, with_load_pool,
 };
-use aozora_encoding::{decode_sjis, decode_sjis_into};
+use aozora_encoding::{decode_auto, decode_auto_into};
 use rayon::prelude::*;
 
-/// Iterate the corpus rooted at `root`, decode SJIS bytes to UTF-8,
-/// and parse each document.
+/// Iterate the corpus rooted at `root`, decode each document to UTF-8
+/// (auto-detecting Shift_JIS vs already-UTF-8 source), and parse it.
 ///
 /// Returns the `(decode_error_count, io_error_count, parsed_doc_count)`
 /// triple. Used by the PGO training binary AND by the
@@ -55,7 +55,7 @@ pub fn parse_corpus<P: AsRef<Path>>(
     let mut parsed = 0;
     for item in corpus.iter() {
         match item {
-            Ok(CorpusItem { bytes, .. }) => match decode_sjis(&bytes) {
+            Ok(CorpusItem { bytes, .. }) => match decode_auto(&bytes) {
                 Ok(text) => {
                     let doc = Document::new(text.clone());
                     let tree = doc.parse();
@@ -166,16 +166,16 @@ impl SizeBandedCorpus {
     }
 }
 
-/// Decode every corpus item to UTF-8 (Shift_JIS) and bucket the
-/// successful decodes by post-decode byte length.
+/// Decode every corpus item to UTF-8 (auto-detecting the encoding) and
+/// bucket the successful decodes by post-decode byte length.
 ///
-/// SJIS decode failures are counted in
+/// Decode failures are counted in
 /// [`SizeBandedCorpus::decode_errors`] but never raised; this matches
 /// the philosophy of the other probes ("exercise as much as possible,
 /// surface the error counts at the end").
 ///
 /// Uses a single function-local decode buffer and the
-/// [`decode_sjis_into`] entry point so per-call growth-realloc is
+/// [`decode_auto_into`] entry point so per-call growth-realloc is
 /// avoided. Each successful decode hands its text to the band entry
 /// via `mem::take`; the buffer's previous capacity is dropped in
 /// exchange for the next decode's `reserve` to allocate exactly the
@@ -190,7 +190,7 @@ pub fn corpus_size_bands(items: Vec<CorpusItem>) -> SizeBandedCorpus {
         let label = item.label;
         let bytes = item.bytes;
         buf.clear();
-        match decode_sjis_into(&bytes, &mut buf) {
+        match decode_auto_into(&bytes, &mut buf) {
             Ok(()) => bucket_one(&mut out, (label, mem::take(&mut buf))),
             Err(_) => out.decode_errors += 1,
         }
@@ -280,7 +280,7 @@ pub fn parallel_size_bands(corpus: &FilesystemCorpus) -> SizeBandedCorpus {
                 let outcome = DECODE_BUF.with(|cell| {
                     let mut buf = cell.borrow_mut();
                     buf.clear();
-                    match decode_sjis_into(&item.bytes, &mut buf) {
+                    match decode_auto_into(&item.bytes, &mut buf) {
                         Ok(()) => Some(mem::take(&mut *buf)),
                         Err(_) => None,
                     }
@@ -374,7 +374,7 @@ pub fn archive_size_bands(archive: &Archive) -> SizeBandedCorpus {
                     let outcome = DECODE_BUF.with(|cell| {
                         let mut buf = cell.borrow_mut();
                         buf.clear();
-                        match decode_sjis_into(bytes, &mut buf) {
+                        match decode_auto_into(bytes, &mut buf) {
                             Ok(()) => Some(mem::take(&mut *buf)),
                             Err(_) => None,
                         }

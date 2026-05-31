@@ -29,7 +29,7 @@ use std::time::Instant;
 
 use aozora_bench::{log_histogram_ns, render_bar_row};
 use aozora_corpus::CorpusItem;
-use aozora_encoding::decode_sjis;
+use aozora_encoding::decode_auto;
 use aozora_pipeline::lex_into_arena;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
@@ -67,7 +67,7 @@ fn main() {
     let mut decode_errors = 0usize;
 
     for item in &items {
-        let Ok(text) = decode_sjis(&item.bytes) else {
+        let Ok(text) = decode_auto(&item.bytes) else {
             decode_errors += 1;
             continue;
         };

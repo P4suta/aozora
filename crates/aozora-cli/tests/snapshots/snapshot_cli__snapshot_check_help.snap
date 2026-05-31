@@ -7,10 +7,29 @@ Run the lexer over a file and report diagnostics
 Usage: aozora check [OPTIONS] [FILE]
 
 Arguments:
-  [FILE]  Input path; pass `-` (or omit) to read from stdin [default: -]
+  [FILE]
+          Input path; pass `-` (or omit) to read from stdin
+          
+          [default: -]
 
 Options:
-  -s, --strict               Exit non-zero on any diagnostic
-  -E, --encoding <ENCODING>  Source encoding [default: utf8] [possible values: utf8, sjis]
-  -h, --help                 Print help
-  -V, --version              Print version
+  -s, --strict
+          Exit non-zero on any diagnostic
+
+  -E, --encoding <ENCODING>
+          Source encoding
+
+          Possible values:
+          - auto: Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are
+            decoded as Shift_JIS. The right default — Aozora files ship as Shift_JIS, but UTF-8
+            mirrors are common, and the caller should not have to know which they have
+          - utf8: Force UTF-8; error if the input is not valid UTF-8
+          - sjis: Force Shift_JIS decoding
+          
+          [default: auto]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version

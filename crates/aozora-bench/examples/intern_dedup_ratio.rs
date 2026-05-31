@@ -34,7 +34,7 @@ use std::process;
 use std::time::Instant;
 
 use aozora_corpus::{CorpusSource, FilesystemCorpus};
-use aozora_encoding::decode_sjis;
+use aozora_encoding::decode_auto;
 use aozora_pipeline::lex_into_arena;
 use aozora_syntax::borrowed::{Arena, InternStats};
 
@@ -56,7 +56,7 @@ fn main() {
     let start = Instant::now();
 
     for item in &items {
-        let Ok(text) = decode_sjis(&item.bytes) else {
+        let Ok(text) = decode_auto(&item.bytes) else {
             total_decode_errors += 1;
             continue;
         };

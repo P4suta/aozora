@@ -69,7 +69,7 @@ use aozora_bench::{
     parallel_size_bands,
 };
 use aozora_corpus::{Archive, CorpusItem, FilesystemCorpus};
-use aozora_encoding::decode_sjis;
+use aozora_encoding::decode_auto;
 use aozora_pipeline::lex_into_arena;
 use aozora_syntax::borrowed::Arena;
 use rayon::prelude::*;
@@ -284,8 +284,8 @@ impl LoadPhase {
         for item in items {
             let label = item.label;
             let bytes = item.bytes;
-            match decode_sjis(&bytes) {
-                Ok(text) => decoded.push((label, text)),
+            match decode_auto(&bytes) {
+                Ok(text) => decoded.push((label, text.into_owned())),
                 Err(_) => decode_errors += 1,
             }
         }
