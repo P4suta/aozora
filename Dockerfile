@@ -144,10 +144,10 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
 
 # just (task runner) installed separately; upstream provides an install script
 RUN curl -fsSL https://just.systems/install.sh \
-    | bash -s -- --to /usr/local/bin --tag 1.36.0
+    | bash -s -- --to /usr/local/bin --tag 1.51.0
 
 # lefthook (pre-commit manager). As of 2.x the release asset is a gzipped raw binary.
-ARG LEFTHOOK_VERSION=2.1.6
+ARG LEFTHOOK_VERSION=2.1.9
 RUN curl -fsSL \
     "https://github.com/evilmartians/lefthook/releases/download/v${LEFTHOOK_VERSION}/lefthook_${LEFTHOOK_VERSION}_Linux_x86_64.gz" \
     | gunzip > /usr/local/bin/lefthook \
