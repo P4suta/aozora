@@ -68,7 +68,7 @@ mod tests {
     use super::*;
     use aozora_syntax::borrowed::Arena;
 
-    /// `aozora_scan::ScalarScanner` MUST yield the exact same byte
+    /// `aozora_scan::scan_offsets` MUST yield the exact same byte
     /// offsets that the legacy phase-1 tokeniser uses for its trigger
     /// positions. We don't have a public hook into phase 1's offsets,
     /// so we cross-check at the [`BorrowedLexOutput`] level: every PUA

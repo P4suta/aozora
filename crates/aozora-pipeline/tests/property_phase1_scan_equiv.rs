@@ -1,11 +1,11 @@
-//! Cross-checks between Phase 1's SIMD trigger scan and the
-//! brute-force [`NaiveScanner`] reference, projected through the
-//! whole `lex_into_arena` pipeline.
+//! Cross-checks between Phase 1's trigger scan and the brute-force
+//! [`NaiveScanner`] reference, projected through the whole
+//! `lex_into_arena` pipeline.
 //!
 //! `aozora-scan/tests/property_backend_equiv.rs` already proves that
-//! every `BackendChoice` variant agrees byte-for-byte with
+//! the production `scan_offsets` agrees byte-for-byte with
 //! [`NaiveScanner`] on raw source bytes. That covers a *single layer*
-//! — the scanner kernel — and says nothing about how Phase 1's output
+//! — the scanner — and says nothing about how Phase 1's output
 //! flows through Phase 2 / Phase 3 on into the lexer's normalized
 //! buffer.
 //!

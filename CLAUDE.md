@@ -23,9 +23,11 @@ Hard guarantees:
   are `publish = false` and reachable only through `aozora`'s curated
   re-exports + the `pipeline` / `syntax` / `render` / `encoding` / `wire`
   modules.
-- **`#![forbid(unsafe_code)]`** everywhere except the SIMD scan kernels
-  (`aozora-scan`), which carry per-block `// SAFETY:` notes and are
-  fuzzed + differentially tested against a naive backend.
+- **`#![forbid(unsafe_code)]` everywhere — the tree has no `unsafe`.**
+  The trigger scanner (`aozora-scan`) used to be the sole exception (a
+  hand-rolled per-ISA SIMD Teddy); it now delegates to the safe,
+  portable `aho-corasick` packed matcher and is differentially tested
+  against a naive backend.
 - **Single binary, no runtime process dependencies** for the `aozora` CLI.
 
 ## Architecture
@@ -68,7 +70,7 @@ one `Bump::reset`. The [`Interner`] deduplicates repeated string content.
 | `aozora-pipeline` | `lex_into_arena` + the four lexer phases (sanitize/events/pair/classify). `publish = false`. |
 | `aozora-render` | `html` / `serialize` / `render_node::render` per-node writer + bouten CSS slugs. `publish = false`. |
 | `aozora-encoding` | Shift_JIS decode + gaiji resolution (`gaiji::Resolved`). `publish = false`. |
-| `aozora-scan` | SIMD trigger-byte scanner (`arch/{x86_64,aarch64,wasm32}`, teddy kernel) with a naive reference backend. The only `unsafe` in the tree. |
+| `aozora-scan` | Trigger-byte scanner. Delegates to the safe, portable `aho-corasick` packed matcher (std) / `NaiveScanner` (no_std); differentially tested against the naive reference. Fully `forbid(unsafe_code)`. |
 | `aozora-veb` | Eytzinger-laid-out static maps used by the registry tables. |
 | `aozora-cst` | Lossless rowan concrete-syntax tree (`cst` feature) for editor-grade tooling. |
 | `aozora-query` | tree-sitter-flavoured query DSL over the CST (`query` feature). |
@@ -155,8 +157,9 @@ homed here; afm keeps redirect stubs pointing at these.
 - **Do not bypass the umbrella crate.** Downstream code (incl. afm)
   consumes `aozora::…`, not `aozora-syntax` / `aozora-render` directly —
   that keeps the surface tested and versioned in one place.
-- **Do not add `unsafe` outside `aozora-scan`**, and never without a
-  `// SAFETY:` note + a fuzz / differential test.
+- **Do not add `unsafe` anywhere.** The whole tree is
+  `forbid(unsafe_code)`; reach for a safe, audited crate (as
+  `aozora-scan` does with `aho-corasick`) before hand-rolling SIMD.
 - **Do not suppress warnings** (`#[allow(...)]`, `continue-on-error`)
   without a `reason = "…"` and a `strict-code` exemption.
 - **Do not run cargo / wasm-pack / mdbook on the host.** `just` + Docker
