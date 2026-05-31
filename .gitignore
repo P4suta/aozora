@@ -60,6 +60,9 @@ crates/*/fuzz/Cargo.lock
 # Criterion
 /target/criterion/
 
+# dhat heap-profile output (written to the workspace root by `just dhat`)
+dhat-heap.json
+
 # Local env overrides
 .env
 .env.local
