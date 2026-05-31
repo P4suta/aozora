@@ -366,6 +366,18 @@ bench-baseline NAME="main":
 bench-compare NAME="main":
     {{_dev}} cargo bench --workspace -- --baseline {{NAME}}
 
+# Heap-allocation profile (dhat) of a 2 MiB synthetic parse + render:
+# total allocations + peak bytes, plus dhat-heap.json for dh_view. dhat
+# needs no perf_event_open, so (unlike `samply-*`) it runs in Docker.
+dhat:
+    {{_dev}} cargo run --release -p aozora-bench --example dhat_parse
+
+# Corpus-free small-doc parse+render latency percentiles (p50/p90/p99/max)
+# over a synthetic buffer. The deep per-phase, corpus-driven view is the
+# `latency_histogram` example.
+latency:
+    {{_dev}} cargo run --release -p aozora-bench --example latency_synthetic
+
 # --- coverage -----------------------------------------------------------------
 
 # Coverage gate. Fails when region coverage drops below `_COV_FLOOR`.
