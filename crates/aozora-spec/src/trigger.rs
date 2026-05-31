@@ -24,8 +24,6 @@
 //! [`TriggerKind`] values by the lexer's structuring layer; the
 //! per-byte classifier here only knows about the singletons.
 
-use phf::phf_map;
-
 /// Classification of a single trigger character (or merged double).
 ///
 /// Single-character triggers cover 3 source bytes; the merged
@@ -92,35 +90,33 @@ impl TriggerKind {
     }
 }
 
-/// Compile-time perfect-hash table from a single-character trigger's
-/// 3-byte UTF-8 sequence to its [`TriggerKind`].
-///
-/// Used by the SIMD-driven scanner: candidates produced by the
-/// bit-parallel scan are 3-byte windows that need precise classification
-/// in branch-predictable form. `phf::Map::get` is branch-free O(1)
-/// (one multiply + one modulo + one compare), strictly better than a
-/// `match` chain for this hot path. Double-character triggers
-/// (`《《` / `》》`) are recognised at the structuring layer by
-/// look-ahead, so they do not appear here.
-static SINGLE_TRIGGER_TABLE: phf::Map<[u8; 3], TriggerKind> = phf_map! {
-    [0xEFu8, 0xBDu8, 0x9Cu8] => TriggerKind::Bar,           // ｜ (U+FF5C)
-    [0xE3u8, 0x80u8, 0x8Au8] => TriggerKind::RubyOpen,      // 《
-    [0xE3u8, 0x80u8, 0x8Bu8] => TriggerKind::RubyClose,     // 》
-    [0xEFu8, 0xBCu8, 0xBBu8] => TriggerKind::BracketOpen,   // ［
-    [0xEFu8, 0xBCu8, 0xBDu8] => TriggerKind::BracketClose,  // ］
-    [0xEFu8, 0xBCu8, 0x83u8] => TriggerKind::Hash,          // ＃
-    [0xE2u8, 0x80u8, 0xBBu8] => TriggerKind::RefMark,       // ※
-    [0xE3u8, 0x80u8, 0x94u8] => TriggerKind::TortoiseOpen,  // 〔
-    [0xE3u8, 0x80u8, 0x95u8] => TriggerKind::TortoiseClose, // 〕
-    [0xE3u8, 0x80u8, 0x8Cu8] => TriggerKind::QuoteOpen,     // 「
-    [0xE3u8, 0x80u8, 0x8Du8] => TriggerKind::QuoteClose,    // 」
-};
-
 /// Classify a 3-byte UTF-8 window as a single-character trigger.
 ///
 /// Returns `None` when the window is not a recognised trigger. Callers
 /// must re-examine the window with their own state for `《《` / `》》`
-/// merging.
+/// merging. Double-character triggers (`《《` / `》》`) are recognised at
+/// the structuring layer by look-ahead, so they do not appear here.
+///
+/// ## Why a direct `match`, not a perfect-hash map
+///
+/// This sits in the lexer's innermost loop: the SIMD scanner emits a
+/// candidate position for every leading byte in `{0xE2, 0xE3, 0xEF}`,
+/// and each one is classified here. An earlier version backed this with
+/// a `phf::Map<[u8; 3], _>` on the assumption that a perfect hash is
+/// "branch-free O(1), strictly better than a `match` chain". A
+/// flamegraph of a ruby-dense document disproved that: `phf::Map::get`
+/// hashes the key with `SipHash`-1-3, and a `SipHash` over three bytes
+/// costs far more than a handful of byte comparisons over an 11-entry set
+/// — the hash alone accounted for ≈0.8 % of total render time (≈5 % of
+/// the parser's own time).
+///
+/// The 11 trigrams carry a trivial discriminator — the leading byte
+/// splits them into `0xE2` (one key), `0xE3` (six, resolved by the
+/// trailing byte) and `0xEF` (four, by the middle + trailing byte) — so
+/// an exhaustive `match` lowers to a small comparison tree with no
+/// hashing at all. The `tests` module pins this `match` against
+/// [`ALL_TRIGGER_TRIGRAMS`], exhaustively over the candidate
+/// leading-byte space, so the two cannot silently drift.
 ///
 /// Takes the window by value: a 3-byte array fits in a single 64-bit
 /// register, so passing by value is strictly cheaper than the indirect
@@ -128,7 +124,20 @@ static SINGLE_TRIGGER_TABLE: phf::Map<[u8; 3], TriggerKind> = phf_map! {
 #[inline]
 #[must_use]
 pub fn classify_trigger_bytes(window: [u8; 3]) -> Option<TriggerKind> {
-    SINGLE_TRIGGER_TABLE.get(&window).copied()
+    Some(match window {
+        [0xE2, 0x80, 0xBB] => TriggerKind::RefMark,       // ※
+        [0xE3, 0x80, 0x8A] => TriggerKind::RubyOpen,      // 《
+        [0xE3, 0x80, 0x8B] => TriggerKind::RubyClose,     // 》
+        [0xE3, 0x80, 0x8C] => TriggerKind::QuoteOpen,     // 「
+        [0xE3, 0x80, 0x8D] => TriggerKind::QuoteClose,    // 」
+        [0xE3, 0x80, 0x94] => TriggerKind::TortoiseOpen,  // 〔
+        [0xE3, 0x80, 0x95] => TriggerKind::TortoiseClose, // 〕
+        [0xEF, 0xBC, 0x83] => TriggerKind::Hash,          // ＃
+        [0xEF, 0xBC, 0xBB] => TriggerKind::BracketOpen,   // ［
+        [0xEF, 0xBC, 0xBD] => TriggerKind::BracketClose,  // ］
+        [0xEF, 0xBD, 0x9C] => TriggerKind::Bar,           // ｜
+        _ => return None,
+    })
 }
 
 /// Set of UTF-8 leading bytes that may begin a trigger character.
@@ -168,6 +177,8 @@ pub const ALL_TRIGGER_TRIGRAMS: [[u8; 3]; 11] = [
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     #[test]
@@ -235,11 +246,11 @@ mod tests {
 
     #[test]
     fn trigger_leading_bytes_are_complete_for_known_triggers() {
-        // Every entry in the PHF table starts with one of the listed
+        // Every recognised trigram starts with one of the listed
         // leading bytes. If a future trigger character is ever added
         // outside this set this test will fail and force the SIMD
         // scanner mask to be updated alongside.
-        for entry_key in SINGLE_TRIGGER_TABLE.keys() {
+        for entry_key in &ALL_TRIGGER_TRIGRAMS {
             assert!(
                 TRIGGER_LEADING_BYTES.contains(&entry_key[0]),
                 "trigger byte sequence {entry_key:?} starts with {:#04X} \
@@ -252,7 +263,7 @@ mod tests {
 
     #[test]
     fn trigger_middle_bytes_are_complete_for_known_triggers() {
-        for entry_key in SINGLE_TRIGGER_TABLE.keys() {
+        for entry_key in &ALL_TRIGGER_TRIGRAMS {
             assert!(
                 TRIGGER_MIDDLE_BYTES.contains(&entry_key[1]),
                 "trigger {entry_key:?} middle byte {:#04X} not in TRIGGER_MIDDLE_BYTES",
@@ -264,31 +275,44 @@ mod tests {
     #[test]
     fn trigger_middle_bytes_has_no_redundant_entries() {
         for &b in &TRIGGER_MIDDLE_BYTES {
-            let used = SINGLE_TRIGGER_TABLE.keys().any(|k| k[1] == b);
+            let used = ALL_TRIGGER_TRIGRAMS.iter().any(|k| k[1] == b);
             assert!(used, "middle byte {b:#04X} listed but unused");
         }
     }
 
     #[test]
-    fn all_trigger_trigrams_match_phf() {
-        // ALL_TRIGGER_TRIGRAMS must be the exact set of PHF keys
-        // (no missing entries; no duplicates; no stale entries).
-        // Forward: every PHF key is in the array.
-        for k in SINGLE_TRIGGER_TABLE.keys() {
-            assert!(
-                ALL_TRIGGER_TRIGRAMS.iter().any(|t| t == k),
-                "PHF key {k:?} not in ALL_TRIGGER_TRIGRAMS"
-            );
-        }
-        // Reverse: every array entry classifies via PHF and has the
-        // expected length of 11 — these are the load-bearing
-        // multi-pattern inputs to the Teddy / DFA scanners.
-        assert_eq!(ALL_TRIGGER_TRIGRAMS.len(), SINGLE_TRIGGER_TABLE.len());
+    fn classify_match_and_trigram_array_cannot_drift() {
+        // With the PHF gone, the `classify_trigger_bytes` match arms and
+        // `ALL_TRIGGER_TRIGRAMS` are two hand-maintained copies of the
+        // same 11-key set. This pins them so adding / removing a trigger
+        // in one place without the other fails CI.
+        //
+        // Forward: every listed trigram classifies to a *distinct* kind.
+        let mut kinds = HashSet::new();
         for trigram in &ALL_TRIGGER_TRIGRAMS {
-            assert!(
-                classify_trigger_bytes(*trigram).is_some(),
-                "ALL_TRIGGER_TRIGRAMS entry {trigram:?} doesn't classify"
-            );
+            let kind = classify_trigger_bytes(*trigram)
+                .unwrap_or_else(|| panic!("{trigram:?} listed but classifies to None"));
+            assert!(kinds.insert(kind), "duplicate kind for {trigram:?}");
+        }
+        assert_eq!(kinds.len(), 11, "expected exactly 11 distinct triggers");
+        assert_eq!(ALL_TRIGGER_TRIGRAMS.len(), 11);
+
+        // Reverse: the match accepts *nothing* outside the array, swept
+        // exhaustively over the candidate leading-byte space (the only
+        // bytes the SIMD scanner ever feeds in — guarded complete by
+        // `trigger_leading_bytes_are_complete_for_known_triggers`).
+        for &b0 in &TRIGGER_LEADING_BYTES {
+            for b1 in 0u8..=u8::MAX {
+                for b2 in 0u8..=u8::MAX {
+                    let window = [b0, b1, b2];
+                    if classify_trigger_bytes(window).is_some() {
+                        assert!(
+                            ALL_TRIGGER_TRIGRAMS.contains(&window),
+                            "match accepts {window:?}, absent from ALL_TRIGGER_TRIGRAMS"
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -297,7 +321,7 @@ mod tests {
         // Conversely: every byte in the leading set is actually used
         // by at least one trigger. Catches stale entries.
         for &b in &TRIGGER_LEADING_BYTES {
-            let used = SINGLE_TRIGGER_TABLE.keys().any(|k| k[0] == b);
+            let used = ALL_TRIGGER_TRIGRAMS.iter().any(|k| k[0] == b);
             assert!(
                 used,
                 "leading byte {b:#04X} listed in TRIGGER_LEADING_BYTES \

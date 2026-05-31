@@ -24,8 +24,8 @@
 //! shared types without depending on the engine.
 //!
 //! Concretely, this crate has **no internal dependency** on any other
-//! `aozora-*` crate, only on `phf`/`miette`/`thiserror`. Every other
-//! crate may depend on `aozora-spec` and re-export from it.
+//! `aozora-*` crate, only on `miette`/`thiserror`. Every other crate
+//! may depend on `aozora-spec` and re-export from it.
 
 #![forbid(unsafe_code)]
 
