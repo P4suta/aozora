@@ -59,9 +59,7 @@
   /* 縦書き時は明朝体を明示。`.aozora-doc` でも serif 指定済みだが、
    * Web ブラウザがゴシックを優先するケースが多いため、縦書き表示時に
    * 強めの font-family 指定で本らしい組版に寄せる。 */
-  font-family:
-    'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho',
-    'Noto Serif JP', 'Source Han Serif JP', 'BIZ UDPMincho', serif;
+  font-family: var(--font-serif);
   line-height: 2.0;
 }
 
@@ -73,9 +71,7 @@
 }
 
 .aozora-doc {
-  font-family:
-    'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', 'Source Han Serif JP',
-    serif;
+  font-family: var(--font-serif);
   color: var(--fg);
 }
 

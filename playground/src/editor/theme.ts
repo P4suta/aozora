@@ -25,7 +25,7 @@ export const aozoraTheme = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
     fontFamily:
-      "'Menlo', 'Consolas', 'Yu Gothic Mono', 'Noto Sans Mono CJK JP', monospace",
+      'var(--font-mono)',
     lineHeight: '1.75',
   },
   '.cm-content': {
