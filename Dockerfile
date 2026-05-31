@@ -233,7 +233,7 @@ FROM dev AS ci
 # debian:bookworm) keep working here because glibc is forwards-
 # compatible: an older-glibc-built ELF runs fine on a newer glibc.
 ########################################################################
-FROM ubuntu:24.04 AS book
+FROM ubuntu:26.04 AS book
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
