@@ -85,7 +85,7 @@ FROM toolchain AS cargo-tools
 # prebuilt tarball straight from the release page rather than
 # `cargo install cargo-binstall` (which would itself be a multi-minute
 # source build of the very tool we're using to *avoid* source builds).
-ARG BINSTALL_VERSION=1.10.22
+ARG BINSTALL_VERSION=1.19.1
 RUN curl -L --proto '=https' --tlsv1.2 -fsSL \
     "https://github.com/cargo-bins/cargo-binstall/releases/download/v${BINSTALL_VERSION}/cargo-binstall-x86_64-unknown-linux-musl.tgz" \
     | tar -xz -C /usr/local/cargo/bin/ cargo-binstall \
@@ -136,11 +136,20 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
         typos-cli \
         mdbook \
         mdbook-mermaid \
-        bacon \
         git-cliff \
         lychee \
         sccache \
         wasm-pack
+
+# bacon (the background compiler behind `just watch`) ships NO prebuilt
+# binaries on its GitHub releases — it's crates.io-source-only. The binstall
+# batch above runs with `--strategies crate-meta-data,quick-install` and no
+# source-compile fallback (by policy: fail fast rather than silently spend
+# 40 min compiling), so binstall can't resolve bacon and the image build dies
+# on it. Compiling bacon from source explicitly is the only honest path for a
+# crate with no prebuilt, and it keeps the no-compile fail-fast policy intact
+# for every tool that *does* publish binaries.
+RUN cargo install --locked bacon
 
 # just (task runner) installed separately; upstream provides an install script
 RUN curl -fsSL https://just.systems/install.sh \
