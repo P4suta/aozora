@@ -56,3 +56,7 @@ harness = false
 [[bench]]
 name    = "classify_kaeriten"
 harness = false
+
+[[bench]]
+name    = "boot"
+harness = false

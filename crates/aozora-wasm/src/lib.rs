@@ -85,6 +85,16 @@ mod bindings {
         .to_string()
     }
 
+    /// Force one-time parser-table initialisation (SIMD backend choice +
+    /// annotation-classifier DFA) off the first-keystroke critical path.
+    /// Idempotent. The playground calls this right after `init()`
+    /// resolves — before the editor is created — so the first keystroke
+    /// parse does not pay the DFA build.
+    #[wasm_bindgen]
+    pub fn prewarm() {
+        aozora::prewarm();
+    }
+
     const GAIJI_OPEN: &str = "※［＃";
     const GAIJI_CLOSE: &str = "］";
     // Bounded window for the cursor-pinned hover variant. A real
