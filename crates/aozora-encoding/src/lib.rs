@@ -7,6 +7,9 @@
 
 #![forbid(unsafe_code)]
 
+use std::borrow::Cow;
+use std::str::from_utf8;
+
 use encoding_rs::{DecoderResult, SHIFT_JIS};
 use miette::Diagnostic;
 use thiserror::Error;
@@ -77,13 +80,66 @@ pub fn decode_sjis_into(input: &[u8], dst: &mut String) -> Result<(), DecodeErro
     }
 }
 
+/// Decode Aozora source bytes to UTF-8, detecting the encoding.
+///
+/// Aozora material reaches this crate in two shapes: the canonical
+/// `Shift_JIS` archive files, and already-decoded UTF-8 mirrors (e.g. a
+/// corpus that has been pre-converted). Forcing every caller to commit
+/// to one encoding up front is the wrong default — it is why corpus
+/// tooling historically hard-coded [`decode_sjis`] and silently broke on
+/// UTF-8 input. This entry point removes that concern: hand it bytes,
+/// get back UTF-8.
+///
+/// - Valid UTF-8 is returned **borrowed**, zero-copy.
+/// - Otherwise the bytes are decoded as `Shift_JIS` (owned).
+///
+/// UTF-8 is tried first on purpose. Valid UTF-8 is a near-unambiguous
+/// signal — `Shift_JIS` Japanese text essentially never forms a wholly
+/// valid UTF-8 sequence — whereas the converse does not hold: a UTF-8
+/// document can contain byte runs that decode as *some* `Shift_JIS`
+/// without erroring, so sniffing `Shift_JIS` first risks mojibake on
+/// UTF-8 input.
+///
+/// BOM stripping, CRLF folding and NFC normalisation are the parser's
+/// Phase-0 responsibility and are deliberately not applied here.
+///
+/// # Errors
+///
+/// Returns [`DecodeError::ShiftJisInvalid`] when the bytes are neither
+/// valid UTF-8 nor valid `Shift_JIS`.
+pub fn decode_auto(input: &[u8]) -> Result<Cow<'_, str>, DecodeError> {
+    if let Ok(text) = from_utf8(input) {
+        return Ok(Cow::Borrowed(text));
+    }
+    decode_sjis(input).map(Cow::Owned)
+}
+
+/// Encoding-agnostic counterpart to [`decode_sjis_into`]: append the
+/// decoded UTF-8 to `dst`, detecting the source encoding.
+///
+/// Same sniffing rule as [`decode_auto`] (valid UTF-8 wins, else
+/// `Shift_JIS`), but writes into a caller-owned buffer so corpus
+/// loaders can reuse one allocation across many documents. The buffer
+/// is **not** cleared first — see [`decode_sjis_into`].
+///
+/// # Errors
+///
+/// Returns [`DecodeError::ShiftJisInvalid`] when the bytes are neither
+/// valid UTF-8 nor valid `Shift_JIS`.
+pub fn decode_auto_into(input: &[u8], dst: &mut String) -> Result<(), DecodeError> {
+    if let Ok(text) = from_utf8(input) {
+        dst.push_str(text);
+        return Ok(());
+    }
+    decode_sjis_into(input, dst)
+}
+
 /// Whether the byte slice carries a UTF-8 BOM (`EF BB BF`).
 ///
-/// Used by the CLI to strip the BOM before handing input to the parser. The
-/// CLI requires an explicit `--encoding` flag, so BOM presence is the only
-/// runtime signal we care about. A full encoding sniffer (BOM + byte-frequency
-/// heuristic) is intentionally out of scope until unknown-encoding input
-/// streams become a concern.
+/// Used by the CLI to strip the BOM before handing input to the parser.
+/// BOM presence is the one signal even [`decode_auto`] leaves to the
+/// caller: it is valid UTF-8, so it round-trips through `decode_auto`
+/// untouched and is stripped by the parser's Phase-0 sanitiser.
 #[must_use]
 pub const fn has_utf8_bom(input: &[u8]) -> bool {
     matches!(input, [0xEF, 0xBB, 0xBF, ..])
@@ -173,6 +229,73 @@ mod tests {
         // １２３ — fullwidth digits are common in Aozora ruby delimiters.
         let bytes = &[0x82, 0x4F, 0x82, 0x50, 0x82, 0x51];
         assert_eq!(decode_sjis(bytes).unwrap(), "０１２");
+    }
+
+    // ------------------------------------------------------------------
+    // decode_auto — encoding-agnostic entry point
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn decode_auto_passes_utf8_through_borrowed() {
+        let bytes = "青空文庫".as_bytes();
+        let out = decode_auto(bytes).unwrap();
+        assert!(matches!(out, Cow::Borrowed(_)), "UTF-8 must be zero-copy");
+        assert_eq!(out, "青空文庫");
+    }
+
+    #[test]
+    fn decode_auto_falls_back_to_sjis_owned() {
+        // 「青空文庫」 in Shift_JIS — not valid UTF-8, so it decodes.
+        let bytes = &[0x90, 0xC2, 0x8B, 0xF3, 0x95, 0xB6, 0x8C, 0xC9];
+        let out = decode_auto(bytes).unwrap();
+        assert!(
+            matches!(out, Cow::Owned(_)),
+            "SJIS must be decoded to owned"
+        );
+        assert_eq!(out, "青空文庫");
+    }
+
+    #[test]
+    fn decode_auto_borrows_ascii() {
+        // ASCII is valid in both encodings; UTF-8-first means borrowed.
+        let out = decode_auto(b"hello").unwrap();
+        assert!(matches!(out, Cow::Borrowed(_)));
+        assert_eq!(out, "hello");
+    }
+
+    #[test]
+    fn decode_auto_prefers_utf8_over_ambiguous_sjis() {
+        // UTF-8 「日本語」 = E3 81 A5 ... whose leading bytes are *also*
+        // valid Shift_JIS lead bytes. Sniffing SJIS first would mojibake
+        // this; UTF-8-first returns the correct text, borrowed.
+        let bytes = "日本語".as_bytes();
+        let out = decode_auto(bytes).unwrap();
+        assert!(matches!(out, Cow::Borrowed(_)));
+        assert_eq!(out, "日本語");
+    }
+
+    #[test]
+    fn decode_auto_errors_when_neither_encoding_fits() {
+        // 0xFF is neither a valid UTF-8 byte nor an assigned Shift_JIS byte.
+        assert!(matches!(
+            decode_auto(&[0xFF, 0xFF]),
+            Err(DecodeError::ShiftJisInvalid)
+        ));
+    }
+
+    #[test]
+    fn decode_auto_empty_is_borrowed_empty() {
+        let out = decode_auto(b"").unwrap();
+        assert!(matches!(out, Cow::Borrowed(_)));
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn decode_auto_into_appends_both_encodings() {
+        let mut buf = String::new();
+        decode_auto_into("青空".as_bytes(), &mut buf).unwrap(); // UTF-8
+        decode_auto_into(&[0x95, 0xB6, 0x8C, 0xC9], &mut buf).unwrap(); // 文庫 in SJIS
+        assert_eq!(buf, "青空文庫");
     }
 
     // ------------------------------------------------------------------

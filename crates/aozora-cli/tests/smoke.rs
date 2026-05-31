@@ -237,12 +237,13 @@ fn render_does_not_leak_pua_sentinels() {
 
 #[test]
 fn render_rejects_non_utf8_input_when_encoding_is_utf8() {
-    // A raw SJIS byte sequence is not valid UTF-8; without
-    // `-E sjis`, the binary must report the input as malformed
-    // rather than silently producing garbage.
+    // A raw SJIS byte sequence is not valid UTF-8; under an explicit
+    // `-E utf8`, the binary must report the input as malformed rather
+    // than silently producing garbage. (The default is now `auto`,
+    // which would decode it — that path is covered separately.)
     let sjis_bytes: Vec<u8> = vec![0x82, 0xa0]; // 「あ」 in SJIS
     let mut child = Command::new(BIN)
-        .args(["render"])
+        .args(["render", "-E", "utf8"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -290,5 +291,35 @@ fn render_accepts_sjis_input_with_explicit_encoding_flag() {
     assert!(
         stdout.contains("あいうえお"),
         "decoded text missing from render: {stdout:?}"
+    );
+}
+
+#[test]
+fn render_auto_detects_sjis_without_encoding_flag() {
+    // The default encoding is `auto`: a raw SJIS file renders correctly
+    // with no `-E` flag at all — the caller need not know the encoding.
+    let sjis_bytes: Vec<u8> = vec![0x82, 0xa0, 0x82, 0xa2, 0x82, 0xa4, 0x82, 0xa6, 0x82, 0xa8];
+    let mut child = Command::new(BIN)
+        .args(["render"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .as_mut()
+        .expect("piped stdin")
+        .write_all(&sjis_bytes)
+        .expect("write");
+    let output = child.wait_with_output().expect("wait");
+    assert!(
+        output.status.success(),
+        "auto-detect must decode + render SJIS: stderr={:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("あいうえお"),
+        "auto-detected text missing from render"
     );
 }

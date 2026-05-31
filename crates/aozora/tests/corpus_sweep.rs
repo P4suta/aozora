@@ -4,10 +4,10 @@
 //! Skipped silently when `AOZORA_CORPUS_ROOT` is unset; never
 //! hard-fails on missing corpus.
 
-use std::str;
+use std::borrow::Cow;
 
 use aozora::Document;
-use aozora_encoding::decode_sjis;
+use aozora_encoding::decode_auto;
 
 #[test]
 fn corpus_round_trip_is_a_fixed_point() {
@@ -17,20 +17,18 @@ fn corpus_round_trip_is_a_fixed_point() {
     };
 
     let mut count: usize = 0;
-    let mut decode_fallbacks: usize = 0;
+    let mut sjis_decoded: usize = 0;
 
     for item in source.iter() {
         let item = item.expect("corpus iteration must not error");
 
-        let utf8 = if let Ok(s) = decode_sjis(&item.bytes) {
-            s
-        } else if let Ok(s) = str::from_utf8(&item.bytes) {
-            decode_fallbacks += 1;
-            s.to_owned()
-        } else {
-            eprintln!("skip (neither SJIS nor UTF-8): {}", item.label);
+        let Ok(utf8) = decode_auto(&item.bytes) else {
+            eprintln!("skip (neither UTF-8 nor Shift_JIS): {}", item.label);
             continue;
         };
+        if matches!(utf8, Cow::Owned(_)) {
+            sjis_decoded += 1;
+        }
 
         // Parse must not panic and must produce a tree.
         let doc = Document::new(utf8);
@@ -52,6 +50,6 @@ fn corpus_round_trip_is_a_fixed_point() {
     }
 
     eprintln!(
-        "corpus sweep: {count} docs walked ({decode_fallbacks} UTF-8 fallback after SJIS decode failure)"
+        "corpus sweep: {count} docs walked ({sjis_decoded} decoded from Shift_JIS, the rest already UTF-8)"
     );
 }

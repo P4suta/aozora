@@ -30,7 +30,7 @@ use std::path::PathBuf;
 use std::process;
 use std::time::Instant;
 
-use aozora_encoding::decode_sjis;
+use aozora_encoding::decode_auto;
 use aozora_pipeline::lex_into_arena;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, SpanKind, Token, classify, pair, sanitize, tokenize,
@@ -62,7 +62,7 @@ fn main() {
     }
 
     let bytes = fs::read(&path).expect("read pathological doc");
-    let text = decode_sjis(&bytes).expect("decode SJIS");
+    let text = decode_auto(&bytes).expect("decode SJIS");
 
     println!(
         "Loaded {}\n  bytes (UTF-8): {}\n  chars: {}\n",

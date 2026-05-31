@@ -54,7 +54,7 @@ use std::time::Instant;
 use std::cell::RefCell;
 
 use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
-use aozora_encoding::decode_sjis;
+use aozora_encoding::decode_auto;
 use aozora_pipeline::lex_into_arena;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
@@ -164,7 +164,7 @@ struct DocResult {
 
 fn measure_corpus(items: &[CorpusItem], parallel: bool) -> (Vec<PhaseSample>, Vec<String>, usize) {
     let process = |item: &CorpusItem| -> Option<DocResult> {
-        let text = decode_sjis(&item.bytes).ok()?;
+        let text = decode_auto(&item.bytes).ok()?;
         Some(DocResult {
             sample: measure_one(&text),
             label: item.label.clone(),

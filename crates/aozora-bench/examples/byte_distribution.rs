@@ -21,7 +21,7 @@ use std::env;
 use std::process::ExitCode;
 
 use aozora_corpus::CorpusItem;
-use aozora_encoding::decode_sjis;
+use aozora_encoding::decode_auto;
 use aozora_scan::NaiveScanner;
 
 const DEFAULT_LIMIT: usize = 2000;
@@ -43,7 +43,7 @@ fn main() -> ExitCode {
     let mut docs = 0u64;
 
     for item in &items {
-        let Ok(text) = decode_sjis(&item.bytes) else {
+        let Ok(text) = decode_auto(&item.bytes) else {
             continue;
         };
         totals.observe(&text);

@@ -29,7 +29,7 @@ use std::process;
 use std::time::Instant;
 
 use aozora_corpus::CorpusItem;
-use aozora_encoding::decode_sjis;
+use aozora_encoding::decode_auto;
 use aozora_pipeline::lex_into_arena;
 use aozora_syntax::borrowed::Arena;
 
@@ -85,7 +85,7 @@ fn main() {
     let wall_start = Instant::now();
 
     for (i, item) in items.iter().enumerate() {
-        let Ok(text) = decode_sjis(&item.bytes) else {
+        let Ok(text) = decode_auto(&item.bytes) else {
             decode_errors += 1;
             continue;
         };

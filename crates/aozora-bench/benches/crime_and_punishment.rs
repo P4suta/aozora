@@ -13,7 +13,7 @@ use std::hint::black_box;
 use std::path::PathBuf;
 
 use aozora::Document;
-use aozora_encoding::decode_sjis;
+use aozora_encoding::decode_auto;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
 const RELATIVE_PATH: &str = "000363/files/56656_ruby_74439/56656_ruby_74439.txt";
@@ -32,14 +32,14 @@ fn bench_crime_and_punishment(c: &mut Criterion) {
         return;
     };
     let bytes = fs::read(&path).expect("read 罪と罰");
-    let utf8 = decode_sjis(&bytes).expect("decode SJIS");
+    let utf8 = decode_auto(&bytes).expect("decode 罪と罰 (UTF-8 or Shift_JIS)");
 
     let mut g = c.benchmark_group("crime_and_punishment");
     g.throughput(Throughput::Bytes(utf8.len() as u64));
 
     g.bench_function("parse", |b| {
         b.iter(|| {
-            let doc = Document::new(black_box(utf8.as_str()));
+            let doc = Document::new(black_box(utf8.as_ref()));
             let tree = doc.parse();
             black_box(tree);
         });
@@ -47,7 +47,7 @@ fn bench_crime_and_punishment(c: &mut Criterion) {
 
     g.bench_function("parse_then_html", |b| {
         b.iter(|| {
-            let doc = Document::new(black_box(utf8.as_str()));
+            let doc = Document::new(black_box(utf8.as_ref()));
             let tree = doc.parse();
             let html = tree.to_html();
             black_box(html);
@@ -56,7 +56,7 @@ fn bench_crime_and_punishment(c: &mut Criterion) {
 
     g.bench_function("parse_then_serialize", |b| {
         b.iter(|| {
-            let doc = Document::new(black_box(utf8.as_str()));
+            let doc = Document::new(black_box(utf8.as_ref()));
             let tree = doc.parse();
             let out = tree.serialize();
             black_box(out);

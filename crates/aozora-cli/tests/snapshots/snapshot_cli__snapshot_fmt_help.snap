@@ -7,14 +7,33 @@ Round-trip parse ∘ serialize and emit the canonical form
 Usage: aozora fmt [OPTIONS] [FILE]
 
 Arguments:
-  [FILE]  Input path; pass `-` (or omit) to read from stdin [default: -]
+  [FILE]
+          Input path; pass `-` (or omit) to read from stdin
+          
+          [default: -]
 
 Options:
-      --check                Exit non-zero if the formatted output differs from the input (after the
-                             lexer's sanitize phase: BOM strip, CRLF→LF). Mutually exclusive with
-                             `--write`
-      --write                Overwrite the input file with the formatted output. Ignored when
-                             reading from stdin
-  -E, --encoding <ENCODING>  Source encoding [default: utf8] [possible values: utf8, sjis]
-  -h, --help                 Print help
-  -V, --version              Print version
+      --check
+          Exit non-zero if the formatted output differs from the input (after the lexer's sanitize
+          phase: BOM strip, CRLF→LF). Mutually exclusive with `--write`
+
+      --write
+          Overwrite the input file with the formatted output. Ignored when reading from stdin
+
+  -E, --encoding <ENCODING>
+          Source encoding
+
+          Possible values:
+          - auto: Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are
+            decoded as Shift_JIS. The right default — Aozora files ship as Shift_JIS, but UTF-8
+            mirrors are common, and the caller should not have to know which they have
+          - utf8: Force UTF-8; error if the input is not valid UTF-8
+          - sjis: Force Shift_JIS decoding
+          
+          [default: auto]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version

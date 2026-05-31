@@ -25,14 +25,15 @@
 //!   given `NodeKind`, surfaced via `include_str!`.
 //!
 //! All document-level subcommands accept `-` (or no path argument)
-//! to read from stdin. Encoding defaults to UTF-8; pass
-//! `--encoding sjis` (or `-E sjis`) to decode a Shift_JIS Aozora
-//! Bunko file before parsing.
+//! to read from stdin. Encoding is auto-detected by default (UTF-8 if
+//! the bytes are valid UTF-8, otherwise Shift_JIS); pass
+//! `--encoding {utf8,sjis}` (or `-E …`) to force a specific decoder.
 
 #![forbid(unsafe_code)]
 
 mod introspect;
 
+use std::borrow::Cow;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -93,7 +94,7 @@ struct CheckArgs {
     strict: bool,
 
     /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Utf8)]
+    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
     encoding: Encoding,
 }
 
@@ -115,7 +116,7 @@ struct FmtArgs {
     write: bool,
 
     /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Utf8)]
+    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
     encoding: Encoding,
 }
 
@@ -126,7 +127,7 @@ struct RenderArgs {
     file: PathBuf,
 
     /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Utf8)]
+    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
     encoding: Encoding,
 }
 
@@ -137,7 +138,7 @@ struct PandocArgs {
     file: PathBuf,
 
     /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Utf8)]
+    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
     encoding: Encoding,
 
     /// Pandoc output format (e.g. `html`, `epub`, `latex`, `docx`).
@@ -148,9 +149,17 @@ struct PandocArgs {
     format: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
 enum Encoding {
+    /// Detect the source encoding: valid UTF-8 is used as-is, otherwise
+    /// the bytes are decoded as Shift_JIS. The right default — Aozora
+    /// files ship as Shift_JIS, but UTF-8 mirrors are common, and the
+    /// caller should not have to know which they have.
+    #[default]
+    Auto,
+    /// Force UTF-8; error if the input is not valid UTF-8.
     Utf8,
+    /// Force Shift_JIS decoding.
     Sjis,
 }
 
@@ -301,6 +310,9 @@ fn read_source(path: &Path, encoding: Encoding) -> Result<String> {
     };
 
     match encoding {
+        Encoding::Auto => aozora_encoding::decode_auto(&raw)
+            .map(Cow::into_owned)
+            .map_err(|e| anyhow::anyhow!("input is neither valid UTF-8 nor Shift_JIS: {e}")),
         Encoding::Utf8 => String::from_utf8(raw)
             .map_err(|e| e.utf8_error())
             .context("input is not valid UTF-8 (use --encoding sjis for Aozora Bunko files)"),

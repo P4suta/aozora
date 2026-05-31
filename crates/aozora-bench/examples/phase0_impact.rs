@@ -39,7 +39,7 @@ use std::time::Instant;
 use memchr::memmem;
 
 use aozora_corpus::CorpusItem;
-use aozora_encoding::decode_sjis;
+use aozora_encoding::decode_auto;
 use aozora_pipeline::lexer::{
     has_long_rule_line, isolate_decorative_rules, normalize_line_endings, rewrite_accent_spans,
     tokenize,
@@ -89,7 +89,7 @@ fn main() {
     let wall_start = Instant::now();
 
     for (i, item) in items.iter().enumerate() {
-        let Ok(text) = decode_sjis(&item.bytes) else {
+        let Ok(text) = decode_auto(&item.bytes) else {
             decode_errors += 1;
             continue;
         };
