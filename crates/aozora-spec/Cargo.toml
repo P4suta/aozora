@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 thiserror = { workspace = true }
 miette    = { workspace = true }
-phf       = { workspace = true }
 serde     = { workspace = true, optional = true }
 
 [dev-dependencies]

@@ -311,7 +311,6 @@ version = "0.3.0"
 dependencies = [
  "aozora-proptest",
  "miette",
- "phf",
  "proptest",
  "serde",
  "thiserror",
