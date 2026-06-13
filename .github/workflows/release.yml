@@ -153,6 +153,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v6
 
@@ -171,6 +173,13 @@ jobs:
           # users can `sha256sum --check SHA256SUMS` in one go.
           sha256sum aozora-*.tar.gz aozora-*.zip 2>/dev/null | sort > SHA256SUMS
           cat SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            artefacts/aozora-*.tar.gz
+            artefacts/aozora-*.zip
 
       - name: Generate release notes with git-cliff
         uses: orhun/git-cliff-action@v4
