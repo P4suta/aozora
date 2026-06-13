@@ -34,7 +34,7 @@ aozora = { workspace = true, features = ["wire"] }
 # discover Python. Enable the feature when running `maturin develop`
 # / `maturin build`.
 [dependencies.pyo3]
-version = "0.28"
+version = "0.29"
 optional = true
 features = ["extension-module"]
 
