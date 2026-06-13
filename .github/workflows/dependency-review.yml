@@ -56,6 +56,16 @@ jobs:
             MPL-2.0,
             Zlib
 
+          # CI-only GitHub Actions are build-time tooling — never linked
+          # into or distributed with the published crates — so their
+          # licenses are out of scope for our `Apache-2.0 OR MIT` product
+          # policy. Swatinem/rust-cache is LGPL-3.0 (a JS action that runs
+          # in CI); exempt it from the license check. The runtime-crate
+          # license policy stays enforced by `allow-licenses` above and
+          # authoritatively by cargo-deny (the `audit (deny)` gate). If a
+          # future CI action carries a copyleft license, append its purl.
+          allow-dependencies-licenses: pkg:githubactions/Swatinem/rust-cache
+
           # Post a summary comment only on failure so clean PRs don't
           # get a no-op drive-by from the bot.
           comment-summary-in-pr: on-failure
