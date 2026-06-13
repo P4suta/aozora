@@ -43,17 +43,17 @@ jobs:
     name: build site
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.2
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: docs
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
           # Pinned to the Dockerfile's BUN_VERSION so the Pages deploy and
           # the dev/CI containers resolve the same bun (was `latest`).
@@ -63,11 +63,11 @@ jobs:
         # Pinned action + version (was an unpinned `curl … | sh`) so the
         # auto-fetched wasm-bindgen-cli is deterministic. Mirrors the
         # sibling afm repo's docs workflow.
-        uses: jetli/wasm-pack-action@v0.4.0
+        uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa  # v0.4.0
         with:
           version: 'v0.15.0'
 
-      - uses: peaceiris/actions-mdbook@v2
+      - uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08  # v2.0.0
         with:
           mdbook-version: latest
 
@@ -130,7 +130,7 @@ jobs:
           # GitHub Pages otherwise runs Jekyll and hides paths like `_sources`.
           touch site/.nojekyll
 
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
         with:
           path: site
 
@@ -142,5 +142,5 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/deploy-pages@v5
+      - uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128  # v5.0.0
         id: deployment

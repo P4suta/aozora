@@ -11,6 +11,12 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 aozora-pipeline = { path = ".." }
 aozora-syntax   = { path = "../../aozora-syntax" }
+# `ffi_no_abort` drives the real C-ABI surface (the `lib`/rlib target of
+# aozora-ffi). aozora-ffi re-states the workspace lint discipline but is
+# the one crate where `unsafe` is permitted, so calling its exported
+# `extern "C"` functions from this out-of-workspace fuzz crate is the
+# faithful "as an embedder would" test of the no-panic/no-abort contract.
+aozora-ffi      = { path = "../../aozora-ffi" }
 
 # Prevent this crate from joining the aozora workspace.
 # Each fuzz target needs libfuzzer-sys (nightly-gated), which the
@@ -24,6 +30,20 @@ debug = 1
 [[bin]]
 name = "lex_into_arena"
 path = "fuzz_targets/lex_into_arena.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "classify_phase3"
+path = "fuzz_targets/classify_phase3.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ffi_no_abort"
+path = "fuzz_targets/ffi_no_abort.rs"
 test = false
 doc = false
 bench = false

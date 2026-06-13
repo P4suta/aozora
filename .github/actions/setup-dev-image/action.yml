@@ -15,7 +15,7 @@ description: Pull (or build) the aozora dev image and install `just` on the runn
 runs:
   using: composite
   steps:
-    - uses: taiki-e/install-action@v2
+    - uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2
       with:
         tool: just
 
@@ -27,7 +27,7 @@ runs:
     # docker-compose.yml is fine for local dev where it persists across
     # invocations, but every CI runner starts with empty named volumes,
     # so on Actions we steer sccache at the run-shared GHA cache instead.
-    - uses: mozilla-actions/sccache-action@v0.0.10
+    - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
     - name: Enable docker-compose CI overlay
       shell: bash
@@ -56,7 +56,7 @@ runs:
     # automatically.
     - name: Cache dev image tar
       id: dev-image-cache
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: /tmp/aozora-dev.tar
         key: aozora-dev-image-${{ hashFiles('Dockerfile', 'docker-compose.yml') }}
@@ -76,7 +76,7 @@ runs:
     # fallback below. Same-repo runs always log in.
     - name: Log in to GHCR (cache miss only, same-repo runs only)
       if: ${{ steps.dev-image-cache.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-      uses: docker/login-action@v3
+      uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}

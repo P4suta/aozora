@@ -53,6 +53,29 @@ Out of scope:
   exploitation path — `cargo deny` and `cargo audit` catch advisories
   at CI time.
 
+## Release profile: `panic = "abort"`
+
+The release profile builds workspace-wide with `panic = "abort"`. A
+panic reached at runtime therefore **aborts the entire host process**
+(`SIGABRT`): it does not unwind and cannot be caught with
+`std::panic::catch_unwind`. The parser targets a panic-free path on
+untrusted input (enforced by the fuzz harnesses and the no-bare-`［＃`
+Tier-A invariant), but an embedder must treat any residual panic as a
+hard crash of its own process.
+
+This matters most at the binding boundaries — the `aozora-ffi` C ABI,
+`aozora-wasm`, and the `aozora-py` PyO3 module all run inside a host
+process (a C/C++ program, a browser tab's wasm instance, a Python
+interpreter). Under `panic = "abort"` a panic crossing the FFI boundary
+aborts rather than unwinding into foreign frames, which is the
+memory-safe outcome, but it still tears the host down. **Pre-validate
+untrusted input** (cap length — the security scope above is bounded at
+10 MiB — and reject inputs you will not render) before calling in, and
+isolate rendering of attacker-controlled content in a worker /
+subprocess if a single parse must not be able to take the host down.
+Report any panic reachable from a well-formed host call as a
+vulnerability per the policy above.
+
 ## Supported versions
 
 aozora is pre-1.0. Only the `main` branch is supported; security fixes

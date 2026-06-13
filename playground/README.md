@@ -86,8 +86,11 @@ bun run build
 ```
 
 The `base: '/aozora/playground/'` in `vite.config.ts` makes asset URLs match the
-GitHub Pages subpath. A production-only CSP meta tag is injected at build time
-to keep the dev HMR WebSocket working in `bun run dev`.
+GitHub Pages subpath. A strict Content-Security-Policy meta tag (`PROD_CSP` in
+`vite.config.ts`) is injected into the production build only — defense-in-depth
+over the renderer's escaping for the `innerHTML`-mounted preview. It is
+build-time-only so the dev HMR WebSocket keeps working in `bun run dev` (a
+`<meta>` CSP cannot be relaxed per-environment).
 
 ## アーキテクチャ要点
 

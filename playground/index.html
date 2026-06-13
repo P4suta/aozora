@@ -3,8 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- CSP is injected at build time only — see vite.config.ts. In dev
-         mode Vite needs HMR WebSockets which a strict CSP would block. -->
+    <!-- A strict Content-Security-Policy meta tag is injected here at
+         build time only (see PROD_CSP in vite.config.ts): defense-in-depth
+         over the renderer's escaping — the HTML preview is mounted via
+         innerHTML, but aozora-render already entity-escapes all text and
+         emits no <script>/on*=/external href. It is build-time-only because
+         dev mode needs an HMR WebSocket that connect-src 'self' would block
+         and a <meta> CSP cannot be relaxed per-environment. -->
 
     <title>Aozora Playground — 青空文庫記法 リアルタイムパーサー</title>
     <meta

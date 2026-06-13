@@ -5,7 +5,7 @@
 # struct. Picked up by `build.rs` at compile time.
 
 language        = "C"
-header          = "/* aozora-ffi — Aozora Bunko notation parser C ABI.\n   Dual-licensed: Apache-2.0 OR MIT. */"
+header          = "/* aozora-ffi — Aozora Bunko notation parser C ABI.\n   Dual-licensed: Apache-2.0 OR MIT.\n\n   PANIC / ABORT CONTRACT (read before embedding):\n   This library is built with `panic = \"abort\"`. A Rust panic does NOT\n   unwind across this ABI — it calls abort() and terminates the ENTIRE\n   host process. There is no catch_unwind net, and none is possible.\n   Every aozora_* function validates its inputs up front and reports\n   problems through the int32_t status code (0 = ok, negative = error;\n   see AozoraStatus). Inputs larger than UINT32_MAX bytes are rejected\n   at aozora_document_new with SOURCE_TOO_LARGE (-5) before the parser\n   core runs. Callers MUST pre-validate untrusted input and MUST NOT\n   rely on catching a panic to recover. */"
 include_guard   = "AOZORA_FFI_H"
 pragma_once     = true
 no_includes     = false

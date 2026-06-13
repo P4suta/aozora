@@ -85,13 +85,16 @@ fn assert_registry_aligned_with_sentinels(source: &str) {
     // Every registry entry's position must land on the matching
     // sentinel byte in `normalized`.
     //
-    // The reverse direction ("every sentinel byte in normalized has a
-    // registry entry") would be a tighter property but isn't
-    // sound when the source itself contains PUA characters: the lexer
-    // emits SourceContainsPua and passes those bytes through verbatim,
-    // so the normalized text legitimately holds sentinel-shaped bytes
-    // that the registry has not registered. The forward direction
-    // alone catches every ordering / build-time bug we care about.
+    // We assert the forward direction only ("every registry entry sits
+    // on its matching sentinel"), not the reverse ("every sentinel byte
+    // has a registry entry"). Phase 0 now neutralizes raw source
+    // sentinels to U+FFFD, so the historical unsoundness of the reverse
+    // direction (source PUA leaking sentinel-shaped bytes the registry
+    // never registered) no longer applies; the forward direction is
+    // nonetheless the property we want, since it alone catches every
+    // ordering / build-time desync bug between the registry and the
+    // normalized text without coupling the test to the neutralization
+    // policy.
     for (pos, nr) in out.registry.iter_sorted() {
         let bytes = &out.normalized.as_bytes()[pos as usize..];
         let kind = nr.sentinel_kind();

@@ -3,13 +3,21 @@
 # Every developer and CI job runs inside this image. Host toolchain is never invoked.
 #
 # Layered so dependency bumps rebuild minimal surface.
-
-ARG RUST_VERSION=1.95.0
+#
+# Base images are pinned by immutable digest (supply-chain hardening,
+# C2/F9): a tag like `rust:1.95.0-bookworm` is mutable and can be
+# re-pushed, so we pin the manifest-list digest and keep the
+# human-readable tag inline for legibility. Dependabot's `docker`
+# ecosystem (.github/dependabot.yml) bumps BOTH the tag and the digest
+# together on its weekly sweep, so the pin stays current without a
+# human resolving sha256 by hand. Resolve a fresh digest with
+# `docker buildx imagetools inspect rust:1.95.0-bookworm`.
 
 ########################################################################
 # Stage: toolchain — Rust stable + system deps for builds and CJK work
 ########################################################################
-FROM rust:${RUST_VERSION}-bookworm AS toolchain
+# rust:1.95.0-bookworm (digest pinned; tag kept for humans / Dependabot)
+FROM rust:1.95.0-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 AS toolchain
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -241,8 +249,13 @@ FROM dev AS ci
 # The mdbook / mdbook-mermaid binaries from cargo-tools (built on
 # debian:bookworm) keep working here because glibc is forwards-
 # compatible: an older-glibc-built ELF runs fine on a newer glibc.
+#
+# Pinned by digest (see the toolchain-stage note above); Dependabot's
+# docker ecosystem bumps the tag + sha together. Refresh via
+# `docker buildx imagetools inspect ubuntu:26.04`.
 ########################################################################
-FROM ubuntu:26.04 AS book
+# ubuntu:26.04 (digest pinned; tag kept for humans / Dependabot)
+FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64 AS book
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
