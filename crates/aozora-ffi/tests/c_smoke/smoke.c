@@ -11,6 +11,11 @@
  *   4. aozora_bytes_free              — release returned buffers
  *   5. aozora_document_free           — release the document handle
  *
+ * It also checks the input-size guard: a src_len greater than
+ * UINT32_MAX must return SOURCE_TOO_LARGE (-5) instead of driving the
+ * parser core into its u32-span assert (which, under panic = "abort",
+ * would abort this process).
+ *
  * Build / run is driven by `tests/c_smoke/run.sh` (which builds the
  * cdylib first, then compiles and runs this program). Returns 0 on
  * success, non-zero on any unexpected status code or content.
@@ -122,6 +127,25 @@ int main(void) {
     free(pua_diag_str);
     aozora_bytes_free(pua_diag);
     aozora_document_free(pua_doc);
+
+    /* 7. oversize input — src_len > UINT32_MAX must return
+     *    AOZORA_SOURCE_TOO_LARGE (-5). The guard checks src_len before
+     *    dereferencing src_ptr, so a non-null dangling pointer with a
+     *    fabricated huge length is safe: the call returns before any
+     *    read. Skip where size_t cannot hold UINT32_MAX + 1 (e.g. a
+     *    32-bit host); the dev image is 64-bit. */
+#if SIZE_MAX > 0xFFFFFFFFu
+    {
+        /* Non-null but never dereferenced. */
+        uint8_t sentinel = 0;
+        const uint8_t *dangling = &sentinel;
+        size_t oversize = (size_t)0xFFFFFFFFu + 1u;
+        AozoraDocument *huge = NULL;
+        status = aozora_document_new(dangling, oversize, &huge);
+        failures += check("oversize src_len returns SourceTooLarge", status == -5);
+        failures += check("oversize src_len leaves out_doc null", huge == NULL);
+    }
+#endif
 
     if (failures == 0) {
         printf("c_smoke: all checks passed\n");

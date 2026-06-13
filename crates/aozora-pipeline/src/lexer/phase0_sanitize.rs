@@ -24,19 +24,29 @@
 //!    inserting a blank line before them, so downstream Markdown
 //!    layers (e.g. the sibling `afm` repo's CommonMark integration)
 //!    do not promote the preceding paragraph into a setext heading.
-//! 5. **PUA sentinel collision scan** — the lexer will shortly inject
-//!    [`crate::INLINE_SENTINEL`] / [`crate::BLOCK_LEAF_SENTINEL`] /
+//! 5. **PUA sentinel collision neutralization** — the lexer will shortly
+//!    inject [`crate::INLINE_SENTINEL`] / [`crate::BLOCK_LEAF_SENTINEL`] /
 //!    [`crate::BLOCK_OPEN_SENTINEL`] / [`crate::BLOCK_CLOSE_SENTINEL`] into
-//!    the normalized text (Phase 4). If the source already uses any of
-//!    those codepoints, post-process splice can't tell source from marker.
-//!    This phase emits a [`aozora_spec::Diagnostic::SourceContainsPua`] for
-//!    each occurrence so the problem surfaces, while still passing the
-//!    text through verbatim. A future enhancement can switch to
-//!    Unicode-noncharacter sentinels when a collision is detected.
+//!    the normalized text (Phase 3). If the source already uses any of
+//!    those codepoints, a post-process splice can't tell source from
+//!    marker — a malicious source could desync the downstream registry
+//!    cursor or produce wrong output by smuggling in lexer-internal
+//!    markers. This
+//!    phase emits one [`aozora_spec::Diagnostic::SourceContainsPua`] per
+//!    occurrence so the problem surfaces, **and** rewrites every raw
+//!    `U+E001..U+E004` to `U+FFFD` (REPLACEMENT CHARACTER) so no
+//!    source-side byte can masquerade as a sentinel downstream. All four
+//!    sentinels and `U+FFFD` encode to three UTF-8 bytes, so the rewrite
+//!    is byte-length-preserving: every byte offset (and therefore every
+//!    diagnostic span and the normalized-offset/registry invariants)
+//!    stays valid. Reserved codepoints are out-of-contract input; this is
+//!    a defense-in-depth measure layered under the renderer's HTML
+//!    escaping rather than a replacement for it.
 //!
 //! The sanitize pass is a pure function: `fn(&str) -> SanitizeOutput<'_>`.
 //! The output borrows the input when no transformation fires and owns a
-//! normalized copy otherwise.
+//! normalized copy otherwise — a source free of raw PUA sentinels keeps
+//! the borrowed fast path (the neutralization allocates only on a hit).
 
 use std::borrow::Cow;
 
@@ -113,10 +123,83 @@ pub fn sanitize(source: &str) -> SanitizeOutput<'_> {
             rule_isolated
         };
 
-    let diagnostics = scan_for_sentinel_collisions(&text);
+    let (text, diagnostics) = neutralize_sentinel_collisions(text);
 
     SanitizeOutput { text, diagnostics }
 }
+
+/// Diagnose and neutralize source-side PUA sentinel collisions.
+///
+/// Runs [`scan_for_sentinel_collisions`] to gather one
+/// [`Diagnostic::SourceContainsPua`] per raw `U+E001..U+E004` occurrence.
+/// When at least one collision is found, returns an **owned** copy of the
+/// text in which every raw sentinel is overwritten with `U+FFFD`
+/// (REPLACEMENT CHARACTER) so that no source byte can be mistaken for a
+/// lexer-injected marker by the downstream splice / registry. When the
+/// text is clean, the input [`Cow`] is returned unchanged — preserving
+/// the borrowed fast path with zero allocation.
+///
+/// ## Byte-offset preservation
+///
+/// Each diagnostic's [`Span`] already brackets the 3-byte sentinel
+/// (`span.start .. span.start + 3`). All four sentinels encode as
+/// `EE 80 81..84` and `U+FFFD` encodes as `EF BF BD` — both exactly 3
+/// UTF-8 bytes — so overwriting the sentinel slice in place leaves every
+/// later byte offset untouched. The diagnostic spans therefore stay
+/// correct after the rewrite, and the normalized-offset / registry
+/// invariants downstream are unaffected. Reusing the diagnostic spans for
+/// the rewrite (rather than re-scanning) guarantees the diagnosed and
+/// neutralized positions can never drift apart.
+fn neutralize_sentinel_collisions(text: Cow<'_, str>) -> (Cow<'_, str>, Vec<Diagnostic>) {
+    let diagnostics = scan_for_sentinel_collisions(&text);
+    if diagnostics.is_empty() {
+        // Clean source: keep the borrowed/owned Cow exactly as-is so the
+        // common no-collision case never allocates.
+        return (text, diagnostics);
+    }
+
+    // At least one raw sentinel is present. Build an owned copy in which
+    // each diagnosed sentinel is swapped for `U+FFFD`. We bulk-copy the
+    // runs between sentinels and push one `\u{FFFD}` per hit, reusing the
+    // diagnostic spans for the cut points so the diagnosed and rewritten
+    // positions are guaranteed identical. `char::push('\u{FFFD}')` emits
+    // exactly the 3 bytes the 3-byte sentinel occupied, so every later
+    // byte offset is preserved — the rewrite is byte-length-neutral and
+    // stays valid UTF-8 by construction (we only ever cut on the
+    // sentinel boundaries the scan reported).
+    let src = text.as_ref();
+    let mut out = String::with_capacity(src.len());
+    let mut cursor = 0usize;
+    for diag in &diagnostics {
+        let Diagnostic::SourceContainsPua { span, .. } = diag else {
+            continue;
+        };
+        let start = span.start as usize;
+        let end = span.end as usize;
+        // Defensive: the scan emitted these spans against this exact
+        // buffer, so `cursor <= start <= end <= src.len()` and each span
+        // brackets a 3-byte sentinel. Guard with bounds + char-boundary
+        // checks so a future drift degrades to "copy verbatim" rather
+        // than panicking on untrusted input.
+        let in_bounds = start >= cursor && end <= src.len();
+        let aligned = src.is_char_boundary(start) && src.is_char_boundary(end);
+        if !(in_bounds && aligned) {
+            continue;
+        }
+        out.push_str(&src[cursor..start]);
+        out.push(REPLACEMENT_CHAR);
+        cursor = end;
+    }
+    out.push_str(&src[cursor..]);
+
+    (Cow::Owned(out), diagnostics)
+}
+
+/// REPLACEMENT CHARACTER `U+FFFD`. Each raw PUA sentinel collision is
+/// overwritten with this. Its UTF-8 encoding (`EF BF BD`) is 3 bytes —
+/// exactly the width of every `U+E001..U+E004` sentinel (`EE 80 81..84`)
+/// — which is what makes the neutralization byte-offset-preserving.
+const REPLACEMENT_CHAR: char = '\u{FFFD}';
 
 /// Rewrite every `〔...〕` span applying accent decomposition to the body.
 /// Text outside spans is copied verbatim.
@@ -316,6 +399,12 @@ pub fn normalize_line_endings(input: &str) -> String {
 /// sentinel codepoints (`U+E001..U+E004`), emitting one diagnostic
 /// per hit.
 ///
+/// This is the detection half of Phase 0's PUA handling; the private
+/// `neutralize_sentinel_collisions` helper consumes the spans returned
+/// here to overwrite each raw sentinel with `U+FFFD`. The function is
+/// kept public for the per-sub-pass benchmark in `aozora-bench`, which
+/// times the scan in isolation.
+///
 /// ## Algorithm
 ///
 /// All four sentinel codepoints encode to the same 2-byte UTF-8
@@ -441,50 +530,105 @@ mod tests {
     }
 
     #[test]
-    fn pua_inline_sentinel_emits_one_diagnostic() {
+    fn pua_inline_sentinel_emits_one_diagnostic_and_neutralizes_to_fffd() {
         let input = "plain\u{E001}text";
         let out = sanitize(input);
         assert_eq!(out.diagnostics.len(), 1);
+        // The diagnostic still reports the *source* codepoint that was
+        // found, so tooling can name what collided.
         let Diagnostic::SourceContainsPua { codepoint, .. } = &out.diagnostics[0] else {
             panic!("expected SourceContainsPua, got {:?}", out.diagnostics[0]);
         };
         assert_eq!(*codepoint, '\u{E001}');
+        // Security neutralization: the raw sentinel must NOT survive in
+        // the normalized text — it is overwritten with U+FFFD so it can
+        // never masquerade as a lexer-injected marker downstream. The
+        // collision forces an owned buffer (the borrowed fast path is
+        // only for clean input).
+        assert_eq!(out.text.as_ref(), "plain\u{FFFD}text");
+        assert!(!out.text.contains('\u{E001}'));
+        assert!(matches!(out.text, Cow::Owned(_)));
     }
 
     #[test]
-    fn pua_all_four_sentinels_emit_four_diagnostics() {
+    fn pua_all_four_sentinels_emit_four_diagnostics_and_all_become_fffd() {
         let input = "\u{E001}\u{E002}\u{E003}\u{E004}";
         let out = sanitize(input);
         assert_eq!(out.diagnostics.len(), 4);
+        // Every one of the four reserved sentinels is neutralized; none
+        // of them leaks through into the normalized text.
+        assert_eq!(out.text.as_ref(), "\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}");
+        for raw in ['\u{E001}', '\u{E002}', '\u{E003}', '\u{E004}'] {
+            assert!(!out.text.contains(raw), "raw sentinel {raw:?} leaked");
+        }
+        // Byte length is preserved (4 × 3-byte sentinel → 4 × 3-byte
+        // U+FFFD), which is what keeps every downstream offset valid.
+        assert_eq!(out.text.len(), input.len());
     }
 
     #[test]
-    fn non_sentinel_pua_codepoints_do_not_emit_diagnostics() {
+    fn non_sentinel_pua_codepoints_do_not_emit_diagnostics_and_stay_borrowed() {
         // U+E000 is inside PUA but not a sentinel; other PUA codepoints
-        // likewise. Only the reserved sentinel set triggers.
+        // likewise. Only the reserved sentinel set triggers — and with no
+        // collision the neutralizer must NOT allocate, so the borrowed
+        // fast path survives and the text is byte-identical to the input.
         let input = "\u{E000}\u{E100}\u{F8FF}";
         let out = sanitize(input);
         assert!(out.diagnostics.is_empty());
+        assert!(matches!(out.text, Cow::Borrowed(_)));
+        assert_eq!(out.text.as_ref(), input);
     }
 
     #[test]
-    fn pua_diagnostic_span_points_at_sentinel_position() {
+    fn mixed_sentinel_and_non_sentinel_pua_only_neutralizes_sentinels() {
+        // Interleave a reserved sentinel (U+E002) with non-sentinel PUA
+        // (U+E000, U+F8FF). Only the sentinel becomes U+FFFD; the other
+        // PUA codepoints are legitimate (if unusual) content and pass
+        // through untouched.
+        let input = "\u{E000}\u{E002}\u{F8FF}";
+        let out = sanitize(input);
+        assert_eq!(out.diagnostics.len(), 1);
+        assert_eq!(out.text.as_ref(), "\u{E000}\u{FFFD}\u{F8FF}");
+    }
+
+    #[test]
+    fn plain_text_without_sentinels_skips_neutralization_allocation() {
+        // Direct fast-path pin for the neutralizer: ordinary prose with
+        // no reserved sentinel must remain Cow::Borrowed all the way
+        // through Phase 0 (no defensive copy on the happy path).
+        let input = "ふつうの日本語 and some ASCII.";
+        let out = sanitize(input);
+        assert!(out.diagnostics.is_empty());
+        assert!(matches!(out.text, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn pua_diagnostic_span_points_at_sentinel_position_after_neutralization() {
         let input = "ab\u{E002}cd";
         let out = sanitize(input);
         let Diagnostic::SourceContainsPua { span, .. } = &out.diagnostics[0] else {
             panic!("expected SourceContainsPua, got {:?}", out.diagnostics[0]);
         };
-        // 'a','b' each 1 byte; U+E002 is 3 bytes in UTF-8.
+        // 'a','b' each 1 byte; U+E002 is 3 bytes in UTF-8. The span is
+        // unchanged by neutralization because U+FFFD occupies the same
+        // 3 bytes the sentinel did — the whole point of the byte-length-
+        // preserving rewrite.
         assert_eq!(span.start, 2);
         assert_eq!(span.end, 5);
+        // U+FFFD sits exactly where the sentinel was; surrounding bytes
+        // are untouched.
+        assert_eq!(out.text.as_ref(), "ab\u{FFFD}cd");
     }
 
     #[test]
     fn bom_plus_crlf_plus_sentinel_all_applied() {
         let input = "\u{FEFF}hello\r\n\u{E003}world";
         let out = sanitize(input);
-        assert_eq!(out.text.as_ref(), "hello\n\u{E003}world");
+        // BOM stripped, CRLF→LF, and the raw U+E003 sentinel neutralized
+        // to U+FFFD — all three sanitation steps compose.
+        assert_eq!(out.text.as_ref(), "hello\n\u{FFFD}world");
         assert_eq!(out.diagnostics.len(), 1);
+        assert!(!out.text.contains('\u{E003}'));
     }
 
     #[test]
@@ -598,11 +742,16 @@ mod tests {
 
     #[test]
     fn tortoiseshell_does_not_interact_with_pua_sentinel_scan() {
-        // PUA scan runs on the accent-decomposed text, so a sentinel
-        // appearing inside a `〔...〕` span is still caught.
+        // PUA scan + neutralization run on the accent-decomposed text, so
+        // a sentinel appearing inside a `〔...〕` span is still caught and
+        // overwritten. This also exercises the path where `text` is
+        // already `Cow::Owned` (accent decomposition fired) before
+        // neutralization, confirming the rewrite works on an owned buffer.
         let input = "〔a\u{E001}b〕";
         let out = sanitize(input);
         assert_eq!(out.diagnostics.len(), 1);
+        assert_eq!(out.text.as_ref(), "〔a\u{FFFD}b〕");
+        assert!(!out.text.contains('\u{E001}'));
     }
 
     // -------------------------------------------------------------

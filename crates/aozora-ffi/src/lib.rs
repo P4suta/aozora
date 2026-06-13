@@ -33,6 +33,27 @@
 //! This crate must use `unsafe` to honour the C ABI; it is the only
 //! crate in the workspace where `unsafe_code = "forbid"` is locally
 //! relaxed. Each `unsafe` block carries a `// SAFETY:` justification.
+//!
+//! ## Panic / abort contract for embedders
+//!
+//! The workspace release profile is compiled with `panic = "abort"`.
+//! A Rust panic therefore does **not** unwind across the C ABI — it
+//! terminates the **entire host process** via `abort()`. There is no
+//! `catch_unwind` net here, and none is possible under `panic =
+//! "abort"`. Concretely:
+//!
+//! - Every `aozora_*` function validates its pointer / length / UTF-8
+//!   preconditions up front and reports problems through the
+//!   [`AozoraStatus`] return code. On those paths it never panics.
+//! - In particular, inputs whose byte length exceeds [`u32::MAX`]
+//!   (~4 GiB) are rejected at [`aozora_document_new`] with
+//!   [`AozoraStatus::SourceTooLarge`] *before* the parser core runs,
+//!   because the core asserts `len <= u32::MAX` (its span offsets are
+//!   `u32`) and would otherwise abort the host process.
+//! - Embedders MUST pre-validate untrusted input and MUST NOT rely on
+//!   catching a Rust panic to recover: by the time a panic reaches the
+//!   ABI the process is already being torn down. Treat a non-zero
+//!   status as the only supported error channel.
 
 #![allow(
     unsafe_code,
@@ -60,6 +81,12 @@ pub enum AozoraStatus {
     AllocFailed = -3,
     /// Internal serialisation error (JSON output construction failed).
     SerializeFailed = -4,
+    /// The input byte length exceeded [`u32::MAX`] (~4 GiB). The parser
+    /// core uses `u32` span offsets and asserts this bound; rejecting
+    /// here keeps the assert (and, under `panic = "abort"`, the whole
+    /// host process) from firing. See the crate-level "Panic / abort
+    /// contract" docs.
+    SourceTooLarge = -5,
 }
 
 /// Opaque handle to a parsed Aozora document. Allocate via
@@ -94,6 +121,14 @@ pub struct AozoraBytes {
 /// [`AozoraStatus::Ok`]. On failure, writes `null` to `*out_doc` and
 /// returns the matching error status.
 ///
+/// Inputs whose byte length exceeds [`u32::MAX`] are rejected with
+/// [`AozoraStatus::SourceTooLarge`] *before* the parser core runs (the
+/// core's span offsets are `u32` and it asserts that bound; under
+/// `panic = "abort"` hitting the assert would abort the whole host
+/// process). Guarding at construction means no oversize document can
+/// exist, so the later `aozora_document_*` accessors never reach the
+/// assert either. See the crate-level "Panic / abort contract" docs.
+///
 /// # Safety
 ///
 /// - `src_ptr` must point to `src_len` valid UTF-8 bytes.
@@ -109,7 +144,21 @@ pub unsafe extern "C" fn aozora_document_new(
     if src_ptr.is_null() || out_doc.is_null() {
         return AozoraStatus::NullInput as c_int;
     }
-    // SAFETY: caller guarantees src_ptr + src_len name a valid byte slice.
+    // Reject oversize input before touching the parser core: its span
+    // offsets are `u32` and it asserts `len <= u32::MAX`, which under
+    // `panic = "abort"` would abort the host process. We can fail fast
+    // on `src_len` alone — it is the source byte length and the parser
+    // never grows the buffer past it.
+    if u32::try_from(src_len).is_err() {
+        // SAFETY: out_doc is non-null (checked above) and the caller
+        // guarantees it is writable.
+        unsafe { out_doc.write(core::ptr::null_mut()) };
+        return AozoraStatus::SourceTooLarge as c_int;
+    }
+    // SAFETY: caller guarantees src_ptr + src_len name a valid byte
+    // slice. src_ptr is non-null (checked above) and src_len <= u32::MAX
+    // (checked above) < isize::MAX, so the slice-length precondition of
+    // `from_raw_parts` is satisfied.
     let bytes = unsafe { slice::from_raw_parts(src_ptr, src_len) };
     let Ok(source_str) = core::str::from_utf8(bytes) else {
         // SAFETY: caller guarantees out_doc is writable.
@@ -439,6 +488,25 @@ mod tests {
         let status = unsafe { aozora_document_new(bad.as_ptr(), bad.len(), &mut doc) };
         assert_eq!(status, AozoraStatus::InvalidUtf8 as c_int);
         assert!(doc.is_null());
+    }
+
+    /// An oversize `src_len` (> `u32::MAX`) is rejected at construction
+    /// with [`AozoraStatus::SourceTooLarge`] and never reaches the
+    /// parser core's `u32`-span assert. The guard checks `src_len`
+    /// before dereferencing `src_ptr`, so we can pass a non-null
+    /// dangling pointer with a fabricated huge length: the function
+    /// returns before any read. This keeps the test from allocating
+    /// 4 GiB.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn oversize_length_returns_source_too_large_status() {
+        // Non-null but never dereferenced (guard returns first).
+        let dangling = core::ptr::NonNull::<u8>::dangling().as_ptr().cast_const();
+        let oversize = u32::MAX as usize + 1;
+        let mut doc: *mut AozoraDocument = core::ptr::null_mut();
+        let status = unsafe { aozora_document_new(dangling, oversize, &mut doc) };
+        assert_eq!(status, AozoraStatus::SourceTooLarge as c_int);
+        assert!(doc.is_null(), "oversize input must not yield a handle");
     }
 
     #[test]

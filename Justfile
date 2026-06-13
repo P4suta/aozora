@@ -477,12 +477,17 @@ strict-code:
     #   - aozora-xtask : dev-tooling binary; `#[allow(reason=...)]`
     #                    for narrow clippy carve-outs is acceptable
     #                    here per Rust 1.81+ stable convention
+    #   - */fuzz/*     : cargo-fuzz harnesses are dev-only and never
+    #                    shipped; the FFI no-abort target must drive the
+    #                    `aozora-ffi` C ABI through `unsafe`. The shipped
+    #                    parser core stays fully under the no-unsafe gate.
     #
     # The grep below skips these paths; everything else stays under the
     # universal "no unsafe" gate.
     is_unsafe_exempt() {
         case "$1" in
             crates/aozora-ffi/*|crates/aozora-scan/*|crates/aozora-xtask/*) return 0 ;;
+            crates/*/fuzz/*) return 0 ;;
             *) return 1 ;;
         esac
     }

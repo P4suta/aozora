@@ -5,8 +5,9 @@
 # advisory rules, while dependency-review focuses on *changes* a PR
 # introduces and comments the diff directly in the review UI.
 #
-# Action pinning: @v<major> tags for now; Dependabot will upgrade to
-# commit SHA pins on its first sweep.
+# Action pinning: the actions below are pinned to full commit SHAs
+# (the `# vX.Y.Z` trailer is the resolved tag); Dependabot's
+# github-actions ecosystem keeps the SHAs current.
 
 name: dependency-review
 
@@ -23,9 +24,9 @@ jobs:
     name: dependency review
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.2
 
-      - uses: actions/dependency-review-action@v5
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
         with:
           # Match the cargo-deny policy: reject any newly introduced
           # advisory of moderate severity or worse.

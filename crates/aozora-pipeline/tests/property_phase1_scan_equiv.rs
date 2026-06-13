@@ -127,10 +127,13 @@ fn paired_container_satisfies_invariants() {
 }
 
 #[test]
-fn pua_passthrough_keeps_invariants() {
-    // PUA in source — phase 0 emits a SourceContainsPua diagnostic
-    // and lets the bytes through. The PUA codepoints are not in the
-    // trigger set, so they don't shift either count.
+fn pua_neutralization_keeps_invariants() {
+    // Raw reserved sentinels in source — Phase 0 emits a
+    // SourceContainsPua diagnostic per hit and neutralizes each to
+    // U+FFFD (byte-length-preserving). Neither the sentinel nor U+FFFD
+    // is in the trigger set, so the scan-count inequalities are
+    // unaffected; the security rewrite is invisible to the Phase 1
+    // monotonicity duality.
     assert_phase1_scan_invariants("a\u{E001}b\u{E004}c");
 }
 

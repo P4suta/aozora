@@ -33,6 +33,38 @@
 
 #![forbid(unsafe_code)]
 
+/// Largest input the parser core accepts, in bytes. Its span offsets
+/// are `u32`, so a source longer than this trips a `u32::MAX` assert
+/// inside the lexer; under `panic = "abort"` that would tear down the
+/// whole Wasm instance instead of surfacing a recoverable error.
+///
+/// Gated to `wasm32 || test`: the constant + its guard are consumed
+/// only by the wasm-bindgen `Document` constructor and the host unit
+/// test, so a plain host build (which compiles neither) would
+/// otherwise see them as dead code under the workspace `dead_code =
+/// "deny"`.
+#[cfg(any(target_arch = "wasm32", test))]
+const MAX_SOURCE_BYTES: usize = u32::MAX as usize;
+
+/// Boundary check shared by the Wasm [`Document`] constructor.
+///
+/// Returns `Ok(())` when a source of `byte_len` UTF-8 bytes is within
+/// the parser core's `u32` span-offset limit, or `Err` with a
+/// human-readable message otherwise. Factored out of the
+/// `cfg(target_arch = "wasm32")` bindings so the guard is unit-testable
+/// on the host (where the wasm-bindgen surface is not compiled).
+///
+/// # Errors
+///
+/// `Err(&'static str)` when `byte_len > u32::MAX`.
+#[cfg(any(target_arch = "wasm32", test))]
+const fn source_len_within_span_limit(byte_len: usize) -> Result<(), &'static str> {
+    if byte_len > MAX_SOURCE_BYTES {
+        return Err("source exceeds 4 GiB (u32::MAX) span limit");
+    }
+    Ok(())
+}
+
 #[cfg(target_arch = "wasm32")]
 mod bindings {
     use aozora::{Document as AozoraDoc, SLUGS, SlugFamily, encoding::gaiji, wire};
@@ -132,12 +164,22 @@ mod bindings {
         /// Construct from a UTF-16 JS string. The string is copied
         /// once into the Document's internal `Box<str>`; subsequent
         /// renders reuse the bumpalo arena.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err(JsValue)` when the UTF-8 byte length of `source`
+        /// exceeds [`u32::MAX`] (~4 GiB). The parser core asserts that
+        /// bound (its span offsets are `u32`), and under `panic =
+        /// "abort"` the assert would abort the Wasm instance rather than
+        /// surface a recoverable error — so we reject up front here.
+        /// Guarding at construction means no oversize `Document` exists,
+        /// so the parse-driven methods below never hit the assert.
         #[wasm_bindgen(constructor)]
-        #[must_use]
-        pub fn new(source: String) -> Self {
-            Self {
+        pub fn new(source: String) -> Result<Document, JsValue> {
+            crate::source_len_within_span_limit(source.len()).map_err(JsValue::from_str)?;
+            Ok(Self {
                 inner: AozoraDoc::new(source),
-            }
+            })
         }
 
         /// Render the document to a semantic-HTML5 string.
@@ -436,6 +478,25 @@ mod bindings {
 #[cfg(test)]
 mod tests {
     use aozora::{Document, wire};
+
+    /// The boundary guard accepts in-range lengths (including the
+    /// inclusive `u32::MAX` upper bound) and rejects anything larger.
+    /// This mirrors the `u32::MAX` assert the parser core enforces at
+    /// `tokenize_in`; the Wasm `Document` constructor calls this guard
+    /// so an oversize source surfaces as `Err(JsValue)` rather than a
+    /// `panic = "abort"` teardown.
+    #[test]
+    fn source_len_guard_matches_u32_span_boundary() {
+        super::source_len_within_span_limit(0).expect("empty source is in range");
+        super::source_len_within_span_limit(1024).expect("1 KiB source is in range");
+        // Largest accepted length is exactly u32::MAX.
+        super::source_len_within_span_limit(u32::MAX as usize)
+            .expect("u32::MAX bytes is the inclusive upper bound");
+        // One byte past the limit is rejected.
+        let err = super::source_len_within_span_limit(u32::MAX as usize + 1)
+            .expect_err("u32::MAX + 1 bytes must be rejected");
+        assert!(err.contains("u32::MAX"), "error mentions the limit: {err}");
+    }
 
     /// Diagnostics for plain input is the empty envelope.
     #[test]
