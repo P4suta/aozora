@@ -5,6 +5,86 @@ this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-14
+
+
+### Added
+
+- **encoding**: Auto-detect source encoding; stop hard-coding Shift_JIS (#60) (#60)
+- **aozora**: Add opt-in prewarm() to force parser boot off the hot path (#56) (#56)
+- **aozora**: Promote render_node + Arena to the curated front door (#45) (#45)
+- **playground**: Solid + CM6 + WASM playground with Docker, tests, mobile (#38) (#38)
+
+
+### Build
+
+- **deps**: Bump pyo3 from 0.28.3 to 0.29.0 (#65) (#65)
+- **deps**: Bump unicode-segmentation from 1.13.2 to 1.13.3 in the rust-deps group (#64) (#64)
+- **aozora**: Refresh dev tooling and crate deps to latest (#54) (#54)
+- **deps**: Bump ubuntu from 24.04 to 26.04 in the docker-base-images group across 1 directory (#35) (#35)
+- **aozora**: Bump playground vite to v8 (fix GHSA-4w7w-66w2-5vf9) (#52) (#52)
+- **aozora**: Run dev/CI containers as a non-root user (#48) (#48)
+- Dev-env hygiene — cargo caches out of the bind mount + playground self-init (#44) (#44)
+- **deps**: Bump the actions-sha-bumps group with 2 updates (#29) (#29)
+
+
+### CI
+
+- Exempt CI-only rust-cache (LGPL-3.0) from dependency-review license check (#68) (#68)
+- Attest release artifacts with build provenance (#66) (#66)
+- **aozora**: Pin docs.yml tool versions and serialise its rustdoc build (#50) (#50)
+- **aozora**: Add a PR-time rustdoc (doc) gate (#47) (#47)
+
+
+### Changed
+
+- **aozora**: Single-source the PUA sentinel set in tests (#51) (#51)
+- **scan**: Pr6b — hand-rolled Teddy redesign (outer/inner split, AVX2 / SSSE3 / NEON / WASM SIMD) (#31) (#31)
+- **scan**: Pr6b — hand-rolled Teddy redesign (outer/inner split, AVX2 / SSSE3 / NEON / WASM SIMD) (#31)
+- **pipeline**: Pr4 — type-state field-bound pipeline + tightened gate (#27) (#27)
+
+
+### Chore
+
+- **hooks**: Wire playground gates into lefthook + persist signing-check (#40) (#40)
+
+
+### Documentation
+
+- **aozora**: Add CLAUDE.md and an ADR home (#46) (#46)
+- Drop hardcoded version pins from install copy (#23) (#23)
+
+
+### Fixed
+
+- **security**: Harden parser, FFI/WASM boundaries, and CI for release (#67) (#67)
+- **playground**: Tokenise fonts and define the undefined --font-sans (#63) (#63)
+- **scan**: Make the no_std path compile + correct the unsafe-tree claim (#62) (#62)
+- **trace**: Load samply traces that use timeDeltas, not absolute time (#58) (#58)
+- **aozora**: Install bacon from source, unblocking cargo-binstall 1.19.1 (#55) (#55)
+- **aozora**: Serialise cargo doc to kill the parallel rustdoc race (#49) (#49)
+- **pipeline**: Forward-ref bouten/TCY consume preceding target literal (#42) (#42)
+- **hooks+pipeline**: Close local-only gaps that let just ci silently fail (#41) (#41)
+- **render**: Serialize is now I3-idempotent across decorative-rule boundaries (#33) (#33)
+
+
+### Performance
+
+- **scan**: Replace the unsafe SIMD Teddy with safe aho-corasick (#61) (#61)
+- **spec**: Classify triggers with a direct match, not a runtime-hash phf (#59) (#59)
+
+
+### Tests
+
+- **aozora**: Add dhat heap profile + synthetic latency probe (align with afm) (#57) (#57)
+- **proptest**: Close emit-symmetry / Annotation::Unknown / wire / phase1 gaps (#34) (#34)
+- **fuzz**: Systematise fuzz triage workflow + fix BOM I3 fixed-point bug (#32) (#32)
+- **quality**: Pr6a — docs drift cleanup + rustdoc deny + Phase D recipe + conformance 6-axis gate (#30) (#30)
+- **quality**: Pr5 — coverage ratchet 73, bench drift recipes, ci corpus-sweep (#28) (#28)
+- **quality**: Pr3 — snapshot tests for render html, ast pretty, cli help (#26) (#26)
+- **quality**: Pr2 — property tests across 11 crates + 2 pandoc bug fixes (#25) (#25)
+- **quality**: Pr1 — re-tighten rustdoc deny + expect-count calibration gate (#24) (#24)
+
 ## [0.3.0] - 2026-05-01
 
 
