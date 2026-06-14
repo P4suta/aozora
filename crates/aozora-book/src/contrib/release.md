@@ -166,6 +166,45 @@ When v1.0 lands, the publication workflow will run from a tag:
 `cargo publish` per crate in topological order
 (`aozora-spec` first, `aozora` last), driven from `release.yml`.
 
+## Code signing
+
+Release binaries are **not** CA code-signed (no Authenticode on the
+Windows `.exe`, no Apple Developer ID / notarization on the macOS
+build). This is a deliberate pre-1.0 decision.
+
+What we ship instead — and why it covers the current audience:
+
+- **Build provenance attestation** (`actions/attest-build-provenance`,
+  since v0.4.0): every archive carries a Sigstore-backed SLSA
+  provenance statement, verifiable with `gh attestation verify
+  <archive> --repo P4suta/aozora` — no certificates, no CA. It proves
+  *which CI built which artefact from which source*: a supply-chain
+  control, **not** an OS-level execution-trust signal.
+- **SHA256SUMS** for integrity; **signed git tags / commits** for
+  authorship.
+
+CA code signing solves a *different* problem — suppressing the Windows
+SmartScreen / macOS Gatekeeper "unknown publisher" prompt for end users
+who double-click a downloaded binary. For a parser library + developer
+CLI installed via `cargo install` / package managers, that prompt is
+low-friction, so the recurring cost and operational overhead (HSM-stored
+keys mandatory since 2023-06; ≤458-day cert validity since 2026-03) is
+not justified yet.
+
+When we revisit this (post-1.0, if desktop double-click installs become
+a real distribution path):
+
+- **Windows** → [SignPath Foundation](https://signpath.io/solutions/open-source-community)
+  free OSS code signing (Sectigo-issued, HSM-backed, CI-integrated).
+  Note the 2024 SmartScreen change: EV no longer buys *instant* trust —
+  both OV and EV build reputation organically over downloads.
+- **macOS** → Apple Developer ID ($99/yr Apple Developer Program) +
+  notarization. Third-party CA certs (e.g. ssl.com) do **not** satisfy
+  Gatekeeper; only an Apple-issued Developer ID does.
+- A paid CA (ssl.com eSigner, etc.) was evaluated and rejected: it
+  covers Windows only, no longer removes the first-run warning on day
+  one, and adds a yearly cost the project does not need pre-1.0.
+
 ## See also
 
 - [Development loop](dev.md) — the local pre-flight commands.
