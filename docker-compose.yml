@@ -30,6 +30,12 @@ x-common-env: &common-env
   CARGO_INCREMENTAL: "0"
   SCCACHE_CACHE_SIZE: "10G"
   RUST_BACKTRACE: "1"
+  # Ride out transient static.crates.io outages. cbindgen's build-time
+  # `cargo metadata` in aozora-ffi failed the `coverage` job on a brief
+  # "Could not connect to server" blip; cargo's default retry is 3. Bump it
+  # so a short network hiccup isn't a CI failure. Applies to every service
+  # that inherits x-common-env (dev / ci / playground).
+  CARGO_NET_RETRY: "10"
   # Use mold (already apt-installed in the Dockerfile toolchain stage).
   # The Dockerfile also writes a /root/.cargo/config.toml with the same
   # intent, but CARGO_HOME=/cargo/home above means cargo never
