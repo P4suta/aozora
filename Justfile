@@ -106,6 +106,17 @@ types:
 types-check:
     {{_dev}} cargo run -p aozora-xtask -q -- types check
 
+# Generate per-language wire types (Go / …) from the committed wire JSON
+# Schema via quicktype — one generator, every host-SDK language. Writes
+# `crates/aozora-<lang>/…`; commit the diff so `types-langs-check` stays
+# green. quicktype + gofmt ship in the dev image.
+types-langs:
+    {{_dev}} cargo run -p aozora-xtask -q -- types langs
+
+# Drift gate for the per-language wire types. Wired into `drift-gate`.
+types-langs-check:
+    {{_dev}} cargo run -p aozora-xtask -q -- types langs-check
+
 # Phase L4 — bundled drift gate. Equivalent to the CI `drift-gate`
 # job: schema + types in one shot. Use locally before pushing.
 #
@@ -117,7 +128,7 @@ types-check:
 # against an already-warm container with the xtask binary cached in
 # `target/`.
 drift-gate:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check'
 
 # Scaffold a new ADR under docs/adr/ from the template: picks the next
 # 4-digit number, slugifies the title, stamps today's date, and writes a
@@ -828,6 +839,45 @@ pgo:
 smoke-ffi:
     bash crates/aozora-ffi/tests/c_smoke/run.sh
 
+# Build the single portable `aozora.wasm` Extism plugin (the polyglot
+# transport hub) and copy it to crates/aozora-extism/dist/. Every
+# language with an Extism host SDK loads this ONE artifact — there is no
+# per-(OS × arch) native build matrix the way the aozora-ffi C ABI needs.
+# The dev image ships binaryen's `wasm-opt` (see Dockerfile); the recipe
+# still degrades gracefully to an unoptimized artifact if a custom image
+# lacks it. See ADR-0006.
+extism-build:
+    {{_dev}} cargo build --release --target wasm32-unknown-unknown -p aozora-extism
+    {{_dev}} sh -c 'mkdir -p crates/aozora-extism/dist \
+        && cp "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/release/aozora_extism.wasm" crates/aozora-extism/dist/aozora.wasm \
+        && (command -v wasm-opt >/dev/null 2>&1 \
+            && wasm-opt -O3 --enable-bulk-memory --enable-mutable-globals \
+                crates/aozora-extism/dist/aozora.wasm -o crates/aozora-extism/dist/aozora.wasm \
+            && echo "wasm-opt applied" \
+            || echo "wasm-opt not present — shipping unoptimized artifact")'
+
+# End-to-end cross-language ABI check (the Extism analogue of smoke-ffi):
+# build the plugin, then load the built aozora.wasm through the Extism
+# (Rust) host SDK and assert every export is byte-identical to calling
+# aozora::wire in-process. The `host-smoke` feature pulls wasmtime, so it
+# is opt-in and never burdens `just test` / `just ci`.
+smoke-extism: extism-build
+    {{_dev}} cargo test -p aozora-extism --features host-smoke --test host_smoke -- --nocapture
+
+# End-to-end Go host SDK check (the Go analogue of smoke-ffi / smoke-extism):
+# build the plugin, embed it in the Go package, and run `go test`, which
+# loads aozora.wasm through the pure-Go wazero Extism runtime and decodes
+# every wire envelope into the quicktype-generated Go structs. Kept out of
+# `just ci` (first run needs `go mod download`); run manually / in a job.
+smoke-go: extism-build
+    {{_dev}} bash -c 'set -euo pipefail; \
+        cp crates/aozora-extism/dist/aozora.wasm crates/aozora-go/aozora.wasm; \
+        cd crates/aozora-go; \
+        unformatted=$(gofmt -l .); \
+        if [ -n "$unformatted" ]; then echo "gofmt needs: $unformatted"; exit 1; fi; \
+        go vet ./...; \
+        go test ./...'
+
 # --- changelog ---------------------------------------------------------------
 
 # Regenerate CHANGELOG.md from Conventional-Commits history (see cliff.toml).
@@ -969,6 +1019,14 @@ ci:
     just drift-gate
     just conformance
     just smoke-ffi
+    # Build the Extism plugin to wasm32: this is the only gate that
+    # compiles the `#[cfg(target_arch = "wasm32")]` plugin exports (the
+    # host build skips them), so it catches plugin-module regressions the
+    # `just build` host gate cannot. The heavier `just smoke-extism`
+    # (loads the wasm through wasmtime) is left out — its wasmtime compile
+    # is too slow for the inline gate; run it manually / in a dedicated CI
+    # job.
+    just extism-build
     just test
     just prop
     just udeps

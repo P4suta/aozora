@@ -18,8 +18,12 @@
 //! the codegen — adding a variant flows automatically into the
 //! generated output once the ALL array is updated.
 
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use serde_json::{Map, Value};
 
 use aozora::pipeline::{NodeRef, PairKind};
 use aozora::syntax::NodeKind;
@@ -27,6 +31,7 @@ use aozora::{DiagnosticSource, InternalCheckCode, Sentinel, Severity};
 
 use crate::TypesArgs;
 use crate::TypesOp;
+use crate::schema::SCHEMA_FILES;
 
 const TYPES_REL_PATH: &str = "crates/aozora-wasm/types/aozora_types.d.ts";
 
@@ -34,6 +39,8 @@ pub(crate) fn dispatch(args: &TypesArgs) -> Result<(), String> {
     match args.op {
         TypesOp::Ts => dump(),
         TypesOp::Check => check(),
+        TypesOp::Langs => langs_dump(),
+        TypesOp::LangsCheck => langs_check(),
     }
 }
 
@@ -228,4 +235,276 @@ fn check() -> Result<(), String> {
              run `xtask types ts` to regenerate, then commit"
         ))
     }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Per-language wire types via quicktype (`xtask types langs`)
+// ────────────────────────────────────────────────────────────────────
+//
+// The TypeScript `.d.ts` above is hand-rolled from the live Rust enums
+// (it needs the string-literal unions for `NodeKind` etc. that the JSON
+// Schema erases to plain `string`). Every *other* host-SDK language is
+// generated mechanically by `quicktype` from the committed wire JSON
+// Schema — one generator, all languages — so adding a language is a
+// single row in `LANG_TYPES`, not a new codegen backend.
+
+/// One target language for `quicktype`-generated wire types.
+struct LangType {
+    /// Display name (and the key used in drift messages).
+    name: &'static str,
+    /// `quicktype --lang` identifier.
+    quicktype_lang: &'static str,
+    /// Output path, relative to the workspace root. Committed + drift-gated.
+    out: &'static str,
+    /// Line-comment prefix for the generated-file header.
+    comment: &'static str,
+    /// Text inserted between the header and the generated body — e.g. a
+    /// Go `package` clause (quicktype's `--just-types` omits it).
+    prelude: &'static str,
+    /// Extra `quicktype` flags.
+    extra: &'static [&'static str],
+    /// When `true`, pipe the output through `gofmt` so the committed
+    /// artifact matches what the host package's own `gofmt` gate expects.
+    gofmt: bool,
+}
+
+/// The languages we generate wire types for. Adding a host SDK is one
+/// row here plus a `crates/aozora-<lang>/` package that consumes the file.
+const LANG_TYPES: &[LangType] = &[LangType {
+    name: "go",
+    quicktype_lang: "go",
+    out: "crates/aozora-go/wire_gen.go",
+    comment: "// ",
+    prelude: "package aozora\n\n",
+    extra: &["--just-types", "--top-level", "AozoraWire"],
+    gofmt: true,
+}];
+
+fn langs_dump() -> Result<(), String> {
+    let root = workspace_root()?;
+    let combined = write_combined_schema(&root)?;
+    for lt in LANG_TYPES {
+        let body = generate_lang(lt, &combined)?;
+        let path = root.join(lt.out);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("create_dir_all {}: {err}", parent.display()))?;
+        }
+        fs::write(&path, &body)
+            .map_err(|err| format!("write {} types {}: {err}", lt.name, path.display()))?;
+        eprintln!("xtask types langs: wrote {}", path.display());
+    }
+    Ok(())
+}
+
+fn langs_check() -> Result<(), String> {
+    let root = workspace_root()?;
+    let combined = write_combined_schema(&root)?;
+    let mut drift = Vec::new();
+    for lt in LANG_TYPES {
+        let actual = generate_lang(lt, &combined)?;
+        let path = root.join(lt.out);
+        let stored = fs::read_to_string(&path)
+            .map_err(|err| format!("read {} types {}: {err}", lt.name, path.display()))?;
+        if actual != stored {
+            drift.push(lt.out.to_owned());
+        }
+    }
+    if drift.is_empty() {
+        eprintln!(
+            "xtask types langs-check: {}/{} per-language wire types up to date",
+            LANG_TYPES.len(),
+            LANG_TYPES.len()
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "per-language wire types drift detected in {} file(s):\n  {}\n\
+             run `xtask types langs` to regenerate, then commit",
+            drift.len(),
+            drift.join("\n  "),
+        ))
+    }
+}
+
+/// Build one combined JSON Schema from the four committed per-envelope
+/// schemas and write it to a temp file `quicktype` can consume. Returns
+/// the temp path.
+///
+/// Why combine: feeding the four schema files to `quicktype` separately
+/// makes it invent distinct names for the structurally-identical inner
+/// types (`PurpleSpan`, `FluffySpan`, …). One document with a shared
+/// `$defs` yields a single `SpanWire` / `OffsetWire`. Two transforms make
+/// it digestible: every `$def` gets a `title` equal to its key (so
+/// `quicktype` names types from the key, not the referencing property),
+/// and `schema_version`'s integer `const` is dropped (`quicktype` chokes
+/// on a numeric `const` — `s.codePointAt is not a function`); the precise
+/// committed schemas keep the `const`.
+fn write_combined_schema(root: &Path) -> Result<PathBuf, String> {
+    let mut defs = Map::new();
+    let mut props = Map::new();
+    for (rel, _) in SCHEMA_FILES {
+        let path = root.join(rel);
+        let text =
+            fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+        let schema: Value = serde_json::from_str(&text)
+            .map_err(|err| format!("parse {}: {err}", path.display()))?;
+        let obj = schema
+            .as_object()
+            .ok_or_else(|| format!("{}: schema root is not an object", path.display()))?;
+        let env_title = obj
+            .get("title")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{}: schema missing root title", path.display()))?
+            .to_owned();
+        // Shared sub-types (SpanWire / OffsetWire), hoisted to root in the
+        // committed schema — merge, first definition wins (they're identical).
+        if let Some(file_defs) = obj.get("$defs").and_then(Value::as_object) {
+            for (key, value) in file_defs {
+                defs.entry(key.clone()).or_insert_with(|| value.clone());
+            }
+        }
+        // The per-entry item type (DiagnosticWire / NodeWire / …).
+        let mut items = obj
+            .get("properties")
+            .and_then(|p| p.get("data"))
+            .and_then(|d| d.get("items"))
+            .cloned()
+            .ok_or_else(|| format!("{}: missing properties.data.items", path.display()))?;
+        let item_title = items
+            .get("title")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{}: data.items missing title", path.display()))?
+            .to_owned();
+        if let Some(item_obj) = items.as_object_mut() {
+            item_obj.remove("$schema");
+            item_obj.remove("$defs");
+        }
+        defs.insert(item_title.clone(), items);
+        // The envelope type, referencing the item. `schema_version` is a
+        // plain integer here (no `const`) for quicktype's sake.
+        defs.insert(
+            env_title.clone(),
+            serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["schema_version", "data"],
+                "properties": {
+                    "schema_version": { "type": "integer" },
+                    "data": { "type": "array", "items": { "$ref": format!("#/$defs/{item_title}") } },
+                },
+            }),
+        );
+        props.insert(
+            env_title.clone(),
+            serde_json::json!({ "$ref": format!("#/$defs/{env_title}") }),
+        );
+    }
+    // Force quicktype to name every type from its `$defs` key by giving
+    // each definition a matching `title`.
+    for (key, value) in &mut defs {
+        if let Some(value_obj) = value.as_object_mut() {
+            value_obj.insert("title".to_owned(), Value::String(key.clone()));
+        }
+    }
+    let combined = serde_json::json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "AozoraWire",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": props,
+        "$defs": defs,
+    });
+    let combined_path = env::temp_dir().join("aozora_wire_combined.schema.json");
+    let pretty = serde_json::to_string_pretty(&combined).map_err(|err| err.to_string())?;
+    fs::write(&combined_path, pretty)
+        .map_err(|err| format!("write combined schema {}: {err}", combined_path.display()))?;
+    Ok(combined_path)
+}
+
+/// Run quicktype (+ gofmt for Go) over the combined schema and return the
+/// finalized, header-stamped, trailing-whitespace-trimmed source.
+fn generate_lang(lt: &LangType, combined_schema: &Path) -> Result<String, String> {
+    let mut cmd = Command::new("quicktype");
+    cmd.arg("--src-lang")
+        .arg("schema")
+        .arg("--lang")
+        .arg(lt.quicktype_lang)
+        .args(lt.extra)
+        .arg(combined_schema);
+    let output = cmd.output().map_err(|err| {
+        format!(
+            "failed to run quicktype ({err}); it ships in the dev image — \
+             run via `just types-langs`, not on the host"
+        )
+    })?;
+    if !output.status.success() {
+        return Err(format!(
+            "quicktype failed for `{}`:\n{}",
+            lt.name,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let body = String::from_utf8(output.stdout)
+        .map_err(|err| format!("quicktype output for `{}` not UTF-8: {err}", lt.name))?;
+    // Assemble the complete file (header + prelude + body) first; gofmt
+    // needs a whole Go file (with the `package` clause), not a fragment.
+    let assembled = finalize(lt, &body);
+    if lt.gofmt {
+        gofmt(&assembled)
+    } else {
+        Ok(assembled)
+    }
+}
+
+/// Pipe `src` through `gofmt -` so the committed Go artifact matches the
+/// host package's own `gofmt` gate byte-for-byte.
+fn gofmt(src: &str) -> Result<String, String> {
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let mut child = Command::new("gofmt")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("failed to run gofmt ({err}); it ships in the dev image"))?;
+    child
+        .stdin
+        .take()
+        .ok_or("gofmt: no stdin handle")?
+        .write_all(src.as_bytes())
+        .map_err(|err| format!("gofmt: write stdin: {err}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("gofmt: wait: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "gofmt failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    String::from_utf8(output.stdout).map_err(|err| format!("gofmt output not UTF-8: {err}"))
+}
+
+/// Prepend the generated-file header + optional prelude, and strip
+/// trailing whitespace per line (quicktype's aligned comments otherwise
+/// leave trailing spaces that would churn the drift gate).
+fn finalize(lt: &LangType, body: &str) -> String {
+    let mut out = String::new();
+    out.push_str(lt.comment);
+    out.push_str(
+        "AUTO-GENERATED by `xtask types langs` (quicktype, from the aozora wire JSON Schema).\n",
+    );
+    out.push_str(lt.comment);
+    out.push_str(
+        "DO NOT EDIT — regenerate with `just types-langs`; drift-gated by `just drift-gate`.\n",
+    );
+    out.push('\n');
+    out.push_str(lt.prelude);
+    for line in body.lines() {
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
 }

@@ -161,6 +161,16 @@ enum TypesOp {
     /// Compare on-disk `aozora_types.d.ts` against fresh codegen;
     /// exit non-zero on drift. CI gate.
     Check,
+    /// Generate native wire types for every host-SDK language from the
+    /// committed JSON Schema via `quicktype` (one generator, all
+    /// languages). Writes one file per language (e.g.
+    /// `crates/aozora-go/aozora/wire_gen.go`); overwrites it, commit
+    /// the diff.
+    Langs,
+    /// Compare each on-disk per-language wire types file against fresh
+    /// `quicktype` codegen; exit non-zero on drift. CI gate (extends
+    /// `drift-gate`).
+    LangsCheck,
 }
 
 #[derive(Args)]

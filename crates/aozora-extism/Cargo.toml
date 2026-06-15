@@ -1,0 +1,63 @@
+[package]
+name        = "aozora-extism"
+description = "Extism (WASM) plugin driver for the aozora parser — one portable artifact, polyglot host SDKs"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+# Driver crate — never published to crates.io. Built into a single
+# portable `aozora.wasm` via `cargo build --release --target
+# wasm32-unknown-unknown -p aozora-extism` (see `just extism-build`),
+# which any language with an Extism host SDK (Go / Java / PHP / Ruby / …)
+# loads. Host (cargo workspace) builds skip the Extism plugin exports
+# entirely and compile only the host-testable `logic` module.
+publish     = false
+
+[lints]
+workspace = true
+
+# extism-pdk is pulled in only when targeting wasm32, so host
+# (x86_64 / aarch64) builds of the workspace skip it entirely. This
+# mirrors how aozora-wasm declares wasm-bindgen as a wasm32-only target
+# dependency (rather than via [workspace.dependencies]) — the dep is
+# used by exactly one crate and only on one target.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+extism-pdk = "1.4"
+
+[dependencies]
+# Consumes the wire format via `aozora::wire::*`; serde + serde_json
+# transitive-only via the `wire` feature. Output is byte-identical to
+# the FFI / WASM / PyO3 drivers because all four delegate to the same
+# `aozora::wire` authority.
+aozora = { workspace = true, features = ["wire"] }
+
+[features]
+# Opt-in: pulls the Extism host SDK (which bundles wasmtime) for the
+# end-to-end ABI smoke test run by `just smoke-extism`. OFF by default so
+# the standard `just test` / `just ci` path never compiles wasmtime.
+host-smoke = ["dep:extism"]
+
+# Host-side Extism runtime, used ONLY by the `host-smoke`-gated
+# integration test (tests/host_smoke.rs) to load the built `aozora.wasm`
+# and exercise the real plugin ABI. Optional + non-wasm32 so it never
+# enters the plugin's own wasm dependency graph.
+#
+# default-features = false drops extism's `http` / `register-http`
+# features (and their `ureq` → `webpki-roots` chain, whose
+# CDLA-Permissive-2.0 license is outside the deny.toml allow-list): the
+# test loads the plugin from in-memory bytes (`Wasm::data`), never a URL,
+# so the HTTP fetcher is dead weight. `wasmtime-default-features` keeps
+# the runtime (cranelift) needed to actually execute the wasm.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+extism = { version = "1", optional = true, default-features = false, features = [
+    "wasmtime-default-features",
+] }
+
+[lib]
+crate-type = ["cdylib", "lib"]
