@@ -87,11 +87,46 @@ jobs:
       # failure (bash -eo pipefail); a mid-ladder failure leaves the
       # earlier crates published — bump the patch version and re-run,
       # skipping the crates already on crates.io.
-      - name: Publish to crates.io (topological)
+      # Resumable + rate-limit aware. crates.io throttles NEW crates
+      # (burst 5, then ~1 per 10 min), so a 13-new-crate first publish
+      # cannot complete in one shot. Each crate is (a) skipped if its
+      # version is already on the registry — so a re-run safely continues
+      # a partial publish — and (b) retried after a wait when the upload
+      # is rejected with HTTP 429.
+      - name: Publish to crates.io (topological, resumable)
         if: inputs.dry_run == false
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
         run: |
+          ua="aozora-release (+https://github.com/P4suta/aozora)"
+          ver="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          echo "Publishing workspace version: ${ver}"
+          publish_one() {
+            crate="$1"
+            code="$(curl -s -H "User-Agent: ${ua}" -o /dev/null -w '%{http_code}' \
+              "https://crates.io/api/v1/crates/${crate}/${ver}" || echo 000)"
+            if [ "${code}" = "200" ]; then
+              echo "::notice::skip ${crate} ${ver} (already on crates.io)"
+              return 0
+            fi
+            tries=0
+            while :; do
+              tries=$((tries + 1))
+              if out="$(cargo publish -p "${crate}" --locked 2>&1)"; then
+                printf '%s\n' "${out}"
+                echo "::notice::published ${crate} ${ver}"
+                return 0
+              fi
+              printf '%s\n' "${out}"
+              if printf '%s' "${out}" | grep -qiE '429|too many|rate.?limit'; then
+                echo "::warning::rate-limited on ${crate} (attempt ${tries}); waiting 630s before retry"
+                sleep 630
+                continue
+              fi
+              echo "::error::failed to publish ${crate} (non-rate-limit error)"
+              return 1
+            done
+          }
           for crate in \
             aozora-encoding \
             aozora-spec \
@@ -107,6 +142,6 @@ jobs:
             aozora-pandoc \
             aozora-cli; do
             echo "::group::publish ${crate}"
-            cargo publish -p "${crate}" --locked
+            publish_one "${crate}" || exit 1
             echo "::endgroup::"
           done
