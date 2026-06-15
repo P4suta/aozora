@@ -269,78 +269,78 @@ fn describe_internal(c: InternalCheckCode) -> &'static str {
 /// at compile time via `include_str!` from the handbook chapters
 /// under `crates/aozora-book/src/nodes/`.
 const NODE_PAGES: &[(&str, &str)] = &[
-    ("ruby", include_str!("../../aozora-book/src/nodes/ruby.md")),
+    ("ruby", include_str!("node-docs/ruby.md")),
     (
         "bouten",
-        include_str!("../../aozora-book/src/nodes/bouten.md"),
+        include_str!("node-docs/bouten.md"),
     ),
     (
         "tateChuYoko",
-        include_str!("../../aozora-book/src/nodes/tate-chu-yoko.md"),
+        include_str!("node-docs/tate-chu-yoko.md"),
     ),
     (
         "gaiji",
-        include_str!("../../aozora-book/src/nodes/gaiji.md"),
+        include_str!("node-docs/gaiji.md"),
     ),
     (
         "indent",
-        include_str!("../../aozora-book/src/nodes/indent.md"),
+        include_str!("node-docs/indent.md"),
     ),
     (
         "alignEnd",
-        include_str!("../../aozora-book/src/nodes/align-end.md"),
+        include_str!("node-docs/align-end.md"),
     ),
     (
         "warichu",
-        include_str!("../../aozora-book/src/nodes/warichu.md"),
+        include_str!("node-docs/warichu.md"),
     ),
     (
         "keigakomi",
-        include_str!("../../aozora-book/src/nodes/keigakomi.md"),
+        include_str!("node-docs/keigakomi.md"),
     ),
     (
         "pageBreak",
-        include_str!("../../aozora-book/src/nodes/page-break.md"),
+        include_str!("node-docs/page-break.md"),
     ),
     (
         "sectionBreak",
-        include_str!("../../aozora-book/src/nodes/section-break.md"),
+        include_str!("node-docs/section-break.md"),
     ),
     (
         "heading",
-        include_str!("../../aozora-book/src/nodes/aozora-heading.md"),
+        include_str!("node-docs/aozora-heading.md"),
     ),
     (
         "headingHint",
-        include_str!("../../aozora-book/src/nodes/heading-hint.md"),
+        include_str!("node-docs/heading-hint.md"),
     ),
     (
         "sashie",
-        include_str!("../../aozora-book/src/nodes/sashie.md"),
+        include_str!("node-docs/sashie.md"),
     ),
     (
         "kaeriten",
-        include_str!("../../aozora-book/src/nodes/kaeriten.md"),
+        include_str!("node-docs/kaeriten.md"),
     ),
     (
         "annotation",
-        include_str!("../../aozora-book/src/nodes/annotation.md"),
+        include_str!("node-docs/annotation.md"),
     ),
     (
         "doubleRuby",
-        include_str!("../../aozora-book/src/nodes/double-ruby.md"),
+        include_str!("node-docs/double-ruby.md"),
     ),
     (
         "container",
-        include_str!("../../aozora-book/src/nodes/container.md"),
+        include_str!("node-docs/container.md"),
     ),
     (
         "containerOpen",
-        include_str!("../../aozora-book/src/nodes/container-open.md"),
+        include_str!("node-docs/container-open.md"),
     ),
     (
         "containerClose",
-        include_str!("../../aozora-book/src/nodes/container-close.md"),
+        include_str!("node-docs/container-close.md"),
     ),
 ];
 
