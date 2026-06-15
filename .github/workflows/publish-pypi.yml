@@ -55,14 +55,15 @@ jobs:
         run: pip install --upgrade "maturin>=1.9" twine
 
       - name: Build wheel
-        # `--manylinux=auto` lets maturin pick the most compatible
-        # tag the runner's glibc supports; on macOS / Windows the
-        # flag is harmlessly ignored.
+        # No `--compatibility`/`--manylinux` flag: maturin defaults to the
+        # lowest compatible manylinux tag on Linux (which PyPI accepts) and
+        # the option is a no-op on macOS / Windows. `--manylinux=auto` was
+        # rejected by maturin >= 1.14 ("invalid value 'auto'") — `auto` is
+        # not a valid value; omitting the flag IS the auto behaviour.
         run: |
           maturin build --release --strip \
             --manifest-path crates/aozora-py/Cargo.toml \
-            --interpreter "python${{ matrix.python }}" \
-            --manylinux=auto
+            --interpreter "python${{ matrix.python }}"
 
       - name: Verify metadata with twine check
         run: twine check target/wheels/*.whl
