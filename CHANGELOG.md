@@ -5,6 +5,26 @@ this file. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+
+### Build
+
+- **release**: Make internal crates publishable and bump to v0.4.1
+- **deps**: Bump the rust-deps group with 6 updates (#72) (#72)
+
+
+### CI
+
+- **release**: Publish the whole workspace to crates.io in topological order
+- Harden release workflow (Node24 attest, pin windows-2025, cargo net retry) (#71) (#71)
+
+
+### Documentation
+
+- **release**: Document crates.io / npm / PyPI publishing
+- **release**: Record the pre-1.0 code-signing deferral decision (#70) (#70)
+
 ## [0.4.0] - 2026-06-14
 
 
