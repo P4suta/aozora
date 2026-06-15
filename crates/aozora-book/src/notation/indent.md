@@ -102,8 +102,12 @@ Renders as nested divs:
 ```
 
 Mismatched closers (e.g. `［＃ここから地付き］` … `［＃ここで字下げ終わり］`)
-fire diagnostic [`E0005`](diagnostics.md#E0005) and the parser
-auto-closes the offending opener at the closer's position.
+fire diagnostic
+[`aozora::lex::mismatched_container_close`](diagnostics.md#mismatched-container-close)
+and the parser auto-closes the offending opener at the closer's position.
+The check compares container *families*, so closing a `2字下げ` opener
+with a plain `字下げ終わり` (both `indent`) is fine — only a different
+family (indent vs align-end vs 罫囲み vs 割り注) is flagged.
 
 ## Why containers, not stack-based push/pop tokens?
 
@@ -126,4 +130,5 @@ is negligible (`bumpalo` returns aligned pointers in O(1) bumps).
 
 - [Architecture → Borrowed-arena AST](../arch/arena.md) — how
   container child slices are laid out in the arena.
-- [Diagnostics → `E0005`](diagnostics.md#E0005) — mismatched closer.
+- [Diagnostics → `aozora::lex::mismatched_container_close`](diagnostics.md#mismatched-container-close)
+  — mismatched closer.

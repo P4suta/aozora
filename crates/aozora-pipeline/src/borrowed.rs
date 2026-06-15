@@ -28,6 +28,8 @@
 //! so callers and benchmarks can measure dedup effectiveness without
 //! re-running the conversion.
 
+use core::mem::discriminant;
+
 use crate::lexer::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, ClassifiedSpan,
     INLINE_SENTINEL, SpanKind,
@@ -203,6 +205,11 @@ pub(crate) struct ArenaNormalizer<'src, 'a> {
     /// into the arena `&'a [ContainerPair]` at pipeline-build time.
     /// One entry per balanced pair.
     pub(crate) container_pairs: Vec<ContainerPair>,
+    /// Diagnostics observed during the fold (post-Phase-3). Currently
+    /// only `mismatched_container_close`. Drained into the pipeline's
+    /// diagnostic stream after the Phase-3 classify set so the final
+    /// order stays phase-monotone.
+    pub(crate) diagnostics: Vec<Diagnostic>,
 }
 
 impl<'src, 'a> ArenaNormalizer<'src, 'a> {
@@ -223,6 +230,8 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
             // each); resolved pair count is half of that.
             open_stack: Vec::with_capacity(span_capacity_hint / 40),
             container_pairs: Vec::with_capacity(span_capacity_hint / 40),
+            // Mismatched closes are rare; start empty and let it grow.
+            diagnostics: Vec::new(),
         }
     }
 
@@ -307,6 +316,23 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 // still lands in `entries` via the push above so
                 // renderer correctness is unchanged).
                 if let Some((open_pos, open_kind)) = self.open_stack.pop() {
+                    // Flag a close that names a different container family
+                    // than the open it matched (`字下げ` opened, `地付き`
+                    // closed). Compare by discriminant so the amount/offset
+                    // payload (open `Indent{2}` vs close `Indent{0}`) does
+                    // not register as a mismatch. The pair is still emitted
+                    // (keyed by the authoritative open kind) so recovery —
+                    // the renderer auto-closing the opener at this closer —
+                    // is unchanged. `source_span` is in sanitized
+                    // coordinates, matching the `Diagnostic::span` contract.
+                    if discriminant(&open_kind) != discriminant(container) {
+                        self.diagnostics
+                            .push(Diagnostic::mismatched_container_close(
+                                span.source_span,
+                                open_kind.kind_str(),
+                                container.kind_str(),
+                            ));
+                    }
                     self.container_pairs.push(ContainerPair {
                         kind: open_kind,
                         open: open_pos,

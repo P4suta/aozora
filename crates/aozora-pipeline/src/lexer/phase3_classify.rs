@@ -970,6 +970,87 @@ struct Frame {
     gaiji_refmark: Option<Span>,
 }
 
+/// Span of the first ruby (`《…》` / `《《…》》`) opening *inside* the body
+/// event range `lo..hi`, if any. Used by [`ClassifyStream::try_ruby_emit`]
+/// to flag `nested_ruby` — `build_content_from_body` folds only nested
+/// gaiji / annotation, so an inner ruby open would otherwise survive raw.
+fn first_nested_ruby_open(events: &[PairEvent], lo: usize, hi: usize) -> Option<Span> {
+    events[lo..hi].iter().find_map(|e| match e {
+        PairEvent::PairOpen {
+            kind: PairKind::Ruby | PairKind::DoubleRuby,
+            span,
+        } => Some(*span),
+        _ => None,
+    })
+}
+
+/// When an explicit-base ruby (`｜base《》`) has an empty reading, the span
+/// of the whole `｜base《》` to flag as `empty_ruby_reading`. Returns `None`
+/// when there is no explicit `｜` base (a bare `《》` is just literal text)
+/// or when the `《…》` reading is non-empty.
+fn empty_explicit_ruby_span(
+    bar_byte_offset: Option<usize>,
+    preceding_start: u32,
+    open_span: Span,
+    close_span: Span,
+) -> Option<Span> {
+    let bar_off = bar_byte_offset?;
+    if open_span.end < close_span.start {
+        return None; // reading carries bytes — not empty
+    }
+    let bar_pos = preceding_start + u32::try_from(bar_off).ok()?;
+    Some(Span::new(bar_pos, close_span.end))
+}
+
+/// Build the synthetic event / link stream `recognize_ruby` expects in the
+/// streaming model: `[optional Solo(Bar), Text(base), ...body events...]`,
+/// with links shifted to account for the prepended prefix. Returns the
+/// stream, its parallel link table, and the index of the synthetic `《`
+/// open. `prev_text_range` is the preceding plain run (`start` = its byte
+/// offset, `end` = the `《` open); `bar_byte_offset` is the position of a
+/// `｜` inside it for the explicit form. Returns `None` when an explicit
+/// `｜` base would leave the base text empty.
+fn build_synth_ruby_view(
+    body: BodyView<'_>,
+    prev_text_range: Span,
+    bar_byte_offset: Option<usize>,
+) -> Option<(Vec<PairEvent>, Vec<u32>, usize)> {
+    let mut synth: Vec<PairEvent> = Vec::with_capacity(body.events.len() + 2);
+    let mut synth_links: Vec<u32> = Vec::with_capacity(body.events.len() + 2);
+    let synth_open_idx = if let Some(bar_off) = bar_byte_offset {
+        let bar_pos = prev_text_range.start + u32::try_from(bar_off).expect("bar offset fits");
+        let bar_span = Span::new(bar_pos, bar_pos + u32::try_from('｜'.len_utf8()).unwrap());
+        synth.push(PairEvent::Solo {
+            kind: TriggerKind::Bar,
+            span: bar_span,
+        });
+        synth_links.push(u32::MAX);
+        if bar_span.end >= prev_text_range.end {
+            return None; // explicit base would be empty
+        }
+        synth.push(PairEvent::Text {
+            range: Span::new(bar_span.end, prev_text_range.end),
+        });
+        synth_links.push(u32::MAX);
+        2
+    } else {
+        synth.push(PairEvent::Text {
+            range: prev_text_range,
+        });
+        synth_links.push(u32::MAX);
+        1
+    };
+    // Append the body events verbatim, shifting their links past the prefix.
+    let shift = u32::try_from(synth.len()).expect("synth prefix fits u32");
+    synth.extend(body.events.iter().cloned());
+    synth_links.extend(
+        body.links
+            .iter()
+            .map(|&l| if l == u32::MAX { u32::MAX } else { l + shift }),
+    );
+    Some((synth, synth_links, synth_open_idx))
+}
+
 impl<'src, 'al, 'a, I> ClassifyStream<'src, 'al, 'a, I>
 where
     I: Iterator<Item = PairEvent>,
@@ -1440,73 +1521,28 @@ where
             return None;
         };
 
-        // Determine the preceding text range and (optionally) a Solo(Bar).
-        let plain_start = self.pending_plain_start;
-        let pending_rm = self.pending_refmark;
-        // For ruby we need the bytes immediately before the `《`. Take
-        // them from the source: from `prev_text_start` to `open_span.start`.
-        // `prev_text_start` is the pending_plain_start if any, else
-        // open_span.start (no preceding text → cannot recognise).
-        let preceding_start = plain_start.unwrap_or(open_span.start);
+        // Nested ruby: a `《…》` / `《《…》》` opening *inside* the reading
+        // body is an authoring error. Flag the first one (caret on the
+        // inner `《`); the outer ruby still parses best-effort. Touched
+        // before `ctx` reborrows `self.alloc`, so no borrow clash.
+        if let Some(inner_open) = first_nested_ruby_open(body.events, open_idx + 1, close_idx) {
+            self.diagnostics.push(Diagnostic::nested_ruby(inner_open));
+        }
+
+        // Determine the preceding plain run (the ruby base lives here) and
+        // detect the explicit `｜` form by scanning it for a bar. The
+        // streaming model has no preceding events, so we synthesise them.
+        let preceding_start = self.pending_plain_start.unwrap_or(open_span.start);
         if preceding_start >= open_span.start {
             return None;
         }
         let prev_text_range = Span::new(preceding_start, open_span.start);
-
-        // Detect explicit form: a `｜` somewhere in the preceding source.
-        // The legacy recogniser checks `events[open_idx - 2] == Solo(Bar)`
-        // with a Text between. We can detect it by scanning the
-        // preceding source bytes for `｜` (U+FF5C, 3 bytes EF BD 9C):
-        // if present, the explicit-ruby base is everything AFTER the bar.
-        // We treat ALL preceding accumulated plain bytes as candidate.
         let preceding_bytes = &self.source[preceding_start as usize..open_span.start as usize];
         let bar_byte_offset = preceding_bytes.rfind('｜');
 
-        // Construct synthetic events to feed recognize_ruby. We need
-        // shape: [optional Solo(Bar), Text, PairOpen, ...body inner...,
-        // PairClose]. Then call recognize_ruby with open_idx pointing
-        // at the synthetic PairOpen. The parallel `links` table is
-        // built in lock-step: the prepended events get `u32::MAX`,
-        // every body link is shifted by `shift` (= number of prepended
-        // events).
-        let mut synth: Vec<PairEvent> = Vec::with_capacity(body.events.len() + 2);
-        let mut synth_links: Vec<u32> = Vec::with_capacity(body.events.len() + 2);
-        let synth_open_idx = if let Some(bar_off) = bar_byte_offset {
-            let bar_pos = preceding_start + u32::try_from(bar_off).expect("bar offset fits");
-            let bar_span = Span::new(bar_pos, bar_pos + u32::try_from('｜'.len_utf8()).unwrap());
-            synth.push(PairEvent::Solo {
-                kind: TriggerKind::Bar,
-                span: bar_span,
-            });
-            synth_links.push(u32::MAX);
-            // Text after the bar to open_span.start.
-            let text_after_bar_start = bar_span.end;
-            if text_after_bar_start >= open_span.start {
-                return None;
-            }
-            synth.push(PairEvent::Text {
-                range: Span::new(text_after_bar_start, open_span.start),
-            });
-            synth_links.push(u32::MAX);
-            2
-        } else {
-            synth.push(PairEvent::Text {
-                range: prev_text_range,
-            });
-            synth_links.push(u32::MAX);
-            1
-        };
-
-        // Push the body events as-is and shift body links by `shift`.
-        let shift = u32::try_from(synth.len()).expect("synth prefix fits u32");
-        synth.extend(body.events.iter().cloned());
-        synth_links.extend(
-            body.links
-                .iter()
-                .map(|&l| if l == u32::MAX { u32::MAX } else { l + shift }),
-        );
+        let (synth, synth_links, synth_open_idx) =
+            build_synth_ruby_view(body, prev_text_range, bar_byte_offset)?;
         let synth_close_idx = synth_open_idx + (close_idx - open_idx);
-
         let synth_view = BodyView {
             events: &synth,
             links: &synth_links,
@@ -1515,13 +1551,28 @@ where
             alloc: self.alloc,
             source: self.source,
         };
-        let m = ctx.recognize_ruby(synth_view, synth_open_idx, synth_close_idx)?;
-        // Truncate any in-progress plain run to end exactly where the
-        // ruby takes over.
-        // Restore pending_refmark for downstream flushing semantics
-        // (recognize_ruby may have consumed a refmark only if it was
-        // inside the body, which is already in `body`).
-        let _ = pending_rm;
+        let Some(m) = ctx.recognize_ruby(synth_view, synth_open_idx, synth_close_idx) else {
+            // `recognize_ruby` rejects an empty `《》` reading; flag the
+            // explicit-base `｜base《》` shape (a bare `《》` stays silent).
+            // The bytes fall through to plain replay either way. `ctx`'s
+            // reborrow of `self.alloc` ended at the call above, so pushing
+            // onto the disjoint `self.diagnostics` is borrow-clear.
+            if let PairEvent::PairClose {
+                span: close_span, ..
+            } = body.events[close_idx]
+                && let Some(span) = empty_explicit_ruby_span(
+                    bar_byte_offset,
+                    preceding_start,
+                    open_span,
+                    close_span,
+                )
+            {
+                self.diagnostics.push(Diagnostic::empty_ruby_reading(span));
+            }
+            return None;
+        };
+        // Truncate any in-progress plain run to end exactly where the ruby
+        // takes over.
         self.flush_plain_up_to(m.consume_start);
         let base_content = self.alloc.content_plain(m.base);
         let node = self.alloc.ruby(base_content, m.reading, m.explicit);
@@ -1605,6 +1656,16 @@ where
             EmitKind::BlockClose(container) => SpanKind::BlockClose(container),
         };
         self.pending_plain_start = None;
+        // Surface any non-fatal warning the recogniser attached
+        // (unrecognised container directive / 縦中横 target not found /
+        // ambiguous bouten target). The emitted node is unaffected — for
+        // the catch-all cases it is still `Annotation{Unknown}`, so the
+        // Tier-A "no bare ［＃" canary holds. `ctx`'s reborrow of
+        // `self.alloc` ended at `recognize_annotation`, so pushing onto the
+        // disjoint `self.diagnostics` is borrow-clear.
+        if let Some(diag) = m.pending_diagnostic {
+            self.diagnostics.push(diag);
+        }
         Some(ClassifiedSpan {
             kind,
             source_span: Span::new(m.consume_start, m.consume_end),
@@ -1625,6 +1686,20 @@ where
         self.flush_plain_up_to(m.consume_start);
         let node = self.alloc.gaiji(m.payload);
         self.pending_plain_start = None;
+        // The gaiji still renders best-effort (as its description text)
+        // when resolution misses; flag the miss so authors know the glyph
+        // won't appear. `m.payload` is a `Copy` arena reference and the
+        // `ctx` reborrow of `self.alloc` ended at the `gaiji()` call above,
+        // so reading `ucs` and pushing onto `self.diagnostics` is clear of
+        // the borrow. Scope: top-level `※［＃…］` only — gaiji nested inside
+        // a ruby/bouten body is out of scope for now.
+        if m.payload.ucs.is_none() {
+            self.diagnostics
+                .push(Diagnostic::unresolved_gaiji(Span::new(
+                    m.consume_start,
+                    m.consume_end,
+                )));
+        }
         Some(ClassifiedSpan {
             kind: SpanKind::Aozora(node),
             source_span: Span::new(m.consume_start, m.consume_end),
@@ -2453,6 +2528,12 @@ struct AnnotationMatch<'a> {
     annotation_payload: Option<&'a borrowed::Annotation<'a>>,
     consume_start: u32,
     consume_end: u32,
+    /// A non-fatal warning to surface for this bracket, if any —
+    /// `unrecognised_container_directive`, `tcy_target_not_found`, or
+    /// `bouten_target_ambiguous`. The caller drains it into the diagnostic
+    /// stream; the emitted node (often the `Annotation{Unknown}` catch-all,
+    /// canary intact) is unaffected.
+    pending_diagnostic: Option<Diagnostic>,
 }
 
 /// What to emit for a matched annotation.
@@ -2532,58 +2613,90 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 annotation_payload,
                 consume_start: open_span.start,
                 consume_end: close_span.end,
+                pending_diagnostic: None,
             });
         }
-        if let Some((node, consume_start)) = self.classify_forward_bouten(view, open_idx, close_idx)
+        // Forward-reference warnings point at the whole `［＃…］` directive,
+        // not at the (possibly pulled-back) consume span.
+        let directive_span = Span::new(open_span.start, close_span.end);
+        if let Some((node, consume_start, ambiguous)) =
+            self.classify_forward_bouten(view, open_idx, close_idx)
         {
             return Some(AnnotationMatch {
                 emit: EmitKind::Aozora(node),
                 annotation_payload: None,
                 consume_start,
                 consume_end: close_span.end,
+                pending_diagnostic: ambiguous
+                    .then(|| Diagnostic::bouten_target_ambiguous(directive_span)),
             });
         }
-        if let Some((node, consume_start)) = self.classify_forward_tcy(view, open_idx, close_idx) {
-            return Some(AnnotationMatch {
-                emit: EmitKind::Aozora(node),
-                annotation_payload: None,
-                consume_start,
-                consume_end: close_span.end,
-            });
-        }
+        // 縦中横 is 3-state: a shape-matched directive whose target has no
+        // referent (`ShapedNoTarget`) carries a warning down the
+        // fall-through path while still degrading to `Annotation{Unknown}`.
+        let tcy_pending = match self.classify_forward_tcy(view, open_idx, close_idx) {
+            ForwardTcy::Recognised(node, consume_start) => {
+                return Some(AnnotationMatch {
+                    emit: EmitKind::Aozora(node),
+                    annotation_payload: None,
+                    consume_start,
+                    consume_end: close_span.end,
+                    pending_diagnostic: None,
+                });
+            }
+            ForwardTcy::ShapedNoTarget => Some(Diagnostic::tcy_target_not_found(directive_span)),
+            ForwardTcy::NotTcy => None,
+        };
         if let Some(node) = self.classify_forward_heading(view, open_idx, close_idx) {
             return Some(AnnotationMatch {
                 emit: EmitKind::Aozora(node),
                 annotation_payload: None,
                 consume_start: open_span.start,
                 consume_end: close_span.end,
+                pending_diagnostic: tcy_pending,
             });
         }
 
-        // Catch-all fallback for any well-formed `［＃…］` whose body no
-        // specialised recogniser claimed — including empty bodies
-        // (`［＃］`), which real Aozora corpora occasionally use as
-        // illustrative glyphs inside explanatory prose. Emitting
-        // `Annotation { Unknown }` with the raw source slice keeps the
-        // Tier-A canary (no bare `［＃` in HTML output) intact: the
-        // renderer wraps the raw bytes in an `aozora-annotation` hidden span
-        // regardless of body shape. The lexer is the sole owner of this
-        // classification — the parse phase never sees `［＃…］`.
-        //
-        // Build the annotation payload once and hand it to the caller in
-        // both `emit` and `annotation_payload` so the body-builder can
-        // re-wrap the same payload as a `Segment::Annotation` without
-        // re-interning the raw string.
-        let raw = &self.source[open_span.start as usize..close_span.end as usize];
+        // No specialised recogniser claimed the bracket — fall back to the
+        // `Annotation{Unknown}` catch-all.
+        Some(self.unknown_annotation_match(directive_span, body, tcy_pending))
+    }
+
+    /// Catch-all for any well-formed `［＃…］` whose body no specialised
+    /// recogniser claimed — including empty bodies (`［＃］`), which real
+    /// Aozora corpora occasionally use as illustrative glyphs. Emitting
+    /// `Annotation{Unknown}` with the raw source slice keeps the Tier-A
+    /// canary (no bare `［＃` in HTML output) intact. `directive_span` is the
+    /// `open.start..close.end` extent of the bracket.
+    ///
+    /// `tcy_pending` carries a 縦中横-target-not-found warning down from the
+    /// fall-through path; otherwise a `ここから…` opener that no
+    /// `ContainerKind` claimed surfaces as `unrecognised_container_directive`
+    /// (`罫囲み` / `割り注` openers don't use the `ここから` prefix and are
+    /// handled upstream, so the prefix uniquely flags a stray container open).
+    fn unknown_annotation_match(
+        &mut self,
+        directive_span: Span,
+        body: &str,
+        tcy_pending: Option<Diagnostic>,
+    ) -> AnnotationMatch<'a> {
+        let raw = &self.source[directive_span.start as usize..directive_span.end as usize];
+        // One payload for `emit`, one for `annotation_payload`, so the
+        // body-builder can re-wrap without re-interning the raw string.
         let payload = self.alloc.make_annotation(raw, AnnotationKind::Unknown);
         let node = self.alloc.annotation(payload);
         let payload_for_seg = self.alloc.make_annotation(raw, AnnotationKind::Unknown);
-        Some(AnnotationMatch {
+        let pending_diagnostic = tcy_pending.or_else(|| {
+            body.starts_with("ここから")
+                .then(|| Diagnostic::unrecognised_container_directive(directive_span))
+        });
+        AnnotationMatch {
             emit: EmitKind::Aozora(node),
             annotation_payload: Some(payload_for_seg),
-            consume_start: open_span.start,
-            consume_end: close_span.end,
-        })
+            consume_start: directive_span.start,
+            consume_end: directive_span.end,
+            pending_diagnostic,
+        }
     }
 }
 
@@ -2612,7 +2725,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+    ) -> Option<(borrowed::AozoraNode<'a>, u32, bool)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // Shape 1: `に<kind>` — default right-side placement.
         // Shape 2: `の左に<kind>` — left-side placement (position flipped).
@@ -2668,11 +2781,25 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             open_span.start
         };
         let consumed_predecessor = consume_start < open_span.start;
+        // Ambiguity: a *single* target that occurs more than once in the
+        // look-back window has no unique referent. Multi-target brackets
+        // (`「A」「B」`) name distinct runs and are not "ambiguous" in this
+        // sense, so they never flag. `matches` counts non-overlapping
+        // occurrences, which is the right notion of "candidate runs".
+        let ambiguous = if let [only] = extracted.targets.as_slice() {
+            self.source[..open_span.start as usize]
+                .matches(only)
+                .count()
+                >= 2
+        } else {
+            false
+        };
         let target = build_bouten_target(&extracted.targets, self.alloc);
         Some((
             self.alloc
                 .bouten(kind, target, position, consumed_predecessor),
             consume_start,
+            ambiguous,
         ))
     }
 }
@@ -2711,6 +2838,22 @@ fn build_bouten_target<'a>(
     }
 }
 
+/// Outcome of [`RecogniseCtx::classify_forward_tcy`].
+///
+/// Distinguishes a recognised 縦中横 from a directive whose `は縦中横`
+/// shape matched but whose target is absent from the look-back (which
+/// still warrants a `tcy_target_not_found` warning even though the
+/// bracket degrades to `Annotation{Unknown}`), and from a bracket that is
+/// not a 縦中横 directive at all (silent fall-through).
+enum ForwardTcy<'a> {
+    /// A 縦中横 with a located target — the node plus its consume start.
+    Recognised(borrowed::AozoraNode<'a>, u32),
+    /// `は縦中横` shape matched but the target has no preceding referent.
+    ShapedNoTarget,
+    /// Not a 縦中横 directive.
+    NotTcy,
+}
+
 /// Classify a `［＃「target」は縦中横］` forward-reference
 /// tate-chu-yoko (horizontal-in-vertical) annotation.
 ///
@@ -2729,36 +2872,43 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
-        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+    ) -> ForwardTcy<'a> {
+        let Some(extracted) = extract_forward_quote_targets(view, self.source, open_idx, close_idx)
+        else {
+            return ForwardTcy::NotTcy;
+        };
         if extracted.suffix != "は縦中横" {
-            return None;
+            return ForwardTcy::NotTcy;
         }
-        let first = extracted.targets.first()?;
-        // Same rationale as `classify_forward_bouten` — the styling has no
-        // meaning without a preceding target literal.
+        let Some(first) = extracted.targets.first() else {
+            return ForwardTcy::NotTcy;
+        };
+        // The shape is a 縦中横 directive. If its target has no referent in
+        // the preceding text the styling is meaningless — flag it (the
+        // caller turns this into `tcy_target_not_found`) and let the bracket
+        // fall through to `Annotation{Unknown}`.
         if !forward_target_is_preceded(view.events, self.source, open_idx, first) {
-            return None;
+            return ForwardTcy::ShapedNoTarget;
         }
         // Same `consume_start` shrink as `classify_forward_bouten`: pull
         // the span back to swallow the immediately-preceding literal so
         // `昭和64［＃「64」は縦中横］年` renders as `昭和<span
         // class="tcy">64</span>年` instead of doubling the digits.
-        let &PairEvent::PairOpen {
+        let Some(&PairEvent::PairOpen {
             span: open_span, ..
-        } = view.events.get(open_idx)?
+        }) = view.events.get(open_idx)
         else {
-            return None;
+            return ForwardTcy::NotTcy;
         };
         let consume_start =
             find_immediate_predecessor_target_position(view.events, self.source, open_idx, first)
                 .unwrap_or(open_span.start);
         let consumed_predecessor = consume_start < open_span.start;
         let text = self.alloc.content_plain(first);
-        Some((
+        ForwardTcy::Recognised(
             self.alloc.tate_chu_yoko(text, consumed_predecessor),
             consume_start,
-        ))
+        )
     }
 }
 

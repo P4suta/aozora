@@ -20,6 +20,26 @@ pub enum ContainerKind {
     AlignEnd { offset: u8 },
 }
 
+impl ContainerKind {
+    /// Stable lowercase tag naming the container *family*, ignoring the
+    /// `amount` / `offset` payload (so `Indent { amount: 2 }` and
+    /// `Indent { amount: 0 }` both report `"indent"`).
+    ///
+    /// Used by human-facing diagnostics — e.g.
+    /// [`aozora_spec::Diagnostic::mismatched_container_close`] — that need
+    /// to name a mismatched open/close pair. (The `aozora` wire format
+    /// keeps its own camelCase mapping for the machine contract.)
+    #[must_use]
+    pub const fn kind_str(self) -> &'static str {
+        match self {
+            Self::Indent { .. } => "indent",
+            Self::Warichu => "warichu",
+            Self::Keigakomi => "keigakomi",
+            Self::AlignEnd { .. } => "align-end",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -31,5 +51,21 @@ mod tests {
         // u8 + discriminant, must fit in a few bytes so downstream
         // vector entries stay tight.
         assert!(size_of::<ContainerKind>() <= 4);
+    }
+
+    #[test]
+    fn kind_str_ignores_payload_and_covers_every_family() {
+        assert_eq!(ContainerKind::Indent { amount: 2 }.kind_str(), "indent");
+        assert_eq!(ContainerKind::Indent { amount: 0 }.kind_str(), "indent");
+        assert_eq!(ContainerKind::Warichu.kind_str(), "warichu");
+        assert_eq!(ContainerKind::Keigakomi.kind_str(), "keigakomi");
+        assert_eq!(
+            ContainerKind::AlignEnd { offset: 0 }.kind_str(),
+            "align-end"
+        );
+        assert_eq!(
+            ContainerKind::AlignEnd { offset: 3 }.kind_str(),
+            "align-end"
+        );
     }
 }

@@ -115,15 +115,28 @@ pub fn sanitize(source: &str) -> SanitizeOutput<'_> {
     // cost on every char of the input. memmem uses Two-Way / SIMD on
     // the 3-byte needle and zooms through Japanese prose at memory-
     // bandwidth speed.
+    let mut accent_diagnostics: Vec<Diagnostic> = Vec::new();
     let text: Cow<'_, str> =
         if memmem::find(rule_isolated.as_bytes(), TORTOISE_OPEN_BYTES).is_some() {
             let owned = rule_isolated.into_owned();
-            Cow::Owned(rewrite_accent_spans(&owned))
+            Cow::Owned(rewrite_accent_spans_collecting(
+                &owned,
+                &mut accent_diagnostics,
+            ))
         } else {
             rule_isolated
         };
 
-    let (text, diagnostics) = neutralize_sentinel_collisions(text);
+    let (text, pua_diagnostics) = neutralize_sentinel_collisions(text);
+
+    // Both accent notes and PUA-collision warnings are Phase-0 diagnostics
+    // (ordinal 0). The PUA scan runs on the post-accent buffer and its
+    // neutralization is byte-length-preserving, so the accent spans
+    // (output coordinates) and the PUA spans share one coordinate system.
+    // Order them in emission order: accent rewrite happens before the
+    // sentinel scan, so accent notes come first.
+    let mut diagnostics = accent_diagnostics;
+    diagnostics.extend(pua_diagnostics);
 
     SanitizeOutput { text, diagnostics }
 }
@@ -206,6 +219,26 @@ const REPLACEMENT_CHAR: char = '\u{FFFD}';
 #[doc(hidden)]
 #[must_use]
 pub fn rewrite_accent_spans(input: &str) -> String {
+    // Discard the per-span notes; the public, diagnostic-free entry point
+    // keeps its `-> String` shape for existing callers and tests.
+    let mut sink = Vec::new();
+    rewrite_accent_spans_collecting(input, &mut sink)
+}
+
+/// As [`rewrite_accent_spans`], but additionally pushes one
+/// [`Diagnostic::accent_decomposition_applied`] (a `Note`) for every
+/// `〔…〕` span whose body is actually rewritten — i.e. a digraph was
+/// decomposed (`decompose_fragment` returns a value differing from the
+/// body); a `〔…〕` that contains no accent digraph is silent.
+///
+/// Spans are reported in **output (post-decomposition) coordinates**.
+/// Accent decomposition is *not* byte-length-preserving (unlike the PUA
+/// neutralization pass), so an input-coordinate span would slide once the
+/// first digraph changes width. The downstream phases — and the CLI's
+/// miette renderer — see the rewritten text, so output coordinates put
+/// the caret on the right characters. The span brackets the whole
+/// `〔decomposed〕` run (open through close).
+fn rewrite_accent_spans_collecting(input: &str, diagnostics: &mut Vec<Diagnostic>) -> String {
     let mut out = String::with_capacity(input.len());
     let mut cursor = 0;
 
@@ -228,10 +261,31 @@ pub fn rewrite_accent_spans(input: &str) -> String {
         };
         let close_abs = after_open + close_rel;
 
-        out.push(TORTOISE_OPEN);
         let body = &input[after_open..close_abs];
-        out.push_str(&decompose_fragment(body));
+        let decomposed = decompose_fragment(body);
+
+        // Capture the output-coordinate span around the three pushes so
+        // the recorded offsets track the rewritten buffer, not the input.
+        let out_open = out.len();
+        out.push(TORTOISE_OPEN);
+        out.push_str(&decomposed);
         out.push(TORTOISE_CLOSE);
+        let out_close = out.len();
+
+        if decomposed.as_ref() != body {
+            // `out.len()` fits u32 by the same sanitize-entry length cap
+            // that bounds the PUA scan; accent decomposition only ever
+            // adds a bounded handful of combining bytes per digraph.
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "sanitized text length <= u32::MAX is asserted at sanitize entry"
+            )]
+            diagnostics.push(Diagnostic::accent_decomposition_applied(Span::new(
+                out_open as u32,
+                out_close as u32,
+            )));
+        }
+
         cursor = close_abs + TORTOISE_CLOSE.len_utf8();
     }
 

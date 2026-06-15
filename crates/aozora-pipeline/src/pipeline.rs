@@ -85,6 +85,8 @@ use core::marker::PhantomData;
 use crate::lexer::{PairEvent, Token, classify, pair_in, sanitize, tokenize_in};
 use aozora_spec::{Diagnostic, PairLink};
 use aozora_syntax::ContainerKind;
+use core::mem::take;
+
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, ContainerPair, Registry};
 use bumpalo::collections::Vec as BumpVec;
@@ -337,6 +339,12 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
             classify_stream.take_diagnostics()
         };
         self.diagnostics.extend(classify_diagnostics);
+        // Normalizer diagnostics (e.g. mismatched container close) are
+        // produced during the `emit` fold above but buffered on the
+        // builder; append them *after* the Phase-3 classify set so the
+        // final vector stays in pipeline-phase order (the normalizer is
+        // the post-Phase-3 fold). See `tests/diagnostic_ordering.rs`.
+        self.diagnostics.extend(take(&mut builder.diagnostics));
 
         let normalized: &'a str = self.arena.alloc_str(&builder.out);
         // Single-table Registry: classifier emits in source order so

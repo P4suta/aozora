@@ -1,12 +1,12 @@
 {
   "implementation": "rust",
-  "total": 23,
-  "passed": 23,
+  "total": 30,
+  "passed": 30,
   "failed": 0,
   "by_level": {
     "may": {
-      "total": 1,
-      "passed": 1,
+      "total": 2,
+      "passed": 2,
       "failed": 0
     },
     "must": {
@@ -15,12 +15,19 @@
       "failed": 0
     },
     "should": {
-      "total": 4,
-      "passed": 4,
+      "total": 10,
+      "passed": 10,
       "failed": 0
     }
   },
   "cases": [
+    {
+      "case": "accent_decomposition_applied",
+      "feature": "accent",
+      "level": "may",
+      "passed": true,
+      "message": null
+    },
     {
       "case": "align_end_container",
       "feature": "container",
@@ -43,9 +50,23 @@
       "message": null
     },
     {
+      "case": "bouten_target_ambiguous",
+      "feature": "bouten",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
       "case": "double_ruby",
       "feature": "ruby",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "empty_ruby_reading",
+      "feature": "ruby",
+      "level": "should",
       "passed": true,
       "message": null
     },
@@ -92,6 +113,13 @@
       "message": null
     },
     {
+      "case": "mismatched_container_close",
+      "feature": "container",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
       "case": "mixed_ruby_bouten",
       "feature": "composite",
       "level": "must",
@@ -101,6 +129,13 @@
     {
       "case": "nested_containers",
       "feature": "composite",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "nested_ruby",
+      "feature": "ruby",
       "level": "should",
       "passed": true,
       "message": null
@@ -172,6 +207,20 @@
       "case": "unclosed_bracket",
       "feature": "recovery",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "unrecognised_container_directive",
+      "feature": "container",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "unresolved_gaiji",
+      "feature": "gaiji",
+      "level": "should",
       "passed": true,
       "message": null
     },
