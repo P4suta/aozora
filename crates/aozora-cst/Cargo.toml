@@ -1,6 +1,6 @@
 [package]
 name        = "aozora-cst"
-description = "Lossless concrete syntax tree (CST) for the aozora parser — rowan-backed projection from BorrowedLexOutput."
+description = "Lossless concrete syntax tree (CST) for the aozora parser — rowan-backed projection from BorrowedLexOutput. Internal crate; reach it via the aozora crate's `cst` feature."
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -10,12 +10,6 @@ authors.workspace      = true
 readme.workspace       = true
 keywords.workspace     = true
 categories.workspace   = true
-
-# Phase N1 — workspace member, not yet on crates.io. The CST is a
-# pure projection over `aozora::AozoraTree`'s public surface (no
-# changes to the lex pipeline) so the API can absorb downstream
-# usage before publish=true.
-publish = false
 
 [lints]
 workspace = true
@@ -30,6 +24,6 @@ aozora-spec     = { workspace = true }
 rowan           = { workspace = true }
 
 [dev-dependencies]
-aozora          = { workspace = true }
-aozora-proptest = { workspace = true }
+aozora          = { path = "../aozora" }
+aozora-proptest = { path = "../aozora-proptest" }
 proptest        = { workspace = true }

@@ -1,6 +1,6 @@
 [package]
 name        = "aozora-render"
-description = "HTML / serialisation renderers for the aozora AST"
+description = "HTML / serialisation renderers for the aozora AST. Internal crate; depend on the aozora umbrella crate instead."
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -10,7 +10,6 @@ authors.workspace      = true
 readme.workspace       = true
 keywords.workspace     = true
 categories.workspace   = true
-publish     = false
 
 [lints]
 workspace = true
@@ -24,5 +23,5 @@ memchr          = { workspace = true }
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 proptest          = { workspace = true }
-aozora-proptest   = { workspace = true }
+aozora-proptest   = { path = "../aozora-proptest" }
 insta             = { workspace = true }

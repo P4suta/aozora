@@ -1,6 +1,6 @@
 [package]
 name        = "aozora-encoding"
-description = "Aozora Bunko notation: Shift_JIS decoding and gaiji (外字) resolution"
+description = "Aozora Bunko notation: Shift_JIS decoding and gaiji (外字) resolution. Internal crate; depend on the aozora umbrella crate instead."
 version.workspace     = true
 edition.workspace     = true
 rust-version.workspace = true
@@ -10,7 +10,6 @@ authors.workspace     = true
 readme.workspace      = true
 keywords.workspace    = true
 categories.workspace  = true
-publish     = false
 
 [lints]
 workspace = true

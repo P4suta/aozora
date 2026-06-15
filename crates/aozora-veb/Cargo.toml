@@ -1,6 +1,6 @@
 [package]
 name        = "aozora-veb"
-description = "Cache-friendly sorted-collection lookup for the aozora pipeline (Eytzinger layout, no_std)"
+description = "Cache-friendly sorted-collection lookup for the aozora pipeline (Eytzinger layout, no_std). Internal crate; depend on the aozora umbrella crate instead."
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -11,12 +11,6 @@ readme.workspace       = true
 keywords.workspace     = true
 categories.workspace   = true
 
-# Internal dev-only support crate. Not published to crates.io —
-# the registry depends on it via path, and the algorithm is general
-# enough that we'd want a separate strategic decision before exposing
-# it as a public crate.
-publish     = false
-
 [lints]
 workspace = true
 
@@ -25,4 +19,4 @@ workspace = true
 
 [dev-dependencies]
 proptest        = { workspace = true }
-aozora-proptest = { workspace = true }
+aozora-proptest = { path = "../aozora-proptest" }
