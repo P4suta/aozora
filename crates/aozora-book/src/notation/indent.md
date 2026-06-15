@@ -1,79 +1,69 @@
 # Indent & align containers (字下げ)
 
 Aozora Bunko uses paired `［＃ここから…］` / `［＃ここで…終わり］`
-brackets to delimit blocks of text with custom layout. The five
-families:
+brackets to delimit blocks of text with custom layout. The block
+container families aozora recognises:
 
 | Family | Opener | Closer | Effect |
 |---|---|---|---|
 | 字下げ (indent) | `［＃ここから2字下げ］` | `［＃ここで字下げ終わり］` | Indent every line by N full-width chars |
-| 地付き (right-flush) | `［＃ここから地付き］` | `［＃ここで地付き終わり］` | Flush right (vertical: 地 = ground = bottom) |
-| 地寄せ (right-align with margin) | `［＃ここから2字下げ、地寄せ］` | `［＃ここで字下げ終わり］` | Right-align with N-char inset |
-| 字詰め (line-length) | `［＃ここから30字詰め］` | `［＃ここで字詰め終わり］` | Force a line length of N chars |
-| 中央揃え | `［＃ここから中央揃え］` | `［＃ここで中央揃え終わり］` | Centre each line |
+| 地付き / 地上げ (align-end) | `［＃ここから地付き］` / `［＃ここから地から2字上げ］` | `［＃ここで地付き終わり］` | Flush right (vertical: 地 = ground = bottom) |
+| 罫囲み (boxed) | `［＃罫囲み］` | `［＃罫囲み終わり］` | Draw a rule frame around the block |
 
-aozora parses every variant; the HTML renderer maps them to a
-`<div class="aozora-indent-N">` / `aozora-align-end` / etc. wrapper.
+The HTML renderer maps them to `<div class="aozora-container …">` wrappers.
+Two more container kinds are **inline**, not block: 割り注
+(`［＃割り注］…［＃割り注終わり］`) and the 傍点 / 傍線 range form
+(`［＃傍点］…［＃傍点終わり］`, see [bouten](bouten.md)).
 
 ## Single-line forms
 
-Some directives apply only to the next single line and don't need a
-closer:
+The 字下げ / 地付き / 地上げ directives also have a **single-line** form
+(no `ここから` prefix, no closer) that applies to the rest of the line:
 
 ```text
 　［＃地付き］平和への誓い
 ```
 
-Renders as:
+In the borrowed AST a single-line directive is a **zero-width marker**
+node (`AozoraNode::Indent` / `AlignEnd`), not a wrapping container — it
+renders as an empty span and the following text stays a sibling:
 
 ```html
-<div class="aozora-align-end">平和への誓い</div>
+<span class="aozora-align-end aozora-align-end-0" data-offset="0"></span>平和への誓い
 ```
+
+A page / section break sharing the line with such a marker drops it —
+see [`break_in_single_line_container`](diagnostics.md#break-in-single-line-container).
 
 ## AST shape
 
+A paired block container is one `Container` node tagging the wrapped
+children (the lexer splices the enclosed siblings under it during
+post-processing); single-line forms and breaks are leaf nodes:
+
 ```rust
-pub struct Container<'src> {
-    pub kind:    ContainerKind,
-    pub indent:  Option<u8>,      // 字 count for indent variants
-    pub form:    ContainerForm,   // SingleLine | Block
-    pub children: &'src [AozoraNode<'src>],
-    pub span:    Span,
+pub struct Container {
+    pub kind: ContainerKind,
 }
 
 pub enum ContainerKind {
-    Indent,
-    AlignEnd,
-    AlignEndWithIndent,
-    LineLength,
-    Centre,
-    /// Composite: indent + align-end on a single block.
-    Composite { indent: u8, align: ContainerAlign },
-    /// Bouten / 縦中横 / 鎖線 / 罫囲み container forms.
-    Emphasis(EmphasisKind),
-    /// Spec-listed but not present in maintained corpus.
-    Unknown,
+    Indent { amount: u8 },    // ［＃ここからN字下げ］
+    AlignEnd { offset: u8 },  // ［＃ここから地付き / 地からN字上げ］
+    Keigakomi,                // ［＃罫囲み］
+    Warichu,                  // ［＃割り注］           (inline)
+    BoutenRange { kind: BoutenKind, position: BoutenPosition }, // ［＃傍点］… (inline)
 }
 ```
 
 ## Why a small flat enum?
 
-`ContainerKind` is closed by spec. A flat `enum` (vs a trait object
-or string tag) gives the parser O(1) variant dispatch in the lexer's
-classify phase and the renderer's HTML walk, *and* lets clippy's
-exhaustiveness check enforce that every variant has a render path.
-
-The `Composite` variant is the one place we *don't* extend the enum
-horizontally — composite indent+align combinations would explode the
-enum to ~30 variants, most of which never appear in real corpus. A
-nested struct with a sub-enum keeps the variant count finite while
-staying matchable.
-
-`large_enum_variant` clippy lint: `Container::Composite` is the
-largest variant at 4 bytes; the others are ≤ 2 bytes. The variant
-data is tiny enough that boxing would add a pointer chase for no
-real layout win — see the `[workspace.lints.clippy]
-large_enum_variant = "allow"` carve-out in `Cargo.toml`.
+`ContainerKind` is closed by spec. A flat `enum` (vs a trait object or
+string tag) gives the parser O(1) variant dispatch in the classify phase
+and the renderer's HTML walk, *and* lets the compiler's exhaustiveness
+check enforce that every variant has a render path. The payloads are tiny
+(`u8` / `BoutenKind` / `BoutenPosition`), so the whole enum stays within a
+few bytes — pinned by the `container_kind_is_copy_and_fits_in_a_word`
+assertion.
 
 ## Composition
 

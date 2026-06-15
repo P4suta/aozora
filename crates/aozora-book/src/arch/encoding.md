@@ -106,7 +106,7 @@ wrong even if our JIS table disagreed. `Lookup` is the common case.
 `Fallback` is the curated subset of characters that have no Unicode
 codepoint at all (~120 entries from the 14 000); we ship a
 descriptive-text rendering rather than dropping the character.
-`Unknown` fires diagnostic [`W0006`](../notation/diagnostics.md#W0006).
+`Unknown` fires diagnostic [`unresolved_gaiji`](../notation/diagnostics.md#unresolved-gaiji).
 
 ## Accent decomposition
 

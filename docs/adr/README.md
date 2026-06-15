@@ -16,6 +16,7 @@ just new-adr "Short imperative title"
 | [0003](0003-accent-decomposition-preparse.md) | Accent decomposition preparse | accepted |
 | [0004](0004-lint-profile-policy.md) | Lint profile policy | accepted |
 | [0005](0005-corpus-sweep-strategy.md) | Corpus sweep strategy | accepted |
+| [0010](0010-bouten-and-bousen-range-containers-as-a-first-class-notation-feature.md) | Bouten / bousen range containers as a first-class notation feature | accepted |
 
 ## Numbering
 

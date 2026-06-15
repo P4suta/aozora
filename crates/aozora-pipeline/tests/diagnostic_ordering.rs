@@ -42,10 +42,14 @@ fn phase_ordinal(d: &Diagnostic) -> u8 {
             | codes::NESTED_RUBY
             | codes::UNRECOGNISED_CONTAINER_DIRECTIVE
             | codes::TCY_TARGET_NOT_FOUND
-            | codes::BOUTEN_TARGET_AMBIGUOUS => 3,
+            | codes::BOUTEN_TARGET_AMBIGUOUS
+            | codes::BRACKETED_KAERITEN_NO_PAIR
+            | codes::KAERITEN_OUTSIDE_KANBUN => 3,
             // Post-Phase-3 normalizer fold (same slot as the Internal
             // validators below, which also run after classify).
-            codes::MISMATCHED_CONTAINER_CLOSE => 4,
+            codes::MISMATCHED_CONTAINER_CLOSE
+            | codes::BREAK_IN_SINGLE_LINE_CONTAINER
+            | codes::MISMATCHED_BOUTEN_CONTAINER => 4,
             _ => 99,
         },
         // Pipeline-internal validators run after Phase 3.

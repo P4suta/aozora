@@ -65,6 +65,8 @@ appear in the maintained corpus:
 - **キャプション alignment** edge cases that the spec lists but no
   active work uses (verified against the corpus sweep).
 
-These are recognised as `Container::Unknown` with a
-[`W0010`](diagnostics.md#W0010) advisory diagnostic. Adding full
-support is a one-PR job once a real corpus document needs it.
+These are kept as a generic `Annotation{Unknown}` and rendered
+best-effort (the "no bare `［＃`" guarantee still holds); a `ここから…`
+opener that names no known container also emits
+[`unrecognised_container_directive`](diagnostics.md#unrecognised-container-directive).
+Adding full support is a one-PR job once a real corpus document needs it.

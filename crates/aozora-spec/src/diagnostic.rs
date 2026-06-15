@@ -89,6 +89,18 @@ pub mod codes {
     /// A forward-reference bouten target occurs more than once before it.
     pub const BOUTEN_TARGET_AMBIGUOUS: &str = "aozora::lex::bouten_target_ambiguous";
 
+    /// A page/section break appeared inside a single-line container.
+    pub const BREAK_IN_SINGLE_LINE_CONTAINER: &str = "aozora::lex::break_in_single_line_container";
+
+    /// A bracketed kaeriten (`［＃二］`) has no matching lower-rank partner.
+    pub const BRACKETED_KAERITEN_NO_PAIR: &str = "aozora::lex::bracketed_kaeriten_no_pair";
+
+    /// A kaeriten appeared outside a 漢文-like context (lookahead heuristic).
+    pub const KAERITEN_OUTSIDE_KANBUN: &str = "aozora::lex::kaeriten_outside_kanbun";
+
+    /// A 傍点 range opener was closed by a 傍線 closer (or vice-versa).
+    pub const MISMATCHED_BOUTEN_CONTAINER: &str = "aozora::lex::mismatched_bouten_container";
+
     /// Pipeline-internal: an `［＃` digraph survived classification
     /// into the normalized text. Indicates a missing recogniser for
     /// the keyword.
@@ -490,6 +502,119 @@ pub enum Diagnostic {
         span: Span,
     },
 
+    /// A page or section break (`［＃改ページ］` / `［＃改段］` / …) appeared
+    /// inside a single-line container — a single-line layout directive
+    /// (`［＃地付き］` / `［＃N字下げ］`) sharing a source line with a later
+    /// break, or a break between `［＃割り注］` and `［＃割り注終わり］`. A
+    /// single-line container governs only the rest of its line, so a break
+    /// on that line drops the container's effect. The label points at the
+    /// break. `container` is the stable family tag of the dropped container
+    /// (`indent` / `align-end` / `warichu`).
+    #[error("page/section break inside a single-line `{container}` container")]
+    #[diagnostic(
+        code("aozora::lex::break_in_single_line_container"),
+        url(
+            "https://p4suta.github.io/aozora/notation/diagnostics.html#break-in-single-line-container"
+        ),
+        severity(Warning),
+        help(
+            "a single-line container governs only the rest of its line — move \
+             the break off the line, or use the paired `［＃ここから…］` … \
+             `［＃ここで…終わり］` block form that persists across breaks"
+        )
+    )]
+    BreakInSingleLineContainer {
+        #[label("break drops the container")]
+        at: miette::SourceSpan,
+        /// Stable family tag of the dropped single-line container
+        /// (`indent` / `align-end` / `warichu`).
+        container: &'static str,
+        /// Byte-range of the break directive in the sanitized source.
+        span: Span,
+    },
+
+    /// A bracketed kaeriten of rank ≥ 2 (`［＃二］` / `［＃下］` / `［＃乙］` …)
+    /// appeared in a document whose matching family base (`［＃一］` /
+    /// `［＃上］` / `［＃甲］`) is absent entirely — there is nothing for the
+    /// return mark to pair back to. The check is document-wide and
+    /// base-only: kanbun return-mark groups routinely span `、` / `。` and
+    /// line boundaries and 上下点 skips `中`, so any narrower scope misfires
+    /// on valid kanbun. The label points at the unpaired mark.
+    #[error("bracketed kaeriten has no matching base mark in the document")]
+    #[diagnostic(
+        code("aozora::lex::bracketed_kaeriten_no_pair"),
+        url(
+            "https://p4suta.github.io/aozora/notation/diagnostics.html#bracketed-kaeriten-no-pair"
+        ),
+        help(
+            "a return mark needs its family base somewhere in the document — \
+             a `［＃二］`/`［＃三］` needs a `［＃一］`, a `［＃下］`/`［＃中］` needs \
+             a `［＃上］`, a `［＃乙］`… needs a `［＃甲］`"
+        )
+    )]
+    BracketedKaeritenNoPair {
+        #[label("unpaired kaeriten")]
+        at: miette::SourceSpan,
+        /// Byte-range of the `［＃…］` kaeriten directive in the sanitized
+        /// source.
+        span: Span,
+    },
+
+    /// A kaeriten (`［＃二］` / `［＃レ］` / …) appeared outside a 漢文-like
+    /// context — it is the only kaeriten in the document and its
+    /// surroundings read as ordinary kana prose, so the mark is most likely
+    /// a stray annotation rather than a genuine return mark. Conservative
+    /// lookahead heuristic: a document with a cluster of kaeriten is never
+    /// flagged. The label points at the lone mark.
+    #[error("kaeriten outside a 漢文-like context")]
+    #[diagnostic(
+        code("aozora::lex::kaeriten_outside_kanbun"),
+        url("https://p4suta.github.io/aozora/notation/diagnostics.html#kaeriten-outside-kanbun"),
+        severity(Warning),
+        help(
+            "this is the only kaeriten in the document and its surroundings \
+             look like ordinary prose — check it is a genuine 返り点 and not a \
+             stray `［＃…］` annotation"
+        )
+    )]
+    KaeritenOutsideKanbun {
+        #[label("isolated kaeriten")]
+        at: miette::SourceSpan,
+        /// Byte-range of the `［＃…］` kaeriten directive in the sanitized
+        /// source.
+        span: Span,
+    },
+
+    /// A 傍点 / 傍線 range form (`［＃傍点］ … ［＃傍点終わり］`) was opened with
+    /// one family (点 / 線) and closed by the other — e.g. a `［＃傍点］`
+    /// opener closed by `［＃傍線終わり］`. The two families render
+    /// differently (dots vs a line), so the run's emphasis is ambiguous.
+    /// The parser recovers by keying the run to the opener's variant. The
+    /// label points at the close marker. `open_family` / `close_family`
+    /// are the stable family tags (`傍点` / `傍線`).
+    #[error("傍点 range opened as `{open_family}` closed by a `{close_family}` closer")]
+    #[diagnostic(
+        code("aozora::lex::mismatched_bouten_container"),
+        url(
+            "https://p4suta.github.io/aozora/notation/diagnostics.html#mismatched-bouten-container"
+        ),
+        help(
+            "close a 傍点 range with `［＃傍点終わり］` (any 点 variant) and a 傍線 \
+             range with `［＃傍線終わり］` (any 線 variant) — match the opener's \
+             family"
+        )
+    )]
+    MismatchedBoutenContainer {
+        #[label("mismatched close")]
+        at: miette::SourceSpan,
+        /// Family of the *open* marker (`傍点` / `傍線`).
+        open_family: &'static str,
+        /// Family named by the *close* marker.
+        close_family: &'static str,
+        /// Byte-range of the close marker in the sanitized source.
+        span: Span,
+    },
+
     /// Pipeline-internal sanity-check failure — production parses on
     /// well-formed input never emit this. The [`check`](Self::Internal)
     /// payload identifies the specific check via the typed
@@ -648,6 +773,57 @@ impl Diagnostic {
         }
     }
 
+    /// Constructor for [`Diagnostic::BreakInSingleLineContainer`]. The
+    /// `container` is the stable family tag of the dropped single-line
+    /// container (`indent` / `align-end` / `warichu`).
+    #[must_use]
+    pub fn break_in_single_line_container(at: Span, container: &'static str) -> Self {
+        let (offset, length) = span_to_miette_parts(at);
+        Self::BreakInSingleLineContainer {
+            at: miette::SourceSpan::new(offset.into(), length),
+            container,
+            span: at,
+        }
+    }
+
+    /// Constructor for [`Diagnostic::BracketedKaeritenNoPair`].
+    #[must_use]
+    pub fn bracketed_kaeriten_no_pair(at: Span) -> Self {
+        let (offset, length) = span_to_miette_parts(at);
+        Self::BracketedKaeritenNoPair {
+            at: miette::SourceSpan::new(offset.into(), length),
+            span: at,
+        }
+    }
+
+    /// Constructor for [`Diagnostic::KaeritenOutsideKanbun`].
+    #[must_use]
+    pub fn kaeriten_outside_kanbun(at: Span) -> Self {
+        let (offset, length) = span_to_miette_parts(at);
+        Self::KaeritenOutsideKanbun {
+            at: miette::SourceSpan::new(offset.into(), length),
+            span: at,
+        }
+    }
+
+    /// Constructor for [`Diagnostic::MismatchedBoutenContainer`]. The
+    /// `open_family` / `close_family` are the stable 点/線 family tags
+    /// (`aozora_syntax::BoutenKind::family_str`).
+    #[must_use]
+    pub fn mismatched_bouten_container(
+        at: Span,
+        open_family: &'static str,
+        close_family: &'static str,
+    ) -> Self {
+        let (offset, length) = span_to_miette_parts(at);
+        Self::MismatchedBoutenContainer {
+            at: miette::SourceSpan::new(offset.into(), length),
+            open_family,
+            close_family,
+            span: at,
+        }
+    }
+
     /// Constructor for [`Diagnostic::Internal`]. Takes a typed
     /// [`InternalCheckCode`] — the compiler enforces that every
     /// production emit-site classifies the check correctly.
@@ -674,13 +850,17 @@ impl Diagnostic {
             | Self::UnresolvedGaiji { .. }
             | Self::UnrecognisedContainerDirective { .. }
             | Self::TcyTargetNotFound { .. }
-            | Self::BoutenTargetAmbiguous { .. } => Severity::Warning,
+            | Self::BoutenTargetAmbiguous { .. }
+            | Self::BreakInSingleLineContainer { .. }
+            | Self::KaeritenOutsideKanbun { .. } => Severity::Warning,
             Self::AccentDecompositionApplied { .. } => Severity::Note,
             Self::UnclosedBracket { .. }
             | Self::UnmatchedClose { .. }
             | Self::MismatchedContainerClose { .. }
             | Self::EmptyRubyReading { .. }
             | Self::NestedRuby { .. }
+            | Self::BracketedKaeritenNoPair { .. }
+            | Self::MismatchedBoutenContainer { .. }
             | Self::Internal { .. } => Severity::Error,
         }
     }
@@ -700,7 +880,11 @@ impl Diagnostic {
             | Self::NestedRuby { .. }
             | Self::UnrecognisedContainerDirective { .. }
             | Self::TcyTargetNotFound { .. }
-            | Self::BoutenTargetAmbiguous { .. } => DiagnosticSource::Source,
+            | Self::BoutenTargetAmbiguous { .. }
+            | Self::BreakInSingleLineContainer { .. }
+            | Self::BracketedKaeritenNoPair { .. }
+            | Self::KaeritenOutsideKanbun { .. }
+            | Self::MismatchedBoutenContainer { .. } => DiagnosticSource::Source,
             Self::Internal { .. } => DiagnosticSource::Internal,
         }
     }
@@ -720,6 +904,10 @@ impl Diagnostic {
             | Self::UnrecognisedContainerDirective { span, .. }
             | Self::TcyTargetNotFound { span, .. }
             | Self::BoutenTargetAmbiguous { span, .. }
+            | Self::BreakInSingleLineContainer { span, .. }
+            | Self::BracketedKaeritenNoPair { span, .. }
+            | Self::KaeritenOutsideKanbun { span, .. }
+            | Self::MismatchedBoutenContainer { span, .. }
             | Self::Internal { span, .. } => *span,
         }
     }
@@ -742,6 +930,10 @@ impl Diagnostic {
             Self::UnrecognisedContainerDirective { .. } => codes::UNRECOGNISED_CONTAINER_DIRECTIVE,
             Self::TcyTargetNotFound { .. } => codes::TCY_TARGET_NOT_FOUND,
             Self::BoutenTargetAmbiguous { .. } => codes::BOUTEN_TARGET_AMBIGUOUS,
+            Self::BreakInSingleLineContainer { .. } => codes::BREAK_IN_SINGLE_LINE_CONTAINER,
+            Self::BracketedKaeritenNoPair { .. } => codes::BRACKETED_KAERITEN_NO_PAIR,
+            Self::KaeritenOutsideKanbun { .. } => codes::KAERITEN_OUTSIDE_KANBUN,
+            Self::MismatchedBoutenContainer { .. } => codes::MISMATCHED_BOUTEN_CONTAINER,
             Self::Internal { check, .. } => check.as_code(),
         }
     }
@@ -918,6 +1110,22 @@ mod tests {
             "aozora::lex::bouten_target_ambiguous"
         );
         assert_eq!(
+            codes::BREAK_IN_SINGLE_LINE_CONTAINER,
+            "aozora::lex::break_in_single_line_container"
+        );
+        assert_eq!(
+            codes::BRACKETED_KAERITEN_NO_PAIR,
+            "aozora::lex::bracketed_kaeriten_no_pair"
+        );
+        assert_eq!(
+            codes::KAERITEN_OUTSIDE_KANBUN,
+            "aozora::lex::kaeriten_outside_kanbun"
+        );
+        assert_eq!(
+            codes::MISMATCHED_BOUTEN_CONTAINER,
+            "aozora::lex::mismatched_bouten_container"
+        );
+        assert_eq!(
             codes::RESIDUAL_ANNOTATION_MARKER,
             "aozora::lex::residual_annotation_marker"
         );
@@ -992,6 +1200,27 @@ mod tests {
         assert_eq!(bouten.severity(), Severity::Warning);
         assert_eq!(bouten.source(), DiagnosticSource::Source);
         assert_eq!(bouten.code(), codes::BOUTEN_TARGET_AMBIGUOUS);
+
+        let break_slc = Diagnostic::break_in_single_line_container(Span::new(0, 18), "align-end");
+        assert_eq!(break_slc.severity(), Severity::Warning);
+        assert_eq!(break_slc.source(), DiagnosticSource::Source);
+        assert_eq!(break_slc.code(), codes::BREAK_IN_SINGLE_LINE_CONTAINER);
+
+        let kaeriten_pair = Diagnostic::bracketed_kaeriten_no_pair(Span::new(0, 9));
+        assert_eq!(kaeriten_pair.severity(), Severity::Error);
+        assert_eq!(kaeriten_pair.source(), DiagnosticSource::Source);
+        assert_eq!(kaeriten_pair.code(), codes::BRACKETED_KAERITEN_NO_PAIR);
+
+        let kaeriten_kanbun = Diagnostic::kaeriten_outside_kanbun(Span::new(0, 9));
+        assert_eq!(kaeriten_kanbun.severity(), Severity::Warning);
+        assert_eq!(kaeriten_kanbun.source(), DiagnosticSource::Source);
+        assert_eq!(kaeriten_kanbun.code(), codes::KAERITEN_OUTSIDE_KANBUN);
+
+        let bouten_mismatch =
+            Diagnostic::mismatched_bouten_container(Span::new(0, 12), "傍点", "傍線");
+        assert_eq!(bouten_mismatch.severity(), Severity::Error);
+        assert_eq!(bouten_mismatch.source(), DiagnosticSource::Source);
+        assert_eq!(bouten_mismatch.code(), codes::MISMATCHED_BOUTEN_CONTAINER);
 
         let internal = Diagnostic::internal(Span::new(0, 3), InternalCheckCode::RegistryOutOfOrder);
         assert_eq!(internal.severity(), Severity::Error);

@@ -182,8 +182,21 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
             ContainerKind::Warichu => {
                 writer.write_str(r#"<div class="aozora-container aozora-container-warichu">"#)
             }
+            ContainerKind::BoutenRange { kind, position } => {
+                // Range-form 傍点 / 傍線: an inline `<em>` matching the
+                // forward-reference bouten markup so a stylesheet picks the
+                // same per-variant treatment.
+                write!(
+                    writer,
+                    r#"<em class="aozora-bouten aozora-bouten-{kind} aozora-bouten-{pos}">"#,
+                    kind = bouten::kind_slug(kind),
+                    pos = bouten::position_slug(position),
+                )
+            }
             _ => writer.write_str(r#"<div class="aozora-container">"#),
         }
+    } else if matches!(c.kind, ContainerKind::BoutenRange { .. }) {
+        writer.write_str("</em>")
     } else {
         writer.write_str("</div>")
     }

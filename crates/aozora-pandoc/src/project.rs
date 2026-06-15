@@ -528,6 +528,13 @@ fn container_attr(kind: ContainerKind) -> Attr {
             "container-align-end",
             vec![("offset".to_owned(), offset.to_string())],
         ),
+        ContainerKind::BoutenRange { kind, position } => {
+            let mut kvs = vec![("variant".to_owned(), bouten_kind_slug(kind).to_owned())];
+            if matches!(position, BoutenPosition::Left) {
+                kvs.push(("position".to_owned(), "left".to_owned()));
+            }
+            ("container-bouten", kvs)
+        }
         _ => ("container-unknown", Vec::new()),
     };
     (

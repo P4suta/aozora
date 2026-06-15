@@ -1,12 +1,12 @@
 {
   "implementation": "rust",
-  "total": 30,
-  "passed": 30,
+  "total": 35,
+  "passed": 35,
   "failed": 0,
   "by_level": {
     "may": {
-      "total": 2,
-      "passed": 2,
+      "total": 3,
+      "passed": 3,
       "failed": 0
     },
     "must": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 10,
-      "passed": 10,
+      "total": 14,
+      "passed": 14,
       "failed": 0
     }
   },
@@ -50,8 +50,29 @@
       "message": null
     },
     {
+      "case": "bouten_range",
+      "feature": "bouten",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
       "case": "bouten_target_ambiguous",
       "feature": "bouten",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "bracketed_kaeriten_no_pair",
+      "feature": "kunten",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "break_in_single_line_container",
+      "feature": "break",
       "level": "should",
       "passed": true,
       "message": null
@@ -106,9 +127,23 @@
       "message": null
     },
     {
+      "case": "kaeriten_outside_kanbun",
+      "feature": "kunten",
+      "level": "may",
+      "passed": true,
+      "message": null
+    },
+    {
       "case": "keigakomi_container",
       "feature": "container",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "mismatched_bouten_container",
+      "feature": "bouten",
+      "level": "should",
       "passed": true,
       "message": null
     },

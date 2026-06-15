@@ -5,6 +5,8 @@
 //! The renderer reads it when wrapping the enclosed sibling nodes
 //! into an `AozoraNode::Container`.
 
+use crate::{BoutenKind, BoutenPosition};
+
 /// The kinds of Aozora container blocks the lexer classifies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -18,6 +20,16 @@ pub enum ContainerKind {
     Keigakomi,
     /// `［＃ここから地付き］` / `［＃ここから地から N 字上げ］`
     AlignEnd { offset: u8 },
+    /// 傍点 / 傍線 range form: `［＃傍点］ ... ［＃傍点終わり］`,
+    /// `［＃二重傍線］ ... ［＃二重傍線終わり］`, `［＃左に傍線］ ...`, etc.
+    /// The `kind` is the emphasis variant (its 点/線 family drives the
+    /// `mismatched_bouten_container` check); `position` records a `左に`
+    /// left-side modifier. The renderer wraps the run in
+    /// `<em class="aozora-bouten-…">`.
+    BoutenRange {
+        kind: BoutenKind,
+        position: BoutenPosition,
+    },
 }
 
 impl ContainerKind {
@@ -36,6 +48,7 @@ impl ContainerKind {
             Self::Warichu => "warichu",
             Self::Keigakomi => "keigakomi",
             Self::AlignEnd { .. } => "align-end",
+            Self::BoutenRange { .. } => "bouten-range",
         }
     }
 }
@@ -66,6 +79,14 @@ mod tests {
         assert_eq!(
             ContainerKind::AlignEnd { offset: 3 }.kind_str(),
             "align-end"
+        );
+        assert_eq!(
+            ContainerKind::BoutenRange {
+                kind: BoutenKind::Goma,
+                position: BoutenPosition::Right,
+            }
+            .kind_str(),
+            "bouten-range"
         );
     }
 }

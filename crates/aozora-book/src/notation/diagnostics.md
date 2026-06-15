@@ -41,9 +41,9 @@ bindings carry the same structured data.
 
 # Source diagnostics
 
-These trace back to your input. The parser emits exactly these today; the
-[Planned diagnostics](#planned-diagnostics) section below tracks the
-authoring-error diagnostics still on the roadmap.
+These trace back to your input. The parser emits exactly these — the
+authoring-error catalogue is [complete](#planned-diagnostics) (no diagnostic
+is specified-but-unimplemented).
 
 ## Source contains PUA
 
@@ -219,6 +219,76 @@ The label spans the directive. **Fix:** reword so the quoted target is
 unique before the directive. (Multi-target brackets like `［＃「A」「B」に傍点］`
 name distinct runs and are never flagged.)
 
+## Mismatched bouten container
+
+`aozora::lex::mismatched_bouten_container` · **Error**
+
+```text
+彼は［＃傍点］必ず［＃傍線終わり］来る   (傍点 opened, 傍線 closed)
+```
+
+A 傍点 / 傍線 range form (`［＃傍点］ … ［＃傍点終わり］`) was opened with one
+family — 点 (dots) or 線 (line) — and closed by the other, e.g. a `［＃傍点］`
+opener closed by `［＃傍線終わり］`. The two families render differently (dots
+beside the text vs a line alongside it), so the run's emphasis is
+ambiguous. The parser recovers by keying the run to the *opener's* variant.
+A same-family variant difference (`白丸傍点` closed by `丸傍点終わり`) is
+tolerated. The label points at the close marker. **Fix:** match the closer's
+family to the opener — `［＃傍点終わり］` for any 点 variant, `［＃傍線終わり］`
+for any 線 variant.
+
+## Bracketed kaeriten no pair
+
+`aozora::lex::bracketed_kaeriten_no_pair` · **Error**
+
+```text
+怪物［＃二］   (［＃二］ with no ［＃一］ anywhere in the document)
+```
+
+A bracketed kaeriten of rank ≥ 2 (`［＃二］` / `［＃下］` / `［＃乙］`) appears in a
+document whose matching family base — `［＃一］` / `［＃上］` / `［＃甲］` — is
+absent entirely, so the return mark has nothing to pair back to. The check
+is document-wide and base-only by design: real 漢文 return-mark groups span
+`、` / `。` and line boundaries (and write `二` before `一`), and 上下点 may
+use just `上` … `下` (skipping `中`), so any narrower scope would wrongly
+flag valid kanbun. `レ` (re-ten) is standalone and never flagged; 送り仮名
+(`［＃（ス）］`) is not a ladder mark. **Fix:** add the missing base mark, or
+check the mark is a genuine 返り点.
+
+## Kaeriten outside kanbun
+
+`aozora::lex::kaeriten_outside_kanbun` · **Warning**
+
+```text
+これは［＃レ］と書いた。   (a lone kaeriten in kana prose)
+```
+
+A kaeriten (`［＃二］` / `［＃レ］` / …) is the only one in the entire document
+and its surroundings read as ordinary kana prose, so it is most likely a
+stray `［＃…］` annotation rather than a genuine 返り点. The lookahead
+heuristic is deliberately conservative — a document carrying a cluster of
+kaeriten (real 漢文) is never flagged. The label points at the lone mark.
+(Only the bracketed `［＃…］` form is recognised; a bare reading-mark glyph in
+running text is left as plain text.) **Fix:** confirm the mark is intended;
+remove it if it is not a reading mark.
+
+## Break in single line container
+
+`aozora::lex::break_in_single_line_container` · **Warning**
+
+```text
+［＃地付き］本文［＃改ページ］   (single-line directive shares its line with a break)
+```
+
+A single-line layout directive (`［＃地付き］`, `［＃N字下げ］`) or a warichu
+range (`［＃割り注］ … ［＃割り注終わり］`) governs only the rest of its line. A
+page / section break sharing that line — or, for warichu, falling between
+the open and close — drops the container: the break starts a new block, so
+the directive's run is cut short. Paired block forms (`［＃ここから…］ …
+［＃ここで…終わり］`) persist across breaks and are **not** flagged (print
+typography keeps the layout across pages). The label points at the break.
+**Fix:** move the break off the line, or use the paired block form.
+
 # Internal
 
 `aozora::internal` · **Error** · source = `Internal`
@@ -240,19 +310,12 @@ triggered it.
 
 # Planned diagnostics
 
-The parser currently emits only the codes above. The richer
-*authoring-error* diagnostics below are **specified but not yet emitted** —
-they are the roadmap for guiding authors toward fixes. Until each lands,
-the construct still parses on a best-effort basis (the relevant
-[error-recovery](../arch/error-recovery.md) behaviour applies) but without
-a dedicated diagnostic.
-
-| Planned code | Severity | Triggers on |
-|---|---|---|
-| `mismatched_bouten_container` | Error | 傍点 opener closed by a 傍線 closer (or vice-versa) |
-| `bracketed_kaeriten_no_pair` | Error | a bracketed kaeriten (`［＃二］`) with no paired `［＃一］` |
-| `kaeriten_outside_kanbun` | Warning | a kaeriten char in a non-漢文 context |
-| `break_in_single_line_container` | Warning | a page break terminating a single-line container early |
+None outstanding. Every authoring-error diagnostic in the catalogue —
+including the four model-dependent ones (`mismatched_bouten_container`,
+`bracketed_kaeriten_no_pair`, `kaeriten_outside_kanbun`,
+`break_in_single_line_container`) — is now emitted; see the
+[Source diagnostics](#source-diagnostics) above. New 記法 work adds new
+codes here as it lands.
 
 ## Why a stable string code, not just a message?
 

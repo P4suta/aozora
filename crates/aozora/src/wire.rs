@@ -138,6 +138,7 @@ const fn container_kind_str(kind: aozora_syntax::ContainerKind) -> &'static str 
         ContainerKind::Warichu => "warichu",
         ContainerKind::Keigakomi => "keigakomi",
         ContainerKind::AlignEnd { .. } => "alignEnd",
+        ContainerKind::BoutenRange { .. } => "boutenRange",
         _ => "unknown",
     }
 }

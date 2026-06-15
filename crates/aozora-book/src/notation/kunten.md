@@ -2,24 +2,18 @@
 
 **Kunten** are the marginal annotations Japanese readers add to
 classical Chinese (漢文) source so that it can be read in Japanese
-word order. The two categories aozora handles:
+word order. aozora recognises **kaeriten** (返り点) — the reading-order
+return marks — in their bracketed form. The recognised marks are:
 
-1. **Kaeriten** (返り点) — reading-order marks inserted between
-   characters: `レ`, `一`, `二`, `三`, `上`, `中`, `下`, `甲`, `乙`,
-   `天`, `地`, `人`.
-2. **Saidoku-moji** (再読文字) — characters that are read twice with
-   different glosses (e.g. 未, 将, 当).
+- single: `レ`, `一`, `二`, `三`, `四`, `上`, `中`, `下`, `甲`, `乙`, `丙`, `丁`
+- `Xレ` compounds: `一レ`, `二レ`, `三レ`, `上レ`, `中レ`, `下レ`
+- 送り仮名: the parenthesised `（…）` form
 
-A handful of late-Edo / Meiji Aozora Bunko works carry these. The
-notation:
+(Re-reading marks — 再読文字 like 未 / 将 / 当 — and any other kunten that
+do not match the above are carried as generic `［＃…］` annotations.)
 
-```text
-有﹅レ朋﹅自﹅遠﹅方﹅来
-```
-
-…where `﹅` stands in for the actual kaeriten character. In real
-source the marks are interleaved between characters using either the
-direct character or a `［＃…］` annotation:
+A handful of late-Edo / Meiji Aozora Bunko works carry these. In real
+source the marks sit between characters as `［＃…］` annotations:
 
 ```text
 有［＃二］朋自遠方来［＃一］
@@ -27,22 +21,10 @@ direct character or a `［＃…］` annotation:
 
 ## Notation forms
 
-### Inline (preferred in modern works)
+### Bracketed (the recognised form)
 
-The kaeriten character is inserted directly between the source
-characters:
-
-```text
-有レ朋自遠方来
-```
-
-Renders as:
-
-```html
-有<span class="aozora-kaeriten" data-aozora-kaeriten="レ">レ</span>朋自遠方来
-```
-
-### Bracketed (older works)
+aozora recognises the **bracketed** form only — the mark in a `［＃…］`
+annotation:
 
 ```text
 有［＃二］朋自遠方来［＃一］
@@ -51,56 +33,52 @@ Renders as:
 Renders as:
 
 ```html
-有<span class="aozora-kaeriten" data-aozora-kaeriten="二">二</span>朋自遠方来<span class="aozora-kaeriten" data-aozora-kaeriten="一">一</span>
+有<sup class="aozora-kaeriten">二</sup>朋自遠方来<sup class="aozora-kaeriten">一</sup>
 ```
 
-The bracketed form is useful when the kaeriten character would
-otherwise be ambiguous with the surrounding text (e.g. a real `一`
-that is *not* a reading mark).
+### Inline (not recognised)
 
-## Saidoku-moji
+A bare reading-mark glyph written directly between characters
+(`有レ朋自遠方来`) is left as **plain text** — the parser cannot tell a
+genuine 返り点 from an ordinary `一` / `上` / `レ` in running prose, which is
+exactly why the bracketed form exists. Use `［＃…］` for any mark you want
+recognised.
+
+## Okurigana
+
+Kunten 送り仮名 (reading-aid kana) use the parenthesised form, also inside a
+`［＃…］` annotation:
 
 ```text
-未［＃「未」に二の字点］
+有［＃（リ）］
 ```
 
-The 二の字点 / 一二点 prefix tells the renderer that the preceding
-character is read twice. aozora emits a `data-aozora-saidoku` data
-attribute on the wrapper.
+These are classified as kaeriten nodes but are **not** ladder marks (they
+take no part in the [pairing check](diagnostics.md#bracketed-kaeriten-no-pair)).
 
 ## AST shape
 
+The recognised marks (single `一 二 三 四 上 中 下 甲 乙 丙 丁 レ`, the `Xレ`
+compounds, and `（…）` okurigana) all produce one node that stores the raw
+mark text:
+
 ```rust
 pub struct Kaeriten<'src> {
-    pub mark: KaeritenKind,    // Re | Ichi | Ni | San | Jou | Chuu | Ge | Kou | Otsu | Ten | Chi | Jin
-    pub form: KaeritenForm,    // Inline | Bracketed
-    pub span: Span,
-}
-
-pub struct Saidoku<'src> {
-    pub target: &'src str,     // the character being re-read
-    pub gloss:  &'src str,     // the second reading
-    pub span:   Span,
+    pub mark: NonEmptyStr<'src>,   // the raw mark, e.g. "二" / "一レ" / "（リ）"
 }
 ```
 
-## Why a flat enum, not just `&str`?
-
-The 13 kaeriten kinds form a closed set fixed by the spec — there
-will never be a 14th. A `KaeritenKind` enum lets the renderer match
-exhaustively (the compiler catches unhandled variants), and pins the
-`data-aozora-kaeriten` attribute value to a stable slug rather than
-the literal source character. That matters because the inline form
-uses the actual `一` / `二` / `上` / … glyphs, which are also valid
-plain text — the enum lets the AST distinguish "a `一` that's a
-kaeriten" from "the digit one in the running text".
+The renderer wraps it in `<sup class="aozora-kaeriten">…</sup>`. The
+`bracketed_kaeriten_no_pair` / `kaeriten_outside_kanbun` checks classify the
+mark's family and rank from this string at diagnostic time rather than
+storing a typed enum.
 
 ## Diagnostics
 
 | Code | Condition |
 |---|---|
-| [`W0007`](diagnostics.md#W0007) | Kaeriten outside a 漢文-like context (lookahead heuristic) |
-| [`E0009`](diagnostics.md#E0009) | Bracketed kaeriten with no matching pair |
+| [`kaeriten_outside_kanbun`](diagnostics.md#kaeriten-outside-kanbun) | A lone kaeriten in kana prose (conservative lookahead heuristic) |
+| [`bracketed_kaeriten_no_pair`](diagnostics.md#bracketed-kaeriten-no-pair) | A rank-≥2 mark whose family base (`一` / `上` / `甲`) is absent from the document |
 
 ## See also
 

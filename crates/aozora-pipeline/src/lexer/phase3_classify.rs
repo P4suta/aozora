@@ -393,6 +393,12 @@ enum BodyFamily {
 
     // === Body-equals-pattern then parse from body[0] ===
     IndentParamPrefix, // {digit} → {N}字下げ (re-parse from body[0])
+
+    /// 傍点 / 傍線 range form (`傍点` / `白丸傍点` / `二重傍線` / `左に傍線`
+    /// …, with optional `終わり` close suffix). The needle matches the
+    /// variant (or the `左に` prefix); `parse_bouten_range_body` reads the
+    /// full body for the kind, the `左に` position, and the `終わり` close.
+    BoutenRange,
 }
 
 /// Static pattern table. Order is irrelevant for behavior because the
@@ -472,6 +478,60 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "割り注",
         family: BodyFamily::WarichuOpen,
+    },
+    // 傍点 / 傍線 range form openers (`［＃傍点］ … ［＃傍点終わり］`). One
+    // needle per emphasis variant `bouten_kind_from_suffix` recognises,
+    // plus the `左に` left-side prefix. LeftmostLongest disambiguates
+    // overlaps (`二重丸傍点` vs `丸傍点`, `白丸傍点` vs `丸傍点`); the close
+    // form (`…終わり`) matches the same variant needle as a prefix and is
+    // re-parsed in full by `parse_bouten_range_body`.
+    BodyPattern {
+        needle: "左に",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "白ゴマ傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "白丸傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "二重丸傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "蛇の目傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "ばつ傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "白三角傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "丸傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "二重傍線",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "波線",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "傍線",
+        family: BodyFamily::BoutenRange,
     },
     // Kaeriten okurigana opener (full-width left paren U+FF08).
     BodyPattern {
@@ -802,6 +862,21 @@ fn classify_annotation_body<'a>(
             (tail == "字下げ" && n >= 1)
                 .then(|| (EmitKind::Aozora(alloc.indent(Indent { amount: n })), None))
         }
+        BodyFamily::BoutenRange => {
+            // `傍点` / `白丸傍点` / `二重傍線` / `左に傍線` … with an optional
+            // `終わり` close suffix. Re-parse the full body for the variant,
+            // the `左に` position, and open vs close.
+            let (kind, position, is_close) = parse_bouten_range_body(body)?;
+            let container = ContainerKind::BoutenRange { kind, position };
+            Some((
+                if is_close {
+                    EmitKind::BlockClose(container)
+                } else {
+                    EmitKind::BlockOpen(container)
+                },
+                None,
+            ))
+        }
 
         // Exact-only families that didn't fully consume the body (e.g.
         // `罫囲みfoo` matched `罫囲み` but body is longer): no claim.
@@ -891,7 +966,117 @@ where
     pending_plain_start: Option<u32>,
     pending_refmark: Option<Span>,
     diagnostics: Vec<Diagnostic>,
+    /// Bracketed kaeriten observed in document order, drained by
+    /// [`Self::finalize_kaeriten`] in [`Self::take_diagnostics`] for the
+    /// document-wide base-presence pairing check and the outside-kanbun
+    /// heuristic.
+    kaeriten_obs: Vec<KaeritenObs>,
     finished: bool,
+}
+
+/// Family of a bracketed kaeriten ladder. Reading-order return marks
+/// come in ordered families; a mark of rank `r` needs a same-family base
+/// (`一` / `上` / `甲`) somewhere in the document (see
+/// [`Diagnostic::bracketed_kaeriten_no_pair`]). `レ` (re-ten) and 送り仮名
+/// `（X）` are standalone and never ladder.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KaeritenFamily {
+    /// `一` < `二` < `三` < `四` (and the `Xレ` compounds).
+    Numeric,
+    /// `上` < `中` < `下`.
+    Jouge,
+    /// `甲` < `乙` < `丙` < `丁`.
+    Kouotsu,
+    /// `レ`, 送り仮名, or any non-ladder mark.
+    Other,
+}
+
+/// One bracketed kaeriten observed during classification, retained for
+/// the end-of-document pairing / context checks run in
+/// [`ClassifyStream::finalize_kaeriten`].
+#[derive(Clone, Copy)]
+struct KaeritenObs {
+    family: KaeritenFamily,
+    /// 1-based ladder rank; `0` for non-ladder marks.
+    rank: u8,
+    /// Whether this mark participates in ladder-base checks.
+    is_ladder: bool,
+    /// Byte-range of the `［＃…］` directive in the sanitized source.
+    span: Span,
+}
+
+/// Classify a bracketed kaeriten body into `(family, rank, is_ladder)`.
+/// `Xレ` compounds ladder by their base char `X`; `レ` alone and 送り仮名
+/// `（X）` are non-ladder.
+fn classify_kaeriten_mark(mark: &str) -> (KaeritenFamily, u8, bool) {
+    // 送り仮名 ［＃（X）］ — a kaeriten node but not a ladder mark.
+    if mark.starts_with('（') {
+        return (KaeritenFamily::Other, 0, false);
+    }
+    // Compound `Xレ` ladders by its base char; `レ` alone has empty base.
+    let base = mark
+        .strip_suffix('レ')
+        .filter(|b| !b.is_empty())
+        .unwrap_or(mark);
+    match base {
+        "一" => (KaeritenFamily::Numeric, 1, true),
+        "二" => (KaeritenFamily::Numeric, 2, true),
+        "三" => (KaeritenFamily::Numeric, 3, true),
+        "四" => (KaeritenFamily::Numeric, 4, true),
+        "上" => (KaeritenFamily::Jouge, 1, true),
+        "中" => (KaeritenFamily::Jouge, 2, true),
+        "下" => (KaeritenFamily::Jouge, 3, true),
+        "甲" => (KaeritenFamily::Kouotsu, 1, true),
+        "乙" => (KaeritenFamily::Kouotsu, 2, true),
+        "丙" => (KaeritenFamily::Kouotsu, 3, true),
+        "丁" => (KaeritenFamily::Kouotsu, 4, true),
+        _ => (KaeritenFamily::Other, 0, false),
+    }
+}
+
+/// Dense index of a ladder [`KaeritenFamily`] for the base-presence
+/// table. `Other` never ladders so it shares the `Numeric` slot (read
+/// but never marked present for non-ladder marks).
+fn family_index(fam: KaeritenFamily) -> usize {
+    match fam {
+        KaeritenFamily::Jouge => 1,
+        KaeritenFamily::Kouotsu => 2,
+        KaeritenFamily::Numeric | KaeritenFamily::Other => 0,
+    }
+}
+
+/// Conservative "is this kana prose, not 漢文?" check for the lone-mark
+/// outside-kanbun heuristic. Reads a small character window each side of
+/// `span`: kana-dominant with almost no kanji ⇒ prose. Real 漢文 around a
+/// genuine 返り点 is kanji-dense and never trips this.
+fn looks_like_kana_prose(source: &str, span: Span) -> bool {
+    const WIN: usize = 12;
+    let before = source.get(..span.start as usize).unwrap_or("");
+    let after = source.get(span.end as usize..).unwrap_or("");
+    let (mut kana, mut kanji) = (0u32, 0u32);
+    for c in before
+        .chars()
+        .rev()
+        .take(WIN)
+        .chain(after.chars().take(WIN))
+    {
+        if is_kana(c) {
+            kana += 1;
+        } else if is_kanji(c) {
+            kanji += 1;
+        }
+    }
+    kana >= 2 && kanji <= 1
+}
+
+/// Hiragana / katakana / half-width katakana.
+fn is_kana(c: char) -> bool {
+    matches!(c, '\u{3040}'..='\u{30FF}' | '\u{FF66}'..='\u{FF9D}')
+}
+
+/// CJK unified ideographs (incl. Ext-A and compatibility) — "kanji".
+fn is_kanji(c: char) -> bool {
+    matches!(c, '\u{3400}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}')
 }
 
 /// Active stream-through frame for a top-level Quote / Tortoise pair.
@@ -1067,6 +1252,7 @@ where
             pending_plain_start: None,
             pending_refmark: None,
             diagnostics: Vec::new(),
+            kaeriten_obs: Vec::new(),
             finished: false,
         }
     }
@@ -1075,7 +1261,50 @@ where
     /// iterator is exhausted (otherwise the trailing Plain flush has
     /// not yet recorded any final-span observations).
     pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
+        self.finalize_kaeriten();
         mem::take(&mut self.diagnostics)
+    }
+
+    /// Document-final kaeriten checks, run once the event stream is
+    /// exhausted: the document-wide base-presence pairing check
+    /// (`bracketed_kaeriten_no_pair`) and the conservative
+    /// outside-kanbun heuristic (`kaeriten_outside_kanbun`). Both work
+    /// off `kaeriten_obs`, accumulated during classification.
+    ///
+    /// The pairing rule is *document-wide base presence*: a ladder mark
+    /// of rank ≥ 2 fires only when its family's base (`一` / `上` / `甲`)
+    /// is absent from the entire document. This is calibrated against the
+    /// real 青空文庫 corpus — kanbun return-mark groups routinely span
+    /// `、` / `。` and line boundaries, and 上下点 skips `中`, so any
+    /// narrower scope or stricter ladder misfires on valid kanbun (per-
+    /// clause strict: 586 false positives across 337 corpus files; this
+    /// rule: 2). It matches the catalogue's literal wording — "a `［＃二］`
+    /// with no `［＃一］`".
+    fn finalize_kaeriten(&mut self) {
+        let obs = mem::take(&mut self.kaeriten_obs);
+        if obs.is_empty() {
+            return;
+        }
+        // Conservative outside-kanbun heuristic: the document holds a
+        // single, isolated kaeriten and its surroundings read as kana
+        // prose — most likely a stray annotation, not a genuine 返り点.
+        if let [only] = obs.as_slice()
+            && looks_like_kana_prose(self.source, only.span)
+        {
+            self.diagnostics
+                .push(Diagnostic::kaeriten_outside_kanbun(only.span));
+        }
+        // Document-wide base presence per ladder family.
+        let mut has_base = [false; 3];
+        for o in obs.iter().filter(|o| o.is_ladder && o.rank == 1) {
+            has_base[family_index(o.family)] = true;
+        }
+        for o in obs.iter().filter(|o| o.is_ladder && o.rank > 1) {
+            if !has_base[family_index(o.family)] {
+                self.diagnostics
+                    .push(Diagnostic::bracketed_kaeriten_no_pair(o.span));
+            }
+        }
     }
 
     fn push_output(&mut self, span: ClassifiedSpan<'a>) {
@@ -1665,6 +1894,19 @@ where
         // disjoint `self.diagnostics` is borrow-clear.
         if let Some(diag) = m.pending_diagnostic {
             self.diagnostics.push(diag);
+        }
+        // Record bracketed kaeriten for the end-of-document pairing /
+        // context checks (`finalize_kaeriten`). The directive span is the
+        // whole `［＃…］`.
+        if let SpanKind::Aozora(borrowed::AozoraNode::Kaeriten(k)) = kind {
+            let span = Span::new(m.consume_start, m.consume_end);
+            let (family, rank, is_ladder) = classify_kaeriten_mark(k.mark.as_str());
+            self.kaeriten_obs.push(KaeritenObs {
+                family,
+                rank,
+                is_ladder,
+                span,
+            });
         }
         Some(ClassifiedSpan {
             kind,
@@ -3252,6 +3494,22 @@ fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
         "二重傍線" => BoutenKind::DoubleUnderLine,
         _ => return None,
     })
+}
+
+/// Parse a 傍点/傍線 range-form body into `(kind, position, is_close)`.
+/// Strips an optional `左に` left-side prefix and an optional `終わり`
+/// close suffix; the remainder must be a [`bouten_kind_from_suffix`]
+/// keyword. Returns `None` (→ `Annotation{Unknown}`) otherwise — e.g.
+/// for `鎖線` / `破線`, which the kind table does not yet cover.
+fn parse_bouten_range_body(body: &str) -> Option<(BoutenKind, BoutenPosition, bool)> {
+    let (position, rest) = body
+        .strip_prefix("左に")
+        .map_or((BoutenPosition::Right, body), |r| (BoutenPosition::Left, r));
+    let (is_close, kind_str) = rest
+        .strip_suffix("終わり")
+        .map_or((false, rest), |k| (true, k));
+    let kind = bouten_kind_from_suffix(kind_str)?;
+    Some((kind, position, is_close))
 }
 
 /// Parse a leading run of ASCII / full-width decimal digits into a

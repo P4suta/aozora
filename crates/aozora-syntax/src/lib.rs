@@ -75,6 +75,28 @@ pub enum BoutenKind {
     DoubleUnderLine,
 }
 
+impl BoutenKind {
+    /// Whether this is a 傍線 (line) variant rather than a 傍点 (dot)
+    /// variant. The 点/線 split is the *family* boundary used by
+    /// `mismatched_bouten_container`: a `［＃傍点］` range closed by a
+    /// `［＃傍線終わり］` (or vice-versa) is the mismatch the diagnostic
+    /// reports.
+    #[must_use]
+    pub const fn is_line(self) -> bool {
+        matches!(
+            self,
+            Self::WavyLine | Self::UnderLine | Self::DoubleUnderLine
+        )
+    }
+
+    /// Stable family tag (`"傍点"` / `"傍線"`) for diagnostics that name a
+    /// mismatched bouten range pair.
+    #[must_use]
+    pub const fn family_str(self) -> &'static str {
+        if self.is_line() { "傍線" } else { "傍点" }
+    }
+}
+
 /// Which side of the vertical-writing base text the bouten marks sit on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

@@ -114,10 +114,10 @@ pub fn serialize_into<W: Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -> 
                 emit_aozora(node, writer)?;
             }
             (SentinelKind::BlockOpen, Some(NodeRef::BlockOpen(kind))) => {
-                writer.write_str(container_open_marker(kind))?;
+                emit_container_open(kind, writer)?;
             }
             (SentinelKind::BlockClose, Some(NodeRef::BlockClose(kind))) => {
-                writer.write_str(container_close_marker(kind))?;
+                emit_container_close(kind, writer)?;
             }
             // Sentinel hit without a corresponding registry entry, or
             // a kind/variant mismatch — pre-Phase-D the per-table
@@ -337,6 +337,43 @@ const fn container_close_marker(kind: ContainerKind) -> &'static str {
         ContainerKind::Keigakomi => "［＃罫囲み終わり］",
         ContainerKind::Warichu => "［＃割り注終わり］",
         _ => "［＃ここで字下げ終わり］",
+    }
+}
+
+/// `左に` left-side prefix for a bouten range marker, or `""`.
+const fn bouten_left_prefix(position: BoutenPosition) -> &'static str {
+    match position {
+        BoutenPosition::Left => "左に",
+        _ => "",
+    }
+}
+
+/// Serialize a container open marker. 傍点 / 傍線 ranges reconstruct
+/// `［＃<左に?><variant>］`; the fixed-family containers use the static
+/// [`container_open_marker`].
+fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Result {
+    match kind {
+        ContainerKind::BoutenRange { kind, position } => write!(
+            out,
+            "［＃{}{}］",
+            bouten_left_prefix(position),
+            bouten_kind_keyword(kind)
+        ),
+        _ => out.write_str(container_open_marker(kind)),
+    }
+}
+
+/// Serialize a container close marker — the bouten range close adds the
+/// `終わり` suffix to the same `［＃<左に?><variant>…］` form.
+fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Result {
+    match kind {
+        ContainerKind::BoutenRange { kind, position } => write!(
+            out,
+            "［＃{}{}終わり］",
+            bouten_left_prefix(position),
+            bouten_kind_keyword(kind)
+        ),
+        _ => out.write_str(container_close_marker(kind)),
     }
 }
 
