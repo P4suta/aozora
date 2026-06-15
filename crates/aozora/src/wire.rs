@@ -215,7 +215,21 @@ fn envelope_schema(
     description: &str,
     item_schema: schemars::Schema,
 ) -> serde_json::Value {
-    serde_json::json!({
+    // `schema_for!(ItemWire)` returns a self-contained document: its
+    // shared sub-types (e.g. `SpanWire`) live under a root `$defs` and
+    // are referenced as `#/$defs/…`. Embedding it verbatim as `items`
+    // would bury that `$defs` under `properties/data/items`, leaving the
+    // `#/$defs/…` refs — which resolve against the *document* root —
+    // dangling, so strict resolvers (quicktype, and any other consumer
+    // of the published schema) reject it. Hoist the item schema's
+    // `$defs` to the envelope root and drop its redundant per-item
+    // `$schema` dialect marker so the refs resolve against the root.
+    let mut item = item_schema.to_value();
+    let defs = item.as_object_mut().and_then(|obj| {
+        obj.remove("$schema");
+        obj.remove("$defs")
+    });
+    let mut root = serde_json::json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": title,
         "description": description,
@@ -231,10 +245,16 @@ fn envelope_schema(
             "data": {
                 "description": "Per-entry payload array; one item per emitted diagnostic / node / pair.",
                 "type": "array",
-                "items": item_schema.to_value(),
+                "items": item,
             },
         },
-    })
+    });
+    if let Some(defs) = defs {
+        root.as_object_mut()
+            .expect("envelope root is a JSON object literal")
+            .insert("$defs".to_owned(), defs);
+    }
+    root
 }
 
 fn serialize_envelope<T: Serialize>(data: &[T]) -> String {

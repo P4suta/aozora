@@ -31,30 +31,29 @@
           "kind",
           "span"
         ],
-        "title": "NodeWire",
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$defs": {
-          "SpanWire": {
-            "type": "object",
-            "properties": {
-              "start": {
-                "type": "integer",
-                "format": "uint32",
-                "minimum": 0
-              },
-              "end": {
-                "type": "integer",
-                "format": "uint32",
-                "minimum": 0
-              }
-            },
-            "required": [
-              "start",
-              "end"
-            ]
-          }
-        }
+        "title": "NodeWire"
       }
+    }
+  },
+  "$defs": {
+    "SpanWire": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
     }
   }
 }
