@@ -270,74 +270,23 @@ fn describe_internal(c: InternalCheckCode) -> &'static str {
 /// under `crates/aozora-book/src/nodes/`.
 const NODE_PAGES: &[(&str, &str)] = &[
     ("ruby", include_str!("node-docs/ruby.md")),
-    (
-        "bouten",
-        include_str!("node-docs/bouten.md"),
-    ),
-    (
-        "tateChuYoko",
-        include_str!("node-docs/tate-chu-yoko.md"),
-    ),
-    (
-        "gaiji",
-        include_str!("node-docs/gaiji.md"),
-    ),
-    (
-        "indent",
-        include_str!("node-docs/indent.md"),
-    ),
-    (
-        "alignEnd",
-        include_str!("node-docs/align-end.md"),
-    ),
-    (
-        "warichu",
-        include_str!("node-docs/warichu.md"),
-    ),
-    (
-        "keigakomi",
-        include_str!("node-docs/keigakomi.md"),
-    ),
-    (
-        "pageBreak",
-        include_str!("node-docs/page-break.md"),
-    ),
-    (
-        "sectionBreak",
-        include_str!("node-docs/section-break.md"),
-    ),
-    (
-        "heading",
-        include_str!("node-docs/aozora-heading.md"),
-    ),
-    (
-        "headingHint",
-        include_str!("node-docs/heading-hint.md"),
-    ),
-    (
-        "sashie",
-        include_str!("node-docs/sashie.md"),
-    ),
-    (
-        "kaeriten",
-        include_str!("node-docs/kaeriten.md"),
-    ),
-    (
-        "annotation",
-        include_str!("node-docs/annotation.md"),
-    ),
-    (
-        "doubleRuby",
-        include_str!("node-docs/double-ruby.md"),
-    ),
-    (
-        "container",
-        include_str!("node-docs/container.md"),
-    ),
-    (
-        "containerOpen",
-        include_str!("node-docs/container-open.md"),
-    ),
+    ("bouten", include_str!("node-docs/bouten.md")),
+    ("tateChuYoko", include_str!("node-docs/tate-chu-yoko.md")),
+    ("gaiji", include_str!("node-docs/gaiji.md")),
+    ("indent", include_str!("node-docs/indent.md")),
+    ("alignEnd", include_str!("node-docs/align-end.md")),
+    ("warichu", include_str!("node-docs/warichu.md")),
+    ("keigakomi", include_str!("node-docs/keigakomi.md")),
+    ("pageBreak", include_str!("node-docs/page-break.md")),
+    ("sectionBreak", include_str!("node-docs/section-break.md")),
+    ("heading", include_str!("node-docs/aozora-heading.md")),
+    ("headingHint", include_str!("node-docs/heading-hint.md")),
+    ("sashie", include_str!("node-docs/sashie.md")),
+    ("kaeriten", include_str!("node-docs/kaeriten.md")),
+    ("annotation", include_str!("node-docs/annotation.md")),
+    ("doubleRuby", include_str!("node-docs/double-ruby.md")),
+    ("container", include_str!("node-docs/container.md")),
+    ("containerOpen", include_str!("node-docs/container-open.md")),
     (
         "containerClose",
         include_str!("node-docs/container-close.md"),
