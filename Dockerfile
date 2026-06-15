@@ -231,15 +231,23 @@ RUN curl -L --proto '=https' --tlsv1.2 -fsSL \
 
 # Node.js + quicktype — used by `just types-langs` to generate native
 # wire types for every host-SDK language from the committed JSON Schema
-# (one generator, all languages). Debian's nodejs (18.x) satisfies
-# quicktype's `engines.node >= 18.12`. Pinned so the drift-gated codegen
-# is byte-reproducible.
+# (one generator, all languages). We install Node 22 LTS from NodeSource:
+# Debian bookworm ships nodejs 18.x, which is EOL and below the
+# `engines.node >= 20.19` that vitest 4 (the playground test runner via
+# `just playground-test`) requires — on Node 18 vitest 4 fails at startup
+# because `node:util` has no `styleText` export. Node 22 also satisfies
+# quicktype's `engines.node >= 18.12`; both are version-pinned so the
+# drift-gated codegen stays reproducible.
+ARG NODE_MAJOR=22
 ARG QUICKTYPE_VERSION=23.2.6
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nodejs npm \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && curl -fsSL --proto '=https' --tlsv1.2 "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g "quicktype@${QUICKTYPE_VERSION}" \
     && npm cache clean --force \
+    && node --version \
     && quicktype --version
 
 # Go toolchain — for the aozora-go host package (the Extism Go SDK is

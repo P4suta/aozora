@@ -3,6 +3,10 @@
 Opening note for any Claude Code session that enters this repo: read this
 file first. It is the shortest path to productive work.
 
+Agents/automation: [`AGENTS.md`](AGENTS.md) is the terse machine contract
+— the canonical gate commands, the `aozora` CLI's JSON outputs, and the
+exit-code contract.
+
 ## What this is
 
 **aozora**: a pure-functional Rust parser for **青空文庫記法** (Aozora
@@ -115,7 +119,9 @@ the `/workspace` bind mount — so the host working tree stays clean of
 root-owned dirs.
 
 ```
-just build                # cargo build (excl. aozora-bench)
+just check                # cargo check — fastest "still compiles?"
+just build                # cargo build --all-targets (excl. aozora-bench)
+just t <FILTER>           # tests matching FILTER (single-test loop)
 just test                 # cargo nextest run
 just lint                 # fmt-check + clippy + typos + strict-code + doc
 just doc                  # rustdoc with all rustdoc lints = deny
@@ -132,8 +138,11 @@ just corpus-sweep         # invariant pass over $AOZORA_CORPUS_ROOT (opt-in)
 just hooks                # install lefthook git hooks
 ```
 
-There is **no `just check`** — use `just build` for the fastest "still
-compiles?" gate (afm uses `just check`; aozora does not — don't assume it).
+`just check` (`cargo check`, codegen-skipped) is the fastest "still
+compiles?" gate; `just build` is the heavier `--all-targets` gate that
+also links the test / example / bench-harness binaries (and is what
+pre-push runs). `just t <FILTER>` runs only the tests whose name matches
+FILTER — the single-test inner loop.
 
 ## Version control
 

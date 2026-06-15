@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# First-run setup for a fresh clone. Thin wrapper around `just setup`
+# (which does the real work: prerequisite checks → build the dev image →
+# install git hooks → green test). Kept at the repo root because it is the
+# entry point a newcomer guesses before they know `just` exists.
+set -euo pipefail
+
+if ! command -v just >/dev/null 2>&1; then
+  cat >&2 <<'MSG'
+`just` is not installed — it is the single entry point for every aozora
+dev task. Install it, then re-run ./bootstrap:
+
+  cargo install just        # or: brew install just / apt install just
+  https://github.com/casey/just#installation
+MSG
+  exit 1
+fi
+
+exec just setup
