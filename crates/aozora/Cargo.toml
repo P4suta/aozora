@@ -79,7 +79,12 @@ query = ["cst", "dep:aozora-query"]
 
 [dev-dependencies]
 # Used by `tests/corpus_sweep.rs` to walk `AOZORA_CORPUS_ROOT` and
-# verify parse + round-trip invariants on every document.
-aozora-corpus   = { workspace = true }
+# verify parse + round-trip invariants on every document. Declared
+# path-only (no version) on purpose: aozora-corpus is a dev-only
+# corpus loader that stays `publish = false`, so cargo must STRIP this
+# dev-dependency from the published manifest. A versioned dev-dep
+# would make crates.io require aozora-corpus to exist on the registry
+# and would fail the `aozora` publish.
+aozora-corpus   = { path = "../aozora-corpus" }
 proptest        = { workspace = true }
-aozora-proptest = { workspace = true }
+aozora-proptest = { path = "../aozora-proptest" }

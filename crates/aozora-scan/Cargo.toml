@@ -1,6 +1,6 @@
 [package]
 name        = "aozora-scan"
-description = "Safe trigger-byte scanner for the Aozora notation lexer (aho-corasick-backed)"
+description = "Safe trigger-byte scanner for the Aozora notation lexer (aho-corasick-backed). Internal crate; depend on the aozora umbrella crate instead."
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -10,10 +10,6 @@ authors.workspace      = true
 readme.workspace       = true
 keywords.workspace     = true
 categories.workspace   = true
-
-# Internal — crate is path-only until the public `aozora` facade ships
-# on crates.io.
-publish     = false
 
 # The scanner used to carry the tree's only `unsafe` (hand-rolled SIMD
 # Teddy kernels). It now delegates to `aho-corasick`, so the crate is
@@ -38,7 +34,7 @@ bumpalo      = { workspace = true }
 
 [dev-dependencies]
 proptest        = { workspace = true }
-aozora-proptest = { workspace = true }
+aozora-proptest = { path = "../aozora-proptest" }
 criterion       = { workspace = true }
 
 [[bench]]

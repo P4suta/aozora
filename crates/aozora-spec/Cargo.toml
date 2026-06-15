@@ -1,6 +1,6 @@
 [package]
 name        = "aozora-spec"
-description = "Aozora Bunko notation: canonical specification (sentinels, span, trigger/pair kinds, diagnostics)"
+description = "Aozora Bunko notation: canonical specification (sentinels, span, trigger/pair kinds, diagnostics). Internal crate; depend on the aozora umbrella crate instead."
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -10,7 +10,6 @@ authors.workspace      = true
 readme.workspace       = true
 keywords.workspace     = true
 categories.workspace   = true
-publish     = false
 
 [lints]
 workspace = true
@@ -22,7 +21,7 @@ serde     = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest        = { workspace = true }
-aozora-proptest = { workspace = true }
+aozora-proptest = { path = "../aozora-proptest" }
 
 [features]
 default = []

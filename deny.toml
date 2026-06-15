@@ -37,6 +37,13 @@ confidence-threshold = 0.9
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Internal crates used only as dev-dependencies are declared path-only
+# (no `version`) so cargo strips them from the published manifest — see
+# the note in `[workspace.dependencies]` (Cargo.toml). Those path-only
+# deps resolve as wildcards (`*`); allow wildcards specifically when the
+# dependency is a path dependency so `wildcards = "deny"` still rejects a
+# stray wildcard on a registry dep.
+allow-wildcard-paths = true
 highlight = "all"
 
 [sources]

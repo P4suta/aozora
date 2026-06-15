@@ -29,7 +29,7 @@ members = [
 exclude = ["crates/aozora-book"]
 
 [workspace.package]
-version       = "0.4.0"
+version       = "0.4.1"
 edition       = "2024"
 rust-version  = "1.95.0"
 license       = "Apache-2.0 OR MIT"
@@ -135,16 +135,23 @@ redundant_pub_crate     = "allow"
 large_enum_variant      = "allow"
 
 [workspace.dependencies]
-# Internal crates — paths within this workspace.
-aozora-spec       = { version = "0.4.0", path = "crates/aozora-spec" }
-aozora-syntax     = { version = "0.4.0", path = "crates/aozora-syntax" }
-aozora-veb        = { version = "0.4.0", path = "crates/aozora-veb" }
-aozora-scan       = { version = "0.4.0", path = "crates/aozora-scan" }
-aozora-pipeline   = { version = "0.4.0", path = "crates/aozora-pipeline" }
-aozora-render     = { version = "0.4.0", path = "crates/aozora-render" }
-aozora            = { version = "0.4.0", path = "crates/aozora" }
-aozora-wasm       = { version = "0.4.0", path = "crates/aozora-wasm" }
-aozora-trace      = { version = "0.4.0", path = "crates/aozora-trace" }
+# Internal crates — paths within this workspace. These carry a `version`
+# so the umbrella `aozora` (and the other publishable crates) can depend
+# on them on crates.io. NOTE: internal crates used only as a
+# *dev-dependency* are declared path-only (no `version`) at their use
+# sites — NOT via `workspace = true` — so cargo strips them from the
+# published manifest. A versioned internal dev-dep must already exist on
+# crates.io at publish time, which would block the first publish and
+# create unpublishable dev-dep cycles (e.g. aozora-pipeline ↔ aozora-render).
+aozora-spec       = { version = "0.4.1", path = "crates/aozora-spec" }
+aozora-syntax     = { version = "0.4.1", path = "crates/aozora-syntax" }
+aozora-veb        = { version = "0.4.1", path = "crates/aozora-veb" }
+aozora-scan       = { version = "0.4.1", path = "crates/aozora-scan" }
+aozora-pipeline   = { version = "0.4.1", path = "crates/aozora-pipeline" }
+aozora-render     = { version = "0.4.1", path = "crates/aozora-render" }
+aozora            = { version = "0.4.1", path = "crates/aozora" }
+aozora-wasm       = { version = "0.4.1", path = "crates/aozora-wasm" }
+aozora-trace      = { version = "0.4.1", path = "crates/aozora-trace" }
 
 # Memory management
 bumpalo = { version = "3.20", features = ["collections"] }
@@ -169,13 +176,13 @@ aho-corasick = { version = "1.1", default-features = false }
 # the lexer's mixed-trigger search where Teddy's SIMD prefilter
 # alone would still need a follow-up confirmation pass.
 regex-automata = { version = "0.4", default-features = false }
-aozora-encoding   = { version = "0.4.0", path = "crates/aozora-encoding" }
-aozora-corpus       = { version = "0.4.0", path = "crates/aozora-corpus" }
-aozora-conformance  = { version = "0.4.0", path = "crates/aozora-conformance" }
-aozora-pandoc       = { version = "0.4.0", path = "crates/aozora-pandoc" }
-aozora-cst          = { version = "0.4.0", path = "crates/aozora-cst" }
-aozora-query        = { version = "0.4.0", path = "crates/aozora-query" }
-aozora-proptest = { version = "0.4.0", path = "crates/aozora-proptest" }
+aozora-encoding   = { version = "0.4.1", path = "crates/aozora-encoding" }
+aozora-corpus       = { version = "0.4.1", path = "crates/aozora-corpus" }
+aozora-conformance  = { version = "0.4.1", path = "crates/aozora-conformance" }
+aozora-pandoc       = { version = "0.4.1", path = "crates/aozora-pandoc" }
+aozora-cst          = { version = "0.4.1", path = "crates/aozora-cst" }
+aozora-query        = { version = "0.4.1", path = "crates/aozora-query" }
+aozora-proptest = { version = "0.4.1", path = "crates/aozora-proptest" }
 
 # Error handling
 thiserror = "2.0.18"

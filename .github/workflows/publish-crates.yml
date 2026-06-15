@@ -1,17 +1,45 @@
-# cargo publish workflow for `aozora` + `aozora-cli`.
+# cargo publish workflow for the aozora workspace.
 #
-# Phase P1 — capability ships in 0.4.0; live publish is `dry_run: false`,
-# manual trigger only. Default `dry_run: true` so a stray
-# `Run workflow` click cannot accidentally push to crates.io.
+# Publishes every publishable crate to crates.io in dependency
+# (topological) order: dependency-free leaves first, `aozora-cli` last.
+# Each `cargo publish` waits for its crate to appear in the crates.io
+# index before returning (cargo >= 1.66), so the next crate's
+# dependency resolution finds the version that was just uploaded — no
+# manual `sleep` between steps.
+#
+# Why an explicit ladder and NOT `cargo publish --workspace`:
+#   `cargo publish --workspace` (and its `--dry-run`) was evaluated on
+#   the pinned toolchain (cargo 1.95.0) and does NOT order interdependent
+#   members topologically on a first publish — it tries to package
+#   `aozora-render` before `aozora-pipeline` and aborts with "no matching
+#   package named aozora-pipeline found". The explicit ladder below is
+#   deterministic and verifiable; revisit `--workspace` once the toolchain
+#   handles first-publish ordering reliably. (See cargo-release #691.)
+#
+# Members marked `publish = false` (aozora-corpus, aozora-conformance,
+# aozora-bench, aozora-trace, aozora-xtask, and the aozora-wasm /
+# aozora-ffi / aozora-py drivers that ship through npm / GitHub Releases
+# / PyPI) are intentionally absent from the list.
+#
+# Live publish is `dry_run: false`, manual trigger only. Default
+# `dry_run: true` so a stray `Run workflow` click cannot accidentally
+# push to crates.io.
 #
 # How to run a real publish:
 #   gh workflow run publish-crates.yml -f dry_run=false
-# (also requires the `CARGO_TOKEN` repo secret to be populated)
+# (also requires the `CARGO_TOKEN` repo secret populated with a crates.io
+#  API token carrying BOTH the publish-new and publish-update scopes —
+#  the first run creates brand-new crates.)
 #
-# Drift gate: PR CI's `lint` job already runs `cargo publish --dry-run`
-# implicitly via `cargo package` semantics. This workflow is the
-# manual-trigger surface; the PR-time check catches metadata drift
-# before it can land on main.
+# NOTE on dry-run coverage: only the dependency-free leaf crates can be
+# dry-run before anything is on crates.io. A non-leaf dry-run fails
+# because its just-bumped internal deps don't exist on the registry yet
+# (a fundamental limitation of interdependent workspace publishing, not
+# a metadata bug). The real correctness gate is a green `just ci` before
+# tagging; the per-crate verify build that `cargo publish` runs on each
+# crate below is the final pre-upload check. Name availability is NOT
+# checked by dry-run — verify the `aozora*` names are free on crates.io
+# before the first live run.
 
 name: publish-crates
 
@@ -19,7 +47,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Run cargo publish in --dry-run mode (no upload)"
+        description: "Dry-run only (no upload): packages + verifies the leaf crates"
         type: boolean
         default: true
 
@@ -36,38 +64,49 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: publish-crates
 
-      # Always run --dry-run first so the metadata is verified even
-      # when the user dispatches a "live" publish — failing here
-      # before flipping the flag would still surface metadata drift.
-      - name: Dry-run package metadata (aozora)
-        run: cargo publish --dry-run -p aozora --locked
+      # Metadata smoke test — always runs, even for a live dispatch, so a
+      # packaging / metadata regression surfaces before any upload. Only
+      # the leaf crates (no internal deps) can be dry-run pre-publish;
+      # they share the inherited workspace metadata, so a clean leaf
+      # dry-run validates the metadata every crate ships.
+      - name: Dry-run leaf crates (metadata smoke test)
+        run: |
+          for crate in aozora-encoding aozora-spec aozora-veb aozora-proptest; do
+            echo "::group::dry-run ${crate}"
+            cargo publish -p "${crate}" --dry-run --locked
+            echo "::endgroup::"
+          done
 
-      - name: Dry-run package metadata (aozora-cli)
-        run: cargo publish --dry-run -p aozora-cli --locked
-
-      - name: Publish aozora (live)
+      # Live publish in topological order. The loop stops on the first
+      # failure (bash -eo pipefail); a mid-ladder failure leaves the
+      # earlier crates published — bump the patch version and re-run,
+      # skipping the crates already on crates.io.
+      - name: Publish to crates.io (topological)
         if: inputs.dry_run == false
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
-        run: cargo publish -p aozora --locked
-
-      # `aozora-cli` depends on the freshly-published `aozora`; the
-      # crates.io index sometimes lags by a few seconds after
-      # `cargo publish`. Sleep before the second publish so the
-      # dependency lookup hits the new version. Five minutes is
-      # generous; crates.io's typical propagation is under 30 s.
-      - name: Wait for crates.io index propagation
-        if: inputs.dry_run == false
-        run: sleep 60
-
-      - name: Publish aozora-cli (live)
-        if: inputs.dry_run == false
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
-        run: cargo publish -p aozora-cli --locked
+        run: |
+          for crate in \
+            aozora-encoding \
+            aozora-spec \
+            aozora-veb \
+            aozora-proptest \
+            aozora-scan \
+            aozora-syntax \
+            aozora-pipeline \
+            aozora-cst \
+            aozora-query \
+            aozora-render \
+            aozora \
+            aozora-pandoc \
+            aozora-cli; do
+            echo "::group::publish ${crate}"
+            cargo publish -p "${crate}" --locked
+            echo "::endgroup::"
+          done

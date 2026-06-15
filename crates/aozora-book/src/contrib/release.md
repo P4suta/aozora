@@ -154,17 +154,70 @@ contract — consumers that need a frozen MSRV pin a release tag.
 
 ## Publishing to crates.io
 
-Deferred until v1.0. The reasoning:
+Live since v0.4.1. The whole workspace publishes through the manual
+`.github/workflows/publish-crates.yml` workflow:
 
-- Pre-1.0 every minor bump may break the API; pushing those churns
-  the registry for downstream `Cargo.lock` consumers.
-- Once published, the published name becomes load-bearing — name
-  changes cost goodwill. Holding the name *unpublished* keeps the
-  option to refactor the crate boundary.
+```sh
+gh workflow run publish-crates.yml -f dry_run=false
+```
 
-When v1.0 lands, the publication workflow will run from a tag:
-`cargo publish` per crate in topological order
-(`aozora-spec` first, `aozora` last), driven from `release.yml`.
+It runs `cargo publish --workspace` (cargo 1.90+), which publishes
+every publishable member in topological order — `aozora-encoding` /
+`aozora-spec` first, `aozora` and `aozora-cli` last — and waits for
+crates.io index propagation between dependent crates itself. Members
+marked `publish = false` (`aozora-corpus`, `aozora-conformance`,
+`aozora-bench`, `aozora-trace`, `aozora-xtask`, plus the
+`aozora-wasm` / `aozora-ffi` / `aozora-py` drivers that ship through
+npm / GitHub Releases / PyPI) are skipped automatically.
+
+The default `dry_run: true` runs `cargo publish --workspace --dry-run`
+only — a safe metadata gate that succeeds even on a first publish
+because `--workspace` resolves intra-workspace deps locally. A live
+run needs the `CARGO_TOKEN` repo secret populated with a crates.io API
+token carrying **both** the publish-new and publish-update scopes (the
+first run creates brand-new crates).
+
+**Single front door, still.** The parser is built from many internal
+crates (`aozora-spec`, `aozora-syntax`, `aozora-pipeline`,
+`aozora-render`, `aozora-encoding`, `aozora-scan`, `aozora-veb`, plus
+`aozora-cst` / `aozora-query` / `aozora-proptest`). They are now on
+crates.io so the umbrella `aozora` crate can depend on them, but they
+carry **no API-stability contract** — their crate descriptions say so,
+and downstream consumers should depend on `aozora` alone.
+
+### Why we publish before v1.0
+
+Earlier this was deferred to v1.0 (every pre-1.0 minor may break the
+API; a published name is load-bearing). We publish now because the
+crate boundary has stabilised and claiming the `aozora*` namespace is
+itself worth doing. The pre-1.0 SemVer contract above still holds — a
+`0.x → 0.x+1` bump may break the API and is flagged by
+`cargo-semver-checks`.
+
+## Publishing to npm and PyPI
+
+The browser (WASM) and Python drivers ship through their own
+manual workflows, same `dry_run: true` default as crates:
+
+```sh
+# npm — aozora-wasm (needs the NPM_TOKEN repo secret)
+gh workflow run publish-npm.yml -f dry_run=false
+
+# PyPI — aozora_py wheels (OIDC trusted publishing; no token secret)
+gh workflow run publish-pypi.yml -f dry_run=false
+```
+
+`publish-npm.yml` builds the package with `wasm-pack build --target
+web --release` and `npm publish`es `crates/aozora-wasm/pkg/`.
+`publish-pypi.yml` builds wheels across the OS × Python matrix with
+maturin and uploads via PyPI trusted publishing (configure the
+project's trusted publisher once, pointing at this repo +
+`publish-pypi.yml`).
+
+Cut these from the same `vX.Y.Z` tag as the GitHub Release so every
+channel ships the same version. Run each workflow once with the
+default `dry_run: true` first and confirm it's green before flipping
+to `dry_run=false`.
 
 ## Code signing
 

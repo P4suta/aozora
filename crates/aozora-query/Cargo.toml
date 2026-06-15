@@ -1,6 +1,6 @@
 [package]
 name        = "aozora-query"
-description = "tree-sitter-flavoured pattern queries over the aozora concrete syntax tree."
+description = "tree-sitter-flavoured pattern queries over the aozora concrete syntax tree. Internal crate; reach it via the aozora crate's `query` feature."
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -11,11 +11,6 @@ readme.workspace       = true
 keywords.workspace     = true
 categories.workspace   = true
 
-# Phase N5 — internal until the DSL surface stabilises. Ergonomic
-# entry today is `aozora::query::*` behind the `query` feature on
-# the meta crate.
-publish = false
-
 [lints]
 workspace = true
 
@@ -25,6 +20,6 @@ rowan      = { workspace = true }
 thiserror  = { workspace = true }
 
 [dev-dependencies]
-aozora          = { workspace = true, features = ["cst", "query"] }
+aozora          = { path = "../aozora", features = ["cst", "query"] }
 proptest        = { workspace = true }
-aozora-proptest = { workspace = true }
+aozora-proptest = { path = "../aozora-proptest" }
