@@ -58,11 +58,25 @@
 
 # Bindings
 
+- [Choosing a binding](bindings/choosing.md)
 - [Rust library](bindings/rust.md)
-- [WASM (wasm-pack)](bindings/wasm.md)
-- [C ABI](bindings/c.md)
+- [WASM (wasm-pack / npm)](bindings/wasm.md)
 - [Python (PyO3 / maturin)](bindings/python.md)
+- [Go (wazero host SDK)](bindings/go.md)
+- [C ABI](bindings/c.md)
+- [Extism host SDKs (Java / PHP / Ruby / …)](bindings/extism.md)
 - [Pandoc AST projection](bindings/pandoc.md)
+
+# Recipes
+
+- [Recipes overview](recipes/index.md)
+  - [Extract ruby readings](recipes/extract-ruby.md)
+  - [Diagnostics as JSON](recipes/diagnostics-json.md)
+  - [Walk the AST](recipes/walk-ast.md)
+  - [Shift_JIS & 外字 input](recipes/sjis-gaiji.md)
+  - [EPUB via Pandoc](recipes/epub-pandoc.md)
+  - [Byte-exact round-trip](recipes/round-trip.md)
+  - [Polyglot host integration](recipes/polyglot.md)
 
 # Performance
 
@@ -85,6 +99,8 @@
 
 # Contributing
 
+- [Your first PR](contrib/first-pr.md)
 - [Development loop](contrib/dev.md)
 - [Testing strategy](contrib/testing.md)
+- [Troubleshooting & gate recovery](contrib/troubleshooting.md)
 - [Release process](contrib/release.md)

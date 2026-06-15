@@ -28,6 +28,11 @@ below only hold when every contribution respects them.
 
 ## First-time setup
 
+New here? Run `./bootstrap` (or `just setup`) — it checks prerequisites,
+builds the dev image, installs hooks, and runs the tests.
+
+The explicit commands it wraps, if you'd rather run them yourself:
+
 ```sh
 docker compose build dev       # ~5 min first time, cached afterward
 just hooks                     # install lefthook git hooks (fmt / clippy / typos / playground-typecheck on commit, just ci on push)
@@ -70,19 +75,28 @@ plain-Japanese / English explanation of what to fix when that gate
 trips, so a failing push prints both the raw tooling output _and_ a
 hint pointing at the recipe responsible.
 
-### Tagged opt-outs
+### If a gate blocks your push
 
 The pre-push `prop-deep` command (4096-case proptest sweep) is
 tagged `deep`. If a deep-sweep regression in aozora core blocks
-your push and is unrelated to your change, you can opt out with:
+your push and is unrelated to your change, `SKIP_TAGS=deep` is the
+narrow escape hatch:
 
 ```sh
 SKIP_TAGS=deep git push
 ```
 
-Use this instead of `LEFTHOOK=0` so that signing-check / ci / etc.
-still run. File an issue against the failing crate so the
+This skips **only** the tagged `deep` command and leaves
+signing-check / ci / etc. in force. Do **not** reach for `LEFTHOOK=0`
+instead — it disables *all* hooks, signing-check included, so an
+unsigned commit slips past locally only to be rejected server-side by
+the ruleset later. File an issue against the failing crate so the
 regression doesn't stay hidden.
+
+For the full symptom → recovery table covering every gate (coverage,
+clippy/fmt, the drift gates, typos, deny/audit), see the handbook's
+[Troubleshooting & gate recovery](crates/aozora-book/src/contrib/troubleshooting.md)
+chapter.
 
 ## Development loop
 
@@ -103,7 +117,28 @@ just fuzz parse_render -- -runs=10000   # cargo-fuzz smoke
 
 `just --list` enumerates everything available.
 
+### Faster inner loop
+
+The full `just test` / `just lint` are the pre-push gates, not the
+edit-by-edit loop. While iterating, lean on the watch and narrowed
+targets instead:
+
+- `just watch` / `just watch-lint` / `just watch-test` — re-run the
+  `check` / clippy / nextest job on every save (bacon, inside the dev
+  container). Leave one running in a second terminal for continuous
+  feedback.
+- `just check` — the fastest "still compiles?" gate (`cargo check
+  --workspace --all-targets`, no codegen). There is no top-level
+  `just check`-as-`ci` here; this `check` is the compile-only probe.
+- `just t <FILTER>` — run only the tests whose name matches `<FILTER>`
+  (nextest filterset: a bare string is a substring match, slashes make
+  it a regex), e.g. `just t ruby` or `just t '/ruby|bouten/'`.
+
 ### Corpus-driven tests
+
+`just corpus-sweep` is **opt-in**: with `AOZORA_CORPUS_ROOT` unset it is
+a no-op, so newcomers can ignore it until they have a corpus to point it
+at.
 
 Set `AOZORA_CORPUS_ROOT` to a directory of 青空文庫 source files
 (UTF-8 or Shift_JIS) before running `just corpus-sweep` or any
@@ -215,6 +250,12 @@ A single commit should be a single logical change. Split unrelated
 edits.
 
 ## Pull requests
+
+Doing a docs change or a small fix? The handbook's
+[Your first PR](crates/aozora-book/src/contrib/first-pr.md) chapter walks
+the lightweight path — no parser code, no TDD flow, just the two quick
+doc gates (`just typos` / `just book-build`) and a signed `docs:` commit.
+The checklist below is the full gate every PR is held to.
 
 - PR title should be `<type>(<scope>): <summary>` matching the commits.
 - Link any issue the PR closes (`Closes #N` in the body).

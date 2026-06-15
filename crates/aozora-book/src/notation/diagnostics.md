@@ -1,164 +1,151 @@
 # Diagnostics catalogue
 
-aozora is *non-fatal by design*: the parser always produces a tree,
-even from malformed input, and reports problems through structured
-diagnostics that callers can choose to treat as errors. This page
-lists every diagnostic the lexer can emit.
+aozora is *non-fatal by design*: the parser always produces a tree, even
+from malformed input, and reports what it noticed through structured
+diagnostics that callers choose how to treat. This page is the catalogue.
 
-Each diagnostic carries:
+Each `Diagnostic` carries:
 
-- A stable **code** (`E0001`, `W0001`, …). The number suffix is
-  permanent across versions; codes are added but never renumbered.
-- A **level**: `Error`, `Warning`, `Info`.
-- A **span** (byte range in the source).
-- A **message** in English.
-- (optional) a **help** line suggesting a fix.
+- a stable **code** — a dotted string such as
+  `aozora::lex::unclosed_bracket`. The string is pinned by a test and
+  never changes within a major release; new diagnostics add new codes.
+- a **severity**: `Error` / `Warning` / `Note`.
+- a **source axis**: `Source` (your input tripped it) or `Internal` (a
+  library-bug sanity check — see [Internal](#internal)).
+- a **span** — a byte range in the *sanitized* source (the Phase 0
+  output: BOM stripped, CRLF→LF, 〔…〕 accents decomposed). For input with
+  none of those, the sanitized bytes equal the original bytes.
 
-The CLI renders diagnostics through [`miette`](https://docs.rs/miette);
-all bindings (Rust library, FFI JSON, WASM JSON, Python list) carry
-the same structured data.
+## Rendering them
 
-## E-codes (errors)
+The `aozora check` CLI renders diagnostics three ways, chosen with
+`--diagnostic-format`:
 
-### E0001 — empty ruby reading
+- **`human`** (the default on a terminal) — a graphical
+  [`miette`](https://docs.rs/miette) report: the source line, a caret
+  under the offending span, the label, the help text, and a link back to
+  this page.
+- **`json`** (the default when stderr is piped) — the `aozora::wire`
+  diagnostics envelope, byte-identical to what the WASM / FFI / Python /
+  Extism front doors emit. This is the machine / agent path.
+- **`short`** — one grep-able line per diagnostic:
+  `path:offset: severity[code]: message`.
 
-```text
-｜青梅《》
-```
+Exit codes: `0` (diagnostics printed but tolerated), `1` (`--strict` with
+at least one diagnostic), `2` (CLI usage error), `3` (an `Internal`
+diagnostic fired — a library bug). See the [CLI reference](../ref/cli.md).
 
-The base text is given but the reading inside `《…》` is empty.
-**Fix:** provide a reading or remove the `｜` marker.
+Library consumers get `tree.diagnostics() -> &[Diagnostic]` and reach the
+parts through `code()`, `severity()`, `source()`, and `span()`. All
+bindings carry the same structured data.
 
-### E0002 — nested ruby
+# Source diagnostics
 
-```text
-｜青梅《｜お《お》うめ》
-```
+These trace back to your input. The parser emits exactly these today; the
+[Planned diagnostics](#planned-diagnostics) section below tracks the
+authoring-error diagnostics still on the roadmap.
 
-The spec disallows ruby inside ruby; the inner `｜…《…》` is
-ambiguous. **Fix:** restructure so the readings are siblings, not
-nested.
+## Source contains PUA
 
-### E0004 — mismatched bouten container closer
-
-```text
-［＃ここから傍点］…［＃ここで傍線終わり］
-```
-
-The opener was a bouten variant; the closer was a bousen variant.
-**Fix:** match the closer to the opener family (`傍点終わり` for any
-点 variant; `傍線終わり` for any 線 variant).
-
-### E0005 — mismatched container closer
+`aozora::lex::source_contains_pua` · **Warning**
 
 ```text
-［＃ここから2字下げ］…［＃ここで地付き終わり］
+…￯…        (a literal U+E001..=U+E004 codepoint in the source)
 ```
 
-Different container kinds. The parser auto-closes the offending
-opener at the closer's position. **Fix:** match opener and closer.
+The source contains a codepoint in `U+E001..=U+E004`, which the lexer
+reserves as inline / block placeholder sentinels. A source-side
+occurrence collides with the lexer's own markers and would confuse the
+placeholder registry. **Fix:** remove the private-use codepoint from the
+source (these are not normal text characters and effectively never occur
+in real 青空文庫 files).
 
-### E0009 — bracketed kaeriten with no pair
+## Unclosed bracket
+
+`aozora::lex::unclosed_bracket` · **Error**
 
 ```text
-有［＃二］朋自遠方来    （［＃一］ missing）
+［＃ここから2字下げ            （no matching ［＃ここで字下げ終わり］）
 ```
 
-The bracketed kaeriten form requires a paired closer. **Fix:** add
-the matching `［＃一］` (or remove the `［＃二］`).
+An Aozora open delimiter (ruby `｜`, annotation `［＃`, quote, …) reached
+end-of-input with no matching close on the pairing stack. The label
+points at the *opener*. The region degrades to plain text — no pair link
+is emitted. **Fix:** add the missing close delimiter, or remove the
+dangling opener.
 
-## W-codes (warnings)
+## Unmatched close
 
-### W0001 — tcy target not found
+`aozora::lex::unmatched_close` · **Error**
 
 ```text
-昭和27年生まれ［＃「999」は縦中横］
+青空］》            （a close with no matching open on the stack）
 ```
 
-The quoted run does not appear in the look-back window (current line
-+ previous line, max 64 KiB). The directive is dropped. **Fix:**
-quote a run that actually appears in the source.
+A close delimiter was seen with an empty pairing stack, or against a
+stack top of a different `PairKind`. The label points at the stray close.
+**Fix:** add the matching open delimiter, or remove the stray close.
 
-### W0003 — bouten target ambiguous
+# Internal
 
-```text
-平和平和［＃「平和」に傍点］
-```
+`aozora::internal` · **Error** · source = `Internal`
 
-Two candidate runs in the look-back window. The parser applies the
-bouten to the *most recent* match (right-most in vertical / left-to-
-right reading); `W0003` flags the ambiguity for the author to
-disambiguate.
+Pipeline-internal sanity checks. **A correct build never emits these** —
+their appearance means a bug in aozora itself, not a problem with your
+input. The specific check is identified by an `InternalCheckCode`:
 
-### W0006 — unresolved gaiji reference
+| Check code | Fires when |
+|---|---|
+| `aozora::lex::residual_annotation_marker` | an `［＃` digraph survived classification into the normalized text (a missing recogniser) |
+| `aozora::lex::unregistered_sentinel` | a PUA sentinel sits at a normalized position not recorded in the placeholder registry |
+| `aozora::lex::registry_out_of_order` | a placeholder-registry vector is not strictly ordered by position |
+| `aozora::lex::registry_position_mismatch` | a registry entry references a position whose character is not the expected sentinel |
 
-The gaiji reference resolved to neither a Unicode codepoint nor a
-JIS X 0213 entry, and no descriptive-name fallback applied. The
-character is rendered as descriptive text in `<span>` brackets.
-**Fix:** check the JIS triple, add the codepoint manually, or extend
-the descriptive-name table.
+`aozora check` exits `3` when one fires. Please
+[report it](https://github.com/P4suta/aozora/issues) with the source that
+triggered it.
 
-### W0007 — kaeriten outside 漢文 context
+# Planned diagnostics
 
-```text
-こんにちは レ
-```
+The parser currently emits only the codes above. The richer
+*authoring-error* diagnostics below are **specified but not yet emitted** —
+they are the roadmap for guiding authors toward fixes. Until each lands,
+the construct still parses on a best-effort basis (the relevant
+[error-recovery](../arch/error-recovery.md) behaviour applies) but without
+a dedicated diagnostic.
 
-A kaeriten character (`レ`, `一`, `上`, …) appeared in a context
-that doesn't look like 漢文 (no preceding kanji run, surrounded by
-kana). The parser still emits the kaeriten node but flags the
-suspicious placement.
+| Planned code | Severity | Triggers on |
+|---|---|---|
+| `empty_ruby_reading` | Error | `｜青梅《》` — base given, reading empty |
+| `nested_ruby` | Error | ruby inside ruby (`｜…《｜…《…》…》`) |
+| `mismatched_bouten_container` | Error | 傍点 opener closed by a 傍線 closer (or vice-versa) |
+| `mismatched_container_close` | Error | `［＃ここから2字下げ］…［＃ここで地付き終わり］` — kinds differ |
+| `bracketed_kaeriten_no_pair` | Error | a bracketed kaeriten (`［＃二］`) with no paired `［＃一］` |
+| `tcy_target_not_found` | Warning | 縦中横 quoted run absent from the look-back window |
+| `bouten_target_ambiguous` | Warning | two candidate runs in the look-back window |
+| `unresolved_gaiji` | Warning | a 外字 reference resolving to neither Unicode nor JIS X 0213 |
+| `kaeriten_outside_kanbun` | Warning | a kaeriten char in a non-漢文 context |
+| `break_in_single_line_container` | Warning | a page break terminating a single-line container early |
+| `unrecognised_container_directive` | Warning | `［＃ここから…］` matching no known container kind |
+| `accent_decomposition_applied` | Note | a 〔…〕 accent digraph decomposed in Phase 0 |
 
-### W0008 — break inside single-line container
+## Why a stable string code, not just a message?
 
-```text
-　［＃地付き］right-flushed［＃改ページ］
-```
-
-The page break terminates the single-line container before its
-implicit end-of-line closer. The container is dropped from the
-output.
-
-### W0010 — unrecognised container directive
-
-The `［＃ここから…］` directive matched no known container kind.
-The parser emits a `Container::Unknown` and copies the directive
-verbatim into the canonical-serialise output.
-
-## I-codes (info)
-
-### I0001 — accent decomposition applied
-
-```text
-M[i!]cher  →  Micher
-```
-
-Reported once per source for each distinct ASCII digraph that the
-sanitize phase decomposed. Off by default; enable with
-`--diagnostics info` on the CLI.
-
-## Why a stable code, not just a message?
-
-Two reasons.
-
-1. **Test stability.** The corpus sweep counts diagnostics by code
-   to detect parser regressions. A test like "the corpus emits at
-   most 12 W0006 warnings" is robust against message wording
-   tweaks; a test that greps the message string breaks every
-   localisation pass.
-2. **Tool integration.** Editors / LSPs / CI lints filter diagnostics
-   by code (e.g. "treat E* as error, ignore W0010 for legacy
-   files"). String matching there is fragile in practice.
-
-The cost is a small lookup table (`code → message`); the win is
-that diagnostics survive refactors and translation.
+1. **Test stability.** The corpus sweep and conformance gate count
+   diagnostics by code; a test like "this corpus emits at most N
+   `unresolved_gaiji` warnings" survives message-wording tweaks and
+   localisation. A test that greps the message string does not.
+2. **Tool integration.** Editors / LSPs / CI lints filter by code
+   (e.g. "treat every `Error`-severity code as fatal, ignore
+   `unrecognised_container_directive` for legacy files"). String matching
+   on prose is fragile.
 
 ## See also
 
-- [Architecture → Error recovery](../arch/error-recovery.md) —
-  what the parser *does* after each diagnostic fires (preserved
-  output, dropped tokens, where the bytes go).
+- [Architecture → Error recovery](../arch/error-recovery.md) — what the
+  parser *does* after each diagnostic fires (preserved output, dropped
+  tokens, where the bytes go).
+- [CLI reference](../ref/cli.md) — `aozora check --diagnostic-format` and
+  the exit-code contract.
 - [Library Quickstart → Diagnostics](../getting-started/library.md)
-- [CLI Quickstart → Diagnostics format](../getting-started/cli.md)
-- [Architecture → Seven-phase lexer](../arch/lexer.md) — which
-  phase emits which code.
+- [Bindings → Diagnostics as JSON](../recipes/diagnostics-json.md)

@@ -42,7 +42,7 @@ current value from
 
 ```sh
 cargo install --git https://github.com/P4suta/aozora \
-              --tag v0.3.0 --locked aozora-cli
+              --tag v0.4.1 --locked aozora-cli
 ```
 
 ## Rust library
@@ -55,8 +55,8 @@ this one block updated:
 
 ```toml
 [dependencies]
-aozora          = { git = "https://github.com/P4suta/aozora.git", tag = "v0.3.0" }
-aozora-encoding = { git = "https://github.com/P4suta/aozora.git", tag = "v0.3.0" }
+aozora          = { git = "https://github.com/P4suta/aozora.git", tag = "v0.4.1" }
+aozora-encoding = { git = "https://github.com/P4suta/aozora.git", tag = "v0.4.1" }
 ```
 
 The current tag is whatever

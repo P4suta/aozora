@@ -93,9 +93,10 @@ configured to *not* auto-bump the MSRV pin (manual decision).
 ## Public API stability
 
 Pre-1.0: minor-version bumps may break the API. `cargo-semver-checks`
-runs in CI to catch unintentional breakage between releases, so a
-`v0.2.x` → `v0.2.y` upgrade is always safe; only `v0.x.y` →
-`v0.x+1.y` opens the door for breaks.
+runs in CI to catch unintentional breakage between releases, so
+`vX.Y.*` patch bumps are always safe; only a minor bump
+(`vX.Y.*` → `vX.Y+1.*`) opens the door for breaks. The current pin to
+track lives in the [install chapter](../getting-started/install.html#rust-library).
 
 Post-1.0 (planned): semver discipline. Breaking changes accumulate
 on a `next` branch and ship in a major bump.

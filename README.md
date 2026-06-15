@@ -57,6 +57,22 @@ For WASM / C ABI / Python bindings see the
 [Bindings chapters](https://p4suta.github.io/aozora/bindings/rust.html) of
 the handbook.
 
+### WASM / npm
+
+```sh
+npm install aozora-wasm
+```
+
+```js
+import init, { Document } from "aozora-wasm";
+
+await init();
+const html = new Document("｜青梅《おうめ》").to_html();
+```
+
+See the [WASM bindings chapter](https://p4suta.github.io/aozora/bindings/wasm.html)
+for the full `Document` method surface and the diagnostics JSON shape.
+
 ## Quickstart
 
 ```rust
@@ -76,6 +92,27 @@ assert_eq!(canonical, "｜青梅《おうめ》");
 `Document` owns a [`bumpalo`](https://docs.rs/bumpalo) arena; `tree`
 borrows from it for the lifetime of the `Document`. Dropping the
 `Document` releases every node in a single `Bump::reset` step.
+
+## Choosing a binding
+
+There is **one parser** behind every surface: the HTML, the canonical
+serialise, and the diagnostic stream are byte-identical across all of
+them. Pick the one that fits the language and runtime you already have.
+
+| You are… | Use | Why |
+|---|---|---|
+| Writing Rust | umbrella [`aozora`](./crates/aozora) library | Zero-copy borrowed AST, full type safety — the fastest path. |
+| At a shell / in CI | the `aozora` CLI | `check` / `render` / `fmt` / `pandoc`, reads stdin, exits with a code. |
+| In the browser, Node, or TypeScript | [`aozora-wasm`](./crates/aozora-wasm) (npm) | wasm-bindgen `Document` class; runs client-side and at the edge. |
+| Writing Python | [`aozora-py`](./crates/aozora-py) (PyO3) | In-process native module via maturin; idiomatic Python API. |
+| Writing Go | [`aozora-go`](./crates/aozora-go) | Pure-Go [wazero](https://wazero.io) host — no cgo, no C toolchain. |
+| Embedding from C / C++ / another native FFI | [`aozora-ffi`](./crates/aozora-ffi) C ABI | Opaque handle + JSON over a stable C header; link it like any library. |
+| Writing Java, PHP, Ruby, or the long tail | [`aozora-extism`](./crates/aozora-extism) host SDK | One portable `aozora.wasm` loaded by any [Extism](https://extism.org) SDK. |
+| Producing anything other than HTML (EPUB, LaTeX/PDF, DOCX, …) | [`aozora pandoc`](./crates/aozora-pandoc) | Projects to the Pandoc AST; 50+ output formats via Pandoc writers. |
+
+See the [Choosing a binding](https://p4suta.github.io/aozora/bindings/choosing.html)
+chapter of the handbook for the in-process-vs-host-runtime trade-offs and
+the per-language jump list.
 
 ## CLI
 
@@ -112,6 +149,8 @@ consumers usually import only this one.
 | [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` binary: `check` / `fmt` / `schema` / `kinds` / `explain` / `pandoc`. |
 | [`crates/aozora-wasm`](./crates/aozora-wasm) | `wasm32-unknown-unknown` target for `wasm-pack build --target web`. |
 | [`crates/aozora-ffi`](./crates/aozora-ffi) | C ABI driver (opaque handle, JSON-encoded structured data). |
+| [`crates/aozora-extism`](./crates/aozora-extism) | Extism (WASM) plugin driver — one portable `aozora.wasm` for polyglot host SDKs (Go / Java / PHP / Ruby / …). The breadth strategy for new languages (ADR-0006). |
+| [`crates/aozora-go`](./crates/aozora-go) | Go host SDK over `aozora.wasm` via pure-Go wazero (no cgo). A Go module, not a cargo crate (in `exclude`). |
 | [`crates/aozora-py`](./crates/aozora-py) | PyO3 bindings, distributed via `maturin`. |
 | [`crates/aozora-bench`](./crates/aozora-bench) | Criterion + corpus-driven probes (PGO profile source). |
 | [`crates/aozora-conformance`](./crates/aozora-conformance) | WPT-style conformance fixture runner (golden HTML / serialize / diagnostics / wire across 23 fixtures). |
