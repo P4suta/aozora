@@ -16,8 +16,8 @@
 ########################################################################
 # Stage: toolchain — Rust stable + system deps for builds and CJK work
 ########################################################################
-# rust:1.95.0-bookworm (digest pinned; tag kept for humans / Dependabot)
-FROM rust:1.95.0-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 AS toolchain
+# rust:1.96.0-bookworm (digest pinned; tag kept for humans / Dependabot)
+FROM rust:1.96.0-bookworm@sha256:19817ead3289c8c631c73df281e18b59b172f6a31f4f563290f69cddd06c30e9 AS toolchain
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
