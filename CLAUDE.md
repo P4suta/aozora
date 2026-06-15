@@ -20,9 +20,10 @@ Hard guarantees:
 - **Single front door.** Downstream consumers depend on the umbrella
   `aozora` crate alone. The build-block crates (`aozora-spec`,
   `aozora-syntax`, `aozora-pipeline`, `aozora-render`, `aozora-encoding`)
-  are `publish = false` and reachable only through `aozora`'s curated
-  re-exports + the `pipeline` / `syntax` / `render` / `encoding` / `wire`
-  modules.
+  are published to crates.io only so the umbrella can depend on them;
+  they are internal/unstable, carry **no API-stability contract**, and
+  are reachable through `aozora`'s curated re-exports + the `pipeline` /
+  `syntax` / `render` / `encoding` / `wire` modules.
 - **`#![forbid(unsafe_code)]` across the parser core.** The trigger
   scanner (`aozora-scan`) used to be the sole core exception (a
   hand-rolled per-ISA SIMD Teddy); it now delegates to the safe,
@@ -68,11 +69,11 @@ one `Bump::reset`. The [`Interner`] deduplicates repeated string content.
 | Crate | Responsibility |
 |---|---|
 | `aozora` | **The front door.** `Document` / `AozoraTree` + curated re-exports (`lex_into_arena`, `html`, `serialize`, `render_node`, `Arena`, `Diagnostic`, node types) and the `pipeline`/`syntax`/`render`/`encoding`/`wire`/`cst`/`query`/`proptest` modules. Depend on this alone. |
-| `aozora-spec` | `Diagnostic` / `Span` / `NormalizedOffset`, the PUA sentinel constants, and the canonical `SLUGS` catalogue. `publish = false`. |
-| `aozora-syntax` | `borrowed::AozoraNode<'a>` + `Arena` + `Interner` + `BoutenKind` / `ContainerKind` / `AnnotationKind` / `SectionKind` / the accent table. `publish = false`. |
-| `aozora-pipeline` | `lex_into_arena` + the four lexer phases (sanitize/events/pair/classify). `publish = false`. |
-| `aozora-render` | `html` / `serialize` / `render_node::render` per-node writer + bouten CSS slugs. `publish = false`. |
-| `aozora-encoding` | Shift_JIS decode + gaiji resolution (`gaiji::Resolved`). `publish = false`. |
+| `aozora-spec` | `Diagnostic` / `Span` / `NormalizedOffset`, the PUA sentinel constants, and the canonical `SLUGS` catalogue. Internal/unstable crate, now on crates.io — depend on `aozora`. |
+| `aozora-syntax` | `borrowed::AozoraNode<'a>` + `Arena` + `Interner` + `BoutenKind` / `ContainerKind` / `AnnotationKind` / `SectionKind` / the accent table. Internal/unstable crate, now on crates.io — depend on `aozora`. |
+| `aozora-pipeline` | `lex_into_arena` + the four lexer phases (sanitize/events/pair/classify). Internal/unstable crate, now on crates.io — depend on `aozora`. |
+| `aozora-render` | `html` / `serialize` / `render_node::render` per-node writer + bouten CSS slugs. Internal/unstable crate, now on crates.io — depend on `aozora`. |
+| `aozora-encoding` | Shift_JIS decode + gaiji resolution (`gaiji::Resolved`). Internal/unstable crate, now on crates.io — depend on `aozora`. |
 | `aozora-scan` | Trigger-byte scanner. Delegates to the safe, portable `aho-corasick` packed matcher (std) / `NaiveScanner` (no_std); differentially tested against the naive reference. Fully `forbid(unsafe_code)`. |
 | `aozora-veb` | Eytzinger-laid-out static maps used by the registry tables. |
 | `aozora-cst` | Lossless rowan concrete-syntax tree (`cst` feature) for editor-grade tooling. |
@@ -158,8 +159,10 @@ homed here; afm keeps redirect stubs pointing at these.
   every annotation is claimed. New 記法 extends the classifier, never the
   HTML escape hatch.
 - **Do not bypass the umbrella crate.** Downstream code (incl. afm)
-  consumes `aozora::…`, not `aozora-syntax` / `aozora-render` directly —
-  that keeps the surface tested and versioned in one place.
+  consumes `aozora::…`, not `aozora-syntax` / `aozora-render` directly.
+  The build-block crates are on crates.io so the umbrella can depend on
+  them, but they carry no API-stability contract — depending on them
+  directly forfeits the tested, versioned surface.
 - **Do not add `unsafe` outside the FFI boundary.** The parser core is
   `forbid(unsafe_code)`; only `aozora-ffi`'s C ABI may carry `unsafe`.
   Reach for a safe, audited crate (as `aozora-scan` does with
