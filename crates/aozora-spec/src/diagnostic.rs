@@ -6,9 +6,12 @@
 //! [`miette::Report`], tests can assert on the variants, library
 //! consumers can ignore them.
 //!
-//! Every variant carries a byte-range [`Span`] in the *original source*
-//! (pre-normalization), so miette's snippet renderer points at the
-//! right characters regardless of which phase detected the issue.
+//! Every variant carries a byte-range [`Span`] in the *sanitized* source
+//! — the Phase 0 output (BOM stripped, CRLF→LF, 〔…〕 accents decomposed),
+//! which is the text the later phases tokenize. To render a snippet,
+//! attach that sanitized text (e.g. via `aozora::pipeline::lexer::sanitize`)
+//! so miette's caret lands on the right character; for input with no BOM /
+//! CRLF / accent digraphs the sanitized text equals the original bytes.
 //!
 //! # Severity and source axes
 //!
@@ -218,6 +221,7 @@ pub enum Diagnostic {
     #[error("source contains lexer PUA sentinel codepoint {codepoint:?}")]
     #[diagnostic(
         code("aozora::lex::source_contains_pua"),
+        url("https://p4suta.github.io/aozora/notation/diagnostics.html#source-contains-pua"),
         severity(Warning),
         help(
             "the lexer reserves U+E001..U+E004 as inline/block markers; \
@@ -228,7 +232,7 @@ pub enum Diagnostic {
         #[label("here")]
         at: miette::SourceSpan,
         codepoint: char,
-        /// Byte-range in the original source for programmatic consumers
+        /// Byte-range in the sanitized source for programmatic consumers
         /// that don't need miette's [`miette::SourceSpan`].
         span: Span,
     },
@@ -238,6 +242,7 @@ pub enum Diagnostic {
     #[error("unclosed Aozora {kind:?} bracket")]
     #[diagnostic(
         code("aozora::lex::unclosed_bracket"),
+        url("https://p4suta.github.io/aozora/notation/diagnostics.html#unclosed-bracket"),
         help(
             "the opener has no matching close delimiter — either the close \
              was omitted or an earlier close matched a nested opener"
@@ -257,6 +262,7 @@ pub enum Diagnostic {
     #[error("unmatched Aozora {kind:?} close delimiter")]
     #[diagnostic(
         code("aozora::lex::unmatched_close"),
+        url("https://p4suta.github.io/aozora/notation/diagnostics.html#unmatched-close"),
         help(
             "no matching open on the pairing stack — either the open was \
              omitted or an inner unmatched close consumed it"
@@ -281,6 +287,7 @@ pub enum Diagnostic {
     #[error("internal aozora pipeline check failed: {}", check.as_code())]
     #[diagnostic(
         code("aozora::internal"),
+        url("https://p4suta.github.io/aozora/notation/diagnostics.html#internal"),
         help(
             "this is a pipeline-internal sanity check; appearance \
              indicates a bug in aozora — please report at \

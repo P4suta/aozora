@@ -189,7 +189,13 @@ aozora-proptest = { version = "0.4.1", path = "crates/aozora-proptest" }
 # Error handling
 thiserror = "2.0.18"
 anyhow    = "1.0"
-miette    = { version = "7.6.0", features = ["fancy"] }
+# Bare miette (the `Diagnostic` derive + `SourceSpan` only) at the
+# workspace level so the parser-core / library crates (spec / syntax /
+# pipeline / encoding) don't drag miette's `fancy` graphical-renderer
+# dependency tree (backtrace, supports-color, terminal_size, textwrap)
+# into every downstream library consumer (afm, the WASM / Python builds).
+# Only `aozora-cli` opts into `fancy` — it renders diagnostics to a TTY.
+miette    = { version = "7.6.0" }
 
 # Parsing helpers
 winnow                = "1.0"
