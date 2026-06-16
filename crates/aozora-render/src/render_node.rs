@@ -208,6 +208,12 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
                     r#"<div class="aozora-container aozora-container-align-end" data-offset="{offset}">"#,
                 )
             }
+            ContainerKind::LineWidth { width } => {
+                write!(
+                    writer,
+                    r#"<div class="aozora-container aozora-container-line-width" data-width="{width}">"#,
+                )
+            }
             ContainerKind::Keigakomi => {
                 writer.write_str(r#"<div class="aozora-container aozora-container-keigakomi">"#)
             }

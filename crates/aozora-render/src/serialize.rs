@@ -412,6 +412,9 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
         ContainerKind::Bold { block: true } => out.write_str("［＃ここから太字］"),
         ContainerKind::Italic { block: false } => out.write_str("［＃斜体］"),
         ContainerKind::Italic { block: true } => out.write_str("［＃ここから斜体］"),
+        // Preserve the width (byte-exact). A bare fallback would emit the
+        // 字下げ opener and silently mislabel the family.
+        ContainerKind::LineWidth { width } => write!(out, "［＃ここから{width}字詰め］"),
         _ => out.write_str(container_open_marker(kind)),
     }
 }
@@ -430,6 +433,7 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
         ContainerKind::Bold { block: true } => out.write_str("［＃ここで太字終わり］"),
         ContainerKind::Italic { block: false } => out.write_str("［＃斜体終わり］"),
         ContainerKind::Italic { block: true } => out.write_str("［＃ここで斜体終わり］"),
+        ContainerKind::LineWidth { .. } => out.write_str("［＃ここで字詰め終わり］"),
         _ => out.write_str(container_close_marker(kind)),
     }
 }

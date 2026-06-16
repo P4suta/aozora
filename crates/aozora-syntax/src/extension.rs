@@ -23,6 +23,16 @@ pub enum ContainerKind {
     Keigakomi,
     /// `［＃ここから地付き］` / `［＃ここから地から N 字上げ］`
     AlignEnd { offset: u8 },
+    /// `［＃ここから N字詰め］ ... ［＃ここで字詰め終わり］` — line-width
+    /// (字詰め): sets the number of full-width characters per line for the
+    /// enclosed run. Block-only (no single-line form), so `is_inline` is
+    /// `false` and the normalizer pads it like any other block container.
+    /// `width` is the character count from the opener; the close marker
+    /// re-emits `width: 0` as a placeholder (the open-side payload is
+    /// authoritative when pairing, mirroring the generic `字下げ終わり`
+    /// closer). Renders as
+    /// `<div class="aozora-container aozora-container-line-width" data-width="N">`.
+    LineWidth { width: u8 },
     /// 傍点 / 傍線 range form: `［＃傍点］ ... ［＃傍点終わり］`,
     /// `［＃二重傍線］ ... ［＃二重傍線終わり］`, `［＃左に傍線］ ...`, etc.
     /// The `kind` is the emphasis variant (its 点/線 family drives the
@@ -66,6 +76,7 @@ impl ContainerKind {
             Self::Warichu => "warichu",
             Self::Keigakomi => "keigakomi",
             Self::AlignEnd { .. } => "align-end",
+            Self::LineWidth { .. } => "line-width",
             Self::BoutenRange { .. } => "bouten-range",
             Self::Bold { .. } => "bold",
             Self::Italic { .. } => "italic",

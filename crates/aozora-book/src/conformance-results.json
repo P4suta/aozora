@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 46,
-  "passed": 46,
+  "total": 47,
+  "passed": 47,
   "failed": 0,
   "by_level": {
     "may": {
@@ -10,8 +10,8 @@
       "failed": 0
     },
     "must": {
-      "total": 18,
-      "passed": 18,
+      "total": 19,
+      "passed": 19,
       "failed": 0
     },
     "should": {
@@ -205,6 +205,13 @@
     },
     {
       "case": "keigakomi_container",
+      "feature": "container",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "line_width_container",
       "feature": "container",
       "level": "must",
       "passed": true,

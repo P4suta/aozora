@@ -66,7 +66,7 @@ export interface PairWire {
 
 /** One entry of `serialize_container_pairs` — paired container (open in normalized coords). */
 export interface ContainerPairWire {
-  kind: "indent" | "warichu" | "keigakomi" | "alignEnd" | "boutenRange" | "bold" | "italic" | "unknown";
+  kind: "indent" | "warichu" | "keigakomi" | "alignEnd" | "lineWidth" | "boutenRange" | "bold" | "italic" | "unknown";
   open: OffsetWire;
   close: OffsetWire;
 }

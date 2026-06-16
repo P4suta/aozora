@@ -373,17 +373,18 @@ enum BodyFamily {
     SectionChoho,
     SectionDan,
     SectionSpread,
-    AlignEnd0,        // 地付き
-    KeigakomiOpen,    // 罫囲み
-    KeigakomiClose,   // 罫囲み終わり
-    IndentBlock1,     // ここから字下げ → Indent { amount: 1 }
-    AlignEndBlock0,   // ここから地付き → AlignEnd { offset: 0 }
-    IndentBlockEnd,   // ここで字下げ終わり
-    AlignEndBlockEnd, // ここで地付き終わり
-    WarichuOpen,      // 割り注
-    WarichuClose,     // 割り注終わり
-    KaeritenSingle,   // body must equal one of 12 single-char marks
-    KaeritenCompound, // body must equal one of 6 compound marks
+    AlignEnd0,         // 地付き
+    KeigakomiOpen,     // 罫囲み
+    KeigakomiClose,    // 罫囲み終わり
+    IndentBlock1,      // ここから字下げ → Indent { amount: 1 }
+    AlignEndBlock0,    // ここから地付き → AlignEnd { offset: 0 }
+    IndentBlockEnd,    // ここで字下げ終わり
+    AlignEndBlockEnd,  // ここで地付き終わり
+    LineWidthBlockEnd, // ここで字詰め終わり
+    WarichuOpen,       // 割り注
+    WarichuClose,      // 割り注終わり
+    KaeritenSingle,    // body must equal one of 12 single-char marks
+    KaeritenCompound,  // body must equal one of 6 compound marks
 
     // === Prefix-with-parameter (parse body[match_end..]) ===
     AlignEndParamPrefix,      // 地から → 地から{N}字上げ
@@ -438,6 +439,10 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "ここで地付き終わり",
         family: BodyFamily::AlignEndBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここで字詰め終わり",
+        family: BodyFamily::LineWidthBlockEnd,
     },
     // Section / page break (exact).
     BodyPattern {
@@ -839,6 +844,12 @@ fn classify_annotation_body<'a>(
             EmitKind::BlockClose(ContainerKind::AlignEnd { offset: 0 }),
             None,
         )),
+        BodyFamily::LineWidthBlockEnd if exact => Some((
+            // The close marker carries no width; the open-side payload is
+            // authoritative when pairing (mirrors the generic 字下げ終わり).
+            EmitKind::BlockClose(ContainerKind::LineWidth { width: 0 }),
+            None,
+        )),
         BodyFamily::WarichuOpen if exact => {
             let p = alloc.make_annotation("［＃割り注］", AnnotationKind::WarichuOpen);
             let node = alloc.annotation(p);
@@ -894,6 +905,15 @@ fn classify_annotation_body<'a>(
                         amount: n,
                         wrap: Some(m),
                     }),
+                    None,
+                ))
+            } else if tail == "字詰め" && n >= 1 {
+                // ここから{N}字詰め — line-width container (字詰め): N
+                // full-width characters per line. Shares the `ここから`
+                // opener prefix with 字下げ; block-only, closes with
+                // `ここで字詰め終わり`.
+                Some((
+                    EmitKind::BlockOpen(ContainerKind::LineWidth { width: n }),
                     None,
                 ))
             } else {
@@ -971,6 +991,7 @@ fn classify_annotation_body<'a>(
         | BodyFamily::AlignEndBlock0
         | BodyFamily::IndentBlockEnd
         | BodyFamily::AlignEndBlockEnd
+        | BodyFamily::LineWidthBlockEnd
         | BodyFamily::WarichuOpen
         | BodyFamily::WarichuClose
         | BodyFamily::KaeritenSingle
