@@ -11,8 +11,7 @@ use aozora::{
     AlignEnd, Annotation, AnnotationKind, AozoraHeading, AozoraHeadingKind, AozoraHeadingStyle,
     AozoraTree, Bouten, BoutenKind, BoutenPosition, ContainerKind, DoubleRuby, Gaiji, HeadingHint,
     Indent, Kaeriten, NodeRef, Ruby, Sashie, SectionKind, Segment, SideNote, SourceNode, Span,
-    TateChuYoko,
-    Warichu,
+    TateChuYoko, Warichu,
     pipeline::lexer::sanitize,
     syntax::borrowed::{AozoraNode, Content},
 };
