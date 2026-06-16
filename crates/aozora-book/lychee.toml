@@ -99,4 +99,10 @@ exclude = [
     # exist on `main` yet. We trust the link — it's a relative path
     # within the same repo — and skip the network probe.
     "^https?://github\\.com/[^/]+/aozora/(blob|edit|tree)/main/",
+
+    # npmjs.com returns 403 to lychee's non-browser User-Agent on
+    # package pages that resolve fine in a browser (same UA-gating
+    # rationale as pyo3.rs above). The only npmjs.com link in the
+    # handbook is the published `aozora-wasm` package.
+    "^https?://(www\\.)?npmjs\\.com/",
 ]
