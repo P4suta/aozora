@@ -319,9 +319,9 @@ fn emit_double_ruby<W: Write>(d: &DoubleRuby<'_>, out: &mut W) -> fmt::Result {
 
 fn emit_section_break<W: Write>(kind: SectionKind, out: &mut W) -> fmt::Result {
     let keyword = match kind {
-        SectionKind::Choho => "改丁",
-        SectionKind::Dan => "改段",
-        SectionKind::Spread => "改見開き",
+        SectionKind::Kaicho => "改丁",
+        SectionKind::Kaidan => "改段",
+        SectionKind::Kaimihiraki => "改見開き",
         _ => "改ページ",
     };
     out.write_str("［＃")?;

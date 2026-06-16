@@ -531,7 +531,7 @@ mod tests {
     #[test]
     fn block_variants_report_block() {
         assert!(AozoraNode::Indent(Indent { amount: 2 }).is_block());
-        assert!(AozoraNode::SectionBreak(SectionKind::Choho).is_block());
+        assert!(AozoraNode::SectionBreak(SectionKind::Kaicho).is_block());
     }
 
     #[test]

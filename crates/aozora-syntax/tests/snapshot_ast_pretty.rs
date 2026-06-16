@@ -41,7 +41,7 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a
         alloc.warichu(upper, lower),
         alloc.keigakomi(Keigakomi),
         alloc.page_break(),
-        alloc.section_break(SectionKind::Choho),
+        alloc.section_break(SectionKind::Kaicho),
         alloc.aozora_heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window, base),
         alloc.heading_hint(2, AozoraHeadingStyle::SameLine, "対象"),
         alloc.sashie("file.png", None),

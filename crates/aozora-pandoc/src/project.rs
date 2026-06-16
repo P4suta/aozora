@@ -474,9 +474,9 @@ fn heading_hint_inline(h: HeadingHint<'_>) -> Inline {
 
 fn section_break_block(k: SectionKind) -> Block {
     let slug = match k {
-        SectionKind::Choho => "choho",
-        SectionKind::Dan => "dan",
-        SectionKind::Spread => "spread",
+        SectionKind::Kaicho => "kaicho",
+        SectionKind::Kaidan => "kaidan",
+        SectionKind::Kaimihiraki => "kaimihiraki",
         _ => "other",
     };
     Block::Div(

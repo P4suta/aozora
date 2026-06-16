@@ -7,7 +7,7 @@
   },
   "source": "前章。\n［＃改丁］\n次章。\n",
   "expected": {
-    "html": "<p>前章。</p>\n<div class=\"aozora-section-break aozora-section-break-choho\"></div>\n<p>次章。</p>\n",
+    "html": "<p>前章。</p>\n<div class=\"aozora-section-break aozora-section-break-kaicho\"></div>\n<p>次章。</p>\n",
     "serialize": "前章。\n\n［＃改丁］\n\n次章。\n",
     "nodes": [
       {

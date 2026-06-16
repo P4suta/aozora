@@ -47,9 +47,9 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
         AozoraNode::PageBreak => writer.write_str(r#"<div class="aozora-page-break"></div>"#),
         AozoraNode::SectionBreak(k) => {
             let slug = match k {
-                SectionKind::Choho => "choho",
-                SectionKind::Dan => "dan",
-                SectionKind::Spread => "spread",
+                SectionKind::Kaicho => "kaicho",
+                SectionKind::Kaidan => "kaidan",
+                SectionKind::Kaimihiraki => "kaimihiraki",
                 _ => "other",
             };
             write!(
@@ -703,9 +703,9 @@ mod tests {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
         for (kind, slug) in [
-            (SectionKind::Choho, "choho"),
-            (SectionKind::Dan, "dan"),
-            (SectionKind::Spread, "spread"),
+            (SectionKind::Kaicho, "kaicho"),
+            (SectionKind::Kaidan, "kaidan"),
+            (SectionKind::Kaimihiraki, "kaimihiraki"),
         ] {
             let n = alloc.section_break(kind);
             assert_eq!(

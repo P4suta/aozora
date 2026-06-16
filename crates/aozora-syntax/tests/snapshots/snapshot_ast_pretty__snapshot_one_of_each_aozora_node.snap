@@ -84,7 +84,7 @@ expression: "format!(\"{nodes:#?}\")"
     ),
     PageBreak,
     SectionBreak(
-        Choho,
+        Kaicho,
     ),
     AozoraHeading(
         AozoraHeading {

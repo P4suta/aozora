@@ -6,9 +6,9 @@ Four annotations split a work into pages, signatures, and openings:
 | Notation | Renders as | Meaning |
 |---|---|---|
 | `［＃改ページ］` | `<div class="aozora-page-break"></div>` | Begin a new page |
-| `［＃改丁］` | `<div class="aozora-section-break aozora-section-break-choho"></div>` | Begin a new 丁 (leaf / recto) |
-| `［＃改段］` | `<div class="aozora-section-break aozora-section-break-dan"></div>` | Section break (smaller than a page) |
-| `［＃改見開き］` | `<div class="aozora-section-break aozora-section-break-spread"></div>` | Begin a new two-page spread |
+| `［＃改丁］` | `<div class="aozora-section-break aozora-section-break-kaicho"></div>` | Begin a new 丁 (leaf / recto) |
+| `［＃改段］` | `<div class="aozora-section-break aozora-section-break-kaidan"></div>` | Section break (smaller than a page) |
+| `［＃改見開き］` | `<div class="aozora-section-break aozora-section-break-kaimihiraki"></div>` | Begin a new two-page spread |
 
 All four are *self-contained* directives — no opener / closer pair,
 no inner content. They appear on their own line in the source.
@@ -34,7 +34,7 @@ pub enum SectionKind {
 
 The flavours render to identical HTML *structure* (an empty `<div>`) but
 different *class* hooks (`aozora-page-break`,
-`aozora-section-break-{choho,dan,spread}`). Keeping `PageBreak` separate
+`aozora-section-break-{kaicho,kaidan,kaimihiraki}`). Keeping `PageBreak` separate
 and tagging the section flavours with a `SectionKind` enum (rather than a
 string) means:
 

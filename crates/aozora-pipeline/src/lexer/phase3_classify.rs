@@ -370,9 +370,9 @@ struct BodyPattern {
 enum BodyFamily {
     // === Exact-match (body must equal needle) ===
     PageBreak,
-    SectionChoho,
-    SectionDan,
-    SectionSpread,
+    SectionKaicho,
+    SectionKaidan,
+    SectionKaimihiraki,
     AlignEnd0,         // 地付き
     CenterMarker,      // ページの左右中央 / 中央揃え
     KeigakomiOpen,     // 罫囲み
@@ -479,15 +479,15 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     },
     BodyPattern {
         needle: "改丁",
-        family: BodyFamily::SectionChoho,
+        family: BodyFamily::SectionKaicho,
     },
     BodyPattern {
         needle: "改段",
-        family: BodyFamily::SectionDan,
+        family: BodyFamily::SectionKaidan,
     },
     BodyPattern {
         needle: "改見開き",
-        family: BodyFamily::SectionSpread,
+        family: BodyFamily::SectionKaimihiraki,
     },
     // Geographic alignment.
     BodyPattern {
@@ -848,16 +848,16 @@ fn classify_annotation_body<'a>(
     match pat.family {
         // ----- Exact-match families (must consume the entire body) -----
         BodyFamily::PageBreak if exact => Some((EmitKind::Aozora(alloc.page_break()), None)),
-        BodyFamily::SectionChoho if exact => Some((
-            EmitKind::Aozora(alloc.section_break(SectionKind::Choho)),
+        BodyFamily::SectionKaicho if exact => Some((
+            EmitKind::Aozora(alloc.section_break(SectionKind::Kaicho)),
             None,
         )),
-        BodyFamily::SectionDan if exact => Some((
-            EmitKind::Aozora(alloc.section_break(SectionKind::Dan)),
+        BodyFamily::SectionKaidan if exact => Some((
+            EmitKind::Aozora(alloc.section_break(SectionKind::Kaidan)),
             None,
         )),
-        BodyFamily::SectionSpread if exact => Some((
-            EmitKind::Aozora(alloc.section_break(SectionKind::Spread)),
+        BodyFamily::SectionKaimihiraki if exact => Some((
+            EmitKind::Aozora(alloc.section_break(SectionKind::Kaimihiraki)),
             None,
         )),
         BodyFamily::AlignEnd0 if exact => Some((
@@ -1054,9 +1054,9 @@ fn classify_annotation_body<'a>(
         // Exact-only families that didn't fully consume the body (e.g.
         // `罫囲みfoo` matched `罫囲み` but body is longer): no claim.
         BodyFamily::PageBreak
-        | BodyFamily::SectionChoho
-        | BodyFamily::SectionDan
-        | BodyFamily::SectionSpread
+        | BodyFamily::SectionKaicho
+        | BodyFamily::SectionKaidan
+        | BodyFamily::SectionKaimihiraki
         | BodyFamily::AlignEnd0
         | BodyFamily::CenterMarker
         | BodyFamily::KeigakomiOpen
@@ -4461,12 +4461,12 @@ mod tests {
     }
 
     #[test]
-    fn section_break_choho_recognized() {
+    fn section_break_kaicho_recognized() {
         run!(out, "［＃改丁］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::SectionBreak(SectionKind::Choho))
+            Some(AozoraNode::SectionBreak(SectionKind::Kaicho))
         ));
     }
 
@@ -4476,7 +4476,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::SectionBreak(SectionKind::Dan))
+            Some(AozoraNode::SectionBreak(SectionKind::Kaidan))
         ));
     }
 
@@ -4486,7 +4486,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::SectionBreak(SectionKind::Spread))
+            Some(AozoraNode::SectionBreak(SectionKind::Kaimihiraki))
         ));
     }
 

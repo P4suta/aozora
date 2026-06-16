@@ -676,10 +676,10 @@ mod tests {
     fn section_break_round_trip() {
         let arena = Arena::new();
         let a = fresh_alloc(&arena);
-        let n = a.section_break(SectionKind::Choho);
+        let n = a.section_break(SectionKind::Kaicho);
         assert!(matches!(
             n,
-            borrowed::AozoraNode::SectionBreak(SectionKind::Choho)
+            borrowed::AozoraNode::SectionBreak(SectionKind::Kaicho)
         ));
     }
 

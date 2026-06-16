@@ -161,11 +161,11 @@ pub struct Keigakomi;
 #[non_exhaustive]
 pub enum SectionKind {
     /// `［＃改丁］`
-    Choho,
+    Kaicho,
     /// `［＃改段］`
-    Dan,
+    Kaidan,
     /// `［＃改見開き］`
-    Spread,
+    Kaimihiraki,
 }
 
 /// Heading *level* — the 大 / 中 / 小 outline rank.

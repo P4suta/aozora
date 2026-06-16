@@ -251,7 +251,7 @@ mod tests {
         // it must not panic and must not affect any other counter.
         let mut counter = Counter::default();
         dispatch_node(
-            AozoraNode::SectionBreak(SectionKind::Choho),
+            AozoraNode::SectionBreak(SectionKind::Kaicho),
             true,
             &mut counter,
         )
