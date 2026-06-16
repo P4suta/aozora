@@ -65,6 +65,7 @@ pub use aozora_spec::{
 
 #[cfg(feature = "phase3-instrument")]
 pub mod instrumentation;
+pub mod offset;
 #[doc(hidden)]
 pub mod phase0_sanitize;
 mod phase1_events;
@@ -72,6 +73,7 @@ pub mod phase2_pair;
 pub mod phase3_classify;
 pub mod token;
 
+pub use offset::{OffsetMap, offset_map};
 pub use phase0_sanitize::{SanitizeOutput, sanitize};
 #[doc(hidden)]
 pub use phase0_sanitize::{

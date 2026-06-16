@@ -187,18 +187,19 @@ pre-push:
 
 # After `git pull` / `git merge` (i.e. when Cargo.lock or Cargo.toml
 # may have moved underneath us), surface dependency freshness so the
-# developer sees stale gates without having to remember to ask.
-# Non-blocking: deps-status returns non-zero only when stale, and
-# `|| true` ensures the merge still completes — the notice is
-# informational, not a gate.
+# developer sees stale gates without having to remember to ask. This
+# is wired ONLY on post-merge — not post-checkout — because a plain
+# branch switch is too frequent a trigger for a deps-freshness notice.
+#
+# Non-blocking, and quiet on failure:
+#   - `2>/dev/null` drops just's own `error: recipe `deps-status`
+#     failed ...` line, which it emits to stderr whenever the recipe
+#     exits non-zero (stale / never-run). The recipe's friendly notice
+#     goes to stdout and is kept.
+#   - `|| true` makes the exit code non-blocking so the merge still
+#     completes — the notice is informational, not a gate.
 post-merge:
   commands:
     deps-status:
       glob: "{Cargo.toml,Cargo.lock,crates/*/Cargo.toml}"
-      run: just deps-status || true
-
-post-checkout:
-  commands:
-    deps-status:
-      glob: "{Cargo.toml,Cargo.lock,crates/*/Cargo.toml}"
-      run: just deps-status || true
+      run: just deps-status 2>/dev/null || true

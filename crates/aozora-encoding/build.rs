@@ -52,17 +52,24 @@ fn main() {
     let combo_tsv = data_dir.join("jisx0213-combo.tsv");
     let dict_tsv = data_dir.join("aozora-gaiji-chuki.tsv");
     let special_tsv = data_dir.join("aozora-gaiji-special.tsv");
+    // Full mapping table — the slim TSVs above carry only 第3/第4水準, so
+    // the reverse char → 水準 classifier (issue #89) needs the complete
+    // file, which alone records the JIS X 0208 cells plus the
+    // `[2000]/[2004]` / `Fullwidth:` / `Windows:` annotations.
+    let std_txt = data_dir.join("jisx0213-2004-std.txt");
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={}", single_tsv.display());
     println!("cargo:rerun-if-changed={}", combo_tsv.display());
     println!("cargo:rerun-if-changed={}", dict_tsv.display());
     println!("cargo:rerun-if-changed={}", special_tsv.display());
+    println!("cargo:rerun-if-changed={}", std_txt.display());
 
     let single = parse_single_tsv(&single_tsv);
     let combo = parse_combo_tsv(&combo_tsv);
     let dict = parse_description_tsv(&dict_tsv);
     let special = parse_description_tsv(&special_tsv);
+    let levels = build_level_table(&std_txt);
 
     // Hand-curated specials win on conflict — same precedence as
     // the previous `xtask gaiji-gen` path.
@@ -161,6 +168,36 @@ fn main() {
         out,
         "pub(crate) static DESCRIPTION_TO_CHAR: phf::Map<&'static str, char> = {};",
         description_builder.build(),
+    )
+    .expect(INFALLIBLE);
+    writeln!(out).expect(INFALLIBLE);
+
+    // ---- reverse char → JIS 水準 table (issue #89) ----
+    // A codepoint-sorted `&[(u32, u8)]` queried by binary search in
+    // `suijun::jis_level`. A plain slice (not phf) keeps the codegen
+    // dependency-free and is plenty fast for a per-char classifier.
+    writeln!(
+        out,
+        "#[allow(dead_code, reason = \"queried by suijun::jis_level\")]\n\
+         pub(crate) static JIS_LEVELS: &[(u32, u8)] = &[",
+    )
+    .expect(INFALLIBLE);
+    for (codepoint, level) in &levels.entries {
+        writeln!(out, "    ({codepoint:#08X}, {level}),").expect(INFALLIBLE);
+    }
+    writeln!(out, "];").expect(INFALLIBLE);
+    writeln!(out).expect(INFALLIBLE);
+    writeln!(
+        out,
+        "#[allow(dead_code, reason = \"pinned for level-table size tests\")]\n\
+         pub(crate) const JISX0208_CELL_COUNT: usize = {jisx0208};\n\
+         #[allow(dead_code, reason = \"pinned for level-table size tests\")]\n\
+         pub(crate) const JIS_LEVEL3_CELL_COUNT: usize = {level3};\n\
+         #[allow(dead_code, reason = \"pinned for level-table size tests\")]\n\
+         pub(crate) const JIS_LEVEL4_CELL_COUNT: usize = {level4};",
+        jisx0208 = levels.jisx0208_cells,
+        level3 = levels.level3_cells,
+        level4 = levels.level4_cells,
     )
     .expect(INFALLIBLE);
     writeln!(out).expect(INFALLIBLE);
@@ -292,4 +329,134 @@ fn parse_description_tsv(path: &std::path::Path) -> Vec<DescriptionEntry> {
 fn mencode(plane: u8, row: u8, cell: u8) -> String {
     let level = if plane == 1 { 3 } else { 4 };
     format!("第{level}水準{plane}-{row}-{cell}")
+}
+
+/// Reverse char → JIS 水準 table built from `jisx0213-2004-std.txt`
+/// for issue #89's `jis_level` / `is_platform_dependent` classifier.
+struct LevelTable {
+    /// `(codepoint, level)` pairs sorted by codepoint, deduped so the
+    /// lowest (most standard) level wins on collision. `level` ∈ 1..=4.
+    entries: Vec<(u32, u8)>,
+    /// plane-1 single cells NOT tagged `[2000]`/`[2004]` — the JIS X 0208
+    /// set (第1 + 第2水準). Upstream-verified at 6918.
+    jisx0208_cells: usize,
+    /// plane-1 single cells tagged `[2000]`/`[2004]` — 第3水準.
+    level3_cells: usize,
+    /// plane-2 single cells — 第4水準.
+    level4_cells: usize,
+}
+
+/// Insert keeping the lowest (most standard) level on collision — a
+/// codepoint reachable as both a JIS X 0208 primary and a higher-level
+/// alias is classified by its most-portable home.
+fn insert_min(map: &mut std::collections::BTreeMap<u32, u8>, codepoint: u32, level: u8) {
+    map.entry(codepoint)
+        .and_modify(|cur| {
+            if level < *cur {
+                *cur = level;
+            }
+        })
+        .or_insert(level);
+}
+
+/// Parse a single `U+XXXX` token to its scalar value. Returns `None`
+/// for combining sequences (`U+XXXX+YYYY`) and malformed tokens.
+fn parse_single_u_plus(token: &str) -> Option<u32> {
+    let hex = token.trim().strip_prefix("U+")?;
+    if hex.contains('+') {
+        return None; // combining sequence — not a single char
+    }
+    u32::from_str_radix(hex, 16).ok()
+}
+
+/// Derive the reverse char → 水準 table from the full JIS X 0213:2004
+/// mapping file. Each line is `JIS<TAB>Unicode<TAB># Name<TAB>Note…`:
+///
+/// * `JIS` = `N-RRCC` — plane digit `N` (1|2) then GL row/cell bytes.
+/// * `Unicode` = `U+XXXX` (single) or `U+XXXX+YYYY` (combining, skipped).
+/// * notes include `[2000]`/`[2004]` level tags and `Fullwidth:` /
+///   `Windows:` alias annotations.
+fn build_level_table(path: &std::path::Path) -> LevelTable {
+    let text =
+        fs::read_to_string(path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+    let mut map: std::collections::BTreeMap<u32, u8> = std::collections::BTreeMap::new();
+    let mut jisx0208_cells = 0usize;
+    let mut level3_cells = 0usize;
+    let mut level4_cells = 0usize;
+
+    for line in text.lines() {
+        let line = line.trim_end();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split('\t');
+        let jis = fields.next().expect("JIS column");
+        let unicode = fields.next().unwrap_or("");
+        let notes: Vec<&str> = fields.collect();
+
+        // `N-RRCC`: GL prefix (`3-` = plane 1, `4-` = plane 2), then 4
+        // hex digits (row byte, cell byte).
+        let (prefix, code) = jis.split_once('-').expect("JIS code shaped `N-RRCC`");
+        let plane: u8 = match prefix {
+            "3" => 1,
+            "4" => 2,
+            other => panic!("unexpected JIS plane prefix {other:?} in {jis:?}"),
+        };
+        let row_byte = u8::from_str_radix(&code[0..2], 16).expect("row byte hex");
+
+        let tagged_0213 = notes
+            .iter()
+            .any(|note| matches!(note.trim(), "[2000]" | "[2004]"));
+
+        // plane 2 ⇒ 第4水準; plane-1 0213 addition ⇒ 第3水準; else
+        // plane-1 JIS X 0208, split 第1|第2水準 at ku 47|48 — i.e. row
+        // byte 0x4F|0x50, since ku = row_byte − 0x20.
+        let level: u8 = if plane == 2 {
+            4
+        } else if tagged_0213 {
+            3
+        } else if row_byte <= 0x4F {
+            1
+        } else {
+            2
+        };
+
+        // A combining sequence has a second `+` after the `U+` prefix.
+        let is_combo = unicode
+            .strip_prefix("U+")
+            .is_some_and(|body| body.contains('+'));
+
+        if !is_combo {
+            match (plane, tagged_0213) {
+                (1, false) => jisx0208_cells += 1,
+                (1, true) => level3_cells += 1,
+                (2, _) => level4_cells += 1,
+                _ => {}
+            }
+            if let Some(codepoint) = parse_single_u_plus(unicode) {
+                insert_min(&mut map, codepoint, level);
+            }
+        }
+
+        // Register every `Fullwidth: U+YYYY` alias at the cell's level:
+        // the primary is the ASCII form (e.g. `|` U+007C) but the
+        // full-width form (｜ U+FF5C, a notation marker) is what appears
+        // in real text and must classify as in-JIS. `Windows:` aliases
+        // are deliberately NOT registered — they are the non-portable
+        // CP932 variants that should surface as 機種依存文字.
+        for note in &notes {
+            if let Some(rest) = note.trim().strip_prefix("Fullwidth:")
+                && let Some(codepoint) = parse_single_u_plus(rest)
+            {
+                insert_min(&mut map, codepoint, level);
+            }
+        }
+    }
+
+    LevelTable {
+        entries: map.into_iter().collect(),
+        jisx0208_cells,
+        level3_cells,
+        level4_cells,
+    }
 }
