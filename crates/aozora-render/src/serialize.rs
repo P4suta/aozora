@@ -452,6 +452,14 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
         ContainerKind::Bold { block: true } => out.write_str("［＃ここから太字］"),
         ContainerKind::Italic { block: false } => out.write_str("［＃斜体］"),
         ContainerKind::Italic { block: true } => out.write_str("［＃ここから斜体］"),
+        // Preserve the 地から N 字上げ offset. A bare fallback collapses
+        // every AlignEnd opener to ［＃ここから地付き］, silently dropping a
+        // non-zero offset (a §7.6 fixed-point violation). The close marker
+        // canonicalises to ［＃ここで地付き終わり］ for both forms (the
+        // close node carries no offset; the open-side payload is
+        // authoritative).
+        ContainerKind::AlignEnd { offset: 0 } => out.write_str("［＃ここから地付き］"),
+        ContainerKind::AlignEnd { offset } => write!(out, "［＃ここから地から{offset}字上げ］"),
         // Preserve the width (byte-exact). A bare fallback would emit the
         // 字下げ opener and silently mislabel the family.
         ContainerKind::LineWidth { width } => write!(out, "［＃ここから{width}字詰め］"),

@@ -444,6 +444,14 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "ここで地付き終わり",
         family: BodyFamily::AlignEndBlockEnd,
     },
+    // The 字上げ block (［＃ここから地から N 字上げ］) is closed by either
+    // ［＃ここで字上げ終わり］ or ［＃ここで地付き終わり］ — both end the same
+    // AlignEnd container. The open-side offset is authoritative when
+    // pairing, so this closer reuses AlignEndBlockEnd.
+    BodyPattern {
+        needle: "ここで字上げ終わり",
+        family: BodyFamily::AlignEndBlockEnd,
+    },
     BodyPattern {
         needle: "ここで字詰め終わり",
         family: BodyFamily::LineWidthBlockEnd,
