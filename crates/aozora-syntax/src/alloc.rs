@@ -248,6 +248,28 @@ impl<'a> BorrowedAllocator<'a> {
         }))
     }
 
+    /// `AozoraNode::SideNote(SideNote { base, note })` — a left-side
+    /// annotation (注記) from the `［＃「base」の左に「note」の注記］`
+    /// forward-reference form. Placement parallels a left-side ruby, but a
+    /// 注記 is an editorial note rather than a phonetic reading.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `base` or `note` is empty (same contract as [`Self::ruby`];
+    /// Phase 3 rejects an empty note before emitting).
+    #[must_use]
+    pub fn side_note(
+        &self,
+        base: borrowed::Content<'a>,
+        note: borrowed::Content<'a>,
+    ) -> borrowed::AozoraNode<'a> {
+        let base =
+            borrowed::NonEmpty::new(base).expect("Phase 3 must emit SideNote with non-empty base");
+        let note =
+            borrowed::NonEmpty::new(note).expect("Phase 3 must emit SideNote with non-empty note");
+        borrowed::AozoraNode::SideNote(self.arena.alloc(borrowed::SideNote { base, note }))
+    }
+
     /// `AozoraNode::Bouten(Bouten { kind, target, position,
     /// consumed_predecessor })`.
     ///

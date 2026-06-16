@@ -69,6 +69,8 @@ pub enum AozoraNode<'src> {
     DoubleRuby(&'src DoubleRuby<'src>),
     /// Bold / italic emphasis (`X［＃「X」は太字／斜体］`). See [`Emphasis`].
     Emphasis(&'src Emphasis<'src>),
+    /// Left-side annotation (注記). See [`SideNote`].
+    SideNote(&'src SideNote<'src>),
     /// Paired-container open (`［＃ここから字下げ］` etc.).
     Container(Container),
 }
@@ -182,6 +184,19 @@ pub struct Ruby<'src> {
     /// Which side the reading sits on. `Right` for the `｜《》` / implicit
     /// forms; `Left` for the `［＃「X」の左に「Y」のルビ］` saidoku building block.
     pub side: RubySide,
+}
+
+/// Left-side annotation (注記).
+///
+/// `［＃「base」の左に「note」の注記］` — a left-side editorial gloss attached
+/// to `base`. Like a left-side ruby in placement, but a *note* (注記) rather
+/// than a phonetic reading, so it is a distinct node and round-trips to
+/// `の注記`, not `のルビ`. Both `base` and `note` are [`super::NonEmpty`]:
+/// Phase 3 emits the node only once both have content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SideNote<'src> {
+    pub base: super::NonEmpty<Content<'src>>,
+    pub note: super::NonEmpty<Content<'src>>,
 }
 
 /// Emphasis dots / sidelines.
@@ -397,6 +412,7 @@ impl AozoraNode<'_> {
             Self::Annotation(_) => "aozora_annotation",
             Self::DoubleRuby(_) => "aozora_double_ruby",
             Self::Emphasis(_) => "aozora_emphasis",
+            Self::SideNote(_) => "aozora_side_note",
             Self::Container(_) => "aozora_container",
         }
     }
@@ -429,6 +445,7 @@ impl AozoraNode<'_> {
             Self::Annotation(_) => NodeKind::Annotation,
             Self::DoubleRuby(_) => NodeKind::DoubleRuby,
             Self::Emphasis(_) => NodeKind::Emphasis,
+            Self::SideNote(_) => NodeKind::SideNote,
             Self::Container(_) => NodeKind::Container,
         }
     }

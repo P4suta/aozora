@@ -3072,6 +3072,20 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 pending_diagnostic: None,
             });
         }
+        // `「X」の左に「Y」の注記` — left-side annotation (注記). The `の注記`
+        // keyword is disjoint from `のルビ` and every bouten kind, so the
+        // bouten and left-ruby classifiers above have already declined.
+        if let Some((node, consume_start)) =
+            self.classify_forward_left_annotation(view, open_idx, close_idx)
+        {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start,
+                consume_end: close_span.end,
+                pending_diagnostic: None,
+            });
+        }
         // 縦中横 is 3-state: a shape-matched directive whose target has no
         // referent (`ShapedNoTarget`) carries a warning down the
         // fall-through path while still degrading to `Annotation{Unknown}`.
@@ -3729,6 +3743,50 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let base = self.alloc.content_plain(target);
         let reading = self.alloc.content_plain(reading_text);
         Some((self.alloc.left_ruby(base, reading), consume_start))
+    }
+}
+
+/// Classify a `「X」の左に「Y」の注記` forward-reference **left-side
+/// annotation** (注記). The structural twin of
+/// [`Self::classify_forward_left_ruby`] — same single-target pull-back — but
+/// the `の注記` keyword selects a distinct [`borrowed::AozoraNode::SideNote`]
+/// node, so it round-trips to `の注記`, not `のルビ`. The `の左に「…」の注記`
+/// suffix is unique, so the left-side bouten / left-ruby classifiers above
+/// have already declined.
+impl<'a> RecogniseCtx<'_, 'a, '_> {
+    fn classify_forward_left_annotation(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        let [target] = extracted.targets.as_slice() else {
+            return None;
+        };
+        // suffix == の左に「<note>」の注記
+        let note_text = extracted
+            .suffix
+            .strip_prefix("の左に「")?
+            .strip_suffix("」の注記")?;
+        if note_text.is_empty() {
+            return None;
+        }
+        if !forward_target_is_preceded(view.events, self.source, open_idx, target) {
+            return None;
+        }
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        let consume_start =
+            find_immediate_predecessor_target_position(view.events, self.source, open_idx, target)
+                .unwrap_or(open_span.start);
+        let base = self.alloc.content_plain(target);
+        let note = self.alloc.content_plain(note_text);
+        Some((self.alloc.side_note(base, note), consume_start))
     }
 }
 

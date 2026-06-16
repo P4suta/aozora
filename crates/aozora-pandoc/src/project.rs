@@ -10,7 +10,8 @@
 use aozora::{
     AlignEnd, Annotation, AnnotationKind, AozoraHeading, AozoraHeadingKind, AozoraHeadingStyle,
     AozoraTree, Bouten, BoutenKind, BoutenPosition, ContainerKind, DoubleRuby, Gaiji, HeadingHint,
-    Indent, Kaeriten, NodeRef, Ruby, Sashie, SectionKind, Segment, SourceNode, Span, TateChuYoko,
+    Indent, Kaeriten, NodeRef, Ruby, Sashie, SectionKind, Segment, SideNote, SourceNode, Span,
+    TateChuYoko,
     Warichu,
     pipeline::lexer::sanitize,
     syntax::borrowed::{AozoraNode, Content},
@@ -187,6 +188,7 @@ impl<'src> Converter<'src> {
         use AozoraNode as N;
         let inline = match node {
             N::Ruby(r) => ruby_inline(r),
+            N::SideNote(s) => side_note_inline(s),
             N::Bouten(b) => bouten_inline(b),
             N::TateChuYoko(t) => tate_chu_yoko_inline(t),
             N::Gaiji(g) => gaiji_inline(*g),
@@ -328,6 +330,16 @@ fn ruby_inline(r: &Ruby<'_>) -> Inline {
         ),
         inner,
     )
+}
+
+fn side_note_inline(s: &SideNote<'_>) -> Inline {
+    let base_inlines = content_to_inlines(s.base.get());
+    let note_inlines = content_to_inlines(s.note.get());
+    let inner = vec![
+        Inline::Span(class_attr("sidenote-base"), base_inlines),
+        Inline::Span(class_attr("sidenote-note"), note_inlines),
+    ];
+    Inline::Span(class_attr("sidenote"), inner)
 }
 
 fn bouten_inline(b: &Bouten<'_>) -> Inline {

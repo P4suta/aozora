@@ -85,7 +85,7 @@ pub use aozora_syntax::{
     Center, ContainerKind, Indent, NodeKind, RubySide, SectionKind,
     borrowed::{
         Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,
-        Kaeriten, Ruby, Sashie, Segment, TateChuYoko, Warichu,
+        Kaeriten, Ruby, Sashie, Segment, SideNote, TateChuYoko, Warichu,
     },
 };
 

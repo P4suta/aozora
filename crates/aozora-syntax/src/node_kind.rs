@@ -66,6 +66,8 @@ pub enum NodeKind {
     DoubleRuby,
     /// 太字 / 斜体 (bold / italic) — forward-reference emphasis leaf.
     Emphasis,
+    /// Side annotation (注記) — `「X」の左に「Y」の注記`.
+    SideNote,
     /// Inline-attached container (字下げ系の `AozoraNode` 包み込み).
     Container,
     /// `NodeRef::BlockOpen` projection — paired-container open
@@ -82,7 +84,7 @@ impl NodeKind {
     /// Used by `aozora kinds` (CLI introspection) and the
     /// TypeScript / JSON-Schema codegen so the artefact list
     /// tracks the enum without a hand-maintained parallel.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Ruby,
         Self::Bouten,
         Self::TateChuYoko,
@@ -101,6 +103,7 @@ impl NodeKind {
         Self::Annotation,
         Self::DoubleRuby,
         Self::Emphasis,
+        Self::SideNote,
         Self::Container,
         Self::ContainerOpen,
         Self::ContainerClose,
@@ -133,6 +136,7 @@ impl NodeKind {
             Self::Annotation => "annotation",
             Self::DoubleRuby => "doubleRuby",
             Self::Emphasis => "emphasis",
+            Self::SideNote => "sideNote",
             Self::Container => "container",
             Self::ContainerOpen => "containerOpen",
             Self::ContainerClose => "containerClose",
@@ -167,6 +171,7 @@ mod tests {
         assert_eq!(NodeKind::Annotation.as_camel_case(), "annotation");
         assert_eq!(NodeKind::DoubleRuby.as_camel_case(), "doubleRuby");
         assert_eq!(NodeKind::Emphasis.as_camel_case(), "emphasis");
+        assert_eq!(NodeKind::SideNote.as_camel_case(), "sideNote");
         assert_eq!(NodeKind::Container.as_camel_case(), "container");
         assert_eq!(NodeKind::ContainerOpen.as_camel_case(), "containerOpen");
         assert_eq!(NodeKind::ContainerClose.as_camel_case(), "containerClose");

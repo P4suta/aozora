@@ -46,5 +46,5 @@ pub use non_empty::{NonEmpty, NonEmptyStr};
 pub use registry::{ContainerPair, NodeRef, Registry};
 pub use types::{
     Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Emphasis, Gaiji,
-    HeadingHint, Kaeriten, Ruby, Sashie, Segment, TateChuYoko, Warichu,
+    HeadingHint, Kaeriten, Ruby, Sashie, Segment, SideNote, TateChuYoko, Warichu,
 };

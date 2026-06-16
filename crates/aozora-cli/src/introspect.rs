@@ -198,6 +198,7 @@ fn describe_node(k: NodeKind) -> &'static str {
         NodeKind::Kaeriten => "返り点 — kanbun reading marker.",
         NodeKind::Annotation => "Generic annotation no specific recogniser claimed.",
         NodeKind::DoubleRuby => "Double ruby (《《…》》).",
+        NodeKind::SideNote => "Side annotation (注記) — 「X」の左に「Y」の注記.",
         NodeKind::Container => "Inline-attached container (字下げ系の wrap).",
         NodeKind::ContainerOpen => "NodeRef::BlockOpen — paired-container open sentinel.",
         NodeKind::ContainerClose => "NodeRef::BlockClose — paired-container close sentinel.",

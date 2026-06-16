@@ -7,7 +7,7 @@ use core::fmt::{self, Write};
 
 use aozora_syntax::borrowed::{
     Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Emphasis, Gaiji,
-    HeadingHint, Kaeriten, Ruby, Sashie, Segment,
+    HeadingHint, Kaeriten, Ruby, Sashie, Segment, SideNote,
 };
 use aozora_syntax::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, Container, ContainerKind,
@@ -35,6 +35,7 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
         AozoraNode::Ruby(r) => render_ruby(r, writer),
         AozoraNode::Bouten(b) => render_bouten(b, writer),
         AozoraNode::Emphasis(e) => render_emphasis(e, writer),
+        AozoraNode::SideNote(s) => render_side_note(s, writer),
         AozoraNode::TateChuYoko(t) => {
             writer.write_str(r#"<span class="aozora-tcy">"#)?;
             render_content(t.text.get(), writer)?;
@@ -83,6 +84,17 @@ fn render_ruby<W: Write>(r: &Ruby<'_>, writer: &mut W) -> fmt::Result {
         _ => "<rp>(</rp><rt>",
     })?;
     render_content(r.reading.get(), writer)?;
+    writer.write_str("</rt><rp>)</rp></ruby>")
+}
+
+fn render_side_note<W: Write>(s: &SideNote<'_>, writer: &mut W) -> fmt::Result {
+    // A 注記 attaches a left-side editorial note to the base — like a
+    // left-side ruby in layout, but a note rather than a reading, so it
+    // reuses the ruby box with a distinct `aozora-sidenote` class.
+    writer.write_str("<ruby>")?;
+    render_content(s.base.get(), writer)?;
+    writer.write_str(r#"<rp>(</rp><rt class="aozora-sidenote">"#)?;
+    render_content(s.note.get(), writer)?;
     writer.write_str("</rt><rp>)</rp></ruby>")
 }
 

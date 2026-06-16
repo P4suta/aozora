@@ -19,6 +19,20 @@ expression: "format!(\"{nodes:#?}\")"
             side: Right,
         },
     ),
+    SideNote(
+        SideNote {
+            base: NonEmpty(
+                Plain(
+                    "base",
+                ),
+            ),
+            note: NonEmpty(
+                Plain(
+                    "よみ",
+                ),
+            ),
+        },
+    ),
     Bouten(
         Bouten {
             kind: Goma,

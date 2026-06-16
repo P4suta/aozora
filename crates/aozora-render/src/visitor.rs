@@ -25,7 +25,7 @@ use core::fmt;
 
 use aozora_syntax::borrowed::{
     Annotation, AozoraHeading, AozoraNode, Bouten, DoubleRuby, Gaiji, HeadingHint, Kaeriten, Ruby,
-    Sashie, TateChuYoko, Warichu,
+    Sashie, SideNote, TateChuYoko, Warichu,
 };
 use aozora_syntax::{AlignEnd, Center, Container, Indent, Keigakomi, SectionKind};
 
@@ -53,6 +53,9 @@ use aozora_syntax::{AlignEnd, Center, Container, Indent, Keigakomi, SectionKind}
 )]
 pub trait AozoraVisitor<'src> {
     fn visit_ruby(&mut self, r: &Ruby<'src>) -> fmt::Result {
+        Ok(())
+    }
+    fn visit_side_note(&mut self, s: &SideNote<'src>) -> fmt::Result {
         Ok(())
     }
     fn visit_bouten(&mut self, b: &Bouten<'src>) -> fmt::Result {
@@ -139,6 +142,7 @@ pub fn dispatch_node<'src, V: AozoraVisitor<'src>>(
         }
         _ if !entering => Ok(()),
         AozoraNode::Ruby(r) => v.visit_ruby(r),
+        AozoraNode::SideNote(s) => v.visit_side_note(s),
         AozoraNode::Bouten(b) => v.visit_bouten(b),
         AozoraNode::TateChuYoko(t) => v.visit_tate_chu_yoko(t),
         AozoraNode::Gaiji(g) => v.visit_gaiji(g),

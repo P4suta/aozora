@@ -12,7 +12,7 @@ use core::fmt::{self, Write};
 use aozora_pipeline::{BorrowedLexOutput, has_long_rule_line, isolate_decorative_rules};
 use aozora_syntax::borrowed::{
     Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Emphasis, Gaiji,
-    HeadingHint, Kaeriten, NodeRef, Ruby, Sashie, Segment, TateChuYoko,
+    HeadingHint, Kaeriten, NodeRef, Ruby, Sashie, Segment, SideNote, TateChuYoko,
 };
 use aozora_syntax::{
     AlignEnd, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition, Center,
@@ -165,6 +165,7 @@ fn emit_aozora<W: Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
         AozoraNode::Annotation(a) => emit_annotation(a, out),
         AozoraNode::DoubleRuby(d) => emit_double_ruby(d, out),
         AozoraNode::Emphasis(e) => emit_emphasis(e, out),
+        AozoraNode::SideNote(s) => emit_side_note(s, out),
         AozoraNode::PageBreak => out.write_str("［＃改ページ］"),
         AozoraNode::SectionBreak(kind) => emit_section_break(kind, out),
         AozoraNode::Indent(i) => emit_indent(i, out),
@@ -201,6 +202,18 @@ fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
     out.write_char('《')?;
     emit_content(r.reading.get(), out)?;
     out.write_char('》')
+}
+
+fn emit_side_note<W: Write>(s: &SideNote<'_>, out: &mut W) -> fmt::Result {
+    // Reconstruct `base［＃「base」の左に「note」の注記］`; the base is the
+    // pulled-back predecessor, so it precedes the directive (mirrors the
+    // left-side ruby round-trip in `emit_ruby`).
+    emit_content(s.base.get(), out)?;
+    out.write_str("［＃「")?;
+    emit_content(s.base.get(), out)?;
+    out.write_str("」の左に「")?;
+    emit_content(s.note.get(), out)?;
+    out.write_str("」の注記］")
 }
 
 fn emit_bouten<W: Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {
