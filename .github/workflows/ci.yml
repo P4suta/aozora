@@ -1,21 +1,27 @@
 # aozora CI
 #
 # Architecture:
-#   - The dev container image is built and published by `dev-image.yml`
-#     to ghcr.io/p4suta/aozora-dev:latest on Dockerfile / compose
-#     changes.
-#   - This workflow PULLS that image (via the `setup-dev-image`
-#     composite action) and invokes `just <target>` on the runner host.
-#     `just` recipes wrap each command in `docker compose run dev cargo
-#     ...` (Justfile policy: never invoke cargo on the host directly).
-#     Running `just` on the runner — instead of `docker compose run ci
-#     just <target>` — avoids Docker-in-Docker: the previous nested
-#     pattern hit `bash: docker: command not found` because the `ci`
-#     container has no docker client.
-#   - If the GHCR image is unavailable (first run before dev-image.yml
-#     publishes, or transient registry outage), the composite action
-#     falls back to `docker compose build` against the local Dockerfile.
-#     Slower path but the same correctness guarantee.
+#   - The `dev-image` job builds the dev container image ONCE per run
+#     (via the `setup-dev-image` composite action) from the in-tree
+#     Dockerfile, using the GitHub Actions build-layer cache (`type=gha`)
+#     so the heavy `cargo binstall` layer is reused, never re-fetched
+#     live. It then saves the image to the runner tar cache. No GHCR pull
+#     and no token: building from this checkout's Dockerfile guarantees
+#     the image matches the PR (the stale-`:latest` footgun), and the
+#     live-binstall path was hitting GitHub's unauthenticated API rate
+#     limit (403). `dev-image.yml` still publishes `:latest` to GHCR on
+#     main for local `docker pull` / external use, but CI does not depend
+#     on it.
+#   - Every container job declares `needs: dev-image` and runs the same
+#     `setup-dev-image` action, which restores the tar (cache hit) and
+#     `docker load`s it — so the image build happens at most once per run
+#     and the jobs never race a live binstall.
+#   - Jobs invoke `just <target>` on the runner host; `just` recipes wrap
+#     each command in `docker compose run dev cargo ...` (Justfile policy:
+#     never invoke cargo on the host directly). Running `just` on the
+#     runner — instead of `docker compose run ci just <target>` — avoids
+#     Docker-in-Docker: the previous nested pattern hit `bash: docker:
+#     command not found` because the `ci` container has no docker client.
 #
 # Action SHAs are pinned; Dependabot bumps weekly.
 
@@ -78,6 +84,20 @@ jobs:
           # are not Conventional Commits and must not be linted.
           done < <(git log --no-merges --format='%H %s' "$range")
 
+  # Build the dev image ONCE per run so the heavy `cargo binstall`
+  # (cargo-tools) layer is never re-fetched live across the container
+  # jobs below — the live binstall path was hitting GitHub's
+  # unauthenticated API rate limit (403) and failing `audit (deny)`. This
+  # job runs `setup-dev-image`, which on a tar-cache miss builds the image
+  # from the in-tree Dockerfile through the GHA build-layer cache (no
+  # GHCR, no token) and saves it to the runner tar cache; every
+  # `needs: dev-image` job then restores that tar and `docker load`s it.
+  dev-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: ./.github/actions/setup-dev-image
+
   # `just lint` is a recipe-deps chain (fmt-check → clippy → typos →
   # strict-code) that ran serially in a single job, so its wall time
   # was the sum of the sub-recipes. Split into a matrix so each runs in
@@ -90,6 +110,7 @@ jobs:
   # cache-miss run.
   lint:
     name: lint (${{ matrix.target }})
+    needs: dev-image
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -107,6 +128,7 @@ jobs:
   # Splitting them into two jobs duplicated the workspace cargo build
   # for ~3 extra wall-clock minutes per push without adding signal.
   coverage:
+    needs: dev-image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -120,6 +142,7 @@ jobs:
   # failing the PR. Run `just doc` here too so doc regressions are caught
   # at review time. Mirrors the sibling afm repo's `doc` job.
   doc:
+    needs: dev-image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -127,6 +150,7 @@ jobs:
       - run: just doc
 
   audit:
+    needs: dev-image
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -147,6 +171,7 @@ jobs:
   # regenerate after touching `aozora::wire::*` or any `pub const ALL`
   # array now fails CI rather than landing silently.
   drift-gate:
+    needs: dev-image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -156,6 +181,7 @@ jobs:
   # Phase O4 — WPT-style conformance suite. Runs every fixture
   # through the parser and asserts every `must`-tier case passes.
   conformance:
+    needs: dev-image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
