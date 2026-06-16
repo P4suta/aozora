@@ -421,6 +421,51 @@ pub fn decompose_fragment(fragment: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+/// Per-digraph **length-changing** edits made by [`decompose_fragment`],
+/// for callers that back-map offsets across the rewrite (see the module
+/// note on the per-position delta).
+///
+/// Each entry is `(in_off, in_len, out_len)`: the `in_len` input bytes at
+/// byte offset `in_off` (relative to `fragment`) become `out_len` output
+/// bytes. Only digraphs whose UTF-8 output length differs from the ASCII
+/// source are reported — length-preserving substitutions (`s&` = ß, 2→2)
+/// shift no later offset and are omitted, so the common case allocates an
+/// empty `Vec`.
+///
+/// ```
+/// use aozora_syntax::accent::decompose_fragment_edits;
+/// // `ae&` (3 bytes) → æ (2 bytes): a −1 shift at offset 0.
+/// assert_eq!(decompose_fragment_edits("ae&on"), vec![(0, 3, 2)]);
+/// // `m'` (2 bytes) → ḿ (3 bytes): a +1 shift.
+/// assert_eq!(decompose_fragment_edits("m'a"), vec![(0, 2, 3)]);
+/// // `s&` (2 bytes) → ß (2 bytes): length-preserving, omitted.
+/// assert!(decompose_fragment_edits("stras&e").is_empty());
+/// ```
+#[must_use]
+pub fn decompose_fragment_edits(fragment: &str) -> Vec<(usize, usize, usize)> {
+    let bytes = fragment.as_bytes();
+    let mut edits = Vec::new();
+    if !bytes.iter().any(|b| is_accent_marker(*b)) {
+        return edits;
+    }
+    let mut i = 0;
+    while i < bytes.len() {
+        if let Some((pat_len, ch)) = try_match(bytes, i) {
+            let out_len = ch.len_utf8();
+            if pat_len != out_len {
+                edits.push((i, pat_len, out_len));
+            }
+            i += pat_len;
+        } else {
+            let Some(ch) = fragment.get(i..).and_then(|s| s.chars().next()) else {
+                break;
+            };
+            i += ch.len_utf8();
+        }
+    }
+    edits
+}
+
 /// Attempt to match a table entry starting at `bytes[i]`. Longest-first
 /// (the spec rule): try 3-byte ligatures before 2-byte digraphs.
 ///
