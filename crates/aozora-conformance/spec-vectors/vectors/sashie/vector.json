@@ -1,0 +1,36 @@
+{
+  "name": "sashie",
+  "meta": {
+    "feature": "sashie",
+    "level": "must",
+    "spec_section": "6.11"
+  },
+  "source": "ある日、［＃挿絵（cover.png）入る］その地に至る。\n",
+  "expected": {
+    "html": "<p>ある日、</p>\n<!-- aozora_sashie -->\n<p>その地に至る。</p>\n",
+    "serialize": "ある日、\n\n［＃挿絵（cover.png）入る］\n\nその地に至る。\n",
+    "nodes": [
+      {
+        "kind": "sashie",
+        "span": {
+          "start": 12,
+          "end": 48
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 45,
+          "end": 48
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

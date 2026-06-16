@@ -1,0 +1,47 @@
+{
+  "name": "bouten_chain_line",
+  "meta": {
+    "feature": "bouten",
+    "level": "should",
+    "spec_section": "6.2"
+  },
+  "source": "重要［＃「重要」に鎖線］な点。\n",
+  "expected": {
+    "html": "<p><em class=\"aozora-bouten aozora-bouten-chain-line aozora-bouten-right\">重要</em>な点。</p>\n",
+    "serialize": "重要［＃「重要」に鎖線］な点。\n",
+    "nodes": [
+      {
+        "kind": "bouten",
+        "span": {
+          "start": 0,
+          "end": 36
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 21,
+          "end": 24
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 33,
+          "end": 36
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

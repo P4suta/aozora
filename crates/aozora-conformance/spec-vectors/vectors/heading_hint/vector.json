@@ -1,0 +1,47 @@
+{
+  "name": "heading_hint",
+  "meta": {
+    "feature": "heading",
+    "level": "should",
+    "spec_section": "6.10"
+  },
+  "source": "序章\n本文\n［＃「序章」は中見出し］\n",
+  "expected": {
+    "html": "<p>序章<br />\n本文<br />\n<span class=\"aozora-heading-hint\" data-level=\"2\" data-target=\"序章\" hidden></span></p>\n",
+    "serialize": "序章\n本文\n［＃「序章」は中見出し］\n",
+    "nodes": [
+      {
+        "kind": "headingHint",
+        "span": {
+          "start": 14,
+          "end": 50
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 20,
+          "end": 23
+        },
+        "close": {
+          "start": 29,
+          "end": 32
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 14,
+          "end": 17
+        },
+        "close": {
+          "start": 47,
+          "end": 50
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

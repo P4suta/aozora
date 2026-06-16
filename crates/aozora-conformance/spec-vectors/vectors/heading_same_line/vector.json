@@ -1,0 +1,47 @@
+{
+  "name": "heading_same_line",
+  "meta": {
+    "feature": "heading",
+    "level": "should",
+    "spec_section": "6.10"
+  },
+  "source": "萩原朔太郎［＃「萩原朔太郎」は同行中見出し］　二十年の友。\n",
+  "expected": {
+    "html": "<p>萩原朔太郎<span class=\"aozora-heading-hint\" data-level=\"2\" data-style=\"same-line\" data-target=\"萩原朔太郎\" hidden></span>　二十年の友。</p>\n",
+    "serialize": "萩原朔太郎［＃「萩原朔太郎」は同行中見出し］　二十年の友。\n",
+    "nodes": [
+      {
+        "kind": "headingHint",
+        "span": {
+          "start": 15,
+          "end": 66
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 21,
+          "end": 24
+        },
+        "close": {
+          "start": 39,
+          "end": 42
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 15,
+          "end": 18
+        },
+        "close": {
+          "start": 63,
+          "end": 66
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "name": "heading_window",
+  "meta": {
+    "feature": "heading",
+    "level": "should",
+    "spec_section": "6.10"
+  },
+  "source": "序章\n［＃「序章」は窓中見出し］\n",
+  "expected": {
+    "html": "<div class=\"aozora-heading aozora-heading-medium aozora-heading-window\">序章</div>",
+    "serialize": "\n\n序章\n［＃「序章」は窓中見出し］\n\n",
+    "nodes": [
+      {
+        "kind": "heading",
+        "span": {
+          "start": 0,
+          "end": 46
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 13,
+          "end": 16
+        },
+        "close": {
+          "start": 22,
+          "end": 25
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 7,
+          "end": 10
+        },
+        "close": {
+          "start": 43,
+          "end": 46
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

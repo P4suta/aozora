@@ -1,0 +1,47 @@
+{
+  "name": "heading_promoted",
+  "meta": {
+    "feature": "heading",
+    "level": "should",
+    "spec_section": "6.10"
+  },
+  "source": "第一章\n［＃「第一章」は大見出し］\n本文がここから始まる。\n",
+  "expected": {
+    "html": "<h1 class=\"aozora-heading aozora-heading-large\">第一章</h1>\n<p>本文がここから始まる。</p>\n",
+    "serialize": "\n\n第一章\n［＃「第一章」は大見出し］\n\n本文がここから始まる。\n",
+    "nodes": [
+      {
+        "kind": "heading",
+        "span": {
+          "start": 0,
+          "end": 49
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 16,
+          "end": 19
+        },
+        "close": {
+          "start": 28,
+          "end": 31
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 10,
+          "end": 13
+        },
+        "close": {
+          "start": 46,
+          "end": 49
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

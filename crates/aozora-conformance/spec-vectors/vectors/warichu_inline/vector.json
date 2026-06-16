@@ -1,0 +1,54 @@
+{
+  "name": "warichu_inline",
+  "meta": {
+    "feature": "warichu",
+    "level": "must",
+    "spec_section": "6"
+  },
+  "source": "［＃割り注］上の段／下の段［＃割り注終わり］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-warichu\">上の段／下の段</span></p>\n",
+    "serialize": "［＃割り注］上の段／下の段［＃割り注終わり］\n",
+    "nodes": [
+      {
+        "kind": "annotation",
+        "span": {
+          "start": 0,
+          "end": 18
+        }
+      },
+      {
+        "kind": "annotation",
+        "span": {
+          "start": 39,
+          "end": 66
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 15,
+          "end": 18
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 39,
+          "end": 42
+        },
+        "close": {
+          "start": 63,
+          "end": 66
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

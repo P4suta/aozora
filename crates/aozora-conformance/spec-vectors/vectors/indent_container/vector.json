@@ -1,0 +1,54 @@
+{
+  "name": "indent_container",
+  "meta": {
+    "feature": "container",
+    "level": "must",
+    "spec_section": "6.6"
+  },
+  "source": "本文。\n［＃ここから2字下げ］\n段落の中身。\n別の行。\n［＃ここで字下げ終わり］\n通常段落。\n",
+  "expected": {
+    "html": "<p>本文。</p>\n<div class=\"aozora-container aozora-container-indent aozora-container-indent-2\" data-amount=\"2\">\n<p>段落の中身。<br />\n別の行。</p>\n</div>\n<p>通常段落。</p>\n",
+    "serialize": "本文。\n\n［＃ここから字下げ］\n\n段落の中身。\n別の行。\n\n［＃ここで字下げ終わり］\n\n通常段落。\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 10,
+          "end": 41
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 74,
+          "end": 110
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 10,
+          "end": 13
+        },
+        "close": {
+          "start": 38,
+          "end": 41
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 74,
+          "end": 77
+        },
+        "close": {
+          "start": 107,
+          "end": 110
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

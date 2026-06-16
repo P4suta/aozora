@@ -1,0 +1,58 @@
+{
+  "name": "left_ruby",
+  "meta": {
+    "feature": "kunten",
+    "level": "should",
+    "spec_section": "6.5"
+  },
+  "source": "未［＃「未」の左に「ザル」のルビ］んとす。\n",
+  "expected": {
+    "html": "<p><ruby>未<rp>(</rp><rt class=\"aozora-ruby-left\">ザル</rt><rp>)</rp></ruby>んとす。</p>\n",
+    "serialize": "未［＃「未」の左に「ザル」のルビ］んとす。\n",
+    "nodes": [
+      {
+        "kind": "ruby",
+        "span": {
+          "start": 0,
+          "end": 51
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 15,
+          "end": 18
+        }
+      },
+      {
+        "kind": "quote",
+        "open": {
+          "start": 27,
+          "end": 30
+        },
+        "close": {
+          "start": 36,
+          "end": 39
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 48,
+          "end": 51
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

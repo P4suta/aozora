@@ -144,6 +144,13 @@ enum ConformanceOp {
     /// `crates/aozora-book/src/conformance-results.json`, and
     /// exit non-zero on any `must`-tier failure.
     Run,
+    /// Run the vendored specification conformance vectors
+    /// (`crates/aozora-conformance/spec-vectors/`) against the parser
+    /// and compare every projection in each vector's `expected`
+    /// (`serialize` / `nodes` / `pairs` / `diagnostics`) per its
+    /// `meta.level`. `must` mismatches exit non-zero; `should` / `may`
+    /// warn. The `html` channel is informative (spec §8) and only warns.
+    Vectors,
 }
 
 #[derive(Args)]

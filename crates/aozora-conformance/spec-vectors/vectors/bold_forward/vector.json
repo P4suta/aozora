@@ -1,0 +1,47 @@
+{
+  "name": "bold_forward",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.12"
+  },
+  "source": "作者附記［＃「作者附記」は太字］――以下略。\n",
+  "expected": {
+    "html": "<p><b class=\"aozora-bold\">作者附記</b>――以下略。</p>\n",
+    "serialize": "作者附記［＃「作者附記」は太字］――以下略。\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 48
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 18,
+          "end": 21
+        },
+        "close": {
+          "start": 33,
+          "end": 36
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 45,
+          "end": 48
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

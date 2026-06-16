@@ -1,0 +1,45 @@
+{
+  "name": "unrecognised_container_directive",
+  "meta": {
+    "feature": "container",
+    "level": "should",
+    "spec_section": "6.6"
+  },
+  "source": "［＃ここからナントカ］本文",
+  "expected": {
+    "html": "<p><span class=\"aozora-annotation\" hidden>［＃ここからナントカ］</span>本文</p>\n",
+    "serialize": "［＃ここからナントカ］本文",
+    "nodes": [
+      {
+        "kind": "annotation",
+        "span": {
+          "start": 0,
+          "end": 33
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 30,
+          "end": 33
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "unrecognised-container-directive",
+        "severity": "warning",
+        "span": {
+          "start": 0,
+          "end": 33
+        }
+      }
+    ]
+  }
+}

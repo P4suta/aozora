@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aozora-notation-spec/conformance/vector.schema.json",
+  "title": "Aozora notation conformance vector",
+  "description": "One self-contained test case: a source string and the projections a conforming processor must (or should/may) produce. Byte offsets are into the SANITIZED source (the §4 pre-processing output), UTF-8.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "meta", "source", "expected"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$",
+      "description": "Stable case identifier; matches the containing directory name."
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["feature", "level"],
+      "properties": {
+        "feature": { "type": "string", "description": "Notation family this case exercises (e.g. \"ruby\", \"bouten\")." },
+        "level": {
+          "enum": ["must", "should", "may"],
+          "description": "Conformance level (§10). `must`: a conforming processor MUST match every listed projection. `should`/`may` scale down."
+        },
+        "spec_section": { "type": "string", "description": "Section that defines this behaviour, e.g. \"6.1\"." },
+        "note": { "type": "string" }
+      }
+    },
+    "source": {
+      "type": "string",
+      "description": "Raw input. May contain pre-sanitize bytes (BOM, CRLF) when the case exercises §4."
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Projections. A `must` vector MUST carry `html`, `serialize`, and `diagnostics`; `nodes`/`pairs`/`container_pairs` are present when the case asserts structure.",
+      "properties": {
+        "html": { "type": "string", "description": "Reference HTML rendering (§8). Informative unless the case's level pins it." },
+        "serialize": { "type": "string", "description": "Byte-exact round-trip serialization (§7)." },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" }, "description": "Recognised nodes in source order, each with its SOURCE-coordinate span. Container open/close appear as `containerOpen`/`containerClose` nodes." },
+        "pairs": { "type": "array", "items": { "$ref": "#/$defs/pair" }, "description": "Delimiter pairs (ruby, quotes) with source spans for each side." },
+        "diagnostics": { "type": "array", "items": { "$ref": "#/$defs/diagnostic" } }
+      }
+    }
+  },
+  "$defs": {
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "integer", "minimum": 0 },
+        "end": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "span"],
+      "properties": {
+        "kind": { "type": "string", "description": "Node family (ruby, bouten, gaiji, kaeriten, …)." },
+        "span": { "$ref": "#/$defs/span" }
+      }
+    },
+    "pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "open", "close"],
+      "properties": {
+        "kind": { "type": "string" },
+        "open": { "$ref": "#/$defs/span" },
+        "close": { "$ref": "#/$defs/span" }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity"],
+      "properties": {
+        "code": { "type": "string", "description": "Stable kebab-case code from §9, e.g. \"empty-ruby-reading\"." },
+        "severity": { "enum": ["error", "warning", "note"] },
+        "span": { "$ref": "#/$defs/span" }
+      }
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "name": "nested_ruby",
+  "meta": {
+    "feature": "ruby",
+    "level": "should",
+    "spec_section": "6.1"
+  },
+  "source": "｜漢《か《ん》じ》",
+  "expected": {
+    "html": "<p><ruby>漢<rp>(</rp><rt>か《ん》じ</rt><rp>)</rp></ruby></p>\n",
+    "serialize": "｜漢《か《ん》じ》",
+    "nodes": [
+      {
+        "kind": "ruby",
+        "span": {
+          "start": 0,
+          "end": 27
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "ruby",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 18,
+          "end": 21
+        }
+      },
+      {
+        "kind": "ruby",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 24,
+          "end": 27
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "nested-ruby",
+        "severity": "error",
+        "span": {
+          "start": 12,
+          "end": 15
+        }
+      }
+    ]
+  }
+}

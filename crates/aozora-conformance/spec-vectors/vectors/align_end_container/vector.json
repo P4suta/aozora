@@ -1,0 +1,54 @@
+{
+  "name": "align_end_container",
+  "meta": {
+    "feature": "container",
+    "level": "should",
+    "spec_section": "6.6"
+  },
+  "source": "［＃ここから地から3字上げ］\n寄付者名簿。\n［＃ここで字上げ終わり］\n",
+  "expected": {
+    "html": "<div class=\"aozora-container aozora-container-align-end\" data-offset=\"3\">\n<p>寄付者名簿。<br />\n<span class=\"aozora-annotation\" hidden>［＃ここで字上げ終わり］</span></p>\n",
+    "serialize": "\n\n［＃ここから地付き］\n\n寄付者名簿。\n［＃ここで字上げ終わり］\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 0,
+          "end": 40
+        }
+      },
+      {
+        "kind": "annotation",
+        "span": {
+          "start": 60,
+          "end": 96
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 37,
+          "end": 40
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 60,
+          "end": 63
+        },
+        "close": {
+          "start": 93,
+          "end": 96
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

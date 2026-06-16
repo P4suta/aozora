@@ -1,0 +1,54 @@
+{
+  "name": "italic_inline",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.12"
+  },
+  "source": "値は［＃斜体］ｅ［＃斜体終わり］である。\n",
+  "expected": {
+    "html": "<p>値は<i class=\"aozora-italic\">ｅ</i>である。</p>\n",
+    "serialize": "値は［＃斜体］ｅ［＃斜体終わり］である。\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 6,
+          "end": 21
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 24,
+          "end": 48
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 18,
+          "end": 21
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 24,
+          "end": 27
+        },
+        "close": {
+          "start": 45,
+          "end": 48
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

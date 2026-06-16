@@ -124,6 +124,18 @@ pre-push:
           git rebase --exec 'git commit --amend --no-edit -S' <base>   # a range
         Re-run `scripts/check-signed-commits.sh` manually to see which
         commit failed verification.
+    # Verify the vendored spec conformance vectors still match the
+    # sibling aozora-notation-spec repo — the host half of the "spec is
+    # master" loop. Fast + host-side; a no-op when the spec isn't checked
+    # out (so it never blocks a push from a machine without the sibling).
+    # Order-independent for correctness: a drift fails the push whether it
+    # runs before or after `ci`.
+    spec-vectors-drift:
+      run: scripts/verify-spec-vectors.sh
+      fail_text: |
+        Vendored spec conformance vectors drift from ../aozora-notation-spec.
+        Run `just sync-spec-vectors` and commit the result — the spec repo
+        is the source of truth for the conformance corpus.
     # Mirror every CI job that's reachable from inside the dev image
     # (lint / build / test / prop / drift-gate / conformance /
     # smoke-ffi / deny / audit / udeps / coverage / book-build /

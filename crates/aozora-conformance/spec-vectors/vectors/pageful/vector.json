@@ -1,0 +1,119 @@
+{
+  "name": "pageful",
+  "meta": {
+    "feature": "composite",
+    "level": "may",
+    "spec_section": "6"
+  },
+  "source": "明治の頃｜青梅《おうめ》街道沿いに、※［＃「木＋吶のつくり」、第3水準1-85-54］なる珍しき木が立つ。［＃ここから2字下げ］その下で人々は語らひ。［＃ここで字下げ終わり］［＃改ページ］\n",
+  "expected": {
+    "html": "<p>明治の頃<ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby>街道沿いに、<span class=\"aozora-gaiji\" data-codepoint=\"U+6798\">枘</span>なる珍しき木が立つ。</p>\n<div class=\"aozora-container aozora-container-indent aozora-container-indent-2\" data-amount=\"2\">\n<p>その下で人々は語らひ。</p>\n</div>\n<div class=\"aozora-page-break\"></div>",
+    "serialize": "明治の頃｜青梅《おうめ》街道沿いに、※［＃「木＋吶のつくり」、第3水準1-85-54］なる珍しき木が立つ。\n\n［＃ここから字下げ］\n\nその下で人々は語らひ。\n\n［＃ここで字下げ終わり］\n\n［＃改ページ］\n\n",
+    "nodes": [
+      {
+        "kind": "ruby",
+        "span": {
+          "start": 12,
+          "end": 36
+        }
+      },
+      {
+        "kind": "gaiji",
+        "span": {
+          "start": 54,
+          "end": 113
+        }
+      },
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 143,
+          "end": 174
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 207,
+          "end": 243
+        }
+      },
+      {
+        "kind": "pageBreak",
+        "span": {
+          "start": 243,
+          "end": 264
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "ruby",
+        "open": {
+          "start": 21,
+          "end": 24
+        },
+        "close": {
+          "start": 33,
+          "end": 36
+        }
+      },
+      {
+        "kind": "quote",
+        "open": {
+          "start": 63,
+          "end": 66
+        },
+        "close": {
+          "start": 87,
+          "end": 90
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 57,
+          "end": 60
+        },
+        "close": {
+          "start": 110,
+          "end": 113
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 143,
+          "end": 146
+        },
+        "close": {
+          "start": 171,
+          "end": 174
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 207,
+          "end": 210
+        },
+        "close": {
+          "start": 240,
+          "end": 243
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 243,
+          "end": 246
+        },
+        "close": {
+          "start": 261,
+          "end": 264
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

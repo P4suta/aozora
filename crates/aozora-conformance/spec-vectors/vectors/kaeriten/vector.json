@@ -1,0 +1,36 @@
+{
+  "name": "kaeriten",
+  "meta": {
+    "feature": "kaeriten",
+    "level": "should",
+    "spec_section": "6.5"
+  },
+  "source": "読［＃返り点 一・二］本\n",
+  "expected": {
+    "html": "<p>読<span class=\"aozora-annotation\" hidden>［＃返り点 一・二］</span>本</p>\n",
+    "serialize": "読［＃返り点 一・二］本\n",
+    "nodes": [
+      {
+        "kind": "annotation",
+        "span": {
+          "start": 3,
+          "end": 31
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 28,
+          "end": 31
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

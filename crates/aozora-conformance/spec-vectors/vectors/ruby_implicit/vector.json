@@ -1,0 +1,36 @@
+{
+  "name": "ruby_implicit",
+  "meta": {
+    "feature": "ruby",
+    "level": "must",
+    "spec_section": "6.1"
+  },
+  "source": "青梅《おうめ》という地名。\n",
+  "expected": {
+    "html": "<p><ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby>という地名。</p>\n",
+    "serialize": "｜青梅《おうめ》という地名。\n",
+    "nodes": [
+      {
+        "kind": "ruby",
+        "span": {
+          "start": 0,
+          "end": 21
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "ruby",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 18,
+          "end": 21
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

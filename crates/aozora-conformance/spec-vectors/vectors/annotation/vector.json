@@ -1,0 +1,36 @@
+{
+  "name": "annotation",
+  "meta": {
+    "feature": "annotation",
+    "level": "must",
+    "spec_section": "6.14"
+  },
+  "source": "text［＃任意のメモ］more\n",
+  "expected": {
+    "html": "<p>text<span class=\"aozora-annotation\" hidden>［＃任意のメモ］</span>more</p>\n",
+    "serialize": "text［＃任意のメモ］more\n",
+    "nodes": [
+      {
+        "kind": "annotation",
+        "span": {
+          "start": 4,
+          "end": 28
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 4,
+          "end": 7
+        },
+        "close": {
+          "start": 25,
+          "end": 28
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

@@ -195,13 +195,33 @@ new-adr TITLE:
     sed -i -e "s/^# NNNN. TITLE_HERE/# ${n}. {{TITLE}}/" -e "s/YYYY-MM-DD/$(date +%F)/" "$f"
     echo "Created $f"
 
-# Phase O4 — WPT-style conformance runner. Walks every fixture
-# under aozora-conformance/fixtures/render/, runs the parser, and
-# fails non-zero if any `must`-tier case regresses. Writes a
-# per-case results.json into the handbook source tree so readers
-# can see the latest tier breakdown.
+# Phase O4 — WPT-style conformance runner. Two passes in one container:
+#   1. `conformance run`     — walks aozora-conformance/fixtures/render/,
+#                              compares against the parser's own goldens,
+#                              writes a per-case results.json into the
+#                              handbook source tree.
+#   2. `conformance vectors` — runs the vendored specification vectors
+#                              (spec-vectors/, synced from the sibling
+#                              aozora-notation-spec) and holds the parser
+#                              to the SPEC's expectations.
+# Either pass exits non-zero on a `must`-tier regression.
 conformance:
-    {{_dev}} cargo run -p aozora-xtask -q -- conformance run
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- conformance run && cargo run -p aozora-xtask -q -- conformance vectors'
+
+# Vendor the conformance vectors from the sibling aozora-notation-spec
+# repo into spec-vectors/ (the spec is the source of truth). Host-side —
+# reaches outside the /workspace bind mount, so it runs directly on the
+# host, not in the dev container. Re-run after the spec's vectors change
+# and commit the diff. Override the spec location with AOZORA_SPEC_REPO.
+sync-spec-vectors:
+    scripts/sync-spec-vectors.sh
+
+# Fail if the vendored spec-vectors/ have drifted from the sibling spec
+# repo. Host-side; a no-op where the spec isn't checked out (cloud CI /
+# dev container), so the vendored copy is authoritative there. Wired into
+# pre-push so vendored drift is caught before publish.
+verify-spec-vectors:
+    scripts/verify-spec-vectors.sh
 
 # Property-based tests only. Default 128 cases per proptest block
 # (AOZORA_PROPTEST_CASES override via aozora-test-utils::config). Fast

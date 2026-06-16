@@ -1,0 +1,54 @@
+{
+  "name": "columns_container",
+  "meta": {
+    "feature": "tables_columns",
+    "level": "should",
+    "spec_section": "6.13"
+  },
+  "source": "前文。\n［＃ここから2段組み］\n左右の段。\n［＃ここで段組み終わり］\n後文。\n",
+  "expected": {
+    "html": "<p>前文。</p>\n<div class=\"aozora-container aozora-container-columns\" data-columns=\"2\">\n<p>左右の段。</p>\n</div>\n<p>後文。</p>\n",
+    "serialize": "前文。\n\n［＃ここから2段組み］\n\n左右の段。\n\n［＃ここで段組み終わり］\n\n後文。\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 10,
+          "end": 41
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 58,
+          "end": 94
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 10,
+          "end": 13
+        },
+        "close": {
+          "start": 38,
+          "end": 41
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 58,
+          "end": 61
+        },
+        "close": {
+          "start": 91,
+          "end": 94
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

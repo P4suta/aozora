@@ -1,0 +1,36 @@
+{
+  "name": "section_break",
+  "meta": {
+    "feature": "break",
+    "level": "must",
+    "spec_section": "6.9"
+  },
+  "source": "前章。\n［＃改丁］\n次章。\n",
+  "expected": {
+    "html": "<p>前章。</p>\n<div class=\"aozora-section-break aozora-section-break-choho\"></div>\n<p>次章。</p>\n",
+    "serialize": "前章。\n\n［＃改丁］\n\n次章。\n",
+    "nodes": [
+      {
+        "kind": "sectionBreak",
+        "span": {
+          "start": 10,
+          "end": 25
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 10,
+          "end": 13
+        },
+        "close": {
+          "start": 22,
+          "end": 25
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "name": "bouten_black_triangle",
+  "meta": {
+    "feature": "bouten",
+    "level": "should",
+    "spec_section": "6.2"
+  },
+  "source": "規範［＃「規範」に黒三角傍点］を説く。\n",
+  "expected": {
+    "html": "<p><em class=\"aozora-bouten aozora-bouten-black-triangle aozora-bouten-right\">規範</em>を説く。</p>\n",
+    "serialize": "規範［＃「規範」に黒三角傍点］を説く。\n",
+    "nodes": [
+      {
+        "kind": "bouten",
+        "span": {
+          "start": 0,
+          "end": 45
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 21,
+          "end": 24
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 42,
+          "end": 45
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

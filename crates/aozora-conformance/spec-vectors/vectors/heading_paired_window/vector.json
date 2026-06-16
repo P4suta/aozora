@@ -1,0 +1,54 @@
+{
+  "name": "heading_paired_window",
+  "meta": {
+    "feature": "heading",
+    "level": "should",
+    "spec_section": "6.10"
+  },
+  "source": "［＃窓小見出し］探検の動機［＃窓小見出し終わり］　私がチベットへ行く原因。\n",
+  "expected": {
+    "html": "<div class=\"aozora-heading aozora-heading-small aozora-heading-window\">探検の動機</div>\n<p>　私がチベットへ行く原因。</p>\n",
+    "serialize": "\n\n［＃窓小見出し］\n\n探検の動機\n\n［＃窓小見出し終わり］\n\n　私がチベットへ行く原因。\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 0,
+          "end": 24
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 39,
+          "end": 72
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 21,
+          "end": 24
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 39,
+          "end": 42
+        },
+        "close": {
+          "start": 69,
+          "end": 72
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

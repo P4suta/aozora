@@ -1,0 +1,36 @@
+{
+  "name": "empty_ruby_reading",
+  "meta": {
+    "feature": "ruby",
+    "level": "should",
+    "spec_section": "6.1"
+  },
+  "source": "｜青梅《》",
+  "expected": {
+    "html": "<p>｜青梅《》</p>\n",
+    "serialize": "｜青梅《》",
+    "pairs": [
+      {
+        "kind": "ruby",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 12,
+          "end": 15
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "empty-ruby-reading",
+        "severity": "error",
+        "span": {
+          "start": 0,
+          "end": 15
+        }
+      }
+    ]
+  }
+}

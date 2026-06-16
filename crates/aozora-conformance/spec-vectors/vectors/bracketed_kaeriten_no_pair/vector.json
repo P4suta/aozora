@@ -1,0 +1,45 @@
+{
+  "name": "bracketed_kaeriten_no_pair",
+  "meta": {
+    "feature": "kunten",
+    "level": "should",
+    "spec_section": "6.5"
+  },
+  "source": "怪物［＃二］",
+  "expected": {
+    "html": "<p>怪物<sup class=\"aozora-kaeriten\">二</sup></p>\n",
+    "serialize": "怪物［＃二］",
+    "nodes": [
+      {
+        "kind": "kaeriten",
+        "span": {
+          "start": 6,
+          "end": 18
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 15,
+          "end": 18
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "bracketed-kaeriten-no-pair",
+        "severity": "error",
+        "span": {
+          "start": 6,
+          "end": 18
+        }
+      }
+    ]
+  }
+}
