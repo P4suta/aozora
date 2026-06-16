@@ -241,9 +241,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: wasm
+      # Lint the `#[cfg(target_arch = "wasm32")]` binding modules on their
+      # real target. The host `lint` job's clippy builds for the native
+      # target and never compiles them, so their lint debt is otherwise
+      # invisible to CI. Mirrors `just clippy-wasm`.
+      - name: clippy (wasm32-unknown-unknown)
+        run: cargo clippy --target wasm32-unknown-unknown -p aozora-wasm -p aozora-extism -- -D warnings
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - name: Build wasm-pack package
@@ -301,24 +308,41 @@ jobs:
       - name: cargo build --target wasm32-wasip1 (aozora-scan)
         run: cargo build --target wasm32-wasip1 -p aozora-scan
 
-  # Python wheel build verification — install maturin, build the
-  # `aozora-py` wheel against the runner's stock Python. Build-only:
-  # no PyPI publish.
+  # Python wheel build + functional test. abi3 (`cp311-abi3`) means ONE
+  # wheel per platform loads on every supported CPython; this job builds
+  # it and runs the pytest suite + `mypy --strict` under both the 3.11
+  # floor and the newest 3.14, proving the abi3 wheel imports and works
+  # across the range (not just compiles). `just smoke-py` is the local
+  # host-side mirror. No PyPI publish (see publish-pypi.yml).
   python-wheel:
+    name: python wheel (py${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version: "3.x"
+          python-version: ${{ matrix.python }}
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
-          key: maturin
-      - name: Install maturin
-        run: pip install --upgrade maturin
-      - name: Build wheel
-        run: maturin build --release -F extension-module --manifest-path crates/aozora-py/Cargo.toml
+          key: maturin-${{ matrix.python }}
+      - name: Install maturin + test tooling
+        run: pip install --upgrade "maturin>=1.9,<2.0" "pytest>=8" "mypy>=1.11"
+      - name: Build the abi3 wheel
+        # abi3-py311 makes maturin emit a cp311-abi3 wheel regardless of
+        # the runner's interpreter; debug profile keeps the gate fast
+        # (the release artifact is built in publish-pypi.yml).
+        run: maturin build -F extension-module --manifest-path crates/aozora-py/Cargo.toml -o dist
+      - name: Install the wheel
+        run: pip install --force-reinstall dist/*.whl
+      - name: Type-check the wrapper (mypy --strict)
+        run: mypy --strict crates/aozora-py/python
+      - name: Run the test suite
+        run: pytest crates/aozora-py/tests -q
 
   # mdbook handbook build verification — builds `crates/aozora-book/`
   # in a lean container so a missing chapter, broken include, or

@@ -33,6 +33,7 @@
 
 use serde::Serialize;
 
+use crate::encoding::gaiji::{GaijiResolution, find_span, gaiji_resolutions, resolve_at};
 use crate::{AozoraTree, Diagnostic, DiagnosticSource, Severity, Span};
 
 /// Wire-format schema version. Bumped on any breaking change to the
@@ -128,6 +129,75 @@ pub fn serialize_container_pairs(tree: &AozoraTree<'_>) -> String {
     serialize_envelope(&entries)
 }
 
+/// Project the canonical slug catalogue ([`crate::SLUGS`]) into a
+/// `{ schema_version, data }` JSON envelope.
+///
+/// Each entry has the shape `{ canonical, family, accepts_param, doc,
+/// partner }`: `family` is the camelCase form of the
+/// [`crate::SlugFamily`] variant, `partner` is `null` for non-paired
+/// families. A static catalogue, independent of any parse — it powers
+/// editor completion menus for `［＃…］` annotations without
+/// re-implementing the table per driver (`aozora-wasm` / `aozora-py`
+/// both call this).
+#[must_use]
+pub fn serialize_slugs() -> String {
+    let entries: Vec<SlugWire> = crate::SLUGS
+        .iter()
+        .map(|s| SlugWire {
+            canonical: s.canonical,
+            family: slug_family_str(s.family),
+            accepts_param: s.accepts_param,
+            doc: s.doc,
+            partner: s.partner,
+        })
+        .collect();
+    serialize_envelope(&entries)
+}
+
+/// Project resolved `※［＃…］` gaiji references from `source` into a
+/// `{ schema_version, data }` JSON envelope.
+///
+/// Each entry is
+/// `{ span: { start, end }, description, mencode, codepoint, resolved }`
+/// in source-byte coordinates; `mencode` / `codepoint` / `resolved` are
+/// `null` when absent or unresolved. Walks the source once — `O(source)`.
+///
+/// Powers inlay-hint UIs (`→GLYPH` after each reference) and batch gaiji
+/// audits. The scan + resolution are the single authority in
+/// [`crate::encoding::gaiji`]; this is only their wire projection.
+///
+/// Empty / gaiji-free source → `{"schema_version":1,"data":[]}`.
+#[must_use]
+pub fn serialize_gaiji_resolutions(source: &str) -> String {
+    let entries: Vec<GaijiResolutionWire> = gaiji_resolutions(source)
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    serialize_envelope(&entries)
+}
+
+/// Resolve the gaiji reference at `byte_offset` (cursor-local).
+///
+/// Serialises the single
+/// `{ span, description, mencode, codepoint, resolved }` object — or the
+/// literal `"null"` when the offset is not inside a `※［＃…］` span.
+///
+/// For editor cursor-hover: the scan is bounded to a window around the
+/// cursor, so cost is independent of document size (unlike
+/// [`serialize_gaiji_resolutions`], which walks the whole source).
+#[must_use]
+pub fn serialize_gaiji_resolution_at(source: &str, byte_offset: usize) -> String {
+    find_span(source, byte_offset)
+        .and_then(|(start, end)| resolve_at(source, start, end))
+        .map_or_else(
+            || "null".to_owned(),
+            |g| {
+                serde_json::to_string(&GaijiResolutionWire::from(g))
+                    .unwrap_or_else(|_| "null".to_owned())
+            },
+        )
+}
+
 const fn container_kind_str(kind: aozora_syntax::ContainerKind) -> &'static str {
     use aozora_syntax::ContainerKind;
     // `ContainerKind` is `#[non_exhaustive]` upstream — the wildcard
@@ -145,6 +215,28 @@ const fn container_kind_str(kind: aozora_syntax::ContainerKind) -> &'static str 
         ContainerKind::Heading { .. } => "heading",
         ContainerKind::Columns { .. } => "columns",
         ContainerKind::Table => "table",
+        _ => "unknown",
+    }
+}
+
+const fn slug_family_str(family: crate::SlugFamily) -> &'static str {
+    use crate::SlugFamily;
+    // `SlugFamily` is `#[non_exhaustive]` upstream — the wildcard arm
+    // emits "unknown" for any family added in a newer spec version so
+    // wire consumers can ignore unfamiliar entries without crashing.
+    match family {
+        SlugFamily::PageBreak => "pageBreak",
+        SlugFamily::Section => "section",
+        SlugFamily::BlockContainerOpen => "blockContainerOpen",
+        SlugFamily::BlockContainerClose => "blockContainerClose",
+        SlugFamily::LeafAlign => "leafAlign",
+        SlugFamily::Bouten => "bouten",
+        SlugFamily::Sashie => "sashie",
+        SlugFamily::Keigakomi => "keigakomi",
+        SlugFamily::Warichu => "warichu",
+        SlugFamily::TateChuYoko => "tateChuYoko",
+        SlugFamily::KaeritenSingle => "kaeritenSingle",
+        SlugFamily::KaeritenCompound => "kaeritenCompound",
         _ => "unknown",
     }
 }
@@ -379,10 +471,106 @@ struct OffsetWire {
     offset: u32,
 }
 
+#[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+struct SlugWire {
+    canonical: &'static str,
+    family: &'static str,
+    accepts_param: bool,
+    doc: &'static str,
+    // No `skip_serializing_if`: non-paired families emit `partner:null`
+    // (byte-identical to the prior aozora-wasm `slugs_json` shape).
+    partner: Option<&'static str>,
+}
+
+/// Source-byte span carried by [`GaijiResolutionWire`]. Distinct from
+/// [`SpanWire`] (whose `u32` fields cover sanitized-source spans): gaiji
+/// offsets are raw `usize` byte positions into the original source, kept
+/// as-is to stay byte-identical to the prior aozora-wasm projection.
+#[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+struct ByteSpanWire {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+struct GaijiResolutionWire {
+    span: ByteSpanWire,
+    description: String,
+    // Nulls (not skipped) so the shape is fixed across entries.
+    mencode: Option<String>,
+    codepoint: Option<u32>,
+    resolved: Option<String>,
+}
+
+impl From<GaijiResolution> for GaijiResolutionWire {
+    fn from(g: GaijiResolution) -> Self {
+        Self {
+            span: ByteSpanWire {
+                start: g.start,
+                end: g.end,
+            },
+            description: g.description,
+            mencode: g.mencode,
+            codepoint: g.codepoint,
+            resolved: g.resolved,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Document;
+
+    #[test]
+    fn slugs_envelope_lists_catalogue_with_known_families() {
+        let json = serialize_slugs();
+        assert!(json.contains(r#""schema_version":1"#));
+        assert!(json.contains(r#""canonical":"#));
+        assert!(json.contains(r#""family":"#));
+        // Guard against the silent `_ => "unknown"` degrade: every
+        // shipped slug must map to an explicit camelCase family.
+        assert!(
+            !json.contains(r#""family":"unknown""#),
+            "shipped catalogue leaked an unknown family: {json}"
+        );
+    }
+
+    #[test]
+    fn gaiji_resolutions_empty_envelope_for_plain_text() {
+        assert_eq!(
+            serialize_gaiji_resolutions("no gaiji here"),
+            r#"{"schema_version":1,"data":[]}"#
+        );
+    }
+
+    #[test]
+    fn gaiji_resolutions_emits_resolved_entry_in_source_coords() {
+        let json = serialize_gaiji_resolutions("※［＃「々」］");
+        assert!(json.contains(r#""schema_version":1"#));
+        assert!(
+            json.contains(r#""span":{"start":0,"end":21}"#),
+            "json: {json}"
+        );
+        assert!(json.contains(r#""description":"々""#), "json: {json}");
+        assert!(json.contains(r#""resolved":"々""#), "json: {json}");
+        // Unresolved/absent fields serialise as null, not skipped.
+        assert!(json.contains(r#""mencode":null"#), "json: {json}");
+    }
+
+    #[test]
+    fn gaiji_resolution_at_returns_object_inside_span_else_null() {
+        let src = "あ※［＃「々」］い";
+        let inside = src.find('※').unwrap() + "※".len();
+        let at = serialize_gaiji_resolution_at(src, inside);
+        assert!(at.contains(r#""description":"々""#), "{at}");
+        assert!(at.contains(r#""resolved":"々""#), "{at}");
+        // A cursor outside any reference resolves to the literal "null".
+        assert_eq!(serialize_gaiji_resolution_at(src, 0), "null");
+    }
 
     #[test]
     fn schema_version_is_one() {

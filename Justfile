@@ -777,6 +777,15 @@ clippy:
 clippy-strict:
     {{_dev}} cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+# wasm32-target clippy for the wasm-bindgen / Extism plugin crates.
+# The host `clippy` recipe builds for the NATIVE target, so it never
+# compiles the `#[cfg(target_arch = "wasm32")]` binding modules — their
+# lint debt would otherwise stay invisible to every host gate. This
+# recipe closes that gap by linting the two wasm32 crates on their real
+# target. The dev image ships wasm32-unknown-unknown (see `extism-build`).
+clippy-wasm:
+    {{_dev}} cargo clippy --target wasm32-unknown-unknown -p aozora-wasm -p aozora-extism -- -D warnings
+
 # Thorough local lint — the --all-targets clippy surface (bench /
 # example targets included) plus fmt / typos / strict-code / doc. Run
 # before cutting a release or after touching a bench / example target.
@@ -954,6 +963,14 @@ smoke-go: extism-build
         go vet ./...; \
         go test ./...'
 
+# Python wheel smoke — HOST-side (maturin + a Python interpreter are not
+# in the dev image, like smoke-ffi / pgo). Provisions a throwaway venv,
+# builds the abi3 wheel, installs it, then runs mypy --strict + pytest.
+# Kept out of `just ci` (the dev image can't run it); mirrored by the
+# ci.yml `python-wheel` job. Knobs: AOZORA_PY_PYTHON / AOZORA_PY_VENV.
+smoke-py:
+    bash scripts/smoke-py.sh
+
 # --- changelog ---------------------------------------------------------------
 
 # Regenerate CHANGELOG.md from Conventional-Commits history (see cliff.toml).
@@ -1091,6 +1108,7 @@ ci:
     # that the original sequential `ci` used, so an early failure
     # still short-circuits before the heavy gates.
     just lint
+    just clippy-wasm
     just build
     just drift-gate
     just conformance

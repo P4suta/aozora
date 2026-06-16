@@ -12,6 +12,7 @@ publishes the GitHub Release.
 just ci                          # lint + build + test + prop + deny + audit + udeps + coverage + book-build
 just prop-deep                   # 4096 cases per proptest block
 AOZORA_CORPUS_ROOT=… just corpus-sweep
+just smoke-py                    # host-side: abi3 wheel build + mypy + pytest (not in `just ci`)
 
 # 2. Bump workspace version
 cargo set-version --workspace 0.2.7
@@ -209,10 +210,13 @@ gh workflow run publish-pypi.yml -f dry_run=false
 
 `publish-npm.yml` builds the package with `wasm-pack build --target
 web --release` and `npm publish`es `crates/aozora-wasm/pkg/`.
-`publish-pypi.yml` builds wheels across the OS × Python matrix with
-maturin and uploads via PyPI trusted publishing (configure the
-project's trusted publisher once, pointing at this repo +
-`publish-pypi.yml`).
+`publish-pypi.yml` builds **one `cp311-abi3` wheel per OS** (pyo3
+`abi3-py311`, so a single wheel covers CPython 3.11 → 3.14 and future
+3.x — no per-Python-version matrix) plus an sdist, and uploads via PyPI
+trusted publishing (configure the project's trusted publisher once,
+pointing at this repo + `publish-pypi.yml`). Run `just smoke-py` first.
+Linux aarch64, macOS universal2, and free-threaded (`3.13t`/`3.14t`,
+which abi3 cannot target) wheels are a future cibuildwheel addition.
 
 Cut these from the same `vX.Y.Z` tag as the GitHub Release so every
 channel ships the same version. Run each workflow once with the

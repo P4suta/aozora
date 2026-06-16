@@ -1,16 +1,18 @@
-# PyPI publish workflow for `aozora-py` wheels.
+# PyPI publish workflow for `aozora-py`.
 #
-# Phase P3 — capability ships in 0.4.0; live publish is `dry_run: false`.
-# Builds wheels for the runner triples × supported Python versions
-# matrix, then either dry-runs (`twine check`) or uploads to PyPI.
+# Ships ONE abi3 wheel per platform (pyo3 `abi3-py311`): a single
+# `cp311-abi3` wheel loads on CPython 3.11, 3.12, 3.13, 3.14 and every
+# future 3.x — no per-Python-version build matrix. Plus an sdist for
+# source installs where no wheel matches.
 #
 # How to run a real publish:
 #   gh workflow run publish-pypi.yml -f dry_run=false
 #
-# Multi-platform strategy: maturin's stock matrix per-platform-per-pyver
-# is enough for 0.4.0; `cibuildwheel` is a 0.5.0+ upgrade once the
-# matrix needs more granular wheel tags (manylinux2_28 + musllinux,
-# pypy, free-threaded 3.13t, etc.).
+# Future matrix growth (0.5.0+, via cibuildwheel): Linux aarch64,
+# macOS universal2, and a SEPARATE free-threaded build — abi3 wheels
+# cannot target `3.13t`/`3.14t` (the limited API is incompatible with
+# `Py_GIL_DISABLED`), so free-threaded support needs its own non-abi3
+# `cp31xt` wheels.
 
 name: publish-pypi
 
@@ -18,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Build wheels + twine check; do not upload to PyPI"
+        description: "Build wheels + sdist + twine check; do not upload to PyPI"
         type: boolean
         default: true
 
@@ -30,12 +32,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: build wheels (${{ matrix.os }} / py${{ matrix.python }})
+  build-wheels:
+    name: build abi3 wheel (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # Force bash on every runner: Windows defaults to PowerShell, which
-    # breaks the `\` line-continuations in the build step and bash-style
-    # globbing in `twine check`.
+    # breaks the `\` line-continuations and bash-style `dist/*` globbing.
     defaults:
       run:
         shell: bash
@@ -43,47 +44,78 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.9", "3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
 
+      # Any 3.11+ interpreter can host the build; abi3-py311 fixes the
+      # wheel's ABI floor regardless of which one maturin finds.
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.11"
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
-          key: pypi-${{ matrix.os }}-${{ matrix.python }}
+          key: pypi-${{ matrix.os }}
 
       - name: Install maturin + twine
-        run: pip install --upgrade "maturin>=1.9" twine
+        run: pip install --upgrade "maturin>=1.9,<2.0" twine
 
-      - name: Build wheel
-        # No `--compatibility`/`--manylinux` flag: maturin defaults to the
-        # lowest compatible manylinux tag on Linux (which PyPI accepts) and
-        # the option is a no-op on macOS / Windows. `--manylinux=auto` was
-        # rejected by maturin >= 1.14 ("invalid value 'auto'") — `auto` is
-        # not a valid value; omitting the flag IS the auto behaviour.
+      - name: Build abi3 wheel
+        # No `--interpreter` / per-version loop: with abi3-py311 maturin
+        # emits a single `cp311-abi3` wheel, tagged at the lowest
+        # compatible manylinux on Linux (a no-op flag on macOS / Windows).
         run: |
           maturin build --release --strip \
             --manifest-path crates/aozora-py/Cargo.toml \
-            --interpreter "python${{ matrix.python }}"
+            --out dist
 
       - name: Verify metadata with twine check
-        run: twine check target/wheels/*.whl
+        run: twine check dist/*.whl
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: wheel-${{ matrix.os }}-py${{ matrix.python }}
-          path: target/wheels/*.whl
+          name: wheel-${{ matrix.os }}
+          path: dist/*.whl
+          retention-days: 7
+
+  build-sdist:
+    name: build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install maturin + twine
+        run: pip install --upgrade "maturin>=1.9,<2.0" twine
+
+      - name: Build sdist
+        # `aozora-py` path-depends on sibling workspace crates; maturin
+        # vendors them into the sdist. If a future restructuring breaks
+        # sdist resolution, fall back to wheels-only (drop this job and
+        # the `needs: build-sdist` below) — the abi3 wheels already cover
+        # every supported platform.
+        run: maturin sdist --manifest-path crates/aozora-py/Cargo.toml --out dist
+
+      - name: Verify metadata with twine check
+        run: twine check dist/*.tar.gz
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sdist
+          path: dist/*.tar.gz
           retention-days: 7
 
   publish:
     name: upload to PyPI
     if: inputs.dry_run == false
-    needs: build
+    needs: [build-wheels, build-sdist]
     runs-on: ubuntu-latest
     permissions:
       # Trusted publishing: PyPI verifies via OIDC, no API token in
@@ -96,7 +128,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
-          pattern: wheel-*
+          # All artifacts (wheel-<os> + sdist) merged into dist/.
           merge-multiple: true
           path: dist
 

@@ -58,6 +58,13 @@ const MAX_SOURCE_BYTES: usize = u32::MAX as usize;
 ///
 /// `Err(&'static str)` when `byte_len > u32::MAX`.
 #[cfg(any(target_arch = "wasm32", test))]
+#[cfg_attr(
+    target_arch = "wasm32",
+    allow(
+        clippy::absurd_extreme_comparisons,
+        reason = "on wasm32 `usize` is `u32`, so `MAX_SOURCE_BYTES` (= u32::MAX) equals `usize::MAX` and this `> u32::MAX` guard is vacuously false there — a wasm32 `String` can never exceed the parser core's u32 span limit. The check is real and unit-tested on 64-bit hosts (usize = u64) under cfg(test)."
+    )
+)]
 const fn source_len_within_span_limit(byte_len: usize) -> Result<(), &'static str> {
     if byte_len > MAX_SOURCE_BYTES {
         return Err("source exceeds 4 GiB (u32::MAX) span limit");
@@ -66,8 +73,8 @@ const fn source_len_within_span_limit(byte_len: usize) -> Result<(), &'static st
 }
 
 #[cfg(target_arch = "wasm32")]
-mod bindings {
-    use aozora::{Document as AozoraDoc, SLUGS, SlugFamily, encoding::gaiji, wire};
+pub mod bindings {
+    use aozora::{Document as AozoraDoc, wire};
     use wasm_bindgen::prelude::*;
 
     /// All canonical slugs from the spec, packaged in the standard
@@ -75,65 +82,25 @@ mod bindings {
     /// `［＃...］` catalogue without re-implementing the table.
     ///
     /// Each `data[]` entry: `{ canonical, family, accepts_param, doc, partner }`.
-    /// `family` is the camelCase form of the Rust enum variant.
+    /// `family` is the camelCase form of the Rust enum variant. Projection
+    /// is the single authority in [`aozora::wire::serialize_slugs`].
     #[wasm_bindgen]
     #[must_use]
     pub fn slugs_json() -> String {
-        let entries: Vec<serde_json::Value> = SLUGS
-            .iter()
-            .map(|s| {
-                let family = match s.family {
-                    SlugFamily::PageBreak => "pageBreak",
-                    SlugFamily::Section => "section",
-                    SlugFamily::BlockContainerOpen => "blockContainerOpen",
-                    SlugFamily::BlockContainerClose => "blockContainerClose",
-                    SlugFamily::LeafAlign => "leafAlign",
-                    SlugFamily::Bouten => "bouten",
-                    SlugFamily::Sashie => "sashie",
-                    SlugFamily::Keigakomi => "keigakomi",
-                    SlugFamily::Warichu => "warichu",
-                    SlugFamily::TateChuYoko => "tateChuYoko",
-                    SlugFamily::KaeritenSingle => "kaeritenSingle",
-                    SlugFamily::KaeritenCompound => "kaeritenCompound",
-                    // SlugFamily is `#[non_exhaustive]`: any family
-                    // added in a newer spec version surfaces as
-                    // "unknown" so JS clients can ignore unfamiliar
-                    // entries without crashing.
-                    _ => "unknown",
-                };
-                serde_json::json!({
-                    "canonical": s.canonical,
-                    "family": family,
-                    "accepts_param": s.accepts_param,
-                    "doc": s.doc,
-                    "partner": s.partner,
-                })
-            })
-            .collect();
-        serde_json::json!({
-            "schema_version": 1,
-            "data": entries,
-        })
-        .to_string()
+        wire::serialize_slugs()
     }
 
-    /// Force one-time parser-table initialisation (SIMD backend choice +
-    /// annotation-classifier DFA) off the first-keystroke critical path.
-    /// Idempotent. The playground calls this right after `init()`
-    /// resolves — before the editor is created — so the first keystroke
-    /// parse does not pay the DFA build.
+    /// Force one-time parser-table initialisation off the
+    /// first-keystroke critical path.
+    ///
+    /// (SIMD backend choice + annotation-classifier DFA.) Idempotent. The
+    /// playground calls this right after `init()` resolves — before the
+    /// editor is created — so the first keystroke parse does not pay the
+    /// DFA build.
     #[wasm_bindgen]
     pub fn prewarm() {
         aozora::prewarm();
     }
-
-    const GAIJI_OPEN: &str = "※［＃";
-    const GAIJI_CLOSE: &str = "］";
-    // Bounded window for the cursor-pinned hover variant. A real
-    // ※［＃...］ span is at most a few hundred bytes; capping the
-    // search makes per-keystroke resolution O(window) rather than
-    // O(doc).
-    const MAX_GAIJI_SPAN_LEN: usize = 512;
 
     /// High-resolution wall-clock for the profile helper. Returns
     /// milliseconds (f64) using the browser `performance.now()` so
@@ -145,8 +112,7 @@ mod bindings {
     fn now_ms() -> f64 {
         web_sys::window()
             .and_then(|w| w.performance())
-            .map(|p| p.now())
-            .unwrap_or(0.0)
+            .map_or(0.0, |p| p.now())
     }
 
     /// JS-facing handle to a parsed Aozora document.
@@ -155,6 +121,7 @@ mod bindings {
     /// the bumpalo arena that backs the borrowed AST). Drop is
     /// automatic when the JS-side handle is GC'd.
     #[wasm_bindgen]
+    #[derive(Debug)]
     pub struct Document {
         inner: AozoraDoc,
     }
@@ -175,7 +142,7 @@ mod bindings {
         /// Guarding at construction means no oversize `Document` exists,
         /// so the parse-driven methods below never hit the assert.
         #[wasm_bindgen(constructor)]
-        pub fn new(source: String) -> Result<Document, JsValue> {
+        pub fn new(source: String) -> Result<Self, JsValue> {
             crate::source_len_within_span_limit(source.len()).map_err(JsValue::from_str)?;
             Ok(Self {
                 inner: AozoraDoc::new(source),
@@ -328,11 +295,7 @@ mod bindings {
         #[wasm_bindgen]
         #[must_use]
         pub fn resolve_gaiji_at(&self, byte_offset: usize) -> String {
-            let source = self.inner.source();
-            find_gaiji_span_local(source, byte_offset)
-                .and_then(|span| build_resolution_value(source, span.0, span.1))
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "null".to_owned())
+            wire::serialize_gaiji_resolution_at(self.inner.source(), byte_offset)
         }
 
         /// All gaiji resolutions found in the document, packaged in
@@ -344,134 +307,8 @@ mod bindings {
         #[wasm_bindgen]
         #[must_use]
         pub fn gaiji_resolutions_json(&self) -> String {
-            let source = self.inner.source();
-            let mut entries: Vec<serde_json::Value> = Vec::new();
-            let mut cursor = 0usize;
-            while let Some(rel) = source[cursor..].find(GAIJI_OPEN) {
-                let span_start = cursor + rel;
-                let body_start = span_start + GAIJI_OPEN.len();
-                let Some(close_rel) = source[body_start..].find(GAIJI_CLOSE) else {
-                    break;
-                };
-                let span_end = body_start + close_rel + GAIJI_CLOSE.len();
-                if let Some(val) = build_resolution_value(source, span_start, span_end) {
-                    entries.push(val);
-                }
-                cursor = span_end;
-            }
-            serde_json::json!({
-                "schema_version": 1,
-                "data": entries,
-            })
-            .to_string()
+            wire::serialize_gaiji_resolutions(self.inner.source())
         }
-    }
-
-    /// Find the byte-range of the `※［＃…］` span containing
-    /// `byte_offset`, scanning only a bounded window around the
-    /// cursor (kept independent of document size).
-    fn find_gaiji_span_local(source: &str, byte_offset: usize) -> Option<(usize, usize)> {
-        if source.is_empty() {
-            return None;
-        }
-        let win_start =
-            snap_to_char_boundary_left(source, byte_offset.saturating_sub(MAX_GAIJI_SPAN_LEN));
-        let win_end = snap_to_char_boundary_right(
-            source,
-            byte_offset
-                .saturating_add(MAX_GAIJI_SPAN_LEN)
-                .min(source.len()),
-        );
-        let window = &source[win_start..win_end];
-        let win_offset = byte_offset.saturating_sub(win_start);
-
-        for (start_in_win, _) in window.match_indices(GAIJI_OPEN) {
-            let after_open = start_in_win + GAIJI_OPEN.len();
-            let Some(end_rel) = window.get(after_open..).and_then(|s| s.find(GAIJI_CLOSE)) else {
-                continue;
-            };
-            let end_in_win = after_open + end_rel + GAIJI_CLOSE.len();
-            if (start_in_win..end_in_win).contains(&win_offset) {
-                return Some((win_start + start_in_win, win_start + end_in_win));
-            }
-        }
-        None
-    }
-
-    const fn snap_to_char_boundary_left(s: &str, mut idx: usize) -> usize {
-        while idx > 0 && !s.is_char_boundary(idx) {
-            idx -= 1;
-        }
-        idx
-    }
-
-    const fn snap_to_char_boundary_right(s: &str, mut idx: usize) -> usize {
-        let len = s.len();
-        while idx < len && !s.is_char_boundary(idx) {
-            idx += 1;
-        }
-        idx
-    }
-
-    /// Split a gaiji body (`「description」、mencode[、page-line]`)
-    /// into `(description, mencode?)`. Tail fields after the mencode
-    /// (page-line refs) are informational only — drop them.
-    fn parse_gaiji_body(body: &str) -> (String, Option<String>) {
-        let body = body.trim();
-        let (description, rest) = body.find('「').map_or_else(
-            || (body.to_owned(), ""),
-            |open_idx| {
-                let after_open = &body[open_idx + '「'.len_utf8()..];
-                after_open.find('」').map_or_else(
-                    || (body.to_owned(), ""),
-                    |close_rel| {
-                        let desc = after_open[..close_rel].to_owned();
-                        let rest = &after_open[close_rel + '」'.len_utf8()..];
-                        (desc, rest)
-                    },
-                )
-            },
-        );
-        let rest = rest.trim_start_matches('、').trim();
-        let mencode = rest
-            .split('、')
-            .next()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned);
-        (description, mencode)
-    }
-
-    /// Build the JSON resolution object for a `※［＃…］` span at
-    /// `[start..end)`. Returns `None` if the body cannot be parsed.
-    fn build_resolution_value(source: &str, start: usize, end: usize) -> Option<serde_json::Value> {
-        // Defensive: `end` should always come from the same scan, but
-        // out-of-band callers could pass arbitrary offsets, so
-        // validate boundaries.
-        let body_start = start.checked_add(GAIJI_OPEN.len())?;
-        let body_end = end.checked_sub(GAIJI_CLOSE.len())?;
-        if body_end <= body_start || body_end > source.len() {
-            return None;
-        }
-        let body = source.get(body_start..body_end)?;
-        let (description, mencode) = parse_gaiji_body(body);
-        let resolved = gaiji::lookup(None, mencode.as_deref(), &description);
-        let (resolved_str, codepoint) = match resolved {
-            Some(r) => {
-                let mut s = String::new();
-                _ = r.write_to(&mut s);
-                let cp = r.as_char().map(|c| c as u32);
-                (Some(s), cp)
-            }
-            None => (None, None),
-        };
-        Some(serde_json::json!({
-            "span": { "start": start, "end": end },
-            "description": description,
-            "mencode": mencode,
-            "codepoint": codepoint,
-            "resolved": resolved_str,
-        }))
     }
 }
 

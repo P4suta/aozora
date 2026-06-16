@@ -197,9 +197,211 @@ pub fn table_sizes() -> (usize, usize, usize) {
     )
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Full-document / cursor-local gaiji scan + resolution
+// ────────────────────────────────────────────────────────────────────
+//
+// Single authority for pulling `※［＃…］` references out of raw source
+// and resolving each to its glyph. Editor surfaces (`aozora-wasm`
+// inlay hints / cursor hover) and batch callers (`aozora-py`
+// `gaiji_resolutions`) both drive this; the `aozora::wire` projection
+// only serialises the [`GaijiResolution`] values produced here. Kept
+// next to [`lookup`] so the scan and the table it consults share one
+// home.
+
+/// Opening delimiter of a gaiji reference (`※［＃`).
+pub const GAIJI_OPEN: &str = "※［＃";
+/// Closing delimiter of a gaiji reference (`］`).
+pub const GAIJI_CLOSE: &str = "］";
+/// Window half-width (bytes) for the cursor-local [`find_span`] scan. A
+/// real `※［＃…］` span is at most a few hundred bytes; capping the
+/// search makes per-cursor resolution O(window) rather than O(doc).
+pub const MAX_GAIJI_SPAN_LEN: usize = 512;
+
+/// One resolved gaiji reference located in source.
+///
+/// Byte offsets index the source string. `mencode` / `codepoint` /
+/// `resolved` are `None` when absent or unresolved; `codepoint` is also
+/// `None` for combining-sequence cells (which have no single scalar).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GaijiResolution {
+    /// Start byte offset of the `※［＃…］` span (inclusive).
+    pub start: usize,
+    /// End byte offset of the span (exclusive).
+    pub end: usize,
+    /// The `「…」` description text (or the whole body if no quotes).
+    pub description: String,
+    /// The mencode tail (`第3水準…` / `U+XXXX`), if present.
+    pub mencode: Option<String>,
+    /// Resolved codepoint as `u32`, when resolution is a single scalar.
+    pub codepoint: Option<u32>,
+    /// Resolved glyph(s), when [`lookup`] succeeds.
+    pub resolved: Option<String>,
+}
+
+/// Split a gaiji body (`「description」、mencode[、page-line]`) into
+/// `(description, mencode?)`. Tail fields after the mencode (page-line
+/// refs) are informational only — dropped.
+fn parse_gaiji_body(body: &str) -> (String, Option<String>) {
+    let body = body.trim();
+    let (description, rest) = body.find('「').map_or_else(
+        || (body.to_owned(), ""),
+        |open_idx| {
+            let after_open = &body[open_idx + '「'.len_utf8()..];
+            after_open.find('」').map_or_else(
+                || (body.to_owned(), ""),
+                |close_rel| {
+                    let desc = after_open[..close_rel].to_owned();
+                    let rest = &after_open[close_rel + '」'.len_utf8()..];
+                    (desc, rest)
+                },
+            )
+        },
+    );
+    let rest = rest.trim_start_matches('、').trim();
+    let mencode = rest
+        .split('、')
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    (description, mencode)
+}
+
+/// Resolve the `※［＃…］` span at `[start..end)`.
+///
+/// Returns `None` if the delimiters don't bracket a parseable body —
+/// defensive, since offsets from [`gaiji_resolutions`] / [`find_span`]
+/// always satisfy it.
+#[must_use]
+pub fn resolve_at(source: &str, start: usize, end: usize) -> Option<GaijiResolution> {
+    let body_start = start.checked_add(GAIJI_OPEN.len())?;
+    let body_end = end.checked_sub(GAIJI_CLOSE.len())?;
+    if body_end <= body_start || body_end > source.len() {
+        return None;
+    }
+    let body = source.get(body_start..body_end)?;
+    let (description, mencode) = parse_gaiji_body(body);
+    let (resolved, codepoint) =
+        lookup(None, mencode.as_deref(), &description).map_or((None, None), |r| {
+            let mut s = String::new();
+            _ = r.write_to(&mut s);
+            (Some(s), r.as_char().map(|c| c as u32))
+        });
+    Some(GaijiResolution {
+        start,
+        end,
+        description,
+        mencode,
+        codepoint,
+        resolved,
+    })
+}
+
+/// All gaiji references in `source`, resolved, in source order. Walks
+/// the source linearly once; cost is `O(source)`.
+#[must_use]
+pub fn gaiji_resolutions(source: &str) -> Vec<GaijiResolution> {
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(rel) = source[cursor..].find(GAIJI_OPEN) {
+        let span_start = cursor + rel;
+        let body_start = span_start + GAIJI_OPEN.len();
+        let Some(close_rel) = source[body_start..].find(GAIJI_CLOSE) else {
+            break;
+        };
+        let span_end = body_start + close_rel + GAIJI_CLOSE.len();
+        if let Some(res) = resolve_at(source, span_start, span_end) {
+            out.push(res);
+        }
+        cursor = span_end;
+    }
+    out
+}
+
+/// Byte-range of the `※［＃…］` span containing `byte_offset`.
+///
+/// Scans only a bounded window around the cursor (cost independent of
+/// doc size). For editor cursor-hover; full-document callers use
+/// [`gaiji_resolutions`].
+#[must_use]
+pub fn find_span(source: &str, byte_offset: usize) -> Option<(usize, usize)> {
+    if source.is_empty() {
+        return None;
+    }
+    let win_start =
+        snap_to_char_boundary_left(source, byte_offset.saturating_sub(MAX_GAIJI_SPAN_LEN));
+    let win_end = snap_to_char_boundary_right(
+        source,
+        byte_offset
+            .saturating_add(MAX_GAIJI_SPAN_LEN)
+            .min(source.len()),
+    );
+    let window = &source[win_start..win_end];
+    let win_offset = byte_offset.saturating_sub(win_start);
+
+    for (start_in_win, _) in window.match_indices(GAIJI_OPEN) {
+        let after_open = start_in_win + GAIJI_OPEN.len();
+        let Some(end_rel) = window.get(after_open..).and_then(|s| s.find(GAIJI_CLOSE)) else {
+            continue;
+        };
+        let end_in_win = after_open + end_rel + GAIJI_CLOSE.len();
+        if (start_in_win..end_in_win).contains(&win_offset) {
+            return Some((win_start + start_in_win, win_start + end_in_win));
+        }
+    }
+    None
+}
+
+const fn snap_to_char_boundary_left(s: &str, mut idx: usize) -> usize {
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
+const fn snap_to_char_boundary_right(s: &str, mut idx: usize) -> usize {
+    let len = s.len();
+    while idx < len && !s.is_char_boundary(idx) {
+        idx += 1;
+    }
+    idx
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gaiji_resolutions_empty_for_plain_text() {
+        assert!(gaiji_resolutions("plain text, no gaiji").is_empty());
+    }
+
+    #[test]
+    fn gaiji_resolutions_resolves_single_char_description() {
+        // A description that is itself one glyph resolves via the smart
+        // fallback in `lookup`.
+        let src = "前※［＃「々」］後";
+        let res = gaiji_resolutions(src);
+        assert_eq!(res.len(), 1);
+        let g = &res[0];
+        assert_eq!(g.description, "々");
+        assert_eq!(g.resolved.as_deref(), Some("々"));
+        assert_eq!(g.codepoint, Some('々' as u32));
+        // Offsets bracket the literal `※［＃…］` span.
+        assert_eq!(&src[g.start..g.end], "※［＃「々」］");
+    }
+
+    #[test]
+    fn find_span_locates_enclosing_reference() {
+        let src = "あ※［＃「々」］い";
+        let open = src.find("※").unwrap();
+        // A cursor inside the span finds the whole `※［＃…］` range.
+        let span = find_span(src, open + GAIJI_OPEN.len()).unwrap();
+        assert_eq!(&src[span.0..span.1], "※［＃「々」］");
+        // A cursor outside any reference finds nothing.
+        assert!(find_span(src, 0).is_none());
+    }
 
     #[test]
     fn lookup_prefers_existing_ucs_when_already_set() {
