@@ -13,7 +13,8 @@
 //! Only the **shared `Copy`-able payloads** referenced by the borrowed
 //! AST (`BoutenKind`, `BoutenPosition`, `Indent`, `AlignEnd`,
 //! `Container`, `ContainerKind`, `Keigakomi`, `SectionKind`,
-//! `AozoraHeadingKind`, `AnnotationKind`) live at the top level. The
+//! `AozoraHeadingKind`, `EmphasisKind`, `AnnotationKind`) live at the
+//! top level. The
 //! borrowed-AST node types live under `borrowed::`. The arena-backed
 //! builder lives under `alloc::`.
 
@@ -160,6 +161,24 @@ pub enum AozoraHeadingKind {
     Medium,
     /// 小見出し — the lowest outline level (renders as `<h3>`).
     Small,
+}
+
+/// Text-weight / slant emphasis: 太字 (bold) or 斜体 (italic).
+///
+/// Distinct from [`BoutenKind`] (傍点 / 傍線 decorative marks): emphasis
+/// is a typographic weight/slant, not a per-character mark. Carried by
+/// the forward-reference leaf node [`borrowed::Emphasis`]
+/// (`X［＃「X」は太字］`); the range / block forms
+/// (`［＃太字］…［＃太字終わり］`, `［＃ここから太字］…`) pair as
+/// [`ContainerKind::Bold`] / [`ContainerKind::Italic`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum EmphasisKind {
+    /// 太字 (bold / ゴシック).
+    Bold,
+    /// 斜体 (italic / イタリック).
+    Italic,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

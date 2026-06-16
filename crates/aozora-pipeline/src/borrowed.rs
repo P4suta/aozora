@@ -303,10 +303,12 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 }
             }
             SpanKind::BlockOpen(container) => {
-                // 傍点 / 傍線 range markers are inline (`<em>…</em>`); every
-                // corpus occurrence sits within a line. Skip the block-leaf
-                // `\n\n` padding so the renderer keeps them in-paragraph.
-                let inline = matches!(container, ContainerKind::BoutenRange { .. });
+                // Inline containers (傍点 / 傍線 range, bare-range 太字 /
+                // 斜体) skip the block-leaf `\n\n` padding so the renderer
+                // keeps them in-paragraph; block forms (字下げ, 罫囲み,
+                // ここから-block emphasis) get the padding. See
+                // [`ContainerKind::is_inline`].
+                let inline = container.is_inline();
                 if !inline {
                     self.out.push_str("\n\n");
                 }
@@ -330,7 +332,7 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     .push((NormalizedOffset::new(pos), *container));
             }
             SpanKind::BlockClose(container) => {
-                let inline = matches!(container, ContainerKind::BoutenRange { .. });
+                let inline = container.is_inline();
                 if !inline {
                     self.out.push_str("\n\n");
                 }

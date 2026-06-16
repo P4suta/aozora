@@ -33,6 +33,21 @@ pub enum ContainerKind {
         kind: BoutenKind,
         position: BoutenPosition,
     },
+    /// 太字 (bold) range / block. `block` distinguishes the bare inline
+    /// range `［＃太字］ ... ［＃太字終わり］` (`false`, no `\n\n` padding,
+    /// renders as inline `<b class="aozora-bold">`) from the block form
+    /// `［＃ここから太字］ ... ［＃ここで太字終わり］` (`true`, padded,
+    /// renders as a block `<div class="aozora-container aozora-container-bold">`
+    /// so the wrapped paragraphs nest validly). A separate variant from
+    /// [`Self::Italic`] so a 太字-open closed by a 斜体-close trips
+    /// `mismatched_container_close` (different discriminant).
+    Bold { block: bool },
+    /// 斜体 (italic) range / block — the slant counterpart of
+    /// [`Self::Bold`]. `［＃斜体］ ... ［＃斜体終わり］` (inline
+    /// `<i class="aozora-italic">`) / `［＃ここから斜体］ ...
+    /// ［＃ここで斜体終わり］` (block
+    /// `<div class="aozora-container aozora-container-italic">`).
+    Italic { block: bool },
 }
 
 impl ContainerKind {
@@ -52,7 +67,27 @@ impl ContainerKind {
             Self::Keigakomi => "keigakomi",
             Self::AlignEnd { .. } => "align-end",
             Self::BoutenRange { .. } => "bouten-range",
+            Self::Bold { .. } => "bold",
+            Self::Italic { .. } => "italic",
         }
+    }
+
+    /// Whether this container renders *inline* (within the current
+    /// paragraph) rather than as a block wrapper.
+    ///
+    /// The 傍点 / 傍線 range (`<em>`) and the bare-range 太字 / 斜体 forms
+    /// (`<b>` / `<i>`, `block: false`) are inline — every corpus
+    /// occurrence sits within a line. Every other container (字下げ,
+    /// 罫囲み, the ここから-block emphasis forms) is block-level: it gets
+    /// `\n\n` padding from the normalizer and a `<div>` wrapper from the
+    /// renderer. Centralised here so the lexer's padding decision and the
+    /// renderer's paragraph decision cannot drift apart.
+    #[must_use]
+    pub const fn is_inline(self) -> bool {
+        matches!(
+            self,
+            Self::BoutenRange { .. } | Self::Bold { block: false } | Self::Italic { block: false }
+        )
     }
 }
 
@@ -113,5 +148,9 @@ mod tests {
             .kind_str(),
             "bouten-range"
         );
+        assert_eq!(ContainerKind::Bold { block: false }.kind_str(), "bold");
+        assert_eq!(ContainerKind::Bold { block: true }.kind_str(), "bold");
+        assert_eq!(ContainerKind::Italic { block: false }.kind_str(), "italic");
+        assert_eq!(ContainerKind::Italic { block: true }.kind_str(), "italic");
     }
 }

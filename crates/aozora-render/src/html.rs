@@ -18,8 +18,8 @@
 use core::fmt;
 
 use aozora_pipeline::BorrowedLexOutput;
+use aozora_syntax::Container;
 use aozora_syntax::borrowed::{AozoraNode, NodeRef};
-use aozora_syntax::{Container, ContainerKind};
 use memchr::{memchr_iter, memchr3_iter};
 
 use crate::render_node;
@@ -146,9 +146,10 @@ pub fn render_into<W: fmt::Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -
                 }
                 (Structural::BlockOpen, Some(NodeRef::BlockOpen(kind))) => {
                     let node = AozoraNode::Container(Container { kind });
-                    if matches!(kind, ContainerKind::BoutenRange { .. }) {
-                        // 傍点 / 傍線 range markers are inline `<em>` — stay
-                        // in the paragraph instead of breaking the block.
+                    if kind.is_inline() {
+                        // Inline containers (傍点 / 傍線 range, bare-range
+                        // 太字 / 斜体) stay in the paragraph instead of
+                        // breaking the block.
                         state.ensure_in_paragraph(writer)?;
                         render_node::render(node, true, writer)?;
                     } else {
@@ -159,7 +160,7 @@ pub fn render_into<W: fmt::Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -
                 }
                 (Structural::BlockClose, Some(NodeRef::BlockClose(kind))) => {
                     let node = AozoraNode::Container(Container { kind });
-                    if matches!(kind, ContainerKind::BoutenRange { .. }) {
+                    if kind.is_inline() {
                         state.ensure_in_paragraph(writer)?;
                         render_node::render(node, false, writer)?;
                     } else {

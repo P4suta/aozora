@@ -6,11 +6,12 @@
 use core::fmt::{self, Write};
 
 use aozora_syntax::borrowed::{
-    Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,
-    Kaeriten, Ruby, Sashie, Segment,
+    Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Emphasis, Gaiji,
+    HeadingHint, Kaeriten, Ruby, Sashie, Segment,
 };
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, Container, ContainerKind, Indent, SectionKind,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, Container, ContainerKind, EmphasisKind, Indent,
+    SectionKind,
 };
 
 use crate::bouten;
@@ -33,6 +34,7 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
         _ if !entering => Ok(()),
         AozoraNode::Ruby(r) => render_ruby(r, writer),
         AozoraNode::Bouten(b) => render_bouten(b, writer),
+        AozoraNode::Emphasis(e) => render_emphasis(e, writer),
         AozoraNode::TateChuYoko(t) => {
             writer.write_str(r#"<span class="aozora-tcy">"#)?;
             render_content(t.text.get(), writer)?;
@@ -86,6 +88,22 @@ fn render_bouten<W: Write>(b: &Bouten<'_>, writer: &mut W) -> fmt::Result {
     )?;
     render_content(b.target.get(), writer)?;
     writer.write_str("</em>")
+}
+
+/// Render a forward-reference 太字 / 斜体 emphasis run. 太字 maps to the
+/// presentational `<b>` element, 斜体 to `<i>` — both carry an `aozora-*`
+/// class so a stylesheet can theme them, and neither collides with the
+/// `<em class="aozora-bouten …">` that [`render_bouten`] owns.
+fn render_emphasis<W: Write>(e: &Emphasis<'_>, writer: &mut W) -> fmt::Result {
+    let (open, close) = match e.kind {
+        EmphasisKind::Italic => (r#"<i class="aozora-italic">"#, "</i>"),
+        // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
+        // weight default to the bold element.
+        _ => (r#"<b class="aozora-bold">"#, "</b>"),
+    };
+    writer.write_str(open)?;
+    render_content(e.text.get(), writer)?;
+    writer.write_str(close)
 }
 
 /// Render a [`Content`] by walking its segments in order.
@@ -207,12 +225,32 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
                     pos = bouten::position_slug(position),
                 )
             }
+            // 太字 / 斜体. The bare inline range (`block: false`) uses the
+            // same presentational `<b>` / `<i>` element as the
+            // forward-reference [`render_emphasis`] leaf. The ここから-block
+            // form (`block: true`) wraps whole paragraphs, so it takes a
+            // block `<div>` (an inline `<b>` around `<p>` would be invalid),
+            // following the indent / keigakomi container convention; the
+            // `aozora-container-bold` / `-italic` class carries the styling.
+            ContainerKind::Bold { block: false } => writer.write_str(r#"<b class="aozora-bold">"#),
+            ContainerKind::Italic { block: false } => {
+                writer.write_str(r#"<i class="aozora-italic">"#)
+            }
+            ContainerKind::Bold { block: true } => {
+                writer.write_str(r#"<div class="aozora-container aozora-container-bold">"#)
+            }
+            ContainerKind::Italic { block: true } => {
+                writer.write_str(r#"<div class="aozora-container aozora-container-italic">"#)
+            }
             _ => writer.write_str(r#"<div class="aozora-container">"#),
         }
-    } else if matches!(c.kind, ContainerKind::BoutenRange { .. }) {
-        writer.write_str("</em>")
     } else {
-        writer.write_str("</div>")
+        writer.write_str(match c.kind {
+            ContainerKind::BoutenRange { .. } => "</em>",
+            ContainerKind::Bold { block: false } => "</b>",
+            ContainerKind::Italic { block: false } => "</i>",
+            _ => "</div>",
+        })
     }
 }
 
@@ -420,6 +458,66 @@ mod tests {
             render_node_to_string(n),
             r#"<em class="aozora-bouten aozora-bouten-black-triangle aozora-bouten-right">規範</em>"#
         );
+    }
+
+    #[test]
+    fn emphasis_bold_leaf_emits_b_tag() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let text = alloc.content_plain("重要");
+        let n = alloc.emphasis(EmphasisKind::Bold, text, false);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<b class="aozora-bold">重要</b>"#
+        );
+    }
+
+    #[test]
+    fn emphasis_italic_leaf_emits_i_tag() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let text = alloc.content_plain("e");
+        let n = alloc.emphasis(EmphasisKind::Italic, text, false);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<i class="aozora-italic">e</i>"#
+        );
+    }
+
+    #[test]
+    fn bold_container_emits_b_tag_open_and_close() {
+        let arena = Arena::new();
+        let alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.container(Container {
+            kind: ContainerKind::Bold { block: false },
+        });
+        let mut open = String::new();
+        render(n, true, &mut open).unwrap();
+        let mut close = String::new();
+        render(n, false, &mut close).unwrap();
+        assert_eq!(open, r#"<b class="aozora-bold">"#);
+        assert_eq!(close, "</b>");
+    }
+
+    #[test]
+    fn italic_block_container_uses_block_div() {
+        // The ここから-block form wraps paragraphs, so it renders a block
+        // `<div>` (not the inline `<i>` the bare-range form uses) to keep
+        // the `<div><p>…</p></div>` nesting valid.
+        let arena = Arena::new();
+        let alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.container(Container {
+            kind: ContainerKind::Italic { block: true },
+        });
+        let mut open = String::new();
+        render(n, true, &mut open).unwrap();
+        let mut close = String::new();
+        render(n, false, &mut close).unwrap();
+        assert_eq!(
+            open,
+            r#"<div class="aozora-container aozora-container-italic">"#
+        );
+        assert_eq!(close, "</div>");
     }
 
     #[test]

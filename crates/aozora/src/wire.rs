@@ -139,6 +139,8 @@ const fn container_kind_str(kind: aozora_syntax::ContainerKind) -> &'static str 
         ContainerKind::Keigakomi => "keigakomi",
         ContainerKind::AlignEnd { .. } => "alignEnd",
         ContainerKind::BoutenRange { .. } => "boutenRange",
+        ContainerKind::Bold { .. } => "bold",
+        ContainerKind::Italic { .. } => "italic",
         _ => "unknown",
     }
 }
@@ -442,5 +444,35 @@ mod tests {
         assert_eq!(PairKind::DoubleRuby.as_camel_case(), "doubleRuby");
         assert_eq!(PairKind::Tortoise.as_camel_case(), "tortoise");
         assert_eq!(PairKind::Quote.as_camel_case(), "quote");
+    }
+
+    #[test]
+    fn container_kind_str_maps_emphasis_and_bouten_range() {
+        use aozora_syntax::{BoutenKind, BoutenPosition, ContainerKind};
+        // Guard against the silent `_ => "unknown"` degrade: every shipped
+        // container family must carry an explicit wire string.
+        assert_eq!(
+            container_kind_str(ContainerKind::Bold { block: false }),
+            "bold"
+        );
+        assert_eq!(
+            container_kind_str(ContainerKind::Bold { block: true }),
+            "bold"
+        );
+        assert_eq!(
+            container_kind_str(ContainerKind::Italic { block: false }),
+            "italic"
+        );
+        assert_eq!(
+            container_kind_str(ContainerKind::Italic { block: true }),
+            "italic"
+        );
+        assert_eq!(
+            container_kind_str(ContainerKind::BoutenRange {
+                kind: BoutenKind::Goma,
+                position: BoutenPosition::Right,
+            }),
+            "boutenRange"
+        );
     }
 }

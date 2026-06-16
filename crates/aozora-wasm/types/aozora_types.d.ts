@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────
 
 /** Cross-cutting tag for an AST node or `NodeRef` projection. */
-export type NodeKind = "ruby" | "bouten" | "tateChuYoko" | "gaiji" | "indent" | "alignEnd" | "warichu" | "keigakomi" | "pageBreak" | "sectionBreak" | "heading" | "headingHint" | "sashie" | "kaeriten" | "annotation" | "doubleRuby" | "container" | "containerOpen" | "containerClose";
+export type NodeKind = "ruby" | "bouten" | "tateChuYoko" | "gaiji" | "indent" | "alignEnd" | "warichu" | "keigakomi" | "pageBreak" | "sectionBreak" | "heading" | "headingHint" | "sashie" | "kaeriten" | "annotation" | "doubleRuby" | "emphasis" | "container" | "containerOpen" | "containerClose";
 
 /** Pair kind for `pairs_json` output. */
 export type PairKind = "bracket" | "ruby" | "doubleRuby" | "tortoise" | "quote";
@@ -66,7 +66,7 @@ export interface PairWire {
 
 /** One entry of `serialize_container_pairs` — paired container (open in normalized coords). */
 export interface ContainerPairWire {
-  kind: "indent" | "warichu" | "keigakomi" | "alignEnd" | "unknown";
+  kind: "indent" | "warichu" | "keigakomi" | "alignEnd" | "boutenRange" | "bold" | "italic" | "unknown";
   open: OffsetWire;
   close: OffsetWire;
 }

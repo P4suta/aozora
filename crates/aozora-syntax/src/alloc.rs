@@ -32,8 +32,8 @@ use aozora_encoding::gaiji::Resolved;
 
 use crate::borrowed::{self, Arena, Interner};
 use crate::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container, Indent,
-    Keigakomi, SectionKind,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container,
+    EmphasisKind, Indent, Keigakomi, SectionKind,
 };
 
 /// Arena-backed builder for [`borrowed::AozoraNode<'a>`] and its
@@ -187,7 +187,7 @@ impl<'a> BorrowedAllocator<'a> {
     }
 
     // ---------------------------------------------------------------------
-    // Node variant constructors (17 — matches the AozoraNode enum)
+    // Node variant constructors (18 — matches the AozoraNode enum)
     // ---------------------------------------------------------------------
 
     /// `AozoraNode::Ruby(Ruby { base, reading, delim_explicit })`.
@@ -279,6 +279,33 @@ impl<'a> BorrowedAllocator<'a> {
         let text = borrowed::NonEmpty::new(text)
             .expect("Phase 3 must emit TateChuYoko with non-empty text");
         borrowed::AozoraNode::TateChuYoko(self.arena.alloc(borrowed::TateChuYoko {
+            text,
+            consumed_predecessor,
+        }))
+    }
+
+    /// `AozoraNode::Emphasis(Emphasis { kind, text, consumed_predecessor })`.
+    ///
+    /// The forward-reference leaf form of 太字 / 斜体
+    /// (`X［＃「X」は太字／斜体］`). `text` carries the
+    /// [`borrowed::NonEmpty`] invariant; `consumed_predecessor` mirrors
+    /// [`Self::tate_chu_yoko`]'s flag (see [`borrowed::Emphasis`] for the
+    /// serializer round-trip contract).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `text` is empty.
+    #[must_use]
+    pub fn emphasis(
+        &self,
+        kind: EmphasisKind,
+        text: borrowed::Content<'a>,
+        consumed_predecessor: bool,
+    ) -> borrowed::AozoraNode<'a> {
+        let text =
+            borrowed::NonEmpty::new(text).expect("Phase 3 must emit Emphasis with non-empty text");
+        borrowed::AozoraNode::Emphasis(self.arena.alloc(borrowed::Emphasis {
+            kind,
             text,
             consumed_predecessor,
         }))
@@ -431,7 +458,7 @@ mod tests {
     //!
     //! Each test constructs one `borrowed::AozoraNode<'a>` via the
     //! allocator and asserts the resulting payload fields match what
-    //! we asked for. Together they cover all 17 node variants plus
+    //! we asked for. Together they cover all 18 node variants plus
     //! content / segment composition + interner dedup.
 
     use core::ptr;
@@ -440,7 +467,7 @@ mod tests {
     use crate::borrowed;
     use crate::{
         AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container,
-        ContainerKind, Indent, Keigakomi, SectionKind,
+        ContainerKind, EmphasisKind, Indent, Keigakomi, SectionKind,
     };
 
     fn fresh_alloc(arena: &Arena) -> BorrowedAllocator<'_> {
@@ -492,6 +519,22 @@ mod tests {
                 assert_eq!(t.text.as_plain(), Some("12"));
             }
             other => panic!("expected TateChuYoko, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn emphasis_round_trip() {
+        let arena = Arena::new();
+        let mut a = fresh_alloc(&arena);
+        let text = a.content_plain("重要");
+        let n = a.emphasis(EmphasisKind::Bold, text, true);
+        match n {
+            borrowed::AozoraNode::Emphasis(e) => {
+                assert_eq!(e.kind, EmphasisKind::Bold);
+                assert_eq!(e.text.as_plain(), Some("重要"));
+                assert!(e.consumed_predecessor);
+            }
+            other => panic!("expected Emphasis, got {other:?}"),
         }
     }
 

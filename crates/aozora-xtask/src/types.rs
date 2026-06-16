@@ -174,7 +174,7 @@ fn render_wire_payloads(out: &mut String) {
         "/** One entry of `serialize_container_pairs` — paired container (open in normalized coords). */\n",
     );
     out.push_str(
-        "export interface ContainerPairWire {\n  kind: \"indent\" | \"warichu\" | \"keigakomi\" | \"alignEnd\" | \"unknown\";\n  open: OffsetWire;\n  close: OffsetWire;\n}\n\n",
+        "export interface ContainerPairWire {\n  kind: \"indent\" | \"warichu\" | \"keigakomi\" | \"alignEnd\" | \"boutenRange\" | \"bold\" | \"italic\" | \"unknown\";\n  open: OffsetWire;\n  close: OffsetWire;\n}\n\n",
     );
 }
 

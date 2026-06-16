@@ -14,7 +14,7 @@
 
 /// Cross-cutting tag for an AST node or `NodeRef` projection.
 ///
-/// The first 17 variants ([`Self::Ruby`] through [`Self::Container`])
+/// The first 18 variants ([`Self::Ruby`] through [`Self::Container`])
 /// project from [`crate::borrowed::AozoraNode`]'s discriminant. The
 /// final two ([`Self::ContainerOpen`] / [`Self::ContainerClose`])
 /// only arise from [`crate::borrowed::NodeRef`]'s container open /
@@ -62,6 +62,8 @@ pub enum NodeKind {
     Annotation,
     /// Double ruby (《《…》》).
     DoubleRuby,
+    /// 太字 / 斜体 (bold / italic) — forward-reference emphasis leaf.
+    Emphasis,
     /// Inline-attached container (字下げ系の `AozoraNode` 包み込み).
     Container,
     /// `NodeRef::BlockOpen` projection — paired-container open
@@ -78,7 +80,7 @@ impl NodeKind {
     /// Used by `aozora kinds` (CLI introspection) and the
     /// TypeScript / JSON-Schema codegen so the artefact list
     /// tracks the enum without a hand-maintained parallel.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::Ruby,
         Self::Bouten,
         Self::TateChuYoko,
@@ -95,6 +97,7 @@ impl NodeKind {
         Self::Kaeriten,
         Self::Annotation,
         Self::DoubleRuby,
+        Self::Emphasis,
         Self::Container,
         Self::ContainerOpen,
         Self::ContainerClose,
@@ -125,6 +128,7 @@ impl NodeKind {
             Self::Kaeriten => "kaeriten",
             Self::Annotation => "annotation",
             Self::DoubleRuby => "doubleRuby",
+            Self::Emphasis => "emphasis",
             Self::Container => "container",
             Self::ContainerOpen => "containerOpen",
             Self::ContainerClose => "containerClose",
@@ -157,6 +161,7 @@ mod tests {
         assert_eq!(NodeKind::Kaeriten.as_camel_case(), "kaeriten");
         assert_eq!(NodeKind::Annotation.as_camel_case(), "annotation");
         assert_eq!(NodeKind::DoubleRuby.as_camel_case(), "doubleRuby");
+        assert_eq!(NodeKind::Emphasis.as_camel_case(), "emphasis");
         assert_eq!(NodeKind::Container.as_camel_case(), "container");
         assert_eq!(NodeKind::ContainerOpen.as_camel_case(), "containerOpen");
         assert_eq!(NodeKind::ContainerClose.as_camel_case(), "containerClose");

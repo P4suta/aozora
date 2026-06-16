@@ -16,8 +16,8 @@ use core::slice;
 use aozora_encoding::gaiji::Resolved;
 
 use crate::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container, Indent,
-    Keigakomi, SectionKind,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container,
+    EmphasisKind, Indent, Keigakomi, SectionKind,
 };
 
 // ----------------------------------------------------------------------
@@ -65,6 +65,8 @@ pub enum AozoraNode<'src> {
     Annotation(&'src Annotation<'src>),
     /// `《《…》》` double-bracket bouten. See [`DoubleRuby`].
     DoubleRuby(&'src DoubleRuby<'src>),
+    /// Bold / italic emphasis (`X［＃「X」は太字／斜体］`). See [`Emphasis`].
+    Emphasis(&'src Emphasis<'src>),
     /// Paired-container open (`［＃ここから字下げ］` etc.).
     Container(Container),
 }
@@ -216,6 +218,29 @@ pub struct TateChuYoko<'src> {
     pub consumed_predecessor: bool,
 }
 
+/// Bold / italic emphasis.
+///
+/// The forward-reference leaf form of 太字 / 斜体
+/// (`X［＃「X」は太字］` / `X［＃「X」は斜体］`). `kind` selects 太字
+/// (`<b>`) or 斜体 (`<i>`); `text` is the emphasised run. The range /
+/// block forms (`［＃太字］…［＃太字終わり］`, `［＃ここから太字］…`)
+/// are paired containers ([`crate::ContainerKind::Bold`] /
+/// [`crate::ContainerKind::Italic`]), not this node.
+///
+/// `text` is [`super::NonEmpty`] — empty emphasis is a parse bug.
+///
+/// `consumed_predecessor` mirrors [`Bouten::consumed_predecessor`] and
+/// [`TateChuYoko::consumed_predecessor`]: when Phase 3 pulled the node's
+/// source span back over the immediately-preceding literal of `text`,
+/// the serializer re-emits that literal before `［＃「text」は太字］` to
+/// hold the parse∘serialize fixed point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Emphasis<'src> {
+    pub kind: EmphasisKind,
+    pub text: super::NonEmpty<Content<'src>>,
+    pub consumed_predecessor: bool,
+}
+
 /// Gaiji (out-of-character-range glyph).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gaiji<'src> {
@@ -359,6 +384,7 @@ impl AozoraNode<'_> {
             Self::Kaeriten(_) => "aozora_kaeriten",
             Self::Annotation(_) => "aozora_annotation",
             Self::DoubleRuby(_) => "aozora_double_ruby",
+            Self::Emphasis(_) => "aozora_emphasis",
             Self::Container(_) => "aozora_container",
         }
     }
@@ -389,6 +415,7 @@ impl AozoraNode<'_> {
             Self::Kaeriten(_) => NodeKind::Kaeriten,
             Self::Annotation(_) => NodeKind::Annotation,
             Self::DoubleRuby(_) => NodeKind::DoubleRuby,
+            Self::Emphasis(_) => NodeKind::Emphasis,
             Self::Container(_) => NodeKind::Container,
         }
     }
@@ -408,6 +435,7 @@ mod tests {
         assert_copy::<Content<'static>>();
         assert_copy::<Ruby<'static>>();
         assert_copy::<Bouten<'static>>();
+        assert_copy::<Emphasis<'static>>();
         assert_copy::<Gaiji<'static>>();
     }
 

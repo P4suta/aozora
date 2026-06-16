@@ -11,11 +11,12 @@ use core::fmt::{self, Write};
 
 use aozora_pipeline::{BorrowedLexOutput, has_long_rule_line, isolate_decorative_rules};
 use aozora_syntax::borrowed::{
-    Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,
-    Kaeriten, NodeRef, Ruby, Sashie, Segment, TateChuYoko,
+    Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Emphasis, Gaiji,
+    HeadingHint, Kaeriten, NodeRef, Ruby, Sashie, Segment, TateChuYoko,
 };
 use aozora_syntax::{
-    AlignEnd, AozoraHeadingKind, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind,
+    AlignEnd, AozoraHeadingKind, BoutenKind, BoutenPosition, ContainerKind, EmphasisKind, Indent,
+    SectionKind,
 };
 use memchr::memchr_iter;
 
@@ -163,6 +164,7 @@ fn emit_aozora<W: Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
         AozoraNode::Kaeriten(k) => emit_kaeriten(k, out),
         AozoraNode::Annotation(a) => emit_annotation(a, out),
         AozoraNode::DoubleRuby(d) => emit_double_ruby(d, out),
+        AozoraNode::Emphasis(e) => emit_emphasis(e, out),
         AozoraNode::PageBreak => out.write_str("［＃改ページ］"),
         AozoraNode::SectionBreak(kind) => emit_section_break(kind, out),
         AozoraNode::Indent(i) => emit_indent(i, out),
@@ -249,6 +251,29 @@ fn emit_tate_chu_yoko<W: Write>(t: &TateChuYoko<'_>, out: &mut W) -> fmt::Result
     out.write_str("［＃「")?;
     emit_content_as_plain(t.text.get(), out)?;
     out.write_str("」は縦中横］")
+}
+
+/// Re-emit a forward-reference 太字 / 斜体 leaf as
+/// `<text>［＃「<text>」は太字／斜体］`. `consumed_predecessor` drives the
+/// leading literal re-emit, identical to `emit_bouten` / `emit_tate_chu_yoko`.
+fn emit_emphasis<W: Write>(e: &Emphasis<'_>, out: &mut W) -> fmt::Result {
+    if e.consumed_predecessor {
+        emit_content_as_plain(e.text.get(), out)?;
+    }
+    out.write_str("［＃「")?;
+    emit_content_as_plain(e.text.get(), out)?;
+    out.write_str("」は")?;
+    out.write_str(emphasis_kind_keyword(e.kind))?;
+    out.write_char('］')
+}
+
+const fn emphasis_kind_keyword(kind: EmphasisKind) -> &'static str {
+    match kind {
+        EmphasisKind::Italic => "斜体",
+        // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
+        // weight serialize as the bold keyword.
+        _ => "太字",
+    }
 }
 
 fn emit_gaiji<W: Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
@@ -383,6 +408,10 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             amount,
             wrap: Some(wrap),
         } => write!(out, "［＃ここから{amount}字下げ、折り返して{wrap}字下げ］"),
+        ContainerKind::Bold { block: false } => out.write_str("［＃太字］"),
+        ContainerKind::Bold { block: true } => out.write_str("［＃ここから太字］"),
+        ContainerKind::Italic { block: false } => out.write_str("［＃斜体］"),
+        ContainerKind::Italic { block: true } => out.write_str("［＃ここから斜体］"),
         _ => out.write_str(container_open_marker(kind)),
     }
 }
@@ -397,6 +426,10 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
             bouten_left_prefix(position),
             bouten_kind_keyword(kind)
         ),
+        ContainerKind::Bold { block: false } => out.write_str("［＃太字終わり］"),
+        ContainerKind::Bold { block: true } => out.write_str("［＃ここで太字終わり］"),
+        ContainerKind::Italic { block: false } => out.write_str("［＃斜体終わり］"),
+        ContainerKind::Italic { block: true } => out.write_str("［＃ここで斜体終わり］"),
         _ => out.write_str(container_close_marker(kind)),
     }
 }
@@ -559,6 +592,9 @@ mod tests {
             "text［＃改ページ］more",
             "※［＃「木＋吶のつくり」、第3水準1-85-54］",
             "［＃ここから2字下げ］\nA\n［＃ここで字下げ終わり］",
+            "本文［＃太字］註［＃太字終わり］。",
+            "重要［＃「重要」は太字］な点。",
+            "［＃ここから斜体］\nA\n［＃ここで斜体終わり］",
         ];
         for src in inputs {
             let first = ser(src);

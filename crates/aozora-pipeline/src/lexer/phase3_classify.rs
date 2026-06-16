@@ -97,8 +97,8 @@ use aozora_encoding::gaiji as gaiji_resolve;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, ContainerKind, Indent,
-    SectionKind, Span,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, ContainerKind,
+    EmphasisKind, Indent, SectionKind, Span,
 };
 
 use super::phase2_pair::{PairEvent, PairKind};
@@ -400,6 +400,12 @@ enum BodyFamily {
     /// variant (or the `左に` prefix); `parse_bouten_range_body` reads the
     /// full body for the kind, the `左に` position, and the `終わり` close.
     BoutenRange,
+
+    /// 太字 / 斜体 range / block form (`太字` / `斜体` inline,
+    /// `ここから太字` / `ここで斜体終わり` block, with `終わり` close). The
+    /// needle anchors the body; `parse_emphasis_body` reads the full body
+    /// for the kind, the block vs inline form, and open vs close.
+    Emphasis,
 }
 
 /// Static pattern table. Order is irrelevant for behavior because the
@@ -533,6 +539,35 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "傍線",
         family: BodyFamily::BoutenRange,
+    },
+    // 太字 / 斜体 emphasis. The inline-range openers (`太字` / `斜体`)
+    // also anchor their `…終わり` closers (re-parsed in full by
+    // `parse_emphasis_body`); the block forms need their own anchors
+    // (`ここから太字` beats the generic `ここから` via LeftmostLongest;
+    // `ここで太字終わり` has no shorter generic anchor).
+    BodyPattern {
+        needle: "太字",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "斜体",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ここから太字",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ここから斜体",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ここで太字終わり",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ここで斜体終わり",
+        family: BodyFamily::Emphasis,
     },
     // Kaeriten okurigana opener (full-width left paren U+FF08).
     BodyPattern {
@@ -893,6 +928,26 @@ fn classify_annotation_body<'a>(
             // the `左に` position, and open vs close.
             let (kind, position, is_close) = parse_bouten_range_body(body)?;
             let container = ContainerKind::BoutenRange { kind, position };
+            Some((
+                if is_close {
+                    EmitKind::BlockClose(container)
+                } else {
+                    EmitKind::BlockOpen(container)
+                },
+                None,
+            ))
+        }
+        BodyFamily::Emphasis => {
+            // `太字` / `斜体` / `ここから太字` / `ここで斜体終わり` … —
+            // re-parse the full body for the kind, the block vs inline
+            // form, and open vs close.
+            let (kind, block, is_close) = parse_emphasis_body(body)?;
+            let container = match kind {
+                EmphasisKind::Italic => ContainerKind::Italic { block },
+                // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any
+                // future weight pair as the bold container.
+                _ => ContainerKind::Bold { block },
+            };
             Some((
                 if is_close {
                     EmitKind::BlockClose(container)
@@ -2823,6 +2878,13 @@ enum EmitKind<'a> {
 /// to the `Annotation { Unknown }` catch-all so the bracket is
 /// always consumed into some `AozoraNode`.
 impl<'a> RecogniseCtx<'_, 'a, '_> {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "a flat dispatch chain over the forward-reference recognisers \
+                  (body / bouten / 縦中横 / heading / emphasis) — each block is \
+                  the same shape and splitting them would scatter the ordered \
+                  fall-through to the Annotation{Unknown} catch-all"
+    )]
     fn recognize_annotation(
         &mut self,
         view: BodyView<'_>,
@@ -2916,6 +2978,17 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         };
         if let Some((node, consume_start)) =
             self.classify_forward_heading(view, open_idx, close_idx)
+        {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start,
+                consume_end: close_span.end,
+                pending_diagnostic: tcy_pending,
+            });
+        }
+        if let Some((node, consume_start)) =
+            self.classify_forward_emphasis(view, open_idx, close_idx)
         {
             return Some(AnnotationMatch {
                 emit: EmitKind::Aozora(node),
@@ -3502,6 +3575,56 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     }
 }
 
+/// Classify a `［＃「target」は太字／斜体］` forward-reference emphasis.
+///
+/// The `は`-form leaf counterpart of the `［＃太字］…［＃太字終わり］`
+/// range container (`parse_emphasis_body`). Shares the quote-extraction
+/// and predecessor-pull-back machinery with `classify_forward_tcy` /
+/// `classify_forward_heading`: the suffix after the target must start with
+/// `は`, and the keyword selects 太字 (`<b>`) or 斜体 (`<i>`).
+///
+/// Single-target only — `「A」「B」は太字` is not a real Aozora shape and
+/// would not round-trip byte-exactly, so it falls through to
+/// `Annotation{Unknown}`. The `forward_target_is_preceded` gate rejects a
+/// target with no referent (emphasis over nothing); the
+/// `find_immediate_predecessor_target_position` pull-back swallows the
+/// immediately-preceding literal (the dominant
+/// `作者附記［＃「作者附記」は太字］` shape) so the `<b>` / `<i>` is its sole
+/// rendered copy.
+impl<'a> RecogniseCtx<'_, 'a, '_> {
+    fn classify_forward_emphasis(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        let rest = extracted.suffix.strip_prefix("は")?;
+        let kind = emphasis_kind_from_suffix(rest)?;
+        let [only] = extracted.targets.as_slice() else {
+            return None;
+        };
+        if !forward_target_is_preceded(view.events, self.source, open_idx, only) {
+            return None;
+        }
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        let consume_start =
+            find_immediate_predecessor_target_position(view.events, self.source, open_idx, only)
+                .unwrap_or(open_span.start);
+        let consumed_predecessor = consume_start < open_span.start;
+        let text = self.alloc.content_plain(only);
+        Some((
+            self.alloc.emphasis(kind, text, consumed_predecessor),
+            consume_start,
+        ))
+    }
+}
+
 /// Map an outline level (1/2/3 from [`heading_level_from_suffix`]) to the
 /// corresponding [`AozoraHeadingKind`]. 大→Large, 中→Medium, 小→Small.
 const fn heading_kind_from_level(level: u8) -> AozoraHeadingKind {
@@ -3565,6 +3688,17 @@ fn heading_level_from_suffix(s: &str) -> Option<u8> {
     })
 }
 
+/// Map the keyword after `は` to an [`EmphasisKind`]: 太字 → Bold,
+/// 斜体 → Italic (per <https://www.aozora.gr.jp/annotation/emphasis.html>).
+/// Unknown suffixes return `None` (→ `Annotation{Unknown}`).
+fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
+    Some(match s {
+        "太字" => EmphasisKind::Bold,
+        "斜体" => EmphasisKind::Italic,
+        _ => return None,
+    })
+}
+
 /// Map the trailing keyword (after `に`) to a [`BoutenKind`].
 ///
 /// Covers the eleven bouten kinds catalogued at
@@ -3612,6 +3746,24 @@ fn parse_bouten_range_body(body: &str) -> Option<(BoutenKind, BoutenPosition, bo
         .map_or((false, rest), |k| (true, k));
     let kind = bouten_kind_from_suffix(kind_str)?;
     Some((kind, position, is_close))
+}
+
+/// Parse a 太字 / 斜体 range / block body into `(kind, block, is_close)`.
+/// `block` is `true` for the `ここから…` / `ここで…終わり` block form,
+/// `false` for the bare inline range `［＃太字］…［＃太字終わり］`. Returns
+/// `None` (→ `Annotation{Unknown}`) for any non-emphasis body.
+fn parse_emphasis_body(body: &str) -> Option<(EmphasisKind, bool, bool)> {
+    Some(match body {
+        "太字" => (EmphasisKind::Bold, false, false),
+        "太字終わり" => (EmphasisKind::Bold, false, true),
+        "ここから太字" => (EmphasisKind::Bold, true, false),
+        "ここで太字終わり" => (EmphasisKind::Bold, true, true),
+        "斜体" => (EmphasisKind::Italic, false, false),
+        "斜体終わり" => (EmphasisKind::Italic, false, true),
+        "ここから斜体" => (EmphasisKind::Italic, true, false),
+        "ここで斜体終わり" => (EmphasisKind::Italic, true, true),
+        _ => return None,
+    })
 }
 
 /// Parse a leading run of ASCII / full-width decimal digits into a
