@@ -29,7 +29,7 @@
 //!
 //! ## Usage
 //!
-//! ```no_run
+//! ```
 //! use aozora::Document;
 //! use aozora_pandoc::to_pandoc;
 //!
@@ -38,7 +38,7 @@
 //! let pandoc = to_pandoc(&tree);
 //! // Serialize to Pandoc JSON for `pandoc -f json -t html`:
 //! let json = serde_json::to_string(&pandoc).expect("serialise pandoc ast");
-//! println!("{json}");
+//! assert!(json.contains("青梅")); // the ruby base lands in the Pandoc AST
 //! ```
 
 #![forbid(unsafe_code)]
