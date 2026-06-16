@@ -62,8 +62,8 @@ pub enum NodeKind {
     Kaeriten,
     /// Generic annotation that no specific recogniser claimed.
     Annotation,
-    /// Double ruby (《《…》》).
-    DoubleRuby,
+    /// Double-angle quotation (input `≪…≫`, display `《…》`).
+    AngleQuote,
     /// 太字 / 斜体 (bold / italic) — forward-reference emphasis leaf.
     Emphasis,
     /// Side annotation (注記) — `「X」の左に「Y」の注記`.
@@ -101,7 +101,7 @@ impl NodeKind {
         Self::Sashie,
         Self::Kaeriten,
         Self::Annotation,
-        Self::DoubleRuby,
+        Self::AngleQuote,
         Self::Emphasis,
         Self::SideNote,
         Self::Container,
@@ -134,7 +134,7 @@ impl NodeKind {
             Self::Sashie => "sashie",
             Self::Kaeriten => "kaeriten",
             Self::Annotation => "annotation",
-            Self::DoubleRuby => "doubleRuby",
+            Self::AngleQuote => "angleQuote",
             Self::Emphasis => "emphasis",
             Self::SideNote => "sideNote",
             Self::Container => "container",
@@ -169,7 +169,7 @@ mod tests {
         assert_eq!(NodeKind::Sashie.as_camel_case(), "sashie");
         assert_eq!(NodeKind::Kaeriten.as_camel_case(), "kaeriten");
         assert_eq!(NodeKind::Annotation.as_camel_case(), "annotation");
-        assert_eq!(NodeKind::DoubleRuby.as_camel_case(), "doubleRuby");
+        assert_eq!(NodeKind::AngleQuote.as_camel_case(), "angleQuote");
         assert_eq!(NodeKind::Emphasis.as_camel_case(), "emphasis");
         assert_eq!(NodeKind::SideNote.as_camel_case(), "sideNote");
         assert_eq!(NodeKind::Container.as_camel_case(), "container");

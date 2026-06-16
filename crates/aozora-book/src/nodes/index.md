@@ -26,7 +26,7 @@ or one shell invocation — away.
 | [Sashie](sashie.md) | `sashie` | `［＃挿絵（path.png）入る］` |
 | [Kaeriten](kaeriten.md) | `kaeriten` | `［＃返り点 一・二］` |
 | [Annotation](annotation.md) | `annotation` | `［＃任意のコメント］` |
-| [DoubleRuby](double-ruby.md) | `doubleRuby` | `《《重要》》` |
+| [AngleQuote](angle-quote.md) | `angleQuote` | `≪重要≫` → `《重要》` |
 | [Container](container.md) | `container` | `［＃ここから...］...［＃ここで...終わり］` |
 | [ContainerOpen](container-open.md) | `containerOpen` | (NodeRef projection) |
 | [ContainerClose](container-close.md) | `containerClose` | (NodeRef projection) |

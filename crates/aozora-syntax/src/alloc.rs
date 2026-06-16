@@ -494,10 +494,10 @@ impl<'a> BorrowedAllocator<'a> {
         borrowed::AozoraNode::Annotation(a)
     }
 
-    /// `AozoraNode::DoubleRuby(DoubleRuby { content })`.
+    /// `AozoraNode::AngleQuote(AngleQuote { content })`.
     ///
     /// `content` carries the [`borrowed::NonEmpty`] invariant — Phase 3
-    /// pre-filters `《《》》` with empty body into plain text so this
+    /// pre-filters `≪≫` with empty body into plain text so this
     /// path is never reached with an empty payload.
     ///
     /// # Panics
@@ -505,10 +505,10 @@ impl<'a> BorrowedAllocator<'a> {
     /// Panics if `content` is empty. Phase 3's pre-filter is the
     /// gate; an empty payload here signals a classifier bug.
     #[must_use]
-    pub fn double_ruby(&self, content: borrowed::Content<'a>) -> borrowed::AozoraNode<'a> {
+    pub fn angle_quote(&self, content: borrowed::Content<'a>) -> borrowed::AozoraNode<'a> {
         let content = borrowed::NonEmpty::new(content)
-            .expect("Phase 3 pre-filters empty DoubleRuby into plain");
-        borrowed::AozoraNode::DoubleRuby(self.arena.alloc(borrowed::DoubleRuby { content }))
+            .expect("Phase 3 pre-filters empty AngleQuote into plain");
+        borrowed::AozoraNode::AngleQuote(self.arena.alloc(borrowed::AngleQuote { content }))
     }
 
     /// `AozoraNode::Container(c)`.
@@ -795,16 +795,16 @@ mod tests {
     }
 
     #[test]
-    fn double_ruby_round_trip() {
+    fn angle_quote_round_trip() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
         let content = a.content_plain("重要");
-        let n = a.double_ruby(content);
+        let n = a.angle_quote(content);
         match n {
-            borrowed::AozoraNode::DoubleRuby(d) => {
+            borrowed::AozoraNode::AngleQuote(d) => {
                 assert_eq!(d.content.as_plain(), Some("重要"));
             }
-            other => panic!("expected DoubleRuby, got {other:?}"),
+            other => panic!("expected AngleQuote, got {other:?}"),
         }
     }
 

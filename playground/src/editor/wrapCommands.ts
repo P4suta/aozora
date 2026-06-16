@@ -19,7 +19,7 @@ export interface WrapShape {
  */
 export const WRAP_SHAPES: readonly WrapShape[] = [
   { id: 'aozora.wrap.ruby', template: '｜BASE《${0}》', description: 'ルビ' },
-  { id: 'aozora.wrap.doubleRuby', template: '｜BASE《《${0}》》', description: 'ダブルルビ' },
+  { id: 'aozora.wrap.angleQuote', template: '≪BASE≫${0}', description: '二重山括弧' },
   { id: 'aozora.wrap.bouten', template: 'BASE［＃「BASE」に傍点］${0}', description: '傍点' },
   { id: 'aozora.wrap.kagikakko', template: '「BASE」${0}', description: '鉤括弧で囲む' },
   { id: 'aozora.wrap.kikkou', template: '〔BASE〕${0}', description: '亀甲括弧で囲む' },
@@ -73,7 +73,7 @@ export function getWrapCommand(id: string): Command | null {
 /**
  * Keybindings registered globally. Mirrors aozora-tools' VSCode
  * bindings: Ctrl/Cmd+Alt+R for ruby, Ctrl/Cmd+Alt+B for bouten.
- * doubleRuby is on Shift+Ctrl/Cmd+Alt+R (aozora-tools leaves it
+ * angleQuote is on Shift+Ctrl/Cmd+Alt+R (aozora-tools leaves it
  * unbound; we pick the natural extension since the playground has
  * no command palette plumbing yet).
  */
@@ -85,7 +85,7 @@ export const aozoraWrapKeymap: KeyBinding[] = [
   },
   {
     key: 'Mod-Alt-Shift-r',
-    run: wrapCommand(SHAPE_BY_ID['aozora.wrap.doubleRuby']!),
+    run: wrapCommand(SHAPE_BY_ID['aozora.wrap.angleQuote']!),
     preventDefault: true,
   },
   {

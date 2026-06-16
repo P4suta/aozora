@@ -28,7 +28,7 @@
   - [Sashie](nodes/sashie.md)
   - [Kaeriten](nodes/kaeriten.md)
   - [Annotation](nodes/annotation.md)
-  - [DoubleRuby](nodes/double-ruby.md)
+  - [AngleQuote](nodes/angle-quote.md)
   - [Container](nodes/container.md)
   - [ContainerOpen](nodes/container-open.md)
   - [ContainerClose](nodes/container-close.md)

@@ -48,7 +48,7 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a
         alloc.sashie("file.png", None),
         alloc.kaeriten("一"),
         alloc.annotation(a),
-        alloc.double_ruby(base),
+        alloc.angle_quote(base),
         alloc.container(Container {
             kind: ContainerKind::Indent {
                 amount: 1,

@@ -63,7 +63,7 @@ fn xml_node_name_is_injective_over_all_variants() {
         alloc.sashie("file.png", None),
         alloc.kaeriten("一"),
         alloc.annotation(a),
-        alloc.double_ruby(base),
+        alloc.angle_quote(base),
         alloc.container(Container {
             kind: ContainerKind::Indent {
                 amount: 1,

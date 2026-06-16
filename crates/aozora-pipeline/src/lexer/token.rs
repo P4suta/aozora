@@ -25,7 +25,7 @@ pub enum Token {
 
     /// A delimiter character. `pos` is the start byte offset of the
     /// token in the sanitized source; `kind` carries its role. For
-    /// multi-character triggers (`《《`, `》》`, `［＃`) the span covers
+    /// multi-character triggers (`［＃`) the span covers
     /// all constituent characters.
     Trigger { kind: TriggerKind, span: Span },
 
@@ -44,6 +44,6 @@ mod tests {
     fn single_char_trigger_byte_lens_match_utf8() {
         // Sanity that the re-export still works the same.
         assert_eq!(TriggerKind::Bar.source_byte_len(), 3);
-        assert_eq!(TriggerKind::DoubleRubyOpen.source_byte_len(), 6);
+        assert_eq!(TriggerKind::AngleQuoteOpen.source_byte_len(), 3);
     }
 }

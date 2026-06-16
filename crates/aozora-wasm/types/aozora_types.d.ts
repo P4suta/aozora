@@ -7,10 +7,10 @@
 // ─────────────────────────────────────────────────────────
 
 /** Cross-cutting tag for an AST node or `NodeRef` projection. */
-export type NodeKind = "ruby" | "bouten" | "tateChuYoko" | "gaiji" | "indent" | "alignEnd" | "center" | "warichu" | "keigakomi" | "pageBreak" | "sectionBreak" | "heading" | "headingHint" | "sashie" | "kaeriten" | "annotation" | "doubleRuby" | "emphasis" | "sideNote" | "container" | "containerOpen" | "containerClose";
+export type NodeKind = "ruby" | "bouten" | "tateChuYoko" | "gaiji" | "indent" | "alignEnd" | "center" | "warichu" | "keigakomi" | "pageBreak" | "sectionBreak" | "heading" | "headingHint" | "sashie" | "kaeriten" | "annotation" | "angleQuote" | "emphasis" | "sideNote" | "container" | "containerOpen" | "containerClose";
 
 /** Pair kind for `pairs_json` output. */
-export type PairKind = "bracket" | "ruby" | "doubleRuby" | "tortoise" | "quote";
+export type PairKind = "bracket" | "ruby" | "angleQuote" | "tortoise" | "quote";
 
 /** Diagnostic severity tier (wire field `severity`). */
 export type Severity = "error" | "warning" | "note";

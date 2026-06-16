@@ -11,7 +11,7 @@ use core::fmt::{self, Write};
 
 use aozora_pipeline::{BorrowedLexOutput, has_long_rule_line, isolate_decorative_rules};
 use aozora_syntax::borrowed::{
-    Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Emphasis, Gaiji,
+    AngleQuote, Annotation, AozoraHeading, AozoraNode, Bouten, Content, Emphasis, Gaiji,
     HeadingHint, Kaeriten, NodeRef, Ruby, Sashie, Segment, SideNote, TateChuYoko,
 };
 use aozora_syntax::{
@@ -163,7 +163,7 @@ fn emit_aozora<W: Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
         AozoraNode::Gaiji(g) => emit_gaiji(g, out),
         AozoraNode::Kaeriten(k) => emit_kaeriten(k, out),
         AozoraNode::Annotation(a) => emit_annotation(a, out),
-        AozoraNode::DoubleRuby(d) => emit_double_ruby(d, out),
+        AozoraNode::AngleQuote(d) => emit_angle_quote(d, out),
         AozoraNode::Emphasis(e) => emit_emphasis(e, out),
         AozoraNode::SideNote(s) => emit_side_note(s, out),
         AozoraNode::PageBreak => out.write_str("［＃改ページ］"),
@@ -322,12 +322,10 @@ fn emit_annotation<W: Write>(a: &Annotation<'_>, out: &mut W) -> fmt::Result {
     out.write_str(a.raw.as_str())
 }
 
-fn emit_double_ruby<W: Write>(d: &DoubleRuby<'_>, out: &mut W) -> fmt::Result {
-    out.write_char('《')?;
-    out.write_char('《')?;
+fn emit_angle_quote<W: Write>(d: &AngleQuote<'_>, out: &mut W) -> fmt::Result {
+    out.write_char('≪')?;
     emit_content(d.content.get(), out)?;
-    out.write_char('》')?;
-    out.write_char('》')
+    out.write_char('≫')
 }
 
 fn emit_section_break<W: Write>(kind: SectionKind, out: &mut W) -> fmt::Result {

@@ -323,7 +323,7 @@ fn main() {
                 AozoraNode::Sashie(_) => "Sashie",
                 AozoraNode::Kaeriten(_) => "Kaeriten",
                 AozoraNode::Annotation(_) => "Annotation",
-                AozoraNode::DoubleRuby(_) => "DoubleRuby",
+                AozoraNode::AngleQuote(_) => "AngleQuote",
                 AozoraNode::Container(_) => "Container",
                 _ => "_unknown",
             };

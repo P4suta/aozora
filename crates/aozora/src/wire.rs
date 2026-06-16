@@ -445,7 +445,7 @@ mod tests {
         use crate::PairKind;
         assert_eq!(PairKind::Bracket.as_camel_case(), "bracket");
         assert_eq!(PairKind::Ruby.as_camel_case(), "ruby");
-        assert_eq!(PairKind::DoubleRuby.as_camel_case(), "doubleRuby");
+        assert_eq!(PairKind::AngleQuote.as_camel_case(), "angleQuote");
         assert_eq!(PairKind::Tortoise.as_camel_case(), "tortoise");
         assert_eq!(PairKind::Quote.as_camel_case(), "quote");
     }

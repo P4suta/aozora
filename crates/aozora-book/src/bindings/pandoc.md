@@ -43,7 +43,7 @@ specialise the rendering:
 | `Gaiji`                | `Span` carrying mencode   | `aozora-gaiji`                |
 | `Indent`, `AlignEnd`   | empty `Span` (marker)     | `aozora-indent` / `align-end` |
 | `Warichu`              | `Span` with two children  | `aozora-warichu`              |
-| `DoubleRuby`           | `Span`                    | `aozora-double-ruby`          |
+| `AngleQuote`           | `Span`                    | `aozora-angle-quote`          |
 | `Annotation`, `Kaeriten`, `HeadingHint` | empty `Span` carrying raw | `aozora-annotation` / etc.    |
 | `PageBreak`            | `HorizontalRule` block    | (n/a — semantic block)        |
 | `SectionBreak`         | empty `Div`               | `aozora-section-break`        |

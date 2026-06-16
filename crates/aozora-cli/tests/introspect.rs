@@ -52,7 +52,7 @@ fn kinds_lists_concrete_node_tags() {
     let (status, stdout, _) = run(&["kinds"]);
     assert!(status.success());
     // Spot-check tags that span the camelCase / non-ascii lookup paths.
-    for tag in ["ruby", "doubleRuby", "containerOpen", "containerClose"] {
+    for tag in ["ruby", "angleQuote", "containerOpen", "containerClose"] {
         assert!(stdout.contains(tag), "kinds missing tag {tag}: {stdout:?}");
     }
 }
@@ -105,9 +105,9 @@ fn explain_known_kind_succeeds() {
 
 #[test]
 fn explain_camelcase_tag_succeeds() {
-    let (status, stdout, _) = run(&["explain", "doubleRuby"]);
-    assert!(status.success(), "explain doubleRuby must succeed");
-    assert!(stdout.contains("DoubleRuby"), "missing tag: {stdout:?}");
+    let (status, stdout, _) = run(&["explain", "angleQuote"]);
+    assert!(status.success(), "explain angleQuote must succeed");
+    assert!(stdout.contains("AngleQuote"), "missing tag: {stdout:?}");
 }
 
 #[test]

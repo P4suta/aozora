@@ -8,10 +8,10 @@
 //! block construct as documented in [`crate`].
 
 use aozora::{
-    AlignEnd, Annotation, AnnotationKind, AozoraHeading, AozoraHeadingKind, AozoraHeadingStyle,
-    AozoraTree, Bouten, BoutenKind, BoutenPosition, ContainerKind, DoubleRuby, Gaiji, HeadingHint,
-    Indent, Kaeriten, NodeRef, Ruby, Sashie, SectionKind, Segment, SideNote, SourceNode, Span,
-    TateChuYoko, Warichu,
+    AlignEnd, AngleQuote, Annotation, AnnotationKind, AozoraHeading, AozoraHeadingKind,
+    AozoraHeadingStyle, AozoraTree, Bouten, BoutenKind, BoutenPosition, ContainerKind, Gaiji,
+    HeadingHint, Indent, Kaeriten, NodeRef, Ruby, Sashie, SectionKind, Segment, SideNote,
+    SourceNode, Span, TateChuYoko, Warichu,
     pipeline::lexer::sanitize,
     syntax::borrowed::{AozoraNode, Content},
 };
@@ -198,7 +198,7 @@ impl<'src> Converter<'src> {
             N::Keigakomi(_) => keigakomi_inline(),
             N::Annotation(a) => annotation_inline(*a),
             N::Kaeriten(k) => kaeriten_inline(*k),
-            N::DoubleRuby(d) => double_ruby_inline(*d),
+            N::AngleQuote(d) => angle_quote_inline(*d),
             N::HeadingHint(h) => heading_hint_inline(*h),
             // Block-leaf variants slip through here only if the
             // pipeline misclassified them; render as fallback span.
@@ -463,9 +463,9 @@ fn kaeriten_inline(k: Kaeriten<'_>) -> Inline {
     )
 }
 
-fn double_ruby_inline(d: DoubleRuby<'_>) -> Inline {
+fn angle_quote_inline(d: AngleQuote<'_>) -> Inline {
     Inline::Span(
-        class_attr("double-ruby"),
+        class_attr("angle-quote"),
         content_to_inlines(d.content.get()),
     )
 }

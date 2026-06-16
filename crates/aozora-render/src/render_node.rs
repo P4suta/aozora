@@ -6,7 +6,7 @@
 use core::fmt::{self, Write};
 
 use aozora_syntax::borrowed::{
-    Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Emphasis, Gaiji,
+    AngleQuote, Annotation, AozoraHeading, AozoraNode, Bouten, Content, Emphasis, Gaiji,
     HeadingHint, Kaeriten, Ruby, Sashie, Segment, SideNote,
 };
 use aozora_syntax::{
@@ -60,7 +60,7 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
         }
         AozoraNode::Annotation(a) => render_annotation(a, writer),
         AozoraNode::Kaeriten(k) => render_kaeriten(k, writer),
-        AozoraNode::DoubleRuby(d) => render_double_ruby(d, writer),
+        AozoraNode::AngleQuote(d) => render_angle_quote(d, writer),
         AozoraNode::Sashie(s) => render_sashie(s, writer),
         AozoraNode::AozoraHeading(h) => render_aozora_heading(h, writer),
         AozoraNode::HeadingHint(h) => render_heading_hint(h, writer),
@@ -299,10 +299,10 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
     }
 }
 
-fn render_double_ruby<W: Write>(d: &DoubleRuby<'_>, writer: &mut W) -> fmt::Result {
-    writer.write_str(r#"<span class="aozora-double-ruby">≪"#)?;
+fn render_angle_quote<W: Write>(d: &AngleQuote<'_>, writer: &mut W) -> fmt::Result {
+    writer.write_str(r#"<span class="aozora-angle-quote">《"#)?;
     render_content(d.content.get(), writer)?;
-    writer.write_str("≫</span>")
+    writer.write_str("》</span>")
 }
 
 /// Render a `［＃挿絵（file）入る］` illustration as a semantic

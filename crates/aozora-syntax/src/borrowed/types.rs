@@ -65,8 +65,8 @@ pub enum AozoraNode<'src> {
     Kaeriten(&'src Kaeriten<'src>),
     /// Generic annotation when no more specific recogniser matched.
     Annotation(&'src Annotation<'src>),
-    /// `《《…》》` double-bracket bouten. See [`DoubleRuby`].
-    DoubleRuby(&'src DoubleRuby<'src>),
+    /// `≪…≫` double-angle quotation (displays as `《…》`). See [`AngleQuote`].
+    AngleQuote(&'src AngleQuote<'src>),
     /// Bold / italic emphasis (`X［＃「X」は太字／斜体］`). See [`Emphasis`].
     Emphasis(&'src Emphasis<'src>),
     /// Left-side annotation (注記). See [`SideNote`].
@@ -334,13 +334,13 @@ pub struct Kaeriten<'src> {
     pub mark: super::NonEmptyStr<'src>,
 }
 
-/// Double angle-bracket payload.
+/// Double-angle quotation payload (input `≪…≫`, display `《…》`).
 ///
 /// `content` is [`super::NonEmpty`] — Phase 3 pre-filters empty
-/// `《《》》` to plain text before allocation, so a `DoubleRuby`
+/// `≪≫` to plain text before allocation, so a `AngleQuote`
 /// node is never emitted with empty content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DoubleRuby<'src> {
+pub struct AngleQuote<'src> {
     pub content: super::NonEmpty<Content<'src>>,
 }
 
@@ -410,7 +410,7 @@ impl AozoraNode<'_> {
             Self::Sashie(_) => "aozora_sashie",
             Self::Kaeriten(_) => "aozora_kaeriten",
             Self::Annotation(_) => "aozora_annotation",
-            Self::DoubleRuby(_) => "aozora_double_ruby",
+            Self::AngleQuote(_) => "aozora_angle_quote",
             Self::Emphasis(_) => "aozora_emphasis",
             Self::SideNote(_) => "aozora_side_note",
             Self::Container(_) => "aozora_container",
@@ -443,7 +443,7 @@ impl AozoraNode<'_> {
             Self::Sashie(_) => NodeKind::Sashie,
             Self::Kaeriten(_) => NodeKind::Kaeriten,
             Self::Annotation(_) => NodeKind::Annotation,
-            Self::DoubleRuby(_) => NodeKind::DoubleRuby,
+            Self::AngleQuote(_) => NodeKind::AngleQuote,
             Self::Emphasis(_) => NodeKind::Emphasis,
             Self::SideNote(_) => NodeKind::SideNote,
             Self::Container(_) => NodeKind::Container,

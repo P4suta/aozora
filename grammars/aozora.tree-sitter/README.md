@@ -33,7 +33,7 @@ consumer. Supported constructs:
 
 - `｜base《reading》` — explicit-delimiter ruby
 - `base《reading》` — implicit-delimiter ruby
-- `《《content》》` — double-bracket bouten
+- `≪content≫` — double-angle quotation (display `《…》`)
 - `※［＃...］` — gaiji marker
 - `［＃...］` — generic bracket annotation (page break, indent,
   bouten directive, kaeriten, sashie, heading, …)

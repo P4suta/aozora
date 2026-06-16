@@ -46,7 +46,7 @@
 //!   bouten, forward-ref TCY, paired-container open / close, and
 //!   an `Annotation{Unknown}` catch-all.
 //! * Gaiji — `※［＃...］` reference-mark + bracket combos.
-//! * Double angle-bracket `《《…》》` escape (`DoubleRuby`).
+//! * Double-angle quotation `≪…≫` (displayed as `《…》`) (`AngleQuote`).
 //!
 //! The catch-all makes every well-formed `［＃…］` bracket produce
 //! *some* `AozoraNode`, so the Tier-A canary (no bare `［＃` in the
@@ -1336,7 +1336,7 @@ pub(crate) struct RecogniseCtx<'al, 'a, 's> {
 /// of the matching `PairOpen` / `PairClose` (or `u32::MAX` for
 /// non-paired entries and unmatched delimiters). The recognise
 /// helpers (`recognize_ruby` / `recognize_annotation` /
-/// `recognize_gaiji` / `try_double_ruby`) consume the buffer as a
+/// `recognize_gaiji` / `try_angle_quote`) consume the buffer as a
 /// [`BodyView`] with `open_idx = 0` and `close_idx = body.len() - 1`.
 ///
 /// `inner_stack` tracks the per-buffer mini-stack of nested opens —
@@ -1352,14 +1352,14 @@ struct Frame {
     gaiji_refmark: Option<Span>,
 }
 
-/// Span of the first ruby (`《…》` / `《《…》》`) opening *inside* the body
+/// Span of the first ruby (`《…》`) opening *inside* the body
 /// event range `lo..hi`, if any. Used by [`ClassifyStream::try_ruby_emit`]
 /// to flag `nested_ruby` — `build_content_from_body` folds only nested
 /// gaiji / annotation, so an inner ruby open would otherwise survive raw.
 fn first_nested_ruby_open(events: &[PairEvent], lo: usize, hi: usize) -> Option<Span> {
     events[lo..hi].iter().find_map(|e| match e {
         PairEvent::PairOpen {
-            kind: PairKind::Ruby | PairKind::DoubleRuby,
+            kind: PairKind::Ruby,
             span,
         } => Some(*span),
         _ => None,
@@ -1656,12 +1656,12 @@ where
                     return;
                 }
             }
-            PairKind::DoubleRuby => {
-                if let Some(span) = self.try_double_ruby_emit(view, open_idx, close_idx) {
+            PairKind::AngleQuote => {
+                if let Some(span) = self.try_angle_quote_emit(view, open_idx, close_idx) {
                     self.push_output(span);
                     return;
                 }
-                // Empty `《《》》` falls through to `replay_unrecognised_body`
+                // Empty `≪≫` falls through to `replay_unrecognised_body`
                 // so the bytes flow back into the pending plain run.
             }
             PairKind::Bracket => {
@@ -1803,7 +1803,7 @@ where
                 // Bracket, is absorbed into the frame; for any other
                 // pair kind the refmark is folded into plain first.
                 //
-                // Ruby and DoubleRuby are special: they consume the
+                // Ruby and AngleQuote are special: they consume the
                 // preceding text (explicit `｜base《reading》` or
                 // implicit trailing-kanji). We DON'T flush
                 // `pending_plain_start` here so `try_ruby_emit` can
@@ -1826,7 +1826,7 @@ where
                 };
                 let preserve_pending_plain = matches!(
                     kind,
-                    PairKind::Ruby | PairKind::DoubleRuby | PairKind::Bracket
+                    PairKind::Ruby | PairKind::AngleQuote | PairKind::Bracket
                 );
                 if !preserve_pending_plain {
                     let truncate_to = gaiji_refmark.map_or(span.start, |rm| rm.start);
@@ -1853,7 +1853,7 @@ where
     /// (a) reads from the live event stream rather than a buffered
     /// `SmallVec`, (b) tracks nested-open depth so the outer close
     /// unambiguously exits the mode, and (c) skips the inner-frame
-    /// open path (a nested `Bracket` / `Ruby` / `DoubleRuby` inside
+    /// open path (a nested `Bracket` / `Ruby` / `AngleQuote` inside
     /// an unrecognised `Quote` folds into the surrounding plain run,
     /// same as the legacy buffered-replay behaviour).
     fn handle_stream_event(&mut self, event: PairEvent) {
@@ -1900,7 +1900,7 @@ where
                 // increment per open, one Unclosed per still-open).
                 // When depth reaches zero the outer pair is gone, so
                 // exit streaming. Other-kind Unclosed events (a
-                // nested Bracket / Ruby / DoubleRuby that streaming
+                // nested Bracket / Ruby / AngleQuote that streaming
                 // mode never opened a frame for) are simply ignored.
                 if kind == stream.kind {
                     stream.depth = stream.depth.saturating_sub(1);
@@ -1947,7 +1947,7 @@ where
             return None;
         };
 
-        // Nested ruby: a `《…》` / `《《…》》` opening *inside* the reading
+        // Nested ruby: a `《…》` opening *inside* the reading
         // body is an authoring error. Flag the first one (caret on the
         // inner `《`); the outer ruby still parses best-effort. Touched
         // before `ctx` reborrows `self.alloc`, so no borrow clash.
@@ -2009,14 +2009,14 @@ where
         })
     }
 
-    /// Attempt to classify the buffered body as a `DoubleRuby` node.
+    /// Attempt to classify the buffered body as a `AngleQuote` node.
     ///
-    /// Returns `None` when the body content is empty (`《《》》` with
+    /// Returns `None` when the body content is empty (`≪≫` with
     /// no payload) — the caller falls through to plain replay so the
-    /// bytes show up as literal source. Emitting a `DoubleRuby` span
+    /// bytes show up as literal source. Emitting a `AngleQuote` span
     /// here would violate the [`borrowed::NonEmpty`] invariant on the
     /// `Content` payload.
-    fn try_double_ruby_emit(
+    fn try_angle_quote_emit(
         &mut self,
         body: BodyView<'_>,
         open_idx: usize,
@@ -2045,7 +2045,7 @@ where
                 bytes: open_span.end..close_span.start,
             },
         );
-        // Empty `《《》》` is not a valid DoubleRuby — let the bytes
+        // Empty `≪≫` is not a valid AngleQuote — let the bytes
         // flow through as plain text. The caller's fall-through path
         // (`replay_unrecognised_body`) handles the plain emission.
         if matches!(content, borrowed::Content::Plain(s) if s.is_empty())
@@ -2054,7 +2054,7 @@ where
             return None;
         }
         self.flush_plain_up_to(open_span.start);
-        let node = self.alloc.double_ruby(content);
+        let node = self.alloc.angle_quote(content);
         self.pending_plain_start = None;
         Some(ClassifiedSpan {
             kind: SpanKind::Aozora(node),
@@ -4131,7 +4131,7 @@ mod tests {
         reason = "individual tests pattern-match on subsets; bringing them all in keeps the import block stable"
     )]
     use aozora_syntax::borrowed::{
-        Annotation, AozoraNode, Arena, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten,
+        AngleQuote, Annotation, AozoraNode, Arena, Bouten, Content, Gaiji, HeadingHint, Kaeriten,
         Ruby, Sashie, Segment, TateChuYoko,
     };
 
@@ -5499,29 +5499,29 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Double angle-bracket `《《X》》`.
+    // Double-angle quotation `≪X≫`.
     // ---------------------------------------------------------------
 
     #[test]
-    fn double_ruby_plain_body_produces_double_ruby_span() {
-        run!(out, "前《《強調》》後");
+    fn angle_quote_plain_body_produces_angle_quote_span() {
+        run!(out, "前≪強調≫後");
         let aozora = out
             .spans
             .iter()
             .find_map(aozora_node)
-            .expect("DoubleRuby expected");
-        let AozoraNode::DoubleRuby(d) = aozora else {
-            panic!("expected DoubleRuby, got {aozora:?}");
+            .expect("AngleQuote expected");
+        let AozoraNode::AngleQuote(d) = aozora else {
+            panic!("expected AngleQuote, got {aozora:?}");
         };
         assert_eq!(d.content.as_plain(), Some("強調"));
     }
 
     #[test]
-    fn double_ruby_consumes_entire_source_span() {
-        // Source `《《X》》` must fold into ONE Aozora span that covers
-        // the double brackets AND the body. No `《` characters may
+    fn angle_quote_consumes_entire_source_span() {
+        // Source `≪X≫` must fold into ONE Aozora span that covers
+        // the angle brackets AND the body. No `≪` characters may
         // leak to the outer `spans` list.
-        let src = "《《ABC》》";
+        let src = "≪ABC≫";
         run!(out, src);
         let aozora_count = out
             .spans
@@ -5530,7 +5530,7 @@ mod tests {
             .count();
         assert_eq!(
             aozora_count, 1,
-            "one DoubleRuby span expected: {:?}",
+            "one AngleQuote span expected: {:?}",
             out.spans
         );
         let aozora = out
@@ -5543,18 +5543,18 @@ mod tests {
     }
 
     #[test]
-    fn double_ruby_with_nested_gaiji_folds_into_segments() {
+    fn angle_quote_with_nested_gaiji_folds_into_segments() {
         // The helper reuses `build_content_from_body`, so a `※［＃…］`
-        // inside the double brackets must surface as `Segment::Gaiji`
+        // inside the angle brackets must surface as `Segment::Gaiji`
         // in the content — same invariant as nested gaiji in ruby.
-        run!(out, "《《※［＃「ほ」、第3水準1-85-54］》》");
+        run!(out, "≪※［＃「ほ」、第3水準1-85-54］≫");
         let aozora = out
             .spans
             .iter()
             .find_map(aozora_node)
             .expect("Aozora expected");
-        let AozoraNode::DoubleRuby(d) = aozora else {
-            panic!("expected DoubleRuby, got {aozora:?}");
+        let AozoraNode::AngleQuote(d) = aozora else {
+            panic!("expected AngleQuote, got {aozora:?}");
         };
         let Content::Segments(segs) = &d.content.get() else {
             panic!("expected Segments, got {:?}", d.content.get());
@@ -5564,13 +5564,13 @@ mod tests {
     }
 
     #[test]
-    fn double_ruby_empty_body_falls_through_to_plain() {
-        // `《《》》` with no body is not classified as DoubleRuby.
+    fn angle_quote_empty_body_falls_through_to_plain() {
+        // `≪≫` with no body is not classified as AngleQuote.
         // The empty payload would violate the
         // `borrowed::NonEmpty<Content>` invariant; instead the bytes
         // flow through as plain text (the catch-all `replay_unrecognised_body`
         // fold). No Aozora span is emitted for the empty case.
-        run!(out, "A《《》》B");
+        run!(out, "A≪≫B");
         let aozora_count = out
             .spans
             .iter()
@@ -5578,7 +5578,7 @@ mod tests {
             .count();
         assert_eq!(
             aozora_count, 0,
-            "empty double-ruby must not emit a DoubleRuby span — \
+            "empty angle-quote must not emit a AngleQuote span — \
              empty content violates the NonEmpty<Content> invariant"
         );
     }

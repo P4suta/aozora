@@ -562,7 +562,7 @@ mod tests {
     /// envelope shape.
     #[test]
     fn nodes_json_round_trips_as_envelope() {
-        let doc = Document::new("｜山《やま》や［＃改ページ］\n《《秘密》》".to_owned());
+        let doc = Document::new("｜山《やま》や［＃改ページ］\n≪秘密≫".to_owned());
         let json = wire::serialize_nodes(&doc.parse());
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         let arr = parsed

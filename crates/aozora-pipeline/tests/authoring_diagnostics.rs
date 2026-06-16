@@ -165,9 +165,9 @@ fn valid_and_baseless_empty_ruby_are_silent() {
 #[test]
 fn nested_ruby_fires_as_error() {
     // The reading body of the outer `《…》` itself opens an inner `《ん》`.
-    // The two closes are non-adjacent (text `じ` sits between them) so the
-    // tokenizer does NOT merge `》》` into a DoubleRuby close — this is the
-    // genuine nested-ruby shape the catalogue describes (`｜…《…《…》…》`).
+    // `《` / `》` are single-character ruby triggers (the angle-quote
+    // notation is the distinct `≪…≫`), so this is the genuine nested-ruby
+    // shape the catalogue describes (`｜…《…《…》…》`).
     let sev = one_diag_severity("｜漢《か《ん》じ》", codes::NESTED_RUBY);
     assert_eq!(sev, Severity::Error);
 }

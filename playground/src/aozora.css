@@ -94,8 +94,8 @@
   display: none;
 }
 
-/* ===== ダブルルビ ===== */
-.aozora-double-ruby {
+/* ===== 二重山括弧 ===== */
+.aozora-angle-quote {
   color: var(--accent);
   background: var(--accent-bg);
   padding: 0 0.1em;

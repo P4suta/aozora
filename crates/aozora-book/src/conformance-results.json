@@ -36,6 +36,13 @@
       "message": null
     },
     {
+      "case": "angle_quote",
+      "feature": "angle_quote",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
       "case": "annotation",
       "feature": "annotation",
       "level": "must",
@@ -123,13 +130,6 @@
       "case": "columns_container",
       "feature": "tables_columns",
       "level": "should",
-      "passed": true,
-      "message": null
-    },
-    {
-      "case": "double_ruby",
-      "feature": "ruby",
-      "level": "must",
       "passed": true,
       "message": null
     },

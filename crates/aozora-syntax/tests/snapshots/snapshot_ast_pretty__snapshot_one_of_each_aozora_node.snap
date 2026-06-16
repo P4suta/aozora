@@ -143,8 +143,8 @@ expression: "format!(\"{nodes:#?}\")"
             kind: Unknown,
         },
     ),
-    DoubleRuby(
-        DoubleRuby {
+    AngleQuote(
+        AngleQuote {
             content: NonEmpty(
                 Plain(
                     "base",

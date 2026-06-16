@@ -395,7 +395,7 @@ const fn open_kind_of(kind: TriggerKind) -> Option<PairKind> {
     Some(match kind {
         TriggerKind::BracketOpen => PairKind::Bracket,
         TriggerKind::RubyOpen => PairKind::Ruby,
-        TriggerKind::DoubleRubyOpen => PairKind::DoubleRuby,
+        TriggerKind::AngleQuoteOpen => PairKind::AngleQuote,
         TriggerKind::TortoiseOpen => PairKind::Tortoise,
         TriggerKind::QuoteOpen => PairKind::Quote,
         _ => return None,
@@ -407,7 +407,7 @@ const fn close_kind_of(kind: TriggerKind) -> Option<PairKind> {
     Some(match kind {
         TriggerKind::BracketClose => PairKind::Bracket,
         TriggerKind::RubyClose => PairKind::Ruby,
-        TriggerKind::DoubleRubyClose => PairKind::DoubleRuby,
+        TriggerKind::AngleQuoteClose => PairKind::AngleQuote,
         TriggerKind::TortoiseClose => PairKind::Tortoise,
         TriggerKind::QuoteClose => PairKind::Quote,
         _ => return None,
@@ -528,13 +528,13 @@ mod tests {
     }
 
     #[test]
-    fn double_ruby_is_its_own_pair_kind() {
-        let (events, _diagnostics) = run("《《X》》");
+    fn angle_quote_is_its_own_pair_kind() {
+        let (events, _diagnostics) = run("≪X≫");
         assert_eq!(
             pair_kinds(&events),
             vec![
-                ("open", PairKind::DoubleRuby),
-                ("close", PairKind::DoubleRuby),
+                ("open", PairKind::AngleQuote),
+                ("close", PairKind::AngleQuote),
             ]
         );
     }

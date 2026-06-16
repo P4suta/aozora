@@ -154,8 +154,8 @@ fn implicit_ruby() {
 }
 
 #[test]
-fn double_ruby() {
-    check("《《重要》》");
+fn angle_quote() {
+    check("≪重要≫");
 }
 
 #[test]

@@ -38,7 +38,7 @@ references the invariant.
 spec/aozora/cases/
 ├── ruby-nested-gaiji.json
 ├── emphasis-bouten.json
-├── emphasis-double-ruby.json
+├── emphasis-angle-quote.json
 ├── kunten-kaeriten.json
 ├── page-break.json
 └── …

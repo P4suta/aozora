@@ -45,6 +45,6 @@ pub use intern::{InternStats, Interner};
 pub use non_empty::{NonEmpty, NonEmptyStr};
 pub use registry::{ContainerPair, NodeRef, Registry};
 pub use types::{
-    Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Emphasis, Gaiji,
+    AngleQuote, Annotation, AozoraHeading, AozoraNode, Bouten, Content, Emphasis, Gaiji,
     HeadingHint, Kaeriten, Ruby, Sashie, Segment, SideNote, TateChuYoko, Warichu,
 };

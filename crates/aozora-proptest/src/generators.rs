@@ -151,6 +151,8 @@ pub fn pathological_aozora(max_depth: usize) -> impl Strategy<Value = String> {
         Just("］］".to_owned()),
         Just("《《".to_owned()),
         Just("》》".to_owned()),
+        Just("≪".to_owned()),
+        Just("≫".to_owned()),
         Just("｜｜".to_owned()),
         Just("※［＃".to_owned()),
         Just("［＃ここから字下げ］".to_owned()),
