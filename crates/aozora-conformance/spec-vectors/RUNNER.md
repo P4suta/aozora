@@ -44,19 +44,35 @@ renderer) is **skipped**, not failed — except that a `must`-level vector's
 
 ## Pass / fail by level (§10)
 
-- **`must`** — every comparable projection MUST match exactly. Any mismatch
-  is a conformance failure.
+- **`must`** — every comparable **normative** projection (`serialize`,
+  `nodes`, `pairs`, `diagnostics`) MUST match exactly; any mismatch is a
+  conformance failure. (`html` is informative — see Comparison rules.)
 - **`should`** — projections SHOULD match; a mismatch is a reported warning,
   not a failure, and MUST be justified.
 - **`may`** — informational; divergence is permitted.
 
 ## Comparison rules
 
-- `html` / `serialize`: byte-exact string equality (including a trailing
-  newline if present).
+- `serialize`: byte-exact string equality (including a trailing newline if
+  present).
 - `nodes` / `pairs` / `diagnostics`: order-sensitive deep equality. Each
   `diagnostic` matches on `code`, `severity`, and (when present) `span`.
 - Spans match on `{start, end}`.
+- `html`: byte-exact when compared, but **informative** — the §8 reference
+  rendering is non-normative (a conforming processor MAY target a different
+  presentation), so an `html` mismatch is always a **warning**, never a
+  conformance failure, regardless of the vector's level.
+
+## Provenance
+
+The `expected` values are derived from the normative prose — the §6 notation
+definitions, the §7 structural model, and the §9 diagnostic catalogue — and
+cross-checked against the official 青空文庫 annotation reference and real
+corpus text, **not** read back from any single processor's output. A vector
+whose values were corrected away from an earlier implementation-derived draft
+records that in its `meta.note` (e.g. `align_end_container`). This keeps the
+corpus from silently encoding one processor's bugs as the specification — a
+vector only means something if a processor can fail it.
 
 ## Notes for a consuming implementation
 
