@@ -60,6 +60,24 @@ runs:
           echo "AOZORA_GID=0"
         } >> "$GITHUB_ENV"
 
+    # Reclaim runner disk before pulling in the dev image. The cached tar
+    # is ~1.5 GB and `docker load` decompresses it to a multi-GB image
+    # (full Rust toolchain + nightly LLVM). On a stock ubuntu-latest runner
+    # that occasionally exhausts the root filesystem mid-load
+    # ("no space left on device"), flaking jobs at random (e.g. audit).
+    # Drop the large preinstalled SDKs we never use to give the load
+    # headroom. Best-effort: never fail the job if a path is absent.
+    - name: Reclaim runner disk
+      shell: bash
+      run: |
+        sudo rm -rf \
+          /usr/local/lib/android \
+          /usr/share/dotnet \
+          /opt/ghc \
+          /usr/local/.ghcup \
+          /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+        df -h / | tail -1
+
     # Cache the dev image tar on the runner host. The upstream `dev-image`
     # job builds the image once and saves it here; every dependent job
     # restores it and `docker load`s it instead of rebuilding. The key is

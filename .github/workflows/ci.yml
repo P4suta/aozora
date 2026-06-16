@@ -245,6 +245,14 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: wasm
+      # `rust-toolchain.toml` pins the channel (1.95.0), so the
+      # `dtolnay/rust-toolchain` `targets:` parameter — which installs the
+      # std component into `stable` — does NOT add the target to the
+      # toolchain cargo actually selects here. clippy then fails with
+      # `E0463: can't find crate for core`. Add it explicitly for the
+      # pinned toolchain so the lookup is deterministic (mirrors wasm-test).
+      - name: Install wasm32-unknown-unknown target
+        run: rustup target add wasm32-unknown-unknown
       # Lint the `#[cfg(target_arch = "wasm32")]` binding modules on their
       # real target. The host `lint` job's clippy builds for the native
       # target and never compiles them, so their lint debt is otherwise
