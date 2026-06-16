@@ -21,7 +21,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap            = { workspace = true }
-aozora          = { workspace = true, features = ["schema"] }
+aozora          = { workspace = true, features = ["schema", "wire"] }
 aozora-corpus   = { workspace = true }
 aozora-encoding = { workspace = true }
 aozora-trace    = { workspace = true }

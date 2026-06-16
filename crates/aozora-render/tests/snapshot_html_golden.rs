@@ -39,8 +39,8 @@ fn snapshot_implicit_ruby() {
 }
 
 #[test]
-fn snapshot_double_ruby() {
-    insta::assert_snapshot!(render("《《重要》》"));
+fn snapshot_angle_quote() {
+    insta::assert_snapshot!(render("≪重要≫"));
 }
 
 #[test]

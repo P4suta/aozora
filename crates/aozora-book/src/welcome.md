@@ -26,8 +26,10 @@ A practical tour and a deep reference, in one document.
 
 - **Tour** — install the [CLI](getting-started/cli.md), drop the
   [library](getting-started/library.md) into a Rust project, or call
-  it from [WASM](bindings/wasm.md), [C](bindings/c.md), or
-  [Python](bindings/python.md).
+  it from [WASM](bindings/wasm.md), [C](bindings/c.md),
+  [Python](bindings/python.md), [Go](bindings/go.md), or the
+  [Extism host-SDK](bindings/extism.md). Not sure which? Start with
+  [Choosing a binding](bindings/choosing.md).
 - **Notation reference** — every annotation aozora recognises, with
   examples, output, edge cases, and the diagnostics that fire when
   authors get them subtly wrong.
@@ -58,11 +60,12 @@ out, not just *what the code does*.
 
 ## Status
 
-`v0.2.x` working set. The CLI, Rust library, WASM, C ABI, and Python
-binding all build and pass the integration smoke tests in CI. Public
+Released versions track [GitHub Releases](https://github.com/P4suta/aozora/releases);
+the bindings — the CLI, the Rust library, WASM, the C ABI, Go, Python,
+and the Extism host-SDK — all build and pass CI smoke tests. Public
 crates.io publication is gated on the v1.0 API freeze; in the
 meantime, depend on a tagged commit (see
-[Install](getting-started/install.md)).
+[Install](getting-started/install.md) for the current pin).
 
 A live build of this site lives at
 <https://p4suta.github.io/aozora/>; the rustdoc API reference is

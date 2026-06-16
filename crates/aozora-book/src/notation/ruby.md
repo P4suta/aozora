@@ -49,41 +49,40 @@ Unicode are represented as gaiji references (see
 
 ## Empty reading
 
-`｜青梅《》` is a parse error. The lexer emits diagnostic
-[`E0001`](diagnostics.md#E0001) ("ruby reading mismatch: target spans
-N chars but `｜《》` reading is empty") and the node is dropped
-from the AST.
+`｜青梅《》` supplies a base but an empty reading. The lexer emits
+[`aozora::lex::empty_ruby_reading`](diagnostics.md#empty-ruby-reading)
+(an `Error`) and the construct degrades to plain text — no `Ruby` node is
+built.
 
-The implicit-base form silently skips a `《》` with empty contents —
-that combination cannot have arisen from valid markup, so the parser
-treats the bare `《》` as literal text.
+The implicit-base form silently skips a `《》` with empty contents — the
+parser can't be sure a base was intended, so it treats the bare `《》` as
+literal text and stays silent.
 
 ## Nested ruby (forbidden)
 
-The spec disallows ruby inside ruby. Sources with `｜青梅《｜お《お》うめ》`
-are rejected with diagnostic [`E0002`](diagnostics.md#E0002).
+The spec disallows ruby inside ruby. A reading whose body opens another
+`《…》` (e.g. `｜漢《か《ん》じ》`) fires
+[`aozora::lex::nested_ruby`](diagnostics.md#nested-ruby); the outer ruby
+is still parsed best-effort. (An *adjacent* `《《…》》` is a different
+construct — [double-bracket bouten](bouten.md) — not nested ruby.)
 
 ## AST shape
 
 ```rust
 pub struct Ruby<'src> {
-    pub target:  &'src str,   // borrowed from source
-    pub reading: &'src str,   // borrowed from source
-    pub span:    Span,        // byte range in the source
-    pub explicit_base: bool,  // true if the input used the ｜…《…》 form
+    pub base:           NonEmpty<Content<'src>>,  // never empty
+    pub reading:        NonEmpty<Content<'src>>,  // never empty
+    pub delim_explicit: bool,                     // true for the ｜…《…》 form
 }
 ```
 
-Both `target` and `reading` are `&str` slices into the
-`Document`-owned source — no allocation, no copy. Re-emitting
-canonical form is exactly:
-
-```rust
-match (ruby.explicit_base, ruby.target, ruby.reading) {
-    (true,  t, r) => format!("｜{t}《{r}》"),
-    (false, t, r) => format!("{t}《{r}》"),
-}
-```
+`base` and `reading` are [`Content`] (a `Plain(&str)` fast path or a
+`Segments` run carrying nested gaiji / annotations), wrapped in
+`NonEmpty` so an empty payload is unrepresentable — Phase 3 only emits a
+`Ruby` once both sides have content (an empty reading takes the
+[empty-reading](#empty-reading) path instead). `delim_explicit` records
+whether the source used the `｜…《…》` form so the serializer re-emits the
+`｜` only when the original did.
 
 ## Edge cases
 
@@ -95,9 +94,9 @@ match (ruby.explicit_base, ruby.target, ruby.reading) {
 | `｜HTTP《ハイパー・テキスト》` | `<ruby>HTTP<rt>ハイパー・テキスト</rt></ruby>` |
 | `お青梅《おうめ》` | `お<ruby>青梅<rt>おうめ</rt></ruby>` (auto-detect skips kana) |
 | `1青梅《おうめ》` | `1<ruby>青梅<rt>おうめ</rt></ruby>` (auto-detect skips digit) |
-| `｜青梅《》` | parse error `E0001` |
+| `｜青梅《》` | plain text + [`empty_ruby_reading`](diagnostics.md#empty-ruby-reading) |
 | `《おうめ》` | literal text (no preceding kanji to anchor) |
-| `｜青梅《｜お《お》うめ》` | parse error `E0002` |
+| `｜漢《か《ん》じ》` | best-effort ruby + [`nested_ruby`](diagnostics.md#nested-ruby) |
 
 ## See also
 

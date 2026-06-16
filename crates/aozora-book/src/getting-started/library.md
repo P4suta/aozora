@@ -42,22 +42,26 @@ for why this trade is worth it.
 
 ## Shift_JIS input
 
-Aozora Bunko ships its corpus as Shift_JIS. Decode through
-`aozora-encoding` first:
+Aozora Bunko ships its corpus as Shift_JIS. Decode through the umbrella
+`aozora::encoding` module first (consumers depend on `aozora` alone —
+never on the internal `aozora-encoding` crate directly):
 
 ```rust
 use aozora::Document;
-use aozora_encoding::sjis;
+use aozora::encoding::decode_sjis;
 
 let bytes = std::fs::read("src.sjis.txt")?;
-let utf8  = sjis::decode_to_string(&bytes)?;   // returns Cow<'_, str>
-let doc   = Document::new(utf8.into_owned());
+let utf8  = decode_sjis(&bytes)?;   // -> String; Err(DecodeError) on bad input
+let doc   = Document::new(utf8);
 let tree  = doc.parse();
 ```
 
-`sjis::decode_to_string` handles BOM stripping, JIS X 0213 codepoints,
-and the Aozora-specific 外字 references that survive the decode pass
-as private-use sentinels (resolved later in the parser).
+`decode_sjis` handles BOM stripping, JIS X 0213 codepoints, and the
+Aozora-specific 外字 references that survive the decode pass as
+private-use sentinels (resolved later in the parser). It is *strict* —
+malformed bytes return `Err(DecodeError)` rather than silently
+substituting replacement characters. A runnable version is
+`just example sjis`.
 
 ## Diagnostics
 
@@ -66,11 +70,16 @@ use aozora::Diagnostic;
 
 let diags: &[Diagnostic] = tree.diagnostics();
 for d in diags {
-    eprintln!("[{}] {} @ {}..{}", d.code, d.message, d.span.start, d.span.end);
+    let span = d.span();
+    // `Diagnostic` is an enum — reach its parts through the accessors.
+    // `Display` ({d}) renders the human message; there is no `.message`.
+    eprintln!("[{:?}] {} @ {}..{}", d.severity(), d.code(), span.start, span.end);
 }
 ```
 
-Each `Diagnostic` carries a stable error code, a span, and a level.
+Each `Diagnostic` carries a stable `code()`, a `span()`, and a
+`severity()` (Error / Warning / Note). A runnable version is
+`just example diagnostics`.
 Diagnostics are *non-fatal* by design: the parser always produces a
 tree, even from malformed input. Callers that want strict behaviour
 treat any diagnostic as an error themselves. See the
@@ -78,28 +87,27 @@ treat any diagnostic as an error themselves. See the
 
 ## Walking the AST
 
-`AozoraTree` exposes a flat node iterator and a typed enum:
+`AozoraTree::source_nodes()` returns a source-ordered side table — one
+`SourceNode` per classified Aozora / container span (plain-text runs
+between constructs round-trip verbatim and are not listed). It is the
+surface editor tooling uses for semantic tokens and document symbols:
 
 ```rust
-use aozora::AozoraNode;
-
-for node in tree.nodes() {
-    match node {
-        AozoraNode::Plain(s)    => print!("{s}"),
-        AozoraNode::Ruby(r)     => print!("[ruby:{}={}]", r.target(), r.reading()),
-        AozoraNode::Bouten(b)   => print!("[bouten {}]", b.kind().slug()),
-        AozoraNode::Tcy(t)      => print!("[tcy:{}]", t.text()),
-        AozoraNode::Gaiji(g)    => print!("[gaiji {}]", g.codepoint()),
-        AozoraNode::Container(c)=> { /* recurse into c.children() */ }
-        // …
-    }
+for entry in tree.source_nodes() {
+    let span = entry.source_span;            // byte range into the source
+    // `entry.node` is a `NodeRef`: Inline / BlockLeaf / BlockOpen /
+    // BlockClose, each wrapping the borrowed AST node or container kind.
+    println!("{}..{}  {:?}", span.start, span.end, entry.node);
 }
 ```
 
-For richer traversal patterns (visitor, fold, structural diff), the
-nodes implement `Copy` (they're effectively `(tag, &str, &Bump-slice)`
-triples), so you can keep references around freely as long as the
-`Document` lives.
+Match on `entry.node` (`NodeRef`) to destructure a specific construct —
+e.g. `NodeRef::Inline(AozoraNode::Ruby(r))` gives you the ruby base and
+reading. A runnable version is `just example walk_ast`.
+
+The borrowed nodes are cheap to copy (they're effectively
+`(tag, &str, &Bump-slice)` triples), so you can keep references around
+freely as long as the `Document` lives.
 
 ## Round-trip and canonicalisation
 

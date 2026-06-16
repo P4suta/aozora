@@ -65,7 +65,8 @@ applicable) a help line:
   help: provide a reading inside 《…》 or remove the ｜ marker
 ```
 
-Every diagnostic carries a stable error code (`E0001`, `E0002`, …);
+Every diagnostic carries a stable dotted code
+(`aozora::lex::empty_ruby_reading`, `aozora::lex::unresolved_gaiji`, …);
 see the [Diagnostics catalogue](../notation/diagnostics.md) for the
 full list.
 

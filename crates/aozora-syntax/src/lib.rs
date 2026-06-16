@@ -13,7 +13,8 @@
 //! Only the **shared `Copy`-able payloads** referenced by the borrowed
 //! AST (`BoutenKind`, `BoutenPosition`, `Indent`, `AlignEnd`,
 //! `Container`, `ContainerKind`, `Keigakomi`, `SectionKind`,
-//! `AozoraHeadingKind`, `AnnotationKind`) live at the top level. The
+//! `AozoraHeadingKind`, `EmphasisKind`, `AnnotationKind`) live at the
+//! top level. The
 //! borrowed-AST node types live under `borrowed::`. The arena-backed
 //! builder lives under `alloc::`.
 
@@ -73,6 +74,38 @@ pub enum BoutenKind {
     UnderLine,
     /// 二重傍線
     DoubleUnderLine,
+    /// 鎖線
+    ChainLine,
+    /// 破線
+    DashedLine,
+    /// 黒三角
+    BlackTriangle,
+}
+
+impl BoutenKind {
+    /// Whether this is a 傍線 (line) variant rather than a 傍点 (dot)
+    /// variant. The 点/線 split is the *family* boundary used by
+    /// `mismatched_bouten_container`: a `［＃傍点］` range closed by a
+    /// `［＃傍線終わり］` (or vice-versa) is the mismatch the diagnostic
+    /// reports.
+    #[must_use]
+    pub const fn is_line(self) -> bool {
+        matches!(
+            self,
+            Self::WavyLine
+                | Self::UnderLine
+                | Self::DoubleUnderLine
+                | Self::ChainLine
+                | Self::DashedLine
+        )
+    }
+
+    /// Stable family tag (`"傍点"` / `"傍線"`) for diagnostics that name a
+    /// mismatched bouten range pair.
+    #[must_use]
+    pub const fn family_str(self) -> &'static str {
+        if self.is_line() { "傍線" } else { "傍点" }
+    }
 }
 
 /// Which side of the vertical-writing base text the bouten marks sit on.
@@ -98,6 +131,27 @@ pub struct AlignEnd {
     pub offset: u8,
 }
 
+/// Single-line centring marker (`［＃ページの左右中央］` / `［＃中央揃え］`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Center {
+    /// `true` for `ページの左右中央` (page centre), `false` for `中央揃え`.
+    pub page: bool,
+}
+
+/// Which side of the base text a ruby reading sits on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum RubySide {
+    /// Standard ruby — `｜base《reading》` (right of / above the base).
+    #[default]
+    Right,
+    /// Left-side (below) ruby — `［＃「base」の左に「reading」のルビ］`, the
+    /// saidoku-moji (再読文字) building block.
+    Left,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Keigakomi;
@@ -107,21 +161,64 @@ pub struct Keigakomi;
 #[non_exhaustive]
 pub enum SectionKind {
     /// `［＃改丁］`
-    Choho,
+    Kaicho,
     /// `［＃改段］`
-    Dan,
+    Kaidan,
     /// `［＃改見開き］`
-    Spread,
+    Kaimihiraki,
 }
 
+/// Heading *level* — the 大 / 中 / 小 outline rank.
+///
+/// Orthogonal to [`AozoraHeadingStyle`]; the two combine (同行中見出し is
+/// `Medium` + `SameLine`, 窓小見出し is `Small` + `Window`, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum AozoraHeadingKind {
-    /// 窓見出し
+    /// 大見出し — the top outline level (renders as `<h1>`).
+    Large,
+    /// 中見出し — the middle outline level (renders as `<h2>`).
+    Medium,
+    /// 小見出し — the lowest outline level (renders as `<h3>`).
+    Small,
+}
+
+/// Heading *style* — standard, 同行 (same-line), or 窓 (window).
+///
+/// Orthogonal to [`AozoraHeadingKind`] (the 大 / 中 / 小 level): each style
+/// pairs with any level. The 同行 style runs the title into the body on the
+/// same line; 窓 is an inset title. 副見出し is **not** a real annotation (it
+/// does not occur in the corpus) and is deliberately absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum AozoraHeadingStyle {
+    /// Standard heading — no 同行 / 窓 prefix. The default.
+    #[default]
+    Standard,
+    /// 同行見出し — the title runs into the body on the same line.
+    SameLine,
+    /// 窓見出し — an inset ("window") title.
     Window,
-    /// 副見出し
-    Sub,
+}
+
+/// Text-weight / slant emphasis: 太字 (bold) or 斜体 (italic).
+///
+/// Distinct from [`BoutenKind`] (傍点 / 傍線 decorative marks): emphasis
+/// is a typographic weight/slant, not a per-character mark. Carried by
+/// the forward-reference leaf node [`borrowed::Emphasis`]
+/// (`X［＃「X」は太字］`); the range / block forms
+/// (`［＃太字］…［＃太字終わり］`, `［＃ここから太字］…`) pair as
+/// [`ContainerKind::Bold`] / [`ContainerKind::Italic`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum EmphasisKind {
+    /// 太字 (bold / ゴシック).
+    Bold,
+    /// 斜体 (italic / イタリック).
+    Italic,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

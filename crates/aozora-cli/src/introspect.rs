@@ -50,7 +50,7 @@ pub(crate) struct KindsArgs;
 /// `aozora explain <kind>` arguments.
 #[derive(Debug, Args)]
 pub(crate) struct ExplainArgs {
-    /// camelCase tag from `aozora kinds` (e.g. `ruby`, `doubleRuby`,
+    /// camelCase tag from `aozora kinds` (e.g. `ruby`, `angleQuote`,
     /// `containerOpen`). Run `aozora kinds` for the canonical list.
     pub(crate) kind: String,
 }
@@ -187,6 +187,7 @@ fn describe_node(k: NodeKind) -> &'static str {
         NodeKind::Gaiji => "外字 — non-Unicode character reference.",
         NodeKind::Indent => "Inline indent (字下げ) marker.",
         NodeKind::AlignEnd => "Right-edge alignment (字上げ) marker.",
+        NodeKind::Center => "Centring (中央) marker — ページの左右中央 / 中央揃え.",
         NodeKind::Warichu => "割注 — split-line annotation.",
         NodeKind::Keigakomi => "罫囲み — ruled box.",
         NodeKind::PageBreak => "改ページ.",
@@ -196,7 +197,8 @@ fn describe_node(k: NodeKind) -> &'static str {
         NodeKind::Sashie => "挿絵 — illustration reference.",
         NodeKind::Kaeriten => "返り点 — kanbun reading marker.",
         NodeKind::Annotation => "Generic annotation no specific recogniser claimed.",
-        NodeKind::DoubleRuby => "Double ruby (《《…》》).",
+        NodeKind::AngleQuote => "Double-angle quotation (≪…≫, displays as 《…》).",
+        NodeKind::SideNote => "Side annotation (注記) — 「X」の左に「Y」の注記.",
         NodeKind::Container => "Inline-attached container (字下げ系の wrap).",
         NodeKind::ContainerOpen => "NodeRef::BlockOpen — paired-container open sentinel.",
         NodeKind::ContainerClose => "NodeRef::BlockClose — paired-container close sentinel.",
@@ -208,7 +210,7 @@ fn describe_pair(k: PairKind) -> &'static str {
     match k {
         PairKind::Bracket => "［ … ］ — annotation body container.",
         PairKind::Ruby => "《 … 》 — ruby reading.",
-        PairKind::DoubleRuby => "《《 … 》》 — double-bracket bouten.",
+        PairKind::AngleQuote => "≪ … ≫ — double-angle quotation (displays as 《…》).",
         PairKind::Tortoise => "〔 … 〕 — accent-decomposition segment.",
         PairKind::Quote => "「 … 」 — quoted literal inside annotation bodies.",
         _ => "(unrecognised PairKind variant — handbook out of date).",
@@ -284,7 +286,7 @@ const NODE_PAGES: &[(&str, &str)] = &[
     ("sashie", include_str!("node-docs/sashie.md")),
     ("kaeriten", include_str!("node-docs/kaeriten.md")),
     ("annotation", include_str!("node-docs/annotation.md")),
-    ("doubleRuby", include_str!("node-docs/double-ruby.md")),
+    ("angleQuote", include_str!("node-docs/angle-quote.md")),
     ("container", include_str!("node-docs/container.md")),
     ("containerOpen", include_str!("node-docs/container-open.md")),
     (

@@ -1,0 +1,23 @@
+{
+  "name": "unclosed_bracket",
+  "meta": {
+    "feature": "recovery",
+    "level": "must",
+    "spec_section": "6"
+  },
+  "source": "｜青梅《おうめ\n",
+  "expected": {
+    "html": "<p>｜青梅《おうめ</p>\n",
+    "serialize": "｜青梅《おうめ\n",
+    "diagnostics": [
+      {
+        "code": "unclosed-bracket",
+        "severity": "error",
+        "span": {
+          "start": 9,
+          "end": 12
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "name": "mismatched_bouten_container",
+  "meta": {
+    "feature": "bouten",
+    "level": "should",
+    "spec_section": "6.2"
+  },
+  "source": "彼は［＃傍点］必ず［＃傍線終わり］来る",
+  "expected": {
+    "html": "<p>彼は<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">必ず</em>来る</p>\n",
+    "serialize": "彼は［＃傍点］必ず［＃傍線終わり］来る",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 6,
+          "end": 21
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 27,
+          "end": 51
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 18,
+          "end": 21
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 27,
+          "end": 30
+        },
+        "close": {
+          "start": 48,
+          "end": 51
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "mismatched-bouten-container",
+        "severity": "error",
+        "span": {
+          "start": 27,
+          "end": 51
+        }
+      }
+    ]
+  }
+}

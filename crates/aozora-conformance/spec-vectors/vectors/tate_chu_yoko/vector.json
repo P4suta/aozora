@@ -1,0 +1,56 @@
+{
+  "name": "tate_chu_yoko",
+  "meta": {
+    "feature": "tcy",
+    "level": "must",
+    "spec_section": "6"
+  },
+  "source": "昭和［＃「12」は縦中横］年\n",
+  "expected": {
+    "html": "<p>昭和<span class=\"aozora-annotation\" hidden>［＃「12」は縦中横］</span>年</p>\n",
+    "serialize": "昭和［＃「12」は縦中横］年\n",
+    "nodes": [
+      {
+        "kind": "annotation",
+        "span": {
+          "start": 6,
+          "end": 35
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 17,
+          "end": 20
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 32,
+          "end": 35
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "tcy-target-not-found",
+        "severity": "warning",
+        "span": {
+          "start": 6,
+          "end": 35
+        }
+      }
+    ]
+  }
+}

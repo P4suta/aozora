@@ -14,7 +14,7 @@
 
 /// Cross-cutting tag for an AST node or `NodeRef` projection.
 ///
-/// The first 17 variants ([`Self::Ruby`] through [`Self::Container`])
+/// The first 18 variants ([`Self::Ruby`] through [`Self::Container`])
 /// project from [`crate::borrowed::AozoraNode`]'s discriminant. The
 /// final two ([`Self::ContainerOpen`] / [`Self::ContainerClose`])
 /// only arise from [`crate::borrowed::NodeRef`]'s container open /
@@ -42,6 +42,8 @@ pub enum NodeKind {
     Indent,
     /// Right-edge alignment (字上げ) marker.
     AlignEnd,
+    /// Centring (中央) marker (`ページの左右中央` / `中央揃え`).
+    Center,
     /// 割注 (warichu) — split-line annotation.
     Warichu,
     /// 罫囲み (keigakomi) — ruled box.
@@ -60,8 +62,12 @@ pub enum NodeKind {
     Kaeriten,
     /// Generic annotation that no specific recogniser claimed.
     Annotation,
-    /// Double ruby (《《…》》).
-    DoubleRuby,
+    /// Double-angle quotation (input `≪…≫`, display `《…》`).
+    AngleQuote,
+    /// 太字 / 斜体 (bold / italic) — forward-reference emphasis leaf.
+    Emphasis,
+    /// Side annotation (注記) — `「X」の左に「Y」の注記`.
+    SideNote,
     /// Inline-attached container (字下げ系の `AozoraNode` 包み込み).
     Container,
     /// `NodeRef::BlockOpen` projection — paired-container open
@@ -78,13 +84,14 @@ impl NodeKind {
     /// Used by `aozora kinds` (CLI introspection) and the
     /// TypeScript / JSON-Schema codegen so the artefact list
     /// tracks the enum without a hand-maintained parallel.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 22] = [
         Self::Ruby,
         Self::Bouten,
         Self::TateChuYoko,
         Self::Gaiji,
         Self::Indent,
         Self::AlignEnd,
+        Self::Center,
         Self::Warichu,
         Self::Keigakomi,
         Self::PageBreak,
@@ -94,7 +101,9 @@ impl NodeKind {
         Self::Sashie,
         Self::Kaeriten,
         Self::Annotation,
-        Self::DoubleRuby,
+        Self::AngleQuote,
+        Self::Emphasis,
+        Self::SideNote,
         Self::Container,
         Self::ContainerOpen,
         Self::ContainerClose,
@@ -115,6 +124,7 @@ impl NodeKind {
             Self::Gaiji => "gaiji",
             Self::Indent => "indent",
             Self::AlignEnd => "alignEnd",
+            Self::Center => "center",
             Self::Warichu => "warichu",
             Self::Keigakomi => "keigakomi",
             Self::PageBreak => "pageBreak",
@@ -124,7 +134,9 @@ impl NodeKind {
             Self::Sashie => "sashie",
             Self::Kaeriten => "kaeriten",
             Self::Annotation => "annotation",
-            Self::DoubleRuby => "doubleRuby",
+            Self::AngleQuote => "angleQuote",
+            Self::Emphasis => "emphasis",
+            Self::SideNote => "sideNote",
             Self::Container => "container",
             Self::ContainerOpen => "containerOpen",
             Self::ContainerClose => "containerClose",
@@ -147,6 +159,7 @@ mod tests {
         assert_eq!(NodeKind::Gaiji.as_camel_case(), "gaiji");
         assert_eq!(NodeKind::Indent.as_camel_case(), "indent");
         assert_eq!(NodeKind::AlignEnd.as_camel_case(), "alignEnd");
+        assert_eq!(NodeKind::Center.as_camel_case(), "center");
         assert_eq!(NodeKind::Warichu.as_camel_case(), "warichu");
         assert_eq!(NodeKind::Keigakomi.as_camel_case(), "keigakomi");
         assert_eq!(NodeKind::PageBreak.as_camel_case(), "pageBreak");
@@ -156,7 +169,9 @@ mod tests {
         assert_eq!(NodeKind::Sashie.as_camel_case(), "sashie");
         assert_eq!(NodeKind::Kaeriten.as_camel_case(), "kaeriten");
         assert_eq!(NodeKind::Annotation.as_camel_case(), "annotation");
-        assert_eq!(NodeKind::DoubleRuby.as_camel_case(), "doubleRuby");
+        assert_eq!(NodeKind::AngleQuote.as_camel_case(), "angleQuote");
+        assert_eq!(NodeKind::Emphasis.as_camel_case(), "emphasis");
+        assert_eq!(NodeKind::SideNote.as_camel_case(), "sideNote");
         assert_eq!(NodeKind::Container.as_camel_case(), "container");
         assert_eq!(NodeKind::ContainerOpen.as_camel_case(), "containerOpen");
         assert_eq!(NodeKind::ContainerClose.as_camel_case(), "containerClose");

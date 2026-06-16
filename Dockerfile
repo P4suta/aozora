@@ -178,6 +178,27 @@ FROM toolchain AS dev
 COPY --from=cargo-tools /usr/local/cargo/bin/ /usr/local/cargo/bin/
 COPY --from=cargo-tools /usr/local/bin/ /usr/local/bin/
 
+# Bake the workspace's PINNED toolchain (rust-toolchain.toml's channel)
+# fully into the image. The base image ships a different default —
+# dependabot bumps the `rust:X-bookworm` base independently of the pin
+# (it moved the base to 1.96.0 while the pin stayed 1.95.0) — so the
+# pinned channel is otherwise installed fresh on every `--rm` container
+# start: RUSTUP_HOME (/usr/local/rustup) is part of the image, not a
+# mounted volume, so a runtime install lands in the throwaway container
+# layer and is lost. That both re-downloaded the toolchain on every
+# command AND left it without the wasm32 target / llvm-tools (which
+# rust-toolchain.toml does not list), silently breaking every
+# `--target wasm32-unknown-unknown` build (wasm-pack, `just extism-build`).
+# Running rustup from a dir that contains the pin makes each install
+# operate on the pinned channel. The toolchain stage's identical adds for
+# the base default stay cached (this is a dev-stage-only addition, so the
+# fragile cargo-tools binstall layer is not invalidated).
+COPY rust-toolchain.toml /opt/rust-toolchain/rust-toolchain.toml
+RUN cd /opt/rust-toolchain \
+    && rustup show \
+    && rustup component add rustfmt clippy rust-src llvm-tools-preview \
+    && rustup target add wasm32-unknown-unknown
+
 # nightly toolchain is needed for cargo-udeps and cargo-fuzz harnesses
 RUN rustup toolchain install nightly --component rust-src --profile minimal
 
@@ -193,10 +214,62 @@ RUN curl -fsSL https://bun.sh/install \
     && chmod +x /usr/local/bin/bun \
     && rm -rf /root/.bun
 
+# Binaryen's wasm-opt — used by `just extism-build` to shrink the
+# portable Extism plugin (and available for any other wasm
+# post-processing). Pulled from the upstream GitHub release rather than
+# apt on purpose: Debian bookworm's binaryen predates version 119 and
+# cannot validate the bulk-memory opcodes (memory.copy / memory.fill)
+# that Rust 1.95+ emits, so the apt build would reject our artifacts.
+# Extracted to /opt and symlinked onto PATH; the binary's rpath
+# ($ORIGIN/../lib) resolves libbinaryen.so after the symlink is followed.
+ARG BINARYEN_VERSION=130
+RUN curl -L --proto '=https' --tlsv1.2 -fsSL \
+    "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz" \
+    | tar -xz -C /opt \
+    && ln -s "/opt/binaryen-version_${BINARYEN_VERSION}/bin/wasm-opt" /usr/local/bin/wasm-opt \
+    && wasm-opt --version
+
+# Node.js + quicktype — used by `just types-langs` to generate native
+# wire types for every host-SDK language from the committed JSON Schema
+# (one generator, all languages). We install Node 22 LTS from NodeSource:
+# Debian bookworm ships nodejs 18.x, which is EOL and below the
+# `engines.node >= 20.19` that vitest 4 (the playground test runner via
+# `just playground-test`) requires — on Node 18 vitest 4 fails at startup
+# because `node:util` has no `styleText` export. Node 22 also satisfies
+# quicktype's `engines.node >= 18.12`; both are version-pinned so the
+# drift-gated codegen stays reproducible.
+ARG NODE_MAJOR=22
+ARG QUICKTYPE_VERSION=23.2.6
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && curl -fsSL --proto '=https' --tlsv1.2 "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g "quicktype@${QUICKTYPE_VERSION}" \
+    && npm cache clean --force \
+    && node --version \
+    && quicktype --version
+
+# Go toolchain — for the aozora-go host package (the Extism Go SDK is
+# pure-Go via wazero: no cgo, no native libextism) and for gofmt'ing the
+# quicktype-generated Go wire types so the committed artifact stays
+# gofmt-clean. Official tarball, pinned. Module + build caches are
+# redirected into the cargo-target volume (see ENV below) so they persist
+# across `--rm` runs instead of re-downloading every invocation.
+ARG GO_VERSION=1.26.4
+RUN curl -L --proto '=https' --tlsv1.2 -fsSL \
+    "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+    | tar -xz -C /usr/local \
+    && ln -s /usr/local/go/bin/go /usr/local/bin/go \
+    && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt \
+    && go version
+
 ENV CARGO_HOME=/cargo/home \
     CARGO_TARGET_DIR=/cargo/target \
     RUSTC_WRAPPER=sccache \
     SCCACHE_DIR=/cargo/sccache \
+    GOCACHE=/cargo/target/go-build \
+    GOMODCACHE=/cargo/target/go-mod \
     RUST_BACKTRACE=1
 
 # Pre-create the cache mount targets at /cargo/* so the named volume

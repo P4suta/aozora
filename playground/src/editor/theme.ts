@@ -70,7 +70,7 @@ export const aozoraTheme = EditorView.theme({
     color: 'var(--token-ruby)',
     fontWeight: '600',
   },
-  '.cm-aozora-double-ruby': {
+  '.cm-aozora-angle-quote': {
     color: 'var(--token-ruby)',
     fontWeight: '700',
     background: 'var(--accent-bg)',

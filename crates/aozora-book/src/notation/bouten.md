@@ -13,7 +13,7 @@ Two indirection styles, both common in real corpus:
 ```text
 ［＃「平和」に傍点］           ← target-by-quoting
 平和［＃「平和」に傍点］        ← redundant explicit copy (also accepted)
-［＃ここから傍点］平和［＃ここで傍点終わり］  ← container form
+［＃傍点］平和［＃傍点終わり］     ← range form (bare opener / closer)
 ```
 
 The target-by-quoting form is by far the most common: the inline
@@ -22,30 +22,27 @@ occurrence of the quoted string and applies the bouten to that run.
 
 ## Variant catalogue
 
-| Slug | Source kanji | Renders as |
-|---|---|---|
-| `sesame` | 傍点 | small black sesame `﹅` |
-| `white_sesame` | 白ゴマ傍点 | small white sesame `﹆` |
-| `circle` | 丸傍点 | filled circle `●` |
-| `white_circle` | 白丸傍点 | open circle `○` |
-| `dot` | 黒点傍点 | bold black dot |
-| `triangle` | 三角傍点 | filled triangle |
-| `white_triangle` | 白三角傍点 | open triangle |
-| `bullseye` | 二重丸傍点 | bullseye |
-| `kotenten` | コ点傍点 | small katakana ko-mark |
-| `kotenten_white` | 白コ点傍点 | white ko-mark |
-| `linear` | 線傍点 | dotted underline |
-| `single_line` | 傍線 | single line |
-| `double_line` | 二重傍線 | double line |
-| `dashed_line` | 鎖線 | dashed line |
-| `wavy_line` | 波線 | wavy line |
-| `chained_line` | 二重鎖線 | double dashed line |
-| `under_dotted` | 下線 | dotted underline |
+aozora recognises eleven variants — eight 点 (dot) families and three 線
+(line) families:
 
-Each variant has a stable `BoutenKind::slug()` that the HTML renderer
-emits as a class name (e.g. `<em class="aozora-bouten-sesame">`). See
-[Architecture → HTML renderer](../arch/renderer.md) for the full
-class-name scheme.
+| Slug | Source keyword | Family |
+|---|---|---|
+| `goma` | 傍点 | 点 |
+| `white-sesame` | 白ゴマ傍点 | 点 |
+| `circle` | 丸傍点 | 点 |
+| `white-circle` | 白丸傍点 | 点 |
+| `double-circle` | 二重丸傍点 | 点 |
+| `janome` | 蛇の目傍点 | 点 |
+| `cross` | ばつ傍点 | 点 |
+| `white-triangle` | 白三角傍点 | 点 |
+| `wavy-line` | 波線 | 線 |
+| `under-line` | 傍線 | 線 |
+| `double-under-line` | 二重傍線 | 線 |
+
+Each variant has a stable slug that the HTML renderer emits as a class
+name (e.g. `<em class="aozora-bouten-goma">`). The 点/線 family boundary is
+what [`mismatched_bouten_container`](diagnostics.md#mismatched-bouten-container)
+checks for the range form below.
 
 ## Default rendering
 
@@ -56,7 +53,7 @@ stylesheet of its own.
 
 ```html
 <!-- 平和［＃「平和」に傍点］ -->
-平和<em class="aozora-bouten-sesame">平和</em>
+平和<em class="aozora-bouten aozora-bouten-goma aozora-bouten-right">平和</em>
 ```
 
 (The redundant copy is intentional — the `［＃…］` indirection
@@ -64,49 +61,52 @@ stylesheet of its own.
 in place. The HTML rendering matches what print Aozora Bunko output
 does in practice.)
 
-## Container form
+## Range form
 
-For runs that span multiple lines or include other annotations, use
-the container form:
+To emphasise a run directly (rather than by quoting it), wrap it between a
+**bare** opener and its matching closer — note there is **no** `ここから` /
+`ここで` (those prefixes are for block layout / 太字 / 斜体, not 傍点):
 
 ```text
-［＃ここから傍点］
-平和は手の届かないものだった。
-そして、戦争もまた。
-［＃ここで傍点終わり］
+彼は［＃傍点］必ず［＃傍点終わり］来る
+本文［＃二重傍線］乙［＃二重傍線終わり］
+［＃左に傍線］丙［＃左に傍線終わり］
 ```
 
-Renders as:
+Renders inline as `<em>`:
 
 ```html
-<em class="aozora-bouten-sesame">
-平和は手の届かないものだった。
-そして、戦争もまた。
-</em>
+彼は<em class="aozora-bouten aozora-bouten-goma aozora-bouten-right">必ず</em>来る
 ```
 
-The opening directive can be any of the variant openers (`ここから二重傍線`,
-`ここから波線`, …); the matching closer must use the same family
-(`ここで傍線終わり` for any 線 variant, `ここで傍点終わり` for any 点
-variant). Mismatched closers fire diagnostic
-[`E0004`](diagnostics.md#E0004).
+The opener can be any variant keyword (`傍点`, `白丸傍点`, `二重傍線`, …), with
+an optional `左に` prefix for left-side marks; the closer is the same
+keyword plus `終わり`. The closer's **family** must match the opener's: a
+点 opener (`［＃傍点］`) pairs with a 点 closer (`［＃傍点終わり］`), a 線 opener
+(`［＃傍線］`) with a 線 closer (`［＃傍線終わり］`). A family mismatch fires
+[`mismatched_bouten_container`](diagnostics.md#mismatched-bouten-container).
 
 ## AST shape
 
+Both the indirect (`［＃「X」に傍点］`) and range (`［＃傍点］…［＃傍点終わり］`)
+forms produce `Bouten` nodes:
+
 ```rust
 pub struct Bouten<'src> {
-    pub target: &'src str,        // the run wrapped in emphasis
-    pub kind:   BoutenKind,       // one of 17 variants
-    pub form:   BoutenForm,       // Indirect | Inline | Container
-    pub span:   Span,
+    pub kind:     BoutenKind,            // one of 11 variants (点 / 線)
+    pub target:   NonEmpty<Content<'src>>, // the emphasised run
+    pub position: BoutenPosition,        // Right (default) | Left (左に…)
+    pub consumed_predecessor: bool,      // whether it absorbed the run before it
 }
 ```
 
-`BoutenKind` is a flat enum with slug accessors; see the
-[rustdoc](../ref/api.md) for the exact variant list.
+`BoutenKind` is a flat enum (`BoutenKind::is_line` splits 点 from 線); see
+the [rustdoc](../ref/api.md) for the exact variant list.
 
 ## See also
 
 - [Notation overview](overview.md) — how this fits with the other
   inline annotations.
-- [Diagnostics catalogue](diagnostics.md) — `E0004`, `W0003`.
+- [Diagnostics catalogue](diagnostics.md) —
+  [`mismatched_bouten_container`](diagnostics.md#mismatched-bouten-container)
+  and [`bouten_target_ambiguous`](diagnostics.md#bouten-target-ambiguous).

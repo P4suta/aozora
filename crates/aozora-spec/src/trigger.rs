@@ -1,12 +1,14 @@
 //! Trigger character classification.
 //!
-//! Aozora notation uses 11 distinct delimiter characters:
+//! Aozora notation uses 13 distinct delimiter characters:
 //!
 //! | char | role                          | UTF-8 bytes |
 //! |------|-------------------------------|-------------|
 //! | `｜` | explicit ruby-base delimiter  | EF BD 9C    |
 //! | `《` | ruby reading open             | E3 80 8A    |
 //! | `》` | ruby reading close            | E3 80 8B    |
+//! | `≪` | double-angle quotation open   | E2 89 AA    |
+//! | `≫` | double-angle quotation close  | E2 89 AB    |
 //! | `［` | bracket open                  | EF BC BB    |
 //! | `］` | bracket close                 | EF BC BD    |
 //! | `＃` | annotation keyword marker     | EF BC 83    |
@@ -20,14 +22,14 @@
 //! one of `{0xE2, 0xE3, 0xEF}` — a fact the SIMD scanner exploits to
 //! bulk-skip the 99.5% of source bytes that are not trigger candidates.
 //!
-//! Two double-character triggers (`《《`, `》》`) are merged into single
-//! [`TriggerKind`] values by the lexer's structuring layer; the
-//! per-byte classifier here only knows about the singletons.
+//! `≪`/`≫` (U+226A/U+226B) are the aozora input encoding for a 底本's
+//! double-angle brackets `《`/`》` (which would otherwise collide with the
+//! ruby delimiters U+300A/U+300B); a renderer displays them back as
+//! `《`/`》`. Being distinct codepoints, they need no look-ahead merge.
 
-/// Classification of a single trigger character (or merged double).
+/// Classification of a single trigger character.
 ///
-/// Single-character triggers cover 3 source bytes; the merged
-/// `DoubleRubyOpen` / `DoubleRubyClose` cover 6.
+/// Every trigger is a single BMP codepoint covering 3 source bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -40,10 +42,12 @@ pub enum TriggerKind {
     /// `》` (U+300B). Ruby-reading close.
     RubyClose,
 
-    /// `《《` — two consecutive U+300A. Double-bracket bouten open.
-    DoubleRubyOpen,
-    /// `》》` — two consecutive U+300B. Double-bracket bouten close.
-    DoubleRubyClose,
+    /// `≪` (U+226A). Double-angle quotation open — the aozora input
+    /// encoding for a 底本 `《`; a renderer displays it as `《`.
+    AngleQuoteOpen,
+    /// `≫` (U+226B). Double-angle quotation close — input encoding for a
+    /// 底本 `》`; a renderer displays it as `》`.
+    AngleQuoteClose,
 
     /// `［` (U+FF3B). Square bracket open.
     BracketOpen,
@@ -69,14 +73,15 @@ pub enum TriggerKind {
 
 impl TriggerKind {
     /// Byte length of the canonical source form of this trigger in UTF-8.
-    /// All single-character triggers are BMP codepoints encoded as 3
-    /// UTF-8 bytes; the merged `DoubleRuby*` variants cover 6.
+    /// Every trigger is a BMP codepoint encoded as 3 UTF-8 bytes.
     #[must_use]
     pub const fn source_byte_len(self) -> u32 {
         match self {
             Self::Bar
             | Self::RubyOpen
             | Self::RubyClose
+            | Self::AngleQuoteOpen
+            | Self::AngleQuoteClose
             | Self::BracketOpen
             | Self::BracketClose
             | Self::Hash
@@ -85,17 +90,13 @@ impl TriggerKind {
             | Self::TortoiseClose
             | Self::QuoteOpen
             | Self::QuoteClose => 3,
-            Self::DoubleRubyOpen | Self::DoubleRubyClose => 6,
         }
     }
 }
 
 /// Classify a 3-byte UTF-8 window as a single-character trigger.
 ///
-/// Returns `None` when the window is not a recognised trigger. Callers
-/// must re-examine the window with their own state for `《《` / `》》`
-/// merging. Double-character triggers (`《《` / `》》`) are recognised at
-/// the structuring layer by look-ahead, so they do not appear here.
+/// Returns `None` when the window is not a recognised trigger.
 ///
 /// ## Why a direct `match`, not a perfect-hash map
 ///
@@ -110,13 +111,13 @@ impl TriggerKind {
 /// — the hash alone accounted for ≈0.8 % of total render time (≈5 % of
 /// the parser's own time).
 ///
-/// The 11 trigrams carry a trivial discriminator — the leading byte
-/// splits them into `0xE2` (one key), `0xE3` (six, resolved by the
-/// trailing byte) and `0xEF` (four, by the middle + trailing byte) — so
-/// an exhaustive `match` lowers to a small comparison tree with no
-/// hashing at all. The `tests` module pins this `match` against
-/// [`ALL_TRIGGER_TRIGRAMS`], exhaustively over the candidate
-/// leading-byte space, so the two cannot silently drift.
+/// The 13 trigrams carry a trivial discriminator — the leading byte
+/// splits them into `0xE2` (three: ※ ≪ ≫, by middle + trailing byte),
+/// `0xE3` (six, by the trailing byte) and `0xEF` (four, by the middle
+/// and trailing byte) — so an exhaustive `match` lowers to a small
+/// comparison tree with no hashing at all. The `tests` module pins
+/// this `match` against [`ALL_TRIGGER_TRIGRAMS`], exhaustively over
+/// the candidate leading-byte space, so the two cannot silently drift.
 ///
 /// Takes the window by value: a 3-byte array fits in a single 64-bit
 /// register, so passing by value is strictly cheaper than the indirect
@@ -125,17 +126,19 @@ impl TriggerKind {
 #[must_use]
 pub fn classify_trigger_bytes(window: [u8; 3]) -> Option<TriggerKind> {
     Some(match window {
-        [0xE2, 0x80, 0xBB] => TriggerKind::RefMark,       // ※
-        [0xE3, 0x80, 0x8A] => TriggerKind::RubyOpen,      // 《
-        [0xE3, 0x80, 0x8B] => TriggerKind::RubyClose,     // 》
-        [0xE3, 0x80, 0x8C] => TriggerKind::QuoteOpen,     // 「
-        [0xE3, 0x80, 0x8D] => TriggerKind::QuoteClose,    // 」
-        [0xE3, 0x80, 0x94] => TriggerKind::TortoiseOpen,  // 〔
-        [0xE3, 0x80, 0x95] => TriggerKind::TortoiseClose, // 〕
-        [0xEF, 0xBC, 0x83] => TriggerKind::Hash,          // ＃
-        [0xEF, 0xBC, 0xBB] => TriggerKind::BracketOpen,   // ［
-        [0xEF, 0xBC, 0xBD] => TriggerKind::BracketClose,  // ］
-        [0xEF, 0xBD, 0x9C] => TriggerKind::Bar,           // ｜
+        [0xE2, 0x80, 0xBB] => TriggerKind::RefMark,         // ※
+        [0xE2, 0x89, 0xAA] => TriggerKind::AngleQuoteOpen,  // ≪
+        [0xE2, 0x89, 0xAB] => TriggerKind::AngleQuoteClose, // ≫
+        [0xE3, 0x80, 0x8A] => TriggerKind::RubyOpen,        // 《
+        [0xE3, 0x80, 0x8B] => TriggerKind::RubyClose,       // 》
+        [0xE3, 0x80, 0x8C] => TriggerKind::QuoteOpen,       // 「
+        [0xE3, 0x80, 0x8D] => TriggerKind::QuoteClose,      // 」
+        [0xE3, 0x80, 0x94] => TriggerKind::TortoiseOpen,    // 〔
+        [0xE3, 0x80, 0x95] => TriggerKind::TortoiseClose,   // 〕
+        [0xEF, 0xBC, 0x83] => TriggerKind::Hash,            // ＃
+        [0xEF, 0xBC, 0xBB] => TriggerKind::BracketOpen,     // ［
+        [0xEF, 0xBC, 0xBD] => TriggerKind::BracketClose,    // ］
+        [0xEF, 0xBD, 0x9C] => TriggerKind::Bar,             // ｜
         _ => return None,
     })
 }
@@ -150,7 +153,7 @@ pub const TRIGGER_LEADING_BYTES: [u8; 3] = [0xE2, 0xE3, 0xEF];
 ///
 /// Empirically ~4× sparser than [`TRIGGER_LEADING_BYTES`] on Japanese
 /// text; used by the structural-bitmap scan strategy.
-pub const TRIGGER_MIDDLE_BYTES: [u8; 3] = [0x80, 0xBC, 0xBD];
+pub const TRIGGER_MIDDLE_BYTES: [u8; 4] = [0x80, 0x89, 0xBC, 0xBD];
 
 /// All 11 single-character trigger trigrams as raw UTF-8 byte arrays.
 ///
@@ -161,10 +164,12 @@ pub const TRIGGER_MIDDLE_BYTES: [u8; 3] = [0x80, 0xBC, 0xBD];
 /// The accompanying `tests::all_trigger_trigrams_match_phf` test
 /// asserts that every entry round-trips through the PHF, so adding /
 /// removing a trigger keeps this list and the PHF in sync.
-pub const ALL_TRIGGER_TRIGRAMS: [[u8; 3]; 11] = [
+pub const ALL_TRIGGER_TRIGRAMS: [[u8; 3]; 13] = [
     [0xEF, 0xBD, 0x9C], // ｜ Bar
     [0xE3, 0x80, 0x8A], // 《 RubyOpen
     [0xE3, 0x80, 0x8B], // 》 RubyClose
+    [0xE2, 0x89, 0xAA], // ≪ AngleQuoteOpen
+    [0xE2, 0x89, 0xAB], // ≫ AngleQuoteClose
     [0xEF, 0xBC, 0xBB], // ［ BracketOpen
     [0xEF, 0xBC, 0xBD], // ］ BracketClose
     [0xEF, 0xBC, 0x83], // ＃ Hash
@@ -189,6 +194,8 @@ mod tests {
             TriggerKind::Bar,
             TriggerKind::RubyOpen,
             TriggerKind::RubyClose,
+            TriggerKind::AngleQuoteOpen,
+            TriggerKind::AngleQuoteClose,
             TriggerKind::BracketOpen,
             TriggerKind::BracketClose,
             TriggerKind::Hash,
@@ -203,17 +210,13 @@ mod tests {
     }
 
     #[test]
-    fn double_triggers_are_six_bytes() {
-        assert_eq!(TriggerKind::DoubleRubyOpen.source_byte_len(), 6);
-        assert_eq!(TriggerKind::DoubleRubyClose.source_byte_len(), 6);
-    }
-
-    #[test]
     fn classify_trigger_bytes_recognises_each_singleton() {
         let cases: &[(&str, TriggerKind)] = &[
             ("｜", TriggerKind::Bar),
             ("《", TriggerKind::RubyOpen),
             ("》", TriggerKind::RubyClose),
+            ("≪", TriggerKind::AngleQuoteOpen),
+            ("≫", TriggerKind::AngleQuoteClose),
             ("［", TriggerKind::BracketOpen),
             ("］", TriggerKind::BracketClose),
             ("＃", TriggerKind::Hash),
@@ -294,8 +297,8 @@ mod tests {
                 .unwrap_or_else(|| panic!("{trigram:?} listed but classifies to None"));
             assert!(kinds.insert(kind), "duplicate kind for {trigram:?}");
         }
-        assert_eq!(kinds.len(), 11, "expected exactly 11 distinct triggers");
-        assert_eq!(ALL_TRIGGER_TRIGRAMS.len(), 11);
+        assert_eq!(kinds.len(), 13, "expected exactly 13 distinct triggers");
+        assert_eq!(ALL_TRIGGER_TRIGRAMS.len(), 13);
 
         // Reverse: the match accepts *nothing* outside the array, swept
         // exhaustively over the candidate leading-byte space (the only

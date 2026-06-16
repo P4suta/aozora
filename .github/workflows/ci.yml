@@ -1,21 +1,27 @@
 # aozora CI
 #
 # Architecture:
-#   - The dev container image is built and published by `dev-image.yml`
-#     to ghcr.io/p4suta/aozora-dev:latest on Dockerfile / compose
-#     changes.
-#   - This workflow PULLS that image (via the `setup-dev-image`
-#     composite action) and invokes `just <target>` on the runner host.
-#     `just` recipes wrap each command in `docker compose run dev cargo
-#     ...` (Justfile policy: never invoke cargo on the host directly).
-#     Running `just` on the runner — instead of `docker compose run ci
-#     just <target>` — avoids Docker-in-Docker: the previous nested
-#     pattern hit `bash: docker: command not found` because the `ci`
-#     container has no docker client.
-#   - If the GHCR image is unavailable (first run before dev-image.yml
-#     publishes, or transient registry outage), the composite action
-#     falls back to `docker compose build` against the local Dockerfile.
-#     Slower path but the same correctness guarantee.
+#   - The `dev-image` job builds the dev container image ONCE per run
+#     (via the `setup-dev-image` composite action) from the in-tree
+#     Dockerfile, using the GitHub Actions build-layer cache (`type=gha`)
+#     so the heavy `cargo binstall` layer is reused, never re-fetched
+#     live. It then saves the image to the runner tar cache. No GHCR pull
+#     and no token: building from this checkout's Dockerfile guarantees
+#     the image matches the PR (the stale-`:latest` footgun), and the
+#     live-binstall path was hitting GitHub's unauthenticated API rate
+#     limit (403). `dev-image.yml` still publishes `:latest` to GHCR on
+#     main for local `docker pull` / external use, but CI does not depend
+#     on it.
+#   - Every container job declares `needs: dev-image` and runs the same
+#     `setup-dev-image` action, which restores the tar (cache hit) and
+#     `docker load`s it — so the image build happens at most once per run
+#     and the jobs never race a live binstall.
+#   - Jobs invoke `just <target>` on the runner host; `just` recipes wrap
+#     each command in `docker compose run dev cargo ...` (Justfile policy:
+#     never invoke cargo on the host directly). Running `just` on the
+#     runner — instead of `docker compose run ci just <target>` — avoids
+#     Docker-in-Docker: the previous nested pattern hit `bash: docker:
+#     command not found` because the `ci` container has no docker client.
 #
 # Action SHAs are pinned; Dependabot bumps weekly.
 
@@ -78,20 +84,38 @@ jobs:
           # are not Conventional Commits and must not be linted.
           done < <(git log --no-merges --format='%H %s' "$range")
 
+  # Build the dev image ONCE per run so the heavy `cargo binstall`
+  # (cargo-tools) layer is never re-fetched live across the container
+  # jobs below — the live binstall path was hitting GitHub's
+  # unauthenticated API rate limit (403) and failing `audit (deny)`. This
+  # job runs `setup-dev-image`, which on a tar-cache miss builds the image
+  # from the in-tree Dockerfile through the GHA build-layer cache (no
+  # GHCR, no token) and saves it to the runner tar cache; every
+  # `needs: dev-image` job then restores that tar and `docker load`s it.
+  dev-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: ./.github/actions/setup-dev-image
+
   # `just lint` is a recipe-deps chain (fmt-check → clippy → typos →
   # strict-code) that ran serially in a single job, so its wall time
-  # was the sum of the four sub-recipes. Split into a matrix so each
-  # sub-recipe runs in parallel; the wall time collapses to whichever
-  # one is slowest (clippy in practice). The dev image cache and the
-  # GHA-backed sccache make the per-job container start near-free
-  # after the first cache-miss run.
+  # was the sum of the sub-recipes. Split into a matrix so each runs in
+  # parallel; the wall time collapses to whichever is slowest
+  # (clippy-strict in practice). CI runs `clippy-strict` (--all-targets,
+  # incl. bench / example targets) as the authoritative lint backstop —
+  # the per-commit hook runs only the lighter `clippy` so commits stay
+  # fast (see lefthook.yml). The dev image cache and the GHA-backed
+  # sccache make the per-job container start near-free after the first
+  # cache-miss run.
   lint:
     name: lint (${{ matrix.target }})
+    needs: dev-image
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target: [fmt-check, clippy, typos, strict-code]
+        target: [fmt-check, clippy-strict, typos, strict-code]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
       - uses: ./.github/actions/setup-dev-image
@@ -104,6 +128,7 @@ jobs:
   # Splitting them into two jobs duplicated the workspace cargo build
   # for ~3 extra wall-clock minutes per push without adding signal.
   coverage:
+    needs: dev-image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -117,6 +142,7 @@ jobs:
   # failing the PR. Run `just doc` here too so doc regressions are caught
   # at review time. Mirrors the sibling afm repo's `doc` job.
   doc:
+    needs: dev-image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -124,6 +150,7 @@ jobs:
       - run: just doc
 
   audit:
+    needs: dev-image
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -144,6 +171,7 @@ jobs:
   # regenerate after touching `aozora::wire::*` or any `pub const ALL`
   # array now fails CI rather than landing silently.
   drift-gate:
+    needs: dev-image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -153,6 +181,7 @@ jobs:
   # Phase O4 — WPT-style conformance suite. Runs every fixture
   # through the parser and asserts every `must`-tier case passes.
   conformance:
+    needs: dev-image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -212,9 +241,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: wasm
+      # `rust-toolchain.toml` pins the channel (1.95.0), so the
+      # `dtolnay/rust-toolchain` `targets:` parameter — which installs the
+      # std component into `stable` — does NOT add the target to the
+      # toolchain cargo actually selects here. clippy then fails with
+      # `E0463: can't find crate for core`. Add it explicitly for the
+      # pinned toolchain so the lookup is deterministic (mirrors wasm-test).
+      - name: Install wasm32-unknown-unknown target
+        run: rustup target add wasm32-unknown-unknown
+      # Lint the `#[cfg(target_arch = "wasm32")]` binding modules on their
+      # real target. The host `lint` job's clippy builds for the native
+      # target and never compiles them, so their lint debt is otherwise
+      # invisible to CI. Mirrors `just clippy-wasm`.
+      - name: clippy (wasm32-unknown-unknown)
+        run: cargo clippy --target wasm32-unknown-unknown -p aozora-wasm -p aozora-extism -- -D warnings
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - name: Build wasm-pack package
@@ -272,24 +316,41 @@ jobs:
       - name: cargo build --target wasm32-wasip1 (aozora-scan)
         run: cargo build --target wasm32-wasip1 -p aozora-scan
 
-  # Python wheel build verification — install maturin, build the
-  # `aozora-py` wheel against the runner's stock Python. Build-only:
-  # no PyPI publish.
+  # Python wheel build + functional test. abi3 (`cp311-abi3`) means ONE
+  # wheel per platform loads on every supported CPython; this job builds
+  # it and runs the pytest suite + `mypy --strict` under both the 3.11
+  # floor and the newest 3.14, proving the abi3 wheel imports and works
+  # across the range (not just compiles). `just smoke-py` is the local
+  # host-side mirror. No PyPI publish (see publish-pypi.yml).
   python-wheel:
+    name: python wheel (py${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version: "3.x"
+          python-version: ${{ matrix.python }}
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
-          key: maturin
-      - name: Install maturin
-        run: pip install --upgrade maturin
-      - name: Build wheel
-        run: maturin build --release -F extension-module --manifest-path crates/aozora-py/Cargo.toml
+          key: maturin-${{ matrix.python }}
+      - name: Install maturin + test tooling
+        run: pip install --upgrade "maturin>=1.9,<2.0" "pytest>=8" "mypy>=1.11"
+      - name: Build the abi3 wheel
+        # abi3-py311 makes maturin emit a cp311-abi3 wheel regardless of
+        # the runner's interpreter; debug profile keeps the gate fast
+        # (the release artifact is built in publish-pypi.yml).
+        run: maturin build -F extension-module --manifest-path crates/aozora-py/Cargo.toml -o dist
+      - name: Install the wheel
+        run: pip install --force-reinstall dist/*.whl
+      - name: Type-check the wrapper (mypy --strict)
+        run: mypy --strict crates/aozora-py/python
+      - name: Run the test suite
+        run: pytest crates/aozora-py/tests -q
 
   # mdbook handbook build verification — builds `crates/aozora-book/`
   # in a lean container so a missing chapter, broken include, or

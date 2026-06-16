@@ -144,6 +144,13 @@ enum ConformanceOp {
     /// `crates/aozora-book/src/conformance-results.json`, and
     /// exit non-zero on any `must`-tier failure.
     Run,
+    /// Run the vendored specification conformance vectors
+    /// (`crates/aozora-conformance/spec-vectors/`) against the parser
+    /// and compare every projection in each vector's `expected`
+    /// (`serialize` / `nodes` / `pairs` / `diagnostics`) per its
+    /// `meta.level`. `must` mismatches exit non-zero; `should` / `may`
+    /// warn. The `html` channel is informative (spec §8) and only warns.
+    Vectors,
 }
 
 #[derive(Args)]
@@ -161,6 +168,16 @@ enum TypesOp {
     /// Compare on-disk `aozora_types.d.ts` against fresh codegen;
     /// exit non-zero on drift. CI gate.
     Check,
+    /// Generate native wire types for every host-SDK language from the
+    /// committed JSON Schema via `quicktype` (one generator, all
+    /// languages). Writes one file per language (e.g.
+    /// `crates/aozora-go/aozora/wire_gen.go`); overwrites it, commit
+    /// the diff.
+    Langs,
+    /// Compare each on-disk per-language wire types file against fresh
+    /// `quicktype` codegen; exit non-zero on drift. CI gate (extends
+    /// `drift-gate`).
+    LangsCheck,
 }
 
 #[derive(Args)]

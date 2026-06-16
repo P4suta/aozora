@@ -1,0 +1,54 @@
+{
+  "name": "keigakomi_container",
+  "meta": {
+    "feature": "container",
+    "level": "must",
+    "spec_section": "6.6"
+  },
+  "source": "［＃罫囲み］\n本文一行目。\n本文二行目。\n［＃罫囲み終わり］\n",
+  "expected": {
+    "html": "<div class=\"aozora-container aozora-container-keigakomi\">\n<p>本文一行目。<br />\n本文二行目。</p>\n</div>",
+    "serialize": "\n\n［＃罫囲み］\n\n本文一行目。\n本文二行目。\n\n［＃罫囲み終わり］\n\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 0,
+          "end": 18
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 57,
+          "end": 84
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 15,
+          "end": 18
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 57,
+          "end": 60
+        },
+        "close": {
+          "start": 81,
+          "end": 84
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

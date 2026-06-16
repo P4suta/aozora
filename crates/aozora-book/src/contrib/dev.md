@@ -7,9 +7,10 @@ aozora's development workflow is built around three rules:
    `just` recipe that wraps the underlying tool inside the dev
    container.
 3. **Lint gates run automatically.** lefthook installs git hooks
-   that run `fmt + clippy + typos` pre-commit and `test + deny`
-   pre-push, so a passing local commit roughly mirrors a passing
-   CI run.
+   that run `fmt + clippy + typos` pre-commit, and pre-push runs the
+   full local CI gate suite plus a deep property sweep before every
+   push (signed-commit check first), so a passing local commit
+   roughly mirrors a passing CI run.
 
 ## First-time setup
 
@@ -116,7 +117,8 @@ just sccache-zero && just clean && just build && just sccache-stats
 
 - **pre-commit** (parallel): `fmt`, `clippy`, `typos`.
 - **commit-msg**: Conventional Commits regex.
-- **pre-push** (parallel): `test`, `deny`.
+- **pre-push**: the full local CI gate suite plus a deep property
+  sweep before every push (the signed-commit check runs first).
 
 The hooks shell into `docker compose run --rm dev …` so they're
 identical to the `just` recipes you ran manually. To skip a hook

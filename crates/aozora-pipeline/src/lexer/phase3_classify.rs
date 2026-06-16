@@ -46,7 +46,7 @@
 //!   bouten, forward-ref TCY, paired-container open / close, and
 //!   an `Annotation{Unknown}` catch-all.
 //! * Gaiji — `※［＃...］` reference-mark + bracket combos.
-//! * Double angle-bracket `《《…》》` escape (`DoubleRuby`).
+//! * Double-angle quotation `≪…≫` (displayed as `《…》`) (`AngleQuote`).
 //!
 //! The catch-all makes every well-formed `［＃…］` bracket produce
 //! *some* `AozoraNode`, so the Tier-A canary (no bare `［＃` in the
@@ -97,7 +97,8 @@ use aozora_encoding::gaiji as gaiji_resolve;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind, Span,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
+    Center, ContainerKind, EmphasisKind, Indent, SectionKind, Span,
 };
 
 use super::phase2_pair::{PairEvent, PairKind};
@@ -369,20 +370,25 @@ struct BodyPattern {
 enum BodyFamily {
     // === Exact-match (body must equal needle) ===
     PageBreak,
-    SectionChoho,
-    SectionDan,
-    SectionSpread,
-    AlignEnd0,        // 地付き
-    KeigakomiOpen,    // 罫囲み
-    KeigakomiClose,   // 罫囲み終わり
-    IndentBlock1,     // ここから字下げ → Indent { amount: 1 }
-    AlignEndBlock0,   // ここから地付き → AlignEnd { offset: 0 }
-    IndentBlockEnd,   // ここで字下げ終わり
-    AlignEndBlockEnd, // ここで地付き終わり
-    WarichuOpen,      // 割り注
-    WarichuClose,     // 割り注終わり
-    KaeritenSingle,   // body must equal one of 12 single-char marks
-    KaeritenCompound, // body must equal one of 6 compound marks
+    SectionKaicho,
+    SectionKaidan,
+    SectionKaimihiraki,
+    AlignEnd0,         // 地付き
+    CenterMarker,      // ページの左右中央 / 中央揃え
+    KeigakomiOpen,     // 罫囲み
+    KeigakomiClose,    // 罫囲み終わり
+    IndentBlock1,      // ここから字下げ → Indent { amount: 1 }
+    AlignEndBlock0,    // ここから地付き → AlignEnd { offset: 0 }
+    IndentBlockEnd,    // ここで字下げ終わり
+    AlignEndBlockEnd,  // ここで地付き終わり
+    LineWidthBlockEnd, // ここで字詰め終わり
+    TableBlockOpen,    // ここから表
+    TableBlockEnd,     // ここで表終わり
+    ColumnsBlockEnd,   // ここで段組(み)終わり
+    WarichuOpen,       // 割り注
+    WarichuClose,      // 割り注終わり
+    KaeritenSingle,    // body must equal one of 12 single-char marks
+    KaeritenCompound,  // body must equal one of 6 compound marks
 
     // === Prefix-with-parameter (parse body[match_end..]) ===
     AlignEndParamPrefix,      // 地から → 地から{N}字上げ
@@ -393,6 +399,18 @@ enum BodyFamily {
 
     // === Body-equals-pattern then parse from body[0] ===
     IndentParamPrefix, // {digit} → {N}字下げ (re-parse from body[0])
+
+    /// 傍点 / 傍線 range form (`傍点` / `白丸傍点` / `二重傍線` / `左に傍線`
+    /// …, with optional `終わり` close suffix). The needle matches the
+    /// variant (or the `左に` prefix); `parse_bouten_range_body` reads the
+    /// full body for the kind, the `左に` position, and the `終わり` close.
+    BoutenRange,
+
+    /// 太字 / 斜体 range / block form (`太字` / `斜体` inline,
+    /// `ここから太字` / `ここで斜体終わり` block, with `終わり` close). The
+    /// needle anchors the body; `parse_emphasis_body` reads the full body
+    /// for the kind, the block vs inline form, and open vs close.
+    Emphasis,
 }
 
 /// Static pattern table. Order is irrelevant for behavior because the
@@ -426,6 +444,34 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "ここで地付き終わり",
         family: BodyFamily::AlignEndBlockEnd,
     },
+    // The 字上げ block (［＃ここから地から N 字上げ］) is closed by either
+    // ［＃ここで字上げ終わり］ or ［＃ここで地付き終わり］ — both end the same
+    // AlignEnd container. The open-side offset is authoritative when
+    // pairing, so this closer reuses AlignEndBlockEnd.
+    BodyPattern {
+        needle: "ここで字上げ終わり",
+        family: BodyFamily::AlignEndBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここで字詰め終わり",
+        family: BodyFamily::LineWidthBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここから表",
+        family: BodyFamily::TableBlockOpen,
+    },
+    BodyPattern {
+        needle: "ここで表終わり",
+        family: BodyFamily::TableBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここで段組終わり",
+        family: BodyFamily::ColumnsBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここで段組み終わり",
+        family: BodyFamily::ColumnsBlockEnd,
+    },
     // Section / page break (exact).
     BodyPattern {
         needle: "改ページ",
@@ -433,15 +479,15 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     },
     BodyPattern {
         needle: "改丁",
-        family: BodyFamily::SectionChoho,
+        family: BodyFamily::SectionKaicho,
     },
     BodyPattern {
         needle: "改段",
-        family: BodyFamily::SectionDan,
+        family: BodyFamily::SectionKaidan,
     },
     BodyPattern {
         needle: "改見開き",
-        family: BodyFamily::SectionSpread,
+        family: BodyFamily::SectionKaimihiraki,
     },
     // Geographic alignment.
     BodyPattern {
@@ -451,6 +497,14 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "地付き",
         family: BodyFamily::AlignEnd0,
+    },
+    BodyPattern {
+        needle: "ページの左右中央",
+        family: BodyFamily::CenterMarker,
+    },
+    BodyPattern {
+        needle: "中央揃え",
+        family: BodyFamily::CenterMarker,
     },
     // Other inline / block.
     BodyPattern {
@@ -472,6 +526,89 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "割り注",
         family: BodyFamily::WarichuOpen,
+    },
+    // 傍点 / 傍線 range form openers (`［＃傍点］ … ［＃傍点終わり］`). One
+    // needle per emphasis variant `bouten_kind_from_suffix` recognises,
+    // plus the `左に` left-side prefix. LeftmostLongest disambiguates
+    // overlaps (`二重丸傍点` vs `丸傍点`, `白丸傍点` vs `丸傍点`); the close
+    // form (`…終わり`) matches the same variant needle as a prefix and is
+    // re-parsed in full by `parse_bouten_range_body`.
+    BodyPattern {
+        needle: "左に",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "白ゴマ傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "白丸傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "二重丸傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "蛇の目傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "ばつ傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "白三角傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "丸傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "二重傍線",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "波線",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "傍線",
+        family: BodyFamily::BoutenRange,
+    },
+    // 太字 / 斜体 emphasis. The inline-range openers (`太字` / `斜体`)
+    // also anchor their `…終わり` closers (re-parsed in full by
+    // `parse_emphasis_body`); the block forms need their own anchors
+    // (`ここから太字` beats the generic `ここから` via LeftmostLongest;
+    // `ここで太字終わり` has no shorter generic anchor).
+    BodyPattern {
+        needle: "太字",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "斜体",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ここから太字",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ここから斜体",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ここで太字終わり",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ここで斜体終わり",
+        family: BodyFamily::Emphasis,
     },
     // Kaeriten okurigana opener (full-width left paren U+FF08).
     BodyPattern {
@@ -691,6 +828,18 @@ fn classify_annotation_body<'a>(
     if body.is_empty() {
         return None;
     }
+    // Paired / block headings route through the container machinery as
+    // `ContainerKind::Heading`. Tried before the body dispatcher: their
+    // keywords overlap the `ここから…` / `…終わり` shapes but always carry a
+    // `見出し` keyword, so a non-heading `ここから…` body falls through.
+    if let Some((container, is_open)) = parse_heading_directive(body) {
+        let emit = if is_open {
+            EmitKind::BlockOpen(container)
+        } else {
+            EmitKind::BlockClose(container)
+        };
+        return Some((emit, None));
+    }
     let dfa = body_dispatcher();
     let mat = dfa.find(Input::new(body).anchored(Anchored::Yes))?;
     let pat = BODY_PATTERNS[mat.pattern().as_usize()];
@@ -699,22 +848,28 @@ fn classify_annotation_body<'a>(
     match pat.family {
         // ----- Exact-match families (must consume the entire body) -----
         BodyFamily::PageBreak if exact => Some((EmitKind::Aozora(alloc.page_break()), None)),
-        BodyFamily::SectionChoho if exact => Some((
-            EmitKind::Aozora(alloc.section_break(SectionKind::Choho)),
+        BodyFamily::SectionKaicho if exact => Some((
+            EmitKind::Aozora(alloc.section_break(SectionKind::Kaicho)),
             None,
         )),
-        BodyFamily::SectionDan if exact => Some((
-            EmitKind::Aozora(alloc.section_break(SectionKind::Dan)),
+        BodyFamily::SectionKaidan if exact => Some((
+            EmitKind::Aozora(alloc.section_break(SectionKind::Kaidan)),
             None,
         )),
-        BodyFamily::SectionSpread if exact => Some((
-            EmitKind::Aozora(alloc.section_break(SectionKind::Spread)),
+        BodyFamily::SectionKaimihiraki if exact => Some((
+            EmitKind::Aozora(alloc.section_break(SectionKind::Kaimihiraki)),
             None,
         )),
         BodyFamily::AlignEnd0 if exact => Some((
             EmitKind::Aozora(alloc.align_end(AlignEnd { offset: 0 })),
             None,
         )),
+        BodyFamily::CenterMarker if exact => {
+            // ページの左右中央 (page centre) vs 中央揃え — a single-line
+            // zero-width centring marker.
+            let page = body == "ページの左右中央";
+            Some((EmitKind::Aozora(alloc.center(Center { page })), None))
+        }
         BodyFamily::KeigakomiOpen if exact => {
             Some((EmitKind::BlockOpen(ContainerKind::Keigakomi), None))
         }
@@ -722,7 +877,11 @@ fn classify_annotation_body<'a>(
             Some((EmitKind::BlockClose(ContainerKind::Keigakomi), None))
         }
         BodyFamily::IndentBlock1 if exact => Some((
-            EmitKind::BlockOpen(ContainerKind::Indent { amount: 1 }),
+            EmitKind::BlockOpen(ContainerKind::Indent {
+                amount: 1,
+                wrap: None,
+                center: false,
+            }),
             None,
         )),
         BodyFamily::AlignEndBlock0 if exact => Some((
@@ -730,11 +889,32 @@ fn classify_annotation_body<'a>(
             None,
         )),
         BodyFamily::IndentBlockEnd if exact => Some((
-            EmitKind::BlockClose(ContainerKind::Indent { amount: 0 }),
+            EmitKind::BlockClose(ContainerKind::Indent {
+                amount: 0,
+                wrap: None,
+                center: false,
+            }),
             None,
         )),
         BodyFamily::AlignEndBlockEnd if exact => Some((
             EmitKind::BlockClose(ContainerKind::AlignEnd { offset: 0 }),
+            None,
+        )),
+        BodyFamily::LineWidthBlockEnd if exact => Some((
+            // The close marker carries no width; the open-side payload is
+            // authoritative when pairing (mirrors the generic 字下げ終わり).
+            EmitKind::BlockClose(ContainerKind::LineWidth { width: 0 }),
+            None,
+        )),
+        BodyFamily::TableBlockOpen if exact => {
+            Some((EmitKind::BlockOpen(ContainerKind::Table), None))
+        }
+        BodyFamily::TableBlockEnd if exact => {
+            Some((EmitKind::BlockClose(ContainerKind::Table), None))
+        }
+        BodyFamily::ColumnsBlockEnd if exact => Some((
+            // Close marker carries no count; the open-side payload is authoritative.
+            EmitKind::BlockClose(ContainerKind::Columns { count: 0 }),
             None,
         )),
         BodyFamily::WarichuOpen if exact => {
@@ -775,10 +955,62 @@ fn classify_annotation_body<'a>(
             // body == ここから{N}字下げ; remainder = body[match_end..]
             let rest = &body[match_end..];
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
-            (tail == "字下げ").then_some((
-                EmitKind::BlockOpen(ContainerKind::Indent { amount: n }),
-                None,
-            ))
+            if tail == "字下げ" {
+                Some((
+                    EmitKind::BlockOpen(ContainerKind::Indent {
+                        amount: n,
+                        wrap: None,
+                        center: false,
+                    }),
+                    None,
+                ))
+            } else if let Some(after) = tail.strip_prefix("字下げ、折り返して") {
+                // ここから{N}字下げ、折り返して{M}字下げ — hanging (wrap) indent:
+                // the first line indents `n`, wrapped continuation lines `m`.
+                let (m, tail2) = parse_decimal_u8_prefix(after)?;
+                (tail2 == "字下げ").then_some((
+                    EmitKind::BlockOpen(ContainerKind::Indent {
+                        amount: n,
+                        wrap: Some(m),
+                        center: false,
+                    }),
+                    None,
+                ))
+            } else if matches!(
+                tail,
+                "字下げ、ページの左右中央" | "字下げ、ページの左右中央に" | "字下げ、左右中央"
+            ) {
+                // ここから{N}字下げ、ページの左右中央 — an indented block that is
+                // also page-centred. The combined opener still closes with the
+                // shared 字下げ終わり (pairing is by family).
+                Some((
+                    EmitKind::BlockOpen(ContainerKind::Indent {
+                        amount: n,
+                        wrap: None,
+                        center: true,
+                    }),
+                    None,
+                ))
+            } else if tail == "字詰め" && n >= 1 {
+                // ここから{N}字詰め — line-width container (字詰め): N
+                // full-width characters per line. Shares the `ここから`
+                // opener prefix with 字下げ; block-only, closes with
+                // `ここで字詰め終わり`.
+                Some((
+                    EmitKind::BlockOpen(ContainerKind::LineWidth { width: n }),
+                    None,
+                ))
+            } else if (tail == "段組" || tail == "段組み") && n >= 1 {
+                // ここから{N}段組(み) — multi-column container (段組): N
+                // columns. Shares the `ここから` prefix; closes with
+                // `ここで段組(み)終わり`.
+                Some((
+                    EmitKind::BlockOpen(ContainerKind::Columns { count: n }),
+                    None,
+                ))
+            } else {
+                None
+            }
         }
         BodyFamily::AlignEndBlockParamPrefix => {
             // body == ここから地から{N}字上げ; remainder = body[match_end..]
@@ -802,20 +1034,60 @@ fn classify_annotation_body<'a>(
             (tail == "字下げ" && n >= 1)
                 .then(|| (EmitKind::Aozora(alloc.indent(Indent { amount: n })), None))
         }
+        BodyFamily::BoutenRange => {
+            // `傍点` / `白丸傍点` / `二重傍線` / `左に傍線` … with an optional
+            // `終わり` close suffix. Re-parse the full body for the variant,
+            // the `左に` position, and open vs close.
+            let (kind, position, is_close) = parse_bouten_range_body(body)?;
+            let container = ContainerKind::BoutenRange { kind, position };
+            Some((
+                if is_close {
+                    EmitKind::BlockClose(container)
+                } else {
+                    EmitKind::BlockOpen(container)
+                },
+                None,
+            ))
+        }
+        BodyFamily::Emphasis => {
+            // `太字` / `斜体` / `ここから太字` / `ここで斜体終わり` … —
+            // re-parse the full body for the kind, the block vs inline
+            // form, and open vs close.
+            let (kind, block, is_close) = parse_emphasis_body(body)?;
+            let container = match kind {
+                EmphasisKind::Italic => ContainerKind::Italic { block },
+                // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any
+                // future weight pair as the bold container.
+                _ => ContainerKind::Bold { block },
+            };
+            Some((
+                if is_close {
+                    EmitKind::BlockClose(container)
+                } else {
+                    EmitKind::BlockOpen(container)
+                },
+                None,
+            ))
+        }
 
         // Exact-only families that didn't fully consume the body (e.g.
         // `罫囲みfoo` matched `罫囲み` but body is longer): no claim.
         BodyFamily::PageBreak
-        | BodyFamily::SectionChoho
-        | BodyFamily::SectionDan
-        | BodyFamily::SectionSpread
+        | BodyFamily::SectionKaicho
+        | BodyFamily::SectionKaidan
+        | BodyFamily::SectionKaimihiraki
         | BodyFamily::AlignEnd0
+        | BodyFamily::CenterMarker
         | BodyFamily::KeigakomiOpen
         | BodyFamily::KeigakomiClose
         | BodyFamily::IndentBlock1
         | BodyFamily::AlignEndBlock0
         | BodyFamily::IndentBlockEnd
         | BodyFamily::AlignEndBlockEnd
+        | BodyFamily::LineWidthBlockEnd
+        | BodyFamily::TableBlockOpen
+        | BodyFamily::TableBlockEnd
+        | BodyFamily::ColumnsBlockEnd
         | BodyFamily::WarichuOpen
         | BodyFamily::WarichuClose
         | BodyFamily::KaeritenSingle
@@ -891,7 +1163,117 @@ where
     pending_plain_start: Option<u32>,
     pending_refmark: Option<Span>,
     diagnostics: Vec<Diagnostic>,
+    /// Bracketed kaeriten observed in document order, drained by
+    /// [`Self::finalize_kaeriten`] in [`Self::take_diagnostics`] for the
+    /// document-wide base-presence pairing check and the outside-kanbun
+    /// heuristic.
+    kaeriten_obs: Vec<KaeritenObs>,
     finished: bool,
+}
+
+/// Family of a bracketed kaeriten ladder. Reading-order return marks
+/// come in ordered families; a mark of rank `r` needs a same-family base
+/// (`一` / `上` / `甲`) somewhere in the document (see
+/// [`Diagnostic::bracketed_kaeriten_no_pair`]). `レ` (re-ten) and 送り仮名
+/// `（X）` are standalone and never ladder.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KaeritenFamily {
+    /// `一` < `二` < `三` < `四` (and the `Xレ` compounds).
+    Numeric,
+    /// `上` < `中` < `下`.
+    Jouge,
+    /// `甲` < `乙` < `丙` < `丁`.
+    Kouotsu,
+    /// `レ`, 送り仮名, or any non-ladder mark.
+    Other,
+}
+
+/// One bracketed kaeriten observed during classification, retained for
+/// the end-of-document pairing / context checks run in
+/// [`ClassifyStream::finalize_kaeriten`].
+#[derive(Clone, Copy)]
+struct KaeritenObs {
+    family: KaeritenFamily,
+    /// 1-based ladder rank; `0` for non-ladder marks.
+    rank: u8,
+    /// Whether this mark participates in ladder-base checks.
+    is_ladder: bool,
+    /// Byte-range of the `［＃…］` directive in the sanitized source.
+    span: Span,
+}
+
+/// Classify a bracketed kaeriten body into `(family, rank, is_ladder)`.
+/// `Xレ` compounds ladder by their base char `X`; `レ` alone and 送り仮名
+/// `（X）` are non-ladder.
+fn classify_kaeriten_mark(mark: &str) -> (KaeritenFamily, u8, bool) {
+    // 送り仮名 ［＃（X）］ — a kaeriten node but not a ladder mark.
+    if mark.starts_with('（') {
+        return (KaeritenFamily::Other, 0, false);
+    }
+    // Compound `Xレ` ladders by its base char; `レ` alone has empty base.
+    let base = mark
+        .strip_suffix('レ')
+        .filter(|b| !b.is_empty())
+        .unwrap_or(mark);
+    match base {
+        "一" => (KaeritenFamily::Numeric, 1, true),
+        "二" => (KaeritenFamily::Numeric, 2, true),
+        "三" => (KaeritenFamily::Numeric, 3, true),
+        "四" => (KaeritenFamily::Numeric, 4, true),
+        "上" => (KaeritenFamily::Jouge, 1, true),
+        "中" => (KaeritenFamily::Jouge, 2, true),
+        "下" => (KaeritenFamily::Jouge, 3, true),
+        "甲" => (KaeritenFamily::Kouotsu, 1, true),
+        "乙" => (KaeritenFamily::Kouotsu, 2, true),
+        "丙" => (KaeritenFamily::Kouotsu, 3, true),
+        "丁" => (KaeritenFamily::Kouotsu, 4, true),
+        _ => (KaeritenFamily::Other, 0, false),
+    }
+}
+
+/// Dense index of a ladder [`KaeritenFamily`] for the base-presence
+/// table. `Other` never ladders so it shares the `Numeric` slot (read
+/// but never marked present for non-ladder marks).
+fn family_index(fam: KaeritenFamily) -> usize {
+    match fam {
+        KaeritenFamily::Jouge => 1,
+        KaeritenFamily::Kouotsu => 2,
+        KaeritenFamily::Numeric | KaeritenFamily::Other => 0,
+    }
+}
+
+/// Conservative "is this kana prose, not 漢文?" check for the lone-mark
+/// outside-kanbun heuristic. Reads a small character window each side of
+/// `span`: kana-dominant with almost no kanji ⇒ prose. Real 漢文 around a
+/// genuine 返り点 is kanji-dense and never trips this.
+fn looks_like_kana_prose(source: &str, span: Span) -> bool {
+    const WIN: usize = 12;
+    let before = source.get(..span.start as usize).unwrap_or("");
+    let after = source.get(span.end as usize..).unwrap_or("");
+    let (mut kana, mut kanji) = (0u32, 0u32);
+    for c in before
+        .chars()
+        .rev()
+        .take(WIN)
+        .chain(after.chars().take(WIN))
+    {
+        if is_kana(c) {
+            kana += 1;
+        } else if is_kanji(c) {
+            kanji += 1;
+        }
+    }
+    kana >= 2 && kanji <= 1
+}
+
+/// Hiragana / katakana / half-width katakana.
+fn is_kana(c: char) -> bool {
+    matches!(c, '\u{3040}'..='\u{30FF}' | '\u{FF66}'..='\u{FF9D}')
+}
+
+/// CJK unified ideographs (incl. Ext-A and compatibility) — "kanji".
+fn is_kanji(c: char) -> bool {
+    matches!(c, '\u{3400}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}')
 }
 
 /// Active stream-through frame for a top-level Quote / Tortoise pair.
@@ -954,7 +1336,7 @@ pub(crate) struct RecogniseCtx<'al, 'a, 's> {
 /// of the matching `PairOpen` / `PairClose` (or `u32::MAX` for
 /// non-paired entries and unmatched delimiters). The recognise
 /// helpers (`recognize_ruby` / `recognize_annotation` /
-/// `recognize_gaiji` / `try_double_ruby`) consume the buffer as a
+/// `recognize_gaiji` / `try_angle_quote`) consume the buffer as a
 /// [`BodyView`] with `open_idx = 0` and `close_idx = body.len() - 1`.
 ///
 /// `inner_stack` tracks the per-buffer mini-stack of nested opens —
@@ -968,6 +1350,87 @@ struct Frame {
     /// frame should be recognised as gaiji rather than a generic
     /// bracket annotation.
     gaiji_refmark: Option<Span>,
+}
+
+/// Span of the first ruby (`《…》`) opening *inside* the body
+/// event range `lo..hi`, if any. Used by [`ClassifyStream::try_ruby_emit`]
+/// to flag `nested_ruby` — `build_content_from_body` folds only nested
+/// gaiji / annotation, so an inner ruby open would otherwise survive raw.
+fn first_nested_ruby_open(events: &[PairEvent], lo: usize, hi: usize) -> Option<Span> {
+    events[lo..hi].iter().find_map(|e| match e {
+        PairEvent::PairOpen {
+            kind: PairKind::Ruby,
+            span,
+        } => Some(*span),
+        _ => None,
+    })
+}
+
+/// When an explicit-base ruby (`｜base《》`) has an empty reading, the span
+/// of the whole `｜base《》` to flag as `empty_ruby_reading`. Returns `None`
+/// when there is no explicit `｜` base (a bare `《》` is just literal text)
+/// or when the `《…》` reading is non-empty.
+fn empty_explicit_ruby_span(
+    bar_byte_offset: Option<usize>,
+    preceding_start: u32,
+    open_span: Span,
+    close_span: Span,
+) -> Option<Span> {
+    let bar_off = bar_byte_offset?;
+    if open_span.end < close_span.start {
+        return None; // reading carries bytes — not empty
+    }
+    let bar_pos = preceding_start + u32::try_from(bar_off).ok()?;
+    Some(Span::new(bar_pos, close_span.end))
+}
+
+/// Build the synthetic event / link stream `recognize_ruby` expects in the
+/// streaming model: `[optional Solo(Bar), Text(base), ...body events...]`,
+/// with links shifted to account for the prepended prefix. Returns the
+/// stream, its parallel link table, and the index of the synthetic `《`
+/// open. `prev_text_range` is the preceding plain run (`start` = its byte
+/// offset, `end` = the `《` open); `bar_byte_offset` is the position of a
+/// `｜` inside it for the explicit form. Returns `None` when an explicit
+/// `｜` base would leave the base text empty.
+fn build_synth_ruby_view(
+    body: BodyView<'_>,
+    prev_text_range: Span,
+    bar_byte_offset: Option<usize>,
+) -> Option<(Vec<PairEvent>, Vec<u32>, usize)> {
+    let mut synth: Vec<PairEvent> = Vec::with_capacity(body.events.len() + 2);
+    let mut synth_links: Vec<u32> = Vec::with_capacity(body.events.len() + 2);
+    let synth_open_idx = if let Some(bar_off) = bar_byte_offset {
+        let bar_pos = prev_text_range.start + u32::try_from(bar_off).expect("bar offset fits");
+        let bar_span = Span::new(bar_pos, bar_pos + u32::try_from('｜'.len_utf8()).unwrap());
+        synth.push(PairEvent::Solo {
+            kind: TriggerKind::Bar,
+            span: bar_span,
+        });
+        synth_links.push(u32::MAX);
+        if bar_span.end >= prev_text_range.end {
+            return None; // explicit base would be empty
+        }
+        synth.push(PairEvent::Text {
+            range: Span::new(bar_span.end, prev_text_range.end),
+        });
+        synth_links.push(u32::MAX);
+        2
+    } else {
+        synth.push(PairEvent::Text {
+            range: prev_text_range,
+        });
+        synth_links.push(u32::MAX);
+        1
+    };
+    // Append the body events verbatim, shifting their links past the prefix.
+    let shift = u32::try_from(synth.len()).expect("synth prefix fits u32");
+    synth.extend(body.events.iter().cloned());
+    synth_links.extend(
+        body.links
+            .iter()
+            .map(|&l| if l == u32::MAX { u32::MAX } else { l + shift }),
+    );
+    Some((synth, synth_links, synth_open_idx))
 }
 
 impl<'src, 'al, 'a, I> ClassifyStream<'src, 'al, 'a, I>
@@ -986,6 +1449,7 @@ where
             pending_plain_start: None,
             pending_refmark: None,
             diagnostics: Vec::new(),
+            kaeriten_obs: Vec::new(),
             finished: false,
         }
     }
@@ -994,7 +1458,50 @@ where
     /// iterator is exhausted (otherwise the trailing Plain flush has
     /// not yet recorded any final-span observations).
     pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
+        self.finalize_kaeriten();
         mem::take(&mut self.diagnostics)
+    }
+
+    /// Document-final kaeriten checks, run once the event stream is
+    /// exhausted: the document-wide base-presence pairing check
+    /// (`bracketed_kaeriten_no_pair`) and the conservative
+    /// outside-kanbun heuristic (`kaeriten_outside_kanbun`). Both work
+    /// off `kaeriten_obs`, accumulated during classification.
+    ///
+    /// The pairing rule is *document-wide base presence*: a ladder mark
+    /// of rank ≥ 2 fires only when its family's base (`一` / `上` / `甲`)
+    /// is absent from the entire document. This is calibrated against the
+    /// real 青空文庫 corpus — kanbun return-mark groups routinely span
+    /// `、` / `。` and line boundaries, and 上下点 skips `中`, so any
+    /// narrower scope or stricter ladder misfires on valid kanbun (per-
+    /// clause strict: 586 false positives across 337 corpus files; this
+    /// rule: 2). It matches the catalogue's literal wording — "a `［＃二］`
+    /// with no `［＃一］`".
+    fn finalize_kaeriten(&mut self) {
+        let obs = mem::take(&mut self.kaeriten_obs);
+        if obs.is_empty() {
+            return;
+        }
+        // Conservative outside-kanbun heuristic: the document holds a
+        // single, isolated kaeriten and its surroundings read as kana
+        // prose — most likely a stray annotation, not a genuine 返り点.
+        if let [only] = obs.as_slice()
+            && looks_like_kana_prose(self.source, only.span)
+        {
+            self.diagnostics
+                .push(Diagnostic::kaeriten_outside_kanbun(only.span));
+        }
+        // Document-wide base presence per ladder family.
+        let mut has_base = [false; 3];
+        for o in obs.iter().filter(|o| o.is_ladder && o.rank == 1) {
+            has_base[family_index(o.family)] = true;
+        }
+        for o in obs.iter().filter(|o| o.is_ladder && o.rank > 1) {
+            if !has_base[family_index(o.family)] {
+                self.diagnostics
+                    .push(Diagnostic::bracketed_kaeriten_no_pair(o.span));
+            }
+        }
     }
 
     fn push_output(&mut self, span: ClassifiedSpan<'a>) {
@@ -1149,12 +1656,12 @@ where
                     return;
                 }
             }
-            PairKind::DoubleRuby => {
-                if let Some(span) = self.try_double_ruby_emit(view, open_idx, close_idx) {
+            PairKind::AngleQuote => {
+                if let Some(span) = self.try_angle_quote_emit(view, open_idx, close_idx) {
                     self.push_output(span);
                     return;
                 }
-                // Empty `《《》》` falls through to `replay_unrecognised_body`
+                // Empty `≪≫` falls through to `replay_unrecognised_body`
                 // so the bytes flow back into the pending plain run.
             }
             PairKind::Bracket => {
@@ -1296,7 +1803,7 @@ where
                 // Bracket, is absorbed into the frame; for any other
                 // pair kind the refmark is folded into plain first.
                 //
-                // Ruby and DoubleRuby are special: they consume the
+                // Ruby and AngleQuote are special: they consume the
                 // preceding text (explicit `｜base《reading》` or
                 // implicit trailing-kanji). We DON'T flush
                 // `pending_plain_start` here so `try_ruby_emit` can
@@ -1319,7 +1826,7 @@ where
                 };
                 let preserve_pending_plain = matches!(
                     kind,
-                    PairKind::Ruby | PairKind::DoubleRuby | PairKind::Bracket
+                    PairKind::Ruby | PairKind::AngleQuote | PairKind::Bracket
                 );
                 if !preserve_pending_plain {
                     let truncate_to = gaiji_refmark.map_or(span.start, |rm| rm.start);
@@ -1346,7 +1853,7 @@ where
     /// (a) reads from the live event stream rather than a buffered
     /// `SmallVec`, (b) tracks nested-open depth so the outer close
     /// unambiguously exits the mode, and (c) skips the inner-frame
-    /// open path (a nested `Bracket` / `Ruby` / `DoubleRuby` inside
+    /// open path (a nested `Bracket` / `Ruby` / `AngleQuote` inside
     /// an unrecognised `Quote` folds into the surrounding plain run,
     /// same as the legacy buffered-replay behaviour).
     fn handle_stream_event(&mut self, event: PairEvent) {
@@ -1393,7 +1900,7 @@ where
                 // increment per open, one Unclosed per still-open).
                 // When depth reaches zero the outer pair is gone, so
                 // exit streaming. Other-kind Unclosed events (a
-                // nested Bracket / Ruby / DoubleRuby that streaming
+                // nested Bracket / Ruby / AngleQuote that streaming
                 // mode never opened a frame for) are simply ignored.
                 if kind == stream.kind {
                     stream.depth = stream.depth.saturating_sub(1);
@@ -1440,73 +1947,28 @@ where
             return None;
         };
 
-        // Determine the preceding text range and (optionally) a Solo(Bar).
-        let plain_start = self.pending_plain_start;
-        let pending_rm = self.pending_refmark;
-        // For ruby we need the bytes immediately before the `《`. Take
-        // them from the source: from `prev_text_start` to `open_span.start`.
-        // `prev_text_start` is the pending_plain_start if any, else
-        // open_span.start (no preceding text → cannot recognise).
-        let preceding_start = plain_start.unwrap_or(open_span.start);
+        // Nested ruby: a `《…》` opening *inside* the reading
+        // body is an authoring error. Flag the first one (caret on the
+        // inner `《`); the outer ruby still parses best-effort. Touched
+        // before `ctx` reborrows `self.alloc`, so no borrow clash.
+        if let Some(inner_open) = first_nested_ruby_open(body.events, open_idx + 1, close_idx) {
+            self.diagnostics.push(Diagnostic::nested_ruby(inner_open));
+        }
+
+        // Determine the preceding plain run (the ruby base lives here) and
+        // detect the explicit `｜` form by scanning it for a bar. The
+        // streaming model has no preceding events, so we synthesise them.
+        let preceding_start = self.pending_plain_start.unwrap_or(open_span.start);
         if preceding_start >= open_span.start {
             return None;
         }
         let prev_text_range = Span::new(preceding_start, open_span.start);
-
-        // Detect explicit form: a `｜` somewhere in the preceding source.
-        // The legacy recogniser checks `events[open_idx - 2] == Solo(Bar)`
-        // with a Text between. We can detect it by scanning the
-        // preceding source bytes for `｜` (U+FF5C, 3 bytes EF BD 9C):
-        // if present, the explicit-ruby base is everything AFTER the bar.
-        // We treat ALL preceding accumulated plain bytes as candidate.
         let preceding_bytes = &self.source[preceding_start as usize..open_span.start as usize];
         let bar_byte_offset = preceding_bytes.rfind('｜');
 
-        // Construct synthetic events to feed recognize_ruby. We need
-        // shape: [optional Solo(Bar), Text, PairOpen, ...body inner...,
-        // PairClose]. Then call recognize_ruby with open_idx pointing
-        // at the synthetic PairOpen. The parallel `links` table is
-        // built in lock-step: the prepended events get `u32::MAX`,
-        // every body link is shifted by `shift` (= number of prepended
-        // events).
-        let mut synth: Vec<PairEvent> = Vec::with_capacity(body.events.len() + 2);
-        let mut synth_links: Vec<u32> = Vec::with_capacity(body.events.len() + 2);
-        let synth_open_idx = if let Some(bar_off) = bar_byte_offset {
-            let bar_pos = preceding_start + u32::try_from(bar_off).expect("bar offset fits");
-            let bar_span = Span::new(bar_pos, bar_pos + u32::try_from('｜'.len_utf8()).unwrap());
-            synth.push(PairEvent::Solo {
-                kind: TriggerKind::Bar,
-                span: bar_span,
-            });
-            synth_links.push(u32::MAX);
-            // Text after the bar to open_span.start.
-            let text_after_bar_start = bar_span.end;
-            if text_after_bar_start >= open_span.start {
-                return None;
-            }
-            synth.push(PairEvent::Text {
-                range: Span::new(text_after_bar_start, open_span.start),
-            });
-            synth_links.push(u32::MAX);
-            2
-        } else {
-            synth.push(PairEvent::Text {
-                range: prev_text_range,
-            });
-            synth_links.push(u32::MAX);
-            1
-        };
-
-        // Push the body events as-is and shift body links by `shift`.
-        let shift = u32::try_from(synth.len()).expect("synth prefix fits u32");
-        synth.extend(body.events.iter().cloned());
-        synth_links.extend(
-            body.links
-                .iter()
-                .map(|&l| if l == u32::MAX { u32::MAX } else { l + shift }),
-        );
+        let (synth, synth_links, synth_open_idx) =
+            build_synth_ruby_view(body, prev_text_range, bar_byte_offset)?;
         let synth_close_idx = synth_open_idx + (close_idx - open_idx);
-
         let synth_view = BodyView {
             events: &synth,
             links: &synth_links,
@@ -1515,13 +1977,28 @@ where
             alloc: self.alloc,
             source: self.source,
         };
-        let m = ctx.recognize_ruby(synth_view, synth_open_idx, synth_close_idx)?;
-        // Truncate any in-progress plain run to end exactly where the
-        // ruby takes over.
-        // Restore pending_refmark for downstream flushing semantics
-        // (recognize_ruby may have consumed a refmark only if it was
-        // inside the body, which is already in `body`).
-        let _ = pending_rm;
+        let Some(m) = ctx.recognize_ruby(synth_view, synth_open_idx, synth_close_idx) else {
+            // `recognize_ruby` rejects an empty `《》` reading; flag the
+            // explicit-base `｜base《》` shape (a bare `《》` stays silent).
+            // The bytes fall through to plain replay either way. `ctx`'s
+            // reborrow of `self.alloc` ended at the call above, so pushing
+            // onto the disjoint `self.diagnostics` is borrow-clear.
+            if let PairEvent::PairClose {
+                span: close_span, ..
+            } = body.events[close_idx]
+                && let Some(span) = empty_explicit_ruby_span(
+                    bar_byte_offset,
+                    preceding_start,
+                    open_span,
+                    close_span,
+                )
+            {
+                self.diagnostics.push(Diagnostic::empty_ruby_reading(span));
+            }
+            return None;
+        };
+        // Truncate any in-progress plain run to end exactly where the ruby
+        // takes over.
         self.flush_plain_up_to(m.consume_start);
         let base_content = self.alloc.content_plain(m.base);
         let node = self.alloc.ruby(base_content, m.reading, m.explicit);
@@ -1532,14 +2009,14 @@ where
         })
     }
 
-    /// Attempt to classify the buffered body as a `DoubleRuby` node.
+    /// Attempt to classify the buffered body as a `AngleQuote` node.
     ///
-    /// Returns `None` when the body content is empty (`《《》》` with
+    /// Returns `None` when the body content is empty (`≪≫` with
     /// no payload) — the caller falls through to plain replay so the
-    /// bytes show up as literal source. Emitting a `DoubleRuby` span
+    /// bytes show up as literal source. Emitting a `AngleQuote` span
     /// here would violate the [`borrowed::NonEmpty`] invariant on the
     /// `Content` payload.
-    fn try_double_ruby_emit(
+    fn try_angle_quote_emit(
         &mut self,
         body: BodyView<'_>,
         open_idx: usize,
@@ -1568,7 +2045,7 @@ where
                 bytes: open_span.end..close_span.start,
             },
         );
-        // Empty `《《》》` is not a valid DoubleRuby — let the bytes
+        // Empty `≪≫` is not a valid AngleQuote — let the bytes
         // flow through as plain text. The caller's fall-through path
         // (`replay_unrecognised_body`) handles the plain emission.
         if matches!(content, borrowed::Content::Plain(s) if s.is_empty())
@@ -1577,7 +2054,7 @@ where
             return None;
         }
         self.flush_plain_up_to(open_span.start);
-        let node = self.alloc.double_ruby(content);
+        let node = self.alloc.angle_quote(content);
         self.pending_plain_start = None;
         Some(ClassifiedSpan {
             kind: SpanKind::Aozora(node),
@@ -1605,6 +2082,29 @@ where
             EmitKind::BlockClose(container) => SpanKind::BlockClose(container),
         };
         self.pending_plain_start = None;
+        // Surface any non-fatal warning the recogniser attached
+        // (unrecognised container directive / 縦中横 target not found /
+        // ambiguous bouten target). The emitted node is unaffected — for
+        // the catch-all cases it is still `Annotation{Unknown}`, so the
+        // Tier-A "no bare ［＃" canary holds. `ctx`'s reborrow of
+        // `self.alloc` ended at `recognize_annotation`, so pushing onto the
+        // disjoint `self.diagnostics` is borrow-clear.
+        if let Some(diag) = m.pending_diagnostic {
+            self.diagnostics.push(diag);
+        }
+        // Record bracketed kaeriten for the end-of-document pairing /
+        // context checks (`finalize_kaeriten`). The directive span is the
+        // whole `［＃…］`.
+        if let SpanKind::Aozora(borrowed::AozoraNode::Kaeriten(k)) = kind {
+            let span = Span::new(m.consume_start, m.consume_end);
+            let (family, rank, is_ladder) = classify_kaeriten_mark(k.mark.as_str());
+            self.kaeriten_obs.push(KaeritenObs {
+                family,
+                rank,
+                is_ladder,
+                span,
+            });
+        }
         Some(ClassifiedSpan {
             kind,
             source_span: Span::new(m.consume_start, m.consume_end),
@@ -1625,6 +2125,20 @@ where
         self.flush_plain_up_to(m.consume_start);
         let node = self.alloc.gaiji(m.payload);
         self.pending_plain_start = None;
+        // The gaiji still renders best-effort (as its description text)
+        // when resolution misses; flag the miss so authors know the glyph
+        // won't appear. `m.payload` is a `Copy` arena reference and the
+        // `ctx` reborrow of `self.alloc` ended at the `gaiji()` call above,
+        // so reading `ucs` and pushing onto `self.diagnostics` is clear of
+        // the borrow. Scope: top-level `※［＃…］` only — gaiji nested inside
+        // a ruby/bouten body is out of scope for now.
+        if m.payload.ucs.is_none() {
+            self.diagnostics
+                .push(Diagnostic::unresolved_gaiji(Span::new(
+                    m.consume_start,
+                    m.consume_end,
+                )));
+        }
         Some(ClassifiedSpan {
             kind: SpanKind::Aozora(node),
             source_span: Span::new(m.consume_start, m.consume_end),
@@ -2453,6 +2967,12 @@ struct AnnotationMatch<'a> {
     annotation_payload: Option<&'a borrowed::Annotation<'a>>,
     consume_start: u32,
     consume_end: u32,
+    /// A non-fatal warning to surface for this bracket, if any —
+    /// `unrecognised_container_directive`, `tcy_target_not_found`, or
+    /// `bouten_target_ambiguous`. The caller drains it into the diagnostic
+    /// stream; the emitted node (often the `Annotation{Unknown}` catch-all,
+    /// canary intact) is unaffected.
+    pending_diagnostic: Option<Diagnostic>,
 }
 
 /// What to emit for a matched annotation.
@@ -2475,6 +2995,13 @@ enum EmitKind<'a> {
 /// to the `Annotation { Unknown }` catch-all so the bracket is
 /// always consumed into some `AozoraNode`.
 impl<'a> RecogniseCtx<'_, 'a, '_> {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "a flat dispatch chain over the forward-reference recognisers \
+                  (body / bouten / 縦中横 / heading / emphasis) — each block is \
+                  the same shape and splitting them would scatter the ordered \
+                  fall-through to the Annotation{Unknown} catch-all"
+    )]
     fn recognize_annotation(
         &mut self,
         view: BodyView<'_>,
@@ -2532,58 +3059,131 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 annotation_payload,
                 consume_start: open_span.start,
                 consume_end: close_span.end,
+                pending_diagnostic: None,
             });
         }
-        if let Some((node, consume_start)) = self.classify_forward_bouten(view, open_idx, close_idx)
+        // Forward-reference warnings point at the whole `［＃…］` directive,
+        // not at the (possibly pulled-back) consume span.
+        let directive_span = Span::new(open_span.start, close_span.end);
+        if let Some((node, consume_start, ambiguous)) =
+            self.classify_forward_bouten(view, open_idx, close_idx)
         {
             return Some(AnnotationMatch {
                 emit: EmitKind::Aozora(node),
                 annotation_payload: None,
                 consume_start,
                 consume_end: close_span.end,
+                pending_diagnostic: ambiguous
+                    .then(|| Diagnostic::bouten_target_ambiguous(directive_span)),
             });
         }
-        if let Some((node, consume_start)) = self.classify_forward_tcy(view, open_idx, close_idx) {
+        // `「X」の左に「Y」のルビ` — left-side ruby (saidoku building block). The
+        // `の左に` prefix overlaps left-side bouten, but its `のルビ` keyword is
+        // not a bouten kind, so the bouten classifier already returned `None`.
+        if let Some((node, consume_start)) =
+            self.classify_forward_left_ruby(view, open_idx, close_idx)
+        {
             return Some(AnnotationMatch {
                 emit: EmitKind::Aozora(node),
                 annotation_payload: None,
                 consume_start,
                 consume_end: close_span.end,
+                pending_diagnostic: None,
             });
         }
-        if let Some(node) = self.classify_forward_heading(view, open_idx, close_idx) {
+        // `「X」の左に「Y」の注記` — left-side annotation (注記). The `の注記`
+        // keyword is disjoint from `のルビ` and every bouten kind, so the
+        // bouten and left-ruby classifiers above have already declined.
+        if let Some((node, consume_start)) =
+            self.classify_forward_left_annotation(view, open_idx, close_idx)
+        {
             return Some(AnnotationMatch {
                 emit: EmitKind::Aozora(node),
                 annotation_payload: None,
-                consume_start: open_span.start,
+                consume_start,
                 consume_end: close_span.end,
+                pending_diagnostic: None,
+            });
+        }
+        // 縦中横 is 3-state: a shape-matched directive whose target has no
+        // referent (`ShapedNoTarget`) carries a warning down the
+        // fall-through path while still degrading to `Annotation{Unknown}`.
+        let tcy_pending = match self.classify_forward_tcy(view, open_idx, close_idx) {
+            ForwardTcy::Recognised(node, consume_start) => {
+                return Some(AnnotationMatch {
+                    emit: EmitKind::Aozora(node),
+                    annotation_payload: None,
+                    consume_start,
+                    consume_end: close_span.end,
+                    pending_diagnostic: None,
+                });
+            }
+            ForwardTcy::ShapedNoTarget => Some(Diagnostic::tcy_target_not_found(directive_span)),
+            ForwardTcy::NotTcy => None,
+        };
+        if let Some((node, consume_start)) =
+            self.classify_forward_heading(view, open_idx, close_idx)
+        {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start,
+                consume_end: close_span.end,
+                pending_diagnostic: tcy_pending,
+            });
+        }
+        if let Some((node, consume_start)) =
+            self.classify_forward_emphasis(view, open_idx, close_idx)
+        {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start,
+                consume_end: close_span.end,
+                pending_diagnostic: tcy_pending,
             });
         }
 
-        // Catch-all fallback for any well-formed `［＃…］` whose body no
-        // specialised recogniser claimed — including empty bodies
-        // (`［＃］`), which real Aozora corpora occasionally use as
-        // illustrative glyphs inside explanatory prose. Emitting
-        // `Annotation { Unknown }` with the raw source slice keeps the
-        // Tier-A canary (no bare `［＃` in HTML output) intact: the
-        // renderer wraps the raw bytes in an `aozora-annotation` hidden span
-        // regardless of body shape. The lexer is the sole owner of this
-        // classification — the parse phase never sees `［＃…］`.
-        //
-        // Build the annotation payload once and hand it to the caller in
-        // both `emit` and `annotation_payload` so the body-builder can
-        // re-wrap the same payload as a `Segment::Annotation` without
-        // re-interning the raw string.
-        let raw = &self.source[open_span.start as usize..close_span.end as usize];
+        // No specialised recogniser claimed the bracket — fall back to the
+        // `Annotation{Unknown}` catch-all.
+        Some(self.unknown_annotation_match(directive_span, body, tcy_pending))
+    }
+
+    /// Catch-all for any well-formed `［＃…］` whose body no specialised
+    /// recogniser claimed — including empty bodies (`［＃］`), which real
+    /// Aozora corpora occasionally use as illustrative glyphs. Emitting
+    /// `Annotation{Unknown}` with the raw source slice keeps the Tier-A
+    /// canary (no bare `［＃` in HTML output) intact. `directive_span` is the
+    /// `open.start..close.end` extent of the bracket.
+    ///
+    /// `tcy_pending` carries a 縦中横-target-not-found warning down from the
+    /// fall-through path; otherwise a `ここから…` opener that no
+    /// `ContainerKind` claimed surfaces as `unrecognised_container_directive`
+    /// (`罫囲み` / `割り注` openers don't use the `ここから` prefix and are
+    /// handled upstream, so the prefix uniquely flags a stray container open).
+    fn unknown_annotation_match(
+        &mut self,
+        directive_span: Span,
+        body: &str,
+        tcy_pending: Option<Diagnostic>,
+    ) -> AnnotationMatch<'a> {
+        let raw = &self.source[directive_span.start as usize..directive_span.end as usize];
+        // One payload for `emit`, one for `annotation_payload`, so the
+        // body-builder can re-wrap without re-interning the raw string.
         let payload = self.alloc.make_annotation(raw, AnnotationKind::Unknown);
         let node = self.alloc.annotation(payload);
         let payload_for_seg = self.alloc.make_annotation(raw, AnnotationKind::Unknown);
-        Some(AnnotationMatch {
+        let pending_diagnostic = tcy_pending.or_else(|| {
+            body.starts_with("ここから")
+                .then(|| Diagnostic::unrecognised_container_directive(directive_span))
+        });
+        AnnotationMatch {
             emit: EmitKind::Aozora(node),
             annotation_payload: Some(payload_for_seg),
-            consume_start: open_span.start,
-            consume_end: close_span.end,
-        })
+            consume_start: directive_span.start,
+            consume_end: directive_span.end,
+            pending_diagnostic,
+        }
     }
 }
 
@@ -2612,7 +3212,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+    ) -> Option<(borrowed::AozoraNode<'a>, u32, bool)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // Shape 1: `に<kind>` — default right-side placement.
         // Shape 2: `の左に<kind>` — left-side placement (position flipped).
@@ -2668,11 +3268,25 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             open_span.start
         };
         let consumed_predecessor = consume_start < open_span.start;
+        // Ambiguity: a *single* target that occurs more than once in the
+        // look-back window has no unique referent. Multi-target brackets
+        // (`「A」「B」`) name distinct runs and are not "ambiguous" in this
+        // sense, so they never flag. `matches` counts non-overlapping
+        // occurrences, which is the right notion of "candidate runs".
+        let ambiguous = if let [only] = extracted.targets.as_slice() {
+            self.source[..open_span.start as usize]
+                .matches(only)
+                .count()
+                >= 2
+        } else {
+            false
+        };
         let target = build_bouten_target(&extracted.targets, self.alloc);
         Some((
             self.alloc
                 .bouten(kind, target, position, consumed_predecessor),
             consume_start,
+            ambiguous,
         ))
     }
 }
@@ -2711,6 +3325,22 @@ fn build_bouten_target<'a>(
     }
 }
 
+/// Outcome of [`RecogniseCtx::classify_forward_tcy`].
+///
+/// Distinguishes a recognised 縦中横 from a directive whose `は縦中横`
+/// shape matched but whose target is absent from the look-back (which
+/// still warrants a `tcy_target_not_found` warning even though the
+/// bracket degrades to `Annotation{Unknown}`), and from a bracket that is
+/// not a 縦中横 directive at all (silent fall-through).
+enum ForwardTcy<'a> {
+    /// A 縦中横 with a located target — the node plus its consume start.
+    Recognised(borrowed::AozoraNode<'a>, u32),
+    /// `は縦中横` shape matched but the target has no preceding referent.
+    ShapedNoTarget,
+    /// Not a 縦中横 directive.
+    NotTcy,
+}
+
 /// Classify a `［＃「target」は縦中横］` forward-reference
 /// tate-chu-yoko (horizontal-in-vertical) annotation.
 ///
@@ -2729,36 +3359,43 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
-        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+    ) -> ForwardTcy<'a> {
+        let Some(extracted) = extract_forward_quote_targets(view, self.source, open_idx, close_idx)
+        else {
+            return ForwardTcy::NotTcy;
+        };
         if extracted.suffix != "は縦中横" {
-            return None;
+            return ForwardTcy::NotTcy;
         }
-        let first = extracted.targets.first()?;
-        // Same rationale as `classify_forward_bouten` — the styling has no
-        // meaning without a preceding target literal.
+        let Some(first) = extracted.targets.first() else {
+            return ForwardTcy::NotTcy;
+        };
+        // The shape is a 縦中横 directive. If its target has no referent in
+        // the preceding text the styling is meaningless — flag it (the
+        // caller turns this into `tcy_target_not_found`) and let the bracket
+        // fall through to `Annotation{Unknown}`.
         if !forward_target_is_preceded(view.events, self.source, open_idx, first) {
-            return None;
+            return ForwardTcy::ShapedNoTarget;
         }
         // Same `consume_start` shrink as `classify_forward_bouten`: pull
         // the span back to swallow the immediately-preceding literal so
         // `昭和64［＃「64」は縦中横］年` renders as `昭和<span
         // class="tcy">64</span>年` instead of doubling the digits.
-        let &PairEvent::PairOpen {
+        let Some(&PairEvent::PairOpen {
             span: open_span, ..
-        } = view.events.get(open_idx)?
+        }) = view.events.get(open_idx)
         else {
-            return None;
+            return ForwardTcy::NotTcy;
         };
         let consume_start =
             find_immediate_predecessor_target_position(view.events, self.source, open_idx, first)
                 .unwrap_or(open_span.start);
         let consumed_predecessor = consume_start < open_span.start;
         let text = self.alloc.content_plain(first);
-        Some((
+        ForwardTcy::Recognised(
             self.alloc.tate_chu_yoko(text, consumed_predecessor),
             consume_start,
-        ))
+        )
     }
 }
 
@@ -3014,10 +3651,14 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
 /// (unlike bouten's `に`), and the keyword selects the Markdown heading
 /// level: `大見出し` → 1, `中見出し` → 2, `小見出し` → 3.
 ///
-/// The crate docs call out that 大/中/小 headings are promoted to
-/// `aozora_syntax::AozoraHeading` by `aozora::post_process`; this
-/// classifier only marks the position. 窓見出し / 副見出し remain
-/// first-class on `AozoraNode::AozoraHeading` via a separate path.
+/// When the (single) referent is the bare line immediately above the
+/// directive, the line is promoted in place to a block
+/// `borrowed::AozoraHeading` (大→`<h1>` / 中→`<h2>` / 小→`<h3>`): the
+/// consume span is pulled back over that line so the heading element is
+/// its sole rendered copy. When the referent is not a clean preceding
+/// line, the classifier keeps the inline `borrowed::HeadingHint` marker
+/// at the directive position (information-preserving, never promoted to
+/// an empty or misplaced heading).
 ///
 /// Same `forward_target_is_preceded` gate as forward bouten: a heading
 /// hint that names a target which does not appear in the preceding
@@ -3031,10 +3672,10 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<borrowed::AozoraNode<'a>> {
+    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let rest = extracted.suffix.strip_prefix("は")?;
-        let level = heading_level_from_suffix(rest)?;
+        let (style, kind) = parse_heading_keyword(rest)?;
 
         // Reject hints whose targets are not preceded by matching text.
         // See `classify_forward_bouten` for the same rationale.
@@ -3047,29 +3688,317 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             }
         }
 
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+
+        // Promote when the single referent is the bare line right above
+        // the directive: pull the consume span back over `序章\n` so the
+        // `<hN>` (carrying the heading text) is the sole rendered copy.
+        if let [only] = extracted.targets.as_slice()
+            && let Some(consume_start) =
+                find_heading_predecessor_position(view.events, self.source, open_idx, only)
+        {
+            let text = self.alloc.content_plain(only);
+            let node = self.alloc.aozora_heading(kind, style, text);
+            return Some((node, consume_start));
+        }
+
+        // Fallback: keep the inline hint marker at the directive position.
         // Concatenate targets in the (rare) multi-quote case so the full
-        // named run drives the heading content. For the 17 k-work corpus
-        // this is always a single quote, but the concat keeps the shape
-        // parallel to forward bouten.
+        // named run drives the hint content. The 同行 / 窓 styles run into
+        // the body on their own line, so they land here rather than promoting.
         let combined: String = extracted.targets.iter().copied().collect();
         if combined.is_empty() {
             return None;
         }
-
-        Some(self.alloc.heading_hint(level, &combined))
+        Some((
+            self.alloc
+                .heading_hint(heading_level_u8(kind), style, &combined),
+            open_span.start,
+        ))
     }
 }
 
-/// Map the keyword after `は` to a Markdown heading level per the
-/// Aozora annotation manual
-/// (<https://www.aozora.gr.jp/annotation/heading.html>). Only the three
-/// first-class levels are recognised; 窓見出し / 副見出し remain on
-/// `AozoraHeading`.
-fn heading_level_from_suffix(s: &str) -> Option<u8> {
+/// Classify a `「X」の左に「Y」のルビ` forward-reference **left-side ruby** — the
+/// building block of a 再読文字 (saidoku-moji). The target `X` is pulled back
+/// (mirroring `classify_forward_bouten`); the reading `Y` attaches on the left.
+/// Single-target only; the `の左に「…」のルビ` suffix shape is unique, so a
+/// non-ruby `の左に…` (left-side bouten) never reaches here.
+impl<'a> RecogniseCtx<'_, 'a, '_> {
+    fn classify_forward_left_ruby(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        let [target] = extracted.targets.as_slice() else {
+            return None;
+        };
+        // suffix == の左に「<reading>」のルビ
+        let reading_text = extracted
+            .suffix
+            .strip_prefix("の左に「")?
+            .strip_suffix("」のルビ")?;
+        if reading_text.is_empty() {
+            return None;
+        }
+        if !forward_target_is_preceded(view.events, self.source, open_idx, target) {
+            return None;
+        }
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        let consume_start =
+            find_immediate_predecessor_target_position(view.events, self.source, open_idx, target)
+                .unwrap_or(open_span.start);
+        let base = self.alloc.content_plain(target);
+        let reading = self.alloc.content_plain(reading_text);
+        Some((self.alloc.left_ruby(base, reading), consume_start))
+    }
+}
+
+/// Classify a `「X」の左に「Y」の注記` forward-reference **left-side
+/// annotation** (注記). The structural twin of
+/// [`Self::classify_forward_left_ruby`] — same single-target pull-back — but
+/// the `の注記` keyword selects a distinct [`borrowed::AozoraNode::SideNote`]
+/// node, so it round-trips to `の注記`, not `のルビ`. The `の左に「…」の注記`
+/// suffix is unique, so the left-side bouten / left-ruby classifiers above
+/// have already declined.
+impl<'a> RecogniseCtx<'_, 'a, '_> {
+    fn classify_forward_left_annotation(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        let [target] = extracted.targets.as_slice() else {
+            return None;
+        };
+        // suffix == の左に「<note>」の注記
+        let note_text = extracted
+            .suffix
+            .strip_prefix("の左に「")?
+            .strip_suffix("」の注記")?;
+        if note_text.is_empty() {
+            return None;
+        }
+        if !forward_target_is_preceded(view.events, self.source, open_idx, target) {
+            return None;
+        }
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        let consume_start =
+            find_immediate_predecessor_target_position(view.events, self.source, open_idx, target)
+                .unwrap_or(open_span.start);
+        let base = self.alloc.content_plain(target);
+        let note = self.alloc.content_plain(note_text);
+        Some((self.alloc.side_note(base, note), consume_start))
+    }
+}
+
+/// Classify a `［＃「target」は太字／斜体］` forward-reference emphasis.
+///
+/// The `は`-form leaf counterpart of the `［＃太字］…［＃太字終わり］`
+/// range container (`parse_emphasis_body`). Shares the quote-extraction
+/// and predecessor-pull-back machinery with `classify_forward_tcy` /
+/// `classify_forward_heading`: the suffix after the target must start with
+/// `は`, and the keyword selects 太字 (`<b>`) or 斜体 (`<i>`).
+///
+/// Single-target only — `「A」「B」は太字` is not a real Aozora shape and
+/// would not round-trip byte-exactly, so it falls through to
+/// `Annotation{Unknown}`. The `forward_target_is_preceded` gate rejects a
+/// target with no referent (emphasis over nothing); the
+/// `find_immediate_predecessor_target_position` pull-back swallows the
+/// immediately-preceding literal (the dominant
+/// `作者附記［＃「作者附記」は太字］` shape) so the `<b>` / `<i>` is its sole
+/// rendered copy.
+impl<'a> RecogniseCtx<'_, 'a, '_> {
+    fn classify_forward_emphasis(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        let rest = extracted.suffix.strip_prefix("は")?;
+        let kind = emphasis_kind_from_suffix(rest)?;
+        let [only] = extracted.targets.as_slice() else {
+            return None;
+        };
+        if !forward_target_is_preceded(view.events, self.source, open_idx, only) {
+            return None;
+        }
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        let consume_start =
+            find_immediate_predecessor_target_position(view.events, self.source, open_idx, only)
+                .unwrap_or(open_span.start);
+        let consumed_predecessor = consume_start < open_span.start;
+        let text = self.alloc.content_plain(only);
+        Some((
+            self.alloc.emphasis(kind, text, consumed_predecessor),
+            consume_start,
+        ))
+    }
+}
+
+/// Map an [`AozoraHeadingKind`] (大/中/小) to the numeric outline level
+/// (1/2/3) the inline `heading-hint` carries in `data-level`.
+const fn heading_level_u8(kind: AozoraHeadingKind) -> u8 {
+    match kind {
+        AozoraHeadingKind::Medium => 2,
+        AozoraHeadingKind::Small => 3,
+        // 大見出し and any future level default to the top level.
+        _ => 1,
+    }
+}
+
+/// Byte position where `target` begins, **only if** it is the bare line
+/// immediately preceding the `［` at `open_idx` — i.e. `target` followed
+/// by a single `\n`, and itself starting at a line boundary (BOF or after
+/// a `\n`). The promoted heading's consume span is pulled back to this
+/// position so `序章\n［＃「序章」は…見出し］` collapses into one
+/// `AozoraHeading`; the mandatory `\n` keeps the serializer's round-trip
+/// (`<text>\n［＃…］`) byte-identical to the source. Returns `None`
+/// (→ inline `HeadingHint` fallback) for any other shape.
+fn find_heading_predecessor_position(
+    events: &[PairEvent],
+    source: &str,
+    open_idx: usize,
+    target: &str,
+) -> Option<u32> {
+    let &PairEvent::PairOpen { span, .. } = events.get(open_idx)? else {
+        return None;
+    };
+    let bytes = source.as_bytes();
+    let cutoff = span.start as usize;
+    // The heading sits on its own line directly above the directive.
+    if cutoff == 0 || bytes[cutoff - 1] != b'\n' {
+        return None;
+    }
+    let text_end = cutoff - 1;
+    let len = target.len();
+    if text_end < len {
+        return None;
+    }
+    let candidate_start = text_end - len;
+    if &bytes[candidate_start..text_end] != target.as_bytes() {
+        return None;
+    }
+    // The target must occupy the whole line (BOF or preceded by `\n`).
+    if candidate_start != 0 && bytes[candidate_start - 1] != b'\n' {
+        return None;
+    }
+    u32::try_from(candidate_start).ok()
+}
+
+/// Parse a heading keyword into `(style, kind)`. An optional `同行`
+/// (same-line) / `窓` (window) prefix selects the style; the remaining
+/// `大 / 中 / 小見出し` selects the level. Shared by the forward-reference
+/// hint (`「X」はSTYLEレベル見出し`) and the paired / block container forms
+/// ([`parse_heading_directive`]).
+///
+/// `副見出し` is not a real annotation — it never occurs in the corpus — so
+/// it matches nothing and the directive falls through to `Annotation{Unknown}`.
+/// The 同行 / 窓 styles cross with every level (`同行中見出し`, `窓小見出し`, …).
+fn parse_heading_keyword(s: &str) -> Option<(AozoraHeadingStyle, AozoraHeadingKind)> {
+    // An optional 同行 / 窓 style prefix, else the standard style; `rest` is
+    // the remaining 大/中/小見出し keyword.
+    let (style, rest) = [
+        ("同行", AozoraHeadingStyle::SameLine),
+        ("窓", AozoraHeadingStyle::Window),
+    ]
+    .into_iter()
+    .find_map(|(prefix, style)| s.strip_prefix(prefix).map(|rest| (style, rest)))
+    .unwrap_or((AozoraHeadingStyle::Standard, s));
+    let kind = match rest {
+        "大見出し" => AozoraHeadingKind::Large,
+        "中見出し" => AozoraHeadingKind::Medium,
+        "小見出し" => AozoraHeadingKind::Small,
+        _ => return None,
+    };
+    Some((style, kind))
+}
+
+/// Recognise a **paired** (`STYLEレベル見出し` / `…見出し終わり`) or **block**
+/// (`ここからSTYLEレベル見出し` / `ここでSTYLEレベル見出し終わり`) heading
+/// directive body, returning `(container, is_open)`. These delimit their
+/// content and route through the container pairing machinery as
+/// [`ContainerKind::Heading`] (the counterpart of the `は`-form leaf heading).
+///
+/// The forward-reference `「X」は…見出し` hint starts with `「`, so it never
+/// matches here; a `ここから…` / `…終わり` body that is not a heading keyword
+/// (e.g. `ここから2字下げ`) fails `parse_heading_keyword` and falls through to
+/// the body dispatcher.
+fn parse_heading_directive(body: &str) -> Option<(ContainerKind, bool)> {
+    if let Some(rest) = body.strip_prefix("ここから") {
+        let (style, kind) = parse_heading_keyword(rest)?;
+        return Some((
+            ContainerKind::Heading {
+                kind,
+                style,
+                block: true,
+            },
+            true,
+        ));
+    }
+    if let Some(rest) = body.strip_prefix("ここで") {
+        let (style, kind) = parse_heading_keyword(rest.strip_suffix("終わり")?)?;
+        return Some((
+            ContainerKind::Heading {
+                kind,
+                style,
+                block: true,
+            },
+            false,
+        ));
+    }
+    if let Some(inner) = body.strip_suffix("終わり") {
+        let (style, kind) = parse_heading_keyword(inner)?;
+        return Some((
+            ContainerKind::Heading {
+                kind,
+                style,
+                block: false,
+            },
+            false,
+        ));
+    }
+    let (style, kind) = parse_heading_keyword(body)?;
+    Some((
+        ContainerKind::Heading {
+            kind,
+            style,
+            block: false,
+        },
+        true,
+    ))
+}
+
+/// Map the keyword after `は` to an [`EmphasisKind`]: 太字 → Bold,
+/// 斜体 → Italic (per <https://www.aozora.gr.jp/annotation/emphasis.html>).
+/// Unknown suffixes return `None` (→ `Annotation{Unknown}`).
+fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
     Some(match s {
-        "大見出し" => 1,
-        "中見出し" => 2,
-        "小見出し" => 3,
+        "太字" => EmphasisKind::Bold,
+        "斜体" => EmphasisKind::Italic,
         _ => return None,
     })
 }
@@ -3100,6 +4029,43 @@ fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
         "波線" => BoutenKind::WavyLine,
         "傍線" => BoutenKind::UnderLine,
         "二重傍線" => BoutenKind::DoubleUnderLine,
+        "鎖線" => BoutenKind::ChainLine,
+        "破線" => BoutenKind::DashedLine,
+        "黒三角傍点" => BoutenKind::BlackTriangle,
+        _ => return None,
+    })
+}
+
+/// Parse a 傍点/傍線 range-form body into `(kind, position, is_close)`.
+/// Strips an optional `左に` left-side prefix and an optional `終わり`
+/// close suffix; the remainder must be a [`bouten_kind_from_suffix`]
+/// keyword. Returns `None` (→ `Annotation{Unknown}`) otherwise — e.g.
+/// for `鎖線` / `破線`, which the kind table does not yet cover.
+fn parse_bouten_range_body(body: &str) -> Option<(BoutenKind, BoutenPosition, bool)> {
+    let (position, rest) = body
+        .strip_prefix("左に")
+        .map_or((BoutenPosition::Right, body), |r| (BoutenPosition::Left, r));
+    let (is_close, kind_str) = rest
+        .strip_suffix("終わり")
+        .map_or((false, rest), |k| (true, k));
+    let kind = bouten_kind_from_suffix(kind_str)?;
+    Some((kind, position, is_close))
+}
+
+/// Parse a 太字 / 斜体 range / block body into `(kind, block, is_close)`.
+/// `block` is `true` for the `ここから…` / `ここで…終わり` block form,
+/// `false` for the bare inline range `［＃太字］…［＃太字終わり］`. Returns
+/// `None` (→ `Annotation{Unknown}`) for any non-emphasis body.
+fn parse_emphasis_body(body: &str) -> Option<(EmphasisKind, bool, bool)> {
+    Some(match body {
+        "太字" => (EmphasisKind::Bold, false, false),
+        "太字終わり" => (EmphasisKind::Bold, false, true),
+        "ここから太字" => (EmphasisKind::Bold, true, false),
+        "ここで太字終わり" => (EmphasisKind::Bold, true, true),
+        "斜体" => (EmphasisKind::Italic, false, false),
+        "斜体終わり" => (EmphasisKind::Italic, false, true),
+        "ここから斜体" => (EmphasisKind::Italic, true, false),
+        "ここで斜体終わり" => (EmphasisKind::Italic, true, true),
         _ => return None,
     })
 }
@@ -3165,7 +4131,7 @@ mod tests {
         reason = "individual tests pattern-match on subsets; bringing them all in keeps the import block stable"
     )]
     use aozora_syntax::borrowed::{
-        Annotation, AozoraNode, Arena, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten,
+        AngleQuote, Annotation, AozoraNode, Arena, Bouten, Content, Gaiji, HeadingHint, Kaeriten,
         Ruby, Sashie, Segment, TateChuYoko,
     };
 
@@ -3572,12 +4538,12 @@ mod tests {
     }
 
     #[test]
-    fn section_break_choho_recognized() {
+    fn section_break_kaicho_recognized() {
         run!(out, "［＃改丁］");
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::SectionBreak(SectionKind::Choho))
+            Some(AozoraNode::SectionBreak(SectionKind::Kaicho))
         ));
     }
 
@@ -3587,7 +4553,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::SectionBreak(SectionKind::Dan))
+            Some(AozoraNode::SectionBreak(SectionKind::Kaidan))
         ));
     }
 
@@ -3597,7 +4563,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::SectionBreak(SectionKind::Spread))
+            Some(AozoraNode::SectionBreak(SectionKind::Kaimihiraki))
         ));
     }
 
@@ -4533,29 +5499,29 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Double angle-bracket `《《X》》`.
+    // Double-angle quotation `≪X≫`.
     // ---------------------------------------------------------------
 
     #[test]
-    fn double_ruby_plain_body_produces_double_ruby_span() {
-        run!(out, "前《《強調》》後");
+    fn angle_quote_plain_body_produces_angle_quote_span() {
+        run!(out, "前≪強調≫後");
         let aozora = out
             .spans
             .iter()
             .find_map(aozora_node)
-            .expect("DoubleRuby expected");
-        let AozoraNode::DoubleRuby(d) = aozora else {
-            panic!("expected DoubleRuby, got {aozora:?}");
+            .expect("AngleQuote expected");
+        let AozoraNode::AngleQuote(d) = aozora else {
+            panic!("expected AngleQuote, got {aozora:?}");
         };
         assert_eq!(d.content.as_plain(), Some("強調"));
     }
 
     #[test]
-    fn double_ruby_consumes_entire_source_span() {
-        // Source `《《X》》` must fold into ONE Aozora span that covers
-        // the double brackets AND the body. No `《` characters may
+    fn angle_quote_consumes_entire_source_span() {
+        // Source `≪X≫` must fold into ONE Aozora span that covers
+        // the angle brackets AND the body. No `≪` characters may
         // leak to the outer `spans` list.
-        let src = "《《ABC》》";
+        let src = "≪ABC≫";
         run!(out, src);
         let aozora_count = out
             .spans
@@ -4564,7 +5530,7 @@ mod tests {
             .count();
         assert_eq!(
             aozora_count, 1,
-            "one DoubleRuby span expected: {:?}",
+            "one AngleQuote span expected: {:?}",
             out.spans
         );
         let aozora = out
@@ -4577,18 +5543,18 @@ mod tests {
     }
 
     #[test]
-    fn double_ruby_with_nested_gaiji_folds_into_segments() {
+    fn angle_quote_with_nested_gaiji_folds_into_segments() {
         // The helper reuses `build_content_from_body`, so a `※［＃…］`
-        // inside the double brackets must surface as `Segment::Gaiji`
+        // inside the angle brackets must surface as `Segment::Gaiji`
         // in the content — same invariant as nested gaiji in ruby.
-        run!(out, "《《※［＃「ほ」、第3水準1-85-54］》》");
+        run!(out, "≪※［＃「ほ」、第3水準1-85-54］≫");
         let aozora = out
             .spans
             .iter()
             .find_map(aozora_node)
             .expect("Aozora expected");
-        let AozoraNode::DoubleRuby(d) = aozora else {
-            panic!("expected DoubleRuby, got {aozora:?}");
+        let AozoraNode::AngleQuote(d) = aozora else {
+            panic!("expected AngleQuote, got {aozora:?}");
         };
         let Content::Segments(segs) = &d.content.get() else {
             panic!("expected Segments, got {:?}", d.content.get());
@@ -4598,13 +5564,13 @@ mod tests {
     }
 
     #[test]
-    fn double_ruby_empty_body_falls_through_to_plain() {
-        // `《《》》` with no body is not classified as DoubleRuby.
+    fn angle_quote_empty_body_falls_through_to_plain() {
+        // `≪≫` with no body is not classified as AngleQuote.
         // The empty payload would violate the
         // `borrowed::NonEmpty<Content>` invariant; instead the bytes
         // flow through as plain text (the catch-all `replay_unrecognised_body`
         // fold). No Aozora span is emitted for the empty case.
-        run!(out, "A《《》》B");
+        run!(out, "A≪≫B");
         let aozora_count = out
             .spans
             .iter()
@@ -4612,7 +5578,7 @@ mod tests {
             .count();
         assert_eq!(
             aozora_count, 0,
-            "empty double-ruby must not emit a DoubleRuby span — \
+            "empty angle-quote must not emit a AngleQuote span — \
              empty content violates the NonEmpty<Content> invariant"
         );
     }
@@ -4623,7 +5589,11 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Indent { amount: 1 })
+            SpanKind::BlockOpen(ContainerKind::Indent {
+                amount: 1,
+                wrap: None,
+                center: false
+            })
         ));
     }
 
@@ -4632,7 +5602,24 @@ mod tests {
         run!(out, "［＃ここから３字下げ］");
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Indent { amount: 3 })
+            SpanKind::BlockOpen(ContainerKind::Indent {
+                amount: 3,
+                wrap: None,
+                center: false
+            })
+        ));
+    }
+
+    #[test]
+    fn container_open_wrap_indent_parses_both_amounts() {
+        run!(out, "［＃ここから２字下げ、折り返して４字下げ］");
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::Indent {
+                amount: 2,
+                wrap: Some(4),
+                center: false
+            })
         ));
     }
 

@@ -1,0 +1,54 @@
+{
+  "name": "table_container",
+  "meta": {
+    "feature": "tables_columns",
+    "level": "should",
+    "spec_section": "6.13"
+  },
+  "source": "［＃ここから表］\n項目　値\n［＃ここで表終わり］\n",
+  "expected": {
+    "html": "<div class=\"aozora-container aozora-container-table\">\n<p>項目　値</p>\n</div>",
+    "serialize": "\n\n［＃ここから表］\n\n項目　値\n\n［＃ここで表終わり］\n\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 0,
+          "end": 24
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 38,
+          "end": 68
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 21,
+          "end": 24
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 38,
+          "end": 41
+        },
+        "close": {
+          "start": 65,
+          "end": 68
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

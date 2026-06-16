@@ -1,0 +1,79 @@
+# Publish workflow for the portable Extism plugin `aozora.wasm`.
+#
+# The whole point of the Extism strategy (ADR-0006): ONE portable wasm
+# artifact serves every language's host SDK — there is no per-(OS × arch)
+# native build matrix. This workflow builds that single artifact, shrinks
+# it with wasm-opt, and attaches it (plus a SHA-256 checksum) to a GitHub
+# Release. Every host SDK (Go / Ruby / …) embeds or downloads these exact
+# bytes.
+#
+# Manual trigger only; defaults to a dry run (build + checksum, no upload).
+#
+# How to run a real publish (attach to an existing release tag):
+#   gh workflow run publish-extism-wasm.yml -f tag=v0.4.1 -f dry_run=false
+
+name: publish-extism-wasm
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach aozora.wasm to (e.g. v0.4.1)"
+        type: string
+        required: true
+      dry_run:
+        description: "Build + checksum only; skip the release upload"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write # upload release assets
+
+concurrency:
+  group: publish-extism-wasm
+  cancel-in-progress: false
+
+env:
+  # Keep in lock-step with the Dockerfile's BINARYEN_VERSION so the
+  # published artifact is byte-reproducible with `just extism-build`.
+  BINARYEN_VERSION: "130"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: publish-extism-wasm
+
+      - name: Install binaryen (wasm-opt)
+        run: |
+          curl -L --proto '=https' --tlsv1.2 -fsSL \
+            "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz" \
+            | tar -xz -C /opt
+          echo "/opt/binaryen-version_${BINARYEN_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Build aozora.wasm
+        run: cargo build --release --target wasm32-unknown-unknown -p aozora-extism
+
+      - name: Optimize + stage artifact
+        run: |
+          mkdir -p dist
+          wasm-opt -O3 --enable-bulk-memory --enable-mutable-globals \
+            target/wasm32-unknown-unknown/release/aozora_extism.wasm \
+            -o dist/aozora.wasm
+          ( cd dist && sha256sum aozora.wasm > aozora.wasm.sha256 )
+          ls -l dist
+          cat dist/aozora.wasm.sha256
+
+      - name: Upload to GitHub Release (live)
+        if: inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.tag }}" dist/aozora.wasm dist/aozora.wasm.sha256 --clobber

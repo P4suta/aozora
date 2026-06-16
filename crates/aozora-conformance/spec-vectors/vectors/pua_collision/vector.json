@@ -1,0 +1,23 @@
+{
+  "name": "pua_collision",
+  "meta": {
+    "feature": "recovery",
+    "level": "must",
+    "spec_section": "6"
+  },
+  "source": "abcdef\n",
+  "expected": {
+    "html": "<p>abc�def</p>\n",
+    "serialize": "abc�def\n",
+    "diagnostics": [
+      {
+        "code": "source-contains-pua",
+        "severity": "warning",
+        "span": {
+          "start": 3,
+          "end": 6
+        }
+      }
+    ]
+  }
+}

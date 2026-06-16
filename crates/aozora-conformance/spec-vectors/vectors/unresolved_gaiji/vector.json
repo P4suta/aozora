@@ -1,0 +1,56 @@
+{
+  "name": "unresolved_gaiji",
+  "meta": {
+    "feature": "gaiji",
+    "level": "should",
+    "spec_section": "6.4"
+  },
+  "source": "※［＃「架空の外字」、第3水準99-99-99］",
+  "expected": {
+    "html": "<p><span class=\"aozora-gaiji\" data-description=\"架空の外字\">架空の外字</span></p>\n",
+    "serialize": "※［＃「架空の外字」、第3水準99-99-99］",
+    "nodes": [
+      {
+        "kind": "gaiji",
+        "span": {
+          "start": 0,
+          "end": 54
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 27,
+          "end": 30
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 51,
+          "end": 54
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "unresolved-gaiji",
+        "severity": "warning",
+        "span": {
+          "start": 0,
+          "end": 54
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "name": "heading_block",
+  "meta": {
+    "feature": "heading",
+    "level": "should",
+    "spec_section": "6.10"
+  },
+  "source": "前文。\n［＃ここから中見出し］\n章タイトル\n［＃ここで中見出し終わり］\n後文。\n",
+  "expected": {
+    "html": "<p>前文。</p>\n<h2 class=\"aozora-heading aozora-heading-medium\">章タイトル</h2>\n<p>後文。</p>\n",
+    "serialize": "前文。\n\n［＃ここから中見出し］\n\n章タイトル\n\n［＃ここで中見出し終わり］\n\n後文。\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 10,
+          "end": 43
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 60,
+          "end": 99
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 10,
+          "end": 13
+        },
+        "close": {
+          "start": 40,
+          "end": 43
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 60,
+          "end": 63
+        },
+        "close": {
+          "start": 96,
+          "end": 99
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

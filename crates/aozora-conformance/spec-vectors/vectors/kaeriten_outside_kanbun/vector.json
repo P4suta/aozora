@@ -1,0 +1,45 @@
+{
+  "name": "kaeriten_outside_kanbun",
+  "meta": {
+    "feature": "kunten",
+    "level": "may",
+    "spec_section": "6.5"
+  },
+  "source": "これは［＃レ］と書いた。",
+  "expected": {
+    "html": "<p>これは<sup class=\"aozora-kaeriten\">レ</sup>と書いた。</p>\n",
+    "serialize": "これは［＃レ］と書いた。",
+    "nodes": [
+      {
+        "kind": "kaeriten",
+        "span": {
+          "start": 9,
+          "end": 21
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 18,
+          "end": 21
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "kaeriten-outside-kanbun",
+        "severity": "warning",
+        "span": {
+          "start": 9,
+          "end": 21
+        }
+      }
+    ]
+  }
+}

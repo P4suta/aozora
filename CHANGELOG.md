@@ -8,6 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 
+### Changed
+
+- **notation**: ⚠ BREAKING — 二重山括弧 is now the `≪…≫` (U+226A/U+226B) input
+  encoding, rendered as `《…》` (U+300A/U+300B) — correcting a model that was
+  inverted and misnamed. The node / wire kind `DoubleRuby` / `doubleRuby` is
+  renamed `AngleQuote` / `angleQuote`; the CSS class `aozora-double-ruby` →
+  `aozora-angle-quote`; the pandoc `Span` class `double-ruby` → `angle-quote`.
+  A literal `《《…》》` in source is now a `nested-ruby` diagnostic with plain
+  recovery. See ADR-0011.
+
+
 ### Build
 
 - **release**: Make internal crates publishable and bump to v0.4.1

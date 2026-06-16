@@ -11,10 +11,13 @@ use core::fmt::{self, Write};
 
 use aozora_pipeline::{BorrowedLexOutput, has_long_rule_line, isolate_decorative_rules};
 use aozora_syntax::borrowed::{
-    Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, NodeRef,
-    Ruby, Sashie, Segment, TateChuYoko,
+    AngleQuote, Annotation, AozoraHeading, AozoraNode, Bouten, Content, Emphasis, Gaiji,
+    HeadingHint, Kaeriten, NodeRef, Ruby, Sashie, Segment, SideNote, TateChuYoko,
 };
-use aozora_syntax::{AlignEnd, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind};
+use aozora_syntax::{
+    AlignEnd, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition, Center,
+    ContainerKind, EmphasisKind, Indent, RubySide, SectionKind,
+};
 use memchr::memchr_iter;
 
 /// First UTF-8 byte of every PUA sentinel (E001..E004). See
@@ -114,10 +117,10 @@ pub fn serialize_into<W: Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -> 
                 emit_aozora(node, writer)?;
             }
             (SentinelKind::BlockOpen, Some(NodeRef::BlockOpen(kind))) => {
-                writer.write_str(container_open_marker(kind))?;
+                emit_container_open(kind, writer)?;
             }
             (SentinelKind::BlockClose, Some(NodeRef::BlockClose(kind))) => {
-                writer.write_str(container_close_marker(kind))?;
+                emit_container_close(kind, writer)?;
             }
             // Sentinel hit without a corresponding registry entry, or
             // a kind/variant mismatch — pre-Phase-D the per-table
@@ -160,13 +163,17 @@ fn emit_aozora<W: Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
         AozoraNode::Gaiji(g) => emit_gaiji(g, out),
         AozoraNode::Kaeriten(k) => emit_kaeriten(k, out),
         AozoraNode::Annotation(a) => emit_annotation(a, out),
-        AozoraNode::DoubleRuby(d) => emit_double_ruby(d, out),
+        AozoraNode::AngleQuote(d) => emit_angle_quote(d, out),
+        AozoraNode::Emphasis(e) => emit_emphasis(e, out),
+        AozoraNode::SideNote(s) => emit_side_note(s, out),
         AozoraNode::PageBreak => out.write_str("［＃改ページ］"),
         AozoraNode::SectionBreak(kind) => emit_section_break(kind, out),
         AozoraNode::Indent(i) => emit_indent(i, out),
         AozoraNode::AlignEnd(a) => emit_align_end(a, out),
+        AozoraNode::Center(c) => emit_center(c, out),
         AozoraNode::Sashie(s) => emit_sashie(s, out),
         AozoraNode::HeadingHint(h) => emit_heading_hint(h, out),
+        AozoraNode::AozoraHeading(h) => emit_aozora_heading(h, out),
         // Variants the serializer doesn't yet cover: Container is
         // routed through the open/close sentinel path; Warichu /
         // Keigakomi / AozoraHeading land here as a diagnostic
@@ -180,11 +187,33 @@ fn emit_aozora<W: Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
 }
 
 fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
+    if matches!(r.side, RubySide::Left) {
+        // Left-side ruby: reconstruct `base［＃「base」の左に「reading」のルビ］`.
+        // The base is the pulled-back predecessor, so it precedes the directive.
+        emit_content(r.base.get(), out)?;
+        out.write_str("［＃「")?;
+        emit_content(r.base.get(), out)?;
+        out.write_str("」の左に「")?;
+        emit_content(r.reading.get(), out)?;
+        return out.write_str("」のルビ］");
+    }
     out.write_char('｜')?;
     emit_content(r.base.get(), out)?;
     out.write_char('《')?;
     emit_content(r.reading.get(), out)?;
     out.write_char('》')
+}
+
+fn emit_side_note<W: Write>(s: &SideNote<'_>, out: &mut W) -> fmt::Result {
+    // Reconstruct `base［＃「base」の左に「note」の注記］`; the base is the
+    // pulled-back predecessor, so it precedes the directive (mirrors the
+    // left-side ruby round-trip in `emit_ruby`).
+    emit_content(s.base.get(), out)?;
+    out.write_str("［＃「")?;
+    emit_content(s.base.get(), out)?;
+    out.write_str("」の左に「")?;
+    emit_content(s.note.get(), out)?;
+    out.write_str("」の注記］")
 }
 
 fn emit_bouten<W: Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {
@@ -248,6 +277,29 @@ fn emit_tate_chu_yoko<W: Write>(t: &TateChuYoko<'_>, out: &mut W) -> fmt::Result
     out.write_str("」は縦中横］")
 }
 
+/// Re-emit a forward-reference 太字 / 斜体 leaf as
+/// `<text>［＃「<text>」は太字／斜体］`. `consumed_predecessor` drives the
+/// leading literal re-emit, identical to `emit_bouten` / `emit_tate_chu_yoko`.
+fn emit_emphasis<W: Write>(e: &Emphasis<'_>, out: &mut W) -> fmt::Result {
+    if e.consumed_predecessor {
+        emit_content_as_plain(e.text.get(), out)?;
+    }
+    out.write_str("［＃「")?;
+    emit_content_as_plain(e.text.get(), out)?;
+    out.write_str("」は")?;
+    out.write_str(emphasis_kind_keyword(e.kind))?;
+    out.write_char('］')
+}
+
+const fn emphasis_kind_keyword(kind: EmphasisKind) -> &'static str {
+    match kind {
+        EmphasisKind::Italic => "斜体",
+        // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
+        // weight serialize as the bold keyword.
+        _ => "太字",
+    }
+}
+
 fn emit_gaiji<W: Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
     out.write_char('※')?;
     out.write_str("［＃「")?;
@@ -270,19 +322,17 @@ fn emit_annotation<W: Write>(a: &Annotation<'_>, out: &mut W) -> fmt::Result {
     out.write_str(a.raw.as_str())
 }
 
-fn emit_double_ruby<W: Write>(d: &DoubleRuby<'_>, out: &mut W) -> fmt::Result {
-    out.write_char('《')?;
-    out.write_char('《')?;
+fn emit_angle_quote<W: Write>(d: &AngleQuote<'_>, out: &mut W) -> fmt::Result {
+    out.write_char('≪')?;
     emit_content(d.content.get(), out)?;
-    out.write_char('》')?;
-    out.write_char('》')
+    out.write_char('≫')
 }
 
 fn emit_section_break<W: Write>(kind: SectionKind, out: &mut W) -> fmt::Result {
     let keyword = match kind {
-        SectionKind::Choho => "改丁",
-        SectionKind::Dan => "改段",
-        SectionKind::Spread => "改見開き",
+        SectionKind::Kaicho => "改丁",
+        SectionKind::Kaidan => "改段",
+        SectionKind::Kaimihiraki => "改見開き",
         _ => "改ページ",
     };
     out.write_str("［＃")?;
@@ -306,20 +356,66 @@ fn emit_align_end<W: Write>(a: AlignEnd, out: &mut W) -> fmt::Result {
     }
 }
 
+fn emit_center<W: Write>(c: Center, out: &mut W) -> fmt::Result {
+    out.write_str(if c.page {
+        "［＃ページの左右中央］"
+    } else {
+        "［＃中央揃え］"
+    })
+}
+
 fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃挿絵（")?;
     out.write_str(s.file.as_str())?;
     out.write_str("）入る］")
 }
 
+/// The optional `同行` / `窓` style prefix that precedes the level keyword in
+/// a `…は<style><level>見出し` directive (empty for the standard style).
+const fn heading_style_keyword(style: AozoraHeadingStyle) -> &'static str {
+    match style {
+        AozoraHeadingStyle::SameLine => "同行",
+        AozoraHeadingStyle::Window => "窓",
+        // Standard and any future style serialize without a prefix.
+        _ => "",
+    }
+}
+
+/// The `大 / 中 / 小見出し` level keyword (no delimiter), shared by the leaf
+/// heading, the hint, and the paired / block [`ContainerKind::Heading`].
+const fn heading_level_word(kind: AozoraHeadingKind) -> &'static str {
+    match kind {
+        AozoraHeadingKind::Medium => "中見出し",
+        AozoraHeadingKind::Small => "小見出し",
+        // 大見出し and any future level fall back to the 大見出し form.
+        _ => "大見出し",
+    }
+}
+
+fn emit_aozora_heading<W: Write>(h: &AozoraHeading<'_>, out: &mut W) -> fmt::Result {
+    // Reconstruct the promoted forward-reference shape, byte-identical to
+    // the source the classifier consumed:
+    //   <text>\n［＃「<text>」は<同行|窓>?<大|中|小>見出し］
+    emit_content(h.text.get(), out)?;
+    out.write_str("\n［＃「")?;
+    emit_content(h.text.get(), out)?;
+    out.write_str("」は")?;
+    out.write_str(heading_style_keyword(h.style))?;
+    out.write_str(heading_level_word(h.kind))?;
+    out.write_str("］")
+}
+
 fn emit_heading_hint<W: Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃「")?;
     out.write_str(h.target.as_str())?;
+    out.write_str("」は")?;
+    out.write_str(heading_style_keyword(h.style))?;
     out.write_str(match h.level {
-        1 => "」は大見出し］",
-        2 => "」は中見出し］",
-        _ => "」は小見出し］",
-    })
+        2 => "中見出し",
+        3 => "小見出し",
+        _ => "大見出し",
+    })?;
+    out.write_str("］")
 }
 
 const fn container_open_marker(kind: ContainerKind) -> &'static str {
@@ -340,6 +436,106 @@ const fn container_close_marker(kind: ContainerKind) -> &'static str {
     }
 }
 
+/// `左に` left-side prefix for a bouten range marker, or `""`.
+const fn bouten_left_prefix(position: BoutenPosition) -> &'static str {
+    match position {
+        BoutenPosition::Left => "左に",
+        _ => "",
+    }
+}
+
+/// Serialize a container open marker. 傍点 / 傍線 ranges reconstruct
+/// `［＃<左に?><variant>］`; the fixed-family containers use the static
+/// [`container_open_marker`].
+fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Result {
+    match kind {
+        ContainerKind::BoutenRange { kind, position } => write!(
+            out,
+            "［＃{}{}］",
+            bouten_left_prefix(position),
+            bouten_kind_keyword(kind)
+        ),
+        ContainerKind::Indent {
+            amount,
+            wrap: Some(wrap),
+            ..
+        } => write!(out, "［＃ここから{amount}字下げ、折り返して{wrap}字下げ］"),
+        // Combined 字下げ＋ページ左右中央 — an indented, page-centred block.
+        ContainerKind::Indent {
+            amount,
+            wrap: None,
+            center: true,
+        } => write!(out, "［＃ここから{amount}字下げ、ページの左右中央に］"),
+        // Plain 字下げ — preserve the amount. A bare container_open_marker
+        // fallback collapses it to ［＃ここから字下げ］, dropping N (a §7.6
+        // fixed-point violation). `amount == 1` keeps the idiomatic
+        // no-number 字下げ form (the IndentBlock1 opener).
+        ContainerKind::Indent {
+            amount: 1,
+            wrap: None,
+            center: false,
+        } => out.write_str("［＃ここから字下げ］"),
+        ContainerKind::Indent {
+            amount,
+            wrap: None,
+            center: false,
+        } => write!(out, "［＃ここから{amount}字下げ］"),
+        ContainerKind::Bold { block: false } => out.write_str("［＃太字］"),
+        ContainerKind::Bold { block: true } => out.write_str("［＃ここから太字］"),
+        ContainerKind::Italic { block: false } => out.write_str("［＃斜体］"),
+        ContainerKind::Italic { block: true } => out.write_str("［＃ここから斜体］"),
+        // Preserve the 地から N 字上げ offset. A bare fallback collapses
+        // every AlignEnd opener to ［＃ここから地付き］, silently dropping a
+        // non-zero offset (a §7.6 fixed-point violation). The close marker
+        // canonicalises to ［＃ここで地付き終わり］ for both forms (the
+        // close node carries no offset; the open-side payload is
+        // authoritative).
+        ContainerKind::AlignEnd { offset: 0 } => out.write_str("［＃ここから地付き］"),
+        ContainerKind::AlignEnd { offset } => write!(out, "［＃ここから地から{offset}字上げ］"),
+        // Preserve the width (byte-exact). A bare fallback would emit the
+        // 字下げ opener and silently mislabel the family.
+        ContainerKind::LineWidth { width } => write!(out, "［＃ここから{width}字詰め］"),
+        ContainerKind::Heading { kind, style, block } => write!(
+            out,
+            "［＃{}{}{}］",
+            if block { "ここから" } else { "" },
+            heading_style_keyword(style),
+            heading_level_word(kind),
+        ),
+        ContainerKind::Columns { count } => write!(out, "［＃ここから{count}段組み］"),
+        ContainerKind::Table => out.write_str("［＃ここから表］"),
+        _ => out.write_str(container_open_marker(kind)),
+    }
+}
+
+/// Serialize a container close marker — the bouten range close adds the
+/// `終わり` suffix to the same `［＃<左に?><variant>…］` form.
+fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Result {
+    match kind {
+        ContainerKind::BoutenRange { kind, position } => write!(
+            out,
+            "［＃{}{}終わり］",
+            bouten_left_prefix(position),
+            bouten_kind_keyword(kind)
+        ),
+        ContainerKind::Bold { block: false } => out.write_str("［＃太字終わり］"),
+        ContainerKind::Bold { block: true } => out.write_str("［＃ここで太字終わり］"),
+        ContainerKind::Italic { block: false } => out.write_str("［＃斜体終わり］"),
+        ContainerKind::Italic { block: true } => out.write_str("［＃ここで斜体終わり］"),
+        ContainerKind::LineWidth { .. } => out.write_str("［＃ここで字詰め終わり］"),
+        ContainerKind::Heading { kind, style, block } => write!(
+            out,
+            "［＃{}{}{}終わり］",
+            if block { "ここで" } else { "" },
+            heading_style_keyword(style),
+            heading_level_word(kind),
+        ),
+        ContainerKind::Columns { .. } => out.write_str("［＃ここで段組み終わり］"),
+        ContainerKind::Table => out.write_str("［＃ここで表終わり］"),
+        _ => out.write_str(container_close_marker(kind)),
+    }
+}
+
 const fn bouten_kind_keyword(kind: BoutenKind) -> &'static str {
     match kind {
         BoutenKind::WhiteSesame => "白ゴマ傍点",
@@ -352,6 +548,9 @@ const fn bouten_kind_keyword(kind: BoutenKind) -> &'static str {
         BoutenKind::WavyLine => "波線",
         BoutenKind::UnderLine => "傍線",
         BoutenKind::DoubleUnderLine => "二重傍線",
+        BoutenKind::ChainLine => "鎖線",
+        BoutenKind::DashedLine => "破線",
+        BoutenKind::BlackTriangle => "黒三角傍点",
         _ => "傍点",
     }
 }
@@ -495,6 +694,9 @@ mod tests {
             "text［＃改ページ］more",
             "※［＃「木＋吶のつくり」、第3水準1-85-54］",
             "［＃ここから2字下げ］\nA\n［＃ここで字下げ終わり］",
+            "本文［＃太字］註［＃太字終わり］。",
+            "重要［＃「重要」は太字］な点。",
+            "［＃ここから斜体］\nA\n［＃ここで斜体終わり］",
         ];
         for src in inputs {
             let first = ser(src);

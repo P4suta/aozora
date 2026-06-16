@@ -18,8 +18,8 @@
 use core::fmt;
 
 use aozora_pipeline::BorrowedLexOutput;
-use aozora_syntax::Container;
 use aozora_syntax::borrowed::{AozoraNode, NodeRef};
+use aozora_syntax::{Container, ContainerKind};
 use memchr::{memchr_iter, memchr3_iter};
 
 use crate::render_node;
@@ -145,16 +145,10 @@ pub fn render_into<W: fmt::Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -
                     state.after_block_emit();
                 }
                 (Structural::BlockOpen, Some(NodeRef::BlockOpen(kind))) => {
-                    state.before_block_emit(writer)?;
-                    let node = AozoraNode::Container(Container { kind });
-                    render_node::render(node, true, writer)?;
-                    state.after_block_emit();
+                    state.open_container(kind, writer)?;
                 }
                 (Structural::BlockClose, Some(NodeRef::BlockClose(kind))) => {
-                    state.before_block_emit(writer)?;
-                    let node = AozoraNode::Container(Container { kind });
-                    render_node::render(node, false, writer)?;
-                    state.after_block_emit();
+                    state.close_container(kind, writer)?;
                 }
                 // Sentinel without a registry hit is a pipeline bug.
                 // Best-effort policy: skip the sentinel and render the
@@ -208,6 +202,9 @@ fn sentinel_for_tail_byte(b: u8) -> Option<Structural> {
 struct RenderState {
     in_paragraph: bool,
     pending_block_separator: bool,
+    /// Inside a phrasing-content container (a heading): its `<hN>` is the
+    /// inline context, so [`Self::ensure_in_paragraph`] suppresses `<p>`.
+    in_heading: bool,
 }
 
 impl RenderState {
@@ -220,6 +217,11 @@ impl RenderState {
     }
 
     fn ensure_in_paragraph<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
+        // Phrasing content inside a heading renders directly under the `<hN>`;
+        // the heading element is the inline context, so no `<p>` is opened.
+        if self.in_heading {
+            return Ok(());
+        }
         if !self.in_paragraph {
             self.flush_pending_separator(out)?;
             out.write_str("<p>")?;
@@ -244,6 +246,45 @@ impl RenderState {
 
     fn after_block_emit(&mut self) {
         self.pending_block_separator = true;
+    }
+
+    /// Emit a container's opening tag, honouring its content model. An inline
+    /// container (傍点 / 傍線 range, bare-range 太字 / 斜体) stays in the
+    /// current paragraph; a phrasing-content container (a heading) flushes the
+    /// paragraph and then holds its content inline under the `<hN>`
+    /// (`in_heading`); every other block container flushes and brackets its
+    /// content as block paragraphs.
+    fn open_container<W: fmt::Write>(&mut self, kind: ContainerKind, out: &mut W) -> fmt::Result {
+        let node = AozoraNode::Container(Container { kind });
+        if kind.is_inline() {
+            self.ensure_in_paragraph(out)?;
+            return render_node::render(node, true, out);
+        }
+        self.before_block_emit(out)?;
+        render_node::render(node, true, out)?;
+        if kind.content_is_phrasing() {
+            self.in_heading = true;
+        } else {
+            self.after_block_emit();
+        }
+        Ok(())
+    }
+
+    /// Emit a container's closing tag — the mirror of [`Self::open_container`].
+    fn close_container<W: fmt::Write>(&mut self, kind: ContainerKind, out: &mut W) -> fmt::Result {
+        let node = AozoraNode::Container(Container { kind });
+        if kind.is_inline() {
+            self.ensure_in_paragraph(out)?;
+            return render_node::render(node, false, out);
+        }
+        if kind.content_is_phrasing() {
+            self.in_heading = false;
+        } else {
+            self.before_block_emit(out)?;
+        }
+        render_node::render(node, false, out)?;
+        self.after_block_emit();
+        Ok(())
     }
 }
 

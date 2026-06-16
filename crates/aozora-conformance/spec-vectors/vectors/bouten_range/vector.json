@@ -1,0 +1,126 @@
+{
+  "name": "bouten_range",
+  "meta": {
+    "feature": "bouten",
+    "level": "should",
+    "spec_section": "6.2"
+  },
+  "source": "本文［＃傍点］甲［＃傍点終わり］と［＃二重傍線］乙［＃二重傍線終わり］と［＃左に傍線］丙［＃左に傍線終わり］。",
+  "expected": {
+    "html": "<p>本文<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">甲</em>と<em class=\"aozora-bouten aozora-bouten-double-under-line aozora-bouten-right\">乙</em>と<em class=\"aozora-bouten aozora-bouten-under-line aozora-bouten-left\">丙</em>。</p>\n",
+    "serialize": "本文［＃傍点］甲［＃傍点終わり］と［＃二重傍線］乙［＃二重傍線終わり］と［＃左に傍線］丙［＃左に傍線終わり］。",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 6,
+          "end": 21
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 24,
+          "end": 48
+        }
+      },
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 51,
+          "end": 72
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 75,
+          "end": 105
+        }
+      },
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 108,
+          "end": 129
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 132,
+          "end": 162
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 18,
+          "end": 21
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 24,
+          "end": 27
+        },
+        "close": {
+          "start": 45,
+          "end": 48
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 51,
+          "end": 54
+        },
+        "close": {
+          "start": 69,
+          "end": 72
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 75,
+          "end": 78
+        },
+        "close": {
+          "start": 102,
+          "end": 105
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 108,
+          "end": 111
+        },
+        "close": {
+          "start": 126,
+          "end": 129
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 132,
+          "end": 135
+        },
+        "close": {
+          "start": 159,
+          "end": 162
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

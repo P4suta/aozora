@@ -19,10 +19,10 @@ pub enum PairKind {
     /// `《 … 》` (U+300A / U+300B). Ruby reading.
     Ruby,
 
-    /// `《《 … 》》`. Double-bracket bouten. Open/close are merged into
-    /// single trigger tokens upstream, so the stack treats them as an
-    /// independent kind (a stray inner `》` never closes a `《《`).
-    DoubleRuby,
+    /// `≪ … ≫` (U+226A / U+226B). Double-angle quotation — the aozora
+    /// input encoding for a 底本's twin angle brackets, displayed back
+    /// as `《…》`. Its own pair kind (a stray `》` never closes a `≪`).
+    AngleQuote,
 
     /// `〔 … 〕` (U+3014 / U+3015). Accent-decomposition segment.
     Tortoise,
@@ -39,7 +39,7 @@ impl PairKind {
     pub const ALL: [Self; 5] = [
         Self::Bracket,
         Self::Ruby,
-        Self::DoubleRuby,
+        Self::AngleQuote,
         Self::Tortoise,
         Self::Quote,
     ];
@@ -52,7 +52,7 @@ impl PairKind {
         match self {
             Self::Bracket => "bracket",
             Self::Ruby => "ruby",
-            Self::DoubleRuby => "doubleRuby",
+            Self::AngleQuote => "angleQuote",
             Self::Tortoise => "tortoise",
             Self::Quote => "quote",
         }
@@ -101,7 +101,7 @@ mod tests {
         let variants = [
             PairKind::Bracket,
             PairKind::Ruby,
-            PairKind::DoubleRuby,
+            PairKind::AngleQuote,
             PairKind::Tortoise,
             PairKind::Quote,
         ];

@@ -1,0 +1,54 @@
+{
+  "name": "italic_block",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.12"
+  },
+  "source": "［＃ここから斜体］\n斜体の段落。\n［＃ここで斜体終わり］\n",
+  "expected": {
+    "html": "<div class=\"aozora-container aozora-container-italic\">\n<p>斜体の段落。</p>\n</div>",
+    "serialize": "\n\n［＃ここから斜体］\n\n斜体の段落。\n\n［＃ここで斜体終わり］\n\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 0,
+          "end": 27
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 47,
+          "end": 80
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 24,
+          "end": 27
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 47,
+          "end": 50
+        },
+        "close": {
+          "start": 77,
+          "end": 80
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

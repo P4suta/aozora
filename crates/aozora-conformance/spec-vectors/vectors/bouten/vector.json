@@ -1,0 +1,47 @@
+{
+  "name": "bouten",
+  "meta": {
+    "feature": "bouten",
+    "level": "must",
+    "spec_section": "6.2"
+  },
+  "source": "青空［＃「青空」に傍点］を見上げる。\n",
+  "expected": {
+    "html": "<p><em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">青空</em>を見上げる。</p>\n",
+    "serialize": "青空［＃「青空」に傍点］を見上げる。\n",
+    "nodes": [
+      {
+        "kind": "bouten",
+        "span": {
+          "start": 0,
+          "end": 36
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 21,
+          "end": 24
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 33,
+          "end": 36
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

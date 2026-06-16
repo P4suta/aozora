@@ -60,11 +60,24 @@ jobs:
           # into or distributed with the published crates — so their
           # licenses are out of scope for our `Apache-2.0 OR MIT` product
           # policy. Swatinem/rust-cache is LGPL-3.0 (a JS action that runs
-          # in CI); exempt it from the license check. The runtime-crate
-          # license policy stays enforced by `allow-licenses` above and
-          # authoritatively by cargo-deny (the `audit (deny)` gate). If a
-          # future CI action carries a copyleft license, append its purl.
-          allow-dependencies-licenses: pkg:githubactions/Swatinem/rust-cache
+          # in CI); exempt it from the license check.
+          #
+          # google.golang.org/protobuf is a transitive dependency of the
+          # aozora-go SDK (pulled in via wazero). Its SPDX expression
+          # `BSD-3-Clause AND LicenseRef-scancode-google-patent-license-golang`
+          # carries Google's standard golang patent grant, which the action
+          # cannot map to an SPDX id in `allow-licenses`. The BSD-3-Clause
+          # base is allowed and the patent grant is permissive (it only
+          # grants rights), so exempt the package by purl. The Go SDK is a
+          # separate module, not linked into the published Rust crates.
+          #
+          # The runtime-crate license policy stays enforced by
+          # `allow-licenses` above and authoritatively by cargo-deny (the
+          # `audit (deny)` gate). If a future dependency carries a copyleft
+          # license, append its purl here.
+          allow-dependencies-licenses: >-
+            pkg:githubactions/Swatinem/rust-cache,
+            pkg:golang/google.golang.org/protobuf
 
           # Post a summary comment only on failure so clean PRs don't
           # get a no-op drive-by from the bot.

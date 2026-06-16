@@ -28,13 +28,15 @@
 //! so callers and benchmarks can measure dedup effectiveness without
 //! re-running the conversion.
 
+use core::mem::discriminant;
+
 use crate::lexer::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, ClassifiedSpan,
     INLINE_SENTINEL, SpanKind,
 };
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset, Span};
-use aozora_syntax::ContainerKind;
 use aozora_syntax::borrowed::{self, Arena, ContainerPair, InternStats, NodeRef, Registry};
+use aozora_syntax::{AnnotationKind, ContainerKind};
 
 /// Borrowed-AST output of the lex pipeline.
 ///
@@ -203,6 +205,25 @@ pub(crate) struct ArenaNormalizer<'src, 'a> {
     /// into the arena `&'a [ContainerPair]` at pipeline-build time.
     /// One entry per balanced pair.
     pub(crate) container_pairs: Vec<ContainerPair>,
+    /// Diagnostics observed during the fold (post-Phase-3). Currently
+    /// `mismatched_container_close`, `mismatched_bouten_container`, and
+    /// `break_in_single_line_container`. Drained into the pipeline's
+    /// diagnostic stream after the Phase-3 classify set so the final
+    /// order stays phase-monotone.
+    pub(crate) diagnostics: Vec<Diagnostic>,
+    /// Family tag of the most recent single-line layout directive
+    /// (`indent` / `align-end`) seen on the *current* source line, if
+    /// any. Set when such a marker is emitted, cleared at the next
+    /// `Newline`. A page/section break arriving while this is `Some`
+    /// fires `break_in_single_line_container` (the break drops the
+    /// single-line container, which governs only the rest of its line).
+    pending_single_line: Option<&'static str>,
+    /// Nesting depth of open `［＃割り注］` … `［＃割り注終わり］` ranges.
+    /// `> 0` means a break would land inside a warichu (which is an
+    /// inline construct and should not contain a break). Unlike
+    /// `pending_single_line` this persists across newlines — a
+    /// multi-line warichu still drops on a break.
+    warichu_depth: u32,
 }
 
 impl<'src, 'a> ArenaNormalizer<'src, 'a> {
@@ -223,6 +244,10 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
             // each); resolved pair count is half of that.
             open_stack: Vec::with_capacity(span_capacity_hint / 40),
             container_pairs: Vec::with_capacity(span_capacity_hint / 40),
+            // Mismatched closes are rare; start empty and let it grow.
+            diagnostics: Vec::new(),
+            pending_single_line: None,
+            warichu_depth: 0,
         }
     }
 
@@ -237,8 +262,15 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
             }
             SpanKind::Newline => {
                 self.out.push('\n');
+                // A single-line layout directive governs only the rest
+                // of its line; the line just ended, so forget it.
+                self.pending_single_line = None;
             }
             SpanKind::Aozora(node) => {
+                // Track single-line-container / warichu break drops
+                // before emitting (the break itself is a standalone
+                // block leaf handled below).
+                self.track_single_line_break(*node, span.source_span);
                 // Phase 3 has already allocated the borrowed node into
                 // the arena via `BorrowedAllocator`. We only have to
                 // emit the appropriate sentinel and remember the
@@ -271,10 +303,20 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 }
             }
             SpanKind::BlockOpen(container) => {
-                self.out.push_str("\n\n");
+                // Inline containers (傍点 / 傍線 range, bare-range 太字 /
+                // 斜体) skip the block-leaf `\n\n` padding so the renderer
+                // keeps them in-paragraph; block forms (字下げ, 罫囲み,
+                // ここから-block emphasis) get the padding. See
+                // [`ContainerKind::is_inline`].
+                let inline = container.is_inline();
+                if !inline {
+                    self.out.push_str("\n\n");
+                }
                 let pos = self.current_pos();
                 self.out.push(BLOCK_OPEN_SENTINEL);
-                self.out.push_str("\n\n");
+                if !inline {
+                    self.out.push_str("\n\n");
+                }
                 let nref = NodeRef::BlockOpen(*container);
                 self.entries.push((pos, nref));
                 self.source_nodes.push(SourceNode {
@@ -290,10 +332,15 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     .push((NormalizedOffset::new(pos), *container));
             }
             SpanKind::BlockClose(container) => {
-                self.out.push_str("\n\n");
+                let inline = container.is_inline();
+                if !inline {
+                    self.out.push_str("\n\n");
+                }
                 let pos = self.current_pos();
                 self.out.push(BLOCK_CLOSE_SENTINEL);
-                self.out.push_str("\n\n");
+                if !inline {
+                    self.out.push_str("\n\n");
+                }
                 let nref = NodeRef::BlockClose(*container);
                 self.entries.push((pos, nref));
                 self.source_nodes.push(SourceNode {
@@ -307,6 +354,7 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 // still lands in `entries` via the push above so
                 // renderer correctness is unchanged).
                 if let Some((open_pos, open_kind)) = self.open_stack.pop() {
+                    self.push_container_mismatch(open_kind, *container, span.source_span);
                     self.container_pairs.push(ContainerPair {
                         kind: open_kind,
                         open: open_pos,
@@ -314,6 +362,72 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     });
                 }
             }
+        }
+    }
+
+    /// Flag a container close whose family differs from its matched open
+    /// (recovery is unchanged — the pair is still keyed by the open kind).
+    /// `字下げ` / `地付き` / `罫囲み` families differ by discriminant; the two
+    /// `BoutenRange` ends share a discriminant, so the 点/線 family is
+    /// compared separately. `span` is the close marker's sanitized span.
+    fn push_container_mismatch(&mut self, open: ContainerKind, close: ContainerKind, span: Span) {
+        if discriminant(&open) != discriminant(&close) {
+            self.diagnostics
+                .push(Diagnostic::mismatched_container_close(
+                    span,
+                    open.kind_str(),
+                    close.kind_str(),
+                ));
+        } else if let (
+            ContainerKind::BoutenRange { kind: open_b, .. },
+            ContainerKind::BoutenRange { kind: close_b, .. },
+        ) = (open, close)
+            && open_b.is_line() != close_b.is_line()
+        {
+            // `［＃傍点］` closed by `［＃傍線終わり］` (or vice-versa) — the
+            // discriminant matches but the 点/線 family does not.
+            self.diagnostics
+                .push(Diagnostic::mismatched_bouten_container(
+                    span,
+                    open_b.family_str(),
+                    close_b.family_str(),
+                ));
+        }
+    }
+
+    /// Single-line-container break tracker for one classified `Aozora`
+    /// node. Single-line layout directives (`［＃地付き］` / `［＃N字下げ］`)
+    /// and warichu ranges (`［＃割り注］` … `［＃割り注終わり］`) are inline,
+    /// self-contained markers — a page/section break sharing their line
+    /// (or, for warichu, their range) drops the container. Fires
+    /// `break_in_single_line_container` at the break; `break_span` is the
+    /// break node's sanitized `source_span`.
+    fn track_single_line_break(&mut self, node: borrowed::AozoraNode<'a>, break_span: Span) {
+        match node {
+            borrowed::AozoraNode::Indent(_) => self.pending_single_line = Some("indent"),
+            borrowed::AozoraNode::AlignEnd(_) => self.pending_single_line = Some("align-end"),
+            borrowed::AozoraNode::Center(_) => self.pending_single_line = Some("center"),
+            borrowed::AozoraNode::Annotation(ann) => match ann.kind {
+                AnnotationKind::WarichuOpen => self.warichu_depth += 1,
+                AnnotationKind::WarichuClose => {
+                    self.warichu_depth = self.warichu_depth.saturating_sub(1);
+                }
+                _ => {}
+            },
+            borrowed::AozoraNode::PageBreak | borrowed::AozoraNode::SectionBreak(_) => {
+                if let Some(container) = self.pending_single_line.take() {
+                    self.diagnostics
+                        .push(Diagnostic::break_in_single_line_container(
+                            break_span, container,
+                        ));
+                } else if self.warichu_depth > 0 {
+                    self.diagnostics
+                        .push(Diagnostic::break_in_single_line_container(
+                            break_span, "warichu",
+                        ));
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -414,7 +528,7 @@ mod tests {
         let NodeRef::BlockOpen(kind) = nr else {
             panic!("expected NodeRef::BlockOpen, got {nr:?}");
         };
-        assert!(matches!(kind, ContainerKind::Indent { amount: 2 }));
+        assert!(matches!(kind, ContainerKind::Indent { amount: 2, .. }));
     }
 
     #[test]
@@ -496,7 +610,7 @@ mod tests {
             panic!("expected NodeRef::BlockOpen, got {nr:?}");
         };
         match kind {
-            ContainerKind::Indent { amount } => assert_eq!(amount, 3),
+            ContainerKind::Indent { amount, .. } => assert_eq!(amount, 3),
             other => panic!("expected Indent {{ amount: 3 }}, got {other:?}"),
         }
     }

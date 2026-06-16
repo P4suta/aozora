@@ -82,9 +82,11 @@
 
 use core::marker::PhantomData;
 
-use crate::lexer::{PairEvent, Token, classify, pair_in, sanitize, tokenize_in};
+use crate::lexer::{ClassifiedSpan, PairEvent, Token, classify, pair_in, sanitize, tokenize_in};
 use aozora_spec::{Diagnostic, PairLink};
 use aozora_syntax::ContainerKind;
+use core::mem::take;
+
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, ContainerPair, Registry};
 use bumpalo::collections::Vec as BumpVec;
@@ -331,12 +333,46 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
         let mut events_iter = events.into_iter();
         let classify_diagnostics: Vec<Diagnostic> = {
             let mut classify_stream = classify(&mut events_iter, sanitized_text, &mut alloc);
+            // Hold a small window of classified spans so a node that pulled
+            // its consume span back across a newline — a promoted 大/中/小
+            // heading reclaiming its referent line `序章\n` — can drop the
+            // Plain + Newline spans it now subsumes before they reach the
+            // normalizer (which appends in source order and would otherwise
+            // duplicate the heading text). Same-line pull-backs (forward
+            // bouten / 縦中横) keep their target in the pending plain run and
+            // never yield a subsumed span, so nothing is dropped for them. A
+            // pull-back reaches only the immediately-preceding line, so a
+            // 4-span tail is always enough to catch the subsumed spans.
+            let mut window: Vec<ClassifiedSpan<'a>> = Vec::new();
             for span in &mut classify_stream {
-                builder.emit(&span);
+                while let Some(back) = window.last() {
+                    let (bs, be) = (back.source_span.start, back.source_span.end);
+                    let (ss, se) = (span.source_span.start, span.source_span.end);
+                    // `span` is a *proper* superset of `back` in source bytes
+                    // (a backward pull-back that reclaimed `back`'s text).
+                    if ss <= bs && be <= se && (ss < bs || se > be) {
+                        window.pop();
+                    } else {
+                        break;
+                    }
+                }
+                window.push(span);
+                if window.len() > 4 {
+                    builder.emit(&window.remove(0));
+                }
+            }
+            for span in &window {
+                builder.emit(span);
             }
             classify_stream.take_diagnostics()
         };
         self.diagnostics.extend(classify_diagnostics);
+        // Normalizer diagnostics (e.g. mismatched container close) are
+        // produced during the `emit` fold above but buffered on the
+        // builder; append them *after* the Phase-3 classify set so the
+        // final vector stays in pipeline-phase order (the normalizer is
+        // the post-Phase-3 fold). See `tests/diagnostic_ordering.rs`.
+        self.diagnostics.extend(take(&mut builder.diagnostics));
 
         let normalized: &'a str = self.arena.alloc_str(&builder.out);
         // Single-table Registry: classifier emits in source order so

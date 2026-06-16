@@ -54,19 +54,19 @@ pre-commit:
       fail_text: |
         `cargo fmt` failed. Run `just fmt` manually to see the error.
         Common cause: rustfmt edition mismatch with rust-toolchain.toml.
-    # `clippy-strict` runs the full `--all-targets --all-features`
-    # surface (incl. bench / example targets and aozora-bench) which
-    # the CI `lint (clippy)` job deliberately skips for build-time
-    # reasons. Catching bench / example regressions in pre-commit
-    # is the trade-off — the dev pays a slightly slower commit, in
-    # return CI does not.
+    # Light `clippy` (--lib --bins --tests, no bench) keeps commits fast.
+    # The heavier `--all-targets --all-features` surface (bench / example
+    # targets, aozora-bench) now runs in CI's `lint (clippy-strict)`
+    # matrix cell — the authoritative backstop — instead of on every
+    # commit. Run `just lint-full` locally before a release if you touched
+    # a bench / example target.
     clippy:
       glob: "*.{rs,toml}"
-      run: just clippy-strict
+      run: just clippy
       fail_text: |
-        clippy reported an error. Re-run `just clippy-strict` for the
-        full diagnostic. `[workspace.lints]` in Cargo.toml controls
-        which lints fire — fix the code rather than silencing the lint.
+        clippy reported an error. Re-run `just clippy` for the full
+        diagnostic. `[workspace.lints]` in Cargo.toml controls which
+        lints fire — fix the code rather than silencing the lint.
     typos:
       run: just typos
       fail_text: |
@@ -95,9 +95,11 @@ commit-msg:
             || { echo 'Commit message must follow Conventional Commits (https://www.conventionalcommits.org/)'; exit 1; }"
 
 pre-push:
-  # `just ci` runs gates sequentially in cheap-to-expensive order so
-  # the early ones fail fast. Parallelising at the lefthook level
-  # would let coverage start before lint catches a typo.
+  # `just ci-parallel` runs every gate before the push, but fast: the
+  # cargo gates run serial + cheap-to-expensive (fail-fast) while every
+  # non-cargo gate runs in the background. Parallelism lives INSIDE the
+  # recipe, not at the lefthook level (which would let coverage start
+  # before lint catches a typo), so signing-check still gates first.
   #
   # Signing defense is layered: post-commit (re-amends unsigned HEAD),
   # this signing-check (blocks any unsigned commit at push time), and
@@ -122,6 +124,18 @@ pre-push:
           git rebase --exec 'git commit --amend --no-edit -S' <base>   # a range
         Re-run `scripts/check-signed-commits.sh` manually to see which
         commit failed verification.
+    # Verify the vendored spec conformance vectors still match the
+    # sibling aozora-notation-spec repo — the host half of the "spec is
+    # master" loop. Fast + host-side; a no-op when the spec isn't checked
+    # out (so it never blocks a push from a machine without the sibling).
+    # Order-independent for correctness: a drift fails the push whether it
+    # runs before or after `ci`.
+    spec-vectors-drift:
+      run: scripts/verify-spec-vectors.sh
+      fail_text: |
+        Vendored spec conformance vectors drift from ../aozora-notation-spec.
+        Run `just sync-spec-vectors` and commit the result — the spec repo
+        is the source of truth for the conformance corpus.
     # Mirror every CI job that's reachable from inside the dev image
     # (lint / build / test / prop / drift-gate / conformance /
     # smoke-ffi / deny / audit / udeps / coverage / book-build /
@@ -136,54 +150,26 @@ pre-push:
     # alternative is "ship a PR, watch GitHub fail, re-push" which
     # is the failure mode this hook exists to eliminate.
     ci:
-      run: just ci
+      run: just ci-parallel
       fail_text: |
-        `just ci` failed. The error message is the last `error: recipe
-        \`<name>\` failed ...` line above this summary — that tells you
-        which sub-recipe (lint / build / test / coverage / playground-* /
-        book-linkcheck / corpus-sweep …) bombed.
+        `just ci-parallel` failed. The `::error title=<gate>::` line above
+        names the gate that bombed (a foreground gate aborts immediately;
+        background gates — deny / audit / book-linkcheck / smoke-ffi /
+        playground-* / fmt-check / typos / strict-code — are reaped at the
+        end, each with its captured log).
 
-        Common causes:
+        - Re-run the single gate for a clean repro, e.g. `just clippy`,
+          `just coverage`, `just conformance`, `just book-linkcheck`.
         - book-linkcheck needs `crates/aozora-book/mermaid.min.js` —
-          `just mermaid-install` regenerates it (or just re-run, the
-          `mermaid-install` prereq runs automatically now).
-        - typos / clippy regressed → run the individual gate (`just typos`,
-          `just clippy-strict`) for a cleaner repro.
-        - background trio (deny / audit / book-linkcheck) gets reaped at
-          the end of `just ci` — its captured log file path is printed
-          alongside `::error title=...`.
+          `just mermaid-install` regenerates it (runs automatically).
+        - prop-deep (the 4096-case sweep) runs in the background INSIDE
+          `ci-parallel`. If it trips a pre-existing CORE regression
+          unrelated to your change, opt out with `SKIP_TAGS=deep git push`
+          and file an issue. Do NOT use `LEFTHOOK=0` — it also skips
+          signing-check.
 
-        Re-run `just ci` directly (not via lefthook) for the unwrapped
-        output if the lefthook summary truncates anything important.
-    # Deep proptest sweep (4096 cases vs the CI baseline 128) — runs
-    # after `just ci`'s 128-case `prop` step so a regression that
-    # needs many cases to surface is caught here instead of on a
-    # downstream PR. Fuzz is deliberately not wired in: libfuzzer's
-    # nightly + corpus + cold start budget overshoots a pre-push hook.
-    prop-deep:
-      run: just prop-deep
-      # Tag for opt-out via `SKIP_TAGS=deep git push`. Deep
-      # proptest sweeps occasionally surface pre-existing bugs in
-      # aozora's core (parse / serialize / round-trip). When the
-      # current sweep hits one of those, the contributor needs a
-      # narrow escape hatch that does NOT disable the whole hook
-      # stack (LEFTHOOK=0 would also skip signing-check, which we
-      # never want to skip). `SKIP_TAGS=deep` keeps everything else
-      # honest while letting the unrelated PR through. The known
-      # regression is then tracked as a normal issue against
-      # aozora-pipeline.
-      tags:
-        - deep
-      fail_text: |
-        Deep proptest regression. Re-run `just prop-deep` to reproduce.
-        The seed for the failing case is printed in nextest's PASS/FAIL
-        line; pass it via `AOZORA_PROPTEST_SEED=<n>` to shrink locally.
-
-        If the failure is in aozora's CORE (parse / render / pipeline)
-        and is unrelated to your change, you may opt out with
-          `SKIP_TAGS=deep git push`
-        and file an issue against the failing crate.
-        Do NOT use `LEFTHOOK=0` — that would also skip signing-check.
+        Re-run `just ci-parallel` directly (not via lefthook) for the
+        unwrapped output if the summary truncates anything important.
 
 # After `git pull` / `git merge` (i.e. when Cargo.lock or Cargo.toml
 # may have moved underneath us), surface dependency freshness so the

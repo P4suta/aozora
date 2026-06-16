@@ -66,9 +66,10 @@ The lookup that finds the target run:
 3. Falls through to the previous line if no match (with an upper
    bound of 64 KiB or one paragraph break, whichever comes first).
 
-If no match is found, diagnostic [`W0001`](diagnostics.md#W0001)
-fires and the directive is dropped from the output. Authors get the
-same look-back semantics they'd get from bouten — see
+If no match is found, diagnostic
+[`aozora::lex::tcy_target_not_found`](diagnostics.md#tcy-target-not-found)
+fires and the directive degrades to a plain `Annotation{Unknown}`.
+Authors get the same look-back semantics they'd get from bouten — see
 [Bouten](bouten.md) for the symmetric case.
 
 ## Why a span, not a flow rotation?

@@ -31,6 +31,7 @@
 
 #![forbid(unsafe_code)]
 
+mod diagnostics_render;
 mod introspect;
 
 use std::borrow::Cow;
@@ -41,11 +42,12 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode, Stdio};
 
-use aozora::Document;
+use aozora::{DiagnosticSource, Document};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::diagnostics_render::DiagFormat;
 use crate::introspect::{ExplainArgs, KindsArgs, SchemaArgs};
 
 #[derive(Debug, Parser)]
@@ -96,6 +98,13 @@ struct CheckArgs {
     /// Source encoding.
     #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
     encoding: Encoding,
+
+    /// How to render diagnostics: `human` (graphical snippet, the
+    /// default on a terminal), `json` (the `aozora::wire` envelope, the
+    /// default when stderr is piped — the machine / agent path), or
+    /// `short` (one grep-able line per diagnostic).
+    #[arg(long, value_enum, default_value_t = DiagFormat::Auto)]
+    diagnostic_format: DiagFormat,
 }
 
 #[derive(Debug, Parser)]
@@ -190,18 +199,31 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
     let source = read_source(&args.file, args.encoding)?;
     let doc = Document::new(source);
     let tree = doc.parse();
+    let diagnostics = tree.diagnostics();
 
-    if tree.diagnostics().is_empty() {
+    if diagnostics.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
 
-    let mut stderr = io::stderr().lock();
-    for diag in tree.diagnostics() {
-        let _drop = writeln!(stderr, "{diag}");
-    }
+    diagnostics_render::render(
+        args.diagnostic_format,
+        &display_path(&args.file),
+        &doc,
+        diagnostics,
+    )
+    .context("failed to write diagnostics")?;
 
-    if args.strict {
-        Ok(ExitCode::FAILURE)
+    // Exit-code contract (documented in `aozora check --help` and
+    // AGENTS.md): 3 = an Internal diagnostic fired (a library bug, not
+    // bad input), 1 = `--strict` with at least one diagnostic, 0 = input
+    // diagnostics were printed but tolerated.
+    if diagnostics
+        .iter()
+        .any(|d| d.source() == DiagnosticSource::Internal)
+    {
+        Ok(ExitCode::from(3))
+    } else if args.strict {
+        Ok(ExitCode::from(1))
     } else {
         Ok(ExitCode::SUCCESS)
     }

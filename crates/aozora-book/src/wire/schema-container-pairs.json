@@ -35,24 +35,23 @@
           "open",
           "close"
         ],
-        "title": "ContainerPairWire",
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$defs": {
-          "OffsetWire": {
-            "type": "object",
-            "properties": {
-              "offset": {
-                "type": "integer",
-                "format": "uint32",
-                "minimum": 0
-              }
-            },
-            "required": [
-              "offset"
-            ]
-          }
-        }
+        "title": "ContainerPairWire"
       }
+    }
+  },
+  "$defs": {
+    "OffsetWire": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "offset"
+      ]
     }
   }
 }

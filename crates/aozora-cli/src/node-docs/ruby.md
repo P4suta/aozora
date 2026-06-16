@@ -57,6 +57,7 @@ opener.
 
 ## Related kinds
 
-- [DoubleRuby](double-ruby.md) — `《《…》》` double-bracket variant.
+- [AngleQuote](angle-quote.md) — `≪…≫` double-angle quotation
+  (displays as `《…》`).
 - [Annotation::InvalidRubySpan](annotation.md) — fallback when the
   ruby pair could not be parsed cleanly.

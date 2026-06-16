@@ -1,16 +1,28 @@
 # Composite action: install `just` on the runner and provision the
-# aozora dev image (pulled from GHCR or, if pull fails, built locally
-# from the in-tree Dockerfile).
+# aozora dev image.
 #
-# Used by every ci.yml job that invokes `just <target>`. Pulling the
-# pre-built image from ghcr.io/p4suta/aozora-dev cuts ~30 minutes off
-# the wall-clock relative to building the image inline; falling back
-# to `docker compose build` keeps CI self-bootstrapping when GHCR is
-# unavailable (first push, registry outage, fork PR without packages
-# read).
+# Used by every ci.yml job that invokes `just <target>`. The image is
+# built ONCE per workflow run by the upstream `dev-image` job (which runs
+# this same action), saved to the runner tar cache, and then restored by
+# every `needs: dev-image` job via `docker load` — so the slow image
+# build happens at most once per run.
+#
+# On a tar-cache MISS (the `dev-image` job itself, or a fresh dev-image
+# input hash), the image is built FROM THE IN-TREE Dockerfile through the
+# GitHub Actions build-layer cache (`type=gha`). It is NOT pulled from
+# GHCR and NOT built inline via `docker compose build`:
+#   - Building from the in-tree Dockerfile guarantees the image matches
+#     THIS checkout, so a PR that adds a tool to the Dockerfile runs
+#     against an image that actually has it (the stale-`:latest` bug).
+#   - The `type=gha` layer cache means the heavy `cargo binstall`
+#     (cargo-tools) layer is reused instead of re-fetched live. The live
+#     binstall path was hitting GitHub's unauthenticated API rate limit
+#     (403) and failing `audit (deny)`.
+# No GHCR, no token, no cross-workflow coordination — mirrors the proven
+# `book` job in ci.yml.
 
 name: setup-dev-image
-description: Pull (or build) the aozora dev image and install `just` on the runner.
+description: Provision the aozora dev image (restore from cache or build via the GHA layer cache) and install `just`.
 
 runs:
   using: composite
@@ -48,18 +60,37 @@ runs:
           echo "AOZORA_GID=0"
         } >> "$GITHUB_ENV"
 
-    # Cache the dev image tar on the runner host. Each CI job otherwise
-    # spends ~32 s pulling aozora-dev:latest from GHCR; with six docker
-    # compose jobs in ci.yml that's ~190 s of pure network overhead per
-    # workflow run. The cache key is keyed off Dockerfile +
-    # docker-compose.yml so a real image rebuild invalidates it
-    # automatically.
+    # Reclaim runner disk before pulling in the dev image. The cached tar
+    # is ~1.5 GB and `docker load` decompresses it to a multi-GB image
+    # (full Rust toolchain + nightly LLVM). On a stock ubuntu-latest runner
+    # that occasionally exhausts the root filesystem mid-load
+    # ("no space left on device"), flaking jobs at random (e.g. audit).
+    # Drop the large preinstalled SDKs we never use to give the load
+    # headroom. Best-effort: never fail the job if a path is absent.
+    - name: Reclaim runner disk
+      shell: bash
+      run: |
+        sudo rm -rf \
+          /usr/local/lib/android \
+          /usr/share/dotnet \
+          /opt/ghc \
+          /usr/local/.ghcup \
+          /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+        df -h / | tail -1
+
+    # Cache the dev image tar on the runner host. The upstream `dev-image`
+    # job builds the image once and saves it here; every dependent job
+    # restores it and `docker load`s it instead of rebuilding. The key is
+    # keyed off Dockerfile + docker-compose.yml + rust-toolchain.toml so a
+    # real image rebuild invalidates it automatically. v3: the v2 entries
+    # were saved by the old GHCR-pull / inline-`docker compose build` path;
+    # bump to invalidate them and switch to the GHA-layer-cache build.
     - name: Cache dev image tar
       id: dev-image-cache
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: /tmp/aozora-dev.tar
-        key: aozora-dev-image-${{ hashFiles('Dockerfile', 'docker-compose.yml') }}
+        key: aozora-dev-image-v3-${{ hashFiles('Dockerfile', 'docker-compose.yml', 'rust-toolchain.toml') }}
 
     - name: Load dev image from cache (cache hit)
       if: steps.dev-image-cache.outputs.cache-hit == 'true'
@@ -70,31 +101,38 @@ runs:
         docker tag aozora-dev:local aozora-ci:local
         echo "::notice title=dev image::Loaded aozora-dev:local from runner cache"
 
-    # docker/login-action authenticates the runner against GHCR using
-    # the standard GITHUB_TOKEN. Skipped on fork PRs where the token
-    # lacks `packages: read` — those runs go through the build
-    # fallback below. Same-repo runs always log in.
-    - name: Log in to GHCR (cache miss only, same-repo runs only)
-      if: ${{ steps.dev-image-cache.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-      uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ github.token }}
+    # Cache MISS → build from the in-tree Dockerfile via the GHA
+    # build-layer cache. `cache-from` lists the ci-owned scope first and
+    # the dev-image.yml scope second: on a cold ci scope the second hits
+    # the layers dev-image.yml already built (so the heavy `cargo binstall`
+    # layer is reused, never re-fetched live). `cache-to` writes the
+    # ci-owned scope only, to avoid clobbering dev-image.yml's scope.
+    - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      if: steps.dev-image-cache.outputs.cache-hit != 'true'
 
-    - name: Pull dev image (GHCR) or fall back to local build (cache miss)
+    - name: Build dev image (GHA layer cache)
+      if: steps.dev-image-cache.outputs.cache-hit != 'true'
+      uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+      with:
+        context: .
+        file: Dockerfile
+        target: ci
+        load: true
+        push: false
+        provenance: false
+        tags: aozora-dev:local
+        cache-from: |
+          type=gha,scope=ci-dev-image
+          type=gha,scope=dev-image
+        cache-to: type=gha,mode=max,scope=ci-dev-image
+
+    - name: Tag + save built image
       if: steps.dev-image-cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
         set -euo pipefail
-        if docker pull ghcr.io/p4suta/aozora-dev:latest; then
-          docker tag ghcr.io/p4suta/aozora-dev:latest aozora-dev:local
-          docker tag ghcr.io/p4suta/aozora-dev:latest aozora-ci:local
-          echo "::notice title=dev image::Pulled aozora-dev:latest from GHCR"
-        else
-          echo "::warning title=dev image::GHCR pull failed; falling back to local Dockerfile build"
-          docker compose build dev
-          docker tag aozora-dev:local aozora-ci:local
-        fi
-        # Save the tar so actions/cache picks it up on the post-action.
+        docker tag aozora-dev:local aozora-ci:local
+        # Save the tar so actions/cache picks it up on the post-action and
+        # dependent (`needs: dev-image`) jobs restore it instead of rebuilding.
         docker save aozora-dev:local -o /tmp/aozora-dev.tar
+        echo "::notice title=dev image::Built aozora-dev:local from the in-tree Dockerfile (GHA layer cache)"

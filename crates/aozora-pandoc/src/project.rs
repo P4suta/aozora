@@ -8,9 +8,10 @@
 //! block construct as documented in [`crate`].
 
 use aozora::{
-    AlignEnd, Annotation, AnnotationKind, AozoraHeading, AozoraHeadingKind, AozoraTree, Bouten,
-    BoutenKind, BoutenPosition, ContainerKind, DoubleRuby, Gaiji, HeadingHint, Indent, Kaeriten,
-    NodeRef, Ruby, Sashie, SectionKind, Segment, SourceNode, Span, TateChuYoko, Warichu,
+    AlignEnd, AngleQuote, Annotation, AnnotationKind, AozoraHeading, AozoraHeadingKind,
+    AozoraHeadingStyle, AozoraTree, Bouten, BoutenKind, BoutenPosition, ContainerKind, Gaiji,
+    HeadingHint, Indent, Kaeriten, NodeRef, Ruby, Sashie, SectionKind, Segment, SideNote,
+    SourceNode, Span, TateChuYoko, Warichu,
     pipeline::lexer::sanitize,
     syntax::borrowed::{AozoraNode, Content},
 };
@@ -186,16 +187,18 @@ impl<'src> Converter<'src> {
         use AozoraNode as N;
         let inline = match node {
             N::Ruby(r) => ruby_inline(r),
+            N::SideNote(s) => side_note_inline(s),
             N::Bouten(b) => bouten_inline(b),
             N::TateChuYoko(t) => tate_chu_yoko_inline(t),
             N::Gaiji(g) => gaiji_inline(*g),
             N::Indent(i) => indent_inline(i),
             N::AlignEnd(a) => align_end_inline(a),
+            N::Center(_) => center_inline(),
             N::Warichu(w) => warichu_inline(w),
             N::Keigakomi(_) => keigakomi_inline(),
             N::Annotation(a) => annotation_inline(*a),
             N::Kaeriten(k) => kaeriten_inline(*k),
-            N::DoubleRuby(d) => double_ruby_inline(*d),
+            N::AngleQuote(d) => angle_quote_inline(*d),
             N::HeadingHint(h) => heading_hint_inline(*h),
             // Block-leaf variants slip through here only if the
             // pipeline misclassified them; render as fallback span.
@@ -328,6 +331,16 @@ fn ruby_inline(r: &Ruby<'_>) -> Inline {
     )
 }
 
+fn side_note_inline(s: &SideNote<'_>) -> Inline {
+    let base_inlines = content_to_inlines(s.base.get());
+    let note_inlines = content_to_inlines(s.note.get());
+    let inner = vec![
+        Inline::Span(class_attr("sidenote-base"), base_inlines),
+        Inline::Span(class_attr("sidenote-note"), note_inlines),
+    ];
+    Inline::Span(class_attr("sidenote"), inner)
+}
+
 fn bouten_inline(b: &Bouten<'_>) -> Inline {
     let attr = class_attr_kv(
         "bouten",
@@ -403,6 +416,10 @@ fn align_end_inline(a: AlignEnd) -> Inline {
     )
 }
 
+fn center_inline() -> Inline {
+    Inline::Span(class_attr_kv("center", Vec::new()), Vec::new())
+}
+
 fn warichu_inline(w: &Warichu<'_>) -> Inline {
     let upper = Inline::Span(class_attr("warichu-upper"), content_to_inlines(w.upper));
     let lower = Inline::Span(class_attr("warichu-lower"), content_to_inlines(w.lower));
@@ -446,9 +463,9 @@ fn kaeriten_inline(k: Kaeriten<'_>) -> Inline {
     )
 }
 
-fn double_ruby_inline(d: DoubleRuby<'_>) -> Inline {
+fn angle_quote_inline(d: AngleQuote<'_>) -> Inline {
     Inline::Span(
-        class_attr("double-ruby"),
+        class_attr("angle-quote"),
         content_to_inlines(d.content.get()),
     )
 }
@@ -468,9 +485,9 @@ fn heading_hint_inline(h: HeadingHint<'_>) -> Inline {
 
 fn section_break_block(k: SectionKind) -> Block {
     let slug = match k {
-        SectionKind::Choho => "choho",
-        SectionKind::Dan => "dan",
-        SectionKind::Spread => "spread",
+        SectionKind::Kaicho => "kaicho",
+        SectionKind::Kaidan => "kaidan",
+        SectionKind::Kaimihiraki => "kaimihiraki",
         _ => "other",
     };
     Block::Div(
@@ -488,25 +505,41 @@ fn section_break_block(k: SectionKind) -> Block {
 
 fn aozora_heading_block(h: AozoraHeading<'_>) -> Block {
     let level: i64 = match h.kind {
-        AozoraHeadingKind::Window => 2,
-        AozoraHeadingKind::Sub => 3,
+        AozoraHeadingKind::Large => 1,
+        AozoraHeadingKind::Medium => 2,
+        AozoraHeadingKind::Small => 3,
         _ => 4,
     };
+    // `kind` (level) is always carried; `style` only for a non-standard
+    // style, so a standard heading's projection is unchanged.
+    let mut kv = vec![("kind".to_owned(), heading_kind_slug(h.kind).to_owned())];
+    if let Some(style) = heading_style_slug(h.style) {
+        kv.push(("style".to_owned(), style.to_owned()));
+    }
     Block::Header(
         level,
-        class_attr_kv(
-            "heading",
-            vec![("kind".to_owned(), heading_kind_slug(h.kind).to_owned())],
-        ),
+        class_attr_kv("heading", kv),
         content_to_inlines(h.text.get()),
     )
 }
 
 fn heading_kind_slug(k: AozoraHeadingKind) -> &'static str {
     match k {
-        AozoraHeadingKind::Window => "window",
-        AozoraHeadingKind::Sub => "sub",
+        AozoraHeadingKind::Large => "large",
+        AozoraHeadingKind::Medium => "medium",
+        AozoraHeadingKind::Small => "small",
         _ => "other",
+    }
+}
+
+/// Style modifier slug, or `None` for the standard style (which adds no
+/// `style` attribute, keeping a standard heading's projection unchanged).
+fn heading_style_slug(s: AozoraHeadingStyle) -> Option<&'static str> {
+    match s {
+        AozoraHeadingStyle::SameLine => Some("same-line"),
+        AozoraHeadingStyle::Window => Some("window"),
+        // Standard (and any future `#[non_exhaustive]` style) adds no attr.
+        _ => None,
     }
 }
 
@@ -518,16 +551,33 @@ fn sashie_block(s: Sashie<'_>) -> Block {
 
 fn container_attr(kind: ContainerKind) -> Attr {
     let (slug, kvs): (&str, Vec<(String, String)>) = match kind {
-        ContainerKind::Indent { amount } => (
-            "container-indent",
-            vec![("amount".to_owned(), amount.to_string())],
-        ),
+        ContainerKind::Indent {
+            amount,
+            wrap,
+            center,
+        } => {
+            let mut kvs = vec![("amount".to_owned(), amount.to_string())];
+            if let Some(w) = wrap {
+                kvs.push(("wrap".to_owned(), w.to_string()));
+            }
+            if center {
+                kvs.push(("center".to_owned(), "true".to_owned()));
+            }
+            ("container-indent", kvs)
+        }
         ContainerKind::Warichu => ("container-warichu", Vec::new()),
         ContainerKind::Keigakomi => ("container-keigakomi", Vec::new()),
         ContainerKind::AlignEnd { offset } => (
             "container-align-end",
             vec![("offset".to_owned(), offset.to_string())],
         ),
+        ContainerKind::BoutenRange { kind, position } => {
+            let mut kvs = vec![("variant".to_owned(), bouten_kind_slug(kind).to_owned())];
+            if matches!(position, BoutenPosition::Left) {
+                kvs.push(("position".to_owned(), "left".to_owned()));
+            }
+            ("container-bouten", kvs)
+        }
         _ => ("container-unknown", Vec::new()),
     };
     (

@@ -1,0 +1,36 @@
+{
+  "name": "ruby_explicit",
+  "meta": {
+    "feature": "ruby",
+    "level": "must",
+    "spec_section": "6.1"
+  },
+  "source": "明治の頃｜青梅《おうめ》街道沿いに。\n",
+  "expected": {
+    "html": "<p>明治の頃<ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby>街道沿いに。</p>\n",
+    "serialize": "明治の頃｜青梅《おうめ》街道沿いに。\n",
+    "nodes": [
+      {
+        "kind": "ruby",
+        "span": {
+          "start": 12,
+          "end": 36
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "ruby",
+        "open": {
+          "start": 21,
+          "end": 24
+        },
+        "close": {
+          "start": 33,
+          "end": 36
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

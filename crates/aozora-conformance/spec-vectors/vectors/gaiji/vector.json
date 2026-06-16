@@ -1,0 +1,47 @@
+{
+  "name": "gaiji",
+  "meta": {
+    "feature": "gaiji",
+    "level": "must",
+    "spec_section": "6.4"
+  },
+  "source": "珍しき木※［＃「木＋吶のつくり」、第3水準1-85-54］が立つ。\n",
+  "expected": {
+    "html": "<p>珍しき木<span class=\"aozora-gaiji\" data-codepoint=\"U+6798\">枘</span>が立つ。</p>\n",
+    "serialize": "珍しき木※［＃「木＋吶のつくり」、第3水準1-85-54］が立つ。\n",
+    "nodes": [
+      {
+        "kind": "gaiji",
+        "span": {
+          "start": 12,
+          "end": 71
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 21,
+          "end": 24
+        },
+        "close": {
+          "start": 45,
+          "end": 48
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 15,
+          "end": 18
+        },
+        "close": {
+          "start": 68,
+          "end": 71
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

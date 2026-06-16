@@ -1,0 +1,36 @@
+{
+  "name": "center_page",
+  "meta": {
+    "feature": "container",
+    "level": "should",
+    "spec_section": "6.6"
+  },
+  "source": "［＃ページの左右中央］題名\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-center\"></span>題名</p>\n",
+    "serialize": "［＃ページの左右中央］題名\n",
+    "nodes": [
+      {
+        "kind": "center",
+        "span": {
+          "start": 0,
+          "end": 33
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 30,
+          "end": 33
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

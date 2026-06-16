@@ -49,7 +49,7 @@ module.exports = grammar({
     _element: $ => choice(
       $.ruby_explicit,
       $.ruby_implicit,
-      $.double_ruby,
+      $.angle_quote,
       $.gaiji_marker,
       $.bracket_annotation,
       $.tortoise_segment,
@@ -77,12 +77,13 @@ module.exports = grammar({
       '》',
     )),
 
-    // `《《content》》` — double-bracket bouten. Matched explicitly
-    // so the inner `《` / `》` pair does not fall back to ruby.
-    double_ruby: $ => seq(
-      '《《',
-      field('content', $.double_ruby_content),
-      '》》',
+    // `≪content≫` — double-angle quotation (input ≪…≫, display 《…》).
+    // Distinct scalars (U+226A / U+226B) from the ruby markers `《`/`》`,
+    // so there is no ambiguity with ruby.
+    angle_quote: $ => seq(
+      '≪',
+      field('content', $.angle_quote_content),
+      '≫',
     ),
 
     // `※［＃description、mencode］` — gaiji marker. The body has
@@ -114,7 +115,7 @@ module.exports = grammar({
 
     ruby_base: $ => token(/[\p{Letter}\p{Number}\p{Mark}_]+/),
     ruby_reading: $ => token(/[^》]+/),
-    double_ruby_content: $ => token(/(?:[^》]|》(?!》))+/),
+    angle_quote_content: $ => token(/[^≫]+/),
     annotation_body: $ => token(/[^］]+/),
     tortoise_body: $ => token(/[^〕]+/),
 

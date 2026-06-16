@@ -1,13 +1,17 @@
-# Phase P3 — maturin-driven Python wheel build for aozora-py.
+# maturin-driven Python wheel build for aozora-py.
 #
 # Local build:    maturin build --release -F extension-module
 # Local install:  maturin develop -F extension-module
+# Host smoke:     just smoke-py   (maturin is not in the dev image)
 # CI:             .github/workflows/publish-pypi.yml (workflow_dispatch)
 #
-# Python module name: `aozora_py` (matches `#[pymodule] fn aozora_py`
-# in src/lib.rs and the `[lib] name = "aozora_py"` override in
-# Cargo.toml). PyPI distribution name is the same so users do
-# `pip install aozora_py` then `import aozora_py`.
+# Distribution name `aozora_py`; users `pip install aozora_py` then
+# `import aozora_py`. Mixed layout: the pure-Python package under
+# `python/aozora_py/` (the public `Document` + parsed helpers) wraps
+# the compiled extension, nested as the private submodule
+# `aozora_py._aozora_py` (see `module-name` + `[lib] name` in
+# Cargo.toml). Ships as a single `cp311-abi3` wheel per platform via
+# pyo3's `abi3-py311` feature.
 
 [build-system]
 requires      = ["maturin>=1.9,<2.0"]
@@ -15,12 +19,12 @@ build-backend = "maturin"
 
 [project]
 name            = "aozora_py"
-description     = "Aozora Bunko notation parser — Python bindings (PyO3)."
-readme          = "../../README.md"
-requires-python = ">=3.9"
-license         = { text = "MIT OR Apache-2.0" }
-authors         = [{ name = "Yasunobu" }]
-keywords        = ["aozora", "parser", "japanese", "ruby"]
+description     = "Aozora Bunko notation (青空文庫記法) parser — Python bindings (PyO3)."
+readme          = "README.md"
+requires-python = ">=3.11"
+license         = { text = "Apache-2.0 OR MIT" }
+authors         = [{ name = "aozora contributors" }]
+keywords        = ["aozora", "aozora-bunko", "parser", "japanese", "ruby", "furigana", "shift-jis"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -28,27 +32,41 @@ classifiers = [
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Rust",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Implementation :: CPython",
   "Topic :: Text Processing :: Markup",
   "Operating System :: POSIX :: Linux",
   "Operating System :: MacOS",
   "Operating System :: Microsoft :: Windows",
+  "Typing :: Typed",
 ]
 dynamic = ["version"]
 
+[project.optional-dependencies]
+test = ["pytest>=8"]
+dev  = ["pytest>=8", "mypy>=1.11", "maturin>=1.9,<2.0"]
+
 [project.urls]
-Homepage   = "https://github.com/P4suta/aozora"
+Homepage   = "https://p4suta.github.io/aozora/"
 Repository = "https://github.com/P4suta/aozora"
 Issues     = "https://github.com/P4suta/aozora/issues"
+Changelog  = "https://github.com/P4suta/aozora/blob/main/CHANGELOG.md"
 
 [tool.maturin]
-manifest-path  = "Cargo.toml"
-features       = ["extension-module"]
-module-name    = "aozora_py"
-strip          = true
-# `auditwheel` post-processing is handled in the publish workflow's
-# Linux job via maturin's `--manylinux=auto`; macOS / Windows wheels
-# need no extra fixup.
+manifest-path = "Cargo.toml"
+# Enables the aozora-py `extension-module` feature, which pulls pyo3
+# (built with `abi3-py311` — see Cargo.toml). maturin auto-detects
+# abi3 from the cargo feature and tags the wheel `cp311-abi3`.
+features      = ["extension-module"]
+# Mixed layout: the public pure-Python package + stubs live here; the
+# compiled extension is placed at `aozora_py/_aozora_py`.
+python-source = "python"
+module-name   = "aozora_py._aozora_py"
+strip         = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

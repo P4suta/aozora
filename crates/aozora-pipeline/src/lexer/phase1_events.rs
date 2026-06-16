@@ -30,9 +30,9 @@
 //!    (once per scan), both at near memory-bandwidth speed.
 //! 3. [`Iterator::next`] merge-walks the two sorted offset streams
 //!    in event order, emitting `Text` / `Trigger` / `Newline` tokens.
-//! 4. Adjacent `RubyOpen` / `RubyClose` triggers fold into the
-//!    `DoubleRubyOpen` / `DoubleRubyClose` two-character variants
-//!    via single-step look-ahead on the trigger offset list.
+//! 4. `≪` / `≫` (U+226A/U+226B) are ordinary single-character triggers
+//!    (`AngleQuoteOpen` / `AngleQuoteClose`) — the aozora input encoding
+//!    for a 底本's double-angle brackets `《`/`》`. No look-ahead merge.
 //!
 //! `［＃` is NOT emitted as a merged trigger: `Hash` after
 //! `BracketOpen` is common but not universal (a stray `［` followed
@@ -136,20 +136,19 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> BumpVec<'a, Token> {
         if next_is_trigger {
             let t_pos = t_offset.expect("checked Some by next_is_trigger arm");
             let kind = trigger_kind_at(bytes, t_pos as usize);
-            let (emit_kind, byte_len, extra) =
-                merge_double(bytes, &trigger_offsets, t_idx, kind, t_pos);
+            let byte_len = kind.source_byte_len();
             if t_pos > text_start {
                 out.push(Token::Text {
                     range: Span::new(text_start, t_pos),
                 });
             }
             out.push(Token::Trigger {
-                kind: emit_kind,
+                kind,
                 span: Span::new(t_pos, t_pos + byte_len),
             });
             let after = t_pos + byte_len;
             text_start = after;
-            t_idx += 1 + extra;
+            t_idx += 1;
             while n_idx < newline_offsets.len() && newline_offsets[n_idx] < after {
                 n_idx += 1;
             }
@@ -173,39 +172,6 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> BumpVec<'a, Token> {
         });
     }
     out
-}
-
-/// Free-function variant of [`Tokenizer::try_merge_double`] used by
-/// [`tokenize_in`]. Returns `(kind, byte_len, extra_idx)`.
-#[inline]
-#[allow(
-    clippy::too_many_arguments,
-    reason = "five small u32/usize/slice/byte-slice args; bundling into a struct would obscure the inner-loop hot path"
-)]
-fn merge_double(
-    bytes: &[u8],
-    trigger_offsets: &[u32],
-    t_idx: usize,
-    kind: TriggerKind,
-    t_pos: u32,
-) -> (TriggerKind, u32, usize) {
-    let merged = match kind {
-        TriggerKind::RubyOpen => TriggerKind::DoubleRubyOpen,
-        TriggerKind::RubyClose => TriggerKind::DoubleRubyClose,
-        _ => return (kind, 3, 0),
-    };
-    let next_idx = t_idx + 1;
-    let Some(&next_pos) = trigger_offsets.get(next_idx) else {
-        return (kind, 3, 0);
-    };
-    if next_pos != t_pos + 3 {
-        return (kind, 3, 0);
-    }
-    let next_kind = trigger_kind_at(bytes, next_pos as usize);
-    if next_kind != kind {
-        return (kind, 3, 0);
-    }
-    (merged, 6, 1)
 }
 
 /// Streaming Phase 1 tokeniser over the merge of two pre-collected
@@ -288,38 +254,6 @@ impl<'s> Tokenizer<'s> {
             None => event,
         }
     }
-
-    /// Single-step look-ahead for the `《《` / `》》` double-trigger
-    /// merge. Returns `(kind_to_emit, byte_len_in_source, extra_offsets_to_consume)`.
-    ///
-    /// Mirrors the legacy tokenizer's merge contract: when a
-    /// `RubyOpen` / `RubyClose` is *immediately* followed (no gap in
-    /// source bytes) by another of the same kind, fold them into the
-    /// double variant covering 6 source bytes.
-    fn try_merge_double(
-        &self,
-        bytes: &[u8],
-        t_pos: u32,
-        kind: TriggerKind,
-    ) -> (TriggerKind, u32, usize) {
-        let merged_kind = match kind {
-            TriggerKind::RubyOpen => TriggerKind::DoubleRubyOpen,
-            TriggerKind::RubyClose => TriggerKind::DoubleRubyClose,
-            _ => return (kind, 3, 0),
-        };
-        let next_idx = self.t_idx + 1;
-        let Some(&next_pos) = self.trigger_offsets.get(next_idx) else {
-            return (kind, 3, 0);
-        };
-        if next_pos != t_pos + 3 {
-            return (kind, 3, 0);
-        }
-        let next_kind = trigger_kind_at(bytes, next_pos as usize);
-        if next_kind != kind {
-            return (kind, 3, 0);
-        }
-        (merged_kind, 6, 1)
-    }
 }
 
 impl Iterator for Tokenizer<'_> {
@@ -356,25 +290,14 @@ impl Iterator for Tokenizer<'_> {
         if next_is_trigger {
             let t_pos = t_offset.expect("checked Some by next_is_trigger arm");
             let kind = trigger_kind_at(bytes, t_pos as usize);
-            let (emit_kind, byte_len, extra) = self.try_merge_double(bytes, t_pos, kind);
+            let byte_len = kind.source_byte_len();
             let trigger = Token::Trigger {
-                kind: emit_kind,
+                kind,
                 span: Span::new(t_pos, t_pos + byte_len),
             };
             let text = self.flush_text(t_pos);
-            let after = t_pos + byte_len;
-            self.text_start = after;
-            self.t_idx += 1 + extra;
-            // The merged double-trigger may cover newline offsets
-            // (in pathological inputs only — `\n` cannot appear inside
-            // `《《`/`》》` since both are 6 ASCII-foreign bytes — but
-            // we keep the skip loop for defensive symmetry with the
-            // tokenize_with_scan reference implementation).
-            while self.n_idx < self.newline_offsets.len()
-                && self.newline_offsets[self.n_idx] < after
-            {
-                self.n_idx += 1;
-            }
+            self.text_start = t_pos + byte_len;
+            self.t_idx += 1;
             Some(self.pair_text_then(text, trigger))
         } else {
             let n_pos = n_offset.expect("checked Some by !next_is_trigger arm");
@@ -467,12 +390,12 @@ mod tests {
     }
 
     #[test]
-    fn double_bouten_brackets_merge_into_double_triggers() {
-        let toks = collect("《《強調》》");
+    fn angle_quote_brackets_are_single_triggers() {
+        let toks = collect("≪強調≫");
         let kinds = triggers(&toks);
         assert_eq!(
             kinds,
-            vec![TriggerKind::DoubleRubyOpen, TriggerKind::DoubleRubyClose,]
+            vec![TriggerKind::AngleQuoteOpen, TriggerKind::AngleQuoteClose,]
         );
     }
 
@@ -565,18 +488,18 @@ mod tests {
 
     #[test]
     fn trigger_span_covers_all_constituent_bytes() {
-        let toks = collect("《《ab》》");
+        let toks = collect("≪ab≫");
         let open_span = toks
             .iter()
             .find_map(|t| match t {
                 Token::Trigger {
-                    kind: TriggerKind::DoubleRubyOpen,
+                    kind: TriggerKind::AngleQuoteOpen,
                     span,
                 } => Some(*span),
                 _ => None,
             })
-            .expect("DoubleRubyOpen present");
-        // Double《 → 6 bytes starting at 0.
-        assert_eq!(open_span, Span::new(0, 6));
+            .expect("AngleQuoteOpen present");
+        // Single ≪ → 3 bytes starting at 0.
+        assert_eq!(open_span, Span::new(0, 3));
     }
 }

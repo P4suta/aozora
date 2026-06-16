@@ -49,6 +49,10 @@ fn double_glyph_sequences() {
     assert_scan_matches_naive("《《");
     assert_scan_matches_naive("》》");
     assert_scan_matches_naive("《《重要》》");
+    // Double-angle quotation triggers (U+226A/U+226B).
+    assert_scan_matches_naive("≪");
+    assert_scan_matches_naive("≫");
+    assert_scan_matches_naive("≪重要≫");
 }
 
 #[test]

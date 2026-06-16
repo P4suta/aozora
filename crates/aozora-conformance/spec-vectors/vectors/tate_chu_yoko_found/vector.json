@@ -1,0 +1,48 @@
+{
+  "name": "tate_chu_yoko_found",
+  "meta": {
+    "feature": "tate_chu_yoko",
+    "level": "must",
+    "spec_section": "6.3",
+    "note": "Happy-path 縦中横: the target ３３ precedes the directive (明治３３年…), so it is recognised and the directive consumed with no diagnostic. Complements the recovery case (vector tate_chu_yoko) where the target is absent and tcy-target-not-found is raised."
+  },
+  "source": "明治３３年［＃「３３」は縦中横］に。\n",
+  "expected": {
+    "html": "<p>明治３３年<span class=\"aozora-tcy\">３３</span>に。</p>\n",
+    "serialize": "明治３３年［＃「３３」は縦中横］に。\n",
+    "nodes": [
+      {
+        "kind": "tateChuYoko",
+        "span": {
+          "start": 15,
+          "end": 48
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 21,
+          "end": 24
+        },
+        "close": {
+          "start": 30,
+          "end": 33
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 15,
+          "end": 18
+        },
+        "close": {
+          "start": 45,
+          "end": 48
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

@@ -16,6 +16,21 @@ expression: "format!(\"{nodes:#?}\")"
                 ),
             ),
             delim_explicit: true,
+            side: Right,
+        },
+    ),
+    SideNote(
+        SideNote {
+            base: NonEmpty(
+                Plain(
+                    "base",
+                ),
+            ),
+            note: NonEmpty(
+                Plain(
+                    "よみ",
+                ),
+            ),
         },
     ),
     Bouten(
@@ -63,6 +78,11 @@ expression: "format!(\"{nodes:#?}\")"
             offset: 2,
         },
     ),
+    Center(
+        Center {
+            page: true,
+        },
+    ),
     Warichu(
         Warichu {
             upper: Plain(
@@ -78,11 +98,12 @@ expression: "format!(\"{nodes:#?}\")"
     ),
     PageBreak,
     SectionBreak(
-        Choho,
+        Kaicho,
     ),
     AozoraHeading(
         AozoraHeading {
-            kind: Window,
+            kind: Medium,
+            style: Window,
             text: NonEmpty(
                 Plain(
                     "base",
@@ -93,6 +114,7 @@ expression: "format!(\"{nodes:#?}\")"
     HeadingHint(
         HeadingHint {
             level: 2,
+            style: SameLine,
             target: NonEmptyStr(
                 "対象",
             ),
@@ -121,8 +143,8 @@ expression: "format!(\"{nodes:#?}\")"
             kind: Unknown,
         },
     ),
-    DoubleRuby(
-        DoubleRuby {
+    AngleQuote(
+        AngleQuote {
             content: NonEmpty(
                 Plain(
                     "base",
@@ -134,6 +156,8 @@ expression: "format!(\"{nodes:#?}\")"
         Container {
             kind: Indent {
                 amount: 1,
+                wrap: None,
+                center: false,
             },
         },
     ),

@@ -94,8 +94,8 @@
   display: none;
 }
 
-/* ===== ダブルルビ ===== */
-.aozora-double-ruby {
+/* ===== 二重山括弧 ===== */
+.aozora-angle-quote {
   color: var(--accent);
   background: var(--accent-bg);
   padding: 0 0.1em;
@@ -290,9 +290,9 @@
   opacity: 0.85;
 }
 
-.aozora-section-break-choho::before { content: '— 改丁 —'; }
-.aozora-section-break-dan::before { content: '— 改段 —'; }
-.aozora-section-break-spread::before { content: '— 改見開き —'; }
+.aozora-section-break-kaicho::before { content: '— 改丁 —'; }
+.aozora-section-break-kaidan::before { content: '— 改段 —'; }
+.aozora-section-break-kaimihiraki::before { content: '— 改見開き —'; }
 
 /* ===== 注記（aozora-render が hidden 付きで埋め込む） ===== */
 .aozora-annotation[hidden] {

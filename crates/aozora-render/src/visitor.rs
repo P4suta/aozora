@@ -24,10 +24,10 @@
 use core::fmt;
 
 use aozora_syntax::borrowed::{
-    Annotation, AozoraHeading, AozoraNode, Bouten, DoubleRuby, Gaiji, HeadingHint, Kaeriten, Ruby,
-    Sashie, TateChuYoko, Warichu,
+    AngleQuote, Annotation, AozoraHeading, AozoraNode, Bouten, Gaiji, HeadingHint, Kaeriten, Ruby,
+    Sashie, SideNote, TateChuYoko, Warichu,
 };
-use aozora_syntax::{AlignEnd, Container, Indent, Keigakomi, SectionKind};
+use aozora_syntax::{AlignEnd, Center, Container, Indent, Keigakomi, SectionKind};
 
 /// Tree-walker visitor for borrowed Aozora AST nodes.
 ///
@@ -55,6 +55,9 @@ pub trait AozoraVisitor<'src> {
     fn visit_ruby(&mut self, r: &Ruby<'src>) -> fmt::Result {
         Ok(())
     }
+    fn visit_side_note(&mut self, s: &SideNote<'src>) -> fmt::Result {
+        Ok(())
+    }
     fn visit_bouten(&mut self, b: &Bouten<'src>) -> fmt::Result {
         Ok(())
     }
@@ -68,6 +71,9 @@ pub trait AozoraVisitor<'src> {
         Ok(())
     }
     fn visit_align_end(&mut self, a: AlignEnd) -> fmt::Result {
+        Ok(())
+    }
+    fn visit_center(&mut self, c: Center) -> fmt::Result {
         Ok(())
     }
     fn visit_warichu(&mut self, w: &Warichu<'src>) -> fmt::Result {
@@ -97,7 +103,7 @@ pub trait AozoraVisitor<'src> {
     fn visit_annotation(&mut self, a: &Annotation<'src>) -> fmt::Result {
         Ok(())
     }
-    fn visit_double_ruby(&mut self, d: &DoubleRuby<'src>) -> fmt::Result {
+    fn visit_angle_quote(&mut self, d: &AngleQuote<'src>) -> fmt::Result {
         Ok(())
     }
     /// Container-open event. Fires on the entering pass for
@@ -136,11 +142,13 @@ pub fn dispatch_node<'src, V: AozoraVisitor<'src>>(
         }
         _ if !entering => Ok(()),
         AozoraNode::Ruby(r) => v.visit_ruby(r),
+        AozoraNode::SideNote(s) => v.visit_side_note(s),
         AozoraNode::Bouten(b) => v.visit_bouten(b),
         AozoraNode::TateChuYoko(t) => v.visit_tate_chu_yoko(t),
         AozoraNode::Gaiji(g) => v.visit_gaiji(g),
         AozoraNode::Indent(i) => v.visit_indent(i),
         AozoraNode::AlignEnd(a) => v.visit_align_end(a),
+        AozoraNode::Center(c) => v.visit_center(c),
         AozoraNode::Warichu(w) => v.visit_warichu(w),
         AozoraNode::Keigakomi(k) => v.visit_keigakomi(k),
         AozoraNode::PageBreak => v.visit_page_break(),
@@ -150,7 +158,7 @@ pub fn dispatch_node<'src, V: AozoraVisitor<'src>>(
         AozoraNode::Sashie(s) => v.visit_sashie(s),
         AozoraNode::Kaeriten(k) => v.visit_kaeriten(k),
         AozoraNode::Annotation(a) => v.visit_annotation(a),
-        AozoraNode::DoubleRuby(d) => v.visit_double_ruby(d),
+        AozoraNode::AngleQuote(d) => v.visit_angle_quote(d),
         // `AozoraNode` is `#[non_exhaustive]`; future variants no-op
         // until a visitor method is added for them.
         _ => Ok(()),
@@ -247,7 +255,7 @@ mod tests {
         // it must not panic and must not affect any other counter.
         let mut counter = Counter::default();
         dispatch_node(
-            AozoraNode::SectionBreak(SectionKind::Choho),
+            AozoraNode::SectionBreak(SectionKind::Kaicho),
             true,
             &mut counter,
         )

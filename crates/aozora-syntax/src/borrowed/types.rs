@@ -16,8 +16,8 @@ use core::slice;
 use aozora_encoding::gaiji::Resolved;
 
 use crate::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container, Indent,
-    Keigakomi, SectionKind,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
+    Center, Container, EmphasisKind, Indent, Keigakomi, RubySide, SectionKind,
 };
 
 // ----------------------------------------------------------------------
@@ -45,6 +45,8 @@ pub enum AozoraNode<'src> {
     Indent(Indent),
     /// End-aligned text marker.
     AlignEnd(AlignEnd),
+    /// Centring marker (`ページの左右中央` / `中央揃え`). See [`Center`].
+    Center(Center),
     /// Warichu (split annotation). See [`Warichu`].
     Warichu(&'src Warichu<'src>),
     /// Keigakomi (boxed text marker, no fields).
@@ -63,8 +65,12 @@ pub enum AozoraNode<'src> {
     Kaeriten(&'src Kaeriten<'src>),
     /// Generic annotation when no more specific recogniser matched.
     Annotation(&'src Annotation<'src>),
-    /// `《《…》》` double-bracket bouten. See [`DoubleRuby`].
-    DoubleRuby(&'src DoubleRuby<'src>),
+    /// `≪…≫` double-angle quotation (displays as `《…》`). See [`AngleQuote`].
+    AngleQuote(&'src AngleQuote<'src>),
+    /// Bold / italic emphasis (`X［＃「X」は太字／斜体］`). See [`Emphasis`].
+    Emphasis(&'src Emphasis<'src>),
+    /// Left-side annotation (注記). See [`SideNote`].
+    SideNote(&'src SideNote<'src>),
     /// Paired-container open (`［＃ここから字下げ］` etc.).
     Container(Container),
 }
@@ -175,6 +181,22 @@ pub struct Ruby<'src> {
     pub base: super::NonEmpty<Content<'src>>,
     pub reading: super::NonEmpty<Content<'src>>,
     pub delim_explicit: bool,
+    /// Which side the reading sits on. `Right` for the `｜《》` / implicit
+    /// forms; `Left` for the `［＃「X」の左に「Y」のルビ］` saidoku building block.
+    pub side: RubySide,
+}
+
+/// Left-side annotation (注記).
+///
+/// `［＃「base」の左に「note」の注記］` — a left-side editorial gloss attached
+/// to `base`. Like a left-side ruby in placement, but a *note* (注記) rather
+/// than a phonetic reading, so it is a distinct node and round-trips to
+/// `の注記`, not `のルビ`. Both `base` and `note` are [`super::NonEmpty`]:
+/// Phase 3 emits the node only once both have content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SideNote<'src> {
+    pub base: super::NonEmpty<Content<'src>>,
+    pub note: super::NonEmpty<Content<'src>>,
 }
 
 /// Emphasis dots / sidelines.
@@ -216,6 +238,29 @@ pub struct TateChuYoko<'src> {
     pub consumed_predecessor: bool,
 }
 
+/// Bold / italic emphasis.
+///
+/// The forward-reference leaf form of 太字 / 斜体
+/// (`X［＃「X」は太字］` / `X［＃「X」は斜体］`). `kind` selects 太字
+/// (`<b>`) or 斜体 (`<i>`); `text` is the emphasised run. The range /
+/// block forms (`［＃太字］…［＃太字終わり］`, `［＃ここから太字］…`)
+/// are paired containers ([`crate::ContainerKind::Bold`] /
+/// [`crate::ContainerKind::Italic`]), not this node.
+///
+/// `text` is [`super::NonEmpty`] — empty emphasis is a parse bug.
+///
+/// `consumed_predecessor` mirrors [`Bouten::consumed_predecessor`] and
+/// [`TateChuYoko::consumed_predecessor`]: when Phase 3 pulled the node's
+/// source span back over the immediately-preceding literal of `text`,
+/// the serializer re-emits that literal before `［＃「text」は太字］` to
+/// hold the parse∘serialize fixed point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Emphasis<'src> {
+    pub kind: EmphasisKind,
+    pub text: super::NonEmpty<Content<'src>>,
+    pub consumed_predecessor: bool,
+}
+
 /// Gaiji (out-of-character-range glyph).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gaiji<'src> {
@@ -238,22 +283,26 @@ pub struct Warichu<'src> {
     pub lower: Content<'src>,
 }
 
-/// Aozora heading (窓見出し / 副見出し).
+/// Aozora heading — a 大 / 中 / 小 `kind` (level) and a `style`
+/// (standard / 同行 / 窓).
 ///
 /// `text` is [`super::NonEmpty`] — every heading carries a label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AozoraHeading<'src> {
     pub kind: AozoraHeadingKind,
+    pub style: AozoraHeadingStyle,
     pub text: super::NonEmpty<Content<'src>>,
 }
 
-/// Forward-reference heading hint.
+/// Forward-reference heading hint, carrying the intended outline `level`
+/// (1 / 2 / 3) and `style` (standard / 同行 / 窓).
 ///
 /// `target` is [`super::NonEmptyStr`] — Phase 3 only emits the hint
 /// after a `「対象」` quoted target landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadingHint<'src> {
     pub level: u8,
+    pub style: AozoraHeadingStyle,
     pub target: super::NonEmptyStr<'src>,
 }
 
@@ -285,13 +334,13 @@ pub struct Kaeriten<'src> {
     pub mark: super::NonEmptyStr<'src>,
 }
 
-/// Double angle-bracket payload.
+/// Double-angle quotation payload (input `≪…≫`, display `《…》`).
 ///
 /// `content` is [`super::NonEmpty`] — Phase 3 pre-filters empty
-/// `《《》》` to plain text before allocation, so a `DoubleRuby`
+/// `≪≫` to plain text before allocation, so a `AngleQuote`
 /// node is never emitted with empty content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DoubleRuby<'src> {
+pub struct AngleQuote<'src> {
     pub content: super::NonEmpty<Content<'src>>,
 }
 
@@ -309,6 +358,7 @@ impl AozoraNode<'_> {
             self,
             Self::Indent(_)
                 | Self::AlignEnd(_)
+                | Self::Center(_)
                 | Self::Warichu(_)
                 | Self::Keigakomi(_)
                 | Self::PageBreak
@@ -330,6 +380,7 @@ impl AozoraNode<'_> {
             self,
             Self::AozoraHeading(_)
                 | Self::AlignEnd(_)
+                | Self::Center(_)
                 | Self::Warichu(_)
                 | Self::Keigakomi(_)
                 | Self::Indent(_)
@@ -349,6 +400,7 @@ impl AozoraNode<'_> {
             Self::Gaiji(_) => "aozora_gaiji",
             Self::Indent(_) => "aozora_indent",
             Self::AlignEnd(_) => "aozora_align_end",
+            Self::Center(_) => "aozora_center",
             Self::Warichu(_) => "aozora_warichu",
             Self::Keigakomi(_) => "aozora_keigakomi",
             Self::PageBreak => "aozora_page_break",
@@ -358,7 +410,9 @@ impl AozoraNode<'_> {
             Self::Sashie(_) => "aozora_sashie",
             Self::Kaeriten(_) => "aozora_kaeriten",
             Self::Annotation(_) => "aozora_annotation",
-            Self::DoubleRuby(_) => "aozora_double_ruby",
+            Self::AngleQuote(_) => "aozora_angle_quote",
+            Self::Emphasis(_) => "aozora_emphasis",
+            Self::SideNote(_) => "aozora_side_note",
             Self::Container(_) => "aozora_container",
         }
     }
@@ -379,6 +433,7 @@ impl AozoraNode<'_> {
             Self::Gaiji(_) => NodeKind::Gaiji,
             Self::Indent(_) => NodeKind::Indent,
             Self::AlignEnd(_) => NodeKind::AlignEnd,
+            Self::Center(_) => NodeKind::Center,
             Self::Warichu(_) => NodeKind::Warichu,
             Self::Keigakomi(_) => NodeKind::Keigakomi,
             Self::PageBreak => NodeKind::PageBreak,
@@ -388,7 +443,9 @@ impl AozoraNode<'_> {
             Self::Sashie(_) => NodeKind::Sashie,
             Self::Kaeriten(_) => NodeKind::Kaeriten,
             Self::Annotation(_) => NodeKind::Annotation,
-            Self::DoubleRuby(_) => NodeKind::DoubleRuby,
+            Self::AngleQuote(_) => NodeKind::AngleQuote,
+            Self::Emphasis(_) => NodeKind::Emphasis,
+            Self::SideNote(_) => NodeKind::SideNote,
             Self::Container(_) => NodeKind::Container,
         }
     }
@@ -408,6 +465,7 @@ mod tests {
         assert_copy::<Content<'static>>();
         assert_copy::<Ruby<'static>>();
         assert_copy::<Bouten<'static>>();
+        assert_copy::<Emphasis<'static>>();
         assert_copy::<Gaiji<'static>>();
     }
 
@@ -490,7 +548,7 @@ mod tests {
     #[test]
     fn block_variants_report_block() {
         assert!(AozoraNode::Indent(Indent { amount: 2 }).is_block());
-        assert!(AozoraNode::SectionBreak(SectionKind::Choho).is_block());
+        assert!(AozoraNode::SectionBreak(SectionKind::Kaicho).is_block());
     }
 
     #[test]
@@ -499,6 +557,7 @@ mod tests {
             base: super::super::NonEmpty::new(Content::Plain("x")).unwrap(),
             reading: super::super::NonEmpty::new(Content::Plain("x")).unwrap(),
             delim_explicit: false,
+            side: RubySide::Right,
         };
         assert!(!AozoraNode::Ruby(&ruby).is_block());
 
@@ -514,6 +573,7 @@ mod tests {
             base: super::super::NonEmpty::new(Content::Plain("青梅")).unwrap(),
             reading: super::super::NonEmpty::new(Content::Plain("おうめ")).unwrap(),
             delim_explicit: true,
+            side: RubySide::Right,
         };
         assert_eq!(r.base.as_plain(), Some("青梅"));
         assert_eq!(r.reading.as_plain(), Some("おうめ"));

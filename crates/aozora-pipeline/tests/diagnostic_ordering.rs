@@ -33,9 +33,23 @@ fn phase_ordinal(d: &Diagnostic) -> u8 {
         // Source-side diagnostics — match by stable code.
         DiagnosticSource::Source => match d.code() {
             // Phase 0: sanitize.
-            codes::SOURCE_CONTAINS_PUA => 0,
+            codes::SOURCE_CONTAINS_PUA | codes::ACCENT_DECOMPOSITION_APPLIED => 0,
             // Phase 2: pair.
             codes::UNCLOSED_BRACKET | codes::UNMATCHED_CLOSE => 2,
+            // Phase 3: classify.
+            codes::UNRESOLVED_GAIJI
+            | codes::EMPTY_RUBY_READING
+            | codes::NESTED_RUBY
+            | codes::UNRECOGNISED_CONTAINER_DIRECTIVE
+            | codes::TCY_TARGET_NOT_FOUND
+            | codes::BOUTEN_TARGET_AMBIGUOUS
+            | codes::BRACKETED_KAERITEN_NO_PAIR
+            | codes::KAERITEN_OUTSIDE_KANBUN => 3,
+            // Post-Phase-3 normalizer fold (same slot as the Internal
+            // validators below, which also run after classify).
+            codes::MISMATCHED_CONTAINER_CLOSE
+            | codes::BREAK_IN_SINGLE_LINE_CONTAINER
+            | codes::MISMATCHED_BOUTEN_CONTAINER => 4,
             _ => 99,
         },
         // Pipeline-internal validators run after Phase 3.

@@ -1,0 +1,14 @@
+{
+  "name": "plain_text",
+  "meta": {
+    "feature": "plain",
+    "level": "must",
+    "spec_section": "6"
+  },
+  "source": "こんにちは、世界。\n",
+  "expected": {
+    "html": "<p>こんにちは、世界。</p>\n",
+    "serialize": "こんにちは、世界。\n",
+    "diagnostics": []
+  }
+}

@@ -57,38 +57,37 @@ For a reference like `※［＃「魚＋師のつくり」、第3水準1-94-37�
    (`U+XXXX`) — used directly.
 2. **JIS X 0213 plane-row-cell** lookup (`第N水準P-R-C`) — most
    ideographs land here.
-3. **Descriptive name** — the parser ships a curated mapping for the
-   ~120 characters that have no JIS / Unicode codepoint at all.
-   Misses fire diagnostic [`W0006`](diagnostics.md#W0006) and the
-   gaiji is rendered as the descriptive text in `<span>` brackets.
+3. **Descriptive name** — the parser ships a curated mapping plus a
+   single-character fallback (a description that is itself one glyph
+   resolves to it). A reference that matches none of these resolves to
+   nothing: the [`aozora::lex::unresolved_gaiji`](diagnostics.md#unresolved-gaiji)
+   warning fires and the gaiji renders as its description text.
 
 ## AST shape
 
 ```rust
 pub struct Gaiji<'src> {
-    pub description:    &'src str,        // 「魚＋師のつくり」
-    pub jis:            Option<JisCode>,  // (plane, row, cell)
-    pub unicode:        Option<char>,     // resolved codepoint
-    pub resolution:     GaijiResolution,  // Direct | Lookup | Fallback
-    pub span:           Span,
-}
-
-pub enum GaijiResolution {
-    /// The source provided U+XXXX directly.
-    Direct,
-    /// Resolved via JIS table.
-    Lookup,
-    /// Could not resolve; rendered as descriptive text.
-    Fallback,
+    /// Free-form description from the source (e.g. "魚＋師のつくり").
+    pub description: &'src str,
+    /// Resolved Unicode value — a single scalar or a static combining
+    /// sequence — or `None` when no path matched.
+    pub ucs: Option<Resolved>,
+    /// Raw mencode reference (e.g. "第3水準1-85-54", "U+XXXX").
+    pub mencode: Option<&'src str>,
 }
 ```
 
+`Resolved` is `Char(char)` for the 99%+ single-scalar case or
+`Multi(&'static str)` for the 25 JIS X 0213 plane-1 combining-sequence
+cells. `ucs == None` is the unresolved case the
+[`unresolved_gaiji`](diagnostics.md#unresolved-gaiji) warning flags.
+
 ## Render output
 
-| Resolution | HTML |
+| `ucs` | HTML |
 |---|---|
-| `Direct` / `Lookup` | the resolved codepoint inline, with a `data-aozora-gaiji-jis="1-94-37"` attribute for downstream analysis tools. |
-| `Fallback` | `<span class="aozora-gaiji-fallback" title="魚＋師のつくり">[魚＋師のつくり]</span>` |
+| `Some(_)` | `<span class="aozora-gaiji" data-codepoint="U+20B9B">𠮛</span>` — the resolved glyph as content, the scalar(s) as space-separated `U+XXXX` in `data-codepoint`. |
+| `None` | `<span class="aozora-gaiji" data-description="魚＋師のつくり">魚＋師のつくり</span>` — the description as both attribute and content. |
 
 ## Accent decomposition
 
@@ -112,5 +111,5 @@ ordering.
 
 - [Architecture → Shift_JIS + 外字 resolver](../arch/encoding.md) —
   the encoding pipeline and the PHF table internals.
-- [Diagnostics → `W0006`](diagnostics.md#W0006) — unresolved gaiji
-  reference.
+- [Diagnostics → `aozora::lex::unresolved_gaiji`](diagnostics.md#unresolved-gaiji)
+  — unresolved gaiji reference.

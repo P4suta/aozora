@@ -72,7 +72,7 @@ The diagnostics JSON shape mirrors `aozora-ffi`'s C ABI:
 
 ```ts
 interface Diagnostic {
-    code:    string;            // "E0001", "W0006", …
+    code:    string;            // "aozora::lex::unresolved_gaiji", …
     level:   "error" | "warning" | "info";
     message: string;
     span:    { start: number; end: number };
@@ -88,8 +88,8 @@ it because:
 
 - It pulls in a meaningful chunk of `serde_json` machinery that
   bloats the wasm bundle by ~80 KiB.
-- The wire format (`{ code: "E0001", level: "warning", … }`) is
-  exactly what every JS consumer is going to deserialise into
+- The wire format (`{ code: "aozora::lex::unresolved_gaiji", level: "warning", … }`)
+  is exactly what every JS consumer is going to deserialise into
   anyway.
 - It would force a `serde::Serialize` derivation on every
   diagnostic-related type in `aozora-spec`, which the Rust library

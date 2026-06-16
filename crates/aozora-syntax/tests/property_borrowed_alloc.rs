@@ -22,13 +22,13 @@ use aozora_proptest::config::default_config;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Content};
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container,
-    ContainerKind, Indent, Keigakomi, SectionKind,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
+    Center, Container, ContainerKind, Indent, Keigakomi, SectionKind,
 };
 use proptest::prelude::*;
 
 // ----------------------------------------------------------------------
-// Hand-curated injectivity check — exhaustive over the 17 variants.
+// Hand-curated injectivity check — exhaustive over the 18 variants.
 // Lives as a unit test (not a proptest) because the variant set is
 // finite and small; the value is in the *exhaustive* sweep, not in
 // shrinker-driven discovery.
@@ -47,23 +47,29 @@ fn xml_node_name_is_injective_over_all_variants() {
 
     let nodes = [
         alloc.ruby(base, reading, true),
+        alloc.side_note(base, reading),
         alloc.bouten(BoutenKind::Goma, base, BoutenPosition::Right, false),
         alloc.tate_chu_yoko(base, false),
         alloc.gaiji(g),
         alloc.indent(Indent { amount: 2 }),
         alloc.align_end(AlignEnd { offset: 2 }),
+        alloc.center(Center { page: true }),
         alloc.warichu(upper, lower),
         alloc.keigakomi(Keigakomi),
         alloc.page_break(),
-        alloc.section_break(SectionKind::Choho),
-        alloc.aozora_heading(AozoraHeadingKind::Window, base),
-        alloc.heading_hint(2, "対象"),
+        alloc.section_break(SectionKind::Kaicho),
+        alloc.aozora_heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window, base),
+        alloc.heading_hint(2, AozoraHeadingStyle::SameLine, "対象"),
         alloc.sashie("file.png", None),
         alloc.kaeriten("一"),
         alloc.annotation(a),
-        alloc.double_ruby(base),
+        alloc.angle_quote(base),
         alloc.container(Container {
-            kind: ContainerKind::Indent { amount: 1 },
+            kind: ContainerKind::Indent {
+                amount: 1,
+                wrap: None,
+                center: false,
+            },
         }),
     ];
 

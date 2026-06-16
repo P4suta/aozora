@@ -1,0 +1,36 @@
+{
+  "name": "angle_quote",
+  "meta": {
+    "feature": "angle_quote",
+    "level": "must",
+    "spec_section": "6.15"
+  },
+  "source": "≪重要≫な記述。\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-angle-quote\">《重要》</span>な記述。</p>\n",
+    "serialize": "≪重要≫な記述。\n",
+    "nodes": [
+      {
+        "kind": "angleQuote",
+        "span": {
+          "start": 0,
+          "end": 12
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "angleQuote",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 9,
+          "end": 12
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

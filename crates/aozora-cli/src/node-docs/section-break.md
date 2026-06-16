@@ -13,11 +13,11 @@ Wire tag: `sectionBreak` — section breaks (改丁 / 改段 / 改見開き).
 ## Rendered HTML
 
 ```html
-<div class="aozora-section-break aozora-section-break-choho"></div>
+<div class="aozora-section-break aozora-section-break-kaicho"></div>
 ```
 
-The second class slot carries the variant slug (`choho`, `dan`,
-`spread`, `other`).
+The second class slot carries the variant slug (`kaicho`, `kaidan`,
+`kaimihiraki`, `other`).
 
 ## Serialize output
 

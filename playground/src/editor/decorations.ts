@@ -23,7 +23,7 @@ import { lowerBoundByStart } from './utils';
  */
 const KIND_TO_CLASS: Record<string, string> = {
   ruby: 'cm-aozora-ruby',
-  doubleRuby: 'cm-aozora-double-ruby',
+  angleQuote: 'cm-aozora-angle-quote',
   bouten: 'cm-aozora-bouten',
   gaiji: 'cm-aozora-gaiji',
   tateChuYoko: 'cm-aozora-tcy',

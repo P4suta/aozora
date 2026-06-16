@@ -7,7 +7,9 @@ rust-version.workspace = true
 license.workspace      = true
 repository.workspace   = true
 authors.workspace      = true
-readme.workspace       = true
+# Crate-local, PyPI-facing README (absolute links so it renders on the
+# PyPI project page); the other crates inherit the workspace README.
+readme                 = "README.md"
 keywords.workspace     = true
 categories.workspace   = true
 
@@ -33,10 +35,20 @@ aozora = { workspace = true, features = ["wire"] }
 # feature so a plain `cargo build --workspace` does not need to
 # discover Python. Enable the feature when running `maturin develop`
 # / `maturin build`.
+#
+# `abi3-py311` builds against CPython's stable ABI (the limited API)
+# with a 3.11 floor: maturin emits ONE forward-compatible
+# `cp311-abi3` wheel per platform that loads on 3.11, 3.12, 3.13,
+# 3.14 and every future 3.x — no per-version build matrix. abi3 also
+# lets pyo3's build script compile WITHOUT discovering a Python
+# interpreter, so `cargo check -p aozora-py -F extension-module`
+# works in the Python-less dev image. (Free-threaded `3.13t`/`3.14t`
+# are NOT abi3-compatible — they need a separate non-abi3 build; see
+# publish-pypi.yml.)
 [dependencies.pyo3]
 version = "0.29"
 optional = true
-features = ["extension-module"]
+features = ["extension-module", "abi3-py311"]
 
 [features]
 default = []
@@ -44,7 +56,12 @@ extension-module = ["dep:pyo3"]
 
 [lib]
 # Hyphenated crate name (`aozora-py`) is not a valid Python module
-# name. Override the lib name so the wheel imports as `aozora_py`,
-# matching the `#[pymodule] fn aozora_py(...)` entry in src/lib.rs.
-name       = "aozora_py"
+# name. The wheel ships a mixed layout (see pyproject.toml
+# `python-source`): the pure-Python package `aozora_py` (the public
+# `Document` + parsed helpers) wraps this compiled extension, which
+# is nested as the PRIVATE submodule `aozora_py._aozora_py`. The lib
+# name must therefore be `_aozora_py`, matching the `#[pymodule] fn
+# _aozora_py(...)` entry in src/lib.rs and the pyproject
+# `module-name = "aozora_py._aozora_py"`.
+name       = "_aozora_py"
 crate-type = ["lib", "cdylib"]

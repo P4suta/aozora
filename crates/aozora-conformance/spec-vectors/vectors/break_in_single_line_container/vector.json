@@ -1,0 +1,63 @@
+{
+  "name": "break_in_single_line_container",
+  "meta": {
+    "feature": "break",
+    "level": "should",
+    "spec_section": "6.9"
+  },
+  "source": "［＃地付き］本文［＃改ページ］",
+  "expected": {
+    "html": "<p><span class=\"aozora-align-end\" data-offset=\"0\"></span>本文</p>\n<div class=\"aozora-page-break\"></div>",
+    "serialize": "［＃地付き］本文\n\n［＃改ページ］\n\n",
+    "nodes": [
+      {
+        "kind": "alignEnd",
+        "span": {
+          "start": 0,
+          "end": 18
+        }
+      },
+      {
+        "kind": "pageBreak",
+        "span": {
+          "start": 24,
+          "end": 45
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 15,
+          "end": 18
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 24,
+          "end": 27
+        },
+        "close": {
+          "start": 42,
+          "end": 45
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "break-in-single-line-container",
+        "severity": "warning",
+        "span": {
+          "start": 24,
+          "end": 45
+        }
+      }
+    ]
+  }
+}

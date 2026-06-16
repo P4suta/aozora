@@ -1,0 +1,54 @@
+{
+  "name": "wrap_indent",
+  "meta": {
+    "feature": "container",
+    "level": "should",
+    "spec_section": "6.6"
+  },
+  "source": "［＃ここから２字下げ、折り返して４字下げ］\n本文が折り返して字下げされる長い行。\n［＃ここで字下げ終わり］\n",
+  "expected": {
+    "html": "<div class=\"aozora-container aozora-container-indent aozora-container-indent-2 aozora-container-wrap-indent\" data-amount=\"2\" data-wrap=\"4\">\n<p>本文が折り返して字下げされる長い行。</p>\n</div>",
+    "serialize": "\n\n［＃ここから2字下げ、折り返して4字下げ］\n\n本文が折り返して字下げされる長い行。\n\n［＃ここで字下げ終わり］\n\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 0,
+          "end": 63
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 119,
+          "end": 155
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 60,
+          "end": 63
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 119,
+          "end": 122
+        },
+        "close": {
+          "start": 152,
+          "end": 155
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

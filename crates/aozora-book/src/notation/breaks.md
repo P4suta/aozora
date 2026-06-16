@@ -5,45 +5,45 @@ Four annotations split a work into pages, signatures, and openings:
 
 | Notation | Renders as | Meaning |
 |---|---|---|
-| `［＃改ページ］` | `<div class="aozora-page-break"/>` | Begin a new page |
-| `［＃改丁］` | `<div class="aozora-page-break aozora-recto"/>` | Begin a new recto (right-hand) page |
-| `［＃改見開き］` | `<div class="aozora-page-break aozora-spread"/>` | Begin a new two-page spread |
-| `［＃改段］` | `<div class="aozora-section-break"/>` | Section break (smaller than a page) |
+| `［＃改ページ］` | `<div class="aozora-page-break"></div>` | Begin a new page |
+| `［＃改丁］` | `<div class="aozora-section-break aozora-section-break-kaicho"></div>` | Begin a new 丁 (leaf / recto) |
+| `［＃改段］` | `<div class="aozora-section-break aozora-section-break-kaidan"></div>` | Section break (smaller than a page) |
+| `［＃改見開き］` | `<div class="aozora-section-break aozora-section-break-kaimihiraki"></div>` | Begin a new two-page spread |
 
 All four are *self-contained* directives — no opener / closer pair,
 no inner content. They appear on their own line in the source.
 
 ## AST shape
 
-```rust
-pub enum Break {
-    Page,
-    PageRecto,        // 改丁
-    PageSpread,       // 改見開き
-    Section,          // 改段
-}
+`［＃改ページ］` is its own borrowed-AST node; the three 段 / 丁 / 見開き
+breaks share one `SectionBreak` node tagged by [`SectionKind`]:
 
-pub struct BreakNode {
-    pub kind: Break,
-    pub span: Span,
+```rust
+// borrowed::AozoraNode variants
+AozoraNode::PageBreak,                  // ［＃改ページ］
+AozoraNode::SectionBreak(SectionKind),  // ［＃改丁 / 改段 / 改見開き］
+
+pub enum SectionKind {
+    Choho,   // 改丁
+    Dan,     // 改段
+    Spread,  // 改見開き
 }
 ```
 
 ## Why distinct variants for each break flavour?
 
-The four flavours render to identical HTML *structure* (an empty
-`<div>`) but different *class* hooks. Collapsing them to a single
-variant with a string tag would:
+The flavours render to identical HTML *structure* (an empty `<div>`) but
+different *class* hooks (`aozora-page-break`,
+`aozora-section-break-{kaicho,kaidan,kaimihiraki}`). Keeping `PageBreak` separate
+and tagging the section flavours with a `SectionKind` enum (rather than a
+string) means:
 
-- Force the renderer to plumb the original notation through to the
-  output, defeating the AST's role as a normalised IR.
-- Lose the type-system check that every break flavour has a render
-  path — clippy's exhaustiveness lint catches the bug at compile time.
-- Make it impossible to *count* page breaks of a specific flavour at
-  the AST level without a string match.
-
-The 4-variant enum is 1 byte plus discriminant — no real cost over
-the alternative.
+- The renderer never plumbs the original notation through to the output,
+  preserving the AST's role as a normalised IR.
+- The compiler's exhaustiveness check guarantees every flavour has a
+  render path.
+- Tooling can *count* breaks of a specific flavour at the AST level
+  without a string match.
 
 ## Composition with other annotations
 
@@ -64,7 +64,7 @@ matches print typography.
 
 | Code | Condition |
 |---|---|
-| [`W0008`](diagnostics.md#W0008) | Page break inside a single-line container (drops the container) |
+| [`break_in_single_line_container`](diagnostics.md#break-in-single-line-container) | A page / section break sharing a line with a single-line container (or inside a warichu range), which drops it |
 
 ## See also
 

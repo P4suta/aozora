@@ -18,6 +18,24 @@ _ci  := "docker compose run --rm --no-TTY ci"
 default:
     @just --list --unsorted
 
+# First-run setup for a fresh clone: prerequisite checks → build the dev
+# image → install git hooks → green test. Idempotent. `./bootstrap` is a
+# thin wrapper around this for newcomers who haven't learned `just` yet.
+setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v docker >/dev/null || { echo "❌ docker not found — install Docker: https://docs.docker.com/get-docker/"; exit 1; }
+    docker info >/dev/null 2>&1 || { echo "❌ Docker daemon not running — start Docker and re-run 'just setup'."; exit 1; }
+    avail_kb=$(df -Pk . | awk 'NR==2{print $4}')
+    if [ "${avail_kb:-0}" -lt 5242880 ]; then echo "⚠️  less than ~5 GB free here — the dev image + cargo volumes want headroom."; fi
+    echo "▶ [1/3] Building the dev image (first run ~5 min, cached afterwards)…"
+    docker compose build dev
+    echo "▶ [2/3] Installing git hooks (lefthook)…"
+    just hooks
+    echo "▶ [3/3] Verifying the toolchain (just test)…"
+    just test
+    echo "✅ Setup complete. Try 'just --list' (every recipe) or 'just shell' (dev container)."
+
 # --- build/shell --------------------------------------------------------------
 
 # Build all workspace crates.
@@ -33,6 +51,15 @@ default:
 build:
     {{_dev}} cargo build --workspace --exclude aozora-bench --all-targets
 
+# Fastest "does it still compile?" gate. `cargo check` skips codegen,
+# so it's the inner-loop signal; `just build` stays the --all-targets
+# gate that also links the test / example binaries. Mirrors bacon's
+# default `check` job and the MSRV CI job's `cargo check --workspace
+# --all-targets`, so the "still compiles?" answer is the same surface
+# everywhere.
+check:
+    {{_dev}} cargo check --workspace --exclude aozora-bench --all-targets
+
 # Build release binaries
 build-release:
     {{_dev}} cargo build --release --workspace --exclude aozora-bench
@@ -45,6 +72,11 @@ shell:
 run *ARGS:
     {{_dev}} cargo run --package aozora-cli --quiet -- {{ARGS}}
 
+# Run a library example from crates/aozora/examples/ (`just example hello`).
+# Each example uses only the `aozora` umbrella surface and prints to stdout.
+example NAME *ARGS:
+    {{_dev}} cargo run -p aozora --example {{NAME}} {{ARGS}}
+
 # --- tests --------------------------------------------------------------------
 
 # Run the full test suite (unit + integration + snapshot).
@@ -52,9 +84,26 @@ run *ARGS:
 test *ARGS:
     {{_dev}} cargo nextest run --workspace --exclude aozora-bench --all-targets {{ARGS}}
 
+# Run only the tests whose name matches FILTER — the single-test inner
+# loop. Uses nextest's filterset DSL: a bare string is a substring
+# match, wrap it in slashes for a regex. Extra nextest flags pass
+# through after FILTER.
+#   just t ruby                # every test whose name contains "ruby"
+#   just t '/ruby|bouten/'     # regex
+#   just t ruby --no-capture   # forward nextest flags
+t FILTER *ARGS:
+    {{_dev}} cargo nextest run --workspace --exclude aozora-bench -E 'test({{FILTER}})' {{ARGS}}
+
 # Run doctests (nextest skips these by design)
 test-doc:
     {{_dev}} cargo test --workspace --doc
+
+# Doctests for the umbrella crate with its optional features enabled
+# (wire / cst / query / …), so feature-gated rustdoc examples are
+# verified too. `just test-doc` stays feature-light for speed; run this
+# before a release or after touching a feature-gated public example.
+test-doc-all:
+    {{_dev}} cargo test -p aozora --doc --all-features
 
 # Refresh insta snapshot files in place. Used after an intentional
 # change to a snapshot-tested surface (rendered HTML, AST `Debug`,
@@ -106,6 +155,17 @@ types:
 types-check:
     {{_dev}} cargo run -p aozora-xtask -q -- types check
 
+# Generate per-language wire types (Go / …) from the committed wire JSON
+# Schema via quicktype — one generator, every host-SDK language. Writes
+# `crates/aozora-<lang>/…`; commit the diff so `types-langs-check` stays
+# green. quicktype + gofmt ship in the dev image.
+types-langs:
+    {{_dev}} cargo run -p aozora-xtask -q -- types langs
+
+# Drift gate for the per-language wire types. Wired into `drift-gate`.
+types-langs-check:
+    {{_dev}} cargo run -p aozora-xtask -q -- types langs-check
+
 # Phase L4 — bundled drift gate. Equivalent to the CI `drift-gate`
 # job: schema + types in one shot. Use locally before pushing.
 #
@@ -117,7 +177,7 @@ types-check:
 # against an already-warm container with the xtask binary cached in
 # `target/`.
 drift-gate:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- schema check && cargo run -p aozora-xtask -q -- types check && cargo run -p aozora-xtask -q -- types langs-check'
 
 # Scaffold a new ADR under docs/adr/ from the template: picks the next
 # 4-digit number, slugifies the title, stamps today's date, and writes a
@@ -135,13 +195,33 @@ new-adr TITLE:
     sed -i -e "s/^# NNNN. TITLE_HERE/# ${n}. {{TITLE}}/" -e "s/YYYY-MM-DD/$(date +%F)/" "$f"
     echo "Created $f"
 
-# Phase O4 — WPT-style conformance runner. Walks every fixture
-# under aozora-conformance/fixtures/render/, runs the parser, and
-# fails non-zero if any `must`-tier case regresses. Writes a
-# per-case results.json into the handbook source tree so readers
-# can see the latest tier breakdown.
+# Phase O4 — WPT-style conformance runner. Two passes in one container:
+#   1. `conformance run`     — walks aozora-conformance/fixtures/render/,
+#                              compares against the parser's own goldens,
+#                              writes a per-case results.json into the
+#                              handbook source tree.
+#   2. `conformance vectors` — runs the vendored specification vectors
+#                              (spec-vectors/, synced from the sibling
+#                              aozora-notation-spec) and holds the parser
+#                              to the SPEC's expectations.
+# Either pass exits non-zero on a `must`-tier regression.
 conformance:
-    {{_dev}} cargo run -p aozora-xtask -q -- conformance run
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- conformance run && cargo run -p aozora-xtask -q -- conformance vectors'
+
+# Vendor the conformance vectors from the sibling aozora-notation-spec
+# repo into spec-vectors/ (the spec is the source of truth). Host-side —
+# reaches outside the /workspace bind mount, so it runs directly on the
+# host, not in the dev container. Re-run after the spec's vectors change
+# and commit the diff. Override the spec location with AOZORA_SPEC_REPO.
+sync-spec-vectors:
+    scripts/sync-spec-vectors.sh
+
+# Fail if the vendored spec-vectors/ have drifted from the sibling spec
+# repo. Host-side; a no-op where the spec isn't checked out (cloud CI /
+# dev container), so the vendored copy is authoritative there. Wired into
+# pre-push so vendored drift is caught before publish.
+verify-spec-vectors:
+    scripts/verify-spec-vectors.sh
 
 # Property-based tests only. Default 128 cases per proptest block
 # (AOZORA_PROPTEST_CASES override via aozora-test-utils::config). Fast
@@ -697,6 +777,22 @@ clippy:
 clippy-strict:
     {{_dev}} cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+# wasm32-target clippy for the wasm-bindgen / Extism plugin crates.
+# The host `clippy` recipe builds for the NATIVE target, so it never
+# compiles the `#[cfg(target_arch = "wasm32")]` binding modules — their
+# lint debt would otherwise stay invisible to every host gate. This
+# recipe closes that gap by linting the two wasm32 crates on their real
+# target. The dev image ships wasm32-unknown-unknown (see `extism-build`).
+clippy-wasm:
+    {{_dev}} cargo clippy --target wasm32-unknown-unknown -p aozora-wasm -p aozora-extism -- -D warnings
+
+# Thorough local lint — the --all-targets clippy surface (bench /
+# example targets included) plus fmt / typos / strict-code / doc. Run
+# before cutting a release or after touching a bench / example target.
+# The per-commit hook runs only the lighter `clippy`; CI's
+# `lint (clippy-strict)` cell is the authoritative --all-targets gate.
+lint-full: fmt-check clippy-strict typos strict-code doc
+
 # Typo check
 typos:
     {{_dev}} typos
@@ -827,6 +923,53 @@ pgo:
 # harness against it, runs end-to-end.
 smoke-ffi:
     bash crates/aozora-ffi/tests/c_smoke/run.sh
+
+# Build the single portable `aozora.wasm` Extism plugin (the polyglot
+# transport hub) and copy it to crates/aozora-extism/dist/. Every
+# language with an Extism host SDK loads this ONE artifact — there is no
+# per-(OS × arch) native build matrix the way the aozora-ffi C ABI needs.
+# The dev image ships binaryen's `wasm-opt` (see Dockerfile); the recipe
+# still degrades gracefully to an unoptimized artifact if a custom image
+# lacks it. See ADR-0006.
+extism-build:
+    {{_dev}} cargo build --release --target wasm32-unknown-unknown -p aozora-extism
+    {{_dev}} sh -c 'mkdir -p crates/aozora-extism/dist \
+        && cp "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/release/aozora_extism.wasm" crates/aozora-extism/dist/aozora.wasm \
+        && (command -v wasm-opt >/dev/null 2>&1 \
+            && wasm-opt -O3 --enable-bulk-memory --enable-mutable-globals \
+                crates/aozora-extism/dist/aozora.wasm -o crates/aozora-extism/dist/aozora.wasm \
+            && echo "wasm-opt applied" \
+            || echo "wasm-opt not present — shipping unoptimized artifact")'
+
+# End-to-end cross-language ABI check (the Extism analogue of smoke-ffi):
+# build the plugin, then load the built aozora.wasm through the Extism
+# (Rust) host SDK and assert every export is byte-identical to calling
+# aozora::wire in-process. The `host-smoke` feature pulls wasmtime, so it
+# is opt-in and never burdens `just test` / `just ci`.
+smoke-extism: extism-build
+    {{_dev}} cargo test -p aozora-extism --features host-smoke --test host_smoke -- --nocapture
+
+# End-to-end Go host SDK check (the Go analogue of smoke-ffi / smoke-extism):
+# build the plugin, embed it in the Go package, and run `go test`, which
+# loads aozora.wasm through the pure-Go wazero Extism runtime and decodes
+# every wire envelope into the quicktype-generated Go structs. Kept out of
+# `just ci` (first run needs `go mod download`); run manually / in a job.
+smoke-go: extism-build
+    {{_dev}} bash -c 'set -euo pipefail; \
+        cp crates/aozora-extism/dist/aozora.wasm crates/aozora-go/aozora.wasm; \
+        cd crates/aozora-go; \
+        unformatted=$(gofmt -l .); \
+        if [ -n "$unformatted" ]; then echo "gofmt needs: $unformatted"; exit 1; fi; \
+        go vet ./...; \
+        go test ./...'
+
+# Python wheel smoke — HOST-side (maturin + a Python interpreter are not
+# in the dev image, like smoke-ffi / pgo). Provisions a throwaway venv,
+# builds the abi3 wheel, installs it, then runs mypy --strict + pytest.
+# Kept out of `just ci` (the dev image can't run it); mirrored by the
+# ci.yml `python-wheel` job. Knobs: AOZORA_PY_PYTHON / AOZORA_PY_VENV.
+smoke-py:
+    bash scripts/smoke-py.sh
 
 # --- changelog ---------------------------------------------------------------
 
@@ -965,10 +1108,19 @@ ci:
     # that the original sequential `ci` used, so an early failure
     # still short-circuits before the heavy gates.
     just lint
+    just clippy-wasm
     just build
     just drift-gate
     just conformance
     just smoke-ffi
+    # Build the Extism plugin to wasm32: this is the only gate that
+    # compiles the `#[cfg(target_arch = "wasm32")]` plugin exports (the
+    # host build skips them), so it catches plugin-module regressions the
+    # `just build` host gate cannot. The heavier `just smoke-extism`
+    # (loads the wasm through wasmtime) is left out — its wasmtime compile
+    # is too slow for the inline gate; run it manually / in a dedicated CI
+    # job.
+    just extism-build
     just test
     just prop
     just udeps
@@ -1010,6 +1162,82 @@ ci:
     rm -f /tmp/aozora-ci-bg-{deny,audit,book}.log
     [[ $failed -eq 0 ]] || exit 1
 
+# Parallel pre-push pipeline — same gates as `ci`, but fast.
+#
+# The 9-13 min pre-push cost was never the gate logic (warm: the whole
+# test suite runs in ~1.3 s); it was redundant recompiles + per-gate
+# container starts + strict sequencing. `ci-parallel` removes all three
+# without dropping a single gate:
+#   1. build + test collapse into `check` (--all-targets compile) +
+#      `coverage` (instrumented test build + run + region floor) — one
+#      compile instead of three.
+#   2. Every gate that does NOT take the container's /cargo/target build
+#      lock runs in the BACKGROUND so its wall-time hides behind the
+#      foreground cargo chain: deny / audit (metadata), book-linkcheck
+#      (network), smoke-ffi (host-side target/), playground-typecheck /
+#      playground-test (bun), and the non-compiling lint gates
+#      fmt-check / typos / strict-code.
+#   3. The 4096-case `prop-deep` sweep launches AFTER the foreground
+#      `prop` gate (so it reuses the just-built `property_*` binaries —
+#      no build-lock contention) and runs in the background, overlapping
+#      udeps / extism-build / doc instead of adding 3-5 min to the tail.
+#
+# Foreground stays serial + cheap→expensive so a failure aborts the push
+# fast. `SKIP_TAGS=deep just ci-parallel` opts out of prop-deep (the
+# narrow escape hatch for an unrelated core regression). CI still runs
+# the full matrix on the PR, so it is the authoritative backstop.
+ci-parallel:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    bglog() { echo "/tmp/aozora-cip-$1.log"; }
+    declare -A PID
+    launch() { local n="$1"; shift; "$@" > "$(bglog "$n")" 2>&1 & PID[$n]=$!; }
+
+    # Background lane — no /cargo/target build-lock contention.
+    for g in deny audit book-linkcheck smoke-ffi fmt-check typos strict-code playground-typecheck playground-test; do
+        launch "$g" just "$g"
+    done
+
+    # Foreground cargo chain — serial (shared build lock), fail-fast.
+    fg_failed=""
+    for gate in clippy check drift-gate conformance coverage prop; do
+        echo ":: [fg] just $gate"
+        if ! just "$gate"; then fg_failed="$gate"; break; fi
+    done
+
+    # property_* binaries are now built → deep sweep reuses them (no
+    # rebuild) and overlaps the remaining foreground gates.
+    if [[ -z "$fg_failed" ]]; then
+        if [[ "${SKIP_TAGS:-}" != *deep* ]]; then
+            launch prop-deep just prop-deep
+        else
+            echo ":: prop-deep skipped via SKIP_TAGS=deep"
+        fi
+        for gate in udeps extism-build doc corpus-sweep; do
+            echo ":: [fg] just $gate"
+            if ! just "$gate"; then fg_failed="$gate"; break; fi
+        done
+    fi
+
+    # Fail fast on a foreground failure (background gates self-clean via --rm).
+    if [[ -n "$fg_failed" ]]; then
+        echo "::error title=${fg_failed}::foreground gate failed — re-run \`just ${fg_failed}\` for the unwrapped output."
+        exit 1
+    fi
+
+    # Foreground passed → reap the background lane.
+    failed=0
+    for name in "${!PID[@]}"; do
+        if ! wait "${PID[$name]}"; then
+            echo "::error title=${name}::background gate failed (log below)"
+            cat "$(bglog "$name")" 2>/dev/null || true
+            failed=1
+        fi
+    done
+    rm -f /tmp/aozora-cip-*.log
+    [[ $failed -eq 0 ]] || { echo "ci-parallel: a background gate failed (see above)"; exit 1; }
+    echo "ci-parallel: all gates passed ✔"
+
 # --- developer workflow helpers ----------------------------------------------
 
 # Run after a build to verify the cache is actually warm; a first-hand
@@ -1030,6 +1258,15 @@ sccache-zero:
 # `f` failing-only / `esc` previous job / `q` quit / Ctrl-J list jobs.
 watch JOB="":
     {{_dev}} bacon {{JOB}}
+
+# Watch + re-run clippy on every save (bacon `clippy` job — same lint
+# surface as `just clippy`). Fast incremental lint feedback.
+watch-lint:
+    {{_dev}} bacon clippy
+
+# Watch + re-run the nextest suite on every save (bacon `test` job).
+watch-test:
+    {{_dev}} bacon test
 
 # Headless bacon run (no TUI).
 # Keeps the watch loop but prints plain lines. Useful for piping output

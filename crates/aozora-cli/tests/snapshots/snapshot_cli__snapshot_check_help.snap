@@ -28,6 +28,19 @@ Options:
           
           [default: auto]
 
+      --diagnostic-format <DIAGNOSTIC_FORMAT>
+          How to render diagnostics: `human` (graphical snippet, the default on a terminal), `json`
+          (the `aozora::wire` envelope, the default when stderr is piped — the machine / agent
+          path), or `short` (one grep-able line per diagnostic)
+
+          Possible values:
+          - auto:  Graphical (`human`) on a terminal, machine (`json`) when piped
+          - human: miette graphical report — source snippet + caret + label + help
+          - json:  The `aozora::wire` JSON envelope — the cross-binding machine view
+          - short: One grep-able line per diagnostic: `path:offset: severity[code]: msg`
+          
+          [default: auto]
+
   -h, --help
           Print help (see a summary with '-h')
 

@@ -17,13 +17,16 @@ use aozora::wire;
 use crate::SchemaArgs;
 use crate::SchemaOp;
 
-type SchemaGen = fn() -> serde_json::Value;
+pub(crate) type SchemaGen = fn() -> serde_json::Value;
 
 /// Schema file relative paths under workspace root, paired with the
 /// generator function that produces the live schema. Order matches
 /// the wire endpoints (`serialize_diagnostics` →
 /// `serialize_container_pairs`).
-const SCHEMA_FILES: &[(&str, SchemaGen)] = &[
+///
+/// `pub(crate)` so the `types` module can read the same committed schema
+/// artefacts as the single source of truth for `quicktype` codegen.
+pub(crate) const SCHEMA_FILES: &[(&str, SchemaGen)] = &[
     (
         "crates/aozora-book/src/wire/schema-diagnostics.json",
         wire::schema_diagnostics,

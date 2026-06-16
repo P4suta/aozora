@@ -1,0 +1,36 @@
+{
+  "name": "page_break",
+  "meta": {
+    "feature": "break",
+    "level": "must",
+    "spec_section": "6.9"
+  },
+  "source": "第一章\n本文。\n［＃改ページ］\n第二章\n",
+  "expected": {
+    "html": "<p>第一章<br />\n本文。</p>\n<div class=\"aozora-page-break\"></div>\n<p>第二章</p>\n",
+    "serialize": "第一章\n本文。\n\n［＃改ページ］\n\n第二章\n",
+    "nodes": [
+      {
+        "kind": "pageBreak",
+        "span": {
+          "start": 20,
+          "end": 41
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 20,
+          "end": 23
+        },
+        "close": {
+          "start": 38,
+          "end": 41
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

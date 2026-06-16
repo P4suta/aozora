@@ -1,0 +1,36 @@
+{
+  "name": "accent_decomposition_applied",
+  "meta": {
+    "feature": "accent",
+    "level": "may",
+    "spec_section": "4"
+  },
+  "source": "前〔ae&on〕後",
+  "expected": {
+    "html": "<p>前〔æon〕後</p>\n",
+    "serialize": "前〔æon〕後",
+    "pairs": [
+      {
+        "kind": "tortoise",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 10,
+          "end": 13
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "accent-decomposition-applied",
+        "severity": "note",
+        "span": {
+          "start": 3,
+          "end": 13
+        }
+      }
+    ]
+  }
+}

@@ -1,1 +1,1 @@
-{"schema_version":1,"data":[]}
+{"schema_version":1,"data":[{"kind":"tcy_target_not_found","severity":"warning","source":"source","span":{"start":6,"end":35}}]}
