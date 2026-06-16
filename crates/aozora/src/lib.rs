@@ -5,14 +5,13 @@
 //! is re-exported through this surface or accessed via [`Document`]
 //! and [`AozoraTree`].
 //!
-//! ```no_run
+//! ```
 //! use aozora::Document;
 //!
-//! let source = std::fs::read_to_string("crime_and_punishment.txt").unwrap();
-//! let doc = Document::new(source);
+//! let doc = Document::new("｜青空《あおぞら》文庫");
 //! let tree = doc.parse();
 //! let html = tree.to_html();
-//! println!("{html}");
+//! assert!(html.contains("青空")); // the ruby base survives into the HTML
 //! ```
 //!
 //! Tunable parses go through the builder chain:
