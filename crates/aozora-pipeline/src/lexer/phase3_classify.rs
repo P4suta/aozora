@@ -97,7 +97,8 @@ use aozora_encoding::gaiji as gaiji_resolve;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind, Span,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, ContainerKind, Indent,
+    SectionKind, Span,
 };
 
 use super::phase2_pair::{PairEvent, PairKind};
@@ -782,7 +783,10 @@ fn classify_annotation_body<'a>(
             Some((EmitKind::BlockClose(ContainerKind::Keigakomi), None))
         }
         BodyFamily::IndentBlock1 if exact => Some((
-            EmitKind::BlockOpen(ContainerKind::Indent { amount: 1 }),
+            EmitKind::BlockOpen(ContainerKind::Indent {
+                amount: 1,
+                wrap: None,
+            }),
             None,
         )),
         BodyFamily::AlignEndBlock0 if exact => Some((
@@ -790,7 +794,10 @@ fn classify_annotation_body<'a>(
             None,
         )),
         BodyFamily::IndentBlockEnd if exact => Some((
-            EmitKind::BlockClose(ContainerKind::Indent { amount: 0 }),
+            EmitKind::BlockClose(ContainerKind::Indent {
+                amount: 0,
+                wrap: None,
+            }),
             None,
         )),
         BodyFamily::AlignEndBlockEnd if exact => Some((
@@ -835,10 +842,28 @@ fn classify_annotation_body<'a>(
             // body == ここから{N}字下げ; remainder = body[match_end..]
             let rest = &body[match_end..];
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
-            (tail == "字下げ").then_some((
-                EmitKind::BlockOpen(ContainerKind::Indent { amount: n }),
-                None,
-            ))
+            if tail == "字下げ" {
+                Some((
+                    EmitKind::BlockOpen(ContainerKind::Indent {
+                        amount: n,
+                        wrap: None,
+                    }),
+                    None,
+                ))
+            } else if let Some(after) = tail.strip_prefix("字下げ、折り返して") {
+                // ここから{N}字下げ、折り返して{M}字下げ — hanging (wrap) indent:
+                // the first line indents `n`, wrapped continuation lines `m`.
+                let (m, tail2) = parse_decimal_u8_prefix(after)?;
+                (tail2 == "字下げ").then_some((
+                    EmitKind::BlockOpen(ContainerKind::Indent {
+                        amount: n,
+                        wrap: Some(m),
+                    }),
+                    None,
+                ))
+            } else {
+                None
+            }
         }
         BodyFamily::AlignEndBlockParamPrefix => {
             // body == ここから地から{N}字上げ; remainder = body[match_end..]
@@ -2889,11 +2914,13 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             ForwardTcy::ShapedNoTarget => Some(Diagnostic::tcy_target_not_found(directive_span)),
             ForwardTcy::NotTcy => None,
         };
-        if let Some(node) = self.classify_forward_heading(view, open_idx, close_idx) {
+        if let Some((node, consume_start)) =
+            self.classify_forward_heading(view, open_idx, close_idx)
+        {
             return Some(AnnotationMatch {
                 emit: EmitKind::Aozora(node),
                 annotation_payload: None,
-                consume_start: open_span.start,
+                consume_start,
                 consume_end: close_span.end,
                 pending_diagnostic: tcy_pending,
             });
@@ -3406,10 +3433,14 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
 /// (unlike bouten's `に`), and the keyword selects the Markdown heading
 /// level: `大見出し` → 1, `中見出し` → 2, `小見出し` → 3.
 ///
-/// The crate docs call out that 大/中/小 headings are promoted to
-/// `aozora_syntax::AozoraHeading` by `aozora::post_process`; this
-/// classifier only marks the position. 窓見出し / 副見出し remain
-/// first-class on `AozoraNode::AozoraHeading` via a separate path.
+/// When the (single) referent is the bare line immediately above the
+/// directive, the line is promoted in place to a block
+/// `borrowed::AozoraHeading` (大→`<h1>` / 中→`<h2>` / 小→`<h3>`): the
+/// consume span is pulled back over that line so the heading element is
+/// its sole rendered copy. When the referent is not a clean preceding
+/// line, the classifier keeps the inline `borrowed::HeadingHint` marker
+/// at the directive position (information-preserving, never promoted to
+/// an empty or misplaced heading).
 ///
 /// Same `forward_target_is_preceded` gate as forward bouten: a heading
 /// hint that names a target which does not appear in the preceding
@@ -3423,7 +3454,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<borrowed::AozoraNode<'a>> {
+    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let rest = extracted.suffix.strip_prefix("は")?;
         let level = heading_level_from_suffix(rest)?;
@@ -3439,17 +3470,85 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             }
         }
 
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+
+        // Promote when the single referent is the bare line right above
+        // the directive: pull the consume span back over `序章\n` so the
+        // `<hN>` (carrying the heading text) is the sole rendered copy.
+        if let [only] = extracted.targets.as_slice()
+            && let Some(consume_start) =
+                find_heading_predecessor_position(view.events, self.source, open_idx, only)
+        {
+            let text = self.alloc.content_plain(only);
+            let node = self
+                .alloc
+                .aozora_heading(heading_kind_from_level(level), text);
+            return Some((node, consume_start));
+        }
+
+        // Fallback: keep the inline hint marker at the directive position.
         // Concatenate targets in the (rare) multi-quote case so the full
-        // named run drives the heading content. For the 17 k-work corpus
-        // this is always a single quote, but the concat keeps the shape
-        // parallel to forward bouten.
+        // named run drives the hint content.
         let combined: String = extracted.targets.iter().copied().collect();
         if combined.is_empty() {
             return None;
         }
-
-        Some(self.alloc.heading_hint(level, &combined))
+        Some((self.alloc.heading_hint(level, &combined), open_span.start))
     }
+}
+
+/// Map an outline level (1/2/3 from [`heading_level_from_suffix`]) to the
+/// corresponding [`AozoraHeadingKind`]. 大→Large, 中→Medium, 小→Small.
+const fn heading_kind_from_level(level: u8) -> AozoraHeadingKind {
+    match level {
+        1 => AozoraHeadingKind::Large,
+        2 => AozoraHeadingKind::Medium,
+        _ => AozoraHeadingKind::Small,
+    }
+}
+
+/// Byte position where `target` begins, **only if** it is the bare line
+/// immediately preceding the `［` at `open_idx` — i.e. `target` followed
+/// by a single `\n`, and itself starting at a line boundary (BOF or after
+/// a `\n`). The promoted heading's consume span is pulled back to this
+/// position so `序章\n［＃「序章」は…見出し］` collapses into one
+/// `AozoraHeading`; the mandatory `\n` keeps the serializer's round-trip
+/// (`<text>\n［＃…］`) byte-identical to the source. Returns `None`
+/// (→ inline `HeadingHint` fallback) for any other shape.
+fn find_heading_predecessor_position(
+    events: &[PairEvent],
+    source: &str,
+    open_idx: usize,
+    target: &str,
+) -> Option<u32> {
+    let &PairEvent::PairOpen { span, .. } = events.get(open_idx)? else {
+        return None;
+    };
+    let bytes = source.as_bytes();
+    let cutoff = span.start as usize;
+    // The heading sits on its own line directly above the directive.
+    if cutoff == 0 || bytes[cutoff - 1] != b'\n' {
+        return None;
+    }
+    let text_end = cutoff - 1;
+    let len = target.len();
+    if text_end < len {
+        return None;
+    }
+    let candidate_start = text_end - len;
+    if &bytes[candidate_start..text_end] != target.as_bytes() {
+        return None;
+    }
+    // The target must occupy the whole line (BOF or preceded by `\n`).
+    if candidate_start != 0 && bytes[candidate_start - 1] != b'\n' {
+        return None;
+    }
+    u32::try_from(candidate_start).ok()
 }
 
 /// Map the keyword after `は` to a Markdown heading level per the
@@ -3492,6 +3591,9 @@ fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
         "波線" => BoutenKind::WavyLine,
         "傍線" => BoutenKind::UnderLine,
         "二重傍線" => BoutenKind::DoubleUnderLine,
+        "鎖線" => BoutenKind::ChainLine,
+        "破線" => BoutenKind::DashedLine,
+        "黒三角傍点" => BoutenKind::BlackTriangle,
         _ => return None,
     })
 }
@@ -5031,7 +5133,10 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Indent { amount: 1 })
+            SpanKind::BlockOpen(ContainerKind::Indent {
+                amount: 1,
+                wrap: None
+            })
         ));
     }
 
@@ -5040,7 +5145,22 @@ mod tests {
         run!(out, "［＃ここから３字下げ］");
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Indent { amount: 3 })
+            SpanKind::BlockOpen(ContainerKind::Indent {
+                amount: 3,
+                wrap: None
+            })
+        ));
+    }
+
+    #[test]
+    fn container_open_wrap_indent_parses_both_amounts() {
+        run!(out, "［＃ここから２字下げ、折り返して４字下げ］");
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::Indent {
+                amount: 2,
+                wrap: Some(4)
+            })
         ));
     }
 

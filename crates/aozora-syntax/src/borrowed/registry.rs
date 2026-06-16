@@ -292,7 +292,10 @@ mod tests {
         let r: Registry<'static> = Registry::from_sorted_slice(&[
             (
                 5u32,
-                NodeRef::BlockOpen(ContainerKind::Indent { amount: 2 }),
+                NodeRef::BlockOpen(ContainerKind::Indent {
+                    amount: 2,
+                    wrap: None,
+                }),
             ),
             (10u32, NodeRef::BlockOpen(ContainerKind::Keigakomi)),
             (15u32, NodeRef::Inline(AozoraNode::PageBreak)),

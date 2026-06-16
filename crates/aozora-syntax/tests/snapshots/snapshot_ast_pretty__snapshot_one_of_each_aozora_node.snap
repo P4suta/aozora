@@ -134,6 +134,7 @@ expression: "format!(\"{nodes:#?}\")"
         Container {
             kind: Indent {
                 amount: 1,
+                wrap: None,
             },
         },
     ),

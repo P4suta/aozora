@@ -73,6 +73,12 @@ pub enum BoutenKind {
     UnderLine,
     /// 二重傍線
     DoubleUnderLine,
+    /// 鎖線
+    ChainLine,
+    /// 破線
+    DashedLine,
+    /// 黒三角
+    BlackTriangle,
 }
 
 impl BoutenKind {
@@ -85,7 +91,11 @@ impl BoutenKind {
     pub const fn is_line(self) -> bool {
         matches!(
             self,
-            Self::WavyLine | Self::UnderLine | Self::DoubleUnderLine
+            Self::WavyLine
+                | Self::UnderLine
+                | Self::DoubleUnderLine
+                | Self::ChainLine
+                | Self::DashedLine
         )
     }
 
@@ -144,6 +154,12 @@ pub enum AozoraHeadingKind {
     Window,
     /// 副見出し
     Sub,
+    /// 大見出し — the top outline level (renders as `<h1>`).
+    Large,
+    /// 中見出し — the middle outline level (renders as `<h2>`).
+    Medium,
+    /// 小見出し — the lowest outline level (renders as `<h3>`).
+    Small,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

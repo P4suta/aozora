@@ -48,7 +48,10 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a
         alloc.annotation(a),
         alloc.double_ruby(base),
         alloc.container(Container {
-            kind: ContainerKind::Indent { amount: 1 },
+            kind: ContainerKind::Indent {
+                amount: 1,
+                wrap: None,
+            },
         }),
     ]
 }

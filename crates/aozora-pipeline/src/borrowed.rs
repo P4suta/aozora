@@ -525,7 +525,7 @@ mod tests {
         let NodeRef::BlockOpen(kind) = nr else {
             panic!("expected NodeRef::BlockOpen, got {nr:?}");
         };
-        assert!(matches!(kind, ContainerKind::Indent { amount: 2 }));
+        assert!(matches!(kind, ContainerKind::Indent { amount: 2, .. }));
     }
 
     #[test]
@@ -607,7 +607,7 @@ mod tests {
             panic!("expected NodeRef::BlockOpen, got {nr:?}");
         };
         match kind {
-            ContainerKind::Indent { amount } => assert_eq!(amount, 3),
+            ContainerKind::Indent { amount, .. } => assert_eq!(amount, 3),
             other => panic!("expected Indent {{ amount: 3 }}, got {other:?}"),
         }
     }

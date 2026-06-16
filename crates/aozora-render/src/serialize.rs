@@ -11,10 +11,12 @@ use core::fmt::{self, Write};
 
 use aozora_pipeline::{BorrowedLexOutput, has_long_rule_line, isolate_decorative_rules};
 use aozora_syntax::borrowed::{
-    Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint, Kaeriten, NodeRef,
-    Ruby, Sashie, Segment, TateChuYoko,
+    Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,
+    Kaeriten, NodeRef, Ruby, Sashie, Segment, TateChuYoko,
 };
-use aozora_syntax::{AlignEnd, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind};
+use aozora_syntax::{
+    AlignEnd, AozoraHeadingKind, BoutenKind, BoutenPosition, ContainerKind, Indent, SectionKind,
+};
 use memchr::memchr_iter;
 
 /// First UTF-8 byte of every PUA sentinel (E001..E004). See
@@ -167,6 +169,7 @@ fn emit_aozora<W: Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
         AozoraNode::AlignEnd(a) => emit_align_end(a, out),
         AozoraNode::Sashie(s) => emit_sashie(s, out),
         AozoraNode::HeadingHint(h) => emit_heading_hint(h, out),
+        AozoraNode::AozoraHeading(h) => emit_aozora_heading(h, out),
         // Variants the serializer doesn't yet cover: Container is
         // routed through the open/close sentinel path; Warichu /
         // Keigakomi / AozoraHeading land here as a diagnostic
@@ -312,6 +315,23 @@ fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
     out.write_str("）入る］")
 }
 
+fn emit_aozora_heading<W: Write>(h: &AozoraHeading<'_>, out: &mut W) -> fmt::Result {
+    // Reconstruct the promoted forward-reference shape, byte-identical to
+    // the source the classifier consumed:
+    //   <text>\n［＃「<text>」は<大|中|小|窓|副>見出し］
+    emit_content(h.text.get(), out)?;
+    out.write_str("\n［＃「")?;
+    emit_content(h.text.get(), out)?;
+    out.write_str(match h.kind {
+        AozoraHeadingKind::Medium => "」は中見出し］",
+        AozoraHeadingKind::Small => "」は小見出し］",
+        AozoraHeadingKind::Window => "」は窓見出し］",
+        AozoraHeadingKind::Sub => "」は副見出し］",
+        // 大見出し and any future kind fall back to the 大見出し form.
+        _ => "」は大見出し］",
+    })
+}
+
 fn emit_heading_hint<W: Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃「")?;
     out.write_str(h.target.as_str())?;
@@ -359,6 +379,10 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             bouten_left_prefix(position),
             bouten_kind_keyword(kind)
         ),
+        ContainerKind::Indent {
+            amount,
+            wrap: Some(wrap),
+        } => write!(out, "［＃ここから{amount}字下げ、折り返して{wrap}字下げ］"),
         _ => out.write_str(container_open_marker(kind)),
     }
 }
@@ -389,6 +413,9 @@ const fn bouten_kind_keyword(kind: BoutenKind) -> &'static str {
         BoutenKind::WavyLine => "波線",
         BoutenKind::UnderLine => "傍線",
         BoutenKind::DoubleUnderLine => "二重傍線",
+        BoutenKind::ChainLine => "鎖線",
+        BoutenKind::DashedLine => "破線",
+        BoutenKind::BlackTriangle => "黒三角傍点",
         _ => "傍点",
     }
 }

@@ -19,6 +19,9 @@ pub(crate) const fn kind_slug(kind: BoutenKind) -> &'static str {
         BoutenKind::WavyLine => "wavy-line",
         BoutenKind::UnderLine => "under-line",
         BoutenKind::DoubleUnderLine => "double-under-line",
+        BoutenKind::ChainLine => "chain-line",
+        BoutenKind::DashedLine => "dashed-line",
+        BoutenKind::BlackTriangle => "black-triangle",
         // BoutenKind is `#[non_exhaustive]`; default future variants
         // to "other" so render stays infallible.
         _ => "other",

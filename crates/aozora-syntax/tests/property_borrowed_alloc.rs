@@ -63,7 +63,10 @@ fn xml_node_name_is_injective_over_all_variants() {
         alloc.annotation(a),
         alloc.double_ruby(base),
         alloc.container(Container {
-            kind: ContainerKind::Indent { amount: 1 },
+            kind: ContainerKind::Indent {
+                amount: 1,
+                wrap: None,
+            },
         }),
     ];
 

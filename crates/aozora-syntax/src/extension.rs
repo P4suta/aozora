@@ -12,8 +12,11 @@ use crate::{BoutenKind, BoutenPosition};
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum ContainerKind {
-    /// `［＃ここから N字下げ］`
-    Indent { amount: u8 },
+    /// `［＃ここから N字下げ］`, or the hanging-indent form
+    /// `［＃ここから N字下げ、折り返して M字下げ］` where `wrap` is `Some(M)`
+    /// (the wrapped continuation lines indent by `M`). `wrap` is `None`
+    /// for a plain block indent and for the generic `字下げ終わり` closer.
+    Indent { amount: u8, wrap: Option<u8> },
     /// `［＃割り注］ ... ［＃割り注終わり］` (when spanning multiple lines)
     Warichu,
     /// `［＃罫囲み］ ... ［＃罫囲み終わり］`
@@ -68,8 +71,30 @@ mod tests {
 
     #[test]
     fn kind_str_ignores_payload_and_covers_every_family() {
-        assert_eq!(ContainerKind::Indent { amount: 2 }.kind_str(), "indent");
-        assert_eq!(ContainerKind::Indent { amount: 0 }.kind_str(), "indent");
+        assert_eq!(
+            ContainerKind::Indent {
+                amount: 2,
+                wrap: None
+            }
+            .kind_str(),
+            "indent"
+        );
+        assert_eq!(
+            ContainerKind::Indent {
+                amount: 0,
+                wrap: None
+            }
+            .kind_str(),
+            "indent"
+        );
+        assert_eq!(
+            ContainerKind::Indent {
+                amount: 2,
+                wrap: Some(4)
+            }
+            .kind_str(),
+            "indent"
+        );
         assert_eq!(ContainerKind::Warichu.kind_str(), "warichu");
         assert_eq!(ContainerKind::Keigakomi.kind_str(), "keigakomi");
         assert_eq!(

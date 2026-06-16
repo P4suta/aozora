@@ -702,7 +702,10 @@ mod tests {
         let arena = Arena::new();
         let a = fresh_alloc(&arena);
         let c = Container {
-            kind: ContainerKind::Indent { amount: 1 },
+            kind: ContainerKind::Indent {
+                amount: 1,
+                wrap: None,
+            },
         };
         let n = a.container(c);
         assert!(matches!(n, borrowed::AozoraNode::Container(cc) if cc == c));

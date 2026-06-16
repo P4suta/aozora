@@ -488,8 +488,9 @@ fn section_break_block(k: SectionKind) -> Block {
 
 fn aozora_heading_block(h: AozoraHeading<'_>) -> Block {
     let level: i64 = match h.kind {
-        AozoraHeadingKind::Window => 2,
-        AozoraHeadingKind::Sub => 3,
+        AozoraHeadingKind::Large => 1,
+        AozoraHeadingKind::Medium | AozoraHeadingKind::Window => 2,
+        AozoraHeadingKind::Small | AozoraHeadingKind::Sub => 3,
         _ => 4,
     };
     Block::Header(
@@ -504,6 +505,9 @@ fn aozora_heading_block(h: AozoraHeading<'_>) -> Block {
 
 fn heading_kind_slug(k: AozoraHeadingKind) -> &'static str {
     match k {
+        AozoraHeadingKind::Large => "large",
+        AozoraHeadingKind::Medium => "medium",
+        AozoraHeadingKind::Small => "small",
         AozoraHeadingKind::Window => "window",
         AozoraHeadingKind::Sub => "sub",
         _ => "other",
@@ -518,10 +522,13 @@ fn sashie_block(s: Sashie<'_>) -> Block {
 
 fn container_attr(kind: ContainerKind) -> Attr {
     let (slug, kvs): (&str, Vec<(String, String)>) = match kind {
-        ContainerKind::Indent { amount } => (
-            "container-indent",
-            vec![("amount".to_owned(), amount.to_string())],
-        ),
+        ContainerKind::Indent { amount, wrap } => {
+            let mut kvs = vec![("amount".to_owned(), amount.to_string())];
+            if let Some(w) = wrap {
+                kvs.push(("wrap".to_owned(), w.to_string()));
+            }
+            ("container-indent", kvs)
+        }
         ContainerKind::Warichu => ("container-warichu", Vec::new()),
         ContainerKind::Keigakomi => ("container-keigakomi", Vec::new()),
         ContainerKind::AlignEnd { offset } => (

@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 35,
-  "passed": 35,
+  "total": 39,
+  "passed": 39,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 14,
-      "passed": 14,
+      "total": 18,
+      "passed": 18,
       "failed": 0
     }
   },
@@ -46,6 +46,20 @@
       "case": "bouten",
       "feature": "bouten",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "bouten_black_triangle",
+      "feature": "bouten",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "bouten_chain_line",
+      "feature": "bouten",
+      "level": "should",
       "passed": true,
       "message": null
     },
@@ -107,6 +121,13 @@
     },
     {
       "case": "heading_hint",
+      "feature": "heading",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "heading_promoted",
       "feature": "heading",
       "level": "should",
       "passed": true,
@@ -263,6 +284,13 @@
       "case": "warichu_inline",
       "feature": "warichu",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "wrap_indent",
+      "feature": "container",
+      "level": "should",
       "passed": true,
       "message": null
     }

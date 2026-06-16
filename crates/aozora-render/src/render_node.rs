@@ -6,9 +6,12 @@
 use core::fmt::{self, Write};
 
 use aozora_syntax::borrowed::{
-    Annotation, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, Kaeriten, Ruby, Segment,
+    Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,
+    Kaeriten, Ruby, Sashie, Segment,
 };
-use aozora_syntax::{AlignEnd, AnnotationKind, Container, ContainerKind, Indent, SectionKind};
+use aozora_syntax::{
+    AlignEnd, AnnotationKind, AozoraHeadingKind, Container, ContainerKind, Indent, SectionKind,
+};
 
 use crate::bouten;
 
@@ -54,6 +57,9 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
         AozoraNode::Annotation(a) => render_annotation(a, writer),
         AozoraNode::Kaeriten(k) => render_kaeriten(k, writer),
         AozoraNode::DoubleRuby(d) => render_double_ruby(d, writer),
+        AozoraNode::Sashie(s) => render_sashie(s, writer),
+        AozoraNode::AozoraHeading(h) => render_aozora_heading(h, writer),
+        AozoraNode::HeadingHint(h) => render_heading_hint(h, writer),
         // Other variants — emit a fallback comment so the rendered
         // HTML stays diagnosable. Mirrors the owned renderer's
         // catch-all behavior for AozoraHeading / HeadingHint / Sashie /
@@ -164,11 +170,19 @@ fn render_kaeriten<W: Write>(k: &Kaeriten<'_>, writer: &mut W) -> fmt::Result {
 fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> fmt::Result {
     if entering {
         match c.kind {
-            ContainerKind::Indent { amount } => {
+            ContainerKind::Indent { amount, wrap } => {
                 write!(
                     writer,
-                    r#"<div class="aozora-container aozora-container-indent aozora-container-indent-{amount}" data-amount="{amount}">"#,
-                )
+                    r#"<div class="aozora-container aozora-container-indent aozora-container-indent-{amount}"#,
+                )?;
+                if wrap.is_some() {
+                    writer.write_str(" aozora-container-wrap-indent")?;
+                }
+                write!(writer, r#"" data-amount="{amount}""#)?;
+                if let Some(w) = wrap {
+                    write!(writer, r#" data-wrap="{w}""#)?;
+                }
+                writer.write_str(">")
             }
             ContainerKind::AlignEnd { offset } => {
                 write!(
@@ -206,6 +220,62 @@ fn render_double_ruby<W: Write>(d: &DoubleRuby<'_>, writer: &mut W) -> fmt::Resu
     writer.write_str(r#"<span class="aozora-double-ruby">≪"#)?;
     render_content(d.content.get(), writer)?;
     writer.write_str("≫</span>")
+}
+
+/// Render a `［＃挿絵（file）入る］` illustration as a semantic
+/// `<figure>` carrying an `<img>` reference. The parser does not fetch
+/// or embed pixels — `src` is the verbatim filename from the directive
+/// and `alt` is left empty (the optional caption, when a future
+/// captioned-form recogniser populates it, renders into `<figcaption>`).
+/// `Sashie::is_block()` is `true`, so the block walker has already
+/// flushed the surrounding paragraph before this fires.
+fn render_sashie<W: Write>(s: &Sashie<'_>, writer: &mut W) -> fmt::Result {
+    writer.write_str(r#"<figure class="aozora-sashie"><img src=""#)?;
+    escape_text(s.file.as_str(), writer)?;
+    writer.write_str(r#"" alt="" />"#)?;
+    if let Some(caption) = s.caption {
+        writer.write_str("<figcaption>")?;
+        render_content(caption, writer)?;
+        writer.write_str("</figcaption>")?;
+    }
+    writer.write_str("</figure>")
+}
+
+/// Render an Aozora heading. 大 / 中 / 小 map to the semantic `<h1>`–`<h3>`
+/// outline levels; 窓見出し / 副見出し carry no outline level and render as
+/// a styled `<div>`. `AozoraHeading::is_block()` is `true`, so the block
+/// walker has flushed the surrounding paragraph before this fires.
+fn render_aozora_heading<W: Write>(h: &AozoraHeading<'_>, writer: &mut W) -> fmt::Result {
+    let (tag, slug) = match h.kind {
+        AozoraHeadingKind::Large => ("h1", "large"),
+        AozoraHeadingKind::Medium => ("h2", "medium"),
+        AozoraHeadingKind::Small => ("h3", "small"),
+        AozoraHeadingKind::Window => ("div", "window"),
+        AozoraHeadingKind::Sub => ("div", "sub"),
+        // `AozoraHeadingKind` is `#[non_exhaustive]`; a future kind renders
+        // as a generic heading block rather than vanishing.
+        _ => ("div", "other"),
+    };
+    write!(
+        writer,
+        r#"<{tag} class="aozora-heading aozora-heading-{slug}">"#
+    )?;
+    render_content(h.text.get(), writer)?;
+    write!(writer, "</{tag}>")
+}
+
+/// Render an *unpromoted* forward-reference heading hint. The referent is
+/// not the bare preceding line, so the heading text stays in the flow and
+/// this hidden inline marker records the intended outline level + target
+/// for downstream promotion — no visible `<!-- … -->` placeholder leaks.
+fn render_heading_hint<W: Write>(h: &HeadingHint<'_>, writer: &mut W) -> fmt::Result {
+    write!(
+        writer,
+        r#"<span class="aozora-heading-hint" data-level="{level}" data-target=""#,
+        level = h.level,
+    )?;
+    escape_text(h.target.as_str(), writer)?;
+    writer.write_str(r#"" hidden></span>"#)
 }
 
 fn render_indent<W: Write>(i: Indent, writer: &mut W) -> fmt::Result {
@@ -336,6 +406,68 @@ mod tests {
     }
 
     #[test]
+    fn bouten_black_triangle_uses_dedicated_slug() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let target = alloc.content_plain("規範");
+        let n = alloc.bouten(
+            BoutenKind::BlackTriangle,
+            target,
+            BoutenPosition::Right,
+            false,
+        );
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<em class="aozora-bouten aozora-bouten-black-triangle aozora-bouten-right">規範</em>"#
+        );
+    }
+
+    #[test]
+    fn sashie_emits_figure_with_img() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.sashie("cover.png", None);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<figure class="aozora-sashie"><img src="cover.png" alt="" /></figure>"#
+        );
+    }
+
+    #[test]
+    fn aozora_heading_large_emits_h1() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let text = alloc.content_plain("第一章");
+        let n = alloc.aozora_heading(AozoraHeadingKind::Large, text);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<h1 class="aozora-heading aozora-heading-large">第一章</h1>"#
+        );
+    }
+
+    #[test]
+    fn wrap_indent_container_adds_wrap_class_and_attr() {
+        let arena = Arena::new();
+        let alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.container(Container {
+            kind: ContainerKind::Indent {
+                amount: 2,
+                wrap: Some(4),
+            },
+        });
+        let mut open = String::new();
+        render(n, true, &mut open).unwrap();
+        assert!(
+            open.contains(
+                "aozora-container-indent aozora-container-indent-2 aozora-container-wrap-indent"
+            ),
+            "{open}"
+        );
+        assert!(open.contains(r#"data-amount="2""#), "{open}");
+        assert!(open.contains(r#"data-wrap="4""#), "{open}");
+    }
+
+    #[test]
     fn indent_emits_marker_with_amount_attr() {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
@@ -390,7 +522,10 @@ mod tests {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.container(Container {
-            kind: ContainerKind::Indent { amount: 2 },
+            kind: ContainerKind::Indent {
+                amount: 2,
+                wrap: None,
+            },
         });
         let mut open = String::new();
         render(n, true, &mut open).unwrap();
