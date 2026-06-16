@@ -3050,6 +3050,20 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                     .then(|| Diagnostic::bouten_target_ambiguous(directive_span)),
             });
         }
+        // `「X」の左に「Y」のルビ` — left-side ruby (saidoku building block). The
+        // `の左に` prefix overlaps left-side bouten, but its `のルビ` keyword is
+        // not a bouten kind, so the bouten classifier already returned `None`.
+        if let Some((node, consume_start)) =
+            self.classify_forward_left_ruby(view, open_idx, close_idx)
+        {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start,
+                consume_end: close_span.end,
+                pending_diagnostic: None,
+            });
+        }
         // 縦中横 is 3-state: a shape-matched directive whose target has no
         // referent (`ShapedNoTarget`) carries a warning down the
         // fall-through path while still degrading to `Annotation{Unknown}`.
@@ -3665,6 +3679,48 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 .heading_hint(heading_level_u8(kind), style, &combined),
             open_span.start,
         ))
+    }
+}
+
+/// Classify a `「X」の左に「Y」のルビ` forward-reference **left-side ruby** — the
+/// building block of a 再読文字 (saidoku-moji). The target `X` is pulled back
+/// (mirroring `classify_forward_bouten`); the reading `Y` attaches on the left.
+/// Single-target only; the `の左に「…」のルビ` suffix shape is unique, so a
+/// non-ruby `の左に…` (left-side bouten) never reaches here.
+impl<'a> RecogniseCtx<'_, 'a, '_> {
+    fn classify_forward_left_ruby(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        let [target] = extracted.targets.as_slice() else {
+            return None;
+        };
+        // suffix == の左に「<reading>」のルビ
+        let reading_text = extracted
+            .suffix
+            .strip_prefix("の左に「")?
+            .strip_suffix("」のルビ")?;
+        if reading_text.is_empty() {
+            return None;
+        }
+        if !forward_target_is_preceded(view.events, self.source, open_idx, target) {
+            return None;
+        }
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        let consume_start =
+            find_immediate_predecessor_target_position(view.events, self.source, open_idx, target)
+                .unwrap_or(open_span.start);
+        let base = self.alloc.content_plain(target);
+        let reading = self.alloc.content_plain(reading_text);
+        Some((self.alloc.left_ruby(base, reading), consume_start))
     }
 }
 

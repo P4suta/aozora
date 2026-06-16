@@ -16,7 +16,7 @@ use aozora_syntax::borrowed::{
 };
 use aozora_syntax::{
     AlignEnd, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition, Center,
-    ContainerKind, EmphasisKind, Indent, SectionKind,
+    ContainerKind, EmphasisKind, Indent, RubySide, SectionKind,
 };
 use memchr::memchr_iter;
 
@@ -186,6 +186,16 @@ fn emit_aozora<W: Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
 }
 
 fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
+    if matches!(r.side, RubySide::Left) {
+        // Left-side ruby: reconstruct `base［＃「base」の左に「reading」のルビ］`.
+        // The base is the pulled-back predecessor, so it precedes the directive.
+        emit_content(r.base.get(), out)?;
+        out.write_str("［＃「")?;
+        emit_content(r.base.get(), out)?;
+        out.write_str("」の左に「")?;
+        emit_content(r.reading.get(), out)?;
+        return out.write_str("」のルビ］");
+    }
     out.write_char('｜')?;
     emit_content(r.base.get(), out)?;
     out.write_char('《')?;

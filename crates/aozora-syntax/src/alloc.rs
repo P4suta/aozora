@@ -33,7 +33,7 @@ use aozora_encoding::gaiji::Resolved;
 use crate::borrowed::{self, Arena, Interner};
 use crate::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Center, Container, EmphasisKind, Indent, Keigakomi, SectionKind,
+    Center, Container, EmphasisKind, Indent, Keigakomi, RubySide, SectionKind,
 };
 
 /// Arena-backed builder for [`borrowed::AozoraNode<'a>`] and its
@@ -219,6 +219,32 @@ impl<'a> BorrowedAllocator<'a> {
             base,
             reading,
             delim_explicit,
+            side: RubySide::Right,
+        }))
+    }
+
+    /// `AozoraNode::Ruby(Ruby { side: Left, … })` — a left-side ruby from the
+    /// `［＃「base」の左に「reading」のルビ］` forward-reference form (the
+    /// saidoku-moji 再読文字 building block).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `base` or `reading` is empty (same contract as [`Self::ruby`]).
+    #[must_use]
+    pub fn left_ruby(
+        &self,
+        base: borrowed::Content<'a>,
+        reading: borrowed::Content<'a>,
+    ) -> borrowed::AozoraNode<'a> {
+        let base =
+            borrowed::NonEmpty::new(base).expect("Phase 3 must emit Ruby with non-empty base");
+        let reading = borrowed::NonEmpty::new(reading)
+            .expect("Phase 3 must emit Ruby with non-empty reading");
+        borrowed::AozoraNode::Ruby(self.arena.alloc(borrowed::Ruby {
+            base,
+            reading,
+            delim_explicit: false,
+            side: RubySide::Left,
         }))
     }
 

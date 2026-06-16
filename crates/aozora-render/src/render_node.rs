@@ -11,7 +11,7 @@ use aozora_syntax::borrowed::{
 };
 use aozora_syntax::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, Container, ContainerKind,
-    EmphasisKind, Indent, SectionKind,
+    EmphasisKind, Indent, RubySide, SectionKind,
 };
 
 use crate::bouten;
@@ -75,7 +75,13 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
 fn render_ruby<W: Write>(r: &Ruby<'_>, writer: &mut W) -> fmt::Result {
     writer.write_str("<ruby>")?;
     render_content(r.base.get(), writer)?;
-    writer.write_str("<rp>(</rp><rt>")?;
+    // A left-side ruby (saidoku building block) marks its `<rt>` with a class
+    // so a stylesheet can place the reading below; the right-side form is
+    // unchanged.
+    writer.write_str(match r.side {
+        RubySide::Left => r#"<rp>(</rp><rt class="aozora-ruby-left">"#,
+        _ => "<rp>(</rp><rt>",
+    })?;
     render_content(r.reading.get(), writer)?;
     writer.write_str("</rt><rp>)</rp></ruby>")
 }

@@ -23,12 +23,12 @@ use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Content};
 use aozora_syntax::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Container, ContainerKind, Indent, Keigakomi, SectionKind,
+    Center, Container, ContainerKind, Indent, Keigakomi, SectionKind,
 };
 use proptest::prelude::*;
 
 // ----------------------------------------------------------------------
-// Hand-curated injectivity check — exhaustive over the 17 variants.
+// Hand-curated injectivity check — exhaustive over the 18 variants.
 // Lives as a unit test (not a proptest) because the variant set is
 // finite and small; the value is in the *exhaustive* sweep, not in
 // shrinker-driven discovery.
@@ -52,6 +52,7 @@ fn xml_node_name_is_injective_over_all_variants() {
         alloc.gaiji(g),
         alloc.indent(Indent { amount: 2 }),
         alloc.align_end(AlignEnd { offset: 2 }),
+        alloc.center(Center { page: true }),
         alloc.warichu(upper, lower),
         alloc.keigakomi(Keigakomi),
         alloc.page_break(),

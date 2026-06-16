@@ -19,7 +19,7 @@ use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{AozoraNode, Arena};
 use aozora_syntax::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Container, ContainerKind, Indent, Keigakomi, SectionKind,
+    Center, Container, ContainerKind, Indent, Keigakomi, SectionKind,
 };
 
 fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a>> {
@@ -37,6 +37,7 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a
         alloc.gaiji(g),
         alloc.indent(Indent { amount: 2 }),
         alloc.align_end(AlignEnd { offset: 2 }),
+        alloc.center(Center { page: true }),
         alloc.warichu(upper, lower),
         alloc.keigakomi(Keigakomi),
         alloc.page_break(),

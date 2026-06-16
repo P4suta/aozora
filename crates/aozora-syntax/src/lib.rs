@@ -139,6 +139,19 @@ pub struct Center {
     pub page: bool,
 }
 
+/// Which side of the base text a ruby reading sits on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum RubySide {
+    /// Standard ruby — `｜base《reading》` (right of / above the base).
+    #[default]
+    Right,
+    /// Left-side (below) ruby — `［＃「base」の左に「reading」のルビ］`, the
+    /// saidoku-moji (再読文字) building block.
+    Left,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Keigakomi;

@@ -17,7 +17,7 @@ use aozora_encoding::gaiji::Resolved;
 
 use crate::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Center, Container, EmphasisKind, Indent, Keigakomi, SectionKind,
+    Center, Container, EmphasisKind, Indent, Keigakomi, RubySide, SectionKind,
 };
 
 // ----------------------------------------------------------------------
@@ -179,6 +179,9 @@ pub struct Ruby<'src> {
     pub base: super::NonEmpty<Content<'src>>,
     pub reading: super::NonEmpty<Content<'src>>,
     pub delim_explicit: bool,
+    /// Which side the reading sits on. `Right` for the `｜《》` / implicit
+    /// forms; `Left` for the `［＃「X」の左に「Y」のルビ］` saidoku building block.
+    pub side: RubySide,
 }
 
 /// Emphasis dots / sidelines.
@@ -537,6 +540,7 @@ mod tests {
             base: super::super::NonEmpty::new(Content::Plain("x")).unwrap(),
             reading: super::super::NonEmpty::new(Content::Plain("x")).unwrap(),
             delim_explicit: false,
+            side: RubySide::Right,
         };
         assert!(!AozoraNode::Ruby(&ruby).is_block());
 
@@ -552,6 +556,7 @@ mod tests {
             base: super::super::NonEmpty::new(Content::Plain("青梅")).unwrap(),
             reading: super::super::NonEmpty::new(Content::Plain("おうめ")).unwrap(),
             delim_explicit: true,
+            side: RubySide::Right,
         };
         assert_eq!(r.base.as_plain(), Some("青梅"));
         assert_eq!(r.reading.as_plain(), Some("おうめ"));
