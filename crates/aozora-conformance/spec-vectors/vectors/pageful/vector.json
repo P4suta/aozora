@@ -8,7 +8,7 @@
   "source": "明治の頃｜青梅《おうめ》街道沿いに、※［＃「木＋吶のつくり」、第3水準1-85-54］なる珍しき木が立つ。［＃ここから2字下げ］その下で人々は語らひ。［＃ここで字下げ終わり］［＃改ページ］\n",
   "expected": {
     "html": "<p>明治の頃<ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby>街道沿いに、<span class=\"aozora-gaiji\" data-codepoint=\"U+6798\">枘</span>なる珍しき木が立つ。</p>\n<div class=\"aozora-container aozora-container-indent aozora-container-indent-2\" data-amount=\"2\">\n<p>その下で人々は語らひ。</p>\n</div>\n<div class=\"aozora-page-break\"></div>",
-    "serialize": "明治の頃｜青梅《おうめ》街道沿いに、※［＃「木＋吶のつくり」、第3水準1-85-54］なる珍しき木が立つ。\n\n［＃ここから字下げ］\n\nその下で人々は語らひ。\n\n［＃ここで字下げ終わり］\n\n［＃改ページ］\n\n",
+    "serialize": "明治の頃｜青梅《おうめ》街道沿いに、※［＃「木＋吶のつくり」、第3水準1-85-54］なる珍しき木が立つ。\n\n［＃ここから2字下げ］\n\nその下で人々は語らひ。\n\n［＃ここで字下げ終わり］\n\n［＃改ページ］\n\n",
     "nodes": [
       {
         "kind": "ruby",

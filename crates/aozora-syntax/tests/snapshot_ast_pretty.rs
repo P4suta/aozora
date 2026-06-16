@@ -53,6 +53,7 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a
             kind: ContainerKind::Indent {
                 amount: 1,
                 wrap: None,
+                center: false,
             },
         }),
     ]

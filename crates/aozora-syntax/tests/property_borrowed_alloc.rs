@@ -68,6 +68,7 @@ fn xml_node_name_is_injective_over_all_variants() {
             kind: ContainerKind::Indent {
                 amount: 1,
                 wrap: None,
+                center: false,
             },
         }),
     ];

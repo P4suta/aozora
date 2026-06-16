@@ -460,7 +460,28 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
         ContainerKind::Indent {
             amount,
             wrap: Some(wrap),
+            ..
         } => write!(out, "［＃ここから{amount}字下げ、折り返して{wrap}字下げ］"),
+        // Combined 字下げ＋ページ左右中央 — an indented, page-centred block.
+        ContainerKind::Indent {
+            amount,
+            wrap: None,
+            center: true,
+        } => write!(out, "［＃ここから{amount}字下げ、ページの左右中央に］"),
+        // Plain 字下げ — preserve the amount. A bare container_open_marker
+        // fallback collapses it to ［＃ここから字下げ］, dropping N (a §7.6
+        // fixed-point violation). `amount == 1` keeps the idiomatic
+        // no-number 字下げ form (the IndentBlock1 opener).
+        ContainerKind::Indent {
+            amount: 1,
+            wrap: None,
+            center: false,
+        } => out.write_str("［＃ここから字下げ］"),
+        ContainerKind::Indent {
+            amount,
+            wrap: None,
+            center: false,
+        } => write!(out, "［＃ここから{amount}字下げ］"),
         ContainerKind::Bold { block: false } => out.write_str("［＃太字］"),
         ContainerKind::Bold { block: true } => out.write_str("［＃ここから太字］"),
         ContainerKind::Italic { block: false } => out.write_str("［＃斜体］"),

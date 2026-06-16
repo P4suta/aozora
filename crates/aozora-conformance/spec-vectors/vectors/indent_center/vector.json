@@ -1,0 +1,55 @@
+{
+  "name": "indent_center",
+  "meta": {
+    "feature": "container",
+    "level": "should",
+    "spec_section": "6.6",
+    "note": "Combined 字下げ＋ページの左右中央: an indented block that is also page-centred. It is the indent family carrying a center flag, so it closes with the shared 字下げ終わり (pairing is by family); the opener preserves both the amount and the center flag on round-trip."
+  },
+  "source": "［＃ここから5字下げ、ページの左右中央に］\n献辞\n［＃ここで字下げ終わり］\n",
+  "expected": {
+    "html": "<div class=\"aozora-container aozora-container-indent aozora-container-indent-5 aozora-container-center\" data-amount=\"5\">\n<p>献辞</p>\n</div>",
+    "serialize": "\n\n［＃ここから5字下げ、ページの左右中央に］\n\n献辞\n\n［＃ここで字下げ終わり］\n\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 0,
+          "end": 61
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 69,
+          "end": 105
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 58,
+          "end": 61
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 69,
+          "end": 72
+        },
+        "close": {
+          "start": 102,
+          "end": 105
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

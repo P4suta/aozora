@@ -8,7 +8,7 @@
   "source": "［＃ここから2字下げ］\n外側の段落。\n［＃ここから3字下げ］\n内側の段落。\n［＃ここで字下げ終わり］\n外側に戻る。\n［＃ここで字下げ終わり］\n",
   "expected": {
     "html": "<div class=\"aozora-container aozora-container-indent aozora-container-indent-2\" data-amount=\"2\">\n<p>外側の段落。</p>\n<div class=\"aozora-container aozora-container-indent aozora-container-indent-3\" data-amount=\"3\">\n<p>内側の段落。</p>\n</div>\n<p>外側に戻る。</p>\n</div>",
-    "serialize": "\n\n［＃ここから字下げ］\n\n外側の段落。\n\n［＃ここから字下げ］\n\n内側の段落。\n\n［＃ここで字下げ終わり］\n\n外側に戻る。\n\n［＃ここで字下げ終わり］\n\n",
+    "serialize": "\n\n［＃ここから2字下げ］\n\n外側の段落。\n\n［＃ここから3字下げ］\n\n内側の段落。\n\n［＃ここで字下げ終わり］\n\n外側に戻る。\n\n［＃ここで字下げ終わり］\n\n",
     "nodes": [
       {
         "kind": "containerOpen",

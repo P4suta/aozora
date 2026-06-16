@@ -207,13 +207,20 @@ fn render_kaeriten<W: Write>(k: &Kaeriten<'_>, writer: &mut W) -> fmt::Result {
 fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> fmt::Result {
     if entering {
         match c.kind {
-            ContainerKind::Indent { amount, wrap } => {
+            ContainerKind::Indent {
+                amount,
+                wrap,
+                center,
+            } => {
                 write!(
                     writer,
                     r#"<div class="aozora-container aozora-container-indent aozora-container-indent-{amount}"#,
                 )?;
                 if wrap.is_some() {
                     writer.write_str(" aozora-container-wrap-indent")?;
+                }
+                if center {
+                    writer.write_str(" aozora-container-center")?;
                 }
                 write!(writer, r#"" data-amount="{amount}""#)?;
                 if let Some(w) = wrap {
@@ -663,6 +670,7 @@ mod tests {
             kind: ContainerKind::Indent {
                 amount: 2,
                 wrap: Some(4),
+                center: false,
             },
         });
         let mut open = String::new();
@@ -735,6 +743,7 @@ mod tests {
             kind: ContainerKind::Indent {
                 amount: 2,
                 wrap: None,
+                center: false,
             },
         });
         let mut open = String::new();

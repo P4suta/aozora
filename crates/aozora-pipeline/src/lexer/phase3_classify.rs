@@ -880,6 +880,7 @@ fn classify_annotation_body<'a>(
             EmitKind::BlockOpen(ContainerKind::Indent {
                 amount: 1,
                 wrap: None,
+                center: false,
             }),
             None,
         )),
@@ -891,6 +892,7 @@ fn classify_annotation_body<'a>(
             EmitKind::BlockClose(ContainerKind::Indent {
                 amount: 0,
                 wrap: None,
+                center: false,
             }),
             None,
         )),
@@ -958,6 +960,7 @@ fn classify_annotation_body<'a>(
                     EmitKind::BlockOpen(ContainerKind::Indent {
                         amount: n,
                         wrap: None,
+                        center: false,
                     }),
                     None,
                 ))
@@ -969,6 +972,22 @@ fn classify_annotation_body<'a>(
                     EmitKind::BlockOpen(ContainerKind::Indent {
                         amount: n,
                         wrap: Some(m),
+                        center: false,
+                    }),
+                    None,
+                ))
+            } else if matches!(
+                tail,
+                "字下げ、ページの左右中央" | "字下げ、ページの左右中央に" | "字下げ、左右中央"
+            ) {
+                // ここから{N}字下げ、ページの左右中央 — an indented block that is
+                // also page-centred. The combined opener still closes with the
+                // shared 字下げ終わり (pairing is by family).
+                Some((
+                    EmitKind::BlockOpen(ContainerKind::Indent {
+                        amount: n,
+                        wrap: None,
+                        center: true,
                     }),
                     None,
                 ))
@@ -5572,7 +5591,8 @@ mod tests {
             out.spans[0].kind,
             SpanKind::BlockOpen(ContainerKind::Indent {
                 amount: 1,
-                wrap: None
+                wrap: None,
+                center: false
             })
         ));
     }
@@ -5584,7 +5604,8 @@ mod tests {
             out.spans[0].kind,
             SpanKind::BlockOpen(ContainerKind::Indent {
                 amount: 3,
-                wrap: None
+                wrap: None,
+                center: false
             })
         ));
     }
@@ -5596,7 +5617,8 @@ mod tests {
             out.spans[0].kind,
             SpanKind::BlockOpen(ContainerKind::Indent {
                 amount: 2,
-                wrap: Some(4)
+                wrap: Some(4),
+                center: false
             })
         ));
     }

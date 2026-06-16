@@ -816,6 +816,7 @@ mod tests {
             kind: ContainerKind::Indent {
                 amount: 1,
                 wrap: None,
+                center: false,
             },
         };
         let n = a.container(c);

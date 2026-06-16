@@ -552,10 +552,17 @@ fn sashie_block(s: Sashie<'_>) -> Block {
 
 fn container_attr(kind: ContainerKind) -> Attr {
     let (slug, kvs): (&str, Vec<(String, String)>) = match kind {
-        ContainerKind::Indent { amount, wrap } => {
+        ContainerKind::Indent {
+            amount,
+            wrap,
+            center,
+        } => {
             let mut kvs = vec![("amount".to_owned(), amount.to_string())];
             if let Some(w) = wrap {
                 kvs.push(("wrap".to_owned(), w.to_string()));
+            }
+            if center {
+                kvs.push(("center".to_owned(), "true".to_owned()));
             }
             ("container-indent", kvs)
         }

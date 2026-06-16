@@ -16,7 +16,14 @@ pub enum ContainerKind {
     /// `［＃ここから N字下げ、折り返して M字下げ］` where `wrap` is `Some(M)`
     /// (the wrapped continuation lines indent by `M`). `wrap` is `None`
     /// for a plain block indent and for the generic `字下げ終わり` closer.
-    Indent { amount: u8, wrap: Option<u8> },
+    /// `center` is `true` for the combined `［＃ここから N字下げ、ページの左右
+    /// 中央］` form — the indented block is also page-centred; it still closes
+    /// with the shared `字下げ終わり`.
+    Indent {
+        amount: u8,
+        wrap: Option<u8>,
+        center: bool,
+    },
     /// `［＃割り注］ ... ［＃割り注終わり］` (when spanning multiple lines)
     Warichu,
     /// `［＃罫囲み］ ... ［＃罫囲み終わり］`
@@ -154,7 +161,10 @@ mod tests {
         assert_copy::<ContainerKind>();
         // u8 + discriminant, must fit in a few bytes so downstream
         // vector entries stay tight.
-        assert!(size_of::<ContainerKind>() <= 4);
+        // The combined 字下げ＋ページ左右中央 form adds a `center` flag to
+        // `Indent`, nudging the widest variant past 4 bytes; 8 keeps the tag
+        // register-friendly while leaving room for the payload.
+        assert!(size_of::<ContainerKind>() <= 8);
     }
 
     #[test]
@@ -162,7 +172,8 @@ mod tests {
         assert_eq!(
             ContainerKind::Indent {
                 amount: 2,
-                wrap: None
+                wrap: None,
+                center: false,
             }
             .kind_str(),
             "indent"
@@ -170,7 +181,8 @@ mod tests {
         assert_eq!(
             ContainerKind::Indent {
                 amount: 0,
-                wrap: None
+                wrap: None,
+                center: false,
             }
             .kind_str(),
             "indent"
@@ -178,7 +190,8 @@ mod tests {
         assert_eq!(
             ContainerKind::Indent {
                 amount: 2,
-                wrap: Some(4)
+                wrap: Some(4),
+                center: false,
             }
             .kind_str(),
             "indent"

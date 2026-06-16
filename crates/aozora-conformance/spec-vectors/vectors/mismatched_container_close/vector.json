@@ -8,7 +8,7 @@
   "source": "［＃ここから2字下げ］本文［＃ここで地付き終わり］",
   "expected": {
     "html": "<div class=\"aozora-container aozora-container-indent aozora-container-indent-2\" data-amount=\"2\">\n<p>本文</p>\n</div>",
-    "serialize": "\n\n［＃ここから字下げ］\n\n本文\n\n［＃ここで地付き終わり］\n\n",
+    "serialize": "\n\n［＃ここから2字下げ］\n\n本文\n\n［＃ここで地付き終わり］\n\n",
     "nodes": [
       {
         "kind": "containerOpen",

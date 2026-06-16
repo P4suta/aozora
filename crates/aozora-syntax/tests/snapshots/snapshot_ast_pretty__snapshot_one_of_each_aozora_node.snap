@@ -157,6 +157,7 @@ expression: "format!(\"{nodes:#?}\")"
             kind: Indent {
                 amount: 1,
                 wrap: None,
+                center: false,
             },
         },
     ),

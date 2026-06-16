@@ -295,6 +295,7 @@ mod tests {
                 NodeRef::BlockOpen(ContainerKind::Indent {
                     amount: 2,
                     wrap: None,
+                    center: false,
                 }),
             ),
             (10u32, NodeRef::BlockOpen(ContainerKind::Keigakomi)),
