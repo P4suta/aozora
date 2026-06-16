@@ -320,7 +320,7 @@ fn is_decorative_rule_line(line: &str) -> bool {
 /// whose first byte is multi-byte UTF-8 (every Japanese line in the
 /// corpus, the dominant case) the leading `matches!` check rejects
 /// in 2–3 ops and the rest of the function is skipped entirely.
-fn is_rule_line_trimmed(trimmed: &str) -> bool {
+pub(crate) fn is_rule_line_trimmed(trimmed: &str) -> bool {
     let bytes = trimmed.as_bytes();
     if bytes.len() < DECORATIVE_RULE_MIN_LEN {
         return false;
