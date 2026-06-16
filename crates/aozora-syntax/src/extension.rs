@@ -5,7 +5,7 @@
 //! The renderer reads it when wrapping the enclosed sibling nodes
 //! into an `AozoraNode::Container`.
 
-use crate::{BoutenKind, BoutenPosition};
+use crate::{AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition};
 
 /// The kinds of Aozora container blocks the lexer classifies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +58,19 @@ pub enum ContainerKind {
     /// ［＃ここで斜体終わり］` (block
     /// `<div class="aozora-container aozora-container-italic">`).
     Italic { block: bool },
+    /// Delimited heading. The **paired** form `［＃窓中見出し］ ...
+    /// ［＃窓中見出し終わり］` (`block: false`) and the **block** form
+    /// `［＃ここから大見出し］ ... ［＃ここで大見出し終わり］` (`block: true`)
+    /// wrap their enclosed run and render it as a heading — the container
+    /// counterpart of the forward-reference [`crate::borrowed::AozoraHeading`]
+    /// leaf. `kind` is the 大/中/小 level, `style` the standard / 同行 / 窓
+    /// style. Its content is *phrasing* (rendered directly inside the
+    /// `<hN>` / `<div>`, not wrapped in a `<p>`) — see [`Self::content_is_phrasing`].
+    Heading {
+        kind: AozoraHeadingKind,
+        style: AozoraHeadingStyle,
+        block: bool,
+    },
 }
 
 impl ContainerKind {
@@ -80,7 +93,23 @@ impl ContainerKind {
             Self::BoutenRange { .. } => "bouten-range",
             Self::Bold { .. } => "bold",
             Self::Italic { .. } => "italic",
+            Self::Heading { .. } => "heading",
         }
+    }
+
+    /// Whether this container's content is *phrasing* (inline) — rendered
+    /// directly inside the block element rather than wrapped in `<p>`
+    /// paragraphs.
+    ///
+    /// Only [`Self::Heading`] is phrasing: a heading element (`<hN>` / inset
+    /// `<div>`) holds its title text directly, so `<h1><p>…</p></h1>` would be
+    /// invalid. Every other block container wraps flow content in paragraphs.
+    /// The block walker reads this to suppress paragraph emission inside the
+    /// heading while still flushing the surrounding paragraph (the heading is
+    /// block-level, just with phrasing content).
+    #[must_use]
+    pub const fn content_is_phrasing(self) -> bool {
+        matches!(self, Self::Heading { .. })
     }
 
     /// Whether this container renders *inline* (within the current

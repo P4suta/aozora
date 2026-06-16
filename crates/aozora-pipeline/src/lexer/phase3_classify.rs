@@ -792,6 +792,18 @@ fn classify_annotation_body<'a>(
     if body.is_empty() {
         return None;
     }
+    // Paired / block headings route through the container machinery as
+    // `ContainerKind::Heading`. Tried before the body dispatcher: their
+    // keywords overlap the `ここから…` / `…終わり` shapes but always carry a
+    // `見出し` keyword, so a non-heading `ここから…` body falls through.
+    if let Some((container, is_open)) = parse_heading_directive(body) {
+        let emit = if is_open {
+            EmitKind::BlockOpen(container)
+        } else {
+            EmitKind::BlockClose(container)
+        };
+        return Some((emit, None));
+    }
     let dfa = body_dispatcher();
     let mat = dfa.find(Input::new(body).anchored(Anchored::Yes))?;
     let pat = BODY_PATTERNS[mat.pattern().as_usize()];
@@ -3551,7 +3563,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let rest = extracted.suffix.strip_prefix("は")?;
-        let (style, level) = parse_heading_suffix(rest)?;
+        let (style, kind) = parse_heading_keyword(rest)?;
 
         // Reject hints whose targets are not preceded by matching text.
         // See `classify_forward_bouten` for the same rationale.
@@ -3579,9 +3591,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 find_heading_predecessor_position(view.events, self.source, open_idx, only)
         {
             let text = self.alloc.content_plain(only);
-            let node = self
-                .alloc
-                .aozora_heading(heading_kind_from_level(level), style, text);
+            let node = self.alloc.aozora_heading(kind, style, text);
             return Some((node, consume_start));
         }
 
@@ -3594,7 +3604,8 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             return None;
         }
         Some((
-            self.alloc.heading_hint(level, style, &combined),
+            self.alloc
+                .heading_hint(heading_level_u8(kind), style, &combined),
             open_span.start,
         ))
     }
@@ -3650,13 +3661,14 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     }
 }
 
-/// Map an outline level (1/2/3 from [`parse_heading_suffix`]) to the
-/// corresponding [`AozoraHeadingKind`]. 大→Large, 中→Medium, 小→Small.
-const fn heading_kind_from_level(level: u8) -> AozoraHeadingKind {
-    match level {
-        1 => AozoraHeadingKind::Large,
-        2 => AozoraHeadingKind::Medium,
-        _ => AozoraHeadingKind::Small,
+/// Map an [`AozoraHeadingKind`] (大/中/小) to the numeric outline level
+/// (1/2/3) the inline `heading-hint` carries in `data-level`.
+const fn heading_level_u8(kind: AozoraHeadingKind) -> u8 {
+    match kind {
+        AozoraHeadingKind::Medium => 2,
+        AozoraHeadingKind::Small => 3,
+        // 大見出し and any future level default to the top level.
+        _ => 1,
     }
 }
 
@@ -3699,17 +3711,16 @@ fn find_heading_predecessor_position(
     u32::try_from(candidate_start).ok()
 }
 
-/// Parse the keyword after `は` into a heading `(style, level)`. An
-/// optional `同行` (same-line) / `窓` (window) prefix selects the style; the
-/// remaining `大 / 中 / 小見出し` selects the level (1 / 2 / 3) per the Aozora
-/// annotation manual (<https://www.aozora.gr.jp/annotation/heading.html>).
+/// Parse a heading keyword into `(style, kind)`. An optional `同行`
+/// (same-line) / `窓` (window) prefix selects the style; the remaining
+/// `大 / 中 / 小見出し` selects the level. Shared by the forward-reference
+/// hint (`「X」はSTYLEレベル見出し`) and the paired / block container forms
+/// ([`parse_heading_directive`]).
 ///
 /// `副見出し` is not a real annotation — it never occurs in the corpus — so
-/// it matches nothing and the directive falls through to
-/// `Annotation{Unknown}`. The 同行 / 窓 styles cross with every level
-/// (`同行中見出し`, `窓小見出し`, …); they are by far the dominant non-standard
-/// heading forms in the corpus.
-fn parse_heading_suffix(s: &str) -> Option<(AozoraHeadingStyle, u8)> {
+/// it matches nothing and the directive falls through to `Annotation{Unknown}`.
+/// The 同行 / 窓 styles cross with every level (`同行中見出し`, `窓小見出し`, …).
+fn parse_heading_keyword(s: &str) -> Option<(AozoraHeadingStyle, AozoraHeadingKind)> {
     // An optional 同行 / 窓 style prefix, else the standard style; `rest` is
     // the remaining 大/中/小見出し keyword.
     let (style, rest) = [
@@ -3719,13 +3730,68 @@ fn parse_heading_suffix(s: &str) -> Option<(AozoraHeadingStyle, u8)> {
     .into_iter()
     .find_map(|(prefix, style)| s.strip_prefix(prefix).map(|rest| (style, rest)))
     .unwrap_or((AozoraHeadingStyle::Standard, s));
-    let level = match rest {
-        "大見出し" => 1,
-        "中見出し" => 2,
-        "小見出し" => 3,
+    let kind = match rest {
+        "大見出し" => AozoraHeadingKind::Large,
+        "中見出し" => AozoraHeadingKind::Medium,
+        "小見出し" => AozoraHeadingKind::Small,
         _ => return None,
     };
-    Some((style, level))
+    Some((style, kind))
+}
+
+/// Recognise a **paired** (`STYLEレベル見出し` / `…見出し終わり`) or **block**
+/// (`ここからSTYLEレベル見出し` / `ここでSTYLEレベル見出し終わり`) heading
+/// directive body, returning `(container, is_open)`. These delimit their
+/// content and route through the container pairing machinery as
+/// [`ContainerKind::Heading`] (the counterpart of the `は`-form leaf heading).
+///
+/// The forward-reference `「X」は…見出し` hint starts with `「`, so it never
+/// matches here; a `ここから…` / `…終わり` body that is not a heading keyword
+/// (e.g. `ここから2字下げ`) fails `parse_heading_keyword` and falls through to
+/// the body dispatcher.
+fn parse_heading_directive(body: &str) -> Option<(ContainerKind, bool)> {
+    if let Some(rest) = body.strip_prefix("ここから") {
+        let (style, kind) = parse_heading_keyword(rest)?;
+        return Some((
+            ContainerKind::Heading {
+                kind,
+                style,
+                block: true,
+            },
+            true,
+        ));
+    }
+    if let Some(rest) = body.strip_prefix("ここで") {
+        let (style, kind) = parse_heading_keyword(rest.strip_suffix("終わり")?)?;
+        return Some((
+            ContainerKind::Heading {
+                kind,
+                style,
+                block: true,
+            },
+            false,
+        ));
+    }
+    if let Some(inner) = body.strip_suffix("終わり") {
+        let (style, kind) = parse_heading_keyword(inner)?;
+        return Some((
+            ContainerKind::Heading {
+                kind,
+                style,
+                block: false,
+            },
+            false,
+        ));
+    }
+    let (style, kind) = parse_heading_keyword(body)?;
+    Some((
+        ContainerKind::Heading {
+            kind,
+            style,
+            block: false,
+        },
+        true,
+    ))
 }
 
 /// Map the keyword after `は` to an [`EmphasisKind`]: 太字 → Bold,

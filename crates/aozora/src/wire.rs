@@ -142,6 +142,7 @@ const fn container_kind_str(kind: aozora_syntax::ContainerKind) -> &'static str 
         ContainerKind::BoutenRange { .. } => "boutenRange",
         ContainerKind::Bold { .. } => "bold",
         ContainerKind::Italic { .. } => "italic",
+        ContainerKind::Heading { .. } => "heading",
         _ => "unknown",
     }
 }

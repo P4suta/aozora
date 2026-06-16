@@ -248,15 +248,21 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
             ContainerKind::Italic { block: true } => {
                 writer.write_str(r#"<div class="aozora-container aozora-container-italic">"#)
             }
+            // Paired / block heading — same element as the forward-reference
+            // leaf, but wrapping the delimited content (phrasing).
+            ContainerKind::Heading { kind, style, .. } => write_heading_open(kind, style, writer),
             _ => writer.write_str(r#"<div class="aozora-container">"#),
         }
     } else {
-        writer.write_str(match c.kind {
-            ContainerKind::BoutenRange { .. } => "</em>",
-            ContainerKind::Bold { block: false } => "</b>",
-            ContainerKind::Italic { block: false } => "</i>",
-            _ => "</div>",
-        })
+        match c.kind {
+            ContainerKind::Heading { kind, style, .. } => write_heading_close(kind, style, writer),
+            _ => writer.write_str(match c.kind {
+                ContainerKind::BoutenRange { .. } => "</em>",
+                ContainerKind::Bold { block: false } => "</b>",
+                ContainerKind::Italic { block: false } => "</i>",
+                _ => "</div>",
+            }),
+        }
     }
 }
 
@@ -297,38 +303,65 @@ fn heading_style_slug(style: AozoraHeadingStyle) -> Option<&'static str> {
     }
 }
 
-/// Render an Aozora heading. The 大 / 中 / 小 level maps to the semantic
-/// `<h1>`–`<h3>` outline tag and an `aozora-heading-<large|medium|small>`
-/// class; an orthogonal style adds an `aozora-heading-<same-line|window>`
-/// modifier (and 窓 takes a non-outline `<div>` instead of an `<hN>`). The
-/// standard style adds no modifier, so its markup is unchanged.
-/// `AozoraHeading::is_block()` is `true`, so the block walker has flushed the
-/// surrounding paragraph before this fires.
-fn render_aozora_heading<W: Write>(h: &AozoraHeading<'_>, writer: &mut W) -> fmt::Result {
-    let (level_tag, level_slug) = match h.kind {
-        AozoraHeadingKind::Medium => ("h2", "medium"),
-        AozoraHeadingKind::Small => ("h3", "small"),
-        // Large, and any future (`#[non_exhaustive]`) level, render as a
-        // top-level `<h1>` rather than vanishing.
-        _ => ("h1", "large"),
-    };
-    let style_slug = heading_style_slug(h.style);
-    // 窓 (window) is an inset block, not an outline level → `<div>`.
-    let tag = if matches!(h.style, AozoraHeadingStyle::Window) {
+/// The HTML tag for a heading. The 窓 (window) style is an inset block, not an
+/// outline level, so it takes a `<div>`; otherwise the 大 / 中 / 小 level maps
+/// to the semantic `<h1>`–`<h3>` outline tag.
+fn heading_tag(kind: AozoraHeadingKind, style: AozoraHeadingStyle) -> &'static str {
+    if matches!(style, AozoraHeadingStyle::Window) {
         "div"
     } else {
-        level_tag
+        match kind {
+            AozoraHeadingKind::Medium => "h2",
+            AozoraHeadingKind::Small => "h3",
+            _ => "h1",
+        }
+    }
+}
+
+/// Write a heading's opening tag — `<hN>` / `<div>` with an
+/// `aozora-heading-<large|medium|small>` class plus an
+/// `aozora-heading-<same-line|window>` modifier for a non-standard style.
+/// Shared by the forward-reference leaf [`render_aozora_heading`] and the
+/// paired / block [`ContainerKind::Heading`] container so both render
+/// identically.
+fn write_heading_open<W: Write>(
+    kind: AozoraHeadingKind,
+    style: AozoraHeadingStyle,
+    writer: &mut W,
+) -> fmt::Result {
+    let level_slug = match kind {
+        AozoraHeadingKind::Medium => "medium",
+        AozoraHeadingKind::Small => "small",
+        _ => "large",
     };
     write!(
         writer,
-        r#"<{tag} class="aozora-heading aozora-heading-{level_slug}"#
+        r#"<{tag} class="aozora-heading aozora-heading-{level_slug}"#,
+        tag = heading_tag(kind, style),
     )?;
-    if let Some(modifier) = style_slug {
+    if let Some(modifier) = heading_style_slug(style) {
         write!(writer, " aozora-heading-{modifier}")?;
     }
-    writer.write_str(r#"">"#)?;
+    writer.write_str(r#"">"#)
+}
+
+/// Write a heading's closing tag (matching [`write_heading_open`]).
+fn write_heading_close<W: Write>(
+    kind: AozoraHeadingKind,
+    style: AozoraHeadingStyle,
+    writer: &mut W,
+) -> fmt::Result {
+    write!(writer, "</{}>", heading_tag(kind, style))
+}
+
+/// Render a forward-reference promoted heading (leaf). The standard style adds
+/// no modifier, so its markup is unchanged. `AozoraHeading::is_block()` is
+/// `true`, so the block walker has flushed the surrounding paragraph before
+/// this fires.
+fn render_aozora_heading<W: Write>(h: &AozoraHeading<'_>, writer: &mut W) -> fmt::Result {
+    write_heading_open(h.kind, h.style, writer)?;
     render_content(h.text.get(), writer)?;
-    write!(writer, "</{tag}>")
+    write_heading_close(h.kind, h.style, writer)
 }
 
 /// Render an *unpromoted* forward-reference heading hint. The referent is

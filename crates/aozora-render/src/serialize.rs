@@ -351,13 +351,14 @@ const fn heading_style_keyword(style: AozoraHeadingStyle) -> &'static str {
     }
 }
 
-/// The `大 / 中 / 小見出し］` level keyword (closing bracket included).
-const fn heading_level_keyword(kind: AozoraHeadingKind) -> &'static str {
+/// The `大 / 中 / 小見出し` level keyword (no delimiter), shared by the leaf
+/// heading, the hint, and the paired / block [`ContainerKind::Heading`].
+const fn heading_level_word(kind: AozoraHeadingKind) -> &'static str {
     match kind {
-        AozoraHeadingKind::Medium => "中見出し］",
-        AozoraHeadingKind::Small => "小見出し］",
+        AozoraHeadingKind::Medium => "中見出し",
+        AozoraHeadingKind::Small => "小見出し",
         // 大見出し and any future level fall back to the 大見出し form.
-        _ => "大見出し］",
+        _ => "大見出し",
     }
 }
 
@@ -370,7 +371,8 @@ fn emit_aozora_heading<W: Write>(h: &AozoraHeading<'_>, out: &mut W) -> fmt::Res
     emit_content(h.text.get(), out)?;
     out.write_str("」は")?;
     out.write_str(heading_style_keyword(h.style))?;
-    out.write_str(heading_level_keyword(h.kind))
+    out.write_str(heading_level_word(h.kind))?;
+    out.write_str("］")
 }
 
 fn emit_heading_hint<W: Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result {
@@ -379,10 +381,11 @@ fn emit_heading_hint<W: Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result 
     out.write_str("」は")?;
     out.write_str(heading_style_keyword(h.style))?;
     out.write_str(match h.level {
-        1 => "大見出し］",
-        2 => "中見出し］",
-        _ => "小見出し］",
-    })
+        2 => "中見出し",
+        3 => "小見出し",
+        _ => "大見出し",
+    })?;
+    out.write_str("］")
 }
 
 const fn container_open_marker(kind: ContainerKind) -> &'static str {
@@ -433,6 +436,13 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
         // Preserve the width (byte-exact). A bare fallback would emit the
         // 字下げ opener and silently mislabel the family.
         ContainerKind::LineWidth { width } => write!(out, "［＃ここから{width}字詰め］"),
+        ContainerKind::Heading { kind, style, block } => write!(
+            out,
+            "［＃{}{}{}］",
+            if block { "ここから" } else { "" },
+            heading_style_keyword(style),
+            heading_level_word(kind),
+        ),
         _ => out.write_str(container_open_marker(kind)),
     }
 }
@@ -452,6 +462,13 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
         ContainerKind::Italic { block: false } => out.write_str("［＃斜体終わり］"),
         ContainerKind::Italic { block: true } => out.write_str("［＃ここで斜体終わり］"),
         ContainerKind::LineWidth { .. } => out.write_str("［＃ここで字詰め終わり］"),
+        ContainerKind::Heading { kind, style, block } => write!(
+            out,
+            "［＃{}{}{}終わり］",
+            if block { "ここで" } else { "" },
+            heading_style_keyword(style),
+            heading_level_word(kind),
+        ),
         _ => out.write_str(container_close_marker(kind)),
     }
 }
