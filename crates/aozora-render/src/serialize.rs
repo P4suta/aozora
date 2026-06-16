@@ -15,8 +15,8 @@ use aozora_syntax::borrowed::{
     HeadingHint, Kaeriten, NodeRef, Ruby, Sashie, Segment, TateChuYoko,
 };
 use aozora_syntax::{
-    AlignEnd, AozoraHeadingKind, BoutenKind, BoutenPosition, ContainerKind, EmphasisKind, Indent,
-    SectionKind,
+    AlignEnd, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition, ContainerKind,
+    EmphasisKind, Indent, SectionKind,
 };
 use memchr::memchr_iter;
 
@@ -340,30 +340,48 @@ fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
     out.write_str("）入る］")
 }
 
+/// The optional `同行` / `窓` style prefix that precedes the level keyword in
+/// a `…は<style><level>見出し` directive (empty for the standard style).
+const fn heading_style_keyword(style: AozoraHeadingStyle) -> &'static str {
+    match style {
+        AozoraHeadingStyle::SameLine => "同行",
+        AozoraHeadingStyle::Window => "窓",
+        // Standard and any future style serialize without a prefix.
+        _ => "",
+    }
+}
+
+/// The `大 / 中 / 小見出し］` level keyword (closing bracket included).
+const fn heading_level_keyword(kind: AozoraHeadingKind) -> &'static str {
+    match kind {
+        AozoraHeadingKind::Medium => "中見出し］",
+        AozoraHeadingKind::Small => "小見出し］",
+        // 大見出し and any future level fall back to the 大見出し form.
+        _ => "大見出し］",
+    }
+}
+
 fn emit_aozora_heading<W: Write>(h: &AozoraHeading<'_>, out: &mut W) -> fmt::Result {
     // Reconstruct the promoted forward-reference shape, byte-identical to
     // the source the classifier consumed:
-    //   <text>\n［＃「<text>」は<大|中|小|窓|副>見出し］
+    //   <text>\n［＃「<text>」は<同行|窓>?<大|中|小>見出し］
     emit_content(h.text.get(), out)?;
     out.write_str("\n［＃「")?;
     emit_content(h.text.get(), out)?;
-    out.write_str(match h.kind {
-        AozoraHeadingKind::Medium => "」は中見出し］",
-        AozoraHeadingKind::Small => "」は小見出し］",
-        AozoraHeadingKind::Window => "」は窓見出し］",
-        AozoraHeadingKind::Sub => "」は副見出し］",
-        // 大見出し and any future kind fall back to the 大見出し form.
-        _ => "」は大見出し］",
-    })
+    out.write_str("」は")?;
+    out.write_str(heading_style_keyword(h.style))?;
+    out.write_str(heading_level_keyword(h.kind))
 }
 
 fn emit_heading_hint<W: Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃「")?;
     out.write_str(h.target.as_str())?;
+    out.write_str("」は")?;
+    out.write_str(heading_style_keyword(h.style))?;
     out.write_str(match h.level {
-        1 => "」は大見出し］",
-        2 => "」は中見出し］",
-        _ => "」は小見出し］",
+        1 => "大見出し］",
+        2 => "中見出し］",
+        _ => "小見出し］",
     })
 }
 

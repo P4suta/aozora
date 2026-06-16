@@ -147,20 +147,39 @@ pub enum SectionKind {
     Spread,
 }
 
+/// Heading *level* — the 大 / 中 / 小 outline rank.
+///
+/// Orthogonal to [`AozoraHeadingStyle`]; the two combine (同行中見出し is
+/// `Medium` + `SameLine`, 窓小見出し is `Small` + `Window`, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum AozoraHeadingKind {
-    /// 窓見出し
-    Window,
-    /// 副見出し
-    Sub,
     /// 大見出し — the top outline level (renders as `<h1>`).
     Large,
     /// 中見出し — the middle outline level (renders as `<h2>`).
     Medium,
     /// 小見出し — the lowest outline level (renders as `<h3>`).
     Small,
+}
+
+/// Heading *style* — standard, 同行 (same-line), or 窓 (window).
+///
+/// Orthogonal to [`AozoraHeadingKind`] (the 大 / 中 / 小 level): each style
+/// pairs with any level. The 同行 style runs the title into the body on the
+/// same line; 窓 is an inset title. 副見出し is **not** a real annotation (it
+/// does not occur in the corpus) and is deliberately absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum AozoraHeadingStyle {
+    /// Standard heading — no 同行 / 窓 prefix. The default.
+    #[default]
+    Standard,
+    /// 同行見出し — the title runs into the body on the same line.
+    SameLine,
+    /// 窓見出し — an inset ("window") title.
+    Window,
 }
 
 /// Text-weight / slant emphasis: 太字 (bold) or 斜体 (italic).

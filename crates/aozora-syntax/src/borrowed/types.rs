@@ -16,8 +16,8 @@ use core::slice;
 use aozora_encoding::gaiji::Resolved;
 
 use crate::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container,
-    EmphasisKind, Indent, Keigakomi, SectionKind,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
+    Container, EmphasisKind, Indent, Keigakomi, SectionKind,
 };
 
 // ----------------------------------------------------------------------
@@ -263,22 +263,26 @@ pub struct Warichu<'src> {
     pub lower: Content<'src>,
 }
 
-/// Aozora heading (窓見出し / 副見出し).
+/// Aozora heading — a 大 / 中 / 小 `kind` (level) and a `style`
+/// (standard / 同行 / 窓).
 ///
 /// `text` is [`super::NonEmpty`] — every heading carries a label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AozoraHeading<'src> {
     pub kind: AozoraHeadingKind,
+    pub style: AozoraHeadingStyle,
     pub text: super::NonEmpty<Content<'src>>,
 }
 
-/// Forward-reference heading hint.
+/// Forward-reference heading hint, carrying the intended outline `level`
+/// (1 / 2 / 3) and `style` (standard / 同行 / 窓).
 ///
 /// `target` is [`super::NonEmptyStr`] — Phase 3 only emits the hint
 /// after a `「対象」` quoted target landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadingHint<'src> {
     pub level: u8,
+    pub style: AozoraHeadingStyle,
     pub target: super::NonEmptyStr<'src>,
 }
 

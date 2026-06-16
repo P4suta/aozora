@@ -82,7 +82,8 @@ expression: "format!(\"{nodes:#?}\")"
     ),
     AozoraHeading(
         AozoraHeading {
-            kind: Window,
+            kind: Medium,
+            style: Window,
             text: NonEmpty(
                 Plain(
                     "base",
@@ -93,6 +94,7 @@ expression: "format!(\"{nodes:#?}\")"
     HeadingHint(
         HeadingHint {
             level: 2,
+            style: SameLine,
             target: NonEmptyStr(
                 "対象",
             ),

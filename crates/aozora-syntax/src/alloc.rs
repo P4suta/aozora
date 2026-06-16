@@ -32,8 +32,8 @@ use aozora_encoding::gaiji::Resolved;
 
 use crate::borrowed::{self, Arena, Interner};
 use crate::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container,
-    EmphasisKind, Indent, Keigakomi, SectionKind,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
+    Container, EmphasisKind, Indent, Keigakomi, SectionKind,
 };
 
 /// Arena-backed builder for [`borrowed::AozoraNode<'a>`] and its
@@ -357,7 +357,7 @@ impl<'a> BorrowedAllocator<'a> {
         borrowed::AozoraNode::SectionBreak(k)
     }
 
-    /// `AozoraNode::AozoraHeading(AozoraHeading { kind, text })`.
+    /// `AozoraNode::AozoraHeading(AozoraHeading { kind, style, text })`.
     ///
     /// `text` carries the [`borrowed::NonEmpty`] invariant.
     ///
@@ -368,16 +368,19 @@ impl<'a> BorrowedAllocator<'a> {
     pub fn aozora_heading(
         &self,
         kind: AozoraHeadingKind,
+        style: AozoraHeadingStyle,
         text: borrowed::Content<'a>,
     ) -> borrowed::AozoraNode<'a> {
         let text = borrowed::NonEmpty::new(text)
             .expect("Phase 3 must emit AozoraHeading with non-empty text");
-        borrowed::AozoraNode::AozoraHeading(
-            self.arena.alloc(borrowed::AozoraHeading { kind, text }),
-        )
+        borrowed::AozoraNode::AozoraHeading(self.arena.alloc(borrowed::AozoraHeading {
+            kind,
+            style,
+            text,
+        }))
     }
 
-    /// `AozoraNode::HeadingHint(HeadingHint { level, target })`.
+    /// `AozoraNode::HeadingHint(HeadingHint { level, style, target })`.
     ///
     /// `target` carries the [`borrowed::NonEmptyStr`] invariant.
     ///
@@ -386,10 +389,19 @@ impl<'a> BorrowedAllocator<'a> {
     /// Panics if `target` is empty. Phase 3 emits the hint only
     /// after the forward-reference target lands non-empty; an empty
     /// payload here signals a classifier bug.
-    pub fn heading_hint(&mut self, level: u8, target: &str) -> borrowed::AozoraNode<'a> {
+    pub fn heading_hint(
+        &mut self,
+        level: u8,
+        style: AozoraHeadingStyle,
+        target: &str,
+    ) -> borrowed::AozoraNode<'a> {
         let target = borrowed::NonEmptyStr::new(self.interner.intern(target))
             .expect("Phase 3 must emit HeadingHint with non-empty target");
-        borrowed::AozoraNode::HeadingHint(self.arena.alloc(borrowed::HeadingHint { level, target }))
+        borrowed::AozoraNode::HeadingHint(self.arena.alloc(borrowed::HeadingHint {
+            level,
+            style,
+            target,
+        }))
     }
 
     /// `AozoraNode::Sashie(Sashie { file, caption })`.
@@ -466,8 +478,8 @@ mod tests {
     use super::*;
     use crate::borrowed;
     use crate::{
-        AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container,
-        ContainerKind, EmphasisKind, Indent, Keigakomi, SectionKind,
+        AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind,
+        BoutenPosition, Container, ContainerKind, EmphasisKind, Indent, Keigakomi, SectionKind,
     };
 
     fn fresh_alloc(arena: &Arena) -> BorrowedAllocator<'_> {
@@ -644,10 +656,11 @@ mod tests {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
         let text = a.content_plain("見出し");
-        let n = a.aozora_heading(AozoraHeadingKind::Window, text);
+        let n = a.aozora_heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window, text);
         match n {
             borrowed::AozoraNode::AozoraHeading(h) => {
-                assert_eq!(h.kind, AozoraHeadingKind::Window);
+                assert_eq!(h.kind, AozoraHeadingKind::Medium);
+                assert_eq!(h.style, AozoraHeadingStyle::Window);
                 assert_eq!(h.text.as_plain(), Some("見出し"));
             }
             other => panic!("expected AozoraHeading, got {other:?}"),
@@ -658,10 +671,11 @@ mod tests {
     fn heading_hint_round_trip() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let n = a.heading_hint(2, "対象");
+        let n = a.heading_hint(2, AozoraHeadingStyle::SameLine, "対象");
         match n {
             borrowed::AozoraNode::HeadingHint(h) => {
                 assert_eq!(h.level, 2);
+                assert_eq!(h.style, AozoraHeadingStyle::SameLine);
                 assert_eq!(h.target.as_str(), "対象");
             }
             other => panic!("expected HeadingHint, got {other:?}"),

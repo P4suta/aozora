@@ -10,8 +10,8 @@ use aozora_syntax::borrowed::{
     HeadingHint, Kaeriten, Ruby, Sashie, Segment,
 };
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, Container, ContainerKind, EmphasisKind, Indent,
-    SectionKind,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, Container, ContainerKind,
+    EmphasisKind, Indent, SectionKind,
 };
 
 use crate::bouten;
@@ -285,25 +285,48 @@ fn render_sashie<W: Write>(s: &Sashie<'_>, writer: &mut W) -> fmt::Result {
     writer.write_str("</figure>")
 }
 
-/// Render an Aozora heading. 大 / 中 / 小 map to the semantic `<h1>`–`<h3>`
-/// outline levels; 窓見出し / 副見出し carry no outline level and render as
-/// a styled `<div>`. `AozoraHeading::is_block()` is `true`, so the block
-/// walker has flushed the surrounding paragraph before this fires.
+/// Per-style modifier class slug (`None` for the standard style, which adds
+/// no modifier so a standard heading's markup is unchanged).
+fn heading_style_slug(style: AozoraHeadingStyle) -> Option<&'static str> {
+    match style {
+        AozoraHeadingStyle::SameLine => Some("same-line"),
+        AozoraHeadingStyle::Window => Some("window"),
+        // Standard adds no modifier class; an unknown (`#[non_exhaustive]`)
+        // style is treated as standard rather than emitting a bogus class.
+        _ => None,
+    }
+}
+
+/// Render an Aozora heading. The 大 / 中 / 小 level maps to the semantic
+/// `<h1>`–`<h3>` outline tag and an `aozora-heading-<large|medium|small>`
+/// class; an orthogonal style adds an `aozora-heading-<same-line|window>`
+/// modifier (and 窓 takes a non-outline `<div>` instead of an `<hN>`). The
+/// standard style adds no modifier, so its markup is unchanged.
+/// `AozoraHeading::is_block()` is `true`, so the block walker has flushed the
+/// surrounding paragraph before this fires.
 fn render_aozora_heading<W: Write>(h: &AozoraHeading<'_>, writer: &mut W) -> fmt::Result {
-    let (tag, slug) = match h.kind {
-        AozoraHeadingKind::Large => ("h1", "large"),
+    let (level_tag, level_slug) = match h.kind {
         AozoraHeadingKind::Medium => ("h2", "medium"),
         AozoraHeadingKind::Small => ("h3", "small"),
-        AozoraHeadingKind::Window => ("div", "window"),
-        AozoraHeadingKind::Sub => ("div", "sub"),
-        // `AozoraHeadingKind` is `#[non_exhaustive]`; a future kind renders
-        // as a generic heading block rather than vanishing.
-        _ => ("div", "other"),
+        // Large, and any future (`#[non_exhaustive]`) level, render as a
+        // top-level `<h1>` rather than vanishing.
+        _ => ("h1", "large"),
+    };
+    let style_slug = heading_style_slug(h.style);
+    // 窓 (window) is an inset block, not an outline level → `<div>`.
+    let tag = if matches!(h.style, AozoraHeadingStyle::Window) {
+        "div"
+    } else {
+        level_tag
     };
     write!(
         writer,
-        r#"<{tag} class="aozora-heading aozora-heading-{slug}">"#
+        r#"<{tag} class="aozora-heading aozora-heading-{level_slug}"#
     )?;
+    if let Some(modifier) = style_slug {
+        write!(writer, " aozora-heading-{modifier}")?;
+    }
+    writer.write_str(r#"">"#)?;
     render_content(h.text.get(), writer)?;
     write!(writer, "</{tag}>")
 }
@@ -315,9 +338,15 @@ fn render_aozora_heading<W: Write>(h: &AozoraHeading<'_>, writer: &mut W) -> fmt
 fn render_heading_hint<W: Write>(h: &HeadingHint<'_>, writer: &mut W) -> fmt::Result {
     write!(
         writer,
-        r#"<span class="aozora-heading-hint" data-level="{level}" data-target=""#,
+        r#"<span class="aozora-heading-hint" data-level="{level}""#,
         level = h.level,
     )?;
+    // `data-style` is emitted only for a non-standard style, so a standard
+    // hint's markup is unchanged.
+    if let Some(style) = heading_style_slug(h.style) {
+        write!(writer, r#" data-style="{style}""#)?;
+    }
+    writer.write_str(r#" data-target=""#)?;
     escape_text(h.target.as_str(), writer)?;
     writer.write_str(r#"" hidden></span>"#)
 }
@@ -542,10 +571,22 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("第一章");
-        let n = alloc.aozora_heading(AozoraHeadingKind::Large, text);
+        let n = alloc.aozora_heading(AozoraHeadingKind::Large, AozoraHeadingStyle::Standard, text);
         assert_eq!(
             render_node_to_string(n),
             r#"<h1 class="aozora-heading aozora-heading-large">第一章</h1>"#
+        );
+    }
+
+    #[test]
+    fn aozora_heading_window_medium_emits_styled_div() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let text = alloc.content_plain("見出し");
+        let n = alloc.aozora_heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window, text);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<div class="aozora-heading aozora-heading-medium aozora-heading-window">見出し</div>"#
         );
     }
 

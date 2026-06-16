@@ -18,8 +18,8 @@ use aozora_encoding::gaiji::Resolved;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{AozoraNode, Arena};
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, Container,
-    ContainerKind, Indent, Keigakomi, SectionKind,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
+    Container, ContainerKind, Indent, Keigakomi, SectionKind,
 };
 
 fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a>> {
@@ -41,8 +41,8 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a
         alloc.keigakomi(Keigakomi),
         alloc.page_break(),
         alloc.section_break(SectionKind::Choho),
-        alloc.aozora_heading(AozoraHeadingKind::Window, base),
-        alloc.heading_hint(2, "対象"),
+        alloc.aozora_heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window, base),
+        alloc.heading_hint(2, AozoraHeadingStyle::SameLine, "対象"),
         alloc.sashie("file.png", None),
         alloc.kaeriten("一"),
         alloc.annotation(a),

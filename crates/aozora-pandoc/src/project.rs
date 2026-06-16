@@ -8,9 +8,10 @@
 //! block construct as documented in [`crate`].
 
 use aozora::{
-    AlignEnd, Annotation, AnnotationKind, AozoraHeading, AozoraHeadingKind, AozoraTree, Bouten,
-    BoutenKind, BoutenPosition, ContainerKind, DoubleRuby, Gaiji, HeadingHint, Indent, Kaeriten,
-    NodeRef, Ruby, Sashie, SectionKind, Segment, SourceNode, Span, TateChuYoko, Warichu,
+    AlignEnd, Annotation, AnnotationKind, AozoraHeading, AozoraHeadingKind, AozoraHeadingStyle,
+    AozoraTree, Bouten, BoutenKind, BoutenPosition, ContainerKind, DoubleRuby, Gaiji, HeadingHint,
+    Indent, Kaeriten, NodeRef, Ruby, Sashie, SectionKind, Segment, SourceNode, Span, TateChuYoko,
+    Warichu,
     pipeline::lexer::sanitize,
     syntax::borrowed::{AozoraNode, Content},
 };
@@ -489,16 +490,19 @@ fn section_break_block(k: SectionKind) -> Block {
 fn aozora_heading_block(h: AozoraHeading<'_>) -> Block {
     let level: i64 = match h.kind {
         AozoraHeadingKind::Large => 1,
-        AozoraHeadingKind::Medium | AozoraHeadingKind::Window => 2,
-        AozoraHeadingKind::Small | AozoraHeadingKind::Sub => 3,
+        AozoraHeadingKind::Medium => 2,
+        AozoraHeadingKind::Small => 3,
         _ => 4,
     };
+    // `kind` (level) is always carried; `style` only for a non-standard
+    // style, so a standard heading's projection is unchanged.
+    let mut kv = vec![("kind".to_owned(), heading_kind_slug(h.kind).to_owned())];
+    if let Some(style) = heading_style_slug(h.style) {
+        kv.push(("style".to_owned(), style.to_owned()));
+    }
     Block::Header(
         level,
-        class_attr_kv(
-            "heading",
-            vec![("kind".to_owned(), heading_kind_slug(h.kind).to_owned())],
-        ),
+        class_attr_kv("heading", kv),
         content_to_inlines(h.text.get()),
     )
 }
@@ -508,9 +512,18 @@ fn heading_kind_slug(k: AozoraHeadingKind) -> &'static str {
         AozoraHeadingKind::Large => "large",
         AozoraHeadingKind::Medium => "medium",
         AozoraHeadingKind::Small => "small",
-        AozoraHeadingKind::Window => "window",
-        AozoraHeadingKind::Sub => "sub",
         _ => "other",
+    }
+}
+
+/// Style modifier slug, or `None` for the standard style (which adds no
+/// `style` attribute, keeping a standard heading's projection unchanged).
+fn heading_style_slug(s: AozoraHeadingStyle) -> Option<&'static str> {
+    match s {
+        AozoraHeadingStyle::SameLine => Some("same-line"),
+        AozoraHeadingStyle::Window => Some("window"),
+        // Standard (and any future `#[non_exhaustive]` style) adds no attr.
+        _ => None,
     }
 }
 

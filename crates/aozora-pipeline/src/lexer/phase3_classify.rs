@@ -97,8 +97,8 @@ use aozora_encoding::gaiji as gaiji_resolve;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, BoutenKind, BoutenPosition, ContainerKind,
-    EmphasisKind, Indent, SectionKind, Span,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
+    ContainerKind, EmphasisKind, Indent, SectionKind, Span,
 };
 
 use super::phase2_pair::{PairEvent, PairKind};
@@ -3551,7 +3551,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let rest = extracted.suffix.strip_prefix("は")?;
-        let level = heading_level_from_suffix(rest)?;
+        let (style, level) = parse_heading_suffix(rest)?;
 
         // Reject hints whose targets are not preceded by matching text.
         // See `classify_forward_bouten` for the same rationale.
@@ -3581,18 +3581,22 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             let text = self.alloc.content_plain(only);
             let node = self
                 .alloc
-                .aozora_heading(heading_kind_from_level(level), text);
+                .aozora_heading(heading_kind_from_level(level), style, text);
             return Some((node, consume_start));
         }
 
         // Fallback: keep the inline hint marker at the directive position.
         // Concatenate targets in the (rare) multi-quote case so the full
-        // named run drives the hint content.
+        // named run drives the hint content. The 同行 / 窓 styles run into
+        // the body on their own line, so they land here rather than promoting.
         let combined: String = extracted.targets.iter().copied().collect();
         if combined.is_empty() {
             return None;
         }
-        Some((self.alloc.heading_hint(level, &combined), open_span.start))
+        Some((
+            self.alloc.heading_hint(level, style, &combined),
+            open_span.start,
+        ))
     }
 }
 
@@ -3646,7 +3650,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     }
 }
 
-/// Map an outline level (1/2/3 from [`heading_level_from_suffix`]) to the
+/// Map an outline level (1/2/3 from [`parse_heading_suffix`]) to the
 /// corresponding [`AozoraHeadingKind`]. 大→Large, 中→Medium, 小→Small.
 const fn heading_kind_from_level(level: u8) -> AozoraHeadingKind {
     match level {
@@ -3695,18 +3699,33 @@ fn find_heading_predecessor_position(
     u32::try_from(candidate_start).ok()
 }
 
-/// Map the keyword after `は` to a Markdown heading level per the
-/// Aozora annotation manual
-/// (<https://www.aozora.gr.jp/annotation/heading.html>). Only the three
-/// first-class levels are recognised; 窓見出し / 副見出し remain on
-/// `AozoraHeading`.
-fn heading_level_from_suffix(s: &str) -> Option<u8> {
-    Some(match s {
+/// Parse the keyword after `は` into a heading `(style, level)`. An
+/// optional `同行` (same-line) / `窓` (window) prefix selects the style; the
+/// remaining `大 / 中 / 小見出し` selects the level (1 / 2 / 3) per the Aozora
+/// annotation manual (<https://www.aozora.gr.jp/annotation/heading.html>).
+///
+/// `副見出し` is not a real annotation — it never occurs in the corpus — so
+/// it matches nothing and the directive falls through to
+/// `Annotation{Unknown}`. The 同行 / 窓 styles cross with every level
+/// (`同行中見出し`, `窓小見出し`, …); they are by far the dominant non-standard
+/// heading forms in the corpus.
+fn parse_heading_suffix(s: &str) -> Option<(AozoraHeadingStyle, u8)> {
+    // An optional 同行 / 窓 style prefix, else the standard style; `rest` is
+    // the remaining 大/中/小見出し keyword.
+    let (style, rest) = [
+        ("同行", AozoraHeadingStyle::SameLine),
+        ("窓", AozoraHeadingStyle::Window),
+    ]
+    .into_iter()
+    .find_map(|(prefix, style)| s.strip_prefix(prefix).map(|rest| (style, rest)))
+    .unwrap_or((AozoraHeadingStyle::Standard, s));
+    let level = match rest {
         "大見出し" => 1,
         "中見出し" => 2,
         "小見出し" => 3,
         _ => return None,
-    })
+    };
+    Some((style, level))
 }
 
 /// Map the keyword after `は` to an [`EmphasisKind`]: 太字 → Bold,
