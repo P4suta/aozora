@@ -33,7 +33,7 @@ use aozora_encoding::gaiji::Resolved;
 use crate::borrowed::{self, Arena, Interner};
 use crate::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Container, EmphasisKind, Indent, Keigakomi, SectionKind,
+    Center, Container, EmphasisKind, Indent, Keigakomi, SectionKind,
 };
 
 /// Arena-backed builder for [`borrowed::AozoraNode<'a>`] and its
@@ -327,6 +327,12 @@ impl<'a> BorrowedAllocator<'a> {
     #[must_use]
     pub fn align_end(&self, a: AlignEnd) -> borrowed::AozoraNode<'a> {
         borrowed::AozoraNode::AlignEnd(a)
+    }
+
+    /// `AozoraNode::Center(c)`.
+    #[must_use]
+    pub fn center(&self, c: Center) -> borrowed::AozoraNode<'a> {
+        borrowed::AozoraNode::Center(c)
     }
 
     /// `AozoraNode::Warichu(Warichu { upper, lower })`.

@@ -27,7 +27,7 @@ use aozora_syntax::borrowed::{
     Annotation, AozoraHeading, AozoraNode, Bouten, DoubleRuby, Gaiji, HeadingHint, Kaeriten, Ruby,
     Sashie, TateChuYoko, Warichu,
 };
-use aozora_syntax::{AlignEnd, Container, Indent, Keigakomi, SectionKind};
+use aozora_syntax::{AlignEnd, Center, Container, Indent, Keigakomi, SectionKind};
 
 /// Tree-walker visitor for borrowed Aozora AST nodes.
 ///
@@ -68,6 +68,9 @@ pub trait AozoraVisitor<'src> {
         Ok(())
     }
     fn visit_align_end(&mut self, a: AlignEnd) -> fmt::Result {
+        Ok(())
+    }
+    fn visit_center(&mut self, c: Center) -> fmt::Result {
         Ok(())
     }
     fn visit_warichu(&mut self, w: &Warichu<'src>) -> fmt::Result {
@@ -141,6 +144,7 @@ pub fn dispatch_node<'src, V: AozoraVisitor<'src>>(
         AozoraNode::Gaiji(g) => v.visit_gaiji(g),
         AozoraNode::Indent(i) => v.visit_indent(i),
         AozoraNode::AlignEnd(a) => v.visit_align_end(a),
+        AozoraNode::Center(c) => v.visit_center(c),
         AozoraNode::Warichu(w) => v.visit_warichu(w),
         AozoraNode::Keigakomi(k) => v.visit_keigakomi(k),
         AozoraNode::PageBreak => v.visit_page_break(),

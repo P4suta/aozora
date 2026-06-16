@@ -406,6 +406,7 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
         match node {
             borrowed::AozoraNode::Indent(_) => self.pending_single_line = Some("indent"),
             borrowed::AozoraNode::AlignEnd(_) => self.pending_single_line = Some("align-end"),
+            borrowed::AozoraNode::Center(_) => self.pending_single_line = Some("center"),
             borrowed::AozoraNode::Annotation(ann) => match ann.kind {
                 AnnotationKind::WarichuOpen => self.warichu_depth += 1,
                 AnnotationKind::WarichuClose => {

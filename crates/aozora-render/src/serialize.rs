@@ -15,8 +15,8 @@ use aozora_syntax::borrowed::{
     HeadingHint, Kaeriten, NodeRef, Ruby, Sashie, Segment, TateChuYoko,
 };
 use aozora_syntax::{
-    AlignEnd, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition, ContainerKind,
-    EmphasisKind, Indent, SectionKind,
+    AlignEnd, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition, Center,
+    ContainerKind, EmphasisKind, Indent, SectionKind,
 };
 use memchr::memchr_iter;
 
@@ -169,6 +169,7 @@ fn emit_aozora<W: Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
         AozoraNode::SectionBreak(kind) => emit_section_break(kind, out),
         AozoraNode::Indent(i) => emit_indent(i, out),
         AozoraNode::AlignEnd(a) => emit_align_end(a, out),
+        AozoraNode::Center(c) => emit_center(c, out),
         AozoraNode::Sashie(s) => emit_sashie(s, out),
         AozoraNode::HeadingHint(h) => emit_heading_hint(h, out),
         AozoraNode::AozoraHeading(h) => emit_aozora_heading(h, out),
@@ -334,6 +335,14 @@ fn emit_align_end<W: Write>(a: AlignEnd, out: &mut W) -> fmt::Result {
     }
 }
 
+fn emit_center<W: Write>(c: Center, out: &mut W) -> fmt::Result {
+    out.write_str(if c.page {
+        "［＃ページの左右中央］"
+    } else {
+        "［＃中央揃え］"
+    })
+}
+
 fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃挿絵（")?;
     out.write_str(s.file.as_str())?;
@@ -443,6 +452,8 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             heading_style_keyword(style),
             heading_level_word(kind),
         ),
+        ContainerKind::Columns { count } => write!(out, "［＃ここから{count}段組み］"),
+        ContainerKind::Table => out.write_str("［＃ここから表］"),
         _ => out.write_str(container_open_marker(kind)),
     }
 }
@@ -469,6 +480,8 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
             heading_style_keyword(style),
             heading_level_word(kind),
         ),
+        ContainerKind::Columns { .. } => out.write_str("［＃ここで段組み終わり］"),
+        ContainerKind::Table => out.write_str("［＃ここで表終わり］"),
         _ => out.write_str(container_close_marker(kind)),
     }
 }

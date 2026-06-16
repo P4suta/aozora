@@ -98,7 +98,7 @@ use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
 use aozora_syntax::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    ContainerKind, EmphasisKind, Indent, SectionKind, Span,
+    Center, ContainerKind, EmphasisKind, Indent, SectionKind, Span,
 };
 
 use super::phase2_pair::{PairEvent, PairKind};
@@ -374,6 +374,7 @@ enum BodyFamily {
     SectionDan,
     SectionSpread,
     AlignEnd0,         // 地付き
+    CenterMarker,      // ページの左右中央 / 中央揃え
     KeigakomiOpen,     // 罫囲み
     KeigakomiClose,    // 罫囲み終わり
     IndentBlock1,      // ここから字下げ → Indent { amount: 1 }
@@ -381,6 +382,9 @@ enum BodyFamily {
     IndentBlockEnd,    // ここで字下げ終わり
     AlignEndBlockEnd,  // ここで地付き終わり
     LineWidthBlockEnd, // ここで字詰め終わり
+    TableBlockOpen,    // ここから表
+    TableBlockEnd,     // ここで表終わり
+    ColumnsBlockEnd,   // ここで段組(み)終わり
     WarichuOpen,       // 割り注
     WarichuClose,      // 割り注終わり
     KaeritenSingle,    // body must equal one of 12 single-char marks
@@ -444,6 +448,22 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "ここで字詰め終わり",
         family: BodyFamily::LineWidthBlockEnd,
     },
+    BodyPattern {
+        needle: "ここから表",
+        family: BodyFamily::TableBlockOpen,
+    },
+    BodyPattern {
+        needle: "ここで表終わり",
+        family: BodyFamily::TableBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここで段組終わり",
+        family: BodyFamily::ColumnsBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここで段組み終わり",
+        family: BodyFamily::ColumnsBlockEnd,
+    },
     // Section / page break (exact).
     BodyPattern {
         needle: "改ページ",
@@ -469,6 +489,14 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "地付き",
         family: BodyFamily::AlignEnd0,
+    },
+    BodyPattern {
+        needle: "ページの左右中央",
+        family: BodyFamily::CenterMarker,
+    },
+    BodyPattern {
+        needle: "中央揃え",
+        family: BodyFamily::CenterMarker,
     },
     // Other inline / block.
     BodyPattern {
@@ -828,6 +856,12 @@ fn classify_annotation_body<'a>(
             EmitKind::Aozora(alloc.align_end(AlignEnd { offset: 0 })),
             None,
         )),
+        BodyFamily::CenterMarker if exact => {
+            // ページの左右中央 (page centre) vs 中央揃え — a single-line
+            // zero-width centring marker.
+            let page = body == "ページの左右中央";
+            Some((EmitKind::Aozora(alloc.center(Center { page })), None))
+        }
         BodyFamily::KeigakomiOpen if exact => {
             Some((EmitKind::BlockOpen(ContainerKind::Keigakomi), None))
         }
@@ -860,6 +894,17 @@ fn classify_annotation_body<'a>(
             // The close marker carries no width; the open-side payload is
             // authoritative when pairing (mirrors the generic 字下げ終わり).
             EmitKind::BlockClose(ContainerKind::LineWidth { width: 0 }),
+            None,
+        )),
+        BodyFamily::TableBlockOpen if exact => {
+            Some((EmitKind::BlockOpen(ContainerKind::Table), None))
+        }
+        BodyFamily::TableBlockEnd if exact => {
+            Some((EmitKind::BlockClose(ContainerKind::Table), None))
+        }
+        BodyFamily::ColumnsBlockEnd if exact => Some((
+            // Close marker carries no count; the open-side payload is authoritative.
+            EmitKind::BlockClose(ContainerKind::Columns { count: 0 }),
             None,
         )),
         BodyFamily::WarichuOpen if exact => {
@@ -926,6 +971,14 @@ fn classify_annotation_body<'a>(
                 // `ここで字詰め終わり`.
                 Some((
                     EmitKind::BlockOpen(ContainerKind::LineWidth { width: n }),
+                    None,
+                ))
+            } else if (tail == "段組" || tail == "段組み") && n >= 1 {
+                // ここから{N}段組(み) — multi-column container (段組): N
+                // columns. Shares the `ここから` prefix; closes with
+                // `ここで段組(み)終わり`.
+                Some((
+                    EmitKind::BlockOpen(ContainerKind::Columns { count: n }),
                     None,
                 ))
             } else {
@@ -997,6 +1050,7 @@ fn classify_annotation_body<'a>(
         | BodyFamily::SectionDan
         | BodyFamily::SectionSpread
         | BodyFamily::AlignEnd0
+        | BodyFamily::CenterMarker
         | BodyFamily::KeigakomiOpen
         | BodyFamily::KeigakomiClose
         | BodyFamily::IndentBlock1
@@ -1004,6 +1058,9 @@ fn classify_annotation_body<'a>(
         | BodyFamily::IndentBlockEnd
         | BodyFamily::AlignEndBlockEnd
         | BodyFamily::LineWidthBlockEnd
+        | BodyFamily::TableBlockOpen
+        | BodyFamily::TableBlockEnd
+        | BodyFamily::ColumnsBlockEnd
         | BodyFamily::WarichuOpen
         | BodyFamily::WarichuClose
         | BodyFamily::KaeritenSingle

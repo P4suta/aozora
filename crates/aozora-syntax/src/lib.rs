@@ -131,6 +131,14 @@ pub struct AlignEnd {
     pub offset: u8,
 }
 
+/// Single-line centring marker (`［＃ページの左右中央］` / `［＃中央揃え］`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Center {
+    /// `true` for `ページの左右中央` (page centre), `false` for `中央揃え`.
+    pub page: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Keigakomi;

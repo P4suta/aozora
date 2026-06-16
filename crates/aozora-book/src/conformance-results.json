@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 51,
-  "passed": 51,
+  "total": 54,
+  "passed": 54,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 29,
-      "passed": 29,
+      "total": 32,
+      "passed": 32,
       "failed": 0
     }
   },
@@ -108,6 +108,20 @@
     {
       "case": "break_in_single_line_container",
       "feature": "break",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "center_page",
+      "feature": "container",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "columns_container",
+      "feature": "tables_columns",
       "level": "should",
       "passed": true,
       "message": null
@@ -333,6 +347,13 @@
       "case": "section_break",
       "feature": "break",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "table_container",
+      "feature": "tables_columns",
+      "level": "should",
       "passed": true,
       "message": null
     },

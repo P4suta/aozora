@@ -82,7 +82,7 @@ pub use aozora_syntax::borrowed::Arena;
 /// front door.
 pub use aozora_syntax::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    ContainerKind, Indent, NodeKind, SectionKind,
+    Center, ContainerKind, Indent, NodeKind, SectionKind,
     borrowed::{
         Annotation, AozoraHeading, AozoraNode, Bouten, Content, DoubleRuby, Gaiji, HeadingHint,
         Kaeriten, Ruby, Sashie, Segment, TateChuYoko, Warichu,

@@ -42,6 +42,8 @@ pub enum NodeKind {
     Indent,
     /// Right-edge alignment (字上げ) marker.
     AlignEnd,
+    /// Centring (中央) marker (`ページの左右中央` / `中央揃え`).
+    Center,
     /// 割注 (warichu) — split-line annotation.
     Warichu,
     /// 罫囲み (keigakomi) — ruled box.
@@ -80,13 +82,14 @@ impl NodeKind {
     /// Used by `aozora kinds` (CLI introspection) and the
     /// TypeScript / JSON-Schema codegen so the artefact list
     /// tracks the enum without a hand-maintained parallel.
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Ruby,
         Self::Bouten,
         Self::TateChuYoko,
         Self::Gaiji,
         Self::Indent,
         Self::AlignEnd,
+        Self::Center,
         Self::Warichu,
         Self::Keigakomi,
         Self::PageBreak,
@@ -118,6 +121,7 @@ impl NodeKind {
             Self::Gaiji => "gaiji",
             Self::Indent => "indent",
             Self::AlignEnd => "alignEnd",
+            Self::Center => "center",
             Self::Warichu => "warichu",
             Self::Keigakomi => "keigakomi",
             Self::PageBreak => "pageBreak",
@@ -151,6 +155,7 @@ mod tests {
         assert_eq!(NodeKind::Gaiji.as_camel_case(), "gaiji");
         assert_eq!(NodeKind::Indent.as_camel_case(), "indent");
         assert_eq!(NodeKind::AlignEnd.as_camel_case(), "alignEnd");
+        assert_eq!(NodeKind::Center.as_camel_case(), "center");
         assert_eq!(NodeKind::Warichu.as_camel_case(), "warichu");
         assert_eq!(NodeKind::Keigakomi.as_camel_case(), "keigakomi");
         assert_eq!(NodeKind::PageBreak.as_camel_case(), "pageBreak");

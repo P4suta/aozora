@@ -71,6 +71,17 @@ pub enum ContainerKind {
         style: AozoraHeadingStyle,
         block: bool,
     },
+    /// `［＃ここからN段組(み)］ ... ［＃ここで段組(み)終わり］` — a multi-column
+    /// (段組) layout region. `count` is the number of columns. A layout
+    /// container only: the enclosed content is plain text with no per-column
+    /// markup. Renders as
+    /// `<div class="aozora-container aozora-container-columns" data-columns="N">`.
+    Columns { count: u8 },
+    /// `［＃ここから表］ ... ［＃ここで表終わり］` — a table region. A layout
+    /// container only: there is no cell / row / column markup, so the enclosed
+    /// content is plain text. Renders as
+    /// `<div class="aozora-container aozora-container-table">`.
+    Table,
 }
 
 impl ContainerKind {
@@ -94,6 +105,8 @@ impl ContainerKind {
             Self::Bold { .. } => "bold",
             Self::Italic { .. } => "italic",
             Self::Heading { .. } => "heading",
+            Self::Columns { .. } => "columns",
+            Self::Table => "table",
         }
     }
 

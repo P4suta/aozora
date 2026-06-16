@@ -143,6 +143,8 @@ const fn container_kind_str(kind: aozora_syntax::ContainerKind) -> &'static str 
         ContainerKind::Bold { .. } => "bold",
         ContainerKind::Italic { .. } => "italic",
         ContainerKind::Heading { .. } => "heading",
+        ContainerKind::Columns { .. } => "columns",
+        ContainerKind::Table => "table",
         _ => "unknown",
     }
 }

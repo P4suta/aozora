@@ -192,6 +192,7 @@ impl<'src> Converter<'src> {
             N::Gaiji(g) => gaiji_inline(*g),
             N::Indent(i) => indent_inline(i),
             N::AlignEnd(a) => align_end_inline(a),
+            N::Center(_) => center_inline(),
             N::Warichu(w) => warichu_inline(w),
             N::Keigakomi(_) => keigakomi_inline(),
             N::Annotation(a) => annotation_inline(*a),
@@ -402,6 +403,10 @@ fn align_end_inline(a: AlignEnd) -> Inline {
         ),
         Vec::new(),
     )
+}
+
+fn center_inline() -> Inline {
+    Inline::Span(class_attr_kv("center", Vec::new()), Vec::new())
 }
 
 fn warichu_inline(w: &Warichu<'_>) -> Inline {

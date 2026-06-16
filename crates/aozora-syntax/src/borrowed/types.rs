@@ -17,7 +17,7 @@ use aozora_encoding::gaiji::Resolved;
 
 use crate::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Container, EmphasisKind, Indent, Keigakomi, SectionKind,
+    Center, Container, EmphasisKind, Indent, Keigakomi, SectionKind,
 };
 
 // ----------------------------------------------------------------------
@@ -45,6 +45,8 @@ pub enum AozoraNode<'src> {
     Indent(Indent),
     /// End-aligned text marker.
     AlignEnd(AlignEnd),
+    /// Centring marker (`ページの左右中央` / `中央揃え`). See [`Center`].
+    Center(Center),
     /// Warichu (split annotation). See [`Warichu`].
     Warichu(&'src Warichu<'src>),
     /// Keigakomi (boxed text marker, no fields).
@@ -338,6 +340,7 @@ impl AozoraNode<'_> {
             self,
             Self::Indent(_)
                 | Self::AlignEnd(_)
+                | Self::Center(_)
                 | Self::Warichu(_)
                 | Self::Keigakomi(_)
                 | Self::PageBreak
@@ -359,6 +362,7 @@ impl AozoraNode<'_> {
             self,
             Self::AozoraHeading(_)
                 | Self::AlignEnd(_)
+                | Self::Center(_)
                 | Self::Warichu(_)
                 | Self::Keigakomi(_)
                 | Self::Indent(_)
@@ -378,6 +382,7 @@ impl AozoraNode<'_> {
             Self::Gaiji(_) => "aozora_gaiji",
             Self::Indent(_) => "aozora_indent",
             Self::AlignEnd(_) => "aozora_align_end",
+            Self::Center(_) => "aozora_center",
             Self::Warichu(_) => "aozora_warichu",
             Self::Keigakomi(_) => "aozora_keigakomi",
             Self::PageBreak => "aozora_page_break",
@@ -409,6 +414,7 @@ impl AozoraNode<'_> {
             Self::Gaiji(_) => NodeKind::Gaiji,
             Self::Indent(_) => NodeKind::Indent,
             Self::AlignEnd(_) => NodeKind::AlignEnd,
+            Self::Center(_) => NodeKind::Center,
             Self::Warichu(_) => NodeKind::Warichu,
             Self::Keigakomi(_) => NodeKind::Keigakomi,
             Self::PageBreak => NodeKind::PageBreak,

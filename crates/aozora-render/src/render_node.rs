@@ -43,6 +43,7 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
         AozoraNode::Gaiji(g) => render_gaiji(g, writer),
         AozoraNode::Indent(i) => render_indent(i, writer),
         AozoraNode::AlignEnd(a) => render_align_end(a, writer),
+        AozoraNode::Center(_) => render_center(writer),
         AozoraNode::PageBreak => writer.write_str(r#"<div class="aozora-page-break"></div>"#),
         AozoraNode::SectionBreak(k) => {
             let slug = match k {
@@ -248,6 +249,13 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
             ContainerKind::Italic { block: true } => {
                 writer.write_str(r#"<div class="aozora-container aozora-container-italic">"#)
             }
+            ContainerKind::Columns { count } => write!(
+                writer,
+                r#"<div class="aozora-container aozora-container-columns" data-columns="{count}">"#,
+            ),
+            ContainerKind::Table => {
+                writer.write_str(r#"<div class="aozora-container aozora-container-table">"#)
+            }
             // Paired / block heading — same element as the forward-reference
             // leaf, but wrapping the delimited content (phrasing).
             ContainerKind::Heading { kind, style, .. } => write_heading_open(kind, style, writer),
@@ -402,6 +410,12 @@ fn render_align_end<W: Write>(a: AlignEnd, writer: &mut W) -> fmt::Result {
             n = a.offset,
         )
     }
+}
+
+/// Render a single-line centring marker (`ページの左右中央` / `中央揃え`). A
+/// zero-width hook; the actual centring is left to a stylesheet.
+fn render_center<W: Write>(writer: &mut W) -> fmt::Result {
+    writer.write_str(r#"<span class="aozora-center"></span>"#)
 }
 
 fn fallback<W: Write>(node: AozoraNode<'_>, writer: &mut W) -> fmt::Result {

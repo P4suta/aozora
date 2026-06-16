@@ -187,6 +187,7 @@ fn describe_node(k: NodeKind) -> &'static str {
         NodeKind::Gaiji => "外字 — non-Unicode character reference.",
         NodeKind::Indent => "Inline indent (字下げ) marker.",
         NodeKind::AlignEnd => "Right-edge alignment (字上げ) marker.",
+        NodeKind::Center => "Centring (中央) marker — ページの左右中央 / 中央揃え.",
         NodeKind::Warichu => "割注 — split-line annotation.",
         NodeKind::Keigakomi => "罫囲み — ruled box.",
         NodeKind::PageBreak => "改ページ.",
