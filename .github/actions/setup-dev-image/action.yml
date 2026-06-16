@@ -59,7 +59,7 @@ runs:
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: /tmp/aozora-dev.tar
-        key: aozora-dev-image-${{ hashFiles('Dockerfile', 'docker-compose.yml') }}
+        key: aozora-dev-image-v2-${{ hashFiles('Dockerfile', 'docker-compose.yml', 'rust-toolchain.toml') }}
 
     - name: Load dev image from cache (cache hit)
       if: steps.dev-image-cache.outputs.cache-hit == 'true'
@@ -82,17 +82,42 @@ runs:
         username: ${{ github.actor }}
         password: ${{ github.token }}
 
-    - name: Pull dev image (GHCR) or fall back to local build (cache miss)
+    - name: Pull dev image (GHCR) or build locally (cache miss)
       if: steps.dev-image-cache.outputs.cache-hit != 'true'
       shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_REF: ${{ github.base_ref }}
       run: |
         set -euo pipefail
-        if docker pull ghcr.io/p4suta/aozora-dev:latest; then
+        # `:latest` tracks main — dev-image.yml republishes it only on
+        # push to main, never on a PR (its push step is gated on
+        # `event_name != pull_request`). So on a PR that changes the
+        # dev-image inputs (Dockerfile / compose / toolchain), `:latest`
+        # is STALE: pulling it runs every job against the OLD image, e.g.
+        # missing a tool the new Dockerfile adds — this is the root cause
+        # of the `types langs-check` "quicktype not found" drift-gate
+        # failure on Dockerfile-changing PRs. Detect that case and build
+        # from the in-tree Dockerfile, which matches this checkout by
+        # construction. Detection is best-effort: any failure falls
+        # through to the normal pull-then-build path (never worse than the
+        # previous behaviour). The built image is cached (keyed on the
+        # dev-image inputs' hash), so reruns and later jobs reuse it.
+        stale_latest=0
+        if [ "${EVENT_NAME}" = "pull_request" ] && [ -n "${BASE_REF}" ]; then
+          if git fetch --depth=1 origin "${BASE_REF}" 2>/dev/null \
+             && ! git diff --quiet FETCH_HEAD HEAD -- Dockerfile docker-compose.yml rust-toolchain.toml; then
+            stale_latest=1
+            echo "::notice title=dev image::dev-image inputs changed vs ${BASE_REF}; building from the in-tree Dockerfile (published :latest tracks main and is stale until merge)"
+          fi
+        fi
+        if [ "${stale_latest}" = "0" ] && docker pull ghcr.io/p4suta/aozora-dev:latest; then
           docker tag ghcr.io/p4suta/aozora-dev:latest aozora-dev:local
           docker tag ghcr.io/p4suta/aozora-dev:latest aozora-ci:local
           echo "::notice title=dev image::Pulled aozora-dev:latest from GHCR"
         else
-          echo "::warning title=dev image::GHCR pull failed; falling back to local Dockerfile build"
+          [ "${stale_latest}" = "1" ] \
+            || echo "::warning title=dev image::GHCR pull failed; falling back to local Dockerfile build"
           docker compose build dev
           docker tag aozora-dev:local aozora-ci:local
         fi
