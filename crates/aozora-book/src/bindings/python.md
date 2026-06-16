@@ -96,17 +96,22 @@ object per diagnostic per call.
 
 ## Wheel distribution
 
-aozora-py is not yet on PyPI — public release tracks the v1.0
-freeze of the core library. Until then, build wheels locally:
+aozora_py is on PyPI (since **v0.4.1**):
+
+```sh
+pip install aozora_py
+```
+
+To build a wheel from a checkout instead:
 
 ```sh
 maturin build -F extension-module --release  # → target/wheels/*.whl
 pip install target/wheels/aozora_py-*.whl
 ```
 
-Pre-1.0 distribution will likely use `cibuildwheel` to ship wheels
-for every supported `(python, target)` combination — that's the
-mainstream path for PyO3 projects in 2026.
+Release wheels are built in CI with maturin for every supported
+`(python, target)` combination — the mainstream path for PyO3
+projects.
 
 ## See also
 

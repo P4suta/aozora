@@ -146,6 +146,14 @@ pub const fn has_utf8_bom(input: &[u8]) -> bool {
 }
 
 pub mod gaiji;
+
+pub mod suijun;
+/// Reverse JIS 水準 classifier (issue #89), re-exported flat so callers
+/// reach it as `aozora::encoding::jis_level` / `Suijun` (the umbrella
+/// wildcard-re-exports this crate).
+#[doc(inline)]
+pub use self::suijun::{Suijun, is_platform_dependent, jis_level, level_table_sizes};
+
 /// PHF tables (single, combo, description) emitted by `build.rs`
 /// at compile time via `phf_codegen`. Lives in `OUT_DIR` so it's
 /// regenerated automatically when any input TSV changes; the

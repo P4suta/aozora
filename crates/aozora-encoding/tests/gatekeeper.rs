@@ -19,6 +19,7 @@
 
 use aozora_encoding::DecodeError;
 use aozora_encoding::gaiji::{Resolved, lookup, table_sizes};
+use aozora_encoding::{Suijun, is_platform_dependent, jis_level, level_table_sizes};
 
 #[test]
 fn gatekeeper_decode_error_is_non_exhaustive_with_one_pinned_variant() {
@@ -143,6 +144,46 @@ fn gatekeeper_lookup_tier_dispatch_order_is_pinned() {
     //    matched AND description is exactly one Unicode scalar.
     assert_eq!(lookup(None, None, "畺"), Some(Resolved::Char('\u{757A}')));
     assert_eq!(lookup(None, None, "未知の字"), None);
+}
+
+#[test]
+fn gatekeeper_level_table_sizes_match_jisx0213_2004_spec() {
+    // Cell counts triangulate the build-time derivation against two
+    // independent sources: the issue-verified JIS X 0208 cell count
+    // (6918) and the slim-TSV 第3/第4水準 counts (1893 / 2436, also
+    // pinned in the single-char gatekeeper). A drift here means the
+    // std.txt parser changed behaviour — re-verify, do NOT edit to pass.
+    let (jisx0208, level3, level4) = level_table_sizes();
+    assert_eq!(jisx0208, 6918, "JIS X 0208 (第1 + 第2水準) plane-1 cells");
+    assert_eq!(level3, 1893, "第3水準 plane-1 cells (matches the slim TSV)");
+    assert_eq!(level4, 2436, "第4水準 plane-2 cells (matches the slim TSV)");
+}
+
+#[test]
+fn gatekeeper_jis_level_classifies_representative_characters() {
+    assert_eq!(jis_level('亜'), Suijun::Level1); // 第1水準漢字
+    assert_eq!(jis_level('弌'), Suijun::Level2); // 第2水準漢字
+    assert_eq!(jis_level('\u{4FF1}'), Suijun::Level3); // 3-2E21 [2004]
+    assert_eq!(jis_level('\u{4E02}'), Suijun::Level4); // 4-2122 plane 2
+    assert_eq!(jis_level('\u{1F600}'), Suijun::Outside); // emoji
+    // ASCII has JIS row-3 Latin cells, so it is 第1水準, not Outside.
+    assert_eq!(jis_level('a'), Suijun::Level1);
+    // The full-width notation markers reach JIS via Fullwidth aliases.
+    for marker in ['｜', '＃', '［', '］'] {
+        assert!(
+            jis_level(marker).is_jisx0208(),
+            "marker {marker:?} must classify as JIS X 0208",
+        );
+    }
+}
+
+#[test]
+fn gatekeeper_is_platform_dependent_matches_cp932_minus_jisx0208() {
+    assert!(is_platform_dependent('\u{FF5E}')); // CP932 full-width tilde variant
+    assert!(!is_platform_dependent('亜')); // JIS X 0208
+    assert!(!is_platform_dependent('a')); // ASCII (in JIS X 0208 via the table)
+    assert!(!is_platform_dependent('\u{FF71}')); // half-width katakana (single-byte)
+    assert!(!is_platform_dependent('\u{1F600}')); // not CP932-encodable
 }
 
 #[test]
