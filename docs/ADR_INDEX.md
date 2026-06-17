@@ -1,0 +1,40 @@
+# Architecture Decision Records
+
+This directory's `adr/` folder holds [MADR 4.0](https://adr.github.io/madr/)
+Architecture Decision Records. Significant, hard-to-reverse decisions live
+there; read the one that governs an area before changing what it governs. Once
+accepted an ADR is never edited — it is *superseded* by a later ADR that links
+back.
+
+| ADR                                                                                  | Title                                                                 | Status   |
+| ------------------------------------------------------------------------------------ | --------------------------------------------------------------------- | -------- |
+| [0001](./adr/0001-zero-parser-hooks.md)                                              | Zero parser hooks — Aozora-first lexer                                | accepted |
+| [0003](./adr/0003-accent-decomposition-preparse.md)                                  | Accent decomposition preparse                                         | accepted |
+| [0004](./adr/0004-lint-profile-policy.md)                                            | Lint profile policy                                                   | accepted |
+| [0005](./adr/0005-corpus-sweep-strategy.md)                                          | Corpus sweep strategy                                                 | accepted |
+| [0006](./adr/0006-polyglot-bindings-via-extism.md)                                   | Polyglot bindings via an Extism wasm plugin + schema-driven typegen   | accepted |
+| [0007](./adr/0007-parallel-pre-push-pipeline.md)                                     | Parallel, fast pre-push pipeline                                      | accepted |
+| [0008](./adr/0008-diagnostic-rendering-and-agent-output.md)                          | Diagnostic rendering & the agent-facing output contract              | accepted |
+| [0009](./adr/0009-version-single-source-of-truth.md)                                 | Single source of truth for version pins                               | accepted |
+| [0010](./adr/0010-bouten-and-bousen-range-containers-as-a-first-class-notation-feature.md) | Bouten / bousen range containers as a first-class notation feature | accepted |
+| [0011](./adr/0011-double-angle-quotation-input-encoding.md)                          | Double-angle quotation: `≪≫` input encoding, `《》` display            | accepted |
+
+## Authoring a new ADR
+
+1. Scaffold with `just new-adr "Short imperative title"` (copies
+   `adr/0000-template.md` to the next sequential number).
+2. Fill in the sections; keep paragraphs short and action-oriented.
+3. Add a row to the table above.
+4. Reference the ADR in the commit body and open a PR. ADRs are normally
+   accepted on merge; controversial ones land as `proposed` and flip to
+   `accepted` once the discussion concludes.
+
+## Numbering
+
+`aozora` was split out of [`P4suta/afm`](https://github.com/P4suta/afm)
+(afm ADR-0010, "extract aozora core"). The parser-layer decisions that
+originated on the afm side moved here and were **renumbered** into this
+repo's own sequence; afm keeps redirect stubs (`NNNN-MOVED.md`) pointing
+at the canonical text here. The numbering therefore starts at 0001 and
+has gaps relative to afm's (and no 0002) — that is expected, not a mistake.
+New aozora ADRs continue this repo's sequence.
