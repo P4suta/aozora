@@ -762,13 +762,14 @@ impl PrevArchive {
 /// `AnnotationKind` variants, in the fixed order used by
 /// [`FileStat::annotation_kinds`] / the report's `annotation_kinds`
 /// table. `Unknown` is index 0 — it is the one that matters.
-const ANN_KIND_LABELS: [&str; 6] = [
+const ANN_KIND_LABELS: [&str; 7] = [
     "unknown",
     "asIs",
     "textualNote",
     "invalidRubySpan",
     "warichuOpen",
     "warichuClose",
+    "empty",
 ];
 
 /// 外字 mencode address-form buckets, in the fixed order used by
@@ -793,7 +794,7 @@ struct FileStat {
     /// Indexed parallel to [`NodeKind::ALL`].
     node_kinds: [u64; 22],
     /// Indexed parallel to [`ANN_KIND_LABELS`].
-    annotation_kinds: [u64; 6],
+    annotation_kinds: [u64; 7],
     gaiji_total: u64,
     gaiji_unresolved: u64,
     /// Indexed parallel to [`GAIJI_FORM_LABELS`].
@@ -963,6 +964,7 @@ fn analyze(text: &str) -> FileStat {
                 AnnotationKind::InvalidRubySpan => s.annotation_kinds[3] += 1,
                 AnnotationKind::WarichuOpen => s.annotation_kinds[4] += 1,
                 AnnotationKind::WarichuClose => s.annotation_kinds[5] += 1,
+                AnnotationKind::Empty => s.annotation_kinds[6] += 1,
                 // `AnnotationKind` is #[non_exhaustive]; a future variant
                 // is simply not bucketed until this match is extended.
                 _ => {}
@@ -1076,7 +1078,7 @@ fn merge(
     elapsed_secs: f64,
 ) -> AuditReport {
     let mut node_kinds = [0u64; 22];
-    let mut ann = [0u64; 6];
+    let mut ann = [0u64; 7];
     let mut gforms = [0u64; 6];
     let mut gaiji_total = 0u64;
     let mut gaiji_unresolved = 0u64;

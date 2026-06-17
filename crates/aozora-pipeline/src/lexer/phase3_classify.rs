@@ -3344,6 +3344,13 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             });
         }
 
+        // Empty directive `［＃］` (or whitespace-only `［＃　］`, already
+        // trimmed): the de-facto-standard symbol from the file-header 凡例
+        // (`［＃］：入力者注…`) that prefixes nearly every work. Type it as
+        // `Empty` rather than the `Unknown` catch-all.
+        if body.is_empty() {
+            return Some(self.typed_annotation_match(directive_span, AnnotationKind::Empty));
+        }
         // Input-editor notes (`「X」はママ`, `「X」は底本では「Y」`, …). These
         // do not restyle their target — X stays in the text — so they emit a
         // typed `Annotation` consuming only the bracket, exactly like the
@@ -5318,6 +5325,26 @@ mod tests {
                 })
                 .unwrap_or_else(|| panic!("expected an Annotation for {src:?}"));
             assert_eq!(kind, *want, "src = {src:?}");
+        }
+    }
+
+    /// The empty directive `［＃］` (and whitespace-only `［＃　］`) — the
+    /// file-header 凡例 symbol that prefixes nearly every work — types as
+    /// `Empty`, not the `Unknown` catch-all, while still round-tripping.
+    #[test]
+    fn empty_directive_types_as_empty() {
+        use aozora_syntax::borrowed::AozoraNode;
+        for src in ["序文［＃］：入力者注", "本文［＃　］続き"] {
+            run!(out, src);
+            let kind = out
+                .spans
+                .iter()
+                .find_map(|s| match aozora_node(s) {
+                    Some(AozoraNode::Annotation(a)) => Some(a.kind),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("expected an Annotation for {src:?}"));
+            assert_eq!(kind, AnnotationKind::Empty, "src = {src:?}");
         }
     }
 

@@ -264,6 +264,12 @@ pub enum AnnotationKind {
     WarichuOpen,
     /// Inline warichu closer — `［＃割り注終わり］`.
     WarichuClose,
+    /// An empty directive `［＃］` (or whitespace-only `［＃　］`). Not an
+    /// unrecognised notation: it is the de-facto-standard symbol used in the
+    /// file-header 凡例 line `［＃］：入力者注…` that prefixes essentially every
+    /// 青空文庫 work. Typed distinctly so it leaves the `Unknown` bucket while
+    /// still round-tripping its raw bytes.
+    Empty,
 }
 
 /// Parse- and render-time error surface for `aozora-syntax` consumers.
