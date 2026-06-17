@@ -3,7 +3,8 @@
   "meta": {
     "feature": "composite",
     "level": "should",
-    "spec_section": "6"
+    "spec_section": "6.6",
+    "note": "[provenance:hand-derived §6.6 + AOZORA-ANNOTATION 2026-06-17] Two nested ［＃ここからN字下げ］ regions close in LIFO order with the shared 字下げ終わり (§7.3). Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "［＃ここから2字下げ］\n外側の段落。\n［＃ここから3字下げ］\n内側の段落。\n［＃ここで字下げ終わり］\n外側に戻る。\n［＃ここで字下げ終わり］\n",
   "expected": {

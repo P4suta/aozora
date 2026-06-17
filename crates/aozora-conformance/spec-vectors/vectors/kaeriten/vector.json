@@ -3,7 +3,8 @@
   "meta": {
     "feature": "kaeriten",
     "level": "should",
-    "spec_section": "6.5"
+    "spec_section": "6.5",
+    "note": "[provenance:hand-derived §6.5 + AOZORA-ANNOTATION 2026-06-17] A 返り点 directive carries kanbun return marks (一・二) attached to a character; rendered as kaeriten markup. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "読［＃返り点 一・二］本\n",
   "expected": {

@@ -3,7 +3,8 @@
   "meta": {
     "feature": "bouten",
     "level": "should",
-    "spec_section": "6.2"
+    "spec_section": "6.2",
+    "note": "[provenance:hand-derived §6.2 + AOZORA-ANNOTATION 2026-06-17] Forward-reference 鎖線, a rare but official 線-family variant; renders the chain-line bouten slug. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "重要［＃「重要」に鎖線］な点。\n",
   "expected": {

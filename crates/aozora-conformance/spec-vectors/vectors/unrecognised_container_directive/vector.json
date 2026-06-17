@@ -3,7 +3,8 @@
   "meta": {
     "feature": "container",
     "level": "should",
-    "spec_section": "6.6"
+    "spec_section": "6.6",
+    "note": "[provenance:hand-derived §6.6 + AOZORA-ANNOTATION 2026-06-17] An unknown ここから-directive (ナントカ) raises unrecognised-container-directive (warning, §9) and is retained losslessly. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "［＃ここからナントカ］本文",
   "expected": {

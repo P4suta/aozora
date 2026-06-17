@@ -3,7 +3,8 @@
   "meta": {
     "feature": "container",
     "level": "should",
-    "spec_section": "6.6"
+    "spec_section": "6.6",
+    "note": "[provenance:hand-derived §6.6 + AOZORA-ANNOTATION 2026-06-17] An indent opener closed by a 地付き closer is a family mismatch and raises mismatched-container-close (error, §9). Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "［＃ここから2字下げ］本文［＃ここで地付き終わり］",
   "expected": {

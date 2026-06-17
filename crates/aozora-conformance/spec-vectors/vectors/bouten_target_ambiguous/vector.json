@@ -3,7 +3,8 @@
   "meta": {
     "feature": "bouten",
     "level": "should",
-    "spec_section": "6.2"
+    "spec_section": "6.2",
+    "note": "[provenance:hand-derived §6.2 + AOZORA-ANNOTATION 2026-06-17] When the quoted target (青空) occurs more than once in the look-back, the forward reference is ambiguous and raises bouten-target-ambiguous (warning, §9). Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "青空青空［＃「青空」に傍点］",
   "expected": {

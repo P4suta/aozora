@@ -3,7 +3,8 @@
   "meta": {
     "feature": "heading",
     "level": "should",
-    "spec_section": "6.10"
+    "spec_section": "6.10",
+    "note": "[provenance:hand-derived §6.10 + AOZORA-ANNOTATION 2026-06-17] A non-adjacent ［＃「序章」は中見出し］ cannot promote a bare line; it degrades to a structured hidden heading-hint carrying the level. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "序章\n本文\n［＃「序章」は中見出し］\n",
   "expected": {

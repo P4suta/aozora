@@ -3,7 +3,8 @@
   "meta": {
     "feature": "tables_columns",
     "level": "should",
-    "spec_section": "6.13"
+    "spec_section": "6.13",
+    "note": "[provenance:hand-derived §6.13 + AOZORA-ANNOTATION 2026-06-17] ［＃ここからN段組み］…［＃ここで段組み終わり］ is a layout-only N-column region; no per-column markup. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "前文。\n［＃ここから2段組み］\n左右の段。\n［＃ここで段組み終わり］\n後文。\n",
   "expected": {

@@ -3,7 +3,8 @@
   "meta": {
     "feature": "kunten",
     "level": "should",
-    "spec_section": "6.5"
+    "spec_section": "6.5",
+    "note": "[provenance:hand-derived §6.5 + AOZORA-ANNOTATION 2026-06-17] ［＃「未」の左に「ザル」のルビ］ attaches a left-side ruby reading ザル to 未 (a saidoku building block); renders <rt class=aozora-ruby-left>. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "未［＃「未」の左に「ザル」のルビ］んとす。\n",
   "expected": {

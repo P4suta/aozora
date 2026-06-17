@@ -3,7 +3,8 @@
   "meta": {
     "feature": "accent",
     "level": "may",
-    "spec_section": "4"
+    "spec_section": "4",
+    "note": "[provenance:hand-derived §4 + AOZORA-ANNOTATION 2026-06-17] 〔…〕 wraps base letters plus combining-accent markers; preprocessing decomposes them to precomposed glyphs and emits an accent-decomposition-applied note (§4). Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "前〔ae&on〕後",
   "expected": {

@@ -3,7 +3,8 @@
   "meta": {
     "feature": "kunten",
     "level": "may",
-    "spec_section": "6.5"
+    "spec_section": "6.5",
+    "note": "[provenance:hand-derived §6.5 + AOZORA-ANNOTATION 2026-06-17] A lone レ kaeriten outside a kanbun clause has no clause to order and raises kaeriten-outside-kanbun (warning, §9). Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "これは［＃レ］と書いた。",
   "expected": {

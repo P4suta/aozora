@@ -3,7 +3,8 @@
   "meta": {
     "feature": "bouten",
     "level": "should",
-    "spec_section": "6.2"
+    "spec_section": "6.2",
+    "note": "[provenance:hand-derived §6.2 + AOZORA-ANNOTATION 2026-06-17] Bare range 点/線 markers pair by family (§7.1): 傍点, 二重傍線, and a 左に-prefixed left-side 傍線 each wrap their run. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "本文［＃傍点］甲［＃傍点終わり］と［＃二重傍線］乙［＃二重傍線終わり］と［＃左に傍線］丙［＃左に傍線終わり］。",
   "expected": {

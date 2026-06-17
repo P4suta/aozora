@@ -3,7 +3,8 @@
   "meta": {
     "feature": "heading",
     "level": "should",
-    "spec_section": "6.10"
+    "spec_section": "6.10",
+    "note": "[provenance:hand-derived §6.10 + AOZORA-ANNOTATION 2026-06-17] An adjacent ［＃「第一章」は大見出し］ promotes the preceding bare line 第一章 to <h1> (§7.5). Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "第一章\n［＃「第一章」は大見出し］\n本文がここから始まる。\n",
   "expected": {

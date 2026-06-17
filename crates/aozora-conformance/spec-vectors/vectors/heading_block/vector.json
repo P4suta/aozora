@@ -3,7 +3,8 @@
   "meta": {
     "feature": "heading",
     "level": "should",
-    "spec_section": "6.10"
+    "spec_section": "6.10",
+    "note": "[provenance:hand-derived §6.10 + AOZORA-ANNOTATION 2026-06-17] ［＃ここから中見出し］…［＃ここで中見出し終わり］ is a block heading over the delimited content (phrasing), rendering <h2>. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "前文。\n［＃ここから中見出し］\n章タイトル\n［＃ここで中見出し終わり］\n後文。\n",
   "expected": {

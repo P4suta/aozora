@@ -3,7 +3,8 @@
   "meta": {
     "feature": "emphasis",
     "level": "should",
-    "spec_section": "6.12"
+    "spec_section": "6.12",
+    "note": "[provenance:hand-derived §6.12 + AOZORA-ANNOTATION 2026-06-17] Forward-reference ［＃「X」は太字］ bolds the most recent preceding X (§7.5), rendering <b>. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "作者附記［＃「作者附記」は太字］――以下略。\n",
   "expected": {

@@ -3,7 +3,8 @@
   "meta": {
     "feature": "emphasis",
     "level": "should",
-    "spec_section": "6.12"
+    "spec_section": "6.12",
+    "note": "[provenance:hand-derived §6.12 + AOZORA-ANNOTATION 2026-06-17] Inline 太字 and 斜体 ranges and a forward 傍点 coexist in one line without interfering, each over its own run. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "本文の［＃太字］甲［＃太字終わり］と［＃斜体］乙［＃斜体終わり］と重要［＃「重要」に傍点］。\n",
   "expected": {
