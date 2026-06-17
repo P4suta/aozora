@@ -1072,6 +1072,23 @@ fn classify_annotation_body<'a>(
         BodyFamily::IndentBlockParamPrefix => {
             // body == ここから{N}字下げ; remainder = body[match_end..]
             let rest = &body[match_end..];
+            // ここから改行天付き、折り返して{M}字下げ — hanging indent whose
+            // first line is flush to the top margin (天付き = no indent) and
+            // whose wrapped continuation lines indent M. Models as the same
+            // Indent container with amount 0 + wrap M, so it closes with the
+            // shared 字下げ終わり (pairing is by family). The corpus's single
+            // most common compound indent (top form ～折り返して１字下げ).
+            if let Some(after) = rest.strip_prefix("改行天付き、折り返して") {
+                let (m, tail2) = parse_decimal_u8_prefix(after)?;
+                return (tail2 == "字下げ").then_some((
+                    EmitKind::BlockOpen(ContainerKind::Indent {
+                        amount: 0,
+                        wrap: Some(m),
+                        center: false,
+                    }),
+                    None,
+                ));
+            }
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
             if tail == "字下げ" {
                 Some((
@@ -5196,6 +5213,28 @@ mod tests {
                 out.spans
             );
         }
+    }
+
+    /// `［＃ここから改行天付き、折り返して{M}字下げ］` — the corpus's most
+    /// common compound indent — opens an Indent container with the first
+    /// line flush to the top (amount 0) and wrapped lines indented M.
+    #[test]
+    fn kaigyou_tentsuki_wrap_indent_recognised() {
+        run!(out, "［＃ここから改行天付き、折り返して２字下げ］");
+        let open = out.spans.iter().find_map(|s| match s.kind {
+            SpanKind::BlockOpen(k) => Some(k),
+            _ => None,
+        });
+        assert_eq!(
+            open,
+            Some(ContainerKind::Indent {
+                amount: 0,
+                wrap: Some(2),
+                center: false,
+            }),
+            "spans = {:?}",
+            out.spans
+        );
     }
 
     /// A target-bearing `「ママ」に傍点` must still be claimed as a Bouten by
