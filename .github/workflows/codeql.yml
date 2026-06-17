@@ -1,0 +1,43 @@
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"  # weekly, Monday 04:23 UTC
+
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+# Advanced CodeQL setup (replaces default setup). The matrix scans the real
+# first-class source: the Rust workspace, the Python binding (aozora-py), and
+# the TypeScript playground. Dropped from default setup's auto-detection:
+#   - c-cpp  → only the aozora-ffi C *test harness* (crates/aozora-ffi/tests/c_smoke)
+#   - go     → the thin, half-generated aozora-go binding
+#   - actions / redundant js+ts aliases
+jobs:
+  codeql:
+    name: codeql (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [rust, python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          config-file: ./.github/codeql/codeql-config.yml
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

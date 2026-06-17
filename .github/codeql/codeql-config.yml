@@ -1,0 +1,8 @@
+name: aozora CodeQL config
+
+# Keep results focused on hand-written source. Exclude vendored/generated
+# artefacts that CodeQL would otherwise flag as noise.
+paths-ignore:
+  - "**/mermaid.min.js"      # vendored mdBook mermaid bundle
+  - "**/mermaid-init.js"     # vendored mdBook mermaid bundle
+  - "crates/aozora-book/book" # rendered mdBook output (if ever present)
