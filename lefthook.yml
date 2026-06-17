@@ -85,14 +85,11 @@ pre-commit:
 
 commit-msg:
   commands:
-    # Conventional Commits — scope is optional but the type + style is enforced.
-    # `{1}` is lefthook's positional reference to the commit-message file path
-    # that git passes to the hook.
-    conventional:
-      run: |
-        docker compose run --rm --no-TTY dev bash -c \
-          "grep -E '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?: .{1,}' {1} > /dev/null \
-            || { echo 'Commit message must follow Conventional Commits (https://www.conventionalcommits.org/)'; exit 1; }"
+    # Conventional Commits via `committed` (config in committed.toml).
+    # Runs on the host — committed is provisioned by mise and a commit-msg
+    # lint needs no container. `{1}` is the commit-message file path.
+    committed:
+      run: committed --commit-file {1}
 
 pre-push:
   # `just ci-parallel` runs every gate before the push, but fast: the

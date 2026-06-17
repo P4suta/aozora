@@ -1,0 +1,13 @@
+# mise (https://mise.jdx.dev/) — declarative source of dev-tool versions
+# for aozora. Run `mise install` for the host inner loop.
+#
+# aozora is Docker-first: the dev-image is the canonical, locale-pinned
+# build/test environment and `just ci` there is the merge gate. This
+# manifest powers the fast host inner loop and the commit-msg hook. Rust +
+# cargo plugins live in .config/mise/config.toml.
+[tools]
+just = "latest"
+lefthook = "latest"
+"github:crate-ci/typos" = "latest"
+"github:crate-ci/committed" = "latest"
+actionlint = "latest"

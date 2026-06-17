@@ -72,17 +72,11 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
           fetch-depth: 0
-      - name: Check Conventional Commits
-        run: |
-          range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
-          while read -r sha subject; do
-            if ! echo "$subject" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?: .{1,}'; then
-              echo "::error::Commit $sha has non-conventional subject: $subject"
-              exit 1
-            fi
-          # `--no-merges`: merge commits (e.g. GitHub's "Update branch")
-          # are not Conventional Commits and must not be linted.
-          done < <(git log --no-merges --format='%H %s' "$range")
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: committed
+      - name: Check Conventional Commits (committed)
+        run: committed "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
 
   # Build the dev image ONCE per run so the heavy `cargo binstall`
   # (cargo-tools) layer is never re-fetched live across the container
