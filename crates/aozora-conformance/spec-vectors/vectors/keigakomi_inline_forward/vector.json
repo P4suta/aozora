@@ -1,0 +1,48 @@
+{
+  "name": "keigakomi_inline_forward",
+  "meta": {
+    "feature": "keigakomi",
+    "level": "should",
+    "spec_section": "6.7",
+    "note": "[provenance:hand-derived §6.7 + AOZORA-ANNOTATION 2026-06-17] The inline forward-reference 罫囲み ［＃「X」は罫囲み］ (https://www.aozora.gr.jp/annotation/etc.html) boxes a span, the span-level counterpart of the block 罫囲み container. Per §7.5 it consumes the preceding target literal 注意 and yields an emphasis node; §8 renders <span class=\"aozora-keigakomi-inline\">. Offsets computed from the §3 byte model; cross-checked against the reference processor."
+  },
+  "source": "注意［＃「注意」は罫囲み］事項。\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-keigakomi-inline\">注意</span>事項。</p>\n",
+    "serialize": "注意［＃「注意」は罫囲み］事項。\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 39
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 21,
+          "end": 24
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 36,
+          "end": 39
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

@@ -237,6 +237,11 @@ pub enum EmphasisKind {
         /// Signed stage count; `+N` = `N段階大きな文字`, `-N` = `N段階小さな文字`.
         steps: i8,
     },
+    /// 行中 罫囲み (`「X」は罫囲み`) — the inline forward-reference box, the
+    /// span-level counterpart of the block [`ContainerKind::Keigakomi`]
+    /// (just as [`Bold`](Self::Bold) is the leaf counterpart of
+    /// [`ContainerKind::Bold`]).
+    KeigakomiInline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

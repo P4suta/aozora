@@ -133,6 +133,7 @@ fn render_emphasis<W: Write>(e: &Emphasis<'_>, writer: &mut W) -> fmt::Result {
         EmphasisKind::SubScript => (r#"<sub class="aozora-subscript">"#, "</sub>"),
         EmphasisKind::SmallRight => (r#"<span class="aozora-koshogaki-right">"#, "</span>"),
         EmphasisKind::SmallLeft => (r#"<span class="aozora-koshogaki-left">"#, "</span>"),
+        EmphasisKind::KeigakomiInline => (r#"<span class="aozora-keigakomi-inline">"#, "</span>"),
         // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
         // weight default to the bold element.
         _ => (r#"<b class="aozora-bold">"#, "</b>"),

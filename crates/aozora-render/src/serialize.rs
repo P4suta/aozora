@@ -308,6 +308,7 @@ const fn emphasis_kind_keyword(kind: EmphasisKind) -> &'static str {
         EmphasisKind::SubScript => "下付き小文字",
         EmphasisKind::SmallRight => "行右小書き",
         EmphasisKind::SmallLeft => "行左小書き",
+        EmphasisKind::KeigakomiInline => "罫囲み",
         // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
         // weight serialize as the bold keyword.
         _ => "太字",

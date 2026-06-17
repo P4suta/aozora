@@ -4032,6 +4032,7 @@ fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
         "下付き小文字" => EmphasisKind::SubScript,
         "行右小書き" => EmphasisKind::SmallRight,
         "行左小書き" => EmphasisKind::SmallLeft,
+        "罫囲み" => EmphasisKind::KeigakomiInline,
         _ => return parse_font_size_suffix(s),
     })
 }
@@ -4824,6 +4825,7 @@ mod tests {
             ("H２［＃「２」は下付き小文字］", EmphasisKind::SubScript),
             ("あ［＃「あ」は行右小書き］", EmphasisKind::SmallRight),
             ("い［＃「い」は行左小書き］", EmphasisKind::SmallLeft),
+            ("注意［＃「注意」は罫囲み］", EmphasisKind::KeigakomiInline),
         ] {
             run!(out, src);
             let emphasis = out
