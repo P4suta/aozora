@@ -3,7 +3,8 @@
   "meta": {
     "feature": "annotation",
     "level": "must",
-    "spec_section": "6.14"
+    "spec_section": "6.14",
+    "note": "[provenance:hand-derived §6.14 + AOZORA-ANNOTATION 2026-06-17] Any unrecognised ［＃…］ is retained verbatim as a generic annotation (§6.14) — no input is discarded; html is the hidden span carrying the raw bracket. Confirmed against the official guide."
   },
   "source": "text［＃任意のメモ］more\n",
   "expected": {

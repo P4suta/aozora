@@ -3,7 +3,8 @@
   "meta": {
     "feature": "container",
     "level": "should",
-    "spec_section": "6.6"
+    "spec_section": "6.6",
+    "note": "[provenance:hand-derived §6.6 + AOZORA-ANNOTATION 2026-06-17] ［＃ここからN字下げ、折り返してM字下げ］ is a hanging indent: first line N, wrapped lines M; closes with the shared 字下げ終わり. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "［＃ここから２字下げ、折り返して４字下げ］\n本文が折り返して字下げされる長い行。\n［＃ここで字下げ終わり］\n",
   "expected": {

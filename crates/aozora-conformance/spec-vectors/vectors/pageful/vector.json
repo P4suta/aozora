@@ -3,7 +3,8 @@
   "meta": {
     "feature": "composite",
     "level": "may",
-    "spec_section": "6"
+    "spec_section": "6",
+    "note": "[provenance:hand-derived §6 + AOZORA-ANNOTATION 2026-06-17] A page-sized mix — explicit ruby, gaiji, an indent block, and a page break — exercises the families together with no diagnostics. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "明治の頃｜青梅《おうめ》街道沿いに、※［＃「木＋吶のつくり」、第3水準1-85-54］なる珍しき木が立つ。［＃ここから2字下げ］その下で人々は語らひ。［＃ここで字下げ終わり］［＃改ページ］\n",
   "expected": {

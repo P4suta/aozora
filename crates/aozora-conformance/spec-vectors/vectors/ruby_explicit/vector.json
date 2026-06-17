@@ -3,7 +3,8 @@
   "meta": {
     "feature": "ruby",
     "level": "must",
-    "spec_section": "6.1"
+    "spec_section": "6.1",
+    "note": "[provenance:hand-derived §6.1 + AOZORA-ANNOTATION 2026-06-17] The explicit base marker ｜ delimits the ruby base 青梅 before 《おうめ》; html is <ruby> with <rp> fallbacks (§8). Offsets from the §3 byte model."
   },
   "source": "明治の頃｜青梅《おうめ》街道沿いに。\n",
   "expected": {

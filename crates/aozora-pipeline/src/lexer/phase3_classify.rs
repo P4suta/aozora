@@ -373,22 +373,25 @@ enum BodyFamily {
     SectionKaicho,
     SectionKaidan,
     SectionKaimihiraki,
-    AlignEnd0,         // 地付き
-    CenterMarker,      // ページの左右中央 / 中央揃え
-    KeigakomiOpen,     // 罫囲み
-    KeigakomiClose,    // 罫囲み終わり
-    IndentBlock1,      // ここから字下げ → Indent { amount: 1 }
-    AlignEndBlock0,    // ここから地付き → AlignEnd { offset: 0 }
-    IndentBlockEnd,    // ここで字下げ終わり
-    AlignEndBlockEnd,  // ここで地付き終わり
-    LineWidthBlockEnd, // ここで字詰め終わり
-    TableBlockOpen,    // ここから表
-    TableBlockEnd,     // ここで表終わり
-    ColumnsBlockEnd,   // ここで段組(み)終わり
-    WarichuOpen,       // 割り注
-    WarichuClose,      // 割り注終わり
-    KaeritenSingle,    // body must equal one of 12 single-char marks
-    KaeritenCompound,  // body must equal one of 6 compound marks
+    AlignEnd0,           // 地付き
+    CenterMarker,        // ページの左右中央 / 中央揃え
+    KeigakomiOpen,       // 罫囲み
+    KeigakomiClose,      // 罫囲み終わり
+    IndentBlock1,        // ここから字下げ → Indent { amount: 1 }
+    AlignEndBlock0,      // ここから地付き → AlignEnd { offset: 0 }
+    IndentBlockEnd,      // ここで字下げ終わり
+    AlignEndBlockEnd,    // ここで地付き終わり
+    LineWidthBlockEnd,   // ここで字詰め終わり
+    TableBlockOpen,      // ここから表
+    TableBlockEnd,       // ここで表終わり
+    HorizontalBlockOpen, // ここから横組み
+    HorizontalBlockEnd,  // ここで横組み終わり
+    FontSizeBlockEnd,    // ここで大きな/小さな文字終わり
+    ColumnsBlockEnd,     // ここで段組(み)終わり
+    WarichuOpen,         // 割り注
+    WarichuClose,        // 割り注終わり
+    KaeritenSingle,      // body must equal one of 12 single-char marks
+    KaeritenCompound,    // body must equal one of 6 compound marks
 
     // === Prefix-with-parameter (parse body[match_end..]) ===
     AlignEndParamPrefix,      // 地から → 地から{N}字上げ
@@ -463,6 +466,22 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "ここで表終わり",
         family: BodyFamily::TableBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここから横組み",
+        family: BodyFamily::HorizontalBlockOpen,
+    },
+    BodyPattern {
+        needle: "ここで横組み終わり",
+        family: BodyFamily::HorizontalBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここで大きな文字終わり",
+        family: BodyFamily::FontSizeBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここで小さな文字終わり",
+        family: BodyFamily::FontSizeBlockEnd,
     },
     BodyPattern {
         needle: "ここで段組終わり",
@@ -562,6 +581,10 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         family: BodyFamily::BoutenRange,
     },
     BodyPattern {
+        needle: "黒三角傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
         needle: "丸傍点",
         family: BodyFamily::BoutenRange,
     },
@@ -571,6 +594,14 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     },
     BodyPattern {
         needle: "二重傍線",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "鎖線",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "破線",
         family: BodyFamily::BoutenRange,
     },
     BodyPattern {
@@ -912,6 +943,25 @@ fn classify_annotation_body<'a>(
         BodyFamily::TableBlockEnd if exact => {
             Some((EmitKind::BlockClose(ContainerKind::Table), None))
         }
+        BodyFamily::HorizontalBlockOpen if exact => {
+            Some((EmitKind::BlockOpen(ContainerKind::Horizontal), None))
+        }
+        BodyFamily::HorizontalBlockEnd if exact => {
+            Some((EmitKind::BlockClose(ContainerKind::Horizontal), None))
+        }
+        BodyFamily::FontSizeBlockEnd if exact => {
+            // The close marker carries only the direction; its magnitude is a
+            // ±1 placeholder (the open-side stage count is authoritative).
+            let steps = if body == "ここで小さな文字終わり" {
+                -1
+            } else {
+                1
+            };
+            Some((
+                EmitKind::BlockClose(ContainerKind::FontSize { steps }),
+                None,
+            ))
+        }
         BodyFamily::ColumnsBlockEnd if exact => Some((
             // Close marker carries no count; the open-side payload is authoritative.
             EmitKind::BlockClose(ContainerKind::Columns { count: 0 }),
@@ -1009,7 +1059,11 @@ fn classify_annotation_body<'a>(
                     None,
                 ))
             } else {
-                None
+                // ここから{N}段階大きな/小さな文字 — block font-size shift.
+                // Shares the `ここから` prefix; closes with the direction-only
+                // `ここで大きな/小さな文字終わり`.
+                font_size_block_open_steps(tail, n)
+                    .map(|steps| (EmitKind::BlockOpen(ContainerKind::FontSize { steps }), None))
             }
         }
         BodyFamily::AlignEndBlockParamPrefix => {
@@ -1087,6 +1141,9 @@ fn classify_annotation_body<'a>(
         | BodyFamily::LineWidthBlockEnd
         | BodyFamily::TableBlockOpen
         | BodyFamily::TableBlockEnd
+        | BodyFamily::HorizontalBlockOpen
+        | BodyFamily::HorizontalBlockEnd
+        | BodyFamily::FontSizeBlockEnd
         | BodyFamily::ColumnsBlockEnd
         | BodyFamily::WarichuOpen
         | BodyFamily::WarichuClose
@@ -2130,8 +2187,11 @@ where
         // won't appear. `m.payload` is a `Copy` arena reference and the
         // `ctx` reborrow of `self.alloc` ended at the `gaiji()` call above,
         // so reading `ucs` and pushing onto `self.diagnostics` is clear of
-        // the borrow. Scope: top-level `※［＃…］` only — gaiji nested inside
-        // a ruby/bouten body is out of scope for now.
+        // the borrow. Scope: this `unresolved-gaiji` warning fires for
+        // top-level `※［＃…］` only. Gaiji nested in a ruby reading / annotation
+        // body are still resolved + rendered (by `build_content_from_body`),
+        // but without this diagnostic; a gaiji buried in a forward-reference
+        // quote target (nested `［＃…］` breaks pairing) falls to `Unknown`.
         if m.payload.ucs.is_none() {
             self.diagnostics
                 .push(Diagnostic::unresolved_gaiji(Span::new(
@@ -2590,6 +2650,13 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         );
         build.segments.push(self.alloc.seg_gaiji(g.payload));
         build.text_start = g.consume_end;
+        // NOTE: a nested gaiji is resolved and rendered here, but
+        // `RecogniseCtx` carries no diagnostics sink (only `alloc` / `source`),
+        // so an *unresolved* nested gaiji renders best-effort as its
+        // description WITHOUT the `unresolved-gaiji` (§9) warning the top-level
+        // `※［＃…］` scan raises. Closing that gap means threading a
+        // diagnostics sink through the content builder — deferred until corpus
+        // demand justifies it (nested unresolved gaiji are vanishingly rare).
         Some(close_idx + 1)
     }
 
@@ -3617,15 +3684,15 @@ const fn is_okurigana_char(ch: char) -> bool {
     )
 }
 
-/// Classify a `［＃挿絵（file）入る］` sashie (illustration insert).
+/// Classify a `［＃挿絵（file）入る］` sashie (illustration insert),
+/// optionally bundling a caption: `［＃挿絵（file）「caption」入る］`.
 ///
 /// Called from [`classify_annotation_body`]'s `SashiePrefix` arm —
 /// the AC has already verified the `挿絵（` prefix at body[0..9]; this
-/// function captures the filename between `（` and `）` and confirms
-/// the trailing `入る` keyword. The captioned form
-/// (`［＃挿絵（file）「caption」入る］`) needs an event-level caption
-/// recogniser that this pass does not yet perform; the no-caption
-/// shape accounts for the vast majority of corpus occurrences.
+/// function captures the filename between `（` and `）`, an optional
+/// `「caption」` (per <https://www.aozora.gr.jp/annotation/graphics.html>),
+/// and confirms the trailing `入る` keyword. The caption is plain content,
+/// rendered into `<figcaption>` (§8).
 fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Option<EmitKind<'a>> {
     let rest = body.strip_prefix("挿絵（")?;
     // `）` is a full-width right parenthesis (U+FF09). Find its first
@@ -3636,10 +3703,22 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
         return None;
     }
     let tail = &rest[close_off + '）'.len_utf8()..];
-    if tail != "入る" {
+    // After `）` the tail is either the bare `入る` keyword or a bundled
+    // `「caption」入る`. Any other shape declines (→ `Annotation{Unknown}`).
+    let caption = if tail == "入る" {
+        None
+    } else if let Some(inner) = tail
+        .strip_prefix('「')
+        .and_then(|t| t.strip_suffix("」入る"))
+    {
+        if inner.is_empty() {
+            return None;
+        }
+        Some(alloc.content_plain(inner))
+    } else {
         return None;
-    }
-    Some(EmitKind::Aozora(alloc.sashie(file, None)))
+    };
+    Some(EmitKind::Aozora(alloc.sashie(file, caption)))
 }
 
 /// Classify a `［＃「target」は(大|中|小)見出し］` forward-reference
@@ -3992,15 +4071,59 @@ fn parse_heading_directive(body: &str) -> Option<(ContainerKind, bool)> {
     ))
 }
 
-/// Map the keyword after `は` to an [`EmphasisKind`]: 太字 → Bold,
-/// 斜体 → Italic (per <https://www.aozora.gr.jp/annotation/emphasis.html>).
-/// Unknown suffixes return `None` (→ `Annotation{Unknown}`).
+/// Map the keyword after `は` to an [`EmphasisKind`].
+///
+/// 太字 → Bold, 斜体 → Italic (per
+/// <https://www.aozora.gr.jp/annotation/emphasis.html>); 上付き小文字 →
+/// `SuperScript`, 下付き小文字 → `SubScript`, 行右小書き → `SmallRight`,
+/// 行左小書き → `SmallLeft`, and `N段階大きな/小さな文字` → `FontSize`
+/// (per <https://www.aozora.gr.jp/annotation/etc.html>). Unknown suffixes
+/// return `None` (→ `Annotation{Unknown}`).
 fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
     Some(match s {
         "太字" => EmphasisKind::Bold,
         "斜体" => EmphasisKind::Italic,
-        _ => return None,
+        "上付き小文字" => EmphasisKind::SuperScript,
+        "下付き小文字" => EmphasisKind::SubScript,
+        "行右小書き" => EmphasisKind::SmallRight,
+        "行左小書き" => EmphasisKind::SmallLeft,
+        "罫囲み" => EmphasisKind::KeigakomiInline,
+        "横組み" => EmphasisKind::HorizontalInline,
+        _ => return parse_font_size_suffix(s),
     })
+}
+
+/// Parse a `N段階大きな文字` / `N段階小さな文字` font-size suffix into an
+/// [`EmphasisKind::FontSize`]. `大きな` yields a positive stage count,
+/// `小さな` a negative one. Returns `None` for a missing/zero magnitude,
+/// an `i8` overflow, or any other suffix (→ `Annotation{Unknown}`).
+fn parse_font_size_suffix(s: &str) -> Option<EmphasisKind> {
+    let (magnitude, rest) = parse_decimal_u8_prefix(s)?;
+    let steps = i8::try_from(magnitude).ok()?;
+    if steps == 0 {
+        return None;
+    }
+    match rest {
+        "段階大きな文字" => Some(EmphasisKind::FontSize { steps }),
+        "段階小さな文字" => Some(EmphasisKind::FontSize { steps: -steps }),
+        _ => None,
+    }
+}
+
+/// Signed stage count for a `ここから{N}段階大きな/小さな文字` block opener,
+/// where `tail` is the body after the `ここから{N}` prefix and `magnitude`
+/// is `N`. `大きな` → `+N`, `小さな` → `-N`; `None` for a zero/overflowing
+/// magnitude or any other tail.
+fn font_size_block_open_steps(tail: &str, magnitude: u8) -> Option<i8> {
+    let steps = i8::try_from(magnitude).ok()?;
+    if steps == 0 {
+        return None;
+    }
+    match tail {
+        "段階大きな文字" => Some(steps),
+        "段階小さな文字" => Some(-steps),
+        _ => None,
+    }
 }
 
 /// Map the trailing keyword (after `に`) to a [`BoutenKind`].
@@ -4039,8 +4162,8 @@ fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
 /// Parse a 傍点/傍線 range-form body into `(kind, position, is_close)`.
 /// Strips an optional `左に` left-side prefix and an optional `終わり`
 /// close suffix; the remainder must be a [`bouten_kind_from_suffix`]
-/// keyword. Returns `None` (→ `Annotation{Unknown}`) otherwise — e.g.
-/// for `鎖線` / `破線`, which the kind table does not yet cover.
+/// keyword (all fourteen kinds, incl. the rare 鎖線 / 破線 / 黒三角傍点).
+/// Returns `None` (→ `Annotation{Unknown}`) for any non-bouten body.
 fn parse_bouten_range_body(body: &str) -> Option<(BoutenKind, BoutenPosition, bool)> {
     let (position, rest) = body
         .strip_prefix("左に")
@@ -4764,6 +4887,83 @@ mod tests {
     }
 
     #[test]
+    fn forward_emphasis_script_and_koshogaki_recognized() {
+        // 上付き/下付き小文字 (super/subscript) and 行右/行左小書き — the
+        // four emphasis-page forward-reference families beyond 太字/斜体
+        // (per <https://www.aozora.gr.jp/annotation/etc.html>). Each is a
+        // first-class `Emphasis` leaf, NOT an `Annotation{Unknown}`.
+        for (src, want) in [
+            ("x２［＃「２」は上付き小文字］", EmphasisKind::SuperScript),
+            ("H２［＃「２」は下付き小文字］", EmphasisKind::SubScript),
+            ("あ［＃「あ」は行右小書き］", EmphasisKind::SmallRight),
+            ("い［＃「い」は行左小書き］", EmphasisKind::SmallLeft),
+            ("注意［＃「注意」は罫囲み］", EmphasisKind::KeigakomiInline),
+            ("西暦［＃「西暦」は横組み］", EmphasisKind::HorizontalInline),
+        ] {
+            run!(out, src);
+            let emphasis = out
+                .spans
+                .iter()
+                .find_map(|s| match aozora_node(s) {
+                    Some(AozoraNode::Emphasis(e)) => Some(e),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("expected an Emphasis span for {src:?}"));
+            assert_eq!(emphasis.kind, want, "src = {src:?}");
+        }
+    }
+
+    #[test]
+    fn forward_emphasis_font_size_recognized() {
+        // 文字サイズ変更 `N段階大きな/小さな文字` — 大きな is a positive
+        // stage count, 小さな negative; full-width and ASCII digits both
+        // parse (per <https://www.aozora.gr.jp/annotation/etc.html>).
+        for (src, want) in [
+            (
+                "甲［＃「甲」は2段階大きな文字］",
+                EmphasisKind::FontSize { steps: 2 },
+            ),
+            (
+                "乙［＃「乙」は1段階小さな文字］",
+                EmphasisKind::FontSize { steps: -1 },
+            ),
+            (
+                "丙［＃「丙」は３段階大きな文字］",
+                EmphasisKind::FontSize { steps: 3 },
+            ),
+        ] {
+            run!(out, src);
+            let emphasis = out
+                .spans
+                .iter()
+                .find_map(|s| match aozora_node(s) {
+                    Some(AozoraNode::Emphasis(e)) => Some(e),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("expected an Emphasis span for {src:?}"));
+            assert_eq!(emphasis.kind, want, "src = {src:?}");
+        }
+    }
+
+    #[test]
+    fn forward_emphasis_font_size_zero_and_overflow_decline() {
+        // 0段階 is degenerate and >127 overflows i8 — both decline cleanly
+        // to Annotation{Unknown} (no Emphasis node).
+        for src in [
+            "甲［＃「甲」は0段階大きな文字］",
+            "甲［＃「甲」は200段階大きな文字］",
+        ] {
+            run!(out, src);
+            assert!(
+                !out.spans
+                    .iter()
+                    .any(|s| matches!(aozora_node(s), Some(AozoraNode::Emphasis(_)))),
+                "src = {src:?} should not yield an Emphasis node",
+            );
+        }
+    }
+
+    #[test]
     fn forward_bouten_consumes_immediate_predecessor_literal() {
         // The fix for forward-ref text duplication: when the target
         // literal sits *immediately* before the `［`, the classifier
@@ -5253,11 +5453,28 @@ mod tests {
     }
 
     #[test]
-    fn sashie_with_caption_form_not_matched() {
-        // Captioned sashie needs a dedicated caption recogniser;
-        // the no-caption matcher must reject the captioned form
-        // cleanly so the bracket falls through to the catch-all.
+    fn sashie_with_caption_recognized() {
+        // Bundled-caption form `挿絵（file）「caption」入る` — the caption is
+        // captured as plain content (rendered into <figcaption>, §8).
         run!(out, "［＃挿絵（fig01.png）「キャプション」入る］");
+        let found = out.spans.iter().find_map(|s| match aozora_node(s) {
+            Some(AozoraNode::Sashie(s)) => Some(s),
+            _ => None,
+        });
+        let Some(sashie) = found else {
+            panic!("expected a Sashie span");
+        };
+        assert_eq!(sashie.file.as_str(), "fig01.png");
+        let Some(caption) = sashie.caption else {
+            panic!("expected a bundled caption");
+        };
+        assert_eq!(caption.as_plain(), Some("キャプション"));
+    }
+
+    #[test]
+    fn sashie_empty_caption_falls_through() {
+        // `「」入る` is a degenerate empty caption — decline cleanly.
+        run!(out, "［＃挿絵（fig01.png）「」入る］");
         assert!(
             !out.spans
                 .iter()
@@ -5663,6 +5880,32 @@ mod tests {
         assert!(matches!(
             out.spans[2].kind,
             SpanKind::BlockClose(ContainerKind::Keigakomi)
+        ));
+    }
+
+    #[test]
+    fn container_open_close_font_size_block() {
+        // ここからN段階大きな/小さな文字 — the opener carries the signed
+        // magnitude; the direction-only closer pairs by the font-size family.
+        run!(
+            out,
+            "［＃ここから2段階大きな文字］大［＃ここで大きな文字終わり］"
+        );
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::FontSize { steps: 2 })
+        ));
+        assert!(matches!(
+            out.spans[2].kind,
+            SpanKind::BlockClose(ContainerKind::FontSize { steps: 1 })
+        ));
+        run!(
+            out2,
+            "［＃ここから1段階小さな文字］小［＃ここで小さな文字終わり］"
+        );
+        assert!(matches!(
+            out2.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::FontSize { steps: -1 })
         ));
     }
 

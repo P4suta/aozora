@@ -3,7 +3,8 @@
   "meta": {
     "feature": "bouten",
     "level": "should",
-    "spec_section": "6.2"
+    "spec_section": "6.2",
+    "note": "[provenance:hand-derived §6.2 + AOZORA-ANNOTATION 2026-06-17] Forward-reference 黒三角傍点, a rare but official 点-family variant; renders the black-triangle bouten slug. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "規範［＃「規範」に黒三角傍点］を説く。\n",
   "expected": {

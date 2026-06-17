@@ -68,11 +68,17 @@ renderer) is **skipped**, not failed — except that a `must`-level vector's
 The `expected` values are derived from the normative prose — the §6 notation
 definitions, the §7 structural model, and the §9 diagnostic catalogue — and
 cross-checked against the official 青空文庫 annotation reference and real
-corpus text, **not** read back from any single processor's output. A vector
-whose values were corrected away from an earlier implementation-derived draft
-records that in its `meta.note` (e.g. `align_end_container`). This keeps the
-corpus from silently encoding one processor's bugs as the specification — a
-vector only means something if a processor can fail it.
+corpus text, **not** read back from any single processor's output. This keeps
+the corpus from silently encoding one processor's bugs as the specification —
+a vector only means something if a processor can fail it.
+
+**Every** vector records its provenance in `meta.note`, tagged
+`[provenance:hand-derived §X + AOZORA-ANNOTATION <date>] …`: the governing
+section(s), the official behaviour it pins, and (where applicable) what was
+corrected away from an earlier implementation-derived draft. The convention is
+machine-checkable — `grep -rl '"note"' conformance/vectors | wc -l` must equal
+the vector count — so a new bare vector is caught before it regresses the
+corpus back toward circularity.
 
 ## Notes for a consuming implementation
 

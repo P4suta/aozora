@@ -3,7 +3,8 @@
   "meta": {
     "feature": "gaiji",
     "level": "should",
-    "spec_section": "6.4"
+    "spec_section": "6.4",
+    "note": "[provenance:hand-derived §6.4 + AOZORA-ANNOTATION 2026-06-17] A gaiji whose men-ku-ten (99-99-99) is not in any JIS X 0213 plane is unresolvable and raises unresolved-gaiji (warning, §9). Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "※［＃「架空の外字」、第3水準99-99-99］",
   "expected": {

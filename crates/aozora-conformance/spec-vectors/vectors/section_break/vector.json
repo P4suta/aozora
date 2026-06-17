@@ -3,7 +3,8 @@
   "meta": {
     "feature": "break",
     "level": "must",
-    "spec_section": "6.9"
+    "spec_section": "6.9",
+    "note": "[provenance:hand-derived §6.9 + AOZORA-ANNOTATION 2026-06-17] ［＃改丁］ (kaicho) is a recto/leaf break; html is the section-break div with the kaicho slug. Offsets from the §3 byte model."
   },
   "source": "前章。\n［＃改丁］\n次章。\n",
   "expected": {

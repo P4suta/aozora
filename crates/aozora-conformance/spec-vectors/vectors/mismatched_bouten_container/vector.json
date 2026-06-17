@@ -3,7 +3,8 @@
   "meta": {
     "feature": "bouten",
     "level": "should",
-    "spec_section": "6.2"
+    "spec_section": "6.2",
+    "note": "[provenance:hand-derived §6.2 + AOZORA-ANNOTATION 2026-06-17] A 点 opener (傍点) closed by a 線 closer (傍線終わり) is a family mismatch and raises mismatched-bouten-container (error, §9). Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "彼は［＃傍点］必ず［＃傍線終わり］来る",
   "expected": {

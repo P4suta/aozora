@@ -3,7 +3,8 @@
   "meta": {
     "feature": "plain",
     "level": "must",
-    "spec_section": "6"
+    "spec_section": "6",
+    "note": "[provenance:hand-derived §6 + AOZORA-ANNOTATION 2026-06-17] Text with no directive is a single paragraph; the only transform is HTML escaping (§8). No nodes, no diagnostics."
   },
   "source": "こんにちは、世界。\n",
   "expected": {

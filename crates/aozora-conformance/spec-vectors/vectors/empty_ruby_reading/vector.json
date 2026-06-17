@@ -3,7 +3,8 @@
   "meta": {
     "feature": "ruby",
     "level": "should",
-    "spec_section": "6.1"
+    "spec_section": "6.1",
+    "note": "[provenance:hand-derived §6.1 + AOZORA-ANNOTATION 2026-06-17] An empty ruby reading ｜青梅《》 is ill-formed and raises empty-ruby-reading (error, §9). Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "｜青梅《》",
   "expected": {

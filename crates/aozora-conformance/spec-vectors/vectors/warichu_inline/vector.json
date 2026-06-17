@@ -3,7 +3,8 @@
   "meta": {
     "feature": "warichu",
     "level": "must",
-    "spec_section": "6"
+    "spec_section": "6.8",
+    "note": "[provenance:hand-derived §6.8 + AOZORA-ANNOTATION 2026-06-17] ［＃割り注］…［＃割り注終わり］ is an inline two-line warichu; html is the warichu span. Offsets from the §3 byte model."
   },
   "source": "［＃割り注］上の段／下の段［＃割り注終わり］\n",
   "expected": {

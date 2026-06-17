@@ -3,7 +3,8 @@
   "meta": {
     "feature": "recovery",
     "level": "must",
-    "spec_section": "6"
+    "spec_section": "6",
+    "note": "[provenance:hand-derived §4+§9 + AOZORA-ANNOTATION 2026-06-17] A Unicode Private Use Area scalar in the source collides with the sanitizer's PUA sentinels (§4), so it raises source-contains-pua (warning) and renders as U+FFFD. Offsets from the §3 byte model."
   },
   "source": "abcdef\n",
   "expected": {

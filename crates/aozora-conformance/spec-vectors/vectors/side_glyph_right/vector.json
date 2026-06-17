@@ -1,0 +1,48 @@
+{
+  "name": "side_glyph_right",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.16",
+    "note": "[provenance:hand-derived §6.16 + AOZORA-ANNOTATION 2026-06-17] 行右小書き (small glyph set to the line's right in vertical writing) is a forward-reference emphasis-page family (https://www.aozora.gr.jp/annotation/etc.html), particle は, single target, inline. Per §7.5 it consumes the immediately preceding target literal い (byte 3); §8 reference rendering is a side <span class=\"aozora-koshogaki-right\">. Offsets computed from the §3 byte model (keyword 行右小書き = 5 fullwidth chars = 15 bytes); cross-checked against the reference processor. New family — no prior implementation-derived draft."
+  },
+  "source": "あい［＃「い」は行右小書き］\n",
+  "expected": {
+    "html": "<p>あ<span class=\"aozora-koshogaki-right\">い</span></p>\n",
+    "serialize": "あい［＃「い」は行右小書き］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 3,
+          "end": 42
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 18,
+          "end": 21
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 39,
+          "end": 42
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

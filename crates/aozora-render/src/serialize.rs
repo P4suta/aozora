@@ -287,13 +287,29 @@ fn emit_emphasis<W: Write>(e: &Emphasis<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃「")?;
     emit_content_as_plain(e.text.get(), out)?;
     out.write_str("」は")?;
-    out.write_str(emphasis_kind_keyword(e.kind))?;
+    // 文字サイズ carries a magnitude that the static keyword table can't hold.
+    if let EmphasisKind::FontSize { steps } = e.kind {
+        let (magnitude, word) = if steps >= 0 {
+            (steps, "大きな")
+        } else {
+            (-steps, "小さな")
+        };
+        write!(out, "{magnitude}段階{word}文字")?;
+    } else {
+        out.write_str(emphasis_kind_keyword(e.kind))?;
+    }
     out.write_char('］')
 }
 
 const fn emphasis_kind_keyword(kind: EmphasisKind) -> &'static str {
     match kind {
         EmphasisKind::Italic => "斜体",
+        EmphasisKind::SuperScript => "上付き小文字",
+        EmphasisKind::SubScript => "下付き小文字",
+        EmphasisKind::SmallRight => "行右小書き",
+        EmphasisKind::SmallLeft => "行左小書き",
+        EmphasisKind::KeigakomiInline => "罫囲み",
+        EmphasisKind::HorizontalInline => "横組み",
         // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
         // weight serialize as the bold keyword.
         _ => "太字",
@@ -367,7 +383,13 @@ fn emit_center<W: Write>(c: Center, out: &mut W) -> fmt::Result {
 fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃挿絵（")?;
     out.write_str(s.file.as_str())?;
-    out.write_str("）入る］")
+    out.write_char('）')?;
+    if let Some(caption) = s.caption {
+        out.write_char('「')?;
+        emit_content_as_plain(caption, out)?;
+        out.write_char('」')?;
+    }
+    out.write_str("入る］")
 }
 
 /// The optional `同行` / `窓` style prefix that precedes the level keyword in
@@ -504,6 +526,15 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
         ),
         ContainerKind::Columns { count } => write!(out, "［＃ここから{count}段組み］"),
         ContainerKind::Table => out.write_str("［＃ここから表］"),
+        ContainerKind::Horizontal => out.write_str("［＃ここから横組み］"),
+        ContainerKind::FontSize { steps } => {
+            let (magnitude, word) = if steps >= 0 {
+                (steps, "大きな")
+            } else {
+                (-steps, "小さな")
+            };
+            write!(out, "［＃ここから{magnitude}段階{word}文字］")
+        }
         _ => out.write_str(container_open_marker(kind)),
     }
 }
@@ -532,6 +563,12 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
         ),
         ContainerKind::Columns { .. } => out.write_str("［＃ここで段組み終わり］"),
         ContainerKind::Table => out.write_str("［＃ここで表終わり］"),
+        ContainerKind::Horizontal => out.write_str("［＃ここで横組み終わり］"),
+        ContainerKind::FontSize { steps } => out.write_str(if steps >= 0 {
+            "［＃ここで大きな文字終わり］"
+        } else {
+            "［＃ここで小さな文字終わり］"
+        }),
         _ => out.write_str(container_close_marker(kind)),
     }
 }

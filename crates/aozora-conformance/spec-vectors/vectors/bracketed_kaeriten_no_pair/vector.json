@@ -3,7 +3,8 @@
   "meta": {
     "feature": "kunten",
     "level": "should",
-    "spec_section": "6.5"
+    "spec_section": "6.5",
+    "note": "[provenance:hand-derived §6.5 + AOZORA-ANNOTATION 2026-06-17] A bracketed kaeriten 二 with no matching 一 in the clause is unpaired and raises bracketed-kaeriten-no-pair (error, §9). Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "怪物［＃二］",
   "expected": {

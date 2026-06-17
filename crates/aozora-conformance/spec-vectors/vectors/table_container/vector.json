@@ -3,7 +3,8 @@
   "meta": {
     "feature": "tables_columns",
     "level": "should",
-    "spec_section": "6.13"
+    "spec_section": "6.13",
+    "note": "[provenance:hand-derived §6.13 + AOZORA-ANNOTATION 2026-06-17] ［＃ここから表］…［＃ここで表終わり］ marks a layout-only table region; no sanctioned cell/row delimiter, so content stays plain. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "［＃ここから表］\n項目　値\n［＃ここで表終わり］\n",
   "expected": {

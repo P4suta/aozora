@@ -3,7 +3,8 @@
   "meta": {
     "feature": "container",
     "level": "must",
-    "spec_section": "6.6"
+    "spec_section": "6.7",
+    "note": "[provenance:hand-derived §6.7 + AOZORA-ANNOTATION 2026-06-17] ［＃罫囲み］…［＃罫囲み終わり］ frames the enclosed block. html is the keigakomi div. Offsets from the §3 byte model."
   },
   "source": "［＃罫囲み］\n本文一行目。\n本文二行目。\n［＃罫囲み終わり］\n",
   "expected": {

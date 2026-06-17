@@ -3,7 +3,8 @@
   "meta": {
     "feature": "tcy",
     "level": "must",
-    "spec_section": "6"
+    "spec_section": "6.3",
+    "note": "[provenance:hand-derived §6.3 + AOZORA-ANNOTATION 2026-06-17] ［＃「12」は縦中横］ whose target 12 does not occur in the preceding text has no run to rotate; it raises tcy-target-not-found (warning) and the directive is retained. Offsets from the §3 byte model."
   },
   "source": "昭和［＃「12」は縦中横］年\n",
   "expected": {

@@ -3,7 +3,8 @@
   "meta": {
     "feature": "container",
     "level": "must",
-    "spec_section": "6.6"
+    "spec_section": "6.6",
+    "note": "[provenance:hand-derived §6.6 + AOZORA-ANNOTATION 2026-06-17] ［＃ここからN字詰め］ sets a fixed N full-width characters per line for the enclosed block, closing with 字詰め終わり. Offsets from the §3 byte model."
   },
   "source": "本文。\n［＃ここから26字詰め］\n詰めた段落。\n別の行。\n［＃ここで字詰め終わり］\n通常段落。\n",
   "expected": {

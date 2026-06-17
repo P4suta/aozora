@@ -3,7 +3,8 @@
   "meta": {
     "feature": "recovery",
     "level": "must",
-    "spec_section": "6"
+    "spec_section": "6",
+    "note": "[provenance:hand-derived §9 + AOZORA-ANNOTATION 2026-06-17] A ruby opener 《 with no closing 》 raises unclosed-bracket (error) at the opener span; the raw text is retained losslessly. Offsets from the §3 byte model."
   },
   "source": "｜青梅《おうめ\n",
   "expected": {

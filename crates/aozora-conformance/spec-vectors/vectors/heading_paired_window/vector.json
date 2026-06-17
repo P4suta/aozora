@@ -3,7 +3,8 @@
   "meta": {
     "feature": "heading",
     "level": "should",
-    "spec_section": "6.10"
+    "spec_section": "6.10",
+    "note": "[provenance:hand-derived §6.10 + AOZORA-ANNOTATION 2026-06-17] Paired ［＃窓小見出し］…［＃窓小見出し終わり］ is a 窓-style small heading over the delimited run. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "［＃窓小見出し］探検の動機［＃窓小見出し終わり］　私がチベットへ行く原因。\n",
   "expected": {

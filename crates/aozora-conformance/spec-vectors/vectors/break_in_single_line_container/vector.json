@@ -3,7 +3,8 @@
   "meta": {
     "feature": "break",
     "level": "should",
-    "spec_section": "6.9"
+    "spec_section": "6.9",
+    "note": "[provenance:hand-derived §6.9 + AOZORA-ANNOTATION 2026-06-17] A page break inside a single-line 地付き marker is ill-formed and raises break-in-single-line-container (warning, §9). Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "［＃地付き］本文［＃改ページ］",
   "expected": {

@@ -3,7 +3,8 @@
   "meta": {
     "feature": "heading",
     "level": "should",
-    "spec_section": "6.10"
+    "spec_section": "6.10",
+    "note": "[provenance:hand-derived §6.10 + AOZORA-ANNOTATION 2026-06-17] 同行中見出し marks a same-line heading; with body text on the line it lands as a structured heading-hint, not a promotion. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "萩原朔太郎［＃「萩原朔太郎」は同行中見出し］　二十年の友。\n",
   "expected": {
