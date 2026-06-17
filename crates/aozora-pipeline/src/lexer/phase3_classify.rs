@@ -448,6 +448,19 @@ enum BodyFamily {
     /// `parse_caption_body` reads the full body for the block-vs-inline form
     /// and open vs close.
     CaptionRange,
+
+    /// `ここから割り注` — block 割り注 opener (the multi-line region form;
+    /// the inline `［＃割り注］` is [`Self::WarichuOpen`]). → `Container(Warichu)`.
+    WarichuBlockOpen,
+    /// `ここで割り注終わり` — block 割り注 closer.
+    WarichuBlockEnd,
+    /// `天から` → `天から{N}字下げ` — a single-line indent measured from the
+    /// top margin; identical to a plain `{N}字下げ`, so it emits an
+    /// `Indent` leaf.
+    TopIndentPrefix,
+    /// `改行天付き` → `改行天付き、折り返して{N}字下げ` — the ここから-less
+    /// bare sibling of the top-flush hanging indent (amount 0 + wrap N).
+    KaigyouTentsukiPrefix,
 }
 
 /// Static pattern table. Order is irrelevant for behavior because the
@@ -576,6 +589,35 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "ここでキャプション終わり",
         family: BodyFamily::CaptionRange,
+    },
+    // Block 罫囲み (ここから form; the bare 罫囲み is also KeigakomiOpen).
+    // LeftmostLongest keeps ここから罫囲み over the ここから indent prefix.
+    BodyPattern {
+        needle: "ここから罫囲み",
+        family: BodyFamily::KeigakomiOpen,
+    },
+    BodyPattern {
+        needle: "ここで罫囲み終わり",
+        family: BodyFamily::KeigakomiClose,
+    },
+    // Block 割り注 (multi-line region; inline ［＃割り注］ stays WarichuOpen).
+    BodyPattern {
+        needle: "ここから割り注",
+        family: BodyFamily::WarichuBlockOpen,
+    },
+    BodyPattern {
+        needle: "ここで割り注終わり",
+        family: BodyFamily::WarichuBlockEnd,
+    },
+    // 天から{N}字下げ (single-line indent from the top) and the bare
+    // 改行天付き、折り返して{N}字下げ hanging indent.
+    BodyPattern {
+        needle: "天から",
+        family: BodyFamily::TopIndentPrefix,
+    },
+    BodyPattern {
+        needle: "改行天付き",
+        family: BodyFamily::KaigyouTentsukiPrefix,
     },
     BodyPattern {
         needle: "ここで段組終わり",
@@ -1026,6 +1068,12 @@ fn classify_annotation_body<'a>(
         BodyFamily::KeigakomiClose if exact => {
             Some((EmitKind::BlockClose(ContainerKind::Keigakomi), None))
         }
+        BodyFamily::WarichuBlockOpen if exact => {
+            Some((EmitKind::BlockOpen(ContainerKind::Warichu), None))
+        }
+        BodyFamily::WarichuBlockEnd if exact => {
+            Some((EmitKind::BlockClose(ContainerKind::Warichu), None))
+        }
         BodyFamily::IndentBlock1 if exact => Some((
             EmitKind::BlockOpen(ContainerKind::Indent {
                 amount: 1,
@@ -1116,6 +1164,30 @@ fn classify_annotation_body<'a>(
                     None,
                 )
             })
+        }
+        BodyFamily::TopIndentPrefix => {
+            // body == 天から{N}字下げ — single-line indent from the top
+            // margin, identical to a plain {N}字下げ (Indent leaf).
+            let rest = &body[match_end..];
+            let (n, tail) = parse_decimal_u8_prefix(rest)?;
+            (tail == "字下げ" && n >= 1)
+                .then(|| (EmitKind::Aozora(alloc.indent(Indent { amount: n })), None))
+        }
+        BodyFamily::KaigyouTentsukiPrefix => {
+            // body == 改行天付き、折り返して{N}字下げ — the ここから-less bare
+            // top-flush hanging indent (amount 0 + wrap N), closed by the
+            // shared 字下げ終わり.
+            let rest = &body[match_end..];
+            let after = rest.strip_prefix("、折り返して")?;
+            let (m, tail) = parse_decimal_u8_prefix(after)?;
+            (tail == "字下げ").then_some((
+                EmitKind::BlockOpen(ContainerKind::Indent {
+                    amount: 0,
+                    wrap: Some(m),
+                    center: false,
+                }),
+                None,
+            ))
         }
         BodyFamily::SashiePrefix => classify_sashie_body(body, alloc).map(|e| (e, None)),
         BodyFamily::IndentBlockParamPrefix => {
@@ -1305,6 +1377,8 @@ fn classify_annotation_body<'a>(
         | BodyFamily::CenterMarker
         | BodyFamily::KeigakomiOpen
         | BodyFamily::KeigakomiClose
+        | BodyFamily::WarichuBlockOpen
+        | BodyFamily::WarichuBlockEnd
         | BodyFamily::IndentBlock1
         | BodyFamily::AlignEndBlock0
         | BodyFamily::IndentBlockEnd
@@ -3315,6 +3389,19 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                     .then(|| Diagnostic::bouten_target_ambiguous(directive_span)),
             });
         }
+        // Range bouten `「X」～「Y」に<kind>` — applies the marks to the whole
+        // preceding run from X to Y.
+        if let Some((node, consume_start)) =
+            self.classify_forward_bouten_range(view, open_idx, close_idx)
+        {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start,
+                consume_end: close_span.end,
+                pending_diagnostic: None,
+            });
+        }
         // `「X」の左に「Y」のルビ` — left-side ruby (saidoku building block). The
         // `の左に` prefix overlaps left-side bouten, but its `のルビ` keyword is
         // not a bouten kind, so the bouten classifier already returned `None`.
@@ -3395,11 +3482,12 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             });
         }
 
-        // Empty directive `［＃］` (or whitespace-only `［＃　］`, already
-        // trimmed): the de-facto-standard symbol from the file-header 凡例
-        // (`［＃］：入力者注…`) that prefixes nearly every work. Type it as
-        // `Empty` rather than the `Unknown` catch-all.
-        if body.is_empty() {
+        // Empty / placeholder directives from the file-header 凡例 that
+        // prefixes nearly every work: `［＃］` (入力者注), `［＃…］` (返り点),
+        // `［＃（…）］` (訓点送り仮名). The body is empty (post-trim) or an
+        // ellipsis placeholder — a de-facto-standard symbol, not unrecognised
+        // notation. Type it as `Empty` rather than the `Unknown` catch-all.
+        if body.is_empty() || body == "…" || body == "（…）" {
             return Some(self.typed_annotation_match(directive_span, AnnotationKind::Empty));
         }
         // Input-editor notes (`「X」はママ`, `「X」は底本では「Y」`, …). These
@@ -3499,6 +3587,60 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 /// close_idx        PairClose(Bracket)
 /// ```
 impl<'a> RecogniseCtx<'_, 'a, '_> {
+    /// Classify a range bouten `「X」～「Y」に<kind>` (also `〜`): apply the
+    /// marks to the whole preceding run from the start of X to the end of Y,
+    /// which butts against the bracket. Returns `(node, consume_start)` with
+    /// `consume_start` at X so the styled span is the run's sole rendered copy.
+    fn classify_forward_bouten_range(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        // Extraction stops at the `～`, so the first quote is X; the suffix is
+        // `～「Y」に<kind>` (or `〜「Y」…`).
+        let [start_target] = extracted.targets.as_slice() else {
+            return None;
+        };
+        let rest = extracted
+            .suffix
+            .strip_prefix("～「")
+            .or_else(|| extracted.suffix.strip_prefix("〜「"))?;
+        let (end_target, after) = rest.split_once('」')?;
+        if start_target.is_empty() || end_target.is_empty() {
+            return None;
+        }
+        let (position, kind_suffix) = if let Some(r) = after.strip_prefix("に") {
+            (BoutenPosition::Right, r)
+        } else if let Some(r) = after.strip_prefix("の左に") {
+            (BoutenPosition::Left, r)
+        } else {
+            return None;
+        };
+        let kind = bouten_kind_from_suffix(kind_suffix)?;
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        // The run ends at the bracket with Y; its start is the last X before Y.
+        let cutoff = open_span.start as usize;
+        let prefix = &self.source[..cutoff];
+        if !prefix.ends_with(end_target) {
+            return None;
+        }
+        let y_start = cutoff - end_target.len();
+        let x_start = self.source[..y_start].rfind(start_target)?;
+        let phrase = &self.source[x_start..cutoff];
+        let content = self.alloc.content_plain(phrase);
+        Some((
+            self.alloc.bouten(kind, content, position, true),
+            u32::try_from(x_start).ok()?,
+        ))
+    }
+
     fn classify_forward_bouten(
         &mut self,
         view: BodyView<'_>,
@@ -4160,11 +4302,12 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         if caption.is_empty() {
             return None;
         }
-        // suffix == のキャプション付きの(図|挿絵)（file）入る
+        // suffix == のキャプション付きの(図|挿絵|写真)（file）入る
         let rest = extracted.suffix.strip_prefix("のキャプション付きの")?;
         let rest = rest
             .strip_prefix("図")
-            .or_else(|| rest.strip_prefix("挿絵"))?;
+            .or_else(|| rest.strip_prefix("挿絵"))
+            .or_else(|| rest.strip_prefix("写真"))?;
         let rest = rest.strip_prefix('（')?;
         let close_off = rest.find('）')?;
         let file = &rest[..close_off];
@@ -4436,7 +4579,7 @@ fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
         "白丸傍点" => BoutenKind::WhiteCircle,
         "二重丸傍点" => BoutenKind::DoubleCircle,
         "蛇の目傍点" => BoutenKind::Janome,
-        "ばつ傍点" => BoutenKind::Cross,
+        "ばつ傍点" | "×傍点" => BoutenKind::Cross,
         "白三角傍点" => BoutenKind::WhiteTriangle,
         "波線" => BoutenKind::WavyLine,
         "傍線" => BoutenKind::UnderLine,
@@ -5438,7 +5581,14 @@ mod tests {
     #[test]
     fn empty_directive_types_as_empty() {
         use aozora_syntax::borrowed::AozoraNode;
-        for src in ["序文［＃］：入力者注", "本文［＃　］続き"] {
+        // ［＃］ (入力者注), whitespace-only ［＃　］, ［＃…］ (返り点 legend
+        // symbol), ［＃（…）］ (訓点送り仮名 legend symbol).
+        for src in [
+            "序文［＃］：入力者注",
+            "本文［＃　］続き",
+            "x［＃…］：返り点",
+            "y［＃（…）］：訓点送り仮名",
+        ] {
             run!(out, src);
             let kind = out
                 .spans
@@ -5450,6 +5600,54 @@ mod tests {
                 .unwrap_or_else(|| panic!("expected an Annotation for {src:?}"));
             assert_eq!(kind, AnnotationKind::Empty, "src = {src:?}");
         }
+    }
+
+    /// The remaining corpus-attested layout forms: block 罫囲み / 割り注
+    /// (`ここから…`), 天から{N}字下げ (Indent leaf), the bare top-flush hanging
+    /// indent, range bouten `「X」～「Y」に<kind>`, and `×傍点` (→ Cross).
+    #[test]
+    fn remaining_layout_and_range_forms_recognised() {
+        use aozora_syntax::borrowed::AozoraNode;
+        let opens = |src: &str| -> Vec<ContainerKind> {
+            run!(out, src);
+            out.spans
+                .iter()
+                .filter_map(|s| match s.kind {
+                    SpanKind::BlockOpen(k) => Some(k),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert!(opens("［＃ここから罫囲み］").contains(&ContainerKind::Keigakomi));
+        assert!(opens("［＃ここから割り注］").contains(&ContainerKind::Warichu));
+        assert!(
+            opens("［＃改行天付き、折り返して２字下げ］").contains(&ContainerKind::Indent {
+                amount: 0,
+                wrap: Some(2),
+                center: false,
+            })
+        );
+        // 天から{N}字下げ → Indent leaf
+        run!(t, "［＃天から３字下げ］本文");
+        assert!(t.spans.iter().any(|s| matches!(
+            aozora_node(s),
+            Some(AozoraNode::Indent(i)) if i.amount == 3
+        )));
+        // range bouten and ×傍点 → Bouten leaf
+        run!(
+            r,
+            "あ實は中身呉れるのである［＃「實は」～「呉れるのである」に傍点］"
+        );
+        assert!(
+            r.spans
+                .iter()
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_))))
+        );
+        run!(x, "天皇制［＃「天皇制」に×傍点］");
+        assert!(x.spans.iter().any(|s| matches!(
+            aozora_node(s),
+            Some(AozoraNode::Bouten(b)) if b.kind == BoutenKind::Cross
+        )));
     }
 
     /// Caption forms: the bare range `［＃キャプション］…終わり` and block

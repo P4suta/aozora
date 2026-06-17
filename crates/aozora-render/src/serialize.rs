@@ -548,6 +548,10 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
         } else {
             "［＃キャプション］"
         }),
+        // `ContainerKind::Warichu` is the block 割り注 region (the inline
+        // ［＃割り注］ is an `Annotation{WarichuOpen}`), so it serializes to
+        // the ここから form.
+        ContainerKind::Warichu => out.write_str("［＃ここから割り注］"),
         _ => out.write_str(container_open_marker(kind)),
     }
 }
@@ -598,6 +602,7 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
         } else {
             "［＃キャプション終わり］"
         }),
+        ContainerKind::Warichu => out.write_str("［＃ここで割り注終わり］"),
         _ => out.write_str(container_close_marker(kind)),
     }
 }
