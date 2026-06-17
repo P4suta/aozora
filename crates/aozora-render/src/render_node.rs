@@ -111,10 +111,22 @@ fn render_bouten<W: Write>(b: &Bouten<'_>, writer: &mut W) -> fmt::Result {
 
 /// Render a forward-reference emphasis run. 太字 maps to the presentational
 /// `<b>` element, 斜体 to `<i>`, 上付き/下付き小文字 to `<sup>` / `<sub>`,
-/// and 行右/行左小書き to a side `<span>` — each carries an `aozora-*` class
-/// so a stylesheet can theme them, and none collides with the
-/// `<em class="aozora-bouten …">` that [`render_bouten`] owns.
+/// 行右/行左小書き to a side `<span>`, and `N段階大きな/小さな文字` to a
+/// `<span class="aozora-font-larger|smaller" data-steps="N">` — each carries
+/// an `aozora-*` class so a stylesheet can theme them, and none collides with
+/// the `<em class="aozora-bouten …">` that [`render_bouten`] owns.
 fn render_emphasis<W: Write>(e: &Emphasis<'_>, writer: &mut W) -> fmt::Result {
+    // 文字サイズ carries a magnitude, so its open tag is dynamic.
+    if let EmphasisKind::FontSize { steps } = e.kind {
+        let (class, magnitude) = if steps >= 0 {
+            ("aozora-font-larger", steps)
+        } else {
+            ("aozora-font-smaller", -steps)
+        };
+        write!(writer, r#"<span class="{class}" data-steps="{magnitude}">"#)?;
+        render_content(e.text.get(), writer)?;
+        return writer.write_str("</span>");
+    }
     let (open, close) = match e.kind {
         EmphasisKind::Italic => (r#"<i class="aozora-italic">"#, "</i>"),
         EmphasisKind::SuperScript => (r#"<sup class="aozora-superscript">"#, "</sup>"),

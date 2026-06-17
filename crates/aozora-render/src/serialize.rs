@@ -287,7 +287,17 @@ fn emit_emphasis<W: Write>(e: &Emphasis<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃「")?;
     emit_content_as_plain(e.text.get(), out)?;
     out.write_str("」は")?;
-    out.write_str(emphasis_kind_keyword(e.kind))?;
+    // 文字サイズ carries a magnitude that the static keyword table can't hold.
+    if let EmphasisKind::FontSize { steps } = e.kind {
+        let (magnitude, word) = if steps >= 0 {
+            (steps, "大きな")
+        } else {
+            (-steps, "小さな")
+        };
+        write!(out, "{magnitude}段階{word}文字")?;
+    } else {
+        out.write_str(emphasis_kind_keyword(e.kind))?;
+    }
     out.write_char('］')
 }
 

@@ -1,0 +1,48 @@
+{
+  "name": "font_size_larger_forward",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.17",
+    "note": "[provenance:hand-derived §6.17 + AOZORA-ANNOTATION 2026-06-17] 文字サイズ変更 forward-reference ［＃「X」はN段階大きな文字］ (https://www.aozora.gr.jp/annotation/etc.html) enlarges a run by N stages. Per §7.5 it consumes the preceding target literal 甲 and yields an emphasis node; §8 renders <span class=\"aozora-font-larger\" data-steps=\"N\">. Full-width magnitudes parse but canonicalise to ASCII on serialize (§7.6 idempotent), so this vector uses an ASCII digit for a byte-exact round-trip. Offsets computed from the §3 byte model; cross-checked against the reference processor. New family."
+  },
+  "source": "甲［＃「甲」は2段階大きな文字］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-font-larger\" data-steps=\"2\">甲</span></p>\n",
+    "serialize": "甲［＃「甲」は2段階大きな文字］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 46
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 15,
+          "end": 18
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 43,
+          "end": 46
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

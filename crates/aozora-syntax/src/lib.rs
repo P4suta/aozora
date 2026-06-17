@@ -230,6 +230,13 @@ pub enum EmphasisKind {
     SmallRight,
     /// 行左小書き (small glyph set to the line's left in vertical writing).
     SmallLeft,
+    /// 文字サイズ変更 (`●段階大きな/小さな文字`) — a relative size shift of
+    /// `steps` stages: positive enlarges (大きな), negative shrinks (小さな).
+    /// Never zero.
+    FontSize {
+        /// Signed stage count; `+N` = `N段階大きな文字`, `-N` = `N段階小さな文字`.
+        steps: i8,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

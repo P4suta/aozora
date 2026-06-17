@@ -4021,8 +4021,8 @@ fn parse_heading_directive(body: &str) -> Option<(ContainerKind, bool)> {
 /// 太字 → Bold, 斜体 → Italic (per
 /// <https://www.aozora.gr.jp/annotation/emphasis.html>); 上付き小文字 →
 /// `SuperScript`, 下付き小文字 → `SubScript`, 行右小書き → `SmallRight`,
-/// 行左小書き → `SmallLeft` (per
-/// <https://www.aozora.gr.jp/annotation/etc.html>). Unknown suffixes
+/// 行左小書き → `SmallLeft`, and `N段階大きな/小さな文字` → `FontSize`
+/// (per <https://www.aozora.gr.jp/annotation/etc.html>). Unknown suffixes
 /// return `None` (→ `Annotation{Unknown}`).
 fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
     Some(match s {
@@ -4032,8 +4032,25 @@ fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
         "下付き小文字" => EmphasisKind::SubScript,
         "行右小書き" => EmphasisKind::SmallRight,
         "行左小書き" => EmphasisKind::SmallLeft,
-        _ => return None,
+        _ => return parse_font_size_suffix(s),
     })
+}
+
+/// Parse a `N段階大きな文字` / `N段階小さな文字` font-size suffix into an
+/// [`EmphasisKind::FontSize`]. `大きな` yields a positive stage count,
+/// `小さな` a negative one. Returns `None` for a missing/zero magnitude,
+/// an `i8` overflow, or any other suffix (→ `Annotation{Unknown}`).
+fn parse_font_size_suffix(s: &str) -> Option<EmphasisKind> {
+    let (magnitude, rest) = parse_decimal_u8_prefix(s)?;
+    let steps = i8::try_from(magnitude).ok()?;
+    if steps == 0 {
+        return None;
+    }
+    match rest {
+        "段階大きな文字" => Some(EmphasisKind::FontSize { steps }),
+        "段階小さな文字" => Some(EmphasisKind::FontSize { steps: -steps }),
+        _ => None,
+    }
 }
 
 /// Map the trailing keyword (after `に`) to a [`BoutenKind`].
@@ -4818,6 +4835,56 @@ mod tests {
                 })
                 .unwrap_or_else(|| panic!("expected an Emphasis span for {src:?}"));
             assert_eq!(emphasis.kind, want, "src = {src:?}");
+        }
+    }
+
+    #[test]
+    fn forward_emphasis_font_size_recognized() {
+        // 文字サイズ変更 `N段階大きな/小さな文字` — 大きな is a positive
+        // stage count, 小さな negative; full-width and ASCII digits both
+        // parse (per <https://www.aozora.gr.jp/annotation/etc.html>).
+        for (src, want) in [
+            (
+                "甲［＃「甲」は2段階大きな文字］",
+                EmphasisKind::FontSize { steps: 2 },
+            ),
+            (
+                "乙［＃「乙」は1段階小さな文字］",
+                EmphasisKind::FontSize { steps: -1 },
+            ),
+            (
+                "丙［＃「丙」は３段階大きな文字］",
+                EmphasisKind::FontSize { steps: 3 },
+            ),
+        ] {
+            run!(out, src);
+            let emphasis = out
+                .spans
+                .iter()
+                .find_map(|s| match aozora_node(s) {
+                    Some(AozoraNode::Emphasis(e)) => Some(e),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("expected an Emphasis span for {src:?}"));
+            assert_eq!(emphasis.kind, want, "src = {src:?}");
+        }
+    }
+
+    #[test]
+    fn forward_emphasis_font_size_zero_and_overflow_decline() {
+        // 0段階 is degenerate and >127 overflows i8 — both decline cleanly
+        // to Annotation{Unknown} (no Emphasis node).
+        for src in [
+            "甲［＃「甲」は0段階大きな文字］",
+            "甲［＃「甲」は200段階大きな文字］",
+        ] {
+            run!(out, src);
+            assert!(
+                !out.spans
+                    .iter()
+                    .any(|s| matches!(aozora_node(s), Some(AozoraNode::Emphasis(_)))),
+                "src = {src:?} should not yield an Emphasis node",
+            );
         }
     }
 
