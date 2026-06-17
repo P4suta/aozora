@@ -442,6 +442,12 @@ enum BodyFamily {
     /// emphasis leaf; `parse_small_script_range_body` reads the full body
     /// for the 右/左 side and open vs close.
     SmallScriptRange,
+
+    /// キャプション range / block (`キャプション` / `キャプション終わり` inline,
+    /// `ここからキャプション` / `ここでキャプション終わり` block).
+    /// `parse_caption_body` reads the full body for the block-vs-inline form
+    /// and open vs close.
+    CaptionRange,
 }
 
 /// Static pattern table. Order is irrelevant for behavior because the
@@ -552,6 +558,24 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "行左小書き終わり",
         family: BodyFamily::SmallScriptRange,
+    },
+    // キャプション range / block. LeftmostLongest keeps キャプション終わり
+    // over キャプション, and ここからキャプション over ここから.
+    BodyPattern {
+        needle: "キャプション",
+        family: BodyFamily::CaptionRange,
+    },
+    BodyPattern {
+        needle: "キャプション終わり",
+        family: BodyFamily::CaptionRange,
+    },
+    BodyPattern {
+        needle: "ここからキャプション",
+        family: BodyFamily::CaptionRange,
+    },
+    BodyPattern {
+        needle: "ここでキャプション終わり",
+        family: BodyFamily::CaptionRange,
     },
     BodyPattern {
         needle: "ここで段組終わり",
@@ -1247,6 +1271,20 @@ fn classify_annotation_body<'a>(
             // longer body) declines to Annotation{Unknown}.
             let (side, is_close) = parse_small_script_range_body(body)?;
             let container = ContainerKind::SmallScript { side };
+            Some((
+                if is_close {
+                    EmitKind::BlockClose(container)
+                } else {
+                    EmitKind::BlockOpen(container)
+                },
+                None,
+            ))
+        }
+        BodyFamily::CaptionRange => {
+            // `キャプション` (inline) / `ここからキャプション` (block) with an
+            // optional `終わり` close; re-parse the full body.
+            let (block, is_close) = parse_caption_body(body)?;
+            let container = ContainerKind::Caption { block };
             Some((
                 if is_close {
                     EmitKind::BlockClose(container)
@@ -3344,6 +3382,19 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             });
         }
 
+        // `「caption」のキャプション付きの(図|挿絵)（file）入る` — illustration
+        // whose caption precedes the figure. Emits a Sashie (consumes the whole
+        // bracket); checked here, after the styling recognisers.
+        if let Some(node) = self.classify_caption_figure(view, open_idx, close_idx) {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start: open_span.start,
+                consume_end: close_span.end,
+                pending_diagnostic: None,
+            });
+        }
+
         // Empty directive `［＃］` (or whitespace-only `［＃　］`, already
         // trimmed): the de-facto-standard symbol from the file-header 凡例
         // (`［＃］：入力者注…`) that prefixes nearly every work. Type it as
@@ -3605,7 +3656,14 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         else {
             return ForwardTcy::NotTcy;
         };
-        if extracted.suffix != "は縦中横" {
+        // `は縦中横` and the corpus compound `は縦中横、行右/左小書き` (numbered
+        // list markers like 「１）」 set horizontal *and* small). Recognise the
+        // compound as 縦中横 — the dominant transform; the small-script
+        // fine-positioning normalises away on serialize (idempotent).
+        if !matches!(
+            extracted.suffix,
+            "は縦中横" | "は縦中横、行右小書き" | "は縦中横、行左小書き"
+        ) {
             return ForwardTcy::NotTcy;
         }
         let Some(first) = extracted.targets.first() else {
@@ -4083,6 +4141,39 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let note = self.alloc.content_plain(note_text);
         Some((self.alloc.side_note(base, note), consume_start))
     }
+
+    /// Classify a `「caption」のキャプション付きの(図|挿絵)（file）入る`
+    /// illustration whose caption *precedes* the figure (distinct from the
+    /// trailing `挿絵（file）「caption」入る` form `classify_sashie_body`
+    /// handles). Emits a `Sashie` with the leading quote as its caption and
+    /// the parenthesised path as its file; consumes only the bracket.
+    fn classify_caption_figure(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<borrowed::AozoraNode<'a>> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        let [caption] = extracted.targets.as_slice() else {
+            return None;
+        };
+        if caption.is_empty() {
+            return None;
+        }
+        // suffix == のキャプション付きの(図|挿絵)（file）入る
+        let rest = extracted.suffix.strip_prefix("のキャプション付きの")?;
+        let rest = rest
+            .strip_prefix("図")
+            .or_else(|| rest.strip_prefix("挿絵"))?;
+        let rest = rest.strip_prefix('（')?;
+        let close_off = rest.find('）')?;
+        let file = &rest[..close_off];
+        if file.is_empty() || &rest[close_off + '）'.len_utf8()..] != "入る" {
+            return None;
+        }
+        let caption_content = self.alloc.content_plain(caption);
+        Some(self.alloc.sashie(file, None, Some(caption_content)))
+    }
 }
 
 /// Classify a `［＃「target」は太字／斜体］` forward-reference emphasis.
@@ -4286,6 +4377,7 @@ fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
         "行左小書き" => EmphasisKind::SmallLeft,
         "罫囲み" => EmphasisKind::KeigakomiInline,
         "横組み" => EmphasisKind::HorizontalInline,
+        "キャプション" => EmphasisKind::Caption,
         _ => return parse_font_size_suffix(s),
     })
 }
@@ -4393,6 +4485,19 @@ fn parse_small_script_range_body(body: &str) -> Option<(BoutenPosition, bool)> {
 /// `block` is `true` for the `ここから…` / `ここで…終わり` block form,
 /// `false` for the bare inline range `［＃太字］…［＃太字終わり］`. Returns
 /// `None` (→ `Annotation{Unknown}`) for any non-emphasis body.
+/// Parse a キャプション range / block body into `(block, is_close)`.
+/// `block` is `true` for `ここから…` / `ここで…終わり`, `false` for the bare
+/// inline range `［＃キャプション］…［＃キャプション終わり］`.
+fn parse_caption_body(body: &str) -> Option<(bool, bool)> {
+    Some(match body {
+        "キャプション" => (false, false),
+        "キャプション終わり" => (false, true),
+        "ここからキャプション" => (true, false),
+        "ここでキャプション終わり" => (true, true),
+        _ => return None,
+    })
+}
+
 fn parse_emphasis_body(body: &str) -> Option<(EmphasisKind, bool, bool)> {
     Some(match body {
         "太字" => (EmphasisKind::Bold, false, false),
@@ -4949,13 +5054,12 @@ mod tests {
     }
 
     #[test]
-    fn empty_bracket_with_hash_is_wrapped_as_annotation_unknown() {
-        // Real Aozora corpora use `［＃］` as an illustrative glyph
-        // inside explanatory prose (e.g. "［＃］：入力者注…"). The
-        // Tier-A canary (no bare `［＃` in HTML output) requires that
-        // the bracket not leak even for empty-body forms, so the
-        // catch-all fallback wraps it as Annotation{Unknown} with the
-        // raw `［＃］` bytes preserved for round-trip.
+    fn empty_bracket_with_hash_is_typed_as_empty() {
+        // Real Aozora corpora use `［＃］` as the de-facto-standard symbol in
+        // the file-header 凡例 (e.g. "［＃］：入力者注…"). It is typed as
+        // AnnotationKind::Empty — recognised, not the Unknown catch-all — while
+        // the Tier-A canary still holds (raw `［＃］` bytes preserved for
+        // round-trip, no bare `［＃` leaking into HTML).
         run!(out, "［＃］");
         let ann = out
             .spans
@@ -4964,8 +5068,8 @@ mod tests {
                 Some(AozoraNode::Annotation(a)) => Some(a),
                 _ => None,
             })
-            .expect("empty body must still wrap as Annotation{Unknown}");
-        assert_eq!(ann.kind, AnnotationKind::Unknown);
+            .expect("empty body must wrap as an Annotation");
+        assert_eq!(ann.kind, AnnotationKind::Empty);
         assert_eq!(ann.raw.as_str(), "［＃］");
     }
 
@@ -5346,6 +5450,80 @@ mod tests {
                 .unwrap_or_else(|| panic!("expected an Annotation for {src:?}"));
             assert_eq!(kind, AnnotationKind::Empty, "src = {src:?}");
         }
+    }
+
+    /// Caption forms: the bare range `［＃キャプション］…終わり` and block
+    /// `ここからキャプション…終わり` open a `Caption` container (inline / block);
+    /// the forward `「X」はキャプション` is an `Emphasis{Caption}` leaf.
+    #[test]
+    fn caption_range_block_and_forward_recognised() {
+        use aozora_syntax::borrowed::AozoraNode;
+        // bare range → inline Caption container
+        run!(a, "図［＃キャプション］第一図［＃キャプション終わり］");
+        assert!(a.spans.iter().any(|s| matches!(
+            s.kind,
+            SpanKind::BlockOpen(ContainerKind::Caption { block: false })
+        )));
+        // block → block Caption container
+        run!(
+            b,
+            "［＃ここからキャプション］本文［＃ここでキャプション終わり］"
+        );
+        assert!(b.spans.iter().any(|s| matches!(
+            s.kind,
+            SpanKind::BlockOpen(ContainerKind::Caption { block: true })
+        )));
+        // forward leaf
+        run!(c, "第一図［＃「第一図」はキャプション］");
+        assert!(c.spans.iter().any(|s| matches!(
+            aozora_node(s),
+            Some(AozoraNode::Emphasis(e)) if e.kind == EmphasisKind::Caption
+        )));
+    }
+
+    /// `「caption」のキャプション付きの(図|挿絵)（file）入る` is a Sashie whose
+    /// caption precedes the figure.
+    #[test]
+    fn caption_before_figure_recognised() {
+        use aozora_syntax::borrowed::AozoraNode;
+        for src in [
+            "［＃「第一図」のキャプション付きの図（fig01.png）入る］",
+            "［＃「絵」のキャプション付きの挿絵（fig02.png）入る］",
+        ] {
+            run!(out, src);
+            let sashie = out
+                .spans
+                .iter()
+                .find_map(|s| match aozora_node(s) {
+                    Some(AozoraNode::Sashie(s)) => Some(s),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("expected a Sashie for {src:?}"));
+            assert!(sashie.caption.is_some(), "caption for {src:?}");
+        }
+    }
+
+    /// The compound `「X」は縦中横、行右/左小書き` (numbered list markers) is
+    /// recognised as 縦中横 (the dominant transform), not Unknown.
+    #[test]
+    fn tcy_small_script_compound_recognised_as_tcy() {
+        use aozora_syntax::borrowed::AozoraNode;
+        run!(out, "１）［＃「１）」は縦中横、行右小書き］");
+        let is_tcy = out
+            .spans
+            .iter()
+            .any(|s| matches!(aozora_node(s), Some(AozoraNode::TateChuYoko(_))));
+        let unknown = out.spans.iter().any(|s| {
+            matches!(
+                aozora_node(s),
+                Some(AozoraNode::Annotation(a)) if a.kind == AnnotationKind::Unknown
+            )
+        });
+        assert!(
+            is_tcy && !unknown,
+            "expected TateChuYoko, got {:?}",
+            out.spans
+        );
     }
 
     /// The bare `「X」に「Y」の注記` side-annotation (the corpus's dominant

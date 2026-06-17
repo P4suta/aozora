@@ -246,6 +246,10 @@ pub enum EmphasisKind {
     /// text, the span-level counterpart of the block
     /// [`ContainerKind::Horizontal`].
     HorizontalInline,
+    /// キャプション (`「X」はキャプション`) — the inline forward-reference
+    /// caption, the leaf counterpart of the block / range
+    /// [`ContainerKind::Caption`].
+    Caption,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

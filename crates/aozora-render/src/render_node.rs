@@ -135,6 +135,7 @@ fn render_emphasis<W: Write>(e: &Emphasis<'_>, writer: &mut W) -> fmt::Result {
         EmphasisKind::SmallLeft => (r#"<span class="aozora-koshogaki-left">"#, "</span>"),
         EmphasisKind::KeigakomiInline => (r#"<span class="aozora-keigakomi-inline">"#, "</span>"),
         EmphasisKind::HorizontalInline => (r#"<span class="aozora-horizontal">"#, "</span>"),
+        EmphasisKind::Caption => (r#"<span class="aozora-caption">"#, "</span>"),
         // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
         // weight default to the bold element.
         _ => (r#"<b class="aozora-bold">"#, "</b>"),
@@ -338,6 +339,13 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
         ContainerKind::SmallScript { .. } => {
             writer.write_str(r#"<span class="aozora-koshogaki-right">"#)
         }
+        // Caption: inline `<span>` for the bare range, block `<div>` for ここから.
+        ContainerKind::Caption { block: false } => {
+            writer.write_str(r#"<span class="aozora-caption">"#)
+        }
+        ContainerKind::Caption { block: true } => {
+            writer.write_str(r#"<div class="aozora-container aozora-caption">"#)
+        }
         _ => writer.write_str(r#"<div class="aozora-container">"#),
     }
 }
@@ -351,7 +359,9 @@ fn render_container_close<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt:
             ContainerKind::BoutenRange { .. } => "</em>",
             ContainerKind::Bold { block: false } => "</b>",
             ContainerKind::Italic { block: false } => "</i>",
-            ContainerKind::SmallScript { .. } => "</span>",
+            ContainerKind::SmallScript { .. } | ContainerKind::Caption { block: false } => {
+                "</span>"
+            }
             _ => "</div>",
         }),
     }

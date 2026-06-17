@@ -108,6 +108,12 @@ pub enum ContainerKind {
     /// it gets no block padding and renders as
     /// `<span class="aozora-koshogaki-right">` / `…-left`.
     SmallScript { side: BoutenPosition },
+    /// Caption region. The bare range `［＃キャプション］ … ［＃キャプション終わり］`
+    /// (`block: false`, inline `<span class="aozora-caption">`) and the block
+    /// form `［＃ここからキャプション］ … ［＃ここでキャプション終わり］`
+    /// (`block: true`, `<div class="aozora-container aozora-caption">`) mark the
+    /// enclosed run as the caption of an adjacent figure.
+    Caption { block: bool },
 }
 
 impl ContainerKind {
@@ -136,6 +142,7 @@ impl ContainerKind {
             Self::Horizontal => "horizontal",
             Self::FontSize { .. } => "font-size",
             Self::SmallScript { .. } => "small-script",
+            Self::Caption { .. } => "caption",
         }
     }
 
@@ -172,6 +179,7 @@ impl ContainerKind {
                 | Self::Bold { block: false }
                 | Self::Italic { block: false }
                 | Self::SmallScript { .. }
+                | Self::Caption { block: false }
         )
     }
 }
