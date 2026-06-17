@@ -1,0 +1,55 @@
+{
+  "name": "head_flush_wrap_indent",
+  "meta": {
+    "feature": "container",
+    "level": "should",
+    "spec_section": "6.6",
+    "note": "[provenance:hand-derived §6.6 + AOZORA-ANNOTATION 2026-06-17] ［＃ここから改行天付き、折り返してM字下げ］ is the 改行天付き hanging indent: the first line is flush to the head (天付き, no indent → amount 0) and only wrapped continuation lines indent by M; closes with the shared 字下げ終わり. The corpus' most common compound-indent form (~8k occurrences). Offsets from the §3 byte model; not read back from a processor."
+  },
+  "source": "［＃ここから改行天付き、折り返して４字下げ］\n本文が折り返して字下げされる長い行。\n［＃ここで字下げ終わり］\n",
+  "expected": {
+    "html": "<div class=\"aozora-container aozora-container-indent aozora-container-indent-0 aozora-container-wrap-indent aozora-container-head-flush\" data-amount=\"0\" data-wrap=\"4\">\n<p>本文が折り返して字下げされる長い行。</p>\n</div>",
+    "serialize": "\n\n［＃ここから改行天付き、折り返して4字下げ］\n\n本文が折り返して字下げされる長い行。\n\n［＃ここで字下げ終わり］\n\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 0,
+          "end": 66
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 122,
+          "end": 158
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 63,
+          "end": 66
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 122,
+          "end": 125
+        },
+        "close": {
+          "start": 155,
+          "end": 158
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

@@ -395,13 +395,15 @@ enum BodyFamily {
 
     // === Prefix-with-parameter (parse body[match_end..]) ===
     AlignEndParamPrefix,      // 地から → 地から{N}字上げ
+    IndentFromTopPrefix,      // 天から → 天から{N}字下げ
     SashiePrefix,             // 挿絵（ → 挿絵（X）入る
     IndentBlockParamPrefix,   // ここから → ここから{N}字下げ
     AlignEndBlockParamPrefix, // ここから地から → ここから地から{N}字上げ
     OkuriganaPrefix,          // （ → kaeriten okurigana （X）
 
     // === Body-equals-pattern then parse from body[0] ===
-    IndentParamPrefix, // {digit} → {N}字下げ (re-parse from body[0])
+    IndentParamPrefix,     // {digit} → {N}字下げ (re-parse from body[0])
+    IndentHeadFlushSingle, // 改行天付き → 改行天付き、折り返して{M}字下げ
 
     /// 傍点 / 傍線 range form (`傍点` / `白丸傍点` / `二重傍線` / `左に傍線`
     /// …, with optional `終わり` close suffix). The needle matches the
@@ -414,6 +416,12 @@ enum BodyFamily {
     /// needle anchors the body; `parse_emphasis_body` reads the full body
     /// for the kind, the block vs inline form, and open vs close.
     Emphasis,
+
+    /// 行右小書き / 行左小書き bare range form (`［＃行右小書き］ ...
+    /// ［＃行右小書き終わり］`). The needle anchors the body;
+    /// `parse_small_side_body` reads the full body for the 右 / 左 position
+    /// and the `終わり` close suffix.
+    SmallSideRange,
 }
 
 /// Static pattern table. Order is irrelevant for behavior because the
@@ -438,6 +446,12 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "ここから",
         family: BodyFamily::IndentBlockParamPrefix,
+    },
+    BodyPattern {
+        // Single-line 改行天付き hanging indent (no ここから / ここで). The
+        // block form is anchored by the longer `ここから` needle above.
+        needle: "改行天付き",
+        family: BodyFamily::IndentHeadFlushSingle,
     },
     BodyPattern {
         needle: "ここで字下げ終わり",
@@ -483,6 +497,16 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "ここで小さな文字終わり",
         family: BodyFamily::FontSizeBlockEnd,
     },
+    // Bare font-size range close (no ここで). The block close above wins
+    // via LeftmostLongest when the body carries the ここで prefix.
+    BodyPattern {
+        needle: "大きな文字終わり",
+        family: BodyFamily::FontSizeBlockEnd,
+    },
+    BodyPattern {
+        needle: "小さな文字終わり",
+        family: BodyFamily::FontSizeBlockEnd,
+    },
     BodyPattern {
         needle: "ここで段組終わり",
         family: BodyFamily::ColumnsBlockEnd,
@@ -512,6 +536,10 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "地から",
         family: BodyFamily::AlignEndParamPrefix,
+    },
+    BodyPattern {
+        needle: "天から",
+        family: BodyFamily::IndentFromTopPrefix,
     },
     BodyPattern {
         needle: "地付き",
@@ -640,6 +668,18 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "ここで斜体終わり",
         family: BodyFamily::Emphasis,
+    },
+    // 行右小書き / 行左小書き bare range. The opener also anchors its
+    // `…終わり` closer (re-parsed in full by `parse_small_side_body`).
+    // Anchored at body[0], so the forward-reference `「X」は行右小書き`
+    // (body starts with `「`) never collides.
+    BodyPattern {
+        needle: "行右小書き",
+        family: BodyFamily::SmallSideRange,
+    },
+    BodyPattern {
+        needle: "行左小書き",
+        family: BodyFamily::SmallSideRange,
     },
     // Kaeriten okurigana opener (full-width left paren U+FF08).
     BodyPattern {
@@ -912,6 +952,7 @@ fn classify_annotation_body<'a>(
                 amount: 1,
                 wrap: None,
                 center: false,
+                head_flush: false,
             }),
             None,
         )),
@@ -924,6 +965,7 @@ fn classify_annotation_body<'a>(
                 amount: 0,
                 wrap: None,
                 center: false,
+                head_flush: false,
             }),
             None,
         )),
@@ -952,13 +994,12 @@ fn classify_annotation_body<'a>(
         BodyFamily::FontSizeBlockEnd if exact => {
             // The close marker carries only the direction; its magnitude is a
             // ±1 placeholder (the open-side stage count is authoritative).
-            let steps = if body == "ここで小さな文字終わり" {
-                -1
-            } else {
-                1
-            };
+            // `ここで…` is the block form; the bare `…終わり` (no ここで) is
+            // the inline range close.
+            let block = body.starts_with("ここで");
+            let steps = if body.contains("小さな") { -1 } else { 1 };
             Some((
-                EmitKind::BlockClose(ContainerKind::FontSize { steps }),
+                EmitKind::BlockClose(ContainerKind::FontSize { steps, block }),
                 None,
             ))
         }
@@ -1000,10 +1041,44 @@ fn classify_annotation_body<'a>(
                 )
             })
         }
+        BodyFamily::IndentFromTopPrefix => {
+            // body == 天から{N}字下げ — a single-line indent measured from the
+            // head (天) of the line. Equivalent rendering to ［＃N字下げ］; the
+            // `from_top` flag preserves the source spelling for round-trip.
+            let rest = &body[match_end..];
+            let (n, tail) = parse_decimal_u8_prefix(rest)?;
+            (tail == "字下げ" && n >= 1).then(|| {
+                (
+                    EmitKind::Aozora(alloc.indent(Indent {
+                        amount: n,
+                        wrap: None,
+                        head_flush: false,
+                        from_top: true,
+                    })),
+                    None,
+                )
+            })
+        }
         BodyFamily::SashiePrefix => classify_sashie_body(body, alloc).map(|e| (e, None)),
         BodyFamily::IndentBlockParamPrefix => {
             // body == ここから{N}字下げ; remainder = body[match_end..]
             let rest = &body[match_end..];
+            if let Some(after) = rest.strip_prefix("改行天付き、折り返して") {
+                // ここから改行天付き、折り返して{M}字下げ — hanging indent whose
+                // first line is flush to the head (天付き = no indent) and whose
+                // wrapped continuation lines indent by `m`. Closes with the
+                // shared 字下げ終わり (pairing is by family).
+                let (m, tail) = parse_decimal_u8_prefix(after)?;
+                return (tail == "字下げ").then_some((
+                    EmitKind::BlockOpen(ContainerKind::Indent {
+                        amount: 0,
+                        wrap: Some(m),
+                        center: false,
+                        head_flush: true,
+                    }),
+                    None,
+                ));
+            }
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
             if tail == "字下げ" {
                 Some((
@@ -1011,6 +1086,7 @@ fn classify_annotation_body<'a>(
                         amount: n,
                         wrap: None,
                         center: false,
+                        head_flush: false,
                     }),
                     None,
                 ))
@@ -1023,6 +1099,7 @@ fn classify_annotation_body<'a>(
                         amount: n,
                         wrap: Some(m),
                         center: false,
+                        head_flush: false,
                     }),
                     None,
                 ))
@@ -1038,6 +1115,7 @@ fn classify_annotation_body<'a>(
                         amount: n,
                         wrap: None,
                         center: true,
+                        head_flush: false,
                     }),
                     None,
                 ))
@@ -1062,8 +1140,12 @@ fn classify_annotation_body<'a>(
                 // ここから{N}段階大きな/小さな文字 — block font-size shift.
                 // Shares the `ここから` prefix; closes with the direction-only
                 // `ここで大きな/小さな文字終わり`.
-                font_size_block_open_steps(tail, n)
-                    .map(|steps| (EmitKind::BlockOpen(ContainerKind::FontSize { steps }), None))
+                font_size_block_open_steps(tail, n).map(|steps| {
+                    (
+                        EmitKind::BlockOpen(ContainerKind::FontSize { steps, block: true }),
+                        None,
+                    )
+                })
             }
         }
         BodyFamily::AlignEndBlockParamPrefix => {
@@ -1085,8 +1167,46 @@ fn classify_annotation_body<'a>(
             // The DFA matched a single digit. Re-parse from body[0]
             // for full multi-digit support.
             let (n, tail) = parse_decimal_u8_prefix(body)?;
-            (tail == "字下げ" && n >= 1)
-                .then(|| (EmitKind::Aozora(alloc.indent(Indent { amount: n })), None))
+            if tail == "字下げ" && n >= 1 {
+                return Some((
+                    EmitKind::Aozora(alloc.indent(Indent {
+                        amount: n,
+                        wrap: None,
+                        head_flush: false,
+                        from_top: false,
+                    })),
+                    None,
+                ));
+            }
+            // Bare font-size range opener `［＃N段階大きな/小さな文字］`
+            // (no ここから). Closes with the bare `…文字終わり`. Inline range.
+            font_size_block_open_steps(tail, n).map(|steps| {
+                (
+                    EmitKind::BlockOpen(ContainerKind::FontSize {
+                        steps,
+                        block: false,
+                    }),
+                    None,
+                )
+            })
+        }
+        BodyFamily::IndentHeadFlushSingle => {
+            // body == 改行天付き、折り返して{M}字下げ — the single-line
+            // counterpart of the 改行天付き hanging block. The first line is
+            // flush to the head (天付き) and only wrapped lines indent by `m`.
+            let after = body.strip_prefix("改行天付き、折り返して")?;
+            let (m, tail) = parse_decimal_u8_prefix(after)?;
+            (tail == "字下げ").then(|| {
+                (
+                    EmitKind::Aozora(alloc.indent(Indent {
+                        amount: 0,
+                        wrap: Some(m),
+                        head_flush: true,
+                        from_top: false,
+                    })),
+                    None,
+                )
+            })
         }
         BodyFamily::BoutenRange => {
             // `傍点` / `白丸傍点` / `二重傍線` / `左に傍線` … with an optional
@@ -1094,6 +1214,24 @@ fn classify_annotation_body<'a>(
             // the `左に` position, and open vs close.
             let (kind, position, is_close) = parse_bouten_range_body(body)?;
             let container = ContainerKind::BoutenRange { kind, position };
+            Some((
+                if is_close {
+                    EmitKind::BlockClose(container)
+                } else {
+                    EmitKind::BlockOpen(container)
+                },
+                None,
+            ))
+        }
+        BodyFamily::SmallSideRange => {
+            // `行右小書き` / `行左小書き` with an optional `終わり` close
+            // suffix. Re-parse the full body for the 右 / 左 position and
+            // open vs close. The bare range is inline (`block: false`).
+            let (position, is_close) = parse_small_side_body(body)?;
+            let container = ContainerKind::SmallSide {
+                position,
+                block: false,
+            };
             Some((
                 if is_close {
                     EmitKind::BlockClose(container)
@@ -2854,6 +2992,15 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                     return None;
                 }
                 let tail = self.source[qcs.end as usize..bracket_close_span.start as usize].trim();
+                // The simple quoted form is `「desc」` optionally followed by
+                // `、mencode`. If extra structure follows the first quote
+                // (e.g. the composed-glyph form `「X」の「Y」に代えて「Z」、
+                // mencode`), this is not a one-quote gaiji — decline so the
+                // bare extractor captures the whole verbatim description
+                // instead of silently dropping it (a round-trip data loss).
+                if !tail.is_empty() && !tail.starts_with('、') {
+                    return None;
+                }
                 let mencode = tail.strip_prefix('、').map(str::trim);
                 Some((desc.to_owned(), mencode.map(str::to_owned)))
             }
@@ -2866,28 +3013,13 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             self.extract_bare_gaiji_body(hash_end, bracket_close_span.start)?
         };
 
-        if description.is_empty() {
-            return None;
-        }
-        // Reject descriptions that carry structural quote characters.
-        // The serializer wraps the description in `「…」` for round-trip,
-        // so a stray `」` (e.g. from the malformed input `※［＃」］`) would
-        // make `serialize ∘ parse` non-stable. Falling through to `None`
-        // here lets the higher-level classifier wrap the raw bracket in
-        // an `Annotation{Unknown}`, which round-trips byte-identical.
-        if description.contains(['「', '」']) {
-            return None;
-        }
-        // Reject descriptions that embed a nested annotation-opening
-        // sequence `［＃`. Pathological shapes like `※［＃［＃改］］`
-        // produce a description string that *contains* `［＃`, which the
-        // gaiji renderer would emit verbatim inside `<span class=
-        // "aozora-gaiji">…</span>` — leaking a bare `［＃` outside the
-        // `aozora-annotation` wrapper and violating the Tier A canary.
-        // Falling through here lets the outer bracket be claimed by
-        // `Annotation{Unknown}`, which is rendered inside an
-        // `aozora-annotation` wrapper as the canary requires.
-        if description.contains("［＃") {
+        if description.is_empty()
+            || !gaiji_description_serializable(&description, mencode.is_some())
+        {
+            // A non-serializable description (stray quote imbalance, an
+            // embedded `［＃`, …) falls through to `Annotation{Unknown}`,
+            // which round-trips byte-identical. See
+            // [`gaiji_description_serializable`].
             return None;
         }
 
@@ -2933,6 +3065,30 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         }
         Some((desc.trim().to_owned(), Some(men.to_owned())))
     }
+}
+
+/// Whether a gaiji `description` can be kept (it both serializes and
+/// round-trips); otherwise the bracket falls through to `Annotation{Unknown}`.
+///
+/// Rejects:
+///   - a description embedding `［＃` (a nested annotation opener would leak a
+///     bare `［＃` outside the `aozora-annotation` wrapper, violating the Tier A
+///     canary), and
+///   - a description carrying structural `「…」` quotes, *except* the
+///     composed-glyph form `「X」の「Y」に代えて「Z」` (corpus §6 external-character
+///     form): balanced quotes, anchored by a trailing `、mencode`, and free of
+///     the `、` separator. `emit_gaiji` writes that form verbatim (no `「…」`
+///     wrapper), so it round-trips; any other quote-bearing description would
+///     unbalance the serializer's wrapper.
+fn gaiji_description_serializable(description: &str, has_mencode: bool) -> bool {
+    if description.contains("［＃") {
+        return false;
+    }
+    if description.contains(['「', '」']) {
+        let balanced = description.matches('「').count() == description.matches('」').count();
+        return balanced && has_mencode && !description.contains('、');
+    }
+    true
 }
 
 /// Loose validator for a bare-form gaiji mencode field.
@@ -3211,9 +3367,70 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             });
         }
 
+        // `「X」はママ` (editorial sic) / `「X」は底本では「Y」` (source-text
+        // divergence note) — editorial annotations that mark the preceding
+        // text without transforming it. Tried after the transforming
+        // recognisers (their suffixes are not emphasis / bouten / heading
+        // keywords, so those have already declined).
+        if let Some((node, seg_payload)) =
+            self.classify_forward_correction(view, open_idx, close_idx)
+        {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: Some(seg_payload),
+                consume_start: directive_span.start,
+                consume_end: directive_span.end,
+                pending_diagnostic: None,
+            });
+        }
+
         // No specialised recogniser claimed the bracket — fall back to the
         // `Annotation{Unknown}` catch-all.
         Some(self.unknown_annotation_match(directive_span, body, tcy_pending))
+    }
+
+    /// Classify a `［＃「X」はママ］` (editorial "sic" → [`AnnotationKind::AsIs`])
+    /// or `［＃「X」は底本では「Y」］` (source-text divergence note →
+    /// [`AnnotationKind::TextualNote`]) forward-reference.
+    ///
+    /// These are editorial notes: they annotate the preceding text but do
+    /// not transform it, so — like the [`Self::unknown_annotation_match`]
+    /// catch-all — the node sits in-position carrying the raw directive, but
+    /// with a specific, downstream-meaningful kind (the pandoc / wire
+    /// consumers map `as-is` / `textual-note` rather than `unknown`).
+    fn classify_forward_correction(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<(borrowed::AozoraNode<'a>, &'a borrowed::Annotation<'a>)> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        let kind = if extracted.suffix == "はママ" {
+            AnnotationKind::AsIs
+        } else if extracted.suffix.starts_with("は底本では") {
+            AnnotationKind::TextualNote
+        } else {
+            return None;
+        };
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        let &PairEvent::PairClose {
+            span: close_span, ..
+        } = view.events.get(close_idx)?
+        else {
+            return None;
+        };
+        let raw = &self.source[open_span.start as usize..close_span.end as usize];
+        // One payload for the emitted node, one for the body-builder segment
+        // (mirrors `unknown_annotation_match` — re-wrap without re-interning).
+        let payload = self.alloc.make_annotation(raw, kind);
+        let node = self.alloc.annotation(payload);
+        let seg_payload = self.alloc.make_annotation(raw, kind);
+        Some((node, seg_payload))
     }
 
     /// Catch-all for any well-formed `［＃…］` whose body no specialised
@@ -3698,10 +3915,18 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
     // `）` is a full-width right parenthesis (U+FF09). Find its first
     // occurrence — corpus rarely nests `（）` inside a filename.
     let close_off = rest.find('）')?;
-    let file = &rest[..close_off];
-    if file.is_empty() {
+    let paren = &rest[..close_off];
+    if paren.is_empty() {
         return None;
     }
+    // The bundled corpus form `挿絵（file、横W×縦H）入る` packs a pixel-size
+    // note after a `、`. Split it off so `file` stays a clean path (the
+    // rendered `<img src>`); the dimensions ride along verbatim for
+    // round-trip and a render-time width/height hint.
+    let (file, dimensions) = match paren.split_once('、') {
+        Some((f, dims)) if !f.is_empty() && !dims.is_empty() => (f, Some(dims)),
+        _ => (paren, None),
+    };
     let tail = &rest[close_off + '）'.len_utf8()..];
     // After `）` the tail is either the bare `入る` keyword or a bundled
     // `「caption」入る`. Any other shape declines (→ `Annotation{Unknown}`).
@@ -3718,7 +3943,7 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
     } else {
         return None;
     };
-    Some(EmitKind::Aozora(alloc.sashie(file, caption)))
+    Some(EmitKind::Aozora(alloc.sashie(file, dimensions, caption)))
 }
 
 /// Classify a `［＃「target」は(大|中|小)見出し］` forward-reference
@@ -4173,6 +4398,22 @@ fn parse_bouten_range_body(body: &str) -> Option<(BoutenKind, BoutenPosition, bo
         .map_or((false, rest), |k| (true, k));
     let kind = bouten_kind_from_suffix(kind_str)?;
     Some((kind, position, is_close))
+}
+
+/// Parse a 行右小書き / 行左小書き bare-range body into
+/// `(position, is_close)`. Strips an optional `終わり` close suffix; the
+/// remainder must be `行右小書き` (→ `Right`) or `行左小書き` (→ `Left`).
+/// Returns `None` (→ `Annotation{Unknown}`) for any other body.
+fn parse_small_side_body(body: &str) -> Option<(BoutenPosition, bool)> {
+    let (is_close, kind_str) = body
+        .strip_suffix("終わり")
+        .map_or((false, body), |k| (true, k));
+    let position = match kind_str {
+        "行右小書き" => BoutenPosition::Right,
+        "行左小書き" => BoutenPosition::Left,
+        _ => return None,
+    };
+    Some((position, is_close))
 }
 
 /// Parse a 太字 / 斜体 range / block body into `(kind, block, is_close)`.
@@ -4761,7 +5002,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::Indent(Indent { amount: 2 }))
+            Some(AozoraNode::Indent(Indent { amount: 2, .. }))
         ));
     }
 
@@ -4771,7 +5012,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::Indent(Indent { amount: 10 }))
+            Some(AozoraNode::Indent(Indent { amount: 10, .. }))
         ));
     }
 
@@ -5453,6 +5694,22 @@ mod tests {
     }
 
     #[test]
+    fn sashie_with_dimensions_splits_file_and_size() {
+        // Bundled corpus form `挿絵（file、横W×縦H）入る` — the pixel-size
+        // note rides in `dimensions`, keeping `file` a clean path.
+        run!(out, "［＃挿絵（fig42_03.png、横480×縦640）入る］");
+        let Some(sashie) = out.spans.iter().find_map(|s| match aozora_node(s) {
+            Some(AozoraNode::Sashie(s)) => Some(s),
+            _ => None,
+        }) else {
+            panic!("expected a Sashie span");
+        };
+        assert_eq!(sashie.file.as_str(), "fig42_03.png");
+        assert_eq!(sashie.dimensions, Some("横480×縦640"));
+        assert!(sashie.caption.is_none());
+    }
+
+    #[test]
     fn sashie_with_caption_recognized() {
         // Bundled-caption form `挿絵（file）「caption」入る` — the caption is
         // captured as plain content (rendered into <figcaption>, §8).
@@ -5809,7 +6066,8 @@ mod tests {
             SpanKind::BlockOpen(ContainerKind::Indent {
                 amount: 1,
                 wrap: None,
-                center: false
+                center: false,
+                ..
             })
         ));
     }
@@ -5822,7 +6080,8 @@ mod tests {
             SpanKind::BlockOpen(ContainerKind::Indent {
                 amount: 3,
                 wrap: None,
-                center: false
+                center: false,
+                ..
             })
         ));
     }
@@ -5835,8 +6094,127 @@ mod tests {
             SpanKind::BlockOpen(ContainerKind::Indent {
                 amount: 2,
                 wrap: Some(4),
-                center: false
+                center: false,
+                ..
             })
+        ));
+    }
+
+    #[test]
+    fn container_open_head_flush_hanging_indent() {
+        run!(out, "［＃ここから改行天付き、折り返して１字下げ］");
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::Indent {
+                amount: 0,
+                wrap: Some(1),
+                center: false,
+                head_flush: true,
+            })
+        ));
+    }
+
+    #[test]
+    fn single_line_head_flush_hanging_indent() {
+        run!(out, "［＃改行天付き、折り返して２字下げ］");
+        assert!(matches!(
+            aozora_node(&out.spans[0]),
+            Some(AozoraNode::Indent(Indent {
+                amount: 0,
+                wrap: Some(2),
+                head_flush: true,
+                from_top: false,
+            }))
+        ));
+    }
+
+    #[test]
+    fn from_top_indent_recognized() {
+        // ［＃天からN字下げ］ — head-anchored single-line indent.
+        run!(out, "本文［＃天から３字下げ］続き");
+        let Some(AozoraNode::Indent(i)) = aozora_node(&out.spans[1]) else {
+            panic!("expected an Indent node for 天から3字下げ");
+        };
+        assert_eq!(i.amount, 3);
+        assert!(i.from_top);
+        assert!(!i.head_flush);
+    }
+
+    #[test]
+    fn small_side_bare_range_open_close() {
+        // spans: [0] Plain(あ), [1] BlockOpen, [2] Plain(いう), [3] BlockClose.
+        run!(out, "あ［＃行右小書き］いう［＃行右小書き終わり］");
+        assert!(matches!(
+            out.spans[1].kind,
+            SpanKind::BlockOpen(ContainerKind::SmallSide {
+                position: BoutenPosition::Right,
+                block: false,
+            })
+        ));
+        assert!(matches!(
+            out.spans[3].kind,
+            SpanKind::BlockClose(ContainerKind::SmallSide {
+                position: BoutenPosition::Right,
+                block: false,
+            })
+        ));
+    }
+
+    #[test]
+    fn small_side_left_position() {
+        run!(out, "X［＃行左小書き］YZ［＃行左小書き終わり］");
+        assert!(matches!(
+            out.spans[1].kind,
+            SpanKind::BlockOpen(ContainerKind::SmallSide {
+                position: BoutenPosition::Left,
+                block: false,
+            })
+        ));
+    }
+
+    #[test]
+    fn correction_sic_is_as_is_annotation() {
+        // spans: [0] Plain(そういう風), [1] Annotation, [2] Plain(だ).
+        run!(out, "そういう風［＃「いう風」はママ］だ");
+        let Some(AozoraNode::Annotation(a)) = aozora_node(&out.spans[1]) else {
+            panic!("expected Annotation node for はママ");
+        };
+        assert_eq!(a.kind, AnnotationKind::AsIs);
+        assert_eq!(a.raw.as_str(), "［＃「いう風」はママ］");
+    }
+
+    #[test]
+    fn correction_textual_note_is_textual_note_annotation() {
+        run!(out, "間違い［＃「間違い」は底本では「間違ひ」］です");
+        let Some(AozoraNode::Annotation(a)) = aozora_node(&out.spans[1]) else {
+            panic!("expected Annotation node for は底本では");
+        };
+        assert_eq!(a.kind, AnnotationKind::TextualNote);
+    }
+
+    #[test]
+    fn gaiji_composed_glyph_kaete_form() {
+        // ※［＃「X」の「Y」に代えて「Z」、第N水準…］ — composed-glyph gaiji.
+        // The whole pre-mencode body is the verbatim description; the
+        // trailing mencode resolves the character. Previously this dropped
+        // everything after the first quote (a round-trip data loss).
+        run!(out, "※［＃「比」の「ヒ」に代えて「く」、第4水準2-1-23］");
+        let Some(AozoraNode::Gaiji(g)) = aozora_node(&out.spans[0]) else {
+            panic!("expected Gaiji node for the 代えて composed-glyph form");
+        };
+        assert_eq!(g.description, "「比」の「ヒ」に代えて「く」");
+        assert_eq!(g.mencode, Some("第4水準2-1-23"));
+    }
+
+    #[test]
+    fn small_side_forward_ref_still_emphasis_not_range() {
+        // The forward-reference `「X」は行右小書き` (body starts with `「`)
+        // must NOT be captured by the anchored 行右小書き range needle —
+        // it stays an EmphasisKind::SmallRight leaf.
+        run!(out, "あ［＃「あ」は行右小書き］");
+        assert!(matches!(
+            aozora_node(&out.spans[0]),
+            Some(AozoraNode::Emphasis(_))
         ));
     }
 
@@ -5893,11 +6271,17 @@ mod tests {
         );
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::FontSize { steps: 2 })
+            SpanKind::BlockOpen(ContainerKind::FontSize {
+                steps: 2,
+                block: true
+            })
         ));
         assert!(matches!(
             out.spans[2].kind,
-            SpanKind::BlockClose(ContainerKind::FontSize { steps: 1 })
+            SpanKind::BlockClose(ContainerKind::FontSize {
+                steps: 1,
+                block: true
+            })
         ));
         run!(
             out2,
@@ -5905,7 +6289,33 @@ mod tests {
         );
         assert!(matches!(
             out2.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::FontSize { steps: -1 })
+            SpanKind::BlockOpen(ContainerKind::FontSize {
+                steps: -1,
+                block: true
+            })
+        ));
+    }
+
+    #[test]
+    fn font_size_bare_range_is_inline() {
+        // ［＃N段階小さな文字］ … ［＃小さな文字終わり］ (no ここから/ここで)
+        run!(
+            out,
+            "本文［＃1段階小さな文字］小さい［＃小さな文字終わり］後"
+        );
+        assert!(matches!(
+            out.spans[1].kind,
+            SpanKind::BlockOpen(ContainerKind::FontSize {
+                steps: -1,
+                block: false
+            })
+        ));
+        assert!(matches!(
+            out.spans[3].kind,
+            SpanKind::BlockClose(ContainerKind::FontSize {
+                steps: -1,
+                block: false
+            })
         ));
     }
 

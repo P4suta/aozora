@@ -71,6 +71,19 @@ expression: "format!(\"{nodes:#?}\")"
     Indent(
         Indent {
             amount: 2,
+            wrap: None,
+            head_flush: false,
+            from_top: false,
+        },
+    ),
+    Indent(
+        Indent {
+            amount: 0,
+            wrap: Some(
+                1,
+            ),
+            head_flush: true,
+            from_top: false,
         },
     ),
     AlignEnd(
@@ -125,6 +138,7 @@ expression: "format!(\"{nodes:#?}\")"
             file: NonEmptyStr(
                 "file.png",
             ),
+            dimensions: None,
             caption: None,
         },
     ),
@@ -158,6 +172,19 @@ expression: "format!(\"{nodes:#?}\")"
                 amount: 1,
                 wrap: None,
                 center: false,
+                head_flush: false,
+            },
+        },
+    ),
+    Container(
+        Container {
+            kind: Indent {
+                amount: 0,
+                wrap: Some(
+                    2,
+                ),
+                center: false,
+                head_flush: true,
             },
         },
     ),

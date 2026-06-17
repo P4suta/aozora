@@ -555,6 +555,7 @@ fn container_attr(kind: ContainerKind) -> Attr {
             amount,
             wrap,
             center,
+            head_flush,
         } => {
             let mut kvs = vec![("amount".to_owned(), amount.to_string())];
             if let Some(w) = wrap {
@@ -562,6 +563,9 @@ fn container_attr(kind: ContainerKind) -> Attr {
             }
             if center {
                 kvs.push(("center".to_owned(), "true".to_owned()));
+            }
+            if head_flush {
+                kvs.push(("head_flush".to_owned(), "true".to_owned()));
             }
             ("container-indent", kvs)
         }

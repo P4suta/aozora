@@ -245,12 +245,22 @@ mod tests {
         let r: Registry<'static> = Registry::from_sorted_slice(&[
             (
                 10u32,
-                NodeRef::Inline(AozoraNode::Indent(Indent { amount: 1 })),
+                NodeRef::Inline(AozoraNode::Indent(Indent {
+                    amount: 1,
+                    wrap: None,
+                    head_flush: false,
+                    from_top: false,
+                })),
             ),
             (20u32, NodeRef::Inline(AozoraNode::PageBreak)),
             (
                 30u32,
-                NodeRef::Inline(AozoraNode::Indent(Indent { amount: 3 })),
+                NodeRef::Inline(AozoraNode::Indent(Indent {
+                    amount: 3,
+                    wrap: None,
+                    head_flush: false,
+                    from_top: false,
+                })),
             ),
         ]);
         assert!(!r.is_empty());
@@ -296,6 +306,7 @@ mod tests {
                     amount: 2,
                     wrap: None,
                     center: false,
+                    head_flush: false,
                 }),
             ),
             (10u32, NodeRef::BlockOpen(ContainerKind::Keigakomi)),

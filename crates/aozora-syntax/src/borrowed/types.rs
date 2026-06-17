@@ -309,10 +309,14 @@ pub struct HeadingHint<'src> {
 /// Illustration metadata.
 ///
 /// `file` is [`super::NonEmptyStr`] — `［＃挿絵（）入る］` with empty
-/// path is a parse bug, not a valid state.
+/// path is a parse bug, not a valid state. `dimensions` carries the
+/// optional pixel-size note from the bundled corpus form
+/// `挿絵（file、横W×縦H）入る` (verbatim, e.g. `横480×縦640`); it is kept
+/// out of `file` so the rendered `<img src>` is a clean path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sashie<'src> {
     pub file: super::NonEmptyStr<'src>,
+    pub dimensions: Option<&'src str>,
     pub caption: Option<Content<'src>>,
 }
 
@@ -547,7 +551,15 @@ mod tests {
 
     #[test]
     fn block_variants_report_block() {
-        assert!(AozoraNode::Indent(Indent { amount: 2 }).is_block());
+        assert!(
+            AozoraNode::Indent(Indent {
+                amount: 2,
+                wrap: None,
+                head_flush: false,
+                from_top: false,
+            })
+            .is_block()
+        );
         assert!(AozoraNode::SectionBreak(SectionKind::Kaicho).is_block());
     }
 

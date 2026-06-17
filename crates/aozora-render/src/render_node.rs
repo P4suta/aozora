@@ -10,8 +10,8 @@ use aozora_syntax::borrowed::{
     HeadingHint, Kaeriten, Ruby, Sashie, Segment, SideNote,
 };
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, Container, ContainerKind,
-    EmphasisKind, Indent, RubySide, SectionKind,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenPosition, Container,
+    ContainerKind, EmphasisKind, Indent, RubySide, SectionKind,
 };
 
 use crate::bouten;
@@ -234,12 +234,48 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
 /// Emit a container's opening tag. Block containers render a
 /// `<div class="aozora-container …">`; the inline range forms (bouten,
 /// bare 太字 / 斜体) render their inline element directly.
+/// Open tag for a 文字サイズ container: a block `<div>` for `block: true`,
+/// or — for the bare inline range (`block: false`) — the same inline `<span>`
+/// the forward-reference [`render_emphasis`] font-size leaf uses.
+fn render_font_size_container_open<W: Write>(
+    steps: i8,
+    block: bool,
+    writer: &mut W,
+) -> fmt::Result {
+    let magnitude = steps.unsigned_abs();
+    let larger = steps >= 0;
+    if block {
+        let class = if larger {
+            "aozora-container-font-larger"
+        } else {
+            "aozora-container-font-smaller"
+        };
+        write!(
+            writer,
+            r#"<div class="aozora-container {class}" data-steps="{magnitude}">"#,
+        )
+    } else {
+        let class = if larger {
+            "aozora-font-larger"
+        } else {
+            "aozora-font-smaller"
+        };
+        write!(writer, r#"<span class="{class}" data-steps="{magnitude}">"#)
+    }
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one match arm per ContainerKind — splitting would scatter the \
+              open-tag dispatch and obscure the 1:1 family mapping"
+)]
 fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::Result {
     match kind {
         ContainerKind::Indent {
             amount,
             wrap,
             center,
+            head_flush,
         } => {
             write!(
                 writer,
@@ -247,6 +283,9 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
             )?;
             if wrap.is_some() {
                 writer.write_str(" aozora-container-wrap-indent")?;
+            }
+            if head_flush {
+                writer.write_str(" aozora-container-head-flush")?;
             }
             if center {
                 writer.write_str(" aozora-container-center")?;
@@ -311,20 +350,21 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
         ContainerKind::Horizontal => {
             writer.write_str(r#"<div class="aozora-container aozora-container-horizontal">"#)
         }
-        ContainerKind::FontSize { steps } => {
-            let (class, magnitude) = if steps >= 0 {
-                ("aozora-container-font-larger", steps)
-            } else {
-                ("aozora-container-font-smaller", -steps)
-            };
-            write!(
-                writer,
-                r#"<div class="aozora-container {class}" data-steps="{magnitude}">"#,
-            )
+        ContainerKind::FontSize { steps, block } => {
+            render_font_size_container_open(steps, block, writer)
         }
         // Paired / block heading — same element as the forward-reference
         // leaf, but wrapping the delimited content (phrasing).
         ContainerKind::Heading { kind, style, .. } => write_heading_open(kind, style, writer),
+        // 行右/行左小書き bare range — the same inline `<span>` as the
+        // forward-reference [`render_emphasis`] small-glyph leaf.
+        ContainerKind::SmallSide { position, .. } => {
+            let side = match position {
+                BoutenPosition::Left => "left",
+                _ => "right",
+            };
+            write!(writer, r#"<span class="aozora-koshogaki-{side}">"#)
+        }
         _ => writer.write_str(r#"<div class="aozora-container">"#),
     }
 }
@@ -338,6 +378,9 @@ fn render_container_close<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt:
             ContainerKind::BoutenRange { .. } => "</em>",
             ContainerKind::Bold { block: false } => "</b>",
             ContainerKind::Italic { block: false } => "</i>",
+            // The bare-range 小書き / font-size forms render inline `<span>`s.
+            ContainerKind::SmallSide { block: false, .. }
+            | ContainerKind::FontSize { block: false, .. } => "</span>",
             _ => "</div>",
         }),
     }
@@ -356,10 +399,25 @@ fn render_angle_quote<W: Write>(d: &AngleQuote<'_>, writer: &mut W) -> fmt::Resu
 /// captioned-form recogniser populates it, renders into `<figcaption>`).
 /// `Sashie::is_block()` is `true`, so the block walker has already
 /// flushed the surrounding paragraph before this fires.
+/// Parse the bundled `横W×縦H` pixel-size note into `(width, height)` —
+/// both runs of ASCII digits. Returns `None` for any other shape (the
+/// dimensions then carry no HTML width/height hint).
+fn parse_sashie_dimensions(dims: &str) -> Option<(&str, &str)> {
+    let (w, h) = dims.split_once('×')?;
+    let w = w.strip_prefix('横')?;
+    let h = h.strip_prefix('縦')?;
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    (digits(w) && digits(h)).then_some((w, h))
+}
+
 fn render_sashie<W: Write>(s: &Sashie<'_>, writer: &mut W) -> fmt::Result {
     writer.write_str(r#"<figure class="aozora-sashie"><img src=""#)?;
     escape_text(s.file.as_str(), writer)?;
-    writer.write_str(r#"" alt="" />"#)?;
+    writer.write_char('"')?;
+    if let Some((w, h)) = s.dimensions.and_then(parse_sashie_dimensions) {
+        write!(writer, r#" width="{w}" height="{h}""#)?;
+    }
+    writer.write_str(r#" alt="" />"#)?;
     if let Some(caption) = s.caption {
         writer.write_str("<figcaption>")?;
         render_content(caption, writer)?;
@@ -462,6 +520,15 @@ fn render_heading_hint<W: Write>(h: &HeadingHint<'_>, writer: &mut W) -> fmt::Re
 }
 
 fn render_indent<W: Write>(i: Indent, writer: &mut W) -> fmt::Result {
+    if i.head_flush {
+        // Single-line 改行天付き hanging form: first line flush to the head,
+        // wrapped lines indent by `wrap`.
+        let wrap = i.wrap.unwrap_or(0);
+        return write!(
+            writer,
+            r#"<span class="aozora-indent aozora-indent-head-flush" data-amount="0" data-wrap="{wrap}"></span>"#,
+        );
+    }
     write!(
         writer,
         r#"<span class="aozora-indent aozora-indent-{n}" data-amount="{n}"></span>"#,
@@ -675,7 +742,7 @@ mod tests {
     fn sashie_emits_figure_with_img() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let n = alloc.sashie("cover.png", None);
+        let n = alloc.sashie("cover.png", None, None);
         assert_eq!(
             render_node_to_string(n),
             r#"<figure class="aozora-sashie"><img src="cover.png" alt="" /></figure>"#
@@ -715,6 +782,7 @@ mod tests {
                 amount: 2,
                 wrap: Some(4),
                 center: false,
+                head_flush: false,
             },
         });
         let mut open = String::new();
@@ -730,13 +798,70 @@ mod tests {
     }
 
     #[test]
+    fn head_flush_container_adds_head_flush_class() {
+        let arena = Arena::new();
+        let alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.container(Container {
+            kind: ContainerKind::Indent {
+                amount: 0,
+                wrap: Some(1),
+                center: false,
+                head_flush: true,
+            },
+        });
+        let mut open = String::new();
+        render(n, true, &mut open).unwrap();
+        assert!(open.contains("aozora-container-head-flush"), "{open}");
+        assert!(open.contains("aozora-container-wrap-indent"), "{open}");
+        assert!(open.contains(r#"data-amount="0""#), "{open}");
+        assert!(open.contains(r#"data-wrap="1""#), "{open}");
+    }
+
+    #[test]
     fn indent_emits_marker_with_amount_attr() {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
-        let n = alloc.indent(Indent { amount: 2 });
+        let n = alloc.indent(Indent {
+            amount: 2,
+            wrap: None,
+            head_flush: false,
+            from_top: false,
+        });
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-indent aozora-indent-2" data-amount="2"></span>"#
+        );
+    }
+
+    #[test]
+    fn from_top_indent_renders_like_plain_indent() {
+        let arena = Arena::new();
+        let alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.indent(Indent {
+            amount: 3,
+            wrap: None,
+            head_flush: false,
+            from_top: true,
+        });
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<span class="aozora-indent aozora-indent-3" data-amount="3"></span>"#
+        );
+    }
+
+    #[test]
+    fn head_flush_single_line_indent_marker() {
+        let arena = Arena::new();
+        let alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.indent(Indent {
+            amount: 0,
+            wrap: Some(1),
+            head_flush: true,
+            from_top: false,
+        });
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<span class="aozora-indent aozora-indent-head-flush" data-amount="0" data-wrap="1"></span>"#
         );
     }
 
@@ -788,6 +913,7 @@ mod tests {
                 amount: 2,
                 wrap: None,
                 center: false,
+                head_flush: false,
             },
         });
         let mut open = String::new();

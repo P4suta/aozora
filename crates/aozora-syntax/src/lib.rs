@@ -121,7 +121,22 @@ pub enum BoutenPosition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Indent {
+    /// First-line indent in full-width characters (`［＃N字下げ］`). `0` for
+    /// the single-line 改行天付き hanging form (the first line is flush to the
+    /// head and only wrapped lines indent — see `head_flush`).
     pub amount: u8,
+    /// Wrapped-continuation indent for the single-line hanging form
+    /// `［＃改行天付き、折り返してM字下げ］` — `Some(M)`. `None` for a plain
+    /// single-line `［＃N字下げ］`.
+    pub wrap: Option<u8>,
+    /// `true` for the 改行天付き single-line hanging form: the first line is
+    /// flush to the head (天付き) and only wrapped lines indent by `wrap`.
+    pub head_flush: bool,
+    /// `true` for the explicit `［＃天からN字下げ］` form — indent measured
+    /// from the head (天) of the line. Rendered identically to a plain
+    /// `［＃N字下げ］`; the flag only preserves the source spelling for a
+    /// faithful round-trip.
+    pub from_top: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

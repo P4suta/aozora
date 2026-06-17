@@ -1,0 +1,55 @@
+{
+  "name": "side_glyph_right_range",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.16",
+    "note": "[provenance:hand-derived §6.16 + AOZORA-ANNOTATION 2026-06-17] ［＃行右小書き］ ... ［＃行右小書き終わり］ is the bare-range form of the small right-side script glyph (the container counterpart of the forward-reference 「X」は行右小書き leaf); it renders to the same inline aozora-koshogaki-right span. ~4k paired occurrences in the corpus. Offsets from the §3 byte model; not read back from a processor."
+  },
+  "source": "あ［＃行右小書き］いう［＃行右小書き終わり］え\n",
+  "expected": {
+    "html": "<p>あ<span class=\"aozora-koshogaki-right\">いう</span>え</p>\n",
+    "serialize": "あ［＃行右小書き］いう［＃行右小書き終わり］え\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 3,
+          "end": 27
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 33,
+          "end": 66
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 24,
+          "end": 27
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 33,
+          "end": 36
+        },
+        "close": {
+          "start": 63,
+          "end": 66
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

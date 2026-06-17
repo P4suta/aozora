@@ -318,9 +318,19 @@ const fn emphasis_kind_keyword(kind: EmphasisKind) -> &'static str {
 
 fn emit_gaiji<W: Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
     out.write_char('※')?;
-    out.write_str("［＃「")?;
-    out.write_str(g.description)?;
-    out.write_char('」')?;
+    if g.description.contains('「') {
+        // Composed-glyph verbatim description (e.g. `「X」の「Y」に代えて
+        // 「Z」`): already self-delimited with its own balanced quotes, so
+        // it is emitted without the `「…」` wrapper (which would unbalance
+        // the re-parse). The parser's quoted-form recogniser declines it
+        // and the bare `desc、mencode` extractor restores it verbatim.
+        out.write_str("［＃")?;
+        out.write_str(g.description)?;
+    } else {
+        out.write_str("［＃「")?;
+        out.write_str(g.description)?;
+        out.write_char('」')?;
+    }
     if let Some(m) = g.mencode {
         out.write_char('、')?;
         out.write_str(m)?;
@@ -357,6 +367,16 @@ fn emit_section_break<W: Write>(kind: SectionKind, out: &mut W) -> fmt::Result {
 }
 
 fn emit_indent<W: Write>(i: Indent, out: &mut W) -> fmt::Result {
+    if i.head_flush {
+        // Single-line 改行天付き hanging form: first line flush to the head,
+        // wrapped lines indent by `wrap`.
+        let wrap = i.wrap.unwrap_or(0);
+        return write!(out, "［＃改行天付き、折り返して{wrap}字下げ］");
+    }
+    if i.from_top {
+        // Explicit head-anchored form `［＃天からN字下げ］`.
+        return write!(out, "［＃天から{}字下げ］", i.amount);
+    }
     if i.amount == 1 {
         out.write_str("［＃字下げ］")
     } else {
@@ -383,6 +403,10 @@ fn emit_center<W: Write>(c: Center, out: &mut W) -> fmt::Result {
 fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃挿絵（")?;
     out.write_str(s.file.as_str())?;
+    if let Some(dims) = s.dimensions {
+        out.write_char('、')?;
+        out.write_str(dims)?;
+    }
     out.write_char('）')?;
     if let Some(caption) = s.caption {
         out.write_char('「')?;
@@ -477,6 +501,15 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             bouten_left_prefix(position),
             bouten_kind_keyword(kind)
         ),
+        // 改行天付き hanging block: first line flush to the head, wrapped
+        // lines indent by `wrap`. MUST precede the generic `wrap: Some` arm
+        // below, which would otherwise emit ［＃ここから0字下げ、折り返して…］
+        // and drop the 改行天付き marker (a §7.6 fixed-point violation).
+        ContainerKind::Indent {
+            wrap: Some(wrap),
+            head_flush: true,
+            ..
+        } => write!(out, "［＃ここから改行天付き、折り返して{wrap}字下げ］"),
         ContainerKind::Indent {
             amount,
             wrap: Some(wrap),
@@ -487,6 +520,7 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             amount,
             wrap: None,
             center: true,
+            ..
         } => write!(out, "［＃ここから{amount}字下げ、ページの左右中央に］"),
         // Plain 字下げ — preserve the amount. A bare container_open_marker
         // fallback collapses it to ［＃ここから字下げ］, dropping N (a §7.6
@@ -496,11 +530,13 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             amount: 1,
             wrap: None,
             center: false,
+            ..
         } => out.write_str("［＃ここから字下げ］"),
         ContainerKind::Indent {
             amount,
             wrap: None,
             center: false,
+            ..
         } => write!(out, "［＃ここから{amount}字下げ］"),
         ContainerKind::Bold { block: false } => out.write_str("［＃太字］"),
         ContainerKind::Bold { block: true } => out.write_str("［＃ここから太字］"),
@@ -527,14 +563,22 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
         ContainerKind::Columns { count } => write!(out, "［＃ここから{count}段組み］"),
         ContainerKind::Table => out.write_str("［＃ここから表］"),
         ContainerKind::Horizontal => out.write_str("［＃ここから横組み］"),
-        ContainerKind::FontSize { steps } => {
+        ContainerKind::FontSize { steps, block } => {
             let (magnitude, word) = if steps >= 0 {
                 (steps, "大きな")
             } else {
                 (-steps, "小さな")
             };
-            write!(out, "［＃ここから{magnitude}段階{word}文字］")
+            let here = if block { "ここから" } else { "" };
+            write!(out, "［＃{here}{magnitude}段階{word}文字］")
         }
+        // 行右/行左小書き bare range. Must be explicit (not the
+        // container_open_marker fallback, which would mislabel the family).
+        ContainerKind::SmallSide {
+            position: BoutenPosition::Left,
+            ..
+        } => out.write_str("［＃行左小書き］"),
+        ContainerKind::SmallSide { .. } => out.write_str("［＃行右小書き］"),
         _ => out.write_str(container_open_marker(kind)),
     }
 }
@@ -564,11 +608,17 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
         ContainerKind::Columns { .. } => out.write_str("［＃ここで段組み終わり］"),
         ContainerKind::Table => out.write_str("［＃ここで表終わり］"),
         ContainerKind::Horizontal => out.write_str("［＃ここで横組み終わり］"),
-        ContainerKind::FontSize { steps } => out.write_str(if steps >= 0 {
-            "［＃ここで大きな文字終わり］"
-        } else {
-            "［＃ここで小さな文字終わり］"
+        ContainerKind::FontSize { steps, block } => out.write_str(match (steps >= 0, block) {
+            (true, true) => "［＃ここで大きな文字終わり］",
+            (false, true) => "［＃ここで小さな文字終わり］",
+            (true, false) => "［＃大きな文字終わり］",
+            (false, false) => "［＃小さな文字終わり］",
         }),
+        ContainerKind::SmallSide {
+            position: BoutenPosition::Left,
+            ..
+        } => out.write_str("［＃行左小書き終わり］"),
+        ContainerKind::SmallSide { .. } => out.write_str("［＃行右小書き終わり］"),
         _ => out.write_str(container_close_marker(kind)),
     }
 }

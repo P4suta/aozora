@@ -1,0 +1,37 @@
+{
+  "name": "sashie_dimensions",
+  "meta": {
+    "feature": "sashie",
+    "level": "should",
+    "spec_section": "6.11",
+    "note": "[provenance:hand-derived §6.11 + AOZORA-ANNOTATION 2026-06-17] ［＃挿絵（file、横W×縦H）入る］ is the bundled illustration form carrying a pixel-size note. The 横W×縦H dimensions are split off `file` (so <img src> stays a clean path) and surface as width/height attributes; they round-trip verbatim. The corpus' standard figure form (~1.3k). Offsets from the §3 byte model; not read back from a processor."
+  },
+  "source": "［＃挿絵（fig42_03.png、横480×縦640）入る］\n",
+  "expected": {
+    "html": "<figure class=\"aozora-sashie\"><img src=\"fig42_03.png\" width=\"480\" height=\"640\" alt=\"\" /></figure>",
+    "serialize": "\n\n［＃挿絵（fig42_03.png、横480×縦640）入る］\n\n",
+    "nodes": [
+      {
+        "kind": "sashie",
+        "span": {
+          "start": 0,
+          "end": 56
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 53,
+          "end": 56
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

@@ -458,9 +458,10 @@ impl<'a> BorrowedAllocator<'a> {
         }))
     }
 
-    /// `AozoraNode::Sashie(Sashie { file, caption })`.
+    /// `AozoraNode::Sashie(Sashie { file, dimensions, caption })`.
     ///
     /// `file` carries the [`borrowed::NonEmptyStr`] invariant.
+    /// `dimensions` is the optional verbatim pixel-size note (`横W×縦H`).
     ///
     /// # Panics
     ///
@@ -468,11 +469,17 @@ impl<'a> BorrowedAllocator<'a> {
     pub fn sashie(
         &mut self,
         file: &str,
+        dimensions: Option<&str>,
         caption: Option<borrowed::Content<'a>>,
     ) -> borrowed::AozoraNode<'a> {
         let file = borrowed::NonEmptyStr::new(self.interner.intern(file))
             .expect("Phase 3 must emit Sashie with non-empty file path");
-        borrowed::AozoraNode::Sashie(self.arena.alloc(borrowed::Sashie { file, caption }))
+        let dimensions = dimensions.map(|d| self.interner.intern(d));
+        borrowed::AozoraNode::Sashie(self.arena.alloc(borrowed::Sashie {
+            file,
+            dimensions,
+            caption,
+        }))
     }
 
     /// `AozoraNode::Kaeriten(Kaeriten { mark })`.
@@ -644,10 +651,15 @@ mod tests {
     fn indent_round_trip() {
         let arena = Arena::new();
         let a = fresh_alloc(&arena);
-        let n = a.indent(Indent { amount: 3 });
+        let n = a.indent(Indent {
+            amount: 3,
+            wrap: None,
+            head_flush: false,
+            from_top: false,
+        });
         assert!(matches!(
             n,
-            borrowed::AozoraNode::Indent(Indent { amount: 3 })
+            borrowed::AozoraNode::Indent(Indent { amount: 3, .. })
         ));
     }
 
@@ -741,7 +753,7 @@ mod tests {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
         let caption = a.content_plain("挿絵キャプション");
-        let n = a.sashie("fig01.png", Some(caption));
+        let n = a.sashie("fig01.png", None, Some(caption));
         match n {
             borrowed::AozoraNode::Sashie(s) => {
                 assert_eq!(s.file.as_str(), "fig01.png");
@@ -758,7 +770,7 @@ mod tests {
     fn sashie_without_caption() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let n = a.sashie("fig02.png", None);
+        let n = a.sashie("fig02.png", None, None);
         match n {
             borrowed::AozoraNode::Sashie(s) => {
                 assert_eq!(s.file.as_str(), "fig02.png");
@@ -817,6 +829,7 @@ mod tests {
                 amount: 1,
                 wrap: None,
                 center: false,
+                head_flush: false,
             },
         };
         let n = a.container(c);

@@ -1,0 +1,55 @@
+{
+  "name": "font_size_bare_range",
+  "meta": {
+    "feature": "container",
+    "level": "should",
+    "spec_section": "6.17",
+    "note": "[provenance:hand-derived §6.17 + AOZORA-ANNOTATION 2026-06-17] ［＃N段階小さな文字］ ... ［＃小さな文字終わり］ is the bare-range (inline) form of the relative font-size shift, with neither ここから nor ここで — the container counterpart of the forward-reference 「X」はN段階小さな文字 leaf; it renders to the same inline aozora-font-smaller span. ~9k paired occurrences in the corpus (more common than the ここから block form). Offsets from the §3 byte model; not read back from a processor."
+  },
+  "source": "本文［＃1段階小さな文字］小さい［＃小さな文字終わり］後\n",
+  "expected": {
+    "html": "<p>本文<span class=\"aozora-font-smaller\" data-steps=\"1\">小さい</span>後</p>\n",
+    "serialize": "本文［＃1段階小さな文字］小さい［＃小さな文字終わり］後\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 6,
+          "end": 37
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 46,
+          "end": 79
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 34,
+          "end": 37
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 46,
+          "end": 49
+        },
+        "close": {
+          "start": 76,
+          "end": 79
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

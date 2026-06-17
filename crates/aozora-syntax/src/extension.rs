@@ -19,10 +19,16 @@ pub enum ContainerKind {
     /// `center` is `true` for the combined `［＃ここから N字下げ、ページの左右
     /// 中央］` form — the indented block is also page-centred; it still closes
     /// with the shared `字下げ終わり`.
+    /// `head_flush` is `true` for the 改行天付き hanging form
+    /// `［＃ここから改行天付き、折り返して M字下げ］` — the first line is flush
+    /// to the head (天付き, no indent: `amount` is `0`) and only the wrapped
+    /// continuation lines indent by `wrap` (`M`). It also closes with the
+    /// shared `字下げ終わり`.
     Indent {
         amount: u8,
         wrap: Option<u8>,
         center: bool,
+        head_flush: bool,
     },
     /// `［＃割り注］ ... ［＃割り注終わり］` (when spanning multiple lines)
     Warichu,
@@ -99,8 +105,26 @@ pub enum ContainerKind {
     /// signed stage count (positive = 大きな, negative = 小さな); the close
     /// marker carries only the direction (its magnitude is a `±1` placeholder).
     /// Renders as
-    /// `<div class="aozora-container aozora-container-font-larger" data-steps="N">`.
-    FontSize { steps: i8 },
+    /// `<div class="aozora-container aozora-container-font-larger" data-steps="N">`
+    /// for the block form (`block: true`), or the inline
+    /// `<span class="aozora-font-larger" data-steps="N">` for the bare range
+    /// `［＃N段階大きな文字］ ... ［＃大きな文字終わり］` (`block: false`, no
+    /// `ここから` / `ここで`) — the container counterpart of the
+    /// forward-reference [`crate::EmphasisKind::FontSize`] leaf.
+    FontSize { steps: i8, block: bool },
+    /// 行右小書き / 行左小書き range / block — the small-glyph side script set
+    /// to the line's right (`position: Right`) or left (`position: Left`) in
+    /// vertical writing. The bare range `［＃行右小書き］ ... ［＃行右小書き
+    /// 終わり］` (`block: false`, inline `<span class="aozora-koshogaki-right">`)
+    /// is the container counterpart of the forward-reference
+    /// [`crate::EmphasisKind::SmallRight`] / [`crate::EmphasisKind::SmallLeft`]
+    /// leaf, just as [`Self::Bold`] is the counterpart of
+    /// [`crate::EmphasisKind::Bold`]. `block` is reserved for a future
+    /// `［＃ここから行右小書き］` form (unattested in the corpus today).
+    SmallSide {
+        position: BoutenPosition,
+        block: bool,
+    },
 }
 
 impl ContainerKind {
@@ -128,6 +152,7 @@ impl ContainerKind {
             Self::Table => "table",
             Self::Horizontal => "horizontal",
             Self::FontSize { .. } => "font-size",
+            Self::SmallSide { .. } => "small-side",
         }
     }
 
@@ -160,7 +185,11 @@ impl ContainerKind {
     pub const fn is_inline(self) -> bool {
         matches!(
             self,
-            Self::BoutenRange { .. } | Self::Bold { block: false } | Self::Italic { block: false }
+            Self::BoutenRange { .. }
+                | Self::Bold { block: false }
+                | Self::Italic { block: false }
+                | Self::SmallSide { block: false, .. }
+                | Self::FontSize { block: false, .. }
         )
     }
 }
@@ -188,6 +217,7 @@ mod tests {
                 amount: 2,
                 wrap: None,
                 center: false,
+                head_flush: false,
             }
             .kind_str(),
             "indent"
@@ -197,6 +227,7 @@ mod tests {
                 amount: 0,
                 wrap: None,
                 center: false,
+                head_flush: false,
             }
             .kind_str(),
             "indent"
@@ -206,6 +237,17 @@ mod tests {
                 amount: 2,
                 wrap: Some(4),
                 center: false,
+                head_flush: false,
+            }
+            .kind_str(),
+            "indent"
+        );
+        assert_eq!(
+            ContainerKind::Indent {
+                amount: 0,
+                wrap: Some(2),
+                center: false,
+                head_flush: true,
             }
             .kind_str(),
             "indent"
@@ -232,5 +274,32 @@ mod tests {
         assert_eq!(ContainerKind::Bold { block: true }.kind_str(), "bold");
         assert_eq!(ContainerKind::Italic { block: false }.kind_str(), "italic");
         assert_eq!(ContainerKind::Italic { block: true }.kind_str(), "italic");
+        assert_eq!(
+            ContainerKind::SmallSide {
+                position: BoutenPosition::Right,
+                block: false,
+            }
+            .kind_str(),
+            "small-side"
+        );
+        assert_eq!(
+            ContainerKind::SmallSide {
+                position: BoutenPosition::Left,
+                block: false,
+            }
+            .kind_str(),
+            "small-side"
+        );
+    }
+
+    #[test]
+    fn small_side_range_is_inline() {
+        assert!(
+            ContainerKind::SmallSide {
+                position: BoutenPosition::Right,
+                block: false,
+            }
+            .is_inline()
+        );
     }
 }

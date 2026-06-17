@@ -1,0 +1,37 @@
+{
+  "name": "head_flush_single",
+  "meta": {
+    "feature": "container",
+    "level": "should",
+    "spec_section": "6.6",
+    "note": "[provenance:hand-derived §6.6 + AOZORA-ANNOTATION 2026-06-17] Single-line ［＃改行天付き、折り返してM字下げ］ — the leaf counterpart of the 改行天付き hanging block: the first line is flush to the head (天付き, amount 0) and wrapped lines indent by M. Offsets from the §3 byte model; not read back from a processor."
+  },
+  "source": "和歌の本文［＃改行天付き、折り返して２字下げ］続き\n",
+  "expected": {
+    "html": "<p>和歌の本文<span class=\"aozora-indent aozora-indent-head-flush\" data-amount=\"0\" data-wrap=\"2\"></span>続き</p>\n",
+    "serialize": "和歌の本文［＃改行天付き、折り返して2字下げ］続き\n",
+    "nodes": [
+      {
+        "kind": "indent",
+        "span": {
+          "start": 15,
+          "end": 69
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 15,
+          "end": 18
+        },
+        "close": {
+          "start": 66,
+          "end": 69
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
