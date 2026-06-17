@@ -15,8 +15,8 @@ use aozora_syntax::borrowed::{
     HeadingHint, Kaeriten, NodeRef, Ruby, Sashie, Segment, SideNote, TateChuYoko,
 };
 use aozora_syntax::{
-    AlignEnd, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition, Center,
-    ContainerKind, EmphasisKind, Indent, RubySide, SectionKind,
+    AlignEnd, AozoraHeadingKind, AozoraHeadingStyle, BoutenPosition, Center, ContainerKind,
+    EmphasisKind, Indent, RubySide, SectionKind,
 };
 use memchr::memchr_iter;
 
@@ -231,7 +231,7 @@ fn emit_bouten<W: Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {
         BoutenPosition::Left => out.write_str("の左に")?,
         _ => out.write_char('に')?,
     }
-    out.write_str(bouten_kind_keyword(b.kind))?;
+    out.write_str(b.kind.keyword())?;
     out.write_char('］')
 }
 
@@ -296,24 +296,9 @@ fn emit_emphasis<W: Write>(e: &Emphasis<'_>, out: &mut W) -> fmt::Result {
         };
         write!(out, "{magnitude}段階{word}文字")?;
     } else {
-        out.write_str(emphasis_kind_keyword(e.kind))?;
+        out.write_str(e.kind.keyword())?;
     }
     out.write_char('］')
-}
-
-const fn emphasis_kind_keyword(kind: EmphasisKind) -> &'static str {
-    match kind {
-        EmphasisKind::Italic => "斜体",
-        EmphasisKind::SuperScript => "上付き小文字",
-        EmphasisKind::SubScript => "下付き小文字",
-        EmphasisKind::SmallRight => "行右小書き",
-        EmphasisKind::SmallLeft => "行左小書き",
-        EmphasisKind::KeigakomiInline => "罫囲み",
-        EmphasisKind::HorizontalInline => "横組み",
-        // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
-        // weight serialize as the bold keyword.
-        _ => "太字",
-    }
 }
 
 fn emit_gaiji<W: Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
@@ -345,14 +330,8 @@ fn emit_angle_quote<W: Write>(d: &AngleQuote<'_>, out: &mut W) -> fmt::Result {
 }
 
 fn emit_section_break<W: Write>(kind: SectionKind, out: &mut W) -> fmt::Result {
-    let keyword = match kind {
-        SectionKind::Kaicho => "改丁",
-        SectionKind::Kaidan => "改段",
-        SectionKind::Kaimihiraki => "改見開き",
-        _ => "改ページ",
-    };
     out.write_str("［＃")?;
-    out.write_str(keyword)?;
+    out.write_str(kind.keyword())?;
     out.write_char('］')
 }
 
@@ -381,7 +360,11 @@ fn emit_center<W: Write>(c: Center, out: &mut W) -> fmt::Result {
 }
 
 fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
-    out.write_str("［＃挿絵（")?;
+    out.write_str("［＃挿絵")?;
+    if let Some(number) = s.number {
+        out.write_str(number.as_str())?;
+    }
+    out.write_char('（')?;
     out.write_str(s.file.as_str())?;
     out.write_char('）')?;
     if let Some(caption) = s.caption {
@@ -475,7 +458,7 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             out,
             "［＃{}{}］",
             bouten_left_prefix(position),
-            bouten_kind_keyword(kind)
+            kind.keyword()
         ),
         ContainerKind::Indent {
             amount,
@@ -535,7 +518,27 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             };
             write!(out, "［＃ここから{magnitude}段階{word}文字］")
         }
+        ContainerKind::SmallScript { side } => {
+            write!(out, "［＃行{}小書き］", small_script_side_word(side))
+        }
+        ContainerKind::Caption { block } => out.write_str(if block {
+            "［＃ここからキャプション］"
+        } else {
+            "［＃キャプション］"
+        }),
+        // `ContainerKind::Warichu` is the block 割り注 region (the inline
+        // ［＃割り注］ is an `Annotation{WarichuOpen}`), so it serializes to
+        // the ここから form.
+        ContainerKind::Warichu => out.write_str("［＃ここから割り注］"),
         _ => out.write_str(container_open_marker(kind)),
+    }
+}
+
+/// 小書き side keyword: `右` / `左`.
+const fn small_script_side_word(side: BoutenPosition) -> &'static str {
+    match side {
+        BoutenPosition::Left => "左",
+        _ => "右",
     }
 }
 
@@ -547,7 +550,7 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
             out,
             "［＃{}{}終わり］",
             bouten_left_prefix(position),
-            bouten_kind_keyword(kind)
+            kind.keyword()
         ),
         ContainerKind::Bold { block: false } => out.write_str("［＃太字終わり］"),
         ContainerKind::Bold { block: true } => out.write_str("［＃ここで太字終わり］"),
@@ -569,26 +572,16 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
         } else {
             "［＃ここで小さな文字終わり］"
         }),
+        ContainerKind::SmallScript { side } => {
+            write!(out, "［＃行{}小書き終わり］", small_script_side_word(side))
+        }
+        ContainerKind::Caption { block } => out.write_str(if block {
+            "［＃ここでキャプション終わり］"
+        } else {
+            "［＃キャプション終わり］"
+        }),
+        ContainerKind::Warichu => out.write_str("［＃ここで割り注終わり］"),
         _ => out.write_str(container_close_marker(kind)),
-    }
-}
-
-const fn bouten_kind_keyword(kind: BoutenKind) -> &'static str {
-    match kind {
-        BoutenKind::WhiteSesame => "白ゴマ傍点",
-        BoutenKind::Circle => "丸傍点",
-        BoutenKind::WhiteCircle => "白丸傍点",
-        BoutenKind::DoubleCircle => "二重丸傍点",
-        BoutenKind::Janome => "蛇の目傍点",
-        BoutenKind::Cross => "ばつ傍点",
-        BoutenKind::WhiteTriangle => "白三角傍点",
-        BoutenKind::WavyLine => "波線",
-        BoutenKind::UnderLine => "傍線",
-        BoutenKind::DoubleUnderLine => "二重傍線",
-        BoutenKind::ChainLine => "鎖線",
-        BoutenKind::DashedLine => "破線",
-        BoutenKind::BlackTriangle => "黒三角傍点",
-        _ => "傍点",
     }
 }
 

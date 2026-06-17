@@ -11,7 +11,7 @@ use aozora_syntax::borrowed::{
 };
 use aozora_syntax::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, Container, ContainerKind,
-    EmphasisKind, Indent, RubySide, SectionKind,
+    EmphasisKind, Indent, RubySide,
 };
 
 use crate::bouten;
@@ -47,12 +47,9 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
         AozoraNode::Center(_) => render_center(writer),
         AozoraNode::PageBreak => writer.write_str(r#"<div class="aozora-page-break"></div>"#),
         AozoraNode::SectionBreak(k) => {
-            let slug = match k {
-                SectionKind::Kaicho => "kaicho",
-                SectionKind::Kaidan => "kaidan",
-                SectionKind::Kaimihiraki => "kaimihiraki",
-                _ => "other",
-            };
+            // Single source of truth for the romaji slug: the spec slug
+            // table, keyed by the canonical 青空文庫 keyword.
+            let slug = aozora_spec::roman_slug(k.keyword()).unwrap_or("other");
             write!(
                 writer,
                 r#"<div class="aozora-section-break aozora-section-break-{slug}"></div>"#,
@@ -127,19 +124,25 @@ fn render_emphasis<W: Write>(e: &Emphasis<'_>, writer: &mut W) -> fmt::Result {
         render_content(e.text.get(), writer)?;
         return writer.write_str("</span>");
     }
-    let (open, close) = match e.kind {
-        EmphasisKind::Italic => (r#"<i class="aozora-italic">"#, "</i>"),
-        EmphasisKind::SuperScript => (r#"<sup class="aozora-superscript">"#, "</sup>"),
-        EmphasisKind::SubScript => (r#"<sub class="aozora-subscript">"#, "</sub>"),
-        EmphasisKind::SmallRight => (r#"<span class="aozora-koshogaki-right">"#, "</span>"),
-        EmphasisKind::SmallLeft => (r#"<span class="aozora-koshogaki-left">"#, "</span>"),
-        EmphasisKind::KeigakomiInline => (r#"<span class="aozora-keigakomi-inline">"#, "</span>"),
-        EmphasisKind::HorizontalInline => (r#"<span class="aozora-horizontal">"#, "</span>"),
+    // The HTML element is semantic (italic→<i>, super/sub→<sup>/<sub>,
+    // 太字→<b>, the small-glyph / inline-box / caption forms→<span>) and
+    // stays here; the `aozora-*` class slug comes from the single source
+    // of truth (the spec slug table), keyed by the canonical keyword.
+    let (el, close) = match e.kind {
+        EmphasisKind::Italic => ("i", "</i>"),
+        EmphasisKind::SuperScript => ("sup", "</sup>"),
+        EmphasisKind::SubScript => ("sub", "</sub>"),
+        EmphasisKind::SmallRight
+        | EmphasisKind::SmallLeft
+        | EmphasisKind::KeigakomiInline
+        | EmphasisKind::HorizontalInline
+        | EmphasisKind::Caption => ("span", "</span>"),
         // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
         // weight default to the bold element.
-        _ => (r#"<b class="aozora-bold">"#, "</b>"),
+        _ => ("b", "</b>"),
     };
-    writer.write_str(open)?;
+    let slug = aozora_spec::roman_slug(e.kind.keyword()).unwrap_or("bold");
+    write!(writer, r#"<{el} class="aozora-{slug}">"#)?;
     render_content(e.text.get(), writer)?;
     writer.write_str(close)
 }
@@ -233,7 +236,12 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
 
 /// Emit a container's opening tag. Block containers render a
 /// `<div class="aozora-container …">`; the inline range forms (bouten,
-/// bare 太字 / 斜体) render their inline element directly.
+/// bare 太字 / 斜体, 小書き) render their inline element directly.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one match arm per ContainerKind — splitting would scatter the \
+              1:1 kind→markup mapping that mirrors emit_container_open"
+)]
 fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::Result {
     match kind {
         ContainerKind::Indent {
@@ -325,6 +333,21 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
         // Paired / block heading — same element as the forward-reference
         // leaf, but wrapping the delimited content (phrasing).
         ContainerKind::Heading { kind, style, .. } => write_heading_open(kind, style, writer),
+        // 小書き range — inline `<span>`, matching the forward-reference
+        // `EmphasisKind::SmallRight` / `SmallLeft` leaf classes.
+        ContainerKind::SmallScript {
+            side: aozora_syntax::BoutenPosition::Left,
+        } => writer.write_str(r#"<span class="aozora-kogaki-left">"#),
+        ContainerKind::SmallScript { .. } => {
+            writer.write_str(r#"<span class="aozora-kogaki-right">"#)
+        }
+        // Caption: inline `<span>` for the bare range, block `<div>` for ここから.
+        ContainerKind::Caption { block: false } => {
+            writer.write_str(r#"<span class="aozora-caption">"#)
+        }
+        ContainerKind::Caption { block: true } => {
+            writer.write_str(r#"<div class="aozora-container aozora-caption">"#)
+        }
         _ => writer.write_str(r#"<div class="aozora-container">"#),
     }
 }
@@ -338,6 +361,9 @@ fn render_container_close<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt:
             ContainerKind::BoutenRange { .. } => "</em>",
             ContainerKind::Bold { block: false } => "</b>",
             ContainerKind::Italic { block: false } => "</i>",
+            ContainerKind::SmallScript { .. } | ContainerKind::Caption { block: false } => {
+                "</span>"
+            }
             _ => "</div>",
         }),
     }
@@ -607,7 +633,7 @@ mod tests {
         );
         assert_eq!(
             render_node_to_string(n),
-            r#"<em class="aozora-bouten aozora-bouten-black-triangle aozora-bouten-right">規範</em>"#
+            r#"<em class="aozora-bouten aozora-bouten-kurosankaku aozora-bouten-right">規範</em>"#
         );
     }
 
@@ -675,7 +701,7 @@ mod tests {
     fn sashie_emits_figure_with_img() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let n = alloc.sashie("cover.png", None);
+        let n = alloc.sashie("cover.png", None, None);
         assert_eq!(
             render_node_to_string(n),
             r#"<figure class="aozora-sashie"><img src="cover.png" alt="" /></figure>"#

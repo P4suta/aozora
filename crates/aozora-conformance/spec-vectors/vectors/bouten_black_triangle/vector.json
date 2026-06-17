@@ -8,7 +8,7 @@
   },
   "source": "規範［＃「規範」に黒三角傍点］を説く。\n",
   "expected": {
-    "html": "<p><em class=\"aozora-bouten aozora-bouten-black-triangle aozora-bouten-right\">規範</em>を説く。</p>\n",
+    "html": "<p><em class=\"aozora-bouten aozora-bouten-kurosankaku aozora-bouten-right\">規範</em>を説く。</p>\n",
     "serialize": "規範［＃「規範」に黒三角傍点］を説く。\n",
     "nodes": [
       {

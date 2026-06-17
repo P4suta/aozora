@@ -15,7 +15,7 @@
     "meta": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["feature", "level"],
+      "required": ["feature", "level", "note"],
       "properties": {
         "feature": { "type": "string", "description": "Notation family this case exercises (e.g. \"ruby\", \"bouten\")." },
         "level": {
@@ -23,7 +23,21 @@
           "description": "Conformance level (§10). `must`: a conforming processor MUST match every listed projection. `should`/`may` scale down."
         },
         "spec_section": { "type": "string", "description": "Section that defines this behaviour, e.g. \"6.1\"." },
-        "note": { "type": "string" }
+        "note": {
+          "type": "string",
+          "pattern": "^\\[provenance:",
+          "description": "REQUIRED provenance tag. MUST begin with `[provenance:…]` naming the hand-derivation source (spec section + AOZORA-ANNOTATION snapshot, optionally a corpus citation). This is the de-circularisation contract: a vector's expected output is hand-derived from the spec and the corpus — never imported from a processor's own output."
+        },
+        "corpus": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["work"],
+          "properties": {
+            "work": { "type": "string", "description": "Corpus-relative path the `source` fragment was taken from, e.g. \"作品/著者/作品.txt\"." },
+            "line": { "type": "integer", "minimum": 1, "description": "1-based line in `work` where the fragment occurs (best-effort pointer)." }
+          },
+          "description": "Optional citation for a vector whose `source` is a real corpus fragment. When present and $AOZORA_CORPUS_ROOT is set, the validator confirms `source` actually occurs in `work` (corpus-verify) — turning provenance from a claim into a checked fact."
+        }
       }
     },
     "source": {

@@ -246,6 +246,78 @@ pub enum EmphasisKind {
     /// text, the span-level counterpart of the block
     /// [`ContainerKind::Horizontal`].
     HorizontalInline,
+    /// キャプション (`「X」はキャプション`) — the inline forward-reference
+    /// caption, the leaf counterpart of the block / range
+    /// [`ContainerKind::Caption`].
+    Caption,
+}
+
+// --- enum → canonical 青空文庫 keyword ---------------------------------------
+//
+// The single source of truth for the Japanese keyword each render-bearing
+// enum maps to (e.g. `BoutenKind::WhiteSesame` → "白ゴマ傍点"). Both the
+// serializer (AST → annotation text) and the renderers key on these, and
+// `aozora_spec::roman_slug` turns the keyword into the romaji CSS slug — so
+// the keyword lives here once instead of being copied per crate.
+
+impl BoutenKind {
+    /// Canonical 青空文庫 keyword (the body of `［＃「…」に〈keyword〉］`).
+    #[must_use]
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::WhiteSesame => "白ゴマ傍点",
+            Self::Circle => "丸傍点",
+            Self::WhiteCircle => "白丸傍点",
+            Self::DoubleCircle => "二重丸傍点",
+            Self::Janome => "蛇の目傍点",
+            Self::Cross => "ばつ傍点",
+            Self::WhiteTriangle => "白三角傍点",
+            Self::WavyLine => "波線",
+            Self::UnderLine => "傍線",
+            Self::DoubleUnderLine => "二重傍線",
+            Self::ChainLine => "鎖線",
+            Self::DashedLine => "破線",
+            Self::BlackTriangle => "黒三角傍点",
+            // Goma (無印) and any future kind default to the bare 傍点.
+            _ => "傍点",
+        }
+    }
+}
+
+impl EmphasisKind {
+    /// Canonical 青空文庫 keyword for the emphasis treatment. `FontSize`
+    /// is serialized separately (it carries a magnitude) and falls through
+    /// to the 太字 default here.
+    #[must_use]
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::Italic => "斜体",
+            Self::SuperScript => "上付き小文字",
+            Self::SubScript => "下付き小文字",
+            Self::SmallRight => "行右小書き",
+            Self::SmallLeft => "行左小書き",
+            Self::KeigakomiInline => "罫囲み",
+            Self::HorizontalInline => "横組み",
+            Self::Caption => "キャプション",
+            // Bold, FontSize, and any future weight default to 太字.
+            _ => "太字",
+        }
+    }
+}
+
+impl SectionKind {
+    /// Canonical 青空文庫 keyword for the section break. Matched
+    /// exhaustively: adding a variant is a compile error here until its
+    /// keyword is supplied, rather than silently falling through a
+    /// `#[non_exhaustive]` `_` arm.
+    #[must_use]
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::Kaicho => "改丁",
+            Self::Kaidan => "改段",
+            Self::Kaimihiraki => "改見開き",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -264,6 +336,12 @@ pub enum AnnotationKind {
     WarichuOpen,
     /// Inline warichu closer — `［＃割り注終わり］`.
     WarichuClose,
+    /// An empty directive `［＃］` (or whitespace-only `［＃　］`). Not an
+    /// unrecognised notation: it is the de-facto-standard symbol used in the
+    /// file-header 凡例 line `［＃］：入力者注…` that prefixes essentially every
+    /// 青空文庫 work. Typed distinctly so it leaves the `Unknown` bucket while
+    /// still round-tripping its raw bytes.
+    Empty,
 }
 
 /// Parse- and render-time error surface for `aozora-syntax` consumers.

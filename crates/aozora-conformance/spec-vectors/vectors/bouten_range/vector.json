@@ -8,7 +8,7 @@
   },
   "source": "本文［＃傍点］甲［＃傍点終わり］と［＃二重傍線］乙［＃二重傍線終わり］と［＃左に傍線］丙［＃左に傍線終わり］。",
   "expected": {
-    "html": "<p>本文<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">甲</em>と<em class=\"aozora-bouten aozora-bouten-double-under-line aozora-bouten-right\">乙</em>と<em class=\"aozora-bouten aozora-bouten-under-line aozora-bouten-left\">丙</em>。</p>\n",
+    "html": "<p>本文<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">甲</em>と<em class=\"aozora-bouten aozora-bouten-nijubosen aozora-bouten-right\">乙</em>と<em class=\"aozora-bouten aozora-bouten-bosen aozora-bouten-left\">丙</em>。</p>\n",
     "serialize": "本文［＃傍点］甲［＃傍点終わり］と［＃二重傍線］乙［＃二重傍線終わり］と［＃左に傍線］丙［＃左に傍線終わり］。",
     "nodes": [
       {

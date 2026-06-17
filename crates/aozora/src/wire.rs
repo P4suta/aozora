@@ -217,6 +217,8 @@ const fn container_kind_str(kind: aozora_syntax::ContainerKind) -> &'static str 
         ContainerKind::Table => "table",
         ContainerKind::Horizontal => "horizontal",
         ContainerKind::FontSize { .. } => "fontSize",
+        ContainerKind::SmallScript { .. } => "smallScript",
+        ContainerKind::Caption { .. } => "caption",
         _ => "unknown",
     }
 }

@@ -9,7 +9,7 @@ a regression.
 
 ```mermaid
 flowchart TD
-    A["1. Spec cases<br/>(spec/aozora/cases/*.json)"]
+    A["1. Conformance suite<br/>(crates/aozora-conformance/)"]
     B["2. Property tests<br/>(crates/*/tests/property_*.rs)"]
     C["3. Corpus sweep<br/>(every Aozora Bunko work)"]
     D["4. Fuzz harness<br/>(cargo-fuzz)"]
@@ -22,7 +22,7 @@ Each layer catches a different *kind* of bug:
 
 | Layer | Catches |
 |---|---|
-| Spec cases | Per-feature contract regressions (the `(input, html, canonical)` triple). |
+| Conformance suite | Per-feature contract regressions — render goldens + spec vectors. |
 | Property tests | Invariant violations in the *space* of inputs (round-trip, escape-safety, span well-formedness). |
 | Corpus sweep | Real-world distribution effects the property generator missed. |
 | Fuzz | Latent panics on adversarial inputs the corpus doesn't contain. |
@@ -32,38 +32,35 @@ When you add a new invariant, **land all five touchpoints in the
 same PR**, or split them into a chain of PRs that explicitly
 references the invariant.
 
-## Layer 1: spec cases
+## Layer 1: conformance suite
 
-```text
-spec/aozora/cases/
-├── ruby-nested-gaiji.json
-├── emphasis-bouten.json
-├── emphasis-angle-quote.json
-├── kunten-kaeriten.json
-├── page-break.json
-└── …
-```
+The `aozora-conformance` crate is the per-feature contract layer,
+with two CI-gated halves:
 
-Each case pins a `(input, html, serialise)` triple:
+- **Render fixtures** — `crates/aozora-conformance/fixtures/render/<case>/`
+  pins a `source` plus `expected.html` / `expected.nodes` /
+  `expected.pairs` goldens. `just render-gate` asserts byte-identical
+  output; `just render-gate-update` (`UPDATE_GOLDEN=1`) refreshes the
+  goldens after an intentional change.
+- **Spec vectors** — `crates/aozora-conformance/spec-vectors/vectors/<case>/vector.json`
+  pins a `(source, expected.{html,serialize,nodes,pairs,diagnostics})`
+  tuple. The specification repo (`../aozora-notation-spec`) is the
+  **single source of truth**: vectors are vendored via
+  `just sync-spec-vectors`, `just verify-spec-vectors` guards the copy
+  against drift, and `just conformance` runs them across must / should
+  / may tiers.
 
-```json
-{
-  "input":     "｜青梅《おうめ》",
-  "html":      "<ruby>青梅<rt>おうめ</rt></ruby>",
-  "serialise": "｜青梅《おうめ》"
-}
-```
+Both halves enumerate their fixture directories automatically, so a
+new case is picked up without editing a manual list. The romaji CSS
+slugs the fixtures assert are themselves centralised in
+`aozora-spec::RENDER_SLUGS` and machine-checked against their kana
+reading, so a misread slug fails a unit test before it ever reaches a
+fixture.
 
-The unit test runner (`cargo nextest run -p aozora-render`) loads
-every case, parses, renders, serialises, and compares against the
-pinned strings. The property harness *also* uses these cases as
-seed inputs for shrinking.
-
-The flagship in-tree fixture lives at
-`spec/aozora/fixtures/56656/` — the Japanese translation of *Crime
-and Punishment* (Aozora Bunko card 56656). It exercises 1000+ ruby
-annotations, forward-reference bouten, JIS X 0213 gaiji, and
-accent decomposition edge cases.
+The flagship corpus fixture lives at `spec/aozora/fixtures/56656/` —
+the Japanese translation of *Crime and Punishment* (Aozora Bunko card
+56656). It exercises 1000+ ruby annotations, forward-reference bouten,
+JIS X 0213 gaiji, and accent decomposition edge cases.
 
 ## Layer 2: property tests
 
@@ -131,7 +128,8 @@ Targets under `crates/*/fuzz/fuzz_targets/`:
 
 Fuzz failures auto-shrink to a minimal byte sequence and land in
 `crates/<crate>/fuzz/artifacts/`. Add the failing input to
-`spec/aozora/cases/` as a regression case after diagnosing.
+`crates/aozora-conformance/fixtures/render/` as a regression case
+after diagnosing.
 
 **Why libFuzzer / cargo-fuzz:**
 

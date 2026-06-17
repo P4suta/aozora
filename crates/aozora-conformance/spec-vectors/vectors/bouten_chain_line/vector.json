@@ -8,7 +8,7 @@
   },
   "source": "重要［＃「重要」に鎖線］な点。\n",
   "expected": {
-    "html": "<p><em class=\"aozora-bouten aozora-bouten-chain-line aozora-bouten-right\">重要</em>な点。</p>\n",
+    "html": "<p><em class=\"aozora-bouten aozora-bouten-kusarisen aozora-bouten-right\">重要</em>な点。</p>\n",
     "serialize": "重要［＃「重要」に鎖線］な点。\n",
     "nodes": [
       {

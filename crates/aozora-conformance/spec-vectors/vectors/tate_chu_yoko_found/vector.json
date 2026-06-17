@@ -4,7 +4,7 @@
     "feature": "tate_chu_yoko",
     "level": "must",
     "spec_section": "6.3",
-    "note": "Happy-path 縦中横: the target ３３ precedes the directive (明治３３年…), so it is recognised and the directive consumed with no diagnostic. Complements the recovery case (vector tate_chu_yoko) where the target is absent and tcy-target-not-found is raised."
+    "note": "[provenance:hand-derived §6.3 + AOZORA-ANNOTATION 2026-06-17] Happy-path 縦中横: the target ３３ precedes the directive (明治３３年…), so it is recognised and the directive consumed with no diagnostic. Complements the recovery case (vector tate_chu_yoko) where the target is absent and tcy-target-not-found is raised."
   },
   "source": "明治３３年［＃「３３」は縦中横］に。\n",
   "expected": {

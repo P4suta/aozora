@@ -4,7 +4,7 @@
     "feature": "container",
     "level": "should",
     "spec_section": "6.6",
-    "note": "Both ［＃ここで字上げ終わり］ and ［＃ここで地付き終わり］ close the 地寄せ (align-end) block opened by ［＃ここから地から N 字上げ］; the open-side offset is authoritative. Per §7.6 the round-trip preserves that offset and canonicalises the closer to 地付き終わり. Corrected from an earlier draft that recorded the closer as an unrecognised annotation and dropped the offset on serialize."
+    "note": "[provenance:hand-derived §6.6 + AOZORA-ANNOTATION 2026-06-17] Both ［＃ここで字上げ終わり］ and ［＃ここで地付き終わり］ close the 地寄せ (align-end) block opened by ［＃ここから地から N 字上げ］; the open-side offset is authoritative. Per §7.6 the round-trip preserves that offset and canonicalises the closer to 地付き終わり. Corrected from an earlier draft that recorded the closer as an unrecognised annotation and dropped the offset on serialize."
   },
   "source": "［＃ここから地から3字上げ］\n寄付者名簿。\n［＃ここで字上げ終わり］\n",
   "expected": {

@@ -4,7 +4,7 @@
     "feature": "sashie",
     "level": "must",
     "spec_section": "6.11",
-    "note": "The informative reference html is the figure/img form; an earlier draft carried a bare <!-- aozora_sashie --> comment placeholder. The normative nodes / pairs are unchanged."
+    "note": "[provenance:hand-derived §6.11 + AOZORA-ANNOTATION 2026-06-17] The informative reference html is the figure/img form; an earlier draft carried a bare <!-- aozora_sashie --> comment placeholder. The normative nodes / pairs are unchanged."
   },
   "source": "ある日、［＃挿絵（cover.png）入る］その地に至る。\n",
   "expected": {

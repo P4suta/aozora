@@ -458,9 +458,11 @@ impl<'a> BorrowedAllocator<'a> {
         }))
     }
 
-    /// `AozoraNode::Sashie(Sashie { file, caption })`.
+    /// `AozoraNode::Sashie(Sashie { file, number, caption })`.
     ///
-    /// `file` carries the [`borrowed::NonEmptyStr`] invariant.
+    /// `file` carries the [`borrowed::NonEmptyStr`] invariant. `number` is
+    /// the optional figure index from the numbered form `［＃挿絵{N}（…）入る］`,
+    /// kept verbatim; an empty `number` string is treated as absent.
     ///
     /// # Panics
     ///
@@ -468,11 +470,17 @@ impl<'a> BorrowedAllocator<'a> {
     pub fn sashie(
         &mut self,
         file: &str,
+        number: Option<&str>,
         caption: Option<borrowed::Content<'a>>,
     ) -> borrowed::AozoraNode<'a> {
         let file = borrowed::NonEmptyStr::new(self.interner.intern(file))
             .expect("Phase 3 must emit Sashie with non-empty file path");
-        borrowed::AozoraNode::Sashie(self.arena.alloc(borrowed::Sashie { file, caption }))
+        let number = number.and_then(|n| borrowed::NonEmptyStr::new(self.interner.intern(n)));
+        borrowed::AozoraNode::Sashie(self.arena.alloc(borrowed::Sashie {
+            file,
+            number,
+            caption,
+        }))
     }
 
     /// `AozoraNode::Kaeriten(Kaeriten { mark })`.
@@ -741,10 +749,11 @@ mod tests {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
         let caption = a.content_plain("挿絵キャプション");
-        let n = a.sashie("fig01.png", Some(caption));
+        let n = a.sashie("fig01.png", Some("3"), Some(caption));
         match n {
             borrowed::AozoraNode::Sashie(s) => {
                 assert_eq!(s.file.as_str(), "fig01.png");
+                assert_eq!(s.number.expect("number present").as_str(), "3");
                 assert_eq!(
                     s.caption.and_then(borrowed::Content::as_plain),
                     Some("挿絵キャプション")
@@ -758,10 +767,11 @@ mod tests {
     fn sashie_without_caption() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let n = a.sashie("fig02.png", None);
+        let n = a.sashie("fig02.png", None, None);
         match n {
             borrowed::AozoraNode::Sashie(s) => {
                 assert_eq!(s.file.as_str(), "fig02.png");
+                assert!(s.number.is_none());
                 assert!(s.caption.is_none());
             }
             other => panic!("expected Sashie, got {other:?}"),
