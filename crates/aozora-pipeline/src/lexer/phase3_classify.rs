@@ -2187,8 +2187,11 @@ where
         // won't appear. `m.payload` is a `Copy` arena reference and the
         // `ctx` reborrow of `self.alloc` ended at the `gaiji()` call above,
         // so reading `ucs` and pushing onto `self.diagnostics` is clear of
-        // the borrow. Scope: top-level `※［＃…］` only — gaiji nested inside
-        // a ruby/bouten body is out of scope for now.
+        // the borrow. Scope: this `unresolved-gaiji` warning fires for
+        // top-level `※［＃…］` only. Gaiji nested in a ruby reading / annotation
+        // body are still resolved + rendered (by `build_content_from_body`),
+        // but without this diagnostic; a gaiji buried in a forward-reference
+        // quote target (nested `［＃…］` breaks pairing) falls to `Unknown`.
         if m.payload.ucs.is_none() {
             self.diagnostics
                 .push(Diagnostic::unresolved_gaiji(Span::new(
@@ -2647,6 +2650,13 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         );
         build.segments.push(self.alloc.seg_gaiji(g.payload));
         build.text_start = g.consume_end;
+        // NOTE: a nested gaiji is resolved and rendered here, but
+        // `RecogniseCtx` carries no diagnostics sink (only `alloc` / `source`),
+        // so an *unresolved* nested gaiji renders best-effort as its
+        // description WITHOUT the `unresolved-gaiji` (§9) warning the top-level
+        // `※［＃…］` scan raises. Closing that gap means threading a
+        // diagnostics sink through the content builder — deferred until corpus
+        // demand justifies it (nested unresolved gaiji are vanishingly rare).
         Some(close_idx + 1)
     }
 
