@@ -595,9 +595,10 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "中央揃え",
         family: BodyFamily::CenterMarker,
     },
-    // Other inline / block.
+    // Other inline / block. Needle is bare 挿絵 (not 挿絵（) so the numbered
+    // form 挿絵{N}（…） also reaches classify_sashie_body, which re-validates.
     BodyPattern {
-        needle: "挿絵（",
+        needle: "挿絵",
         family: BodyFamily::SashiePrefix,
     },
     BodyPattern {
@@ -3860,7 +3861,26 @@ const fn is_okurigana_char(ch: char) -> bool {
 /// and confirms the trailing `入る` keyword. The caption is plain content,
 /// rendered into `<figcaption>` (§8).
 fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Option<EmitKind<'a>> {
-    let rest = body.strip_prefix("挿絵（")?;
+    // `挿絵（file）入る` and the numbered `挿絵{N}（file）入る` (N a run of
+    // half/full-width digits before the `（`). A description *before* 挿絵
+    // (`女性と犬の挿絵（…）`, `「…」のキャプション付きの挿絵（…）`) is a separate,
+    // unhandled form — it does not start with 挿絵, so the needle misses it.
+    let after_kw = body.strip_prefix("挿絵")?;
+    let paren = after_kw.find('（')?;
+    let number = if paren == 0 {
+        None
+    } else {
+        let num = &after_kw[..paren];
+        if num
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('０'..='９').contains(&c))
+        {
+            Some(num)
+        } else {
+            return None;
+        }
+    };
+    let rest = &after_kw[paren + '（'.len_utf8()..];
     // `）` is a full-width right parenthesis (U+FF09). Find its first
     // occurrence — corpus rarely nests `（）` inside a filename.
     let close_off = rest.find('）')?;
@@ -3884,7 +3904,7 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
     } else {
         return None;
     };
-    Some(EmitKind::Aozora(alloc.sashie(file, caption)))
+    Some(EmitKind::Aozora(alloc.sashie(file, number, caption)))
 }
 
 /// Classify a `［＃「target」は(大|中|小)見出し］` forward-reference
@@ -5864,7 +5884,45 @@ mod tests {
             })
             .expect("expected a Sashie span");
         assert_eq!(sashie.file.as_str(), "fig01.png");
+        assert!(sashie.number.is_none());
         assert!(sashie.caption.is_none());
+    }
+
+    /// The numbered illustration form `［＃挿絵{N}（file）入る］` keeps the
+    /// figure index verbatim (full-width digits included) and round-trips.
+    #[test]
+    fn sashie_numbered_form_recognized() {
+        for (src, want_num, want_file) in [
+            (
+                "［＃挿絵10（fig01.png、横362×縦489）入る］",
+                "10",
+                "fig01.png、横362×縦489",
+            ),
+            ("［＃挿絵１（fig194_01.png）入る］", "１", "fig194_01.png"),
+        ] {
+            run!(out, src);
+            let sashie = out
+                .spans
+                .iter()
+                .find_map(|s| match aozora_node(s) {
+                    Some(AozoraNode::Sashie(s)) => Some(s),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("expected a Sashie span for {src:?}"));
+            assert_eq!(
+                sashie.number.expect("figure number present").as_str(),
+                want_num,
+                "src={src:?}"
+            );
+            assert_eq!(sashie.file.as_str(), want_file, "src={src:?}");
+        }
+        // A description before 挿絵 is a different, unhandled form.
+        run!(out, "x［＃女性の挿絵（fig.png）入る］y");
+        let has_sashie = out
+            .spans
+            .iter()
+            .any(|s| matches!(aozora_node(s), Some(AozoraNode::Sashie(_))));
+        assert!(!has_sashie, "description-before 挿絵 must not be claimed");
     }
 
     #[test]

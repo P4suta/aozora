@@ -381,7 +381,11 @@ fn emit_center<W: Write>(c: Center, out: &mut W) -> fmt::Result {
 }
 
 fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
-    out.write_str("［＃挿絵（")?;
+    out.write_str("［＃挿絵")?;
+    if let Some(number) = s.number {
+        out.write_str(number.as_str())?;
+    }
+    out.write_char('（')?;
     out.write_str(s.file.as_str())?;
     out.write_char('）')?;
     if let Some(caption) = s.caption {

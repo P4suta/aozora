@@ -313,6 +313,10 @@ pub struct HeadingHint<'src> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sashie<'src> {
     pub file: super::NonEmptyStr<'src>,
+    /// Optional figure number from the `［＃挿絵{N}（…）入る］` numbered form,
+    /// kept as the raw digit string (so `０１` / `10` round-trip verbatim).
+    /// `None` for the plain `［＃挿絵（…）入る］`.
+    pub number: Option<super::NonEmptyStr<'src>>,
     pub caption: Option<Content<'src>>,
 }
 

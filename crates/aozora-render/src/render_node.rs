@@ -689,7 +689,7 @@ mod tests {
     fn sashie_emits_figure_with_img() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let n = alloc.sashie("cover.png", None);
+        let n = alloc.sashie("cover.png", None, None);
         assert_eq!(
             render_node_to_string(n),
             r#"<figure class="aozora-sashie"><img src="cover.png" alt="" /></figure>"#
