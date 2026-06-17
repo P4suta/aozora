@@ -886,6 +886,30 @@ pub(crate) fn prewarm() {
     let _ = body_dispatcher();
 }
 
+/// Classify an input-editor note body into its [`AnnotationKind`], or
+/// `None` if the body is not a recognised editorial note.
+///
+/// These are the corpus's two dominant editorial families:
+/// - `ママ` / `「X」はママ` (and `ルビの「X」はママ`) — *sic*: X is reproduced
+///   as it stands in the source. → [`AnnotationKind::AsIs`].
+/// - `…底本では…` (`「X」は底本では「Y」`, `「X」は底本では脱落`, …) — a
+///   source-text divergence note. → [`AnnotationKind::TextualNote`].
+///
+/// Called only at the tail of [`RecogniseCtx::recognize_annotation`], after
+/// every styling recogniser has declined, so a target-bearing form like
+/// `「ママ」に傍点` has already been claimed as a Bouten and never reaches
+/// here. The note does not restyle its target, so the caller leaves X in
+/// the text and consumes only the bracket.
+fn editorial_note_kind(body: &str) -> Option<AnnotationKind> {
+    if body == "ママ" || body.ends_with("はママ") {
+        Some(AnnotationKind::AsIs)
+    } else if body.contains("底本では") {
+        Some(AnnotationKind::TextualNote)
+    } else {
+        None
+    }
+}
+
 /// Single-pass classification of `body` (the trimmed bytes between
 /// `［＃` and `］`) into an `EmitKind` for body-only annotation
 /// families. Returns `None` if the body matches no body-only family;
@@ -3263,6 +3287,15 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             });
         }
 
+        // Input-editor notes (`「X」はママ`, `「X」は底本では「Y」`, …). These
+        // do not restyle their target — X stays in the text — so they emit a
+        // typed `Annotation` consuming only the bracket, exactly like the
+        // Unknown catch-all but with the correct kind. Checked here, after the
+        // specialised recognisers, so `「ママ」に傍点` etc. are already claimed.
+        if let Some(kind) = editorial_note_kind(body) {
+            return Some(self.typed_annotation_match(directive_span, kind));
+        }
+
         // No specialised recogniser claimed the bracket — fall back to the
         // `Annotation{Unknown}` catch-all.
         Some(self.unknown_annotation_match(directive_span, body, tcy_pending))
@@ -3302,6 +3335,31 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             consume_start: directive_span.start,
             consume_end: directive_span.end,
             pending_diagnostic,
+        }
+    }
+
+    /// Emit a `［＃…］` as an `Annotation` carrying a *specific* kind
+    /// (`AsIs`, `TextualNote`, …) rather than the `Unknown` catch-all.
+    /// Same span discipline as [`Self::unknown_annotation_match`] — the
+    /// whole bracket is consumed and the target text is left in place — so
+    /// the raw round-trips and the HTML output is unchanged (these kinds
+    /// render hidden, as Unknown does); only the typed `AnnotationKind` the
+    /// AST / wire surfaces differs.
+    fn typed_annotation_match(
+        &mut self,
+        directive_span: Span,
+        kind: AnnotationKind,
+    ) -> AnnotationMatch<'a> {
+        let raw = &self.source[directive_span.start as usize..directive_span.end as usize];
+        let payload = self.alloc.make_annotation(raw, kind);
+        let node = self.alloc.annotation(payload);
+        let payload_for_seg = self.alloc.make_annotation(raw, kind);
+        AnnotationMatch {
+            emit: EmitKind::Aozora(node),
+            annotation_payload: Some(payload_for_seg),
+            consume_start: directive_span.start,
+            consume_end: directive_span.end,
+            pending_diagnostic: None,
         }
     }
 }
@@ -3914,11 +3972,15 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let [target] = extracted.targets.as_slice() else {
             return None;
         };
-        // suffix == の左に「<note>」の注記
-        let note_text = extracted
-            .suffix
-            .strip_prefix("の左に「")?
-            .strip_suffix("」の注記")?;
+        // suffix == の左に「<note>」の注記  (explicit left side), or the
+        // bare 「X」に「<note>」の注記 form (the corpus's dominant shape).
+        // Both carry a note attached to the target; `SideNote` has no side
+        // axis, so they map to the same node. `の左に「` is tried first; the
+        // two prefixes are disjoint at offset 0 (`の` vs `に`).
+        let inner = extracted.suffix.strip_suffix("」の注記")?;
+        let note_text = inner
+            .strip_prefix("の左に「")
+            .or_else(|| inner.strip_prefix("に「"))?;
         if note_text.is_empty() {
             return None;
         }
@@ -5080,6 +5142,73 @@ mod tests {
             "expected Annotation{{Unknown}} and no Horizontal open, got {:?}",
             out.spans
         );
+    }
+
+    /// Input-editor notes type correctly instead of degrading to Unknown:
+    /// `「X」はママ` / bare `ママ` → `AsIs`; `…底本では…` → `TextualNote`.
+    /// These were previously dead `AnnotationKind` variants (emitted nowhere
+    /// on the whole corpus). The target text stays in place.
+    #[test]
+    fn editorial_notes_type_as_asis_and_textual_note() {
+        use aozora_syntax::borrowed::AozoraNode;
+        let cases: &[(&str, AnnotationKind)] = &[
+            ("誤［＃「誤」はママ］", AnnotationKind::AsIs),
+            ("あ［＃ママ］", AnnotationKind::AsIs),
+            (
+                "名刺［＃「名刺」は底本では「名剌」］",
+                AnnotationKind::TextualNote,
+            ),
+            ("。［＃「。」は底本では脱落］", AnnotationKind::TextualNote),
+        ];
+        for (src, want) in cases {
+            run!(out, src);
+            let kind = out
+                .spans
+                .iter()
+                .find_map(|s| match aozora_node(s) {
+                    Some(AozoraNode::Annotation(a)) => Some(a.kind),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("expected an Annotation for {src:?}"));
+            assert_eq!(kind, *want, "src = {src:?}");
+        }
+    }
+
+    /// The bare `「X」に「Y」の注記` side-annotation (the corpus's dominant
+    /// shape) is recognised as a `SideNote`, like the explicit
+    /// `「X」の左に「Y」の注記` left form. `SideNote` has no side axis, so both
+    /// map to the same node.
+    #[test]
+    fn side_note_right_form_recognised() {
+        use aozora_syntax::borrowed::AozoraNode;
+        for src in [
+            "は［＃「は」に「ママ」の注記］",
+            "は［＃「は」の左に「ママ」の注記］",
+        ] {
+            run!(out, src);
+            let is_side_note = out
+                .spans
+                .iter()
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::SideNote(_))));
+            assert!(
+                is_side_note,
+                "expected a SideNote for {src:?}: {:?}",
+                out.spans
+            );
+        }
+    }
+
+    /// A target-bearing `「ママ」に傍点` must still be claimed as a Bouten by
+    /// the earlier recogniser — the editorial-note tail never sees it.
+    #[test]
+    fn mama_target_with_bouten_stays_bouten() {
+        use aozora_syntax::borrowed::AozoraNode;
+        run!(out, "ママ［＃「ママ」に傍点］");
+        let is_bouten = out
+            .spans
+            .iter()
+            .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_))));
+        assert!(is_bouten, "expected a Bouten, got {:?}", out.spans);
     }
 
     #[test]
