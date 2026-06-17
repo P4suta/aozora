@@ -535,7 +535,18 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             };
             write!(out, "［＃ここから{magnitude}段階{word}文字］")
         }
+        ContainerKind::SmallScript { side } => {
+            write!(out, "［＃行{}小書き］", small_script_side_word(side))
+        }
         _ => out.write_str(container_open_marker(kind)),
+    }
+}
+
+/// 小書き side keyword: `右` / `左`.
+const fn small_script_side_word(side: BoutenPosition) -> &'static str {
+    match side {
+        BoutenPosition::Left => "左",
+        _ => "右",
     }
 }
 
@@ -569,6 +580,9 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
         } else {
             "［＃ここで小さな文字終わり］"
         }),
+        ContainerKind::SmallScript { side } => {
+            write!(out, "［＃行{}小書き終わり］", small_script_side_word(side))
+        }
         _ => out.write_str(container_close_marker(kind)),
     }
 }

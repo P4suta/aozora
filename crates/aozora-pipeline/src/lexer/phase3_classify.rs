@@ -436,6 +436,12 @@ enum BodyFamily {
     /// needle anchors the body; `parse_emphasis_body` reads the full body
     /// for the kind, the block vs inline form, and open vs close.
     Emphasis,
+
+    /// 小書き range form (`行右小書き` / `行左小書き`, with optional `終わり`
+    /// close). The bare-range sibling of the forward `「X」は行右小書き`
+    /// emphasis leaf; `parse_small_script_range_body` reads the full body
+    /// for the 右/左 side and open vs close.
+    SmallScriptRange,
 }
 
 /// Static pattern table. Order is irrelevant for behavior because the
@@ -528,6 +534,24 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "横組み終わり",
         family: BodyFamily::HorizontalBlockEnd,
+    },
+    // 小書き range: ［＃行右小書き］ … ［＃行右小書き終わり］ (and 行左).
+    // LeftmostLongest keeps 行右小書き終わり winning over 行右小書き.
+    BodyPattern {
+        needle: "行右小書き",
+        family: BodyFamily::SmallScriptRange,
+    },
+    BodyPattern {
+        needle: "行右小書き終わり",
+        family: BodyFamily::SmallScriptRange,
+    },
+    BodyPattern {
+        needle: "行左小書き",
+        family: BodyFamily::SmallScriptRange,
+    },
+    BodyPattern {
+        needle: "行左小書き終わり",
+        family: BodyFamily::SmallScriptRange,
     },
     BodyPattern {
         needle: "ここで段組終わり",
@@ -1207,6 +1231,21 @@ fn classify_annotation_body<'a>(
                 // future weight pair as the bold container.
                 _ => ContainerKind::Bold { block },
             };
+            Some((
+                if is_close {
+                    EmitKind::BlockClose(container)
+                } else {
+                    EmitKind::BlockOpen(container)
+                },
+                None,
+            ))
+        }
+        BodyFamily::SmallScriptRange => {
+            // `行右小書き` / `行左小書き` with an optional `終わり` close.
+            // Re-parse the full body so `行右小書きほげ` (needle prefix but
+            // longer body) declines to Annotation{Unknown}.
+            let (side, is_close) = parse_small_script_range_body(body)?;
+            let container = ContainerKind::SmallScript { side };
             Some((
                 if is_close {
                     EmitKind::BlockClose(container)
@@ -4306,6 +4345,23 @@ fn parse_bouten_range_body(body: &str) -> Option<(BoutenKind, BoutenPosition, bo
     Some((kind, position, is_close))
 }
 
+/// Parse a 小書き range body into `(side, is_close)`. `行右小書き` →
+/// `BoutenPosition::Right`, `行左小書き` → `Left`; an optional `終わり`
+/// suffix marks the close. Returns `None` (→ `Annotation{Unknown}`) for any
+/// other body, so a needle-prefix-but-longer body like `行右小書きほげ`
+/// declines cleanly.
+fn parse_small_script_range_body(body: &str) -> Option<(BoutenPosition, bool)> {
+    let (is_close, core) = body
+        .strip_suffix("終わり")
+        .map_or((false, body), |c| (true, c));
+    let side = match core {
+        "行右小書き" => BoutenPosition::Right,
+        "行左小書き" => BoutenPosition::Left,
+        _ => return None,
+    };
+    Some((side, is_close))
+}
+
 /// Parse a 太字 / 斜体 range / block body into `(kind, block, is_close)`.
 /// `block` is `true` for the `ここから…` / `ここで…終わり` block form,
 /// `false` for the bare inline range `［＃太字］…［＃太字終わり］`. Returns
@@ -5158,6 +5214,60 @@ mod tests {
             unknown && !opened_horizontal,
             "expected Annotation{{Unknown}} and no Horizontal open, got {:?}",
             out.spans
+        );
+    }
+
+    /// 小書き range `［＃行右小書き］ … ［＃行右小書き終わり］` (and 行左) —
+    /// the bare-range sibling of the forward `「X」は行右小書き` emphasis —
+    /// opens an inline `SmallScript` container carrying the 右/左 side.
+    #[test]
+    fn small_script_range_recognised() {
+        let cases: &[(&str, ContainerKind)] = &[
+            (
+                "x［＃行右小書き］２）［＃行右小書き終わり］y",
+                ContainerKind::SmallScript {
+                    side: BoutenPosition::Right,
+                },
+            ),
+            (
+                "x［＃行左小書き］左［＃行左小書き終わり］y",
+                ContainerKind::SmallScript {
+                    side: BoutenPosition::Left,
+                },
+            ),
+        ];
+        for (src, want) in cases {
+            run!(out, src);
+            let opens: Vec<ContainerKind> = out
+                .spans
+                .iter()
+                .filter_map(|s| match s.kind {
+                    SpanKind::BlockOpen(k) => Some(k),
+                    _ => None,
+                })
+                .collect();
+            let closes: Vec<ContainerKind> = out
+                .spans
+                .iter()
+                .filter_map(|s| match s.kind {
+                    SpanKind::BlockClose(k) => Some(k),
+                    _ => None,
+                })
+                .collect();
+            assert!(opens.contains(want), "open for {src:?}: {opens:?}");
+            assert!(closes.contains(want), "close for {src:?}: {closes:?}");
+        }
+        // A needle-prefix-but-longer body must not be claimed.
+        run!(out, "x［＃行右小書きほげ］y");
+        let opened = out.spans.iter().any(|s| {
+            matches!(
+                s.kind,
+                SpanKind::BlockOpen(ContainerKind::SmallScript { .. })
+            )
+        });
+        assert!(
+            !opened,
+            "行右小書きほげ must not open a SmallScript container"
         );
     }
 

@@ -101,6 +101,13 @@ pub enum ContainerKind {
     /// Renders as
     /// `<div class="aozora-container aozora-container-font-larger" data-steps="N">`.
     FontSize { steps: i8 },
+    /// `［＃行右小書き］ ... ［＃行右小書き終わり］` (and the 行左 variant) —
+    /// the range counterpart of the forward-reference small-script emphasis
+    /// (`「X」は行右小書き` → [`crate::EmphasisKind::SmallRight`]). `side`
+    /// records 右 / 左. Inline (sits within a line, like the 傍点 range), so
+    /// it gets no block padding and renders as
+    /// `<span class="aozora-koshogaki-right">` / `…-left`.
+    SmallScript { side: BoutenPosition },
 }
 
 impl ContainerKind {
@@ -128,6 +135,7 @@ impl ContainerKind {
             Self::Table => "table",
             Self::Horizontal => "horizontal",
             Self::FontSize { .. } => "font-size",
+            Self::SmallScript { .. } => "small-script",
         }
     }
 
@@ -160,7 +168,10 @@ impl ContainerKind {
     pub const fn is_inline(self) -> bool {
         matches!(
             self,
-            Self::BoutenRange { .. } | Self::Bold { block: false } | Self::Italic { block: false }
+            Self::BoutenRange { .. }
+                | Self::Bold { block: false }
+                | Self::Italic { block: false }
+                | Self::SmallScript { .. }
         )
     }
 }

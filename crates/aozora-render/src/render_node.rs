@@ -233,7 +233,12 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
 
 /// Emit a container's opening tag. Block containers render a
 /// `<div class="aozora-container …">`; the inline range forms (bouten,
-/// bare 太字 / 斜体) render their inline element directly.
+/// bare 太字 / 斜体, 小書き) render their inline element directly.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one match arm per ContainerKind — splitting would scatter the \
+              1:1 kind→markup mapping that mirrors emit_container_open"
+)]
 fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::Result {
     match kind {
         ContainerKind::Indent {
@@ -325,6 +330,14 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
         // Paired / block heading — same element as the forward-reference
         // leaf, but wrapping the delimited content (phrasing).
         ContainerKind::Heading { kind, style, .. } => write_heading_open(kind, style, writer),
+        // 小書き range — inline `<span>`, matching the forward-reference
+        // `EmphasisKind::SmallRight` / `SmallLeft` leaf classes.
+        ContainerKind::SmallScript {
+            side: aozora_syntax::BoutenPosition::Left,
+        } => writer.write_str(r#"<span class="aozora-koshogaki-left">"#),
+        ContainerKind::SmallScript { .. } => {
+            writer.write_str(r#"<span class="aozora-koshogaki-right">"#)
+        }
         _ => writer.write_str(r#"<div class="aozora-container">"#),
     }
 }
@@ -338,6 +351,7 @@ fn render_container_close<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt:
             ContainerKind::BoutenRange { .. } => "</em>",
             ContainerKind::Bold { block: false } => "</b>",
             ContainerKind::Italic { block: false } => "</i>",
+            ContainerKind::SmallScript { .. } => "</span>",
             _ => "</div>",
         }),
     }
