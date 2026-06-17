@@ -47,7 +47,43 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
+  # Classify the PR diff so the heavy Rust / SIMD / wasm / Python matrix
+  # only runs when code that affects it changed. A docs-only, playground-
+  # only, or handbook-only PR skips straight to the lightweight checks +
+  # the `ci-success` gate. Conservative by design: ANY change under
+  # crates/ (except the handbook), the Cargo manifests, the toolchain,
+  # Docker, the Justfile, or CI wiring flips `rust` true and runs the
+  # full matrix — so a config/CI change is always validated end-to-end.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      book: ${{ steps.filter.outputs.book }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d  # v4.0.1
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - '!crates/aozora-book/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'deny.toml'
+              - 'rustfmt.toml'
+              - 'clippy.toml'
+              - 'Dockerfile'
+              - 'docker-compose*.yml'
+              - 'Justfile'
+              - '.github/**'
+            book:
+              - 'crates/aozora-book/**'
+
   msrv:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     # Verify that the pinned MSRV (1.95.0) still builds. Uses the
     # native runner toolchain rather than the dev image, because the
     # point is exercising a clean rustc 1.95.0 install, which the
@@ -67,7 +103,9 @@ jobs:
 
   commitlint:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    # Skip for dependabot: its auto-generated subjects/bodies exceed the
+    # 50/72 limits, and its PRs squash-merge with a maintainer subject.
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
@@ -75,8 +113,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: committed
+      # --no-merge-commit: `gh pr update-branch` merge commits ("Merge
+      # branch 'main' …") are not Conventional Commits and must not fail
+      # the lint.
       - name: Check Conventional Commits (committed)
-        run: committed "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+        run: committed --no-merge-commit "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
 
   # Build the dev image ONCE per run so the heavy `cargo binstall`
   # (cargo-tools) layer is never re-fetched live across the container
@@ -87,6 +128,8 @@ jobs:
   # GHCR, no token) and saves it to the runner tar cache; every
   # `needs: dev-image` job then restores that tar and `docker load`s it.
   dev-image:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -104,7 +147,8 @@ jobs:
   # cache-miss run.
   lint:
     name: lint (${{ matrix.target }})
-    needs: dev-image
+    needs: [changes, dev-image]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -122,7 +166,8 @@ jobs:
   # Splitting them into two jobs duplicated the workspace cargo build
   # for ~3 extra wall-clock minutes per push without adding signal.
   coverage:
-    needs: dev-image
+    needs: [changes, dev-image]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -136,7 +181,8 @@ jobs:
   # failing the PR. Run `just doc` here too so doc regressions are caught
   # at review time. Mirrors the sibling afm repo's `doc` job.
   doc:
-    needs: dev-image
+    needs: [changes, dev-image]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -144,7 +190,8 @@ jobs:
       - run: just doc
 
   audit:
-    needs: dev-image
+    needs: [changes, dev-image]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -165,7 +212,8 @@ jobs:
   # regenerate after touching `aozora::wire::*` or any `pub const ALL`
   # array now fails CI rather than landing silently.
   drift-gate:
-    needs: dev-image
+    needs: [changes, dev-image]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -175,7 +223,8 @@ jobs:
   # Phase O4 — WPT-style conformance suite. Runs every fixture
   # through the parser and asserts every `must`-tier case passes.
   conformance:
-    needs: dev-image
+    needs: [changes, dev-image]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -189,6 +238,8 @@ jobs:
   # `AozoraTree → pandoc_ast::Pandoc` projection or the JSON
   # round-trip through `pandoc -f json -t html`.
   pandoc-smoke:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -216,6 +267,8 @@ jobs:
   # `cargo build -p aozora-ffi` produces a working library AND that
   # the cbindgen build script generates `aozora.h` cleanly.
   smoke-ffi:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -229,6 +282,8 @@ jobs:
   # `wasm-pack build crates/aozora-wasm --target web --release`.
   # Build-only: no npm publish.
   wasm-build:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -265,6 +320,8 @@ jobs:
   # up on PR. Build-only on x86 hosts wouldn't catch correctness
   # regressions.
   cross-aarch64:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -291,6 +348,8 @@ jobs:
   # WASM SIMD intrinsic mapping (`i8x16_swizzle`, `u8x16_shr`,
   # `u8x16_shuffle` const-index encoding) at the codegen level.
   wasm-test:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -317,6 +376,8 @@ jobs:
   # across the range (not just compiles). `just smoke-py` is the local
   # host-side mirror. No PyPI publish (see publish-pypi.yml).
   python-wheel:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     name: python wheel (py${{ matrix.python }})
     runs-on: ubuntu-latest
     strategy:
@@ -352,6 +413,8 @@ jobs:
   # Independent buildx cache scope (`book`) keeps this job decoupled
   # from the heavier dev image.
   book:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.book == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -380,3 +443,42 @@ jobs:
         run: |
           docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local \
             lychee --config lychee.toml 'book/**/*.html'
+
+  # Single required status check. Every ci.yml job feeds in; this gate
+  # passes iff none of them FAILED — a job that change-aware gating
+  # SKIPPED counts as fine. Branch protection requires only `ci-success`
+  # plus the CodeQL contexts, so a docs/playground/CI-only PR that skips
+  # the whole Rust matrix still merges, while any genuine failure (in a
+  # job that did run) blocks the merge.
+  ci-success:
+    name: ci-success
+    if: always()
+    needs:
+      - changes
+      - msrv
+      - commitlint
+      - dev-image
+      - lint
+      - coverage
+      - doc
+      - audit
+      - drift-gate
+      - conformance
+      - pandoc-smoke
+      - smoke-ffi
+      - wasm-build
+      - cross-aarch64
+      - wasm-test
+      - python-wheel
+      - book
+    runs-on: ubuntu-latest
+    steps:
+      # Fail iff a job that actually RAN ended in failure/cancelled. Jobs
+      # that change-aware gating SKIPPED report "skipped" and are fine.
+      - name: Gate on CI job results
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "::error::a required CI job failed or was cancelled — see the job list above"
+          exit 1
+      - name: All CI jobs passed or were skipped
+        run: echo "ci-success ✔"
