@@ -311,6 +311,17 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
         ContainerKind::Horizontal => {
             writer.write_str(r#"<div class="aozora-container aozora-container-horizontal">"#)
         }
+        ContainerKind::FontSize { steps } => {
+            let (class, magnitude) = if steps >= 0 {
+                ("aozora-container-font-larger", steps)
+            } else {
+                ("aozora-container-font-smaller", -steps)
+            };
+            write!(
+                writer,
+                r#"<div class="aozora-container {class}" data-steps="{magnitude}">"#,
+            )
+        }
         // Paired / block heading — same element as the forward-reference
         // leaf, but wrapping the delimited content (phrasing).
         ContainerKind::Heading { kind, style, .. } => write_heading_open(kind, style, writer),

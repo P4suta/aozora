@@ -94,6 +94,13 @@ pub enum ContainerKind {
     /// container; the enclosed content is plain text. Renders as
     /// `<div class="aozora-container aozora-container-horizontal">`.
     Horizontal,
+    /// `［＃ここからN段階大きな文字］ ... ［＃ここで大きな文字終わり］` (and the
+    /// 小さな variant) — a block-level relative font-size shift. `steps` is the
+    /// signed stage count (positive = 大きな, negative = 小さな); the close
+    /// marker carries only the direction (its magnitude is a `±1` placeholder).
+    /// Renders as
+    /// `<div class="aozora-container aozora-container-font-larger" data-steps="N">`.
+    FontSize { steps: i8 },
 }
 
 impl ContainerKind {
@@ -120,6 +127,7 @@ impl ContainerKind {
             Self::Columns { .. } => "columns",
             Self::Table => "table",
             Self::Horizontal => "horizontal",
+            Self::FontSize { .. } => "font-size",
         }
     }
 

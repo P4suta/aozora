@@ -1,0 +1,55 @@
+{
+  "name": "font_size_block",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.17",
+    "note": "[provenance:hand-derived §6.17 + AOZORA-ANNOTATION 2026-06-17] The block form ［＃ここからN段階大きな文字］ … ［＃ここで大きな文字終わり］ (corpus: ~3 openers, ~25 closers) shifts the enclosed paragraphs' size. The opener carries the signed magnitude; the closer carries only the direction (大きな vs 小さな), its magnitude a ±1 placeholder, and pairs by the font-size family (§7.1). Renders <div class=\"aozora-container aozora-container-font-larger\" data-steps=\"N\">. Offsets computed from the §3 byte model; cross-checked against the reference processor. New family."
+  },
+  "source": "［＃ここから2段階大きな文字］\n大文字\n［＃ここで大きな文字終わり］\n",
+  "expected": {
+    "html": "<div class=\"aozora-container aozora-container-font-larger\" data-steps=\"2\">\n<p>大文字</p>\n</div>",
+    "serialize": "\n\n［＃ここから2段階大きな文字］\n\n大文字\n\n［＃ここで大きな文字終わり］\n\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 0,
+          "end": 43
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 54,
+          "end": 96
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 0,
+          "end": 3
+        },
+        "close": {
+          "start": 40,
+          "end": 43
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 54,
+          "end": 57
+        },
+        "close": {
+          "start": 93,
+          "end": 96
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

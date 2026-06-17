@@ -527,6 +527,14 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
         ContainerKind::Columns { count } => write!(out, "［＃ここから{count}段組み］"),
         ContainerKind::Table => out.write_str("［＃ここから表］"),
         ContainerKind::Horizontal => out.write_str("［＃ここから横組み］"),
+        ContainerKind::FontSize { steps } => {
+            let (magnitude, word) = if steps >= 0 {
+                (steps, "大きな")
+            } else {
+                (-steps, "小さな")
+            };
+            write!(out, "［＃ここから{magnitude}段階{word}文字］")
+        }
         _ => out.write_str(container_open_marker(kind)),
     }
 }
@@ -556,6 +564,11 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
         ContainerKind::Columns { .. } => out.write_str("［＃ここで段組み終わり］"),
         ContainerKind::Table => out.write_str("［＃ここで表終わり］"),
         ContainerKind::Horizontal => out.write_str("［＃ここで横組み終わり］"),
+        ContainerKind::FontSize { steps } => out.write_str(if steps >= 0 {
+            "［＃ここで大きな文字終わり］"
+        } else {
+            "［＃ここで小さな文字終わり］"
+        }),
         _ => out.write_str(container_close_marker(kind)),
     }
 }

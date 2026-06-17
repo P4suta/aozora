@@ -386,6 +386,7 @@ enum BodyFamily {
     TableBlockEnd,       // ここで表終わり
     HorizontalBlockOpen, // ここから横組み
     HorizontalBlockEnd,  // ここで横組み終わり
+    FontSizeBlockEnd,    // ここで大きな/小さな文字終わり
     ColumnsBlockEnd,     // ここで段組(み)終わり
     WarichuOpen,         // 割り注
     WarichuClose,        // 割り注終わり
@@ -473,6 +474,14 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "ここで横組み終わり",
         family: BodyFamily::HorizontalBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここで大きな文字終わり",
+        family: BodyFamily::FontSizeBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここで小さな文字終わり",
+        family: BodyFamily::FontSizeBlockEnd,
     },
     BodyPattern {
         needle: "ここで段組終わり",
@@ -940,6 +949,19 @@ fn classify_annotation_body<'a>(
         BodyFamily::HorizontalBlockEnd if exact => {
             Some((EmitKind::BlockClose(ContainerKind::Horizontal), None))
         }
+        BodyFamily::FontSizeBlockEnd if exact => {
+            // The close marker carries only the direction; its magnitude is a
+            // ±1 placeholder (the open-side stage count is authoritative).
+            let steps = if body == "ここで小さな文字終わり" {
+                -1
+            } else {
+                1
+            };
+            Some((
+                EmitKind::BlockClose(ContainerKind::FontSize { steps }),
+                None,
+            ))
+        }
         BodyFamily::ColumnsBlockEnd if exact => Some((
             // Close marker carries no count; the open-side payload is authoritative.
             EmitKind::BlockClose(ContainerKind::Columns { count: 0 }),
@@ -1037,7 +1059,11 @@ fn classify_annotation_body<'a>(
                     None,
                 ))
             } else {
-                None
+                // ここから{N}段階大きな/小さな文字 — block font-size shift.
+                // Shares the `ここから` prefix; closes with the direction-only
+                // `ここで大きな/小さな文字終わり`.
+                font_size_block_open_steps(tail, n)
+                    .map(|steps| (EmitKind::BlockOpen(ContainerKind::FontSize { steps }), None))
             }
         }
         BodyFamily::AlignEndBlockParamPrefix => {
@@ -1117,6 +1143,7 @@ fn classify_annotation_body<'a>(
         | BodyFamily::TableBlockEnd
         | BodyFamily::HorizontalBlockOpen
         | BodyFamily::HorizontalBlockEnd
+        | BodyFamily::FontSizeBlockEnd
         | BodyFamily::ColumnsBlockEnd
         | BodyFamily::WarichuOpen
         | BodyFamily::WarichuClose
@@ -4073,6 +4100,22 @@ fn parse_font_size_suffix(s: &str) -> Option<EmphasisKind> {
     }
 }
 
+/// Signed stage count for a `ここから{N}段階大きな/小さな文字` block opener,
+/// where `tail` is the body after the `ここから{N}` prefix and `magnitude`
+/// is `N`. `大きな` → `+N`, `小さな` → `-N`; `None` for a zero/overflowing
+/// magnitude or any other tail.
+fn font_size_block_open_steps(tail: &str, magnitude: u8) -> Option<i8> {
+    let steps = i8::try_from(magnitude).ok()?;
+    if steps == 0 {
+        return None;
+    }
+    match tail {
+        "段階大きな文字" => Some(steps),
+        "段階小さな文字" => Some(-steps),
+        _ => None,
+    }
+}
+
 /// Map the trailing keyword (after `に`) to a [`BoutenKind`].
 ///
 /// Covers the eleven bouten kinds catalogued at
@@ -5827,6 +5870,32 @@ mod tests {
         assert!(matches!(
             out.spans[2].kind,
             SpanKind::BlockClose(ContainerKind::Keigakomi)
+        ));
+    }
+
+    #[test]
+    fn container_open_close_font_size_block() {
+        // ここからN段階大きな/小さな文字 — the opener carries the signed
+        // magnitude; the direction-only closer pairs by the font-size family.
+        run!(
+            out,
+            "［＃ここから2段階大きな文字］大［＃ここで大きな文字終わり］"
+        );
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::FontSize { steps: 2 })
+        ));
+        assert!(matches!(
+            out.spans[2].kind,
+            SpanKind::BlockClose(ContainerKind::FontSize { steps: 1 })
+        ));
+        run!(
+            out2,
+            "［＃ここから1段階小さな文字］小［＃ここで小さな文字終わり］"
+        );
+        assert!(matches!(
+            out2.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::FontSize { steps: -1 })
         ));
     }
 
