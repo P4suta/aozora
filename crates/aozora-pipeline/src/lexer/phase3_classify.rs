@@ -307,7 +307,25 @@ fn install_forward_target_index_from_source(source: &str) {
 
     // For each `「`, find the next `」` and slice the body. UTF-8
     // boundaries are guaranteed because both delimiters are 3-byte
-    // sequences carved from `&str` source.
+    // sequences carved from `&str` source. The set of quote bodies is
+    // the set of *candidate* forward-reference targets — every
+    // `［＃「X」に傍点／は見出し／は縦中横］` names its target with a `「」`
+    // pair, so the target appears as a quote body at least once (inside
+    // its own directive).
+    //
+    // The stored value must be the target's first occurrence **as a
+    // substring of the source text** — the same question the
+    // `source[..cutoff].contains(target)` fallback answers — NOT the
+    // position of the `「` that introduced this body. The canonical
+    // forward reference is `語句［＃「語句」に傍点］`, where the referent
+    // `語句` is *bare* text before the bracket and the only `「語句」`
+    // pair lives *inside* the directive (after `［`). Recording the
+    // quote position there would put `first_position` past every
+    // directive's cutoff, so `first_pos < cutoff` is always false and
+    // the bouten silently degrades to `Annotation{Unknown}` — exactly
+    // the bug that dropped ~half of all corpus 傍点/見出し once a
+    // document crossed the 64-quote AC-install threshold. `memmem::find`
+    // over the whole source picks up the bare referent.
     let mut first_positions: HashMap<String, u32> = HashMap::with_capacity(opens.len());
     for open_pos in opens {
         let body_start = open_pos + QUOTE_OPEN.len();
@@ -320,7 +338,11 @@ fn install_forward_target_index_from_source(source: &str) {
             continue;
         }
         first_positions.entry(body.to_owned()).or_insert_with(|| {
-            u32::try_from(open_pos).expect("source positions fit in u32 per Phase 0 cap")
+            // First substring occurrence anywhere in the source. The
+            // body provably occurs at `body_start` (its own quote), so
+            // `find` never returns `None`; the fallback keeps it total.
+            let first = memmem::find(bytes, body.as_bytes()).unwrap_or(body_start);
+            u32::try_from(first).expect("source positions fit in u32 per Phase 0 cap")
         });
     }
 
@@ -6169,6 +6191,64 @@ mod tests {
             "without prior `「青空」`, expected fallback Annotation{{Unknown}} and no Bouten, \
              got spans={:?}",
             b.spans
+        );
+    }
+
+    /// Regression: once a document crosses
+    /// `FORWARD_QUOTE_BODY_THRESHOLD` the Aho-Corasick forward-target
+    /// index installs and takes over from the substring fallback. It
+    /// must give the SAME answer — including for the canonical
+    /// `語句［＃「語句」に傍点］`, where the referent `語句` is *bare*
+    /// text before the bracket and the only `「語句」` pair lives
+    /// *inside* the directive (after the `［` cutoff).
+    ///
+    /// A prior index bug recorded each body's *quote* position rather
+    /// than its first substring position; for the canonical shape that
+    /// quote is the in-bracket one (past the cutoff), so
+    /// `first_pos < cutoff` was always false and the bouten silently
+    /// degraded to `Annotation{Unknown}`. On real corpus this dropped
+    /// ~114k 傍点/見出し/縦中横 occurrences (≈59 % of all
+    /// `Annotation{Unknown}`) the moment a work grew past 64 quotes —
+    /// which every full-length work does. The short synthetic vectors
+    /// never crossed the threshold, so the conformance suite stayed
+    /// green throughout: this test deliberately crosses it.
+    #[test]
+    fn forward_bouten_recognised_above_ac_threshold_with_bare_target() {
+        use aozora_syntax::borrowed::AozoraNode;
+
+        // 70 distinct quote bodies → forces the AC index to install
+        // (threshold is 64). None of them is `語句`, so the target's
+        // only quoted occurrence is the one inside the directive.
+        let mut src = String::new();
+        for i in 0..70 {
+            src.push_str("「ダミー");
+            src.push_str(&i.to_string());
+            src.push_str("」\n");
+        }
+        // Canonical forward bouten with a bare preceding referent.
+        src.push_str("語句［＃「語句」に傍点］");
+
+        run!(out, src.as_str());
+
+        let has_bouten = out
+            .spans
+            .iter()
+            .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_))));
+        let degraded = out.spans.iter().any(|s| {
+            matches!(
+                aozora_node(s),
+                Some(AozoraNode::Annotation(ann)) if ann.kind == AnnotationKind::Unknown
+            )
+        });
+        assert!(
+            has_bouten,
+            "bare-target 傍点 must be recognised with the AC index installed; spans={:?}",
+            out.spans
+        );
+        assert!(
+            !degraded,
+            "the 傍点 directive must not degrade to Annotation{{Unknown}}; spans={:?}",
+            out.spans
         );
     }
 
