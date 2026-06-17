@@ -6312,11 +6312,10 @@ mod tests {
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("expected a Sashie span for {src:?}"));
-            assert_eq!(
-                sashie.number.expect("figure number present").as_str(),
-                want_num,
-                "src={src:?}"
-            );
+            let num = sashie
+                .number
+                .unwrap_or_else(|| panic!("figure number present for {src:?}"));
+            assert_eq!(num.as_str(), want_num, "src={src:?}");
             assert_eq!(sashie.file.as_str(), want_file, "src={src:?}");
         }
         // A description before 挿絵 is a different, unhandled form.
