@@ -134,6 +134,7 @@ fn render_emphasis<W: Write>(e: &Emphasis<'_>, writer: &mut W) -> fmt::Result {
         EmphasisKind::SmallRight => (r#"<span class="aozora-koshogaki-right">"#, "</span>"),
         EmphasisKind::SmallLeft => (r#"<span class="aozora-koshogaki-left">"#, "</span>"),
         EmphasisKind::KeigakomiInline => (r#"<span class="aozora-keigakomi-inline">"#, "</span>"),
+        EmphasisKind::HorizontalInline => (r#"<span class="aozora-horizontal">"#, "</span>"),
         // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
         // weight default to the bold element.
         _ => (r#"<b class="aozora-bold">"#, "</b>"),
@@ -224,96 +225,110 @@ fn render_kaeriten<W: Write>(k: &Kaeriten<'_>, writer: &mut W) -> fmt::Result {
 
 fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> fmt::Result {
     if entering {
-        match c.kind {
-            ContainerKind::Indent {
-                amount,
-                wrap,
-                center,
-            } => {
-                write!(
-                    writer,
-                    r#"<div class="aozora-container aozora-container-indent aozora-container-indent-{amount}"#,
-                )?;
-                if wrap.is_some() {
-                    writer.write_str(" aozora-container-wrap-indent")?;
-                }
-                if center {
-                    writer.write_str(" aozora-container-center")?;
-                }
-                write!(writer, r#"" data-amount="{amount}""#)?;
-                if let Some(w) = wrap {
-                    write!(writer, r#" data-wrap="{w}""#)?;
-                }
-                writer.write_str(">")
-            }
-            ContainerKind::AlignEnd { offset } => {
-                write!(
-                    writer,
-                    r#"<div class="aozora-container aozora-container-align-end" data-offset="{offset}">"#,
-                )
-            }
-            ContainerKind::LineWidth { width } => {
-                write!(
-                    writer,
-                    r#"<div class="aozora-container aozora-container-line-width" data-width="{width}">"#,
-                )
-            }
-            ContainerKind::Keigakomi => {
-                writer.write_str(r#"<div class="aozora-container aozora-container-keigakomi">"#)
-            }
-            ContainerKind::Warichu => {
-                writer.write_str(r#"<div class="aozora-container aozora-container-warichu">"#)
-            }
-            ContainerKind::BoutenRange { kind, position } => {
-                // Range-form 傍点 / 傍線: an inline `<em>` matching the
-                // forward-reference bouten markup so a stylesheet picks the
-                // same per-variant treatment.
-                write!(
-                    writer,
-                    r#"<em class="aozora-bouten aozora-bouten-{kind} aozora-bouten-{pos}">"#,
-                    kind = bouten::kind_slug(kind),
-                    pos = bouten::position_slug(position),
-                )
-            }
-            // 太字 / 斜体. The bare inline range (`block: false`) uses the
-            // same presentational `<b>` / `<i>` element as the
-            // forward-reference [`render_emphasis`] leaf. The ここから-block
-            // form (`block: true`) wraps whole paragraphs, so it takes a
-            // block `<div>` (an inline `<b>` around `<p>` would be invalid),
-            // following the indent / keigakomi container convention; the
-            // `aozora-container-bold` / `-italic` class carries the styling.
-            ContainerKind::Bold { block: false } => writer.write_str(r#"<b class="aozora-bold">"#),
-            ContainerKind::Italic { block: false } => {
-                writer.write_str(r#"<i class="aozora-italic">"#)
-            }
-            ContainerKind::Bold { block: true } => {
-                writer.write_str(r#"<div class="aozora-container aozora-container-bold">"#)
-            }
-            ContainerKind::Italic { block: true } => {
-                writer.write_str(r#"<div class="aozora-container aozora-container-italic">"#)
-            }
-            ContainerKind::Columns { count } => write!(
-                writer,
-                r#"<div class="aozora-container aozora-container-columns" data-columns="{count}">"#,
-            ),
-            ContainerKind::Table => {
-                writer.write_str(r#"<div class="aozora-container aozora-container-table">"#)
-            }
-            // Paired / block heading — same element as the forward-reference
-            // leaf, but wrapping the delimited content (phrasing).
-            ContainerKind::Heading { kind, style, .. } => write_heading_open(kind, style, writer),
-            _ => writer.write_str(r#"<div class="aozora-container">"#),
-        }
+        render_container_open(c.kind, writer)
     } else {
-        match c.kind {
-            ContainerKind::Heading { kind, style, .. } => write_heading_close(kind, style, writer),
-            _ => writer.write_str(match c.kind {
-                ContainerKind::BoutenRange { .. } => "</em>",
-                ContainerKind::Bold { block: false } => "</b>",
-                ContainerKind::Italic { block: false } => "</i>",
-                _ => "</div>",
-            }),
+        render_container_close(c.kind, writer)
+    }
+}
+
+/// Emit a container's opening tag. Block containers render a
+/// `<div class="aozora-container …">`; the inline range forms (bouten,
+/// bare 太字 / 斜体) render their inline element directly.
+fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::Result {
+    match kind {
+        ContainerKind::Indent {
+            amount,
+            wrap,
+            center,
+        } => {
+            write!(
+                writer,
+                r#"<div class="aozora-container aozora-container-indent aozora-container-indent-{amount}"#,
+            )?;
+            if wrap.is_some() {
+                writer.write_str(" aozora-container-wrap-indent")?;
+            }
+            if center {
+                writer.write_str(" aozora-container-center")?;
+            }
+            write!(writer, r#"" data-amount="{amount}""#)?;
+            if let Some(w) = wrap {
+                write!(writer, r#" data-wrap="{w}""#)?;
+            }
+            writer.write_str(">")
         }
+        ContainerKind::AlignEnd { offset } => {
+            write!(
+                writer,
+                r#"<div class="aozora-container aozora-container-align-end" data-offset="{offset}">"#,
+            )
+        }
+        ContainerKind::LineWidth { width } => {
+            write!(
+                writer,
+                r#"<div class="aozora-container aozora-container-line-width" data-width="{width}">"#,
+            )
+        }
+        ContainerKind::Keigakomi => {
+            writer.write_str(r#"<div class="aozora-container aozora-container-keigakomi">"#)
+        }
+        ContainerKind::Warichu => {
+            writer.write_str(r#"<div class="aozora-container aozora-container-warichu">"#)
+        }
+        ContainerKind::BoutenRange { kind, position } => {
+            // Range-form 傍点 / 傍線: an inline `<em>` matching the
+            // forward-reference bouten markup so a stylesheet picks the
+            // same per-variant treatment.
+            write!(
+                writer,
+                r#"<em class="aozora-bouten aozora-bouten-{kind} aozora-bouten-{pos}">"#,
+                kind = bouten::kind_slug(kind),
+                pos = bouten::position_slug(position),
+            )
+        }
+        // 太字 / 斜体. The bare inline range (`block: false`) uses the
+        // same presentational `<b>` / `<i>` element as the
+        // forward-reference [`render_emphasis`] leaf. The ここから-block
+        // form (`block: true`) wraps whole paragraphs, so it takes a
+        // block `<div>` (an inline `<b>` around `<p>` would be invalid),
+        // following the indent / keigakomi container convention; the
+        // `aozora-container-bold` / `-italic` class carries the styling.
+        ContainerKind::Bold { block: false } => writer.write_str(r#"<b class="aozora-bold">"#),
+        ContainerKind::Italic { block: false } => writer.write_str(r#"<i class="aozora-italic">"#),
+        ContainerKind::Bold { block: true } => {
+            writer.write_str(r#"<div class="aozora-container aozora-container-bold">"#)
+        }
+        ContainerKind::Italic { block: true } => {
+            writer.write_str(r#"<div class="aozora-container aozora-container-italic">"#)
+        }
+        ContainerKind::Columns { count } => write!(
+            writer,
+            r#"<div class="aozora-container aozora-container-columns" data-columns="{count}">"#,
+        ),
+        ContainerKind::Table => {
+            writer.write_str(r#"<div class="aozora-container aozora-container-table">"#)
+        }
+        ContainerKind::Horizontal => {
+            writer.write_str(r#"<div class="aozora-container aozora-container-horizontal">"#)
+        }
+        // Paired / block heading — same element as the forward-reference
+        // leaf, but wrapping the delimited content (phrasing).
+        ContainerKind::Heading { kind, style, .. } => write_heading_open(kind, style, writer),
+        _ => writer.write_str(r#"<div class="aozora-container">"#),
+    }
+}
+
+/// Emit a container's closing tag — `</em>` / `</b>` / `</i>` for the inline
+/// range forms, the heading element for a block heading, `</div>` otherwise.
+fn render_container_close<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::Result {
+    match kind {
+        ContainerKind::Heading { kind, style, .. } => write_heading_close(kind, style, writer),
+        _ => writer.write_str(match kind {
+            ContainerKind::BoutenRange { .. } => "</em>",
+            ContainerKind::Bold { block: false } => "</b>",
+            ContainerKind::Italic { block: false } => "</i>",
+            _ => "</div>",
+        }),
     }
 }
 

@@ -89,6 +89,11 @@ pub enum ContainerKind {
     /// content is plain text. Renders as
     /// `<div class="aozora-container aozora-container-table">`.
     Table,
+    /// `［＃ここから横組み］ ... ［＃ここで横組み終わり］` — a horizontal-writing
+    /// (横組み) region inside an otherwise vertical document. A writing-mode
+    /// container; the enclosed content is plain text. Renders as
+    /// `<div class="aozora-container aozora-container-horizontal">`.
+    Horizontal,
 }
 
 impl ContainerKind {
@@ -114,6 +119,7 @@ impl ContainerKind {
             Self::Heading { .. } => "heading",
             Self::Columns { .. } => "columns",
             Self::Table => "table",
+            Self::Horizontal => "horizontal",
         }
     }
 

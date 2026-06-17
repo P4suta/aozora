@@ -309,6 +309,7 @@ const fn emphasis_kind_keyword(kind: EmphasisKind) -> &'static str {
         EmphasisKind::SmallRight => "行右小書き",
         EmphasisKind::SmallLeft => "行左小書き",
         EmphasisKind::KeigakomiInline => "罫囲み",
+        EmphasisKind::HorizontalInline => "横組み",
         // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
         // weight serialize as the bold keyword.
         _ => "太字",
@@ -525,6 +526,7 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
         ),
         ContainerKind::Columns { count } => write!(out, "［＃ここから{count}段組み］"),
         ContainerKind::Table => out.write_str("［＃ここから表］"),
+        ContainerKind::Horizontal => out.write_str("［＃ここから横組み］"),
         _ => out.write_str(container_open_marker(kind)),
     }
 }
@@ -553,6 +555,7 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
         ),
         ContainerKind::Columns { .. } => out.write_str("［＃ここで段組み終わり］"),
         ContainerKind::Table => out.write_str("［＃ここで表終わり］"),
+        ContainerKind::Horizontal => out.write_str("［＃ここで横組み終わり］"),
         _ => out.write_str(container_close_marker(kind)),
     }
 }

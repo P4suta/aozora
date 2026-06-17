@@ -373,22 +373,24 @@ enum BodyFamily {
     SectionKaicho,
     SectionKaidan,
     SectionKaimihiraki,
-    AlignEnd0,         // 地付き
-    CenterMarker,      // ページの左右中央 / 中央揃え
-    KeigakomiOpen,     // 罫囲み
-    KeigakomiClose,    // 罫囲み終わり
-    IndentBlock1,      // ここから字下げ → Indent { amount: 1 }
-    AlignEndBlock0,    // ここから地付き → AlignEnd { offset: 0 }
-    IndentBlockEnd,    // ここで字下げ終わり
-    AlignEndBlockEnd,  // ここで地付き終わり
-    LineWidthBlockEnd, // ここで字詰め終わり
-    TableBlockOpen,    // ここから表
-    TableBlockEnd,     // ここで表終わり
-    ColumnsBlockEnd,   // ここで段組(み)終わり
-    WarichuOpen,       // 割り注
-    WarichuClose,      // 割り注終わり
-    KaeritenSingle,    // body must equal one of 12 single-char marks
-    KaeritenCompound,  // body must equal one of 6 compound marks
+    AlignEnd0,           // 地付き
+    CenterMarker,        // ページの左右中央 / 中央揃え
+    KeigakomiOpen,       // 罫囲み
+    KeigakomiClose,      // 罫囲み終わり
+    IndentBlock1,        // ここから字下げ → Indent { amount: 1 }
+    AlignEndBlock0,      // ここから地付き → AlignEnd { offset: 0 }
+    IndentBlockEnd,      // ここで字下げ終わり
+    AlignEndBlockEnd,    // ここで地付き終わり
+    LineWidthBlockEnd,   // ここで字詰め終わり
+    TableBlockOpen,      // ここから表
+    TableBlockEnd,       // ここで表終わり
+    HorizontalBlockOpen, // ここから横組み
+    HorizontalBlockEnd,  // ここで横組み終わり
+    ColumnsBlockEnd,     // ここで段組(み)終わり
+    WarichuOpen,         // 割り注
+    WarichuClose,        // 割り注終わり
+    KaeritenSingle,      // body must equal one of 12 single-char marks
+    KaeritenCompound,    // body must equal one of 6 compound marks
 
     // === Prefix-with-parameter (parse body[match_end..]) ===
     AlignEndParamPrefix,      // 地から → 地から{N}字上げ
@@ -463,6 +465,14 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "ここで表終わり",
         family: BodyFamily::TableBlockEnd,
+    },
+    BodyPattern {
+        needle: "ここから横組み",
+        family: BodyFamily::HorizontalBlockOpen,
+    },
+    BodyPattern {
+        needle: "ここで横組み終わり",
+        family: BodyFamily::HorizontalBlockEnd,
     },
     BodyPattern {
         needle: "ここで段組終わり",
@@ -924,6 +934,12 @@ fn classify_annotation_body<'a>(
         BodyFamily::TableBlockEnd if exact => {
             Some((EmitKind::BlockClose(ContainerKind::Table), None))
         }
+        BodyFamily::HorizontalBlockOpen if exact => {
+            Some((EmitKind::BlockOpen(ContainerKind::Horizontal), None))
+        }
+        BodyFamily::HorizontalBlockEnd if exact => {
+            Some((EmitKind::BlockClose(ContainerKind::Horizontal), None))
+        }
         BodyFamily::ColumnsBlockEnd if exact => Some((
             // Close marker carries no count; the open-side payload is authoritative.
             EmitKind::BlockClose(ContainerKind::Columns { count: 0 }),
@@ -1099,6 +1115,8 @@ fn classify_annotation_body<'a>(
         | BodyFamily::LineWidthBlockEnd
         | BodyFamily::TableBlockOpen
         | BodyFamily::TableBlockEnd
+        | BodyFamily::HorizontalBlockOpen
+        | BodyFamily::HorizontalBlockEnd
         | BodyFamily::ColumnsBlockEnd
         | BodyFamily::WarichuOpen
         | BodyFamily::WarichuClose
@@ -4033,6 +4051,7 @@ fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
         "行右小書き" => EmphasisKind::SmallRight,
         "行左小書き" => EmphasisKind::SmallLeft,
         "罫囲み" => EmphasisKind::KeigakomiInline,
+        "横組み" => EmphasisKind::HorizontalInline,
         _ => return parse_font_size_suffix(s),
     })
 }
@@ -4826,6 +4845,7 @@ mod tests {
             ("あ［＃「あ」は行右小書き］", EmphasisKind::SmallRight),
             ("い［＃「い」は行左小書き］", EmphasisKind::SmallLeft),
             ("注意［＃「注意」は罫囲み］", EmphasisKind::KeigakomiInline),
+            ("西暦［＃「西暦」は横組み］", EmphasisKind::HorizontalInline),
         ] {
             run!(out, src);
             let emphasis = out

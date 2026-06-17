@@ -242,6 +242,10 @@ pub enum EmphasisKind {
     /// (just as [`Bold`](Self::Bold) is the leaf counterpart of
     /// [`ContainerKind::Bold`]).
     KeigakomiInline,
+    /// 横組み (`「X」は横組み`) — an inline run set horizontally inside vertical
+    /// text, the span-level counterpart of the block
+    /// [`ContainerKind::Horizontal`].
+    HorizontalInline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

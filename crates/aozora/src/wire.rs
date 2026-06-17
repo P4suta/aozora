@@ -215,6 +215,7 @@ const fn container_kind_str(kind: aozora_syntax::ContainerKind) -> &'static str 
         ContainerKind::Heading { .. } => "heading",
         ContainerKind::Columns { .. } => "columns",
         ContainerKind::Table => "table",
+        ContainerKind::Horizontal => "horizontal",
         _ => "unknown",
     }
 }
