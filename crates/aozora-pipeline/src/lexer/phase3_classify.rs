@@ -3617,15 +3617,15 @@ const fn is_okurigana_char(ch: char) -> bool {
     )
 }
 
-/// Classify a `［＃挿絵（file）入る］` sashie (illustration insert).
+/// Classify a `［＃挿絵（file）入る］` sashie (illustration insert),
+/// optionally bundling a caption: `［＃挿絵（file）「caption」入る］`.
 ///
 /// Called from [`classify_annotation_body`]'s `SashiePrefix` arm —
 /// the AC has already verified the `挿絵（` prefix at body[0..9]; this
-/// function captures the filename between `（` and `）` and confirms
-/// the trailing `入る` keyword. The captioned form
-/// (`［＃挿絵（file）「caption」入る］`) needs an event-level caption
-/// recogniser that this pass does not yet perform; the no-caption
-/// shape accounts for the vast majority of corpus occurrences.
+/// function captures the filename between `（` and `）`, an optional
+/// `「caption」` (per <https://www.aozora.gr.jp/annotation/graphics.html>),
+/// and confirms the trailing `入る` keyword. The caption is plain content,
+/// rendered into `<figcaption>` (§8).
 fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Option<EmitKind<'a>> {
     let rest = body.strip_prefix("挿絵（")?;
     // `）` is a full-width right parenthesis (U+FF09). Find its first
@@ -3636,10 +3636,22 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
         return None;
     }
     let tail = &rest[close_off + '）'.len_utf8()..];
-    if tail != "入る" {
+    // After `）` the tail is either the bare `入る` keyword or a bundled
+    // `「caption」入る`. Any other shape declines (→ `Annotation{Unknown}`).
+    let caption = if tail == "入る" {
+        None
+    } else if let Some(inner) = tail
+        .strip_prefix('「')
+        .and_then(|t| t.strip_suffix("」入る"))
+    {
+        if inner.is_empty() {
+            return None;
+        }
+        Some(alloc.content_plain(inner))
+    } else {
         return None;
-    }
-    Some(EmitKind::Aozora(alloc.sashie(file, None)))
+    };
+    Some(EmitKind::Aozora(alloc.sashie(file, caption)))
 }
 
 /// Classify a `［＃「target」は(大|中|小)見出し］` forward-reference
@@ -5287,11 +5299,28 @@ mod tests {
     }
 
     #[test]
-    fn sashie_with_caption_form_not_matched() {
-        // Captioned sashie needs a dedicated caption recogniser;
-        // the no-caption matcher must reject the captioned form
-        // cleanly so the bracket falls through to the catch-all.
+    fn sashie_with_caption_recognized() {
+        // Bundled-caption form `挿絵（file）「caption」入る` — the caption is
+        // captured as plain content (rendered into <figcaption>, §8).
         run!(out, "［＃挿絵（fig01.png）「キャプション」入る］");
+        let found = out.spans.iter().find_map(|s| match aozora_node(s) {
+            Some(AozoraNode::Sashie(s)) => Some(s),
+            _ => None,
+        });
+        let Some(sashie) = found else {
+            panic!("expected a Sashie span");
+        };
+        assert_eq!(sashie.file.as_str(), "fig01.png");
+        let Some(caption) = sashie.caption else {
+            panic!("expected a bundled caption");
+        };
+        assert_eq!(caption.as_plain(), Some("キャプション"));
+    }
+
+    #[test]
+    fn sashie_empty_caption_falls_through() {
+        // `「」入る` is a degenerate empty caption — decline cleanly.
+        run!(out, "［＃挿絵（fig01.png）「」入る］");
         assert!(
             !out.spans
                 .iter()

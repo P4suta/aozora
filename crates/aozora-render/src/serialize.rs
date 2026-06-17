@@ -371,7 +371,13 @@ fn emit_center<W: Write>(c: Center, out: &mut W) -> fmt::Result {
 fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃挿絵（")?;
     out.write_str(s.file.as_str())?;
-    out.write_str("）入る］")
+    out.write_char('）')?;
+    if let Some(caption) = s.caption {
+        out.write_char('「')?;
+        emit_content_as_plain(caption, out)?;
+        out.write_char('」')?;
+    }
+    out.write_str("入る］")
 }
 
 /// The optional `同行` / `窓` style prefix that precedes the level keyword in
