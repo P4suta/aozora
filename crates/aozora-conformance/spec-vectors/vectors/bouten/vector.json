@@ -3,7 +3,8 @@
   "meta": {
     "feature": "bouten",
     "level": "must",
-    "spec_section": "6.2"
+    "spec_section": "6.2",
+    "note": "[provenance:hand-derived §6.2 + AOZORA-ANNOTATION 2026-06-17] Forward-reference 傍点 ［＃「X」に傍点］ applies goma dots to the most recent preceding X (§7.5), default side right; html per §8. Offsets from the §3 byte model."
   },
   "source": "青空［＃「青空」に傍点］を見上げる。\n",
   "expected": {

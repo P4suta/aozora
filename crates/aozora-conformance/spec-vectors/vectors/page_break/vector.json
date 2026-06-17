@@ -3,7 +3,8 @@
   "meta": {
     "feature": "break",
     "level": "must",
-    "spec_section": "6.9"
+    "spec_section": "6.9",
+    "note": "[provenance:hand-derived §6.9 + AOZORA-ANNOTATION 2026-06-17] ［＃改ページ］ is a self-contained page break yielding a zero-width break node between paragraphs; html is the page-break div. Offsets from the §3 byte model."
   },
   "source": "第一章\n本文。\n［＃改ページ］\n第二章\n",
   "expected": {

@@ -3,7 +3,8 @@
   "meta": {
     "feature": "angle_quote",
     "level": "must",
-    "spec_section": "6.15"
+    "spec_section": "6.15",
+    "note": "[provenance:hand-derived §6.15 + AOZORA-ANNOTATION 2026-06-17] A base text's 《》 collides with ruby 《》, so it is transcribed ≪≫ (U+226A/B) and the renderer restores 《》 (U+300A/B). The node spans the ≪…≫ run; html is the restored display form. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "≪重要≫な記述。\n",
   "expected": {

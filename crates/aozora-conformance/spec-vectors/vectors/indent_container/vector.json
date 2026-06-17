@@ -3,7 +3,8 @@
   "meta": {
     "feature": "container",
     "level": "must",
-    "spec_section": "6.6"
+    "spec_section": "6.6",
+    "note": "[provenance:hand-derived §6.6 + AOZORA-ANNOTATION 2026-06-17] ［＃ここからN字下げ］…［＃ここで字下げ終わり］ indents the enclosed block N full-width spaces, closing by the indent family (§7.1). Offsets from the §3 byte model."
   },
   "source": "本文。\n［＃ここから2字下げ］\n段落の中身。\n別の行。\n［＃ここで字下げ終わり］\n通常段落。\n",
   "expected": {

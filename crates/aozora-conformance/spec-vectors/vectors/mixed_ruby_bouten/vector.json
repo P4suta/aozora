@@ -3,7 +3,8 @@
   "meta": {
     "feature": "composite",
     "level": "must",
-    "spec_section": "6"
+    "spec_section": "6.1",
+    "note": "[provenance:hand-derived §6.1+§6.2 + AOZORA-ANNOTATION 2026-06-17] An explicit ruby ｜青梅《おうめ》 and a later forward bouten both reference 青梅 independently; the ruby reading and the bouten target do not interfere. Offsets from the §3 byte model."
   },
   "source": "｜青梅《おうめ》には［＃「青梅」に傍点］という街道がある。\n",
   "expected": {
