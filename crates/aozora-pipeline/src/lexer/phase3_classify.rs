@@ -505,6 +505,30 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "ここで小さな文字終わり",
         family: BodyFamily::FontSizeBlockEnd,
     },
+    // Bare-range font-size close (ここ-less): ［＃大きな/小さな文字終わり］,
+    // the sibling of ここで…終わり. Reuses FontSizeBlockEnd; the open side
+    // (［＃{N}段階…文字］) routes through IndentParamPrefix (leading digit).
+    // LeftmostLongest keeps ここで… winning over the bare needle.
+    BodyPattern {
+        needle: "大きな文字終わり",
+        family: BodyFamily::FontSizeBlockEnd,
+    },
+    BodyPattern {
+        needle: "小さな文字終わり",
+        family: BodyFamily::FontSizeBlockEnd,
+    },
+    // Bare-range horizontal (ここ-less): ［＃横組み］ … ［＃横組み終わり］,
+    // the sibling of ここから横組み / ここで横組み終わり. Same Horizontal
+    // container; LeftmostLongest keeps 横組み終わり winning over 横組み, and
+    // the exact-match guard rejects compounds like 横組みで、… (→ Unknown).
+    BodyPattern {
+        needle: "横組み",
+        family: BodyFamily::HorizontalBlockOpen,
+    },
+    BodyPattern {
+        needle: "横組み終わり",
+        family: BodyFamily::HorizontalBlockEnd,
+    },
     BodyPattern {
         needle: "ここで段組終わり",
         family: BodyFamily::ColumnsBlockEnd,
@@ -974,11 +998,9 @@ fn classify_annotation_body<'a>(
         BodyFamily::FontSizeBlockEnd if exact => {
             // The close marker carries only the direction; its magnitude is a
             // ±1 placeholder (the open-side stage count is authoritative).
-            let steps = if body == "ここで小さな文字終わり" {
-                -1
-            } else {
-                1
-            };
+            // Matches both ここで…終わり and the bare …終わり sibling, so key
+            // on the direction word rather than the whole literal.
+            let steps = if body.contains("小さな") { -1 } else { 1 };
             Some((
                 EmitKind::BlockClose(ContainerKind::FontSize { steps }),
                 None,
@@ -1107,8 +1129,16 @@ fn classify_annotation_body<'a>(
             // The DFA matched a single digit. Re-parse from body[0]
             // for full multi-digit support.
             let (n, tail) = parse_decimal_u8_prefix(body)?;
-            (tail == "字下げ" && n >= 1)
-                .then(|| (EmitKind::Aozora(alloc.indent(Indent { amount: n })), None))
+            if tail == "字下げ" && n >= 1 {
+                Some((EmitKind::Aozora(alloc.indent(Indent { amount: n })), None))
+            } else {
+                // Bare-range font-size open: ［＃{N}段階大きな/小さな文字］ —
+                // the ここから-less sibling of the block opener, closed by the
+                // bare ［＃大きな/小さな文字終わり］. Reuses the FontSize
+                // container so render / pairing / serialize already apply.
+                font_size_block_open_steps(tail, n)
+                    .map(|steps| (EmitKind::BlockOpen(ContainerKind::FontSize { steps }), None))
+            }
         }
         BodyFamily::BoutenRange => {
             // `傍点` / `白丸傍点` / `二重傍線` / `左に傍線` … with an optional
@@ -4965,6 +4995,91 @@ mod tests {
                 .unwrap_or_else(|| panic!("expected an Emphasis span for {src:?}"));
             assert_eq!(emphasis.kind, want, "src = {src:?}");
         }
+    }
+
+    /// Bare-range font-size (`［＃{N}段階大きな/小さな文字］ … ［＃…文字終わり］`)
+    /// and bare-range 横組み (`［＃横組み］ … ［＃横組み終わり］`) — the
+    /// ここから/ここで-less siblings of the block forms. Corpus-attested in
+    /// bulk (e.g. 共産党宣言) but previously fell through to
+    /// `Annotation{Unknown}`, silently dropping the styling. They reuse the
+    /// existing `FontSize` / `Horizontal` containers; the close marker carries
+    /// a ±1 placeholder magnitude (the open side is authoritative on pairing).
+    #[test]
+    fn bare_range_font_size_and_horizontal_recognised() {
+        let cases: &[(&str, ContainerKind, ContainerKind)] = &[
+            (
+                "あ［＃１段階小さな文字］x［＃小さな文字終わり］い",
+                ContainerKind::FontSize { steps: -1 },
+                ContainerKind::FontSize { steps: -1 },
+            ),
+            (
+                "あ［＃２段階大きな文字］x［＃大きな文字終わり］い",
+                ContainerKind::FontSize { steps: 2 },
+                ContainerKind::FontSize { steps: 1 },
+            ),
+            (
+                "あ［＃横組み］x［＃横組み終わり］い",
+                ContainerKind::Horizontal,
+                ContainerKind::Horizontal,
+            ),
+        ];
+        for (src, want_open, want_close) in cases {
+            run!(out, src);
+            let opens: Vec<ContainerKind> = out
+                .spans
+                .iter()
+                .filter_map(|s| match s.kind {
+                    SpanKind::BlockOpen(k) => Some(k),
+                    _ => None,
+                })
+                .collect();
+            let closes: Vec<ContainerKind> = out
+                .spans
+                .iter()
+                .filter_map(|s| match s.kind {
+                    SpanKind::BlockClose(k) => Some(k),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                opens.contains(want_open),
+                "expected open {want_open:?} for {src:?}, got {opens:?}"
+            );
+            assert!(
+                closes.contains(want_close),
+                "expected close {want_close:?} for {src:?}, got {closes:?}"
+            );
+            let unknown = out.spans.iter().any(|s| {
+                matches!(
+                    aozora_node(s),
+                    Some(AozoraNode::Annotation(a)) if a.kind == AnnotationKind::Unknown
+                )
+            });
+            assert!(!unknown, "unexpected Unknown fall-through for {src:?}");
+        }
+    }
+
+    /// The bare 横組み needle must NOT claim a compound like `横組みで、…`
+    /// (the exact-match guard rejects it) — it degrades to
+    /// `Annotation{Unknown}` rather than wrongly opening a Horizontal range.
+    #[test]
+    fn bare_horizontal_compound_stays_unknown() {
+        run!(out, "あ［＃横組みで、ページの左右中央に］い");
+        let unknown = out.spans.iter().any(|s| {
+            matches!(
+                aozora_node(s),
+                Some(AozoraNode::Annotation(a)) if a.kind == AnnotationKind::Unknown
+            )
+        });
+        let opened_horizontal = out
+            .spans
+            .iter()
+            .any(|s| matches!(s.kind, SpanKind::BlockOpen(ContainerKind::Horizontal)));
+        assert!(
+            unknown && !opened_horizontal,
+            "expected Annotation{{Unknown}} and no Horizontal open, got {:?}",
+            out.spans
+        );
     }
 
     #[test]
