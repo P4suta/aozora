@@ -7,17 +7,24 @@
 # Base images are pinned by immutable digest (supply-chain hardening,
 # C2/F9): a tag like `rust:1.95.0-bookworm` is mutable and can be
 # re-pushed, so we pin the manifest-list digest and keep the
-# human-readable tag inline for legibility. Dependabot's `docker`
-# ecosystem (.github/dependabot.yml) bumps BOTH the tag and the digest
-# together on its weekly sweep, so the pin stays current without a
-# human resolving sha256 by hand. Resolve a fresh digest with
-# `docker buildx imagetools inspect rust:1.95.0-bookworm`.
+# human-readable tag inline for legibility. Resolve a fresh digest with
+# `docker buildx imagetools inspect <tag>`.
+#
+# The rust base is held at the SAME version as rust-toolchain.toml's
+# pinned channel (the workspace MSRV) on purpose: rust-toolchain.toml
+# makes every `cargo` invocation select that channel, so a base on any
+# other version would ship a second, never-used toolchain (pure DL +
+# image bloat). Dependabot's `docker` ecosystem is told to IGNORE the
+# `rust` image (.github/dependabot.yml) so it cannot drift ahead of the
+# MSRV — bump BOTH this FROM pin and rust-toolchain.toml together when
+# raising the MSRV. Dependabot still bumps the `ubuntu` base of the
+# `book` stage automatically.
 
 ########################################################################
 # Stage: toolchain — Rust stable + system deps for builds and CJK work
 ########################################################################
-# rust:1.96.0-bookworm (digest pinned; tag kept for humans / Dependabot)
-FROM rust:1.96.0-bookworm@sha256:19817ead3289c8c631c73df281e18b59b172f6a31f4f563290f69cddd06c30e9 AS toolchain
+# rust:1.95.0-bookworm (digest pinned; tag kept for humans; == rust-toolchain.toml)
+FROM rust:1.95.0-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 AS toolchain
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -55,9 +62,11 @@ RUN mkdir -p /root/.cargo && printf '%s\n' \
     'rustflags = ["-C", "link-arg=-fuse-ld=mold"]' \
     > /root/.cargo/config.toml
 
-# Pre-install every component rust-toolchain.toml + cargo-llvm-cov
-# require, so the rustup channel-sync that fires on every container
-# start finds nothing to download.
+# The base toolchain == rust-toolchain.toml's pinned channel (see the
+# FROM note above), so it IS the toolchain every `cargo` invocation
+# selects at runtime. Pre-install every component that channel +
+# cargo-llvm-cov require here, so the rustup channel-sync that fires on
+# every container start finds nothing to download.
 #
 # Without this, each CI job spends ~22-30 s on `info: downloading
 # 3 components` (rustfmt + clippy + rust-src per workspace
@@ -104,8 +113,8 @@ RUN curl -L --proto '=https' --tlsv1.2 -fsSL \
 # - `--no-confirm`: skip the y/N prompt (we're in a Dockerfile).
 # - `--no-symlinks`: copy binaries instead of symlinking; safer
 #   across docker overlayfs and image export.
-# - `--locked`: respects the `Cargo.lock` of each crate when binstall
-#   does fall back to a source build.
+# - `--locked`: pin to each crate's `Cargo.lock` for reproducible
+#   binary selection (this batch never compiles — see strategies below).
 # - `--strategies crate-meta-data,quick-install` (NO `compile`):
 #   binstall's default chain ends with `compile`, which on a missing
 #   prebuilt silently falls through to `cargo install --from-source`.
@@ -150,14 +159,22 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
         wasm-pack
 
 # bacon (the background compiler behind `just watch`) ships NO prebuilt
-# binaries on its GitHub releases — it's crates.io-source-only. The binstall
-# batch above runs with `--strategies crate-meta-data,quick-install` and no
-# source-compile fallback (by policy: fail fast rather than silently spend
-# 40 min compiling), so binstall can't resolve bacon and the image build dies
-# on it. Compiling bacon from source explicitly is the only honest path for a
-# crate with no prebuilt, and it keeps the no-compile fail-fast policy intact
-# for every tool that *does* publish binaries.
-RUN cargo install --locked bacon
+# binaries on its OWN GitHub releases — but the cargo-quickinstall
+# community mirror DOES publish one (verified: the bacon-<ver>
+# x86_64-unknown-linux-{gnu,musl} tarballs resolve 200). So binstall's
+# `quick-install` strategy fetches a prebuilt and no source compile
+# happens — this used to be a `cargo install --locked bacon` that
+# recompiled bacon + ~200 deps from scratch on every cargo-tools
+# rebuild. `compile` is kept ONLY as a last-resort backstop for this one
+# crate (in case the mirror lacks a future version). The main batch above
+# stays no-compile fail-fast — only bacon, the lone crate without
+# first-party prebuilts, carries the compile backstop. Shares the same
+# binstall download cache mount as the batch above.
+RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
+    cargo binstall --no-confirm --no-symlinks --locked \
+        --strategies quick-install,compile \
+        --root /usr/local \
+        bacon
 
 # just (task runner) installed separately; upstream provides an install script
 RUN curl -fsSL https://just.systems/install.sh \
@@ -178,26 +195,15 @@ FROM toolchain AS dev
 COPY --from=cargo-tools /usr/local/cargo/bin/ /usr/local/cargo/bin/
 COPY --from=cargo-tools /usr/local/bin/ /usr/local/bin/
 
-# Bake the workspace's PINNED toolchain (rust-toolchain.toml's channel)
-# fully into the image. The base image ships a different default —
-# dependabot bumps the `rust:X-bookworm` base independently of the pin
-# (it moved the base to 1.96.0 while the pin stayed 1.95.0) — so the
-# pinned channel is otherwise installed fresh on every `--rm` container
-# start: RUSTUP_HOME (/usr/local/rustup) is part of the image, not a
-# mounted volume, so a runtime install lands in the throwaway container
-# layer and is lost. That both re-downloaded the toolchain on every
-# command AND left it without the wasm32 target / llvm-tools (which
-# rust-toolchain.toml does not list), silently breaking every
-# `--target wasm32-unknown-unknown` build (wasm-pack, `just extism-build`).
-# Running rustup from a dir that contains the pin makes each install
-# operate on the pinned channel. The toolchain stage's identical adds for
-# the base default stay cached (this is a dev-stage-only addition, so the
-# fragile cargo-tools binstall layer is not invalidated).
-COPY rust-toolchain.toml /opt/rust-toolchain/rust-toolchain.toml
-RUN cd /opt/rust-toolchain \
-    && rustup show \
-    && rustup component add rustfmt clippy rust-src llvm-tools-preview \
-    && rustup target add wasm32-unknown-unknown
+# The stable toolchain is fully provisioned in the `toolchain` stage:
+# because the base image == rust-toolchain.toml's pinned channel (see the
+# FROM note), the base default IS the runtime toolchain, and the
+# `toolchain` stage already added every component (rustfmt, clippy,
+# rust-src, llvm-tools-preview) and the wasm32-unknown-unknown target to
+# it. So there is no second toolchain to install here — only nightly,
+# below. (Previously the base drifted ahead of the pin and a whole second
+# pinned toolchain had to be re-installed in this stage; holding base ==
+# pin removes that download and the dead base-default toolchain entirely.)
 
 # nightly toolchain is needed for cargo-udeps and cargo-fuzz harnesses
 RUN rustup toolchain install nightly --component rust-src --profile minimal

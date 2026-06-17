@@ -153,6 +153,14 @@ The MSRV pin (`rust-toolchain.toml`) advances on its own cadence,
 roughly quarterly. MSRV bumps are *not* breaking under our pre-1.0
 contract — consumers that need a frozen MSRV pin a release tag.
 
+When you raise the MSRV, bump the **Dockerfile `FROM rust:` base in the
+same commit** so the dev image keeps building on exactly the pinned
+channel (one toolchain, no dead second one). Dependabot deliberately
+ignores the `rust` base image (`.github/dependabot.yml`) precisely so it
+cannot drift ahead of `rust-toolchain.toml`, so this base bump is manual.
+Resolve the new digest with `docker buildx imagetools inspect
+rust:<ver>-bookworm`.
+
 ## Publishing to crates.io
 
 Live since v0.4.1. The whole workspace publishes through the manual

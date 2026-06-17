@@ -81,6 +81,19 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=dev-image
-          cache-to: type=gha,mode=max,scope=dev-image
+          # Read the registry buildcache too so even this job's own build
+          # survives a GHA-cache eviction by restoring published layers.
+          cache-from: |
+            type=gha,scope=dev-image
+            type=registry,ref=ghcr.io/p4suta/aozora-dev:buildcache
+          # Publish the FULL multi-stage layer cache (mode=max) to a
+          # dedicated :buildcache tag, so ci.yml (and any future run whose
+          # GHA scope was evicted) can restore from GHCR instead of a
+          # from-scratch rebuild incl. all tool downloads. mode=max keeps
+          # intermediate stages (toolchain / cargo-tools) that the final
+          # image discards, which inline cache on :latest could not. Only
+          # on push — fork PRs cannot authenticate to GHCR for the write.
+          cache-to: |
+            type=gha,mode=max,scope=dev-image
+            ${{ github.event_name != 'pull_request' && 'type=registry,ref=ghcr.io/p4suta/aozora-dev:buildcache,mode=max' || '' }}
           provenance: false

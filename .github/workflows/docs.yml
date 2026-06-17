@@ -72,7 +72,13 @@ jobs:
           mdbook-version: latest
 
       - name: Install mdbook-mermaid
-        run: cargo install --locked mdbook-mermaid
+        # Prebuilt binary via install-action (binstall-backed) instead of
+        # a ~1-2 min `cargo install` source build on every Pages deploy.
+        # mdbook-mermaid ships prebuilts — the same source the dev image's
+        # `cargo binstall` uses (Dockerfile cargo-tools stage).
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912  # v2
+        with:
+          tool: mdbook-mermaid
 
       - name: Install mermaid assets into the book directory
         # Writes `mermaid.min.js` + `mermaid-init.js` next to `book.toml`
