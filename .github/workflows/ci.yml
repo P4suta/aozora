@@ -309,7 +309,12 @@ jobs:
       - name: clippy (wasm32-unknown-unknown)
         run: cargo clippy --target wasm32-unknown-unknown -p aozora-wasm -p aozora-extism -- -D warnings
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        # Pinned action + version (was an unpinned `curl … | sh`) so the
+        # auto-fetched wasm-bindgen-cli is deterministic and matches the
+        # docs.yml Pages build.
+        uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa  # v0.4.0
+        with:
+          version: 'v0.15.0'
       - name: Build wasm-pack package
         run: wasm-pack build --target web --release crates/aozora-wasm
 

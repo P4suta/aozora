@@ -121,9 +121,18 @@ runs:
         push: false
         provenance: false
         tags: aozora-dev:local
+        # cache-from order = priority. GHA scopes first (fastest, written
+        # this run / by dev-image.yml). The registry buildcache is the
+        # cross-run backstop: GHA caches evict (7-day idle / 10 GB repo
+        # cap), and on a cold GHA scope this restores the published
+        # multi-stage layers from GHCR instead of a from-scratch rebuild
+        # (all tool downloads + bacon). The aozora-dev package is public,
+        # so this reads anonymously — no login step needed (fork PRs work
+        # too; a private package would just miss gracefully and rebuild).
         cache-from: |
           type=gha,scope=ci-dev-image
           type=gha,scope=dev-image
+          type=registry,ref=ghcr.io/p4suta/aozora-dev:buildcache
         cache-to: type=gha,mode=max,scope=ci-dev-image
 
     - name: Tag + save built image
