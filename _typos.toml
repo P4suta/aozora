@@ -20,6 +20,12 @@ Fyodor      = "Fyodor"
 Yonekawa    = "Yonekawa"
 Masao       = "Masao"
 Yasunobu    = "Yasunobu"
+# Hepburn romaji morae in the render-slug consistency test
+# (`aozora-spec/src/slugs.rs` `tests::hepburn`) — valid kana
+# romanisations that collide with the dictionary.
+gya = "gya"
+myu = "myu"
+ba  = "ba"
 
 [files]
 extend-exclude = [

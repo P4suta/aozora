@@ -656,6 +656,18 @@ strict-code:
     check_strict 'unsafe code (unsafe fn / unsafe { / unsafe impl / unsafe trait)' \
         '(^|[^a-zA-Z_#])unsafe\s+(fn|impl|trait|\{)' || failed=1
 
+    # ---- Notation slug misspellings (regression guard) --------------------
+    # The romaji CSS slugs are centralised in `aozora-spec::RENDER_SLUGS`
+    # and machine-checked against their kana reading there. These greps
+    # are the cheap last line of defence: `koshogaki` was a misreading of
+    # 小書き (こがき → `kogaki`); `choho`/`dan`/`spread` are the pre-Hepburn
+    # section-break slugs (now `kaicho`/`kaidan`/`kaimihiraki`). If either
+    # reappears anywhere in the source tree, fail loudly.
+    check 'misread slug koshogaki (小書き＝こがき → kogaki)' \
+        'koshogaki' || failed=1
+    check 'stale section-break slug (choho/dan/spread → kaicho/kaidan/kaimihiraki)' \
+        'section-break-(choho|dan|spread)' || failed=1
+
     # ---- Required deny directive -------------------------------------------
     for root in crates/*/src/lib.rs crates/*/src/main.rs; do
         [[ -f "$root" ]] || continue
