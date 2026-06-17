@@ -3992,13 +3992,22 @@ fn parse_heading_directive(body: &str) -> Option<(ContainerKind, bool)> {
     ))
 }
 
-/// Map the keyword after `は` to an [`EmphasisKind`]: 太字 → Bold,
-/// 斜体 → Italic (per <https://www.aozora.gr.jp/annotation/emphasis.html>).
-/// Unknown suffixes return `None` (→ `Annotation{Unknown}`).
+/// Map the keyword after `は` to an [`EmphasisKind`].
+///
+/// 太字 → Bold, 斜体 → Italic (per
+/// <https://www.aozora.gr.jp/annotation/emphasis.html>); 上付き小文字 →
+/// `SuperScript`, 下付き小文字 → `SubScript`, 行右小書き → `SmallRight`,
+/// 行左小書き → `SmallLeft` (per
+/// <https://www.aozora.gr.jp/annotation/etc.html>). Unknown suffixes
+/// return `None` (→ `Annotation{Unknown}`).
 fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
     Some(match s {
         "太字" => EmphasisKind::Bold,
         "斜体" => EmphasisKind::Italic,
+        "上付き小文字" => EmphasisKind::SuperScript,
+        "下付き小文字" => EmphasisKind::SubScript,
+        "行右小書き" => EmphasisKind::SmallRight,
+        "行左小書き" => EmphasisKind::SmallLeft,
         _ => return None,
     })
 }
@@ -4761,6 +4770,31 @@ mod tests {
             .expect("expected a Bouten span");
         assert_eq!(bouten.kind, BoutenKind::Goma);
         assert_eq!(bouten.target.as_plain(), Some("青空"));
+    }
+
+    #[test]
+    fn forward_emphasis_script_and_koshogaki_recognized() {
+        // 上付き/下付き小文字 (super/subscript) and 行右/行左小書き — the
+        // four emphasis-page forward-reference families beyond 太字/斜体
+        // (per <https://www.aozora.gr.jp/annotation/etc.html>). Each is a
+        // first-class `Emphasis` leaf, NOT an `Annotation{Unknown}`.
+        for (src, want) in [
+            ("x２［＃「２」は上付き小文字］", EmphasisKind::SuperScript),
+            ("H２［＃「２」は下付き小文字］", EmphasisKind::SubScript),
+            ("あ［＃「あ」は行右小書き］", EmphasisKind::SmallRight),
+            ("い［＃「い」は行左小書き］", EmphasisKind::SmallLeft),
+        ] {
+            run!(out, src);
+            let emphasis = out
+                .spans
+                .iter()
+                .find_map(|s| match aozora_node(s) {
+                    Some(AozoraNode::Emphasis(e)) => Some(e),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("expected an Emphasis span for {src:?}"));
+            assert_eq!(emphasis.kind, want, "src = {src:?}");
+        }
     }
 
     #[test]

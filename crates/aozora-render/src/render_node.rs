@@ -109,13 +109,18 @@ fn render_bouten<W: Write>(b: &Bouten<'_>, writer: &mut W) -> fmt::Result {
     writer.write_str("</em>")
 }
 
-/// Render a forward-reference 太字 / 斜体 emphasis run. 太字 maps to the
-/// presentational `<b>` element, 斜体 to `<i>` — both carry an `aozora-*`
-/// class so a stylesheet can theme them, and neither collides with the
+/// Render a forward-reference emphasis run. 太字 maps to the presentational
+/// `<b>` element, 斜体 to `<i>`, 上付き/下付き小文字 to `<sup>` / `<sub>`,
+/// and 行右/行左小書き to a side `<span>` — each carries an `aozora-*` class
+/// so a stylesheet can theme them, and none collides with the
 /// `<em class="aozora-bouten …">` that [`render_bouten`] owns.
 fn render_emphasis<W: Write>(e: &Emphasis<'_>, writer: &mut W) -> fmt::Result {
     let (open, close) = match e.kind {
         EmphasisKind::Italic => (r#"<i class="aozora-italic">"#, "</i>"),
+        EmphasisKind::SuperScript => (r#"<sup class="aozora-superscript">"#, "</sup>"),
+        EmphasisKind::SubScript => (r#"<sub class="aozora-subscript">"#, "</sub>"),
+        EmphasisKind::SmallRight => (r#"<span class="aozora-koshogaki-right">"#, "</span>"),
+        EmphasisKind::SmallLeft => (r#"<span class="aozora-koshogaki-left">"#, "</span>"),
         // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
         // weight default to the bold element.
         _ => (r#"<b class="aozora-bold">"#, "</b>"),

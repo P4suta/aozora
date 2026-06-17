@@ -294,6 +294,10 @@ fn emit_emphasis<W: Write>(e: &Emphasis<'_>, out: &mut W) -> fmt::Result {
 const fn emphasis_kind_keyword(kind: EmphasisKind) -> &'static str {
     match kind {
         EmphasisKind::Italic => "斜体",
+        EmphasisKind::SuperScript => "上付き小文字",
+        EmphasisKind::SubScript => "下付き小文字",
+        EmphasisKind::SmallRight => "行右小書き",
+        EmphasisKind::SmallLeft => "行左小書き",
         // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
         // weight serialize as the bold keyword.
         _ => "太字",

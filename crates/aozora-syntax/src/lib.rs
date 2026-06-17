@@ -203,14 +203,17 @@ pub enum AozoraHeadingStyle {
     Window,
 }
 
-/// Text-weight / slant emphasis: 太字 (bold) or 斜体 (italic).
+/// Inline typographic treatment carried by the forward-reference leaf
+/// node [`borrowed::Emphasis`] (`X［＃「X」は…］`).
 ///
-/// Distinct from [`BoutenKind`] (傍点 / 傍線 decorative marks): emphasis
-/// is a typographic weight/slant, not a per-character mark. Carried by
-/// the forward-reference leaf node [`borrowed::Emphasis`]
-/// (`X［＃「X」は太字］`); the range / block forms
+/// Covers text-weight / slant (太字 / 斜体), super- and sub-script
+/// (上付き小文字 / 下付き小文字), and the vertical-writing small side
+/// glyphs (行右小書き / 行左小書き). Distinct from [`BoutenKind`]
+/// (傍点 / 傍線 decorative marks): emphasis is a typographic treatment of
+/// a whole span, not a per-character mark. The weight range / block forms
 /// (`［＃太字］…［＃太字終わり］`, `［＃ここから太字］…`) pair as
-/// [`ContainerKind::Bold`] / [`ContainerKind::Italic`].
+/// [`ContainerKind::Bold`] / [`ContainerKind::Italic`]; the script and
+/// 小書き forms are forward-reference only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -219,6 +222,14 @@ pub enum EmphasisKind {
     Bold,
     /// 斜体 (italic / イタリック).
     Italic,
+    /// 上付き小文字 (superscript — exponents, ordinals; 横組み).
+    SuperScript,
+    /// 下付き小文字 (subscript — chemical formulae; 横組み).
+    SubScript,
+    /// 行右小書き (small glyph set to the line's right in vertical writing).
+    SmallRight,
+    /// 行左小書き (small glyph set to the line's left in vertical writing).
+    SmallLeft,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
