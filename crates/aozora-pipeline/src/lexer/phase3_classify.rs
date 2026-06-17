@@ -562,6 +562,10 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         family: BodyFamily::BoutenRange,
     },
     BodyPattern {
+        needle: "黒三角傍点",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
         needle: "丸傍点",
         family: BodyFamily::BoutenRange,
     },
@@ -571,6 +575,14 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     },
     BodyPattern {
         needle: "二重傍線",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "鎖線",
+        family: BodyFamily::BoutenRange,
+    },
+    BodyPattern {
+        needle: "破線",
         family: BodyFamily::BoutenRange,
     },
     BodyPattern {
@@ -4060,8 +4072,8 @@ fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
 /// Parse a 傍点/傍線 range-form body into `(kind, position, is_close)`.
 /// Strips an optional `左に` left-side prefix and an optional `終わり`
 /// close suffix; the remainder must be a [`bouten_kind_from_suffix`]
-/// keyword. Returns `None` (→ `Annotation{Unknown}`) otherwise — e.g.
-/// for `鎖線` / `破線`, which the kind table does not yet cover.
+/// keyword (all fourteen kinds, incl. the rare 鎖線 / 破線 / 黒三角傍点).
+/// Returns `None` (→ `Annotation{Unknown}`) for any non-bouten body.
 fn parse_bouten_range_body(body: &str) -> Option<(BoutenKind, BoutenPosition, bool)> {
     let (position, rest) = body
         .strip_prefix("左に")
