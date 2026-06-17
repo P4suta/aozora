@@ -151,18 +151,21 @@ just corpus-sweep
 
 The flagship in-tree fixture lives at
 [`spec/aozora/fixtures/56656/`](./spec/aozora/fixtures/56656/) and is
-gated as the Tier-A acceptance check. Smaller focused JSON cases sit
-under [`spec/aozora/cases/`](./spec/aozora/cases/) and run from
-`just test`.
+gated as the Tier-A acceptance check. Smaller per-feature cases live
+in the [`aozora-conformance`](./crates/aozora-conformance/) crate —
+render goldens under `fixtures/render/` (`just render-gate`) and spec
+vectors under `spec-vectors/` (`just conformance`).
 
 ## Test strategy
 
 Each invariant is asserted from multiple angles (see user memory
 `feedback_tests_from_many_angles.md`):
 
-1. **Spec cases** under `spec/aozora/cases/*.json` — each entry pins
-   `(input, html, canonical_serialise)` for round-trip + render
-   equality.
+1. **Conformance suite** in `crates/aozora-conformance/` — render
+   goldens (`fixtures/render/`, `just render-gate`) and spec vectors
+   (`spec-vectors/`, vendored from `../aozora-notation-spec` and run by
+   `just conformance`) pin per-feature `(source, html, serialize, …)`
+   contracts.
 2. **Property tests** under `crates/*/tests/property_*.rs` — generators
    in [`crates/aozora-test-utils`](./crates/aozora-test-utils) drive
    parse / render / round-trip invariants.
@@ -222,8 +225,10 @@ for the layered crate boundaries this implies.
 
 The end-to-end TDD flow is roughly:
 
-1. **Spec fixture** — add a `(input, html, serialise)` triple under
-   [`spec/aozora/cases/`](./spec/aozora/cases/).
+1. **Conformance fixture** — add a `source` + `expected.*` golden under
+   [`crates/aozora-conformance/fixtures/render/`](./crates/aozora-conformance/)
+   (and a spec vector in `../aozora-notation-spec` for normative cases,
+   synced via `just sync-spec-vectors`).
 2. **AST variant** — add a borrowed-arena variant to `AozoraNode` in
    `crates/aozora-syntax/src/borrowed.rs`.
 3. **Lexer test (red)** — add a case to the relevant phase test
