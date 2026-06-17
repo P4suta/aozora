@@ -11,7 +11,7 @@ use aozora_syntax::borrowed::{
 };
 use aozora_syntax::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, Container, ContainerKind,
-    EmphasisKind, Indent, RubySide, SectionKind,
+    EmphasisKind, Indent, RubySide,
 };
 
 use crate::bouten;
@@ -47,12 +47,9 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
         AozoraNode::Center(_) => render_center(writer),
         AozoraNode::PageBreak => writer.write_str(r#"<div class="aozora-page-break"></div>"#),
         AozoraNode::SectionBreak(k) => {
-            let slug = match k {
-                SectionKind::Kaicho => "kaicho",
-                SectionKind::Kaidan => "kaidan",
-                SectionKind::Kaimihiraki => "kaimihiraki",
-                _ => "other",
-            };
+            // Single source of truth for the romaji slug: the spec slug
+            // table, keyed by the canonical 青空文庫 keyword.
+            let slug = aozora_spec::roman_slug(k.keyword()).unwrap_or("other");
             write!(
                 writer,
                 r#"<div class="aozora-section-break aozora-section-break-{slug}"></div>"#,
@@ -127,20 +124,25 @@ fn render_emphasis<W: Write>(e: &Emphasis<'_>, writer: &mut W) -> fmt::Result {
         render_content(e.text.get(), writer)?;
         return writer.write_str("</span>");
     }
-    let (open, close) = match e.kind {
-        EmphasisKind::Italic => (r#"<i class="aozora-italic">"#, "</i>"),
-        EmphasisKind::SuperScript => (r#"<sup class="aozora-superscript">"#, "</sup>"),
-        EmphasisKind::SubScript => (r#"<sub class="aozora-subscript">"#, "</sub>"),
-        EmphasisKind::SmallRight => (r#"<span class="aozora-koshogaki-right">"#, "</span>"),
-        EmphasisKind::SmallLeft => (r#"<span class="aozora-koshogaki-left">"#, "</span>"),
-        EmphasisKind::KeigakomiInline => (r#"<span class="aozora-keigakomi-inline">"#, "</span>"),
-        EmphasisKind::HorizontalInline => (r#"<span class="aozora-horizontal">"#, "</span>"),
-        EmphasisKind::Caption => (r#"<span class="aozora-caption">"#, "</span>"),
+    // The HTML element is semantic (italic→<i>, super/sub→<sup>/<sub>,
+    // 太字→<b>, the small-glyph / inline-box / caption forms→<span>) and
+    // stays here; the `aozora-*` class slug comes from the single source
+    // of truth (the spec slug table), keyed by the canonical keyword.
+    let (el, close) = match e.kind {
+        EmphasisKind::Italic => ("i", "</i>"),
+        EmphasisKind::SuperScript => ("sup", "</sup>"),
+        EmphasisKind::SubScript => ("sub", "</sub>"),
+        EmphasisKind::SmallRight
+        | EmphasisKind::SmallLeft
+        | EmphasisKind::KeigakomiInline
+        | EmphasisKind::HorizontalInline
+        | EmphasisKind::Caption => ("span", "</span>"),
         // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
         // weight default to the bold element.
-        _ => (r#"<b class="aozora-bold">"#, "</b>"),
+        _ => ("b", "</b>"),
     };
-    writer.write_str(open)?;
+    let slug = aozora_spec::roman_slug(e.kind.keyword()).unwrap_or("bold");
+    write!(writer, r#"<{el} class="aozora-{slug}">"#)?;
     render_content(e.text.get(), writer)?;
     writer.write_str(close)
 }
@@ -335,9 +337,9 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
         // `EmphasisKind::SmallRight` / `SmallLeft` leaf classes.
         ContainerKind::SmallScript {
             side: aozora_syntax::BoutenPosition::Left,
-        } => writer.write_str(r#"<span class="aozora-koshogaki-left">"#),
+        } => writer.write_str(r#"<span class="aozora-kogaki-left">"#),
         ContainerKind::SmallScript { .. } => {
-            writer.write_str(r#"<span class="aozora-koshogaki-right">"#)
+            writer.write_str(r#"<span class="aozora-kogaki-right">"#)
         }
         // Caption: inline `<span>` for the bare range, block `<div>` for ここから.
         ContainerKind::Caption { block: false } => {
@@ -631,7 +633,7 @@ mod tests {
         );
         assert_eq!(
             render_node_to_string(n),
-            r#"<em class="aozora-bouten aozora-bouten-black-triangle aozora-bouten-right">規範</em>"#
+            r#"<em class="aozora-bouten aozora-bouten-kurosankaku aozora-bouten-right">規範</em>"#
         );
     }
 

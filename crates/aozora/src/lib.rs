@@ -62,8 +62,8 @@ pub use aozora_render::{html, serialize};
 pub use aozora_spec::{
     ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic,
     DiagnosticSource, INLINE_SENTINEL, InternalCheckCode, NormalizedOffset, PairKind, PairLink,
-    SLUGS, Sentinel, Severity, SlugEntry, SlugFamily, SourceOffset, Span, TriggerKind,
-    canonicalise_slug, codes,
+    RENDER_SLUGS, RenderSlug, SLUGS, Sentinel, Severity, SlugEntry, SlugFamily, SourceOffset, Span,
+    TriggerKind, canonicalise_slug, codes, roman_slug,
 };
 /// Bump-allocator arena that owns all borrowed-AST node storage.
 ///

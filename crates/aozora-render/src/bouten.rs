@@ -6,26 +6,13 @@
 use aozora_syntax::{BoutenKind, BoutenPosition};
 
 #[must_use]
-pub(crate) const fn kind_slug(kind: BoutenKind) -> &'static str {
-    match kind {
-        BoutenKind::Goma => "goma",
-        BoutenKind::WhiteSesame => "white-sesame",
-        BoutenKind::Circle => "circle",
-        BoutenKind::WhiteCircle => "white-circle",
-        BoutenKind::DoubleCircle => "double-circle",
-        BoutenKind::Janome => "janome",
-        BoutenKind::Cross => "cross",
-        BoutenKind::WhiteTriangle => "white-triangle",
-        BoutenKind::WavyLine => "wavy-line",
-        BoutenKind::UnderLine => "under-line",
-        BoutenKind::DoubleUnderLine => "double-under-line",
-        BoutenKind::ChainLine => "chain-line",
-        BoutenKind::DashedLine => "dashed-line",
-        BoutenKind::BlackTriangle => "black-triangle",
-        // BoutenKind is `#[non_exhaustive]`; default future variants
-        // to "other" so render stays infallible.
-        _ => "other",
-    }
+pub(crate) fn kind_slug(kind: BoutenKind) -> &'static str {
+    // Single source of truth: the romaji slug lives in the spec slug
+    // table (`RENDER_SLUGS`), keyed by the canonical 青空文庫 keyword.
+    // `BoutenKind` is `#[non_exhaustive]`; an unknown kind keys the bare
+    // 傍点 (→ `goma`), keeping render infallible — `unwrap_or` only
+    // guards the theoretical lookup miss.
+    aozora_spec::roman_slug(kind.keyword()).unwrap_or("other")
 }
 
 #[must_use]

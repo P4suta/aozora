@@ -44,6 +44,8 @@ pub use sentinels::{
     ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL,
     Sentinel,
 };
-pub use slugs::{SLUGS, SlugEntry, SlugFamily, canonicalise_slug};
+pub use slugs::{
+    RENDER_SLUGS, RenderSlug, SLUGS, SlugEntry, SlugFamily, canonicalise_slug, roman_slug,
+};
 pub use span::Span;
 pub use trigger::{TriggerKind, classify_trigger_bytes};

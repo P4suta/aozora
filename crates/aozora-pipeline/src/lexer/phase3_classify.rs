@@ -5348,7 +5348,7 @@ mod tests {
     }
 
     #[test]
-    fn forward_emphasis_script_and_koshogaki_recognized() {
+    fn forward_emphasis_script_and_kogaki_recognized() {
         // 上付き/下付き小文字 (super/subscript) and 行右/行左小書き — the
         // four emphasis-page forward-reference families beyond 太字/斜体
         // (per <https://www.aozora.gr.jp/annotation/etc.html>). Each is a

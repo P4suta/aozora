@@ -106,7 +106,7 @@ pub enum ContainerKind {
     /// (`「X」は行右小書き` → [`crate::EmphasisKind::SmallRight`]). `side`
     /// records 右 / 左. Inline (sits within a line, like the 傍点 range), so
     /// it gets no block padding and renders as
-    /// `<span class="aozora-koshogaki-right">` / `…-left`.
+    /// `<span class="aozora-kogaki-right">` / `…-left`.
     SmallScript { side: BoutenPosition },
     /// Caption region. The bare range `［＃キャプション］ … ［＃キャプション終わり］`
     /// (`block: false`, inline `<span class="aozora-caption">`) and the block

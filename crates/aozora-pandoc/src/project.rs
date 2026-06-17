@@ -9,10 +9,11 @@
 
 use aozora::{
     AlignEnd, AngleQuote, Annotation, AnnotationKind, AozoraHeading, AozoraHeadingKind,
-    AozoraHeadingStyle, AozoraTree, Bouten, BoutenKind, BoutenPosition, ContainerKind, Gaiji,
-    HeadingHint, Indent, Kaeriten, NodeRef, Ruby, Sashie, SectionKind, Segment, SideNote,
-    SourceNode, Span, TateChuYoko, Warichu,
+    AozoraHeadingStyle, AozoraTree, Bouten, BoutenPosition, ContainerKind, Gaiji, HeadingHint,
+    Indent, Kaeriten, NodeRef, Ruby, Sashie, SectionKind, Segment, SideNote, SourceNode, Span,
+    TateChuYoko, Warichu,
     pipeline::lexer::sanitize,
+    roman_slug,
     syntax::borrowed::{AozoraNode, Content},
 };
 use pandoc_ast::{Attr, Block, Inline, Pandoc};
@@ -345,7 +346,10 @@ fn bouten_inline(b: &Bouten<'_>) -> Inline {
     let attr = class_attr_kv(
         "bouten",
         vec![
-            ("kind".to_owned(), bouten_kind_slug(b.kind).to_owned()),
+            (
+                "kind".to_owned(),
+                roman_slug(b.kind.keyword()).unwrap_or("unknown").to_owned(),
+            ),
             (
                 "position".to_owned(),
                 bouten_position_slug(b.position).to_owned(),
@@ -353,23 +357,6 @@ fn bouten_inline(b: &Bouten<'_>) -> Inline {
         ],
     );
     Inline::Span(attr, content_to_inlines(b.target.get()))
-}
-
-fn bouten_kind_slug(k: BoutenKind) -> &'static str {
-    match k {
-        BoutenKind::Goma => "goma",
-        BoutenKind::WhiteSesame => "white-sesame",
-        BoutenKind::Circle => "circle",
-        BoutenKind::WhiteCircle => "white-circle",
-        BoutenKind::DoubleCircle => "double-circle",
-        BoutenKind::Janome => "janome",
-        BoutenKind::Cross => "cross",
-        BoutenKind::WhiteTriangle => "white-triangle",
-        BoutenKind::WavyLine => "wavy-line",
-        BoutenKind::UnderLine => "underline",
-        BoutenKind::DoubleUnderLine => "double-underline",
-        _ => "unknown",
-    }
 }
 
 fn bouten_position_slug(p: BoutenPosition) -> &'static str {
@@ -484,12 +471,7 @@ fn heading_hint_inline(h: HeadingHint<'_>) -> Inline {
 }
 
 fn section_break_block(k: SectionKind) -> Block {
-    let slug = match k {
-        SectionKind::Kaicho => "kaicho",
-        SectionKind::Kaidan => "kaidan",
-        SectionKind::Kaimihiraki => "kaimihiraki",
-        _ => "other",
-    };
+    let slug = roman_slug(k.keyword()).unwrap_or("other");
     Block::Div(
         (
             String::new(),
@@ -572,7 +554,10 @@ fn container_attr(kind: ContainerKind) -> Attr {
             vec![("offset".to_owned(), offset.to_string())],
         ),
         ContainerKind::BoutenRange { kind, position } => {
-            let mut kvs = vec![("variant".to_owned(), bouten_kind_slug(kind).to_owned())];
+            let mut kvs = vec![(
+                "variant".to_owned(),
+                roman_slug(kind.keyword()).unwrap_or("unknown").to_owned(),
+            )];
             if matches!(position, BoutenPosition::Left) {
                 kvs.push(("position".to_owned(), "left".to_owned()));
             }

@@ -572,9 +572,442 @@ pub fn canonicalise_slug(input: &str) -> Option<&'static str> {
     None
 }
 
+/// One row of the *render* slug table.
+///
+/// The single source of truth for the romaji CSS slug emitted for a
+/// given annotation. Kept separate from [`SLUGS`] (the LSP completion
+/// catalogue) because render slugs key on the enum *keyword* (傍点 kind
+/// / emphasis kind / section kind), a vocabulary the completion table
+/// does not carry.
+///
+/// `roman` is the stable kebab-case CSS slug. `reading` is the kana the
+/// slug romanises (Hepburn, long vowels dropped — 改丁／かいちょう →
+/// `kaicho`); `None` marks a loanword kept in English (改ページ →
+/// `page-break`, キャプション → `caption`) which has no reading-derived
+/// spelling to check. `jis` cites the JIS Z 8125:2004 clause the term
+/// is reconciled against, where one exists.
+///
+/// The `render_slug_matches_reading` test re-derives Hepburn from
+/// `reading` and asserts it agrees with `roman`, so a slug that drifts
+/// from its reading — 小書き is こがき (→ `kogaki`), not the over-long
+/// spelling once shipped — cannot reappear.
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RenderSlug {
+    /// Canonical Japanese keyword (matches the enum→keyword tables in
+    /// `aozora-syntax`), used as the lookup key.
+    pub canonical: &'static str,
+    /// Kana the slug romanises, or `None` for an English loanword slug.
+    pub reading: Option<&'static str>,
+    /// Stable kebab-case CSS slug.
+    pub roman: &'static str,
+    /// JIS Z 8125:2004 clause, where the term is standardised.
+    pub jis: Option<&'static str>,
+}
+
+/// The render slug catalogue — the single source of truth for romaji
+/// CSS slugs. See [`RenderSlug`].
+pub const RENDER_SLUGS: &[RenderSlug] = &[
+    // --- Section / page break (JIS Z 8125:2004 §07.24) ---------------------
+    RenderSlug {
+        canonical: "改丁",
+        reading: Some("かいちょう"),
+        roman: "kaicho",
+        jis: Some("07.24.12"),
+    },
+    RenderSlug {
+        canonical: "改段",
+        reading: Some("かいだん"),
+        roman: "kaidan",
+        jis: Some("07.24.14"),
+    },
+    RenderSlug {
+        canonical: "改見開き",
+        reading: Some("かいみひらき"),
+        roman: "kaimihiraki",
+        jis: Some("07.24.01"),
+    },
+    RenderSlug {
+        canonical: "改ページ",
+        reading: None,
+        roman: "page-break",
+        jis: Some("07.24.13"),
+    },
+    // --- Bouten kinds (圏点 JIS Z 8125:2004 §07.16) ------------------------
+    RenderSlug {
+        canonical: "傍点",
+        reading: Some("ごま"),
+        roman: "goma",
+        jis: Some("07.16"),
+    },
+    RenderSlug {
+        canonical: "白ゴマ傍点",
+        reading: Some("しろごま"),
+        roman: "shirogoma",
+        jis: Some("07.16"),
+    },
+    RenderSlug {
+        canonical: "丸傍点",
+        reading: Some("まる"),
+        roman: "maru",
+        jis: Some("07.16"),
+    },
+    RenderSlug {
+        canonical: "白丸傍点",
+        reading: Some("しろまる"),
+        roman: "shiromaru",
+        jis: Some("07.16"),
+    },
+    RenderSlug {
+        canonical: "二重丸傍点",
+        reading: Some("にじゅうまる"),
+        roman: "nijumaru",
+        jis: Some("07.16"),
+    },
+    RenderSlug {
+        canonical: "蛇の目傍点",
+        reading: Some("じゃのめ"),
+        roman: "janome",
+        jis: Some("07.16"),
+    },
+    RenderSlug {
+        canonical: "ばつ傍点",
+        reading: Some("ばつ"),
+        roman: "batsu",
+        jis: Some("07.16"),
+    },
+    RenderSlug {
+        canonical: "白三角傍点",
+        reading: Some("しろさんかく"),
+        roman: "shirosankaku",
+        jis: Some("07.16"),
+    },
+    RenderSlug {
+        canonical: "波線",
+        reading: Some("なみせん"),
+        roman: "namisen",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "傍線",
+        reading: Some("ぼうせん"),
+        roman: "bosen",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "二重傍線",
+        reading: Some("にじゅうぼうせん"),
+        roman: "nijubosen",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "鎖線",
+        reading: Some("くさりせん"),
+        roman: "kusarisen",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "破線",
+        reading: Some("はせん"),
+        roman: "hasen",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "黒三角傍点",
+        reading: Some("くろさんかく"),
+        roman: "kurosankaku",
+        jis: Some("07.16"),
+    },
+    // --- Emphasis / inline ---------------------------------------------------
+    // These keep their established English slugs: they are translations,
+    // not misreadings, and span three emit paths (forward / range / block)
+    // plus the `aozora-container-*` class family, so reading-based renaming
+    // is tracked separately. `reading: None` keeps them out of the
+    // Hepburn-consistency check. Only 行右/行左小書き carry a reading —
+    // their slug once carried an over-long misspelling, now corrected
+    // to `kogaki` (小書き＝こがき).
+    RenderSlug {
+        canonical: "斜体",
+        reading: None,
+        roman: "italic",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "太字",
+        reading: None,
+        roman: "bold",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "上付き小文字",
+        reading: None,
+        roman: "superscript",
+        jis: Some("07.12.01"),
+    },
+    RenderSlug {
+        canonical: "下付き小文字",
+        reading: None,
+        roman: "subscript",
+        jis: Some("07.12.02"),
+    },
+    RenderSlug {
+        canonical: "行右小書き",
+        reading: Some("こがき"),
+        roman: "kogaki-right",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "行左小書き",
+        reading: Some("こがき"),
+        roman: "kogaki-left",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "罫囲み",
+        reading: None,
+        roman: "keigakomi-inline",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "横組み",
+        reading: None,
+        roman: "horizontal",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "キャプション",
+        reading: None,
+        roman: "caption",
+        jis: None,
+    },
+];
+
+/// Look up the romaji CSS slug for an annotation `canonical` keyword.
+/// Returns `None` for an unknown keyword (callers fall back to a
+/// neutral slug).
+#[must_use]
+pub fn roman_slug(canonical: &str) -> Option<&'static str> {
+    RENDER_SLUGS
+        .iter()
+        .find(|e| e.canonical == canonical)
+        .map(|e| e.roman)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Minimal Hepburn romaniser (long vowel お／う段 + う dropped,
+    /// matching the slug convention 改丁→`kaicho`). Test-only — the
+    /// production slugs are hand-written in [`RENDER_SLUGS`]; this
+    /// re-derives them from `reading` to catch a misspelling.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "exhaustive kana→romaji morae tables read clearest inline"
+    )]
+    fn hepburn(kana: &str) -> String {
+        const TWO: &[(&str, &str)] = &[
+            ("きゃ", "kya"),
+            ("きゅ", "kyu"),
+            ("きょ", "kyo"),
+            ("しゃ", "sha"),
+            ("しゅ", "shu"),
+            ("しょ", "sho"),
+            ("ちゃ", "cha"),
+            ("ちゅ", "chu"),
+            ("ちょ", "cho"),
+            ("にゃ", "nya"),
+            ("にゅ", "nyu"),
+            ("にょ", "nyo"),
+            ("ひゃ", "hya"),
+            ("ひゅ", "hyu"),
+            ("ひょ", "hyo"),
+            ("みゃ", "mya"),
+            ("みゅ", "myu"),
+            ("みょ", "myo"),
+            ("りゃ", "rya"),
+            ("りゅ", "ryu"),
+            ("りょ", "ryo"),
+            ("ぎゃ", "gya"),
+            ("ぎゅ", "gyu"),
+            ("ぎょ", "gyo"),
+            ("じゃ", "ja"),
+            ("じゅ", "ju"),
+            ("じょ", "jo"),
+            ("びゃ", "bya"),
+            ("びゅ", "byu"),
+            ("びょ", "byo"),
+            ("ぴゃ", "pya"),
+            ("ぴゅ", "pyu"),
+            ("ぴょ", "pyo"),
+        ];
+        const ONE: &[(&str, &str)] = &[
+            ("あ", "a"),
+            ("い", "i"),
+            ("う", "u"),
+            ("え", "e"),
+            ("お", "o"),
+            ("か", "ka"),
+            ("き", "ki"),
+            ("く", "ku"),
+            ("け", "ke"),
+            ("こ", "ko"),
+            ("が", "ga"),
+            ("ぎ", "gi"),
+            ("ぐ", "gu"),
+            ("げ", "ge"),
+            ("ご", "go"),
+            ("さ", "sa"),
+            ("し", "shi"),
+            ("す", "su"),
+            ("せ", "se"),
+            ("そ", "so"),
+            ("ざ", "za"),
+            ("じ", "ji"),
+            ("ず", "zu"),
+            ("ぜ", "ze"),
+            ("ぞ", "zo"),
+            ("た", "ta"),
+            ("ち", "chi"),
+            ("つ", "tsu"),
+            ("て", "te"),
+            ("と", "to"),
+            ("だ", "da"),
+            ("ぢ", "ji"),
+            ("づ", "zu"),
+            ("で", "de"),
+            ("ど", "do"),
+            ("な", "na"),
+            ("に", "ni"),
+            ("ぬ", "nu"),
+            ("ね", "ne"),
+            ("の", "no"),
+            ("は", "ha"),
+            ("ひ", "hi"),
+            ("ふ", "fu"),
+            ("へ", "he"),
+            ("ほ", "ho"),
+            ("ば", "ba"),
+            ("び", "bi"),
+            ("ぶ", "bu"),
+            ("べ", "be"),
+            ("ぼ", "bo"),
+            ("ぱ", "pa"),
+            ("ぴ", "pi"),
+            ("ぷ", "pu"),
+            ("ぺ", "pe"),
+            ("ぽ", "po"),
+            ("ま", "ma"),
+            ("み", "mi"),
+            ("む", "mu"),
+            ("め", "me"),
+            ("も", "mo"),
+            ("や", "ya"),
+            ("ゆ", "yu"),
+            ("よ", "yo"),
+            ("ら", "ra"),
+            ("り", "ri"),
+            ("る", "ru"),
+            ("れ", "re"),
+            ("ろ", "ro"),
+            ("わ", "wa"),
+            ("を", "o"),
+            ("ん", "n"),
+        ];
+        let mut out = String::new();
+        let mut rest = kana;
+        'outer: while !rest.is_empty() {
+            // Long-vowel う after an o/u sound collapses (ちょう→cho).
+            if let Some(r) = rest.strip_prefix('う')
+                && (out.ends_with('o') || out.ends_with('u'))
+            {
+                rest = r;
+                continue;
+            }
+            for (k, v) in TWO {
+                if let Some(r) = rest.strip_prefix(k) {
+                    out.push_str(v);
+                    rest = r;
+                    continue 'outer;
+                }
+            }
+            for (k, v) in ONE {
+                if let Some(r) = rest.strip_prefix(k) {
+                    out.push_str(v);
+                    rest = r;
+                    continue 'outer;
+                }
+            }
+            // Unknown kana — surface it so the test fails loudly.
+            return format!("{out}?{rest}");
+        }
+        out
+    }
+
+    #[test]
+    fn render_slugs_are_kebab_ascii() {
+        for e in RENDER_SLUGS {
+            assert!(
+                !e.roman.is_empty()
+                    && e.roman
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b == b'-' || b.is_ascii_digit()),
+                "non-kebab render slug: {:?}",
+                e.roman
+            );
+        }
+    }
+
+    #[test]
+    fn render_slugs_are_unique() {
+        let mut seen: Vec<&'static str> = Vec::with_capacity(RENDER_SLUGS.len());
+        for e in RENDER_SLUGS {
+            assert!(
+                !seen.contains(&e.roman),
+                "duplicate render slug: {}",
+                e.roman
+            );
+            seen.push(e.roman);
+        }
+    }
+
+    #[test]
+    fn render_slug_readings_are_hiragana() {
+        for e in RENDER_SLUGS {
+            if let Some(r) = e.reading {
+                assert!(
+                    r.chars().all(|c| ('\u{3040}'..='\u{309F}').contains(&c)),
+                    "reading not hiragana: {r} ({})",
+                    e.canonical
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn render_slug_matches_reading() {
+        for e in RENDER_SLUGS {
+            let Some(reading) = e.reading else { continue };
+            let h = hepburn(reading);
+            let ok = e.roman == h
+                || e.roman
+                    .strip_prefix(&h)
+                    .is_some_and(|rest| rest.starts_with('-'));
+            assert!(
+                ok,
+                "render slug {:?} (canonical {}) inconsistent with reading {reading} → hepburn {h}",
+                e.roman, e.canonical
+            );
+        }
+    }
+
+    #[test]
+    fn roman_slug_looks_up_and_misses() {
+        assert_eq!(roman_slug("行右小書き"), Some("kogaki-right"));
+        assert_eq!(roman_slug("白ゴマ傍点"), Some("shirogoma"));
+        assert_eq!(roman_slug("改丁"), Some("kaicho"));
+        assert_eq!(roman_slug("nonsense"), None);
+    }
 
     #[test]
     fn slugs_table_is_non_empty() {
