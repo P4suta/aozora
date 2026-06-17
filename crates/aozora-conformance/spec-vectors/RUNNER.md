@@ -75,10 +75,14 @@ a vector only means something if a processor can fail it.
 **Every** vector records its provenance in `meta.note`, tagged
 `[provenance:hand-derived §X + AOZORA-ANNOTATION <date>] …`: the governing
 section(s), the official behaviour it pins, and (where applicable) what was
-corrected away from an earlier implementation-derived draft. The convention is
-machine-checkable — `grep -rl '"note"' conformance/vectors | wc -l` must equal
-the vector count — so a new bare vector is caught before it regresses the
-corpus back toward circularity.
+corrected away from an earlier implementation-derived draft. This is
+**enforced, not merely conventional**: the schema makes `meta.note` REQUIRED
+and constrains it to begin with `[provenance:`, and `tools/validate_vectors.py`
+(run in CI) rejects any vector that lacks it — so a bare vector cannot regress
+the corpus back toward circularity. A vector may additionally cite a real
+corpus fragment via `meta.corpus { work, line }`; when `$AOZORA_CORPUS_ROOT` is
+set the validator confirms the `source` actually occurs in that file
+(corpus-verify), turning the provenance claim into a checked fact.
 
 ## Notes for a consuming implementation
 
@@ -86,5 +90,9 @@ An implementation SHOULD pin this specification by revision and run the
 vectors in its own CI, failing on any `must` mismatch. This is how the
 specification acts as the master: the prose, the examples, and the
 implementation cannot drift apart without a red build. The vector corpus is
-maintained in this repository; `tools/import_vectors.py` can refresh it from
-an external fixture set in the standard layout.
+maintained in this repository. Vectors are hand-authored and -audited from the
+specification and the real corpus; they are deliberately **not** generated from
+any processor's output. (An earlier `tools/import_vectors.py` did exactly that —
+collapsing a processor's golden fixtures into vectors — and has been removed: a
+vector imported from the implementation it is meant to test cannot, by
+construction, fail that implementation.)

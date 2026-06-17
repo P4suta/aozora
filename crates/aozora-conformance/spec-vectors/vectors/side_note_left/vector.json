@@ -4,7 +4,7 @@
     "feature": "kunten",
     "level": "should",
     "spec_section": "6.5",
-    "note": "Left-side annotation (注記): the 「未来」 target precedes the directive (pulled back) and the の注記 keyword yields a sideNote node, distinct from a ruby. Promoted from the §10.5 deferred list now that §6.5 pins it normatively."
+    "note": "[provenance:hand-derived §6.5 + AOZORA-ANNOTATION 2026-06-17] Left-side annotation (注記): the 「未来」 target precedes the directive (pulled back) and the の注記 keyword yields a sideNote node, distinct from a ruby. Promoted from the §10.5 deferred list now that §6.5 pins it normatively."
   },
   "source": "未来［＃「未来」の左に「みらい」の注記］を見る。\n",
   "expected": {

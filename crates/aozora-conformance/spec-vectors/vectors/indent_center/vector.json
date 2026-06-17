@@ -4,7 +4,7 @@
     "feature": "container",
     "level": "should",
     "spec_section": "6.6",
-    "note": "Combined 字下げ＋ページの左右中央: an indented block that is also page-centred. It is the indent family carrying a center flag, so it closes with the shared 字下げ終わり (pairing is by family); the opener preserves both the amount and the center flag on round-trip."
+    "note": "[provenance:hand-derived §6.6 + AOZORA-ANNOTATION 2026-06-17] Combined 字下げ＋ページの左右中央: an indented block that is also page-centred. It is the indent family carrying a center flag, so it closes with the shared 字下げ終わり (pairing is by family); the opener preserves both the amount and the center flag on round-trip."
   },
   "source": "［＃ここから5字下げ、ページの左右中央に］\n献辞\n［＃ここで字下げ終わり］\n",
   "expected": {
