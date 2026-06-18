@@ -317,6 +317,10 @@ pub struct Sashie<'src> {
     /// kept as the raw digit string (so `０１` / `10` round-trip verbatim).
     /// `None` for the plain `［＃挿絵（…）入る］`.
     pub number: Option<super::NonEmptyStr<'src>>,
+    /// Optional verbatim pixel-size note (`横W×縦H`) from the
+    /// `［＃挿絵（file、横W×縦H）入る］` form, kept out of `file` so the
+    /// rendered `<img src>` stays a clean path. `None` when absent.
+    pub dimensions: Option<&'src str>,
     pub caption: Option<Content<'src>>,
 }
 

@@ -3099,6 +3099,15 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                     return None;
                 }
                 let tail = self.source[qcs.end as usize..bracket_close_span.start as usize].trim();
+                // The simple quoted form is `「desc」` optionally followed by
+                // `、mencode`. If extra structure follows the first quote
+                // (e.g. the composed-glyph form `「X」の「Y」に代えて「Z」、
+                // mencode`), this is not a one-quote gaiji — decline so the
+                // bare extractor captures the whole verbatim description
+                // instead of silently dropping it (a round-trip data loss).
+                if !tail.is_empty() && !tail.starts_with('、') {
+                    return None;
+                }
                 let mencode = tail.strip_prefix('、').map(str::trim);
                 Some((desc.to_owned(), mencode.map(str::to_owned)))
             }
@@ -3111,28 +3120,13 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             self.extract_bare_gaiji_body(hash_end, bracket_close_span.start)?
         };
 
-        if description.is_empty() {
-            return None;
-        }
-        // Reject descriptions that carry structural quote characters.
-        // The serializer wraps the description in `「…」` for round-trip,
-        // so a stray `」` (e.g. from the malformed input `※［＃」］`) would
-        // make `serialize ∘ parse` non-stable. Falling through to `None`
-        // here lets the higher-level classifier wrap the raw bracket in
-        // an `Annotation{Unknown}`, which round-trips byte-identical.
-        if description.contains(['「', '」']) {
-            return None;
-        }
-        // Reject descriptions that embed a nested annotation-opening
-        // sequence `［＃`. Pathological shapes like `※［＃［＃改］］`
-        // produce a description string that *contains* `［＃`, which the
-        // gaiji renderer would emit verbatim inside `<span class=
-        // "aozora-gaiji">…</span>` — leaking a bare `［＃` outside the
-        // `aozora-annotation` wrapper and violating the Tier A canary.
-        // Falling through here lets the outer bracket be claimed by
-        // `Annotation{Unknown}`, which is rendered inside an
-        // `aozora-annotation` wrapper as the canary requires.
-        if description.contains("［＃") {
+        if description.is_empty()
+            || !gaiji_description_serializable(&description, mencode.is_some())
+        {
+            // A non-serializable description (stray quote imbalance, an
+            // embedded `［＃`, …) falls through to `Annotation{Unknown}`,
+            // which round-trips byte-identical. See
+            // [`gaiji_description_serializable`].
             return None;
         }
 
@@ -3178,6 +3172,30 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         }
         Some((desc.trim().to_owned(), Some(men.to_owned())))
     }
+}
+
+/// Whether a gaiji `description` can be kept (it both serializes and
+/// round-trips); otherwise the bracket falls through to `Annotation{Unknown}`.
+///
+/// Rejects:
+///   - a description embedding `［＃` (a nested annotation opener would leak a
+///     bare `［＃` outside the `aozora-annotation` wrapper, violating the Tier A
+///     canary), and
+///   - a description carrying structural `「…」` quotes, *except* the
+///     composed-glyph form `「X」の「Y」に代えて「Z」` (corpus §6 external-character
+///     form): balanced quotes, anchored by a trailing `、mencode`, and free of
+///     the `、` separator. `emit_gaiji` writes that form verbatim (no `「…」`
+///     wrapper), so it round-trips; any other quote-bearing description would
+///     unbalance the serializer's wrapper.
+fn gaiji_description_serializable(description: &str, has_mencode: bool) -> bool {
+    if description.contains("［＃") {
+        return false;
+    }
+    if description.contains(['「', '」']) {
+        let balanced = description.matches('「').count() == description.matches('」').count();
+        return balanced && has_mencode && !description.contains('、');
+    }
+    true
 }
 
 /// Loose validator for a bare-form gaiji mencode field.
@@ -4091,7 +4109,14 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
     // `）` is a full-width right parenthesis (U+FF09). Find its first
     // occurrence — corpus rarely nests `（）` inside a filename.
     let close_off = rest.find('）')?;
-    let file = &rest[..close_off];
+    // The `（…）` body is either a bare `file` or `file、横W×縦H` — split off
+    // the optional pixel-size note so `file` stays a clean `<img src>` path
+    // and the dimensions render as `width`/`height` (see render_node).
+    let inside = &rest[..close_off];
+    let (file, dimensions) = match inside.split_once('、') {
+        Some((f, dims)) if !f.is_empty() && !dims.is_empty() => (f, Some(dims)),
+        _ => (inside, None),
+    };
     if file.is_empty() {
         return None;
     }
@@ -4111,7 +4136,9 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
     } else {
         return None;
     };
-    Some(EmitKind::Aozora(alloc.sashie(file, number, caption)))
+    Some(EmitKind::Aozora(
+        alloc.sashie(file, number, dimensions, caption),
+    ))
 }
 
 /// Classify a `［＃「target」は(大|中|小)見出し］` forward-reference
@@ -4315,7 +4342,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             return None;
         }
         let caption_content = self.alloc.content_plain(caption);
-        Some(self.alloc.sashie(file, None, Some(caption_content)))
+        Some(self.alloc.sashie(file, None, None, Some(caption_content)))
     }
 }
 
@@ -6295,13 +6322,19 @@ mod tests {
     /// figure index verbatim (full-width digits included) and round-trips.
     #[test]
     fn sashie_numbered_form_recognized() {
-        for (src, want_num, want_file) in [
+        for (src, want_num, want_file, want_dims) in [
             (
                 "［＃挿絵10（fig01.png、横362×縦489）入る］",
                 "10",
-                "fig01.png、横362×縦489",
+                "fig01.png",
+                Some("横362×縦489"),
             ),
-            ("［＃挿絵１（fig194_01.png）入る］", "１", "fig194_01.png"),
+            (
+                "［＃挿絵１（fig194_01.png）入る］",
+                "１",
+                "fig194_01.png",
+                None,
+            ),
         ] {
             run!(out, src);
             let sashie = out
@@ -6317,6 +6350,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("figure number present for {src:?}"));
             assert_eq!(num.as_str(), want_num, "src={src:?}");
             assert_eq!(sashie.file.as_str(), want_file, "src={src:?}");
+            assert_eq!(sashie.dimensions, want_dims, "src={src:?}");
         }
         // A description before 挿絵 is a different, unhandled form.
         run!(out, "x［＃女性の挿絵（fig.png）入る］y");
@@ -6344,6 +6378,22 @@ mod tests {
             panic!("expected a bundled caption");
         };
         assert_eq!(caption.as_plain(), Some("キャプション"));
+    }
+
+    #[test]
+    fn sashie_with_dimensions_splits_file_and_size() {
+        // Bundled corpus form `挿絵（file、横W×縦H）入る` — the pixel-size
+        // note rides in `dimensions`, keeping `file` a clean path.
+        run!(out, "［＃挿絵（fig42_03.png、横480×縦640）入る］");
+        let Some(sashie) = out.spans.iter().find_map(|s| match aozora_node(s) {
+            Some(AozoraNode::Sashie(s)) => Some(s),
+            _ => None,
+        }) else {
+            panic!("expected a Sashie span");
+        };
+        assert_eq!(sashie.file.as_str(), "fig42_03.png");
+        assert_eq!(sashie.dimensions, Some("横480×縦640"));
+        assert!(sashie.caption.is_none());
     }
 
     #[test]
@@ -6439,6 +6489,23 @@ mod tests {
             .expect("expected a Gaiji span");
         // span must start at the ※ (after "a"), not at ［.
         assert_eq!(gaiji_span.source_span.slice(src), "※［＃「X」、m］");
+    }
+
+    #[test]
+    fn gaiji_composed_glyph_kaete_form() {
+        // ※［＃「X」の「Y」に代えて「Z」、第N水準…］ — composed-glyph gaiji.
+        // The whole pre-mencode body is the verbatim description; the
+        // trailing mencode resolves the character. Previously this dropped
+        // everything after the first quote (a round-trip data loss).
+        run!(out, "※［＃「比」の「ヒ」に代えて「く」、第4水準2-1-23］");
+        let Some(g) = out.spans.iter().find_map(|s| match aozora_node(s) {
+            Some(AozoraNode::Gaiji(g)) => Some(g),
+            _ => None,
+        }) else {
+            panic!("expected Gaiji node for the 代えて composed-glyph form");
+        };
+        assert_eq!(g.description, "「比」の「ヒ」に代えて「く」");
+        assert_eq!(g.mencode, Some("第4水準2-1-23"));
     }
 
     #[test]
