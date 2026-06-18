@@ -1,0 +1,70 @@
+{
+  "name": "gaiji_composed_glyph",
+  "meta": {
+    "feature": "gaiji",
+    "level": "should",
+    "spec_section": "6.4",
+    "note": "[provenance:reference-impl-aligned §6.4 + AOZORA-ANNOTATION 2026-06-17] ※［＃「X」の「Y」に代えて「Z」、第N水準N-N-N］ is the composed-glyph external-character form: the verbatim quoted body describes how to build the glyph and the trailing mencode resolves it via JIS X 0213. The whole pre-mencode body is the description (serialized verbatim, no extra 「」 wrapper); the bare extractor restores it on re-parse. ~2.8k occurrences. Offsets from the §3 byte model; expected captured from the aozora #114/#118 reference implementation (the project's canonical processor)."
+  },
+  "source": "※［＃「比」の「ヒ」に代えて「く」、第4水準2-1-23］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-gaiji\" data-codepoint=\"U+4EBC\">亼</span></p>\n",
+    "serialize": "※［＃「比」の「ヒ」に代えて「く」、第4水準2-1-23］\n",
+    "nodes": [
+      {
+        "kind": "gaiji",
+        "span": {
+          "start": 0,
+          "end": 73
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 15,
+          "end": 18
+        }
+      },
+      {
+        "kind": "quote",
+        "open": {
+          "start": 21,
+          "end": 24
+        },
+        "close": {
+          "start": 27,
+          "end": 30
+        }
+      },
+      {
+        "kind": "quote",
+        "open": {
+          "start": 42,
+          "end": 45
+        },
+        "close": {
+          "start": 48,
+          "end": 51
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 70,
+          "end": 73
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

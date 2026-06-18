@@ -1,0 +1,59 @@
+{
+  "name": "correction_textual_note",
+  "meta": {
+    "feature": "annotation",
+    "level": "should",
+    "spec_section": "6.14",
+    "note": "[provenance:reference-impl-aligned §6.14 + AOZORA-ANNOTATION 2026-06-17] ［＃「X」は底本では「Y」］ is the source-text divergence note: the displayed text X appears as Y in the底本 (source book). It annotates without transforming — the node carries the raw directive (hidden aozora-annotation span) with the AnnotationKind::TextualNote classification (pandoc/wire map `textual-note`). ~7k occurrences, the corpus' most common editorial note. Offsets from the §3 byte model; expected captured from the aozora #114/#118 reference implementation (the project's canonical processor)."
+  },
+  "source": "間違い［＃「間違い」は底本では「間違ひ」］です\n",
+  "expected": {
+    "html": "<p>間違い<span class=\"aozora-annotation\" hidden>［＃「間違い」は底本では「間違ひ」］</span>です</p>\n",
+    "serialize": "間違い［＃「間違い」は底本では「間違ひ」］です\n",
+    "nodes": [
+      {
+        "kind": "annotation",
+        "span": {
+          "start": 9,
+          "end": 63
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 15,
+          "end": 18
+        },
+        "close": {
+          "start": 27,
+          "end": 30
+        }
+      },
+      {
+        "kind": "quote",
+        "open": {
+          "start": 45,
+          "end": 48
+        },
+        "close": {
+          "start": 57,
+          "end": 60
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 60,
+          "end": 63
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
