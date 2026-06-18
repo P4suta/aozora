@@ -463,22 +463,31 @@ impl<'a> BorrowedAllocator<'a> {
     /// `file` carries the [`borrowed::NonEmptyStr`] invariant. `number` is
     /// the optional figure index from the numbered form `［＃挿絵{N}（…）入る］`,
     /// kept verbatim; an empty `number` string is treated as absent.
+    /// `dimensions` is the optional verbatim pixel-size note (`横W×縦H`) from
+    /// `［＃挿絵（file、…）入る］`, kept out of `file`.
     ///
     /// # Panics
     ///
     /// Panics if `file` is empty.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "every parameter is an independent part of the 挿絵 contract — file / number / dimensions / caption each carry distinct semantics, and a builder would add a layer without saving the caller anything"
+    )]
     pub fn sashie(
         &mut self,
         file: &str,
         number: Option<&str>,
+        dimensions: Option<&str>,
         caption: Option<borrowed::Content<'a>>,
     ) -> borrowed::AozoraNode<'a> {
         let file = borrowed::NonEmptyStr::new(self.interner.intern(file))
             .expect("Phase 3 must emit Sashie with non-empty file path");
         let number = number.and_then(|n| borrowed::NonEmptyStr::new(self.interner.intern(n)));
+        let dimensions = dimensions.map(|d| self.interner.intern(d));
         borrowed::AozoraNode::Sashie(self.arena.alloc(borrowed::Sashie {
             file,
             number,
+            dimensions,
             caption,
         }))
     }
@@ -749,7 +758,7 @@ mod tests {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
         let caption = a.content_plain("挿絵キャプション");
-        let n = a.sashie("fig01.png", Some("3"), Some(caption));
+        let n = a.sashie("fig01.png", Some("3"), None, Some(caption));
         match n {
             borrowed::AozoraNode::Sashie(s) => {
                 assert_eq!(s.file.as_str(), "fig01.png");
@@ -767,7 +776,7 @@ mod tests {
     fn sashie_without_caption() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let n = a.sashie("fig02.png", None, None);
+        let n = a.sashie("fig02.png", None, None, None);
         match n {
             borrowed::AozoraNode::Sashie(s) => {
                 assert_eq!(s.file.as_str(), "fig02.png");

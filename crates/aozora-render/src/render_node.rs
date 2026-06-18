@@ -376,6 +376,17 @@ fn render_angle_quote<W: Write>(d: &AngleQuote<'_>, writer: &mut W) -> fmt::Resu
 }
 
 /// Render a `［＃挿絵（file）入る］` illustration as a semantic
+/// Parse the bundled `横W×縦H` pixel-size note into `(width, height)` —
+/// both runs of ASCII digits. Returns `None` for any other shape (the
+/// dimensions then carry no HTML width/height hint).
+fn parse_sashie_dimensions(dims: &str) -> Option<(&str, &str)> {
+    let (w, h) = dims.split_once('×')?;
+    let w = w.strip_prefix('横')?;
+    let h = h.strip_prefix('縦')?;
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    (digits(w) && digits(h)).then_some((w, h))
+}
+
 /// `<figure>` carrying an `<img>` reference. The parser does not fetch
 /// or embed pixels — `src` is the verbatim filename from the directive
 /// and `alt` is left empty (the optional caption, when a future
@@ -385,7 +396,11 @@ fn render_angle_quote<W: Write>(d: &AngleQuote<'_>, writer: &mut W) -> fmt::Resu
 fn render_sashie<W: Write>(s: &Sashie<'_>, writer: &mut W) -> fmt::Result {
     writer.write_str(r#"<figure class="aozora-sashie"><img src=""#)?;
     escape_text(s.file.as_str(), writer)?;
-    writer.write_str(r#"" alt="" />"#)?;
+    writer.write_char('"')?;
+    if let Some((w, h)) = s.dimensions.and_then(parse_sashie_dimensions) {
+        write!(writer, r#" width="{w}" height="{h}""#)?;
+    }
+    writer.write_str(r#" alt="" />"#)?;
     if let Some(caption) = s.caption {
         writer.write_str("<figcaption>")?;
         render_content(caption, writer)?;
@@ -701,10 +716,23 @@ mod tests {
     fn sashie_emits_figure_with_img() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let n = alloc.sashie("cover.png", None, None);
+        let n = alloc.sashie("cover.png", None, None, None);
         assert_eq!(
             render_node_to_string(n),
             r#"<figure class="aozora-sashie"><img src="cover.png" alt="" /></figure>"#
+        );
+    }
+
+    #[test]
+    fn sashie_dimensions_emit_width_and_height() {
+        // `横W×縦H` rides in `dimensions`; src stays a clean path and the
+        // pixel size lands as `width` / `height` attributes.
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.sashie("fig42_03.png", None, Some("横480×縦640"), None);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<figure class="aozora-sashie"><img src="fig42_03.png" width="480" height="640" alt="" /></figure>"#
         );
     }
 

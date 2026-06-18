@@ -126,6 +126,7 @@ expression: "format!(\"{nodes:#?}\")"
                 "file.png",
             ),
             number: None,
+            dimensions: None,
             caption: None,
         },
     ),
