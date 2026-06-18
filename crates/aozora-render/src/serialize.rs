@@ -303,9 +303,18 @@ fn emit_emphasis<W: Write>(e: &Emphasis<'_>, out: &mut W) -> fmt::Result {
 
 fn emit_gaiji<W: Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
     out.write_char('※')?;
-    out.write_str("［＃「")?;
-    out.write_str(g.description)?;
-    out.write_char('」')?;
+    out.write_str("［＃")?;
+    // The composed-glyph form (`「X」の「Y」に代えて「Z」`) is captured verbatim,
+    // already carrying its own `「」` structure, so emit it raw — wrapping it in
+    // another `「…」` would double-quote and break the round-trip. The simple
+    // form's description is bare text and gets the `「…」` wrapper.
+    if g.description.contains(['「', '」']) {
+        out.write_str(g.description)?;
+    } else {
+        out.write_char('「')?;
+        out.write_str(g.description)?;
+        out.write_char('」')?;
+    }
     if let Some(m) = g.mencode {
         out.write_char('、')?;
         out.write_str(m)?;
@@ -366,6 +375,12 @@ fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
     }
     out.write_char('（')?;
     out.write_str(s.file.as_str())?;
+    if let Some(dims) = s.dimensions {
+        // Reconstruct `（file、横W×縦H）` so the pixel-size note round-trips
+        // (it rides in `dimensions`, out of the clean `file` path).
+        out.write_char('、')?;
+        out.write_str(dims)?;
+    }
     out.write_char('）')?;
     if let Some(caption) = s.caption {
         out.write_char('「')?;

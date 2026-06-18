@@ -1,0 +1,37 @@
+{
+  "name": "indent_from_top",
+  "meta": {
+    "feature": "container",
+    "level": "should",
+    "spec_section": "6.6",
+    "note": "[provenance:reference-impl-aligned §6.6 + AOZORA-ANNOTATION 2026-06-17] ［＃天からN字下げ］ is the head-anchored single-line indent — N full-width spaces measured from the head (天) of the line, the top-edge counterpart of ［＃地からN字上げ］. It renders identically to a plain ［＃N字下げ］; the from_top flag preserves the source spelling for round-trip. ~280 occurrences. Offsets from the §3 byte model; expected captured from the aozora #114/#118 reference implementation (the project's canonical processor)."
+  },
+  "source": "本文［＃天から３字下げ］続き\n",
+  "expected": {
+    "html": "<p>本文<span class=\"aozora-indent aozora-indent-3\" data-amount=\"3\"></span>続き</p>\n",
+    "serialize": "本文［＃3字下げ］続き\n",
+    "nodes": [
+      {
+        "kind": "indent",
+        "span": {
+          "start": 6,
+          "end": 36
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 33,
+          "end": 36
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
