@@ -3134,8 +3134,14 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // aozora-encoding so the downstream AST / renderer never has to
         // re-probe. `None` stays `None` when the mencode has no mapping
         // entry and no `U+XXXX` shape matches — the renderer falls back
-        // to escaping the raw `description`.
-        let ucs = gaiji_resolve::lookup(None, mencode.as_deref(), &description);
+        // to escaping the raw `description`. A trailing 底本ページ-行 suffix is
+        // stripped for resolution (the men-ku-ten still maps the glyph) while
+        // the full mencode is stored verbatim for round-trip.
+        let ucs = gaiji_resolve::lookup(
+            None,
+            mencode.as_deref().map(mencode_resolution_token),
+            &description,
+        );
 
         let payload = self.alloc.make_gaiji(&description, ucs, mencode.as_deref());
         Some(GaijiMatch {
@@ -3167,11 +3173,48 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let body = self.source[hash_end as usize..bracket_close_start as usize].trim();
         let (desc, men) = body.split_once('、')?;
         let men = men.trim();
-        if !is_mencode_shaped(men) {
+        // The mencode may carry a trailing 底本ページ-行 reference
+        // (`第3水準1-84-27、144-上-9`, `U+74FC、372-10`) — the corpus' 凡例 keys
+        // each 外字 to its JIS men-ku-ten *and* the page/line where it occurs.
+        // Validate the leading JIS / U+ token, require the trailing part to be
+        // page-line shaped, and keep the whole `men` verbatim (round-trip + the
+        // documented `mencode` "… page-line" representation).
+        let (mencode_token, page_line) = match men.split_once('、') {
+            Some((m, pl)) => (m.trim(), Some(pl.trim())),
+            None => (men, None),
+        };
+        if !is_mencode_shaped(mencode_token) {
+            return None;
+        }
+        if let Some(pl) = page_line
+            && !pl.split('、').all(|p| is_page_line_shaped(p.trim()))
+        {
             return None;
         }
         Some((desc.trim().to_owned(), Some(men.to_owned())))
     }
+}
+
+/// The JIS / U+ token of a `mencode`, dropping any trailing 底本ページ-行
+/// suffix (`第3水準1-84-27、144-上-9` → `第3水準1-84-27`, `U+74FC、372-10` →
+/// `U+74FC`) so the resolver sees a clean men-ku-ten / codepoint.
+fn mencode_resolution_token(mencode: &str) -> &str {
+    mencode
+        .split_once('、')
+        .map_or(mencode, |(token, _)| token.trim())
+}
+
+/// Whether `s` is a 底本ページ-行 reference — the trailing column in the
+/// corpus' 外字 凡例 (`144-上-9`, `372-10`, `1-13-25`): `-`-joined parts,
+/// each a run of ASCII / full-width digits or a 上 / 中 / 下 column marker.
+fn is_page_line_shaped(s: &str) -> bool {
+    !s.is_empty()
+        && s.split('-').all(|p| {
+            matches!(p, "上" | "中" | "下")
+                || (!p.is_empty()
+                    && p.chars()
+                        .all(|c| c.is_ascii_digit() || ('０'..='９').contains(&c)))
+        })
 }
 
 /// Whether a gaiji `description` can be kept (it both serializes and
@@ -3232,7 +3275,29 @@ fn is_mencode_shaped(s: &str) -> bool {
 
 #[cfg(test)]
 mod is_mencode_shaped_tests {
-    use super::is_mencode_shaped;
+    use super::{is_mencode_shaped, is_page_line_shaped, mencode_resolution_token};
+
+    #[test]
+    fn page_line_shaped_accepts_corpus_forms() {
+        assert!(is_page_line_shaped("372-10"));
+        assert!(is_page_line_shaped("144-上-9"));
+        assert!(is_page_line_shaped("1-13-25"));
+        assert!(is_page_line_shaped("１４４-下-９"));
+        assert!(!is_page_line_shaped(""));
+        assert!(!is_page_line_shaped("漢字"));
+        assert!(!is_page_line_shaped("U+304B"));
+    }
+
+    #[test]
+    fn mencode_token_drops_trailing_page_line() {
+        assert_eq!(
+            mencode_resolution_token("第3水準1-84-27、144-上-9"),
+            "第3水準1-84-27"
+        );
+        assert_eq!(mencode_resolution_token("U+74FC、372-10"), "U+74FC");
+        // No page-line suffix — returned unchanged.
+        assert_eq!(mencode_resolution_token("第3水準1-85-54"), "第3水準1-85-54");
+    }
 
     #[test]
     fn jis_x_0213_row_cell_passes() {
@@ -6571,6 +6636,33 @@ mod tests {
         // character, U+6903 = 木+室. The corrected mapping is sourced
         // from glibc's EUC-JISX0213 charmap = the spec.)
         assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{6798}')));
+    }
+
+    /// A composed-glyph gaiji with a trailing 底本ページ-行 suffix
+    /// (`、U+74FC、372-10`): the full mencode is kept verbatim for round-trip,
+    /// but the page-line is stripped for resolution so the codepoint still
+    /// resolves. Previously the trailing suffix failed `is_mencode_shaped`
+    /// and the whole bracket degraded to `Annotation{Unknown}`.
+    #[test]
+    fn gaiji_composed_with_page_line_suffix() {
+        use aozora_encoding::gaiji::Resolved;
+        run!(
+            out,
+            "※［＃「瓰」の「扮のつくり」に代えて「里」、U+74FC、372-10］"
+        );
+        let gaiji = out
+            .spans
+            .iter()
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Gaiji(g)) => Some(g),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
+        assert_eq!(gaiji.description, "「瓰」の「扮のつくり」に代えて「里」");
+        // Full mencode (incl. page-line) kept verbatim for the round-trip.
+        assert_eq!(gaiji.mencode, Some("U+74FC、372-10"));
+        // The page-line is stripped for resolution → U+74FC still resolves.
+        assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{74FC}')));
     }
 
     #[test]
