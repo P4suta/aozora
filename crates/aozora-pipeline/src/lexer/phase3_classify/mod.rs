@@ -3042,6 +3042,61 @@ enum EmitKind<'a> {
 /// to the `Annotation { Unknown }` catch-all so the bracket is
 /// always consumed into some `AozoraNode`.
 impl<'a> RecogniseCtx<'_, 'a, '_> {
+    /// Forward-reference dispatch for a well-formed `［＃…］` bracket.
+    ///
+    /// Tries the body-keyword classifier first, then a fixed cascade of
+    /// forward-reference recognisers, falling through to the
+    /// `Annotation{Unknown}` catch-all. Cascade order:
+    ///
+    /// 1. body keyword — `classify_annotation_body`
+    /// 2. bouten (single) — `「X」に<kind>`
+    /// 3. bouten (range) — `「X」～「Y」に<kind>`
+    /// 4. left-ruby — `「X」の左に「Y」のルビ`
+    /// 5. left-annotation — `「X」の左に「Y」の注記`
+    /// 6. 縦中横 — `「X」は縦中横`
+    /// 7. heading — `「X」は…見出し`
+    /// 8. emphasis — `「X」は太字` / `斜体`
+    /// 9. caption-figure — `「cap」のキャプション付きの…（file）入る`
+    /// 10. general image — `<desc>（file）入る`
+    /// 11. empty / editorial-note / `Annotation{Unknown}` catch-all
+    ///
+    /// # Ordering contract
+    ///
+    /// Most adjacent recognisers are **keyword-disjoint**: their bodies
+    /// carry mutually exclusive particles/keywords, so reordering them
+    /// leaves the output unchanged. These are deliberately *not* pinned
+    /// by dedicated order tests (such a test would be vacuous):
+    ///
+    /// * bouten vs left-ruby vs left-annotation — `のルビ` and `の注記`
+    ///   are not bouten kinds, so each declines before the next is tried.
+    /// * 縦中横 / heading / emphasis — `縦中横`, `…見出し`, and
+    ///   `太字`/`斜体` are mutually exclusive after the shared `は`
+    ///   particle (縦中横's *diagnostic* threading is the one exception,
+    ///   below).
+    /// * bouten single vs range — separated by the `～` / `〜` infix.
+    ///
+    /// The orderings that **are** load-bearing (reordering changes the
+    /// output) each have a regression test that pins them:
+    ///
+    /// * caption-figure ≺ general-image — both end in `（file）入る`; the
+    ///   caption form is more specific and must win to keep its
+    ///   figcaption. Pinned by `caption_before_figure_recognised`.
+    /// * target-bearing recogniser ≺ editorial-note — `「ママ」に傍点`
+    ///   must be claimed as bouten before the `ママ` editorial note would
+    ///   type it as `AsIs`. Pinned by
+    ///   `mama_target_with_bouten_stays_bouten`.
+    /// * editorial-note ≺ `Unknown` — the editorial kinds refine the
+    ///   catch-all, which would otherwise claim every body. Pinned by
+    ///   `editorial_notes_type_as_asis_and_textual_note`.
+    /// * 縦中横 compound ≺ small-script range — `「X」は縦中横、行右小書き`
+    ///   is 縦中横, not a small-script range nor `Unknown`. Pinned by
+    ///   `tcy_small_script_compound_recognised_as_tcy`.
+    /// * 縦中横 `ShapedNoTarget` diagnostic survives the fall-through —
+    ///   when the target is absent the directive degrades to
+    ///   `Annotation{Unknown}`, but its `tcy_target_not_found` warning is
+    ///   carried through the later arms via `tcy_pending`. Pinned by
+    ///   `tcy_target_not_found_fires_as_warning` (node-absence by
+    ///   `forward_tcy_without_preceding_target_falls_through`).
     #[allow(
         clippy::too_many_lines,
         reason = "a flat dispatch chain over the forward-reference recognisers \
