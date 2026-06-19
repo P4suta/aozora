@@ -322,6 +322,13 @@ pub struct Sashie<'src> {
     /// rendered `<img src>` stays a clean path. `None` when absent.
     pub dimensions: Option<&'src str>,
     pub caption: Option<Content<'src>>,
+    /// The free-text description that precedes `（…）入る` in the *general*
+    /// image form `［＃<説明>（file）入る］` — 図 / 地図 / 口絵 / コンドル博士の図
+    /// … — per <https://www.aozora.gr.jp/annotation/graphics.html>, where
+    /// the leading text is the image's alt. Becomes the `<img alt>`.
+    /// `None` for the keyword `挿絵` form, which carries no leading
+    /// description (and renders an empty `alt`).
+    pub description: Option<&'src str>,
 }
 
 /// Generic annotation.
