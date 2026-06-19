@@ -24,4 +24,5 @@ memchr          = { workspace = true }
 pretty_assertions = { workspace = true }
 proptest          = { workspace = true }
 aozora-proptest   = { path = "../aozora-proptest" }
+aozora-encoding   = { workspace = true }
 insta             = { workspace = true }

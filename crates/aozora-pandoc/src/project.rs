@@ -585,6 +585,7 @@ fn container_attr(kind: ContainerKind) -> Attr {
 mod tests {
     use super::*;
     use aozora::Document;
+    use aozora::syntax::borrowed::NonEmpty;
 
     /// Plain text round-trips into a single Pandoc Para of `Inline::Str`.
     #[test]
@@ -680,5 +681,729 @@ mod tests {
             )
         });
         assert!(has_indent_div, "no indent Div: {:?}", pandoc.blocks);
+    }
+
+    // -----------------------------------------------------------------
+    // Test helpers
+    // -----------------------------------------------------------------
+
+    /// Project `src` through the full pipeline and return the doc blocks.
+    fn project(src: &str) -> Vec<Block> {
+        let doc = Document::new(src);
+        to_pandoc(&doc.parse()).blocks
+    }
+
+    /// Whether any class in `attr` ends with `suffix` (the `aozora-`
+    /// prefix is constant; matching the tail keeps assertions stable).
+    fn has_class(attr: &Attr, suffix: &str) -> bool {
+        attr.1.iter().any(|c| c == &format!("aozora-{suffix}"))
+    }
+
+    /// Look up a key in an `Attr`'s key/value list.
+    fn kv<'a>(attr: &'a Attr, key: &str) -> Option<&'a str> {
+        attr.2
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Find the first inline `Span` (recursively) whose class list carries
+    /// `aozora-{suffix}`. Walks into nested inlines so a span buried in a
+    /// `Para` is found.
+    fn find_span<'a>(blocks: &'a [Block], suffix: &str) -> Option<(&'a Attr, &'a [Inline])> {
+        fn walk_inlines<'a>(
+            inlines: &'a [Inline],
+            suffix: &str,
+        ) -> Option<(&'a Attr, &'a [Inline])> {
+            for inline in inlines {
+                if let Inline::Span(attr, inner) = inline {
+                    if has_class(attr, suffix) {
+                        return Some((attr, inner.as_slice()));
+                    }
+                    if let Some(found) = walk_inlines(inner, suffix) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        }
+        fn walk_blocks<'a>(blocks: &'a [Block], suffix: &str) -> Option<(&'a Attr, &'a [Inline])> {
+            for block in blocks {
+                let found = match block {
+                    Block::Para(inlines) | Block::Header(_, _, inlines) => {
+                        walk_inlines(inlines, suffix)
+                    }
+                    Block::Div(_, inner) => walk_blocks(inner, suffix),
+                    _ => None,
+                };
+                if found.is_some() {
+                    return found;
+                }
+            }
+            None
+        }
+        walk_blocks(blocks, suffix)
+    }
+
+    /// Find the first top-level `Div` whose class list carries
+    /// `aozora-{suffix}`.
+    fn find_div<'a>(blocks: &'a [Block], suffix: &str) -> Option<(&'a Attr, &'a [Block])> {
+        blocks.iter().find_map(|b| match b {
+            Block::Div(attr, inner) if has_class(attr, suffix) => Some((attr, inner.as_slice())),
+            _ => None,
+        })
+    }
+
+    // -----------------------------------------------------------------
+    // Inline nodes (source-driven)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn implicit_ruby_carries_implicit_delim() {
+        let blocks = project("青梅《おうめ》という地名。\n");
+        let (attr, inner) = find_span(&blocks, "ruby").expect("ruby span");
+        assert_eq!(kv(attr, "delim"), Some("implicit"), "implicit ruby delim");
+        assert_eq!(inner.len(), 2, "ruby has base + reading children");
+    }
+
+    #[test]
+    fn explicit_ruby_carries_explicit_delim() {
+        let blocks = project("｜青梅《おうめ》\n");
+        let (attr, _) = find_span(&blocks, "ruby").expect("ruby span");
+        assert_eq!(kv(attr, "delim"), Some("explicit"), "explicit ruby delim");
+    }
+
+    #[test]
+    fn left_ruby_projects_as_ruby_span() {
+        let blocks = project("未［＃「未」の左に「ザル」のルビ］んとす。\n");
+        let (_, inner) = find_span(&blocks, "ruby").expect("left ruby span");
+        let (_, base) = inner
+            .iter()
+            .find_map(|i| match i {
+                Inline::Span(a, c) if has_class(a, "ruby-base") => Some((a, c)),
+                _ => None,
+            })
+            .expect("ruby-base sub-span");
+        assert_eq!(base, &[Inline::Str("未".to_owned())], "left ruby base text");
+    }
+
+    #[test]
+    fn side_note_projects_base_and_note_subspans() {
+        let blocks = project("未来［＃「未来」の左に「みらい」の注記］を見る。\n");
+        let (_, inner) = find_span(&blocks, "sidenote").expect("sidenote span");
+        assert!(
+            inner.iter().any(|i| matches!(
+                i,
+                Inline::Span(a, _) if has_class(a, "sidenote-base")
+            )),
+            "sidenote has base sub-span: {inner:?}"
+        );
+        assert!(
+            inner.iter().any(|i| matches!(
+                i,
+                Inline::Span(a, _) if has_class(a, "sidenote-note")
+            )),
+            "sidenote has note sub-span: {inner:?}"
+        );
+    }
+
+    #[test]
+    fn bouten_carries_kind_and_position() {
+        let blocks = project("青空［＃「青空」に傍点］を見上げる。\n");
+        let (attr, inner) = find_span(&blocks, "bouten").expect("bouten span");
+        assert_eq!(kv(attr, "kind"), Some("goma"), "goma bouten kind slug");
+        assert_eq!(
+            kv(attr, "position"),
+            Some("right"),
+            "default right position"
+        );
+        assert_eq!(
+            inner,
+            &[Inline::Str("青空".to_owned())],
+            "bouten target text"
+        );
+    }
+
+    #[test]
+    fn bouten_black_triangle_kind_slug() {
+        let blocks = project("規範［＃「規範」に黒三角傍点］を説く。\n");
+        let (attr, _) = find_span(&blocks, "bouten").expect("bouten span");
+        assert_eq!(
+            kv(attr, "kind"),
+            Some("kurosankaku"),
+            "black-triangle bouten slug"
+        );
+    }
+
+    #[test]
+    fn tate_chu_yoko_projects_to_tcy_span() {
+        let blocks = project("明治３３年［＃「３３」は縦中横］に。\n");
+        let (_, inner) = find_span(&blocks, "tate-chu-yoko").expect("tcy span");
+        assert_eq!(
+            inner,
+            &[Inline::Str("３３".to_owned())],
+            "tcy embedded text"
+        );
+    }
+
+    #[test]
+    fn resolved_gaiji_emits_resolved_char() {
+        let blocks = project("珍しき木※［＃「木＋吶のつくり」、第3水準1-85-54］が立つ。\n");
+        let (attr, inner) = find_span(&blocks, "gaiji").expect("gaiji span");
+        assert_eq!(
+            kv(attr, "description"),
+            Some("木＋吶のつくり"),
+            "gaiji description"
+        );
+        assert_eq!(kv(attr, "mencode"), Some("第3水準1-85-54"), "gaiji mencode");
+        match inner {
+            [Inline::Str(s)] => assert!(
+                s.starts_with("Char("),
+                "resolved gaiji renders the debug Char(...) form, got {s:?}"
+            ),
+            other => panic!("expected single Str for resolved gaiji, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unresolved_gaiji_emits_geta_placeholder() {
+        let blocks = project("※［＃「架空の外字」、第3水準99-99-99］");
+        let (_, inner) = find_span(&blocks, "gaiji").expect("gaiji span");
+        assert_eq!(
+            inner,
+            &[Inline::Str("〓".to_owned())],
+            "unresolved gaiji → 〓 placeholder"
+        );
+    }
+
+    #[test]
+    fn angle_quote_projects_to_span() {
+        let blocks = project("≪重要≫な記述。\n");
+        let (_, inner) = find_span(&blocks, "angle-quote").expect("angle-quote span");
+        assert_eq!(inner, &[Inline::Str("重要".to_owned())], "angle-quote text");
+    }
+
+    #[test]
+    fn kaeriten_re_mark_projects_to_span() {
+        let blocks = project("天［＃（レ）］地\n");
+        let (attr, _) = find_span(&blocks, "kaeriten").expect("kaeriten span");
+        assert_eq!(kv(attr, "mark"), Some("（レ）"), "kaeriten mark text");
+    }
+
+    #[test]
+    fn center_page_projects_to_center_span() {
+        let blocks = project("［＃ページの左右中央］題名\n");
+        let (_, inner) = find_span(&blocks, "center").expect("center span");
+        assert!(
+            inner.is_empty(),
+            "center is an empty marker span: {inner:?}"
+        );
+    }
+
+    #[test]
+    fn heading_hint_carries_level_and_target() {
+        let blocks = project("序章\n本文\n［＃「序章」は中見出し］\n");
+        let (attr, _) = find_span(&blocks, "heading-hint").expect("heading-hint span");
+        assert_eq!(kv(attr, "level"), Some("2"), "中見出し → level 2");
+        assert_eq!(kv(attr, "target"), Some("序章"), "heading-hint target");
+    }
+
+    #[test]
+    fn same_line_heading_emits_heading_hint() {
+        let blocks = project("萩原朔太郎［＃「萩原朔太郎」は同行中見出し］\u{3000}二十年の友。\n");
+        let (attr, _) = find_span(&blocks, "heading-hint").expect("heading-hint span");
+        assert_eq!(kv(attr, "target"), Some("萩原朔太郎"), "same-line target");
+    }
+
+    // -----------------------------------------------------------------
+    // Annotation fallthrough (kind slug arms)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn unknown_annotation_kind_slug() {
+        // `［＃見出し］` is not a dedicated node → generic Unknown annotation.
+        let blocks = project("［＃見出し］序章［＃見出し終わり］\n");
+        let (attr, _) = find_span(&blocks, "annotation").expect("annotation span");
+        assert_eq!(kv(attr, "kind"), Some("unknown"), "unknown annotation kind");
+        assert!(
+            kv(attr, "raw").is_some_and(|r| r.contains("見出し")),
+            "annotation carries raw text"
+        );
+    }
+
+    #[test]
+    fn as_is_annotation_kind_slug() {
+        let blocks = project("そういう風［＃「いう風」はママ］だ\n");
+        let (attr, _) = find_span(&blocks, "annotation").expect("annotation span");
+        assert_eq!(kv(attr, "kind"), Some("as-is"), "ママ → as-is kind");
+    }
+
+    #[test]
+    fn textual_note_annotation_kind_slug() {
+        let blocks = project("間違い［＃「間違い」は底本では「間違ひ」］です\n");
+        let (attr, _) = find_span(&blocks, "annotation").expect("annotation span");
+        assert_eq!(
+            kv(attr, "kind"),
+            Some("textual-note"),
+            "底本では → textual-note kind"
+        );
+    }
+
+    #[test]
+    fn other_annotation_kind_slug() {
+        // `［＃割り注］` inline classifies as a non-Unknown, non-correction
+        // annotation → the `other` slug arm.
+        let blocks = project("［＃割り注］上の段／下の段［＃割り注終わり］\n");
+        let (attr, _) = find_span(&blocks, "annotation").expect("annotation span");
+        assert_eq!(kv(attr, "kind"), Some("other"), "割り注 → other kind");
+    }
+
+    // -----------------------------------------------------------------
+    // Emphasis fallthrough (the `other` arm in dispatch_inline_node)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn emphasis_font_size_falls_through_to_debug_span() {
+        // Forward-reference emphasis has no dedicated projection — it lands
+        // in the catch-all `other` arm as a plain-attr debug Span.
+        let blocks = project("甲［＃「甲」は2段階大きな文字］\n");
+        let para = match &blocks[0] {
+            Block::Para(inlines) => inlines,
+            other => panic!("expected Para, got {other:?}"),
+        };
+        let dbg = para
+            .iter()
+            .find_map(|i| match i {
+                Inline::Span(attr, inner) if attr.1.is_empty() => Some(inner),
+                _ => None,
+            })
+            .expect("debug fallback span with empty class list");
+        match dbg.as_slice() {
+            [Inline::Str(s)] => assert!(
+                s.contains("Emphasis") && s.contains("FontSize"),
+                "fallback renders the node's Debug form, got {s:?}"
+            ),
+            other => panic!("expected single debug Str, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn emphasis_superscript_falls_through_to_debug_span() {
+        let blocks = project("ｅ２［＃「２」は上付き小文字］\n");
+        let json = serde_json::to_string(&blocks).expect("serialise blocks");
+        assert!(
+            json.contains("SuperScript"),
+            "superscript emphasis lands as a debug Str: {json}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Block-leaf nodes
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn section_break_emits_classed_div() {
+        let blocks = project("前章。\n［＃改丁］\n次章。\n");
+        let (attr, inner) = find_div(&blocks, "section-break").expect("section-break div");
+        assert!(
+            attr.1.iter().any(|c| c.contains("section-break-")),
+            "section-break carries a kind-specific class: {:?}",
+            attr.1
+        );
+        assert!(inner.is_empty(), "section-break div is empty: {inner:?}");
+    }
+
+    #[test]
+    fn page_break_closes_paragraph_and_emits_rule() {
+        let blocks = project("第一章\n本文。\n［＃改ページ］\n第二章\n");
+        let rule_idx = blocks
+            .iter()
+            .position(|b| matches!(b, Block::HorizontalRule))
+            .expect("HorizontalRule present");
+        assert!(
+            matches!(&blocks[rule_idx - 1], Block::Para(_)),
+            "page break flushes the preceding paragraph"
+        );
+    }
+
+    #[test]
+    fn large_heading_projects_to_header_level_1() {
+        let blocks = project("第一章\n［＃「第一章」は大見出し］\n本文。\n");
+        let header = blocks
+            .iter()
+            .find_map(|b| match b {
+                Block::Header(level, attr, inlines) => Some((*level, attr, inlines)),
+                _ => None,
+            })
+            .expect("Header block");
+        assert_eq!(header.0, 1, "大見出し → level 1");
+        assert_eq!(kv(header.1, "kind"), Some("large"), "large heading kind");
+        assert!(
+            kv(header.1, "style").is_none(),
+            "standard style adds no style kv"
+        );
+    }
+
+    #[test]
+    fn window_heading_projects_with_style_attr() {
+        let blocks = project("序章\n［＃「序章」は窓中見出し］\n");
+        let header = blocks
+            .iter()
+            .find_map(|b| match b {
+                Block::Header(level, attr, _) => Some((*level, attr)),
+                _ => None,
+            })
+            .expect("Header block");
+        assert_eq!(header.0, 2, "中見出し → level 2");
+        assert_eq!(kv(header.1, "kind"), Some("medium"), "medium kind");
+        assert_eq!(kv(header.1, "style"), Some("window"), "window style attr");
+    }
+
+    #[test]
+    fn sashie_keyword_form_no_caption_has_empty_alt() {
+        let blocks = project("ある日、［＃挿絵（cover.png）入る］その地に至る。\n");
+        let img = find_image(&blocks).expect("sashie image");
+        assert!(img.1.is_empty(), "no caption → empty alt: {:?}", img.1);
+        assert_eq!(img.2.0, "cover.png", "image target file");
+    }
+
+    #[test]
+    fn sashie_keyword_form_with_caption_uses_caption_alt() {
+        let blocks = project("ある日、［＃挿絵（cover.png）「図一」入る］その地に至る。\n");
+        let img = find_image(&blocks).expect("sashie image");
+        assert_eq!(
+            img.1,
+            &[Inline::Str("図一".to_owned())],
+            "caption becomes alt text"
+        );
+    }
+
+    #[test]
+    fn sashie_general_form_uses_description_alt() {
+        let blocks = project("［＃キャラクターの図（fig.png）入る］\n");
+        let img = find_image(&blocks).expect("sashie image");
+        assert_eq!(
+            img.1,
+            &[Inline::Str("キャラクターの図".to_owned())],
+            "leading description becomes alt text"
+        );
+        assert_eq!(img.2.0, "fig.png", "image target file");
+    }
+
+    /// Find the first `Image` inline in any `Para` block.
+    fn find_image(blocks: &[Block]) -> Option<(&Attr, &[Inline], &(String, String))> {
+        blocks.iter().find_map(|b| match b {
+            Block::Para(inlines) => inlines.iter().find_map(|i| match i {
+                Inline::Image(attr, alt, target) => Some((attr, alt.as_slice(), target)),
+                _ => None,
+            }),
+            _ => None,
+        })
+    }
+
+    // -----------------------------------------------------------------
+    // Container attr arms
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn indent_container_carries_amount() {
+        let blocks =
+            project("本文。\n［＃ここから2字下げ］\n中身。\n［＃ここで字下げ終わり］\n後。\n");
+        let (attr, _) = find_div(&blocks, "container-indent").expect("indent div");
+        assert_eq!(kv(attr, "amount"), Some("2"), "indent amount");
+        assert!(kv(attr, "wrap").is_none(), "plain indent has no wrap kv");
+        assert!(
+            kv(attr, "center").is_none(),
+            "plain indent has no center kv"
+        );
+    }
+
+    #[test]
+    fn wrap_indent_container_carries_wrap_kv() {
+        let blocks = project(
+            "［＃ここから２字下げ、折り返して４字下げ］\n本文。\n［＃ここで字下げ終わり］\n",
+        );
+        let (attr, _) = find_div(&blocks, "container-indent").expect("indent div");
+        assert_eq!(kv(attr, "amount"), Some("2"), "indent base amount");
+        assert_eq!(kv(attr, "wrap"), Some("4"), "hanging-indent wrap amount");
+    }
+
+    #[test]
+    fn center_indent_container_carries_center_kv() {
+        let blocks =
+            project("［＃ここから5字下げ、ページの左右中央に］\n献辞\n［＃ここで字下げ終わり］\n");
+        let (attr, _) = find_div(&blocks, "container-indent").expect("indent div");
+        assert_eq!(kv(attr, "amount"), Some("5"), "indent amount");
+        assert_eq!(kv(attr, "center"), Some("true"), "page-centred indent kv");
+    }
+
+    #[test]
+    fn warichu_block_container_div() {
+        let blocks =
+            project("前文。\n［＃ここから割り注］\n上／下\n［＃ここで割り注終わり］\n後文。\n");
+        let div = find_div(&blocks, "container-warichu");
+        assert!(div.is_some(), "warichu container div: {blocks:?}");
+    }
+
+    #[test]
+    fn keigakomi_container_div() {
+        let blocks = project("［＃罫囲み］\n本文一行目。\n本文二行目。\n［＃罫囲み終わり］\n");
+        let (_, inner) = find_div(&blocks, "container-keigakomi").expect("keigakomi div");
+        assert!(!inner.is_empty(), "keigakomi wraps inner blocks");
+    }
+
+    #[test]
+    fn align_end_container_carries_offset() {
+        let blocks = project("［＃ここから地から3字上げ］\n名簿。\n［＃ここで字上げ終わり］\n");
+        let (attr, _) = find_div(&blocks, "container-align-end").expect("align-end div");
+        assert_eq!(kv(attr, "offset"), Some("3"), "align-end offset");
+    }
+
+    #[test]
+    fn bouten_range_container_carries_variant() {
+        let blocks = project("本文［＃傍点］甲［＃傍点終わり］。");
+        let (attr, _) = find_div(&blocks, "container-bouten").expect("bouten range div");
+        assert_eq!(kv(attr, "variant"), Some("goma"), "default bouten variant");
+        assert!(
+            kv(attr, "position").is_none(),
+            "right-side range omits the position kv"
+        );
+    }
+
+    #[test]
+    fn bouten_range_left_position_kv() {
+        let blocks = project("本文［＃左に傍線］丙［＃左に傍線終わり］。");
+        let (attr, _) = find_div(&blocks, "container-bouten").expect("bouten range div");
+        assert_eq!(kv(attr, "variant"), Some("bosen"), "傍線 variant slug");
+        assert_eq!(kv(attr, "position"), Some("left"), "left-side range kv");
+    }
+
+    #[test]
+    fn unknown_container_falls_through_to_unknown_class() {
+        // 段組 (columns) has no dedicated container_attr arm → `container-unknown`.
+        let blocks =
+            project("前文。\n［＃ここから2段組み］\n左右。\n［＃ここで段組み終わり］\n後文。\n");
+        let div = find_div(&blocks, "container-unknown");
+        assert!(div.is_some(), "columns → container-unknown div: {blocks:?}");
+    }
+
+    #[test]
+    fn table_container_falls_through_to_unknown_class() {
+        let blocks = project("［＃ここから表］\n項目\u{3000}値\n［＃ここで表終わり］\n");
+        assert!(
+            find_div(&blocks, "container-unknown").is_some(),
+            "table → container-unknown: {blocks:?}"
+        );
+    }
+
+    #[test]
+    fn bold_block_container_falls_through_to_unknown_class() {
+        let blocks = project("［＃ここから太字］\n強調する段落。\n［＃ここで太字終わり］\n");
+        assert!(
+            find_div(&blocks, "container-unknown").is_some(),
+            "bold block → container-unknown: {blocks:?}"
+        );
+    }
+
+    #[test]
+    fn nested_containers_nest_divs() {
+        let blocks = project(
+            "［＃ここから2字下げ］\n外。\n［＃ここから3字下げ］\n内。\n\
+             ［＃ここで字下げ終わり］\n戻る。\n［＃ここで字下げ終わり］\n",
+        );
+        let (_, outer) = find_div(&blocks, "container-indent").expect("outer indent div");
+        let has_nested = find_div(outer, "container-indent").is_some();
+        assert!(has_nested, "inner indent div nested in outer: {outer:?}");
+    }
+
+    // -----------------------------------------------------------------
+    // Defensive stack handling
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn unclosed_container_is_popped_at_eof() {
+        // No matching close — `run` must still wrap the body in a Div.
+        let blocks = project("［＃ここから2字下げ］\n本文。\n");
+        assert!(
+            find_div(&blocks, "container-indent").is_some(),
+            "unclosed container still wraps its body: {blocks:?}"
+        );
+    }
+
+    #[test]
+    fn unmatched_close_does_not_panic_and_keeps_body() {
+        // A close with no matching open must not pop the root frame.
+        let blocks = project("本文。\n［＃ここで字下げ終わり］\n");
+        assert!(
+            blocks.iter().any(|b| matches!(b, Block::Para(_))),
+            "body survives an unmatched close: {blocks:?}"
+        );
+        assert!(
+            find_div(&blocks, "container-indent").is_none(),
+            "no spurious container div: {blocks:?}"
+        );
+    }
+
+    #[test]
+    fn empty_source_yields_no_blocks() {
+        let blocks = project("");
+        assert!(blocks.is_empty(), "empty source → no blocks: {blocks:?}");
+    }
+
+    #[test]
+    fn pandoc_api_version_is_pinned() {
+        let doc = Document::new("x");
+        let pandoc = to_pandoc(&doc.parse());
+        assert_eq!(
+            pandoc.pandoc_api_version,
+            vec![1, 23],
+            "pinned Pandoc 1.23 API version"
+        );
+        assert!(pandoc.meta.is_empty(), "no meta emitted");
+    }
+
+    // -----------------------------------------------------------------
+    // Direct builder unit tests (forms not reachable as inline leaves
+    // through the source pipeline, but live projection helpers)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn indent_inline_builder_carries_amount() {
+        let inline = indent_inline(Indent { amount: 4 });
+        match inline {
+            Inline::Span(attr, inner) => {
+                assert!(has_class(&attr, "indent"), "indent class: {:?}", attr.1);
+                assert_eq!(kv(&attr, "amount"), Some("4"), "indent amount kv");
+                assert!(inner.is_empty(), "indent is an empty marker span");
+            }
+            other => panic!("expected Span, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn align_end_inline_builder_carries_offset() {
+        let inline = align_end_inline(AlignEnd { offset: 7 });
+        match inline {
+            Inline::Span(attr, _) => {
+                assert!(has_class(&attr, "align-end"), "align-end class");
+                assert_eq!(kv(&attr, "offset"), Some("7"), "align-end offset kv");
+            }
+            other => panic!("expected Span, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn center_inline_builder_is_empty_marker() {
+        match center_inline() {
+            Inline::Span(attr, inner) => {
+                assert!(has_class(&attr, "center"), "center class");
+                assert!(inner.is_empty(), "center marker span is empty");
+            }
+            other => panic!("expected Span, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn keigakomi_inline_builder_is_empty_marker() {
+        match keigakomi_inline() {
+            Inline::Span(attr, inner) => {
+                assert!(has_class(&attr, "keigakomi"), "keigakomi class");
+                assert!(inner.is_empty(), "keigakomi marker span is empty");
+            }
+            other => panic!("expected Span, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn warichu_inline_builder_wraps_upper_and_lower() {
+        let w = Warichu {
+            upper: Content::Plain("上"),
+            lower: Content::Plain("下"),
+        };
+        match warichu_inline(&w) {
+            Inline::Span(attr, inner) => {
+                assert!(has_class(&attr, "warichu"), "warichu class");
+                assert_eq!(inner.len(), 2, "warichu wraps upper + lower");
+                assert!(
+                    matches!(&inner[0], Inline::Span(a, _) if has_class(a, "warichu-upper")),
+                    "first child is warichu-upper: {inner:?}"
+                );
+                assert!(
+                    matches!(&inner[1], Inline::Span(a, _) if has_class(a, "warichu-lower")),
+                    "second child is warichu-lower: {inner:?}"
+                );
+            }
+            other => panic!("expected Span, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bouten_position_slug_covers_left_and_unknown() {
+        assert_eq!(bouten_position_slug(BoutenPosition::Right), "right");
+        assert_eq!(bouten_position_slug(BoutenPosition::Left), "left");
+    }
+
+    #[test]
+    fn annotation_kind_slug_covers_all_named_arms() {
+        assert_eq!(annotation_kind_slug(AnnotationKind::Unknown), "unknown");
+        assert_eq!(annotation_kind_slug(AnnotationKind::AsIs), "as-is");
+        assert_eq!(
+            annotation_kind_slug(AnnotationKind::TextualNote),
+            "textual-note"
+        );
+        assert_eq!(
+            annotation_kind_slug(AnnotationKind::InvalidRubySpan),
+            "invalid-ruby-span"
+        );
+    }
+
+    #[test]
+    fn heading_kind_slug_covers_levels() {
+        assert_eq!(heading_kind_slug(AozoraHeadingKind::Large), "large");
+        assert_eq!(heading_kind_slug(AozoraHeadingKind::Medium), "medium");
+        assert_eq!(heading_kind_slug(AozoraHeadingKind::Small), "small");
+    }
+
+    #[test]
+    fn heading_style_slug_covers_styles() {
+        assert_eq!(
+            heading_style_slug(AozoraHeadingStyle::SameLine),
+            Some("same-line")
+        );
+        assert_eq!(
+            heading_style_slug(AozoraHeadingStyle::Window),
+            Some("window")
+        );
+        assert_eq!(
+            heading_style_slug(AozoraHeadingStyle::Standard),
+            None,
+            "standard style adds no slug"
+        );
+    }
+
+    #[test]
+    fn small_heading_block_builder_is_level_3() {
+        let heading = AozoraHeading {
+            kind: AozoraHeadingKind::Small,
+            style: AozoraHeadingStyle::SameLine,
+            text: NonEmpty::new(Content::Plain("見出し")).expect("non-empty heading text"),
+        };
+        match aozora_heading_block(heading) {
+            Block::Header(level, attr, inlines) => {
+                assert_eq!(level, 3, "小見出し → level 3");
+                assert_eq!(kv(&attr, "kind"), Some("small"), "small kind slug");
+                assert_eq!(
+                    kv(&attr, "style"),
+                    Some("same-line"),
+                    "same-line style attr"
+                );
+                assert_eq!(
+                    inlines,
+                    vec![Inline::Str("見出し".to_owned())],
+                    "heading text inlines"
+                );
+            }
+            other => panic!("expected Header, got {other:?}"),
+        }
     }
 }

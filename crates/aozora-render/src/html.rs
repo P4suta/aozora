@@ -436,4 +436,90 @@ mod tests {
     fn empty_input_emits_empty_string() {
         assert_eq!(render(""), "");
     }
+
+    #[test]
+    fn inline_container_stays_inside_paragraph() {
+        // A bare 太字 range is inline: it must open / close *inside* the
+        // surrounding `<p>`, not flush it.
+        let html = render("前［＃太字］中［＃太字終わり］後");
+        assert_eq!(
+            html, "<p>前<b class=\"aozora-bold\">中</b>後</p>\n",
+            "inline container must stay within the paragraph",
+        );
+    }
+
+    #[test]
+    fn block_container_flushes_paragraph_then_wraps_body() {
+        let html = render("前文\n\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］");
+        assert!(html.contains("<p>前文</p>\n"), "leading paragraph: {html}");
+        assert!(
+            html.contains(
+                "<div class=\"aozora-container aozora-container-indent aozora-container-indent-2\""
+            ),
+            "indent container open: {html}"
+        );
+        assert!(
+            html.contains("<p>本文</p>"),
+            "wrapped body paragraph: {html}"
+        );
+        assert!(html.contains("</div>"), "container close: {html}");
+    }
+
+    #[test]
+    fn heading_container_holds_content_inline_without_inner_paragraph() {
+        // A heading container's content is phrasing: it renders directly
+        // inside the `<hN>` with no inner `<p>` (the `in_heading` flag).
+        let html = render("［＃ここから大見出し］\n章題\n［＃ここで大見出し終わり］");
+        assert!(
+            html.contains("<h1 class=\"aozora-heading aozora-heading-large\">章題</h1>"),
+            "heading must hold text inline without a <p>: {html}"
+        );
+        assert!(
+            !html.contains("<h1 class=\"aozora-heading aozora-heading-large\"><p>"),
+            "heading must not wrap content in <p>: {html}"
+        );
+    }
+
+    #[test]
+    fn section_break_block_flushes_surrounding_paragraphs() {
+        let html = render("前\n\n［＃改丁］\n\n後");
+        assert!(
+            html.contains("<p>前</p>\n"),
+            "paragraph before break: {html}"
+        );
+        assert!(
+            html.contains("<div class=\"aozora-section-break aozora-section-break-kaicho\"></div>"),
+            "section break div: {html}"
+        );
+        assert!(
+            html.contains("<p>後</p>\n"),
+            "paragraph after break: {html}"
+        );
+    }
+
+    #[test]
+    fn single_trailing_newline_emits_no_break_outside_paragraph() {
+        // A lone trailing `\n` with nothing after it (and no open
+        // paragraph) must not emit a stray `<br />`.
+        let html = render("a\n");
+        assert_eq!(html, "<p>a</p>\n", "trailing newline must not add <br />");
+    }
+
+    #[test]
+    fn quote_and_apostrophe_chunk_take_the_slow_escape_path() {
+        // Mixing `"` and `'` with `<`/`>`/`&` exercises the three-iterator
+        // merge in `escape_text_chunk`.
+        let html = render(r#"x"y'z<&>"#);
+        assert_eq!(
+            html, "<p>x&quot;y&#x27;z&lt;&amp;&gt;</p>\n",
+            "all five unsafe chars must escape in document order",
+        );
+    }
+
+    #[test]
+    fn apostrophe_only_chunk_escapes_via_byte_loop() {
+        // `'` has no memchr partner; a chunk with only `'` still escapes.
+        let html = render("it's");
+        assert_eq!(html, "<p>it&#x27;s</p>\n", "lone apostrophe must escape");
+    }
 }

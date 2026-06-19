@@ -22,3 +22,36 @@ pub(crate) const fn position_slug(pos: BoutenPosition) -> &'static str {
         _ => "right",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kind_slug_covers_every_bouten_variant() {
+        for (kind, slug) in [
+            (BoutenKind::Goma, "goma"),
+            (BoutenKind::WhiteSesame, "shirogoma"),
+            (BoutenKind::Circle, "maru"),
+            (BoutenKind::WhiteCircle, "shiromaru"),
+            (BoutenKind::DoubleCircle, "nijumaru"),
+            (BoutenKind::Janome, "janome"),
+            (BoutenKind::Cross, "batsu"),
+            (BoutenKind::WhiteTriangle, "shirosankaku"),
+            (BoutenKind::WavyLine, "namisen"),
+            (BoutenKind::UnderLine, "bosen"),
+            (BoutenKind::DoubleUnderLine, "nijubosen"),
+            (BoutenKind::ChainLine, "kusarisen"),
+            (BoutenKind::DashedLine, "hasen"),
+            (BoutenKind::BlackTriangle, "kurosankaku"),
+        ] {
+            assert_eq!(kind_slug(kind), slug, "kind_slug mismatch for {kind:?}");
+        }
+    }
+
+    #[test]
+    fn position_slug_maps_left_and_right() {
+        assert_eq!(position_slug(BoutenPosition::Left), "left");
+        assert_eq!(position_slug(BoutenPosition::Right), "right");
+    }
+}

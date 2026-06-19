@@ -327,3 +327,64 @@ fn unit_installed() -> Result<bool, String> {
     let path = unit_dir()?.join(format!("{SERVICE_NAME}.timer"));
     Ok(path.exists())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_unit_bakes_in_repo_and_log_paths() {
+        let unit = render_service_unit(Path::new("/repo/aozora"), Path::new("/state/deps.log"));
+        assert!(
+            unit.contains("WorkingDirectory=/repo/aozora"),
+            "WorkingDirectory pins the checkout: {unit}"
+        );
+        assert!(
+            unit.contains("ConditionPathExists=/repo/aozora/Justfile"),
+            "guards on the Justfile: {unit}"
+        );
+        assert!(
+            unit.contains("tee -a \"/state/deps.log\""),
+            "tees output to the rolling log: {unit}"
+        );
+    }
+
+    #[test]
+    fn service_unit_is_oneshot_with_docker_guard() {
+        let unit = render_service_unit(Path::new("/repo"), Path::new("/log"));
+        assert!(unit.contains("Type=oneshot"), "oneshot unit: {unit}");
+        assert!(
+            unit.contains("ConditionPathExists=/var/run/docker.sock"),
+            "requires docker socket: {unit}"
+        );
+        assert!(
+            unit.contains("just deps-check"),
+            "invokes the deps-check recipe: {unit}"
+        );
+    }
+
+    #[test]
+    fn timer_unit_is_weekly_and_persistent() {
+        let unit = render_timer_unit(Path::new("/repo/aozora"));
+        assert!(
+            unit.contains("OnCalendar=Sun *-*-* 03:30:00"),
+            "Sunday 03:30 schedule: {unit}"
+        );
+        assert!(
+            unit.contains("Persistent=true"),
+            "persistent across boots: {unit}"
+        );
+        assert!(
+            unit.contains("RandomizedDelaySec=30m"),
+            "jitter to avoid crates.io lock-step: {unit}"
+        );
+        assert!(
+            unit.contains("WantedBy=timers.target"),
+            "installs into timers.target: {unit}"
+        );
+        assert!(
+            unit.contains("file:///repo/aozora/CONTRIBUTING.md"),
+            "docs URL embeds the repo path: {unit}"
+        );
+    }
+}

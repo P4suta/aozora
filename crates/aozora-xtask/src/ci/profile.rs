@@ -483,4 +483,111 @@ mod tests {
     fn trim_truncates_long_string() {
         assert_eq!(trim("hello world", 6), "hello…");
     }
+
+    #[test]
+    fn trim_handles_multibyte_chars() {
+        // Truncation counts chars, never bytes — must not split a codepoint.
+        assert_eq!(trim("あいうえお", 3), "あい…");
+    }
+
+    #[test]
+    fn secs_subtracts_two_timestamps() {
+        let d = secs(Some("2026-04-30T11:32:25Z"), Some("2026-04-30T11:36:50Z"));
+        assert_eq!(d, Some(4 * 60 + 25), "duration in seconds");
+    }
+
+    #[test]
+    fn secs_is_none_when_either_bound_missing() {
+        assert_eq!(secs(None, Some("2026-04-30T11:36:50Z")), None, "no start");
+        assert_eq!(secs(Some("2026-04-30T11:32:25Z"), None), None, "no end");
+    }
+
+    #[test]
+    fn secs_is_none_on_malformed_timestamp() {
+        assert_eq!(secs(Some("bad"), Some("2026-04-30T11:36:50Z")), None);
+    }
+
+    fn job(name: &str, start: Option<&str>, end: Option<&str>, steps: Vec<Step>) -> Job {
+        Job {
+            name: name.to_owned(),
+            conclusion: Some("success".to_owned()),
+            started_at: start.map(ToOwned::to_owned),
+            completed_at: end.map(ToOwned::to_owned),
+            steps,
+        }
+    }
+
+    fn step(name: &str, start: Option<&str>, end: Option<&str>) -> Step {
+        Step {
+            name: name.to_owned(),
+            conclusion: Some("success".to_owned()),
+            started_at: start.map(ToOwned::to_owned),
+            completed_at: end.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn job_duration_secs_computes_from_timestamps() {
+        let j = job(
+            "build",
+            Some("2026-04-30T11:00:00Z"),
+            Some("2026-04-30T11:02:00Z"),
+            Vec::new(),
+        );
+        assert_eq!(j.duration_secs(), Some(120), "two-minute job");
+    }
+
+    #[test]
+    fn job_duration_secs_pending_when_incomplete() {
+        let j = job("running", Some("2026-04-30T11:00:00Z"), None, Vec::new());
+        assert_eq!(j.duration_secs(), None, "no completed_at → pending");
+    }
+
+    #[test]
+    fn step_duration_secs_computes_from_timestamps() {
+        let s = step(
+            "checkout",
+            Some("2026-04-30T11:00:00Z"),
+            Some("2026-04-30T11:00:30Z"),
+        );
+        assert_eq!(s.duration_secs(), Some(30), "thirty-second step");
+    }
+
+    #[test]
+    fn print_per_job_runs_for_mixed_completion() {
+        // Smoke: prints to stdout, must not panic with pending + complete jobs.
+        let jobs = vec![
+            job(
+                "lint",
+                Some("2026-04-30T11:00:00Z"),
+                Some("2026-04-30T11:01:00Z"),
+                Vec::new(),
+            ),
+            job("pending", Some("2026-04-30T11:00:00Z"), None, Vec::new()),
+        ];
+        print_per_job(&jobs);
+    }
+
+    #[test]
+    fn print_top_steps_runs_and_filters_trivial() {
+        // A 1-second step is filtered (d > 1); a 5-second one is kept.
+        let jobs = vec![job(
+            "build",
+            Some("2026-04-30T11:00:00Z"),
+            Some("2026-04-30T11:00:10Z"),
+            vec![
+                step(
+                    "quick",
+                    Some("2026-04-30T11:00:00Z"),
+                    Some("2026-04-30T11:00:01Z"),
+                ),
+                step(
+                    "slow",
+                    Some("2026-04-30T11:00:01Z"),
+                    Some("2026-04-30T11:00:06Z"),
+                ),
+            ],
+        )];
+        print_top_steps(&jobs, 10);
+    }
 }

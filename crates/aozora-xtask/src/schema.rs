@@ -115,3 +115,69 @@ fn check() -> Result<(), String> {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_pretty_prints_with_two_space_indent() {
+        let value = serde_json::json!({ "a": 1, "b": [2, 3] });
+        let out = render(&value);
+        // 2-space indent for nested keys.
+        assert!(out.contains("  \"a\": 1"), "2-space indent: {out}");
+        assert!(
+            out.contains("  \"b\": ["),
+            "2-space indent for array: {out}"
+        );
+    }
+
+    #[test]
+    fn render_appends_trailing_newline() {
+        let out = render(&serde_json::json!({}));
+        assert!(out.ends_with('\n'), "must end with newline: {out:?}");
+        assert!(
+            !out.ends_with("\n\n"),
+            "exactly one trailing newline: {out:?}"
+        );
+    }
+
+    #[test]
+    fn render_round_trips_to_equal_json_value() {
+        let value = serde_json::json!({ "nested": { "x": true }, "list": [1, 2] });
+        let out = render(&value);
+        let reparsed: serde_json::Value =
+            serde_json::from_str(&out).expect("render output must be valid JSON");
+        assert_eq!(reparsed, value, "render must preserve the value");
+    }
+
+    #[test]
+    fn schema_files_cover_all_four_wire_endpoints() {
+        assert_eq!(SCHEMA_FILES.len(), 4, "exactly four wire schema files");
+        for (rel, _) in SCHEMA_FILES {
+            assert!(
+                Path::new(rel)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("json")),
+                "schema artefact path must be a .json file: {rel}"
+            );
+            assert!(
+                rel.contains("wire/schema-"),
+                "schema artefact lives under wire/: {rel}"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_generators_produce_object_schemas() {
+        // Each generator must yield a JSON object with a `title`; this is
+        // pure (no I/O) and exercises the live wire schema codegen.
+        for (rel, make_schema) in SCHEMA_FILES {
+            let schema = make_schema();
+            let obj = schema
+                .as_object()
+                .unwrap_or_else(|| panic!("{rel}: schema root must be an object"));
+            assert!(obj.contains_key("title"), "{rel}: schema must have a title");
+        }
+    }
+}

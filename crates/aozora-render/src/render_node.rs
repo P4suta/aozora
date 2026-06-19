@@ -868,7 +868,609 @@ mod tests {
         let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.page_break();
         let mut buf = String::new();
-        render(n, false, &mut buf).unwrap();
+        render(n, false, &mut buf).expect("render exit pass never fails");
         assert!(buf.is_empty(), "PageBreak must emit nothing on exit");
+    }
+
+    // Helpers to render a container's open / close tag.
+    fn open_tag(kind: ContainerKind) -> String {
+        let arena = Arena::new();
+        let alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.container(Container { kind });
+        let mut out = String::new();
+        render(n, true, &mut out).expect("container open render never fails");
+        out
+    }
+
+    fn close_tag(kind: ContainerKind) -> String {
+        let arena = Arena::new();
+        let alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.container(Container { kind });
+        let mut out = String::new();
+        render(n, false, &mut out).expect("container close render never fails");
+        out
+    }
+
+    // -------------------------------------------------------------------
+    // Bouten: every BoutenKind maps to its stable slug; left position too.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn bouten_every_kind_uses_its_slug() {
+        for (kind, slug) in [
+            (BoutenKind::Goma, "goma"),
+            (BoutenKind::WhiteSesame, "shirogoma"),
+            (BoutenKind::Circle, "maru"),
+            (BoutenKind::WhiteCircle, "shiromaru"),
+            (BoutenKind::DoubleCircle, "nijumaru"),
+            (BoutenKind::Janome, "janome"),
+            (BoutenKind::Cross, "batsu"),
+            (BoutenKind::WhiteTriangle, "shirosankaku"),
+            (BoutenKind::WavyLine, "namisen"),
+            (BoutenKind::UnderLine, "bosen"),
+            (BoutenKind::DoubleUnderLine, "nijubosen"),
+            (BoutenKind::ChainLine, "kusarisen"),
+            (BoutenKind::DashedLine, "hasen"),
+            (BoutenKind::BlackTriangle, "kurosankaku"),
+        ] {
+            let arena = Arena::new();
+            let mut alloc = BorrowedAllocator::new(&arena);
+            let target = alloc.content_plain("対象");
+            let n = alloc.bouten(kind, target, BoutenPosition::Right, false);
+            assert_eq!(
+                render_node_to_string(n),
+                format!(
+                    r#"<em class="aozora-bouten aozora-bouten-{slug} aozora-bouten-right">対象</em>"#
+                ),
+                "bouten slug mismatch for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bouten_left_position_uses_left_slug() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let target = alloc.content_plain("対象");
+        let n = alloc.bouten(BoutenKind::Goma, target, BoutenPosition::Left, false);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<em class="aozora-bouten aozora-bouten-goma aozora-bouten-left">対象</em>"#
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Emphasis leaf: each semantic element + the dynamic FontSize span.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn emphasis_super_and_sub_script_use_sup_sub() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let exponent = alloc.content_plain("2");
+        let sup = alloc.emphasis(EmphasisKind::SuperScript, exponent, false);
+        assert_eq!(
+            render_node_to_string(sup),
+            r#"<sup class="aozora-superscript">2</sup>"#
+        );
+        let index = alloc.content_plain("3");
+        let sub = alloc.emphasis(EmphasisKind::SubScript, index, false);
+        assert_eq!(
+            render_node_to_string(sub),
+            r#"<sub class="aozora-subscript">3</sub>"#
+        );
+    }
+
+    #[test]
+    fn emphasis_span_forms_use_span_with_slug() {
+        for (kind, slug) in [
+            (EmphasisKind::SmallRight, "kogaki-right"),
+            (EmphasisKind::SmallLeft, "kogaki-left"),
+            (EmphasisKind::KeigakomiInline, "keigakomi-inline"),
+            (EmphasisKind::HorizontalInline, "horizontal"),
+            (EmphasisKind::Caption, "caption"),
+        ] {
+            let arena = Arena::new();
+            let mut alloc = BorrowedAllocator::new(&arena);
+            let text = alloc.content_plain("X");
+            let n = alloc.emphasis(kind, text, false);
+            assert_eq!(
+                render_node_to_string(n),
+                format!(r#"<span class="aozora-{slug}">X</span>"#),
+                "emphasis span slug mismatch for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn emphasis_font_size_positive_emits_larger_span() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let text = alloc.content_plain("大");
+        let n = alloc.emphasis(EmphasisKind::FontSize { steps: 3 }, text, false);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<span class="aozora-font-larger" data-steps="3">大</span>"#
+        );
+    }
+
+    #[test]
+    fn emphasis_font_size_negative_emits_smaller_span() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let text = alloc.content_plain("小");
+        let n = alloc.emphasis(EmphasisKind::FontSize { steps: -2 }, text, false);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<span class="aozora-font-smaller" data-steps="2">小</span>"#
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // TateChuYoko leaf + SideNote + AngleQuote + kaeriten.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn tate_chu_yoko_leaf_wraps_in_tcy_span() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let text = alloc.content_plain("12");
+        let n = alloc.tate_chu_yoko(text, false);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<span class="aozora-tcy">12</span>"#
+        );
+    }
+
+    #[test]
+    fn side_note_uses_ruby_box_with_sidenote_class() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let base = alloc.content_plain("底本");
+        let note = alloc.content_plain("注記");
+        let n = alloc.side_note(base, note);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<ruby>底本<rp>(</rp><rt class="aozora-sidenote">注記</rt><rp>)</rp></ruby>"#
+        );
+    }
+
+    #[test]
+    fn left_ruby_marks_rt_with_left_class() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let base = alloc.content_plain("再読");
+        let reading = alloc.content_plain("さい");
+        let n = alloc.left_ruby(base, reading);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<ruby>再読<rp>(</rp><rt class="aozora-ruby-left">さい</rt><rp>)</rp></ruby>"#
+        );
+    }
+
+    #[test]
+    fn angle_quote_wraps_display_glyphs() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let content = alloc.content_plain("引用");
+        let n = alloc.angle_quote(content);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<span class="aozora-angle-quote">《引用》</span>"#
+        );
+    }
+
+    #[test]
+    fn kaeriten_wraps_mark_and_escapes() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.kaeriten("レ");
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<sup class="aozora-kaeriten">レ</sup>"#
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Gaiji: resolved single / multi scalar + description fallback.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn gaiji_resolved_char_emits_single_codepoint() {
+        use aozora_encoding::gaiji::Resolved;
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let g = alloc.make_gaiji("desc", Some(Resolved::Char('枘')), None);
+        let n = alloc.gaiji(g);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<span class="aozora-gaiji" data-codepoint="U+6798">枘</span>"#
+        );
+    }
+
+    #[test]
+    fn gaiji_resolved_multi_lists_each_scalar() {
+        use aozora_encoding::gaiji::Resolved;
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        // A combining sequence: U+304B U+309A.
+        let g = alloc.make_gaiji("desc", Some(Resolved::Multi("\u{304B}\u{309A}")), None);
+        let n = alloc.gaiji(g);
+        assert_eq!(
+            render_node_to_string(n),
+            "<span class=\"aozora-gaiji\" data-codepoint=\"U+304B U+309A\">\u{304B}\u{309A}</span>"
+        );
+    }
+
+    #[test]
+    fn gaiji_unresolved_falls_back_to_description() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let g = alloc.make_gaiji("第3水準", None, None);
+        let n = alloc.gaiji(g);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<span class="aozora-gaiji" data-description="第3水準">第3水準</span>"#
+        );
+    }
+
+    #[test]
+    fn gaiji_unresolved_escapes_description_in_both_slots() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let g = alloc.make_gaiji("a<b>&", None, None);
+        let n = alloc.gaiji(g);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<span class="aozora-gaiji" data-description="a&lt;b&gt;&amp;">a&lt;b&gt;&amp;</span>"#
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Annotation: warichu open/close shortcuts + the hidden-span default.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn annotation_warichu_open_and_close_emit_span_pair() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let open = alloc.make_annotation("［＃割り注］", AnnotationKind::WarichuOpen);
+        let open_n = alloc.annotation(open);
+        assert_eq!(
+            render_node_to_string(open_n),
+            r#"<span class="aozora-warichu">"#
+        );
+        let close = alloc.make_annotation("［＃割り注終わり］", AnnotationKind::WarichuClose);
+        let close_n = alloc.annotation(close);
+        assert_eq!(render_node_to_string(close_n), "</span>");
+    }
+
+    #[test]
+    fn annotation_hidden_span_escapes_raw() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let payload = alloc.make_annotation("a<b>", AnnotationKind::AsIs);
+        let n = alloc.annotation(payload);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<span class="aozora-annotation" hidden>a&lt;b&gt;</span>"#
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Center + section break (every kind).
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn center_emits_zero_width_hook_for_both_forms() {
+        let arena = Arena::new();
+        let alloc = BorrowedAllocator::new(&arena);
+        for page in [true, false] {
+            let n = alloc.center(aozora_syntax::Center { page });
+            assert_eq!(
+                render_node_to_string(n),
+                r#"<span class="aozora-center"></span>"#,
+                "center hook differs for page={page}"
+            );
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Sashie: general image form (description → alt) + caption.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn sashie_general_form_puts_description_in_alt() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.sashie_general("map.png", "地図", None);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<figure class="aozora-sashie"><img src="map.png" alt="地図" /></figure>"#
+        );
+    }
+
+    #[test]
+    fn sashie_caption_renders_figcaption() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let caption = alloc.content_plain("図の説明");
+        let n = alloc.sashie("fig.png", Some("1"), None, Some(caption));
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<figure class="aozora-sashie"><img src="fig.png" alt="" /><figcaption>図の説明</figcaption></figure>"#
+        );
+    }
+
+    #[test]
+    fn sashie_malformed_dimensions_drop_size_attrs() {
+        // `parse_sashie_dimensions` returns None for a non `横W×縦H` shape.
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.sashie("fig.png", None, Some("不明"), None);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<figure class="aozora-sashie"><img src="fig.png" alt="" /></figure>"#
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // AozoraHeading leaf — small level + same-line style.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn aozora_heading_small_same_line_emits_h3_with_modifier() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let text = alloc.content_plain("見出し");
+        let n = alloc.aozora_heading(AozoraHeadingKind::Small, AozoraHeadingStyle::SameLine, text);
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<h3 class="aozora-heading aozora-heading-small aozora-heading-same-line">見出し</h3>"#
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // HeadingHint — standard (no data-style) vs styled.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn heading_hint_standard_omits_data_style() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.heading_hint(1, AozoraHeadingStyle::Standard, "対象");
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<span class="aozora-heading-hint" data-level="1" data-target="対象" hidden></span>"#
+        );
+    }
+
+    #[test]
+    fn heading_hint_styled_includes_data_style_and_escapes_target() {
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let n = alloc.heading_hint(2, AozoraHeadingStyle::Window, "a<b>");
+        assert_eq!(
+            render_node_to_string(n),
+            r#"<span class="aozora-heading-hint" data-level="2" data-style="window" data-target="a&lt;b&gt;" hidden></span>"#
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Container open: one assertion per ContainerKind family / branch.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn container_indent_center_adds_center_class() {
+        assert_eq!(
+            open_tag(ContainerKind::Indent {
+                amount: 2,
+                wrap: None,
+                center: true,
+            }),
+            r#"<div class="aozora-container aozora-container-indent aozora-container-indent-2 aozora-container-center" data-amount="2">"#
+        );
+    }
+
+    #[test]
+    fn container_align_end_open_carries_offset() {
+        assert_eq!(
+            open_tag(ContainerKind::AlignEnd { offset: 3 }),
+            r#"<div class="aozora-container aozora-container-align-end" data-offset="3">"#
+        );
+        assert_eq!(close_tag(ContainerKind::AlignEnd { offset: 3 }), "</div>");
+    }
+
+    #[test]
+    fn container_line_width_open_carries_width() {
+        assert_eq!(
+            open_tag(ContainerKind::LineWidth { width: 20 }),
+            r#"<div class="aozora-container aozora-container-line-width" data-width="20">"#
+        );
+        assert_eq!(close_tag(ContainerKind::LineWidth { width: 20 }), "</div>");
+    }
+
+    #[test]
+    fn container_keigakomi_and_warichu_open_close() {
+        assert_eq!(
+            open_tag(ContainerKind::Keigakomi),
+            r#"<div class="aozora-container aozora-container-keigakomi">"#
+        );
+        assert_eq!(close_tag(ContainerKind::Keigakomi), "</div>");
+        assert_eq!(
+            open_tag(ContainerKind::Warichu),
+            r#"<div class="aozora-container aozora-container-warichu">"#
+        );
+        assert_eq!(close_tag(ContainerKind::Warichu), "</div>");
+    }
+
+    #[test]
+    fn container_bouten_range_uses_em_with_slugs() {
+        let kind = ContainerKind::BoutenRange {
+            kind: BoutenKind::UnderLine,
+            position: BoutenPosition::Left,
+        };
+        assert_eq!(
+            open_tag(kind),
+            r#"<em class="aozora-bouten aozora-bouten-bosen aozora-bouten-left">"#
+        );
+        assert_eq!(close_tag(kind), "</em>");
+    }
+
+    #[test]
+    fn container_bold_block_uses_div() {
+        assert_eq!(
+            open_tag(ContainerKind::Bold { block: true }),
+            r#"<div class="aozora-container aozora-container-bold">"#
+        );
+        assert_eq!(close_tag(ContainerKind::Bold { block: true }), "</div>");
+    }
+
+    #[test]
+    fn container_italic_bare_range_uses_i() {
+        assert_eq!(
+            open_tag(ContainerKind::Italic { block: false }),
+            r#"<i class="aozora-italic">"#
+        );
+        assert_eq!(close_tag(ContainerKind::Italic { block: false }), "</i>");
+    }
+
+    #[test]
+    fn container_columns_carries_count() {
+        assert_eq!(
+            open_tag(ContainerKind::Columns { count: 2 }),
+            r#"<div class="aozora-container aozora-container-columns" data-columns="2">"#
+        );
+        assert_eq!(close_tag(ContainerKind::Columns { count: 2 }), "</div>");
+    }
+
+    #[test]
+    fn container_table_and_horizontal() {
+        assert_eq!(
+            open_tag(ContainerKind::Table),
+            r#"<div class="aozora-container aozora-container-table">"#
+        );
+        assert_eq!(close_tag(ContainerKind::Table), "</div>");
+        assert_eq!(
+            open_tag(ContainerKind::Horizontal),
+            r#"<div class="aozora-container aozora-container-horizontal">"#
+        );
+        assert_eq!(close_tag(ContainerKind::Horizontal), "</div>");
+    }
+
+    #[test]
+    fn container_font_size_positive_and_negative() {
+        assert_eq!(
+            open_tag(ContainerKind::FontSize { steps: 3 }),
+            r#"<div class="aozora-container aozora-container-font-larger" data-steps="3">"#
+        );
+        assert_eq!(close_tag(ContainerKind::FontSize { steps: 3 }), "</div>");
+        assert_eq!(
+            open_tag(ContainerKind::FontSize { steps: -2 }),
+            r#"<div class="aozora-container aozora-container-font-smaller" data-steps="2">"#
+        );
+        assert_eq!(close_tag(ContainerKind::FontSize { steps: -2 }), "</div>");
+    }
+
+    #[test]
+    fn container_heading_block_uses_heading_element() {
+        let kind = ContainerKind::Heading {
+            kind: AozoraHeadingKind::Large,
+            style: AozoraHeadingStyle::Standard,
+            block: true,
+        };
+        assert_eq!(
+            open_tag(kind),
+            r#"<h1 class="aozora-heading aozora-heading-large">"#
+        );
+        assert_eq!(close_tag(kind), "</h1>");
+    }
+
+    #[test]
+    fn container_heading_window_uses_div_element() {
+        let kind = ContainerKind::Heading {
+            kind: AozoraHeadingKind::Medium,
+            style: AozoraHeadingStyle::Window,
+            block: false,
+        };
+        assert_eq!(
+            open_tag(kind),
+            r#"<div class="aozora-heading aozora-heading-medium aozora-heading-window">"#
+        );
+        assert_eq!(close_tag(kind), "</div>");
+    }
+
+    #[test]
+    fn container_small_script_left_and_right() {
+        assert_eq!(
+            open_tag(ContainerKind::SmallScript {
+                side: BoutenPosition::Left,
+            }),
+            r#"<span class="aozora-kogaki-left">"#
+        );
+        assert_eq!(
+            open_tag(ContainerKind::SmallScript {
+                side: BoutenPosition::Right,
+            }),
+            r#"<span class="aozora-kogaki-right">"#
+        );
+        assert_eq!(
+            close_tag(ContainerKind::SmallScript {
+                side: BoutenPosition::Right,
+            }),
+            "</span>"
+        );
+    }
+
+    #[test]
+    fn container_caption_range_and_block() {
+        assert_eq!(
+            open_tag(ContainerKind::Caption { block: false }),
+            r#"<span class="aozora-caption">"#
+        );
+        assert_eq!(
+            close_tag(ContainerKind::Caption { block: false }),
+            "</span>"
+        );
+        assert_eq!(
+            open_tag(ContainerKind::Caption { block: true }),
+            r#"<div class="aozora-container aozora-caption">"#
+        );
+        assert_eq!(close_tag(ContainerKind::Caption { block: true }), "</div>");
+    }
+
+    #[test]
+    fn container_tcy_range_uses_tcy_span() {
+        assert_eq!(
+            open_tag(ContainerKind::TcyRange),
+            r#"<span class="aozora-tcy">"#
+        );
+        assert_eq!(close_tag(ContainerKind::TcyRange), "</span>");
+    }
+
+    #[test]
+    fn render_content_walks_text_gaiji_and_annotation_segments() {
+        // A ruby base built from mixed segments exercises every arm of
+        // `render_content`: Text (escaped), Gaiji (nested render), and
+        // Annotation (hidden span).
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+        let g = alloc.make_gaiji("外字", None, None);
+        let seg_g = alloc.seg_gaiji(g);
+        let ann = alloc.make_annotation("［＃注］", AnnotationKind::Unknown);
+        let seg_a = alloc.seg_annotation(ann);
+        let seg_t = alloc.seg_text("前<");
+        let base = alloc.content_segments(&[seg_t, seg_g, seg_a]);
+        let reading = alloc.content_plain("よ");
+        let n = alloc.ruby(base, reading, true);
+        assert_eq!(
+            render_node_to_string(n),
+            concat!(
+                "<ruby>前&lt;",
+                r#"<span class="aozora-gaiji" data-description="外字">外字</span>"#,
+                r#"<span class="aozora-annotation" hidden>［＃注］</span>"#,
+                "<rp>(</rp><rt>よ</rt><rp>)</rp></ruby>"
+            )
+        );
     }
 }

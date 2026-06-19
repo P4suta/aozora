@@ -394,3 +394,142 @@ fn normalise_id(id: &str) -> String {
         .flat_map(char::to_lowercase)
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use serde_json::json;
+
+    use super::{DYNSYM_FUZZY_GAP_LIMIT, DynSymbolTable, Symbolicator, normalise_id};
+    use crate::Trace;
+
+    fn table(entries: &[(u64, u64, &str)]) -> DynSymbolTable {
+        DynSymbolTable {
+            entries: entries
+                .iter()
+                .map(|(s, e, n)| (*s, *e, (*n).to_owned()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn dynsym_exact_range_match() {
+        // address inside [start, end) ⇒ bare symbol name.
+        let t = table(&[(0x100, 0x200, "foo"), (0x200, 0x300, "bar")]);
+        assert_eq!(t.lookup(0x150).as_deref(), Some("foo"), "in foo's range");
+        assert_eq!(t.lookup(0x200).as_deref(), Some("bar"), "start of bar");
+        assert_eq!(t.lookup(0x2ff).as_deref(), Some("bar"), "last byte of bar");
+    }
+
+    #[test]
+    fn dynsym_fuzzy_nearest_preceding_within_gap() {
+        // Zero-size symbol (end == start, IFUNC stub style) ⇒ fuzzy.
+        let t = table(&[(0x1000, 0x1000, "stub")]);
+        assert_eq!(
+            t.lookup(0x1010).as_deref(),
+            Some("stub+0x10"),
+            "fuzzy offset from nearest preceding symbol"
+        );
+    }
+
+    #[test]
+    fn dynsym_fuzzy_beyond_gap_limit_is_none() {
+        let t = table(&[(0x1000, 0x1000, "stub")]);
+        let far = 0x1000 + DYNSYM_FUZZY_GAP_LIMIT + 1;
+        assert!(
+            t.lookup(far).is_none(),
+            "address past the fuzzy gap limit is unresolved"
+        );
+        // Exactly at the limit still resolves.
+        let edge = 0x1000 + DYNSYM_FUZZY_GAP_LIMIT;
+        assert!(t.lookup(edge).is_some(), "at the gap limit ⇒ resolved");
+    }
+
+    #[test]
+    fn dynsym_before_first_symbol_is_none() {
+        let t = table(&[(0x1000, 0x1100, "foo")]);
+        assert!(
+            t.lookup(0x500).is_none(),
+            "address below the first symbol has no preceding entry"
+        );
+    }
+
+    #[test]
+    fn dynsym_empty_table_is_none() {
+        let t = DynSymbolTable::default();
+        assert!(t.lookup(0x10).is_none(), "empty table resolves nothing");
+    }
+
+    #[test]
+    fn normalise_id_strips_dashes_and_lowercases() {
+        assert_eq!(
+            normalise_id("AB-CD-12"),
+            "abcd12",
+            "dashes dropped, hex lowercased"
+        );
+        assert_eq!(
+            normalise_id("xyz123"),
+            "123",
+            "non-hex letters filtered out"
+        );
+    }
+
+    fn trace_with_lib(name: &str, code_id: &str, debug_id: &str) -> Trace {
+        let json = json!({
+            "libs": [{
+                "name": name,
+                "path": "/x",
+                "codeId": code_id,
+                "debugId": debug_id,
+            }],
+            "threads": [],
+        });
+        Trace::from_json(&json, PathBuf::from("t")).expect("load")
+    }
+
+    #[test]
+    fn verify_against_skips_unregistered_and_idless_libs() {
+        let sym = Symbolicator::new();
+        // No binaries registered ⇒ nothing to compare ⇒ Ok.
+        let t = trace_with_lib("bin", "deadbeef", "");
+        assert!(
+            sym.verify_against(&t).is_ok(),
+            "unregistered lib is skipped"
+        );
+    }
+
+    #[test]
+    fn verify_against_matches_and_mismatches_build_id() {
+        let mut sym = Symbolicator::new();
+        // Inject a known build-id without touching disk.
+        sym.build_ids
+            .insert("bin".to_owned(), "deadbeefcafe".to_owned());
+
+        // Matching codeId ⇒ Ok.
+        let good = trace_with_lib("bin", "deadbeefcafe", "");
+        assert!(
+            sym.verify_against(&good).is_ok(),
+            "matching codeId verifies"
+        );
+
+        // Trace with empty ids ⇒ nothing to compare ⇒ Ok.
+        let idless = trace_with_lib("bin", "", "");
+        assert!(sym.verify_against(&idless).is_ok(), "no trace id ⇒ skipped");
+
+        // Falls back to debugId when codeId empty; matching ⇒ Ok.
+        let via_debug = trace_with_lib("bin", "", "DEAD-BEEF-CAFE");
+        assert!(
+            sym.verify_against(&via_debug).is_ok(),
+            "debugId fallback verifies after normalisation"
+        );
+
+        // Divergent id ⇒ BuildIdMismatch error.
+        let bad = trace_with_lib("bin", "00000000ffff", "");
+        let err = sym.verify_against(&bad).expect_err("mismatch must error");
+        assert!(
+            err.to_string().contains("build-id mismatch"),
+            "error is a build-id mismatch: {err}"
+        );
+    }
+}
