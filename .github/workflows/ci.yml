@@ -231,6 +231,34 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just conformance
 
+  # Phase O5 — Unknown-degradation budget gate. The empirical,
+  # non-circular complement to the vector suite: walks the *whole*
+  # P4suta/aozorabunko_text corpus and fails if the per-file
+  # `Annotation{Unknown}` rate rose above the committed
+  # `corpus/baseline.json`. This is what stops a recogniser change from
+  # silently shoving real notation into the catch-all (where the vector
+  # suite, being hand-written, would never notice). The corpus is too
+  # large to vendor, so we check it out here; the same gate runs at
+  # pre-push against the developer's local $AOZORA_CORPUS_ROOT.
+  corpus-audit-gate:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - name: Check out the conformance corpus
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          repository: P4suta/aozorabunko_text
+          path: .corpus
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+        with:
+          key: corpus-audit-gate
+      - name: Unknown-degradation budget gate
+        run: cargo run -p aozora-xtask -q -- corpus audit-gate --root "$GITHUB_WORKSPACE/.corpus" --baseline corpus/baseline.json
+
   # Phase M1 — Pandoc end-to-end smoke. Builds the CLI, runs
   # `aozora pandoc input.txt --format html` against a tiny ruby
   # fixture, and checks the resulting HTML carries the expected
@@ -469,6 +497,7 @@ jobs:
       - audit
       - drift-gate
       - conformance
+      - corpus-audit-gate
       - pandoc-smoke
       - smoke-ffi
       - wasm-build
