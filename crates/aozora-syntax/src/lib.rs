@@ -108,6 +108,31 @@ impl BoutenKind {
     }
 }
 
+/// Every [`BoutenKind`] variant, in declaration order.
+///
+/// The single enumeration source the rest of the workspace derives from:
+/// the parser's reverse keyword→kind lookup walks this list against
+/// [`BoutenKind::keyword`] instead of hand-maintaining a second match,
+/// and the render / spec slug tables are drift-checked against it. Adding
+/// a bouten mark therefore means a new variant + its `keyword` arm + one
+/// row here — nothing else can silently fall out of sync.
+pub const BOUTEN_KINDS: &[BoutenKind] = &[
+    BoutenKind::Goma,
+    BoutenKind::WhiteSesame,
+    BoutenKind::Circle,
+    BoutenKind::WhiteCircle,
+    BoutenKind::DoubleCircle,
+    BoutenKind::Janome,
+    BoutenKind::Cross,
+    BoutenKind::WhiteTriangle,
+    BoutenKind::WavyLine,
+    BoutenKind::UnderLine,
+    BoutenKind::DoubleUnderLine,
+    BoutenKind::ChainLine,
+    BoutenKind::DashedLine,
+    BoutenKind::BlackTriangle,
+];
+
 /// Which side of the vertical-writing base text the bouten marks sit on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -492,5 +517,31 @@ mod tests {
         assert_eq!(align.offset, 0);
         let center = Center { page: true };
         assert!(center.page, "page-centre flag round-trips");
+    }
+
+    #[test]
+    fn bouten_kinds_are_complete_and_distinct() {
+        assert_eq!(BOUTEN_KINDS.len(), 14, "every BoutenKind variant listed");
+        for (i, a) in BOUTEN_KINDS.iter().enumerate() {
+            for b in &BOUTEN_KINDS[i + 1..] {
+                assert_ne!(a, b, "duplicate variant in BOUTEN_KINDS");
+                assert_ne!(a.keyword(), b.keyword(), "duplicate bouten keyword");
+            }
+        }
+    }
+
+    #[test]
+    fn every_bouten_kind_has_a_render_slug() {
+        // The spec's RENDER_SLUGS must carry a romaji slug for every bouten
+        // kind so the renderer's `aozora-bouten-<slug>` class never falls
+        // back. Drift-guards the syntax↔spec bouten tables against the
+        // single `BOUTEN_KINDS` source.
+        for k in BOUTEN_KINDS {
+            assert!(
+                aozora_spec::roman_slug(k.keyword()).is_some(),
+                "RENDER_SLUGS missing a slug for bouten keyword {:?}",
+                k.keyword()
+            );
+        }
     }
 }
