@@ -264,6 +264,48 @@ corpus-sweep:
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo nextest run --package aozora --test corpus_sweep --no-capture
 
+# Conformance regression gate: fail when the corpus per-file Unknown-
+# degradation rate rises above `corpus/baseline.json` — i.e. when a
+# change pushed more notation into the `Annotation{Unknown}` catch-all.
+# Same corpus bind-mount as `corpus-sweep`; runtime-skips (NOT a failure)
+# when AOZORA_CORPUS_ROOT is unset, so a corpus-less machine still
+# pushes — the corpus CI job (which checks out P4suta/aozorabunko_text)
+# is the backstop.
+#
+# Usage:
+#   export AOZORA_CORPUS_ROOT=$HOME/aozora-corpus
+#   just audit-gate
+audit-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; audit-gate skipped (no corpus to walk)."
+        exit 0
+    fi
+    if [[ ! -d "$AOZORA_CORPUS_ROOT" ]]; then
+        echo "AOZORA_CORPUS_ROOT=$AOZORA_CORPUS_ROOT is not a directory." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus audit-gate --root /corpus --baseline corpus/baseline.json
+
+# Re-capture `corpus/baseline.json` from the current corpus — the
+# ratchet step after a recogniser lands and shrinks the Unknown set.
+# Lower it on improvement; never raise it to paper over a regression.
+audit-gate-update:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; cannot capture a baseline." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus audit-gate --root /corpus --baseline corpus/baseline.json --update
+
 # --- fuzzing -----------------------------------------------------------------
 #
 # cargo-fuzz harnesses live under `crates/<crate>/fuzz/` as

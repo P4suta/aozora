@@ -114,6 +114,13 @@ pub enum ContainerKind {
     /// (`block: true`, `<div class="aozora-container aozora-caption">`) mark the
     /// enclosed run as the caption of an adjacent figure.
     Caption { block: bool },
+    /// 縦中横 range form `［＃縦中横］ … ［＃縦中横終わり］` — sets the enclosed
+    /// run horizontally within vertical text. The forward-reference leaf
+    /// `「X」は縦中横` ([`super::borrowed::TateChuYoko`]) is the official form;
+    /// this paired range is a corpus convention (not in the official 注記
+    /// 一覧), so it is a tolerant extension. Inline — like the leaf, it
+    /// renders `<span class="aozora-tcy">` with no block padding.
+    TcyRange,
 }
 
 impl ContainerKind {
@@ -143,6 +150,7 @@ impl ContainerKind {
             Self::FontSize { .. } => "font-size",
             Self::SmallScript { .. } => "small-script",
             Self::Caption { .. } => "caption",
+            Self::TcyRange => "tcy-range",
         }
     }
 
@@ -180,6 +188,7 @@ impl ContainerKind {
                 | Self::Italic { block: false }
                 | Self::SmallScript { .. }
                 | Self::Caption { block: false }
+                | Self::TcyRange
         )
     }
 }

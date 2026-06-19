@@ -348,6 +348,9 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
         ContainerKind::Caption { block: true } => {
             writer.write_str(r#"<div class="aozora-container aozora-caption">"#)
         }
+        // 縦中横 range — inline `<span>`, matching the forward-reference
+        // [`TateChuYoko`] leaf class so a stylesheet treats both alike.
+        ContainerKind::TcyRange => writer.write_str(r#"<span class="aozora-tcy">"#),
         _ => writer.write_str(r#"<div class="aozora-container">"#),
     }
 }
@@ -361,9 +364,9 @@ fn render_container_close<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt:
             ContainerKind::BoutenRange { .. } => "</em>",
             ContainerKind::Bold { block: false } => "</b>",
             ContainerKind::Italic { block: false } => "</i>",
-            ContainerKind::SmallScript { .. } | ContainerKind::Caption { block: false } => {
-                "</span>"
-            }
+            ContainerKind::SmallScript { .. }
+            | ContainerKind::Caption { block: false }
+            | ContainerKind::TcyRange => "</span>",
             _ => "</div>",
         }),
     }
@@ -400,7 +403,13 @@ fn render_sashie<W: Write>(s: &Sashie<'_>, writer: &mut W) -> fmt::Result {
     if let Some((w, h)) = s.dimensions.and_then(parse_sashie_dimensions) {
         write!(writer, r#" width="{w}" height="{h}""#)?;
     }
-    writer.write_str(r#" alt="" />"#)?;
+    // The general image form's leading description (図 / コンドル博士の図 …)
+    // is the alt; the keyword 挿絵 form carries none, so alt stays empty.
+    writer.write_str(r#" alt=""#)?;
+    if let Some(description) = s.description {
+        escape_text(description, writer)?;
+    }
+    writer.write_str(r#"" />"#)?;
     if let Some(caption) = s.caption {
         writer.write_str("<figcaption>")?;
         render_content(caption, writer)?;
