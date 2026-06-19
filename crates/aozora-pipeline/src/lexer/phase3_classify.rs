@@ -449,6 +449,12 @@ enum BodyFamily {
     /// and open vs close.
     CaptionRange,
 
+    /// 縦中横 paired range (`縦中横` open / `縦中横終わり` close). A corpus
+    /// convention (not in the official 注記一覧, which defines only the
+    /// forward-reference `「X」は縦中横` leaf), kept as a tolerant extension.
+    /// `parse_tcy_range_body` reads the full body for open vs close.
+    TcyRange,
+
     /// `ここから割り注` — block 割り注 opener (the multi-line region form;
     /// the inline `［＃割り注］` is [`Self::WarichuOpen`]). → `Container(Warichu)`.
     WarichuBlockOpen,
@@ -589,6 +595,14 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "ここでキャプション終わり",
         family: BodyFamily::CaptionRange,
+    },
+    // 縦中横 paired range. The bare 縦中横 needle anchors both the opener and
+    // its 縦中横終わり closer (re-parsed by `parse_tcy_range_body`). The
+    // forward-reference `「X」は縦中横` leaf starts with `「`, so it is not
+    // claimed here.
+    BodyPattern {
+        needle: "縦中横",
+        family: BodyFamily::TcyRange,
     },
     // Block 罫囲み (ここから form; the bare 罫囲み is also KeigakomiOpen).
     // LeftmostLongest keeps ここから罫囲み over the ここから indent prefix.
@@ -1362,6 +1376,20 @@ fn classify_annotation_body<'a>(
                     EmitKind::BlockClose(container)
                 } else {
                     EmitKind::BlockOpen(container)
+                },
+                None,
+            ))
+        }
+
+        BodyFamily::TcyRange => {
+            // `縦中横` open / `縦中横終わり` close — re-parse the full body so a
+            // needle-prefix-but-longer body (`縦中横ほげ`) declines cleanly.
+            let is_close = parse_tcy_range_body(body)?;
+            Some((
+                if is_close {
+                    EmitKind::BlockClose(ContainerKind::TcyRange)
+                } else {
+                    EmitKind::BlockOpen(ContainerKind::TcyRange)
                 },
                 None,
             ))
@@ -4793,6 +4821,17 @@ fn parse_caption_body(body: &str) -> Option<(bool, bool)> {
     })
 }
 
+/// Parse a 縦中横 paired-range body into `is_close`. `縦中横` opens, `縦中横
+/// 終わり` closes; any other body (incl. the longer `縦中横ほげ`) declines to
+/// `Annotation{Unknown}`.
+fn parse_tcy_range_body(body: &str) -> Option<bool> {
+    match body {
+        "縦中横" => Some(false),
+        "縦中横終わり" => Some(true),
+        _ => None,
+    }
+}
+
 fn parse_emphasis_body(body: &str) -> Option<(EmphasisKind, bool, bool)> {
     Some(match body {
         "太字" => (EmphasisKind::Bold, false, false),
@@ -5255,6 +5294,35 @@ mod tests {
         };
         assert_eq!(a.raw.as_str(), "［＃改ページ］");
         assert_eq!(a.kind, AnnotationKind::Unknown);
+    }
+
+    /// 縦中横 paired range `［＃縦中横］ … ［＃縦中横終わり］` opens and closes a
+    /// `ContainerKind::TcyRange` (a corpus convention, tolerant extension);
+    /// the forward-reference `「X」は縦中横` leaf is unaffected. A longer
+    /// needle-prefix body declines to Unknown.
+    #[test]
+    fn tcy_range_recognised() {
+        run!(out, "前あ［＃縦中横］１２［＃縦中横終わり］後");
+        let opens = out
+            .spans
+            .iter()
+            .filter(|s| matches!(s.kind, SpanKind::BlockOpen(ContainerKind::TcyRange)))
+            .count();
+        let closes = out
+            .spans
+            .iter()
+            .filter(|s| matches!(s.kind, SpanKind::BlockClose(ContainerKind::TcyRange)))
+            .count();
+        assert_eq!(opens, 1, "one TcyRange open");
+        assert_eq!(closes, 1, "one TcyRange close");
+        // A needle-prefix-but-longer body must not be claimed.
+        run!(out, "x［＃縦中横ほげ］y");
+        assert!(
+            out.spans
+                .iter()
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Annotation(a)) if a.kind == AnnotationKind::Unknown)),
+            "縦中横ほげ should fall through to Unknown"
+        );
     }
 
     #[test]

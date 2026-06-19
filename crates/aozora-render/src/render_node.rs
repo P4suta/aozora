@@ -348,6 +348,9 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
         ContainerKind::Caption { block: true } => {
             writer.write_str(r#"<div class="aozora-container aozora-caption">"#)
         }
+        // 縦中横 range — inline `<span>`, matching the forward-reference
+        // [`TateChuYoko`] leaf class so a stylesheet treats both alike.
+        ContainerKind::TcyRange => writer.write_str(r#"<span class="aozora-tcy">"#),
         _ => writer.write_str(r#"<div class="aozora-container">"#),
     }
 }
@@ -361,9 +364,9 @@ fn render_container_close<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt:
             ContainerKind::BoutenRange { .. } => "</em>",
             ContainerKind::Bold { block: false } => "</b>",
             ContainerKind::Italic { block: false } => "</i>",
-            ContainerKind::SmallScript { .. } | ContainerKind::Caption { block: false } => {
-                "</span>"
-            }
+            ContainerKind::SmallScript { .. }
+            | ContainerKind::Caption { block: false }
+            | ContainerKind::TcyRange => "</span>",
             _ => "</div>",
         }),
     }

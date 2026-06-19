@@ -450,6 +450,7 @@ const fn container_open_marker(kind: ContainerKind) -> &'static str {
         ContainerKind::AlignEnd { .. } => "［＃ここから地付き］",
         ContainerKind::Keigakomi => "［＃罫囲み］",
         ContainerKind::Warichu => "［＃割り注］",
+        ContainerKind::TcyRange => "［＃縦中横］",
         _ => "［＃ここから字下げ］",
     }
 }
@@ -459,6 +460,7 @@ const fn container_close_marker(kind: ContainerKind) -> &'static str {
         ContainerKind::AlignEnd { .. } => "［＃ここで地付き終わり］",
         ContainerKind::Keigakomi => "［＃罫囲み終わり］",
         ContainerKind::Warichu => "［＃割り注終わり］",
+        ContainerKind::TcyRange => "［＃縦中横終わり］",
         _ => "［＃ここで字下げ終わり］",
     }
 }
