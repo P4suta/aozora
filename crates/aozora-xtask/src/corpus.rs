@@ -58,7 +58,7 @@ use aozora_corpus::{
     Archive, ArchiveBuilder, CorpusItem, EntryMeta, FilesystemCorpus, archive, par_load_decoded,
 };
 use aozora_encoding::decode_auto;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::panic::{self, AssertUnwindSafe};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -159,6 +159,29 @@ pub(crate) enum CorpusTarget {
         #[arg(long)]
         limit: Option<usize>,
     },
+    /// Conformance regression gate: fail (exit 1) when the corpus
+    /// per-file Unknown-degradation rate rises above a committed
+    /// baseline — i.e. when a change pushed more notation into the
+    /// `AnnotationKind::Unknown` catch-all. Runs the full audit
+    /// (`$AOZORA_CORPUS_ROOT` or `--root`), so it needs a corpus; in
+    /// CI that is a checkout of `P4suta/aozorabunko_text`, locally the
+    /// developer's `$AOZORA_CORPUS_ROOT`.
+    AuditGate {
+        /// Corpus root directory of `.txt` files. Defaults to
+        /// `$AOZORA_CORPUS_ROOT`.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Baseline JSON (`{ unknown_total, files_analyzed }`).
+        #[arg(long, default_value = "corpus/baseline.json")]
+        baseline: PathBuf,
+        /// Rewrite the baseline from the current run (ratchet down).
+        #[arg(long)]
+        update: bool,
+        /// Relative slack on the baseline rate before failing, to
+        /// absorb daily corpus drift (default 0.02 = 2 %).
+        #[arg(long, default_value_t = 0.02)]
+        tolerance: f64,
+    },
 }
 
 pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
@@ -178,6 +201,12 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             top,
             limit,
         } => audit(root.as_deref(), out.as_deref(), *top, *limit),
+        CorpusTarget::AuditGate {
+            root,
+            baseline,
+            update,
+            tolerance,
+        } => audit_gate(root.as_deref(), baseline, *update, *tolerance),
     }
 }
 
@@ -856,12 +885,10 @@ struct AuditReport {
     unknown_bodies: Vec<UnknownRow>,
 }
 
-fn audit(
-    root: Option<&Path>,
-    out: Option<&Path>,
-    top: usize,
-    limit: Option<usize>,
-) -> Result<(), String> {
+/// Walk the corpus and build the [`AuditReport`] without emitting any
+/// human/JSON output — the shared core behind both `corpus audit` (which
+/// prints) and `corpus audit-gate` (which compares against a baseline).
+fn run_audit(root: Option<&Path>, limit: Option<usize>) -> Result<AuditReport, String> {
     let corpus = resolve_corpus(root)?;
     let root_display = corpus.root().display().to_string();
     eprintln!("xtask corpus audit: walking {root_display} …");
@@ -886,7 +913,16 @@ fn audit(
 
     panic::set_hook(prev_hook);
 
-    let report = merge(results, root_display, start.elapsed().as_secs_f64());
+    Ok(merge(results, root_display, start.elapsed().as_secs_f64()))
+}
+
+fn audit(
+    root: Option<&Path>,
+    out: Option<&Path>,
+    top: usize,
+    limit: Option<usize>,
+) -> Result<(), String> {
+    let report = run_audit(root, limit)?;
     print_human_summary(&report, top);
 
     let json = serde_json::to_string_pretty(&report).map_err(|e| format!("serialize: {e}"))?;
@@ -896,6 +932,92 @@ fn audit(
             eprintln!("xtask corpus audit: JSON report → {}", path.display());
         }
         None => println!("{json}"),
+    }
+    Ok(())
+}
+
+/// Committed Unknown-degradation budget. `corpus audit-gate` fails when
+/// the live per-file Unknown rate rises above this baseline (modulo a
+/// relative tolerance that absorbs daily corpus drift). It is a
+/// ratchet: lower it whenever a recogniser lands and shrinks the
+/// Unknown set; never raise it to paper over a regression.
+#[derive(Serialize, Deserialize)]
+struct Baseline {
+    /// Total `AnnotationKind::Unknown` occurrences captured at baseline.
+    unknown_total: u64,
+    /// Files analysed at baseline (the rate denominator).
+    files_analyzed: usize,
+    /// Free-form provenance / ratchet note (date, corpus SHA, …).
+    #[serde(default)]
+    note: String,
+}
+
+impl Baseline {
+    fn rate(&self) -> f64 {
+        self.unknown_total as f64 / self.files_analyzed.max(1) as f64
+    }
+}
+
+fn audit_gate(
+    root: Option<&Path>,
+    baseline_path: &Path,
+    update: bool,
+    tolerance: f64,
+) -> Result<(), String> {
+    let report = run_audit(root, None)?;
+    let cur_total = report.unknown_total;
+    let cur_files = report.files_analyzed;
+    let cur_rate = cur_total as f64 / cur_files.max(1) as f64;
+
+    if update {
+        let baseline = Baseline {
+            unknown_total: cur_total,
+            files_analyzed: cur_files,
+            note: "ratchet-down Unknown-degradation budget; lower on improvement, never raise. \
+                   Re-capture with `xtask corpus audit-gate --update`."
+                .to_owned(),
+        };
+        let mut json =
+            serde_json::to_string_pretty(&baseline).map_err(|e| format!("serialize: {e}"))?;
+        json.push('\n');
+        fs::write(baseline_path, json)
+            .map_err(|e| format!("write {}: {e}", baseline_path.display()))?;
+        eprintln!(
+            "audit-gate: wrote baseline {} (unknown {cur_total} / files {cur_files}, rate {cur_rate:.6})",
+            baseline_path.display()
+        );
+        return Ok(());
+    }
+
+    let text = fs::read_to_string(baseline_path)
+        .map_err(|e| format!("read {}: {e}", baseline_path.display()))?;
+    let baseline: Baseline = serde_json::from_str(&text)
+        .map_err(|e| format!("parse {}: {e}", baseline_path.display()))?;
+    let base_rate = baseline.rate();
+    let allowed = base_rate * (1.0 + tolerance);
+
+    eprintln!(
+        "audit-gate: current unknown {cur_total} / files {cur_files} = rate {cur_rate:.6}\n\
+         audit-gate: baseline unknown {} / files {} = rate {base_rate:.6} (allowed ≤ {allowed:.6}, tolerance {tolerance})",
+        baseline.unknown_total, baseline.files_analyzed,
+    );
+
+    if cur_rate > allowed {
+        return Err(format!(
+            "Unknown-degradation regression: current rate {cur_rate:.6} exceeds allowed {allowed:.6}. \
+             A recogniser change pushed more notation into the Annotation{{Unknown}} catch-all. \
+             Fix the recogniser, or — if this is an intentional, justified shift — re-baseline with \
+             `xtask corpus audit-gate --update`."
+        ));
+    }
+
+    if cur_rate < base_rate {
+        eprintln!(
+            "audit-gate: PASS — Unknown rate dropped below baseline. Ratchet it down with \
+             `xtask corpus audit-gate --update` so future regressions are caught against the new floor."
+        );
+    } else {
+        eprintln!("audit-gate: PASS");
     }
     Ok(())
 }

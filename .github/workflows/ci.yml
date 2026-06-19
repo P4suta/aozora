@@ -113,11 +113,17 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: committed
-      # --no-merge-commit: `gh pr update-branch` merge commits ("Merge
-      # branch 'main' …") are not Conventional Commits and must not fail
-      # the lint.
+      # Lint only the non-merge commits. `committed` flags any merge commit
+      # ("Merge branch 'main' …") as "Missing type" no matter how its
+      # merge_commit setting is toggled, so a `gh pr update-branch` merge
+      # must never be fed to it. Walk --no-merges and check the real
+      # commits individually. With the merge queue, merges should not
+      # reach a PR branch at all; this lint is a backstop.
       - name: Check Conventional Commits (committed)
-        run: committed --no-merge-commit "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+        run: |
+          base='${{ github.event.pull_request.base.sha }}'
+          head='${{ github.event.pull_request.head.sha }}'
+          git rev-list --no-merges "$base..$head" | xargs -r committed
 
   # Build the dev image ONCE per run so the heavy `cargo binstall`
   # (cargo-tools) layer is never re-fetched live across the container
@@ -230,6 +236,34 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
       - uses: ./.github/actions/setup-dev-image
       - run: just conformance
+
+  # Phase O5 — Unknown-degradation budget gate. The empirical,
+  # non-circular complement to the vector suite: walks the *whole*
+  # P4suta/aozorabunko_text corpus and fails if the per-file
+  # `Annotation{Unknown}` rate rose above the committed
+  # `corpus/baseline.json`. This is what stops a recogniser change from
+  # silently shoving real notation into the catch-all (where the vector
+  # suite, being hand-written, would never notice). The corpus is too
+  # large to vendor, so we check it out here; the same gate runs at
+  # pre-push against the developer's local $AOZORA_CORPUS_ROOT.
+  corpus-audit-gate:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - name: Check out the conformance corpus
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          repository: P4suta/aozorabunko_text
+          path: .corpus
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+        with:
+          key: corpus-audit-gate
+      - name: Unknown-degradation budget gate
+        run: cargo run -p aozora-xtask -q -- corpus audit-gate --root "$GITHUB_WORKSPACE/.corpus" --baseline corpus/baseline.json
 
   # Phase M1 — Pandoc end-to-end smoke. Builds the CLI, runs
   # `aozora pandoc input.txt --format html` against a tiny ruby
@@ -469,6 +503,7 @@ jobs:
       - audit
       - drift-gate
       - conformance
+      - corpus-audit-gate
       - pandoc-smoke
       - smoke-ffi
       - wasm-build

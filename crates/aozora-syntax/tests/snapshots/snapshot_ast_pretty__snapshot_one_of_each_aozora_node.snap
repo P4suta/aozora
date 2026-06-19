@@ -128,6 +128,7 @@ expression: "format!(\"{nodes:#?}\")"
             number: None,
             dimensions: None,
             caption: None,
+            description: None,
         },
     ),
     Kaeriten(
