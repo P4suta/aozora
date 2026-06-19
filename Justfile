@@ -534,6 +534,17 @@ _COV_FLOOR := "84"
 _COV_IGNORE := "(target/|/main\\.rs$)"
 
 coverage:
+    # Purge the instrumented build dir first. `cargo` never garbage-
+    # collects the old hash-suffixed rlib / test binaries of a *renamed
+    # or moved* source file, and `cargo llvm-cov clean --workspace`
+    # leaves the stale test binaries behind — so on the persistent local
+    # dev volume `llvm-cov` would aggregate the pre-rename coverage map as
+    # a phantom "ghost" file, inflating the region denominator and
+    # deflating the percentage. (CI's volume is ephemeral, so it never
+    # sees this — but the local pre-push gate is the authoritative one
+    # and must measure correctly, with no skip.) sccache keeps the
+    # rebuild cheap (~45 s warm) since the compile cache survives the rm.
+    {{_dev}} sh -c 'rm -rf "${CARGO_TARGET_DIR:-target}/llvm-cov-target"'
     {{_dev}} cargo llvm-cov nextest \
         --workspace --exclude aozora-bench \
         --ignore-filename-regex '{{_COV_IGNORE}}' \
