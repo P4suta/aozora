@@ -96,8 +96,8 @@ use super::instrumentation::{
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Center, ContainerKind, EmphasisKind, Indent, SectionKind, Span,
+    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BOUTEN_KINDS, BoutenKind,
+    BoutenPosition, Center, ContainerKind, EmphasisKind, Indent, SectionKind, Span,
 };
 
 use super::phase2_pair::{PairEvent, PairKind};
@@ -4366,35 +4366,19 @@ fn font_size_block_open_steps(tail: &str, magnitude: u8) -> Option<i8> {
 
 /// Map the trailing keyword (after `に`) to a [`BoutenKind`].
 ///
-/// Covers the eleven bouten kinds catalogued at
-/// <https://www.aozora.gr.jp/annotation/bouten.html> plus the common
-/// emphasis-page variants (`白ゴマ` / `ばつ` / `白三角` / `二重傍線`).
-/// Unknown suffixes return `None`, letting the annotation fall through
-/// to the `Annotation{Unknown}` catch-all.
-///
-/// The dispatch is a straight `match` rather than a PHF table: 11
-/// entries, each a short literal, lookup cost is dominated by hash
-/// overhead either way. The exhaustive test in
-/// `bouten_kind_from_suffix_recognises_all_spec_keywords` catches
-/// typos before they silence recognition.
+/// The reverse of [`BoutenKind::keyword`], derived by walking the single
+/// [`BOUTEN_KINDS`] source rather than a hand-maintained second table —
+/// so a mark can never be recognised in the forward direction
+/// (`keyword`) yet silently missed here. `×傍点` is accepted as an input
+/// alias for the canonical ばつ傍点. Unknown suffixes return `None`,
+/// letting the annotation fall through to the `Annotation{Unknown}`
+/// catch-all. Lookup is a short linear scan (14 entries, dominated by
+/// the leading-byte mismatch on the first compare).
 fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
-    Some(match s {
-        "傍点" => BoutenKind::Goma,
-        "白ゴマ傍点" => BoutenKind::WhiteSesame,
-        "丸傍点" => BoutenKind::Circle,
-        "白丸傍点" => BoutenKind::WhiteCircle,
-        "二重丸傍点" => BoutenKind::DoubleCircle,
-        "蛇の目傍点" => BoutenKind::Janome,
-        "ばつ傍点" | "×傍点" => BoutenKind::Cross,
-        "白三角傍点" => BoutenKind::WhiteTriangle,
-        "波線" => BoutenKind::WavyLine,
-        "傍線" => BoutenKind::UnderLine,
-        "二重傍線" => BoutenKind::DoubleUnderLine,
-        "鎖線" => BoutenKind::ChainLine,
-        "破線" => BoutenKind::DashedLine,
-        "黒三角傍点" => BoutenKind::BlackTriangle,
-        _ => return None,
-    })
+    if s == "×傍点" {
+        return Some(BoutenKind::Cross);
+    }
+    BOUTEN_KINDS.iter().copied().find(|k| k.keyword() == s)
 }
 
 /// Parse a 傍点/傍線 range-form body into `(kind, position, is_close)`.
