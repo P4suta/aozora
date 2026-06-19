@@ -16,11 +16,13 @@
 #![forbid(unsafe_code)]
 
 mod bouten;
+pub mod classes;
 pub mod html;
 pub mod render_node;
 pub mod serialize;
 pub mod visitor;
 
+pub use classes::AOZORA_CLASSES;
 pub use visitor::{AozoraVisitor, dispatch_node};
 
 #[cfg(test)]
