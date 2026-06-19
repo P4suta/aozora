@@ -115,6 +115,63 @@ enum BodyFamily {
     KaigyouTentsukiPrefix,
 }
 
+/// How a [`BodyFamily`] consumes its DFA match: an `Exact` family must
+/// equal the whole body, a `Prefix` family parses `body[match_end..]`,
+/// and a `Reparse` family re-reads the full body from `body[0]`. Derived
+/// 1:1 from the family so the exact-vs-not contract lives in one place
+/// instead of being split across the per-arm `if exact` guards and a
+/// parallel catch-all `None`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MatchMode {
+    Exact,
+    Prefix,
+    Reparse,
+}
+
+/// The [`MatchMode`] of a [`BodyFamily`] (see [`MatchMode`]).
+const fn body_family_mode(family: BodyFamily) -> MatchMode {
+    match family {
+        BodyFamily::PageBreak
+        | BodyFamily::SectionKaicho
+        | BodyFamily::SectionKaidan
+        | BodyFamily::SectionKaimihiraki
+        | BodyFamily::AlignEnd0
+        | BodyFamily::CenterMarker
+        | BodyFamily::KeigakomiOpen
+        | BodyFamily::KeigakomiClose
+        | BodyFamily::WarichuBlockOpen
+        | BodyFamily::WarichuBlockEnd
+        | BodyFamily::IndentBlock1
+        | BodyFamily::AlignEndBlock0
+        | BodyFamily::IndentBlockEnd
+        | BodyFamily::AlignEndBlockEnd
+        | BodyFamily::LineWidthBlockEnd
+        | BodyFamily::TableBlockOpen
+        | BodyFamily::TableBlockEnd
+        | BodyFamily::HorizontalBlockOpen
+        | BodyFamily::HorizontalBlockEnd
+        | BodyFamily::FontSizeBlockEnd
+        | BodyFamily::ColumnsBlockEnd
+        | BodyFamily::WarichuOpen
+        | BodyFamily::WarichuClose
+        | BodyFamily::KaeritenSingle
+        | BodyFamily::KaeritenCompound => MatchMode::Exact,
+        BodyFamily::AlignEndParamPrefix
+        | BodyFamily::SashiePrefix
+        | BodyFamily::IndentBlockParamPrefix
+        | BodyFamily::AlignEndBlockParamPrefix
+        | BodyFamily::OkuriganaPrefix
+        | BodyFamily::TopIndentPrefix
+        | BodyFamily::KaigyouTentsukiPrefix => MatchMode::Prefix,
+        BodyFamily::IndentParamPrefix
+        | BodyFamily::BoutenRange
+        | BodyFamily::Emphasis
+        | BodyFamily::SmallScriptRange
+        | BodyFamily::CaptionRange
+        | BodyFamily::TcyRange => MatchMode::Reparse,
+    }
+}
+
 /// Static pattern table. Order is irrelevant for behavior because the
 /// DFA is built with [`MatchKind::LeftmostLongest`]: the longer needle
 /// always wins (so `罫囲み終わり` beats `罫囲み`, `ここから字下げ` beats
@@ -746,44 +803,43 @@ pub(super) fn classify_annotation_body<'a>(
     let pat = BODY_PATTERNS[mat.pattern().as_usize()];
     let match_end = mat.end();
     let exact = match_end == body.len();
+    // An exact-match family must consume the whole body; a prefix-only
+    // DFA hit (`罫囲みfoo` matches the needle `罫囲み`) makes no claim.
+    // Checking the mode once here lets every exact arm below drop its
+    // `if exact` guard and replaces the parallel catch-all `None`.
+    if body_family_mode(pat.family) == MatchMode::Exact && !exact {
+        return None;
+    }
     match pat.family {
         // ----- Exact-match families (must consume the entire body) -----
-        BodyFamily::PageBreak if exact => Some((EmitKind::Aozora(alloc.page_break()), None)),
-        BodyFamily::SectionKaicho if exact => Some((
+        BodyFamily::PageBreak => Some((EmitKind::Aozora(alloc.page_break()), None)),
+        BodyFamily::SectionKaicho => Some((
             EmitKind::Aozora(alloc.section_break(SectionKind::Kaicho)),
             None,
         )),
-        BodyFamily::SectionKaidan if exact => Some((
+        BodyFamily::SectionKaidan => Some((
             EmitKind::Aozora(alloc.section_break(SectionKind::Kaidan)),
             None,
         )),
-        BodyFamily::SectionKaimihiraki if exact => Some((
+        BodyFamily::SectionKaimihiraki => Some((
             EmitKind::Aozora(alloc.section_break(SectionKind::Kaimihiraki)),
             None,
         )),
-        BodyFamily::AlignEnd0 if exact => Some((
+        BodyFamily::AlignEnd0 => Some((
             EmitKind::Aozora(alloc.align_end(AlignEnd { offset: 0 })),
             None,
         )),
-        BodyFamily::CenterMarker if exact => {
+        BodyFamily::CenterMarker => {
             // ページの左右中央 (page centre) vs 中央揃え — a single-line
             // zero-width centring marker.
             let page = body == "ページの左右中央";
             Some((EmitKind::Aozora(alloc.center(Center { page })), None))
         }
-        BodyFamily::KeigakomiOpen if exact => {
-            Some((EmitKind::BlockOpen(ContainerKind::Keigakomi), None))
-        }
-        BodyFamily::KeigakomiClose if exact => {
-            Some((EmitKind::BlockClose(ContainerKind::Keigakomi), None))
-        }
-        BodyFamily::WarichuBlockOpen if exact => {
-            Some((EmitKind::BlockOpen(ContainerKind::Warichu), None))
-        }
-        BodyFamily::WarichuBlockEnd if exact => {
-            Some((EmitKind::BlockClose(ContainerKind::Warichu), None))
-        }
-        BodyFamily::IndentBlock1 if exact => Some((
+        BodyFamily::KeigakomiOpen => Some((EmitKind::BlockOpen(ContainerKind::Keigakomi), None)),
+        BodyFamily::KeigakomiClose => Some((EmitKind::BlockClose(ContainerKind::Keigakomi), None)),
+        BodyFamily::WarichuBlockOpen => Some((EmitKind::BlockOpen(ContainerKind::Warichu), None)),
+        BodyFamily::WarichuBlockEnd => Some((EmitKind::BlockClose(ContainerKind::Warichu), None)),
+        BodyFamily::IndentBlock1 => Some((
             EmitKind::BlockOpen(ContainerKind::Indent {
                 amount: 1,
                 wrap: None,
@@ -791,11 +847,11 @@ pub(super) fn classify_annotation_body<'a>(
             }),
             None,
         )),
-        BodyFamily::AlignEndBlock0 if exact => Some((
+        BodyFamily::AlignEndBlock0 => Some((
             EmitKind::BlockOpen(ContainerKind::AlignEnd { offset: 0 }),
             None,
         )),
-        BodyFamily::IndentBlockEnd if exact => Some((
+        BodyFamily::IndentBlockEnd => Some((
             EmitKind::BlockClose(ContainerKind::Indent {
                 amount: 0,
                 wrap: None,
@@ -803,29 +859,25 @@ pub(super) fn classify_annotation_body<'a>(
             }),
             None,
         )),
-        BodyFamily::AlignEndBlockEnd if exact => Some((
+        BodyFamily::AlignEndBlockEnd => Some((
             EmitKind::BlockClose(ContainerKind::AlignEnd { offset: 0 }),
             None,
         )),
-        BodyFamily::LineWidthBlockEnd if exact => Some((
+        BodyFamily::LineWidthBlockEnd => Some((
             // The close marker carries no width; the open-side payload is
             // authoritative when pairing (mirrors the generic 字下げ終わり).
             EmitKind::BlockClose(ContainerKind::LineWidth { width: 0 }),
             None,
         )),
-        BodyFamily::TableBlockOpen if exact => {
-            Some((EmitKind::BlockOpen(ContainerKind::Table), None))
-        }
-        BodyFamily::TableBlockEnd if exact => {
-            Some((EmitKind::BlockClose(ContainerKind::Table), None))
-        }
-        BodyFamily::HorizontalBlockOpen if exact => {
+        BodyFamily::TableBlockOpen => Some((EmitKind::BlockOpen(ContainerKind::Table), None)),
+        BodyFamily::TableBlockEnd => Some((EmitKind::BlockClose(ContainerKind::Table), None)),
+        BodyFamily::HorizontalBlockOpen => {
             Some((EmitKind::BlockOpen(ContainerKind::Horizontal), None))
         }
-        BodyFamily::HorizontalBlockEnd if exact => {
+        BodyFamily::HorizontalBlockEnd => {
             Some((EmitKind::BlockClose(ContainerKind::Horizontal), None))
         }
-        BodyFamily::FontSizeBlockEnd if exact => {
+        BodyFamily::FontSizeBlockEnd => {
             // The close marker carries only the direction; its magnitude is a
             // ±1 placeholder (the open-side stage count is authoritative).
             // Matches both ここで…終わり and the bare …終わり sibling, so key
@@ -836,12 +888,12 @@ pub(super) fn classify_annotation_body<'a>(
                 None,
             ))
         }
-        BodyFamily::ColumnsBlockEnd if exact => Some((
+        BodyFamily::ColumnsBlockEnd => Some((
             // Close marker carries no count; the open-side payload is authoritative.
             EmitKind::BlockClose(ContainerKind::Columns { count: 0 }),
             None,
         )),
-        BodyFamily::WarichuOpen if exact => {
+        BodyFamily::WarichuOpen => {
             let p = alloc.make_annotation("［＃割り注］", AnnotationKind::WarichuOpen);
             let node = alloc.annotation(p);
             // Re-build a payload for the segment-wrap case. The
@@ -852,13 +904,13 @@ pub(super) fn classify_annotation_body<'a>(
             let p2 = alloc.make_annotation("［＃割り注］", AnnotationKind::WarichuOpen);
             Some((EmitKind::Aozora(node), Some(p2)))
         }
-        BodyFamily::WarichuClose if exact => {
+        BodyFamily::WarichuClose => {
             let p = alloc.make_annotation("［＃割り注終わり］", AnnotationKind::WarichuClose);
             let node = alloc.annotation(p);
             let p2 = alloc.make_annotation("［＃割り注終わり］", AnnotationKind::WarichuClose);
             Some((EmitKind::Aozora(node), Some(p2)))
         }
-        BodyFamily::KaeritenSingle | BodyFamily::KaeritenCompound if exact => {
+        BodyFamily::KaeritenSingle | BodyFamily::KaeritenCompound => {
             Some((EmitKind::Aozora(alloc.kaeriten(body)), None))
         }
 
@@ -1089,34 +1141,6 @@ pub(super) fn classify_annotation_body<'a>(
                 None,
             ))
         }
-
-        // Exact-only families that didn't fully consume the body (e.g.
-        // `罫囲みfoo` matched `罫囲み` but body is longer): no claim.
-        BodyFamily::PageBreak
-        | BodyFamily::SectionKaicho
-        | BodyFamily::SectionKaidan
-        | BodyFamily::SectionKaimihiraki
-        | BodyFamily::AlignEnd0
-        | BodyFamily::CenterMarker
-        | BodyFamily::KeigakomiOpen
-        | BodyFamily::KeigakomiClose
-        | BodyFamily::WarichuBlockOpen
-        | BodyFamily::WarichuBlockEnd
-        | BodyFamily::IndentBlock1
-        | BodyFamily::AlignEndBlock0
-        | BodyFamily::IndentBlockEnd
-        | BodyFamily::AlignEndBlockEnd
-        | BodyFamily::LineWidthBlockEnd
-        | BodyFamily::TableBlockOpen
-        | BodyFamily::TableBlockEnd
-        | BodyFamily::HorizontalBlockOpen
-        | BodyFamily::HorizontalBlockEnd
-        | BodyFamily::FontSizeBlockEnd
-        | BodyFamily::ColumnsBlockEnd
-        | BodyFamily::WarichuOpen
-        | BodyFamily::WarichuClose
-        | BodyFamily::KaeritenSingle
-        | BodyFamily::KaeritenCompound => None,
     }
 }
 
