@@ -113,11 +113,13 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: committed
-      # --no-merge-commit: `gh pr update-branch` merge commits ("Merge
+      # --merge-commit: `gh pr update-branch` merge commits ("Merge
       # branch 'main' …") are not Conventional Commits and must not fail
-      # the lint.
+      # the lint. committed.toml sets merge_commit=true, but the CLI
+      # re-disallows merge commits unless --merge-commit is passed
+      # explicitly (--no-merge-commit does the opposite and rejects them).
       - name: Check Conventional Commits (committed)
-        run: committed --no-merge-commit "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+        run: committed --merge-commit "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
 
   # Build the dev image ONCE per run so the heavy `cargo binstall`
   # (cargo-tools) layer is never re-fetched live across the container
