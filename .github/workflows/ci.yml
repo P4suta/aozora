@@ -105,7 +105,11 @@ jobs:
     runs-on: ubuntu-latest
     # Skip for dependabot: its auto-generated subjects/bodies exceed the
     # 50/72 limits, and its PRs squash-merge with a maintainer subject.
-    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+    # Guard on the PR *author*, not `github.actor`: a maintainer
+    # `gh pr update-branch` on a dependabot PR flips `github.actor` to the
+    # maintainer, which would let the bot's >50-char subjects through to
+    # `committed` and fail the lint (#113).
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
