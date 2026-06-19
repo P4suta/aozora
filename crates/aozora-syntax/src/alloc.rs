@@ -489,6 +489,39 @@ impl<'a> BorrowedAllocator<'a> {
             number,
             dimensions,
             caption,
+            description: None,
+        }))
+    }
+
+    /// `AozoraNode::Sashie` for the *general* image form
+    /// `［＃<説明>（file［、横W×縦H］）入る］` (図 / 地図 / コンドル博士の図 …),
+    /// per <https://www.aozora.gr.jp/annotation/graphics.html>. The leading
+    /// `description` is the image alt; there is no `挿絵` keyword, figure
+    /// `number`, or trailing 「caption」 in this form.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `file` or `description` is empty.
+    pub fn sashie_general(
+        &mut self,
+        file: &str,
+        description: &str,
+        dimensions: Option<&str>,
+    ) -> borrowed::AozoraNode<'a> {
+        let file = borrowed::NonEmptyStr::new(self.interner.intern(file))
+            .expect("Phase 3 must emit Sashie with non-empty file path");
+        let description = self.interner.intern(description);
+        debug_assert!(
+            !description.is_empty(),
+            "Phase 3 must emit a general Sashie with a non-empty description"
+        );
+        let dimensions = dimensions.map(|d| self.interner.intern(d));
+        borrowed::AozoraNode::Sashie(self.arena.alloc(borrowed::Sashie {
+            file,
+            number: None,
+            dimensions,
+            caption: None,
+            description: Some(description),
         }))
     }
 
