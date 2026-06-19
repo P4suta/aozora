@@ -113,13 +113,17 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: committed
-      # --merge-commit: `gh pr update-branch` merge commits ("Merge
-      # branch 'main' …") are not Conventional Commits and must not fail
-      # the lint. committed.toml sets merge_commit=true, but the CLI
-      # re-disallows merge commits unless --merge-commit is passed
-      # explicitly (--no-merge-commit does the opposite and rejects them).
+      # Lint only the non-merge commits. `committed` flags any merge commit
+      # ("Merge branch 'main' …") as "Missing type" no matter how its
+      # merge_commit setting is toggled, so a `gh pr update-branch` merge
+      # must never be fed to it. Walk --no-merges and check the real
+      # commits individually. With the merge queue, merges should not
+      # reach a PR branch at all; this lint is a backstop.
       - name: Check Conventional Commits (committed)
-        run: committed --merge-commit "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+        run: |
+          base='${{ github.event.pull_request.base.sha }}'
+          head='${{ github.event.pull_request.head.sha }}'
+          git rev-list --no-merges "$base..$head" | xargs -r committed
 
   # Build the dev image ONCE per run so the heavy `cargo binstall`
   # (cargo-tools) layer is never re-fetched live across the container
