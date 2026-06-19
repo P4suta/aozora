@@ -526,7 +526,12 @@ fn heading_style_slug(s: AozoraHeadingStyle) -> Option<&'static str> {
 }
 
 fn sashie_block(s: Sashie<'_>) -> Block {
-    let alt = s.caption.map(content_to_inlines).unwrap_or_default();
+    // The general form's leading description is the alt; otherwise the
+    // keyword 挿絵 form's trailing 「caption」 is the next-best alt text.
+    let alt = s.description.map_or_else(
+        || s.caption.map(content_to_inlines).unwrap_or_default(),
+        |description| vec![Inline::Str(description.to_owned())],
+    );
     let target = (s.file.as_str().to_owned(), String::new());
     Block::Para(vec![Inline::Image(class_attr("sashie"), alt, target)])
 }

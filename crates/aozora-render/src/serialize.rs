@@ -369,9 +369,16 @@ fn emit_center<W: Write>(c: Center, out: &mut W) -> fmt::Result {
 }
 
 fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
-    out.write_str("［＃挿絵")?;
-    if let Some(number) = s.number {
-        out.write_str(number.as_str())?;
+    out.write_str("［＃")?;
+    if let Some(description) = s.description {
+        // General image form `<説明>（file）入る` — the leading text is the
+        // alt; there is no 挿絵 keyword / number / trailing 「caption」.
+        out.write_str(description)?;
+    } else {
+        out.write_str("挿絵")?;
+        if let Some(number) = s.number {
+            out.write_str(number.as_str())?;
+        }
     }
     out.write_char('（')?;
     out.write_str(s.file.as_str())?;

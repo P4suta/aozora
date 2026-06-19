@@ -403,7 +403,13 @@ fn render_sashie<W: Write>(s: &Sashie<'_>, writer: &mut W) -> fmt::Result {
     if let Some((w, h)) = s.dimensions.and_then(parse_sashie_dimensions) {
         write!(writer, r#" width="{w}" height="{h}""#)?;
     }
-    writer.write_str(r#" alt="" />"#)?;
+    // The general image form's leading description (図 / コンドル博士の図 …)
+    // is the alt; the keyword 挿絵 form carries none, so alt stays empty.
+    writer.write_str(r#" alt=""#)?;
+    if let Some(description) = s.description {
+        escape_text(description, writer)?;
+    }
+    writer.write_str(r#"" />"#)?;
     if let Some(caption) = s.caption {
         writer.write_str("<figcaption>")?;
         render_content(caption, writer)?;
