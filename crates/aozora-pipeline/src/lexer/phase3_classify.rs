@@ -632,6 +632,12 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "改ページ",
         family: BodyFamily::PageBreak,
     },
+    // 改頁 — the kanji spelling of 改ページ (annotation/layout_1.html);
+    // canonicalises to 改ページ on serialize.
+    BodyPattern {
+        needle: "改頁",
+        family: BodyFamily::PageBreak,
+    },
     BodyPattern {
         needle: "改丁",
         family: BodyFamily::SectionKaicho,
@@ -648,6 +654,17 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "地から",
         family: BodyFamily::AlignEndParamPrefix,
+    },
+    // 地より — the alternate wording of 地から (both "measured from the
+    // bottom margin"); `地よりN字上げ` parses identically and canonicalises
+    // to 地から on serialize. LeftmostLongest keeps ここから地より winning.
+    BodyPattern {
+        needle: "地より",
+        family: BodyFamily::AlignEndParamPrefix,
+    },
+    BodyPattern {
+        needle: "ここから地より",
+        family: BodyFamily::AlignEndBlockParamPrefix,
     },
     BodyPattern {
         needle: "地付き",
@@ -982,9 +999,12 @@ pub(crate) fn prewarm() {
 ///
 /// These are the corpus's two dominant editorial families:
 /// - `ママ` / `「X」はママ` (and `ルビの「X」はママ`) — *sic*: X is reproduced
-///   as it stands in the source. → [`AnnotationKind::AsIs`].
+///   as it stands in the source. `底本のまま` ("as in the base text") is the
+///   same kept-irregularity note. → [`AnnotationKind::AsIs`].
 /// - `…底本では…` (`「X」は底本では「Y」`, `「X」は底本では脱落`, …) — a
-///   source-text divergence note. → [`AnnotationKind::TextualNote`].
+///   source-text divergence note. `…初出では…` ("in the first appearance …")
+///   is the same shape against the first publication. →
+///   [`AnnotationKind::TextualNote`].
 ///
 /// Called only at the tail of [`RecogniseCtx::recognize_annotation`], after
 /// every styling recogniser has declined, so a target-bearing form like
@@ -992,9 +1012,9 @@ pub(crate) fn prewarm() {
 /// here. The note does not restyle its target, so the caller leaves X in
 /// the text and consumes only the bracket.
 fn editorial_note_kind(body: &str) -> Option<AnnotationKind> {
-    if body == "ママ" || body.ends_with("はママ") {
+    if body == "ママ" || body.ends_with("はママ") || body == "底本のまま" {
         Some(AnnotationKind::AsIs)
-    } else if body.contains("底本では") {
+    } else if body.contains("底本では") || body.contains("初出では") {
         Some(AnnotationKind::TextualNote)
     } else {
         None
@@ -5149,6 +5169,30 @@ mod tests {
         assert_eq!(out.spans[4].kind, SpanKind::Plain);
     }
 
+    /// 改頁 (the kanji spelling of 改ページ) and 地より (the alternate wording
+    /// of 地から) are corpus spellings of supported layout directives — they
+    /// emit the same nodes and canonicalise to 改ページ / 地から on serialize.
+    #[test]
+    fn alt_spelling_page_break_and_align_end() {
+        run!(out, "前［＃改頁］後");
+        assert!(
+            out.spans
+                .iter()
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::PageBreak))),
+            "改頁 should emit a PageBreak"
+        );
+        run!(out, "本文［＃地より２字上げ］続き");
+        let offset = out
+            .spans
+            .iter()
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::AlignEnd(a)) => Some(a.offset),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("地より should emit an AlignEnd"));
+        assert_eq!(offset, 2);
+    }
+
     #[test]
     fn section_break_kaicho_recognized() {
         run!(out, "［＃改丁］");
@@ -5582,11 +5626,18 @@ mod tests {
         let cases: &[(&str, AnnotationKind)] = &[
             ("誤［＃「誤」はママ］", AnnotationKind::AsIs),
             ("あ［＃ママ］", AnnotationKind::AsIs),
+            // 底本のまま — kept-irregularity note, the same *sic* family as ママ.
+            ("綴り［＃底本のまま］", AnnotationKind::AsIs),
             (
                 "名刺［＃「名刺」は底本では「名剌」］",
                 AnnotationKind::TextualNote,
             ),
             ("。［＃「。」は底本では脱落］", AnnotationKind::TextualNote),
+            // 初出では — the first-appearance divergence note, same shape as 底本では.
+            (
+                "正字［＃「正字」は初出では「異字」］",
+                AnnotationKind::TextualNote,
+            ),
         ];
         for (src, want) in cases {
             run!(out, src);
