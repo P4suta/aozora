@@ -3565,6 +3565,21 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             });
         }
 
+        // General image form `［＃<説明>（file［、横W×縦H］）入る］` (graphics.html)
+        // — the free leading description (図 / 地図 / コンドル博士の図 …) is the
+        // alt. Its description is arbitrary so it has no prefix needle in the
+        // body dispatcher; checked here, after the more-specific 「caption」
+        // form so that keeps its figcaption, and before the Unknown catch-all.
+        if let Some(emit) = classify_general_image_body(body, self.alloc) {
+            return Some(AnnotationMatch {
+                emit,
+                annotation_payload: None,
+                consume_start: open_span.start,
+                consume_end: close_span.end,
+                pending_diagnostic: None,
+            });
+        }
+
         // Empty / placeholder directives from the file-header 凡例 that
         // prefixes nearly every work: `［＃］` (入力者注), `［＃…］` (返り点),
         // `［＃（…）］` (訓点送り仮名). The body is empty (post-trim) or an
@@ -4204,6 +4219,51 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
     Some(EmitKind::Aozora(
         alloc.sashie(file, number, dimensions, caption),
     ))
+}
+
+/// Classify the *general* image form `［＃<説明>（file［、横W×縦H］）入る］`
+/// (図 / 地図 / 口絵 / 表紙 / コンドル博士の図 / 神代文字ア …) per
+/// <https://www.aozora.gr.jp/annotation/graphics.html>: the leading text
+/// before `（` is the image's alt-description (the guide lists 図 / 地図 /
+/// 絵 / 挿絵 / 表 / 写真 as type words but the description is free text),
+/// the parenthesised part is `file` (+ optional `、横W×縦H` pixel size),
+/// and `入る` closes it.
+///
+/// The keyword `挿絵` form is claimed earlier by [`classify_sashie_body`]
+/// via its anchored needle; this is the fallback for every other
+/// description, tried just before the `Annotation{Unknown}` catch-all (it
+/// has no prefix needle because the description is arbitrary). Returns
+/// `None` for any body that is not a complete `<非空>（<file>）入る`.
+fn classify_general_image_body<'a>(
+    body: &str,
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Option<EmitKind<'a>> {
+    let middle = body.strip_suffix("入る")?;
+    let paren = middle.find('（')?;
+    let description = &middle[..paren];
+    if description.is_empty() {
+        return None;
+    }
+    let rest = &middle[paren + '（'.len_utf8()..];
+    let close_off = rest.find('）')?;
+    // Once `入る` is stripped, `）` must be the final byte — a trailing
+    // `「caption」` or any other shape is not this form and declines.
+    if close_off + '）'.len_utf8() != rest.len() {
+        return None;
+    }
+    let inside = &rest[..close_off];
+    let (file, dimensions) = match inside.split_once('、') {
+        Some((f, dims)) if !f.is_empty() && !dims.is_empty() => (f, Some(dims)),
+        _ => (inside, None),
+    };
+    if file.is_empty() {
+        return None;
+    }
+    Some(EmitKind::Aozora(alloc.sashie_general(
+        file,
+        description,
+        dimensions,
+    )))
 }
 
 /// Classify a `［＃「target」は(大|中|小)見出し］` forward-reference
@@ -5771,6 +5831,63 @@ mod tests {
         )));
     }
 
+    /// The general image form `<説明>（file［、横W×縦H］）入る` (graphics.html):
+    /// any leading description becomes the alt, dimensions split off the
+    /// file, and the leading text round-trips verbatim. The `のキャプション
+    /// 付き` form is left to `classify_caption_figure` (it earns a figcaption).
+    #[test]
+    fn general_image_form_recognised() {
+        use aozora_syntax::borrowed::AozoraNode;
+        let cases = [
+            (
+                "［＃図（fig1.png、横100×縦80）入る］",
+                "図",
+                "fig1.png",
+                Some("横100×縦80"),
+            ),
+            ("［＃口絵（fig2.png）入る］", "口絵", "fig2.png", None),
+            (
+                "［＃神代文字ア（f.png、横20×縦20）入る］",
+                "神代文字ア",
+                "f.png",
+                Some("横20×縦20"),
+            ),
+        ];
+        for (src, desc, file, dims) in cases {
+            run!(out, src);
+            let s = out
+                .spans
+                .iter()
+                .find_map(|s| match aozora_node(s) {
+                    Some(AozoraNode::Sashie(s)) => Some(s),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("expected a Sashie for {src:?}"));
+            assert_eq!(s.description, Some(desc), "desc {src:?}");
+            assert_eq!(s.file.as_str(), file, "file {src:?}");
+            assert_eq!(s.dimensions, dims, "dims {src:?}");
+            assert!(
+                s.number.is_none() && s.caption.is_none(),
+                "general form has no number / trailing caption: {src:?}"
+            );
+        }
+        // The のキャプション付き form stays with classify_caption_figure, which
+        // lifts the 「caption」 into a figcaption rather than the alt.
+        run!(out, "［＃「絵」のキャプション付きの図（f.png）入る］");
+        let cap = out
+            .spans
+            .iter()
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Sashie(s)) => Some(s),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("caption-figure should still be a Sashie"));
+        assert!(
+            cap.caption.is_some() && cap.description.is_none(),
+            "caption-figure routes its 「caption」 to a figcaption, not the alt"
+        );
+    }
+
     /// `「caption」のキャプション付きの(図|挿絵)（file）入る` is a Sashie whose
     /// caption precedes the figure.
     #[test]
@@ -6417,13 +6534,21 @@ mod tests {
             assert_eq!(sashie.file.as_str(), want_file, "src={src:?}");
             assert_eq!(sashie.dimensions, want_dims, "src={src:?}");
         }
-        // A description before 挿絵 is a different, unhandled form.
+        // A free description before `（…）入る` is the general image form
+        // (graphics.html): `女性の挿絵（fig.png）入る` → a Sashie whose leading
+        // text is the alt (no 挿絵 keyword, no figure number).
         run!(out, "x［＃女性の挿絵（fig.png）入る］y");
-        let has_sashie = out
+        let general = out
             .spans
             .iter()
-            .any(|s| matches!(aozora_node(s), Some(AozoraNode::Sashie(_))));
-        assert!(!has_sashie, "description-before 挿絵 must not be claimed");
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Sashie(s)) => Some(s),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("general image form should be recognised"));
+        assert_eq!(general.description, Some("女性の挿絵"));
+        assert_eq!(general.file.as_str(), "fig.png");
+        assert!(general.number.is_none(), "general form carries no number");
     }
 
     #[test]

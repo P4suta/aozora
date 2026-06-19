@@ -133,6 +133,18 @@ pre-push:
         Vendored spec conformance vectors drift from ../aozora-notation-spec.
         Run `just sync-spec-vectors` and commit the result — the spec repo
         is the source of truth for the conformance corpus.
+    # Conformance regression gate: fail the push when the corpus per-file
+    # Unknown-degradation rate rose above corpus/baseline.json. Needs a
+    # corpus; runtime-skips (no-op, not a failure) when AOZORA_CORPUS_ROOT
+    # is unset — so a machine without the corpus still pushes and the
+    # corpus CI job (checkout of P4suta/aozorabunko_text) is the backstop.
+    audit-gate:
+      run: just audit-gate
+      fail_text: |
+        Unknown-degradation regression: more notation now falls through to
+        the Annotation{Unknown} catch-all than corpus/baseline.json allows.
+        Fix the recogniser, or — if the shift is intentional and justified —
+        re-baseline with `just audit-gate-update` and commit corpus/baseline.json.
     # Mirror every CI job that's reachable from inside the dev image
     # (lint / build / test / prop / drift-gate / conformance /
     # smoke-ffi / deny / audit / udeps / coverage / book-build /
