@@ -778,6 +778,35 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "ここで斜体終わり",
         family: BodyFamily::Emphasis,
     },
+    // ゴシック体 / ゴチック — corpus spellings of 太字 (bold). The official
+    // guide writes 太字（ゴシック） and prescribes 太字 as the keyword
+    // (annotation/emphasis.html), so both canonicalise to `太字` on
+    // serialize. The bare openers also anchor their `…終わり` closers and
+    // the forward-reference `「X」はゴシック体` leaf.
+    BodyPattern {
+        needle: "ゴシック体",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ゴチック",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ここからゴシック体",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ここからゴチック",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ここでゴシック体終わり",
+        family: BodyFamily::Emphasis,
+    },
+    BodyPattern {
+        needle: "ここでゴチック終わり",
+        family: BodyFamily::Emphasis,
+    },
     // Kaeriten okurigana opener (full-width left paren U+FF08).
     BodyPattern {
         needle: "（",
@@ -4532,14 +4561,16 @@ fn parse_heading_directive(body: &str) -> Option<(ContainerKind, bool)> {
 /// Map the keyword after `は` to an [`EmphasisKind`].
 ///
 /// 太字 → Bold, 斜体 → Italic (per
-/// <https://www.aozora.gr.jp/annotation/emphasis.html>); 上付き小文字 →
+/// <https://www.aozora.gr.jp/annotation/emphasis.html>). ゴシック体 / ゴチック
+/// are corpus spellings of bold — the guide writes 太字（ゴシック） — so both
+/// map to Bold and canonicalise to `太字` on serialize. 上付き小文字 →
 /// `SuperScript`, 下付き小文字 → `SubScript`, 行右小書き → `SmallRight`,
 /// 行左小書き → `SmallLeft`, and `N段階大きな/小さな文字` → `FontSize`
 /// (per <https://www.aozora.gr.jp/annotation/etc.html>). Unknown suffixes
 /// return `None` (→ `Annotation{Unknown}`).
 fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
     Some(match s {
-        "太字" => EmphasisKind::Bold,
+        "太字" | "ゴシック体" | "ゴチック" => EmphasisKind::Bold,
         "斜体" => EmphasisKind::Italic,
         "上付き小文字" => EmphasisKind::SuperScript,
         "下付き小文字" => EmphasisKind::SubScript,
@@ -4670,10 +4701,16 @@ fn parse_caption_body(body: &str) -> Option<(bool, bool)> {
 
 fn parse_emphasis_body(body: &str) -> Option<(EmphasisKind, bool, bool)> {
     Some(match body {
-        "太字" => (EmphasisKind::Bold, false, false),
-        "太字終わり" => (EmphasisKind::Bold, false, true),
-        "ここから太字" => (EmphasisKind::Bold, true, false),
-        "ここで太字終わり" => (EmphasisKind::Bold, true, true),
+        "太字" | "ゴシック体" | "ゴチック" => (EmphasisKind::Bold, false, false),
+        "太字終わり" | "ゴシック体終わり" | "ゴチック終わり" => {
+            (EmphasisKind::Bold, false, true)
+        }
+        "ここから太字" | "ここからゴシック体" | "ここからゴチック" => {
+            (EmphasisKind::Bold, true, false)
+        }
+        "ここで太字終わり" | "ここでゴシック体終わり" | "ここでゴチック終わり" => {
+            (EmphasisKind::Bold, true, true)
+        }
         "斜体" => (EmphasisKind::Italic, false, false),
         "斜体終わり" => (EmphasisKind::Italic, false, true),
         "ここから斜体" => (EmphasisKind::Italic, true, false),
@@ -5493,6 +5530,40 @@ mod tests {
             });
             assert!(!unknown, "unexpected Unknown fall-through for {src:?}");
         }
+    }
+
+    /// ゴシック体 / ゴチック are corpus spellings of 太字 (bold): the official
+    /// guide writes 太字（ゴシック）. Both map to `EmphasisKind::Bold` in the
+    /// forward-reference suffix and in every range / block body, and
+    /// canonicalise to 太字 on serialize (`Bold.keyword()`).
+    #[test]
+    fn gothic_spellings_map_to_bold() {
+        assert_eq!(
+            emphasis_kind_from_suffix("ゴシック体"),
+            Some(EmphasisKind::Bold)
+        );
+        assert_eq!(
+            emphasis_kind_from_suffix("ゴチック"),
+            Some(EmphasisKind::Bold)
+        );
+        assert_eq!(
+            parse_emphasis_body("ゴシック体"),
+            Some((EmphasisKind::Bold, false, false))
+        );
+        assert_eq!(
+            parse_emphasis_body("ゴチック終わり"),
+            Some((EmphasisKind::Bold, false, true))
+        );
+        assert_eq!(
+            parse_emphasis_body("ここからゴシック体"),
+            Some((EmphasisKind::Bold, true, false))
+        );
+        assert_eq!(
+            parse_emphasis_body("ここでゴチック終わり"),
+            Some((EmphasisKind::Bold, true, true))
+        );
+        // Every spelling serializes back to the canonical 太字.
+        assert_eq!(EmphasisKind::Bold.keyword(), "太字");
     }
 
     /// The bare 横組み needle must NOT claim a compound like `横組みで、…`
