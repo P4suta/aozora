@@ -528,3 +528,323 @@ fn diagnostics_match(expected: &[ExpectedDiagnostic], actual: &[ActualDiagnostic
                 && want.span.is_none_or(|span| span == got.span)
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn case(level: Level, passed: bool) -> CaseResult {
+        CaseResult {
+            case: "c".to_owned(),
+            feature: "f".to_owned(),
+            level,
+            passed,
+            message: None,
+        }
+    }
+
+    #[test]
+    fn level_parse_accepts_each_tier() {
+        assert_eq!(Level::parse("must").expect("must parses"), Level::Must);
+        assert_eq!(
+            Level::parse("should").expect("should parses"),
+            Level::Should
+        );
+        assert_eq!(Level::parse("may").expect("may parses"), Level::May);
+    }
+
+    #[test]
+    fn level_parse_rejects_unknown() {
+        let err = Level::parse("required").expect_err("unknown tier rejected");
+        assert!(err.contains("required"), "error names bad input: {err}");
+        assert!(
+            err.contains("must / should / may"),
+            "error lists tiers: {err}"
+        );
+    }
+
+    #[test]
+    fn level_slug_round_trips_with_parse() {
+        for level in [Level::Must, Level::Should, Level::May] {
+            let slug = level_slug(level);
+            assert_eq!(Level::parse(slug).expect("slug parses"), level);
+        }
+    }
+
+    #[test]
+    fn level_ordering_is_must_then_should_then_may() {
+        assert!(Level::Must < Level::Should, "must precedes should");
+        assert!(Level::Should < Level::May, "should precedes may");
+    }
+
+    #[test]
+    fn build_summary_counts_pass_fail_overall() {
+        let cases = vec![
+            case(Level::Must, true),
+            case(Level::Must, false),
+            case(Level::Should, true),
+        ];
+        let summary = build_summary(cases);
+        assert_eq!(summary.total, 3, "total cases");
+        assert_eq!(summary.passed, 2, "passed cases");
+        assert_eq!(summary.failed, 1, "failed cases");
+        assert_eq!(summary.implementation, "rust", "rust is impl under test");
+    }
+
+    #[test]
+    fn build_summary_buckets_by_level_slug() {
+        let cases = vec![
+            case(Level::Must, true),
+            case(Level::Must, false),
+            case(Level::May, true),
+        ];
+        let summary = build_summary(cases);
+        let must = summary.by_level.get("must").expect("must bucket present");
+        assert_eq!(must.total, 2, "two must cases");
+        assert_eq!(must.passed, 1, "one must pass");
+        assert_eq!(must.failed, 1, "one must fail");
+        let may = summary.by_level.get("may").expect("may bucket present");
+        assert_eq!(may.total, 1, "one may case");
+        assert!(
+            !summary.by_level.contains_key("should"),
+            "no should cases → no bucket"
+        );
+    }
+
+    #[test]
+    fn build_summary_empty_is_all_zero() {
+        let summary = build_summary(Vec::new());
+        assert_eq!(summary.total, 0, "no cases");
+        assert_eq!(summary.passed, 0, "no passes");
+        assert_eq!(summary.failed, 0, "no fails");
+        assert!(summary.by_level.is_empty(), "no level buckets");
+    }
+
+    #[test]
+    fn wire_data_extracts_data_array() {
+        let json = r#"{ "schema_version": 1, "data": [1, 2, 3] }"#;
+        let items = wire_data(json).expect("valid envelope");
+        assert_eq!(items.len(), 3, "three data items");
+        assert_eq!(items[0], Value::from(1), "first item preserved");
+    }
+
+    #[test]
+    fn wire_data_rejects_missing_data() {
+        let err = wire_data(r#"{ "schema_version": 1 }"#).expect_err("no data array");
+        assert!(err.contains("data"), "error mentions missing data: {err}");
+    }
+
+    #[test]
+    fn wire_data_rejects_invalid_json() {
+        let err = wire_data("not json").expect_err("invalid json");
+        assert!(err.contains("parse"), "error mentions parse failure: {err}");
+    }
+
+    fn err_of<T>(result: Result<T, String>) -> String {
+        match result {
+            Ok(_) => panic!("expected an Err"),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn span_from_value_parses_start_end() {
+        let v = serde_json::json!({ "start": 4, "end": 9 });
+        // `SpanCmp` has no `Debug`, so compare fields rather than the struct.
+        let span = span_from_value(&v).unwrap_or_else(|_| panic!("valid span"));
+        assert_eq!(span.start, 4, "start parsed");
+        assert_eq!(span.end, 9, "end parsed");
+    }
+
+    #[test]
+    fn span_from_value_requires_both_bounds() {
+        let only_start = serde_json::json!({ "start": 4 });
+        assert!(
+            err_of(span_from_value(&only_start)).contains("end"),
+            "error names the missing end bound"
+        );
+        let only_end = serde_json::json!({ "end": 9 });
+        assert!(
+            err_of(span_from_value(&only_end)).contains("start"),
+            "error names the missing start bound"
+        );
+    }
+
+    #[test]
+    fn normalized_actual_diagnostics_kebabs_kind_and_drops_internal() {
+        let wire = r#"{
+            "schema_version": 1,
+            "data": [
+                { "kind": "source_contains_pua", "severity": "warning", "source": "library", "span": { "start": 0, "end": 1 } },
+                { "kind": "self_check", "severity": "error", "source": "internal", "span": { "start": 2, "end": 3 } }
+            ]
+        }"#;
+        let out = normalized_actual_diagnostics(wire).unwrap_or_else(|_| panic!("valid wire"));
+        assert_eq!(out.len(), 1, "internal-source diagnostic stripped");
+        assert_eq!(
+            out[0].code, "source-contains-pua",
+            "snake_case → kebab-case code"
+        );
+        assert_eq!(out[0].severity, "warning", "severity preserved");
+        assert_eq!(out[0].span.start, 0, "span start parsed");
+        assert_eq!(out[0].span.end, 1, "span end parsed");
+    }
+
+    #[test]
+    fn normalized_actual_diagnostics_requires_kind() {
+        let wire = r#"{
+            "schema_version": 1,
+            "data": [ { "severity": "warning", "source": "library", "span": { "start": 0, "end": 1 } } ]
+        }"#;
+        let err = err_of(normalized_actual_diagnostics(wire));
+        assert!(err.contains("kind"), "error names missing kind: {err}");
+    }
+
+    #[test]
+    fn diagnostics_match_requires_equal_length() {
+        let expected = vec![ExpectedDiagnostic {
+            code: "a".to_owned(),
+            severity: "error".to_owned(),
+            span: None,
+        }];
+        let actual: Vec<ActualDiagnostic> = Vec::new();
+        assert!(
+            !diagnostics_match(&expected, &actual),
+            "length mismatch → no match"
+        );
+    }
+
+    #[test]
+    fn diagnostics_match_ignores_span_when_unpinned() {
+        let expected = vec![ExpectedDiagnostic {
+            code: "a".to_owned(),
+            severity: "error".to_owned(),
+            span: None,
+        }];
+        let actual = vec![ActualDiagnostic {
+            code: "a".to_owned(),
+            severity: "error".to_owned(),
+            span: SpanCmp { start: 7, end: 9 },
+        }];
+        assert!(
+            diagnostics_match(&expected, &actual),
+            "unpinned span: code+severity match is enough"
+        );
+    }
+
+    #[test]
+    fn diagnostics_match_enforces_pinned_span() {
+        let expected = vec![ExpectedDiagnostic {
+            code: "a".to_owned(),
+            severity: "error".to_owned(),
+            span: Some(SpanCmp { start: 1, end: 2 }),
+        }];
+        let matching = vec![ActualDiagnostic {
+            code: "a".to_owned(),
+            severity: "error".to_owned(),
+            span: SpanCmp { start: 1, end: 2 },
+        }];
+        assert!(
+            diagnostics_match(&expected, &matching),
+            "pinned span matches exactly"
+        );
+        let diverging = vec![ActualDiagnostic {
+            code: "a".to_owned(),
+            severity: "error".to_owned(),
+            span: SpanCmp { start: 1, end: 3 },
+        }];
+        assert!(
+            !diagnostics_match(&expected, &diverging),
+            "pinned span mismatch → no match"
+        );
+    }
+
+    #[test]
+    fn diagnostics_match_compares_code_and_severity() {
+        let expected = vec![ExpectedDiagnostic {
+            code: "a".to_owned(),
+            severity: "error".to_owned(),
+            span: None,
+        }];
+        let wrong_severity = vec![ActualDiagnostic {
+            code: "a".to_owned(),
+            severity: "warning".to_owned(),
+            span: SpanCmp { start: 0, end: 0 },
+        }];
+        assert!(
+            !diagnostics_match(&expected, &wrong_severity),
+            "severity must match"
+        );
+    }
+
+    fn vector(source: &str, expected: VectorExpected) -> Vector {
+        Vector {
+            name: "v".to_owned(),
+            meta: VectorMeta {
+                feature: "f".to_owned(),
+                level: "must".to_owned(),
+            },
+            source: source.to_owned(),
+            expected,
+        }
+    }
+
+    fn empty_expected() -> VectorExpected {
+        VectorExpected {
+            html: None,
+            serialize: None,
+            nodes: None,
+            pairs: None,
+            diagnostics: None,
+        }
+    }
+
+    #[test]
+    fn compare_vector_no_expectations_is_no_mismatch() {
+        let v = vector("plain text", empty_expected());
+        let (normative, html) = compare_vector(&v).expect("compare runs");
+        assert!(normative.is_empty(), "nothing pinned → no normative diff");
+        assert!(html.is_none(), "no html pinned → no html diff");
+    }
+
+    #[test]
+    fn compare_vector_matching_serialize_passes() {
+        // Parse once to learn the parser's own serialize output, then pin it.
+        let doc = aozora::Document::new("plain text".to_owned());
+        let expected_serialize = doc.parse().serialize();
+        let mut exp = empty_expected();
+        exp.serialize = Some(expected_serialize);
+        let v = vector("plain text", exp);
+        let (normative, _) = compare_vector(&v).expect("compare runs");
+        assert!(
+            normative.is_empty(),
+            "pinned serialize equals parser output: {normative:?}"
+        );
+    }
+
+    #[test]
+    fn compare_vector_serialize_drift_is_reported() {
+        let mut exp = empty_expected();
+        exp.serialize = Some("definitely-not-the-real-serialization".to_owned());
+        let v = vector("plain text", exp);
+        let (normative, _) = compare_vector(&v).expect("compare runs");
+        assert!(
+            normative.contains(&"serialize".to_owned()),
+            "serialize drift flagged: {normative:?}"
+        );
+    }
+
+    #[test]
+    fn compare_vector_html_drift_is_informative_only() {
+        let mut exp = empty_expected();
+        exp.html = Some("<not-the-real-html/>".to_owned());
+        let v = vector("plain text", exp);
+        let (normative, html) = compare_vector(&v).expect("compare runs");
+        assert!(normative.is_empty(), "html is not normative: {normative:?}");
+        assert_eq!(
+            html,
+            Some("html".to_owned()),
+            "html mismatch surfaces as an informative diff"
+        );
+    }
+}

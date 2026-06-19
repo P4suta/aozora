@@ -1429,3 +1429,491 @@ fn truncate_for_display(s: &str, max_chars: usize) -> String {
     reason = "OsString is used by the parent module's command surface; clippy can't see across module boundaries"
 )]
 fn _unused_marker(_: OsString) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- band_slot ----------------------------------------------------
+
+    #[test]
+    fn band_slot_buckets_by_decoded_len() {
+        assert_eq!(band_slot(0), 0, "empty → <50KB");
+        assert_eq!(band_slot(SMALL_MAX - 1), 0, "just under 50KB → band 0");
+        assert_eq!(band_slot(SMALL_MAX), 1, "50KB boundary → band 1");
+        assert_eq!(band_slot(MEDIUM_MAX - 1), 1, "just under 500KB → band 1");
+        assert_eq!(band_slot(MEDIUM_MAX), 2, "500KB boundary → band 2");
+        assert_eq!(band_slot(LARGE_MAX - 1), 2, "just under 2MB → band 2");
+        assert_eq!(band_slot(LARGE_MAX), 3, "2MB boundary → band 3");
+        assert_eq!(band_slot(u32::MAX), 3, "huge → band 3");
+    }
+
+    // ---- year_of ------------------------------------------------------
+
+    fn at_epoch_secs(secs: u64) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn year_of_mid_year_timestamps() {
+        // `year_of` carries ±1 day slop at year boundaries (documented), so
+        // pin it to mid-year instants where the bucketing is unambiguous.
+        // 2000-07-01 12:00:01 UTC = 962_452_801.
+        assert_eq!(year_of(at_epoch_secs(962_452_801)), 2000, "mid-2000");
+        // 2026-06-15 00:00:01 UTC = 1_781_481_601.
+        assert_eq!(year_of(at_epoch_secs(1_781_481_601)), 2026, "mid-2026");
+        // 1995-06-01 00:00:01 UTC = 802_044_001 (a typical corpus mtime era).
+        assert_eq!(year_of(at_epoch_secs(802_044_001)), 1995, "mid-1995");
+    }
+
+    #[test]
+    fn year_of_pre_epoch_does_not_panic() {
+        // `duration_since(UNIX_EPOCH)` fails for pre-epoch times → maps to 0s,
+        // landing on the 1969/1970 boundary; the contract is "doesn't panic".
+        let before = UNIX_EPOCH - Duration::from_secs(100);
+        let y = year_of(before);
+        assert!((1969..=1970).contains(&y), "pre-epoch lands near 1970: {y}");
+    }
+
+    // ---- bar ----------------------------------------------------------
+
+    #[test]
+    fn bar_empty_total_is_blank() {
+        assert_eq!(bar(5, 0, 40), "", "zero total → empty bar");
+    }
+
+    #[test]
+    fn bar_full_and_partial() {
+        assert_eq!(bar(10, 10, 8).chars().count(), 8, "full ratio fills width");
+        assert_eq!(bar(0, 10, 8), "", "zero count → empty");
+        // Half of width 8, rounded.
+        assert_eq!(bar(5, 10, 8).chars().count(), 4, "half ratio → half width");
+    }
+
+    #[test]
+    fn bar_never_exceeds_width() {
+        assert_eq!(
+            bar(100, 10, 5).chars().count(),
+            5,
+            "over-ratio is clamped to width"
+        );
+    }
+
+    // ---- line_of ------------------------------------------------------
+
+    #[test]
+    fn line_of_counts_newlines_before_offset() {
+        let text = "a\nb\nc";
+        assert_eq!(line_of(text, 0), 1, "offset 0 → line 1");
+        assert_eq!(line_of(text, 2), 2, "after first newline → line 2");
+        assert_eq!(line_of(text, 4), 3, "after second newline → line 3");
+    }
+
+    #[test]
+    fn line_of_clamps_offset_past_end() {
+        let text = "x\ny";
+        assert_eq!(
+            line_of(text, 9999),
+            2,
+            "offset past end clamps to last line"
+        );
+    }
+
+    // ---- is_digit_char ------------------------------------------------
+
+    #[test]
+    fn is_digit_char_ascii_and_fullwidth() {
+        assert!(is_digit_char('0'), "ascii zero");
+        assert!(is_digit_char('9'), "ascii nine");
+        assert!(is_digit_char('０'), "fullwidth zero");
+        assert!(is_digit_char('９'), "fullwidth nine");
+        assert!(!is_digit_char('a'), "letter is not a digit");
+        assert!(!is_digit_char('「'), "kanji bracket is not a digit");
+    }
+
+    // ---- gaiji_bucket -------------------------------------------------
+
+    #[test]
+    fn gaiji_bucket_absent() {
+        assert_eq!(gaiji_bucket(None), 5, "no mencode → absent");
+    }
+
+    #[test]
+    fn gaiji_bucket_unicode() {
+        assert_eq!(gaiji_bucket(Some("U+9DD7")), 2, "U+ form → unicode");
+    }
+
+    #[test]
+    fn gaiji_bucket_jis_level() {
+        assert_eq!(gaiji_bucket(Some("第3水準1-15-94")), 0, "水準 → jisLevel");
+    }
+
+    #[test]
+    fn gaiji_bucket_jis_triple() {
+        assert_eq!(gaiji_bucket(Some("1-15-94")), 1, "N-N-N → jisTriple");
+    }
+
+    #[test]
+    fn gaiji_bucket_page_line() {
+        assert_eq!(gaiji_bucket(Some("123-4")), 3, "N-N → pageLine");
+    }
+
+    #[test]
+    fn gaiji_bucket_named_fallback() {
+        assert_eq!(gaiji_bucket(Some("猫の絵")), 4, "free-form → named");
+        assert_eq!(gaiji_bucket(Some("1-2-3-4")), 4, "four-part dash → named");
+    }
+
+    #[test]
+    fn gaiji_bucket_takes_leading_token() {
+        // Only the head token (before a separator) drives the dash analysis;
+        // trailing prose after a separator is ignored.
+        assert_eq!(
+            gaiji_bucket(Some("1-15-94、参照")),
+            1,
+            "leading triple wins; trailing prose dropped"
+        );
+        assert_eq!(
+            gaiji_bucket(Some("123-4 注")),
+            3,
+            "leading page-line pair via space separator"
+        );
+    }
+
+    #[test]
+    fn gaiji_bucket_jis_level_short_circuits_dash_analysis() {
+        // The 水準 substring check precedes the dash analysis, so a triple
+        // that also carries 水準 classifies as jisLevel, not jisTriple.
+        assert_eq!(
+            gaiji_bucket(Some("1-15-94、第3水準")),
+            0,
+            "水準 substring wins over the leading triple"
+        );
+    }
+
+    // ---- normalize_shape ---------------------------------------------
+
+    #[test]
+    fn normalize_shape_folds_quoted_operands() {
+        assert_eq!(
+            normalize_shape("「猫」は太字"),
+            "「」は太字",
+            "quoted content dropped"
+        );
+        // Two distinct operands fold to the same shape.
+        assert_eq!(
+            normalize_shape("「猫」は太字"),
+            normalize_shape("「犬」は太字")
+        );
+    }
+
+    #[test]
+    fn normalize_shape_collapses_digit_runs() {
+        assert_eq!(normalize_shape("第123水準"), "第N水準", "digit run → N");
+        assert_eq!(
+            normalize_shape("１２３行"),
+            "N行",
+            "fullwidth digit run → single N"
+        );
+    }
+
+    #[test]
+    fn normalize_shape_plain_text_unchanged() {
+        assert_eq!(
+            normalize_shape("改ページ"),
+            "改ページ",
+            "no operands/digits"
+        );
+    }
+
+    // ---- kv_sorted ----------------------------------------------------
+
+    #[test]
+    fn kv_sorted_drops_zero_counts() {
+        let kvs = kv_sorted(vec![("a".to_owned(), 0), ("b".to_owned(), 3)]);
+        assert_eq!(kvs.len(), 1, "zero-count rows are dropped");
+        assert_eq!(kvs[0].key, "b", "non-zero row kept");
+    }
+
+    #[test]
+    fn kv_sorted_orders_by_count_desc_then_key() {
+        let kvs = kv_sorted(vec![
+            ("zebra".to_owned(), 2),
+            ("apple".to_owned(), 5),
+            ("mango".to_owned(), 2),
+        ]);
+        let order: Vec<&str> = kvs.iter().map(|k| k.key.as_str()).collect();
+        // Highest count first; ties broken by ascending key.
+        assert_eq!(
+            order,
+            ["apple", "mango", "zebra"],
+            "count-desc then key-asc"
+        );
+    }
+
+    // ---- truncate_for_display -----------------------------------------
+
+    #[test]
+    fn truncate_for_display_keeps_short_strings() {
+        assert_eq!(
+            truncate_for_display("猫", 10),
+            "猫",
+            "under limit is untouched"
+        );
+    }
+
+    #[test]
+    fn truncate_for_display_truncates_by_char_with_ellipsis() {
+        let out = truncate_for_display("あいうえお", 3);
+        assert_eq!(out, "あい…", "truncate to (max-1) chars + ellipsis");
+        assert_eq!(out.chars().count(), 3, "char count respects the limit");
+    }
+
+    // ---- Baseline::rate ----------------------------------------------
+
+    #[test]
+    fn baseline_rate_is_unknown_over_files() {
+        let b = Baseline {
+            unknown_total: 10,
+            files_analyzed: 4,
+            note: String::new(),
+        };
+        assert!((b.rate() - 2.5).abs() < f64::EPSILON, "10/4 = 2.5");
+    }
+
+    #[test]
+    fn baseline_rate_zero_files_avoids_div_by_zero() {
+        let b = Baseline {
+            unknown_total: 7,
+            files_analyzed: 0,
+            note: String::new(),
+        };
+        // Denominator clamps to 1 → rate equals the numerator.
+        assert!(
+            (b.rate() - 7.0).abs() < f64::EPSILON,
+            "0 files → divide by 1"
+        );
+    }
+
+    #[test]
+    fn baseline_serde_round_trips() {
+        let b = Baseline {
+            unknown_total: 42,
+            files_analyzed: 17,
+            note: "n".to_owned(),
+        };
+        let json = serde_json::to_string(&b).expect("serialize baseline");
+        let back: Baseline = serde_json::from_str(&json).expect("deserialize baseline");
+        assert_eq!(back.unknown_total, 42, "unknown_total round-trips");
+        assert_eq!(back.files_analyzed, 17, "files_analyzed round-trips");
+    }
+
+    #[test]
+    fn baseline_note_defaults_when_absent() {
+        let back: Baseline = serde_json::from_str(r#"{ "unknown_total": 1, "files_analyzed": 2 }"#)
+            .expect("note is optional");
+        assert_eq!(back.note, "", "missing note defaults to empty");
+    }
+
+    // ---- analyze (real parser, pure str → FileStat) -------------------
+
+    #[test]
+    fn analyze_counts_ruby_node_kind() {
+        // `｜青空《あおぞら》` is a base-ruby span → one Ruby node.
+        let stat = analyze("｜青空《あおぞら》文庫");
+        let ruby_idx = NodeKind::ALL
+            .iter()
+            .position(|k| *k == NodeKind::Ruby)
+            .expect("Ruby is in ALL");
+        assert!(stat.node_kinds[ruby_idx] >= 1, "ruby node tallied");
+    }
+
+    #[test]
+    fn analyze_plain_text_has_no_annotations_or_gaiji() {
+        let stat = analyze("ただのテキストです");
+        assert_eq!(stat.gaiji_total, 0, "no gaiji in plain text");
+        assert_eq!(
+            stat.annotation_kinds.iter().sum::<u64>(),
+            0,
+            "no annotations in plain text"
+        );
+    }
+
+    #[test]
+    fn analyze_unknown_annotation_records_body_and_line() {
+        // A nonsense directive falls through to AnnotationKind::Unknown.
+        let stat = analyze("前置き\n［＃まったく未知の指示］");
+        assert_eq!(stat.annotation_kinds[0], 1, "one Unknown annotation");
+        assert_eq!(stat.unknown.len(), 1, "one unknown body captured");
+        let (_body, line) = &stat.unknown[0];
+        assert_eq!(*line, 2, "directive sits on the second line");
+    }
+
+    // ---- audit_one (CorpusItem → FileStat) ----------------------------
+
+    #[test]
+    fn audit_one_carries_label_through() {
+        let item = CorpusItem::new("a/b.txt", "ただのテキスト".as_bytes().to_vec());
+        let stat = audit_one(item);
+        assert_eq!(stat.label, "a/b.txt", "label preserved");
+        assert!(!stat.decode_error, "valid UTF-8 decodes");
+        assert!(!stat.panicked, "well-formed doc does not panic");
+    }
+
+    #[test]
+    fn audit_one_flags_undecodable_bytes() {
+        // Lone continuation byte: not valid UTF-8 and not valid Shift_JIS text.
+        let item = CorpusItem::new("bad.txt", vec![0xFF, 0xFE, 0xFD, 0xFC]);
+        let stat = audit_one(item);
+        // Either it decodes (lenient) with no error, or it flags decode_error;
+        // in both cases the label is intact and it must not panic.
+        assert_eq!(stat.label, "bad.txt", "label preserved even on decode path");
+        assert!(!stat.panicked, "decode failure is recorded, not a panic");
+    }
+
+    // ---- merge --------------------------------------------------------
+
+    fn stat_labeled(label: &str) -> FileStat {
+        FileStat {
+            label: label.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn merge_tallies_files_and_node_kinds() {
+        let mut s = FileStat {
+            label: "doc1".to_owned(),
+            ..Default::default()
+        };
+        s.node_kinds[0] = 3; // Ruby
+        s.gaiji_total = 2;
+        s.gaiji_unresolved = 1;
+        s.gaiji_forms[2] = 2; // unicode
+        let results = vec![Ok(s), Ok(stat_labeled("doc2"))];
+        let report = merge(results, "root".to_owned(), 1.5);
+
+        assert_eq!(report.files_total, 2, "two readable files");
+        assert_eq!(report.files_analyzed, 2, "both analyzed");
+        assert_eq!(report.corpus_root, "root", "root recorded");
+        assert!(
+            (report.elapsed_secs - 1.5).abs() < f64::EPSILON,
+            "elapsed kept"
+        );
+        assert_eq!(report.gaiji.total, 2, "gaiji summed");
+        assert_eq!(report.gaiji.unresolved, 1, "unresolved summed");
+        // Ruby is index 0 in NodeKind::ALL with camelCase "ruby".
+        let ruby = report
+            .node_kinds
+            .iter()
+            .find(|kv| kv.key == "ruby")
+            .expect("ruby row present");
+        assert_eq!(ruby.count, 3, "ruby count aggregated");
+    }
+
+    #[test]
+    fn merge_separates_decode_errors_panics_and_walk_errors() {
+        let decode = FileStat {
+            label: "decode".to_owned(),
+            decode_error: true,
+            ..Default::default()
+        };
+        let panicked = FileStat {
+            label: "boom".to_owned(),
+            panicked: true,
+            ..Default::default()
+        };
+        let walk_err = Err(aozora_corpus::CorpusError::RootNotDirectory {
+            path: PathBuf::from("/nope"),
+        });
+        let results = vec![Ok(decode), Ok(panicked), walk_err, Ok(stat_labeled("good"))];
+        let report = merge(results, "r".to_owned(), 0.0);
+
+        assert_eq!(report.walk_errors, 1, "one walk error");
+        assert_eq!(report.decode_errors, 1, "one decode error");
+        assert_eq!(report.panic_count, 1, "one panic");
+        assert_eq!(
+            report.panics,
+            vec!["boom".to_owned()],
+            "panic label captured"
+        );
+        // files_total counts everything that read OK (decode + panic + good),
+        // not the walk error; files_analyzed only the clean one.
+        assert_eq!(report.files_total, 3, "three files read OK");
+        assert_eq!(report.files_analyzed, 1, "only one fully analyzed");
+    }
+
+    #[test]
+    fn merge_folds_unknown_bodies_into_shapes_with_smallest_example() {
+        let mk = |label: &str, body: &str, line: u32| FileStat {
+            label: label.to_owned(),
+            annotation_kinds: {
+                let mut a = [0u64; 7];
+                a[0] = 1;
+                a
+            },
+            unknown: vec![(body.to_owned(), line)],
+            ..Default::default()
+        };
+        // Two bodies fold to the same shape "「」は太字".
+        let results = vec![
+            Ok(mk("zfile", "「猫」は太字", 5)),
+            Ok(mk("afile", "「犬」は太字", 9)),
+        ];
+        let report = merge(results, "r".to_owned(), 0.0);
+
+        assert_eq!(report.unknown_total, 2, "two unknown occurrences");
+        assert_eq!(report.unknown_distinct, 2, "two distinct bodies");
+        assert_eq!(
+            report.unknown_shapes.len(),
+            1,
+            "folded into one shape family"
+        );
+        let shape = &report.unknown_shapes[0];
+        assert_eq!(shape.shape, "「」は太字", "operands folded out");
+        assert_eq!(shape.count, 2, "shape covers both occurrences");
+        assert_eq!(shape.distinct, 2, "shape spans two distinct bodies");
+
+        // Smallest-example selection is lexicographic: "afile:9" < "zfile:5".
+        let cat = report
+            .unknown_bodies
+            .iter()
+            .find(|r| r.body == "「犬」は太字")
+            .expect("dog body present");
+        assert_eq!(cat.example, "afile:9", "lexicographically smallest example");
+    }
+
+    #[test]
+    fn merge_empty_input_yields_zeroed_report() {
+        let report = merge(Vec::new(), "r".to_owned(), 0.0);
+        assert_eq!(report.files_total, 0, "no files");
+        assert_eq!(report.unknown_total, 0, "no unknowns");
+        assert!(report.node_kinds.is_empty(), "no node-kind rows");
+        assert!(report.unknown_shapes.is_empty(), "no shapes");
+    }
+
+    // ---- print_band_row / header (smoke: must not panic) --------------
+
+    #[test]
+    fn print_band_row_handles_empty_and_populated_bands() {
+        // These print to stdout; we only assert they run without panicking
+        // for both the empty and populated paths, raw and zstd.
+        let empty: Vec<&EntryMeta> = Vec::new();
+        print_band_header(false);
+        print_band_header(true);
+        print_band_row("<50KB", &empty, false);
+        print_band_row("<50KB", &empty, true);
+
+        let meta = EntryMeta {
+            payload_offset: 0,
+            payload_len: 100,
+            decoded_len: 400,
+            source_mtime_ns: 0,
+            source_blake3: [0u8; 32],
+            label: "x".to_owned(),
+        };
+        let entries = vec![&meta];
+        print_band_row("<50KB", &entries, false);
+        print_band_row("<50KB", &entries, true);
+    }
+}

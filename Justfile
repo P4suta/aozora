@@ -524,11 +524,13 @@ latency:
 #
 # `_COV_FLOOR` is the enforced minimum, not the goal. The workspace
 # policy targets 100% on production code; the floor ratchets upward
-# in follow-up commits that close specific gaps. Today's measurement
-# (73.93%) sets the floor at 73 with a 1-point margin so a borderline
-# refactor doesn't trip the gate spuriously — push it up by hand
+# in follow-up commits that close specific gaps. The 2026-06-19
+# coverage push (render / pandoc / cli / trace / xtask / syntax test
+# suites) lifted the workspace to 86.20%; the floor moves to 84 with a
+# ~2-point margin so proptest-driven region variance and borderline
+# refactors don't trip the gate spuriously — push it up by hand
 # whenever a coverage-closing PR lands.
-_COV_FLOOR := "73"
+_COV_FLOOR := "84"
 _COV_IGNORE := "(target/|/main\\.rs$)"
 
 coverage:

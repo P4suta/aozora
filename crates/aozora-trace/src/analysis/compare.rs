@@ -158,3 +158,81 @@ impl TableRenderable for ComparisonReport {
         t.render()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use serde_json::{Value, json};
+
+    use super::{ChangeStatus, compare};
+    use crate::Trace;
+
+    /// Build a single-thread trace whose leaves are `(name, weight)`
+    /// pairs, each its own root stack. Keeps the `ChangeStatus` arms
+    /// assertable in-crate (the enum is not re-exported).
+    fn leaves(samples: &[(&str, u64)]) -> Trace {
+        let strings: Vec<Value> = samples.iter().map(|(n, _)| json!(n)).collect();
+        let func_name: Vec<Value> = (0..samples.len()).map(|i| json!(i)).collect();
+        let func_res: Vec<Value> = (0..samples.len()).map(|_| json!(0)).collect();
+        let frame_addr: Vec<Value> = (0..samples.len()).map(|i| json!(i + 1)).collect();
+        let frame_func: Vec<Value> = (0..samples.len()).map(|i| json!(i)).collect();
+        let stack_prefix: Vec<Value> = (0..samples.len()).map(|_| json!(null)).collect();
+        let stack_frame: Vec<Value> = (0..samples.len()).map(|i| json!(i)).collect();
+        let sample_stack: Vec<Value> = (0..samples.len()).map(|i| json!(i)).collect();
+        let sample_weight: Vec<Value> = samples.iter().map(|(_, w)| json!(w)).collect();
+        let json = json!({
+            "libs": [{ "name": "bin", "path": "/bin" }],
+            "threads": [{
+                "name": "t",
+                "stringArray": strings,
+                "stackTable": { "prefix": stack_prefix, "frame": stack_frame },
+                "frameTable": { "address": frame_addr, "func": frame_func },
+                "funcTable": { "name": func_name, "resource": func_res },
+                "resourceTable": { "lib": [0] },
+                "samples": { "stack": sample_stack, "weight": sample_weight },
+            }],
+        });
+        Trace::from_json(&json, PathBuf::from("t")).expect("load")
+    }
+
+    #[test]
+    fn status_variants_are_assigned_correctly() {
+        // f: both sides → Shifted; g: before-only → Disappeared;
+        // h: after-only → Appeared.
+        let before = leaves(&[("f", 8), ("g", 2)]);
+        let after = leaves(&[("f", 2), ("h", 8)]);
+        let report = compare(&before, &after, 10);
+        let status_of = |label: &str| {
+            report
+                .rows
+                .iter()
+                .find(|r| r.label == label)
+                .map(|r| r.status)
+        };
+        assert_eq!(
+            status_of("f"),
+            Some(ChangeStatus::Shifted),
+            "present in both ⇒ Shifted"
+        );
+        assert_eq!(
+            status_of("g"),
+            Some(ChangeStatus::Disappeared),
+            "before-only ⇒ Disappeared"
+        );
+        assert_eq!(
+            status_of("h"),
+            Some(ChangeStatus::Appeared),
+            "after-only ⇒ Appeared"
+        );
+    }
+
+    #[test]
+    fn unchanged_function_is_shifted_with_zero_delta() {
+        let t = leaves(&[("f", 1)]);
+        let report = compare(&t, &t, 10);
+        let f = report.rows.iter().find(|r| r.label == "f").expect("f");
+        assert_eq!(f.status, ChangeStatus::Shifted, "in both ⇒ Shifted");
+        assert!(f.delta_pct.abs() < 1e-9, "identical ⇒ zero delta");
+    }
+}

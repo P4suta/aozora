@@ -508,3 +508,157 @@ fn finalize(lt: &LangType, body: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ts_string_union_joins_quoted_wire_strings() {
+        let union = ts_string_union(&["a", "b", "c"], |s| s);
+        assert_eq!(union, "\"a\" | \"b\" | \"c\"", "pipe-joined quoted union");
+    }
+
+    #[test]
+    fn ts_string_union_single_value_has_no_pipe() {
+        let union = ts_string_union(&["only"], |s| s);
+        assert_eq!(union, "\"only\"", "single value: no separator");
+    }
+
+    #[test]
+    fn push_export_type_emits_statement_and_blank_line() {
+        let mut out = String::new();
+        push_export_type(&mut out, "Foo", "\"x\" | \"y\"");
+        assert_eq!(
+            out, "export type Foo = \"x\" | \"y\";\n\n",
+            "export type with trailing blank line"
+        );
+    }
+
+    #[test]
+    fn render_header_is_marked_auto_generated() {
+        let mut out = String::new();
+        render_header(&mut out);
+        assert!(
+            out.contains("AUTO-GENERATED"),
+            "header must warn against hand edits: {out}"
+        );
+        assert!(
+            out.contains("xtask types ts"),
+            "header must name the regen command: {out}"
+        );
+    }
+
+    #[test]
+    fn render_enums_emits_every_live_enum_type() {
+        let mut out = String::new();
+        render_enums(&mut out);
+        for name in [
+            "NodeKind",
+            "PairKind",
+            "Severity",
+            "DiagnosticSource",
+            "InternalCheckCode",
+            "SentinelKind",
+        ] {
+            assert!(
+                out.contains(&format!("export type {name} =")),
+                "missing `export type {name}`: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_enums_projects_node_kind_via_camel_case() {
+        let mut out = String::new();
+        render_enums(&mut out);
+        // `as_camel_case` projects Ruby → "ruby"; the union must carry it.
+        assert!(
+            out.contains("\"ruby\""),
+            "NodeKind union must contain camelCase ruby: {out}"
+        );
+    }
+
+    #[test]
+    fn render_wire_payloads_defines_core_interfaces() {
+        let mut out = String::new();
+        render_wire_payloads(&mut out);
+        for iface in [
+            "interface SpanWire",
+            "interface OffsetWire",
+            "interface DiagnosticWire",
+            "interface NodeWire",
+            "interface PairWire",
+            "interface ContainerPairWire",
+        ] {
+            assert!(out.contains(iface), "missing `{iface}`: {out}");
+        }
+    }
+
+    #[test]
+    fn render_envelopes_aliases_each_endpoint() {
+        let mut out = String::new();
+        render_envelopes(&mut out);
+        assert!(
+            out.contains("interface WireEnvelope<T>"),
+            "generic envelope"
+        );
+        for alias in [
+            "DiagnosticsEnvelope",
+            "NodesEnvelope",
+            "PairsEnvelope",
+            "ContainerPairsEnvelope",
+        ] {
+            assert!(
+                out.contains(alias),
+                "missing envelope alias `{alias}`: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_full_artefact_is_well_formed() {
+        let dts = render();
+        // Header first, enums + payloads + envelopes all present.
+        assert!(dts.starts_with("// AUTO-GENERATED"), "header leads: {dts}");
+        assert!(dts.contains("export type NodeKind ="), "enums section");
+        assert!(dts.contains("interface SpanWire"), "payload section");
+        assert!(
+            dts.contains("WireEnvelope<DiagnosticWire>"),
+            "envelope section"
+        );
+    }
+
+    #[test]
+    fn sentinel_to_wire_maps_each_variant() {
+        assert_eq!(sentinel_to_wire(Sentinel::Inline), "inline");
+        assert_eq!(sentinel_to_wire(Sentinel::BlockLeaf), "blockLeaf");
+        assert_eq!(sentinel_to_wire(Sentinel::BlockOpen), "blockOpen");
+        assert_eq!(sentinel_to_wire(Sentinel::BlockClose), "blockClose");
+    }
+
+    #[test]
+    fn finalize_prepends_header_and_prelude() {
+        let lt = &LANG_TYPES[0];
+        let out = finalize(lt, "type X struct{}\n");
+        assert!(out.contains("AUTO-GENERATED"), "header present: {out}");
+        assert!(out.contains("package aozora"), "Go prelude present: {out}");
+        assert!(out.contains("type X struct{}"), "body present: {out}");
+    }
+
+    #[test]
+    fn finalize_trims_trailing_whitespace_per_line() {
+        let lt = &LANG_TYPES[0];
+        let out = finalize(lt, "a   \nb\t\n");
+        // Every line of the assembled output must be free of trailing space.
+        for line in out.lines() {
+            assert_eq!(
+                line.trim_end(),
+                line,
+                "line has trailing whitespace: {line:?}"
+            );
+        }
+        assert!(out.contains("\na\n"), "trimmed body line `a`: {out}");
+        assert!(out.contains("\nb\n"), "trimmed body line `b`: {out}");
+    }
+}

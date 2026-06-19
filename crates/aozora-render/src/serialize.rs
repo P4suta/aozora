@@ -758,4 +758,570 @@ mod tests {
             assert_eq!(first, second, "fixed point broken for {src:?}");
         }
     }
+
+    // -------------------------------------------------------------------
+    // Per-construct exact round-trip. Each input lexes into one node /
+    // container kind and serializes back to the canonical fixed-point
+    // source. The exact `assert_eq!` pins every `emit_*` arm.
+    //
+    // Block sentinels carry `\n\n` padding from Phase 4, capped at two by
+    // the NewlineCappedWriter, so a standalone block node serializes
+    // wrapped in `\n\n…\n\n`. Inline / block-leaf-without-padding nodes
+    // serialize bare.
+    // -------------------------------------------------------------------
+
+    // --- Ruby (right + left) + side note -------------------------------
+
+    #[test]
+    fn explicit_ruby_exact() {
+        assert_eq!(ser("｜青梅《おうめ》"), "｜青梅《おうめ》");
+    }
+
+    #[test]
+    fn implicit_ruby_canonicalises_to_explicit_delimiter() {
+        // No `｜`: the serializer re-emits the canonical explicit form.
+        assert_eq!(ser("青梅《おうめ》"), "｜青梅《おうめ》");
+    }
+
+    #[test]
+    fn left_ruby_reconstructs_forward_directive() {
+        assert_eq!(
+            ser("再読［＃「再読」の左に「さい」のルビ］"),
+            "再読［＃「再読」の左に「さい」のルビ］"
+        );
+    }
+
+    #[test]
+    fn side_note_reconstructs_forward_directive() {
+        assert_eq!(
+            ser("底本「青空」［＃「青空」の左に「注記」の注記］"),
+            "底本「青空」青空［＃「青空」の左に「注記」の注記］"
+        );
+    }
+
+    // --- Bouten leaf (forward reference) -------------------------------
+
+    #[test]
+    fn bouten_goma_default_keyword() {
+        assert_eq!(
+            ser("可哀想［＃「可哀想」に傍点］"),
+            "可哀想［＃「可哀想」に傍点］"
+        );
+    }
+
+    #[test]
+    fn bouten_named_kinds_keep_keyword() {
+        for (src, want) in [
+            ("X［＃「X」に白ゴマ傍点］", "X［＃「X」に白ゴマ傍点］"),
+            ("X［＃「X」に丸傍点］", "X［＃「X」に丸傍点］"),
+            ("X［＃「X」に二重丸傍点］", "X［＃「X」に二重丸傍点］"),
+            ("X［＃「X」に蛇の目傍点］", "X［＃「X」に蛇の目傍点］"),
+            ("X［＃「X」に傍線］", "X［＃「X」に傍線］"),
+            ("X［＃「X」に波線］", "X［＃「X」に波線］"),
+            ("X［＃「X」に二重傍線］", "X［＃「X」に二重傍線］"),
+            ("X［＃「X」に鎖線］", "X［＃「X」に鎖線］"),
+            ("X［＃「X」に破線］", "X［＃「X」に破線］"),
+            ("X［＃「X」に黒三角傍点］", "X［＃「X」に黒三角傍点］"),
+        ] {
+            assert_eq!(ser(src), want, "bouten kind round-trip for {src:?}");
+        }
+    }
+
+    #[test]
+    fn bouten_left_position_emits_no_hidari_prefix_form() {
+        assert_eq!(ser("X［＃「X」の左に傍点］"), "X［＃「X」の左に傍点］");
+    }
+
+    // --- 縦中横 leaf ---------------------------------------------------
+
+    #[test]
+    fn tate_chu_yoko_leaf_round_trips() {
+        assert_eq!(ser("12［＃「12」は縦中横］"), "12［＃「12」は縦中横］");
+    }
+
+    // --- Emphasis leaf (every kind, incl. FontSize ±) ------------------
+
+    #[test]
+    fn emphasis_bold_leaf_round_trips() {
+        assert_eq!(ser("重要［＃「重要」は太字］"), "重要［＃「重要」は太字］");
+    }
+
+    #[test]
+    fn emphasis_italic_leaf_round_trips() {
+        assert_eq!(ser("X［＃「X」は斜体］"), "X［＃「X」は斜体］");
+    }
+
+    #[test]
+    fn emphasis_super_and_sub_script_round_trip() {
+        assert_eq!(
+            ser("X［＃「X」は上付き小文字］"),
+            "X［＃「X」は上付き小文字］"
+        );
+        assert_eq!(
+            ser("X［＃「X」は下付き小文字］"),
+            "X［＃「X」は下付き小文字］"
+        );
+    }
+
+    #[test]
+    fn emphasis_small_script_round_trips() {
+        assert_eq!(ser("X［＃「X」は行右小書き］"), "X［＃「X」は行右小書き］");
+        assert_eq!(ser("X［＃「X」は行左小書き］"), "X［＃「X」は行左小書き］");
+    }
+
+    #[test]
+    fn emphasis_font_size_positive_emits_bigger_word() {
+        assert_eq!(
+            ser("X［＃「X」は3段階大きな文字］"),
+            "X［＃「X」は3段階大きな文字］"
+        );
+    }
+
+    #[test]
+    fn emphasis_font_size_negative_emits_smaller_word() {
+        assert_eq!(
+            ser("X［＃「X」は2段階小さな文字］"),
+            "X［＃「X」は2段階小さな文字］"
+        );
+    }
+
+    // --- Gaiji ---------------------------------------------------------
+
+    #[test]
+    fn gaiji_simple_description_wraps_in_quotes() {
+        // The description is bare text → it gets the 「…」 wrapper back.
+        assert_eq!(
+            ser("※［＃「○○」、第3水準1-85-54］"),
+            "※［＃「○○」、第3水準1-85-54］"
+        );
+    }
+
+    // --- Kaeriten ------------------------------------------------------
+
+    #[test]
+    fn kaeriten_round_trips() {
+        assert_eq!(ser("一二［＃レ］"), "一二［＃レ］");
+    }
+
+    // --- Annotation (unknown directive flows through raw) ---------------
+
+    #[test]
+    fn unknown_annotation_round_trips_raw() {
+        // `［＃字下げ］` (no number) is an unknown annotation, re-emitted raw.
+        assert_eq!(ser("［＃字下げ］"), "［＃字下げ］");
+    }
+
+    // --- AngleQuote ----------------------------------------------------
+
+    #[test]
+    fn angle_quote_round_trips() {
+        assert_eq!(ser("≪重要≫"), "≪重要≫");
+    }
+
+    // --- PageBreak + SectionBreak (block leaves, padded) ---------------
+
+    #[test]
+    fn page_break_block_leaf_padded() {
+        assert_eq!(ser("［＃改ページ］"), "\n\n［＃改ページ］\n\n");
+    }
+
+    #[test]
+    fn section_break_kinds_round_trip_padded() {
+        assert_eq!(ser("［＃改丁］"), "\n\n［＃改丁］\n\n");
+        assert_eq!(ser("［＃改段］"), "\n\n［＃改段］\n\n");
+        assert_eq!(ser("［＃改見開き］"), "\n\n［＃改見開き］\n\n");
+    }
+
+    // --- Indent leaf + AlignEnd leaf -----------------------------------
+
+    #[test]
+    fn indent_leaf_keeps_amount() {
+        assert_eq!(ser("［＃2字下げ］"), "［＃2字下げ］");
+    }
+
+    #[test]
+    fn align_end_leaf_zero_offset_is_jizuki() {
+        assert_eq!(ser("［＃地付き］"), "［＃地付き］");
+    }
+
+    #[test]
+    fn align_end_leaf_nonzero_offset_keeps_number() {
+        assert_eq!(ser("［＃地から2字上げ］"), "［＃地から2字上げ］");
+    }
+
+    // --- Center leaf (page vs line) ------------------------------------
+
+    #[test]
+    fn center_page_and_line_round_trip() {
+        assert_eq!(ser("［＃ページの左右中央］"), "［＃ページの左右中央］");
+        assert_eq!(ser("［＃中央揃え］"), "［＃中央揃え］");
+    }
+
+    // --- Sashie (keyword form + dimensions) ----------------------------
+
+    #[test]
+    fn sashie_keyword_form_padded() {
+        assert_eq!(
+            ser("［＃挿絵（fig.png）入る］"),
+            "\n\n［＃挿絵（fig.png）入る］\n\n"
+        );
+    }
+
+    #[test]
+    fn sashie_dimensions_round_trip() {
+        assert_eq!(
+            ser("［＃挿絵（fig.png、横480×縦640）入る］"),
+            "\n\n［＃挿絵（fig.png、横480×縦640）入る］\n\n"
+        );
+    }
+
+    // --- AozoraHeading leaf (every level × style) ----------------------
+
+    #[test]
+    fn aozora_heading_levels_round_trip() {
+        assert_eq!(
+            ser("見出し\n［＃「見出し」は大見出し］"),
+            "\n\n見出し\n［＃「見出し」は大見出し］\n\n"
+        );
+        assert_eq!(
+            ser("見出し\n［＃「見出し」は中見出し］"),
+            "\n\n見出し\n［＃「見出し」は中見出し］\n\n"
+        );
+        assert_eq!(
+            ser("見出し\n［＃「見出し」は小見出し］"),
+            "\n\n見出し\n［＃「見出し」は小見出し］\n\n"
+        );
+    }
+
+    #[test]
+    fn aozora_heading_styles_round_trip() {
+        assert_eq!(
+            ser("見出し\n［＃「見出し」は窓中見出し］"),
+            "\n\n見出し\n［＃「見出し」は窓中見出し］\n\n"
+        );
+        assert_eq!(
+            ser("見出し\n［＃「見出し」は同行小見出し］"),
+            "\n\n見出し\n［＃「見出し」は同行小見出し］\n\n"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Container open / close — one per ContainerKind family + payload.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn indent_block_amount_one_uses_no_number() {
+        assert_eq!(
+            ser("［＃ここから字下げ］\nA\n［＃ここで字下げ終わり］"),
+            "\n\n［＃ここから字下げ］\n\nA\n\n［＃ここで字下げ終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn indent_block_keeps_amount() {
+        assert_eq!(
+            ser("［＃ここから2字下げ］\nA\n［＃ここで字下げ終わり］"),
+            "\n\n［＃ここから2字下げ］\n\nA\n\n［＃ここで字下げ終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn indent_block_wrap_form_keeps_both_amounts() {
+        assert_eq!(
+            ser("［＃ここから3字下げ、折り返して5字下げ］\nA\n［＃ここで字下げ終わり］"),
+            "\n\n［＃ここから3字下げ、折り返して5字下げ］\n\nA\n\n［＃ここで字下げ終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn indent_block_center_form_keeps_page_center() {
+        assert_eq!(
+            ser("［＃ここから2字下げ、ページの左右中央］\nA\n［＃ここで字下げ終わり］"),
+            "\n\n［＃ここから2字下げ、ページの左右中央に］\n\nA\n\n［＃ここで字下げ終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn align_end_block_zero_and_offset() {
+        assert_eq!(
+            ser("［＃ここから地付き］\nA\n［＃ここで地付き終わり］"),
+            "\n\n［＃ここから地付き］\n\nA\n\n［＃ここで地付き終わり］\n\n"
+        );
+        assert_eq!(
+            ser("［＃ここから地から3字上げ］\nA\n［＃ここで地付き終わり］"),
+            "\n\n［＃ここから地から3字上げ］\n\nA\n\n［＃ここで地付き終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn line_width_block_keeps_width() {
+        assert_eq!(
+            ser("［＃ここから20字詰め］\nA\n［＃ここで字詰め終わり］"),
+            "\n\n［＃ここから20字詰め］\n\nA\n\n［＃ここで字詰め終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn keigakomi_block_round_trips() {
+        assert_eq!(
+            ser("［＃罫囲み］\nA\n［＃罫囲み終わり］"),
+            "\n\n［＃罫囲み］\n\nA\n\n［＃罫囲み終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn bouten_range_inline_and_left_round_trip() {
+        assert_eq!(
+            ser("［＃傍点］A［＃傍点終わり］"),
+            "［＃傍点］A［＃傍点終わり］"
+        );
+        assert_eq!(
+            ser("［＃傍線］A［＃傍線終わり］"),
+            "［＃傍線］A［＃傍線終わり］"
+        );
+        assert_eq!(
+            ser("［＃左に傍線］A［＃左に傍線終わり］"),
+            "［＃左に傍線］A［＃左に傍線終わり］"
+        );
+    }
+
+    #[test]
+    fn bold_inline_range_round_trips() {
+        assert_eq!(
+            ser("本文［＃太字］註［＃太字終わり］。"),
+            "本文［＃太字］註［＃太字終わり］。"
+        );
+    }
+
+    #[test]
+    fn bold_block_round_trips() {
+        assert_eq!(
+            ser("［＃ここから太字］\nA\n［＃ここで太字終わり］"),
+            "\n\n［＃ここから太字］\n\nA\n\n［＃ここで太字終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn italic_inline_range_round_trips() {
+        assert_eq!(
+            ser("本文［＃斜体］註［＃斜体終わり］。"),
+            "本文［＃斜体］註［＃斜体終わり］。"
+        );
+    }
+
+    #[test]
+    fn italic_block_round_trips() {
+        assert_eq!(
+            ser("［＃ここから斜体］\nA\n［＃ここで斜体終わり］"),
+            "\n\n［＃ここから斜体］\n\nA\n\n［＃ここで斜体終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn heading_block_round_trips() {
+        assert_eq!(
+            ser("［＃ここから大見出し］\nA\n［＃ここで大見出し終わり］"),
+            "\n\n［＃ここから大見出し］\n\nA\n\n［＃ここで大見出し終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn heading_paired_window_round_trips() {
+        assert_eq!(
+            ser("［＃窓中見出し］A［＃窓中見出し終わり］"),
+            "\n\n［＃窓中見出し］\n\nA\n\n［＃窓中見出し終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn columns_block_keeps_count() {
+        assert_eq!(
+            ser("［＃ここから2段組み］\nA\n［＃ここで段組み終わり］"),
+            "\n\n［＃ここから2段組み］\n\nA\n\n［＃ここで段組み終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn table_block_round_trips() {
+        assert_eq!(
+            ser("［＃ここから表］\nA\n［＃ここで表終わり］"),
+            "\n\n［＃ここから表］\n\nA\n\n［＃ここで表終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn horizontal_block_round_trips() {
+        assert_eq!(
+            ser("［＃ここから横組み］\nA\n［＃ここで横組み終わり］"),
+            "\n\n［＃ここから横組み］\n\nA\n\n［＃ここで横組み終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn font_size_block_positive_and_negative() {
+        assert_eq!(
+            ser("［＃ここから3段階大きな文字］\nA\n［＃ここで大きな文字終わり］"),
+            "\n\n［＃ここから3段階大きな文字］\n\nA\n\n［＃ここで大きな文字終わり］\n\n"
+        );
+        assert_eq!(
+            ser("［＃ここから2段階小さな文字］\nA\n［＃ここで小さな文字終わり］"),
+            "\n\n［＃ここから2段階小さな文字］\n\nA\n\n［＃ここで小さな文字終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn small_script_range_round_trips() {
+        assert_eq!(
+            ser("［＃行右小書き］A［＃行右小書き終わり］"),
+            "［＃行右小書き］A［＃行右小書き終わり］"
+        );
+        assert_eq!(
+            ser("［＃行左小書き］A［＃行左小書き終わり］"),
+            "［＃行左小書き］A［＃行左小書き終わり］"
+        );
+    }
+
+    #[test]
+    fn caption_range_and_block_round_trip() {
+        assert_eq!(
+            ser("［＃キャプション］A［＃キャプション終わり］"),
+            "［＃キャプション］A［＃キャプション終わり］"
+        );
+        assert_eq!(
+            ser("［＃ここからキャプション］\nA\n［＃ここでキャプション終わり］"),
+            "\n\n［＃ここからキャプション］\n\nA\n\n［＃ここでキャプション終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn tcy_range_round_trips() {
+        assert_eq!(
+            ser("［＃ここから縦中横］\nA\n［＃縦中横終わり］"),
+            "［＃ここから縦中横］\nA\n［＃縦中横終わり］"
+        );
+    }
+
+    // --- A crafted source covering many constructs at once --------------
+
+    #[test]
+    fn mixed_document_is_a_fixed_point() {
+        let src = concat!(
+            "冒頭の文。\n",
+            "｜青梅《おうめ》が見える。\n",
+            "可哀想［＃「可哀想」に傍点］だ。\n",
+            "本文［＃太字］強調［＃太字終わり］。\n",
+            "12［＃「12」は縦中横］時。\n",
+            "≪引用≫もある。\n",
+            "［＃ここから2字下げ］\n字下げ本文\n［＃ここで字下げ終わり］\n",
+            "［＃改ページ］\n",
+            "末尾。",
+        );
+        let first = ser(src);
+        let second = ser(&first);
+        assert_eq!(first, second, "mixed document must reach a fixed point");
+        // Spot-check that the headline constructs survived the round-trip.
+        assert!(first.contains("｜青梅《おうめ》"), "ruby lost: {first:?}");
+        assert!(
+            first.contains("可哀想［＃「可哀想」に傍点］"),
+            "bouten lost: {first:?}"
+        );
+        assert!(first.contains("≪引用≫"), "angle quote lost: {first:?}");
+        assert!(
+            first.contains("［＃改ページ］"),
+            "page break lost: {first:?}"
+        );
+    }
+
+    // --- NewlineCappedWriter unit behaviour ----------------------------
+
+    #[test]
+    fn newline_capped_writer_caps_runs_at_two() {
+        let mut w = NewlineCappedWriter::with_capacity(8);
+        w.write_str("a\n\n\n\nb")
+            .expect("write into capped writer never fails");
+        assert_eq!(w.into_string(), "a\n\nb", "consecutive newlines cap at two");
+    }
+
+    #[test]
+    fn newline_capped_writer_char_path_caps_runs() {
+        let mut w = NewlineCappedWriter::with_capacity(8);
+        w.write_char('x').expect("write_char never fails");
+        for _ in 0..5 {
+            w.write_char('\n').expect("write_char never fails");
+        }
+        w.write_char('y').expect("write_char never fails");
+        assert_eq!(
+            w.into_string(),
+            "x\n\ny",
+            "write_char newline run caps at two"
+        );
+    }
+
+    #[test]
+    fn newline_capped_writer_resets_run_on_text() {
+        // A non-newline char between runs resets the counter so each run
+        // is capped independently.
+        let mut w = NewlineCappedWriter::with_capacity(16);
+        w.write_str("\n\n\nA\n\n\n")
+            .expect("write into capped writer never fails");
+        assert_eq!(w.into_string(), "\n\nA\n\n", "each run caps independently");
+    }
+
+    // -------------------------------------------------------------------
+    // Coverage for the remaining reachable emit_* arms.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn heading_hint_unpromoted_reconstructs_directive() {
+        // The referent is not the immediately-preceding bare line, so the
+        // forward reference stays a HeadingHint (not a promoted heading);
+        // `emit_heading_hint` reconstructs the `［＃「…」は…見出し］` form.
+        assert_eq!(
+            ser("本文の途中に見出しがある。\n［＃「見出し」は大見出し］"),
+            "本文の途中に見出しがある。\n［＃「見出し」は大見出し］"
+        );
+    }
+
+    #[test]
+    fn heading_hint_medium_and_small_levels() {
+        assert_eq!(
+            ser("長い前置きの文章があって行頭ではない［＃「見出し」は中見出し］"),
+            "長い前置きの文章があって行頭ではない［＃「見出し」は中見出し］"
+        );
+        assert_eq!(
+            ser("長い前置きの文章があって行頭ではない［＃「見出し」は小見出し］"),
+            "長い前置きの文章があって行頭ではない［＃「見出し」は小見出し］"
+        );
+    }
+
+    #[test]
+    fn bouten_segmented_targets_split_on_comma() {
+        // Multiple 「」 targets lex into a `Content::Segments` whose text is
+        // comma-joined; `emit_bouten_targets` re-wraps each comma part in
+        // its own 「」 → canonical `「甲、乙」` form.
+        assert_eq!(
+            ser("甲乙［＃「甲」「乙」に傍点］"),
+            "甲乙［＃「甲、乙」に傍点］"
+        );
+    }
+
+    #[test]
+    fn gaiji_composed_form_is_emitted_raw() {
+        // The composed-glyph description already carries its own 「」, so it
+        // must be emitted verbatim (no extra 「」 wrapper).
+        assert_eq!(
+            ser("※［＃「あ」の「い」に代えて「う」、1-2-3］"),
+            "※［＃「あ」の「い」に代えて「う」、1-2-3］"
+        );
+    }
+
+    #[test]
+    fn angle_quote_content_with_gaiji_segment_round_trips() {
+        // The AngleQuote body holds a gaiji segment, so `emit_content`
+        // walks its `Segment::Gaiji` arm.
+        assert_eq!(
+            ser("≪※［＃「○」、第3水準1-85-54］≫"),
+            "≪※［＃「○」、第3水準1-85-54］≫"
+        );
+    }
 }

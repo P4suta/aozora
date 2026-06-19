@@ -375,4 +375,122 @@ mod tests {
     fn bouten_position_defaults_to_right() {
         assert_eq!(BoutenPosition::default(), BoutenPosition::Right);
     }
+
+    #[test]
+    fn ruby_side_and_heading_style_defaults() {
+        assert_eq!(RubySide::default(), RubySide::Right);
+        assert_eq!(AozoraHeadingStyle::default(), AozoraHeadingStyle::Standard);
+    }
+
+    #[test]
+    fn bouten_keyword_is_exhaustive_and_stable() {
+        // Every named variant keys its canonical 青空文庫 keyword; the
+        // bare 傍点 (Goma) flows through the `_` default arm.
+        let cases = [
+            (BoutenKind::Goma, "傍点"),
+            (BoutenKind::WhiteSesame, "白ゴマ傍点"),
+            (BoutenKind::Circle, "丸傍点"),
+            (BoutenKind::WhiteCircle, "白丸傍点"),
+            (BoutenKind::DoubleCircle, "二重丸傍点"),
+            (BoutenKind::Janome, "蛇の目傍点"),
+            (BoutenKind::Cross, "ばつ傍点"),
+            (BoutenKind::WhiteTriangle, "白三角傍点"),
+            (BoutenKind::WavyLine, "波線"),
+            (BoutenKind::UnderLine, "傍線"),
+            (BoutenKind::DoubleUnderLine, "二重傍線"),
+            (BoutenKind::ChainLine, "鎖線"),
+            (BoutenKind::DashedLine, "破線"),
+            (BoutenKind::BlackTriangle, "黒三角傍点"),
+        ];
+        for (kind, kw) in cases {
+            assert_eq!(kind.keyword(), kw, "keyword mismatch for {kind:?}");
+        }
+    }
+
+    #[test]
+    fn bouten_is_line_splits_dot_from_line_family() {
+        // 線 family.
+        for kind in [
+            BoutenKind::WavyLine,
+            BoutenKind::UnderLine,
+            BoutenKind::DoubleUnderLine,
+            BoutenKind::ChainLine,
+            BoutenKind::DashedLine,
+        ] {
+            assert!(kind.is_line(), "{kind:?} should be a 線 variant");
+            assert_eq!(kind.family_str(), "傍線", "family_str for {kind:?}");
+        }
+        // 点 family.
+        for kind in [
+            BoutenKind::Goma,
+            BoutenKind::WhiteSesame,
+            BoutenKind::Circle,
+            BoutenKind::WhiteCircle,
+            BoutenKind::DoubleCircle,
+            BoutenKind::Janome,
+            BoutenKind::Cross,
+            BoutenKind::WhiteTriangle,
+            BoutenKind::BlackTriangle,
+        ] {
+            assert!(!kind.is_line(), "{kind:?} should be a 点 variant");
+            assert_eq!(kind.family_str(), "傍点", "family_str for {kind:?}");
+        }
+    }
+
+    #[test]
+    fn emphasis_keyword_is_exhaustive_and_stable() {
+        let cases = [
+            (EmphasisKind::Bold, "太字"),
+            (EmphasisKind::Italic, "斜体"),
+            (EmphasisKind::SuperScript, "上付き小文字"),
+            (EmphasisKind::SubScript, "下付き小文字"),
+            (EmphasisKind::SmallRight, "行右小書き"),
+            (EmphasisKind::SmallLeft, "行左小書き"),
+            (EmphasisKind::KeigakomiInline, "罫囲み"),
+            (EmphasisKind::HorizontalInline, "横組み"),
+            (EmphasisKind::Caption, "キャプション"),
+            // FontSize carries a magnitude and falls through to 太字.
+            (EmphasisKind::FontSize { steps: 3 }, "太字"),
+            (EmphasisKind::FontSize { steps: -2 }, "太字"),
+        ];
+        for (kind, kw) in cases {
+            assert_eq!(kind.keyword(), kw, "keyword mismatch for {kind:?}");
+        }
+    }
+
+    #[test]
+    fn section_keyword_is_exhaustive() {
+        assert_eq!(SectionKind::Kaicho.keyword(), "改丁");
+        assert_eq!(SectionKind::Kaidan.keyword(), "改段");
+        assert_eq!(SectionKind::Kaimihiraki.keyword(), "改見開き");
+    }
+
+    #[test]
+    fn heading_kind_and_style_are_orthogonal_copies() {
+        // Cheap structural smoke: every level pairs with every style and
+        // the payload structs are Copy + Eq as the AST relies on.
+        let heading = |kind, style| Container {
+            kind: ContainerKind::Heading {
+                kind,
+                style,
+                block: true,
+            },
+        };
+        assert_eq!(
+            heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window),
+            heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window),
+            "equal Heading containers compare equal"
+        );
+        assert_ne!(
+            heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window),
+            heading(AozoraHeadingKind::Small, AozoraHeadingStyle::Window),
+            "different level ⇒ not equal"
+        );
+        let indent = Indent { amount: 4 };
+        assert_eq!(indent, Indent { amount: 4 });
+        let align = AlignEnd { offset: 0 };
+        assert_eq!(align.offset, 0);
+        let center = Center { page: true };
+        assert!(center.page, "page-centre flag round-trips");
+    }
 }
