@@ -14,7 +14,8 @@ Arguments:
 
 Options:
   -E, --encoding <ENCODING>
-          Source encoding
+          Source encoding. Falls back to `AOZORA_ENCODING`, then the `encoding` key in
+          `.aozora.toml`, then auto-detection
 
           Possible values:
           - auto: Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are
@@ -23,7 +24,11 @@ Options:
           - utf8: Force UTF-8; error if the input is not valid UTF-8
           - sjis: Force Shift_JIS decoding
           
-          [default: auto]
+          [env: AOZORA_ENCODING=]
+
+      --config <PATH>
+          Read settings from this `.aozora.toml` instead of searching upward from the working
+          directory
 
       --timing
           Print per-phase timing (read / parse / output) to stderr. Writes only to stderr, so stdout
@@ -42,12 +47,16 @@ Options:
           [default: human]
 
   -s, --strict
-          Exit non-zero on any diagnostic
+          Exit non-zero on any diagnostic. Also settable via `AOZORA_STRICT` or the `strict` key in
+          `.aozora.toml`
+          
+          [env: AOZORA_STRICT=]
 
       --diagnostic-format <DIAGNOSTIC_FORMAT>
           How to render diagnostics: `human` (graphical snippet, the default on a terminal), `json`
           (the `aozora::wire` envelope, the default when stderr is piped — the machine / agent
-          path), or `short` (one grep-able line per diagnostic)
+          path), or `short` (one grep-able line per diagnostic). Falls back to
+          `AOZORA_DIAGNOSTIC_FORMAT`, then `.aozora.toml`
 
           Possible values:
           - auto:  Graphical (`human`) on a terminal, machine (`json`) when piped
@@ -55,7 +64,7 @@ Options:
           - json:  The `aozora::wire` JSON envelope — the cross-binding machine view
           - short: One grep-able line per diagnostic: `path:offset: severity[code]: msg`
           
-          [default: auto]
+          [env: AOZORA_DIAGNOSTIC_FORMAT=]
 
   -h, --help
           Print help (see a summary with '-h')

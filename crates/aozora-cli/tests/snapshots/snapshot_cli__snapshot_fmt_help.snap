@@ -14,7 +14,8 @@ Arguments:
 
 Options:
   -E, --encoding <ENCODING>
-          Source encoding
+          Source encoding. Falls back to `AOZORA_ENCODING`, then the `encoding` key in
+          `.aozora.toml`, then auto-detection
 
           Possible values:
           - auto: Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are
@@ -23,7 +24,11 @@ Options:
           - utf8: Force UTF-8; error if the input is not valid UTF-8
           - sjis: Force Shift_JIS decoding
           
-          [default: auto]
+          [env: AOZORA_ENCODING=]
+
+      --config <PATH>
+          Read settings from this `.aozora.toml` instead of searching upward from the working
+          directory
 
       --timing
           Print per-phase timing (read / parse / output) to stderr. Writes only to stderr, so stdout

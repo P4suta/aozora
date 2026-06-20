@@ -42,6 +42,7 @@
 #![forbid(unsafe_code)]
 
 mod completions;
+mod config;
 mod diagnostics_render;
 mod introspect;
 mod manpage;
@@ -138,9 +139,15 @@ struct CommonArgs {
     #[arg(default_value = "-")]
     file: PathBuf,
 
-    /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
-    encoding: Encoding,
+    /// Source encoding. Falls back to `AOZORA_ENCODING`, then the
+    /// `encoding` key in `.aozora.toml`, then auto-detection.
+    #[arg(long, short = 'E', value_enum, env = "AOZORA_ENCODING")]
+    encoding: Option<Encoding>,
+
+    /// Read settings from this `.aozora.toml` instead of searching
+    /// upward from the working directory.
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
 
     /// Print per-phase timing (read / parse / output) to stderr. Writes
     /// only to stderr, so stdout stays byte-identical — safe to leave on
@@ -155,6 +162,21 @@ struct CommonArgs {
     timing_format: TimingFormat,
 }
 
+impl CommonArgs {
+    /// Load the effective `.aozora.toml`: an explicit `--config`, else an
+    /// upward search from the working directory, else all-default.
+    fn load_config(&self) -> Result<config::ConfigFile> {
+        let cwd = env::current_dir().context("failed to read the working directory")?;
+        config::ConfigFile::resolve(self.config.as_deref(), &cwd)
+    }
+
+    /// Effective encoding: `-E/--encoding` (or `AOZORA_ENCODING`, both via
+    /// clap), else the config's `encoding`, else auto-detect.
+    fn resolved_encoding(&self, cfg: &config::ConfigFile) -> Encoding {
+        self.encoding.or(cfg.encoding).unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(after_long_help = "Examples:
   aozora check src.txt          # human on a TTY, json when piped
@@ -166,16 +188,18 @@ struct CheckArgs {
     #[command(flatten)]
     common: CommonArgs,
 
-    /// Exit non-zero on any diagnostic.
-    #[arg(long, short = 's')]
+    /// Exit non-zero on any diagnostic. Also settable via `AOZORA_STRICT`
+    /// or the `strict` key in `.aozora.toml`.
+    #[arg(long, short = 's', env = "AOZORA_STRICT")]
     strict: bool,
 
     /// How to render diagnostics: `human` (graphical snippet, the
     /// default on a terminal), `json` (the `aozora::wire` envelope, the
     /// default when stderr is piped — the machine / agent path), or
-    /// `short` (one grep-able line per diagnostic).
-    #[arg(long, value_enum, default_value_t = DiagFormat::Auto)]
-    diagnostic_format: DiagFormat,
+    /// `short` (one grep-able line per diagnostic). Falls back to
+    /// `AOZORA_DIAGNOSTIC_FORMAT`, then `.aozora.toml`.
+    #[arg(long, value_enum, env = "AOZORA_DIAGNOSTIC_FORMAT")]
+    diagnostic_format: Option<DiagFormat>,
 }
 
 #[derive(Debug, Parser)]
@@ -251,7 +275,8 @@ struct PandocArgs {
     format: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 enum Encoding {
     /// Detect the source encoding: valid UTF-8 is used as-is, otherwise
     /// the bytes are decoded as Shift_JIS. The right default — Aozora
@@ -292,10 +317,16 @@ fn main() -> ExitCode {
 }
 
 fn run_check(args: &CheckArgs) -> Result<ExitCode> {
+    let cfg = args.common.load_config()?;
+    let encoding = args.common.resolved_encoding(&cfg);
+    let diagnostic_format = args
+        .diagnostic_format
+        .or(cfg.diagnostic_format)
+        .unwrap_or_default();
+    let strict = args.strict || cfg.strict.unwrap_or(false);
+
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);
-    let source = timer.measure("read", || {
-        read_source(&args.common.file, args.common.encoding)
-    })?;
+    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let doc = Document::new(source);
     let tree = timer.measure("parse", || doc.parse());
     let diagnostics = tree.diagnostics();
@@ -306,7 +337,7 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
         timer
             .measure("render", || {
                 diagnostics_render::render(
-                    args.diagnostic_format,
+                    diagnostic_format,
                     &display_path(&args.common.file),
                     &doc,
                     diagnostics,
@@ -323,7 +354,7 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
             .any(|d| d.source() == DiagnosticSource::Internal)
         {
             ExitCode::from(3)
-        } else if args.strict {
+        } else if strict {
             ExitCode::from(1)
         } else {
             ExitCode::SUCCESS
@@ -335,10 +366,10 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
 }
 
 fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
+    let cfg = args.common.load_config()?;
+    let encoding = args.common.resolved_encoding(&cfg);
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);
-    let source = timer.measure("read", || {
-        read_source(&args.common.file, args.common.encoding)
-    })?;
+    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let doc = Document::new(source.clone());
     let tree = timer.measure("parse", || doc.parse());
     let formatted = timer.measure("serialize", || tree.serialize());
@@ -381,10 +412,10 @@ fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
 }
 
 fn run_render(args: &RenderArgs) -> Result<ExitCode> {
+    let cfg = args.common.load_config()?;
+    let encoding = args.common.resolved_encoding(&cfg);
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);
-    let source = timer.measure("read", || {
-        read_source(&args.common.file, args.common.encoding)
-    })?;
+    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let doc = Document::new(source);
     let tree = timer.measure("parse", || doc.parse());
     let html = timer.measure("render", || tree.to_html());
@@ -414,9 +445,9 @@ fn wire_json(args: &WireArgs, timer: &mut Timer) -> Result<String> {
     if matches!(args.which, WireKind::Slugs) {
         return Ok(wire::serialize_slugs());
     }
-    let source = timer.measure("read", || {
-        read_source(&args.common.file, args.common.encoding)
-    })?;
+    let cfg = args.common.load_config()?;
+    let encoding = args.common.resolved_encoding(&cfg);
+    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     if matches!(args.which, WireKind::GaijiResolutions) {
         return Ok(timer.measure("serialize", || wire::serialize_gaiji_resolutions(&source)));
     }
@@ -434,10 +465,10 @@ fn wire_json(args: &WireArgs, timer: &mut Timer) -> Result<String> {
 }
 
 fn run_pandoc(args: &PandocArgs) -> Result<ExitCode> {
+    let cfg = args.common.load_config()?;
+    let encoding = args.common.resolved_encoding(&cfg);
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);
-    let source = timer.measure("read", || {
-        read_source(&args.common.file, args.common.encoding)
-    })?;
+    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let doc = Document::new(source);
     let tree = timer.measure("parse", || doc.parse());
     let json = timer

@@ -22,7 +22,8 @@ use clap::ValueEnum;
 use miette::{NamedSource, Report};
 
 /// How `aozora check` renders diagnostics.
-#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum DiagFormat {
     /// Graphical (`human`) on a terminal, machine (`json`) when piped.
     #[default]
