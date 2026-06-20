@@ -1,0 +1,47 @@
+---
+source: crates/aozora-cli/tests/snapshot_cli.rs
+expression: "run(&[\"wire\", \"--help\"])"
+---
+Emit a parsed document's wire JSON for one `aozora::wire` envelope — `nodes` / `pairs` /
+`container-pairs` / `diagnostics` / `gaiji` — or the static `slugs` catalogue. The data counterpart
+to `schema`: `schema <kind>` prints the JSON Schema, `wire <kind>` prints a document's data in that
+schema, byte-identical to every binding's `*_json()` output
+
+Usage: aozora wire [OPTIONS] <WHICH> [FILE]
+
+Arguments:
+  <WHICH>
+          Which wire envelope to emit
+
+          Possible values:
+          - diagnostics:     Per-diagnostic `{ kind, severity, source, span, codepoint? }`
+          - nodes:           Per-source-node `{ kind, span }`, sorted by `span.start`
+          - pairs:           Per-matched-pair `{ kind, open, close }`
+          - container-pairs: Per-container-pair `{ kind, open, close }` (normalized coordinates)
+          - gaiji:           Per-外字-reference `{ span, description, mencode, codepoint, resolved }`
+          - slugs:           The static ［＃…］ slug catalogue — reads no document input
+
+  [FILE]
+          Input path; pass `-` (or omit) to read from stdin. Unused by `slugs` (a static catalogue
+          with no document input)
+          
+          [default: -]
+
+Options:
+  -E, --encoding <ENCODING>
+          Source encoding
+
+          Possible values:
+          - auto: Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are
+            decoded as Shift_JIS. The right default — Aozora files ship as Shift_JIS, but UTF-8
+            mirrors are common, and the caller should not have to know which they have
+          - utf8: Force UTF-8; error if the input is not valid UTF-8
+          - sjis: Force Shift_JIS decoding
+          
+          [default: auto]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version

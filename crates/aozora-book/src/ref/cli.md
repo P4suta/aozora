@@ -14,6 +14,7 @@ aozora <SUBCOMMAND> [OPTIONS] [ARGS]
 | `check` | Lex + report diagnostics. |
 | `fmt` | Round-trip `parse ∘ serialize` (canonicalise). |
 | `render` | Render to HTML on stdout. |
+| `wire` | Emit a document's wire JSON (`nodes`/`pairs`/`container-pairs`/`diagnostics`/`gaiji`) or the static `slugs` catalogue. |
 | `pandoc` | Project to a Pandoc AST (JSON, or pipe through `pandoc`). |
 | `kinds` | Tabulate every `NodeKind` / `PairKind` / `Severity` / … wire tag. |
 | `schema` | Print the JSON Schema for a wire envelope. |
@@ -25,7 +26,7 @@ document subcommands accept `-` (or no path) to read **stdin**.
 
 | Common flag | Subcommands | Effect |
 |---|---|---|
-| `-E`, `--encoding {auto,utf8,sjis}` | check / fmt / render / pandoc | Source encoding. **Default `auto`** — UTF-8 if the bytes are valid UTF-8, else Shift_JIS. |
+| `-E`, `--encoding {auto,utf8,sjis}` | check / fmt / render / wire / pandoc | Source encoding. **Default `auto`** — UTF-8 if the bytes are valid UTF-8, else Shift_JIS. |
 
 Colour follows the terminal and the `NO_COLOR` environment variable
 (miette honours it); there is no `--no-color` flag.
@@ -110,6 +111,42 @@ The output is semantic HTML5 with `aozora-*` class hooks (no inline
 styles). See [HTML renderer](../arch/renderer.md#class-name-scheme) for
 the class-name reference.
 
+## `aozora wire`
+
+```text
+aozora wire <KIND> [OPTIONS] [PATH]
+```
+
+Emit a parsed document's data as the shared `aozora::wire` JSON
+envelope — the **data** counterpart to `aozora schema` (which prints the
+*contract*). The bytes are identical to every binding's `*_json()`
+output (Python `.nodes_json()`, WASM `.nodes_json()`, the C FFI
+`aozora_nodes_json`), so the CLI is a first-class way to get structured
+parser output into a shell pipeline.
+
+| `KIND` | Envelope |
+|---|---|
+| `nodes` | Source-keyed nodes: `{ kind, span }`. |
+| `pairs` | Matched delimiter pairs: `{ kind, open, close }`. |
+| `container-pairs` | Container open/close pairs (normalized coordinates). |
+| `diagnostics` | The diagnostics stream as data (same shape as `check --diagnostic-format json`, but always exit `0`). |
+| `gaiji` | Resolved `※［＃…］` references: `{ span, description, mencode, codepoint, resolved }`. Alias: `gaiji-resolutions`. |
+| `slugs` | The static `［＃…］` slug catalogue — needs no input. |
+
+Every envelope is `{ "schema_version": 1, "data": [ … ] }`; the per-kind
+item schema is the one `aozora schema <kind>` prints (see
+[Wire format](../wire/overview.md)). `PATH` of `-` (or omitted) reads
+stdin and `--encoding`/`-E` applies; `slugs` ignores any input. Unlike
+`check`, `wire` is a pure projection — it always exits `0`.
+
+```sh
+aozora wire nodes src.txt                  # source nodes as JSON
+cat src.txt | aozora wire pairs            # matched pairs, from stdin
+aozora wire gaiji -E sjis crime.txt        # resolved 外字 references
+aozora wire slugs                          # the static slug catalogue
+aozora schema nodes                        # the *contract* for `wire nodes`
+```
+
 ## `aozora pandoc`
 
 ```text
@@ -133,6 +170,8 @@ See [Bindings → Pandoc](../bindings/pandoc.md).
 `kinds`, `schema {diagnostics|nodes|pairs|container-pairs}`, and
 `explain <tag>` print typed contracts and need no input file. They back
 the drift-gated wire artefacts; see [Wire format](../wire/overview.md).
+The **data** counterpart to `schema` is [`aozora wire`](#aozora-wire),
+which projects a parsed document into those same envelopes.
 
 ## Exit codes
 

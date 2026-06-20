@@ -11,6 +11,11 @@
 //!   output differs from `FILE`; `--write` overwrites `FILE`. Default
 //!   is print-to-stdout.
 //! - `aozora render FILE` — render `FILE` to HTML on stdout.
+//! - `aozora wire <kind> FILE` — emit the parsed document's wire JSON
+//!   for one `aozora::wire` envelope (`nodes` / `pairs` /
+//!   `container-pairs` / `diagnostics` / `gaiji`), or the static
+//!   `slugs` catalogue. The data counterpart to `aozora schema
+//!   <kind>`, byte-identical to every binding's `*_json()` output.
 //!
 //! Introspection (no input required, prints typed contracts):
 //! - `aozora kinds` — table of every `NodeKind` / `PairKind` /
@@ -42,7 +47,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode, Stdio};
 
-use aozora::{DiagnosticSource, Document};
+use aozora::{DiagnosticSource, Document, wire};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -70,6 +75,13 @@ enum Command {
     Fmt(FmtArgs),
     /// Render Aozora notation to HTML on stdout.
     Render(RenderArgs),
+    /// Emit a parsed document's wire JSON for one `aozora::wire`
+    /// envelope — `nodes` / `pairs` / `container-pairs` /
+    /// `diagnostics` / `gaiji` — or the static `slugs` catalogue. The
+    /// data counterpart to `schema`: `schema <kind>` prints the JSON
+    /// Schema, `wire <kind>` prints a document's data in that schema,
+    /// byte-identical to every binding's `*_json()` output.
+    Wire(WireArgs),
     /// Tabulate every `NodeKind` / `PairKind` / `Severity` /
     /// `DiagnosticSource` / `Sentinel` / `InternalCheckCode`
     /// variant with its wire tag.
@@ -140,6 +152,42 @@ struct RenderArgs {
     encoding: Encoding,
 }
 
+/// `aozora wire <kind>` — which wire envelope to emit. The data
+/// counterpart to `SchemaKind`: `schema nodes` prints the contract,
+/// `wire nodes` prints a document's data in that contract.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum WireKind {
+    /// Per-diagnostic `{ kind, severity, source, span, codepoint? }`.
+    Diagnostics,
+    /// Per-source-node `{ kind, span }`, sorted by `span.start`.
+    Nodes,
+    /// Per-matched-pair `{ kind, open, close }`.
+    Pairs,
+    /// Per-container-pair `{ kind, open, close }` (normalized coordinates).
+    ContainerPairs,
+    /// Per-外字-reference `{ span, description, mencode, codepoint, resolved }`.
+    #[value(name = "gaiji", alias = "gaiji-resolutions")]
+    GaijiResolutions,
+    /// The static ［＃…］ slug catalogue — reads no document input.
+    Slugs,
+}
+
+#[derive(Debug, Parser)]
+struct WireArgs {
+    /// Which wire envelope to emit.
+    #[arg(value_enum)]
+    which: WireKind,
+
+    /// Input path; pass `-` (or omit) to read from stdin. Unused by
+    /// `slugs` (a static catalogue with no document input).
+    #[arg(default_value = "-")]
+    file: PathBuf,
+
+    /// Source encoding.
+    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
+    encoding: Encoding,
+}
+
 #[derive(Debug, Parser)]
 struct PandocArgs {
     /// Input path; pass `-` (or omit) to read from stdin.
@@ -180,6 +228,7 @@ fn main() -> ExitCode {
         Command::Check(opts) => run_check(&opts),
         Command::Fmt(opts) => run_fmt(&opts),
         Command::Render(opts) => run_render(&opts),
+        Command::Wire(opts) => run_wire(&opts),
         Command::Kinds(opts) => introspect::run_kinds(&opts),
         Command::Schema(opts) => introspect::run_schema(&opts),
         Command::Explain(opts) => introspect::run_explain(&opts),
@@ -277,6 +326,39 @@ fn run_render(args: &RenderArgs) -> Result<ExitCode> {
         .write_all(html.as_bytes())
         .context("failed to write to stdout")?;
     Ok(ExitCode::SUCCESS)
+}
+
+fn run_wire(args: &WireArgs) -> Result<ExitCode> {
+    let json = wire_json(args)?;
+    let mut stdout = io::stdout().lock();
+    writeln!(stdout, "{json}").context("failed to write to stdout")?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Project the requested wire envelope to its JSON string. `slugs` is a
+/// static catalogue (no input read); `gaiji` scans raw source; every
+/// other kind walks the parse tree. All arms delegate to
+/// `aozora::wire`, the single authority shared with the Python / WASM /
+/// C bindings, so the bytes are identical across every surface.
+fn wire_json(args: &WireArgs) -> Result<String> {
+    if matches!(args.which, WireKind::Slugs) {
+        return Ok(wire::serialize_slugs());
+    }
+    let source = read_source(&args.file, args.encoding)?;
+    if matches!(args.which, WireKind::GaijiResolutions) {
+        return Ok(wire::serialize_gaiji_resolutions(&source));
+    }
+    let doc = Document::new(source);
+    let tree = doc.parse();
+    Ok(match args.which {
+        WireKind::Nodes => wire::serialize_nodes(&tree),
+        WireKind::Pairs => wire::serialize_pairs(&tree),
+        WireKind::ContainerPairs => wire::serialize_container_pairs(&tree),
+        WireKind::Diagnostics => wire::serialize_diagnostics(tree.diagnostics()),
+        WireKind::Slugs | WireKind::GaijiResolutions => {
+            unreachable!("slugs and gaiji are emitted before the parse step")
+        }
+    })
 }
 
 fn run_pandoc(args: &PandocArgs) -> Result<ExitCode> {

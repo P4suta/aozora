@@ -10,6 +10,10 @@ Commands:
   check    Run the lexer over a file and report diagnostics
   fmt      Round-trip parse ∘ serialize and emit the canonical form
   render   Render Aozora notation to HTML on stdout
+  wire     Emit a parsed document's wire JSON for one `aozora::wire` envelope — `nodes` / `pairs` /
+           `container-pairs` / `diagnostics` / `gaiji` — or the static `slugs` catalogue. The data
+           counterpart to `schema`: `schema <kind>` prints the JSON Schema, `wire <kind>` prints a
+           document's data in that schema, byte-identical to every binding's `*_json()` output
   kinds    Tabulate every `NodeKind` / `PairKind` / `Severity` / `DiagnosticSource` / `Sentinel` /
            `InternalCheckCode` variant with its wire tag
   schema   Pretty-print the JSON Schema for one of the four wire envelopes
