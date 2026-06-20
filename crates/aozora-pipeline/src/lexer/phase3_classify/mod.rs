@@ -3580,6 +3580,42 @@ mod tests {
     }
 
     #[test]
+    fn forward_heading_ruby_split_target_recognized() {
+        // The heading text carries ruby (`両頭《りやうとう》`), so the quoted
+        // target is the ruby-*stripped* form `○　両頭の蛇` and is not a
+        // contiguous source substring. The ruby-tolerant gate strips `《…》`
+        // from the look-back and recovers it as a hint (the corpus's
+        // single largest Unknown family).
+        run!(
+            out,
+            "○　両頭《りやうとう》の蛇《へび》［＃「○　両頭の蛇」は中見出し］"
+        );
+        let hit = find_heading_hint(&out)
+            .is_some_and(|h| h.level == 2 && h.target.as_str() == "○　両頭の蛇");
+        assert!(hit, "expected a 中見出し HeadingHint, got {:?}", out.spans);
+    }
+
+    #[test]
+    fn forward_heading_explicit_bar_ruby_target_recognized() {
+        // Explicit-base ruby `序｜章《しよう》`: the `｜` marker is also
+        // stripped so the target `序章` matches the look-back.
+        run!(out, "序｜章《しよう》［＃「序章」は大見出し］");
+        let hit =
+            find_heading_hint(&out).is_some_and(|h| h.level == 1 && h.target.as_str() == "序章");
+        assert!(hit, "expected a 大見出し HeadingHint, got {:?}", out.spans);
+    }
+
+    #[test]
+    fn forward_heading_ruby_strip_does_not_invent_legend_example() {
+        // The standard 凡例 line `（例）［＃「第一章」は中見出し］` has no
+        // preceding `第一章` run — even ruby-stripped, the look-back is
+        // `（例）`, which does not contain the target. It must stay Unknown
+        // (a documentation example, not a real heading).
+        run!(out, "（例）［＃「第一章」は中見出し］");
+        assert!(find_heading_hint(&out).is_none());
+    }
+
+    #[test]
     fn forward_heading_all_three_levels_exercised_in_one_paragraph() {
         // A single paragraph could conceivably carry multiple heading
         // hints — the lexer emits one HeadingHint per bracket and
