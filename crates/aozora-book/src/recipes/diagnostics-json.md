@@ -70,12 +70,24 @@ aozora check --strict src.txt     # warnings → exit 1 (the CI gate)
 cat src.txt | aozora check        # reads stdin
 ```
 
-A JSON output mode for `check` (`--diagnostic-format json`, emitting
-the same `serialize_diagnostics` envelope) is planned so scripts get
-the structured stream without writing Rust. Until it lands, the
-library path above is the supported way to obtain the JSON; the CLI's
-current output is the human-readable form documented in the
-[CLI reference](../ref/cli.md).
+Pass `--diagnostic-format json` to get the exact `serialize_diagnostics`
+envelope shown above — byte-identical to the library path and to what
+every binding emits — straight from the shell, no Rust required:
+
+```sh
+aozora check --diagnostic-format json src.txt
+```
+
+Diagnostics print to **stderr** (where `json` is already the default
+once stderr is piped), so redirect that stream to feed a tool like
+`jq`. A clean file prints nothing and exits `0`:
+
+```sh
+aozora check --diagnostic-format json src.txt 2>&1 >/dev/null | jq .
+```
+
+See the [CLI reference](../ref/cli.md) for the full flag list and the
+exit-code table.
 
 ## See also
 

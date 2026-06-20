@@ -77,6 +77,7 @@
   - [EPUB via Pandoc](recipes/epub-pandoc.md)
   - [Byte-exact round-trip](recipes/round-trip.md)
   - [Polyglot host integration](recipes/polyglot.md)
+  - [Batch many files](recipes/batch.md)
 
 # Performance
 
