@@ -119,8 +119,8 @@ character. The construct still parses; the renderer falls back to the
 description text (`<span class="aozora-gaiji" data-description="…">…</span>`)
 rather than the intended glyph. The label points at the `※［＃…］` reference.
 **Fix:** correct the men-ku-ten / `U+XXXX` reference, or accept the
-description-only rendering. (Fires for top-level references; gaiji nested
-inside a ruby / bouten reading is not yet flagged.)
+description-only rendering. (Fires for both top-level `※［＃…］` references
+and gaiji nested inside a ruby / bouten reading.)
 
 ## Mismatched container close
 
