@@ -1,0 +1,48 @@
+{
+  "name": "standalone_gaiji",
+  "meta": {
+    "feature": "gaiji",
+    "level": "should",
+    "spec_section": "6.4",
+    "note": "[provenance:reference-impl-aligned §6.4 + JIS X 0213 + AOZORA-ANNOTATION external_character.html 2026-06-20] A corpus-attested tolerant extension: the same [#description、address] reference WITHOUT the leading reference mark, used by some 凡例 as a standalone descriptive note. Resolution is identical to the gaiji vector (men-ku-ten 1-85-54 -> U+6798 枘 via Annex B) and it serialises back without a reference mark. Tagged should, not must: the reference-mark form is canonical; the no-mark form is a tolerated corpus convention."
+  },
+  "source": "珍しき木［＃「木＋吶のつくり」、第3水準1-85-54］が立つ。\n",
+  "expected": {
+    "html": "<p>珍しき木<span class=\"aozora-gaiji\" data-codepoint=\"U+6798\">枘</span>が立つ。</p>\n",
+    "serialize": "珍しき木［＃「木＋吶のつくり」、第3水準1-85-54］が立つ。\n",
+    "nodes": [
+      {
+        "kind": "gaiji",
+        "span": {
+          "start": 12,
+          "end": 68
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 18,
+          "end": 21
+        },
+        "close": {
+          "start": 42,
+          "end": 45
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 65,
+          "end": 68
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
