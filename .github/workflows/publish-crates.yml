@@ -9,7 +9,7 @@
 #
 # Why an explicit ladder and NOT `cargo publish --workspace`:
 #   `cargo publish --workspace` (and its `--dry-run`) was evaluated on
-#   the pinned toolchain (cargo 1.95.0) and does NOT order interdependent
+#   the pinned toolchain (cargo 1.96.0) and does NOT order interdependent
 #   members topologically on a first publish — it tries to package
 #   `aozora-render` before `aozora-pipeline` and aborts with "no matching
 #   package named aozora-pipeline found". The explicit ladder below is

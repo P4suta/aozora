@@ -24,7 +24,7 @@
 //! Skipped on purpose:
 //! - `msrv`: needs a different rustc pin than the dev image carries;
 //!   would force a second toolchain install. Run on demand with
-//!   `cargo +1.95.0 check --workspace --all-targets`.
+//!   `cargo +1.96.0 check --workspace --all-targets`.
 //! - `commitlint`: PR-only.
 
 use std::cmp::Reverse;

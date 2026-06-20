@@ -55,7 +55,7 @@ enum-variant-size-threshold = 256
 
 # MSRV — let clippy know our floor so it doesn't flag idioms we can't use
 # yet. Matches rust-toolchain.toml.
-msrv = "1.95.0"
+msrv = "1.96.0"
 
 # Tests are allowed to be expressive about failure: unwrap / expect / panic
 # are diagnostic shortcuts, not bugs. Production code remains strict.

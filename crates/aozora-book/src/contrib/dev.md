@@ -67,7 +67,7 @@ just watch-headless check       # plain output, no TUI
 Three reasons.
 
 1. **Toolchain reproducibility.** The dev image pins
-   `rust:1.95.0-bookworm` plus exact versions of `cargo-nextest`,
+   `rust:1.96.0-bookworm` plus exact versions of `cargo-nextest`,
    `cargo-llvm-cov`, `cargo-deny`, `cargo-audit`, `cargo-udeps`,
    `cargo-semver-checks`, `cargo-fuzz`, `mdbook`, `mdbook-mermaid`,
    `lychee`, `git-cliff`, `bacon`, and `lefthook`. A fresh checkout
