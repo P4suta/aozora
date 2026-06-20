@@ -313,6 +313,47 @@ pub enum EmphasisKind {
     Caption,
 }
 
+/// Every [`SectionKind`] variant in declaration order.
+///
+/// Drives the renderer's class-list derivation (and any codegen) so a new
+/// section break flows in without a hand-maintained parallel — mirrors
+/// [`BOUTEN_KINDS`].
+pub const SECTION_KINDS: &[SectionKind] = &[
+    SectionKind::Kaicho,
+    SectionKind::Kaidan,
+    SectionKind::Kaimihiraki,
+];
+
+/// Every [`HeadingKind`] outline level in declaration order. See
+/// [`BOUTEN_KINDS`].
+pub const HEADING_KINDS: &[HeadingKind] =
+    &[HeadingKind::Large, HeadingKind::Medium, HeadingKind::Small];
+
+/// Every [`HeadingStyle`] in declaration order. See [`BOUTEN_KINDS`].
+pub const HEADING_STYLES: &[HeadingStyle] = &[
+    HeadingStyle::Standard,
+    HeadingStyle::SameLine,
+    HeadingStyle::Window,
+];
+
+/// Every [`EmphasisKind`] variant in declaration order.
+///
+/// `FontSize` appears once with a representative magnitude — the
+/// renderer's larger/smaller split is driven by the sign, exercised
+/// explicitly where it matters. See [`BOUTEN_KINDS`].
+pub const EMPHASIS_KINDS: &[EmphasisKind] = &[
+    EmphasisKind::Bold,
+    EmphasisKind::Italic,
+    EmphasisKind::SuperScript,
+    EmphasisKind::SubScript,
+    EmphasisKind::SmallRight,
+    EmphasisKind::SmallLeft,
+    EmphasisKind::KeigakomiInline,
+    EmphasisKind::HorizontalInline,
+    EmphasisKind::Caption,
+    EmphasisKind::FontSize { steps: 1 },
+];
+
 // --- enum → canonical 青空文庫 keyword ---------------------------------------
 //
 // The single source of truth for the Japanese keyword each render-bearing

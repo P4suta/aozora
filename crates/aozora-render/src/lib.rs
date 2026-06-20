@@ -15,7 +15,6 @@
 
 #![forbid(unsafe_code)]
 
-mod bouten;
 pub mod classes;
 pub mod html;
 pub mod render_node;

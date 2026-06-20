@@ -8,6 +8,8 @@
 //! the emitted class tokens are *exactly* this set, so the published
 //! list can never drift from the emit sites.
 
+use aozora_syntax::{BoutenKind, BoutenPosition, HeadingKind, HeadingStyle};
+
 /// Every CSS class token the HTML renderer can emit.
 ///
 /// Open-ended numeric variants are normalised to their stem
@@ -90,15 +92,71 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-warichu",
 ];
 
+// ── Per-enum class-token slugs ────────────────────────────────────────
+// Single source of truth for the variable `aozora-*` slugs the renderer
+// composes, shared by `crate::render_node` (the emit sites) and the
+// `class_list_matches_emitted` derivation below. Fixed, structure-bound
+// class literals stay inline in the HTML templates they belong to.
+
+/// Romaji slug for a [`BoutenKind`] — the `aozora-bouten-<slug>` suffix.
+///
+/// The slug lives in the spec table (`RENDER_SLUGS`), keyed by the
+/// canonical 青空文庫 keyword; `BoutenKind` is `#[non_exhaustive]`, so an
+/// unknown kind falls back to `other` and rendering stays infallible.
+#[must_use]
+pub(crate) fn bouten_kind_slug(kind: BoutenKind) -> &'static str {
+    aozora_spec::roman_slug(kind.keyword()).unwrap_or("other")
+}
+
+/// Side slug for a [`BoutenPosition`] — the `aozora-bouten-<slug>` /
+/// `aozora-kogaki-<slug>` suffix.
+#[must_use]
+pub(crate) const fn bouten_position_slug(pos: BoutenPosition) -> &'static str {
+    match pos {
+        BoutenPosition::Left => "left",
+        _ => "right",
+    }
+}
+
+/// Outline-level slug for a [`HeadingKind`] — the `aozora-heading-<slug>`
+/// suffix.
+///
+/// Shared by the forward-reference leaf and the paired/block heading
+/// container. `HeadingKind` is `#[non_exhaustive]`; an unknown level
+/// defaults to the top (`large`).
+#[must_use]
+pub(crate) const fn heading_level_slug(kind: HeadingKind) -> &'static str {
+    match kind {
+        HeadingKind::Medium => "medium",
+        HeadingKind::Small => "small",
+        _ => "large",
+    }
+}
+
+/// Per-style modifier slug for a [`HeadingStyle`].
+///
+/// `None` for the standard style, which adds no modifier so a standard
+/// heading's markup is unchanged. An unknown (`#[non_exhaustive]`) style
+/// is treated as standard.
+#[must_use]
+pub(crate) const fn heading_style_slug(style: HeadingStyle) -> Option<&'static str> {
+    match style {
+        HeadingStyle::SameLine => Some("same-line"),
+        HeadingStyle::Window => Some("window"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::AOZORA_CLASSES;
+    use super::{AOZORA_CLASSES, bouten_kind_slug, bouten_position_slug};
     use crate::render_node::render;
     use aozora_syntax::alloc::BorrowedAllocator;
     use aozora_syntax::borrowed::{Arena, Node};
     use aozora_syntax::{
-        AlignEnd, BOUTEN_KINDS, BoutenPosition, Center, Container, ContainerKind, DirectiveKind,
-        EmphasisKind, HeadingKind, HeadingStyle, Indent, MarginNoteKind, SectionKind,
+        AlignEnd, BOUTEN_KINDS, BoutenKind, BoutenPosition, Center, Container, ContainerKind,
+        DirectiveKind, EMPHASIS_KINDS, EmphasisKind, HEADING_KINDS, HEADING_STYLES, HeadingStyle,
+        Indent, MarginNoteKind, SECTION_KINDS,
     };
     use std::collections::BTreeSet;
 
@@ -136,13 +194,17 @@ mod tests {
         collect_classes(&s, set);
     }
 
-    #[test]
+    /// Render every `Node` + `ContainerKind` variant and collect the
+    /// emitted `aozora-*` class tokens (numeric variants collapsed to their
+    /// stem). The authoritative derivation [`AOZORA_CLASSES`] is pinned to;
+    /// enum families enumerate through the `*_KINDS` constants so a new
+    /// variant flows in automatically.
     #[allow(
         clippy::too_many_lines,
         reason = "one render call per Node + ContainerKind variant; \
                   splitting would scatter the exhaustive enumeration"
     )]
-    fn class_list_matches_emitted() {
+    fn all_emitted_classes() -> BTreeSet<String> {
         let arena = Arena::new();
         let mut a = BorrowedAllocator::new(&arena);
         let mut emitted: BTreeSet<String> = BTreeSet::new();
@@ -159,11 +221,7 @@ mod tests {
         render_into(a.sashie_general("f.png", "図", None), &mut emitted);
         render_into(a.heading_hint(1, HeadingStyle::Standard, "x"), &mut emitted);
 
-        for k in [
-            SectionKind::Kaicho,
-            SectionKind::Kaidan,
-            SectionKind::Kaimihiraki,
-        ] {
+        for &k in SECTION_KINDS {
             render_into(a.section_break(k), &mut emitted);
         }
 
@@ -204,28 +262,20 @@ mod tests {
                 render_into(a.bouten(kind, t, pos, false), &mut emitted);
             }
         }
-        for kind in [
-            EmphasisKind::Bold,
-            EmphasisKind::Italic,
-            EmphasisKind::SuperScript,
-            EmphasisKind::SubScript,
-            EmphasisKind::SmallRight,
-            EmphasisKind::SmallLeft,
-            EmphasisKind::KeigakomiInline,
-            EmphasisKind::HorizontalInline,
-            EmphasisKind::Caption,
-            EmphasisKind::FontSize { steps: 2 },
-            EmphasisKind::FontSize { steps: -2 },
-        ] {
+        for &kind in EMPHASIS_KINDS {
             let t = a.content_plain("強");
             render_into(a.emphasis(kind, t, false), &mut emitted);
         }
-        for kind in [HeadingKind::Large, HeadingKind::Medium, HeadingKind::Small] {
-            for style in [
-                HeadingStyle::Standard,
-                HeadingStyle::SameLine,
-                HeadingStyle::Window,
-            ] {
+        // `EMPHASIS_KINDS` carries one `FontSize` (positive → font-larger);
+        // its negative magnitude (font-smaller) is the only other class the
+        // variant produces, so exercise that sign explicitly.
+        let smaller = a.content_plain("小");
+        render_into(
+            a.emphasis(EmphasisKind::FontSize { steps: -1 }, smaller, false),
+            &mut emitted,
+        );
+        for &kind in HEADING_KINDS {
+            for &style in HEADING_STYLES {
                 let t = a.content_plain("見");
                 render_into(a.aozora_heading(kind, style, t), &mut emitted);
             }
@@ -272,12 +322,8 @@ mod tests {
                 containers.push(ContainerKind::BoutenRange { kind, position });
             }
         }
-        for kind in [HeadingKind::Large, HeadingKind::Medium, HeadingKind::Small] {
-            for style in [
-                HeadingStyle::Standard,
-                HeadingStyle::SameLine,
-                HeadingStyle::Window,
-            ] {
+        for &kind in HEADING_KINDS {
+            for &style in HEADING_STYLES {
                 containers.push(ContainerKind::Heading {
                     kind,
                     style,
@@ -289,9 +335,15 @@ mod tests {
             render_into(a.container(Container { kind }), &mut emitted);
         }
 
+        emitted
+    }
+
+    #[test]
+    fn class_list_matches_emitted() {
         let listed: BTreeSet<String> = AOZORA_CLASSES.iter().map(|s| (*s).to_owned()).collect();
         assert_eq!(
-            emitted, listed,
+            all_emitted_classes(),
+            listed,
             "AOZORA_CLASSES is out of sync with the renderer's emitted classes"
         );
 
@@ -305,5 +357,37 @@ mod tests {
             AOZORA_CLASSES,
             "AOZORA_CLASSES must be sorted and free of duplicates"
         );
+    }
+
+    #[test]
+    fn bouten_kind_slug_covers_every_variant() {
+        for (kind, slug) in [
+            (BoutenKind::Goma, "goma"),
+            (BoutenKind::WhiteSesame, "shirogoma"),
+            (BoutenKind::Circle, "maru"),
+            (BoutenKind::WhiteCircle, "shiromaru"),
+            (BoutenKind::DoubleCircle, "nijumaru"),
+            (BoutenKind::Janome, "janome"),
+            (BoutenKind::Cross, "batsu"),
+            (BoutenKind::WhiteTriangle, "shirosankaku"),
+            (BoutenKind::WavyLine, "namisen"),
+            (BoutenKind::UnderLine, "bosen"),
+            (BoutenKind::DoubleUnderLine, "nijubosen"),
+            (BoutenKind::ChainLine, "kusarisen"),
+            (BoutenKind::DashedLine, "hasen"),
+            (BoutenKind::BlackTriangle, "kurosankaku"),
+        ] {
+            assert_eq!(
+                bouten_kind_slug(kind),
+                slug,
+                "bouten_kind_slug mismatch for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bouten_position_slug_maps_left_and_right() {
+        assert_eq!(bouten_position_slug(BoutenPosition::Left), "left");
+        assert_eq!(bouten_position_slug(BoutenPosition::Right), "right");
     }
 }

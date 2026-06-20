@@ -14,7 +14,7 @@ use aozora_syntax::{
     Indent, RubySide,
 };
 
-use crate::bouten;
+use crate::classes;
 
 /// Render a single borrowed [`Node`] into `writer`.
 ///
@@ -99,8 +99,8 @@ fn render_bouten<W: Write>(b: &Bouten<'_>, writer: &mut W) -> fmt::Result {
     write!(
         writer,
         r#"<em class="aozora-bouten aozora-bouten-{kind} aozora-bouten-{pos}">"#,
-        kind = bouten::kind_slug(b.kind),
-        pos = bouten::position_slug(b.position),
+        kind = classes::bouten_kind_slug(b.kind),
+        pos = classes::bouten_position_slug(b.position),
     )?;
     render_content(b.target.get(), writer)?;
     writer.write_str("</em>")
@@ -290,8 +290,8 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
             write!(
                 writer,
                 r#"<em class="aozora-bouten aozora-bouten-{kind} aozora-bouten-{pos}">"#,
-                kind = bouten::kind_slug(kind),
-                pos = bouten::position_slug(position),
+                kind = classes::bouten_kind_slug(kind),
+                pos = classes::bouten_position_slug(position),
             )
         }
         // 太字 / 斜体. The bare inline range (`block: false`) uses the
@@ -420,18 +420,6 @@ fn render_sashie<W: Write>(s: &Illustration<'_>, writer: &mut W) -> fmt::Result 
     writer.write_str("</figure>")
 }
 
-/// Per-style modifier class slug (`None` for the standard style, which adds
-/// no modifier so a standard heading's markup is unchanged).
-fn heading_style_slug(style: HeadingStyle) -> Option<&'static str> {
-    match style {
-        HeadingStyle::SameLine => Some("same-line"),
-        HeadingStyle::Window => Some("window"),
-        // Standard adds no modifier class; an unknown (`#[non_exhaustive]`)
-        // style is treated as standard rather than emitting a bogus class.
-        _ => None,
-    }
-}
-
 /// The HTML tag for a heading. The 窓 (window) style is an inset block, not an
 /// outline level, so it takes a `<div>`; otherwise the 大 / 中 / 小 level maps
 /// to the semantic `<h1>`–`<h3>` outline tag.
@@ -458,17 +446,13 @@ fn write_heading_open<W: Write>(
     style: HeadingStyle,
     writer: &mut W,
 ) -> fmt::Result {
-    let level_slug = match kind {
-        HeadingKind::Medium => "medium",
-        HeadingKind::Small => "small",
-        _ => "large",
-    };
     write!(
         writer,
         r#"<{tag} class="aozora-heading aozora-heading-{level_slug}"#,
         tag = heading_tag(kind, style),
+        level_slug = classes::heading_level_slug(kind),
     )?;
-    if let Some(modifier) = heading_style_slug(style) {
+    if let Some(modifier) = classes::heading_style_slug(style) {
         write!(writer, " aozora-heading-{modifier}")?;
     }
     writer.write_str(r#"">"#)
@@ -505,7 +489,7 @@ fn render_heading_hint<W: Write>(h: &HeadingHint<'_>, writer: &mut W) -> fmt::Re
     )?;
     // `data-style` is emitted only for a non-standard style, so a standard
     // hint's markup is unchanged.
-    if let Some(style) = heading_style_slug(h.style) {
+    if let Some(style) = classes::heading_style_slug(h.style) {
         write!(writer, r#" data-style="{style}""#)?;
     }
     writer.write_str(r#" data-target=""#)?;
