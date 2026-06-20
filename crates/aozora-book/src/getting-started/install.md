@@ -139,7 +139,7 @@ See [Bindings → Python](../bindings/python.md) for the API and the
 
 ## Toolchain pin
 
-aozora pins **Rust 1.95.0** as its MSRV (`rust-toolchain.toml`). CI
+aozora pins **Rust 1.96.0** as its MSRV (`rust-toolchain.toml`). CI
 enforces it via a dedicated `msrv` job. If you run `rustup show`
 inside the repo and see something else, your local override needs
 updating.

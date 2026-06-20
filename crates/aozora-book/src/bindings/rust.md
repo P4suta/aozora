@@ -85,7 +85,7 @@ so there's no contention point.
 
 ## MSRV policy
 
-aozora pins **Rust 1.95.0**. The MSRV advances roughly once per
+aozora pins **Rust 1.96.0**. The MSRV advances roughly once per
 quarter, when a new stable feature is needed and the workspace
 moves to it. The `msrv` job in CI gates every PR; Dependabot is
 configured to *not* auto-bump the MSRV pin (manual decision).

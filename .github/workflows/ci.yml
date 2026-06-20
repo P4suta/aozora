@@ -84,18 +84,18 @@ jobs:
   msrv:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    # Verify that the pinned MSRV (1.95.0) still builds. Uses the
+    # Verify that the pinned MSRV (1.96.0) still builds. Uses the
     # native runner toolchain rather than the dev image, because the
-    # point is exercising a clean rustc 1.95.0 install, which the
+    # point is exercising a clean rustc 1.96.0 install, which the
     # image has no mechanism to downgrade to.
-    name: msrv (rust 1.95.0)
+    name: msrv (rust 1.96.0)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
-      - name: Install Rust 1.95.0 (MSRV)
+      - name: Install Rust 1.96.0 (MSRV)
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.95.0
+          toolchain: 1.96.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: msrv
@@ -336,7 +336,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: wasm
-      # `rust-toolchain.toml` pins the channel (1.95.0), so the
+      # `rust-toolchain.toml` pins the channel (1.96.0), so the
       # `dtolnay/rust-toolchain` `targets:` parameter — which installs the
       # std component into `stable` — does NOT add the target to the
       # toolchain cargo actually selects here. clippy then fails with

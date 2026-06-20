@@ -8,7 +8,7 @@
 # version mirrors rust-toolchain.toml. cargo-udeps is intentionally absent
 # (nightly-only, owned by the audit workflow).
 [tools]
-rust = "1.95.0"
+rust = "1.96.0"
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-llvm-cov" = "latest"

@@ -5,7 +5,7 @@
 # Layered so dependency bumps rebuild minimal surface.
 #
 # Base images are pinned by immutable digest (supply-chain hardening,
-# C2/F9): a tag like `rust:1.95.0-bookworm` is mutable and can be
+# C2/F9): a tag like `rust:1.96.0-bookworm` is mutable and can be
 # re-pushed, so we pin the manifest-list digest and keep the
 # human-readable tag inline for legibility. Resolve a fresh digest with
 # `docker buildx imagetools inspect <tag>`.
@@ -23,8 +23,8 @@
 ########################################################################
 # Stage: toolchain — Rust stable + system deps for builds and CJK work
 ########################################################################
-# rust:1.95.0-bookworm (digest pinned; tag kept for humans; == rust-toolchain.toml)
-FROM rust:1.95.0-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 AS toolchain
+# rust:1.96.0-bookworm (digest pinned; tag kept for humans; == rust-toolchain.toml)
+FROM rust:1.96.0-bookworm@sha256:19817ead3289c8c631c73df281e18b59b172f6a31f4f563290f69cddd06c30e9 AS toolchain
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
