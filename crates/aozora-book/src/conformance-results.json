@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 58,
-  "passed": 58,
+  "total": 59,
+  "passed": 59,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 35,
-      "passed": 35,
+      "total": 36,
+      "passed": 36,
       "failed": 0
     }
   },
@@ -46,6 +46,13 @@
       "case": "annotation",
       "feature": "annotation",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "boki",
+      "feature": "kunten",
+      "level": "should",
       "passed": true,
       "message": null
     },
