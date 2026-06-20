@@ -1,0 +1,32 @@
+{
+  // Kept consistent with .devcontainer/devcontainer.json. The Dev
+  // Container is where rust-analyzer actually runs: the cargo target dir
+  // lives in a named volume outside the bind mount, so a host-only RA
+  // sees no build artifacts — use "Reopen in Container" for the full
+  // experience. These editor-agnostic keys are harmless on the host too.
+  "editor.formatOnSave": true,
+  "editor.tabSize": 4,
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.cargo.features": "all",
+  "rust-analyzer.cargo.targetDir": true,
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  },
+  // Keep the file tree and search focused on tracked sources; these are
+  // the generated / cache paths from .gitignore.
+  "files.exclude": {
+    "**/target": true,
+    "**/.sccache": true
+  },
+  "search.exclude": {
+    "**/target": true,
+    "**/pkg": true,
+    "**/dist": true,
+    "**/node_modules": true,
+    "**/coverage": true,
+    "crates/aozora-book/book": true
+  }
+}

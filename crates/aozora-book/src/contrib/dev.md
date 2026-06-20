@@ -19,8 +19,14 @@ git clone git@github.com:P4suta/aozora.git
 cd aozora
 docker compose build dev        # ~5 min the first time, cached afterwards
 just hooks                      # install lefthook git hooks
+just doctor                     # verify the environment (read-only)
 just test                       # confirm green
 ```
+
+`just doctor` is the read-only health check: it reports Docker, the dev
+image, host tools, git hooks, signing, corpus, and profiling readiness
+without changing anything, so it is the first thing to run when a fresh
+environment misbehaves.
 
 ## Daily loop
 
@@ -84,11 +90,18 @@ The two exceptions to Docker-only:
 
 ## Editor / IDE setup
 
-The repository includes a `.devcontainer/` config, so:
+The repository ships a `.devcontainer/` config and a committed
+`.vscode/`, so:
 
 - **VS Code with Dev Containers extension** — "Reopen in Container"
   picks up the dev image, the rust-analyzer toolchain, and the
   `aozora-*` workspace at once. No host-side rust install needed.
+- **`.vscode/` (committed)** — recommended extensions (auto-prompted on
+  open), format-on-save and rust-analyzer settings matching the
+  container, `just`-recipe tasks (Ctrl-Shift-B runs `just ci`; the
+  "test (filter)" task prompts for a nextest filter), and a CodeLLDB
+  "Debug aozora-cli" launch config. Native debugging builds the
+  debuggee, so run it inside the Dev Container or with a host toolchain.
 - **Anything else** — point your editor's rust-analyzer at the dev
   container via `docker exec`. The cleanest approach is symlinking
   `target/` from the named volume to a host-visible path; the
@@ -175,5 +188,9 @@ End-to-end TDD flow:
 ## See also
 
 - [Testing strategy](testing.md) — what each test layer asserts.
+- [Profiling with samply](../perf/samply.md) — host-side perf profiling
+  of the parser's hot paths (and the `perf_event_paranoid` prerequisite).
+- [Troubleshooting & gate recovery](troubleshooting.md) — `just doctor`
+  and the gate-failure recovery table.
 - [Release process](release.md) — how a tag becomes a published
   release.

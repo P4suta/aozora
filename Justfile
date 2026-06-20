@@ -36,6 +36,79 @@ setup:
     just test
     echo "✅ Setup complete. Try 'just --list' (every recipe) or 'just shell' (dev container)."
 
+# Diagnose the dev environment without changing anything: Docker, the
+# dev image, host tools, git hooks, signing, corpus, and profiling
+# readiness. The read-only complement to `setup` (which builds and
+# installs) — fix with the per-line hints, `just setup`, or `just hooks`.
+# Never mutates.
+doctor:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    fail=0; warn=0
+    ok()   { echo "✅ $1"; }
+    bad()  { echo "❌ $1"; echo "      ↳ $2"; fail=$((fail + 1)); }
+    note() { echo "⚠️  $1"; echo "      ↳ $2"; warn=$((warn + 1)); }
+
+    echo "── host ──"
+    command -v docker >/dev/null \
+      && ok "docker installed" \
+      || bad "docker not found" "install Docker: https://docs.docker.com/get-docker/"
+    docker info >/dev/null 2>&1 \
+      && ok "docker daemon running" \
+      || bad "docker daemon not running" "start Docker Desktop, or 'sudo systemctl start docker'"
+    docker image inspect aozora-dev:local >/dev/null 2>&1 \
+      && ok "dev image built (aozora-dev:local)" \
+      || note "dev image not built yet" "run 'just setup' (first build ~5 min)"
+    command -v mise >/dev/null \
+      && ok "mise installed" \
+      || note "mise not found (host tool-version manager)" "https://mise.jdx.dev/, then 'mise install'"
+    for tool in just lefthook typos committed actionlint; do
+      command -v "$tool" >/dev/null \
+        && ok "host tool: $tool" \
+        || note "host tool missing: $tool" "run 'mise install' (declared in mise.toml)"
+    done
+    if [ -f .git/hooks/pre-commit ] && grep -q lefthook .git/hooks/pre-commit 2>/dev/null; then
+      ok "git hooks installed (lefthook)"
+    elif [ -n "$(git config --get core.hooksPath 2>/dev/null)" ]; then
+      ok "git hooks via core.hooksPath ($(git config --get core.hooksPath))"
+    else
+      bad "git hooks not installed" "run 'just hooks'"
+    fi
+    { [ "$(git config --get commit.gpgsign 2>/dev/null)" = "true" ] \
+        && [ -n "$(git config --get user.signingkey 2>/dev/null)" ]; } \
+      && ok "commit signing configured" \
+      || note "commit signing not configured" "commits must be signed — see CONTRIBUTING.md"
+    [ -f rust-toolchain.toml ] \
+      && ok "rust-toolchain.toml present (the dev image is canonical)" \
+      || note "no rust-toolchain.toml" "the dev image pins the toolchain; host rust is optional"
+    { [ -n "${AOZORA_CORPUS_ROOT:-}" ] && [ -d "${AOZORA_CORPUS_ROOT:-}" ]; } \
+      && ok "AOZORA_CORPUS_ROOT set ($AOZORA_CORPUS_ROOT)" \
+      || note "AOZORA_CORPUS_ROOT unset (corpus sweeps skip)" "export AOZORA_CORPUS_ROOT=\$HOME/aozora-corpus (optional)"
+    avail_kb=$(df -Pk . | awk 'NR==2{print $4}')
+    [ "${avail_kb:-0}" -ge 5242880 ] \
+      && ok "disk headroom (>= 5 GB free)" \
+      || note "less than ~5 GB free here" "the dev image + cargo volumes want headroom; try 'docker system prune'"
+    if [ -r /proc/sys/kernel/perf_event_paranoid ]; then
+      lvl=$(cat /proc/sys/kernel/perf_event_paranoid)
+      [ "${lvl:-9}" -le 1 ] \
+        && ok "perf_event_paranoid=$lvl (samply profiling ready)" \
+        || note "perf_event_paranoid=$lvl (samply needs <= 1)" "echo 1 | sudo tee /proc/sys/kernel/perf_event_paranoid"
+    fi
+
+    if docker image inspect aozora-dev:local >/dev/null 2>&1; then
+      echo "── container ──"
+      {{_dev}} sccache --show-stats >/dev/null 2>&1 \
+        && ok "sccache responding in the dev image" \
+        || note "sccache not responding" "rebuild the image: 'docker compose build dev'"
+    fi
+
+    echo "────"
+    if [ "$fail" -gt 0 ]; then
+      echo "❌ $fail blocking issue(s), $warn warning(s) — fix the ❌ above (often 'just setup')."
+      exit 1
+    fi
+    echo "✅ no blocking issues ($warn warning(s))."
+
 # --- build/shell --------------------------------------------------------------
 
 # Build all workspace crates.

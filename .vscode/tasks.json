@@ -1,0 +1,58 @@
+{
+  // Surfaces the canonical `just` recipes as VS Code tasks. Each runs on
+  // the host shell and `just` re-enters Docker, so this stays
+  // Docker-first (no host cargo). Ctrl-Shift-B runs the default (ci).
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ci",
+      "type": "shell",
+      "command": "just ci",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$rustc"],
+      "detail": "Full local CI gate — the merge-gate replica."
+    },
+    {
+      "label": "test",
+      "type": "shell",
+      "command": "just test",
+      "group": "test",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "test (filter)",
+      "type": "shell",
+      "command": "just t ${input:filter}",
+      "group": "test",
+      "problemMatcher": ["$rustc"],
+      "detail": "Run tests matching a nextest filter (substring or /regex/)."
+    },
+    {
+      "label": "clippy",
+      "type": "shell",
+      "command": "just clippy",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "check",
+      "type": "shell",
+      "command": "just check",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "book-serve",
+      "type": "shell",
+      "command": "just book-serve",
+      "isBackground": true,
+      "problemMatcher": [],
+      "detail": "Serve the handbook at http://localhost:3000 (long-running)."
+    }
+  ],
+  "inputs": [
+    {
+      "id": "filter",
+      "type": "promptString",
+      "description": "nextest filter (substring or /regex/)"
+    }
+  ]
+}
