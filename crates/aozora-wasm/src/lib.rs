@@ -332,30 +332,60 @@ pub mod bindings {
         // above remain the raw-string escape hatch.
 
         /// Source-keyed Aozora nodes as parsed JS objects.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
+        /// or its `data` payload cannot be converted to a JS value — neither
+        /// occurs for a well-formed parse.
         #[wasm_bindgen(js_name = nodes)]
         pub fn nodes(&self) -> Result<JsValue, JsValue> {
             parsed_data(&json::nodes(&self.inner.parse()))
         }
 
         /// Matched open/close pairs as parsed JS objects.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
+        /// or its `data` payload cannot be converted to a JS value — neither
+        /// occurs for a well-formed parse.
         #[wasm_bindgen(js_name = pairs)]
         pub fn pairs(&self) -> Result<JsValue, JsValue> {
             parsed_data(&json::pairs(&self.inner.parse()))
         }
 
         /// Container open/close pairs as parsed JS objects.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
+        /// or its `data` payload cannot be converted to a JS value — neither
+        /// occurs for a well-formed parse.
         #[wasm_bindgen(js_name = containerPairs)]
         pub fn container_pairs(&self) -> Result<JsValue, JsValue> {
             parsed_data(&json::container_pairs(&self.inner.parse()))
         }
 
         /// Diagnostics as parsed JS objects.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
+        /// or its `data` payload cannot be converted to a JS value — neither
+        /// occurs for a well-formed parse.
         #[wasm_bindgen(js_name = diagnostics)]
         pub fn diagnostics(&self) -> Result<JsValue, JsValue> {
             parsed_data(&json::diagnostics(self.inner.parse().diagnostics()))
         }
 
         /// Gaiji resolutions as parsed JS objects.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
+        /// or its `data` payload cannot be converted to a JS value — neither
+        /// occurs for a well-formed parse.
         #[wasm_bindgen(js_name = gaiji)]
         pub fn gaiji(&self) -> Result<JsValue, JsValue> {
             parsed_data(&json::gaiji(self.inner.source()))
