@@ -21,6 +21,7 @@ pub mod html;
 pub mod render_node;
 pub mod serialize;
 pub mod visitor;
+mod walk;
 
 pub use classes::AOZORA_CLASSES;
 pub use visitor::{AozoraVisitor, dispatch_node};

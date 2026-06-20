@@ -23,22 +23,7 @@ use aozora_syntax::{Container, ContainerKind};
 use memchr::{memchr_iter, memchr3_iter};
 
 use crate::render_node;
-
-/// First UTF-8 byte of every PUA sentinel (E001..E004). Used by
-/// [`render_into`] to fast-scan candidate positions; the next two
-/// bytes (0x80 + variant) are validated before the position is
-/// treated as a sentinel.
-const SENTINEL_LEAD_BYTE: u8 = 0xEE;
-/// Second UTF-8 byte shared by every PUA sentinel.
-const SENTINEL_MID_BYTE: u8 = 0x80;
-/// Third UTF-8 byte of `aozora_pipeline::INLINE_SENTINEL` (U+E001).
-const INLINE_SENTINEL_TAIL: u8 = 0x81;
-/// Third UTF-8 byte of `aozora_pipeline::BLOCK_LEAF_SENTINEL` (U+E002).
-const BLOCK_LEAF_SENTINEL_TAIL: u8 = 0x82;
-/// Third UTF-8 byte of `aozora_pipeline::BLOCK_OPEN_SENTINEL` (U+E003).
-const BLOCK_OPEN_SENTINEL_TAIL: u8 = 0x83;
-/// Third UTF-8 byte of `aozora_pipeline::BLOCK_CLOSE_SENTINEL` (U+E004).
-const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
+use crate::walk::{SentinelKind, WalkSink, walk};
 
 /// Render a `LexOutput` into a fresh `String`.
 ///
@@ -69,129 +54,67 @@ pub fn render_to_string(out: &LexOutput<'_>) -> String {
 /// from the lexer's `Span` width contract; in practice unreachable
 /// (Phase 0 sanitize already gates on this bound).
 pub fn render_into<W: fmt::Write>(out: &LexOutput<'_>, writer: &mut W) -> fmt::Result {
-    let normalized = out.normalized;
-    let registry = &out.registry;
-    let mut state = RenderState::default();
+    let mut sink = HtmlSink {
+        out: writer,
+        state: RenderState::default(),
+    };
+    walk(out, &mut sink)
+}
 
-    let bytes = normalized.as_bytes();
-    let mut cursor = 0usize;
+/// [`WalkSink`] that emits semantic HTML5: HTML-escapes every plain run
+/// and drives the block-level [`RenderState`] (`<p>` / `<br />` /
+/// container brackets) from the walk's sentinel and newline events.
+struct HtmlSink<'w, W: fmt::Write> {
+    out: &'w mut W,
+    state: RenderState,
+}
 
-    // Byte-level structural scan. The legacy implementation used
-    // `match_indices(is_structural_char)`, which dispatches the
-    // predicate through `Chars::next` → `next_code_point` for every
-    // codepoint of the document. For Japanese-text-heavy corpora
-    // (3-byte UTF-8 per char) that is ~67 k char-iter calls per
-    // 200 KB doc, almost all returning false. Samply attributed the
-    // bulk of `render_to_string` time to this scan and its
-    // `MatchIndicesInternal::next` machinery.
-    //
-    // Replacement: every PUA sentinel (E001..E004) shares the
-    // 2-byte UTF-8 prefix `0xEE 0x80`. The other structural
-    // character is `\n` (0x0A). One `memchr2` finds candidate
-    // positions at memory-bandwidth speed (Two-Way + AVX2 SIMD via
-    // the `memchr` crate); each candidate is then validated with two
-    // byte loads to confirm the full sentinel codepoint, falling
-    // through cleanly for the rare PUA-collision case (Phase 0's
-    // `scan_for_sentinel_collisions` records a diagnostic but does
-    // not delete colliding bytes — they must render as plain text).
-    let iter = memchr::memchr2_iter(SENTINEL_LEAD_BYTE, b'\n', bytes);
-    for cand_pos in iter {
-        let (kind, len) = match bytes[cand_pos] {
-            b'\n' => (Structural::Newline, 1),
-            SENTINEL_LEAD_BYTE => {
-                if cand_pos + 2 < bytes.len()
-                    && bytes[cand_pos + 1] == SENTINEL_MID_BYTE
-                    && let Some(k) = sentinel_for_tail_byte(bytes[cand_pos + 2])
-                {
-                    (k, 3)
-                } else {
-                    // PUA collision in source: bytes flow through as
-                    // plain. Skip; the next-iteration's pending-plain
-                    // emission picks them up in the chunk between
-                    // `cursor` and the next match.
-                    continue;
-                }
+impl<W: fmt::Write> WalkSink for HtmlSink<'_, W> {
+    // HTML output treats `\n` as structural (paragraph / line break).
+    const WANTS_NEWLINES: bool = true;
+
+    fn on_text(&mut self, text: &str) -> fmt::Result {
+        self.state.ensure_in_paragraph(self.out)?;
+        escape_text_chunk(text, self.out)
+    }
+
+    fn on_newline(&mut self, next: Option<u8>) -> fmt::Result {
+        match next {
+            // A blank line closes the current paragraph.
+            Some(b'\n') => self.state.close_paragraph(self.out),
+            // A lone newline inside a paragraph is a line break.
+            Some(_) if self.state.in_paragraph => self.out.write_str("<br />\n"),
+            // A newline outside a paragraph (e.g. between blocks) is dropped.
+            Some(_) | None => Ok(()),
+        }
+    }
+
+    fn on_node(&mut self, kind: SentinelKind, node: NodeRef<'_>) -> fmt::Result {
+        match (kind, node) {
+            (SentinelKind::Inline, NodeRef::Inline(node)) => {
+                self.state.ensure_in_paragraph(self.out)?;
+                render_node::render(node, true, self.out)
             }
-            // memchr2 only matches the two needles above.
-            _ => unreachable!("memchr2 hit non-needle byte"),
-        };
-
-        if cursor < cand_pos {
-            state.ensure_in_paragraph(writer)?;
-            escape_text_chunk(&normalized[cursor..cand_pos], writer)?;
+            (SentinelKind::BlockLeaf, NodeRef::BlockLeaf(node)) => {
+                self.state.before_block_emit(self.out)?;
+                render_node::render(node, true, self.out)?;
+                self.state.after_block_emit();
+                Ok(())
+            }
+            (SentinelKind::BlockOpen, NodeRef::BlockOpen(kind)) => {
+                self.state.open_container(kind, self.out)
+            }
+            (SentinelKind::BlockClose, NodeRef::BlockClose(kind)) => {
+                self.state.close_container(kind, self.out)
+            }
+            // Sentinel without a matching registry entry: best-effort
+            // skip, mirroring the legacy walker.
+            _ => Ok(()),
         }
-        let byte_pos = u32::try_from(cand_pos).expect("normalized fits u32 per Phase 0 cap");
-
-        match kind {
-            Structural::Newline => match bytes.get(cand_pos + 1) {
-                Some(&b'\n') => state.close_paragraph(writer)?,
-                Some(_) if state.in_paragraph => writer.write_str("<br />\n")?,
-                Some(_) | None => {}
-            },
-            // The four sentinel kinds funnel through one registry
-            // lookup; the `NodeRef` variant tells us which structural
-            // role this hit plays.
-            _ => match (
-                kind,
-                registry.node_at(aozora_spec::NormalizedOffset::new(byte_pos)),
-            ) {
-                (Structural::Inline, Some(NodeRef::Inline(node))) => {
-                    state.ensure_in_paragraph(writer)?;
-                    render_node::render(node, true, writer)?;
-                }
-                (Structural::BlockLeaf, Some(NodeRef::BlockLeaf(node))) => {
-                    state.before_block_emit(writer)?;
-                    render_node::render(node, true, writer)?;
-                    state.after_block_emit();
-                }
-                (Structural::BlockOpen, Some(NodeRef::BlockOpen(kind))) => {
-                    state.open_container(kind, writer)?;
-                }
-                (Structural::BlockClose, Some(NodeRef::BlockClose(kind))) => {
-                    state.close_container(kind, writer)?;
-                }
-                // Sentinel without a registry hit is a pipeline bug.
-                // Best-effort policy: skip the sentinel and render the
-                // surrounding text so downstream invariants do not
-                // regress on a half-baked emit.
-                _ => {}
-            },
-        }
-        cursor = cand_pos + len;
     }
 
-    if cursor < normalized.len() {
-        state.ensure_in_paragraph(writer)?;
-        escape_text_chunk(&normalized[cursor..], writer)?;
-    }
-    state.close_paragraph(writer)?;
-    Ok(())
-}
-
-/// Structural-character classification for [`render_into`]'s byte-level
-/// scanner. `Newline` consumes 1 byte; the four sentinel variants each
-/// consume 3 (`0xEE 0x80 0x8X`).
-#[derive(Clone, Copy)]
-enum Structural {
-    Inline,
-    BlockLeaf,
-    BlockOpen,
-    BlockClose,
-    Newline,
-}
-
-/// Decode the third UTF-8 byte of a PUA-sentinel candidate. Returns
-/// `Some` only for the four well-known sentinels; any other byte is
-/// a collision (plain text that happens to share the prefix) and
-/// rejects this position.
-#[inline]
-fn sentinel_for_tail_byte(b: u8) -> Option<Structural> {
-    match b {
-        INLINE_SENTINEL_TAIL => Some(Structural::Inline),
-        BLOCK_LEAF_SENTINEL_TAIL => Some(Structural::BlockLeaf),
-        BLOCK_OPEN_SENTINEL_TAIL => Some(Structural::BlockOpen),
-        BLOCK_CLOSE_SENTINEL_TAIL => Some(Structural::BlockClose),
-        _ => None,
+    fn finish(&mut self) -> fmt::Result {
+        self.state.close_paragraph(self.out)
     }
 }
 

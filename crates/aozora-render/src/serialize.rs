@@ -9,6 +9,7 @@
 
 use core::fmt::{self, Write};
 
+use crate::walk::{SentinelKind, WalkSink, walk};
 use aozora_pipeline::{LexOutput, has_long_rule_line, isolate_decorative_rules};
 use aozora_syntax::borrowed::{
     AngleQuote, Bouten, CombineUpright, Content, Directive, Emphasis, Gaiji, Heading, HeadingHint,
@@ -18,22 +19,6 @@ use aozora_syntax::{
     AlignEnd, BoutenPosition, Center, ContainerKind, EmphasisKind, HeadingKind, HeadingStyle,
     Indent, RubySide, SectionKind,
 };
-use memchr::memchr_iter;
-
-/// First UTF-8 byte of every PUA sentinel (E001..E004). See
-/// [`crate::html`] for the full discussion of why we scan bytes
-/// instead of `match_indices`-ing chars.
-const SENTINEL_LEAD_BYTE: u8 = 0xEE;
-/// Second UTF-8 byte shared by every PUA sentinel.
-const SENTINEL_MID_BYTE: u8 = 0x80;
-/// Third UTF-8 byte → [`SentinelKind::Inline`].
-const INLINE_SENTINEL_TAIL: u8 = 0x81;
-/// Third UTF-8 byte → [`SentinelKind::BlockLeaf`].
-const BLOCK_LEAF_SENTINEL_TAIL: u8 = 0x82;
-/// Third UTF-8 byte → [`SentinelKind::BlockOpen`].
-const BLOCK_OPEN_SENTINEL_TAIL: u8 = 0x83;
-/// Third UTF-8 byte → [`SentinelKind::BlockClose`].
-const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
 
 /// Serialize a `LexOutput` back to Aozora source text.
 ///
@@ -83,75 +68,40 @@ pub fn serialize(out: &LexOutput<'_>) -> String {
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited
 /// from the lexer's `Span` width contract; in practice unreachable.
 pub fn serialize_into<W: Write>(out: &LexOutput<'_>, writer: &mut W) -> fmt::Result {
-    let normalized = out.normalized;
-    let registry = &out.registry;
-    let bytes = normalized.as_bytes();
-    let mut cursor = 0usize;
+    let mut sink = SerializeSink { out: writer };
+    walk(out, &mut sink)
+}
 
-    // Byte-level PUA sentinel scan — same rationale as `crate::html`.
-    // The four sentinels share the 2-byte UTF-8 prefix `0xEE 0x80`;
-    // a single `memchr(0xEE)` finds candidates at memory-bandwidth
-    // speed and we validate each against the third byte. PUA
-    // collisions in source (Phase 0 records a diagnostic but doesn't
-    // delete them) flow through as plain text via the cursor advance.
-    for cand_pos in memchr_iter(SENTINEL_LEAD_BYTE, bytes) {
-        if cand_pos + 2 >= bytes.len() || bytes[cand_pos + 1] != SENTINEL_MID_BYTE {
-            continue;
-        }
-        let Some(kind) = sentinel_kind_for_tail_byte(bytes[cand_pos + 2]) else {
-            continue;
-        };
+/// [`WalkSink`] that re-emits Aozora source text: plain runs are copied
+/// verbatim (newlines included — [`Self::WANTS_NEWLINES`] is `false`) and
+/// each sentinel is reconstructed through the `emit_*` helpers.
+struct SerializeSink<'w, W: Write> {
+    out: &'w mut W,
+}
 
-        writer.write_str(&normalized[cursor..cand_pos])?;
-        let byte_pos = u32::try_from(cand_pos).expect("normalized fits u32 per Phase 0 cap");
-        // One registry lookup per sentinel hit; the `NodeRef` variant
-        // tells us which sentinel kind landed (and pattern-matching
-        // the `(SentinelKind, NodeRef)` cross-product flags any
-        // mismatch as a no-op rather than rendering the wrong shape).
-        match (
-            kind,
-            registry.node_at(aozora_spec::NormalizedOffset::new(byte_pos)),
-        ) {
-            (SentinelKind::Inline, Some(NodeRef::Inline(node))) => emit_aozora(node, writer)?,
-            (SentinelKind::BlockLeaf, Some(NodeRef::BlockLeaf(node))) => {
-                emit_aozora(node, writer)?;
-            }
-            (SentinelKind::BlockOpen, Some(NodeRef::BlockOpen(kind))) => {
-                emit_container_open(kind, writer)?;
-            }
-            (SentinelKind::BlockClose, Some(NodeRef::BlockClose(kind))) => {
-                emit_container_close(kind, writer)?;
-            }
-            // Sentinel hit without a corresponding registry entry, or
-            // a kind/variant mismatch — pre-Phase-D the per-table
-            // lookups silently dropped these too. Best-effort policy.
-            _ => {}
-        }
-        cursor = cand_pos + 3;
+impl<W: Write> WalkSink for SerializeSink<'_, W> {
+    // Serialization copies `\n` verbatim, so it is not a structural event.
+    const WANTS_NEWLINES: bool = false;
+
+    fn on_text(&mut self, text: &str) -> fmt::Result {
+        self.out.write_str(text)
     }
-    writer.write_str(&normalized[cursor..])
-}
 
-#[derive(Clone, Copy)]
-enum SentinelKind {
-    Inline,
-    BlockLeaf,
-    BlockOpen,
-    BlockClose,
-}
-
-/// Decode the third UTF-8 byte of a PUA-sentinel candidate. Returns
-/// `Some` only for the four well-known sentinels; any other byte is
-/// a collision (plain text that happens to share the prefix) and
-/// falls through to plain copy via the caller's cursor advance.
-#[inline]
-fn sentinel_kind_for_tail_byte(b: u8) -> Option<SentinelKind> {
-    match b {
-        INLINE_SENTINEL_TAIL => Some(SentinelKind::Inline),
-        BLOCK_LEAF_SENTINEL_TAIL => Some(SentinelKind::BlockLeaf),
-        BLOCK_OPEN_SENTINEL_TAIL => Some(SentinelKind::BlockOpen),
-        BLOCK_CLOSE_SENTINEL_TAIL => Some(SentinelKind::BlockClose),
-        _ => None,
+    fn on_node(&mut self, kind: SentinelKind, node: NodeRef<'_>) -> fmt::Result {
+        match (kind, node) {
+            (SentinelKind::Inline, NodeRef::Inline(node))
+            | (SentinelKind::BlockLeaf, NodeRef::BlockLeaf(node)) => emit_aozora(node, self.out),
+            (SentinelKind::BlockOpen, NodeRef::BlockOpen(kind)) => {
+                emit_container_open(kind, self.out)
+            }
+            (SentinelKind::BlockClose, NodeRef::BlockClose(kind)) => {
+                emit_container_close(kind, self.out)
+            }
+            // Sentinel hit without a corresponding registry entry, or a
+            // kind/variant mismatch — best-effort skip (the per-table
+            // lookups silently dropped these too).
+            _ => Ok(()),
+        }
     }
 }
 
