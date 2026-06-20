@@ -22,6 +22,8 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
 
 # mdbook build output
 /crates/afm-book/book/

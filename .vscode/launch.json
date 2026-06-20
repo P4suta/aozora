@@ -1,0 +1,23 @@
+{
+  // Debug the CLI with CodeLLDB (vadimcn.vscode-lldb). Native debugging
+  // needs a Rust toolchain to build the debuggee, which the Docker-first
+  // workflow otherwise does not require — run this inside the Dev
+  // Container (the image ships rust + lldb), or install a host toolchain.
+  // The canonical build path stays `just` / Docker.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug aozora-cli",
+      "cargo": {
+        "args": ["build", "--package=aozora-cli"],
+        "filter": { "name": "aozora", "kind": "bin" }
+      },
+      // Add CLI arguments here, e.g. ["check", "file.txt"] or
+      // ["render", "-"]. Left empty so a bare launch prints --help.
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}
