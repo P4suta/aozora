@@ -29,6 +29,7 @@ says so — e.g. *run with `just example walk_ast`*.
 | Convert to EPUB / LaTeX / DOCX                        | [EPUB via Pandoc](epub-pandoc.md)                 |
 | Check that a file is already canonical                | [Round-trip & fmt --check](round-trip.md)         |
 | Call aozora from Go / Java / Python / JS              | [Call from another language](polyglot.md)         |
+| Check or render a whole directory of files            | [Batch many files](batch.md)                      |
 
 ## The example programs
 
