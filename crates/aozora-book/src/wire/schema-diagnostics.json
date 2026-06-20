@@ -47,6 +47,7 @@
           "source",
           "span"
         ],
+        "description": "One `diagnostics` envelope entry — a projected [`Diagnostic`].",
         "title": "DiagnosticWire"
       }
     }
@@ -69,7 +70,8 @@
       "required": [
         "start",
         "end"
-      ]
+      ],
+      "description": "One half-open `[start, end)` byte span in a wire envelope."
     }
   }
 }

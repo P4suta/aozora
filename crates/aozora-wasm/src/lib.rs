@@ -115,16 +115,6 @@ pub mod bindings {
             .map_or(0.0, |p| p.now())
     }
 
-    /// Parse a `{ schemaVersion, data }` wire envelope and return its
-    /// `data` array as a JS value. The structured accessors return this;
-    /// the `*Json` methods return the raw envelope string instead.
-    fn parsed_data(envelope: &str) -> Result<JsValue, JsValue> {
-        let v: serde_json::Value =
-            serde_json::from_str(envelope).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        serde_wasm_bindgen::to_value(v.get("data").unwrap_or(&serde_json::Value::Null))
-            .map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-
     /// JS-facing handle to a parsed Aozora document.
     ///
     /// Wraps an [`aozora::Document`] (which owns both the source and
@@ -335,60 +325,64 @@ pub mod bindings {
         ///
         /// # Errors
         ///
-        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
-        /// or its `data` payload cannot be converted to a JS value — neither
-        /// occurs for a well-formed parse.
+        /// Returns `Err(JsValue)` if `serde-wasm-bindgen` cannot convert the
+        /// node records to a JS value — not expected for a well-formed parse.
         #[wasm_bindgen(js_name = nodes)]
         pub fn nodes(&self) -> Result<JsValue, JsValue> {
-            parsed_data(&json::nodes(&self.inner.parse()))
+            serde_wasm_bindgen::to_value(&json::node_entries(&self.inner.parse()))
+                .map_err(|e| JsValue::from_str(&e.to_string()))
         }
 
         /// Matched open/close pairs as parsed JS objects.
         ///
         /// # Errors
         ///
-        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
-        /// or its `data` payload cannot be converted to a JS value — neither
-        /// occurs for a well-formed parse.
+        /// Returns `Err(JsValue)` if `serde-wasm-bindgen` cannot convert the
+        /// pair records to a JS value — not expected for a well-formed parse.
         #[wasm_bindgen(js_name = pairs)]
         pub fn pairs(&self) -> Result<JsValue, JsValue> {
-            parsed_data(&json::pairs(&self.inner.parse()))
+            serde_wasm_bindgen::to_value(&json::pair_entries(&self.inner.parse()))
+                .map_err(|e| JsValue::from_str(&e.to_string()))
         }
 
         /// Container open/close pairs as parsed JS objects.
         ///
         /// # Errors
         ///
-        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
-        /// or its `data` payload cannot be converted to a JS value — neither
-        /// occurs for a well-formed parse.
+        /// Returns `Err(JsValue)` if `serde-wasm-bindgen` cannot convert the
+        /// container-pair records to a JS value — not expected for a
+        /// well-formed parse.
         #[wasm_bindgen(js_name = containerPairs)]
         pub fn container_pairs(&self) -> Result<JsValue, JsValue> {
-            parsed_data(&json::container_pairs(&self.inner.parse()))
+            serde_wasm_bindgen::to_value(&json::container_pair_entries(&self.inner.parse()))
+                .map_err(|e| JsValue::from_str(&e.to_string()))
         }
 
         /// Diagnostics as parsed JS objects.
         ///
         /// # Errors
         ///
-        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
-        /// or its `data` payload cannot be converted to a JS value — neither
-        /// occurs for a well-formed parse.
+        /// Returns `Err(JsValue)` if `serde-wasm-bindgen` cannot convert the
+        /// diagnostic records to a JS value — not expected for a well-formed
+        /// parse.
         #[wasm_bindgen(js_name = diagnostics)]
         pub fn diagnostics(&self) -> Result<JsValue, JsValue> {
-            parsed_data(&json::diagnostics(self.inner.parse().diagnostics()))
+            serde_wasm_bindgen::to_value(&json::diagnostic_entries(
+                self.inner.parse().diagnostics(),
+            ))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
         }
 
         /// Gaiji resolutions as parsed JS objects.
         ///
         /// # Errors
         ///
-        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
-        /// or its `data` payload cannot be converted to a JS value — neither
-        /// occurs for a well-formed parse.
+        /// Returns `Err(JsValue)` if `serde-wasm-bindgen` cannot convert the
+        /// gaiji records to a JS value — not expected for a well-formed parse.
         #[wasm_bindgen(js_name = gaiji)]
         pub fn gaiji(&self) -> Result<JsValue, JsValue> {
-            parsed_data(&json::gaiji(self.inner.source()))
+            serde_wasm_bindgen::to_value(&json::gaiji_entries(self.inner.source()))
+                .map_err(|e| JsValue::from_str(&e.to_string()))
         }
     }
 }

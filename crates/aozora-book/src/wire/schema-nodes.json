@@ -31,6 +31,7 @@
           "kind",
           "span"
         ],
+        "description": "One `nodes` envelope entry — a classified node span in source coords.",
         "title": "NodeWire"
       }
     }
@@ -53,7 +54,8 @@
       "required": [
         "start",
         "end"
-      ]
+      ],
+      "description": "One half-open `[start, end)` byte span in a wire envelope."
     }
   }
 }

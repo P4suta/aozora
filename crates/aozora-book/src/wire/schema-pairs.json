@@ -35,6 +35,7 @@
           "open",
           "close"
         ],
+        "description": "One `pairs` envelope entry — a matched bracket pair.",
         "title": "PairWire"
       }
     }
@@ -57,7 +58,8 @@
       "required": [
         "start",
         "end"
-      ]
+      ],
+      "description": "One half-open `[start, end)` byte span in a wire envelope."
     }
   }
 }

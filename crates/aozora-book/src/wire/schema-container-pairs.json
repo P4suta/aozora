@@ -35,6 +35,7 @@
           "open",
           "close"
         ],
+        "description": "One `container_pairs` envelope entry — a paired container, open/close\nin normalized coordinates.",
         "title": "ContainerPairWire"
       }
     }
@@ -51,7 +52,8 @@
       },
       "required": [
         "offset"
-      ]
+      ],
+      "description": "A single byte offset (a `container_pairs` open/close in normalized\ncoordinates)."
     }
   }
 }

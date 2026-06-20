@@ -48,8 +48,15 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// Empty input → `{"schemaVersion":1,"data":[]}`.
 #[must_use]
 pub fn diagnostics(diagnostics: &[Diagnostic]) -> String {
-    let entries: Vec<DiagnosticWire> = diagnostics.iter().map(DiagnosticWire::from).collect();
-    serialize_envelope(&entries)
+    serialize_envelope(&diagnostic_entries(diagnostics))
+}
+
+/// The structured `DiagnosticWire` records that back `diagnostics()` —
+/// prefer this to re-parsing the JSON when a caller needs the values
+/// directly (e.g. a Wasm binding building JS objects).
+#[must_use]
+pub fn diagnostic_entries(diagnostics: &[Diagnostic]) -> Vec<DiagnosticWire> {
+    diagnostics.iter().map(DiagnosticWire::from).collect()
 }
 
 /// Project an [`Tree`]'s source-keyed node side-table into a
@@ -60,15 +67,20 @@ pub fn diagnostics(diagnostics: &[Diagnostic]) -> String {
 /// `{"schemaVersion":1,"data":[]}`.
 #[must_use]
 pub fn nodes(tree: &Tree<'_>) -> String {
-    let entries: Vec<NodeWire> = tree
-        .source_nodes()
+    serialize_envelope(&node_entries(tree))
+}
+
+/// The structured `NodeWire` records that back `nodes()` — prefer this to
+/// re-parsing the JSON when a caller needs the values directly.
+#[must_use]
+pub fn node_entries(tree: &Tree<'_>) -> Vec<NodeWire> {
+    tree.source_nodes()
         .iter()
         .map(|sn| NodeWire {
             kind: sn.node.kind().as_wire_tag(),
             span: sn.source_span.into(),
         })
-        .collect();
-    serialize_envelope(&entries)
+        .collect()
 }
 
 /// Project an [`Tree`]'s pair table into a
@@ -84,16 +96,21 @@ pub fn nodes(tree: &Tree<'_>) -> String {
 /// Empty parse → `{"schemaVersion":1,"data":[]}`.
 #[must_use]
 pub fn pairs(tree: &Tree<'_>) -> String {
-    let entries: Vec<PairWire> = tree
-        .pairs()
+    serialize_envelope(&pair_entries(tree))
+}
+
+/// The structured `PairWire` records that back `pairs()` — prefer this to
+/// re-parsing the JSON when a caller needs the values directly.
+#[must_use]
+pub fn pair_entries(tree: &Tree<'_>) -> Vec<PairWire> {
+    tree.pairs()
         .iter()
         .map(|link| PairWire {
             kind: link.kind.as_wire_tag(),
             open: link.open.into(),
             close: link.close.into(),
         })
-        .collect();
-    serialize_envelope(&entries)
+        .collect()
 }
 
 /// Project an [`Tree`]'s container open/close pair table into a
@@ -113,8 +130,15 @@ pub fn pairs(tree: &Tree<'_>) -> String {
 /// Empty parse → `{"schemaVersion":1,"data":[]}`.
 #[must_use]
 pub fn container_pairs(tree: &Tree<'_>) -> String {
-    let entries: Vec<ContainerPairWire> = tree
-        .container_pairs()
+    serialize_envelope(&container_pair_entries(tree))
+}
+
+/// The structured `ContainerPairWire` records that back
+/// `container_pairs()` — prefer this to re-parsing the JSON when a caller
+/// needs the values directly.
+#[must_use]
+pub fn container_pair_entries(tree: &Tree<'_>) -> Vec<ContainerPairWire> {
+    tree.container_pairs()
         .iter()
         .map(|pair| ContainerPairWire {
             kind: pair.kind.as_wire_tag(),
@@ -125,8 +149,7 @@ pub fn container_pairs(tree: &Tree<'_>) -> String {
                 offset: pair.close.get(),
             },
         })
-        .collect();
-    serialize_envelope(&entries)
+        .collect()
 }
 
 /// Project the canonical slug catalogue ([`crate::SLUGS`]) into a
@@ -141,7 +164,14 @@ pub fn container_pairs(tree: &Tree<'_>) -> String {
 /// both call this).
 #[must_use]
 pub fn slugs() -> String {
-    let entries: Vec<SlugWire> = crate::SLUGS
+    serialize_envelope(&slug_entries())
+}
+
+/// The structured `SlugWire` records that back `slugs()` — prefer this to
+/// re-parsing the JSON when a caller needs the catalogue directly.
+#[must_use]
+pub fn slug_entries() -> Vec<SlugWire> {
+    crate::SLUGS
         .iter()
         .map(|s| SlugWire {
             canonical: s.canonical,
@@ -150,8 +180,7 @@ pub fn slugs() -> String {
             doc: s.doc,
             partner: s.partner,
         })
-        .collect();
-    serialize_envelope(&entries)
+        .collect()
 }
 
 /// Project resolved `※［＃…］` gaiji references from `source` into a
@@ -169,11 +198,18 @@ pub fn slugs() -> String {
 /// Empty / gaiji-free source → `{"schemaVersion":1,"data":[]}`.
 #[must_use]
 pub fn gaiji(source: &str) -> String {
-    let entries: Vec<GaijiResolutionWire> = gaiji_resolutions(source)
+    serialize_envelope(&gaiji_entries(source))
+}
+
+/// The structured `GaijiResolutionWire` records that back `gaiji()` —
+/// prefer this to re-parsing the JSON when a caller needs the values
+/// directly.
+#[must_use]
+pub fn gaiji_entries(source: &str) -> Vec<GaijiResolutionWire> {
+    gaiji_resolutions(source)
         .into_iter()
         .map(Into::into)
-        .collect();
-    serialize_envelope(&entries)
+        .collect()
 }
 
 /// Resolve the gaiji reference at `byte_offset` (cursor-local).
@@ -323,9 +359,10 @@ fn serialize_envelope<T: Serialize>(data: &[T]) -> String {
         .unwrap_or_else(|_| format!(r#"{{"schemaVersion":{SCHEMA_VERSION},"data":[]}}"#))
 }
 
-#[derive(Serialize)]
+/// One half-open `[start, end)` byte span in a wire envelope.
+#[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-struct SpanWire {
+pub struct SpanWire {
     start: u32,
     end: u32,
 }
@@ -339,9 +376,10 @@ impl From<Span> for SpanWire {
     }
 }
 
-#[derive(Serialize)]
+/// One `diagnostics` envelope entry — a projected [`Diagnostic`].
+#[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-struct DiagnosticWire {
+pub struct DiagnosticWire {
     kind: &'static str,
     severity: &'static str,
     source: &'static str,
@@ -400,38 +438,45 @@ const fn source_str(s: DiagnosticSource) -> &'static str {
     }
 }
 
-#[derive(Serialize)]
+/// One `nodes` envelope entry — a classified node span in source coords.
+#[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-struct NodeWire {
+pub struct NodeWire {
     kind: &'static str,
     span: SpanWire,
 }
 
-#[derive(Serialize)]
+/// One `pairs` envelope entry — a matched bracket pair.
+#[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-struct PairWire {
+pub struct PairWire {
     kind: &'static str,
     open: SpanWire,
     close: SpanWire,
 }
 
-#[derive(Serialize)]
+/// One `container_pairs` envelope entry — a paired container, open/close
+/// in normalized coordinates.
+#[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-struct ContainerPairWire {
+pub struct ContainerPairWire {
     kind: &'static str,
     open: OffsetWire,
     close: OffsetWire,
 }
 
-#[derive(Serialize)]
+/// A single byte offset (a `container_pairs` open/close in normalized
+/// coordinates).
+#[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-struct OffsetWire {
+pub struct OffsetWire {
     offset: u32,
 }
 
-#[derive(Serialize)]
+/// One `slugs` envelope entry — a row of the annotation slug catalogue.
+#[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-struct SlugWire {
+pub struct SlugWire {
     canonical: &'static str,
     family: &'static str,
     accepts_param: bool,
@@ -441,20 +486,23 @@ struct SlugWire {
     partner: Option<&'static str>,
 }
 
-/// Source-byte span carried by [`GaijiResolutionWire`]. Distinct from
-/// [`SpanWire`] (whose `u32` fields cover sanitized-source spans): gaiji
-/// offsets are raw `usize` byte positions into the original source, kept
-/// as-is to stay byte-identical to the prior aozora-wasm projection.
-#[derive(Serialize)]
+/// Source-byte span carried by [`GaijiResolutionWire`].
+///
+/// Distinct from [`SpanWire`] (whose `u32` fields cover sanitized-source
+/// spans): gaiji offsets are raw `usize` byte positions into the original
+/// source, kept as-is to stay byte-identical to the prior aozora-wasm
+/// projection.
+#[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-struct ByteSpanWire {
+pub struct ByteSpanWire {
     start: usize,
     end: usize,
 }
 
-#[derive(Serialize)]
+/// One `gaiji` envelope entry — a resolved `※［＃…］` reference.
+#[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-struct GaijiResolutionWire {
+pub struct GaijiResolutionWire {
     span: ByteSpanWire,
     description: String,
     // Nulls (not skipped) so the shape is fixed across entries.
