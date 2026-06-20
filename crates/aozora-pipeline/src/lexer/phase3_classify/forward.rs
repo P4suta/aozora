@@ -879,6 +879,52 @@ fn forward_target_is_preceded(
     source[..cutoff as usize].contains(target)
 }
 
+/// Ruby-tolerant variant of [`forward_target_is_preceded`], for the heading
+/// hint gate only. Tests whether `target` occurs in the look-back source
+/// `source[..cutoff]` once ruby readings (`《…》`) and explicit-base `｜`
+/// markers are stripped.
+///
+/// A heading whose quoted target is the ruby-*stripped* form of a preceding
+/// run — `○　両頭《りやうとう》の蛇《へび》［＃「○　両頭の蛇」は中見出し］` — is not
+/// a contiguous source substring, so the exact gate misses it (the AC index
+/// misses it too, recording such a target at its own directive quote past
+/// `cutoff`). Stripping is done over the raw source rather than the event
+/// stream because the recogniser's [`BodyView`] is scoped to the bracket body
+/// and does not carry the preceding run's ruby events. Headings are rare, so
+/// the per-call `String` is immaterial.
+///
+/// Heading-only: bouten / emphasis / left-ruby pull their styled span back
+/// over the literal predecessor (`find_immediate_predecessor_target_position`)
+/// and must not see a ruby-stripped match, so they keep the exact gate.
+fn forward_heading_target_is_preceded_ruby_stripped(
+    view: BodyView<'_>,
+    source: &str,
+    open_idx: usize,
+    target: &str,
+) -> bool {
+    let Some(&PairEvent::PairOpen { span, .. }) = view.events.get(open_idx) else {
+        return false;
+    };
+    let prefix = &source[..span.start as usize];
+
+    // Drop every `《reading》` span and explicit-base `｜`. A `《` with no
+    // closing `》` leaves `in_ruby` set, dropping the tail — a ruby-less real
+    // heading is unaffected, and an unmatched `《` only suppresses a match
+    // (never invents one), so the gate stays conservative.
+    let mut stripped = String::with_capacity(prefix.len());
+    let mut in_ruby = false;
+    for ch in prefix.chars() {
+        match ch {
+            '《' => in_ruby = true,
+            '》' => in_ruby = false,
+            '｜' => {}
+            _ if in_ruby => {}
+            _ => stripped.push(ch),
+        }
+    }
+    stripped.contains(target)
+}
+
 /// Like [`forward_target_is_preceded`] but stricter: returns the byte
 /// position where `target` begins **only if** that target's end butts
 /// directly against the `［` event at `open_idx`. Used by the
@@ -1041,14 +1087,24 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let (style, kind) = parse_heading_keyword(rest)?;
 
         // Reject hints whose targets are not preceded by matching text.
-        // See `classify_forward_bouten` for the same rationale.
+        // See `classify_forward_bouten` for the same rationale. Exact
+        // look-back first (cheap; uses the AC index when installed); on a
+        // miss, retry against a ruby-stripped copy of the look-back, since a
+        // heading title carrying ruby (`両頭《りやうとう》`) has its
+        // ruby-stripped target (`両頭`) quoted in the directive and so is not
+        // a contiguous source substring.
         for target in &extracted.targets {
             if target.is_empty() {
                 continue;
             }
-            if !forward_target_is_preceded(view.events, self.source, open_idx, target) {
-                return None;
+            if forward_target_is_preceded(view.events, self.source, open_idx, target) {
+                continue;
             }
+            if forward_heading_target_is_preceded_ruby_stripped(view, self.source, open_idx, target)
+            {
+                continue;
+            }
+            return None;
         }
 
         let &PairEvent::PairOpen {
