@@ -1028,7 +1028,7 @@ mod tests {
         let mut alloc = BorrowedAllocator::new(&arena);
         let base = alloc.content_plain("底本");
         let note = alloc.content_plain("注記");
-        let n = alloc.side_note(base, note);
+        let n = alloc.side_note(aozora_syntax::SideNoteKind::Annotation, base, note);
         assert_eq!(
             render_node_to_string(n),
             r#"<ruby>底本<rp>(</rp><rt class="aozora-sidenote">注記</rt><rp>)</rp></ruby>"#

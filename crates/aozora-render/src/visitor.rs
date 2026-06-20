@@ -369,7 +369,7 @@ mod tests {
     fn dispatch_every_variant_into(recorder: &mut Recorder) {
         use aozora_syntax::{
             AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-            ContainerKind,
+            ContainerKind, SideNoteKind,
         };
 
         let arena = Arena::new();
@@ -381,7 +381,7 @@ mod tests {
 
         let nbase = a.content_plain("底");
         let note = a.content_plain("注");
-        let side_note = a.side_note(nbase, note);
+        let side_note = a.side_note(SideNoteKind::Annotation, nbase, note);
 
         let btarget = a.content_plain("点");
         let bouten = a.bouten(BoutenKind::Goma, btarget, BoutenPosition::Right, false);

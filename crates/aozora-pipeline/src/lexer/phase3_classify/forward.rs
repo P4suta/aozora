@@ -2,7 +2,7 @@
 //!
 //! The `recognize_annotation` cascade and the per-construct
 //! forward-reference recognisers (bouten, 縦中横, heading, emphasis,
-//! left-ruby / left-annotation, caption-figure) plus the source-scanned
+//! left-ruby / side-note, caption-figure) plus the source-scanned
 //! `FORWARD_TARGET_INDEX` that answers "does this target appear earlier
 //! in the source?". These need the Phase 2 event stream, unlike the
 //! body-keyword `directive` classifier. Extracted verbatim from the
@@ -18,7 +18,9 @@ use std::collections::HashMap;
 use aozora_spec::Diagnostic;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
-use aozora_syntax::{AnnotationKind, AozoraHeadingKind, BoutenPosition, EmphasisKind, Span};
+use aozora_syntax::{
+    AnnotationKind, AozoraHeadingKind, BoutenPosition, EmphasisKind, SideNoteKind, Span,
+};
 
 use super::super::phase2_pair::{PairEvent, PairKind};
 use super::super::token::TriggerKind;
@@ -196,7 +198,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     /// 2. bouten (single) — `「X」に<kind>`
     /// 3. bouten (range) — `「X」～「Y」に<kind>`
     /// 4. left-ruby — `「X」の左に「Y」のルビ`
-    /// 5. left-annotation — `「X」の左に「Y」の注記`
+    /// 5. side-note — `「X」の左に「Y」の注記` / `「X」に「Y」の傍記`
     /// 6. 縦中横 — `「X」は縦中横`
     /// 7. heading — `「X」は…見出し`
     /// 8. emphasis — `「X」は太字` / `斜体`
@@ -211,7 +213,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     /// leaves the output unchanged. These are deliberately *not* pinned
     /// by dedicated order tests (such a test would be vacuous):
     ///
-    /// * bouten vs left-ruby vs left-annotation — `のルビ` and `の注記`
+    /// * bouten vs left-ruby vs side-note — `のルビ`, `の注記`, and `の傍記`
     ///   are not bouten kinds, so each declines before the next is tried.
     /// * 縦中横 / heading / emphasis — `縦中横`, `…見出し`, and
     ///   `太字`/`斜体` are mutually exclusive after the shared `は`
@@ -350,11 +352,12 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 pending_diagnostic: None,
             });
         }
-        // `「X」の左に「Y」の注記` — left-side annotation (注記). The `の注記`
-        // keyword is disjoint from `のルビ` and every bouten kind, so the
-        // bouten and left-ruby classifiers above have already declined.
+        // `「X」…の注記` / `「X」に「Y」の傍記` — side annotation (注記 / 傍記).
+        // The `の注記` / `の傍記` keywords are disjoint from `のルビ` and every
+        // bouten kind, so the bouten and left-ruby classifiers above have
+        // already declined.
         if let Some((node, consume_start)) =
-            self.classify_forward_left_annotation(view, open_idx, close_idx)
+            self.classify_forward_side_note(view, open_idx, close_idx)
         {
             return Some(AnnotationMatch {
                 emit: EmitKind::Aozora(node),
@@ -1125,15 +1128,20 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     }
 }
 
-/// Classify a `「X」の左に「Y」の注記` forward-reference **left-side
-/// annotation** (注記). The structural twin of
-/// [`Self::classify_forward_left_ruby`] — same single-target pull-back — but
-/// the `の注記` keyword selects a distinct [`borrowed::AozoraNode::SideNote`]
-/// node, so it round-trips to `の注記`, not `のルビ`. The `の左に「…」の注記`
-/// suffix is unique, so the left-side bouten / left-ruby classifiers above
-/// have already declined.
+/// Classify a forward-reference **side annotation** — 注記 or 傍記. The
+/// structural twin of [`Self::classify_forward_left_ruby`] (same
+/// single-target pull-back), but the trailing keyword selects a distinct
+/// [`borrowed::AozoraNode::SideNote`] node and flavour:
+/// - `「X」の左に「Y」の注記` / bare `「X」に「Y」の注記` →
+///   [`SideNoteKind::Annotation`] (editorial gloss; round-trips `の注記`).
+/// - `「X」に「Y」の傍記` → [`SideNoteKind::Marginal`] (the censorship-marker
+///   form; round-trips bare `に…の傍記`).
+///
+/// The `の注記` / `の傍記` suffixes are disjoint from `のルビ` and every
+/// bouten kind, so the bouten and left-ruby classifiers above have already
+/// declined.
 impl<'a> RecogniseCtx<'_, 'a, '_> {
-    fn classify_forward_left_annotation(
+    fn classify_forward_side_note(
         &mut self,
         view: BodyView<'_>,
         open_idx: usize,
@@ -1143,15 +1151,21 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let [target] = extracted.targets.as_slice() else {
             return None;
         };
-        // suffix == の左に「<note>」の注記  (explicit left side), or the
-        // bare 「X」に「<note>」の注記 form (the corpus's dominant shape).
-        // Both carry a note attached to the target; `SideNote` has no side
-        // axis, so they map to the same node. `の左に「` is tried first; the
-        // two prefixes are disjoint at offset 0 (`の` vs `に`).
-        let inner = extracted.suffix.strip_suffix("」の注記")?;
-        let note_text = inner
-            .strip_prefix("の左に「")
-            .or_else(|| inner.strip_prefix("に「"))?;
+        // Pick the flavour by trailing keyword, then the note text:
+        //   注記: explicit `の左に「Y」の注記` or bare `に「Y」の注記` — both map
+        //         to the same node (`SideNote` has no side axis).
+        //   傍記: bare `に「Y」の傍記` only (the corpus's sole 傍記 shape; an
+        //         unattested `の左に…の傍記` would be ambiguous to round-trip).
+        let (kind, note_text) = if let Some(inner) = extracted.suffix.strip_suffix("」の注記") {
+            let note = inner
+                .strip_prefix("の左に「")
+                .or_else(|| inner.strip_prefix("に「"))?;
+            (SideNoteKind::Annotation, note)
+        } else if let Some(inner) = extracted.suffix.strip_suffix("」の傍記") {
+            (SideNoteKind::Marginal, inner.strip_prefix("に「")?)
+        } else {
+            return None;
+        };
         if note_text.is_empty() {
             return None;
         }
@@ -1169,7 +1183,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 .unwrap_or(open_span.start);
         let base = self.alloc.content_plain(target);
         let note = self.alloc.content_plain(note_text);
-        Some((self.alloc.side_note(base, note), consume_start))
+        Some((self.alloc.side_note(kind, base, note), consume_start))
     }
 
     /// Classify a `「caption」のキャプション付きの(図|挿絵)（file）入る`

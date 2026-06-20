@@ -19,7 +19,7 @@ use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{AozoraNode, Arena};
 use aozora_syntax::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Center, Container, ContainerKind, Indent, Keigakomi, SectionKind,
+    Center, Container, ContainerKind, Indent, Keigakomi, SectionKind, SideNoteKind,
 };
 
 fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a>> {
@@ -32,7 +32,9 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a
 
     vec![
         alloc.ruby(base, reading, true),
-        alloc.side_note(base, reading),
+        // Both SideNote flavours — pin each kind's Debug shape.
+        alloc.side_note(SideNoteKind::Annotation, base, reading),
+        alloc.side_note(SideNoteKind::Marginal, base, reading),
         alloc.bouten(BoutenKind::Goma, base, BoutenPosition::Right, false),
         alloc.tate_chu_yoko(base, false),
         alloc.gaiji(g),

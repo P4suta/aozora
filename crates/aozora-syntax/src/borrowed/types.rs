@@ -17,7 +17,7 @@ use aozora_encoding::gaiji::Resolved;
 
 use crate::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Center, Container, EmphasisKind, Indent, Keigakomi, RubySide, SectionKind,
+    Center, Container, EmphasisKind, Indent, Keigakomi, RubySide, SectionKind, SideNoteKind,
 };
 
 // ----------------------------------------------------------------------
@@ -186,15 +186,23 @@ pub struct Ruby<'src> {
     pub side: RubySide,
 }
 
-/// Left-side annotation (注記).
+/// Side annotation — 注記 or 傍記 (selected by [`kind`](Self::kind)).
 ///
-/// `［＃「base」の左に「note」の注記］` — a left-side editorial gloss attached
-/// to `base`. Like a left-side ruby in placement, but a *note* (注記) rather
-/// than a phonetic reading, so it is a distinct node and round-trips to
-/// `の注記`, not `のルビ`. Both `base` and `note` are [`super::NonEmpty`]:
-/// Phase 3 emits the node only once both have content.
+/// A `note` attached to a preceding `base` run via a forward reference.
+/// Like a left-side ruby in placement, but a *note* rather than a phonetic
+/// reading, so it is a distinct node that round-trips to its own keyword
+/// (not `のルビ`):
+/// - [`SideNoteKind::Annotation`] — `［＃「base」の左に「note」の注記］`, an
+///   editorial gloss.
+/// - [`SideNoteKind::Marginal`] — `［＃「base」に「note」の傍記］`, a redaction
+///   marker (典型的に ×) written beside `base`.
+///
+/// Both `base` and `note` are [`super::NonEmpty`]: Phase 3 emits the node
+/// only once both have content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SideNote<'src> {
+    /// 注記 vs 傍記 — preserved for faithful round-trip; both render alike.
+    pub kind: SideNoteKind,
     pub base: super::NonEmpty<Content<'src>>,
     pub note: super::NonEmpty<Content<'src>>,
 }

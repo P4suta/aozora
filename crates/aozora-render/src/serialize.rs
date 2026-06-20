@@ -205,15 +205,17 @@ fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
 }
 
 fn emit_side_note<W: Write>(s: &SideNote<'_>, out: &mut W) -> fmt::Result {
-    // Reconstruct `base［＃「base」の左に「note」の注記］`; the base is the
+    // Reconstruct `base［＃「base{connector}note{suffix}`; the base is the
     // pulled-back predecessor, so it precedes the directive (mirrors the
-    // left-side ruby round-trip in `emit_ruby`).
+    // left-side ruby round-trip in `emit_ruby`). The connector + keyword
+    // depend on the flavour (注記 vs 傍記) — see `SideNoteKind::serialize_affixes`.
+    let (connector, suffix) = s.kind.serialize_affixes();
     emit_content(s.base.get(), out)?;
     out.write_str("［＃「")?;
     emit_content(s.base.get(), out)?;
-    out.write_str("」の左に「")?;
+    out.write_str(connector)?;
     emit_content(s.note.get(), out)?;
-    out.write_str("」の注記］")
+    out.write_str(suffix)
 }
 
 fn emit_bouten<W: Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {
@@ -800,6 +802,16 @@ mod tests {
         assert_eq!(
             ser("底本「青空」［＃「青空」の左に「注記」の注記］"),
             "底本「青空」青空［＃「青空」の左に「注記」の注記］"
+        );
+    }
+
+    #[test]
+    fn boki_reconstructs_forward_directive() {
+        // 傍記 keeps the bare `に` (no 左) and its own keyword; the target
+        // is the immediate predecessor, so the round-trip is byte-identical.
+        assert_eq!(
+            ser("資本主義の一般的危機［＃「危機」に「×」の傍記］"),
+            "資本主義の一般的危機［＃「危機」に「×」の傍記］"
         );
     }
 
