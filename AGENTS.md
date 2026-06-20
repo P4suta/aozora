@@ -1,8 +1,11 @@
 # AGENTS.md — machine contract for automation
 
 This is the terse, machine-facing contract for agents and CI driving the
-aozora repo. The prose guide for humans (and the architecture, the DO-NOTs,
-the workspace map) lives in [`CLAUDE.md`](CLAUDE.md) — read that first;
+aozora repo. The prose guide for humans — the architecture and the
+workspace map — lives in the handbook under `crates/aozora-book/`
+(published at <https://p4suta.github.io/aozora/>); start with the
+Architecture chapters [Pipeline overview](crates/aozora-book/src/arch/pipeline.md)
+and [Crate map](crates/aozora-book/src/arch/crates.md) — read those first;
 this file only pins the commands, outputs, and exit codes you can rely on.
 
 ## Execution surface
@@ -83,7 +86,9 @@ them up; that is not output.)
 
 ## See also
 
-- [`CLAUDE.md`](CLAUDE.md) — architecture, workspace crates, hard
-  guarantees, DO-NOTs.
+- [Pipeline overview](crates/aozora-book/src/arch/pipeline.md) and
+  [Crate map](crates/aozora-book/src/arch/crates.md) — architecture and
+  the workspace crate map (handbook, `crates/aozora-book/`).
+- [`README.md`](README.md) — project overview and quickstart.
 - `docs/adr/` — the decision records (e.g. ADR-0007 parallel pre-push,
   ADR-0008 diagnostic rendering & this output contract).
