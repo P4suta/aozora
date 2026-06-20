@@ -72,7 +72,7 @@ page, with grammar `angle-quote = ANGLE-OPEN angle-content ANGLE-CLOSE`
 - The lexer is simpler: the bespoke `《《`/`》》` merge and the §5.1
   longest-match consequence both disappear.
 - afm (the downstream Markdown superset) is non-breaking: it matches
-  `AozoraNode` through `#[non_exhaustive]` with a `_` arm and never named
+  `Node` through `#[non_exhaustive]` with a `_` arm and never named
   the old variant directly.
 - The specification is the enforced master: the `angle_quote` vector is
   vendored into `spec-vectors/` and held by the `just conformance` gate, so

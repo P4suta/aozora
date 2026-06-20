@@ -8,11 +8,11 @@
   },
   "source": "text［＃任意のメモ］more\n",
   "expected": {
-    "html": "<p>text<span class=\"aozora-annotation\" hidden>［＃任意のメモ］</span>more</p>\n",
+    "html": "<p>text<span class=\"aozora-directive\" hidden>［＃任意のメモ］</span>more</p>\n",
     "serialize": "text［＃任意のメモ］more\n",
     "nodes": [
       {
-        "kind": "annotation",
+        "kind": "directive",
         "span": {
           "start": 4,
           "end": 28

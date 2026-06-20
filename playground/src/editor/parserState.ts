@@ -22,27 +22,27 @@ export interface HeadingEntry {
   level: number;
 }
 
-/** A `nodes_json` entry, post-parse. Spans are UTF-8 byte offsets. */
+/** A `nodesJson` entry, post-parse. Spans are UTF-8 byte offsets. */
 export interface NodeEntry {
   kind: string;
   span: { start: number; end: number };
 }
 
-/** A `diagnostics_json` entry. */
+/** A `diagnosticsJson` entry. */
 export interface DiagnosticEntry {
   kind: string;
   span: { start: number; end: number };
   codepoint?: number;
 }
 
-/** A `pairs_json` entry — matched open/close bracket pair. */
+/** A `pairsJson` entry — matched open/close bracket pair. */
 export interface PairEntry {
   kind: string;
   open: { start: number; end: number };
   close: { start: number; end: number };
 }
 
-/** A `gaiji_resolutions_json` entry. */
+/** A `gaijiJson` entry. */
 export interface GaijiResolutionEntry {
   span: { start: number; end: number };
   description: string;
@@ -51,7 +51,7 @@ export interface GaijiResolutionEntry {
   resolved: string | null;
 }
 
-/** One row of `profile_json`. */
+/** One row of `profileJson`. */
 export interface ProfilePhaseEntry {
   name: string;
   duration_ms: number;
@@ -82,11 +82,11 @@ export interface ParserState {
   containerFolds: ContainerFold[];
   /** Heading entries for the outline panel, in source order. */
   headings: HeadingEntry[];
-  /** Per-method profile (parse / to_html / serialize / each *_json). */
+  /** Per-method profile (parse / toHtml / serialize / each *_json). */
   profile: ProfilePhaseEntry[];
 }
 
-const EMPTY_ENVELOPE = '{"schema_version":1,"data":[]}';
+const EMPTY_ENVELOPE = '{"schemaVersion":1,"data":[]}';
 
 const EMPTY_PARSER_STATE: ParserState = {
   doc: null,
@@ -274,14 +274,14 @@ function computeParserState(prev: ParserState | null, source: string): ParserSta
   }
   const t0 = performance.now();
   const doc = new Document(source);
-  const html = doc.to_html();
+  const html = doc.toHtml();
   const parseDurationMs = performance.now() - t0;
-  const serialized = doc.serialize();
-  const nodesJson = doc.nodes_json();
-  const diagJson = doc.diagnostics_json();
-  const pairsJson = doc.pairs_json();
-  const gaijiResJson = doc.gaiji_resolutions_json();
-  const byteLen = doc.source_byte_len();
+  const serialized = doc.toSource();
+  const nodesJson = doc.nodesJson();
+  const diagJson = doc.diagnosticsJson();
+  const pairsJson = doc.pairsJson();
+  const gaijiResJson = doc.gaijiJson();
+  const byteLen = doc.sourceByteLen();
   const tables = buildOffsetTables(source);
 
   // Single source of truth for parsed JSON — every CM6 extension
@@ -293,11 +293,11 @@ function computeParserState(prev: ParserState | null, source: string): ParserSta
   const pairs = safeParseData<PairEntry>(pairsJson);
   const gaijiResolutions = safeParseData<GaijiResolutionEntry>(gaijiResJson);
 
-  // profile_json invokes each method again to time it independently;
+  // profileJson invokes each method again to time it independently;
   // this roughly doubles parse cost but the badge popover wants
   // numbers that aren't contaminated by JS<>WASM bridge overhead.
   // For documents up to a few MB this is invisible UX-wise.
-  const profile = safeParseData<ProfilePhaseEntry>(doc.profile_json());
+  const profile = safeParseData<ProfilePhaseEntry>(doc.profileJson());
 
   const secondary = deriveSecondaryData(source, nodes, tables.b2u);
   const ps: ParserState = {

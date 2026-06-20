@@ -3,16 +3,16 @@
 //! CLI-side instrumentation only: the parser stays a pure, hook-free
 //! function (ADR-0001). We wrap the three coarse stages every document
 //! subcommand shares — `read` (I/O + decode), `parse`, and the
-//! command's `output` step (render / serialize / wire / pandoc) — in
+//! command's `output` step (render / serialize / inspect / pandoc) — in
 //! [`std::time::Instant`] and print the result to **stderr**, so a
-//! `render` / `wire` pipeline's stdout stays byte-identical with or
+//! `render` / `inspect` pipeline's stdout stays byte-identical with or
 //! without `--timing`.
 //!
 //! Finer, per-lex-phase numbers (sanitize / tokenize / pair / build)
 //! are a parser-development concern served by `xtask samply`, `just
 //! bench`, and `just dhat` — not this user-facing flag. They also can't
-//! be surfaced uniformly here: `wire <nodes|pairs>` and `pandoc` render
-//! from an `AozoraTree`, whose internals the CLI cannot reconstruct from
+//! be surfaced uniformly here: `inspect <nodes|pairs>` and `pandoc` render
+//! from an `Tree`, whose internals the CLI cannot reconstruct from
 //! a hand-driven `Pipeline`, so a common three-stage view is the honest
 //! one.
 
@@ -27,7 +27,7 @@ pub(crate) enum TimingFormat {
     /// Aligned `name  duration` lines plus a total. The default.
     #[default]
     Human,
-    /// `{"schema_version":1,"phases":[{"name","nanos"}],"total_nanos"}`
+    /// `{"schemaVersion":1,"phases":[{"name","nanos"}],"totalNanos"}`
     /// — the agent / scripting view.
     Json,
 }
@@ -65,7 +65,7 @@ impl Timer {
     }
 
     /// Write the collected timings to stderr. A no-op when disabled or
-    /// when nothing was measured (e.g. `wire slugs`, which neither reads
+    /// when nothing was measured (e.g. `inspect slugs`, which neither reads
     /// nor parses).
     pub(crate) fn report(&self) -> io::Result<()> {
         if !self.enabled || self.phases.is_empty() {
@@ -101,9 +101,9 @@ impl Timer {
             .map(|(name, dur)| serde_json::json!({ "name": name, "nanos": nanos(*dur) }))
             .collect();
         let envelope = serde_json::json!({
-            "schema_version": 1,
+            "schemaVersion": 1,
             "phases": phases,
-            "total_nanos": nanos(total),
+            "totalNanos": nanos(total),
         });
         writeln!(w, "{envelope}")
     }

@@ -52,7 +52,7 @@ The three formats:
 - **`human`** — a graphical [`miette`](https://docs.rs/miette) report:
   the source line, a caret under the span, the label, the help, and a
   link to the [diagnostics catalogue](../notation/diagnostics.md).
-- **`json`** — the `aozora::wire` diagnostics envelope, byte-identical to
+- **`json`** — the `aozora::json` diagnostics envelope, byte-identical to
   every other binding. The machine / agent path (the default when piped).
 - **`short`** — one grep-able line: `path:offset: severity[code]: msg`.
 
@@ -118,7 +118,7 @@ the class-name reference.
 aozora wire <KIND> [OPTIONS] [PATH]
 ```
 
-Emit a parsed document's data as the shared `aozora::wire` JSON
+Emit a parsed document's data as the shared `aozora::json` JSON
 envelope — the **data** counterpart to `aozora schema` (which prints the
 *contract*). The bytes are identical to every binding's `*_json()`
 output (Python `.nodes_json()`, WASM `.nodes_json()`, the C FFI
@@ -134,7 +134,7 @@ parser output into a shell pipeline.
 | `gaiji` | Resolved `※［＃…］` references: `{ span, description, mencode, codepoint, resolved }`. Alias: `gaiji-resolutions`. |
 | `slugs` | The static `［＃…］` slug catalogue — needs no input. |
 
-Every envelope is `{ "schema_version": 1, "data": [ … ] }`; the per-kind
+Every envelope is `{ "schemaVersion": 1, "data": [ … ] }`; the per-kind
 item schema is the one `aozora schema <kind>` prints (see
 [Wire format](../wire/overview.md)). `PATH` of `-` (or omitted) reads
 stdin and `--encoding`/`-E` applies; `slugs` ignores any input. Unlike

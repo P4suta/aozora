@@ -2,7 +2,7 @@
 //! borrowed-pipeline entry point.
 //!
 //! `classify_kaeriten` itself is crate-private, so the bench drives
-//! it via [`aozora_pipeline::lex_into_arena`] on synthetic inputs:
+//! it via [`aozora_pipeline::lex`] on synthetic inputs:
 //!
 //! - **`kaeriten_dense`** — a buffer dominated by `［＃<mark>］`
 //!   annotations whose body is one of the 18 spec marks. Every
@@ -15,7 +15,7 @@
 //!
 //! Run via `cargo bench -p aozora-pipelineer`.
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_syntax::borrowed::Arena;
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
@@ -66,13 +66,13 @@ fn bench_kaeriten(c: &mut Criterion) {
     group.bench_function("kaeriten_dense_32k", |b| {
         b.iter(|| {
             let arena = Arena::new();
-            black_box(lex_into_arena(black_box(&dense), &arena));
+            black_box(lex(black_box(&dense), &arena));
         });
     });
     group.bench_function("annotations_no_kaeriten_32k", |b| {
         b.iter(|| {
             let arena = Arena::new();
-            black_box(lex_into_arena(black_box(&absent), &arena));
+            black_box(lex(black_box(&absent), &arena));
         });
     });
     group.finish();

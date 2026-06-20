@@ -1,7 +1,7 @@
 //! Canonical slug catalogue for Aozora annotation bodies (Phase 1.2 of
 //! the editor-integration sprint).
 //!
-//! `phase3_classify::BODY_PATTERNS` is the *parser-side* aho-corasick
+//! `classify::BODY_PATTERNS` is the *parser-side* aho-corasick
 //! table — its goal is exhaustive matching, including every digit a
 //! `{N}字下げ` form can start with. This module is the *editor-side*
 //! mirror: the public, stable list of slugs an LSP completion menu
@@ -55,13 +55,13 @@ pub enum SlugFamily {
     /// Forward-reference bouten / underline (`［＃「target」に傍点］`).
     Bouten,
     /// Inline figure (`［＃挿絵（path）入る］`).
-    Sashie,
-    /// Keigakomi rule frame (open / close).
-    Keigakomi,
+    Illustration,
+    /// Framed rule frame (open / close).
+    Framed,
     /// Warichu inline-break (open / close).
     Warichu,
     /// Forward-reference 縦中横 (`［＃「target」は縦中横］`).
-    TateChuYoko,
+    CombineUpright,
     /// Kaeriten single mark (一, 二, 三, 上, 中, 下, 甲, 乙, 丙, 丁,
     /// 四, レ).
     KaeritenSingle,
@@ -77,7 +77,7 @@ pub struct SlugEntry {
     pub canonical: &'static str,
     /// Coarse category / family.
     pub family: SlugFamily,
-    /// Whether the slug expects a numeric parameter (or, for `Sashie`,
+    /// Whether the slug expects a numeric parameter (or, for `Illustration`,
     /// a path) following the canonical text.
     pub accepts_param: bool,
     /// Short Japanese description shown in LSP `CompletionItem.detail`
@@ -186,7 +186,7 @@ pub const SLUGS: &[SlugEntry] = &[
     },
     SlugEntry {
         canonical: "罫囲み",
-        family: SlugFamily::Keigakomi,
+        family: SlugFamily::Framed,
         accepts_param: false,
         doc: "罫線で囲む（終わりまで）",
         partner: Some("罫囲み終わり"),
@@ -194,7 +194,7 @@ pub const SLUGS: &[SlugEntry] = &[
     },
     SlugEntry {
         canonical: "罫囲み終わり",
-        family: SlugFamily::Keigakomi,
+        family: SlugFamily::Framed,
         accepts_param: false,
         doc: "罫囲みを閉じる",
         partner: Some("罫囲み"),
@@ -333,7 +333,7 @@ pub const SLUGS: &[SlugEntry] = &[
     // --- Other inline -----------------------------------------------------
     SlugEntry {
         canonical: "挿絵（{path}）入る",
-        family: SlugFamily::Sashie,
+        family: SlugFamily::Illustration,
         accepts_param: true,
         doc: "挿絵を埋め込む",
         partner: None,
@@ -341,7 +341,7 @@ pub const SLUGS: &[SlugEntry] = &[
     },
     SlugEntry {
         canonical: "縦中横",
-        family: SlugFamily::TateChuYoko,
+        family: SlugFamily::CombineUpright,
         accepts_param: false,
         doc: "縦中横（［＃「対象」は縦中横］）",
         partner: None,
@@ -534,7 +534,7 @@ const VARIANTS: &[(&str, &str)] = &[
     ("たてちゅうよこ", "縦中横"),
     ("たて中横", "縦中横"),
     ("そうにゅうえ", "挿絵（{path}）入る"),
-    // Keigakomi / warichu.
+    // Framed / warichu.
     ("けいがこみ", "罫囲み"),
     ("けいがこみおわり", "罫囲み終わり"),
     ("わりちゅう", "割り注"),
@@ -1080,9 +1080,7 @@ mod tests {
                         .expect("partner exists");
                     assert!(matches!(
                         partner.family,
-                        SlugFamily::BlockContainerClose
-                            | SlugFamily::Keigakomi
-                            | SlugFamily::Warichu
+                        SlugFamily::BlockContainerClose | SlugFamily::Framed | SlugFamily::Warichu
                     ));
                 }
                 SlugFamily::BlockContainerClose => {
@@ -1095,9 +1093,7 @@ mod tests {
                         .expect("partner exists");
                     assert!(matches!(
                         partner.family,
-                        SlugFamily::BlockContainerOpen
-                            | SlugFamily::Keigakomi
-                            | SlugFamily::Warichu
+                        SlugFamily::BlockContainerOpen | SlugFamily::Framed | SlugFamily::Warichu
                     ));
                 }
                 _ => {}

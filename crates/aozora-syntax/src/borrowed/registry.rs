@@ -1,7 +1,7 @@
-//! Sentinel-position → [`AozoraNode`] lookup table.
+//! Sentinel-position → [`Node`] lookup table.
 //!
 //! The registry pairs every PUA sentinel position written into the
-//! lexer's normalized text with the [`AozoraNode`] (or
+//! lexer's normalized text with the [`Node`] (or
 //! [`crate::extension::ContainerKind`]) that originated it.
 //! Downstream renderers walk the normalized text, encounter a
 //! sentinel, and `node_at(pos)` to recover the structured node.
@@ -31,23 +31,23 @@ use crate::extension::ContainerKind;
 use aozora_spec::{NormalizedOffset, Sentinel};
 use aozora_veb::EytzingerMap;
 
-use super::types::AozoraNode;
+use super::types::Node;
 
 /// Unified view over a registry hit, returned by [`Registry::node_at`].
 ///
 /// Each variant tags the sentinel kind that fired; renderers
 /// pattern-match the variant once, then handle the inline payload
-/// (a borrowed [`AozoraNode`]) or the container payload (a
+/// (a borrowed [`Node`]) or the container payload (a
 /// [`ContainerKind`] enum) accordingly.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum NodeRef<'src> {
     /// Hit on an inline-sentinel position
     /// ([`aozora_spec::Sentinel::Inline`]).
-    Inline(AozoraNode<'src>),
+    Inline(Node<'src>),
     /// Hit on a block-leaf-sentinel position
     /// ([`aozora_spec::Sentinel::BlockLeaf`]).
-    BlockLeaf(AozoraNode<'src>),
+    BlockLeaf(Node<'src>),
     /// Hit on a block-container-open position
     /// ([`aozora_spec::Sentinel::BlockOpen`]).
     BlockOpen(ContainerKind),
@@ -75,7 +75,7 @@ impl NodeRef<'_> {
     /// Cross-cutting [`crate::NodeKind`] tag for this entry.
     ///
     /// Inline / block-leaf hits project to the underlying
-    /// [`AozoraNode::kind`] tag; container open / close hits flatten
+    /// [`Node::kind`] tag; container open / close hits flatten
     /// into [`NodeKind::ContainerOpen`](crate::NodeKind::ContainerOpen)
     /// / [`ContainerClose`](crate::NodeKind::ContainerClose) because
     /// the wire format places container kind detail in the inline
@@ -149,7 +149,7 @@ impl<'src> Registry<'src> {
     /// The argument is a [`NormalizedOffset`] newtype rather than a
     /// raw `u32` — editor surfaces that hold a source-coordinate byte
     /// offset must first translate via
-    /// `BorrowedLexOutput::node_at_source` (which walks a
+    /// `LexOutput::node_at_source` (which walks a
     /// source-keyed side-table built during the lex pipeline) instead
     /// of casting between the two coordinate spaces.
     #[must_use]
@@ -199,7 +199,7 @@ impl Default for Registry<'_> {
 /// [`NodeRef::BlockOpen`] / [`NodeRef::BlockClose`] entries.
 ///
 /// Coordinates are [`NormalizedOffset`] — they index the
-/// `BorrowedLexOutput::normalized` text, the same coordinate space
+/// `LexOutput::normalized` text, the same coordinate space
 /// the [`Registry`] uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContainerPair {
@@ -243,46 +243,40 @@ mod tests {
     #[test]
     fn node_at_returns_inline_payload_for_inline_sentinel_position() {
         let r: Registry<'static> = Registry::from_sorted_slice(&[
-            (
-                10u32,
-                NodeRef::Inline(AozoraNode::Indent(Indent { amount: 1 })),
-            ),
-            (20u32, NodeRef::Inline(AozoraNode::PageBreak)),
-            (
-                30u32,
-                NodeRef::Inline(AozoraNode::Indent(Indent { amount: 3 })),
-            ),
+            (10u32, NodeRef::Inline(Node::Indent(Indent { amount: 1 }))),
+            (20u32, NodeRef::Inline(Node::PageBreak)),
+            (30u32, NodeRef::Inline(Node::Indent(Indent { amount: 3 }))),
         ]);
         assert!(!r.is_empty());
         assert_eq!(r.len(), 3);
         let got = r.node_at(NormalizedOffset::new(20));
-        assert!(matches!(got, Some(NodeRef::Inline(AozoraNode::PageBreak))));
+        assert!(matches!(got, Some(NodeRef::Inline(Node::PageBreak))));
         assert!(r.node_at(NormalizedOffset::new(15)).is_none());
     }
 
     #[test]
     fn node_at_dispatches_to_correct_variant() {
         let r: Registry<'static> = Registry::from_sorted_slice(&[
-            (10u32, NodeRef::Inline(AozoraNode::PageBreak)),
-            (20u32, NodeRef::BlockLeaf(AozoraNode::PageBreak)),
-            (30u32, NodeRef::BlockOpen(ContainerKind::Keigakomi)),
-            (40u32, NodeRef::BlockClose(ContainerKind::Keigakomi)),
+            (10u32, NodeRef::Inline(Node::PageBreak)),
+            (20u32, NodeRef::BlockLeaf(Node::PageBreak)),
+            (30u32, NodeRef::BlockOpen(ContainerKind::Framed)),
+            (40u32, NodeRef::BlockClose(ContainerKind::Framed)),
         ]);
         assert!(matches!(
             r.node_at(NormalizedOffset::new(10)),
-            Some(NodeRef::Inline(AozoraNode::PageBreak))
+            Some(NodeRef::Inline(Node::PageBreak))
         ));
         assert!(matches!(
             r.node_at(NormalizedOffset::new(20)),
-            Some(NodeRef::BlockLeaf(AozoraNode::PageBreak))
+            Some(NodeRef::BlockLeaf(Node::PageBreak))
         ));
         assert!(matches!(
             r.node_at(NormalizedOffset::new(30)),
-            Some(NodeRef::BlockOpen(ContainerKind::Keigakomi))
+            Some(NodeRef::BlockOpen(ContainerKind::Framed))
         ));
         assert!(matches!(
             r.node_at(NormalizedOffset::new(40)),
-            Some(NodeRef::BlockClose(ContainerKind::Keigakomi))
+            Some(NodeRef::BlockClose(ContainerKind::Framed))
         ));
         assert!(r.node_at(NormalizedOffset::new(99)).is_none());
     }
@@ -298,9 +292,9 @@ mod tests {
                     center: false,
                 }),
             ),
-            (10u32, NodeRef::BlockOpen(ContainerKind::Keigakomi)),
-            (15u32, NodeRef::Inline(AozoraNode::PageBreak)),
-            (20u32, NodeRef::BlockClose(ContainerKind::Keigakomi)),
+            (10u32, NodeRef::BlockOpen(ContainerKind::Framed)),
+            (15u32, NodeRef::Inline(Node::PageBreak)),
+            (20u32, NodeRef::BlockClose(ContainerKind::Framed)),
         ]);
         assert_eq!(r.count_kind(Sentinel::BlockOpen), 2);
         assert_eq!(r.count_kind(Sentinel::Inline), 1);
@@ -310,10 +304,10 @@ mod tests {
 
     #[test]
     fn node_ref_sentinel_kind_round_trips() {
-        let inline = NodeRef::Inline(AozoraNode::PageBreak);
-        let block_leaf = NodeRef::BlockLeaf(AozoraNode::PageBreak);
-        let block_open = NodeRef::BlockOpen(ContainerKind::Keigakomi);
-        let block_close = NodeRef::BlockClose(ContainerKind::Keigakomi);
+        let inline = NodeRef::Inline(Node::PageBreak);
+        let block_leaf = NodeRef::BlockLeaf(Node::PageBreak);
+        let block_open = NodeRef::BlockOpen(ContainerKind::Framed);
+        let block_close = NodeRef::BlockClose(ContainerKind::Framed);
         assert_eq!(inline.sentinel_kind(), Sentinel::Inline);
         assert_eq!(block_leaf.sentinel_kind(), Sentinel::BlockLeaf);
         assert_eq!(block_open.sentinel_kind(), Sentinel::BlockOpen);

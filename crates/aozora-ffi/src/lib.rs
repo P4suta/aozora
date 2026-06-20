@@ -206,10 +206,10 @@ pub unsafe extern "C" fn aozora_document_to_html(
 ///
 /// On success, writes the bytes to `*out_json` and returns
 /// [`AozoraStatus::Ok`]. Empty document →
-/// `{"schema_version":1,"data":[]}`. The caller MUST call
+/// `{"schemaVersion":1,"data":[]}`. The caller MUST call
 /// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
 ///
-/// Wire format is defined in [`aozora::wire`] and shared bit-for-bit
+/// Wire format is defined in [`aozora::json`] and shared bit-for-bit
 /// with the WASM and PyO3 drivers.
 ///
 /// # Safety
@@ -228,7 +228,7 @@ pub unsafe extern "C" fn aozora_document_diagnostics_json(
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let tree = doc_ref.inner.parse();
-    let json = aozora::wire::serialize_diagnostics(tree.diagnostics());
+    let json = aozora::json::diagnostics(tree.diagnostics());
     let owned = into_owned_bytes(json.into_bytes());
     // SAFETY: caller guarantees out_json is writable.
     unsafe { out_json.write(owned) };
@@ -244,10 +244,10 @@ pub unsafe extern "C" fn aozora_document_diagnostics_json(
 ///
 /// On success, writes the bytes to `*out_json` and returns
 /// [`AozoraStatus::Ok`]. Empty parse →
-/// `{"schema_version":1,"data":[]}`. The caller MUST call
+/// `{"schemaVersion":1,"data":[]}`. The caller MUST call
 /// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
 ///
-/// Wire format is defined in [`aozora::wire`] and shared bit-for-bit
+/// Wire format is defined in [`aozora::json`] and shared bit-for-bit
 /// with the WASM and PyO3 drivers.
 ///
 /// # Safety
@@ -266,7 +266,7 @@ pub unsafe extern "C" fn aozora_document_nodes_json(
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let tree = doc_ref.inner.parse();
-    let json = aozora::wire::serialize_nodes(&tree);
+    let json = aozora::json::nodes(&tree);
     let owned = into_owned_bytes(json.into_bytes());
     // SAFETY: caller guarantees out_json is writable.
     unsafe { out_json.write(owned) };
@@ -284,10 +284,10 @@ pub unsafe extern "C" fn aozora_document_nodes_json(
 ///
 /// On success, writes the bytes to `*out_json` and returns
 /// [`AozoraStatus::Ok`]. Empty parse →
-/// `{"schema_version":1,"data":[]}`. The caller MUST call
+/// `{"schemaVersion":1,"data":[]}`. The caller MUST call
 /// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
 ///
-/// Wire format is defined in [`aozora::wire`] and shared bit-for-bit
+/// Wire format is defined in [`aozora::json`] and shared bit-for-bit
 /// with the WASM and PyO3 drivers.
 ///
 /// # Safety
@@ -306,7 +306,7 @@ pub unsafe extern "C" fn aozora_document_pairs_json(
     // SAFETY: caller guarantees doc is a valid handle.
     let doc_ref: &AozoraDocument = unsafe { &*doc };
     let tree = doc_ref.inner.parse();
-    let json = aozora::wire::serialize_pairs(&tree);
+    let json = aozora::json::pairs(&tree);
     let owned = into_owned_bytes(json.into_bytes());
     // SAFETY: caller guarantees out_json is writable.
     unsafe { out_json.write(owned) };
@@ -401,8 +401,8 @@ mod tests {
         assert_eq!(status, AozoraStatus::Ok as c_int);
         let json = unsafe { core::str::from_utf8(slice::from_raw_parts(diag.ptr, diag.len)) }
             .expect("json is utf8");
-        // Envelope shape — wire format is {"schema_version":N,"data":[…]}.
-        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
+        // Envelope shape — wire format is {"schemaVersion":N,"data":[…]}.
+        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
         unsafe { aozora_bytes_free(diag) };
 
         unsafe { aozora_document_free(doc) };
@@ -424,7 +424,7 @@ mod tests {
         assert_eq!(status, AozoraStatus::Ok as c_int);
         let json = unsafe { core::str::from_utf8(slice::from_raw_parts(nodes.ptr, nodes.len)) }
             .expect("json is utf8");
-        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
+        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
         unsafe { aozora_bytes_free(nodes) };
         unsafe { aozora_document_free(doc) };
     }

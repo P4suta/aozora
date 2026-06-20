@@ -12,7 +12,7 @@
 
 #![no_main]
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_render::html::render_to_string;
 use aozora_syntax::borrowed::Arena;
 use libfuzzer_sys::fuzz_target;
@@ -36,7 +36,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let arena = Arena::new();
-    let lex_out = lex_into_arena(src, &arena);
+    let lex_out = lex(src, &arena);
     let html = render_to_string(&lex_out);
     for sentinel in PUA_SENTINELS {
         assert!(

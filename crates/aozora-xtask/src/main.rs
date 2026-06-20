@@ -95,7 +95,7 @@ enum Cmd {
     /// run every CI job locally before pushing, or replay a workflow
     /// job through `nektos/act`.
     Ci(CiArgs),
-    /// JSON Schema artefact dump / drift gate for the `aozora::wire`
+    /// JSON Schema artefact dump / drift gate for the `aozora::json`
     /// envelopes. Generates schema files under
     /// `crates/aozora-book/src/wire/schema-*.json` and CI-checks
     /// that they stay in sync with the live wire shape.
@@ -190,7 +190,7 @@ struct SamplyArgs {
 enum SamplyTarget {
     /// Profile a single corpus document via the `pathological_probe` example.
     ///
-    /// The probe runs `lex_into_arena` 100 times on the doc, so a 232 KB
+    /// The probe runs `lex` 100 times on the doc, so a 232 KB
     /// outlier doc gives samply ~170 ms of parser-bound wall time at 4 kHz
     /// = ~700 samples. Larger docs (e.g. 3 MB doc 50685) give richer
     /// traces (~10 k samples).

@@ -2,7 +2,7 @@
 //!
 //! Times each corpus document twice:
 //!
-//! - **fused** — `lex_into_arena`, the production I-2 fused chain.
+//! - **fused** — `lex`, the production I-2 fused chain.
 //! - **materialized** — sanitize → `tokenize().collect()` →
 //!   `pair().collect()` → `classify().collect()`. Same call sequence
 //!   as `phase_breakdown`, but invoked here so the materialised cost
@@ -35,7 +35,7 @@ use std::time::Instant;
 
 use aozora_bench::{SizeBand, corpus_size_bands};
 use aozora_corpus::CorpusItem;
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
 };
@@ -100,7 +100,7 @@ fn main() {
 fn time_fused(text: &str) -> u64 {
     let arena = Arena::new();
     let t = Instant::now();
-    drop(lex_into_arena(text, &arena));
+    drop(lex(text, &arena));
     t.elapsed().as_nanos() as u64
 }
 

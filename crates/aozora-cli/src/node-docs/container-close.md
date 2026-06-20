@@ -1,6 +1,6 @@
 # NodeKind::ContainerClose
 
-Wire tag: `containerClose` — paired-container close boundary marker.
+Inspect tag: `containerClose` — paired-container close boundary marker.
 
 `NodeRef`-only counterpart of [ContainerOpen](container-open.md).
 

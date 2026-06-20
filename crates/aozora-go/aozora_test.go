@@ -10,7 +10,7 @@ import (
 // SDK and exercises every export across the real plugin ABI — the Go
 // analogue of the Rust `host_smoke` test. It proves the Go transport
 // (wazero → wasm → wire JSON → generated structs) works end to end; the
-// byte-identical-to-aozora::wire guarantee itself is pinned by the Rust
+// byte-identical-to-aozora::json guarantee itself is pinned by the Rust
 // smoke test, so here we assert decoded structure for known inputs.
 func TestEndToEnd(t *testing.T) {
 	ctx := context.Background()

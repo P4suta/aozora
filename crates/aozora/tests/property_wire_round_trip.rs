@@ -6,8 +6,8 @@
 //! nothing about Aozora source the fixture set hasn't enumerated.
 //!
 //! The properties below project the four wire envelopes
-//! ([`serialize_diagnostics`], [`serialize_nodes`], [`serialize_pairs`],
-//! [`serialize_container_pairs`]) onto *arbitrary* Aozora input drawn
+//! ([`diagnostics`], [`nodes`], [`pairs`],
+//! [`container_pairs`]) onto *arbitrary* Aozora input drawn
 //! from the workhorse generators, and assert two cross-cutting
 //! invariants on each:
 //!
@@ -28,9 +28,9 @@
 //! Together these close the gap between "fixture-checked wire shape"
 //! and "wire output stable across the entire input space".
 
-#![cfg(feature = "wire")]
+#![cfg(feature = "json")]
 
-use aozora::{Document, wire};
+use aozora::{Document, json};
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use proptest::prelude::*;
@@ -46,16 +46,16 @@ fn assert_envelope_is_well_formed_json(label: &str, source: &str, json: &str) {
         panic!("{label} envelope must be a JSON object for source {source:?}\n---\n{json}")
     });
     let version = obj
-        .get("schema_version")
+        .get("schemaVersion")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or_else(|| {
             panic!("{label} envelope missing schema_version for source {source:?}\n---\n{json}")
         });
     assert_eq!(
         u32::try_from(version).ok(),
-        Some(wire::SCHEMA_VERSION),
+        Some(json::SCHEMA_VERSION),
         "{label} envelope schema_version drift for source {source:?}: got {version}, expected {expected}",
-        expected = wire::SCHEMA_VERSION,
+        expected = json::SCHEMA_VERSION,
     );
     assert!(
         obj.get("data").is_some_and(serde_json::Value::is_array),
@@ -85,19 +85,19 @@ fn assert_wire_round_trip(source: &str) {
     let tree = doc.parse();
 
     // (1) and (2) for each of the four envelope flavours.
-    let diags = wire::serialize_diagnostics(tree.diagnostics());
+    let diags = json::diagnostics(tree.diagnostics());
     assert_envelope_is_well_formed_json("diagnostics", source, &diags);
     assert_envelope_round_trips("diagnostics", source, &diags);
 
-    let nodes = wire::serialize_nodes(&tree);
+    let nodes = json::nodes(&tree);
     assert_envelope_is_well_formed_json("nodes", source, &nodes);
     assert_envelope_round_trips("nodes", source, &nodes);
 
-    let pairs = wire::serialize_pairs(&tree);
+    let pairs = json::pairs(&tree);
     assert_envelope_is_well_formed_json("pairs", source, &pairs);
     assert_envelope_round_trips("pairs", source, &pairs);
 
-    let containers = wire::serialize_container_pairs(&tree);
+    let containers = json::container_pairs(&tree);
     assert_envelope_is_well_formed_json("container_pairs", source, &containers);
     assert_envelope_round_trips("container_pairs", source, &containers);
 }

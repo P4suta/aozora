@@ -3,11 +3,11 @@
 //! For each corpus document this probe measures:
 //!
 //! - **Arena bytes per source byte** — `Arena::allocated_bytes()`
-//!   sampled before and after `lex_into_arena`, divided by the input
+//!   sampled before and after `lex`, divided by the input
 //!   UTF-8 byte length. The histogram reveals the allocator amplification
 //!   factor for typical vs tail-heavy documents.
 //! - **Per-document intern dedup ratio** —
-//!   `(cache_hits + table_hits) / calls` from the `BorrowedLexOutput`'s
+//!   `(cache_hits + table_hits) / calls` from the `LexOutput`'s
 //!   `intern_stats`. Histogrammed across the corpus.
 //!
 //! Together these surface allocator regressions that aggregate dedup
@@ -35,7 +35,7 @@ use std::time::Instant;
 
 use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_auto;
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_syntax::borrowed::Arena;
 
 #[derive(Debug, Clone, Copy)]
@@ -82,7 +82,7 @@ fn main() {
         // they're rare and a zero-length source is a legitimate edge.
         let arena = Arena::new();
         let before = arena.allocated_bytes() as u64;
-        let out = lex_into_arena(&text, &arena);
+        let out = lex(&text, &arena);
         let after = arena.allocated_bytes() as u64;
         let arena_delta = after.saturating_sub(before);
         let reuses = out.intern_stats.cache_hits + out.intern_stats.table_hits;

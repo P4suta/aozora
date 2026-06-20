@@ -93,9 +93,9 @@ impl<'src> NonEmpty<Content<'src>> {
 /// Non-empty `&'src str` newtype.
 ///
 /// Used by AST fields where an empty string would never represent a
-/// valid input — e.g. [`super::Sashie::file`] (illustration path),
+/// valid input — e.g. [`super::Illustration::file`] (illustration path),
 /// [`super::HeadingHint::target`] (forward-reference target),
-/// [`super::Annotation::raw`] (annotation body bytes), and
+/// [`super::Directive::raw`] (annotation body bytes), and
 /// [`super::Kaeriten::mark`] (kanbun mark text).
 ///
 /// Constructable through [`Self::new`] (returns `Option`) or

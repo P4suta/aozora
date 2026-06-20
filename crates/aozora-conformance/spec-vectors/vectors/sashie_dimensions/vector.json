@@ -8,11 +8,11 @@
   },
   "source": "［＃挿絵（fig42_03.png、横480×縦640）入る］\n",
   "expected": {
-    "html": "<figure class=\"aozora-sashie\"><img src=\"fig42_03.png\" width=\"480\" height=\"640\" alt=\"\" /></figure>",
+    "html": "<figure class=\"aozora-illustration\"><img src=\"fig42_03.png\" width=\"480\" height=\"640\" alt=\"\" /></figure>",
     "serialize": "\n\n［＃挿絵（fig42_03.png、横480×縦640）入る］\n\n",
     "nodes": [
       {
-        "kind": "sashie",
+        "kind": "illustration",
         "span": {
           "start": 0,
           "end": 56

@@ -31,11 +31,11 @@ workspace = true
 extism-pdk = "1.4"
 
 [dependencies]
-# Consumes the wire format via `aozora::wire::*`; serde + serde_json
+# Consumes the wire format via `aozora::json::*`; serde + serde_json
 # transitive-only via the `wire` feature. Output is byte-identical to
 # the FFI / WASM / PyO3 drivers because all four delegate to the same
-# `aozora::wire` authority.
-aozora = { workspace = true, features = ["wire"] }
+# `aozora::json` authority.
+aozora = { workspace = true, features = ["json"] }
 
 [features]
 # Opt-in: pulls the Extism host SDK (which bundles wasmtime) for the

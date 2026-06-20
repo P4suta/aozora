@@ -15,7 +15,7 @@ use aozora::Document;
 fn main() {
     // `｜青梅《おうめ》` is explicit ruby: base text 青梅, reading おうめ.
     // `Document` owns the source buffer and the parse arena; the
-    // borrowed `AozoraTree` lives only as long as `doc`.
+    // borrowed `Tree` lives only as long as `doc`.
     let doc = Document::new("｜青梅《おうめ》");
     let tree = doc.parse();
 
@@ -25,5 +25,5 @@ fn main() {
 
     // Byte-exact re-emission of the canonical Aozora source.
     println!("--- serialize ---");
-    println!("{}", tree.serialize());
+    println!("{}", tree.to_source());
 }

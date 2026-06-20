@@ -1,4 +1,4 @@
-//! Invariants for `AnnotationKind::Unknown` — the catch-all that
+//! Invariants for `DirectiveKind::Unknown` — the catch-all that
 //! Phase 3 emits when no recogniser claimed an `［＃…］` annotation.
 //!
 //! The catch-all is a deliberate decision: every bracket annotation is
@@ -9,14 +9,14 @@
 //! 1. **panic-free**: lex must not panic on any input that exercises
 //!    the catch-all path, including pathological / unbalanced bracket
 //!    shapes.
-//! 2. **non-empty raw bytes**: every emitted `Annotation` node carries
+//! 2. **non-empty raw bytes**: every emitted `Directive` node carries
 //!    a `NonEmptyStr` raw payload — the type system enforces it, but
 //!    we cross-check the runtime invariant explicitly so a future
 //!    refactor that loosens the type can't quietly emit empty
 //!    annotations.
-//! 3. **lex → serialise → lex round-trip preserves Annotation count**:
+//! 3. **lex → serialise → lex round-trip preserves Directive count**:
 //!    re-parsing the serialised output must produce the same number of
-//!    Annotation nodes (any kind, including Unknown). A regression that
+//!    Directive nodes (any kind, including Unknown). A regression that
 //!    drops or duplicates an Unknown annotation on the second pass
 //!    would shift this count.
 //! 4. **Tier-A canary holds on well-formed input**: when the lexer
@@ -27,24 +27,24 @@
 //!    contract, and the serialise side honours it only when the
 //!    lexer accepts the input cleanly.
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use aozora_render::serialize::serialize;
-use aozora_syntax::borrowed::{AozoraNode, Arena, NodeRef};
+use aozora_syntax::borrowed::{Arena, Node, NodeRef};
 use proptest::prelude::*;
 
-/// Walk every registry hit and pull out the `Annotation` nodes.
+/// Walk every registry hit and pull out the `Directive` nodes.
 ///
 /// Annotations are emitted on `Sentinel::Inline` positions, so they
-/// surface as `NodeRef::Inline(AozoraNode::Annotation(_))`. Container
+/// surface as `NodeRef::Inline(Node::Directive(_))`. Container
 /// open/close hits never carry annotations; block-leaf hits in the
 /// borrowed AST are reserved for non-annotation block primitives
 /// (page break, section break, sashie, …).
-fn count_annotations(out: &aozora_pipeline::BorrowedLexOutput<'_>) -> usize {
+fn count_annotations(out: &aozora_pipeline::LexOutput<'_>) -> usize {
     out.registry
         .iter_sorted()
-        .filter(|(_, nr)| matches!(nr, NodeRef::Inline(AozoraNode::Annotation(_))))
+        .filter(|(_, nr)| matches!(nr, NodeRef::Inline(Node::Directive(_))))
         .count()
 }
 
@@ -52,10 +52,10 @@ fn count_annotations(out: &aozora_pipeline::BorrowedLexOutput<'_>) -> usize {
 /// guard for properties that only make sense when the input actually
 /// triggered the catch-all path; properties that hold *unconditionally*
 /// don't need this guard.
-fn has_annotation(out: &aozora_pipeline::BorrowedLexOutput<'_>) -> bool {
+fn has_annotation(out: &aozora_pipeline::LexOutput<'_>) -> bool {
     out.registry
         .iter_sorted()
-        .any(|(_, nr)| matches!(nr, NodeRef::Inline(AozoraNode::Annotation(_))))
+        .any(|(_, nr)| matches!(nr, NodeRef::Inline(Node::Directive(_))))
 }
 
 /// Tier-A canary on a string: no bare `［＃` may appear without a
@@ -78,7 +78,7 @@ fn assert_no_bare_open_bracket(serialised: &str) {
 
 fn assert_annotation_invariants(source: &str) {
     let arena_a = Arena::new();
-    let out_a = lex_into_arena(source, &arena_a);
+    let out_a = lex(source, &arena_a);
 
     // (2) Every annotation's raw payload is non-empty (the type system
     // already says so via `NonEmptyStr`, but we cross-check at runtime
@@ -87,7 +87,7 @@ fn assert_annotation_invariants(source: &str) {
     // UTF-8 — true by construction (it's `&str`), but a `is_empty`
     // probe on every annotation closes the loop on (2).
     for (_, nr) in out_a.registry.iter_sorted() {
-        if let NodeRef::Inline(AozoraNode::Annotation(a)) = nr {
+        if let NodeRef::Inline(Node::Directive(a)) = nr {
             assert!(
                 !a.raw.as_str().is_empty(),
                 "annotation with empty raw bytes for source {source:?}"
@@ -98,7 +98,7 @@ fn assert_annotation_invariants(source: &str) {
     // (3) lex → serialise → lex preserves the annotation count.
     let serialised = serialize(&out_a);
     let arena_b = Arena::new();
-    let out_b = lex_into_arena(&serialised, &arena_b);
+    let out_b = lex(&serialised, &arena_b);
     let count_first = count_annotations(&out_a);
     let count_second = count_annotations(&out_b);
     assert_eq!(
@@ -149,7 +149,7 @@ fn known_annotations_round_trip() {
 #[test]
 fn unknown_annotations_round_trip() {
     // Definitely not in the recogniser table — falls through to
-    // `AnnotationKind::Unknown`.
+    // `DirectiveKind::Unknown`.
     assert_annotation_invariants("text［＃this is a wholly novel marker］more");
     assert_annotation_invariants("［＃random text 1234］");
 }

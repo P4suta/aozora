@@ -7,7 +7,7 @@
 // kaeriten, indent containers, page breaks. The same `aozora.wasm` powers
 // every language's host SDK, so the output here is byte-identical to the
 // Rust / WASM / Python / C-ABI front doors (all funnel through
-// `aozora::wire`).
+// `aozora::json`).
 //
 // The generated wire types live in wire_gen.go (regenerate with
 // `just types-langs`). This file is the hand-written transport wrapper.
@@ -32,7 +32,7 @@ var wasmBytes []byte
 // SchemaVersion is the wire-format schema version this SDK is built
 // against. Open verifies the loaded plugin reports the same version, so a
 // plugin/SDK skew fails loudly instead of decoding against the wrong
-// shape. Mirrors aozora::wire::SCHEMA_VERSION.
+// shape. Mirrors aozora::json::SCHEMA_VERSION.
 const SchemaVersion = 1
 
 // Parser is a loaded aozora plugin instance. It is NOT safe for
@@ -52,7 +52,7 @@ func Open(ctx context.Context) (*Parser, error) {
 		return nil, fmt.Errorf("aozora: instantiate plugin: %w", err)
 	}
 	p := &Parser{plugin: plugin}
-	version, err := p.call("schema_version", "")
+	version, err := p.call("schemaVersion", "")
 	if err != nil {
 		_ = plugin.Close(ctx)
 		return nil, err

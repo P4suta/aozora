@@ -9,7 +9,7 @@
 //! whitespace or character variants that the parser strips, the
 //! second pass would *change* the bytes, and the property fails.
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use aozora_render::serialize::serialize;
@@ -18,7 +18,7 @@ use proptest::prelude::*;
 
 fn round_trip_once(source: &str) -> String {
     let arena = Arena::new();
-    let out = lex_into_arena(source, &arena);
+    let out = lex(source, &arena);
     serialize(&out)
 }
 

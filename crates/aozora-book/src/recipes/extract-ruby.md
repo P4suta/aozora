@@ -13,7 +13,7 @@ Walk `source_nodes()` (see [Walk the AST](walk-ast.md)), keep only the
 constructs.
 
 ```rust
-use aozora::{Document, AozoraNode, NodeRef};
+use aozora::{Document, Node, NodeRef};
 
 fn main() {
     let source = "｜青梅《おうめ》街道を｜逢《お》う";
@@ -22,7 +22,7 @@ fn main() {
 
     for sn in tree.source_nodes() {
         // Ruby is always an inline construct.
-        if let NodeRef::Inline(AozoraNode::Ruby(ruby)) = sn.node {
+        if let NodeRef::Inline(Node::Ruby(ruby)) = sn.node {
             // `base` / `reading` are NonEmpty<Content>; `.get()` is the
             // Content, `.as_plain()` its text when there are no nested nodes.
             let base = ruby.base.get().as_plain().unwrap_or("<mixed>");
@@ -64,7 +64,7 @@ fn main() {
           if let Segment::Text(s) = seg {
               out.push_str(s);
           }
-          // Segment::Gaiji / Segment::Annotation carry non-plain payloads;
+          // Segment::Gaiji / Segment::Directive carry non-plain payloads;
           // handle them here if your glossary needs them.
       }
       out

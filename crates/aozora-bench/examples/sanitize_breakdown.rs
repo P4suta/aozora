@@ -16,7 +16,7 @@
 //! Run via:
 //! ```bash
 //! AOZORA_CORPUS_ROOT=/path/to/corpus \
-//!   cargo run --release --example phase0_breakdown -p aozora-bench
+//!   cargo run --release --example sanitize_breakdown -p aozora-bench
 //! ```
 
 #![allow(
@@ -70,11 +70,11 @@ fn main() {
         eprintln!("AOZORA_CORPUS_ROOT not set; aborting");
         process::exit(2);
     };
-    eprintln!("phase0_breakdown: scanning {root}");
+    eprintln!("sanitize_breakdown: scanning {root}");
 
     let corpus = FilesystemCorpus::new(root).expect("filesystem root must exist");
     let items: Vec<CorpusItem> = corpus.iter().filter_map(Result::ok).collect();
-    eprintln!("phase0_breakdown: discovered {} items", items.len());
+    eprintln!("sanitize_breakdown: discovered {} items", items.len());
 
     let mut samples: Vec<Sub> = Vec::with_capacity(items.len());
     let mut decode_errors = 0u64;
@@ -88,7 +88,7 @@ fn main() {
     }
     let wall = start.elapsed();
     eprintln!(
-        "phase0_breakdown: done in {:.2}s, {decode_errors} decode errors",
+        "sanitize_breakdown: done in {:.2}s, {decode_errors} decode errors",
         wall.as_secs_f64()
     );
     print_report(&samples);

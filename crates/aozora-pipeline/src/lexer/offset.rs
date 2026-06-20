@@ -1,7 +1,7 @@
 //! Sanitized ↔ source byte-offset mapping — issue #90.
 //!
 //! [`Document::parse`](crate) reports [`Diagnostic`](aozora_spec::Diagnostic)
-//! spans in **sanitized** coordinates: the [`phase0_sanitize`](super::phase0_sanitize)
+//! spans in **sanitized** coordinates: the [`sanitize`](super::sanitize)
 //! output, after a leading BOM is stripped, `CR`/`LF` is folded to `\n`,
 //! decorative rules gain a separating blank line, and `〔…〕` accent
 //! digraphs are decomposed. Each of those shifts byte offsets, so a
@@ -139,7 +139,7 @@ impl Piece {
 
 /// Build the exact [`OffsetMap`] for `source`.
 ///
-/// Re-derives the [`sanitize`](super::phase0_sanitize::sanitize)
+/// Re-derives the [`sanitize`](super::sanitize::sanitize)
 /// transform's offset shifts pass by pass. Pure — allocates only the
 /// small per-pass anchor tables (empty for a source that needs no
 /// sanitation).
@@ -148,9 +148,7 @@ impl Piece {
 /// byte-length-preserving, so it contributes no shift and is not modelled.
 #[must_use]
 pub fn offset_map(source: &str) -> OffsetMap {
-    use super::phase0_sanitize::{
-        has_long_rule_line, isolate_decorative_rules, normalize_line_endings,
-    };
+    use super::sanitize::{has_long_rule_line, isolate_decorative_rules, normalize_line_endings};
     use std::borrow::Cow;
 
     // Pass 1 — strip every leading BOM. A single constant shift.
@@ -193,7 +191,7 @@ pub fn offset_map(source: &str) -> OffsetMap {
 }
 
 /// `(in_off, in_len, out_len)` edits for the CR/LF fold over `after_bom`.
-/// Mirrors [`normalize_line_endings`](super::phase0_sanitize::normalize_line_endings):
+/// Mirrors [`normalize_line_endings`](super::sanitize::normalize_line_endings):
 /// `\r\n` collapses 2 bytes to 1; a lone `\r` is length-preserving and
 /// emits no edit.
 fn scan_crlf_edits(after_bom: &str) -> Vec<(u32, u32, u32)> {
@@ -213,7 +211,7 @@ fn scan_crlf_edits(after_bom: &str) -> Vec<(u32, u32, u32)> {
 
 /// `(in_off, 0, 1)` insertion edits for decorative-rule isolation over
 /// `line_normalized`. Mirrors
-/// [`isolate_decorative_rules`](super::phase0_sanitize::isolate_decorative_rules)
+/// [`isolate_decorative_rules`](super::sanitize::isolate_decorative_rules)
 /// exactly (same `prev_nonblank` bookkeeping and tail-line handling), so
 /// the recorded insertion points stay in lockstep with the real pass.
 #[allow(
@@ -221,7 +219,7 @@ fn scan_crlf_edits(after_bom: &str) -> Vec<(u32, u32, u32)> {
     reason = "byte offset ≤ source.len() ≤ u32::MAX is the lexer-wide span contract"
 )]
 fn scan_rule_edits(line_normalized: &str) -> Vec<(u32, u32, u32)> {
-    use super::phase0_sanitize::is_rule_line_trimmed;
+    use super::sanitize::is_rule_line_trimmed;
 
     let bytes = line_normalized.as_bytes();
     let mut edits = Vec::new();
@@ -247,7 +245,7 @@ fn scan_rule_edits(line_normalized: &str) -> Vec<(u32, u32, u32)> {
 
 /// `(in_off, in_len, out_len)` edits for `〔…〕` accent decomposition over
 /// `rule_isolated`. Mirrors
-/// [`rewrite_accent_spans`](super::phase0_sanitize::rewrite_accent_spans)'
+/// [`rewrite_accent_spans`](super::sanitize::rewrite_accent_spans)'
 /// span scan (unclosed `〔` ends the scan) and delegates the per-digraph
 /// deltas to [`decompose_fragment_edits`](aozora_syntax::accent::decompose_fragment_edits).
 fn scan_accent_edits(rule_isolated: &str) -> Vec<(u32, u32, u32)> {
@@ -281,7 +279,7 @@ fn scan_accent_edits(rule_isolated: &str) -> Vec<(u32, u32, u32)> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::phase0_sanitize::sanitize;
+    use super::super::sanitize::sanitize;
     use super::*;
 
     /// Walk every sanitized offset and pin the universal invariants a

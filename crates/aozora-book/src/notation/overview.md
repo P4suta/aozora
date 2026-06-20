@@ -65,7 +65,7 @@ appear in the maintained corpus:
 - **キャプション alignment** edge cases that the spec lists but no
   active work uses (verified against the corpus sweep).
 
-These are kept as a generic `Annotation{Unknown}` and rendered
+These are kept as a generic `Directive{Unknown}` and rendered
 best-effort (the "no bare `［＃`" guarantee still holds); a `ここから…`
 opener that names no known container also emits
 [`unrecognised_container_directive`](diagnostics.md#unrecognised-container-directive).

@@ -12,7 +12,7 @@ type AozoraWire struct {
 
 type AozoraContainerPairsEnvelope struct {
 	Data          []ContainerPairWire `json:"data"`
-	SchemaVersion int64               `json:"schema_version"`
+	SchemaVersion int64               `json:"schemaVersion"`
 }
 
 type ContainerPairWire struct {
@@ -27,7 +27,7 @@ type OffsetWire struct {
 
 type AozoraDiagnosticsEnvelope struct {
 	Data          []DiagnosticWire `json:"data"`
-	SchemaVersion int64            `json:"schema_version"`
+	SchemaVersion int64            `json:"schemaVersion"`
 }
 
 type DiagnosticWire struct {
@@ -45,7 +45,7 @@ type SpanWire struct {
 
 type AozoraNodesEnvelope struct {
 	Data          []NodeWire `json:"data"`
-	SchemaVersion int64      `json:"schema_version"`
+	SchemaVersion int64      `json:"schemaVersion"`
 }
 
 type NodeWire struct {
@@ -55,7 +55,7 @@ type NodeWire struct {
 
 type AozoraPairsEnvelope struct {
 	Data          []PairWire `json:"data"`
-	SchemaVersion int64      `json:"schema_version"`
+	SchemaVersion int64      `json:"schemaVersion"`
 }
 
 type PairWire struct {

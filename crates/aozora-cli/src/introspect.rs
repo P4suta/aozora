@@ -2,14 +2,14 @@
 //! introspection of the parser's typed contracts.
 //!
 //! No parsing happens here — the goal is to make "what tags can the
-//! wire format produce?" / "what is the JSON envelope shape?" /
+//! JSON format produce?" / "what is the JSON envelope shape?" /
 //! "what does `bouten` mean?" answerable without reading source.
 //!
 //! - `aozora kinds` walks every `pub const ALL: [Self; N]` on the
 //!   spec / syntax enums and tabulates them.
 //! - `aozora schema` pretty-prints the generated JSON Schema for
-//!   one of the four wire envelopes (delegated to
-//!   `aozora::wire::schema_*` behind the `schema` Cargo feature).
+//!   one of the four JSON envelopes (delegated to
+//!   `aozora::json::schema_*` behind the `schema` Cargo feature).
 //! - `aozora explain <kind>` prints the embedded handbook chapter
 //!   for that `NodeKind` — the same `nodes/<kind>.md` rendered by
 //!   mdbook, surfaced in the terminal via `include_str!`.
@@ -26,19 +26,19 @@ use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 
 use aozora::{
     Diagnostic, DiagnosticSource, InternalCheckCode, NodeKind, PairKind, Sentinel, Severity,
-    wire::{schema_container_pairs, schema_diagnostics, schema_nodes, schema_pairs},
+    json::{schema_container_pairs, schema_diagnostics, schema_nodes, schema_pairs},
 };
 
 /// `aozora schema <which>` subcommand argument.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum SchemaKind {
-    /// `WireEnvelope<DiagnosticWire>` — `serialize_diagnostics` output shape.
+    /// `WireEnvelope<DiagnosticWire>` — `diagnostics` output shape.
     Diagnostics,
-    /// `WireEnvelope<NodeWire>` — `serialize_nodes` output shape.
+    /// `WireEnvelope<NodeWire>` — `nodes` output shape.
     Nodes,
-    /// `WireEnvelope<PairWire>` — `serialize_pairs` output shape.
+    /// `WireEnvelope<PairWire>` — `pairs` output shape.
     Pairs,
-    /// `WireEnvelope<ContainerPairWire>` — `serialize_container_pairs` output shape.
+    /// `WireEnvelope<ContainerPairWire>` — `container_pairs` output shape.
     ContainerPairs,
 }
 
@@ -65,7 +65,7 @@ pub(crate) struct ExplainArgs {
 /// `aozora schema <which>` arguments.
 #[derive(Debug, Args)]
 pub(crate) struct SchemaArgs {
-    /// Which wire envelope schema to dump.
+    /// Which JSON envelope schema to dump.
     #[arg(value_enum)]
     pub(crate) which: SchemaKind,
 }
@@ -80,7 +80,7 @@ pub(crate) fn run_kinds(_args: &KindsArgs) -> Result<ExitCode> {
         "AST node / NodeRef projection tag",
         NodeKind::ALL
             .iter()
-            .map(|k| (k.as_camel_case(), describe_node(*k))),
+            .map(|k| (k.as_wire_tag(), describe_node(*k))),
     )?;
     write_table(
         &mut stdout,
@@ -88,7 +88,7 @@ pub(crate) fn run_kinds(_args: &KindsArgs) -> Result<ExitCode> {
         "Balanced delimiter pair tag (PairWire)",
         PairKind::ALL
             .iter()
-            .map(|k| (k.as_camel_case(), describe_pair(*k))),
+            .map(|k| (k.as_wire_tag(), describe_pair(*k))),
     )?;
     write_table(
         &mut stdout,
@@ -125,7 +125,7 @@ pub(crate) fn run_kinds(_args: &KindsArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Pretty-print the requested wire envelope schema as JSON.
+/// Pretty-print the requested JSON envelope schema as JSON.
 pub(crate) fn run_schema(args: &SchemaArgs) -> Result<ExitCode> {
     let value = match args.which {
         SchemaKind::Diagnostics => schema_diagnostics(),
@@ -195,22 +195,22 @@ fn describe_node(k: NodeKind) -> &'static str {
     match k {
         NodeKind::Ruby => "Ruby annotation (｜base《reading》).",
         NodeKind::Bouten => "Bouten (傍点) — emphasis dots over a span.",
-        NodeKind::TateChuYoko => "縦中横 — horizontal text inside a vertical run.",
+        NodeKind::CombineUpright => "縦中横 — horizontal text inside a vertical run.",
         NodeKind::Gaiji => "外字 — non-Unicode character reference.",
         NodeKind::Indent => "Inline indent (字下げ) marker.",
         NodeKind::AlignEnd => "Right-edge alignment (字上げ) marker.",
         NodeKind::Center => "Centring (中央) marker — ページの左右中央 / 中央揃え.",
         NodeKind::Warichu => "割注 — split-line annotation.",
-        NodeKind::Keigakomi => "罫囲み — ruled box.",
+        NodeKind::Framed => "罫囲み — ruled box.",
         NodeKind::PageBreak => "改ページ.",
         NodeKind::SectionBreak => "Section break.",
-        NodeKind::AozoraHeading => "Aozora heading (見出し).",
+        NodeKind::Heading => "Aozora heading (見出し).",
         NodeKind::HeadingHint => "Heading hint informing downstream rendering.",
-        NodeKind::Sashie => "挿絵 — illustration reference.",
+        NodeKind::Illustration => "挿絵 — illustration reference.",
         NodeKind::Kaeriten => "返り点 — kanbun reading marker.",
-        NodeKind::Annotation => "Generic annotation no specific recogniser claimed.",
+        NodeKind::Directive => "Generic annotation no specific recogniser claimed.",
         NodeKind::AngleQuote => "Double-angle quotation (≪…≫, displays as 《…》).",
-        NodeKind::SideNote => "Side annotation (注記) — 「X」の左に「Y」の注記.",
+        NodeKind::MarginNote => "Side annotation (注記) — 「X」の左に「Y」の注記.",
         NodeKind::Container => "Inline-attached container (字下げ系の wrap).",
         NodeKind::ContainerOpen => "NodeRef::BlockOpen — paired-container open sentinel.",
         NodeKind::ContainerClose => "NodeRef::BlockClose — paired-container close sentinel.",

@@ -23,7 +23,7 @@
 //!
 //! Run via `cargo bench -p aozora-pipeline --bench boot`.
 
-use aozora_pipeline::lexer::phase3_classify::build_body_dispatcher;
+use aozora_pipeline::lexer::classify::build_body_dispatcher;
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 

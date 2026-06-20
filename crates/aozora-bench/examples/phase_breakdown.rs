@@ -13,7 +13,7 @@
 //! are individually meaningful — the per-phase costs reported here
 //! include the materialisation overhead and are NOT a faithful
 //! reflection of the fused pipeline's instruction-cache / cache-line
-//! behaviour. Use `lex_into_arena` totals for end-to-end numbers.
+//! behaviour. Use `lex` totals for end-to-end numbers.
 //!
 //! Reads `AOZORA_CORPUS_ROOT` (same convention as `profile_corpus`),
 //! walks every `.txt` under it, decodes Shift_JIS, and runs the
@@ -55,7 +55,7 @@ use std::cell::RefCell;
 
 use aozora_corpus::{CorpusItem, CorpusSource, FilesystemCorpus};
 use aozora_encoding::decode_auto;
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
 };
@@ -94,7 +94,7 @@ struct PhaseSample {
     tokenize_ns: u64,
     pair_ns: u64,
     classify_ns: u64,
-    /// `lex_into_arena` total — everything from sanitize through the
+    /// `lex` total — everything from sanitize through the
     /// fused `ArenaNormalizer` walk that builds the borrowed registry.
     full_ns: u64,
     /// Derived: `full_ns - (sanitize + tokenize + pair + classify)`.
@@ -201,7 +201,7 @@ fn measure_one(text: &str) -> PhaseSample {
     let sanitize_ns = t.elapsed().as_nanos() as u64;
 
     // Phase 1 — collect into a Vec for per-phase isolation. Production
-    // pipeline (`lex_into_arena`) does NOT materialise; see the file
+    // pipeline (`lex`) does NOT materialise; see the file
     // header.
     let t = Instant::now();
     let tokens: Vec<Token> = tokenize(&sanitized.text).collect();
@@ -242,7 +242,7 @@ fn measure_one(text: &str) -> PhaseSample {
         let mut arena = cell.borrow_mut();
         arena.reset_with_hint(text.len().saturating_mul(4));
         let t = Instant::now();
-        let _full = lex_into_arena(text, &arena);
+        let _full = lex(text, &arena);
         t.elapsed().as_nanos() as u64
     });
 
@@ -317,7 +317,7 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64, parall
     println!("  ─────────────────────────────────────────────────");
     print_phase_row("4 standalone sum ", total, total, total_bytes);
     print_phase_row("post-classify (∼) ", post_classify_, full_, total_bytes);
-    print_phase_row("lex_into_arena   ", full_, full_, total_bytes);
+    print_phase_row("lex   ", full_, full_, total_bytes);
     println!();
 
     println!("Per-doc latency (per phase, microseconds)");
@@ -338,10 +338,7 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64, parall
         "post-classify",
         samples.iter().map(|s| s.post_classify_ns).collect(),
     );
-    print_phase_quantiles(
-        "lex_into_arena",
-        samples.iter().map(|s| s.full_ns).collect(),
-    );
+    print_phase_quantiles("lex", samples.iter().map(|s| s.full_ns).collect());
     print_phase_quantiles(
         "4-PHASE TOTAL",
         samples.iter().map(|s| s.total_ns).collect(),

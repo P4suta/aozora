@@ -1,6 +1,5 @@
 ---
 source: crates/aozora-syntax/tests/snapshot_ast_pretty.rs
-assertion_line: 69
 expression: "format!(\"{nodes:#?}\")"
 ---
 [
@@ -20,9 +19,9 @@ expression: "format!(\"{nodes:#?}\")"
             side: Right,
         },
     ),
-    SideNote(
-        SideNote {
-            kind: Annotation,
+    MarginNote(
+        MarginNote {
+            kind: Gloss,
             base: NonEmpty(
                 Plain(
                     "base",
@@ -35,8 +34,8 @@ expression: "format!(\"{nodes:#?}\")"
             ),
         },
     ),
-    SideNote(
-        SideNote {
+    MarginNote(
+        MarginNote {
             kind: Marginal,
             base: NonEmpty(
                 Plain(
@@ -62,8 +61,8 @@ expression: "format!(\"{nodes:#?}\")"
             consumed_predecessor: false,
         },
     ),
-    TateChuYoko(
-        TateChuYoko {
+    CombineUpright(
+        CombineUpright {
             text: NonEmpty(
                 Plain(
                     "base",
@@ -111,15 +110,15 @@ expression: "format!(\"{nodes:#?}\")"
             ),
         },
     ),
-    Keigakomi(
-        Keigakomi,
+    Framed(
+        Framed,
     ),
     PageBreak,
     SectionBreak(
         Kaicho,
     ),
-    AozoraHeading(
-        AozoraHeading {
+    Heading(
+        Heading {
             kind: Medium,
             style: Window,
             text: NonEmpty(
@@ -138,8 +137,8 @@ expression: "format!(\"{nodes:#?}\")"
             ),
         },
     ),
-    Sashie(
-        Sashie {
+    Illustration(
+        Illustration {
             file: NonEmptyStr(
                 "file.png",
             ),
@@ -156,8 +155,8 @@ expression: "format!(\"{nodes:#?}\")"
             ),
         },
     ),
-    Annotation(
-        Annotation {
+    Directive(
+        Directive {
             raw: NonEmptyStr(
                 "annotation",
             ),

@@ -2,7 +2,7 @@
 //!
 //! Compiles to a `wasm32-unknown-unknown` artifact suitable for
 //! `wasm-pack build --target web`, exposing `aozora::Document` /
-//! `aozora::AozoraTree` equivalents that JS / TypeScript consumers
+//! `aozora::Tree` equivalents that JS / TypeScript consumers
 //! can `import { Document } from "aozora-wasm"`.
 //!
 //! ## Build targeting
@@ -20,15 +20,15 @@
 //!
 //! ## Wire format
 //!
-//! Every JSON-returning method delegates to [`aozora::wire`], the
+//! Every JSON-returning method delegates to [`aozora::json`], the
 //! single authority for the cross-driver wire shape. `aozora-ffi` /
 //! `aozora-wasm` / `aozora-py` emit byte-identical envelopes:
 //!
 //! ```json
-//! { "schema_version": 1, "data": [ … ] }
+//! { "schemaVersion": 1, "data": [ … ] }
 //! ```
 //!
-//! [`aozora::wire::SCHEMA_VERSION`] bumps on any breaking change to
+//! [`aozora::json::SCHEMA_VERSION`] bumps on any breaking change to
 //! that shape.
 
 #![forbid(unsafe_code)]
@@ -74,7 +74,7 @@ const fn source_len_within_span_limit(byte_len: usize) -> Result<(), &'static st
 
 #[cfg(target_arch = "wasm32")]
 pub mod bindings {
-    use aozora::{Document as AozoraDoc, wire};
+    use aozora::{Document as AozoraDoc, json};
     use wasm_bindgen::prelude::*;
 
     /// All canonical slugs from the spec, packaged in the standard
@@ -83,11 +83,11 @@ pub mod bindings {
     ///
     /// Each `data[]` entry: `{ canonical, family, accepts_param, doc, partner }`.
     /// `family` is the camelCase form of the Rust enum variant. Projection
-    /// is the single authority in [`aozora::wire::serialize_slugs`].
-    #[wasm_bindgen]
+    /// is the single authority in [`aozora::json::slugs`].
+    #[wasm_bindgen(js_name = slugsJson)]
     #[must_use]
     pub fn slugs_json() -> String {
-        wire::serialize_slugs()
+        json::slugs()
     }
 
     /// Force one-time parser-table initialisation off the
@@ -113,6 +113,16 @@ pub mod bindings {
         web_sys::window()
             .and_then(|w| w.performance())
             .map_or(0.0, |p| p.now())
+    }
+
+    /// Parse a `{ schemaVersion, data }` wire envelope and return its
+    /// `data` array as a JS value. The structured accessors return this;
+    /// the `*Json` methods return the raw envelope string instead.
+    fn parsed_data(envelope: &str) -> Result<JsValue, JsValue> {
+        let v: serde_json::Value =
+            serde_json::from_str(envelope).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        serde_wasm_bindgen::to_value(v.get("data").unwrap_or(&serde_json::Value::Null))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// JS-facing handle to a parsed Aozora document.
@@ -150,31 +160,31 @@ pub mod bindings {
         }
 
         /// Render the document to a semantic-HTML5 string.
-        #[wasm_bindgen]
+        #[wasm_bindgen(js_name = toHtml)]
         #[must_use]
         pub fn to_html(&self) -> String {
             self.inner.parse().to_html()
         }
 
         /// Re-emit Aozora source text from the parse tree.
-        #[wasm_bindgen]
+        #[wasm_bindgen(js_name = toSource)]
         #[must_use]
         pub fn serialize(&self) -> String {
-            self.inner.parse().serialize()
+            self.inner.parse().to_source()
         }
 
         /// Diagnostics as JSON. Empty parse →
-        /// `{"schema_version":1,"data":[]}`. Wire format defined in
-        /// [`aozora::wire`].
-        #[wasm_bindgen]
+        /// `{"schemaVersion":1,"data":[]}`. Wire format defined in
+        /// [`aozora::json`].
+        #[wasm_bindgen(js_name = diagnosticsJson)]
         #[must_use]
         pub fn diagnostics_json(&self) -> String {
-            wire::serialize_diagnostics(self.inner.parse().diagnostics())
+            json::diagnostics(self.inner.parse().diagnostics())
         }
 
         /// Source-keyed Aozora-node spans as JSON. Each entry is
         /// `{ kind, span: { start, end } }` where `kind` is the
-        /// camelCase [`aozora::AozoraNode`] discriminant
+        /// camelCase [`aozora::Node`] discriminant
         /// (`"ruby"` / `"bouten"` / `"gaiji"` / …) plus
         /// `"containerOpen"` / `"containerClose"` for container
         /// open / close markers. `span` covers source bytes, sorted
@@ -183,10 +193,10 @@ pub mod bindings {
         /// Stream-friendly for the aozora-obsidian Lezer-Tree builder
         /// — the underlying `source_nodes` table tiles spans
         /// contiguously by construction.
-        #[wasm_bindgen]
+        #[wasm_bindgen(js_name = nodesJson)]
         #[must_use]
         pub fn nodes_json(&self) -> String {
-            wire::serialize_nodes(&self.inner.parse())
+            json::nodes(&self.inner.parse())
         }
 
         /// Matched open/close pair links as JSON. Each entry is
@@ -198,14 +208,14 @@ pub mod bindings {
         /// Unmatched closes and unclosed opens are excluded — they
         /// have no partner span and would only confuse editor
         /// surfaces.
-        #[wasm_bindgen]
+        #[wasm_bindgen(js_name = pairsJson)]
         #[must_use]
         pub fn pairs_json(&self) -> String {
-            wire::serialize_pairs(&self.inner.parse())
+            json::pairs(&self.inner.parse())
         }
 
         /// Source byte length. Useful for JS-side progress UI.
-        #[wasm_bindgen]
+        #[wasm_bindgen(js_name = sourceByteLen)]
         #[must_use]
         pub fn source_byte_len(&self) -> usize {
             self.inner.source().len()
@@ -213,7 +223,7 @@ pub mod bindings {
 
         /// Per-method timing snapshot for the current source.
         ///
-        /// Each entry is `{ "name": string, "duration_ms": number }`.
+        /// Each entry is `{ "name": string, "durationMs": number }`.
         /// Timings are taken via `performance.now()` on the host
         /// (`Instant::now()` panics on `wasm32-unknown-unknown`).
         ///
@@ -224,7 +234,7 @@ pub mod bindings {
         /// so summing them is the cost of "produce every output JS
         /// might want", and `parse` shows how much of the work
         /// happens up-front in the parser core itself.
-        #[wasm_bindgen]
+        #[wasm_bindgen(js_name = profileJson)]
         #[must_use]
         pub fn profile_json(&self) -> String {
             let p0 = now_ms();
@@ -236,19 +246,19 @@ pub mod bindings {
             let h1 = now_ms();
 
             let s0 = now_ms();
-            let _serialized = tree.serialize();
+            let _serialized = tree.to_source();
             let s1 = now_ms();
 
             let d0 = now_ms();
-            let _diag = wire::serialize_diagnostics(tree.diagnostics());
+            let _diag = json::diagnostics(tree.diagnostics());
             let d1 = now_ms();
 
             let n0 = now_ms();
-            let _nodes = wire::serialize_nodes(&tree);
+            let _nodes = json::nodes(&tree);
             let n1 = now_ms();
 
             let pa0 = now_ms();
-            let _pairs = wire::serialize_pairs(&tree);
+            let _pairs = json::pairs(&tree);
             let pa1 = now_ms();
 
             // gaiji_resolutions_json scans the source string directly
@@ -259,17 +269,17 @@ pub mod bindings {
             let g1 = now_ms();
 
             let entries = serde_json::json!([
-                { "name": "parse",             "duration_ms": p1  - p0  },
-                { "name": "to_html",           "duration_ms": h1  - h0  },
-                { "name": "serialize",         "duration_ms": s1  - s0  },
-                { "name": "diagnostics_json",  "duration_ms": d1  - d0  },
-                { "name": "nodes_json",        "duration_ms": n1  - n0  },
-                { "name": "pairs_json",        "duration_ms": pa1 - pa0 },
-                { "name": "gaiji_resolutions", "duration_ms": g1  - g0  },
+                { "name": "parse",             "durationMs": p1  - p0  },
+                { "name": "to_html",           "durationMs": h1  - h0  },
+                { "name": "serialize",         "durationMs": s1  - s0  },
+                { "name": "diagnostics_json",  "durationMs": d1  - d0  },
+                { "name": "nodes_json",        "durationMs": n1  - n0  },
+                { "name": "pairs_json",        "durationMs": pa1 - pa0 },
+                { "name": "gaiji_resolutions", "durationMs": g1  - g0  },
             ]);
             serde_json::json!({
-                "schema_version": 1,
-                "byte_len": self.inner.source().len(),
+                "schemaVersion": 1,
+                "byteLen": self.inner.source().len(),
                 "data": entries,
             })
             .to_string()
@@ -292,10 +302,10 @@ pub mod bindings {
         /// Locality: the scan is bounded to a 512-byte window either
         /// side of `byte_offset`, so the cost is independent of
         /// document size. Editors call this on every cursor move.
-        #[wasm_bindgen]
+        #[wasm_bindgen(js_name = resolveGaijiAt)]
         #[must_use]
         pub fn resolve_gaiji_at(&self, byte_offset: usize) -> String {
-            wire::serialize_gaiji_resolution_at(self.inner.source(), byte_offset)
+            json::gaiji_at(self.inner.source(), byte_offset)
         }
 
         /// All gaiji resolutions found in the document, packaged in
@@ -304,17 +314,88 @@ pub mod bindings {
         /// `※［＃…］` span.
         ///
         /// Walks the source linearly once; cost is `O(source)`.
-        #[wasm_bindgen]
+        #[wasm_bindgen(js_name = gaijiJson)]
         #[must_use]
         pub fn gaiji_resolutions_json(&self) -> String {
-            wire::serialize_gaiji_resolutions(self.inner.source())
+            json::gaiji(self.inner.source())
+        }
+
+        /// Container open/close pairs as a raw wire-envelope string.
+        #[wasm_bindgen(js_name = containerPairsJson)]
+        #[must_use]
+        pub fn container_pairs_json(&self) -> String {
+            json::container_pairs(&self.inner.parse())
+        }
+
+        // ── Structured accessors ──────────────────────────────────
+        // First-class parsed `data[]` (JS objects). The `*Json` methods
+        // above remain the raw-string escape hatch.
+
+        /// Source-keyed Aozora nodes as parsed JS objects.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
+        /// or its `data` payload cannot be converted to a JS value — neither
+        /// occurs for a well-formed parse.
+        #[wasm_bindgen(js_name = nodes)]
+        pub fn nodes(&self) -> Result<JsValue, JsValue> {
+            parsed_data(&json::nodes(&self.inner.parse()))
+        }
+
+        /// Matched open/close pairs as parsed JS objects.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
+        /// or its `data` payload cannot be converted to a JS value — neither
+        /// occurs for a well-formed parse.
+        #[wasm_bindgen(js_name = pairs)]
+        pub fn pairs(&self) -> Result<JsValue, JsValue> {
+            parsed_data(&json::pairs(&self.inner.parse()))
+        }
+
+        /// Container open/close pairs as parsed JS objects.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
+        /// or its `data` payload cannot be converted to a JS value — neither
+        /// occurs for a well-formed parse.
+        #[wasm_bindgen(js_name = containerPairs)]
+        pub fn container_pairs(&self) -> Result<JsValue, JsValue> {
+            parsed_data(&json::container_pairs(&self.inner.parse()))
+        }
+
+        /// Diagnostics as parsed JS objects.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
+        /// or its `data` payload cannot be converted to a JS value — neither
+        /// occurs for a well-formed parse.
+        #[wasm_bindgen(js_name = diagnostics)]
+        pub fn diagnostics(&self) -> Result<JsValue, JsValue> {
+            parsed_data(&json::diagnostics(self.inner.parse().diagnostics()))
+        }
+
+        /// Gaiji resolutions as parsed JS objects.
+        ///
+        /// # Errors
+        ///
+        /// Returns `Err(JsValue)` if the wire envelope cannot be deserialized
+        /// or its `data` payload cannot be converted to a JS value — neither
+        /// occurs for a well-formed parse.
+        #[wasm_bindgen(js_name = gaiji)]
+        pub fn gaiji(&self) -> Result<JsValue, JsValue> {
+            parsed_data(&json::gaiji(self.inner.source()))
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use aozora::{Document, wire};
+    use aozora::{Document, json};
 
     /// The boundary guard accepts in-range lengths (including the
     /// inclusive `u32::MAX` upper bound) and rejects anything larger.
@@ -339,8 +420,8 @@ mod tests {
     #[test]
     fn diagnostics_json_is_empty_envelope_for_clean_input() {
         let doc = Document::new("plain".to_owned());
-        let json = wire::serialize_diagnostics(doc.parse().diagnostics());
-        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
+        let json = json::diagnostics(doc.parse().diagnostics());
+        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
     }
 
     /// PUA collision shows up as a `kind:"source_contains_pua"` entry
@@ -348,13 +429,13 @@ mod tests {
     #[test]
     fn diagnostics_json_emits_pua_diagnostic() {
         let doc = Document::new("abc\u{E001}def".to_owned());
-        let json = wire::serialize_diagnostics(doc.parse().diagnostics());
+        let json = json::diagnostics(doc.parse().diagnostics());
         assert!(
             json.contains(r#""kind":"source_contains_pua""#),
             "json missing diag kind: {json}"
         );
         assert!(
-            json.contains(r#""schema_version":1"#),
+            json.contains(r#""schemaVersion":1"#),
             "json missing schema_version: {json}"
         );
     }
@@ -364,12 +445,12 @@ mod tests {
     #[test]
     fn diagnostics_json_round_trips_envelope() {
         let doc = Document::new("abc\u{E001}def".to_owned());
-        let json = wire::serialize_diagnostics(doc.parse().diagnostics());
+        let json = json::diagnostics(doc.parse().diagnostics());
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert!(parsed.is_object(), "wire root must be object");
         assert_eq!(
             parsed
-                .get("schema_version")
+                .get("schemaVersion")
                 .and_then(serde_json::Value::as_u64),
             Some(1)
         );
@@ -380,15 +461,15 @@ mod tests {
     #[test]
     fn nodes_json_is_empty_envelope_for_plain_text() {
         let doc = Document::new("hello, world".to_owned());
-        let json = wire::serialize_nodes(&doc.parse());
-        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
+        let json = json::nodes(&doc.parse());
+        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
     }
 
     /// Ruby span emits a `kind:"ruby"` entry.
     #[test]
     fn nodes_json_classifies_ruby() {
         let doc = Document::new("｜青梅《おうめ》".to_owned());
-        let json = wire::serialize_nodes(&doc.parse());
+        let json = json::nodes(&doc.parse());
         assert!(
             json.contains(r#""kind":"ruby""#),
             "json should mark ruby: {json}"
@@ -400,7 +481,7 @@ mod tests {
     #[test]
     fn nodes_json_round_trips_as_envelope() {
         let doc = Document::new("｜山《やま》や［＃改ページ］\n≪秘密≫".to_owned());
-        let json = wire::serialize_nodes(&doc.parse());
+        let json = json::nodes(&doc.parse());
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         let arr = parsed
             .get("data")
@@ -420,7 +501,7 @@ mod tests {
     #[test]
     fn nodes_json_spans_are_in_source_order() {
         let doc = Document::new("｜山《やま》。｜川《かわ》。｜空《そら》。".to_owned());
-        let json = wire::serialize_nodes(&doc.parse());
+        let json = json::nodes(&doc.parse());
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         let arr = parsed
             .get("data")
@@ -443,7 +524,7 @@ mod tests {
     #[test]
     fn pairs_json_emits_ruby_pair() {
         let doc = Document::new("｜青梅《おうめ》".to_owned());
-        let json = wire::serialize_pairs(&doc.parse());
+        let json = json::pairs(&doc.parse());
         assert!(json.contains(r#""kind":"ruby""#), "pairs json: {json}");
         assert!(json.contains(r#""open":"#), "pairs json: {json}");
         assert!(json.contains(r#""close":"#), "pairs json: {json}");

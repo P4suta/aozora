@@ -8,11 +8,11 @@
   },
   "source": "ある日、［＃挿絵（cover.png）「図一」入る］その地に至る。\n",
   "expected": {
-    "html": "<p>ある日、</p>\n<figure class=\"aozora-sashie\"><img src=\"cover.png\" alt=\"\" /><figcaption>図一</figcaption></figure>\n<p>その地に至る。</p>\n",
+    "html": "<p>ある日、</p>\n<figure class=\"aozora-illustration\"><img src=\"cover.png\" alt=\"\" /><figcaption>図一</figcaption></figure>\n<p>その地に至る。</p>\n",
     "serialize": "ある日、\n\n［＃挿絵（cover.png）「図一」入る］\n\nその地に至る。\n",
     "nodes": [
       {
-        "kind": "sashie",
+        "kind": "illustration",
         "span": {
           "start": 12,
           "end": 60

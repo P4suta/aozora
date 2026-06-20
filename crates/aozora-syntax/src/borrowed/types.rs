@@ -8,7 +8,7 @@
 //! visitors and renderers walk the tree without `&mut` ceremony.
 //!
 //! Variants that hold no string content (`Indent`, `AlignEnd`,
-//! `Keigakomi`, `SectionKind`, `Container`) are re-exported from the
+//! `Framed`, `SectionKind`, `Container`) are re-exported from the
 //! owned module unchanged — they are already `Copy + 'static`.
 
 use core::slice;
@@ -16,8 +16,8 @@ use core::slice;
 use aozora_encoding::gaiji::Resolved;
 
 use crate::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Center, Container, EmphasisKind, Indent, Keigakomi, RubySide, SectionKind, SideNoteKind,
+    AlignEnd, BoutenKind, BoutenPosition, Center, Container, DirectiveKind, EmphasisKind, Framed,
+    HeadingKind, HeadingStyle, Indent, MarginNoteKind, RubySide, SectionKind,
 };
 
 // ----------------------------------------------------------------------
@@ -31,13 +31,13 @@ use crate::{
 /// [`aozora_syntax owned API (no longer present)`] type 1:1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum AozoraNode<'src> {
+pub enum Node<'src> {
     /// Ruby (furigana). See [`Ruby`].
     Ruby(&'src Ruby<'src>),
     /// Emphasis dots / sidelines. See [`Bouten`].
     Bouten(&'src Bouten<'src>),
     /// Tate-chu-yoko (horizontal embedding inside vertical text).
-    TateChuYoko(&'src TateChuYoko<'src>),
+    CombineUpright(&'src CombineUpright<'src>),
     /// Out-of-character-range glyph reference. See [`Gaiji`].
     Gaiji(&'src Gaiji<'src>),
     /// Indentation marker. Carries no string content; uses the legacy
@@ -49,28 +49,28 @@ pub enum AozoraNode<'src> {
     Center(Center),
     /// Warichu (split annotation). See [`Warichu`].
     Warichu(&'src Warichu<'src>),
-    /// Keigakomi (boxed text marker, no fields).
-    Keigakomi(Keigakomi),
+    /// Framed (boxed text marker, no fields).
+    Framed(Framed),
     /// Page break (`［＃改ページ］`).
     PageBreak,
     /// Section break — `［＃改丁／改段／改見開き］`.
     SectionBreak(SectionKind),
-    /// Aozora heading (窓見出し / 副見出し). See [`AozoraHeading`].
-    AozoraHeading(&'src AozoraHeading<'src>),
+    /// Aozora heading (窓見出し / 副見出し). See [`Heading`].
+    Heading(&'src Heading<'src>),
     /// Forward-reference heading hint (`［＃「X」は大見出し］`).
     HeadingHint(&'src HeadingHint<'src>),
     /// Illustration (`［＃挿絵］`).
-    Sashie(&'src Sashie<'src>),
+    Illustration(&'src Illustration<'src>),
     /// Chinese-reading-order mark (`返り点`).
     Kaeriten(&'src Kaeriten<'src>),
     /// Generic annotation when no more specific recogniser matched.
-    Annotation(&'src Annotation<'src>),
+    Directive(&'src Directive<'src>),
     /// `≪…≫` double-angle quotation (displays as `《…》`). See [`AngleQuote`].
     AngleQuote(&'src AngleQuote<'src>),
     /// Bold / italic emphasis (`X［＃「X」は太字／斜体］`). See [`Emphasis`].
     Emphasis(&'src Emphasis<'src>),
-    /// Left-side annotation (注記). See [`SideNote`].
-    SideNote(&'src SideNote<'src>),
+    /// Left-side annotation (注記). See [`MarginNote`].
+    MarginNote(&'src MarginNote<'src>),
     /// Paired-container open (`［＃ここから字下げ］` etc.).
     Container(Container),
 }
@@ -134,7 +134,7 @@ impl Default for Content<'_> {
 pub enum Segment<'src> {
     Text(&'src str),
     Gaiji(&'src Gaiji<'src>),
-    Annotation(&'src Annotation<'src>),
+    Directive(&'src Directive<'src>),
 }
 
 /// Iterator over a [`Content`]'s logical segments, returned by
@@ -192,17 +192,17 @@ pub struct Ruby<'src> {
 /// Like a left-side ruby in placement, but a *note* rather than a phonetic
 /// reading, so it is a distinct node that round-trips to its own keyword
 /// (not `のルビ`):
-/// - [`SideNoteKind::Annotation`] — `［＃「base」の左に「note」の注記］`, an
+/// - [`MarginNoteKind::Gloss`] — `［＃「base」の左に「note」の注記］`, an
 ///   editorial gloss.
-/// - [`SideNoteKind::Marginal`] — `［＃「base」に「note」の傍記］`, a redaction
+/// - [`MarginNoteKind::Marginal`] — `［＃「base」に「note」の傍記］`, a redaction
 ///   marker (典型的に ×) written beside `base`.
 ///
 /// Both `base` and `note` are [`super::NonEmpty`]: Phase 3 emits the node
 /// only once both have content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SideNote<'src> {
+pub struct MarginNote<'src> {
     /// 注記 vs 傍記 — preserved for faithful round-trip; both render alike.
-    pub kind: SideNoteKind,
+    pub kind: MarginNoteKind,
     pub base: super::NonEmpty<Content<'src>>,
     pub note: super::NonEmpty<Content<'src>>,
 }
@@ -241,7 +241,7 @@ pub struct Bouten<'src> {
 /// 中横］`) follows the same back-ref consume model and the same
 /// round-trip contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TateChuYoko<'src> {
+pub struct CombineUpright<'src> {
     pub text: super::NonEmpty<Content<'src>>,
     pub consumed_predecessor: bool,
 }
@@ -258,7 +258,7 @@ pub struct TateChuYoko<'src> {
 /// `text` is [`super::NonEmpty`] — empty emphasis is a parse bug.
 ///
 /// `consumed_predecessor` mirrors [`Bouten::consumed_predecessor`] and
-/// [`TateChuYoko::consumed_predecessor`]: when Phase 3 pulled the node's
+/// [`CombineUpright::consumed_predecessor`]: when Phase 3 pulled the node's
 /// source span back over the immediately-preceding literal of `text`,
 /// the serializer re-emits that literal before `［＃「text」は太字］` to
 /// hold the parse∘serialize fixed point.
@@ -301,9 +301,9 @@ pub struct Warichu<'src> {
 ///
 /// `text` is [`super::NonEmpty`] — every heading carries a label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AozoraHeading<'src> {
-    pub kind: AozoraHeadingKind,
-    pub style: AozoraHeadingStyle,
+pub struct Heading<'src> {
+    pub kind: HeadingKind,
+    pub style: HeadingStyle,
     pub text: super::NonEmpty<Content<'src>>,
 }
 
@@ -315,7 +315,7 @@ pub struct AozoraHeading<'src> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadingHint<'src> {
     pub level: u8,
-    pub style: AozoraHeadingStyle,
+    pub style: HeadingStyle,
     pub target: super::NonEmptyStr<'src>,
 }
 
@@ -324,7 +324,7 @@ pub struct HeadingHint<'src> {
 /// `file` is [`super::NonEmptyStr`] — `［＃挿絵（）入る］` with empty
 /// path is a parse bug, not a valid state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Sashie<'src> {
+pub struct Illustration<'src> {
     pub file: super::NonEmptyStr<'src>,
     /// Optional figure number from the `［＃挿絵{N}（…）入る］` numbered form,
     /// kept as the raw digit string (so `０１` / `10` round-trip verbatim).
@@ -349,9 +349,9 @@ pub struct Sashie<'src> {
 /// `raw` is [`super::NonEmptyStr`] — annotation always carries the
 /// raw bytes between `［＃` and `］`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Annotation<'src> {
+pub struct Directive<'src> {
     pub raw: super::NonEmptyStr<'src>,
-    pub kind: AnnotationKind,
+    pub kind: DirectiveKind,
 }
 
 /// Chinese-reading-order mark (`返り点`).
@@ -372,11 +372,11 @@ pub struct AngleQuote<'src> {
     pub content: super::NonEmpty<Content<'src>>,
 }
 
-/// [`AozoraNode`] classifier methods. Mirror the inherent methods on
+/// [`Node`] classifier methods. Mirror the inherent methods on
 /// the legacy owned [`aozora_syntax owned API (no longer present)`] 1:1 so a renderer compiled
 /// against either AST takes the same code path and the same XML
 /// snapshot string.
-impl AozoraNode<'_> {
+impl Node<'_> {
     /// True iff this node occupies a paragraph position in the
     /// document tree (and therefore shouldn't be wrapped inside a
     /// surrounding text run by the renderer).
@@ -388,11 +388,11 @@ impl AozoraNode<'_> {
                 | Self::AlignEnd(_)
                 | Self::Center(_)
                 | Self::Warichu(_)
-                | Self::Keigakomi(_)
+                | Self::Framed(_)
                 | Self::PageBreak
                 | Self::SectionBreak(_)
-                | Self::AozoraHeading(_)
-                | Self::Sashie(_)
+                | Self::Heading(_)
+                | Self::Illustration(_)
                 | Self::Container(_)
         )
     }
@@ -406,11 +406,11 @@ impl AozoraNode<'_> {
     pub const fn contains_inlines(&self) -> bool {
         matches!(
             self,
-            Self::AozoraHeading(_)
+            Self::Heading(_)
                 | Self::AlignEnd(_)
                 | Self::Center(_)
                 | Self::Warichu(_)
-                | Self::Keigakomi(_)
+                | Self::Framed(_)
                 | Self::Indent(_)
         )
     }
@@ -424,23 +424,23 @@ impl AozoraNode<'_> {
         match self {
             Self::Ruby(_) => "aozora_ruby",
             Self::Bouten(_) => "aozora_bouten",
-            Self::TateChuYoko(_) => "aozora_tcy",
+            Self::CombineUpright(_) => "aozora_tcy",
             Self::Gaiji(_) => "aozora_gaiji",
             Self::Indent(_) => "aozora_indent",
             Self::AlignEnd(_) => "aozora_align_end",
             Self::Center(_) => "aozora_center",
             Self::Warichu(_) => "aozora_warichu",
-            Self::Keigakomi(_) => "aozora_keigakomi",
+            Self::Framed(_) => "aozora_keigakomi",
             Self::PageBreak => "aozora_page_break",
             Self::SectionBreak(_) => "aozora_section_break",
-            Self::AozoraHeading(_) => "aozora_heading",
+            Self::Heading(_) => "aozora_heading",
             Self::HeadingHint(_) => "aozora_heading_hint",
-            Self::Sashie(_) => "aozora_sashie",
+            Self::Illustration(_) => "aozora_sashie",
             Self::Kaeriten(_) => "aozora_kaeriten",
-            Self::Annotation(_) => "aozora_annotation",
+            Self::Directive(_) => "aozora_annotation",
             Self::AngleQuote(_) => "aozora_angle_quote",
             Self::Emphasis(_) => "aozora_emphasis",
-            Self::SideNote(_) => "aozora_side_note",
+            Self::MarginNote(_) => "aozora_side_note",
             Self::Container(_) => "aozora_container",
         }
     }
@@ -449,7 +449,7 @@ impl AozoraNode<'_> {
     ///
     /// Driver wire formats (`aozora-ffi` / `aozora-wasm` / `aozora-py`)
     /// project to the camelCase string via
-    /// [`NodeKind::as_camel_case`](crate::NodeKind::as_camel_case);
+    /// [`NodeKind::as_wire_tag`](crate::NodeKind::as_wire_tag);
     /// internal consumers can `match` on the typed enum directly.
     #[must_use]
     pub const fn kind(&self) -> crate::NodeKind {
@@ -457,23 +457,23 @@ impl AozoraNode<'_> {
         match self {
             Self::Ruby(_) => NodeKind::Ruby,
             Self::Bouten(_) => NodeKind::Bouten,
-            Self::TateChuYoko(_) => NodeKind::TateChuYoko,
+            Self::CombineUpright(_) => NodeKind::CombineUpright,
             Self::Gaiji(_) => NodeKind::Gaiji,
             Self::Indent(_) => NodeKind::Indent,
             Self::AlignEnd(_) => NodeKind::AlignEnd,
             Self::Center(_) => NodeKind::Center,
             Self::Warichu(_) => NodeKind::Warichu,
-            Self::Keigakomi(_) => NodeKind::Keigakomi,
+            Self::Framed(_) => NodeKind::Framed,
             Self::PageBreak => NodeKind::PageBreak,
             Self::SectionBreak(_) => NodeKind::SectionBreak,
-            Self::AozoraHeading(_) => NodeKind::AozoraHeading,
+            Self::Heading(_) => NodeKind::Heading,
             Self::HeadingHint(_) => NodeKind::HeadingHint,
-            Self::Sashie(_) => NodeKind::Sashie,
+            Self::Illustration(_) => NodeKind::Illustration,
             Self::Kaeriten(_) => NodeKind::Kaeriten,
-            Self::Annotation(_) => NodeKind::Annotation,
+            Self::Directive(_) => NodeKind::Directive,
             Self::AngleQuote(_) => NodeKind::AngleQuote,
             Self::Emphasis(_) => NodeKind::Emphasis,
-            Self::SideNote(_) => NodeKind::SideNote,
+            Self::MarginNote(_) => NodeKind::MarginNote,
             Self::Container(_) => NodeKind::Container,
         }
     }
@@ -489,7 +489,7 @@ mod tests {
         // non-Copy payload, the visitor pattern falls apart and this
         // test fails to compile.
         fn assert_copy<T: Copy>() {}
-        assert_copy::<AozoraNode<'static>>();
+        assert_copy::<Node<'static>>();
         assert_copy::<Content<'static>>();
         assert_copy::<Ruby<'static>>();
         assert_copy::<Bouten<'static>>();
@@ -560,23 +560,23 @@ mod tests {
     #[test]
     fn aozora_node_xml_names_are_unique_per_variant() {
         // Spot-check a couple of variants — exhaustive coverage lives
-        // in the legacy AozoraNode test suite. Our concern here is
+        // in the legacy Node test suite. Our concern here is
         // that the borrowed mirror returns the SAME strings.
         let kaeriten = Kaeriten {
             mark: super::super::NonEmptyStr::new("x").unwrap(),
         };
-        let n = AozoraNode::Kaeriten(&kaeriten);
+        let n = Node::Kaeriten(&kaeriten);
         assert_eq!(n.xml_node_name(), "aozora_kaeriten");
         assert!(!n.contains_inlines());
 
-        assert!(AozoraNode::PageBreak.is_block());
-        assert_eq!(AozoraNode::PageBreak.xml_node_name(), "aozora_page_break");
+        assert!(Node::PageBreak.is_block());
+        assert_eq!(Node::PageBreak.xml_node_name(), "aozora_page_break");
     }
 
     #[test]
     fn block_variants_report_block() {
-        assert!(AozoraNode::Indent(Indent { amount: 2 }).is_block());
-        assert!(AozoraNode::SectionBreak(SectionKind::Kaicho).is_block());
+        assert!(Node::Indent(Indent { amount: 2 }).is_block());
+        assert!(Node::SectionBreak(SectionKind::Kaicho).is_block());
     }
 
     #[test]
@@ -587,12 +587,12 @@ mod tests {
             delim_explicit: false,
             side: RubySide::Right,
         };
-        assert!(!AozoraNode::Ruby(&ruby).is_block());
+        assert!(!Node::Ruby(&ruby).is_block());
 
         let kaeriten = Kaeriten {
             mark: super::super::NonEmptyStr::new("x").unwrap(),
         };
-        assert!(!AozoraNode::Kaeriten(&kaeriten).is_block());
+        assert!(!Node::Kaeriten(&kaeriten).is_block());
     }
 
     #[test]

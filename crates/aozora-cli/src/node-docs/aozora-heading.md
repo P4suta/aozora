@@ -1,6 +1,6 @@
-# NodeKind::AozoraHeading
+# NodeKind::Heading
 
-Wire tag: `heading` — Aozora 見出し (window / sub heading).
+Inspect tag: `heading` — Aozora 見出し (window / sub heading).
 
 ## Source examples
 
@@ -23,13 +23,13 @@ Round-trips to `［＃<kind>見出し］...［＃<kind>見出し終わり］`.
 ## AST shape
 
 ```rust,ignore
-pub struct AozoraHeading<'src> {
-    pub kind: AozoraHeadingKind,
+pub struct Heading<'src> {
+    pub kind: HeadingKind,
     pub text: NonEmpty<Content<'src>>,
 }
 ```
 
-`AozoraHeadingKind` is `Window` (窓見出し) or `Sub` (副見出し).
+`HeadingKind` is `Window` (窓見出し) or `Sub` (副見出し).
 
 ## When emitted
 

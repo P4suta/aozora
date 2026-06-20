@@ -1,6 +1,6 @@
 # NodeKind::AngleQuote
 
-Wire tag: `angleQuote` — double-angle quotation (二重山括弧).
+Inspect tag: `angleQuote` — double-angle quotation (二重山括弧).
 
 A 底本's twin angle brackets `《…》` would collide with the ruby
 markers `《…》` (U+300A/U+300B), so Aozora Bunko **input** encodes them

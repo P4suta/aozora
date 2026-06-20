@@ -1,6 +1,6 @@
 [package]
 name        = "aozora"
-description = "Aozora Bunko notation parser — single front door (Document + AozoraTree)"
+description = "Aozora Bunko notation parser — single front door (Document + Tree)"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -15,7 +15,7 @@ categories.workspace   = true
 workspace = true
 
 [dependencies]
-# Document wraps `aozora_pipeline::lex_into_arena` and AozoraTree
+# Document wraps `aozora_pipeline::lex` and Tree
 # borrows from a `bumpalo`-backed arena owned by Document. The five
 # internal crates below are `publish = false`; this meta crate is the
 # single front door, exposing them via the `aozora::pipeline` /
@@ -26,10 +26,10 @@ aozora-syntax   = { workspace = true }
 aozora-spec     = { workspace = true }
 aozora-encoding = { workspace = true }
 
-# Driver-shared wire format (see `aozora::wire`). Optional so library
+# Driver-shared wire format (see `aozora::json`). Optional so library
 # consumers that only use the borrowed-AST surface do not have to
 # compile serde / serde_json. Drivers (aozora-ffi / aozora-wasm /
-# aozora-py) enable `aozora/wire` to project the AST into JSON.
+# aozora-py) enable `aozora/json` to project the AST into JSON.
 serde      = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 # JSON Schema generation for the wire format. Optional, enabled by
@@ -55,8 +55,8 @@ aozora-query    = { workspace = true, optional = true }
 [features]
 default = []
 # JSON wire format projection used by FFI / WASM / PyO3 drivers.
-# Enables `aozora::wire::serialize_diagnostics` /
-# `serialize_nodes` / `serialize_pairs` and the `SCHEMA_VERSION`
+# Enables `aozora::json::diagnostics` /
+# `nodes` / `pairs` and the `SCHEMA_VERSION`
 # constant — the single authority for cross-language wire output.
 #
 # `serde_json/preserve_order` makes `serde_json::Value` keep insertion
@@ -67,12 +67,12 @@ default = []
 # key order. Pinning it to `wire` makes the byte-canonical contract
 # self-contained instead of silently depending on `schema` pulling in
 # schemars (which also enables `preserve_order`).
-wire = ["dep:serde", "dep:serde_json", "serde_json/preserve_order"]
+json = ["dep:serde", "dep:serde_json", "serde_json/preserve_order"]
 # JSON Schema introspection for the wire format. Enables
-# `aozora::wire::schema_diagnostics` / `schema_nodes` /
+# `aozora::json::schema_diagnostics` / `schema_nodes` /
 # `schema_pairs` / `schema_container_pairs` (one per envelope).
 # Used by `xtask schema dump` and the introspection CLI subcommand.
-schema = ["wire", "dep:schemars"]
+schema = ["json", "dep:schemars"]
 # Aozora-shaped proptest generators (`aozora::proptest::*`).
 # Downstream renderer authors enable this when writing property
 # tests over their own `AozoraVisitor` impls.

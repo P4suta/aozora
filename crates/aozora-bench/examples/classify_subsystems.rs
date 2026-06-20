@@ -1,8 +1,8 @@
 //! Phase 3 sub-system per-recogniser breakdown.
 //!
-//! Requires the `aozora-pipeline/phase3-instrument` feature (enforced via
+//! Requires the `aozora-pipeline/classify-instrument` feature (enforced via
 //! `required-features` in `aozora-bench/Cargo.toml`). When the feature
-//! is on, each recogniser entry inside [`aozora_pipeline::lexer::phase3_classify`]
+//! is on, each recogniser entry inside [`aozora_pipeline::lexer::classify`](mod@aozora_pipeline::lexer::classify)
 //! emits an [`instrumentation::SubsystemGuard`] that records elapsed
 //! nanoseconds into a thread-local table. This probe drains the table
 //! per document, accumulates totals across the corpus, and reports
@@ -26,8 +26,8 @@
 //!   - `append_to_frame`                  — per-event frame buffer push
 //!
 //! ```text
-//! AOZORA_CORPUS_ROOT=… cargo run --release --example phase3_subsystems \
-//!   -p aozora-bench --features 'aozora-pipeline/phase3-instrument'
+//! AOZORA_CORPUS_ROOT=… cargo run --release --example classify_subsystems \
+//!   -p aozora-bench --features 'aozora-pipeline/classify-instrument'
 //! ```
 
 #![allow(
@@ -49,7 +49,7 @@ use std::time::Instant;
 
 use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_auto;
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_pipeline::lexer::instrumentation::{Subsystem, TimingTable};
 use aozora_syntax::borrowed::Arena;
 
@@ -85,7 +85,7 @@ fn main() {
         .ok()
         .and_then(|s| s.trim().parse().ok());
 
-    eprintln!("phase3_subsystems: starting (limit = {limit:?})");
+    eprintln!("classify_subsystems: starting (limit = {limit:?})");
 
     let items: Vec<CorpusItem> = corpus
         .iter()
@@ -93,7 +93,7 @@ fn main() {
         .filter_map(Result::ok)
         .collect();
     eprintln!(
-        "phase3_subsystems: loaded {} items, measuring…",
+        "classify_subsystems: loaded {} items, measuring…",
         items.len()
     );
 
@@ -111,7 +111,7 @@ fn main() {
         // doc's recogniser activity. Run lex with a fresh arena.
         TimingTable::reset();
         let arena = Arena::new();
-        let _out = lex_into_arena(&text, &arena);
+        let _out = lex(&text, &arena);
         let snap = TimingTable::snapshot();
         agg.merge(&snap);
         docs_processed += 1;
@@ -127,7 +127,7 @@ fn main() {
 
     let wall = wall_start.elapsed();
     eprintln!(
-        "phase3_subsystems: done in {:.2}s, {decode_errors} decode errors",
+        "classify_subsystems: done in {:.2}s, {decode_errors} decode errors",
         wall.as_secs_f64()
     );
 

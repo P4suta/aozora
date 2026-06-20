@@ -1,6 +1,6 @@
 # Borrowed-arena AST
 
-`AozoraTree<'a>` is **not** an owned tree. It's a borrow into two
+`Tree<'a>` is **not** an owned tree. It's a borrow into two
 things owned by `Document`:
 
 - the source `Box<str>`,
@@ -13,7 +13,7 @@ flowchart LR
         src["Box&lt;str&gt; source"]
         bump["bumpalo::Bump arena"]
     end
-    tree["AozoraTree&lt;'a&gt;"]
+    tree["Tree&lt;'a&gt;"]
     walk["render / serialize / iterate"]
 
     src -.borrows.-> tree
@@ -72,7 +72,7 @@ allocation strategy.
 ## How the AST shape interacts with the lifetime
 
 ```rust
-pub enum AozoraNode<'src> {
+pub enum Node<'src> {
     Plain(&'src str),
     Ruby(Ruby<'src>),
     Bouten(Bouten<'src>),
@@ -91,17 +91,17 @@ as long as the arena). Each variant either:
 - holds a `&str` slice into the source (zero copy), or
 - is a small `Copy` struct (`BreakNode`, `Saidoku`, …), or
 - is `&'src Container<'src>` — boxed in the arena because
-  `Container` itself contains a `&'src [AozoraNode<'src>]` child
+  `Container` itself contains a `&'src [Node<'src>]` child
   slice.
 
-The whole `AozoraNode` is `Copy` (it's a tagged union of references
+The whole `Node` is `Copy` (it's a tagged union of references
 and small primitives), so iterating the tree never needs `&` — just
 deref the reference, copy the node, walk on.
 
 ## What you trade
 
 The big trade-off: **you can't outlive the `Document`**. A
-`Vec<AozoraNode<'_>>` doesn't compile because the `'_` lifetime is
+`Vec<Node<'_>>` doesn't compile because the `'_` lifetime is
 bound to the arena, which is bound to the `Document`.
 
 In practice this rarely matters — consumers either:
@@ -114,7 +114,7 @@ In practice this rarely matters — consumers either:
   the tree on the inside.
 
 For consumers that genuinely need an owned tree, the visitor trait
-on `AozoraTree` makes the conversion trivial — walk the tree once
+on `Tree` makes the conversion trivial — walk the tree once
 and emit your own owned IR. We resist shipping a built-in
 `aozora::owned` because doing so would push consumers toward it
 even when an immediate `to_html()` or per-walk transcription would
@@ -125,7 +125,7 @@ serve them better.
 The `'src` parameter prevents these shapes at compile time:
 
 ```rust
-fn bad() -> AozoraTree<'static> {
+fn bad() -> Tree<'static> {
     let doc = aozora::Document::new("…".into());
     doc.parse()        // ERROR: cannot return value referencing local
 }
@@ -137,6 +137,6 @@ Borrow-checker enforcement; no runtime `Drop` ordering bugs possible.
 
 - [Pipeline overview](pipeline.md) — where the arena is created.
 - [Crate map](crates.md) — `aozora-syntax` defines the node types;
-  `aozora-pipeline` does the allocation via [`lex_into_arena`].
+  `aozora-pipeline` does the allocation via [`lex`].
 
-[`lex_into_arena`]: https://docs.rs/aozora-pipeline/latest/aozora_pipeline/fn.lex_into_arena.html
+[`lex`]: https://docs.rs/aozora-pipeline/latest/aozora_pipeline/fn.lex.html

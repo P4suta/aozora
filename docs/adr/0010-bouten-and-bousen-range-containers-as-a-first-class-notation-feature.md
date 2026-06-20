@@ -46,7 +46,7 @@ Model the range form as a **`ContainerKind::BoutenRange { kind, position }`**
 container that pairs through the normalizer's `open_stack` (giving the
 mismatch check for free) **but renders inline**:
 
-- The classifier (`phase3_classify`) recognises bare `［＃<variant>］` /
+- The classifier (`classify`) recognises bare `［＃<variant>］` /
   `［＃<variant>終わり］` (with an optional `左に` left-side prefix) and
   emits `EmitKind::BlockOpen` / `BlockClose(ContainerKind::BoutenRange…)`.
   `parse_bouten_range_body` reuses `bouten_kind_from_suffix`.
@@ -91,8 +91,8 @@ The `mismatched_bouten_container` diagnostic is scoped to the 点/線
   need data-carrying `AnnotationKind` variants (touching serde) and a
   bespoke pairing stack for the mismatch check, duplicating machinery the
   `open_stack` already provides.
-- **A dedicated `AozoraNode` variant.** Cleaner typing, but ripples
-  through every exhaustive `AozoraNode` match (render / serialize /
+- **A dedicated `Node` variant.** Cleaner typing, but ripples
+  through every exhaustive `Node` match (render / serialize /
   visitor / cst / query) for a construct the container model already
   expresses.
 - **Reuse block containers verbatim.** Simplest to wire, but the `\n\n`

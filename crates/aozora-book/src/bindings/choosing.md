@@ -4,7 +4,7 @@ aozora reaches a lot of languages, but there is only **one parser** behind
 them. Every surface — the Rust library, the CLI, the wasm package, the
 PyO3 module, the Go module, the C ABI, the Extism plugin — funnels the same
 source text through the same lexer and renders it through the same
-[`aozora::wire`](../wire/overview.md) authority. The HTML, the canonical
+[`aozora::json`](../wire/overview.md) authority. The HTML, the canonical
 serialise, and the diagnostic stream are therefore **byte-identical across
 every binding**. What differs between them is only the *host language* you
 write in and the *overhead* you pay to cross the language boundary.
@@ -92,7 +92,7 @@ aozora's renderer emits **semantic HTML5**. The decision here is binary:
 
 If raw throughput is the deciding factor, the ordering is:
 
-1. **Rust, borrowed-arena.** The library hands you `AozoraNode`s that borrow
+1. **Rust, borrowed-arena.** The library hands you `Node`s that borrow
    directly from the `bumpalo` arena — no copies, no serialise, no JSON.
    Nothing is faster.
 2. **In-process native bindings** (`aozora-py`, `aozora-wasm`, C ABI). One

@@ -1,6 +1,6 @@
-# NodeKind::TateChuYoko
+# NodeKind::CombineUpright
 
-Wire tag: `tateChuYoko` — horizontal text inside a vertical
+Inspect tag: `tateChuYoko` — horizontal text inside a vertical
 writing-mode run (縦中横, "vertical-with-horizontal-inside").
 
 ## Source examples
@@ -12,7 +12,7 @@ writing-mode run (縦中横, "vertical-with-horizontal-inside").
 ## Rendered HTML
 
 ```html
-<span class="aozora-tcy">12</span>
+<span class="aozora-combine-upright">12</span>
 ```
 
 Downstream CSS gives the span `text-combine-upright: all` for proper
@@ -25,7 +25,7 @@ Round-trips to `［＃「target」は縦中横］`.
 ## AST shape
 
 ```rust,ignore
-pub struct TateChuYoko<'src> {
+pub struct CombineUpright<'src> {
     pub text: NonEmpty<Content<'src>>,
 }
 ```
@@ -41,4 +41,4 @@ TARGET in preceding text, then emits with the matched span.
 
 ## Related kinds
 
-- [Annotation](annotation.md) — fallback if target resolution fails.
+- [Directive](annotation.md) — fallback if target resolution fails.

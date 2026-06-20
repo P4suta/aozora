@@ -1,6 +1,6 @@
 [package]
 name        = "aozora-cst"
-description = "Lossless concrete syntax tree (CST) for the aozora parser — rowan-backed projection from BorrowedLexOutput. Internal crate; reach it via the aozora crate's `cst` feature."
+description = "Lossless concrete syntax tree (CST) for the aozora parser — rowan-backed projection from LexOutput. Internal crate; reach it via the aozora crate's `cst` feature."
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true

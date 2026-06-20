@@ -2,7 +2,7 @@
 //!
 //! `aozora-cst` builds a [rowan][rowan]-backed `SyntaxNode` tree as
 //! a **pure projection** over the public surface of
-//! `aozora::AozoraTree` — no changes to the lex pipeline are
+//! `aozora::Tree` — no changes to the lex pipeline are
 //! required. The decoupled architecture means the CST stays
 //! reproducible from source bytes alone, and adding/removing CST
 //! consumers does not perturb the AST's perf-critical path.

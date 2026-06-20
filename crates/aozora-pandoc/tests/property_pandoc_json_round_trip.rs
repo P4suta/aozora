@@ -1,6 +1,6 @@
 //! Pandoc projection invariants.
 //!
-//! Two complementary properties on the `AozoraTree → pandoc_ast::Pandoc`
+//! Two complementary properties on the `Tree → pandoc_ast::Pandoc`
 //! projection:
 //!
 //! 1. **Totality**: [`to_pandoc`] is total over every input the lex

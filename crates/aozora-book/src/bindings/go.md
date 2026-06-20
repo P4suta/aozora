@@ -11,7 +11,7 @@ go get github.com/P4suta/aozora-go
 
 It is one spoke of aozora's polyglot binding strategy: rather than a
 hand-written native binding per language, every non-Rust front door
-funnels through the same `aozora.wasm` bytes and the same `aozora::wire`
+funnels through the same `aozora.wasm` bytes and the same `aozora::json`
 authority. See [Choosing a binding](choosing.md) for when to reach for Go
 versus the [native C ABI](c.md) or the in-process [Rust library](rust.md),
 and [Extism plugin](extism.md) for the wasm artifact this SDK loads. The
@@ -78,7 +78,7 @@ runtime. Every method serialises its argument, calls the corresponding
 plugin export, and decodes the JSON envelope into a Go type. Those wire
 types live in `wire_gen.go` and are **generated** by `just types-langs`
 (quicktype, fed from the wire JSON Schema) — they are not hand-maintained,
-so they cannot drift from the Rust `aozora::wire` definitions. Because the
+so they cannot drift from the Rust `aozora::json` definitions. Because the
 plugin bytes and the wire schema are shared, the Go output is
 **byte-identical** to the Rust, WASM, Python, and C-ABI front doors:
 same HTML, same canonical serialisation, same diagnostics.

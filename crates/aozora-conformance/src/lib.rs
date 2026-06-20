@@ -8,15 +8,15 @@
 //!
 //! - `source.txt` — input bytes (UTF-8) for the parser
 //! - `expected.html` — golden output from `tree.to_html()`
-//! - `expected.serialize.txt` — golden output from `tree.serialize()`
+//! - `expected.serialize.txt` — golden output from `tree.to_source()`
 //! - `expected.diagnostics.json` — golden output from
-//!   `aozora::wire::serialize_diagnostics(tree.diagnostics())`
+//!   `aozora::json::diagnostics(tree.diagnostics())`
 //! - `expected.nodes.json` — golden output from
-//!   `aozora::wire::serialize_nodes(&tree)`
+//!   `aozora::json::nodes(&tree)`
 //! - `expected.pairs.json` — golden output from
-//!   `aozora::wire::serialize_pairs(&tree)`
+//!   `aozora::json::pairs(&tree)`
 //! - `expected.container_pairs.json` — golden output from
-//!   `aozora::wire::serialize_container_pairs(&tree)`
+//!   `aozora::json::container_pairs(&tree)`
 //!
 //! The two source-text axes (`html`, `serialize`) anchor the
 //! human-readable surface; the four wire-format axes pin the JSON

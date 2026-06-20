@@ -102,13 +102,13 @@ fn render_enums(out: &mut String) {
     push_export_type(
         out,
         "NodeKind",
-        &ts_string_union(&NodeKind::ALL, NodeKind::as_camel_case),
+        &ts_string_union(&NodeKind::ALL, NodeKind::as_wire_tag),
     );
     out.push_str("/** Pair kind for `pairs_json` output. */\n");
     push_export_type(
         out,
         "PairKind",
-        &ts_string_union(&PairKind::ALL, PairKind::as_camel_case),
+        &ts_string_union(&PairKind::ALL, PairKind::as_wire_tag),
     );
     out.push_str("/** Diagnostic severity tier (wire field `severity`). */\n");
     push_export_type(
@@ -151,27 +151,25 @@ fn render_wire_payloads(out: &mut String) {
     out.push('\n');
     out.push_str(
         "/** Half-open byte span `[start, end)` in the relevant coordinate system\n\
-         (sanitized source for diagnostics / nodes / pairs; see `aozora::wire` docs). */\n",
+         (sanitized source for diagnostics / nodes / pairs; see `aozora::json` docs). */\n",
     );
     out.push_str("export interface SpanWire {\n  start: number;\n  end: number;\n}\n\n");
     out.push_str(
         "/** Single byte offset (used by `ContainerPairWire` open / close in normalized coords). */\n",
     );
     out.push_str("export interface OffsetWire {\n  offset: number;\n}\n\n");
-    out.push_str("/** One entry of `serialize_diagnostics` — `Diagnostic` projection. */\n");
+    out.push_str("/** One entry of `diagnostics` — `Diagnostic` projection. */\n");
     out.push_str(
         "export interface DiagnosticWire {\n  /** Variant tag (last segment of `Diagnostic::code()`, e.g. `\"source_contains_pua\"`). */\n  kind: string;\n  severity: Severity;\n  source: DiagnosticSource;\n  span: SpanWire;\n  /** Codepoint payload (only `SourceContainsPua` carries one today). */\n  codepoint?: string;\n}\n\n",
     );
-    out.push_str(
-        "/** One entry of `serialize_nodes` — classified `AozoraNode` span in source coords. */\n",
-    );
+    out.push_str("/** One entry of `nodes` — classified `Node` span in source coords. */\n");
     out.push_str("export interface NodeWire {\n  kind: NodeKind;\n  span: SpanWire;\n}\n\n");
-    out.push_str("/** One entry of `serialize_pairs` — matched bracket pair link. */\n");
+    out.push_str("/** One entry of `pairs` — matched bracket pair link. */\n");
     out.push_str(
         "export interface PairWire {\n  kind: PairKind;\n  open: SpanWire;\n  close: SpanWire;\n}\n\n",
     );
     out.push_str(
-        "/** One entry of `serialize_container_pairs` — paired container (open in normalized coords). */\n",
+        "/** One entry of `container_pairs` — paired container (open in normalized coords). */\n",
     );
     out.push_str(
         "export interface ContainerPairWire {\n  kind: \"indent\" | \"warichu\" | \"keigakomi\" | \"alignEnd\" | \"lineWidth\" | \"boutenRange\" | \"bold\" | \"italic\" | \"heading\" | \"columns\" | \"table\" | \"unknown\";\n  open: OffsetWire;\n  close: OffsetWire;\n}\n\n",
@@ -388,9 +386,9 @@ fn write_combined_schema(root: &Path) -> Result<PathBuf, String> {
             serde_json::json!({
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["schema_version", "data"],
+                "required": ["schemaVersion", "data"],
                 "properties": {
-                    "schema_version": { "type": "integer" },
+                    "schemaVersion": { "type": "integer" },
                     "data": { "type": "array", "items": { "$ref": format!("#/$defs/{item_title}") } },
                 },
             }),
@@ -572,7 +570,7 @@ mod tests {
     fn render_enums_projects_node_kind_via_camel_case() {
         let mut out = String::new();
         render_enums(&mut out);
-        // `as_camel_case` projects Ruby → "ruby"; the union must carry it.
+        // `as_wire_tag` projects Ruby → "ruby"; the union must carry it.
         assert!(
             out.contains("\"ruby\""),
             "NodeKind union must contain camelCase ruby: {out}"

@@ -6,47 +6,47 @@
 use core::fmt::{self, Write};
 
 use aozora_syntax::borrowed::{
-    AngleQuote, Annotation, AozoraHeading, AozoraNode, Bouten, Content, Emphasis, Gaiji,
-    HeadingHint, Kaeriten, Ruby, Sashie, Segment, SideNote,
+    AngleQuote, Bouten, Content, Directive, Emphasis, Gaiji, Heading, HeadingHint, Illustration,
+    Kaeriten, MarginNote, Node, Ruby, Segment,
 };
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, Container, ContainerKind,
-    EmphasisKind, Indent, RubySide,
+    AlignEnd, Container, ContainerKind, DirectiveKind, EmphasisKind, HeadingKind, HeadingStyle,
+    Indent, RubySide,
 };
 
 use crate::bouten;
 
-/// Render a single borrowed [`AozoraNode`] into `writer`.
+/// Render a single borrowed [`Node`] into `writer`.
 ///
 /// `entering` follows the standard tree-walker enter/exit convention:
 /// inline / leaf nodes emit their markup only on `entering == true`
 /// and produce nothing on the exit pass. Container nodes
-/// ([`AozoraNode::Container`]) emit an opening tag on enter and a
+/// ([`Node::Container`]) emit an opening tag on enter and a
 /// closing tag on exit — the calling block walker drives children
 /// between the two events.
 ///
 /// # Errors
 ///
 /// Propagates formatter write errors.
-pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) -> fmt::Result {
+pub fn render<W: Write>(node: Node<'_>, entering: bool, writer: &mut W) -> fmt::Result {
     match node {
-        AozoraNode::Container(c) => render_container(c, entering, writer),
+        Node::Container(c) => render_container(c, entering, writer),
         _ if !entering => Ok(()),
-        AozoraNode::Ruby(r) => render_ruby(r, writer),
-        AozoraNode::Bouten(b) => render_bouten(b, writer),
-        AozoraNode::Emphasis(e) => render_emphasis(e, writer),
-        AozoraNode::SideNote(s) => render_side_note(s, writer),
-        AozoraNode::TateChuYoko(t) => {
-            writer.write_str(r#"<span class="aozora-tcy">"#)?;
+        Node::Ruby(r) => render_ruby(r, writer),
+        Node::Bouten(b) => render_bouten(b, writer),
+        Node::Emphasis(e) => render_emphasis(e, writer),
+        Node::MarginNote(s) => render_side_note(s, writer),
+        Node::CombineUpright(t) => {
+            writer.write_str(r#"<span class="aozora-combine-upright">"#)?;
             render_content(t.text.get(), writer)?;
             writer.write_str("</span>")
         }
-        AozoraNode::Gaiji(g) => render_gaiji(g, writer),
-        AozoraNode::Indent(i) => render_indent(i, writer),
-        AozoraNode::AlignEnd(a) => render_align_end(a, writer),
-        AozoraNode::Center(_) => render_center(writer),
-        AozoraNode::PageBreak => writer.write_str(r#"<div class="aozora-page-break"></div>"#),
-        AozoraNode::SectionBreak(k) => {
+        Node::Gaiji(g) => render_gaiji(g, writer),
+        Node::Indent(i) => render_indent(i, writer),
+        Node::AlignEnd(a) => render_align_end(a, writer),
+        Node::Center(_) => render_center(writer),
+        Node::PageBreak => writer.write_str(r#"<div class="aozora-page-break"></div>"#),
+        Node::SectionBreak(k) => {
             // Single source of truth for the romaji slug: the spec slug
             // table, keyed by the canonical 青空文庫 keyword.
             let slug = aozora_spec::roman_slug(k.keyword()).unwrap_or("other");
@@ -55,16 +55,16 @@ pub fn render<W: Write>(node: AozoraNode<'_>, entering: bool, writer: &mut W) ->
                 r#"<div class="aozora-section-break aozora-section-break-{slug}"></div>"#,
             )
         }
-        AozoraNode::Annotation(a) => render_annotation(a, writer),
-        AozoraNode::Kaeriten(k) => render_kaeriten(k, writer),
-        AozoraNode::AngleQuote(d) => render_angle_quote(d, writer),
-        AozoraNode::Sashie(s) => render_sashie(s, writer),
-        AozoraNode::AozoraHeading(h) => render_aozora_heading(h, writer),
-        AozoraNode::HeadingHint(h) => render_heading_hint(h, writer),
+        Node::Directive(a) => render_annotation(a, writer),
+        Node::Kaeriten(k) => render_kaeriten(k, writer),
+        Node::AngleQuote(d) => render_angle_quote(d, writer),
+        Node::Illustration(s) => render_sashie(s, writer),
+        Node::Heading(h) => render_aozora_heading(h, writer),
+        Node::HeadingHint(h) => render_heading_hint(h, writer),
         // Other variants — emit a fallback comment so the rendered
         // HTML stays diagnosable. Mirrors the owned renderer's
-        // catch-all behavior for AozoraHeading / HeadingHint / Sashie /
-        // Warichu / Keigakomi (which the legacy renderer also routes
+        // catch-all behavior for Heading / HeadingHint / Illustration /
+        // Warichu / Framed (which the legacy renderer also routes
         // through `fallback`).
         _ => fallback(node, writer),
     }
@@ -84,13 +84,13 @@ fn render_ruby<W: Write>(r: &Ruby<'_>, writer: &mut W) -> fmt::Result {
     writer.write_str("</rt><rp>)</rp></ruby>")
 }
 
-fn render_side_note<W: Write>(s: &SideNote<'_>, writer: &mut W) -> fmt::Result {
+fn render_side_note<W: Write>(s: &MarginNote<'_>, writer: &mut W) -> fmt::Result {
     // A 注記 attaches a left-side editorial note to the base — like a
     // left-side ruby in layout, but a note rather than a reading, so it
-    // reuses the ruby box with a distinct `aozora-sidenote` class.
+    // reuses the ruby box with a distinct `aozora-margin-note` class.
     writer.write_str("<ruby>")?;
     render_content(s.base.get(), writer)?;
-    writer.write_str(r#"<rp>(</rp><rt class="aozora-sidenote">"#)?;
+    writer.write_str(r#"<rp>(</rp><rt class="aozora-margin-note">"#)?;
     render_content(s.note.get(), writer)?;
     writer.write_str("</rt><rp>)</rp></ruby>")
 }
@@ -153,7 +153,7 @@ fn render_content<W: Write>(content: Content<'_>, writer: &mut W) -> fmt::Result
         match seg {
             Segment::Text(t) => escape_text(t, writer)?,
             Segment::Gaiji(g) => render_gaiji(g, writer)?,
-            Segment::Annotation(a) => render_annotation(a, writer)?,
+            Segment::Directive(a) => render_annotation(a, writer)?,
             // Borrowed `Segment` is `#[non_exhaustive]`; future variants
             // emit nothing until a dedicated renderer lands.
             _ => {}
@@ -209,13 +209,13 @@ fn render_gaiji<W: Write>(g: &Gaiji<'_>, writer: &mut W) -> fmt::Result {
     writer.write_str("</span>")
 }
 
-fn render_annotation<W: Write>(a: &Annotation<'_>, writer: &mut W) -> fmt::Result {
+fn render_annotation<W: Write>(a: &Directive<'_>, writer: &mut W) -> fmt::Result {
     match a.kind {
-        AnnotationKind::WarichuOpen => return writer.write_str(r#"<span class="aozora-warichu">"#),
-        AnnotationKind::WarichuClose => return writer.write_str("</span>"),
+        DirectiveKind::WarichuOpen => return writer.write_str(r#"<span class="aozora-warichu">"#),
+        DirectiveKind::WarichuClose => return writer.write_str("</span>"),
         _ => {}
     }
-    writer.write_str(r#"<span class="aozora-annotation" hidden>"#)?;
+    writer.write_str(r#"<span class="aozora-directive" hidden>"#)?;
     escape_text(a.raw.as_str(), writer)?;
     writer.write_str("</span>")
 }
@@ -277,7 +277,7 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
                 r#"<div class="aozora-container aozora-container-line-width" data-width="{width}">"#,
             )
         }
-        ContainerKind::Keigakomi => {
+        ContainerKind::Framed => {
             writer.write_str(r#"<div class="aozora-container aozora-container-keigakomi">"#)
         }
         ContainerKind::Warichu => {
@@ -349,8 +349,10 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
             writer.write_str(r#"<div class="aozora-container aozora-caption">"#)
         }
         // 縦中横 range — inline `<span>`, matching the forward-reference
-        // [`TateChuYoko`] leaf class so a stylesheet treats both alike.
-        ContainerKind::TcyRange => writer.write_str(r#"<span class="aozora-tcy">"#),
+        // [`CombineUpright`] leaf class so a stylesheet treats both alike.
+        ContainerKind::CombineUprightRange => {
+            writer.write_str(r#"<span class="aozora-combine-upright">"#)
+        }
         _ => writer.write_str(r#"<div class="aozora-container">"#),
     }
 }
@@ -366,7 +368,7 @@ fn render_container_close<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt:
             ContainerKind::Italic { block: false } => "</i>",
             ContainerKind::SmallScript { .. }
             | ContainerKind::Caption { block: false }
-            | ContainerKind::TcyRange => "</span>",
+            | ContainerKind::CombineUprightRange => "</span>",
             _ => "</div>",
         }),
     }
@@ -394,10 +396,10 @@ fn parse_sashie_dimensions(dims: &str) -> Option<(&str, &str)> {
 /// or embed pixels — `src` is the verbatim filename from the directive
 /// and `alt` is left empty (the optional caption, when a future
 /// captioned-form recogniser populates it, renders into `<figcaption>`).
-/// `Sashie::is_block()` is `true`, so the block walker has already
+/// `Illustration::is_block()` is `true`, so the block walker has already
 /// flushed the surrounding paragraph before this fires.
-fn render_sashie<W: Write>(s: &Sashie<'_>, writer: &mut W) -> fmt::Result {
-    writer.write_str(r#"<figure class="aozora-sashie"><img src=""#)?;
+fn render_sashie<W: Write>(s: &Illustration<'_>, writer: &mut W) -> fmt::Result {
+    writer.write_str(r#"<figure class="aozora-illustration"><img src=""#)?;
     escape_text(s.file.as_str(), writer)?;
     writer.write_char('"')?;
     if let Some((w, h)) = s.dimensions.and_then(parse_sashie_dimensions) {
@@ -420,10 +422,10 @@ fn render_sashie<W: Write>(s: &Sashie<'_>, writer: &mut W) -> fmt::Result {
 
 /// Per-style modifier class slug (`None` for the standard style, which adds
 /// no modifier so a standard heading's markup is unchanged).
-fn heading_style_slug(style: AozoraHeadingStyle) -> Option<&'static str> {
+fn heading_style_slug(style: HeadingStyle) -> Option<&'static str> {
     match style {
-        AozoraHeadingStyle::SameLine => Some("same-line"),
-        AozoraHeadingStyle::Window => Some("window"),
+        HeadingStyle::SameLine => Some("same-line"),
+        HeadingStyle::Window => Some("window"),
         // Standard adds no modifier class; an unknown (`#[non_exhaustive]`)
         // style is treated as standard rather than emitting a bogus class.
         _ => None,
@@ -433,13 +435,13 @@ fn heading_style_slug(style: AozoraHeadingStyle) -> Option<&'static str> {
 /// The HTML tag for a heading. The 窓 (window) style is an inset block, not an
 /// outline level, so it takes a `<div>`; otherwise the 大 / 中 / 小 level maps
 /// to the semantic `<h1>`–`<h3>` outline tag.
-fn heading_tag(kind: AozoraHeadingKind, style: AozoraHeadingStyle) -> &'static str {
-    if matches!(style, AozoraHeadingStyle::Window) {
+fn heading_tag(kind: HeadingKind, style: HeadingStyle) -> &'static str {
+    if matches!(style, HeadingStyle::Window) {
         "div"
     } else {
         match kind {
-            AozoraHeadingKind::Medium => "h2",
-            AozoraHeadingKind::Small => "h3",
+            HeadingKind::Medium => "h2",
+            HeadingKind::Small => "h3",
             _ => "h1",
         }
     }
@@ -452,13 +454,13 @@ fn heading_tag(kind: AozoraHeadingKind, style: AozoraHeadingStyle) -> &'static s
 /// paired / block [`ContainerKind::Heading`] container so both render
 /// identically.
 fn write_heading_open<W: Write>(
-    kind: AozoraHeadingKind,
-    style: AozoraHeadingStyle,
+    kind: HeadingKind,
+    style: HeadingStyle,
     writer: &mut W,
 ) -> fmt::Result {
     let level_slug = match kind {
-        AozoraHeadingKind::Medium => "medium",
-        AozoraHeadingKind::Small => "small",
+        HeadingKind::Medium => "medium",
+        HeadingKind::Small => "small",
         _ => "large",
     };
     write!(
@@ -474,18 +476,18 @@ fn write_heading_open<W: Write>(
 
 /// Write a heading's closing tag (matching [`write_heading_open`]).
 fn write_heading_close<W: Write>(
-    kind: AozoraHeadingKind,
-    style: AozoraHeadingStyle,
+    kind: HeadingKind,
+    style: HeadingStyle,
     writer: &mut W,
 ) -> fmt::Result {
     write!(writer, "</{}>", heading_tag(kind, style))
 }
 
 /// Render a forward-reference promoted heading (leaf). The standard style adds
-/// no modifier, so its markup is unchanged. `AozoraHeading::is_block()` is
+/// no modifier, so its markup is unchanged. `Heading::is_block()` is
 /// `true`, so the block walker has flushed the surrounding paragraph before
 /// this fires.
-fn render_aozora_heading<W: Write>(h: &AozoraHeading<'_>, writer: &mut W) -> fmt::Result {
+fn render_aozora_heading<W: Write>(h: &Heading<'_>, writer: &mut W) -> fmt::Result {
     write_heading_open(h.kind, h.style, writer)?;
     render_content(h.text.get(), writer)?;
     write_heading_close(h.kind, h.style, writer)
@@ -537,7 +539,7 @@ fn render_center<W: Write>(writer: &mut W) -> fmt::Result {
     writer.write_str(r#"<span class="aozora-center"></span>"#)
 }
 
-fn fallback<W: Write>(node: AozoraNode<'_>, writer: &mut W) -> fmt::Result {
+fn fallback<W: Write>(node: Node<'_>, writer: &mut W) -> fmt::Result {
     write!(writer, "<!-- {} -->", node.xml_node_name())
 }
 
@@ -573,12 +575,10 @@ const fn html_entity(c: char) -> &'static str {
 mod tests {
     use super::*;
     use aozora_syntax::alloc::BorrowedAllocator;
-    use aozora_syntax::borrowed::{AozoraNode, Arena};
-    use aozora_syntax::{
-        AlignEnd, AnnotationKind, BoutenKind, BoutenPosition, Indent, SectionKind,
-    };
+    use aozora_syntax::borrowed::{Arena, Node};
+    use aozora_syntax::{AlignEnd, BoutenKind, BoutenPosition, DirectiveKind, Indent, SectionKind};
 
-    fn render_node_to_string(node: AozoraNode<'_>) -> String {
+    fn render_node_to_string(node: Node<'_>) -> String {
         let mut out = String::new();
         render(node, true, &mut out).expect("fmt::Write into String never fails");
         out
@@ -624,11 +624,11 @@ mod tests {
     fn annotation_unknown_wraps_in_hidden_span() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let payload = alloc.make_annotation("［＃改ページ］", AnnotationKind::Unknown);
+        let payload = alloc.make_directive("［＃改ページ］", DirectiveKind::Unknown);
         let n = alloc.annotation(payload);
         assert_eq!(
             render_node_to_string(n),
-            r#"<span class="aozora-annotation" hidden>［＃改ページ］</span>"#
+            r#"<span class="aozora-directive" hidden>［＃改ページ］</span>"#
         );
     }
 
@@ -728,7 +728,7 @@ mod tests {
         let n = alloc.sashie("cover.png", None, None, None);
         assert_eq!(
             render_node_to_string(n),
-            r#"<figure class="aozora-sashie"><img src="cover.png" alt="" /></figure>"#
+            r#"<figure class="aozora-illustration"><img src="cover.png" alt="" /></figure>"#
         );
     }
 
@@ -741,7 +741,7 @@ mod tests {
         let n = alloc.sashie("fig42_03.png", None, Some("横480×縦640"), None);
         assert_eq!(
             render_node_to_string(n),
-            r#"<figure class="aozora-sashie"><img src="fig42_03.png" width="480" height="640" alt="" /></figure>"#
+            r#"<figure class="aozora-illustration"><img src="fig42_03.png" width="480" height="640" alt="" /></figure>"#
         );
     }
 
@@ -750,7 +750,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("第一章");
-        let n = alloc.aozora_heading(AozoraHeadingKind::Large, AozoraHeadingStyle::Standard, text);
+        let n = alloc.aozora_heading(HeadingKind::Large, HeadingStyle::Standard, text);
         assert_eq!(
             render_node_to_string(n),
             r#"<h1 class="aozora-heading aozora-heading-large">第一章</h1>"#
@@ -762,7 +762,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("見出し");
-        let n = alloc.aozora_heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window, text);
+        let n = alloc.aozora_heading(HeadingKind::Medium, HeadingStyle::Window, text);
         assert_eq!(
             render_node_to_string(n),
             r#"<div class="aozora-heading aozora-heading-medium aozora-heading-window">見出し</div>"#
@@ -1007,7 +1007,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // TateChuYoko leaf + SideNote + AngleQuote + kaeriten.
+    // CombineUpright leaf + MarginNote + AngleQuote + kaeriten.
     // -------------------------------------------------------------------
 
     #[test]
@@ -1018,7 +1018,7 @@ mod tests {
         let n = alloc.tate_chu_yoko(text, false);
         assert_eq!(
             render_node_to_string(n),
-            r#"<span class="aozora-tcy">12</span>"#
+            r#"<span class="aozora-combine-upright">12</span>"#
         );
     }
 
@@ -1028,10 +1028,10 @@ mod tests {
         let mut alloc = BorrowedAllocator::new(&arena);
         let base = alloc.content_plain("底本");
         let note = alloc.content_plain("注記");
-        let n = alloc.side_note(aozora_syntax::SideNoteKind::Annotation, base, note);
+        let n = alloc.side_note(aozora_syntax::MarginNoteKind::Gloss, base, note);
         assert_eq!(
             render_node_to_string(n),
-            r#"<ruby>底本<rp>(</rp><rt class="aozora-sidenote">注記</rt><rp>)</rp></ruby>"#
+            r#"<ruby>底本<rp>(</rp><rt class="aozora-margin-note">注記</rt><rp>)</rp></ruby>"#
         );
     }
 
@@ -1132,20 +1132,20 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // Annotation: warichu open/close shortcuts + the hidden-span default.
+    // Directive: warichu open/close shortcuts + the hidden-span default.
     // -------------------------------------------------------------------
 
     #[test]
     fn annotation_warichu_open_and_close_emit_span_pair() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let open = alloc.make_annotation("［＃割り注］", AnnotationKind::WarichuOpen);
+        let open = alloc.make_directive("［＃割り注］", DirectiveKind::WarichuOpen);
         let open_n = alloc.annotation(open);
         assert_eq!(
             render_node_to_string(open_n),
             r#"<span class="aozora-warichu">"#
         );
-        let close = alloc.make_annotation("［＃割り注終わり］", AnnotationKind::WarichuClose);
+        let close = alloc.make_directive("［＃割り注終わり］", DirectiveKind::WarichuClose);
         let close_n = alloc.annotation(close);
         assert_eq!(render_node_to_string(close_n), "</span>");
     }
@@ -1154,11 +1154,11 @@ mod tests {
     fn annotation_hidden_span_escapes_raw() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let payload = alloc.make_annotation("a<b>", AnnotationKind::AsIs);
+        let payload = alloc.make_directive("a<b>", DirectiveKind::Sic);
         let n = alloc.annotation(payload);
         assert_eq!(
             render_node_to_string(n),
-            r#"<span class="aozora-annotation" hidden>a&lt;b&gt;</span>"#
+            r#"<span class="aozora-directive" hidden>a&lt;b&gt;</span>"#
         );
     }
 
@@ -1181,7 +1181,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // Sashie: general image form (description → alt) + caption.
+    // Illustration: general image form (description → alt) + caption.
     // -------------------------------------------------------------------
 
     #[test]
@@ -1191,7 +1191,7 @@ mod tests {
         let n = alloc.sashie_general("map.png", "地図", None);
         assert_eq!(
             render_node_to_string(n),
-            r#"<figure class="aozora-sashie"><img src="map.png" alt="地図" /></figure>"#
+            r#"<figure class="aozora-illustration"><img src="map.png" alt="地図" /></figure>"#
         );
     }
 
@@ -1203,7 +1203,7 @@ mod tests {
         let n = alloc.sashie("fig.png", Some("1"), None, Some(caption));
         assert_eq!(
             render_node_to_string(n),
-            r#"<figure class="aozora-sashie"><img src="fig.png" alt="" /><figcaption>図の説明</figcaption></figure>"#
+            r#"<figure class="aozora-illustration"><img src="fig.png" alt="" /><figcaption>図の説明</figcaption></figure>"#
         );
     }
 
@@ -1215,12 +1215,12 @@ mod tests {
         let n = alloc.sashie("fig.png", None, Some("不明"), None);
         assert_eq!(
             render_node_to_string(n),
-            r#"<figure class="aozora-sashie"><img src="fig.png" alt="" /></figure>"#
+            r#"<figure class="aozora-illustration"><img src="fig.png" alt="" /></figure>"#
         );
     }
 
     // -------------------------------------------------------------------
-    // AozoraHeading leaf — small level + same-line style.
+    // Heading leaf — small level + same-line style.
     // -------------------------------------------------------------------
 
     #[test]
@@ -1228,7 +1228,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("見出し");
-        let n = alloc.aozora_heading(AozoraHeadingKind::Small, AozoraHeadingStyle::SameLine, text);
+        let n = alloc.aozora_heading(HeadingKind::Small, HeadingStyle::SameLine, text);
         assert_eq!(
             render_node_to_string(n),
             r#"<h3 class="aozora-heading aozora-heading-small aozora-heading-same-line">見出し</h3>"#
@@ -1243,7 +1243,7 @@ mod tests {
     fn heading_hint_standard_omits_data_style() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let n = alloc.heading_hint(1, AozoraHeadingStyle::Standard, "対象");
+        let n = alloc.heading_hint(1, HeadingStyle::Standard, "対象");
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-heading-hint" data-level="1" data-target="対象" hidden></span>"#
@@ -1254,7 +1254,7 @@ mod tests {
     fn heading_hint_styled_includes_data_style_and_escapes_target() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let n = alloc.heading_hint(2, AozoraHeadingStyle::Window, "a<b>");
+        let n = alloc.heading_hint(2, HeadingStyle::Window, "a<b>");
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-heading-hint" data-level="2" data-style="window" data-target="a&lt;b&gt;" hidden></span>"#
@@ -1298,10 +1298,10 @@ mod tests {
     #[test]
     fn container_keigakomi_and_warichu_open_close() {
         assert_eq!(
-            open_tag(ContainerKind::Keigakomi),
+            open_tag(ContainerKind::Framed),
             r#"<div class="aozora-container aozora-container-keigakomi">"#
         );
-        assert_eq!(close_tag(ContainerKind::Keigakomi), "</div>");
+        assert_eq!(close_tag(ContainerKind::Framed), "</div>");
         assert_eq!(
             open_tag(ContainerKind::Warichu),
             r#"<div class="aozora-container aozora-container-warichu">"#
@@ -1380,8 +1380,8 @@ mod tests {
     #[test]
     fn container_heading_block_uses_heading_element() {
         let kind = ContainerKind::Heading {
-            kind: AozoraHeadingKind::Large,
-            style: AozoraHeadingStyle::Standard,
+            kind: HeadingKind::Large,
+            style: HeadingStyle::Standard,
             block: true,
         };
         assert_eq!(
@@ -1394,8 +1394,8 @@ mod tests {
     #[test]
     fn container_heading_window_uses_div_element() {
         let kind = ContainerKind::Heading {
-            kind: AozoraHeadingKind::Medium,
-            style: AozoraHeadingStyle::Window,
+            kind: HeadingKind::Medium,
+            style: HeadingStyle::Window,
             block: false,
         };
         assert_eq!(
@@ -1447,22 +1447,22 @@ mod tests {
     #[test]
     fn container_tcy_range_uses_tcy_span() {
         assert_eq!(
-            open_tag(ContainerKind::TcyRange),
-            r#"<span class="aozora-tcy">"#
+            open_tag(ContainerKind::CombineUprightRange),
+            r#"<span class="aozora-combine-upright">"#
         );
-        assert_eq!(close_tag(ContainerKind::TcyRange), "</span>");
+        assert_eq!(close_tag(ContainerKind::CombineUprightRange), "</span>");
     }
 
     #[test]
     fn render_content_walks_text_gaiji_and_annotation_segments() {
         // A ruby base built from mixed segments exercises every arm of
         // `render_content`: Text (escaped), Gaiji (nested render), and
-        // Annotation (hidden span).
+        // Directive (hidden span).
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let g = alloc.make_gaiji("外字", None, None, false);
         let seg_g = alloc.seg_gaiji(g);
-        let ann = alloc.make_annotation("［＃注］", AnnotationKind::Unknown);
+        let ann = alloc.make_directive("［＃注］", DirectiveKind::Unknown);
         let seg_a = alloc.seg_annotation(ann);
         let seg_t = alloc.seg_text("前<");
         let base = alloc.content_segments(&[seg_t, seg_g, seg_a]);
@@ -1473,7 +1473,7 @@ mod tests {
             concat!(
                 "<ruby>前&lt;",
                 r#"<span class="aozora-gaiji" data-description="外字">外字</span>"#,
-                r#"<span class="aozora-annotation" hidden>［＃注］</span>"#,
+                r#"<span class="aozora-directive" hidden>［＃注］</span>"#,
                 "<rp>(</rp><rt>よ</rt><rp>)</rp></ruby>"
             )
         );

@@ -4,7 +4,7 @@ aozora ships a stable JSON wire format used by every binding —
 `aozora-ffi` (C ABI), `aozora-wasm` (npm), `aozora-py` (PyO3) — and by
 the [`aozora wire <kind>`](../ref/cli.md#aozora-wire) CLI subcommand, to
 project the parser's output across language boundaries.
-[`aozora::wire`](https://docs.rs/aozora/latest/aozora/wire/index.html)
+[`aozora::json`](https://docs.rs/aozora/latest/aozora/wire/index.html)
 is the single authority for that projection; downstream drivers
 call into it and receive bit-identical output.
 
@@ -13,7 +13,7 @@ call into it and receive bit-identical output.
 Every wire JSON has the form
 
 ```json
-{ "schema_version": 1, "data": [ /* … entries … */ ] }
+{ "schemaVersion": 1, "data": [ /* … entries … */ ] }
 ```
 
 where `schema_version` is the major version of the wire contract and
@@ -23,14 +23,14 @@ The four endpoint envelopes are:
 
 | Endpoint                    | Entry shape                                        | JSON Schema                                                |
 | --------------------------- | -------------------------------------------------- | ---------------------------------------------------------- |
-| `serialize_diagnostics`     | `{ kind, severity, source, span, codepoint? }`     | [`schema-diagnostics.json`](schema-diagnostics.json)       |
-| `serialize_nodes`           | `{ kind, span: { start, end } }`                   | [`schema-nodes.json`](schema-nodes.json)                   |
-| `serialize_pairs`           | `{ kind, open: { start, end }, close: { … } }`     | [`schema-pairs.json`](schema-pairs.json)                   |
-| `serialize_container_pairs` | `{ kind, open: { offset }, close: { offset } }`    | [`schema-container-pairs.json`](schema-container-pairs.json) |
+| `diagnostics`     | `{ kind, severity, source, span, codepoint? }`     | [`schema-diagnostics.json`](schema-diagnostics.json)       |
+| `nodes`           | `{ kind, span: { start, end } }`                   | [`schema-nodes.json`](schema-nodes.json)                   |
+| `pairs`           | `{ kind, open: { start, end }, close: { … } }`     | [`schema-pairs.json`](schema-pairs.json)                   |
+| `container_pairs` | `{ kind, open: { offset }, close: { offset } }`    | [`schema-container-pairs.json`](schema-container-pairs.json) |
 
 ## SCHEMA_VERSION
 
-The `schema_version` integer (`aozora::wire::SCHEMA_VERSION`)
+The `schema_version` integer (`aozora::json::SCHEMA_VERSION`)
 bumps on any breaking change to the serialised shape — variant
 additions exposing as a new `kind` value, field renames, envelope
 restructuring. Clients should branch on the version and handle
@@ -40,7 +40,7 @@ guarantees with later schemas.
 ## Stability vs. `non_exhaustive`
 
 [`Diagnostic`](https://docs.rs/aozora/latest/aozora/enum.Diagnostic.html)
-and [`AozoraNode`](https://docs.rs/aozora/latest/aozora/syntax/borrowed/enum.AozoraNode.html)
+and [`Node`](https://docs.rs/aozora/latest/aozora/syntax/borrowed/enum.Node.html)
 are `#[non_exhaustive]` — minor releases can add variants. The wire
 format protects callers in two ways:
 
@@ -57,7 +57,7 @@ format protects callers in two ways:
 - [Architecture → Error recovery](../arch/error-recovery.md) — what
   the parser actually *does* after each diagnostic fires.
 - [Node reference](../nodes/index.md) — per-`NodeKind` documentation
-  for every wire `kind` tag emitted by `serialize_nodes`.
-- [`aozora::wire` rustdoc](https://docs.rs/aozora/latest/aozora/wire/index.html)
+  for every wire `kind` tag emitted by `nodes`.
+- [`aozora::json` rustdoc](https://docs.rs/aozora/latest/aozora/wire/index.html)
   — Rust API surface (envelope structs, the `schema_*` introspection
   helpers behind the `schema` Cargo feature).

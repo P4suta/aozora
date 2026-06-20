@@ -145,7 +145,7 @@ AOZORA_CORPUS_ROOT=… AOZORA_PROBE_DOC=000286/files/49178_ruby_58807/49178_ruby
   cargo run --release --example pathological_probe -p aozora-bench
 ```
 
-### "Where is `lex_into_arena` spending its time?"
+### "Where is `lex` spending its time?"
 
 ```sh
 # Macroscopic per-phase split

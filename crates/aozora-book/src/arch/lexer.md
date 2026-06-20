@@ -6,11 +6,11 @@ keeps the dominant hot path (Phase 1 events / Phase 3 classify)
 tight, lets the bench harness measure each phase independently, and
 maps every diagnostic to a single phase boundary.
 
-The single public entry [`lex_into_arena`] drives all four phases
+The single public entry [`lex`] drives all four phases
 and lands the resulting borrowed AST inside an
 `aozora_syntax::borrowed::Arena` provided by the caller. The legacy
 "phase 4 normalize / phase 5 registry / phase 6 validate" steps
-disappeared into a fused walk inside `lex_into_arena`; they no
+disappeared into a fused walk inside `lex`; they no
 longer have standalone phase functions.
 
 ## Phase ordering
@@ -21,7 +21,7 @@ flowchart LR
     p1["Phase 1<br/>events"]
     p2["Phase 2<br/>pair"]
     p3["Phase 3<br/>classify"]
-    fused["lex_into_arena<br/>(fused walk:<br/>normalize + registry + validate)"]
+    fused["lex<br/>(fused walk:<br/>normalize + registry + validate)"]
 
     p0 --> p1 --> p2 --> p3 --> fused
 ```
@@ -35,12 +35,12 @@ previous phase's output.
 | 0 — Sanitize | raw `&str` | `SanitizeOutput { sanitized: &str, .. }` | BOM strip, CRLF → LF, accent decomposition, decorative-rule isolation, PUA collision pre-scan |
 | 1 — Events | sanitised `&str` | `Iterator<Item = Token>` | SIMD trigger scan (`aozora-scan`) followed by linear tokenise into `Plain` / trigger events |
 | 2 — Pair | `Iterator<Token>` | `Iterator<Item = PairEvent>` | Balanced-stack pairing for all opener/closer trigrams (`｜》《`, `［］`, `〔〕`, `「」`, `《《》》`) |
-| 3 — Classify | `Iterator<PairEvent>` | `Iterator<Item = ClassifiedSpan>` | Full-spec Aozora classification into [`AozoraNode`] variants (ruby, bouten, gaiji, tcy, kaeriten, sashie, annotation, …) |
+| 3 — Classify | `Iterator<PairEvent>` | `Iterator<Item = ClassifiedSpan>` | Full-spec Aozora classification into [`Node`] variants (ruby, bouten, gaiji, tcy, kaeriten, sashie, annotation, …) |
 
-The orchestrator [`lex_into_arena`] consumes the Phase 3 stream,
+The orchestrator [`lex`] consumes the Phase 3 stream,
 substitutes PUA sentinels into the normalised text, builds the
 side-table registry that maps sentinel positions back to
-classified `AozoraNode` values, and accumulates diagnostics — all
+classified `Node` values, and accumulates diagnostics — all
 in a single fused walk over the classified-span stream.
 
 ## Phase 0: sanitize
@@ -104,7 +104,7 @@ event stream regardless of input wellformedness.
 ## Phase 3: classify
 
 The most code-heavy phase. The classifier maps `PairEvent`s to
-[`AozoraNode`] variants via a slug-canonicalised dispatch table
+[`Node`] variants via a slug-canonicalised dispatch table
 ([`SLUGS`] / `canonicalise_slug`). Recognisers are organised per
 construct family:
 
@@ -113,7 +113,7 @@ construct family:
 - Tate-chu-yoko (`［＃「12」は縦中横］`)
 - Gaiji (`※［＃説明、ページ-行］`)
 - Kaeriten (Chinese-text reading marks)
-- Sashie (illustrations)
+- Illustration (illustrations)
 - Indent / alignment / line-length annotations
 - Section / page breaks
 
@@ -125,7 +125,7 @@ sanitised text in the same walk.
 
 ## Fused finishing walk
 
-After Phase 3, [`lex_into_arena`] runs a single output-build walk
+After Phase 3, [`lex`] runs a single output-build walk
 that does what was once three separate phases:
 
 - **Normalise** — substitute each Aozora span with its PUA sentinel
@@ -161,7 +161,7 @@ Three reasons.
    [conformance suite](../conformance.md) can pin regression
    fixtures targeting that phase only.
 3. **Composability.** `aozora-pipeline` exposes both the fused
-   [`lex_into_arena`] entry and the per-phase functions
+   [`lex`] entry and the per-phase functions
    (`sanitize`, `tokenize` / `tokenize_in`, `pair` / `pair_in`,
    `classify`). Production code uses the fused entry; benchmarks
    and the [type-state Pipeline state machine](pipeline.md) use
@@ -181,7 +181,7 @@ measurement attached.
 - [Performance → Profiling with samply](../perf/samply.md) — how to
   measure the per-phase cost on your own workload.
 
-[`lex_into_arena`]: https://docs.rs/aozora-pipeline/latest/aozora_pipeline/fn.lex_into_arena.html
-[`AozoraNode`]: https://docs.rs/aozora-syntax/latest/aozora_syntax/borrowed/enum.AozoraNode.html
+[`lex`]: https://docs.rs/aozora-pipeline/latest/aozora_pipeline/fn.lex.html
+[`Node`]: https://docs.rs/aozora-syntax/latest/aozora_syntax/borrowed/enum.Node.html
 [`SLUGS`]: https://docs.rs/aozora-spec/latest/aozora_spec/static.SLUGS.html
 [`Registry`]: https://docs.rs/aozora-pipeline/latest/aozora_pipeline/struct.Registry.html

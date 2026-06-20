@@ -8,7 +8,7 @@
 //!   ※［＃「description」、U+XXXX、page-line］ ← explicit Unicode codepoint
 //! ```
 //!
-//! The lexer's Phase 3 recogniser (`aozora-lexer::phase3_classify::recognize_gaiji`)
+//! The lexer's Phase 3 recogniser (`aozora-lexer::classify::recognize_gaiji`)
 //! captures `description` and `mencode` verbatim and leaves `ucs = None`;
 //! this module turns that reference into a concrete [`Resolved`] by
 //! consulting two `phf::Map`s compiled into the binary
@@ -204,7 +204,7 @@ pub fn table_sizes() -> (usize, usize, usize) {
 // Single authority for pulling `※［＃…］` references out of raw source
 // and resolving each to its glyph. Editor surfaces (`aozora-wasm`
 // inlay hints / cursor hover) and batch callers (`aozora-py`
-// `gaiji_resolutions`) both drive this; the `aozora::wire` projection
+// `gaiji_resolutions`) both drive this; the `aozora::json` projection
 // only serialises the [`GaijiResolution`] values produced here. Kept
 // next to [`lookup`] so the scan and the table it consults share one
 // home.

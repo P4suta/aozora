@@ -20,7 +20,7 @@ every crate's IR into one module before optimisation, so the
 inliner can see across the whole pipeline.
 
 For aozora that pays off because the lex pipeline is *deep*:
-`aozora-render` → `aozora` → `aozora-pipeline::lex_into_arena` →
+`aozora-render` → `aozora` → `aozora-pipeline::lex` →
 per-phase functions, each living behind a crate boundary or a
 module boundary that LLVM treats the same way under thin LTO. A
 function call across that depth under thin LTO costs several

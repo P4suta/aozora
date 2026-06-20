@@ -1,6 +1,6 @@
 # NodeKind::Indent
 
-Wire tag: `indent` — single-line `［＃N字下げ］` indent marker.
+Inspect tag: `indent` — single-line `［＃N字下げ］` indent marker.
 
 ## Source examples
 

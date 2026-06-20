@@ -14,7 +14,7 @@
 //!
 //! ```text
 //! tests/fuzz_regressions/
-//!   lex_into_arena/
+//!   lex/
 //!     <hash>             ── raw byte payload, fed verbatim
 //!     <hash>.expect.txt  ── (optional) panic snippet, archaeology only
 //! ```
@@ -24,14 +24,14 @@ use std::panic;
 use std::path::{Path, PathBuf};
 use std::str;
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_syntax::borrowed::Arena;
 
 #[test]
 fn lex_into_arena_regressions_replay_cleanly() {
-    replay_each("lex_into_arena", |src| {
+    replay_each("lex", |src| {
         let arena = Arena::new();
-        let out = lex_into_arena(src, &arena);
+        let out = lex(src, &arena);
         for diag in &out.diagnostics {
             let span = diag.span();
             assert!(
@@ -60,7 +60,7 @@ fn replay_each(target: &str, assert_one: impl Fn(&str)) {
         let bytes = fs::read(&path)
             .unwrap_or_else(|e| panic!("failed to read regression artifact {path_display}: {e}"));
         let Ok(src) = str::from_utf8(&bytes) else {
-            // The fuzzer accepts raw bytes; the lex_into_arena target
+            // The fuzzer accepts raw bytes; the lex target
             // skips invalid UTF-8 with `return`, so the corresponding
             // regression-test arm is the same skip.
             continue;

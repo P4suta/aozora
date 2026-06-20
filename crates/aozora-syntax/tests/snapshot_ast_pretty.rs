@@ -16,25 +16,25 @@
 
 use aozora_encoding::gaiji::Resolved;
 use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::{AozoraNode, Arena};
+use aozora_syntax::borrowed::{Arena, Node};
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Center, Container, ContainerKind, Indent, Keigakomi, SectionKind, SideNoteKind,
+    AlignEnd, BoutenKind, BoutenPosition, Center, Container, ContainerKind, DirectiveKind, Framed,
+    HeadingKind, HeadingStyle, Indent, MarginNoteKind, SectionKind,
 };
 
-fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a>> {
+fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<Node<'a>> {
     let base = alloc.content_plain("base");
     let reading = alloc.content_plain("よみ");
     let upper = alloc.content_plain("up");
     let lower = alloc.content_plain("lo");
     let g = alloc.make_gaiji("木＋吶", Some(Resolved::Char('A')), Some("第3水準"), false);
-    let a = alloc.make_annotation("annotation", AnnotationKind::Unknown);
+    let a = alloc.make_directive("annotation", DirectiveKind::Unknown);
 
     vec![
         alloc.ruby(base, reading, true),
-        // Both SideNote flavours — pin each kind's Debug shape.
-        alloc.side_note(SideNoteKind::Annotation, base, reading),
-        alloc.side_note(SideNoteKind::Marginal, base, reading),
+        // Both MarginNote flavours — pin each kind's Debug shape.
+        alloc.side_note(MarginNoteKind::Gloss, base, reading),
+        alloc.side_note(MarginNoteKind::Marginal, base, reading),
         alloc.bouten(BoutenKind::Goma, base, BoutenPosition::Right, false),
         alloc.tate_chu_yoko(base, false),
         alloc.gaiji(g),
@@ -42,11 +42,11 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a
         alloc.align_end(AlignEnd { offset: 2 }),
         alloc.center(Center { page: true }),
         alloc.warichu(upper, lower),
-        alloc.keigakomi(Keigakomi),
+        alloc.keigakomi(Framed),
         alloc.page_break(),
         alloc.section_break(SectionKind::Kaicho),
-        alloc.aozora_heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window, base),
-        alloc.heading_hint(2, AozoraHeadingStyle::SameLine, "対象"),
+        alloc.aozora_heading(HeadingKind::Medium, HeadingStyle::Window, base),
+        alloc.heading_hint(2, HeadingStyle::SameLine, "対象"),
         alloc.sashie("file.png", None, None, None),
         alloc.kaeriten("一"),
         alloc.annotation(a),

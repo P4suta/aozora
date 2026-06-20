@@ -5,7 +5,7 @@
 //! - **human** — miette's graphical report: the source line, a caret
 //!   under the offending span, the label, and the help text. The
 //!   default when stderr is a terminal.
-//! - **json** — the `aozora::wire` diagnostics envelope, byte-identical
+//! - **json** — the `aozora::json` diagnostics envelope, byte-identical
 //!   to what the WASM / FFI / Python / Extism front doors emit. The
 //!   default when stderr is piped, so agents and CI get a stable,
 //!   parseable stream without a flag.
@@ -16,8 +16,8 @@
 use std::io::{self, IsTerminal, Write};
 
 use aozora::Document;
+use aozora::json;
 use aozora::pipeline::lexer::sanitize;
-use aozora::wire::serialize_diagnostics;
 use clap::ValueEnum;
 use miette::{NamedSource, Report};
 
@@ -30,7 +30,7 @@ pub(crate) enum DiagFormat {
     Auto,
     /// miette graphical report — source snippet + caret + label + help.
     Human,
-    /// The `aozora::wire` JSON envelope — the cross-binding machine view.
+    /// The `aozora::json` JSON envelope — the cross-binding machine view.
     Json,
     /// One grep-able line per diagnostic: `path:offset: severity[code]: msg`.
     Short,
@@ -118,11 +118,7 @@ fn short_code(code: &'static str) -> &'static str {
 }
 
 fn render_json(diagnostics: &[aozora::Diagnostic]) -> io::Result<()> {
-    writeln!(
-        io::stderr().lock(),
-        "{}",
-        serialize_diagnostics(diagnostics)
-    )
+    writeln!(io::stderr().lock(), "{}", json::diagnostics(diagnostics))
 }
 
 fn render_short(path: &str, diagnostics: &[aozora::Diagnostic]) -> io::Result<()> {

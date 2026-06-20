@@ -19,7 +19,7 @@ bytes and see how each gaiji reference resolved.
 ## Solution (library)
 
 ```rust
-use aozora::{Document, AozoraNode, NodeRef};
+use aozora::{Document, Node, NodeRef};
 use aozora::encoding::decode_sjis;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tree = doc.parse();
 
     for sn in tree.source_nodes() {
-        if let NodeRef::Inline(AozoraNode::Gaiji(g)) = sn.node {
+        if let NodeRef::Inline(Node::Gaiji(g)) = sn.node {
             match g.ucs.and_then(|r| r.as_char()) {
                 Some(ch) => println!("{} → {ch}", g.description),
                 None => println!("{} → (unresolved)", g.description),

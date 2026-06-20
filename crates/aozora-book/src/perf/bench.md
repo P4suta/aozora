@@ -51,16 +51,16 @@ slice of the workload. All read `AOZORA_CORPUS_ROOT`; most accept
 
 | Probe | Question it answers | Output shape |
 |---|---|---|
-| `throughput_by_class` | Per-band MB/s for `lex_into_arena` | 4-band table + p50 / p90 / p99 / max + ns/byte |
+| `throughput_by_class` | Per-band MB/s for `lex` | 4-band table + p50 / p90 / p99 / max + ns/byte |
 | `phase_breakdown` | Per-phase ms for sanitize / events / pair / classify | per-doc latencies + top-5 worst classify / sanitize |
 | `latency_histogram` | Log-bucketed latency distribution per phase | bar histogram, 10 buckets, 1 µs … 1 s |
 | `pathological_probe` | Single-doc 100-iter avg per phase | tight per-call numbers; takes `AOZORA_PROBE_DOC` for any corpus path |
-| `phase0_breakdown` | Per-sub-pass cost inside Phase 0 sanitize | bom_strip / crlf / rule_isolate / accent / pua_scan |
-| `phase0_impact` | Does Phase 0 sub-pass firing change Phase 1 cost? | bucketed by which sub-passes fired |
-| `phase3_subsystems` | Per-recogniser ms inside classify | requires `--features instrument` |
+| `sanitize_breakdown` | Per-sub-pass cost inside Phase 0 sanitize | bom_strip / crlf / rule_isolate / accent / pua_scan |
+| `sanitize_impact` | Does Phase 0 sub-pass firing change Phase 1 cost? | bucketed by which sub-passes fired |
+| `classify_subsystems` | Per-recogniser ms inside classify | requires `--features instrument` |
 | `diagnostic_distribution` | What fraction of docs emit diagnostics? | histogram by diag count; latency-by-diag-bucket |
 | `allocator_pressure` | Arena bytes / source byte ratio + intern dedup | per-doc histograms |
-| `fused_vs_materialized` | Does the deforestation actually win? | per-band gap % between fused (`lex_into_arena`) and materialized (per-phase collect) |
+| `fused_vs_materialized` | Does the deforestation actually win? | per-band gap % between fused (`lex`) and materialized (per-phase collect) |
 | `intern_dedup_ratio` | How well does the interner dedup short strings? | corpus-aggregate (cache + table) / calls |
 | `render_hot_path` | Per-band MB/s for HTML render | 4-band MB/s + render/parse ratio + out/in size ratio |
 
@@ -70,11 +70,11 @@ Each probe is invoked directly:
 AOZORA_CORPUS_ROOT=… cargo run --release --example <name> -p aozora-bench
 ```
 
-For `phase3_subsystems`, build with the instrumentation feature:
+For `classify_subsystems`, build with the instrumentation feature:
 
 ```sh
 AOZORA_CORPUS_ROOT=… cargo run --release --features instrument \
-  --example phase3_subsystems -p aozora-bench
+  --example classify_subsystems -p aozora-bench
 ```
 
 ## Why corpus probes *and* criterion benches?
@@ -96,7 +96,7 @@ cost of the large-input path. The corpus probe catches it.
 
 ## Phase 3 instrumentation caveat
 
-`phase3-instrument` wraps every recogniser entry in a
+`classify-instrument` wraps every recogniser entry in a
 `SubsystemGuard` that calls `Instant::now()` on construction +
 drop. For the dominant inner-loop recognisers this adds enough
 overhead that the **report's own timing is significantly skewed**.

@@ -1,6 +1,6 @@
 //! Arena-emitting lex API.
 //!
-//! Produces a [`BorrowedLexOutput<'a>`] whose normalized text and
+//! Produces a [`LexOutput<'a>`] whose normalized text and
 //! placeholder registry live entirely inside an external [`Arena`].
 //! Drop the arena, and the entire lex output (every node, every
 //! borrowed string, every registry table) deallocates in a single
@@ -24,7 +24,7 @@
 //!    [`aozora_veb::EytzingerMap`] for cache-friendly lookup.
 //!
 //! The interner's diagnostic counters (cache hits, table hits, allocs,
-//! avg probe length) are exposed via [`BorrowedLexOutput::intern_stats`]
+//! avg probe length) are exposed via [`LexOutput::intern_stats`]
 //! so callers and benchmarks can measure dedup effectiveness without
 //! re-running the conversion.
 
@@ -36,7 +36,7 @@ use crate::lexer::{
 };
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset, Span};
 use aozora_syntax::borrowed::{self, Arena, ContainerPair, InternStats, NodeRef, Registry};
-use aozora_syntax::{AnnotationKind, ContainerKind};
+use aozora_syntax::{ContainerKind, DirectiveKind};
 
 /// Borrowed-AST output of the lex pipeline.
 ///
@@ -46,7 +46,7 @@ use aozora_syntax::{AnnotationKind, ContainerKind};
 /// correctly).
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct BorrowedLexOutput<'a> {
+pub struct LexOutput<'a> {
     /// Normalized text with PUA sentinels. Allocated in `arena`.
     pub normalized: &'a str,
     /// Cache-friendly sentinel-position → node lookup tables.
@@ -114,7 +114,7 @@ pub struct SourceNode<'a> {
     pub node: NodeRef<'a>,
 }
 
-impl<'a> BorrowedLexOutput<'a> {
+impl<'a> LexOutput<'a> {
     /// Find the [`SourceNode`] whose `source_span` covers `src_off`,
     /// where `src_off` is a [`SourceOffset`] (sanitized-source byte
     /// offset). The newtype prevents accidental cross-coordinate
@@ -147,7 +147,7 @@ impl<'a> BorrowedLexOutput<'a> {
 
 /// Run the lex pipeline and collect the result into `arena`.
 ///
-/// The returned [`BorrowedLexOutput`] has lifetime `'a` tied to
+/// The returned [`LexOutput`] has lifetime `'a` tied to
 /// `arena`; consumers can hold the output for as long as the arena
 /// lives, then drop the arena to free the entire allocation in one
 /// `Bump::reset`-equivalent step.
@@ -157,14 +157,14 @@ impl<'a> BorrowedLexOutput<'a> {
 /// 1. Sanitize / tokenize / pair (Phases 0-2) — owned-data helpers
 ///    operating on byte spans and event indices.
 /// 2. `classify_with::<BorrowedAllocator>` — Phase 3 builds borrowed
-///    `AozoraNode<'a>` directly into `arena`, with strings interned
+///    `Node<'a>` directly into `arena`, with strings interned
 ///    through the `Interner` owned by the allocator.
 /// 3. Single fused normalize walk: build the four borrowed-registry
 ///    tables and stream the PUA-rewritten text into `arena` in one
 ///    pass. Determinism + sentinel-alignment is proptest-pinned in
 ///    `tests/property_borrowed_arena.rs`.
 #[must_use]
-pub fn lex_into_arena<'a>(source: &str, arena: &'a Arena) -> BorrowedLexOutput<'a> {
+pub fn lex<'a>(source: &str, arena: &'a Arena) -> LexOutput<'a> {
     // Thin wrapper around the canonical Pipeline. The Pipeline owns
     // the type-state machine that enforces phase order at compile
     // time; this function exists for API compatibility and is what
@@ -277,10 +277,8 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 // position. No conversion, no per-node allocation.
                 if is_standalone_block_for_render_borrowed(*node) {
                     // Block-leaf padding: blank-line / sentinel /
-                    // blank-line. Mirrors
-                    // `aozora_lexer::phase4_normalize::Normalizer::emit_block_leaf`
-                    // byte-for-byte so the parser still sees the standalone
-                    // paragraph shape.
+                    // blank-line, byte-for-byte so the parser still sees
+                    // the standalone paragraph shape.
                     self.out.push_str("\n\n");
                     let pos = self.current_pos();
                     self.out.push(BLOCK_LEAF_SENTINEL);
@@ -402,19 +400,19 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
     /// (or, for warichu, their range) drops the container. Fires
     /// `break_in_single_line_container` at the break; `break_span` is the
     /// break node's sanitized `source_span`.
-    fn track_single_line_break(&mut self, node: borrowed::AozoraNode<'a>, break_span: Span) {
+    fn track_single_line_break(&mut self, node: borrowed::Node<'a>, break_span: Span) {
         match node {
-            borrowed::AozoraNode::Indent(_) => self.pending_single_line = Some("indent"),
-            borrowed::AozoraNode::AlignEnd(_) => self.pending_single_line = Some("align-end"),
-            borrowed::AozoraNode::Center(_) => self.pending_single_line = Some("center"),
-            borrowed::AozoraNode::Annotation(ann) => match ann.kind {
-                AnnotationKind::WarichuOpen => self.warichu_depth += 1,
-                AnnotationKind::WarichuClose => {
+            borrowed::Node::Indent(_) => self.pending_single_line = Some("indent"),
+            borrowed::Node::AlignEnd(_) => self.pending_single_line = Some("align-end"),
+            borrowed::Node::Center(_) => self.pending_single_line = Some("center"),
+            borrowed::Node::Directive(ann) => match ann.kind {
+                DirectiveKind::WarichuOpen => self.warichu_depth += 1,
+                DirectiveKind::WarichuClose => {
                     self.warichu_depth = self.warichu_depth.saturating_sub(1);
                 }
                 _ => {}
             },
-            borrowed::AozoraNode::PageBreak | borrowed::AozoraNode::SectionBreak(_) => {
+            borrowed::Node::PageBreak | borrowed::Node::SectionBreak(_) => {
                 if let Some(container) = self.pending_single_line.take() {
                     self.diagnostics
                         .push(Diagnostic::break_in_single_line_container(
@@ -436,13 +434,13 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
 /// own line, no surrounding plain-text context required). Pinned by
 /// variant kind so adding a new standalone-block variant only needs
 /// updating here.
-fn is_standalone_block_for_render_borrowed(node: borrowed::AozoraNode<'_>) -> bool {
+fn is_standalone_block_for_render_borrowed(node: borrowed::Node<'_>) -> bool {
     matches!(
         node,
-        borrowed::AozoraNode::PageBreak
-            | borrowed::AozoraNode::SectionBreak(_)
-            | borrowed::AozoraNode::AozoraHeading(_)
-            | borrowed::AozoraNode::Sashie(_)
+        borrowed::Node::PageBreak
+            | borrowed::Node::SectionBreak(_)
+            | borrowed::Node::Heading(_)
+            | borrowed::Node::Illustration(_)
     )
 }
 
@@ -463,7 +461,7 @@ mod tests {
     #[test]
     fn empty_source_round_trips() {
         let arena = Arena::new();
-        let out = lex_into_arena("", &arena);
+        let out = lex("", &arena);
         assert!(out.normalized.is_empty());
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
@@ -473,7 +471,7 @@ mod tests {
     #[test]
     fn plain_text_passes_through_unchanged() {
         let arena = Arena::new();
-        let out = lex_into_arena("hello, world", &arena);
+        let out = lex("hello, world", &arena);
         assert_eq!(out.normalized, "hello, world");
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
@@ -482,10 +480,10 @@ mod tests {
     #[test]
     fn explicit_ruby_lands_in_inline_registry() {
         let arena = Arena::new();
-        let out = lex_into_arena("｜青梅《おうめ》", &arena);
+        let out = lex("｜青梅《おうめ》", &arena);
         // Exactly one inline sentinel emitted by the normalizer.
         assert_eq!(out.registry.count_kind(Sentinel::Inline), 1);
-        // The borrowed AozoraNode behind it must be a Ruby.
+        // The borrowed Node behind it must be a Ruby.
         let (pos, nr) = out
             .registry
             .iter_kind(Sentinel::Inline)
@@ -495,13 +493,13 @@ mod tests {
         let NodeRef::Inline(node) = nr else {
             panic!("expected NodeRef::Inline, got {nr:?}");
         };
-        assert!(matches!(node, borrowed::AozoraNode::Ruby(_)));
+        assert!(matches!(node, borrowed::Node::Ruby(_)));
     }
 
     #[test]
     fn page_break_lands_in_block_leaf_registry() {
         let arena = Arena::new();
-        let out = lex_into_arena("text［＃改ページ］more", &arena);
+        let out = lex("text［＃改ページ］more", &arena);
         // Page break is a standalone block, lands in block_leaf.
         assert_eq!(out.registry.count_kind(Sentinel::BlockLeaf), 1);
         let (_pos, nr) = out
@@ -512,13 +510,13 @@ mod tests {
         let NodeRef::BlockLeaf(node) = nr else {
             panic!("expected NodeRef::BlockLeaf, got {nr:?}");
         };
-        assert!(matches!(node, borrowed::AozoraNode::PageBreak));
+        assert!(matches!(node, borrowed::Node::PageBreak));
     }
 
     #[test]
     fn paired_container_lands_in_open_close_registries() {
         let arena = Arena::new();
-        let out = lex_into_arena(
+        let out = lex(
             "［＃ここから2字下げ］\nbody\n［＃ここで字下げ終わり］",
             &arena,
         );
@@ -534,7 +532,7 @@ mod tests {
     #[test]
     fn diagnostics_carry_through_to_borrowed_output() {
         let arena = Arena::new();
-        let out = lex_into_arena("source has \u{E001} reserved sentinel", &arena);
+        let out = lex("source has \u{E001} reserved sentinel", &arena);
         assert!(
             out.diagnostics
                 .iter()
@@ -550,7 +548,7 @@ mod tests {
         // matches the input length.
         let arena = Arena::new();
         let input = "plain text\nwith newline";
-        let out = lex_into_arena(input, &arena);
+        let out = lex(input, &arena);
         assert_eq!(usize::try_from(out.sanitized_len), Ok(input.len()));
     }
 
@@ -564,7 +562,7 @@ mod tests {
         let arena = Arena::new();
         let out = {
             let owned_string = String::from("a｜青梅《おうめ》b");
-            lex_into_arena(&owned_string, &arena)
+            lex(&owned_string, &arena)
             // owned_string drops here at end of inner scope
         };
         // out is still usable
@@ -574,9 +572,7 @@ mod tests {
         let NodeRef::Inline(node) = nr else {
             panic!("expected NodeRef::Inline, got {nr:?}");
         };
-        assert!(
-            matches!(node, borrowed::AozoraNode::Ruby(r) if r.reading.as_plain() == Some("おうめ"))
-        );
+        assert!(matches!(node, borrowed::Node::Ruby(r) if r.reading.as_plain() == Some("おうめ")));
     }
 
     #[test]
@@ -585,7 +581,7 @@ mod tests {
         // Five distinct ruby spans → five inline registry entries in
         // monotonic source order.
         let src = "a｜A《a》b｜B《b》c｜C《c》d｜D《d》e｜E《e》";
-        let out = lex_into_arena(src, &arena);
+        let out = lex(src, &arena);
         assert_eq!(out.registry.count_kind(Sentinel::Inline), 5);
         let positions: Vec<u32> = out
             .registry
@@ -600,7 +596,7 @@ mod tests {
     #[test]
     fn container_kind_indent_amount_preserved() {
         let arena = Arena::new();
-        let out = lex_into_arena(
+        let out = lex(
             "［＃ここから3字下げ］\ntext\n［＃ここで字下げ終わり］",
             &arena,
         );
@@ -627,7 +623,7 @@ mod tests {
                    なる珍しき木が立つ。［＃ここから2字下げ］\n\
                    その下で人々は語らひ、［＃「青空」に傍点］\n\
                    ［＃ここで字下げ終わり］";
-        let out = lex_into_arena(src, &arena);
+        let out = lex(src, &arena);
         // Inline: ruby + gaiji + bouten ⇒ 3 entries. Block container
         // open/close ⇒ 1 each. No leaves.
         assert_eq!(out.registry.count_kind(Sentinel::Inline), 3);
@@ -641,7 +637,7 @@ mod tests {
     }
 
     /// Pin the contract that the explicit Pipeline chain and the
-    /// `lex_into_arena` one-shot agree byte-for-byte on the dense
+    /// `lex` one-shot agree byte-for-byte on the dense
     /// corpus shape. (`pipeline.rs` already pins this for the simpler
     /// ruby input; this case adds container open/close + gaiji +
     /// bouten coverage.)
@@ -658,7 +654,7 @@ mod tests {
             .tokenize()
             .pair()
             .build();
-        let oneshot = lex_into_arena(src, &arena_one);
+        let oneshot = lex(src, &arena_one);
 
         assert_eq!(chain.normalized, oneshot.normalized);
         assert_eq!(chain.sanitized_len, oneshot.sanitized_len);
@@ -698,7 +694,7 @@ mod tests {
     fn arena_normalizer_block_open_close_padding_is_blank_line_sentinel_blank_line() {
         let arena = Arena::new();
         let src = "［＃ここから2字下げ］\nbody\n［＃ここで字下げ終わり］";
-        let out = lex_into_arena(src, &arena);
+        let out = lex(src, &arena);
 
         // Find the open and close sentinel positions from the registry.
         let (open_pos, _) = out

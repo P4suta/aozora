@@ -1,6 +1,6 @@
 //! Cross-checks between Phase 1's trigger scan and the brute-force
 //! [`NaiveScanner`] reference, projected through the whole
-//! `lex_into_arena` pipeline.
+//! `lex` pipeline.
 //!
 //! `aozora-scan/tests/property_backend_equiv.rs` already proves that
 //! the production `scan_offsets` agrees byte-for-byte with
@@ -34,7 +34,7 @@
 //! properties remain decisive: any regression that *adds* triggers
 //! during normalization fails them under shrinking.
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use aozora_scan::NaiveScanner;
@@ -60,7 +60,7 @@ fn assert_offsets_are_char_boundaries(label: &str, text: &str, offsets: &[u32]) 
     }
 }
 
-fn assert_phase1_scan_invariants(source: &str) {
+fn assert_scan_invariants(source: &str) {
     // (1a) Scanner totality on raw source. NaiveScanner is the same
     // kernel used by every backend; this also pins that the scanner
     // is panic-free over the full generator surface (a separate
@@ -72,7 +72,7 @@ fn assert_phase1_scan_invariants(source: &str) {
     // Run the lex pipeline. (1b) Scanner totality on the normalized
     // buffer.
     let arena = Arena::new();
-    let out = lex_into_arena(source, &arena);
+    let out = lex(source, &arena);
     let norm_offsets = NaiveScanner.scan_offsets(out.normalized);
     assert_offsets_are_char_boundaries("normalized", out.normalized, &norm_offsets);
 
@@ -100,13 +100,13 @@ fn assert_phase1_scan_invariants(source: &str) {
 
 #[test]
 fn empty_input_satisfies_invariants() {
-    assert_phase1_scan_invariants("");
+    assert_scan_invariants("");
 }
 
 #[test]
 fn plain_text_satisfies_invariants() {
-    assert_phase1_scan_invariants("Hello, world.");
-    assert_phase1_scan_invariants("こんにちは、世界！");
+    assert_scan_invariants("Hello, world.");
+    assert_scan_invariants("こんにちは、世界！");
 }
 
 #[test]
@@ -114,12 +114,12 @@ fn explicit_ruby_satisfies_invariants() {
     // `｜青梅《おうめ》` — three triggers in source (`｜`, `《`, `》`),
     // all consumed into PUA sentinels by Phase 3 → zero triggers in
     // normalized. Property: 0 ≤ 3.
-    assert_phase1_scan_invariants("｜青梅《おうめ》");
+    assert_scan_invariants("｜青梅《おうめ》");
 }
 
 #[test]
 fn paired_container_satisfies_invariants() {
-    assert_phase1_scan_invariants(
+    assert_scan_invariants(
         "［＃ここから2字下げ］\n\
          body\n\
          ［＃ここで字下げ終わり］",
@@ -134,7 +134,7 @@ fn pua_neutralization_keeps_invariants() {
     // is in the trigger set, so the scan-count inequalities are
     // unaffected; the security rewrite is invisible to the Phase 1
     // monotonicity duality.
-    assert_phase1_scan_invariants("a\u{E001}b\u{E004}c");
+    assert_scan_invariants("a\u{E001}b\u{E004}c");
 }
 
 proptest! {
@@ -144,7 +144,7 @@ proptest! {
     /// hold over every Aozora-shaped fragment.
     #[test]
     fn aozora_fragment_scan_invariants_hold(s in aozora_fragment(120)) {
-        assert_phase1_scan_invariants(&s);
+        assert_scan_invariants(&s);
     }
 
     /// Pathological — runs of unbalanced trigger glyphs (the case that
@@ -152,7 +152,7 @@ proptest! {
     /// accounting).
     #[test]
     fn pathological_input_scan_invariants_hold(s in pathological_aozora(120)) {
-        assert_phase1_scan_invariants(&s);
+        assert_scan_invariants(&s);
     }
 
     /// Unicode adversarial — combining marks, RTL overrides, PUA
@@ -161,6 +161,6 @@ proptest! {
     /// triggers when normalising adversarial input.
     #[test]
     fn unicode_adversarial_scan_invariants_hold(s in unicode_adversarial()) {
-        assert_phase1_scan_invariants(&s);
+        assert_scan_invariants(&s);
     }
 }

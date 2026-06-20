@@ -1,6 +1,6 @@
 # HTML renderer & canonical serialiser
 
-`aozora-render` ships two walkers over `AozoraTree<'_>`:
+`aozora-render` ships two walkers over `Tree<'_>`:
 
 - `html::render_to_string` — emits semantic HTML5 with `aozora-*`
   class hooks.
@@ -20,7 +20,7 @@ aozora emits stable class names that downstream stylesheets can hook:
 |---|---|---|
 | `Ruby` | `<ruby>X<rt>Y</rt></ruby>` | (no class — semantic ruby element) |
 | `Bouten { kind: Sesame }` | `<em class="aozora-bouten-sesame">…</em>` | `aozora-bouten-<slug>` |
-| `Tcy` | `<span class="aozora-tcy">…</span>` | `aozora-tcy` |
+| `Tcy` | `<span class="aozora-combine-upright">…</span>` | `aozora-combine-upright` |
 | `Gaiji { resolution: Direct }` | `<span data-aozora-gaiji-jis="1-94-37">字</span>` | `data-aozora-gaiji-*` |
 | `Gaiji { resolution: Fallback }` | `<span class="aozora-gaiji-fallback" title="…">[…]</span>` | `aozora-gaiji-fallback` |
 | `Container { kind: Indent { n: 2 } }` | `<div class="aozora-indent-2">…</div>` | `aozora-indent-<n>` |
@@ -91,22 +91,22 @@ prevents.
 Both walkers follow the same shape:
 
 ```rust
-pub fn render_to_string(tree: &AozoraTree<'_>) -> String {
+pub fn render_to_string(tree: &Tree<'_>) -> String {
     let mut buf = String::with_capacity(tree.estimated_html_size());
     walk(tree, &mut buf);
     buf
 }
 
-fn walk(tree: &AozoraTree<'_>, out: &mut String) {
+fn walk(tree: &Tree<'_>, out: &mut String) {
     for node in tree.nodes() {
         match node {
-            AozoraNode::Plain(s)     => out.push_str(html_escape(s)),
-            AozoraNode::Ruby(r)      => emit_ruby(r, out),
-            AozoraNode::Bouten(b)    => emit_bouten(b, out),
-            AozoraNode::Tcy(t)       => emit_tcy(t, out),
-            AozoraNode::Gaiji(g)     => emit_gaiji(g, out),
-            AozoraNode::Container(c) => emit_container(c, out),
-            AozoraNode::BreakNode(b) => emit_break(b, out),
+            Node::Plain(s)     => out.push_str(html_escape(s)),
+            Node::Ruby(r)      => emit_ruby(r, out),
+            Node::Bouten(b)    => emit_bouten(b, out),
+            Node::Tcy(t)       => emit_tcy(t, out),
+            Node::Gaiji(g)     => emit_gaiji(g, out),
+            Node::Container(c) => emit_container(c, out),
+            Node::BreakNode(b) => emit_break(b, out),
             // … exhaustive
         }
     }

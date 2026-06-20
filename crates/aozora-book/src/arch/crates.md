@@ -85,7 +85,7 @@ flowchart TD
 | Crate | Role |
 |---|---|
 | `aozora-veb` | `no_std` Eytzinger-layout sorted-set lookup. Cache-friendly binary search for sub-256-entry registries. |
-| `aozora-syntax` | AST node types — `AozoraNode<'src>`, `Container<'src>`, `Bouten<'src>`, `Ruby<'src>`, …. Borrows from the bumpalo arena. |
+| `aozora-syntax` | AST node types — `Node<'src>`, `Container<'src>`, `Bouten<'src>`, `Ruby<'src>`, …. Borrows from the bumpalo arena. |
 | `aozora-encoding` | Shift_JIS decoding, JIS X 0213 patch, 外字 PHF resolver, accent decomposition. |
 | `aozora-scan` | SIMD-friendly multi-pattern byte scanner (Phase 1's trigger scan). One of three crates that locally relaxes `unsafe_code` — for aligned-load SIMD intrinsics. |
 
@@ -93,7 +93,7 @@ flowchart TD
 
 | Crate | Role |
 |---|---|
-| `aozora-pipeline` | Four-phase lexer (sanitize → events → pair → classify) plus the `lex_into_arena` orchestrator that fuses normalize + registry + diagnostics into a single output walk. |
+| `aozora-pipeline` | Four-phase lexer (sanitize → events → pair → classify) plus the `lex` orchestrator that fuses normalize + registry + diagnostics into a single output walk. |
 | `aozora-render` | HTML and canonical-serialisation walkers. Single O(n) tree pass each; no allocation outside the output buffer. |
 
 ### Editor-grade surface
@@ -107,13 +107,13 @@ flowchart TD
 
 | Crate | Role |
 |---|---|
-| `aozora-pandoc` | Pandoc AST projection — turns an `AozoraTree` into `pandoc_ast::Pandoc`, unlocking 50+ output formats via Pandoc's writer matrix. |
+| `aozora-pandoc` | Pandoc AST projection — turns an `Tree` into `pandoc_ast::Pandoc`, unlocking 50+ output formats via Pandoc's writer matrix. |
 
 ### Facade
 
 | Crate | Role |
 |---|---|
-| `aozora` | Public facade. `Document::parse() -> AozoraTree<'_>`, `tree.to_html()`, `tree.serialize()`, `tree.diagnostics()`. The single import for library consumers. |
+| `aozora` | Public facade. `Document::parse() -> Tree<'_>`, `tree.to_html()`, `tree.serialize()`, `tree.diagnostics()`. The single import for library consumers. |
 
 ### Bindings
 

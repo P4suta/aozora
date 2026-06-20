@@ -8,7 +8,7 @@
 //!    references (pointer equality at minimum). Renderers that
 //!    pointer-key on intern hits would silently double-allocate if the
 //!    interner ever returned distinct pointers for byte-equal input.
-//! 2. **`xml_node_name` injectivity** over [`AozoraNode`] variants:
+//! 2. **`xml_node_name` injectivity** over [`Node`] variants:
 //!    every variant produces a distinct stable name. A duplicate would
 //!    silently make two AST shapes render to the same XML element,
 //!    collapsing snapshot diffs to a no-op.
@@ -22,8 +22,8 @@ use aozora_proptest::config::default_config;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Content};
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Center, Container, ContainerKind, Indent, Keigakomi, SectionKind, SideNoteKind,
+    AlignEnd, BoutenKind, BoutenPosition, Center, Container, ContainerKind, DirectiveKind, Framed,
+    HeadingKind, HeadingStyle, Indent, MarginNoteKind, SectionKind,
 };
 use proptest::prelude::*;
 
@@ -43,11 +43,11 @@ fn xml_node_name_is_injective_over_all_variants() {
     let upper = alloc.content_plain("up");
     let lower = alloc.content_plain("lo");
     let g = alloc.make_gaiji("木＋吶", Some(Resolved::Char('A')), Some("第3水準"), false);
-    let a = alloc.make_annotation("annotation", AnnotationKind::Unknown);
+    let a = alloc.make_directive("annotation", DirectiveKind::Unknown);
 
     let nodes = [
         alloc.ruby(base, reading, true),
-        alloc.side_note(SideNoteKind::Annotation, base, reading),
+        alloc.side_note(MarginNoteKind::Gloss, base, reading),
         alloc.bouten(BoutenKind::Goma, base, BoutenPosition::Right, false),
         alloc.tate_chu_yoko(base, false),
         alloc.gaiji(g),
@@ -55,11 +55,11 @@ fn xml_node_name_is_injective_over_all_variants() {
         alloc.align_end(AlignEnd { offset: 2 }),
         alloc.center(Center { page: true }),
         alloc.warichu(upper, lower),
-        alloc.keigakomi(Keigakomi),
+        alloc.keigakomi(Framed),
         alloc.page_break(),
         alloc.section_break(SectionKind::Kaicho),
-        alloc.aozora_heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window, base),
-        alloc.heading_hint(2, AozoraHeadingStyle::SameLine, "対象"),
+        alloc.aozora_heading(HeadingKind::Medium, HeadingStyle::Window, base),
+        alloc.heading_hint(2, HeadingStyle::SameLine, "対象"),
         alloc.sashie("file.png", None, None, None),
         alloc.kaeriten("一"),
         alloc.annotation(a),
@@ -75,7 +75,7 @@ fn xml_node_name_is_injective_over_all_variants() {
 
     let mut names: Vec<&'static str> = nodes
         .iter()
-        .map(aozora_syntax::borrowed::AozoraNode::xml_node_name)
+        .map(aozora_syntax::borrowed::Node::xml_node_name)
         .collect();
     names.sort_unstable();
     let len_before = names.len();
@@ -83,7 +83,7 @@ fn xml_node_name_is_injective_over_all_variants() {
     assert_eq!(
         len_before,
         names.len(),
-        "xml_node_name collision among AozoraNode variants: {names:?}"
+        "xml_node_name collision among Node variants: {names:?}"
     );
 
     // `kind()` is similarly injective — no two variants project to
@@ -91,15 +91,15 @@ fn xml_node_name_is_injective_over_all_variants() {
     // ever doubles up on a discriminant.
     let mut kinds: Vec<aozora_syntax::NodeKind> = nodes
         .iter()
-        .map(aozora_syntax::borrowed::AozoraNode::kind)
+        .map(aozora_syntax::borrowed::Node::kind)
         .collect();
-    kinds.sort_by_key(|k| k.as_camel_case());
+    kinds.sort_by_key(|k| k.as_wire_tag());
     let len_kinds_before = kinds.len();
     kinds.dedup();
     assert_eq!(
         len_kinds_before,
         kinds.len(),
-        "NodeKind collision among AozoraNode variants"
+        "NodeKind collision among Node variants"
     );
 }
 

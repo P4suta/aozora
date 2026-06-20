@@ -25,7 +25,7 @@ The `aozora check` CLI renders diagnostics three ways, chosen with
   [`miette`](https://docs.rs/miette) report: the source line, a caret
   under the offending span, the label, the help text, and a link back to
   this page.
-- **`json`** (the default when stderr is piped) — the `aozora::wire`
+- **`json`** (the default when stderr is piped) — the `aozora::json`
   diagnostics envelope, byte-identical to what the WASM / FFI / Python /
   Extism front doors emit. This is the machine / agent path.
 - **`short`** — one grep-able line per diagnostic:
@@ -193,7 +193,7 @@ remove the inner `《…》`.
 
 A `［＃ここから…］` directive looked like a paired-container opener but
 named no known container kind (`字下げ`, `地付き`, `地から N 字上げ`). The
-bracket is kept as a plain `Annotation{Unknown}` (so output is preserved
+bracket is kept as a plain `Directive{Unknown}` (so output is preserved
 and the "no bare `［＃`" guarantee holds) but is **not** treated as a
 container — any matching `［＃ここで…終わり］` will not pair with it. The
 label spans the directive. **Fix:** use a recognised opener, e.g.
@@ -209,7 +209,7 @@ label spans the directive. **Fix:** use a recognised opener, e.g.
 
 A 縦中横 forward reference (`［＃「X」は縦中横］`) named a target that does
 not appear anywhere in the preceding text, so it has no run to rotate. The
-directive degrades to an `Annotation{Unknown}`. The label spans the
+directive degrades to an `Directive{Unknown}`. The label spans the
 directive. **Fix:** check the spelling of the quoted target, or place the
 `［＃「X」は縦中横］` after the run it should style.
 

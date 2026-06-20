@@ -8,11 +8,11 @@
   },
   "source": "昭和［＃「12」は縦中横］年\n",
   "expected": {
-    "html": "<p>昭和<span class=\"aozora-annotation\" hidden>［＃「12」は縦中横］</span>年</p>\n",
+    "html": "<p>昭和<span class=\"aozora-directive\" hidden>［＃「12」は縦中横］</span>年</p>\n",
     "serialize": "昭和［＃「12」は縦中横］年\n",
     "nodes": [
       {
-        "kind": "annotation",
+        "kind": "directive",
         "span": {
           "start": 6,
           "end": 35

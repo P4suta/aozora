@@ -4,8 +4,8 @@ Three cargo-fuzz harnesses live in this workspace:
 
 | Crate | Target | What it asserts |
 |-------|--------|-----------------|
-| `aozora-pipeline` | `lex_into_arena` | `lex_into_arena` is panic-free, normalized text stays valid UTF-8, every diagnostic span is in-bounds |
-| `aozora-render` | `render_html` | `lex_into_arena` → `render_to_string` is panic-free and never leaks PUA sentinels (U+E001..U+E004) into the rendered HTML |
+| `aozora-pipeline` | `lex` | `lex` is panic-free, normalized text stays valid UTF-8, every diagnostic span is in-bounds |
+| `aozora-render` | `render_html` | `lex` → `render_to_string` is panic-free and never leaks PUA sentinels (U+E001..U+E004) into the rendered HTML |
 | `aozora-render` | `serialize_round_trip` | I3 fixed-point invariant: `serialize(serialize(x))` byte-equals `serialize(x)` |
 | `aozora-encoding` | `decode_sjis` | `decode_sjis` is panic-free on adversarial bytes and returns valid UTF-8 on success |
 
@@ -17,7 +17,7 @@ Each crate keeps its harness binaries under `crates/<crate>/fuzz/`
 
 ```sh
 # 60-second smoke fuzz of one target.
-just fuzz-quick aozora-pipeline lex_into_arena
+just fuzz-quick aozora-pipeline lex
 
 # 5-minute deep fuzz — release pre-flight gate.
 just fuzz-deep aozora-render render_html
@@ -36,11 +36,11 @@ just fuzz-status
 # the panic block — tier label + src + html excerpt + violation —
 # filtered out of libFuzzer's stack-trace noise. Exit status is the
 # count of still-crashing artifacts so it can drive a CI gate.
-just fuzz-triage aozora-pipeline lex_into_arena
+just fuzz-triage aozora-pipeline lex
 
 # Lift a triaged artifact into the permanent regression set so
 # `tests/fuzz_regressions.rs` replays it on every `just test`.
-just fuzz-promote aozora-pipeline lex_into_arena crash-<sha>
+just fuzz-promote aozora-pipeline lex crash-<sha>
 ```
 
 When libFuzzer flags a crash it writes the offending input to

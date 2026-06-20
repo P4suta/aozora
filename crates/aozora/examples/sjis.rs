@@ -35,5 +35,5 @@ fn main() {
     println!("{}", tree.to_html());
 
     println!("--- serialize ---");
-    println!("{}", tree.serialize());
+    println!("{}", tree.to_source());
 }

@@ -30,7 +30,7 @@ use std::time::Instant;
 use aozora_bench::{log_histogram_ns, render_bar_row};
 use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_auto;
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
 };
@@ -96,7 +96,7 @@ fn main() {
 
         let arena_full = Arena::new();
         let t = Instant::now();
-        let _full = lex_into_arena(&text, &arena_full);
+        let _full = lex(&text, &arena_full);
         full_ns.push(t.elapsed().as_nanos() as u64);
     }
 
@@ -115,7 +115,7 @@ fn main() {
     print_one("phase 1 tokenize", &tokenize_ns);
     print_one("phase 2 pair", &pair_ns);
     print_one("phase 3 classify", &classify_ns);
-    print_one("lex_into_arena (total)", &full_ns);
+    print_one("lex (total)", &full_ns);
 }
 
 fn print_one(label: &str, samples: &[u64]) {

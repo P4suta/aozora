@@ -1,7 +1,7 @@
 # Error recovery
 
 aozora is *non-fatal by design*: the parser always returns an
-[`AozoraTree`][tree] even when the input violates the spec. Every
+[`Tree`][tree] even when the input violates the spec. Every
 problem is reported as a structured [`Diagnostic`][diagnostic] whose
 [`code`][code] tooling can match on; nothing is ever raised as a
 panic from `Document::parse`.
@@ -124,7 +124,7 @@ correction.
 - [Wire format → DiagnosticWire](../wire/overview.md) — the JSON
   shape every binding (FFI, WASM, Python) carries diagnostics over.
 
-[tree]: https://docs.rs/aozora/latest/aozora/struct.AozoraTree.html
+[tree]: https://docs.rs/aozora/latest/aozora/struct.Tree.html
 [diagnostic]: https://docs.rs/aozora/latest/aozora/enum.Diagnostic.html
 [code]: https://docs.rs/aozora/latest/aozora/enum.Diagnostic.html#method.code
 [severity]: https://docs.rs/aozora/latest/aozora/enum.Severity.html

@@ -1,9 +1,9 @@
 //! Measure the `ArenaInterner`'s deduplication effect on the
 //! 17 k-document Aozora corpus.
 //!
-//! For each document we run `aozora_pipeline::lex_into_arena` (which uses
+//! For each document we run `aozora_pipeline::lex` (which uses
 //! the interner internally) and accumulate the `InternStats` exposed
-//! on the resulting `BorrowedLexOutput`. The aggregate stats then
+//! on the resulting `LexOutput`. The aggregate stats then
 //! report:
 //!
 //! - Total interned strings vs unique allocations: dedup ratio.
@@ -35,7 +35,7 @@ use std::time::Instant;
 
 use aozora_corpus::{CorpusSource, FilesystemCorpus};
 use aozora_encoding::decode_auto;
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_syntax::borrowed::{Arena, InternStats};
 
 fn main() {
@@ -61,7 +61,7 @@ fn main() {
             continue;
         };
         let arena = Arena::new();
-        let out = lex_into_arena(&text, &arena);
+        let out = lex(&text, &arena);
         agg.calls += out.intern_stats.calls;
         agg.cache_hits += out.intern_stats.cache_hits;
         agg.table_hits += out.intern_stats.table_hits;

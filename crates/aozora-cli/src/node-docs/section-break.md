@@ -1,6 +1,6 @@
 # NodeKind::SectionBreak
 
-Wire tag: `sectionBreak` — section breaks (改丁 / 改段 / 改見開き).
+Inspect tag: `sectionBreak` — section breaks (改丁 / 改段 / 改見開き).
 
 ## Source examples
 
@@ -26,7 +26,7 @@ Round-trips to `［＃改丁］` etc.
 ## AST shape
 
 ```rust,ignore
-AozoraNode::SectionBreak(SectionKind)
+Node::SectionBreak(SectionKind)
 ```
 
 `SectionKind` is `Choho` (改丁) / `Dan` (改段) / `Spread` (改見開き).

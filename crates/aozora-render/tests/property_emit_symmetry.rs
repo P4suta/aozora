@@ -25,7 +25,7 @@
 //! that introduces an asymmetric emit will fail under shrinking with a
 //! minimal repro pointing at the offending construct.
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use aozora_render::html::render_to_string;
@@ -80,7 +80,7 @@ fn assert_html_tag_pairs_balanced(input: &str, html: &str) {
 
 fn assert_emit_symmetry(source: &str) {
     let arena = Arena::new();
-    let out = lex_into_arena(source, &arena);
+    let out = lex(source, &arena);
     let serialised = serialize(&out);
     assert_source_pair_deltas_preserved(source, &serialised);
 

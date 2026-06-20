@@ -1,6 +1,6 @@
 # NodeKind::Kaeriten
 
-Wire tag: `kaeriten` — kanbun reading-order marker (返り点).
+Inspect tag: `kaeriten` — kanbun reading-order marker (返り点).
 
 ## Source examples
 

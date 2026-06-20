@@ -98,7 +98,7 @@ export default function PerfBadge(props: PerfBadgeProps) {
           <div class="perf-popover-footer">
             <span class="perf-popover-sub">
               計測は <code>performance.now()</code> 経由。 PerfBadge の数値は{' '}
-              <code>parse + to_html</code> のみ。
+              <code>parse + toHtml</code> のみ。
             </span>
           </div>
         </div>

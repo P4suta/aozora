@@ -15,6 +15,6 @@ export interface NodeEntry {
 }
 
 export interface WireEnvelope<T> {
-  schema_version: number;
+  schemaVersion: number;
   data: T[];
 }

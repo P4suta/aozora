@@ -5,23 +5,23 @@
 //!
 //! - The orchestrator (`pipeline` / `borrowed` modules at the crate
 //!   root) drives the borrowed-AST pipeline through its 4 phase
-//!   stages. The single public entry [`lex_into_arena`] runs the
+//!   stages. The single public entry [`lex`] runs the
 //!   whole thing and lands the resulting borrowed AST inside an
 //!   `aozora_syntax::borrowed::Arena` provided by the caller.
-//! - The phase implementations live under [`lexer`] (`lexer::phase0`
-//!   through `lexer::phase3`). External consumers should reach for
-//!   [`lex_into_arena`] or the [`Pipeline`] state machine; the
+//! - The phase implementations live under [`lexer`] (`lexer::sanitize`
+//!   through `lexer::classify`). External consumers should reach for
+//!   [`lex`] or the [`Pipeline`] state machine; the
 //!   per-phase functions are exposed for benchmarks and the
 //!   instrumentation feature.
 //!
 //! [`aozora_scan`] still ships as a separate `no_std` crate — the
 //! SIMD trigger scan is independently swappable, benchmarkable, and
-//! consumed by `lexer::phase1` directly.
+//! consumed by `lexer::tokenize` directly.
 //!
 //! # Observable equivalence
 //!
-//! [`lex_into_arena`] is a pure function from source text to
-//! [`BorrowedLexOutput`] *as observed externally*, even though the
+//! [`lex`] is a pure function from source text to
+//! [`LexOutput`] *as observed externally*, even though the
 //! internal pipeline mutates the bumpalo arena and runs SIMD scratch
 //! buffers. The determinism + sentinel-alignment proptests in
 //! `tests/property_borrowed_arena.rs` pin the contract.
@@ -33,21 +33,21 @@ pub mod lexer;
 pub mod pipeline;
 
 pub use aozora_syntax::borrowed::NodeRef;
-pub use borrowed::{BorrowedLexOutput, SourceNode, lex_into_arena};
+pub use borrowed::{LexOutput, SourceNode, lex};
 pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 
 /// Eagerly initialise every lazily-built parser table.
 ///
 /// Forces the Phase-1 SIMD backend choice (`aozora_scan`) and the
 /// Phase-3 annotation-classifier Aho-Corasick DFA, so the first
-/// [`lex_into_arena`] does not pay the one-time build cost on its
+/// [`lex`] does not pay the one-time build cost on its
 /// critical path. Idempotent and cheap to call repeatedly.
 ///
 /// Lexing stays lazy by default; this is opt-in for latency-sensitive
 /// front ends — the umbrella `aozora::prewarm` is the public entry point.
 pub fn prewarm() {
     aozora_scan::prewarm();
-    lexer::phase3_classify::prewarm();
+    lexer::classify::prewarm();
 }
 
 /// Re-exports of the Phase 0 decorative-rule isolator, surfaced so
@@ -55,7 +55,7 @@ pub fn prewarm() {
 /// blank-line-injection pass on its output and converge to a parser
 /// fixed point in one cycle. The helpers are otherwise pipeline
 /// internals — keep the public surface narrow.
-pub use lexer::phase0_sanitize::{has_long_rule_line, isolate_decorative_rules};
+pub use lexer::sanitize::{has_long_rule_line, isolate_decorative_rules};
 
 pub use aozora_spec::{
     ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic,
@@ -71,13 +71,13 @@ mod tests {
     /// `aozora_scan::scan_offsets` MUST yield the exact same byte
     /// offsets that the legacy phase-1 tokeniser uses for its trigger
     /// positions. We don't have a public hook into phase 1's offsets,
-    /// so we cross-check at the [`BorrowedLexOutput`] level: every PUA
+    /// so we cross-check at the [`LexOutput`] level: every PUA
     /// sentinel in `normalized` must correspond to a consumed source
     /// trigger.
     #[test]
     fn lex_produces_normalized_with_pua_sentinels_for_trigger_inputs() {
         let arena = Arena::new();
-        let out = lex_into_arena("｜青梅《おうめ》", &arena);
+        let out = lex("｜青梅《おうめ》", &arena);
         // Exactly one inline sentinel for the ruby span.
         let inline_count = out
             .normalized
@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn lex_passes_through_plain_text_unchanged() {
         let arena = Arena::new();
-        let out = lex_into_arena("hello, world", &arena);
+        let out = lex("hello, world", &arena);
         assert_eq!(out.normalized, "hello, world");
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn lex_handles_empty_input() {
         let arena = Arena::new();
-        let out = lex_into_arena("", &arena);
+        let out = lex("", &arena);
         assert!(out.normalized.is_empty());
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn lex_emits_diagnostics_for_pua_collision() {
         let arena = Arena::new();
-        let out = lex_into_arena("abc\u{E001}def", &arena);
+        let out = lex("abc\u{E001}def", &arena);
         assert!(
             out.diagnostics
                 .iter()
@@ -135,7 +135,7 @@ mod tests {
     fn lex_preserves_sanitized_len_for_segment_merge() {
         // Sanitize is identity on plain text → sanitized_len == source.len().
         let arena = Arena::new();
-        let out = lex_into_arena("plain text", &arena);
+        let out = lex("plain text", &arena);
         assert_eq!(usize::try_from(out.sanitized_len), Ok("plain text".len()));
     }
 }

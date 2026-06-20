@@ -74,13 +74,13 @@ fn snapshot_fmt_help() {
 }
 
 #[test]
-fn snapshot_wire_help() {
+fn snapshot_inspect_help() {
     insta::with_settings!({
         filters => vec![
             (r"\d+\.\d+\.\d+(?:-[\w.]+)?", "[VERSION]"),
         ],
     }, {
-        insta::assert_snapshot!(run(&["wire", "--help"]));
+        insta::assert_snapshot!(run(&["inspect", "--help"]));
     });
 }
 

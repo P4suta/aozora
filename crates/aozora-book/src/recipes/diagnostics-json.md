@@ -7,14 +7,14 @@ or a cross-language tool.
 ## Solution (library)
 
 The parser always produces a tree, even from malformed input;
-diagnostics ride alongside it. `AozoraTree::diagnostics` is the typed
-slice, and `aozora::wire::serialize_diagnostics` projects that slice
+diagnostics ride alongside it. `Tree::diagnostics` is the typed
+slice, and `aozora::json::diagnostics` projects that slice
 into the shared [wire envelope](../wire/overview.md) — the exact JSON
 every binding (FFI, wasm, Python, Extism) emits.
 
 ```rust
 use aozora::Document;
-use aozora::wire::serialize_diagnostics;
+use aozora::json::diagnostics;
 
 fn main() {
     // U+E001 is a private-use sentinel the parser reserves; feeding one
@@ -22,7 +22,7 @@ fn main() {
     let doc = Document::new("abc\u{E001}def");
     let tree = doc.parse();
 
-    let json = serialize_diagnostics(tree.diagnostics());
+    let json = diagnostics(tree.diagnostics());
     println!("{json}");
 }
 ```
@@ -32,7 +32,7 @@ fn main() {
 ## Expected output
 
 ```json
-{"schema_version":1,"data":[{"kind":"source_contains_pua","severity":"warning","source":"source","span":{"start":3,"end":6},"codepoint":""}]}
+{"schemaVersion":1,"data":[{"kind":"source_contains_pua","severity":"warning","source":"source","span":{"start":3,"end":6},"codepoint":""}]}
 ```
 
 Each entry is `{ kind, severity, source, span: { start, end },
@@ -70,7 +70,7 @@ aozora check --strict src.txt     # warnings → exit 1 (the CI gate)
 cat src.txt | aozora check        # reads stdin
 ```
 
-Pass `--diagnostic-format json` to get the exact `serialize_diagnostics`
+Pass `--diagnostic-format json` to get the exact `diagnostics`
 envelope shown above — byte-identical to the library path and to what
 every binding emits — straight from the shell, no Rust required:
 

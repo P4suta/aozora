@@ -1,6 +1,6 @@
 # NodeKind::Bouten
 
-Wire tag: `bouten` — emphasis dots / sidelines over a target span.
+Inspect tag: `bouten` — emphasis dots / sidelines over a target span.
 
 ## Source examples
 
@@ -51,9 +51,9 @@ node with the matched span.
 
 - `aozora::lex::unclosed_bracket` — annotation `［＃` opened with no
   matching `］`.
-- `Annotation` (fallback) — quote target unresolved.
+- `Directive` (fallback) — quote target unresolved.
 
 ## Related kinds
 
-- [Annotation](annotation.md) — fallback when the target cannot be
+- [Directive](annotation.md) — fallback when the target cannot be
   matched.

@@ -1,9 +1,9 @@
 //! `Document` — single owning handle to a parsed Aozora source
-//! buffer, and `AozoraTree<'a>` — borrowed view a caller walks for
+//! buffer, and `Tree<'a>` — borrowed view a caller walks for
 //! output rendering.
 //!
 //! `Document` owns both the source buffer and a `bumpalo`-backed
-//! [`Arena`]; [`Document::parse`] returns an [`AozoraTree<'_>`]
+//! [`Arena`]; [`Document::parse`] returns an [`Tree<'_>`]
 //! that borrows from the arena via the `&self` lifetime. Owning
 //! source removes the self-referential-struct problem that would
 //! otherwise plague driver wrappers (FFI/WASM/Py): callers can hold
@@ -16,7 +16,7 @@
 
 use core::fmt;
 
-use aozora_pipeline::{BorrowedLexOutput, NodeRef, SourceNode, lex_into_arena};
+use aozora_pipeline::{LexOutput, NodeRef, SourceNode, lex};
 use aozora_render::{html as borrowed_html, serialize as borrowed_serialize};
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset};
 use aozora_syntax::borrowed::{Arena, ContainerPair};
@@ -33,7 +33,7 @@ const ARENA_CAPACITY_FACTOR: usize = 4;
 ///
 /// Diagnostics are always collected best-effort — the lexer never
 /// aborts mid-stream — but the policy controls whether the
-/// returned [`AozoraTree::diagnostics`] slice retains every entry,
+/// returned [`Tree::diagnostics`] slice retains every entry,
 /// drops library-internal sanity-check failures, or short-circuits
 /// after the first source-side error.
 ///
@@ -228,14 +228,14 @@ impl Document {
     /// Parse the document, returning a borrowed-AST view bound to
     /// `&self`'s lifetime.
     #[must_use]
-    pub fn parse(&self) -> AozoraTree<'_> {
-        let mut inner = lex_into_arena(&self.source, &self.arena);
+    pub fn parse(&self) -> Tree<'_> {
+        let mut inner = lex(&self.source, &self.arena);
         if self.diagnostic_policy == DiagnosticPolicy::DropInternal {
             inner
                 .diagnostics
                 .retain(|d| d.source() != aozora_spec::DiagnosticSource::Internal);
         }
-        AozoraTree {
+        Tree {
             source: &self.source,
             inner,
         }
@@ -254,16 +254,16 @@ impl fmt::Debug for Document {
 
 /// Borrowed view into a parsed Aozora document.
 ///
-/// Wraps a [`BorrowedLexOutput`] whose normalized text and registry
+/// Wraps a [`LexOutput`] whose normalized text and registry
 /// borrow from the parent [`Document`]'s arena. Renderer methods
 /// dispatch to `aozora_render`'s borrowed-AST implementations.
 #[derive(Debug)]
-pub struct AozoraTree<'a> {
+pub struct Tree<'a> {
     source: &'a str,
-    inner: BorrowedLexOutput<'a>,
+    inner: LexOutput<'a>,
 }
 
-impl<'a> AozoraTree<'a> {
+impl<'a> Tree<'a> {
     /// The source text this tree was parsed from.
     #[must_use]
     pub fn source(&self) -> &'a str {
@@ -292,9 +292,9 @@ impl<'a> AozoraTree<'a> {
         self.inner.pairs
     }
 
-    /// Borrow the underlying [`BorrowedLexOutput`].
+    /// Borrow the underlying [`LexOutput`].
     #[must_use]
-    pub fn lex_output(&self) -> &BorrowedLexOutput<'a> {
+    pub fn lex_output(&self) -> &LexOutput<'a> {
         &self.inner
     }
 
@@ -355,7 +355,7 @@ impl<'a> AozoraTree<'a> {
 
     /// Re-emit Aozora source text from the parsed tree.
     #[must_use]
-    pub fn serialize(&self) -> String {
+    pub fn to_source(&self) -> String {
         borrowed_serialize::serialize(&self.inner)
     }
 }
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn edit_equivalence_full_reparse() {
-        // The edited document parses to the same AozoraTree shape as
+        // The edited document parses to the same Tree shape as
         // re-parsing the spliced source from scratch — this is the
         // observable property `Document::edit` ships under, and the
         // future incremental implementation will preserve.
@@ -443,8 +443,8 @@ mod tests {
         assert_eq!(edited.source(), from_scratch.source());
         // Same serialize output → AST shape is equivalent.
         assert_eq!(
-            edited.parse().serialize(),
-            from_scratch.parse().serialize(),
+            edited.parse().to_source(),
+            from_scratch.parse().to_source(),
             "edit() must be equivalent to splice + reparse"
         );
     }
@@ -458,8 +458,8 @@ mod tests {
     #[test]
     fn round_trip_through_serialize_is_a_fixed_point() {
         let s = "｜青梅《おうめ》";
-        let first = Document::new(s).parse().serialize();
-        let second = Document::new(first.clone()).parse().serialize();
+        let first = Document::new(s).parse().to_source();
+        let second = Document::new(first.clone()).parse().to_source();
         assert_eq!(first, second, "round-trip must be a fixed point");
     }
 
@@ -553,7 +553,7 @@ mod tests {
         let src = "｜青梅《おうめ》";
         let via_new = Document::new(src);
         let via_options = ParseOptions::new().build(src);
-        assert_eq!(via_new.parse().serialize(), via_options.parse().serialize());
+        assert_eq!(via_new.parse().to_source(), via_options.parse().to_source());
     }
 
     #[test]

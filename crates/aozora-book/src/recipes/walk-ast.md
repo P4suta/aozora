@@ -6,7 +6,7 @@ build an index, or drive a custom renderer.
 
 ## Solution
 
-`AozoraTree::source_nodes` returns a slice of `SourceNode`, one per
+`Tree::source_nodes` returns a slice of `SourceNode`, one per
 classified construct, sorted by source position. Each carries a
 `source_span` (byte offsets into the source) and a `node`, which is a
 `NodeRef` tagging the sentinel kind that fired.
@@ -23,7 +23,7 @@ fn main() {
         let span = sn.source_span;
         match sn.node {
             NodeRef::Inline(node) | NodeRef::BlockLeaf(node) => {
-                // `node` is an AozoraNode; `.kind()` is the cross-cutting tag.
+                // `node` is an Node; `.kind()` is the cross-cutting tag.
                 println!("{:>3}..{:<3} {:?}", span.start, span.end, node.kind());
             }
             NodeRef::BlockOpen(kind) => {
@@ -56,9 +56,9 @@ features and indexers want. The `NodeRef` variant tells you where the
 construct landed:
 
 - `Inline` — an inline construct (ruby, bouten, gaiji, 縦中横, …)
-  carrying an `AozoraNode`.
+  carrying an `Node`.
 - `BlockLeaf` — a standalone block construct (page break, section
-  break, heading) carrying an `AozoraNode`.
+  break, heading) carrying an `Node`.
 - `BlockOpen` / `BlockClose` — the two ends of a paired container
   (`［＃ここから…］` / `［＃ここで…終わり］`), each carrying a
   `ContainerKind`.
@@ -71,15 +71,15 @@ construct landed:
 
 The walk above sees opens and closes as independent events. When you
 need them *paired* — "where does this `［＃ここから…］` close?" —
-read `AozoraTree::container_pairs` instead, which yields one entry per
+read `Tree::container_pairs` instead, which yields one entry per
 balanced pair (in normalized coordinates). The inline-delimiter
-analogue (ruby `《…》`, brackets) is `AozoraTree::pairs`. See
+analogue (ruby `《…》`, brackets) is `Tree::pairs`. See
 [Indent & align containers](../notation/indent.md) for the container
 model.
 
 ### Reaching inside a node
 
-`AozoraNode` is a borrowed enum; its payload fields hold the
+`Node` is a borrowed enum; its payload fields hold the
 construct's content. To pull text out of a specific variant — say the
 base and reading of a ruby node — match the variant and read its
 `Content`; that is the next recipe,

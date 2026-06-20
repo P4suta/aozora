@@ -8,11 +8,11 @@
   },
   "source": "未来［＃「未来」の左に「みらい」の注記］を見る。\n",
   "expected": {
-    "html": "<p><ruby>未来<rp>(</rp><rt class=\"aozora-sidenote\">みらい</rt><rp>)</rp></ruby>を見る。</p>\n",
+    "html": "<p><ruby>未来<rp>(</rp><rt class=\"aozora-margin-note\">みらい</rt><rp>)</rp></ruby>を見る。</p>\n",
     "serialize": "未来［＃「未来」の左に「みらい」の注記］を見る。\n",
     "nodes": [
       {
-        "kind": "sideNote",
+        "kind": "marginNote",
         "span": {
           "start": 0,
           "end": 60

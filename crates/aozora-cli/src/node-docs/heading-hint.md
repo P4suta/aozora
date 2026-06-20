@@ -1,6 +1,6 @@
 # NodeKind::HeadingHint
 
-Wire tag: `headingHint` — forward-reference heading hint
+Inspect tag: `headingHint` — forward-reference heading hint
 (`［＃「target」は中見出し］`).
 
 ## Source examples
@@ -48,4 +48,4 @@ None on well-formed input.
 
 ## Related kinds
 
-- [AozoraHeading](aozora-heading.md) — direct heading-marker variant.
+- [Heading](aozora-heading.md) — direct heading-marker variant.

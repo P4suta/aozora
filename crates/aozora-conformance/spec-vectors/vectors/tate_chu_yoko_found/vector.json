@@ -8,11 +8,11 @@
   },
   "source": "明治３３年［＃「３３」は縦中横］に。\n",
   "expected": {
-    "html": "<p>明治３３年<span class=\"aozora-tcy\">３３</span>に。</p>\n",
+    "html": "<p>明治３３年<span class=\"aozora-combine-upright\">３３</span>に。</p>\n",
     "serialize": "明治３３年［＃「３３」は縦中横］に。\n",
     "nodes": [
       {
-        "kind": "tateChuYoko",
+        "kind": "combineUpright",
         "span": {
           "start": 15,
           "end": 48

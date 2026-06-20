@@ -25,7 +25,7 @@
 //! ```
 //!
 //! Output is split into **load wall** (Shift-JIS decode + bucketing)
-//! and **parse wall** (the actual `lex_into_arena` work). Earlier
+//! and **parse wall** (the actual `lex` work). Earlier
 //! versions reported a single "wall" that conflated both — when read
 //! by a sampling profiler this caused the corpus-load syscalls
 //! (`read` / `__nss_database_lookup` / `__memmove_avx_unaligned`) to
@@ -70,7 +70,7 @@ use aozora_bench::{
 };
 use aozora_corpus::{Archive, CorpusItem, FilesystemCorpus};
 use aozora_encoding::decode_auto;
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_syntax::borrowed::Arena;
 use rayon::prelude::*;
 
@@ -353,7 +353,7 @@ impl LoadPhase {
 
 #[derive(Debug, Default)]
 struct BandReport {
-    /// Per-doc total parse latency (`lex_into_arena`) in ns.
+    /// Per-doc total parse latency (`lex`) in ns.
     latencies_ns: Vec<u64>,
     /// Per-doc input size (post-decode UTF-8 bytes).
     sizes_bytes: Vec<u64>,
@@ -413,7 +413,7 @@ fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
             let mut arena = cell.borrow_mut();
             arena.reset_with_hint(text.len().saturating_mul(4));
             let t = Instant::now();
-            let _out = lex_into_arena(text, &arena);
+            let _out = lex(text, &arena);
             let ns = t.elapsed().as_nanos() as u64;
             (text.len() as u64, ns)
         })

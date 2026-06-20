@@ -11,7 +11,7 @@
 //! Every wire JSON has the shape
 //!
 //! ```json
-//! { "schema_version": 1, "data": [ /* …entries… */ ] }
+//! { "schemaVersion": 1, "data": [ /* …entries… */ ] }
 //! ```
 //!
 //! [`SCHEMA_VERSION`] is bumped on any breaking change to the
@@ -22,7 +22,7 @@
 //!
 //! # Stability vs. `non_exhaustive`
 //!
-//! Both [`crate::Diagnostic`] and [`crate::AozoraNode`] are
+//! Both [`crate::Diagnostic`] and [`crate::Node`] are
 //! `#[non_exhaustive]` upstream so the library can add variants in
 //! minor releases. The wire format protects callers by:
 //!
@@ -34,7 +34,7 @@
 use serde::Serialize;
 
 use crate::encoding::gaiji::{GaijiResolution, find_span, gaiji_resolutions, resolve_at};
-use crate::{AozoraTree, Diagnostic, DiagnosticSource, Severity, Span};
+use crate::{Diagnostic, DiagnosticSource, Severity, Span, Tree};
 
 /// Wire-format schema version. Bumped on any breaking change to the
 /// serialised shape (variant additions, field renames, envelope
@@ -45,33 +45,33 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// JSON envelope. Every entry has the shape
 /// `{ kind, span: { start, end }, codepoint? }`.
 ///
-/// Empty input → `{"schema_version":1,"data":[]}`.
+/// Empty input → `{"schemaVersion":1,"data":[]}`.
 #[must_use]
-pub fn serialize_diagnostics(diagnostics: &[Diagnostic]) -> String {
+pub fn diagnostics(diagnostics: &[Diagnostic]) -> String {
     let entries: Vec<DiagnosticWire> = diagnostics.iter().map(DiagnosticWire::from).collect();
     serialize_envelope(&entries)
 }
 
-/// Project an [`AozoraTree`]'s source-keyed node side-table into a
+/// Project an [`Tree`]'s source-keyed node side-table into a
 /// `{ schema_version, data }` JSON envelope.
 ///
 /// Every entry has the shape `{ kind, span: { start, end } }`,
 /// source-coordinate, sorted by `span.start`. Empty parse →
-/// `{"schema_version":1,"data":[]}`.
+/// `{"schemaVersion":1,"data":[]}`.
 #[must_use]
-pub fn serialize_nodes(tree: &AozoraTree<'_>) -> String {
+pub fn nodes(tree: &Tree<'_>) -> String {
     let entries: Vec<NodeWire> = tree
         .source_nodes()
         .iter()
         .map(|sn| NodeWire {
-            kind: sn.node.kind().as_camel_case(),
+            kind: sn.node.kind().as_wire_tag(),
             span: sn.source_span.into(),
         })
         .collect();
     serialize_envelope(&entries)
 }
 
-/// Project an [`AozoraTree`]'s pair table into a
+/// Project an [`Tree`]'s pair table into a
 /// `{ schema_version, data }` JSON envelope. Every entry has the shape
 /// `{ kind, open: { start, end }, close: { start, end } }`.
 ///
@@ -81,14 +81,14 @@ pub fn serialize_nodes(tree: &AozoraTree<'_>) -> String {
 /// `textDocument/linkedEditingRange` and
 /// `textDocument/documentHighlight`.
 ///
-/// Empty parse → `{"schema_version":1,"data":[]}`.
+/// Empty parse → `{"schemaVersion":1,"data":[]}`.
 #[must_use]
-pub fn serialize_pairs(tree: &AozoraTree<'_>) -> String {
+pub fn pairs(tree: &Tree<'_>) -> String {
     let entries: Vec<PairWire> = tree
         .pairs()
         .iter()
         .map(|link| PairWire {
-            kind: link.kind.as_camel_case(),
+            kind: link.kind.as_wire_tag(),
             open: link.open.into(),
             close: link.close.into(),
         })
@@ -96,23 +96,23 @@ pub fn serialize_pairs(tree: &AozoraTree<'_>) -> String {
     serialize_envelope(&entries)
 }
 
-/// Project an [`AozoraTree`]'s container open/close pair table into a
+/// Project an [`Tree`]'s container open/close pair table into a
 /// `{ schema_version, data }` JSON envelope.
 ///
 /// Each entry has the shape
 /// `{ kind, open: { offset }, close: { offset } }` where `kind` is
 /// the [`crate::ContainerKind`] discriminant (one of `"indent"` /
-/// `"warichu"` / `"keigakomi"` / `"alignEnd"`) and the offsets are
+/// `"warichu"` / `"framed"` / `"alignEnd"`) and the offsets are
 /// **normalized-coordinate** byte positions that index the PUA
 /// sentinel positions — not the source span the user wrote.
 ///
 /// Coordinate-system distinction matters: editor surfaces that want
 /// source-coordinate container pairs must translate through
-/// [`AozoraTree::source_nodes`].
+/// [`Tree::source_nodes`].
 ///
-/// Empty parse → `{"schema_version":1,"data":[]}`.
+/// Empty parse → `{"schemaVersion":1,"data":[]}`.
 #[must_use]
-pub fn serialize_container_pairs(tree: &AozoraTree<'_>) -> String {
+pub fn container_pairs(tree: &Tree<'_>) -> String {
     let entries: Vec<ContainerPairWire> = tree
         .container_pairs()
         .iter()
@@ -140,7 +140,7 @@ pub fn serialize_container_pairs(tree: &AozoraTree<'_>) -> String {
 /// re-implementing the table per driver (`aozora-wasm` / `aozora-py`
 /// both call this).
 #[must_use]
-pub fn serialize_slugs() -> String {
+pub fn slugs() -> String {
     let entries: Vec<SlugWire> = crate::SLUGS
         .iter()
         .map(|s| SlugWire {
@@ -166,9 +166,9 @@ pub fn serialize_slugs() -> String {
 /// audits. The scan + resolution are the single authority in
 /// [`crate::encoding::gaiji`]; this is only their wire projection.
 ///
-/// Empty / gaiji-free source → `{"schema_version":1,"data":[]}`.
+/// Empty / gaiji-free source → `{"schemaVersion":1,"data":[]}`.
 #[must_use]
-pub fn serialize_gaiji_resolutions(source: &str) -> String {
+pub fn gaiji(source: &str) -> String {
     let entries: Vec<GaijiResolutionWire> = gaiji_resolutions(source)
         .into_iter()
         .map(Into::into)
@@ -184,9 +184,9 @@ pub fn serialize_gaiji_resolutions(source: &str) -> String {
 ///
 /// For editor cursor-hover: the scan is bounded to a window around the
 /// cursor, so cost is independent of document size (unlike
-/// [`serialize_gaiji_resolutions`], which walks the whole source).
+/// [`gaiji`], which walks the whole source).
 #[must_use]
-pub fn serialize_gaiji_resolution_at(source: &str, byte_offset: usize) -> String {
+pub fn gaiji_at(source: &str, byte_offset: usize) -> String {
     find_span(source, byte_offset)
         .and_then(|(start, end)| resolve_at(source, start, end))
         .map_or_else(
@@ -206,7 +206,7 @@ const fn container_kind_str(kind: aozora_syntax::ContainerKind) -> &'static str 
     match kind {
         ContainerKind::Indent { .. } => "indent",
         ContainerKind::Warichu => "warichu",
-        ContainerKind::Keigakomi => "keigakomi",
+        ContainerKind::Framed => "framed",
         ContainerKind::AlignEnd { .. } => "alignEnd",
         ContainerKind::LineWidth { .. } => "lineWidth",
         ContainerKind::BoutenRange { .. } => "boutenRange",
@@ -235,10 +235,10 @@ const fn slug_family_str(family: crate::SlugFamily) -> &'static str {
         SlugFamily::BlockContainerClose => "blockContainerClose",
         SlugFamily::LeafAlign => "leafAlign",
         SlugFamily::Bouten => "bouten",
-        SlugFamily::Sashie => "sashie",
-        SlugFamily::Keigakomi => "keigakomi",
+        SlugFamily::Illustration => "illustration",
+        SlugFamily::Framed => "framed",
         SlugFamily::Warichu => "warichu",
-        SlugFamily::TateChuYoko => "tateChuYoko",
+        SlugFamily::CombineUpright => "combineUpright",
         SlugFamily::KaeritenSingle => "kaeritenSingle",
         SlugFamily::KaeritenCompound => "kaeritenCompound",
         _ => "unknown",
@@ -250,6 +250,7 @@ const fn slug_family_str(family: crate::SlugFamily) -> &'static str {
 // ────────────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Envelope<'a, T> {
     schema_version: u32,
     data: &'a [T],
@@ -260,7 +261,7 @@ struct Envelope<'a, T> {
 // ────────────────────────────────────────────────────────────────────
 
 /// JSON Schema (draft 2020-12) describing the
-/// [`serialize_diagnostics`] envelope output.
+/// [`diagnostics`] envelope output.
 ///
 /// Schema-feature only. Used by `xtask schema dump` to commit the
 /// schema artefact under `crates/aozora-book/src/wire/`, and by the
@@ -270,40 +271,40 @@ struct Envelope<'a, T> {
 pub fn schema_diagnostics() -> serde_json::Value {
     envelope_schema(
         "AozoraDiagnosticsEnvelope",
-        "Envelope returned by aozora::wire::serialize_diagnostics.",
+        "Envelope returned by aozora::json::diagnostics.",
         schemars::schema_for!(DiagnosticWire),
     )
 }
 
-/// JSON Schema for the [`serialize_nodes`] envelope output.
+/// JSON Schema for the [`nodes`] envelope output.
 #[cfg(feature = "schema")]
 #[must_use]
 pub fn schema_nodes() -> serde_json::Value {
     envelope_schema(
         "AozoraNodesEnvelope",
-        "Envelope returned by aozora::wire::serialize_nodes.",
+        "Envelope returned by aozora::json::nodes.",
         schemars::schema_for!(NodeWire),
     )
 }
 
-/// JSON Schema for the [`serialize_pairs`] envelope output.
+/// JSON Schema for the [`pairs`] envelope output.
 #[cfg(feature = "schema")]
 #[must_use]
 pub fn schema_pairs() -> serde_json::Value {
     envelope_schema(
         "AozoraPairsEnvelope",
-        "Envelope returned by aozora::wire::serialize_pairs.",
+        "Envelope returned by aozora::json::pairs.",
         schemars::schema_for!(PairWire),
     )
 }
 
-/// JSON Schema for the [`serialize_container_pairs`] envelope output.
+/// JSON Schema for the [`container_pairs`] envelope output.
 #[cfg(feature = "schema")]
 #[must_use]
 pub fn schema_container_pairs() -> serde_json::Value {
     envelope_schema(
         "AozoraContainerPairsEnvelope",
-        "Envelope returned by aozora::wire::serialize_container_pairs.",
+        "Envelope returned by aozora::json::container_pairs.",
         schemars::schema_for!(ContainerPairWire),
     )
 }
@@ -338,10 +339,10 @@ fn envelope_schema(
         "description": description,
         "type": "object",
         "additionalProperties": false,
-        "required": ["schema_version", "data"],
+        "required": ["schemaVersion", "data"],
         "properties": {
-            "schema_version": {
-                "description": "Wire schema version. See aozora::wire::SCHEMA_VERSION.",
+            "schemaVersion": {
+                "description": "Wire schema version. See aozora::json::SCHEMA_VERSION.",
                 "type": "integer",
                 "const": SCHEMA_VERSION,
             },
@@ -366,7 +367,7 @@ fn serialize_envelope<T: Serialize>(data: &[T]) -> String {
         data,
     };
     serde_json::to_string(&env)
-        .unwrap_or_else(|_| format!(r#"{{"schema_version":{SCHEMA_VERSION},"data":[]}}"#))
+        .unwrap_or_else(|_| format!(r#"{{"schemaVersion":{SCHEMA_VERSION},"data":[]}}"#))
 }
 
 #[derive(Serialize)]
@@ -531,8 +532,8 @@ mod tests {
 
     #[test]
     fn slugs_envelope_lists_catalogue_with_known_families() {
-        let json = serialize_slugs();
-        assert!(json.contains(r#""schema_version":1"#));
+        let json = slugs();
+        assert!(json.contains(r#""schemaVersion":1"#));
         assert!(json.contains(r#""canonical":"#));
         assert!(json.contains(r#""family":"#));
         // Guard against the silent `_ => "unknown"` degrade: every
@@ -545,16 +546,13 @@ mod tests {
 
     #[test]
     fn gaiji_resolutions_empty_envelope_for_plain_text() {
-        assert_eq!(
-            serialize_gaiji_resolutions("no gaiji here"),
-            r#"{"schema_version":1,"data":[]}"#
-        );
+        assert_eq!(gaiji("no gaiji here"), r#"{"schemaVersion":1,"data":[]}"#);
     }
 
     #[test]
     fn gaiji_resolutions_emits_resolved_entry_in_source_coords() {
-        let json = serialize_gaiji_resolutions("※［＃「々」］");
-        assert!(json.contains(r#""schema_version":1"#));
+        let json = gaiji("※［＃「々」］");
+        assert!(json.contains(r#""schemaVersion":1"#));
         assert!(
             json.contains(r#""span":{"start":0,"end":21}"#),
             "json: {json}"
@@ -569,11 +567,11 @@ mod tests {
     fn gaiji_resolution_at_returns_object_inside_span_else_null() {
         let src = "あ※［＃「々」］い";
         let inside = src.find('※').unwrap() + "※".len();
-        let at = serialize_gaiji_resolution_at(src, inside);
+        let at = gaiji_at(src, inside);
         assert!(at.contains(r#""description":"々""#), "{at}");
         assert!(at.contains(r#""resolved":"々""#), "{at}");
         // A cursor outside any reference resolves to the literal "null".
-        assert_eq!(serialize_gaiji_resolution_at(src, 0), "null");
+        assert_eq!(gaiji_at(src, 0), "null");
     }
 
     #[test]
@@ -583,32 +581,32 @@ mod tests {
 
     #[test]
     fn empty_diagnostics_round_trip_envelope() {
-        let json = serialize_diagnostics(&[]);
-        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
+        let json = diagnostics(&[]);
+        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
     }
 
     #[test]
     fn empty_nodes_round_trip_envelope() {
         let doc = Document::new("plain");
         let tree = doc.parse();
-        let json = serialize_nodes(&tree);
-        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
+        let json = nodes(&tree);
+        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
     }
 
     #[test]
     fn empty_pairs_round_trip_envelope() {
         let doc = Document::new("plain");
         let tree = doc.parse();
-        let json = serialize_pairs(&tree);
-        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
+        let json = pairs(&tree);
+        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
     }
 
     #[test]
     fn pua_collision_serialises_as_warning_kind() {
         let doc = Document::new("abc\u{E001}def");
         let tree = doc.parse();
-        let json = serialize_diagnostics(tree.diagnostics());
-        assert!(json.contains(r#""schema_version":1"#));
+        let json = diagnostics(tree.diagnostics());
+        assert!(json.contains(r#""schemaVersion":1"#));
         assert!(json.contains(r#""kind":"source_contains_pua""#));
         assert!(json.contains(r#""codepoint":"""#) || json.contains(r#""codepoint":""#));
     }
@@ -617,16 +615,16 @@ mod tests {
     fn ruby_serialises_with_kind_ruby_in_nodes() {
         let doc = Document::new("｜青梅《おうめ》");
         let tree = doc.parse();
-        let json = serialize_nodes(&tree);
+        let json = nodes(&tree);
         assert!(json.contains(r#""kind":"ruby""#));
-        assert!(json.contains(r#""schema_version":1"#));
+        assert!(json.contains(r#""schemaVersion":1"#));
     }
 
     #[test]
     fn ruby_serialises_in_pairs() {
         let doc = Document::new("｜青梅《おうめ》");
         let tree = doc.parse();
-        let json = serialize_pairs(&tree);
+        let json = pairs(&tree);
         assert!(json.contains(r#""kind":"ruby""#));
         assert!(json.contains(r#""open":"#));
         assert!(json.contains(r#""close":"#));
@@ -635,11 +633,11 @@ mod tests {
     #[test]
     fn pair_kind_camel_case_covers_all_known_kinds() {
         use crate::PairKind;
-        assert_eq!(PairKind::Bracket.as_camel_case(), "bracket");
-        assert_eq!(PairKind::Ruby.as_camel_case(), "ruby");
-        assert_eq!(PairKind::AngleQuote.as_camel_case(), "angleQuote");
-        assert_eq!(PairKind::Tortoise.as_camel_case(), "tortoise");
-        assert_eq!(PairKind::Quote.as_camel_case(), "quote");
+        assert_eq!(PairKind::Bracket.as_wire_tag(), "bracket");
+        assert_eq!(PairKind::Ruby.as_wire_tag(), "ruby");
+        assert_eq!(PairKind::AngleQuote.as_wire_tag(), "angleQuote");
+        assert_eq!(PairKind::Tortoise.as_wire_tag(), "tortoise");
+        assert_eq!(PairKind::Quote.as_wire_tag(), "quote");
     }
 
     #[test]
