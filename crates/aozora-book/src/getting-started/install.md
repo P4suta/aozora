@@ -24,7 +24,7 @@ aozora --version
 ```
 
 Each archive also bundles shell completion scripts under `completions/`
-(bash / zsh / fish / powershell / elvish) and man pages under
+(bash / zsh / fish / powershell / elvish / nushell) and man pages under
 `man/man1/`; see
 [CLI reference → completions](../ref/cli.md#aozora-completions) for where
 to install the completions. Regenerate either at any time with

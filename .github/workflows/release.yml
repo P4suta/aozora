@@ -111,6 +111,7 @@ jobs:
           "${bin}" completions fish       > "${staging}/completions/aozora.fish"
           "${bin}" completions powershell > "${staging}/completions/_aozora.ps1"
           "${bin}" completions elvish     > "${staging}/completions/aozora.elv"
+          "${bin}" completions nushell    > "${staging}/completions/aozora.nu"
 
           # Man pages (clap_mangen) — same release-time, never-committed
           # policy as completions (ADR-0012): the top-level page plus one

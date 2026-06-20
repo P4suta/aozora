@@ -31,8 +31,8 @@
 //!
 //! Tooling:
 //! - `aozora completions <shell>` — print a shell completion script
-//!   (bash / zsh / fish / powershell / elvish), generated from the
-//!   live command tree.
+//!   (bash / zsh / fish / powershell / elvish / nushell), generated
+//!   from the live command tree.
 //!
 //! All document-level subcommands accept `-` (or no path argument)
 //! to read from stdin. Encoding is auto-detected by default (UTF-8 if
@@ -115,9 +115,9 @@ enum Command {
     /// pandoc and pipes the JSON through it.
     Pandoc(PandocArgs),
     /// Print a shell completion script (`bash` / `zsh` / `fish` /
-    /// `powershell` / `elvish`) on stdout. Generated from the live
-    /// command tree, so it always matches the installed binary;
-    /// release tarballs also ship these under `completions/`.
+    /// `powershell` / `elvish` / `nushell`) on stdout. Generated from
+    /// the live command tree, so it always matches the installed
+    /// binary; release tarballs also ship these under `completions/`.
     Completions(CompletionsArgs),
     /// Render a roff man page (the top-level page, or a named
     /// subcommand's). Hidden: man pages ship in the release tarball

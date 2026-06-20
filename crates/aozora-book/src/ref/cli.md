@@ -19,7 +19,7 @@ aozora <SUBCOMMAND> [OPTIONS] [ARGS]
 | `kinds` | Tabulate every `NodeKind` / `PairKind` / `Severity` / … wire tag. |
 | `schema` | Print the JSON Schema for a wire envelope. |
 | `explain` | Print prose for a `NodeKind` tag, or help / severity / URL for a diagnostic code. |
-| `completions` | Print a shell completion script (bash / zsh / fish / powershell / elvish). |
+| `completions` | Print a shell completion script (bash / zsh / fish / powershell / elvish / nushell). |
 
 There are **no global options** beyond clap's `-h`/`--help` and
 `-V`/`--version`; the input-shaping flags below are per-subcommand. All
@@ -173,10 +173,10 @@ aozora completions <SHELL>
 ```
 
 Print a shell completion script for `<SHELL>` (`bash` / `zsh` / `fish` /
-`powershell` / `elvish`) on stdout. The script is generated from the live
-command tree, so it always matches the installed binary — there is no
-committed copy to drift (ADR-0012). Release tarballs also bundle these
-under `completions/`.
+`powershell` / `elvish` / `nushell`) on stdout. The script is generated
+from the live command tree, so it always matches the installed binary —
+there is no committed copy to drift (ADR-0012). Release tarballs also
+bundle these under `completions/`.
 
 ```sh
 # bash — system-wide (or source the file from ~/.bashrc)
@@ -187,6 +187,9 @@ aozora completions zsh > ~/.zfunc/_aozora
 
 # fish
 aozora completions fish > ~/.config/fish/completions/aozora.fish
+
+# nushell — save the module, then `use` it from your config
+aozora completions nushell | save -f ($nu.default-config-dir | path join aozora.nu)
 ```
 
 The release archive likewise ships man pages under `man/man1/`

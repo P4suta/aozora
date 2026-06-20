@@ -24,7 +24,7 @@ fn run(args: &[&str]) -> (bool, String) {
 
 #[test]
 fn every_supported_shell_emits_a_script() {
-    for shell in ["bash", "zsh", "fish", "powershell", "elvish"] {
+    for shell in ["bash", "zsh", "fish", "powershell", "elvish", "nushell"] {
         let (ok, stdout) = run(&["completions", shell]);
         assert!(ok, "completions {shell} exited non-zero");
         assert!(
