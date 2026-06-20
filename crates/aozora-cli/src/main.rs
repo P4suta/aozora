@@ -44,6 +44,7 @@
 mod completions;
 mod diagnostics_render;
 mod introspect;
+mod manpage;
 
 use std::borrow::Cow;
 use std::env;
@@ -61,6 +62,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use crate::completions::CompletionsArgs;
 use crate::diagnostics_render::DiagFormat;
 use crate::introspect::{ExplainArgs, KindsArgs, SchemaArgs};
+use crate::manpage::ManArgs;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -108,6 +110,11 @@ enum Command {
     /// command tree, so it always matches the installed binary;
     /// release tarballs also ship these under `completions/`.
     Completions(CompletionsArgs),
+    /// Render a roff man page (the top-level page, or a named
+    /// subcommand's). Hidden: man pages ship in the release tarball
+    /// under `man/man1/` rather than being invoked by hand.
+    #[command(hide = true)]
+    Man(ManArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -247,6 +254,7 @@ fn main() -> ExitCode {
         Command::Explain(opts) => introspect::run_explain(&opts),
         Command::Pandoc(opts) => run_pandoc(&opts),
         Command::Completions(opts) => Ok(completions::run_completions(&opts)),
+        Command::Man(opts) => manpage::run_man(&opts),
     };
 
     match result {

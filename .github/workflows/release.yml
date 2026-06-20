@@ -112,6 +112,15 @@ jobs:
           "${bin}" completions powershell > "${staging}/completions/_aozora.ps1"
           "${bin}" completions elvish     > "${staging}/completions/aozora.elv"
 
+          # Man pages (clap_mangen) — same release-time, never-committed
+          # policy as completions (ADR-0012): the top-level page plus one
+          # per subcommand.
+          mkdir -p "${staging}/man/man1"
+          "${bin}" man > "${staging}/man/man1/aozora.1"
+          for sub in check fmt render wire schema explain kinds pandoc completions; do
+              "${bin}" man "${sub}" > "${staging}/man/man1/aozora-${sub}.1"
+          done
+
           # C ABI shared library + header. The library file extension
           # varies per platform; collect all candidate names and copy
           # whatever cargo produced.

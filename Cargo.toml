@@ -304,6 +304,9 @@ clap = { version = "4.6.1", features = ["derive", "wrap_help", "env", "color", "
 # Tracks clap's 4.x line; scripts are generated at release time, never
 # committed (ADR-0012), so this is a CLI-only dependency.
 clap_complete = "4.5"
+# Man-page (roff) generation for the hidden `aozora man` subcommand.
+# Same release-time, never-committed policy as clap_complete (ADR-0012).
+clap_mangen = "0.2"
 
 # Testing
 insta             = { version = "1.47", features = ["yaml", "json", "filters"] }

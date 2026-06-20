@@ -189,6 +189,11 @@ aozora completions zsh > ~/.zfunc/_aozora
 aozora completions fish > ~/.config/fish/completions/aozora.fish
 ```
 
+The release archive likewise ships man pages under `man/man1/`
+(`aozora.1` plus one page per subcommand), generated the same way. The
+hidden `aozora man [SUBCOMMAND]` subcommand renders a page to stdout if
+you want to install one locally.
+
 ## Introspection subcommands
 
 `kinds`, `schema {diagnostics|nodes|pairs|container-pairs}`, and
