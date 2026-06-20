@@ -300,6 +300,10 @@ rayon              = "1.12"
 
 # CLI
 clap = { version = "4.6.1", features = ["derive", "wrap_help", "env", "color", "cargo"] }
+# Shell-completion script generation for `aozora completions <shell>`.
+# Tracks clap's 4.x line; scripts are generated at release time, never
+# committed (ADR-0012), so this is a CLI-only dependency.
+clap_complete = "4.5"
 
 # Testing
 insta             = { version = "1.47", features = ["yaml", "json", "filters"] }

@@ -19,6 +19,7 @@ aozora <SUBCOMMAND> [OPTIONS] [ARGS]
 | `kinds` | Tabulate every `NodeKind` / `PairKind` / `Severity` / … wire tag. |
 | `schema` | Print the JSON Schema for a wire envelope. |
 | `explain` | Print prose for a `NodeKind` tag, or help / severity / URL for a diagnostic code. |
+| `completions` | Print a shell completion script (bash / zsh / fish / powershell / elvish). |
 
 There are **no global options** beyond clap's `-h`/`--help` and
 `-V`/`--version`; the input-shaping flags below are per-subcommand. All
@@ -164,6 +165,29 @@ aozora pandoc src.txt -t latex > src.tex          # spawns pandoc directly
 ```
 
 See [Bindings → Pandoc](../bindings/pandoc.md).
+
+## `aozora completions`
+
+```text
+aozora completions <SHELL>
+```
+
+Print a shell completion script for `<SHELL>` (`bash` / `zsh` / `fish` /
+`powershell` / `elvish`) on stdout. The script is generated from the live
+command tree, so it always matches the installed binary — there is no
+committed copy to drift (ADR-0012). Release tarballs also bundle these
+under `completions/`.
+
+```sh
+# bash — system-wide (or source the file from ~/.bashrc)
+aozora completions bash | sudo tee /etc/bash_completion.d/aozora >/dev/null
+
+# zsh — drop into a directory on your $fpath, then restart the shell
+aozora completions zsh > ~/.zfunc/_aozora
+
+# fish
+aozora completions fish > ~/.config/fish/completions/aozora.fish
+```
 
 ## Introspection subcommands
 

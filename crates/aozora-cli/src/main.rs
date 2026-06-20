@@ -29,6 +29,11 @@
 //! - `aozora explain <kind>` — embedded handbook chapter for the
 //!   given `NodeKind`, surfaced via `include_str!`.
 //!
+//! Tooling:
+//! - `aozora completions <shell>` — print a shell completion script
+//!   (bash / zsh / fish / powershell / elvish), generated from the
+//!   live command tree.
+//!
 //! All document-level subcommands accept `-` (or no path argument)
 //! to read from stdin. Encoding is auto-detected by default (UTF-8 if
 //! the bytes are valid UTF-8, otherwise Shift_JIS); pass
@@ -36,6 +41,7 @@
 
 #![forbid(unsafe_code)]
 
+mod completions;
 mod diagnostics_render;
 mod introspect;
 
@@ -52,6 +58,7 @@ use aozora::{DiagnosticSource, Document, wire};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::completions::CompletionsArgs;
 use crate::diagnostics_render::DiagFormat;
 use crate::introspect::{ExplainArgs, KindsArgs, SchemaArgs};
 
@@ -88,13 +95,19 @@ enum Command {
     Kinds(KindsArgs),
     /// Pretty-print the JSON Schema for one of the four wire envelopes.
     Schema(SchemaArgs),
-    /// Print short prose for a `NodeKind` camelCase tag.
+    /// Print prose for a `NodeKind` tag, or help / severity / URL for a
+    /// diagnostic code.
     Explain(ExplainArgs),
     /// Project the parsed document to a Pandoc AST.
     /// Without `--format`, prints Pandoc JSON to stdout (consumable
     /// by `pandoc -f json -t <FORMAT>`); with `--format`, spawns
     /// pandoc and pipes the JSON through it.
     Pandoc(PandocArgs),
+    /// Print a shell completion script (`bash` / `zsh` / `fish` /
+    /// `powershell` / `elvish`) on stdout. Generated from the live
+    /// command tree, so it always matches the installed binary;
+    /// release tarballs also ship these under `completions/`.
+    Completions(CompletionsArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -233,6 +246,7 @@ fn main() -> ExitCode {
         Command::Schema(opts) => introspect::run_schema(&opts),
         Command::Explain(opts) => introspect::run_explain(&opts),
         Command::Pandoc(opts) => run_pandoc(&opts),
+        Command::Completions(opts) => Ok(completions::run_completions(&opts)),
     };
 
     match result {

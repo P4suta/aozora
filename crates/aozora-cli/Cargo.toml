@@ -27,6 +27,7 @@ aozora          = { workspace = true, features = ["schema"] }
 aozora-encoding = { workspace = true }
 aozora-pandoc   = { workspace = true }
 clap            = { workspace = true }
+clap_complete   = { workspace = true }
 comfy-table     = { workspace = true }
 miette          = { workspace = true, features = ["fancy"] }
 anyhow          = { workspace = true }

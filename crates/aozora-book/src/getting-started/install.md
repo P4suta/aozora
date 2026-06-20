@@ -23,6 +23,12 @@ sudo install -m 0755 aozora /usr/local/bin/
 aozora --version
 ```
 
+Each archive also bundles shell completion scripts under `completions/`
+(bash / zsh / fish / powershell / elvish); see
+[CLI reference → completions](../ref/cli.md#aozora-completions) for where
+to install them. You can also regenerate one at any time with
+`aozora completions <shell>`.
+
 ## CLI binary (build from source)
 
 The released CLI is on crates.io — `cargo install` compiles it from the

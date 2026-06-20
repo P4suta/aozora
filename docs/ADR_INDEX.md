@@ -18,6 +18,7 @@ back.
 | [0009](./adr/0009-version-single-source-of-truth.md)                                 | Single source of truth for version pins                               | accepted |
 | [0010](./adr/0010-bouten-and-bousen-range-containers-as-a-first-class-notation-feature.md) | Bouten / bousen range containers as a first-class notation feature | accepted |
 | [0011](./adr/0011-double-angle-quotation-input-encoding.md)                          | Double-angle quotation: `≪≫` input encoding, `《》` display            | accepted |
+| [0012](./adr/0012-release-time-generated-cli-artefacts.md)                           | Release-time generated CLI artefacts (completions, man pages)         | accepted |
 
 ## Authoring a new ADR
 
