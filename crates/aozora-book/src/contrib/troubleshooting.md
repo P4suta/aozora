@@ -94,6 +94,7 @@ to its recovery recipe:
 | drift-gate (types) | TypeScript `.d.ts` drift | `just types` to regenerate, then commit the diff |
 | drift-gate (langs) | Generated host-SDK wire types are stale | `just types-langs` to regenerate, then commit the diff |
 | typos | Spelling hit | `just typos` to see every hit; fix, or add a genuine term to `typos.toml` |
+| strict-code | A forbidden source pattern (see below) | `just strict-code` prints each hit as `==> forbidden: <label>` with its `file:line`; fix per the list below |
 | deny / audit | License / advisory failure | Read the captured log under `/tmp` (the recipe writes the full `cargo deny` / `cargo audit` output there), then update the dependency or the `deny.toml` exception |
 
 For the schema / types gates, the regenerate-then-commit step is the
@@ -101,6 +102,40 @@ fix — the gate only checks that the committed artefact matches what the
 generator would emit, so a stale checkout fails until you regenerate
 and stage it. See [Wire format](../wire/overview.md) for what `wire` /
 `.d.ts` / langs each cover.
+
+### strict-code violations
+
+`just strict-code` (part of `just lint`) greps the tree for patterns the
+workspace forbids, printing each as `==> forbidden: <label>` with the
+offending `file:line`. The common ones and their fixes:
+
+| Forbidden | Fix |
+|---|---|
+| `#[allow(...)]` without `reason = "..."` | Add a `reason`, or drop the allow and fix the lint. |
+| `unsafe` outside the exempt crates (`aozora-ffi` / `-scan` / `-xtask` / fuzz) | Refactor to safe code; the exempt crates carry a crate-level `#![allow(unsafe_code, reason = …)]`. |
+| A crate root missing `#![forbid(unsafe_code)]` | Add it to that crate's `lib.rs` / `main.rs`. |
+| Bare `TODO` / `FIXME` / `XXX` without an issue reference | Append `#123` (or an `M<n>` milestone). |
+| `println!` / `eprintln!` in a library crate | Use `tracing`; stdout/stderr printing belongs to the CLI. |
+| A `comrak` import or path | Remove it — aozora is the pure-notation layer, with no markdown dependency. |
+| Stale slug `koshogaki` (小書き = こがき) | Use `kogaki`. |
+| Stale section-break slugs `choho` / `dan` / `spread` | Use `kaicho` / `kaidan` / `kaimihiraki`. |
+
+The grep is the cheap last line of defence behind the type system; when
+it fires, the fix is in the named file, not in the recipe.
+
+### samply: `perf_event_open` permission denied
+
+Host-side profiling (`just samply-*`, `just trace-*`) reads kernel
+performance counters, which need `perf_event_paranoid` at `1` or lower:
+
+```sh
+cat /proc/sys/kernel/perf_event_paranoid          # want <= 1
+echo 1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+```
+
+`just doctor` reports this — along with Docker, the dev image, host
+tools, hooks, and signing — in one read-only pass. Run it first when a
+fresh environment misbehaves; it never mutates anything.
 
 ## Escape hatches
 

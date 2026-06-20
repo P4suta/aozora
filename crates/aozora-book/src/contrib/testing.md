@@ -190,6 +190,25 @@ on the hot path).
 - Doc tests inside ` ```rust ` blocks in rustdoc comments. CI runs
   `just test-doc` separately because nextest skips them.
 
+## Running a single test
+
+`just t <FILTER>` runs only the matching tests instead of the whole
+suite — the single-test inner loop, using nextest's
+[filterset DSL](https://nexte.st/docs/filtersets/). A bare string is a
+substring match; wrap it in slashes for a regex. Extra nextest flags
+pass through after the filter:
+
+```sh
+just t ruby                     # every test whose name contains "ruby"
+just t '/ruby|bouten/'          # regex over test names
+just t ruby --no-capture        # forward flags to cargo nextest
+```
+
+`just test` runs the full suite. The corpus sweep (Layer 3) is
+env-gated: with `AOZORA_CORPUS_ROOT` unset, `just corpus-sweep` skips
+rather than fails, so a fresh clone stays green before you fetch a
+corpus.
+
 ## Snapshot testing
 
 Where the output is a multi-line string that's tedious to inline
