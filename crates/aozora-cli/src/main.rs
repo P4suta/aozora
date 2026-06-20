@@ -47,6 +47,7 @@ mod diagnostics_render;
 mod introspect;
 mod manpage;
 mod timing;
+mod watch;
 
 use std::borrow::Cow;
 use std::env;
@@ -160,6 +161,11 @@ struct CommonArgs {
     /// envelope for scripts and agents). Ignored without `--timing`.
     #[arg(long, value_enum, default_value_t = TimingFormat::Human)]
     timing_format: TimingFormat,
+
+    /// Re-run on every change to the input file (foreground; Ctrl-C to
+    /// stop). Requires a file path — not available on stdin.
+    #[arg(long)]
+    watch: bool,
 }
 
 impl CommonArgs {
@@ -316,7 +322,27 @@ fn main() -> ExitCode {
     }
 }
 
+/// Run `once`, or — with `--watch` — run it now and re-run on every
+/// change to the input file. `--watch` on stdin is a usage error (2).
+fn run_watched(common: &CommonArgs, once: impl Fn() -> Result<ExitCode>) -> Result<ExitCode> {
+    if !common.watch {
+        return once();
+    }
+    if common.file.as_os_str() == "-" {
+        let _drop = writeln!(
+            io::stderr(),
+            "aozora: --watch needs a file path; it cannot watch stdin"
+        );
+        return Ok(ExitCode::from(2));
+    }
+    watch::watch(&common.file, once)
+}
+
 fn run_check(args: &CheckArgs) -> Result<ExitCode> {
+    run_watched(&args.common, || run_check_once(args))
+}
+
+fn run_check_once(args: &CheckArgs) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
     let diagnostic_format = args
@@ -366,6 +392,10 @@ fn run_check(args: &CheckArgs) -> Result<ExitCode> {
 }
 
 fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
+    run_watched(&args.common, || run_fmt_once(args))
+}
+
+fn run_fmt_once(args: &FmtArgs) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);
@@ -412,6 +442,10 @@ fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
 }
 
 fn run_render(args: &RenderArgs) -> Result<ExitCode> {
+    run_watched(&args.common, || run_render_once(args))
+}
+
+fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);
@@ -428,6 +462,10 @@ fn run_render(args: &RenderArgs) -> Result<ExitCode> {
 }
 
 fn run_wire(args: &WireArgs) -> Result<ExitCode> {
+    run_watched(&args.common, || run_wire_once(args))
+}
+
+fn run_wire_once(args: &WireArgs) -> Result<ExitCode> {
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);
     let json = wire_json(args, &mut timer)?;
     let mut stdout = io::stdout().lock();
@@ -465,6 +503,10 @@ fn wire_json(args: &WireArgs, timer: &mut Timer) -> Result<String> {
 }
 
 fn run_pandoc(args: &PandocArgs) -> Result<ExitCode> {
+    run_watched(&args.common, || run_pandoc_once(args))
+}
+
+fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);

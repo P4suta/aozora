@@ -46,6 +46,10 @@ Options:
           
           [default: human]
 
+      --watch
+          Re-run on every change to the input file (foreground; Ctrl-C to stop). Requires a file
+          path — not available on stdin
+
   -s, --strict
           Exit non-zero on any diagnostic. Also settable via `AOZORA_STRICT` or the `strict` key in
           `.aozora.toml`

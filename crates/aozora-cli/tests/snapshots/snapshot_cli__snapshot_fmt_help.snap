@@ -46,6 +46,10 @@ Options:
           
           [default: human]
 
+      --watch
+          Re-run on every change to the input file (foreground; Ctrl-C to stop). Requires a file
+          path — not available on stdin
+
       --check
           Exit non-zero if the formatted output differs from the input (after the lexer's sanitize
           phase: BOM strip, CRLF→LF). Mutually exclusive with `--write`

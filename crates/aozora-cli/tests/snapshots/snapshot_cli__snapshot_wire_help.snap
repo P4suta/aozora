@@ -60,6 +60,10 @@ Options:
           
           [default: human]
 
+      --watch
+          Re-run on every change to the input file (foreground; Ctrl-C to stop). Requires a file
+          path — not available on stdin
+
   -h, --help
           Print help (see a summary with '-h')
 

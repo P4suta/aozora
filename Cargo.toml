@@ -310,6 +310,10 @@ clap_complete_nushell = "4.5"
 # Man-page (roff) generation for the hidden `aozora man` subcommand.
 # Same release-time, never-committed policy as clap_complete (ADR-0012).
 clap_mangen = "0.2"
+# File-system watching for `aozora <cmd> --watch` — re-run on save.
+# notify is the de-facto cross-platform watcher (inotify / FSEvents /
+# ReadDirectoryChangesW); CLI-only, like the clap_* generators above.
+notify = "8.2"
 
 # Testing
 insta             = { version = "1.47", features = ["yaml", "json", "filters"] }
