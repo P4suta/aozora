@@ -1,0 +1,59 @@
+{
+  "name": "boki",
+  "meta": {
+    "feature": "kunten",
+    "level": "should",
+    "spec_section": "6.5",
+    "note": "[provenance:reference-impl-aligned §6.5 + AOZORA-ANNOTATION 2026-06-20] A corpus-attested tolerant extension: the censorship-marker form [#「X」に「Y」の傍記], where Y (典型的に ×) is written beside X in proletarian-literature redaction restoration (102 corpus occurrences, one shape). It shares the side-note node with the 注記 form but ends in の傍記 after a bare に connector (no の左に), so it round-trips to に…の傍記 rather than の左に…の注記. Reference rendering reuses the aozora-sidenote ruby box. Tagged should, not must: 注記 is the canonical side annotation; 傍記 is a tolerated corpus convention."
+  },
+  "source": "革命［＃「革命」に「×」の傍記］の時代。\n",
+  "expected": {
+    "html": "<p><ruby>革命<rp>(</rp><rt class=\"aozora-sidenote\">×</rt><rp>)</rp></ruby>の時代。</p>\n",
+    "serialize": "革命［＃「革命」に「×」の傍記］の時代。\n",
+    "nodes": [
+      {
+        "kind": "sideNote",
+        "span": {
+          "start": 0,
+          "end": 47
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 21,
+          "end": 24
+        }
+      },
+      {
+        "kind": "quote",
+        "open": {
+          "start": 27,
+          "end": 30
+        },
+        "close": {
+          "start": 32,
+          "end": 35
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 44,
+          "end": 47
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
