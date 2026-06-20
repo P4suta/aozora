@@ -18,7 +18,7 @@ artifact and mechanically generated types.
 The contract is the same "text in → bytes out" waist as the C ABI: each
 export takes the Aozora source as input bytes and returns either HTML, a
 round-tripped source string, or a versioned JSON envelope. Every JSON
-path delegates to [`aozora::wire`](../wire/overview.md) — the single
+path delegates to [`aozora::json`](../wire/overview.md) — the single
 cross-driver authority — so the output is byte-identical to the C ABI,
 the browser WASM, and the PyO3 drivers.
 
@@ -40,7 +40,7 @@ source text as input and returns a string:
 The four `*_json` exports each emit the standard wire envelope
 
 ```json
-{ "schema_version": 1, "data": [ /* … entries … */ ] }
+{ "schemaVersion": 1, "data": [ /* … entries … */ ] }
 ```
 
 The per-endpoint `data` entry shapes — and the committed JSON Schema for
@@ -56,8 +56,8 @@ the same guard the C ABI and browser WASM apply.
 ## The schema_version wire contract
 
 Every `*_json` export wraps its payload in
-`{ "schema_version": N, "data": [...] }`, where `N` is
-`aozora::wire::SCHEMA_VERSION` baked into the wasm at build time.
+`{ "schemaVersion": N, "data": [...] }`, where `N` is
+`aozora::json::SCHEMA_VERSION` baked into the wasm at build time.
 
 A host **MUST** call `schema_version` at load time and assert that the
 returned integer equals the version its types were generated for:
@@ -121,7 +121,7 @@ and type syntax change.
 ```text
 plugin  = ExtismPlugin(read("aozora.wasm"))      // step 2
 
-ver     = int(plugin.call("schema_version", ""))  // step 3
+ver     = int(plugin.call("schemaVersion", ""))  // step 3
 assert ver == EXPECTED_SCHEMA_VERSION
 
 html    = plugin.call("to_html", source)          // step 4

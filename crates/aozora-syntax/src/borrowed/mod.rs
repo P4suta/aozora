@@ -14,7 +14,7 @@
 //!
 //! All AST types are `Copy` because they only contain `Copy` data:
 //! `&'src` references, primitives, and `Copy` enums. This means a
-//! parsed [`AozoraNode`] can be passed by value without ceremony and
+//! parsed [`Node`] can be passed by value without ceremony and
 //! the visitor pattern in `aozora-render` does not need
 //! `&mut` self for traversal.
 //!
@@ -45,6 +45,6 @@ pub use intern::{InternStats, Interner};
 pub use non_empty::{NonEmpty, NonEmptyStr};
 pub use registry::{ContainerPair, NodeRef, Registry};
 pub use types::{
-    AngleQuote, Annotation, AozoraHeading, AozoraNode, Bouten, Content, Emphasis, Gaiji,
-    HeadingHint, Kaeriten, Ruby, Sashie, Segment, SideNote, TateChuYoko, Warichu,
+    AngleQuote, Bouten, CombineUpright, Content, Directive, Emphasis, Gaiji, Heading, HeadingHint,
+    Illustration, Kaeriten, MarginNote, Node, Ruby, Segment, Warichu,
 };

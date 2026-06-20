@@ -1,30 +1,29 @@
-//! Source-driven projection from an [`AozoraTree`] to a
+//! Source-driven projection from an [`Tree`] to a
 //! [`pandoc_ast::Pandoc`] document.
 //!
 //! Walks the source linearly, slicing it into spans by
-//! [`AozoraTree::source_nodes`]. Plain runs flow into Pandoc inlines
+//! [`Tree::source_nodes`]. Plain runs flow into Pandoc inlines
 //! verbatim (with `\n\n` paragraph splits and single `\n` →
 //! `SoftBreak`). Each classified node lifts to a Pandoc inline /
 //! block construct as documented in [`crate`].
 
 use aozora::{
-    AlignEnd, AngleQuote, Annotation, AnnotationKind, AozoraHeading, AozoraHeadingKind,
-    AozoraHeadingStyle, AozoraTree, Bouten, BoutenPosition, ContainerKind, Gaiji, HeadingHint,
-    Indent, Kaeriten, NodeRef, Ruby, Sashie, SectionKind, Segment, SideNote, SourceNode, Span,
-    TateChuYoko, Warichu,
+    AlignEnd, AngleQuote, Bouten, BoutenPosition, CombineUpright, ContainerKind, Directive,
+    DirectiveKind, Gaiji, Heading, HeadingHint, HeadingKind, HeadingStyle, Illustration, Indent,
+    Kaeriten, MarginNote, NodeRef, Ruby, SectionKind, Segment, SourceNode, Span, Tree, Warichu,
     pipeline::lexer::sanitize,
     roman_slug,
-    syntax::borrowed::{AozoraNode, Content},
+    syntax::borrowed::{Content, Node},
 };
 use pandoc_ast::{Attr, Block, Inline, Pandoc};
 
 use crate::AOZORA_CLASS_PREFIX;
 
-/// Lift a parsed [`AozoraTree`] to a [`pandoc_ast::Pandoc`] document.
+/// Lift a parsed [`Tree`] to a [`pandoc_ast::Pandoc`] document.
 ///
 /// See the crate-level docs for the projection rules.
 #[must_use]
-pub fn to_pandoc(tree: &AozoraTree<'_>) -> Pandoc {
+pub fn to_pandoc(tree: &Tree<'_>) -> Pandoc {
     // `source_nodes` indexes into Phase 0's sanitized buffer, not the
     // raw user-supplied source. For typical input the two are
     // byte-identical (no BOM, only LF, no `〔..〕` accent rewrites),
@@ -184,20 +183,20 @@ impl<'src> Converter<'src> {
         }
     }
 
-    fn dispatch_inline_node(&mut self, node: AozoraNode<'src>, _span: Span) {
-        use AozoraNode as N;
+    fn dispatch_inline_node(&mut self, node: Node<'src>, _span: Span) {
+        use Node as N;
         let inline = match node {
             N::Ruby(r) => ruby_inline(r),
-            N::SideNote(s) => side_note_inline(s),
+            N::MarginNote(s) => side_note_inline(s),
             N::Bouten(b) => bouten_inline(b),
-            N::TateChuYoko(t) => tate_chu_yoko_inline(t),
+            N::CombineUpright(t) => tate_chu_yoko_inline(t),
             N::Gaiji(g) => gaiji_inline(*g),
             N::Indent(i) => indent_inline(i),
             N::AlignEnd(a) => align_end_inline(a),
             N::Center(_) => center_inline(),
             N::Warichu(w) => warichu_inline(w),
-            N::Keigakomi(_) => keigakomi_inline(),
-            N::Annotation(a) => annotation_inline(*a),
+            N::Framed(_) => keigakomi_inline(),
+            N::Directive(a) => annotation_inline(*a),
             N::Kaeriten(k) => kaeriten_inline(*k),
             N::AngleQuote(d) => angle_quote_inline(*d),
             N::HeadingHint(h) => heading_hint_inline(*h),
@@ -208,16 +207,16 @@ impl<'src> Converter<'src> {
         self.current_frame_mut().paragraph().push(inline);
     }
 
-    fn dispatch_block_leaf(&mut self, node: AozoraNode<'src>, _span: Span) {
-        use AozoraNode as N;
+    fn dispatch_block_leaf(&mut self, node: Node<'src>, _span: Span) {
+        use Node as N;
         // Block-leaf nodes close any in-flight paragraph and emit a
         // standalone block.
         self.current_frame_mut().flush_paragraph();
         let block = match node {
             N::PageBreak => Block::HorizontalRule,
             N::SectionBreak(k) => section_break_block(k),
-            N::AozoraHeading(h) => aozora_heading_block(*h),
-            N::Sashie(s) => sashie_block(*s),
+            N::Heading(h) => aozora_heading_block(*h),
+            N::Illustration(s) => sashie_block(*s),
             // Inline-typed variants here would mean a pipeline
             // misclassification; emit them inside a singleton Para
             // so the document stays renderable.
@@ -301,7 +300,7 @@ fn push_content_inlines(content: Content<'_>, buf: &mut Vec<Inline>) {
         match seg {
             Segment::Text(s) => buf.push(Inline::Str(s.to_owned())),
             Segment::Gaiji(g) => buf.push(gaiji_inline(*g)),
-            Segment::Annotation(a) => buf.push(annotation_inline(*a)),
+            Segment::Directive(a) => buf.push(annotation_inline(*a)),
             // `Segment` is `#[non_exhaustive]`; future segment kinds
             // get a placeholder until projection logic is added.
             _ => buf.push(Inline::Str(String::new())),
@@ -332,7 +331,7 @@ fn ruby_inline(r: &Ruby<'_>) -> Inline {
     )
 }
 
-fn side_note_inline(s: &SideNote<'_>) -> Inline {
+fn side_note_inline(s: &MarginNote<'_>) -> Inline {
     let base_inlines = content_to_inlines(s.base.get());
     let note_inlines = content_to_inlines(s.note.get());
     let inner = vec![
@@ -367,7 +366,7 @@ fn bouten_position_slug(p: BoutenPosition) -> &'static str {
     }
 }
 
-fn tate_chu_yoko_inline(t: &TateChuYoko<'_>) -> Inline {
+fn tate_chu_yoko_inline(t: &CombineUpright<'_>) -> Inline {
     Inline::Span(
         class_attr("tate-chu-yoko"),
         content_to_inlines(t.text.get()),
@@ -417,7 +416,7 @@ fn keigakomi_inline() -> Inline {
     Inline::Span(class_attr("keigakomi"), Vec::new())
 }
 
-fn annotation_inline(a: Annotation<'_>) -> Inline {
+fn annotation_inline(a: Directive<'_>) -> Inline {
     Inline::Span(
         class_attr_kv(
             "annotation",
@@ -430,12 +429,12 @@ fn annotation_inline(a: Annotation<'_>) -> Inline {
     )
 }
 
-fn annotation_kind_slug(k: AnnotationKind) -> &'static str {
+fn annotation_kind_slug(k: DirectiveKind) -> &'static str {
     match k {
-        AnnotationKind::Unknown => "unknown",
-        AnnotationKind::AsIs => "as-is",
-        AnnotationKind::TextualNote => "textual-note",
-        AnnotationKind::InvalidRubySpan => "invalid-ruby-span",
+        DirectiveKind::Unknown => "unknown",
+        DirectiveKind::Sic => "sic",
+        DirectiveKind::BaseTextVariant => "base-text-variant",
+        DirectiveKind::InvalidRubySpan => "invalid-ruby-span",
         _ => "other",
     }
 }
@@ -485,11 +484,11 @@ fn section_break_block(k: SectionKind) -> Block {
     )
 }
 
-fn aozora_heading_block(h: AozoraHeading<'_>) -> Block {
+fn aozora_heading_block(h: Heading<'_>) -> Block {
     let level: i64 = match h.kind {
-        AozoraHeadingKind::Large => 1,
-        AozoraHeadingKind::Medium => 2,
-        AozoraHeadingKind::Small => 3,
+        HeadingKind::Large => 1,
+        HeadingKind::Medium => 2,
+        HeadingKind::Small => 3,
         _ => 4,
     };
     // `kind` (level) is always carried; `style` only for a non-standard
@@ -505,27 +504,27 @@ fn aozora_heading_block(h: AozoraHeading<'_>) -> Block {
     )
 }
 
-fn heading_kind_slug(k: AozoraHeadingKind) -> &'static str {
+fn heading_kind_slug(k: HeadingKind) -> &'static str {
     match k {
-        AozoraHeadingKind::Large => "large",
-        AozoraHeadingKind::Medium => "medium",
-        AozoraHeadingKind::Small => "small",
+        HeadingKind::Large => "large",
+        HeadingKind::Medium => "medium",
+        HeadingKind::Small => "small",
         _ => "other",
     }
 }
 
 /// Style modifier slug, or `None` for the standard style (which adds no
 /// `style` attribute, keeping a standard heading's projection unchanged).
-fn heading_style_slug(s: AozoraHeadingStyle) -> Option<&'static str> {
+fn heading_style_slug(s: HeadingStyle) -> Option<&'static str> {
     match s {
-        AozoraHeadingStyle::SameLine => Some("same-line"),
-        AozoraHeadingStyle::Window => Some("window"),
+        HeadingStyle::SameLine => Some("same-line"),
+        HeadingStyle::Window => Some("window"),
         // Standard (and any future `#[non_exhaustive]` style) adds no attr.
         _ => None,
     }
 }
 
-fn sashie_block(s: Sashie<'_>) -> Block {
+fn sashie_block(s: Illustration<'_>) -> Block {
     // The general form's leading description is the alt; otherwise the
     // keyword 挿絵 form's trailing 「caption」 is the next-best alt text.
     let alt = s.description.map_or_else(
@@ -553,7 +552,7 @@ fn container_attr(kind: ContainerKind) -> Attr {
             ("container-indent", kvs)
         }
         ContainerKind::Warichu => ("container-warichu", Vec::new()),
-        ContainerKind::Keigakomi => ("container-keigakomi", Vec::new()),
+        ContainerKind::Framed => ("container-keigakomi", Vec::new()),
         ContainerKind::AlignEnd { offset } => (
             "container-align-end",
             vec![("offset".to_owned(), offset.to_string())],
@@ -916,7 +915,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Annotation fallthrough (kind slug arms)
+    // Directive fallthrough (kind slug arms)
     // -----------------------------------------------------------------
 
     #[test]
@@ -932,20 +931,20 @@ mod tests {
     }
 
     #[test]
-    fn as_is_annotation_kind_slug() {
+    fn sic_annotation_kind_slug() {
         let blocks = project("そういう風［＃「いう風」はママ］だ\n");
         let (attr, _) = find_span(&blocks, "annotation").expect("annotation span");
-        assert_eq!(kv(attr, "kind"), Some("as-is"), "ママ → as-is kind");
+        assert_eq!(kv(attr, "kind"), Some("sic"), "ママ → sic kind");
     }
 
     #[test]
-    fn textual_note_annotation_kind_slug() {
+    fn base_text_variant_annotation_kind_slug() {
         let blocks = project("間違い［＃「間違い」は底本では「間違ひ」］です\n");
         let (attr, _) = find_span(&blocks, "annotation").expect("annotation span");
         assert_eq!(
             kv(attr, "kind"),
-            Some("textual-note"),
-            "底本では → textual-note kind"
+            Some("base-text-variant"),
+            "底本では → base-text-variant kind"
         );
     }
 
@@ -1345,37 +1344,34 @@ mod tests {
 
     #[test]
     fn annotation_kind_slug_covers_all_named_arms() {
-        assert_eq!(annotation_kind_slug(AnnotationKind::Unknown), "unknown");
-        assert_eq!(annotation_kind_slug(AnnotationKind::AsIs), "as-is");
+        assert_eq!(annotation_kind_slug(DirectiveKind::Unknown), "unknown");
+        assert_eq!(annotation_kind_slug(DirectiveKind::Sic), "sic");
         assert_eq!(
-            annotation_kind_slug(AnnotationKind::TextualNote),
-            "textual-note"
+            annotation_kind_slug(DirectiveKind::BaseTextVariant),
+            "base-text-variant"
         );
         assert_eq!(
-            annotation_kind_slug(AnnotationKind::InvalidRubySpan),
+            annotation_kind_slug(DirectiveKind::InvalidRubySpan),
             "invalid-ruby-span"
         );
     }
 
     #[test]
     fn heading_kind_slug_covers_levels() {
-        assert_eq!(heading_kind_slug(AozoraHeadingKind::Large), "large");
-        assert_eq!(heading_kind_slug(AozoraHeadingKind::Medium), "medium");
-        assert_eq!(heading_kind_slug(AozoraHeadingKind::Small), "small");
+        assert_eq!(heading_kind_slug(HeadingKind::Large), "large");
+        assert_eq!(heading_kind_slug(HeadingKind::Medium), "medium");
+        assert_eq!(heading_kind_slug(HeadingKind::Small), "small");
     }
 
     #[test]
     fn heading_style_slug_covers_styles() {
         assert_eq!(
-            heading_style_slug(AozoraHeadingStyle::SameLine),
+            heading_style_slug(HeadingStyle::SameLine),
             Some("same-line")
         );
+        assert_eq!(heading_style_slug(HeadingStyle::Window), Some("window"));
         assert_eq!(
-            heading_style_slug(AozoraHeadingStyle::Window),
-            Some("window")
-        );
-        assert_eq!(
-            heading_style_slug(AozoraHeadingStyle::Standard),
+            heading_style_slug(HeadingStyle::Standard),
             None,
             "standard style adds no slug"
         );
@@ -1383,9 +1379,9 @@ mod tests {
 
     #[test]
     fn small_heading_block_builder_is_level_3() {
-        let heading = AozoraHeading {
-            kind: AozoraHeadingKind::Small,
-            style: AozoraHeadingStyle::SameLine,
+        let heading = Heading {
+            kind: HeadingKind::Small,
+            style: HeadingStyle::SameLine,
             text: NonEmpty::new(Content::Plain("見出し")).expect("non-empty heading text"),
         };
         match aozora_heading_block(heading) {

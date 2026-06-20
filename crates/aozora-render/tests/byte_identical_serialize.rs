@@ -5,14 +5,14 @@
 //! `serialize ∘ parse` once produces a string `s`. A second pass —
 //! `serialize ∘ parse(s)` — must produce the same `s` byte-for-byte.
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_render::serialize::serialize;
 use aozora_syntax::borrowed::Arena;
 use proptest::prelude::*;
 
 fn round_trip(src: &str) -> String {
     let arena = Arena::new();
-    let out = lex_into_arena(src, &arena);
+    let out = lex(src, &arena);
     serialize(&out)
 }
 

@@ -6,7 +6,7 @@ serialize being lossless.
 
 ## The property
 
-`AozoraTree::serialize` re-emits Aozora source from the parsed tree.
+`Tree::serialize` re-emits Aozora source from the parsed tree.
 The guarantee is a **fixed point**: parsing a *canonical* document and
 serialising it returns the same bytes, and serialising again changes
 nothing.

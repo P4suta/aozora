@@ -1,4 +1,4 @@
-# aozora_py
+# aozora
 
 Python bindings for [**aozora**](https://github.com/P4suta/aozora) — a
 pure-functional Rust parser for **青空文庫記法** (Aozora Bunko notation):
@@ -12,7 +12,7 @@ around it — an in-process native module, no runtime process dependencies.
 ## Install
 
 ```sh
-pip install aozora_py
+pip install aozora
 ```
 
 Wheels ship as a single **`cp311-abi3`** build per platform (CPython
@@ -22,12 +22,12 @@ every future 3.x. The package is typed (`py.typed`, PEP 561).
 ## Quickstart
 
 ```python
-import aozora_py
+import aozora
 
-doc = aozora_py.Document("｜青梅《おうめ》の街")
+doc = aozora.Document("｜青梅《おうめ》の街")
 
 doc.to_html()        # → semantic HTML5 with <ruby>…</ruby>
-doc.serialize()      # → re-emit Aozora source text
+doc.to_source()      # → re-emit Aozora source text
 
 # Inspection — parsed native objects (list[dict]):
 doc.diagnostics()       # lexer diagnostics
@@ -36,32 +36,32 @@ doc.pairs()             # matched open/close pair links
 doc.container_pairs()   # indent / warichu / keigakomi / alignEnd containers
 
 # …or the raw, byte-identical wire envelope strings shared with the
-# WASM / FFI / Go drivers ({"schema_version": 1, "data": [...]}):
+# WASM / FFI / Go drivers ({"schemaVersion": 1, "data": [...]}):
 doc.diagnostics_json()
 doc.nodes_json()
 
 # One-shot parse + render:
-aozora_py.parse_to_html("｜青梅《おうめ》")
+aozora.parse_to_html("｜青梅《おうめ》")
 ```
 
 ## Shift_JIS source
 
 Real 青空文庫 archive files are `Shift_JIS`. Hand bytes to
-`Document.from_sjis` (it auto-detects `Shift_JIS` vs UTF-8), or decode
+`Document.from_bytes` (it auto-detects `Shift_JIS` vs UTF-8), or decode
 explicitly:
 
 ```python
 raw = open("souseki.txt", "rb").read()      # Shift_JIS archive bytes
-doc = aozora_py.Document.from_sjis(raw)
+doc = aozora.Document.from_bytes(raw)
 print(doc.to_html())
 
 # Decode without parsing:
-text = aozora_py.decode_sjis(raw)
+text = aozora.decode_sjis(raw)
 ```
 
 ## Performance
 
-`aozora_py.prewarm()` forces one-time parser-table initialisation off the
+`aozora.prewarm()` forces one-time parser-table initialisation off the
 first-parse critical path — call it once at startup in batch workloads
 that parse many short documents.
 

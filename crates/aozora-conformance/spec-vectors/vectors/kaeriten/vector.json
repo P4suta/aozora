@@ -8,11 +8,11 @@
   },
   "source": "読［＃返り点 一・二］本\n",
   "expected": {
-    "html": "<p>読<span class=\"aozora-annotation\" hidden>［＃返り点 一・二］</span>本</p>\n",
+    "html": "<p>読<span class=\"aozora-directive\" hidden>［＃返り点 一・二］</span>本</p>\n",
     "serialize": "読［＃返り点 一・二］本\n",
     "nodes": [
       {
-        "kind": "annotation",
+        "kind": "directive",
         "span": {
           "start": 3,
           "end": 31

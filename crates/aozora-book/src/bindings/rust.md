@@ -22,19 +22,19 @@ methods cover everything:
 pub struct Document { /* opaque */ }
 impl Document {
     pub fn new(source: String) -> Self;
-    pub fn parse(&self) -> AozoraTree<'_>;
+    pub fn parse(&self) -> Tree<'_>;
     pub fn source(&self) -> &str;
 }
 
-pub struct AozoraTree<'a> { /* borrows from Document */ }
-impl<'a> AozoraTree<'a> {
-    pub fn nodes(&self) -> impl Iterator<Item = AozoraNode<'a>>;
+pub struct Tree<'a> { /* borrows from Document */ }
+impl<'a> Tree<'a> {
+    pub fn nodes(&self) -> impl Iterator<Item = Node<'a>>;
     pub fn to_html(&self) -> String;
     pub fn serialize(&self) -> String;
     pub fn diagnostics(&self) -> &[Diagnostic];
 }
 
-pub enum AozoraNode<'src> { Plain(&'src str), Ruby(Ruby<'src>), … }
+pub enum Node<'src> { Plain(&'src str), Ruby(Ruby<'src>), … }
 ```
 
 See [Library Quickstart](../getting-started/library.md) for the
@@ -46,7 +46,7 @@ aozora exposes one optional feature:
 
 | Feature | Default | What it enables |
 |---|---|---|
-| `serde` | off | `serde::Serialize` / `Deserialize` impls on `AozoraNode`, `Diagnostic`, `Span`. Useful for downstream tools that need to ship the AST over a wire. |
+| `serde` | off | `serde::Serialize` / `Deserialize` impls on `Node`, `Diagnostic`, `Span`. Useful for downstream tools that need to ship the AST over a wire. |
 
 The default-off policy keeps `cargo build aozora` slim — the JSON
 encoders that the bindings need live in the bindings themselves
@@ -57,7 +57,7 @@ encoders that the bindings need live in the bindings themselves
 Three philosophies, used consistently:
 
 1. **Diagnostics are not errors.** `Document::parse()` always returns a
-   `AozoraTree<'_>`. Per-input diagnostics live in `tree.diagnostics()`.
+   `Tree<'_>`. Per-input diagnostics live in `tree.diagnostics()`.
    Callers decide whether to treat any diagnostic as fatal.
 2. **Decoding is fallible.** `aozora_encoding::sjis::decode_to_string`
    returns `Result<Cow<str>, DecodeError>`. Malformed Shift_JIS is the
@@ -74,8 +74,8 @@ Three philosophies, used consistently:
 support concurrent allocation. Pass a `Document` between threads
 freely; do not share `&Document` across threads.
 
-`AozoraTree<'_>` borrows from `&Document`, so by Rust's lifetime
-rules the same shape applies: a `&AozoraTree` is `Send + Sync` (it's
+`Tree<'_>` borrows from `&Document`, so by Rust's lifetime
+rules the same shape applies: a `&Tree` is `Send + Sync` (it's
 just `&` to immutable data), but it can't outlive its `Document`.
 
 For *parallel* corpus processing (e.g. the corpus sweep harness

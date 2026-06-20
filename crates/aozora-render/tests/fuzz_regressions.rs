@@ -10,7 +10,7 @@ use std::panic;
 use std::path::{Path, PathBuf};
 use std::str;
 
-use aozora_pipeline::{ALL_SENTINELS, lex_into_arena};
+use aozora_pipeline::{ALL_SENTINELS, lex};
 use aozora_render::html::render_to_string;
 use aozora_render::serialize::serialize;
 use aozora_syntax::borrowed::Arena;
@@ -24,7 +24,7 @@ fn render_html_regressions_replay_cleanly() {
             return;
         }
         let arena = Arena::new();
-        let lex_out = lex_into_arena(src, &arena);
+        let lex_out = lex(src, &arena);
         let html = render_to_string(&lex_out);
         for sentinel in ALL_SENTINELS {
             assert!(
@@ -45,10 +45,10 @@ fn serialize_round_trip_regressions_replay_cleanly() {
             return;
         }
         let arena1 = Arena::new();
-        let lex1 = lex_into_arena(src, &arena1);
+        let lex1 = lex(src, &arena1);
         let first = serialize(&lex1);
         let arena2 = Arena::new();
-        let lex2 = lex_into_arena(&first, &arena2);
+        let lex2 = lex(&first, &arena2);
         let second = serialize(&lex2);
         assert!(
             first == second,

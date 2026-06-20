@@ -38,13 +38,13 @@ The runner pins six axes per fixture:
 
 1. `tree.to_html()` byte-identical to `expected.html`.
 2. `tree.serialize()` byte-identical to `expected.serialize.txt`.
-3. `aozora::wire::serialize_diagnostics(tree.diagnostics())`
+3. `aozora::json::diagnostics(tree.diagnostics())`
    byte-identical to `expected.diagnostics.json`.
-4. `aozora::wire::serialize_nodes(&tree)` byte-identical to
+4. `aozora::json::nodes(&tree)` byte-identical to
    `expected.nodes.json`.
-5. `aozora::wire::serialize_pairs(&tree)` byte-identical to
+5. `aozora::json::pairs(&tree)` byte-identical to
    `expected.pairs.json`.
-6. `aozora::wire::serialize_container_pairs(&tree)` byte-identical to
+6. `aozora::json::container_pairs(&tree)` byte-identical to
    `expected.container_pairs.json`.
 
 Axes 1–2 anchor the human-readable surface; axes 3–6 pin the JSON

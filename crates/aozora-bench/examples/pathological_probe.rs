@@ -31,13 +31,13 @@ use std::process;
 use std::time::Instant;
 
 use aozora_encoding::decode_auto;
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, SpanKind, Token, classify, pair, sanitize, tokenize,
 };
 use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::AozoraNode;
 use aozora_syntax::borrowed::Arena;
+use aozora_syntax::borrowed::Node;
 
 /// Default pathological doc — kaeriten / annotation density extreme.
 /// Override via the `AOZORA_PROBE_DOC` env var (relative to
@@ -120,7 +120,7 @@ fn main() {
         // includes the post-classify ArenaNormalizer walk.
         arena_full.reset_with_hint(arena_hint);
         let t = Instant::now();
-        let _full = lex_into_arena(&text, &arena_full);
+        let _full = lex(&text, &arena_full);
         full_total += t.elapsed().as_nanos() as u64;
     }
 
@@ -152,13 +152,13 @@ fn main() {
     );
     println!("  ──────────────────────────────────────");
     println!("  4-PHASE TOTAL  : {:>7.2} ms", avg(standalone));
-    println!("  lex_into_arena : {:>7.2} ms", avg(full_total));
+    println!("  lex : {:>7.2} ms", avg(full_total));
     println!(
         "  post-classify ∼: {:>7.2} ms",
         avg(full_total.saturating_sub(standalone))
     );
 
-    // When `aozora-pipeline/phase3-instrument` is enabled, dump the
+    // When `aozora-pipeline/classify-instrument` is enabled, dump the
     // per-subsystem call counts for the LAST iteration so callers can
     // see which subsystem dominates on this specific document.
     // (Cargo's cross-package feature resolution surfaces it as
@@ -175,7 +175,7 @@ fn main() {
         PendingSizeHistogram::reset();
         {
             let arena_inst = Arena::new();
-            drop(lex_into_arena(&text, &arena_inst));
+            drop(lex(&text, &arena_inst));
         }
         let snap = TimingTable::snapshot();
         let yields = YieldCounters::snapshot();
@@ -308,23 +308,23 @@ fn main() {
         if let SpanKind::Aozora(node) = &span.kind {
             aozora_count += 1;
             let name = match node {
-                AozoraNode::Ruby(_) => "Ruby",
-                AozoraNode::Bouten(_) => "Bouten",
-                AozoraNode::TateChuYoko(_) => "TateChuYoko",
-                AozoraNode::Gaiji(_) => "Gaiji",
-                AozoraNode::Indent(_) => "Indent",
-                AozoraNode::AlignEnd(_) => "AlignEnd",
-                AozoraNode::Warichu(_) => "Warichu",
-                AozoraNode::Keigakomi(_) => "Keigakomi",
-                AozoraNode::PageBreak => "PageBreak",
-                AozoraNode::SectionBreak(_) => "SectionBreak",
-                AozoraNode::AozoraHeading(_) => "AozoraHeading",
-                AozoraNode::HeadingHint(_) => "HeadingHint",
-                AozoraNode::Sashie(_) => "Sashie",
-                AozoraNode::Kaeriten(_) => "Kaeriten",
-                AozoraNode::Annotation(_) => "Annotation",
-                AozoraNode::AngleQuote(_) => "AngleQuote",
-                AozoraNode::Container(_) => "Container",
+                Node::Ruby(_) => "Ruby",
+                Node::Bouten(_) => "Bouten",
+                Node::CombineUpright(_) => "CombineUpright",
+                Node::Gaiji(_) => "Gaiji",
+                Node::Indent(_) => "Indent",
+                Node::AlignEnd(_) => "AlignEnd",
+                Node::Warichu(_) => "Warichu",
+                Node::Framed(_) => "Framed",
+                Node::PageBreak => "PageBreak",
+                Node::SectionBreak(_) => "SectionBreak",
+                Node::Heading(_) => "Heading",
+                Node::HeadingHint(_) => "HeadingHint",
+                Node::Illustration(_) => "Illustration",
+                Node::Kaeriten(_) => "Kaeriten",
+                Node::Directive(_) => "Directive",
+                Node::AngleQuote(_) => "AngleQuote",
+                Node::Container(_) => "Container",
                 _ => "_unknown",
             };
             *counts.entry(name).or_insert(0) += 1;

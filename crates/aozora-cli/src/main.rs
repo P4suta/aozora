@@ -11,8 +11,8 @@
 //!   output differs from `FILE`; `--write` overwrites `FILE`. Default
 //!   is print-to-stdout.
 //! - `aozora render FILE` — render `FILE` to HTML on stdout.
-//! - `aozora wire <kind> FILE` — emit the parsed document's wire JSON
-//!   for one `aozora::wire` envelope (`nodes` / `pairs` /
+//! - `aozora inspect <kind> FILE` — emit the parsed document's JSON
+//!   for one `aozora::json` envelope (`nodes` / `pairs` /
 //!   `container-pairs` / `diagnostics` / `gaiji`), or the static
 //!   `slugs` catalogue. The data counterpart to `aozora schema
 //!   <kind>`, byte-identical to every binding's `*_json()` output.
@@ -23,8 +23,8 @@
 //!   `InternalCheckCode` variant with its wire tag and a one-line
 //!   summary.
 //! - `aozora schema {diagnostics|nodes|pairs|container-pairs}` —
-//!   pretty-prints the JSON Schema for one of the four wire
-//!   envelopes. Sourced from `aozora::wire::schema_*` (`schema`
+//!   pretty-prints the JSON Schema for one of the four
+//!   envelopes. Sourced from `aozora::json::schema_*` (`schema`
 //!   feature on the `aozora` crate).
 //! - `aozora explain <kind>` — embedded handbook chapter for the
 //!   given `NodeKind`, surfaced via `include_str!`.
@@ -57,7 +57,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode, Stdio};
 
-use aozora::{DiagnosticSource, Document, wire};
+use aozora::{DiagnosticSource, Document, json};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -77,7 +77,7 @@ use crate::timing::{Timer, TimingFormat};
     after_long_help = "Examples:
   aozora check FILE.txt              # lex + report diagnostics
   aozora render FILE.txt > out.html  # render to HTML
-  aozora wire nodes FILE.txt         # parsed nodes as wire JSON
+  aozora inspect nodes FILE.txt         # parsed nodes as JSON
   aozora fmt --check FILE.txt        # CI format gate
   aozora explain unclosed_bracket    # explain a diagnostic code
   aozora completions zsh             # shell completion script
@@ -97,18 +97,18 @@ enum Command {
     Fmt(FmtArgs),
     /// Render Aozora notation to HTML on stdout.
     Render(RenderArgs),
-    /// Emit a parsed document's wire JSON for one `aozora::wire`
+    /// Emit a parsed document's JSON for one `aozora::json`
     /// envelope — `nodes` / `pairs` / `container-pairs` /
     /// `diagnostics` / `gaiji` — or the static `slugs` catalogue. The
     /// data counterpart to `schema`: `schema <kind>` prints the JSON
-    /// Schema, `wire <kind>` prints a document's data in that schema,
+    /// Schema, `inspect <kind>` prints a document's data in that schema,
     /// byte-identical to every binding's `*_json()` output.
-    Wire(WireArgs),
+    Inspect(InspectArgs),
     /// Tabulate every `NodeKind` / `PairKind` / `Severity` /
     /// `DiagnosticSource` / `Sentinel` / `InternalCheckCode`
     /// variant with its wire tag.
     Kinds(KindsArgs),
-    /// Pretty-print the JSON Schema for one of the four wire envelopes.
+    /// Pretty-print the JSON Schema for one of the four JSON envelopes.
     Schema(SchemaArgs),
     /// Print prose for a `NodeKind` tag, or help / severity / URL for a
     /// diagnostic code.
@@ -133,7 +133,7 @@ enum Command {
 /// Flags shared by every document subcommand: where to read, how to
 /// decode, and whether to print timing. Flattened into each so `file`
 /// and `-E/--encoding` are declared once and `--timing` has a single
-/// home (it spans check / render / fmt / wire / pandoc).
+/// home (it spans check / render / fmt / inspect / pandoc).
 #[derive(Debug, Parser)]
 struct CommonArgs {
     /// Input path; pass `-` (or omit) to read from stdin.
@@ -152,7 +152,7 @@ struct CommonArgs {
 
     /// Print per-phase timing (read / parse / output) to stderr. Writes
     /// only to stderr, so stdout stays byte-identical — safe to leave on
-    /// inside a `render` / `wire` pipeline.
+    /// inside a `render` / `inspect` pipeline.
     #[arg(long)]
     timing: bool,
 
@@ -200,7 +200,7 @@ struct CheckArgs {
     strict: bool,
 
     /// How to render diagnostics: `human` (graphical snippet, the
-    /// default on a terminal), `json` (the `aozora::wire` envelope, the
+    /// default on a terminal), `json` (the `aozora::json` envelope, the
     /// default when stderr is piped — the machine / agent path), or
     /// `short` (one grep-able line per diagnostic). Falls back to
     /// `AOZORA_DIAGNOSTIC_FORMAT`, then `.aozora.toml`.
@@ -231,11 +231,11 @@ struct RenderArgs {
     common: CommonArgs,
 }
 
-/// `aozora wire <kind>` — which wire envelope to emit. The data
+/// `aozora inspect <kind>` — which JSON envelope to emit. The data
 /// counterpart to `SchemaKind`: `schema nodes` prints the contract,
-/// `wire nodes` prints a document's data in that contract.
+/// `inspect nodes` prints a document's data in that contract.
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum WireKind {
+enum InspectKind {
     /// Per-diagnostic `{ kind, severity, source, span, codepoint? }`.
     Diagnostics,
     /// Per-source-node `{ kind, span }`, sorted by `span.start`.
@@ -253,14 +253,14 @@ enum WireKind {
 
 #[derive(Debug, Parser)]
 #[command(after_long_help = "Examples:
-  aozora wire nodes src.txt           # source nodes as JSON
-  cat src.txt | aozora wire pairs     # matched pairs from stdin
-  aozora wire gaiji -E sjis file.txt  # resolved gaiji references
-  aozora wire slugs                   # the static slug catalogue")]
-struct WireArgs {
-    /// Which wire envelope to emit.
+  aozora inspect nodes src.txt           # source nodes as JSON
+  cat src.txt | aozora inspect pairs     # matched pairs from stdin
+  aozora inspect gaiji -E sjis file.txt  # resolved gaiji references
+  aozora inspect slugs                   # the static slug catalogue")]
+struct InspectArgs {
+    /// Which JSON envelope to emit.
     #[arg(value_enum)]
-    which: WireKind,
+    which: InspectKind,
 
     // `common.file` is unused by `slugs` (a static catalogue with no
     // document input); every other kind reads it.
@@ -304,7 +304,7 @@ fn main() -> ExitCode {
         Command::Check(opts) => run_check(&opts),
         Command::Fmt(opts) => run_fmt(&opts),
         Command::Render(opts) => run_render(&opts),
-        Command::Wire(opts) => run_wire(&opts),
+        Command::Inspect(opts) => run_inspect(&opts),
         Command::Kinds(opts) => introspect::run_kinds(&opts),
         Command::Schema(opts) => introspect::run_schema(&opts),
         Command::Explain(opts) => introspect::run_explain(&opts),
@@ -402,7 +402,7 @@ fn run_fmt_once(args: &FmtArgs) -> Result<ExitCode> {
     let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let doc = Document::new(source.clone());
     let tree = timer.measure("parse", || doc.parse());
-    let formatted = timer.measure("serialize", || tree.serialize());
+    let formatted = timer.measure("serialize", || tree.to_source());
     // Timing covers read/parse/serialize; the comparison and I/O below
     // are not the parse cost a reader cares about, so report here.
     timer.report()?;
@@ -461,42 +461,42 @@ fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_wire(args: &WireArgs) -> Result<ExitCode> {
-    run_watched(&args.common, || run_wire_once(args))
+fn run_inspect(args: &InspectArgs) -> Result<ExitCode> {
+    run_watched(&args.common, || run_inspect_once(args))
 }
 
-fn run_wire_once(args: &WireArgs) -> Result<ExitCode> {
+fn run_inspect_once(args: &InspectArgs) -> Result<ExitCode> {
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);
-    let json = wire_json(args, &mut timer)?;
+    let json = inspect_json(args, &mut timer)?;
     let mut stdout = io::stdout().lock();
     writeln!(stdout, "{json}").context("failed to write to stdout")?;
     timer.report()?;
     Ok(ExitCode::SUCCESS)
 }
 
-/// Project the requested wire envelope to its JSON string. `slugs` is a
+/// Project the requested JSON envelope to its JSON string. `slugs` is a
 /// static catalogue (no input read); `gaiji` scans raw source; every
 /// other kind walks the parse tree. All arms delegate to
-/// `aozora::wire`, the single authority shared with the Python / WASM /
+/// `aozora::json`, the single authority shared with the Python / WASM /
 /// C bindings, so the bytes are identical across every surface.
-fn wire_json(args: &WireArgs, timer: &mut Timer) -> Result<String> {
-    if matches!(args.which, WireKind::Slugs) {
-        return Ok(wire::serialize_slugs());
+fn inspect_json(args: &InspectArgs, timer: &mut Timer) -> Result<String> {
+    if matches!(args.which, InspectKind::Slugs) {
+        return Ok(json::slugs());
     }
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
     let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
-    if matches!(args.which, WireKind::GaijiResolutions) {
-        return Ok(timer.measure("serialize", || wire::serialize_gaiji_resolutions(&source)));
+    if matches!(args.which, InspectKind::GaijiResolutions) {
+        return Ok(timer.measure("serialize", || json::gaiji(&source)));
     }
     let doc = Document::new(source);
     let tree = timer.measure("parse", || doc.parse());
     Ok(timer.measure("serialize", || match args.which {
-        WireKind::Nodes => wire::serialize_nodes(&tree),
-        WireKind::Pairs => wire::serialize_pairs(&tree),
-        WireKind::ContainerPairs => wire::serialize_container_pairs(&tree),
-        WireKind::Diagnostics => wire::serialize_diagnostics(tree.diagnostics()),
-        WireKind::Slugs | WireKind::GaijiResolutions => {
+        InspectKind::Nodes => json::nodes(&tree),
+        InspectKind::Pairs => json::pairs(&tree),
+        InspectKind::ContainerPairs => json::container_pairs(&tree),
+        InspectKind::Diagnostics => json::diagnostics(tree.diagnostics()),
+        InspectKind::Slugs | InspectKind::GaijiResolutions => {
             unreachable!("slugs and gaiji are emitted before the parse step")
         }
     }))

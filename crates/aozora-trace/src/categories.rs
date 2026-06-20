@@ -21,12 +21,12 @@ use regex::Regex;
 
 /// Built-in category table for [`RollupConfig::aozora_defaults`].
 /// First-match wins, in declaration order. The ordering matters —
-/// e.g. AVX2 SIMD intrinsics are attributed to `phase1_scan`
+/// e.g. AVX2 SIMD intrinsics are attributed to `scan`
 /// (because that's where the only AVX2 use is) BEFORE the generic
 /// `core_simd_intrinsics` catch-all sees them.
 const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
     (
-        "phase1_scan",
+        "scan",
         &[
             r"aho_corasick::packed",
             r"aozora_scan::backends",
@@ -42,26 +42,17 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
             r"core::core_arch::x86::avx2::_mm256_alignr",
         ],
     ),
-    ("phase1_walker", &[r"aozora_pipeline::lexer::phase1_events"]),
+    ("tokenize", &[r"aozora_pipeline::lexer::tokenize"]),
+    ("sanitize", &[r"aozora_pipeline::lexer::sanitize"]),
+    ("pair", &[r"aozora_pipeline::lexer::pair"]),
     (
-        "phase0_sanitize",
+        "classify",
         &[
-            r"aozora_pipeline::lexer::sanitize",
-            r"aozora_pipeline::lexer::phase0",
-        ],
-    ),
-    ("phase2_pair", &[r"aozora_pipeline::lexer::phase2_pair"]),
-    (
-        "phase3_classify",
-        &[
-            r"aozora_pipeline::lexer::phase3",
+            r"aozora_pipeline::lexer::classify",
             r"aozora_pipeline::lexer::recognise",
         ],
     ),
-    (
-        "phase4_intern",
-        &[r"aozora_syntax::borrowed::intern", r"Interner"],
-    ),
+    ("intern", &[r"aozora_syntax::borrowed::intern", r"Interner"]),
     (
         "memchr_scan",
         &[
@@ -306,7 +297,7 @@ impl RollupConfig {
     ///
     /// ```toml
     /// [[categories]]
-    /// name = "phase1_scan"
+    /// name = "scan"
     /// patterns = ["aho_corasick::packed::teddy", "aozora_scan"]
     ///
     /// [[categories]]

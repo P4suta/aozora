@@ -14,19 +14,19 @@
 //! * `serialize` is a fixed point after one pass for canonical
 //!   markup shapes (inline ruby, page break, kaeriten, gaiji).
 
-use aozora_pipeline::{ALL_SENTINELS, lex_into_arena};
+use aozora_pipeline::{ALL_SENTINELS, lex};
 use aozora_render::{html, serialize};
 use aozora_syntax::borrowed::Arena;
 
 fn render_html(text: &str) -> String {
     let arena = Arena::new();
-    let out = lex_into_arena(text, &arena);
+    let out = lex(text, &arena);
     html::render_to_string(&out)
 }
 
 fn ser(text: &str) -> String {
     let arena = Arena::new();
-    let out = lex_into_arena(text, &arena);
+    let out = lex(text, &arena);
     serialize::serialize(&out)
 }
 

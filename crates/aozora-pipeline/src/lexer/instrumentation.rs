@@ -1,12 +1,12 @@
 //! Opt-in phase 3 sub-system instrumentation.
 //!
-//! Compiled in only when the `phase3-instrument` feature is on. When
-//! enabled, every recogniser entry point inside [`crate::phase3_classify`]
+//! Compiled in only when the `classify-instrument` feature is on. When
+//! enabled, every recogniser entry point inside [`crate::lexer::classify`](mod@crate::lexer::classify)
 //! constructs a [`SubsystemGuard`] on entry; on `Drop` the guard pushes
 //! its elapsed nanoseconds into a thread-local [`TimingTable`] keyed by
 //! [`Subsystem`].
 //!
-//! The `aozora-bench` `phase3_subsystems` example reads the table after
+//! The `aozora-bench` `classify_subsystems` example reads the table after
 //! each document is processed via [`TimingTable::snapshot`] and
 //! [`TimingTable::reset`].
 //!
@@ -14,7 +14,7 @@
 //! API surface added by the feature is this module and its re-exports
 //! (no changes to existing types).
 
-#![cfg(feature = "phase3-instrument")]
+#![cfg(feature = "classify-instrument")]
 #![allow(
     clippy::missing_panics_doc,
     reason = "instrumentation panics only on RefCell re-entry, an internal contract"
@@ -37,7 +37,7 @@ pub enum Subsystem {
     /// `recognize_ruby` — paired-quote ruby spans `｜base《reading》`.
     Ruby,
     /// `recognize_annotation` — bracket-hash annotation `［＃...］`.
-    Annotation,
+    Directive,
     /// `recognize_gaiji` — gaiji marker `※［＃...］`.
     Gaiji,
     /// `build_content_from_body` — segment construction + interning
@@ -69,7 +69,7 @@ pub enum Subsystem {
     FrameAppend,
     /// `recognize_and_emit` — runs when the outermost open closes;
     /// dispatches into the per-`PairKind` recogniser. Wraps recogniser
-    /// leaves so its time INCLUDES Ruby/Annotation/Gaiji/etc. — the
+    /// leaves so its time INCLUDES Ruby/Directive/Gaiji/etc. — the
     /// dispatch overhead = `recognize_and_emit` - `leaf_total`.
     RecognizeAndEmit,
     /// `replay_unrecognised_body` — frames whose recogniser declined
@@ -106,7 +106,7 @@ impl Subsystem {
     pub fn label(self) -> &'static str {
         match self {
             Self::Ruby => "recognize_ruby",
-            Self::Annotation => "recognize_annotation",
+            Self::Directive => "recognize_annotation",
             Self::Gaiji => "recognize_gaiji",
             Self::BuildContent => "build_content_from_body",
             Self::BodyDispatcher => "body_dispatcher",
@@ -131,7 +131,7 @@ impl Subsystem {
     pub fn ordered() -> [Self; 17] {
         [
             Self::Ruby,
-            Self::Annotation,
+            Self::Directive,
             Self::Gaiji,
             Self::BuildContent,
             Self::BodyDispatcher,
@@ -157,7 +157,7 @@ impl Subsystem {
     pub fn is_leaf(self) -> bool {
         matches!(
             self,
-            Self::Ruby | Self::Annotation | Self::Gaiji | Self::BuildContent | Self::BodyDispatcher
+            Self::Ruby | Self::Directive | Self::Gaiji | Self::BuildContent | Self::BodyDispatcher
         )
     }
 }
@@ -200,7 +200,7 @@ impl Drop for SubsystemGuard {
 /// Per-thread accumulation of `(call count, total ns)` per [`Subsystem`].
 ///
 /// Created lazily in the `thread_local!` block; reset between corpus
-/// docs by the `phase3_subsystems` probe via [`TimingTable::reset`].
+/// docs by the `classify_subsystems` probe via [`TimingTable::reset`].
 #[derive(Debug, Clone, Default)]
 pub struct TimingTable {
     /// Number of recogniser entries observed per subsystem.
@@ -387,12 +387,12 @@ mod tests {
     fn snapshot_clone_does_not_share_state() {
         TimingTable::reset();
         {
-            let _g = SubsystemGuard::new(Subsystem::Annotation);
+            let _g = SubsystemGuard::new(Subsystem::Directive);
         }
         let snap_a = TimingTable::snapshot();
         TimingTable::reset();
         let snap_b = TimingTable::snapshot();
-        assert_eq!(snap_a.counts.get(&Subsystem::Annotation).copied(), Some(1));
-        assert_eq!(snap_b.counts.get(&Subsystem::Annotation).copied(), None);
+        assert_eq!(snap_a.counts.get(&Subsystem::Directive).copied(), Some(1));
+        assert_eq!(snap_b.counts.get(&Subsystem::Directive).copied(), None);
     }
 }

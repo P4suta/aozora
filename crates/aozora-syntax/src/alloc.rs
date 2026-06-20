@@ -8,11 +8,11 @@
 //! ## Naming convention
 //!
 //! - `make_*` methods build *payload* references (`&'a Gaiji<'a>`,
-//!   `&'a Annotation<'a>`) without wrapping them in a node.
+//!   `&'a Directive<'a>`) without wrapping them in a node.
 //! - Variant-named methods (`ruby`, `bouten`, `gaiji`, …) build the
-//!   final [`borrowed::AozoraNode<'a>`]. The `gaiji` and `annotation`
+//!   final [`borrowed::Node<'a>`]. The `gaiji` and `annotation`
 //!   node constructors take the payload reference (built via
-//!   `make_gaiji` / `make_annotation`) so a payload can be shared
+//!   `make_gaiji` / `make_directive`) so a payload can be shared
 //!   between a `Segment` and a `Node` without recomputing the string
 //!   interns.
 //! - `seg_*` methods build segment elements for `content_segments`.
@@ -32,11 +32,11 @@ use aozora_encoding::gaiji::Resolved;
 
 use crate::borrowed::{self, Arena, Interner};
 use crate::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Center, Container, EmphasisKind, Indent, Keigakomi, RubySide, SectionKind, SideNoteKind,
+    AlignEnd, BoutenKind, BoutenPosition, Center, Container, DirectiveKind, EmphasisKind, Framed,
+    HeadingKind, HeadingStyle, Indent, MarginNoteKind, RubySide, SectionKind,
 };
 
-/// Arena-backed builder for [`borrowed::AozoraNode<'a>`] and its
+/// Arena-backed builder for [`borrowed::Node<'a>`] and its
 /// payload types.
 ///
 /// Owns an [`Interner`] keyed off the supplied [`Arena`]; both string
@@ -140,10 +140,10 @@ impl<'a> BorrowedAllocator<'a> {
         borrowed::Segment::Gaiji(g)
     }
 
-    /// `Segment::Annotation(a)` — wraps a payload built via [`Self::make_annotation`].
+    /// `Segment::Directive(a)` — wraps a payload built via [`Self::make_directive`].
     #[must_use]
-    pub fn seg_annotation(&self, a: &'a borrowed::Annotation<'a>) -> borrowed::Segment<'a> {
-        borrowed::Segment::Annotation(a)
+    pub fn seg_annotation(&self, a: &'a borrowed::Directive<'a>) -> borrowed::Segment<'a> {
+        borrowed::Segment::Directive(a)
     }
 
     // ---------------------------------------------------------------------
@@ -173,7 +173,7 @@ impl<'a> BorrowedAllocator<'a> {
         self.arena.alloc(g)
     }
 
-    /// Build an `Annotation` payload. Use [`Self::seg_annotation`] to
+    /// Build an `Directive` payload. Use [`Self::seg_annotation`] to
     /// wrap as a segment, or [`Self::annotation`] to wrap as a node.
     ///
     /// `raw` carries the [`borrowed::NonEmptyStr`] invariant.
@@ -182,22 +182,22 @@ impl<'a> BorrowedAllocator<'a> {
     ///
     /// Panics if `raw` is empty. Phase 3 emits annotation only after
     /// at least one byte landed in the bracket body.
-    pub fn make_annotation(
+    pub fn make_directive(
         &mut self,
         raw: &str,
-        kind: AnnotationKind,
-    ) -> &'a borrowed::Annotation<'a> {
+        kind: DirectiveKind,
+    ) -> &'a borrowed::Directive<'a> {
         let raw = borrowed::NonEmptyStr::new(self.interner.intern(raw))
-            .expect("Phase 3 must emit Annotation with non-empty raw bytes");
-        let a = borrowed::Annotation { raw, kind };
+            .expect("Phase 3 must emit Directive with non-empty raw bytes");
+        let a = borrowed::Directive { raw, kind };
         self.arena.alloc(a)
     }
 
     // ---------------------------------------------------------------------
-    // Node variant constructors (18 — matches the AozoraNode enum)
+    // Node variant constructors (18 — matches the Node enum)
     // ---------------------------------------------------------------------
 
-    /// `AozoraNode::Ruby(Ruby { base, reading, delim_explicit })`.
+    /// `Node::Ruby(Ruby { base, reading, delim_explicit })`.
     ///
     /// `base` and `reading` carry the [`borrowed::NonEmpty`]
     /// invariant. Phase 3 only emits Ruby once both are non-empty,
@@ -217,12 +217,12 @@ impl<'a> BorrowedAllocator<'a> {
         base: borrowed::Content<'a>,
         reading: borrowed::Content<'a>,
         delim_explicit: bool,
-    ) -> borrowed::AozoraNode<'a> {
+    ) -> borrowed::Node<'a> {
         let base =
             borrowed::NonEmpty::new(base).expect("Phase 3 must emit Ruby with non-empty base");
         let reading = borrowed::NonEmpty::new(reading)
             .expect("Phase 3 must emit Ruby with non-empty reading");
-        borrowed::AozoraNode::Ruby(self.arena.alloc(borrowed::Ruby {
+        borrowed::Node::Ruby(self.arena.alloc(borrowed::Ruby {
             base,
             reading,
             delim_explicit,
@@ -230,7 +230,7 @@ impl<'a> BorrowedAllocator<'a> {
         }))
     }
 
-    /// `AozoraNode::Ruby(Ruby { side: Left, … })` — a left-side ruby from the
+    /// `Node::Ruby(Ruby { side: Left, … })` — a left-side ruby from the
     /// `［＃「base」の左に「reading」のルビ］` forward-reference form (the
     /// saidoku-moji 再読文字 building block).
     ///
@@ -242,12 +242,12 @@ impl<'a> BorrowedAllocator<'a> {
         &self,
         base: borrowed::Content<'a>,
         reading: borrowed::Content<'a>,
-    ) -> borrowed::AozoraNode<'a> {
+    ) -> borrowed::Node<'a> {
         let base =
             borrowed::NonEmpty::new(base).expect("Phase 3 must emit Ruby with non-empty base");
         let reading = borrowed::NonEmpty::new(reading)
             .expect("Phase 3 must emit Ruby with non-empty reading");
-        borrowed::AozoraNode::Ruby(self.arena.alloc(borrowed::Ruby {
+        borrowed::Node::Ruby(self.arena.alloc(borrowed::Ruby {
             base,
             reading,
             delim_explicit: false,
@@ -255,7 +255,7 @@ impl<'a> BorrowedAllocator<'a> {
         }))
     }
 
-    /// `AozoraNode::SideNote(SideNote { kind, base, note })` — a note
+    /// `Node::MarginNote(MarginNote { kind, base, note })` — a note
     /// attached to a preceding `base` run via a forward reference. `kind`
     /// selects 注記 (`の左に…の注記`) or 傍記 (`に…の傍記`); both reuse the
     /// left-side-ruby placement but round-trip to their own keyword.
@@ -267,18 +267,18 @@ impl<'a> BorrowedAllocator<'a> {
     #[must_use]
     pub fn side_note(
         &self,
-        kind: SideNoteKind,
+        kind: MarginNoteKind,
         base: borrowed::Content<'a>,
         note: borrowed::Content<'a>,
-    ) -> borrowed::AozoraNode<'a> {
-        let base =
-            borrowed::NonEmpty::new(base).expect("Phase 3 must emit SideNote with non-empty base");
-        let note =
-            borrowed::NonEmpty::new(note).expect("Phase 3 must emit SideNote with non-empty note");
-        borrowed::AozoraNode::SideNote(self.arena.alloc(borrowed::SideNote { kind, base, note }))
+    ) -> borrowed::Node<'a> {
+        let base = borrowed::NonEmpty::new(base)
+            .expect("Phase 3 must emit MarginNote with non-empty base");
+        let note = borrowed::NonEmpty::new(note)
+            .expect("Phase 3 must emit MarginNote with non-empty note");
+        borrowed::Node::MarginNote(self.arena.alloc(borrowed::MarginNote { kind, base, note }))
     }
 
-    /// `AozoraNode::Bouten(Bouten { kind, target, position,
+    /// `Node::Bouten(Bouten { kind, target, position,
     /// consumed_predecessor })`.
     ///
     /// `target` carries the [`borrowed::NonEmpty`] invariant —
@@ -306,10 +306,10 @@ impl<'a> BorrowedAllocator<'a> {
         target: borrowed::Content<'a>,
         position: BoutenPosition,
         consumed_predecessor: bool,
-    ) -> borrowed::AozoraNode<'a> {
+    ) -> borrowed::Node<'a> {
         let target = borrowed::NonEmpty::new(target)
             .expect("Phase 3 must emit Bouten with a resolved non-empty target");
-        borrowed::AozoraNode::Bouten(self.arena.alloc(borrowed::Bouten {
+        borrowed::Node::Bouten(self.arena.alloc(borrowed::Bouten {
             kind,
             target,
             position,
@@ -317,7 +317,7 @@ impl<'a> BorrowedAllocator<'a> {
         }))
     }
 
-    /// `AozoraNode::TateChuYoko(TateChuYoko { text,
+    /// `Node::CombineUpright(CombineUpright { text,
     /// consumed_predecessor })`.
     ///
     /// `text` carries the [`borrowed::NonEmpty`] invariant.
@@ -331,16 +331,16 @@ impl<'a> BorrowedAllocator<'a> {
         &self,
         text: borrowed::Content<'a>,
         consumed_predecessor: bool,
-    ) -> borrowed::AozoraNode<'a> {
+    ) -> borrowed::Node<'a> {
         let text = borrowed::NonEmpty::new(text)
-            .expect("Phase 3 must emit TateChuYoko with non-empty text");
-        borrowed::AozoraNode::TateChuYoko(self.arena.alloc(borrowed::TateChuYoko {
+            .expect("Phase 3 must emit CombineUpright with non-empty text");
+        borrowed::Node::CombineUpright(self.arena.alloc(borrowed::CombineUpright {
             text,
             consumed_predecessor,
         }))
     }
 
-    /// `AozoraNode::Emphasis(Emphasis { kind, text, consumed_predecessor })`.
+    /// `Node::Emphasis(Emphasis { kind, text, consumed_predecessor })`.
     ///
     /// The forward-reference leaf form of 太字 / 斜体
     /// (`X［＃「X」は太字／斜体］`). `text` carries the
@@ -357,69 +357,69 @@ impl<'a> BorrowedAllocator<'a> {
         kind: EmphasisKind,
         text: borrowed::Content<'a>,
         consumed_predecessor: bool,
-    ) -> borrowed::AozoraNode<'a> {
+    ) -> borrowed::Node<'a> {
         let text =
             borrowed::NonEmpty::new(text).expect("Phase 3 must emit Emphasis with non-empty text");
-        borrowed::AozoraNode::Emphasis(self.arena.alloc(borrowed::Emphasis {
+        borrowed::Node::Emphasis(self.arena.alloc(borrowed::Emphasis {
             kind,
             text,
             consumed_predecessor,
         }))
     }
 
-    /// `AozoraNode::Gaiji(g)`.
+    /// `Node::Gaiji(g)`.
     #[must_use]
-    pub fn gaiji(&self, g: &'a borrowed::Gaiji<'a>) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::Gaiji(g)
+    pub fn gaiji(&self, g: &'a borrowed::Gaiji<'a>) -> borrowed::Node<'a> {
+        borrowed::Node::Gaiji(g)
     }
 
-    /// `AozoraNode::Indent(i)`.
+    /// `Node::Indent(i)`.
     #[must_use]
-    pub fn indent(&self, i: Indent) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::Indent(i)
+    pub fn indent(&self, i: Indent) -> borrowed::Node<'a> {
+        borrowed::Node::Indent(i)
     }
 
-    /// `AozoraNode::AlignEnd(a)`.
+    /// `Node::AlignEnd(a)`.
     #[must_use]
-    pub fn align_end(&self, a: AlignEnd) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::AlignEnd(a)
+    pub fn align_end(&self, a: AlignEnd) -> borrowed::Node<'a> {
+        borrowed::Node::AlignEnd(a)
     }
 
-    /// `AozoraNode::Center(c)`.
+    /// `Node::Center(c)`.
     #[must_use]
-    pub fn center(&self, c: Center) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::Center(c)
+    pub fn center(&self, c: Center) -> borrowed::Node<'a> {
+        borrowed::Node::Center(c)
     }
 
-    /// `AozoraNode::Warichu(Warichu { upper, lower })`.
+    /// `Node::Warichu(Warichu { upper, lower })`.
     #[must_use]
     pub fn warichu(
         &self,
         upper: borrowed::Content<'a>,
         lower: borrowed::Content<'a>,
-    ) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::Warichu(self.arena.alloc(borrowed::Warichu { upper, lower }))
+    ) -> borrowed::Node<'a> {
+        borrowed::Node::Warichu(self.arena.alloc(borrowed::Warichu { upper, lower }))
     }
 
-    /// `AozoraNode::Keigakomi(k)`.
+    /// `Node::Framed(k)`.
     #[must_use]
-    pub fn keigakomi(&self, k: Keigakomi) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::Keigakomi(k)
+    pub fn keigakomi(&self, k: Framed) -> borrowed::Node<'a> {
+        borrowed::Node::Framed(k)
     }
 
-    /// `AozoraNode::PageBreak`.
+    /// `Node::PageBreak`.
     #[must_use]
-    pub fn page_break(&self) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::PageBreak
+    pub fn page_break(&self) -> borrowed::Node<'a> {
+        borrowed::Node::PageBreak
     }
 
-    /// `AozoraNode::SectionBreak(k)`.
+    /// `Node::SectionBreak(k)`.
     #[must_use]
-    pub fn section_break(&self, k: SectionKind) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::SectionBreak(k)
+    pub fn section_break(&self, k: SectionKind) -> borrowed::Node<'a> {
+        borrowed::Node::SectionBreak(k)
     }
 
-    /// `AozoraNode::AozoraHeading(AozoraHeading { kind, style, text })`.
+    /// `Node::Heading(Heading { kind, style, text })`.
     ///
     /// `text` carries the [`borrowed::NonEmpty`] invariant.
     ///
@@ -429,20 +429,16 @@ impl<'a> BorrowedAllocator<'a> {
     #[must_use]
     pub fn aozora_heading(
         &self,
-        kind: AozoraHeadingKind,
-        style: AozoraHeadingStyle,
+        kind: HeadingKind,
+        style: HeadingStyle,
         text: borrowed::Content<'a>,
-    ) -> borrowed::AozoraNode<'a> {
-        let text = borrowed::NonEmpty::new(text)
-            .expect("Phase 3 must emit AozoraHeading with non-empty text");
-        borrowed::AozoraNode::AozoraHeading(self.arena.alloc(borrowed::AozoraHeading {
-            kind,
-            style,
-            text,
-        }))
+    ) -> borrowed::Node<'a> {
+        let text =
+            borrowed::NonEmpty::new(text).expect("Phase 3 must emit Heading with non-empty text");
+        borrowed::Node::Heading(self.arena.alloc(borrowed::Heading { kind, style, text }))
     }
 
-    /// `AozoraNode::HeadingHint(HeadingHint { level, style, target })`.
+    /// `Node::HeadingHint(HeadingHint { level, style, target })`.
     ///
     /// `target` carries the [`borrowed::NonEmptyStr`] invariant.
     ///
@@ -454,19 +450,19 @@ impl<'a> BorrowedAllocator<'a> {
     pub fn heading_hint(
         &mut self,
         level: u8,
-        style: AozoraHeadingStyle,
+        style: HeadingStyle,
         target: &str,
-    ) -> borrowed::AozoraNode<'a> {
+    ) -> borrowed::Node<'a> {
         let target = borrowed::NonEmptyStr::new(self.interner.intern(target))
             .expect("Phase 3 must emit HeadingHint with non-empty target");
-        borrowed::AozoraNode::HeadingHint(self.arena.alloc(borrowed::HeadingHint {
+        borrowed::Node::HeadingHint(self.arena.alloc(borrowed::HeadingHint {
             level,
             style,
             target,
         }))
     }
 
-    /// `AozoraNode::Sashie(Sashie { file, number, caption })`.
+    /// `Node::Illustration(Illustration { file, number, caption })`.
     ///
     /// `file` carries the [`borrowed::NonEmptyStr`] invariant. `number` is
     /// the optional figure index from the numbered form `［＃挿絵{N}（…）入る］`,
@@ -487,12 +483,12 @@ impl<'a> BorrowedAllocator<'a> {
         number: Option<&str>,
         dimensions: Option<&str>,
         caption: Option<borrowed::Content<'a>>,
-    ) -> borrowed::AozoraNode<'a> {
+    ) -> borrowed::Node<'a> {
         let file = borrowed::NonEmptyStr::new(self.interner.intern(file))
-            .expect("Phase 3 must emit Sashie with non-empty file path");
+            .expect("Phase 3 must emit Illustration with non-empty file path");
         let number = number.and_then(|n| borrowed::NonEmptyStr::new(self.interner.intern(n)));
         let dimensions = dimensions.map(|d| self.interner.intern(d));
-        borrowed::AozoraNode::Sashie(self.arena.alloc(borrowed::Sashie {
+        borrowed::Node::Illustration(self.arena.alloc(borrowed::Illustration {
             file,
             number,
             dimensions,
@@ -501,7 +497,7 @@ impl<'a> BorrowedAllocator<'a> {
         }))
     }
 
-    /// `AozoraNode::Sashie` for the *general* image form
+    /// `Node::Illustration` for the *general* image form
     /// `［＃<説明>（file［、横W×縦H］）入る］` (図 / 地図 / コンドル博士の図 …),
     /// per <https://www.aozora.gr.jp/annotation/graphics.html>. The leading
     /// `description` is the image alt; there is no `挿絵` keyword, figure
@@ -515,16 +511,16 @@ impl<'a> BorrowedAllocator<'a> {
         file: &str,
         description: &str,
         dimensions: Option<&str>,
-    ) -> borrowed::AozoraNode<'a> {
+    ) -> borrowed::Node<'a> {
         let file = borrowed::NonEmptyStr::new(self.interner.intern(file))
-            .expect("Phase 3 must emit Sashie with non-empty file path");
+            .expect("Phase 3 must emit Illustration with non-empty file path");
         let description = self.interner.intern(description);
         debug_assert!(
             !description.is_empty(),
-            "Phase 3 must emit a general Sashie with a non-empty description"
+            "Phase 3 must emit a general Illustration with a non-empty description"
         );
         let dimensions = dimensions.map(|d| self.interner.intern(d));
-        borrowed::AozoraNode::Sashie(self.arena.alloc(borrowed::Sashie {
+        borrowed::Node::Illustration(self.arena.alloc(borrowed::Illustration {
             file,
             number: None,
             dimensions,
@@ -533,26 +529,26 @@ impl<'a> BorrowedAllocator<'a> {
         }))
     }
 
-    /// `AozoraNode::Kaeriten(Kaeriten { mark })`.
+    /// `Node::Kaeriten(Kaeriten { mark })`.
     ///
     /// `mark` carries the [`borrowed::NonEmptyStr`] invariant.
     ///
     /// # Panics
     ///
     /// Panics if `mark` is empty.
-    pub fn kaeriten(&mut self, mark: &str) -> borrowed::AozoraNode<'a> {
+    pub fn kaeriten(&mut self, mark: &str) -> borrowed::Node<'a> {
         let mark = borrowed::NonEmptyStr::new(self.interner.intern(mark))
             .expect("Phase 3 must emit Kaeriten with non-empty mark");
-        borrowed::AozoraNode::Kaeriten(self.arena.alloc(borrowed::Kaeriten { mark }))
+        borrowed::Node::Kaeriten(self.arena.alloc(borrowed::Kaeriten { mark }))
     }
 
-    /// `AozoraNode::Annotation(a)`.
+    /// `Node::Directive(a)`.
     #[must_use]
-    pub fn annotation(&self, a: &'a borrowed::Annotation<'a>) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::Annotation(a)
+    pub fn annotation(&self, a: &'a borrowed::Directive<'a>) -> borrowed::Node<'a> {
+        borrowed::Node::Directive(a)
     }
 
-    /// `AozoraNode::AngleQuote(AngleQuote { content })`.
+    /// `Node::AngleQuote(AngleQuote { content })`.
     ///
     /// `content` carries the [`borrowed::NonEmpty`] invariant — Phase 3
     /// pre-filters `≪≫` with empty body into plain text so this
@@ -563,16 +559,16 @@ impl<'a> BorrowedAllocator<'a> {
     /// Panics if `content` is empty. Phase 3's pre-filter is the
     /// gate; an empty payload here signals a classifier bug.
     #[must_use]
-    pub fn angle_quote(&self, content: borrowed::Content<'a>) -> borrowed::AozoraNode<'a> {
+    pub fn angle_quote(&self, content: borrowed::Content<'a>) -> borrowed::Node<'a> {
         let content = borrowed::NonEmpty::new(content)
             .expect("Phase 3 pre-filters empty AngleQuote into plain");
-        borrowed::AozoraNode::AngleQuote(self.arena.alloc(borrowed::AngleQuote { content }))
+        borrowed::Node::AngleQuote(self.arena.alloc(borrowed::AngleQuote { content }))
     }
 
-    /// `AozoraNode::Container(c)`.
+    /// `Node::Container(c)`.
     #[must_use]
-    pub fn container(&self, c: Container) -> borrowed::AozoraNode<'a> {
-        borrowed::AozoraNode::Container(c)
+    pub fn container(&self, c: Container) -> borrowed::Node<'a> {
+        borrowed::Node::Container(c)
     }
 }
 
@@ -580,7 +576,7 @@ impl<'a> BorrowedAllocator<'a> {
 mod tests {
     //! Per-variant round-trip tests for `BorrowedAllocator`.
     //!
-    //! Each test constructs one `borrowed::AozoraNode<'a>` via the
+    //! Each test constructs one `borrowed::Node<'a>` via the
     //! allocator and asserts the resulting payload fields match what
     //! we asked for. Together they cover all 18 node variants plus
     //! content / segment composition + interner dedup.
@@ -590,8 +586,8 @@ mod tests {
     use super::*;
     use crate::borrowed;
     use crate::{
-        AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind,
-        BoutenPosition, Container, ContainerKind, EmphasisKind, Indent, Keigakomi, SectionKind,
+        AlignEnd, BoutenKind, BoutenPosition, Container, ContainerKind, DirectiveKind,
+        EmphasisKind, Framed, HeadingKind, HeadingStyle, Indent, SectionKind,
     };
 
     fn fresh_alloc(arena: &Arena) -> BorrowedAllocator<'_> {
@@ -606,7 +602,7 @@ mod tests {
         let reading = a.content_plain("おうめ");
         let n = a.ruby(base, reading, true);
         match n {
-            borrowed::AozoraNode::Ruby(r) => {
+            borrowed::Node::Ruby(r) => {
                 assert_eq!(r.base.as_plain(), Some("青梅"));
                 assert_eq!(r.reading.as_plain(), Some("おうめ"));
                 assert!(r.delim_explicit);
@@ -622,7 +618,7 @@ mod tests {
         let target = a.content_plain("青空");
         let n = a.bouten(BoutenKind::Goma, target, BoutenPosition::Right, false);
         match n {
-            borrowed::AozoraNode::Bouten(b) => {
+            borrowed::Node::Bouten(b) => {
                 assert_eq!(b.kind, BoutenKind::Goma);
                 assert_eq!(b.target.as_plain(), Some("青空"));
                 assert_eq!(b.position, BoutenPosition::Right);
@@ -639,10 +635,10 @@ mod tests {
         let text = a.content_plain("12");
         let n = a.tate_chu_yoko(text, false);
         match n {
-            borrowed::AozoraNode::TateChuYoko(t) => {
+            borrowed::Node::CombineUpright(t) => {
                 assert_eq!(t.text.as_plain(), Some("12"));
             }
-            other => panic!("expected TateChuYoko, got {other:?}"),
+            other => panic!("expected CombineUpright, got {other:?}"),
         }
     }
 
@@ -653,7 +649,7 @@ mod tests {
         let text = a.content_plain("重要");
         let n = a.emphasis(EmphasisKind::Bold, text, true);
         match n {
-            borrowed::AozoraNode::Emphasis(e) => {
+            borrowed::Node::Emphasis(e) => {
                 assert_eq!(e.kind, EmphasisKind::Bold);
                 assert_eq!(e.text.as_plain(), Some("重要"));
                 assert!(e.consumed_predecessor);
@@ -674,7 +670,7 @@ mod tests {
         );
         let n = a.gaiji(g);
         match n {
-            borrowed::AozoraNode::Gaiji(gn) => {
+            borrowed::Node::Gaiji(gn) => {
                 assert_eq!(gn.description, "木＋吶のつくり");
                 assert_eq!(gn.ucs, Some(Resolved::Char('𠀋')));
                 assert_eq!(gn.mencode, Some("第3水準1-85-54"));
@@ -690,7 +686,7 @@ mod tests {
         let g = a.make_gaiji("desc", None, None, false);
         let n = a.gaiji(g);
         match n {
-            borrowed::AozoraNode::Gaiji(gn) => {
+            borrowed::Node::Gaiji(gn) => {
                 assert_eq!(gn.description, "desc");
                 assert!(gn.ucs.is_none());
                 assert!(gn.mencode.is_none());
@@ -704,10 +700,7 @@ mod tests {
         let arena = Arena::new();
         let a = fresh_alloc(&arena);
         let n = a.indent(Indent { amount: 3 });
-        assert!(matches!(
-            n,
-            borrowed::AozoraNode::Indent(Indent { amount: 3 })
-        ));
+        assert!(matches!(n, borrowed::Node::Indent(Indent { amount: 3 })));
     }
 
     #[test]
@@ -717,7 +710,7 @@ mod tests {
         let n = a.align_end(AlignEnd { offset: 2 });
         assert!(matches!(
             n,
-            borrowed::AozoraNode::AlignEnd(AlignEnd { offset: 2 })
+            borrowed::Node::AlignEnd(AlignEnd { offset: 2 })
         ));
     }
 
@@ -729,7 +722,7 @@ mod tests {
         let lower = a.content_plain("下");
         let n = a.warichu(upper, lower);
         match n {
-            borrowed::AozoraNode::Warichu(w) => {
+            borrowed::Node::Warichu(w) => {
                 assert_eq!(w.upper.as_plain(), Some("上"));
                 assert_eq!(w.lower.as_plain(), Some("下"));
             }
@@ -741,8 +734,8 @@ mod tests {
     fn keigakomi_round_trip() {
         let arena = Arena::new();
         let a = fresh_alloc(&arena);
-        let n = a.keigakomi(Keigakomi);
-        assert!(matches!(n, borrowed::AozoraNode::Keigakomi(Keigakomi)));
+        let n = a.keigakomi(Framed);
+        assert!(matches!(n, borrowed::Node::Framed(Framed)));
     }
 
     #[test]
@@ -750,7 +743,7 @@ mod tests {
         let arena = Arena::new();
         let a = fresh_alloc(&arena);
         let n = a.page_break();
-        assert!(matches!(n, borrowed::AozoraNode::PageBreak));
+        assert!(matches!(n, borrowed::Node::PageBreak));
     }
 
     #[test]
@@ -760,7 +753,7 @@ mod tests {
         let n = a.section_break(SectionKind::Kaicho);
         assert!(matches!(
             n,
-            borrowed::AozoraNode::SectionBreak(SectionKind::Kaicho)
+            borrowed::Node::SectionBreak(SectionKind::Kaicho)
         ));
     }
 
@@ -769,14 +762,14 @@ mod tests {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
         let text = a.content_plain("見出し");
-        let n = a.aozora_heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window, text);
+        let n = a.aozora_heading(HeadingKind::Medium, HeadingStyle::Window, text);
         match n {
-            borrowed::AozoraNode::AozoraHeading(h) => {
-                assert_eq!(h.kind, AozoraHeadingKind::Medium);
-                assert_eq!(h.style, AozoraHeadingStyle::Window);
+            borrowed::Node::Heading(h) => {
+                assert_eq!(h.kind, HeadingKind::Medium);
+                assert_eq!(h.style, HeadingStyle::Window);
                 assert_eq!(h.text.as_plain(), Some("見出し"));
             }
-            other => panic!("expected AozoraHeading, got {other:?}"),
+            other => panic!("expected Heading, got {other:?}"),
         }
     }
 
@@ -784,11 +777,11 @@ mod tests {
     fn heading_hint_round_trip() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let n = a.heading_hint(2, AozoraHeadingStyle::SameLine, "対象");
+        let n = a.heading_hint(2, HeadingStyle::SameLine, "対象");
         match n {
-            borrowed::AozoraNode::HeadingHint(h) => {
+            borrowed::Node::HeadingHint(h) => {
                 assert_eq!(h.level, 2);
-                assert_eq!(h.style, AozoraHeadingStyle::SameLine);
+                assert_eq!(h.style, HeadingStyle::SameLine);
                 assert_eq!(h.target.as_str(), "対象");
             }
             other => panic!("expected HeadingHint, got {other:?}"),
@@ -802,7 +795,7 @@ mod tests {
         let caption = a.content_plain("挿絵キャプション");
         let n = a.sashie("fig01.png", Some("3"), None, Some(caption));
         match n {
-            borrowed::AozoraNode::Sashie(s) => {
+            borrowed::Node::Illustration(s) => {
                 assert_eq!(s.file.as_str(), "fig01.png");
                 assert_eq!(s.number.expect("number present").as_str(), "3");
                 assert_eq!(
@@ -810,7 +803,7 @@ mod tests {
                     Some("挿絵キャプション")
                 );
             }
-            other => panic!("expected Sashie, got {other:?}"),
+            other => panic!("expected Illustration, got {other:?}"),
         }
     }
 
@@ -820,12 +813,12 @@ mod tests {
         let mut a = fresh_alloc(&arena);
         let n = a.sashie("fig02.png", None, None, None);
         match n {
-            borrowed::AozoraNode::Sashie(s) => {
+            borrowed::Node::Illustration(s) => {
                 assert_eq!(s.file.as_str(), "fig02.png");
                 assert!(s.number.is_none());
                 assert!(s.caption.is_none());
             }
-            other => panic!("expected Sashie, got {other:?}"),
+            other => panic!("expected Illustration, got {other:?}"),
         }
     }
 
@@ -835,7 +828,7 @@ mod tests {
         let mut a = fresh_alloc(&arena);
         let n = a.kaeriten("一");
         match n {
-            borrowed::AozoraNode::Kaeriten(k) => assert_eq!(k.mark.as_str(), "一"),
+            borrowed::Node::Kaeriten(k) => assert_eq!(k.mark.as_str(), "一"),
             other => panic!("expected Kaeriten, got {other:?}"),
         }
     }
@@ -844,14 +837,14 @@ mod tests {
     fn annotation_round_trip() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let payload = a.make_annotation("［＃X］", AnnotationKind::Unknown);
+        let payload = a.make_directive("［＃X］", DirectiveKind::Unknown);
         let n = a.annotation(payload);
         match n {
-            borrowed::AozoraNode::Annotation(an) => {
+            borrowed::Node::Directive(an) => {
                 assert_eq!(an.raw.as_str(), "［＃X］");
-                assert_eq!(an.kind, AnnotationKind::Unknown);
+                assert_eq!(an.kind, DirectiveKind::Unknown);
             }
-            other => panic!("expected Annotation, got {other:?}"),
+            other => panic!("expected Directive, got {other:?}"),
         }
     }
 
@@ -862,7 +855,7 @@ mod tests {
         let content = a.content_plain("重要");
         let n = a.angle_quote(content);
         match n {
-            borrowed::AozoraNode::AngleQuote(d) => {
+            borrowed::Node::AngleQuote(d) => {
                 assert_eq!(d.content.as_plain(), Some("重要"));
             }
             other => panic!("expected AngleQuote, got {other:?}"),
@@ -881,7 +874,7 @@ mod tests {
             },
         };
         let n = a.container(c);
-        assert!(matches!(n, borrowed::AozoraNode::Container(cc) if cc == c));
+        assert!(matches!(n, borrowed::Node::Container(cc) if cc == c));
     }
 
     // ---------------------------------------------------------------------
@@ -912,7 +905,7 @@ mod tests {
         let seg_g = a.seg_gaiji(g);
         let seg_t1 = a.seg_text("before ");
         let seg_t2 = a.seg_text(" after");
-        let ann = a.make_annotation("［＃X］", AnnotationKind::Unknown);
+        let ann = a.make_directive("［＃X］", DirectiveKind::Unknown);
         let seg_a = a.seg_annotation(ann);
         let c = a.content_segments(&[seg_t1, seg_g, seg_t2, seg_a]);
         let borrowed::Content::Segments(segs) = c else {
@@ -922,7 +915,7 @@ mod tests {
         assert!(matches!(&segs[0], borrowed::Segment::Text(t) if *t == "before "));
         assert!(matches!(&segs[1], borrowed::Segment::Gaiji(_)));
         assert!(matches!(&segs[2], borrowed::Segment::Text(t) if *t == " after"));
-        assert!(matches!(&segs[3], borrowed::Segment::Annotation(_)));
+        assert!(matches!(&segs[3], borrowed::Segment::Directive(_)));
     }
 
     #[test]
@@ -958,10 +951,10 @@ mod tests {
         let base2 = a.content_plain("青梅");
         let reading2 = a.content_plain("おうめ");
         let n2 = a.ruby(base2, reading2, false);
-        let borrowed::AozoraNode::Ruby(r1) = n1 else {
+        let borrowed::Node::Ruby(r1) = n1 else {
             unreachable!();
         };
-        let borrowed::AozoraNode::Ruby(r2) = n2 else {
+        let borrowed::Node::Ruby(r2) = n2 else {
             unreachable!();
         };
         let s1 = r1.reading.as_plain().expect("plain");

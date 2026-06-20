@@ -1,9 +1,9 @@
 # NodeKind::ContainerOpen
 
-Wire tag: `containerOpen` — paired-container open boundary marker.
+Inspect tag: `containerOpen` — paired-container open boundary marker.
 
 This variant only appears in `NodeRef`-flavoured wire output (e.g.
-`serialize_nodes`); the structural [`AozoraNode::Container`](container.md)
+`nodes`); the structural [`Node::Container`](container.md)
 payload covers the wrapping construct itself.
 
 ## Source examples

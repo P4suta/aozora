@@ -139,7 +139,7 @@ fn json_format_emits_wire_envelope() {
     let value: serde_json::Value =
         serde_json::from_str(stderr.trim()).expect("json diagnostics envelope parses");
     assert_eq!(
-        value["schema_version"], 1,
+        value["schemaVersion"], 1,
         "wire envelope carries schema_version 1: {stderr:?}"
     );
     let data = value["data"]
@@ -172,7 +172,7 @@ fn auto_format_resolves_to_json_when_stderr_is_piped() {
     let value: serde_json::Value =
         serde_json::from_str(stderr.trim()).expect("auto → json envelope parses");
     assert_eq!(
-        value["schema_version"], 1,
+        value["schemaVersion"], 1,
         "auto resolves to the json envelope off a TTY: {stderr:?}"
     );
 }

@@ -3,9 +3,9 @@
 //! [`ContainerKind`] is the tag the lexer's classify phase emits on
 //! every paired open / close marker (e.g. `［＃ここから2字下げ］ … ［＃ここで字下げ終わり］`).
 //! The renderer reads it when wrapping the enclosed sibling nodes
-//! into an `AozoraNode::Container`.
+//! into an `Node::Container`.
 
-use crate::{AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition};
+use crate::{BoutenKind, BoutenPosition, HeadingKind, HeadingStyle};
 
 /// The kinds of Aozora container blocks the lexer classifies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,7 +27,7 @@ pub enum ContainerKind {
     /// `［＃割り注］ ... ［＃割り注終わり］` (when spanning multiple lines)
     Warichu,
     /// `［＃罫囲み］ ... ［＃罫囲み終わり］`
-    Keigakomi,
+    Framed,
     /// `［＃ここから地付き］` / `［＃ここから地から N 字上げ］`
     AlignEnd { offset: u8 },
     /// `［＃ここから N字詰め］ ... ［＃ここで字詰め終わり］` — line-width
@@ -69,13 +69,13 @@ pub enum ContainerKind {
     /// ［＃窓中見出し終わり］` (`block: false`) and the **block** form
     /// `［＃ここから大見出し］ ... ［＃ここで大見出し終わり］` (`block: true`)
     /// wrap their enclosed run and render it as a heading — the container
-    /// counterpart of the forward-reference [`crate::borrowed::AozoraHeading`]
+    /// counterpart of the forward-reference [`crate::borrowed::Heading`]
     /// leaf. `kind` is the 大/中/小 level, `style` the standard / 同行 / 窓
     /// style. Its content is *phrasing* (rendered directly inside the
     /// `<hN>` / `<div>`, not wrapped in a `<p>`) — see [`Self::content_is_phrasing`].
     Heading {
-        kind: AozoraHeadingKind,
-        style: AozoraHeadingStyle,
+        kind: HeadingKind,
+        style: HeadingStyle,
         block: bool,
     },
     /// `［＃ここからN段組(み)］ ... ［＃ここで段組(み)終わり］` — a multi-column
@@ -116,11 +116,11 @@ pub enum ContainerKind {
     Caption { block: bool },
     /// 縦中横 range form `［＃縦中横］ … ［＃縦中横終わり］` — sets the enclosed
     /// run horizontally within vertical text. The forward-reference leaf
-    /// `「X」は縦中横` ([`super::borrowed::TateChuYoko`]) is the official form;
+    /// `「X」は縦中横` ([`super::borrowed::CombineUpright`]) is the official form;
     /// this paired range is a corpus convention (not in the official 注記
     /// 一覧), so it is a tolerant extension. Inline — like the leaf, it
-    /// renders `<span class="aozora-tcy">` with no block padding.
-    TcyRange,
+    /// renders `<span class="aozora-combine-upright">` with no block padding.
+    CombineUprightRange,
 }
 
 impl ContainerKind {
@@ -137,7 +137,7 @@ impl ContainerKind {
         match self {
             Self::Indent { .. } => "indent",
             Self::Warichu => "warichu",
-            Self::Keigakomi => "keigakomi",
+            Self::Framed => "framed",
             Self::AlignEnd { .. } => "align-end",
             Self::LineWidth { .. } => "line-width",
             Self::BoutenRange { .. } => "bouten-range",
@@ -150,7 +150,7 @@ impl ContainerKind {
             Self::FontSize { .. } => "font-size",
             Self::SmallScript { .. } => "small-script",
             Self::Caption { .. } => "caption",
-            Self::TcyRange => "tcy-range",
+            Self::CombineUprightRange => "combine-upright-range",
         }
     }
 
@@ -188,7 +188,7 @@ impl ContainerKind {
                 | Self::Italic { block: false }
                 | Self::SmallScript { .. }
                 | Self::Caption { block: false }
-                | Self::TcyRange
+                | Self::CombineUprightRange
         )
     }
 }
@@ -239,7 +239,7 @@ mod tests {
             "indent"
         );
         assert_eq!(ContainerKind::Warichu.kind_str(), "warichu");
-        assert_eq!(ContainerKind::Keigakomi.kind_str(), "keigakomi");
+        assert_eq!(ContainerKind::Framed.kind_str(), "framed");
         assert_eq!(
             ContainerKind::AlignEnd { offset: 0 }.kind_str(),
             "align-end"

@@ -1,6 +1,6 @@
 # NodeKind::PageBreak
 
-Wire tag: `pageBreak` — `［＃改ページ］` page break marker.
+Inspect tag: `pageBreak` — `［＃改ページ］` page break marker.
 
 ## Source examples
 
@@ -25,7 +25,7 @@ Round-trips to `［＃改ページ］\n`.
 
 ## AST shape
 
-`AozoraNode::PageBreak` is a unit variant — no payload.
+`Node::PageBreak` is a unit variant — no payload.
 
 ## When emitted
 

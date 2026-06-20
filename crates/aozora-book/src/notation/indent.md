@@ -25,7 +25,7 @@ The 字下げ / 地付き / 地上げ directives also have a **single-line** for
 ```
 
 In the borrowed AST a single-line directive is a **zero-width marker**
-node (`AozoraNode::Indent` / `AlignEnd`), not a wrapping container — it
+node (`Node::Indent` / `AlignEnd`), not a wrapping container — it
 renders as an empty span and the following text stays a sibling:
 
 ```html
@@ -49,7 +49,7 @@ pub struct Container {
 pub enum ContainerKind {
     Indent { amount: u8 },    // ［＃ここからN字下げ］
     AlignEnd { offset: u8 },  // ［＃ここから地付き / 地からN字上げ］
-    Keigakomi,                // ［＃罫囲み］
+    Framed,                // ［＃罫囲み］
     Warichu,                  // ［＃割り注］           (inline)
     BoutenRange { kind: BoutenKind, position: BoutenPosition }, // ［＃傍点］… (inline)
 }

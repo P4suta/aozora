@@ -1,17 +1,17 @@
 ---
 source: crates/aozora-cli/tests/snapshot_cli.rs
-expression: "run(&[\"wire\", \"--help\"])"
+expression: "run(&[\"inspect\", \"--help\"])"
 ---
-Emit a parsed document's wire JSON for one `aozora::wire` envelope — `nodes` / `pairs` /
+Emit a parsed document's JSON for one `aozora::json` envelope — `nodes` / `pairs` /
 `container-pairs` / `diagnostics` / `gaiji` — or the static `slugs` catalogue. The data counterpart
-to `schema`: `schema <kind>` prints the JSON Schema, `wire <kind>` prints a document's data in that
-schema, byte-identical to every binding's `*_json()` output
+to `schema`: `schema <kind>` prints the JSON Schema, `inspect <kind>` prints a document's data in
+that schema, byte-identical to every binding's `*_json()` output
 
-Usage: aozora wire [OPTIONS] <WHICH> [FILE]
+Usage: aozora inspect [OPTIONS] <WHICH> [FILE]
 
 Arguments:
   <WHICH>
-          Which wire envelope to emit
+          Which JSON envelope to emit
 
           Possible values:
           - diagnostics:     Per-diagnostic `{ kind, severity, source, span, codepoint? }`
@@ -46,7 +46,7 @@ Options:
 
       --timing
           Print per-phase timing (read / parse / output) to stderr. Writes only to stderr, so stdout
-          stays byte-identical — safe to leave on inside a `render` / `wire` pipeline
+          stays byte-identical — safe to leave on inside a `render` / `inspect` pipeline
 
       --timing-format <TIMING_FORMAT>
           Timing report format: `human` (aligned lines + total, the default) or `json` (a
@@ -55,7 +55,7 @@ Options:
 
           Possible values:
           - human: Aligned `name  duration` lines plus a total. The default
-          - json:  `{"schema_version":1,"phases":[{"name","nanos"}],"total_nanos"}` — the agent /
+          - json:  `{"schemaVersion":1,"phases":[{"name","nanos"}],"totalNanos"}` — the agent /
             scripting view
           
           [default: human]
@@ -71,7 +71,7 @@ Options:
           Print version
 
 Examples:
-  aozora wire nodes src.txt           # source nodes as JSON
-  cat src.txt | aozora wire pairs     # matched pairs from stdin
-  aozora wire gaiji -E sjis file.txt  # resolved gaiji references
-  aozora wire slugs                   # the static slug catalogue
+  aozora inspect nodes src.txt           # source nodes as JSON
+  cat src.txt | aozora inspect pairs     # matched pairs from stdin
+  aozora inspect gaiji -E sjis file.txt  # resolved gaiji references
+  aozora inspect slugs                   # the static slug catalogue

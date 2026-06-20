@@ -165,7 +165,7 @@ belongs to an opt-in higher layer (formatter / LSP).
 - Wire authority (machine view): `crates/aozora/src/wire.rs`
   (`serialize_diagnostics`, `SCHEMA_VERSION`).
 - Sanitize phase (span coordinate origin):
-  `crates/aozora-pipeline/src/lexer/phase0_sanitize.rs`.
+  `crates/aozora-pipeline/src/lexer/sanitize.rs`.
 - miette feature pins: workspace `Cargo.toml` (bare `miette`) vs
   `crates/aozora-cli/Cargo.toml` (`features = ["fancy"]`); library example
   `crates/aozora-spec/Cargo.toml` (bare).

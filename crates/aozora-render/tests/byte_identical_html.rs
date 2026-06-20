@@ -9,7 +9,7 @@
 //! contract is: for any plain-text input (no Aozora markup), both
 //! renderers MUST produce byte-identical HTML.
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_render::html;
 use aozora_syntax::borrowed::Arena;
 use proptest::prelude::*;
@@ -20,7 +20,7 @@ use proptest::prelude::*;
 /// after wrapping.
 fn render_streaming(text: &str) -> String {
     let arena = Arena::new();
-    let out = lex_into_arena(text, &arena);
+    let out = lex(text, &arena);
     html::render_to_string(&out)
 }
 

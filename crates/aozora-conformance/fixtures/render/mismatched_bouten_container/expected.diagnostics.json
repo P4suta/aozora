@@ -1,1 +1,1 @@
-{"schema_version":1,"data":[{"kind":"mismatched_bouten_container","severity":"error","source":"source","span":{"start":27,"end":51}}]}
+{"schemaVersion":1,"data":[{"kind":"mismatched_bouten_container","severity":"error","source":"source","span":{"start":27,"end":51}}]}

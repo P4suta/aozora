@@ -32,7 +32,7 @@ Options:
 
       --timing
           Print per-phase timing (read / parse / output) to stderr. Writes only to stderr, so stdout
-          stays byte-identical — safe to leave on inside a `render` / `wire` pipeline
+          stays byte-identical — safe to leave on inside a `render` / `inspect` pipeline
 
       --timing-format <TIMING_FORMAT>
           Timing report format: `human` (aligned lines + total, the default) or `json` (a
@@ -41,7 +41,7 @@ Options:
 
           Possible values:
           - human: Aligned `name  duration` lines plus a total. The default
-          - json:  `{"schema_version":1,"phases":[{"name","nanos"}],"total_nanos"}` — the agent /
+          - json:  `{"schemaVersion":1,"phases":[{"name","nanos"}],"totalNanos"}` — the agent /
             scripting view
           
           [default: human]
@@ -58,14 +58,14 @@ Options:
 
       --diagnostic-format <DIAGNOSTIC_FORMAT>
           How to render diagnostics: `human` (graphical snippet, the default on a terminal), `json`
-          (the `aozora::wire` envelope, the default when stderr is piped — the machine / agent
+          (the `aozora::json` envelope, the default when stderr is piped — the machine / agent
           path), or `short` (one grep-able line per diagnostic). Falls back to
           `AOZORA_DIAGNOSTIC_FORMAT`, then `.aozora.toml`
 
           Possible values:
           - auto:  Graphical (`human`) on a terminal, machine (`json`) when piped
           - human: miette graphical report — source snippet + caret + label + help
-          - json:  The `aozora::wire` JSON envelope — the cross-binding machine view
+          - json:  The `aozora::json` JSON envelope — the cross-binding machine view
           - short: One grep-able line per diagnostic: `path:offset: severity[code]: msg`
           
           [env: AOZORA_DIAGNOSTIC_FORMAT=]

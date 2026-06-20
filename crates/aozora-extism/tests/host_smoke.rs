@@ -1,11 +1,11 @@
 //! End-to-end ABI smoke test for the Extism plugin.
 //!
 //! The library unit tests prove the `logic` functions are byte-identical
-//! to `aozora::wire`, but they call that logic in-process — they never
+//! to `aozora::json`, but they call that logic in-process — they never
 //! cross the Extism plugin boundary. This test does: it loads the
 //! actually-built `dist/aozora.wasm` through the Extism **host** SDK
 //! (wasmtime) and asserts every export returns bytes identical to
-//! calling `aozora::wire` directly. That extends the cross-binding
+//! calling `aozora::json` directly. That extends the cross-binding
 //! guarantee (already asserted for FFI / WASM / `PyO3`) to the wasm
 //! transport, mirroring what `smoke-ffi` does for the C ABI.
 //!
@@ -16,7 +16,7 @@
 
 use std::fs;
 
-use aozora::{Document, wire};
+use aozora::{Document, json};
 use extism::{Manifest, Plugin, Wasm};
 
 /// The artifact `just extism-build` writes. Read at runtime (not
@@ -52,29 +52,29 @@ fn every_export_is_byte_identical_to_the_shared_authority() {
         assert_eq!(html, tree.to_html(), "to_html src: {src}");
 
         let serialized: &str = plugin.call("serialize", src).expect("serialize");
-        assert_eq!(serialized, tree.serialize(), "serialize src: {src}");
+        assert_eq!(serialized, tree.to_source(), "serialize src: {src}");
 
         let diagnostics: &str = plugin
             .call("diagnostics_json", src)
             .expect("diagnostics_json");
         assert_eq!(
             diagnostics,
-            wire::serialize_diagnostics(tree.diagnostics()),
+            json::diagnostics(tree.diagnostics()),
             "diagnostics_json src: {src}"
         );
 
         let nodes: &str = plugin.call("nodes_json", src).expect("nodes_json");
-        assert_eq!(nodes, wire::serialize_nodes(&tree), "nodes_json src: {src}");
+        assert_eq!(nodes, json::nodes(&tree), "nodes_json src: {src}");
 
         let pairs: &str = plugin.call("pairs_json", src).expect("pairs_json");
-        assert_eq!(pairs, wire::serialize_pairs(&tree), "pairs_json src: {src}");
+        assert_eq!(pairs, json::pairs(&tree), "pairs_json src: {src}");
 
         let containers: &str = plugin
             .call("container_pairs_json", src)
             .expect("container_pairs_json");
         assert_eq!(
             containers,
-            wire::serialize_container_pairs(&tree),
+            json::container_pairs(&tree),
             "container_pairs_json src: {src}"
         );
     }
@@ -84,5 +84,5 @@ fn every_export_is_byte_identical_to_the_shared_authority() {
 fn schema_version_export_matches_wire() {
     let mut plugin = load_plugin();
     let version: &str = plugin.call("schema_version", "").expect("schema_version");
-    assert_eq!(version, wire::SCHEMA_VERSION.to_string());
+    assert_eq!(version, json::SCHEMA_VERSION.to_string());
 }

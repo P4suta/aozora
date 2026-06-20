@@ -10,10 +10,10 @@
 //!
 //! # Design
 //!
-//! - `AozoraVisitor<'src>` has one method per [`AozoraNode`] variant
+//! - `AozoraVisitor<'src>` has one method per [`Node`] variant
 //!   plus container open / close. Default impls are no-ops so a
 //!   visitor that only cares about a subset of variants stays terse.
-//! - `dispatch_node` routes a `borrowed::AozoraNode<'src>` through
+//! - `dispatch_node` routes a `borrowed::Node<'src>` through
 //!   the visitor. Mirrors the legacy `render_node::render` enter /
 //!   exit semantics: containers fire open on enter and close on
 //!   exit; every other variant ignores the exit pass.
@@ -24,10 +24,10 @@
 use core::fmt;
 
 use aozora_syntax::borrowed::{
-    AngleQuote, Annotation, AozoraHeading, AozoraNode, Bouten, Gaiji, HeadingHint, Kaeriten, Ruby,
-    Sashie, SideNote, TateChuYoko, Warichu,
+    AngleQuote, Bouten, CombineUpright, Directive, Gaiji, Heading, HeadingHint, Illustration,
+    Kaeriten, MarginNote, Node, Ruby, Warichu,
 };
-use aozora_syntax::{AlignEnd, Center, Container, Indent, Keigakomi, SectionKind};
+use aozora_syntax::{AlignEnd, Center, Container, Framed, Indent, SectionKind};
 
 /// Tree-walker visitor for borrowed Aozora AST nodes.
 ///
@@ -36,7 +36,7 @@ use aozora_syntax::{AlignEnd, Center, Container, Indent, Keigakomi, SectionKind}
 /// impls are no-ops; implementors override only the variants they
 /// produce output for. The `'src` lifetime mirrors the borrowed-AST
 /// lifetime — node payloads borrow from the same arena that the
-/// `BorrowedLexOutput` borrows from.
+/// `LexOutput` borrows from.
 ///
 /// # Errors
 ///
@@ -55,13 +55,13 @@ pub trait AozoraVisitor<'src> {
     fn visit_ruby(&mut self, r: &Ruby<'src>) -> fmt::Result {
         Ok(())
     }
-    fn visit_side_note(&mut self, s: &SideNote<'src>) -> fmt::Result {
+    fn visit_side_note(&mut self, s: &MarginNote<'src>) -> fmt::Result {
         Ok(())
     }
     fn visit_bouten(&mut self, b: &Bouten<'src>) -> fmt::Result {
         Ok(())
     }
-    fn visit_tate_chu_yoko(&mut self, t: &TateChuYoko<'src>) -> fmt::Result {
+    fn visit_tate_chu_yoko(&mut self, t: &CombineUpright<'src>) -> fmt::Result {
         Ok(())
     }
     fn visit_gaiji(&mut self, g: &Gaiji<'src>) -> fmt::Result {
@@ -79,7 +79,7 @@ pub trait AozoraVisitor<'src> {
     fn visit_warichu(&mut self, w: &Warichu<'src>) -> fmt::Result {
         Ok(())
     }
-    fn visit_keigakomi(&mut self, k: Keigakomi) -> fmt::Result {
+    fn visit_keigakomi(&mut self, k: Framed) -> fmt::Result {
         Ok(())
     }
     fn visit_page_break(&mut self) -> fmt::Result {
@@ -88,26 +88,26 @@ pub trait AozoraVisitor<'src> {
     fn visit_section_break(&mut self, k: SectionKind) -> fmt::Result {
         Ok(())
     }
-    fn visit_aozora_heading(&mut self, h: &AozoraHeading<'src>) -> fmt::Result {
+    fn visit_aozora_heading(&mut self, h: &Heading<'src>) -> fmt::Result {
         Ok(())
     }
     fn visit_heading_hint(&mut self, h: &HeadingHint<'src>) -> fmt::Result {
         Ok(())
     }
-    fn visit_sashie(&mut self, s: &Sashie<'src>) -> fmt::Result {
+    fn visit_sashie(&mut self, s: &Illustration<'src>) -> fmt::Result {
         Ok(())
     }
     fn visit_kaeriten(&mut self, k: &Kaeriten<'src>) -> fmt::Result {
         Ok(())
     }
-    fn visit_annotation(&mut self, a: &Annotation<'src>) -> fmt::Result {
+    fn visit_annotation(&mut self, a: &Directive<'src>) -> fmt::Result {
         Ok(())
     }
     fn visit_angle_quote(&mut self, d: &AngleQuote<'src>) -> fmt::Result {
         Ok(())
     }
     /// Container-open event. Fires on the entering pass for
-    /// `AozoraNode::Container` nodes; the corresponding
+    /// `Node::Container` nodes; the corresponding
     /// `visit_container_close` fires on exit.
     fn visit_container_open(&mut self, c: Container) -> fmt::Result {
         Ok(())
@@ -117,7 +117,7 @@ pub trait AozoraVisitor<'src> {
     }
 }
 
-/// Dispatch a single borrowed [`AozoraNode`] through the visitor,
+/// Dispatch a single borrowed [`Node`] through the visitor,
 /// honouring the standard enter / exit convention.
 ///
 /// `entering = true` fires the per-variant `visit_*` method.
@@ -128,12 +128,12 @@ pub trait AozoraVisitor<'src> {
 ///
 /// Propagates the visitor method's `fmt::Result`.
 pub fn dispatch_node<'src, V: AozoraVisitor<'src>>(
-    node: AozoraNode<'src>,
+    node: Node<'src>,
     entering: bool,
     v: &mut V,
 ) -> fmt::Result {
     match node {
-        AozoraNode::Container(c) => {
+        Node::Container(c) => {
             if entering {
                 v.visit_container_open(c)
             } else {
@@ -141,25 +141,25 @@ pub fn dispatch_node<'src, V: AozoraVisitor<'src>>(
             }
         }
         _ if !entering => Ok(()),
-        AozoraNode::Ruby(r) => v.visit_ruby(r),
-        AozoraNode::SideNote(s) => v.visit_side_note(s),
-        AozoraNode::Bouten(b) => v.visit_bouten(b),
-        AozoraNode::TateChuYoko(t) => v.visit_tate_chu_yoko(t),
-        AozoraNode::Gaiji(g) => v.visit_gaiji(g),
-        AozoraNode::Indent(i) => v.visit_indent(i),
-        AozoraNode::AlignEnd(a) => v.visit_align_end(a),
-        AozoraNode::Center(c) => v.visit_center(c),
-        AozoraNode::Warichu(w) => v.visit_warichu(w),
-        AozoraNode::Keigakomi(k) => v.visit_keigakomi(k),
-        AozoraNode::PageBreak => v.visit_page_break(),
-        AozoraNode::SectionBreak(k) => v.visit_section_break(k),
-        AozoraNode::AozoraHeading(h) => v.visit_aozora_heading(h),
-        AozoraNode::HeadingHint(h) => v.visit_heading_hint(h),
-        AozoraNode::Sashie(s) => v.visit_sashie(s),
-        AozoraNode::Kaeriten(k) => v.visit_kaeriten(k),
-        AozoraNode::Annotation(a) => v.visit_annotation(a),
-        AozoraNode::AngleQuote(d) => v.visit_angle_quote(d),
-        // `AozoraNode` is `#[non_exhaustive]`; future variants no-op
+        Node::Ruby(r) => v.visit_ruby(r),
+        Node::MarginNote(s) => v.visit_side_note(s),
+        Node::Bouten(b) => v.visit_bouten(b),
+        Node::CombineUpright(t) => v.visit_tate_chu_yoko(t),
+        Node::Gaiji(g) => v.visit_gaiji(g),
+        Node::Indent(i) => v.visit_indent(i),
+        Node::AlignEnd(a) => v.visit_align_end(a),
+        Node::Center(c) => v.visit_center(c),
+        Node::Warichu(w) => v.visit_warichu(w),
+        Node::Framed(k) => v.visit_keigakomi(k),
+        Node::PageBreak => v.visit_page_break(),
+        Node::SectionBreak(k) => v.visit_section_break(k),
+        Node::Heading(h) => v.visit_aozora_heading(h),
+        Node::HeadingHint(h) => v.visit_heading_hint(h),
+        Node::Illustration(s) => v.visit_sashie(s),
+        Node::Kaeriten(k) => v.visit_kaeriten(k),
+        Node::Directive(a) => v.visit_annotation(a),
+        Node::AngleQuote(d) => v.visit_angle_quote(d),
+        // `Node` is `#[non_exhaustive]`; future variants no-op
         // until a visitor method is added for them.
         _ => Ok(()),
     }
@@ -219,18 +219,18 @@ mod tests {
         let borrowed_ruby = alloc.ruby(base, reading, false);
         let mut counter = Counter::default();
         dispatch_node(borrowed_ruby, true, &mut counter).unwrap();
-        dispatch_node(AozoraNode::PageBreak, true, &mut counter).unwrap();
+        dispatch_node(Node::PageBreak, true, &mut counter).unwrap();
         dispatch_node(
-            AozoraNode::Container(Container {
-                kind: aozora_syntax::ContainerKind::Keigakomi,
+            Node::Container(Container {
+                kind: aozora_syntax::ContainerKind::Framed,
             }),
             true,
             &mut counter,
         )
         .unwrap();
         dispatch_node(
-            AozoraNode::Container(Container {
-                kind: aozora_syntax::ContainerKind::Keigakomi,
+            Node::Container(Container {
+                kind: aozora_syntax::ContainerKind::Framed,
             }),
             false,
             &mut counter,
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn exit_pass_is_noop_for_non_container_variants() {
         let mut counter = Counter::default();
-        dispatch_node(AozoraNode::PageBreak, false, &mut counter).unwrap();
+        dispatch_node(Node::PageBreak, false, &mut counter).unwrap();
         assert_eq!(counter.page_breaks, 0);
     }
 
@@ -254,12 +254,7 @@ mod tests {
         // `Counter` doesn't override visit_section_break — calling
         // it must not panic and must not affect any other counter.
         let mut counter = Counter::default();
-        dispatch_node(
-            AozoraNode::SectionBreak(SectionKind::Kaicho),
-            true,
-            &mut counter,
-        )
-        .unwrap();
+        dispatch_node(Node::SectionBreak(SectionKind::Kaicho), true, &mut counter).unwrap();
         assert_eq!(counter.rubies, 0, "ruby counter must stay untouched");
         assert_eq!(counter.any_other, 0, "other counter must stay untouched");
     }
@@ -267,7 +262,7 @@ mod tests {
     // -------------------------------------------------------------------
     // Full dispatch coverage: a recorder visitor that overrides *every*
     // `visit_*` method and pushes a stable tag, so `dispatch_node` can be
-    // asserted to route each `AozoraNode` variant to the matching method.
+    // asserted to route each `Node` variant to the matching method.
     // -------------------------------------------------------------------
 
     /// Records the tag of each visit in call order.
@@ -281,7 +276,7 @@ mod tests {
             self.log.push("ruby");
             Ok(())
         }
-        fn visit_side_note(&mut self, _s: &SideNote<'src>) -> fmt::Result {
+        fn visit_side_note(&mut self, _s: &MarginNote<'src>) -> fmt::Result {
             self.log.push("side_note");
             Ok(())
         }
@@ -289,7 +284,7 @@ mod tests {
             self.log.push("bouten");
             Ok(())
         }
-        fn visit_tate_chu_yoko(&mut self, _t: &TateChuYoko<'src>) -> fmt::Result {
+        fn visit_tate_chu_yoko(&mut self, _t: &CombineUpright<'src>) -> fmt::Result {
             self.log.push("tcy");
             Ok(())
         }
@@ -313,7 +308,7 @@ mod tests {
             self.log.push("warichu");
             Ok(())
         }
-        fn visit_keigakomi(&mut self, _k: Keigakomi) -> fmt::Result {
+        fn visit_keigakomi(&mut self, _k: Framed) -> fmt::Result {
             self.log.push("keigakomi");
             Ok(())
         }
@@ -325,7 +320,7 @@ mod tests {
             self.log.push("section_break");
             Ok(())
         }
-        fn visit_aozora_heading(&mut self, _h: &AozoraHeading<'src>) -> fmt::Result {
+        fn visit_aozora_heading(&mut self, _h: &Heading<'src>) -> fmt::Result {
             self.log.push("aozora_heading");
             Ok(())
         }
@@ -333,7 +328,7 @@ mod tests {
             self.log.push("heading_hint");
             Ok(())
         }
-        fn visit_sashie(&mut self, _s: &Sashie<'src>) -> fmt::Result {
+        fn visit_sashie(&mut self, _s: &Illustration<'src>) -> fmt::Result {
             self.log.push("sashie");
             Ok(())
         }
@@ -341,7 +336,7 @@ mod tests {
             self.log.push("kaeriten");
             Ok(())
         }
-        fn visit_annotation(&mut self, _a: &Annotation<'src>) -> fmt::Result {
+        fn visit_annotation(&mut self, _a: &Directive<'src>) -> fmt::Result {
             self.log.push("annotation");
             Ok(())
         }
@@ -359,7 +354,7 @@ mod tests {
         }
     }
 
-    /// Build one of every dispatchable `AozoraNode` variant (skipping
+    /// Build one of every dispatchable `Node` variant (skipping
     /// `Emphasis`, which `dispatch_node` deliberately has no visit method
     /// for — its enter pass no-ops via the `#[non_exhaustive]` `_` arm).
     #[allow(
@@ -368,8 +363,8 @@ mod tests {
     )]
     fn dispatch_every_variant_into(recorder: &mut Recorder) {
         use aozora_syntax::{
-            AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-            ContainerKind, SideNoteKind,
+            BoutenKind, BoutenPosition, ContainerKind, DirectiveKind, HeadingKind, HeadingStyle,
+            MarginNoteKind,
         };
 
         let arena = Arena::new();
@@ -381,7 +376,7 @@ mod tests {
 
         let nbase = a.content_plain("底");
         let note = a.content_plain("注");
-        let side_note = a.side_note(SideNoteKind::Annotation, nbase, note);
+        let side_note = a.side_note(MarginNoteKind::Gloss, nbase, note);
 
         let btarget = a.content_plain("点");
         let bouten = a.bouten(BoutenKind::Goma, btarget, BoutenPosition::Right, false);
@@ -400,29 +395,25 @@ mod tests {
         let lower = a.content_plain("下");
         let warichu = a.warichu(upper, lower);
 
-        let keigakomi = a.keigakomi(Keigakomi);
+        let keigakomi = a.keigakomi(Framed);
         let page_break = a.page_break();
         let section_break = a.section_break(SectionKind::Kaicho);
 
         let htext = a.content_plain("見出し");
-        let heading = a.aozora_heading(
-            AozoraHeadingKind::Large,
-            AozoraHeadingStyle::Standard,
-            htext,
-        );
-        let heading_hint = a.heading_hint(1, AozoraHeadingStyle::Standard, "対象");
+        let heading = a.aozora_heading(HeadingKind::Large, HeadingStyle::Standard, htext);
+        let heading_hint = a.heading_hint(1, HeadingStyle::Standard, "対象");
 
         let sashie = a.sashie("fig.png", None, None, None);
         let kaeriten = a.kaeriten("レ");
 
-        let ann_payload = a.make_annotation("［＃X］", AnnotationKind::Unknown);
+        let ann_payload = a.make_directive("［＃X］", DirectiveKind::Unknown);
         let annotation = a.annotation(ann_payload);
 
         let qcontent = a.content_plain("引用");
         let angle_quote = a.angle_quote(qcontent);
 
         let container = a.container(Container {
-            kind: ContainerKind::Keigakomi,
+            kind: ContainerKind::Framed,
         });
 
         let nodes = [
@@ -502,7 +493,7 @@ mod tests {
             false,
         );
         let mut recorder = Recorder::default();
-        for n in [ruby, bouten, AozoraNode::PageBreak] {
+        for n in [ruby, bouten, Node::PageBreak] {
             dispatch_node(n, false, &mut recorder).expect("exit dispatch never fails");
         }
         assert!(
@@ -548,9 +539,9 @@ mod tests {
         let reading = a.content_plain("よ");
         let ruby = a.ruby(base, reading, true);
         dispatch_node(ruby, true, &mut visitor).expect("default visit_ruby");
-        dispatch_node(AozoraNode::PageBreak, true, &mut visitor).expect("default visit_page_break");
+        dispatch_node(Node::PageBreak, true, &mut visitor).expect("default visit_page_break");
         let container = a.container(Container {
-            kind: aozora_syntax::ContainerKind::Keigakomi,
+            kind: aozora_syntax::ContainerKind::Framed,
         });
         dispatch_node(container, true, &mut visitor).expect("default container_open");
         dispatch_node(container, false, &mut visitor).expect("default container_close");

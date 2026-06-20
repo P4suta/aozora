@@ -6,7 +6,7 @@ import { EditorView } from '@codemirror/view';
  * surrounding shell.
  *
  * The `.cm-aozora-*` token classes are emitted by
- * `decorations.ts` based on `nodes_json` from the WASM parser.
+ * `decorations.ts` based on `nodesJson` from the WASM parser.
  */
 export const aozoraTheme = EditorView.theme({
   '&': {
@@ -65,7 +65,7 @@ export const aozoraTheme = EditorView.theme({
     fontSize: '0.85em',
   },
 
-  // ===== nodes_json kind markers =====
+  // ===== nodesJson kind markers =====
   '.cm-aozora-ruby': {
     color: 'var(--token-ruby)',
     fontWeight: '600',
@@ -86,8 +86,8 @@ export const aozoraTheme = EditorView.theme({
     background: 'var(--token-gaiji-bg)',
     borderBottom: '1px dotted var(--token-gaiji-border)',
   },
-  '.cm-aozora-tcy': { textDecoration: 'underline dotted' },
-  '.cm-aozora-sashie': { color: 'var(--success)', fontStyle: 'italic' },
+  '.cm-aozora-combine-upright': { textDecoration: 'underline dotted' },
+  '.cm-aozora-illustration': { color: 'var(--success)', fontStyle: 'italic' },
   '.cm-aozora-warichu': {
     fontSize: '0.9em',
     color: 'var(--fg-muted)',
@@ -98,7 +98,7 @@ export const aozoraTheme = EditorView.theme({
     color: 'var(--accent)',
     verticalAlign: 'super',
   },
-  '.cm-aozora-annotation': { color: 'var(--fg-muted)', fontStyle: 'italic' },
+  '.cm-aozora-directive': { color: 'var(--fg-muted)', fontStyle: 'italic' },
   '.cm-aozora-aozora-heading': {
     color: 'var(--accent)',
     fontWeight: '700',

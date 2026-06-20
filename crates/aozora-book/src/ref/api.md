@@ -27,7 +27,7 @@ here when you need unreleased `main`.
 |---|---|
 | `/aozora/` (this site) | Handbook (this mdbook) |
 | `/aozora/api/aozora/` | Public facade crate |
-| `/aozora/api/aozora_pipeline/` | Four-phase lexer + `lex_into_arena` orchestrator |
+| `/aozora/api/aozora_pipeline/` | Four-phase lexer + `lex` orchestrator |
 | `/aozora/api/aozora_render/` | HTML / serialise renderers |
 | `/aozora/api/aozora_syntax/` | AST node types |
 | `/aozora/api/aozora_spec/` | Shared types + `SLUGS` dispatch table |

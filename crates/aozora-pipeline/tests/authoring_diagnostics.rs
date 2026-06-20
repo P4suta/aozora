@@ -2,28 +2,28 @@
 //! diagnostics emitted by the fused lex pipeline.
 //!
 //! Each test parses a hand-crafted trigger string through
-//! [`lex_into_arena`] and asserts that the expected
+//! [`lex`] and asserts that the expected
 //! [`aozora_spec::Diagnostic`] code shows up with the right severity. The
 //! exact span / wire shape is frozen separately by the conformance render
 //! gate (`crates/aozora-conformance/fixtures/render/<case>/`); here we only
 //! pin *that* the detection triggers (and, for the negatives, that it does
 //! not).
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_spec::{Severity, codes};
 use aozora_syntax::borrowed::Arena;
 
 /// Count diagnostics with the given stable code in a fresh parse of `src`.
 fn count_code(src: &str, code: &str) -> usize {
     let arena = Arena::new();
-    let out = lex_into_arena(src, &arena);
+    let out = lex(src, &arena);
     out.diagnostics.iter().filter(|d| d.code() == code).count()
 }
 
 /// Assert exactly one diagnostic of `code` fires, and return its severity.
 fn one_diag_severity(src: &str, code: &str) -> Severity {
     let arena = Arena::new();
-    let out = lex_into_arena(src, &arena);
+    let out = lex(src, &arena);
     let hits: Vec<_> = out
         .diagnostics
         .iter()
@@ -207,7 +207,7 @@ fn known_and_non_container_directives_are_silent() {
         0
     );
     // An unknown annotation that is NOT a `ここから` directive is just a
-    // plain `Annotation{Unknown}` and must not be mislabelled.
+    // plain `Directive{Unknown}` and must not be mislabelled.
     assert_eq!(
         count_code(
             "［＃ふつうの注記］",

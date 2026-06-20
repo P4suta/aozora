@@ -129,7 +129,7 @@ impl Arena {
     /// pay the syscall. Compared to plain [`Arena::reset`] +
     /// chunk-grow-on-demand, the cost is identical (same number of
     /// mmaps) but moved out of the parse hot path: the syscall fires
-    /// before `lex_into_arena` rather than inside it, removing one
+    /// before `lex` rather than inside it, removing one
     /// source of intra-parse latency variance.
     ///
     /// Used by long-running workers (rayon corpus sweep, LSP daemon)

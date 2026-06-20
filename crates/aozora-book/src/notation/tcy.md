@@ -17,7 +17,7 @@ The annotation always uses the indirect-quoting form:
 Renders as:
 
 ```html
-昭和<span class="aozora-tcy">27</span>年生まれ
+昭和<span class="aozora-combine-upright">27</span>年生まれ
 ```
 
 The `［＃…］` directive looks back through the most recent text and
@@ -40,7 +40,7 @@ an outer indent block:
 Renders as:
 
 ```html
-<div class="aozora-tcy-block">
+<div class="aozora-combine-upright-block">
 27 / 100 = 0.27
 </div>
 ```
@@ -49,10 +49,10 @@ Renders as:
 
 | Source | Output |
 |---|---|
-| `27［＃「27」は縦中横］` | `<span class="aozora-tcy">27</span>` |
-| `100％［＃「100」は縦中横］` | `<span class="aozora-tcy">100</span>％` |
-| `A4［＃「A4」は縦中横］` | `<span class="aozora-tcy">A4</span>` |
-| `&［＃「&」は縦中横］` | `<span class="aozora-tcy">&amp;</span>` |
+| `27［＃「27」は縦中横］` | `<span class="aozora-combine-upright">27</span>` |
+| `100％［＃「100」は縦中横］` | `<span class="aozora-combine-upright">100</span>％` |
+| `A4［＃「A4」は縦中横］` | `<span class="aozora-combine-upright">A4</span>` |
+| `&［＃「&」は縦中横］` | `<span class="aozora-combine-upright">&amp;</span>` |
 
 (HTML escapes are handled by the renderer, not the AST.)
 
@@ -68,7 +68,7 @@ The lookup that finds the target run:
 
 If no match is found, diagnostic
 [`aozora::lex::tcy_target_not_found`](diagnostics.md#tcy-target-not-found)
-fires and the directive degrades to a plain `Annotation{Unknown}`.
+fires and the directive degrades to a plain `Directive{Unknown}`.
 Authors get the same look-back semantics they'd get from bouten — see
 [Bouten](bouten.md) for the symmetric case.
 
@@ -77,7 +77,7 @@ Authors get the same look-back semantics they'd get from bouten — see
 Web renderers reach for `writing-mode: horizontal-tb` inside a
 `writing-mode: vertical-rl` parent, but that has poor browser support
 and breaks line-break propagation. aozora's HTML output uses a
-single class hook (`<span class="aozora-tcy">`) so the consuming
+single class hook (`<span class="aozora-combine-upright">`) so the consuming
 stylesheet can decide:
 
 - print stylesheet → `font-feature-settings: "vert"; text-combine-upright: all;`

@@ -2,10 +2,10 @@
 //!
 //! [`NodeKind`] enumerates every wire-distinct tag the borrowed-AST
 //! surfaces produce. It is used both for **internal** projection
-//! ([`AozoraNode::kind`](crate::borrowed::AozoraNode::kind),
+//! ([`Node::kind`](crate::borrowed::Node::kind),
 //! [`NodeRef::kind`](crate::borrowed::NodeRef::kind)) and for the
 //! **driver wire format** ([`crate`]'s host crate `aozora` projects
-//! the tag to a stable camelCase string via [`NodeKind::as_camel_case`]).
+//! the tag to a stable camelCase string via [`NodeKind::as_wire_tag`]).
 //!
 //! The typed enum (rather than a `&'static str` constant) lets every
 //! consumer pattern-match the tag exhaustively — the compiler points
@@ -15,13 +15,13 @@
 /// Cross-cutting tag for an AST node or `NodeRef` projection.
 ///
 /// The first 18 variants ([`Self::Ruby`] through [`Self::Container`])
-/// project from [`crate::borrowed::AozoraNode`]'s discriminant. The
+/// project from [`crate::borrowed::Node`]'s discriminant. The
 /// final two ([`Self::ContainerOpen`] / [`Self::ContainerClose`])
 /// only arise from [`crate::borrowed::NodeRef`]'s container open /
 /// close variants — the inline `Container` payload uses
 /// [`Self::Container`].
 ///
-/// `#[non_exhaustive]` so adding a new `AozoraNode` variant only needs
+/// `#[non_exhaustive]` so adding a new `Node` variant only needs
 /// to land here and on the per-call `match` sites; existing wire
 /// consumers see the new variant as an unrecognised tag and gracefully
 /// degrade (the camelCase mapping is exhaustive within this crate;
@@ -35,7 +35,7 @@ pub enum NodeKind {
     /// Bouten (傍点) — emphasis dots over a span.
     Bouten,
     /// 縦中横 (tate-chu-yoko) — horizontal text inside vertical run.
-    TateChuYoko,
+    CombineUpright,
     /// 外字 (gaiji) — non-Unicode character reference.
     Gaiji,
     /// Inline indent (字下げ) marker.
@@ -47,28 +47,28 @@ pub enum NodeKind {
     /// 割注 (warichu) — split-line annotation.
     Warichu,
     /// 罫囲み (keigakomi) — ruled box.
-    Keigakomi,
+    Framed,
     /// 改ページ (page break).
     PageBreak,
     /// Section break (大見出し系統合).
     SectionBreak,
     /// Aozora heading (見出し).
-    AozoraHeading,
+    Heading,
     /// Heading hint that informs downstream rendering decisions.
     HeadingHint,
     /// 挿絵 (sashie) — illustration reference.
-    Sashie,
+    Illustration,
     /// 返り点 (kaeriten) — kanbun reading marker.
     Kaeriten,
     /// Generic annotation that no specific recogniser claimed.
-    Annotation,
+    Directive,
     /// Double-angle quotation (input `≪…≫`, display `《…》`).
     AngleQuote,
     /// 太字 / 斜体 (bold / italic) — forward-reference emphasis leaf.
     Emphasis,
     /// Side annotation (注記) — `「X」の左に「Y」の注記`.
-    SideNote,
-    /// Inline-attached container (字下げ系の `AozoraNode` 包み込み).
+    MarginNote,
+    /// Inline-attached container (字下げ系の `Node` 包み込み).
     Container,
     /// `NodeRef::BlockOpen` projection — paired-container open
     /// sentinel position.
@@ -87,23 +87,23 @@ impl NodeKind {
     pub const ALL: [Self; 22] = [
         Self::Ruby,
         Self::Bouten,
-        Self::TateChuYoko,
+        Self::CombineUpright,
         Self::Gaiji,
         Self::Indent,
         Self::AlignEnd,
         Self::Center,
         Self::Warichu,
-        Self::Keigakomi,
+        Self::Framed,
         Self::PageBreak,
         Self::SectionBreak,
-        Self::AozoraHeading,
+        Self::Heading,
         Self::HeadingHint,
-        Self::Sashie,
+        Self::Illustration,
         Self::Kaeriten,
-        Self::Annotation,
+        Self::Directive,
         Self::AngleQuote,
         Self::Emphasis,
-        Self::SideNote,
+        Self::MarginNote,
         Self::Container,
         Self::ContainerOpen,
         Self::ContainerClose,
@@ -116,27 +116,27 @@ impl NodeKind {
     /// downstream TypeScript / Python / C consumers can switch on the
     /// tag without consulting an out-of-band table.
     #[must_use]
-    pub const fn as_camel_case(self) -> &'static str {
+    pub const fn as_wire_tag(self) -> &'static str {
         match self {
             Self::Ruby => "ruby",
             Self::Bouten => "bouten",
-            Self::TateChuYoko => "tateChuYoko",
+            Self::CombineUpright => "combineUpright",
             Self::Gaiji => "gaiji",
             Self::Indent => "indent",
             Self::AlignEnd => "alignEnd",
             Self::Center => "center",
             Self::Warichu => "warichu",
-            Self::Keigakomi => "keigakomi",
+            Self::Framed => "framed",
             Self::PageBreak => "pageBreak",
             Self::SectionBreak => "sectionBreak",
-            Self::AozoraHeading => "heading",
+            Self::Heading => "heading",
             Self::HeadingHint => "headingHint",
-            Self::Sashie => "sashie",
+            Self::Illustration => "illustration",
             Self::Kaeriten => "kaeriten",
-            Self::Annotation => "annotation",
+            Self::Directive => "directive",
             Self::AngleQuote => "angleQuote",
             Self::Emphasis => "emphasis",
-            Self::SideNote => "sideNote",
+            Self::MarginNote => "marginNote",
             Self::Container => "container",
             Self::ContainerOpen => "containerOpen",
             Self::ContainerClose => "containerClose",
@@ -153,27 +153,27 @@ mod tests {
     /// switches on the tag.
     #[test]
     fn camel_case_strings_are_stable() {
-        assert_eq!(NodeKind::Ruby.as_camel_case(), "ruby");
-        assert_eq!(NodeKind::Bouten.as_camel_case(), "bouten");
-        assert_eq!(NodeKind::TateChuYoko.as_camel_case(), "tateChuYoko");
-        assert_eq!(NodeKind::Gaiji.as_camel_case(), "gaiji");
-        assert_eq!(NodeKind::Indent.as_camel_case(), "indent");
-        assert_eq!(NodeKind::AlignEnd.as_camel_case(), "alignEnd");
-        assert_eq!(NodeKind::Center.as_camel_case(), "center");
-        assert_eq!(NodeKind::Warichu.as_camel_case(), "warichu");
-        assert_eq!(NodeKind::Keigakomi.as_camel_case(), "keigakomi");
-        assert_eq!(NodeKind::PageBreak.as_camel_case(), "pageBreak");
-        assert_eq!(NodeKind::SectionBreak.as_camel_case(), "sectionBreak");
-        assert_eq!(NodeKind::AozoraHeading.as_camel_case(), "heading");
-        assert_eq!(NodeKind::HeadingHint.as_camel_case(), "headingHint");
-        assert_eq!(NodeKind::Sashie.as_camel_case(), "sashie");
-        assert_eq!(NodeKind::Kaeriten.as_camel_case(), "kaeriten");
-        assert_eq!(NodeKind::Annotation.as_camel_case(), "annotation");
-        assert_eq!(NodeKind::AngleQuote.as_camel_case(), "angleQuote");
-        assert_eq!(NodeKind::Emphasis.as_camel_case(), "emphasis");
-        assert_eq!(NodeKind::SideNote.as_camel_case(), "sideNote");
-        assert_eq!(NodeKind::Container.as_camel_case(), "container");
-        assert_eq!(NodeKind::ContainerOpen.as_camel_case(), "containerOpen");
-        assert_eq!(NodeKind::ContainerClose.as_camel_case(), "containerClose");
+        assert_eq!(NodeKind::Ruby.as_wire_tag(), "ruby");
+        assert_eq!(NodeKind::Bouten.as_wire_tag(), "bouten");
+        assert_eq!(NodeKind::CombineUpright.as_wire_tag(), "combineUpright");
+        assert_eq!(NodeKind::Gaiji.as_wire_tag(), "gaiji");
+        assert_eq!(NodeKind::Indent.as_wire_tag(), "indent");
+        assert_eq!(NodeKind::AlignEnd.as_wire_tag(), "alignEnd");
+        assert_eq!(NodeKind::Center.as_wire_tag(), "center");
+        assert_eq!(NodeKind::Warichu.as_wire_tag(), "warichu");
+        assert_eq!(NodeKind::Framed.as_wire_tag(), "framed");
+        assert_eq!(NodeKind::PageBreak.as_wire_tag(), "pageBreak");
+        assert_eq!(NodeKind::SectionBreak.as_wire_tag(), "sectionBreak");
+        assert_eq!(NodeKind::Heading.as_wire_tag(), "heading");
+        assert_eq!(NodeKind::HeadingHint.as_wire_tag(), "headingHint");
+        assert_eq!(NodeKind::Illustration.as_wire_tag(), "illustration");
+        assert_eq!(NodeKind::Kaeriten.as_wire_tag(), "kaeriten");
+        assert_eq!(NodeKind::Directive.as_wire_tag(), "directive");
+        assert_eq!(NodeKind::AngleQuote.as_wire_tag(), "angleQuote");
+        assert_eq!(NodeKind::Emphasis.as_wire_tag(), "emphasis");
+        assert_eq!(NodeKind::MarginNote.as_wire_tag(), "marginNote");
+        assert_eq!(NodeKind::Container.as_wire_tag(), "container");
+        assert_eq!(NodeKind::ContainerOpen.as_wire_tag(), "containerOpen");
+        assert_eq!(NodeKind::ContainerClose.as_wire_tag(), "containerClose");
     }
 }

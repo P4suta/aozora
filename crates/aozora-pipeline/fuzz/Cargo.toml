@@ -28,15 +28,15 @@ members = ["."]
 debug = 1
 
 [[bin]]
-name = "lex_into_arena"
-path = "fuzz_targets/lex_into_arena.rs"
+name = "lex"
+path = "fuzz_targets/lex.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "classify_phase3"
-path = "fuzz_targets/classify_phase3.rs"
+name = "classify"
+path = "fuzz_targets/classify.rs"
 test = false
 doc = false
 bench = false

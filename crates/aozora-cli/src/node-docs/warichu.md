@@ -1,6 +1,6 @@
 # NodeKind::Warichu
 
-Wire tag: `warichu` — split-line annotation (割注). Two text runs
+Inspect tag: `warichu` — split-line annotation (割注). Two text runs
 are stacked into a single line of the surrounding text.
 
 ## Source examples

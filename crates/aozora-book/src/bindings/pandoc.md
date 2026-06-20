@@ -29,7 +29,7 @@ aozora pandoc -E sjis legacy.txt -t epub > out.epub
 
 ## Projection rules
 
-Each [`AozoraNode`][nodekind] variant lifts to a Pandoc construct
+Each [`Node`][nodekind] variant lifts to a Pandoc construct
 carrying a stable CSS class so downstream filters or stylesheets can
 specialise the rendering:
 
@@ -39,16 +39,16 @@ specialise the rendering:
 |   ↳ base text          | nested `Span`             | `aozora-ruby-base`            |
 |   ↳ reading text       | nested `Span`             | `aozora-ruby-reading`         |
 | `Bouten`               | `Span` over target text   | `aozora-bouten`               |
-| `TateChuYoko`          | `Span`                    | `aozora-tate-chu-yoko`        |
+| `CombineUpright`          | `Span`                    | `aozora-combine-upright`        |
 | `Gaiji`                | `Span` carrying mencode   | `aozora-gaiji`                |
 | `Indent`, `AlignEnd`   | empty `Span` (marker)     | `aozora-indent` / `align-end` |
 | `Warichu`              | `Span` with two children  | `aozora-warichu`              |
 | `AngleQuote`           | `Span`                    | `aozora-angle-quote`          |
-| `Annotation`, `Kaeriten`, `HeadingHint` | empty `Span` carrying raw | `aozora-annotation` / etc.    |
+| `Directive`, `Kaeriten`, `HeadingHint` | empty `Span` carrying raw | `aozora-directive` / etc.    |
 | `PageBreak`            | `HorizontalRule` block    | (n/a — semantic block)        |
 | `SectionBreak`         | empty `Div`               | `aozora-section-break`        |
-| `AozoraHeading`        | `Header` block            | `aozora-heading`              |
-| `Sashie`               | `Para` with `Image`       | `aozora-sashie`               |
+| `Heading`        | `Header` block            | `aozora-heading`              |
+| `Illustration`               | `Para` with `Image`       | `aozora-illustration`               |
 | Container (字下げ等)   | `Div` wrapping inner blocks | `aozora-container-indent` / etc. |
 
 The structural attribute `kvs` (Pandoc's third Attr tuple) carries

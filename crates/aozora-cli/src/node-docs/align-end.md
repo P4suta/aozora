@@ -1,6 +1,6 @@
 # NodeKind::AlignEnd
 
-Wire tag: `alignEnd` — right-edge alignment marker (字上げ).
+Inspect tag: `alignEnd` — right-edge alignment marker (字上げ).
 
 ## Source examples
 

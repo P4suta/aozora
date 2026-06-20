@@ -1,4 +1,4 @@
-//! CST build path: project `aozora::AozoraTree` into a rowan
+//! CST build path: project `aozora::Tree` into a rowan
 //! `SyntaxNode` tree using the public source-node + container-pair
 //! surface only.
 
@@ -11,7 +11,7 @@ use crate::kind::{SyntaxKind, SyntaxNode};
 /// source-node table.
 ///
 /// `sanitized_source` MUST be the output of
-/// [`aozora_pipeline::lexer::sanitize`] over the original source —
+/// [`aozora_pipeline::lexer::sanitize()`] over the original source —
 /// the `source_nodes` table's `source_span` coordinates live in
 /// sanitized-source bytes. For typical inputs (no BOM, LF only, no
 /// long decorative rule lines, no `〔…〕` accent spans) sanitized

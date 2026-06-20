@@ -27,7 +27,7 @@ use std::fs;
 use std::mem;
 use std::path::{Path, PathBuf};
 
-use aozora::wire::{serialize_diagnostics, serialize_nodes, serialize_pairs};
+use aozora::json::{diagnostics, nodes, pairs};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -237,7 +237,7 @@ fn run_case(dir: &Path) -> Result<(), String> {
     let tree = doc.parse();
 
     let actual_html = tree.to_html();
-    let actual_serialize = tree.serialize();
+    let actual_serialize = tree.to_source();
 
     let expected_html = fs::read_to_string(dir.join("expected.html"))
         .map_err(|err| format!("read {}/expected.html: {err}", dir.display()))?;
@@ -435,20 +435,20 @@ fn compare_vector(vector: &Vector) -> Result<(Vec<String>, Option<String>), Stri
         .expected
         .serialize
         .as_ref()
-        .is_some_and(|expected| tree.serialize() != *expected)
+        .is_some_and(|expected| tree.to_source() != *expected)
     {
         mismatches.push("serialize".to_owned());
     }
     if let Some(expected) = &vector.expected.nodes {
-        let actual = Value::Array(wire_data(&serialize_nodes(&tree))?);
+        let actual = Value::Array(wire_data(&nodes(&tree))?);
         mismatches.extend((actual != *expected).then(|| "nodes".to_owned()));
     }
     if let Some(expected) = &vector.expected.pairs {
-        let actual = Value::Array(wire_data(&serialize_pairs(&tree))?);
+        let actual = Value::Array(wire_data(&pairs(&tree))?);
         mismatches.extend((actual != *expected).then(|| "pairs".to_owned()));
     }
     if let Some(expected) = &vector.expected.diagnostics {
-        let actual = normalized_actual_diagnostics(&serialize_diagnostics(tree.diagnostics()))?;
+        let actual = normalized_actual_diagnostics(&diagnostics(tree.diagnostics()))?;
         mismatches
             .extend((!diagnostics_match(expected, &actual)).then(|| "diagnostics".to_owned()));
     }
@@ -622,7 +622,7 @@ mod tests {
 
     #[test]
     fn wire_data_extracts_data_array() {
-        let json = r#"{ "schema_version": 1, "data": [1, 2, 3] }"#;
+        let json = r#"{ "schemaVersion": 1, "data": [1, 2, 3] }"#;
         let items = wire_data(json).expect("valid envelope");
         assert_eq!(items.len(), 3, "three data items");
         assert_eq!(items[0], Value::from(1), "first item preserved");
@@ -630,7 +630,7 @@ mod tests {
 
     #[test]
     fn wire_data_rejects_missing_data() {
-        let err = wire_data(r#"{ "schema_version": 1 }"#).expect_err("no data array");
+        let err = wire_data(r#"{ "schemaVersion": 1 }"#).expect_err("no data array");
         assert!(err.contains("data"), "error mentions missing data: {err}");
     }
 
@@ -673,7 +673,7 @@ mod tests {
     #[test]
     fn normalized_actual_diagnostics_kebabs_kind_and_drops_internal() {
         let wire = r#"{
-            "schema_version": 1,
+            "schemaVersion": 1,
             "data": [
                 { "kind": "source_contains_pua", "severity": "warning", "source": "library", "span": { "start": 0, "end": 1 } },
                 { "kind": "self_check", "severity": "error", "source": "internal", "span": { "start": 2, "end": 3 } }
@@ -693,7 +693,7 @@ mod tests {
     #[test]
     fn normalized_actual_diagnostics_requires_kind() {
         let wire = r#"{
-            "schema_version": 1,
+            "schemaVersion": 1,
             "data": [ { "severity": "warning", "source": "library", "span": { "start": 0, "end": 1 } } ]
         }"#;
         let err = err_of(normalized_actual_diagnostics(wire));
@@ -811,7 +811,7 @@ mod tests {
     fn compare_vector_matching_serialize_passes() {
         // Parse once to learn the parser's own serialize output, then pin it.
         let doc = aozora::Document::new("plain text".to_owned());
-        let expected_serialize = doc.parse().serialize();
+        let expected_serialize = doc.parse().to_source();
         let mut exp = empty_expected();
         exp.serialize = Some(expected_serialize);
         let v = vector("plain text", exp);

@@ -16,7 +16,7 @@
 //!    way to catch a stray phase-state branch that drops a closing
 //!    tag.
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use aozora_render::html::render_to_string;
@@ -30,7 +30,7 @@ fn count_substr(haystack: &str, needle: &str) -> usize {
 
 fn assert_render_is_balanced(source: &str) {
     let arena = Arena::new();
-    let out = lex_into_arena(source, &arena);
+    let out = lex(source, &arena);
     let html = render_to_string(&out);
 
     // Paragraph balance — `<p` rather than `<p>` to also catch
@@ -105,7 +105,7 @@ proptest! {
     #[test]
     fn xss_payload_does_not_leak_script_tag(s in xss_payload()) {
         let arena = Arena::new();
-        let out = lex_into_arena(&s, &arena);
+        let out = lex(&s, &arena);
         let html = render_to_string(&out);
         prop_assert!(
             !html.contains("<script>") && !html.contains("<SCRIPT>"),

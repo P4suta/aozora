@@ -7,7 +7,7 @@
 //! live in the parent module. Extracted verbatim from the phase-3
 //! classifier.
 
-#[cfg(feature = "phase3-instrument")]
+#[cfg(feature = "classify-instrument")]
 use super::super::instrumentation::{Subsystem, SubsystemGuard};
 
 use std::sync::OnceLock;
@@ -16,8 +16,8 @@ use aho_corasick::{AhoCorasick, AhoCorasickBuilder, Anchored, Input, MatchKind, 
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
 use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BOUTEN_KINDS, BoutenKind,
-    BoutenPosition, Center, ContainerKind, EmphasisKind, Indent, SectionKind,
+    AlignEnd, BOUTEN_KINDS, BoutenKind, BoutenPosition, Center, ContainerKind, DirectiveKind,
+    EmphasisKind, HeadingKind, HeadingStyle, Indent, SectionKind,
 };
 
 use super::EmitKind;
@@ -99,7 +99,7 @@ enum BodyFamily {
     /// convention (not in the official 注記一覧, which defines only the
     /// forward-reference `「X」は縦中横` leaf), kept as a tolerant extension.
     /// `parse_tcy_range_body` reads the full body for open vs close.
-    TcyRange,
+    CombineUprightRange,
 
     /// `ここから割り注` — block 割り注 opener (the multi-line region form;
     /// the inline `［＃割り注］` is [`Self::WarichuOpen`]). → `Container(Warichu)`.
@@ -168,7 +168,7 @@ const fn body_family_mode(family: BodyFamily) -> MatchMode {
         | BodyFamily::Emphasis
         | BodyFamily::SmallScriptRange
         | BodyFamily::CaptionRange
-        | BodyFamily::TcyRange => MatchMode::Reparse,
+        | BodyFamily::CombineUprightRange => MatchMode::Reparse,
     }
 }
 
@@ -305,7 +305,7 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     // claimed here.
     BodyPattern {
         needle: "縦中横",
-        family: BodyFamily::TcyRange,
+        family: BodyFamily::CombineUprightRange,
     },
     // Block 罫囲み (ここから form; the bare 罫囲み is also KeigakomiOpen).
     // LeftmostLongest keeps ここから罫囲み over the ここから indent prefix.
@@ -740,28 +740,28 @@ pub(crate) fn prewarm() {
     let _ = body_dispatcher();
 }
 
-/// Classify an input-editor note body into its [`AnnotationKind`], or
+/// Classify an input-editor note body into its [`DirectiveKind`], or
 /// `None` if the body is not a recognised editorial note.
 ///
 /// These are the corpus's two dominant editorial families:
 /// - `ママ` / `「X」はママ` (and `ルビの「X」はママ`) — *sic*: X is reproduced
 ///   as it stands in the source. `底本のまま` ("as in the base text") is the
-///   same kept-irregularity note. → [`AnnotationKind::AsIs`].
+///   same kept-irregularity note. → [`DirectiveKind::Sic`].
 /// - `…底本では…` (`「X」は底本では「Y」`, `「X」は底本では脱落`, …) — a
 ///   source-text divergence note. `…初出では…` ("in the first appearance …")
 ///   is the same shape against the first publication. →
-///   [`AnnotationKind::TextualNote`].
+///   [`DirectiveKind::BaseTextVariant`].
 ///
 /// Called only at the tail of `RecogniseCtx::recognize_annotation`, after
 /// every styling recogniser has declined, so a target-bearing form like
 /// `「ママ」に傍点` has already been claimed as a Bouten and never reaches
 /// here. The note does not restyle its target, so the caller leaves X in
 /// the text and consumes only the bracket.
-pub(super) fn editorial_note_kind(body: &str) -> Option<AnnotationKind> {
+pub(super) fn editorial_note_kind(body: &str) -> Option<DirectiveKind> {
     if body == "ママ" || body.ends_with("はママ") || body == "底本のまま" {
-        Some(AnnotationKind::AsIs)
+        Some(DirectiveKind::Sic)
     } else if body.contains("底本では") || body.contains("初出では") {
-        Some(AnnotationKind::TextualNote)
+        Some(DirectiveKind::BaseTextVariant)
     } else {
         None
     }
@@ -771,7 +771,7 @@ pub(super) fn editorial_note_kind(body: &str) -> Option<AnnotationKind> {
 /// `［＃` and `］`) into an `EmitKind` for body-only annotation
 /// families. Returns `None` if the body matches no body-only family;
 /// the caller then falls through to forward classifiers and finally
-/// the `Annotation{Unknown}` catch-all.
+/// the `Directive{Unknown}` catch-all.
 #[allow(
     clippy::too_many_lines,
     reason = "single match arm per BodyFamily — splitting would scatter \
@@ -780,8 +780,8 @@ pub(super) fn editorial_note_kind(body: &str) -> Option<AnnotationKind> {
 pub(super) fn classify_annotation_body<'a>(
     body: &str,
     alloc: &mut BorrowedAllocator<'a>,
-) -> Option<(EmitKind<'a>, Option<&'a borrowed::Annotation<'a>>)> {
-    #[cfg(feature = "phase3-instrument")]
+) -> Option<(EmitKind<'a>, Option<&'a borrowed::Directive<'a>>)> {
+    #[cfg(feature = "classify-instrument")]
     let _phase3_guard = SubsystemGuard::new(Subsystem::BodyDispatcher);
     if body.is_empty() {
         return None;
@@ -835,8 +835,8 @@ pub(super) fn classify_annotation_body<'a>(
             let page = body == "ページの左右中央";
             Some((EmitKind::Aozora(alloc.center(Center { page })), None))
         }
-        BodyFamily::KeigakomiOpen => Some((EmitKind::BlockOpen(ContainerKind::Keigakomi), None)),
-        BodyFamily::KeigakomiClose => Some((EmitKind::BlockClose(ContainerKind::Keigakomi), None)),
+        BodyFamily::KeigakomiOpen => Some((EmitKind::BlockOpen(ContainerKind::Framed), None)),
+        BodyFamily::KeigakomiClose => Some((EmitKind::BlockClose(ContainerKind::Framed), None)),
         BodyFamily::WarichuBlockOpen => Some((EmitKind::BlockOpen(ContainerKind::Warichu), None)),
         BodyFamily::WarichuBlockEnd => Some((EmitKind::BlockClose(ContainerKind::Warichu), None)),
         BodyFamily::IndentBlock1 => Some((
@@ -894,20 +894,20 @@ pub(super) fn classify_annotation_body<'a>(
             None,
         )),
         BodyFamily::WarichuOpen => {
-            let p = alloc.make_annotation("［＃割り注］", AnnotationKind::WarichuOpen);
+            let p = alloc.make_directive("［＃割り注］", DirectiveKind::WarichuOpen);
             let node = alloc.annotation(p);
             // Re-build a payload for the segment-wrap case. The
             // borrowed allocator interns by string content, so the
             // second call hits the dedup table; the owned allocator
             // pays a single `Box<str>` clone, which is cheap relative
             // to the rare nested-Warichu shape this case targets.
-            let p2 = alloc.make_annotation("［＃割り注］", AnnotationKind::WarichuOpen);
+            let p2 = alloc.make_directive("［＃割り注］", DirectiveKind::WarichuOpen);
             Some((EmitKind::Aozora(node), Some(p2)))
         }
         BodyFamily::WarichuClose => {
-            let p = alloc.make_annotation("［＃割り注終わり］", AnnotationKind::WarichuClose);
+            let p = alloc.make_directive("［＃割り注終わり］", DirectiveKind::WarichuClose);
             let node = alloc.annotation(p);
-            let p2 = alloc.make_annotation("［＃割り注終わり］", AnnotationKind::WarichuClose);
+            let p2 = alloc.make_directive("［＃割り注終わり］", DirectiveKind::WarichuClose);
             Some((EmitKind::Aozora(node), Some(p2)))
         }
         BodyFamily::KaeritenSingle | BodyFamily::KaeritenCompound => {
@@ -1101,7 +1101,7 @@ pub(super) fn classify_annotation_body<'a>(
         BodyFamily::SmallScriptRange => {
             // `行右小書き` / `行左小書き` with an optional `終わり` close.
             // Re-parse the full body so `行右小書きほげ` (needle prefix but
-            // longer body) declines to Annotation{Unknown}.
+            // longer body) declines to Directive{Unknown}.
             let (side, is_close) = parse_small_script_range_body(body)?;
             let container = ContainerKind::SmallScript { side };
             Some((
@@ -1128,15 +1128,15 @@ pub(super) fn classify_annotation_body<'a>(
             ))
         }
 
-        BodyFamily::TcyRange => {
+        BodyFamily::CombineUprightRange => {
             // `縦中横` open / `縦中横終わり` close — re-parse the full body so a
             // needle-prefix-but-longer body (`縦中横ほげ`) declines cleanly.
             let is_close = parse_tcy_range_body(body)?;
             Some((
                 if is_close {
-                    EmitKind::BlockClose(ContainerKind::TcyRange)
+                    EmitKind::BlockClose(ContainerKind::CombineUprightRange)
                 } else {
-                    EmitKind::BlockOpen(ContainerKind::TcyRange)
+                    EmitKind::BlockOpen(ContainerKind::CombineUprightRange)
                 },
                 None,
             ))
@@ -1241,7 +1241,7 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
     }
     let tail = &rest[close_off + '）'.len_utf8()..];
     // After `）` the tail is either the bare `入る` keyword or a bundled
-    // `「caption」入る`. Any other shape declines (→ `Annotation{Unknown}`).
+    // `「caption」入る`. Any other shape declines (→ `Directive{Unknown}`).
     let caption = if tail == "入る" {
         None
     } else if let Some(inner) = tail
@@ -1270,7 +1270,7 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
 ///
 /// The keyword `挿絵` form is claimed earlier by [`classify_sashie_body`]
 /// via its anchored needle; this is the fallback for every other
-/// description, tried just before the `Annotation{Unknown}` catch-all (it
+/// description, tried just before the `Directive{Unknown}` catch-all (it
 /// has no prefix needle because the description is arbitrary). Returns
 /// `None` for any body that is not a complete `<非空>（<file>）入る`.
 pub(super) fn classify_general_image_body<'a>(
@@ -1312,22 +1312,22 @@ pub(super) fn classify_general_image_body<'a>(
 /// ([`parse_heading_directive`]).
 ///
 /// `副見出し` is not a real annotation — it never occurs in the corpus — so
-/// it matches nothing and the directive falls through to `Annotation{Unknown}`.
+/// it matches nothing and the directive falls through to `Directive{Unknown}`.
 /// The 同行 / 窓 styles cross with every level (`同行中見出し`, `窓小見出し`, …).
-pub(super) fn parse_heading_keyword(s: &str) -> Option<(AozoraHeadingStyle, AozoraHeadingKind)> {
+pub(super) fn parse_heading_keyword(s: &str) -> Option<(HeadingStyle, HeadingKind)> {
     // An optional 同行 / 窓 style prefix, else the standard style; `rest` is
     // the remaining 大/中/小見出し keyword.
     let (style, rest) = [
-        ("同行", AozoraHeadingStyle::SameLine),
-        ("窓", AozoraHeadingStyle::Window),
+        ("同行", HeadingStyle::SameLine),
+        ("窓", HeadingStyle::Window),
     ]
     .into_iter()
     .find_map(|(prefix, style)| s.strip_prefix(prefix).map(|rest| (style, rest)))
-    .unwrap_or((AozoraHeadingStyle::Standard, s));
+    .unwrap_or((HeadingStyle::Standard, s));
     let kind = match rest {
-        "大見出し" => AozoraHeadingKind::Large,
-        "中見出し" => AozoraHeadingKind::Medium,
-        "小見出し" => AozoraHeadingKind::Small,
+        "大見出し" => HeadingKind::Large,
+        "中見出し" => HeadingKind::Medium,
+        "小見出し" => HeadingKind::Small,
         _ => return None,
     };
     Some((style, kind))
@@ -1411,7 +1411,7 @@ fn font_size_block_open_steps(tail: &str, magnitude: u8) -> Option<i8> {
 /// so a mark can never be recognised in the forward direction
 /// (`keyword`) yet silently missed here. `×傍点` is accepted as an input
 /// alias for the canonical ばつ傍点. Unknown suffixes return `None`,
-/// letting the annotation fall through to the `Annotation{Unknown}`
+/// letting the annotation fall through to the `Directive{Unknown}`
 /// catch-all. Lookup is a short linear scan (14 entries, dominated by
 /// the leading-byte mismatch on the first compare).
 pub(super) fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
@@ -1425,7 +1425,7 @@ pub(super) fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
 /// Strips an optional `左に` left-side prefix and an optional `終わり`
 /// close suffix; the remainder must be a [`bouten_kind_from_suffix`]
 /// keyword (all fourteen kinds, incl. the rare 鎖線 / 破線 / 黒三角傍点).
-/// Returns `None` (→ `Annotation{Unknown}`) for any non-bouten body.
+/// Returns `None` (→ `Directive{Unknown}`) for any non-bouten body.
 fn parse_bouten_range_body(body: &str) -> Option<(BoutenKind, BoutenPosition, bool)> {
     let (position, rest) = body
         .strip_prefix("左に")
@@ -1439,7 +1439,7 @@ fn parse_bouten_range_body(body: &str) -> Option<(BoutenKind, BoutenPosition, bo
 
 /// Parse a 小書き range body into `(side, is_close)`. `行右小書き` →
 /// `BoutenPosition::Right`, `行左小書き` → `Left`; an optional `終わり`
-/// suffix marks the close. Returns `None` (→ `Annotation{Unknown}`) for any
+/// suffix marks the close. Returns `None` (→ `Directive{Unknown}`) for any
 /// other body, so a needle-prefix-but-longer body like `行右小書きほげ`
 /// declines cleanly.
 fn parse_small_script_range_body(body: &str) -> Option<(BoutenPosition, bool)> {
@@ -1457,7 +1457,7 @@ fn parse_small_script_range_body(body: &str) -> Option<(BoutenPosition, bool)> {
 /// Parse a 太字 / 斜体 range / block body into `(kind, block, is_close)`.
 /// `block` is `true` for the `ここから…` / `ここで…終わり` block form,
 /// `false` for the bare inline range `［＃太字］…［＃太字終わり］`. Returns
-/// `None` (→ `Annotation{Unknown}`) for any non-emphasis body.
+/// `None` (→ `Directive{Unknown}`) for any non-emphasis body.
 /// Parse a キャプション range / block body into `(block, is_close)`.
 /// `block` is `true` for `ここから…` / `ここで…終わり`, `false` for the bare
 /// inline range `［＃キャプション］…［＃キャプション終わり］`.
@@ -1473,7 +1473,7 @@ fn parse_caption_body(body: &str) -> Option<(bool, bool)> {
 
 /// Parse a 縦中横 paired-range body into `is_close`. `縦中横` opens, `縦中横
 /// 終わり` closes; any other body (incl. the longer `縦中横ほげ`) declines to
-/// `Annotation{Unknown}`.
+/// `Directive{Unknown}`.
 fn parse_tcy_range_body(body: &str) -> Option<bool> {
     match body {
         "縦中横" => Some(false),

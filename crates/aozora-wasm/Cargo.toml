@@ -35,9 +35,9 @@ serde-wasm-bindgen    = "0.6"
 web-sys               = { version = "0.3", features = ["Performance", "Window"] }
 
 [dependencies]
-# Drivers consume the wire format via `aozora::wire::*`; serde +
+# Drivers consume the wire format via `aozora::json::*`; serde +
 # serde_json transitive-only via the `wire` feature.
-aozora = { workspace = true, features = ["wire"] }
+aozora = { workspace = true, features = ["json"] }
 # Direct use for the gaiji-resolution helpers: hand-rolling JSON
 # escaping for arbitrary Unicode descriptions would re-implement
 # what serde_json already does well. The `wire` feature above

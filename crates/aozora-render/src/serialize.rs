@@ -9,14 +9,14 @@
 
 use core::fmt::{self, Write};
 
-use aozora_pipeline::{BorrowedLexOutput, has_long_rule_line, isolate_decorative_rules};
+use aozora_pipeline::{LexOutput, has_long_rule_line, isolate_decorative_rules};
 use aozora_syntax::borrowed::{
-    AngleQuote, Annotation, AozoraHeading, AozoraNode, Bouten, Content, Emphasis, Gaiji,
-    HeadingHint, Kaeriten, NodeRef, Ruby, Sashie, Segment, SideNote, TateChuYoko,
+    AngleQuote, Bouten, CombineUpright, Content, Directive, Emphasis, Gaiji, Heading, HeadingHint,
+    Illustration, Kaeriten, MarginNote, Node, NodeRef, Ruby, Segment,
 };
 use aozora_syntax::{
-    AlignEnd, AozoraHeadingKind, AozoraHeadingStyle, BoutenPosition, Center, ContainerKind,
-    EmphasisKind, Indent, RubySide, SectionKind,
+    AlignEnd, BoutenPosition, Center, ContainerKind, EmphasisKind, HeadingKind, HeadingStyle,
+    Indent, RubySide, SectionKind,
 };
 use memchr::memchr_iter;
 
@@ -35,7 +35,7 @@ const BLOCK_OPEN_SENTINEL_TAIL: u8 = 0x83;
 /// Third UTF-8 byte → [`SentinelKind::BlockClose`].
 const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
 
-/// Serialize a `BorrowedLexOutput` back to Aozora source text.
+/// Serialize a `LexOutput` back to Aozora source text.
 ///
 /// The output is a fixed point of `serialize ∘ parse` after one
 /// pass: a second cycle returns the same bytes. This is the
@@ -61,7 +61,7 @@ const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
 /// Does not panic in normal use: `String` cannot fail as a
 /// [`Write`] sink.
 #[must_use]
-pub fn serialize(out: &BorrowedLexOutput<'_>) -> String {
+pub fn serialize(out: &LexOutput<'_>) -> String {
     let mut s = NewlineCappedWriter::with_capacity(out.normalized.len().saturating_mul(2));
     serialize_into(out, &mut s).expect("writing to NewlineCappedWriter never fails");
     let raw = s.into_string();
@@ -82,7 +82,7 @@ pub fn serialize(out: &BorrowedLexOutput<'_>) -> String {
 ///
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited
 /// from the lexer's `Span` width contract; in practice unreachable.
-pub fn serialize_into<W: Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -> fmt::Result {
+pub fn serialize_into<W: Write>(out: &LexOutput<'_>, writer: &mut W) -> fmt::Result {
     let normalized = out.normalized;
     let registry = &out.registry;
     let bytes = normalized.as_bytes();
@@ -155,28 +155,28 @@ fn sentinel_kind_for_tail_byte(b: u8) -> Option<SentinelKind> {
     }
 }
 
-fn emit_aozora<W: Write>(node: AozoraNode<'_>, out: &mut W) -> fmt::Result {
+fn emit_aozora<W: Write>(node: Node<'_>, out: &mut W) -> fmt::Result {
     match node {
-        AozoraNode::Ruby(r) => emit_ruby(r, out),
-        AozoraNode::Bouten(b) => emit_bouten(b, out),
-        AozoraNode::TateChuYoko(t) => emit_tate_chu_yoko(t, out),
-        AozoraNode::Gaiji(g) => emit_gaiji(g, out),
-        AozoraNode::Kaeriten(k) => emit_kaeriten(k, out),
-        AozoraNode::Annotation(a) => emit_annotation(a, out),
-        AozoraNode::AngleQuote(d) => emit_angle_quote(d, out),
-        AozoraNode::Emphasis(e) => emit_emphasis(e, out),
-        AozoraNode::SideNote(s) => emit_side_note(s, out),
-        AozoraNode::PageBreak => out.write_str("［＃改ページ］"),
-        AozoraNode::SectionBreak(kind) => emit_section_break(kind, out),
-        AozoraNode::Indent(i) => emit_indent(i, out),
-        AozoraNode::AlignEnd(a) => emit_align_end(a, out),
-        AozoraNode::Center(c) => emit_center(c, out),
-        AozoraNode::Sashie(s) => emit_sashie(s, out),
-        AozoraNode::HeadingHint(h) => emit_heading_hint(h, out),
-        AozoraNode::AozoraHeading(h) => emit_aozora_heading(h, out),
+        Node::Ruby(r) => emit_ruby(r, out),
+        Node::Bouten(b) => emit_bouten(b, out),
+        Node::CombineUpright(t) => emit_tate_chu_yoko(t, out),
+        Node::Gaiji(g) => emit_gaiji(g, out),
+        Node::Kaeriten(k) => emit_kaeriten(k, out),
+        Node::Directive(a) => emit_annotation(a, out),
+        Node::AngleQuote(d) => emit_angle_quote(d, out),
+        Node::Emphasis(e) => emit_emphasis(e, out),
+        Node::MarginNote(s) => emit_side_note(s, out),
+        Node::PageBreak => out.write_str("［＃改ページ］"),
+        Node::SectionBreak(kind) => emit_section_break(kind, out),
+        Node::Indent(i) => emit_indent(i, out),
+        Node::AlignEnd(a) => emit_align_end(a, out),
+        Node::Center(c) => emit_center(c, out),
+        Node::Illustration(s) => emit_sashie(s, out),
+        Node::HeadingHint(h) => emit_heading_hint(h, out),
+        Node::Heading(h) => emit_aozora_heading(h, out),
         // Variants the serializer doesn't yet cover: Container is
         // routed through the open/close sentinel path; Warichu /
-        // Keigakomi / AozoraHeading land here as a diagnostic
+        // Framed / Heading land here as a diagnostic
         // placeholder, matching the legacy serializer's behavior.
         _ => {
             out.write_str("<!-- unsupported-aozora: ")?;
@@ -204,11 +204,11 @@ fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
     out.write_char('》')
 }
 
-fn emit_side_note<W: Write>(s: &SideNote<'_>, out: &mut W) -> fmt::Result {
+fn emit_side_note<W: Write>(s: &MarginNote<'_>, out: &mut W) -> fmt::Result {
     // Reconstruct `base［＃「base{connector}note{suffix}`; the base is the
     // pulled-back predecessor, so it precedes the directive (mirrors the
     // left-side ruby round-trip in `emit_ruby`). The connector + keyword
-    // depend on the flavour (注記 vs 傍記) — see `SideNoteKind::serialize_affixes`.
+    // depend on the flavour (注記 vs 傍記) — see `MarginNoteKind::serialize_affixes`.
     let (connector, suffix) = s.kind.serialize_affixes();
     emit_content(s.base.get(), out)?;
     out.write_str("［＃「")?;
@@ -268,7 +268,7 @@ fn emit_bouten_targets<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
     }
 }
 
-fn emit_tate_chu_yoko<W: Write>(t: &TateChuYoko<'_>, out: &mut W) -> fmt::Result {
+fn emit_tate_chu_yoko<W: Write>(t: &CombineUpright<'_>, out: &mut W) -> fmt::Result {
     if t.consumed_predecessor {
         // Same back-ref re-emit as `emit_bouten` — see that function's
         // comment for the round-trip rationale.
@@ -334,7 +334,7 @@ fn emit_kaeriten<W: Write>(k: &Kaeriten<'_>, out: &mut W) -> fmt::Result {
     out.write_char('］')
 }
 
-fn emit_annotation<W: Write>(a: &Annotation<'_>, out: &mut W) -> fmt::Result {
+fn emit_annotation<W: Write>(a: &Directive<'_>, out: &mut W) -> fmt::Result {
     out.write_str(a.raw.as_str())
 }
 
@@ -374,7 +374,7 @@ fn emit_center<W: Write>(c: Center, out: &mut W) -> fmt::Result {
     })
 }
 
-fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
+fn emit_sashie<W: Write>(s: &Illustration<'_>, out: &mut W) -> fmt::Result {
     out.write_str("［＃")?;
     if let Some(description) = s.description {
         // General image form `<説明>（file）入る` — the leading text is the
@@ -405,10 +405,10 @@ fn emit_sashie<W: Write>(s: &Sashie<'_>, out: &mut W) -> fmt::Result {
 
 /// The optional `同行` / `窓` style prefix that precedes the level keyword in
 /// a `…は<style><level>見出し` directive (empty for the standard style).
-const fn heading_style_keyword(style: AozoraHeadingStyle) -> &'static str {
+const fn heading_style_keyword(style: HeadingStyle) -> &'static str {
     match style {
-        AozoraHeadingStyle::SameLine => "同行",
-        AozoraHeadingStyle::Window => "窓",
+        HeadingStyle::SameLine => "同行",
+        HeadingStyle::Window => "窓",
         // Standard and any future style serialize without a prefix.
         _ => "",
     }
@@ -416,16 +416,16 @@ const fn heading_style_keyword(style: AozoraHeadingStyle) -> &'static str {
 
 /// The `大 / 中 / 小見出し` level keyword (no delimiter), shared by the leaf
 /// heading, the hint, and the paired / block [`ContainerKind::Heading`].
-const fn heading_level_word(kind: AozoraHeadingKind) -> &'static str {
+const fn heading_level_word(kind: HeadingKind) -> &'static str {
     match kind {
-        AozoraHeadingKind::Medium => "中見出し",
-        AozoraHeadingKind::Small => "小見出し",
+        HeadingKind::Medium => "中見出し",
+        HeadingKind::Small => "小見出し",
         // 大見出し and any future level fall back to the 大見出し form.
         _ => "大見出し",
     }
 }
 
-fn emit_aozora_heading<W: Write>(h: &AozoraHeading<'_>, out: &mut W) -> fmt::Result {
+fn emit_aozora_heading<W: Write>(h: &Heading<'_>, out: &mut W) -> fmt::Result {
     // Reconstruct the promoted forward-reference shape, byte-identical to
     // the source the classifier consumed:
     //   <text>\n［＃「<text>」は<同行|窓>?<大|中|小>見出し］
@@ -454,9 +454,9 @@ fn emit_heading_hint<W: Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result 
 const fn container_open_marker(kind: ContainerKind) -> &'static str {
     match kind {
         ContainerKind::AlignEnd { .. } => "［＃ここから地付き］",
-        ContainerKind::Keigakomi => "［＃罫囲み］",
+        ContainerKind::Framed => "［＃罫囲み］",
         ContainerKind::Warichu => "［＃割り注］",
-        ContainerKind::TcyRange => "［＃縦中横］",
+        ContainerKind::CombineUprightRange => "［＃縦中横］",
         _ => "［＃ここから字下げ］",
     }
 }
@@ -464,9 +464,9 @@ const fn container_open_marker(kind: ContainerKind) -> &'static str {
 const fn container_close_marker(kind: ContainerKind) -> &'static str {
     match kind {
         ContainerKind::AlignEnd { .. } => "［＃ここで地付き終わり］",
-        ContainerKind::Keigakomi => "［＃罫囲み終わり］",
+        ContainerKind::Framed => "［＃罫囲み終わり］",
         ContainerKind::Warichu => "［＃割り注終わり］",
-        ContainerKind::TcyRange => "［＃縦中横終わり］",
+        ContainerKind::CombineUprightRange => "［＃縦中横終わり］",
         _ => "［＃ここで字下げ終わり］",
     }
 }
@@ -557,7 +557,7 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             "［＃キャプション］"
         }),
         // `ContainerKind::Warichu` is the block 割り注 region (the inline
-        // ［＃割り注］ is an `Annotation{WarichuOpen}`), so it serializes to
+        // ［＃割り注］ is an `Directive{WarichuOpen}`), so it serializes to
         // the ここから form.
         ContainerKind::Warichu => out.write_str("［＃ここから割り注］"),
         _ => out.write_str(container_open_marker(kind)),
@@ -620,7 +620,7 @@ fn emit_content<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
         match seg {
             Segment::Text(t) => out.write_str(t)?,
             Segment::Gaiji(g) => emit_gaiji(g, out)?,
-            Segment::Annotation(a) => emit_annotation(a, out)?,
+            Segment::Directive(a) => emit_annotation(a, out)?,
             _ => {}
         }
     }
@@ -632,7 +632,7 @@ fn emit_content_as_plain<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
         match seg {
             Segment::Text(t) => out.write_str(t)?,
             Segment::Gaiji(g) => out.write_str(g.description)?,
-            Segment::Annotation(a) => out.write_str(a.raw.as_str())?,
+            Segment::Directive(a) => out.write_str(a.raw.as_str())?,
             _ => {}
         }
     }
@@ -718,7 +718,7 @@ mod tests {
 
     fn ser(src: &str) -> String {
         let arena = Arena::new();
-        let out = aozora_pipeline::lex_into_arena(src, &arena);
+        let out = aozora_pipeline::lex(src, &arena);
         serialize(&out)
     }
 
@@ -919,7 +919,7 @@ mod tests {
         assert_eq!(ser("一二［＃レ］"), "一二［＃レ］");
     }
 
-    // --- Annotation (unknown directive flows through raw) ---------------
+    // --- Directive (unknown directive flows through raw) ---------------
 
     #[test]
     fn unknown_annotation_round_trips_raw() {
@@ -973,7 +973,7 @@ mod tests {
         assert_eq!(ser("［＃中央揃え］"), "［＃中央揃え］");
     }
 
-    // --- Sashie (keyword form + dimensions) ----------------------------
+    // --- Illustration (keyword form + dimensions) ----------------------------
 
     #[test]
     fn sashie_keyword_form_padded() {
@@ -991,7 +991,7 @@ mod tests {
         );
     }
 
-    // --- AozoraHeading leaf (every level × style) ----------------------
+    // --- Heading leaf (every level × style) ----------------------
 
     #[test]
     fn aozora_heading_levels_round_trip() {

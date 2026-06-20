@@ -13,19 +13,19 @@ or one shell invocation — away.
 | --- | --- | --- |
 | [Ruby](ruby.md) | `ruby` | `｜base《reading》` |
 | [Bouten](bouten.md) | `bouten` | `［＃「target」に傍点］` |
-| [TateChuYoko](tate-chu-yoko.md) | `tateChuYoko` | `［＃「12」は縦中横］` |
+| [CombineUpright](tate-chu-yoko.md) | `tateChuYoko` | `［＃「12」は縦中横］` |
 | [Gaiji](gaiji.md) | `gaiji` | `※［＃...、第3水準1-85-54］` |
 | [Indent](indent.md) | `indent` | `［＃2字下げ］` |
 | [AlignEnd](align-end.md) | `alignEnd` | `［＃地から2字上げ］` |
 | [Warichu](warichu.md) | `warichu` | `［＃割り注］...` |
-| [Keigakomi](keigakomi.md) | `keigakomi` | `［＃罫囲み］` |
+| [Framed](keigakomi.md) | `keigakomi` | `［＃罫囲み］` |
 | [PageBreak](page-break.md) | `pageBreak` | `［＃改ページ］` |
 | [SectionBreak](section-break.md) | `sectionBreak` | `［＃改丁］` |
-| [AozoraHeading](aozora-heading.md) | `heading` | `［＃見出し］` |
+| [Heading](aozora-heading.md) | `heading` | `［＃見出し］` |
 | [HeadingHint](heading-hint.md) | `headingHint` | `［＃「対象」は中見出し］` |
-| [Sashie](sashie.md) | `sashie` | `［＃挿絵（path.png）入る］` |
+| [Illustration](sashie.md) | `sashie` | `［＃挿絵（path.png）入る］` |
 | [Kaeriten](kaeriten.md) | `kaeriten` | `［＃返り点 一・二］` |
-| [Annotation](annotation.md) | `annotation` | `［＃任意のコメント］` |
+| [Directive](annotation.md) | `annotation` | `［＃任意のコメント］` |
 | [AngleQuote](angle-quote.md) | `angleQuote` | `≪重要≫` → `《重要》` |
 | [Container](container.md) | `container` | `［＃ここから...］...［＃ここで...終わり］` |
 | [ContainerOpen](container-open.md) | `containerOpen` | (NodeRef projection) |

@@ -10,14 +10,14 @@ Commands:
   check        Run the lexer over a file and report diagnostics
   fmt          Round-trip parse ∘ serialize and emit the canonical form
   render       Render Aozora notation to HTML on stdout
-  wire         Emit a parsed document's wire JSON for one `aozora::wire` envelope — `nodes` /
-               `pairs` / `container-pairs` / `diagnostics` / `gaiji` — or the static `slugs`
-               catalogue. The data counterpart to `schema`: `schema <kind>` prints the JSON Schema,
-               `wire <kind>` prints a document's data in that schema, byte-identical to every
-               binding's `*_json()` output
+  inspect      Emit a parsed document's JSON for one `aozora::json` envelope — `nodes` / `pairs` /
+               `container-pairs` / `diagnostics` / `gaiji` — or the static `slugs` catalogue. The
+               data counterpart to `schema`: `schema <kind>` prints the JSON Schema, `inspect
+               <kind>` prints a document's data in that schema, byte-identical to every binding's
+               `*_json()` output
   kinds        Tabulate every `NodeKind` / `PairKind` / `Severity` / `DiagnosticSource` / `Sentinel`
                / `InternalCheckCode` variant with its wire tag
-  schema       Pretty-print the JSON Schema for one of the four wire envelopes
+  schema       Pretty-print the JSON Schema for one of the four JSON envelopes
   explain      Print prose for a `NodeKind` tag, or help / severity / URL for a diagnostic code
   pandoc       Project the parsed document to a Pandoc AST. Without `--format`, prints Pandoc JSON
                to stdout (consumable by `pandoc -f json -t <FORMAT>`); with `--format`, spawns
@@ -37,7 +37,7 @@ Options:
 Examples:
   aozora check FILE.txt              # lex + report diagnostics
   aozora render FILE.txt > out.html  # render to HTML
-  aozora wire nodes FILE.txt         # parsed nodes as wire JSON
+  aozora inspect nodes FILE.txt         # parsed nodes as JSON
   aozora fmt --check FILE.txt        # CI format gate
   aozora explain unclosed_bracket    # explain a diagnostic code
   aozora completions zsh             # shell completion script

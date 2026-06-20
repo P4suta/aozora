@@ -6,14 +6,14 @@
 //! arena-allocated, `Copy`-able, deduplicated through
 //! [`borrowed::Interner`]. Public consumers (`aozora` meta crate,
 //! FFI / WASM / Python drivers, CLI) parse via
-//! `aozora::Document::parse()` and walk a `borrowed::AozoraNode<'_>`.
+//! `aozora::Document::parse()` and walk a `borrowed::Node<'_>`.
 //!
 //! # Top-level surface
 //!
 //! Only the **shared `Copy`-able payloads** referenced by the borrowed
 //! AST (`BoutenKind`, `BoutenPosition`, `Indent`, `AlignEnd`,
-//! `Container`, `ContainerKind`, `Keigakomi`, `SectionKind`,
-//! `AozoraHeadingKind`, `EmphasisKind`, `AnnotationKind`) live at the
+//! `Container`, `ContainerKind`, `Framed`, `SectionKind`,
+//! `HeadingKind`, `EmphasisKind`, `DirectiveKind`) live at the
 //! top level. The
 //! borrowed-AST node types live under `borrowed::`. The arena-backed
 //! builder lives under `alloc::`.
@@ -177,26 +177,26 @@ pub enum RubySide {
     Left,
 }
 
-/// Which annotation flavour a [`crate::borrowed::SideNote`] carries.
+/// Which annotation flavour a [`crate::borrowed::MarginNote`] carries.
 ///
-/// 注記 and 傍記 share the `SideNote` structure (a note attached to a
+/// 注記 and 傍記 share the `MarginNote` structure (a note attached to a
 /// preceding run) but round-trip to distinct keywords, so the flavour is
 /// preserved here even though both render the same.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-pub enum SideNoteKind {
+pub enum MarginNoteKind {
     /// 注記 — `［＃「X」の左に「Y」の注記］`, a left-side editorial gloss.
     #[default]
-    Annotation,
+    Gloss,
     /// 傍記 — `［＃「X」に「Y」の傍記］`, a redaction marker (典型的に ×)
     /// written beside X, used in censorship restoration.
     Marginal,
 }
 
-impl SideNoteKind {
+impl MarginNoteKind {
     /// The `(connector, suffix)` source literals that wrap the note text
-    /// when a [`crate::borrowed::SideNote`] of this flavour round-trips
+    /// when a [`crate::borrowed::MarginNote`] of this flavour round-trips
     /// back to source as `base［＃「base{connector}note{suffix}`.
     ///
     /// Renderers call this instead of matching the (`non_exhaustive`)
@@ -206,7 +206,7 @@ impl SideNoteKind {
     pub const fn serialize_affixes(self) -> (&'static str, &'static str) {
         match self {
             // 注記 normalises bare `に` input to the canonical `の左に…の注記`.
-            Self::Annotation => ("」の左に「", "」の注記］"),
+            Self::Gloss => ("」の左に「", "」の注記］"),
             // 傍記 keeps the bare `に` — there is no 左 in the source.
             Self::Marginal => ("」に「", "」の傍記］"),
         }
@@ -215,7 +215,7 @@ impl SideNoteKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Keigakomi;
+pub struct Framed;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -231,12 +231,12 @@ pub enum SectionKind {
 
 /// Heading *level* — the 大 / 中 / 小 outline rank.
 ///
-/// Orthogonal to [`AozoraHeadingStyle`]; the two combine (同行中見出し is
+/// Orthogonal to [`HeadingStyle`]; the two combine (同行中見出し is
 /// `Medium` + `SameLine`, 窓小見出し is `Small` + `Window`, …).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-pub enum AozoraHeadingKind {
+pub enum HeadingKind {
     /// 大見出し — the top outline level (renders as `<h1>`).
     Large,
     /// 中見出し — the middle outline level (renders as `<h2>`).
@@ -247,14 +247,14 @@ pub enum AozoraHeadingKind {
 
 /// Heading *style* — standard, 同行 (same-line), or 窓 (window).
 ///
-/// Orthogonal to [`AozoraHeadingKind`] (the 大 / 中 / 小 level): each style
+/// Orthogonal to [`HeadingKind`] (the 大 / 中 / 小 level): each style
 /// pairs with any level. The 同行 style runs the title into the body on the
 /// same line; 窓 is an inset title. 副見出し is **not** a real annotation (it
 /// does not occur in the corpus) and is deliberately absent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-pub enum AozoraHeadingStyle {
+pub enum HeadingStyle {
     /// Standard heading — no 同行 / 窓 prefix. The default.
     #[default]
     Standard,
@@ -299,7 +299,7 @@ pub enum EmphasisKind {
         steps: i8,
     },
     /// 行中 罫囲み (`「X」は罫囲み`) — the inline forward-reference box, the
-    /// span-level counterpart of the block [`ContainerKind::Keigakomi`]
+    /// span-level counterpart of the block [`ContainerKind::Framed`]
     /// (just as [`Bold`](Self::Bold) is the leaf counterpart of
     /// [`ContainerKind::Bold`]).
     KeigakomiInline,
@@ -384,13 +384,13 @@ impl SectionKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
-pub enum AnnotationKind {
+pub enum DirectiveKind {
     /// The parser recognised the notation as Aozora-shaped but not registered.
     Unknown,
-    /// `［＃「」」はママ］`-style editorial as-is marker.
-    AsIs,
+    /// `［＃「」」はママ］`-style editorial *sic* marker (text reproduced as in the source).
+    Sic,
     /// Source-text divergence note (`［＃「X」は底本では「Y」］`).
-    TextualNote,
+    BaseTextVariant,
     /// A ruby span that couldn't be parsed cleanly.
     InvalidRubySpan,
     /// Inline warichu opener — `［＃割り注］`.
@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn ruby_side_and_heading_style_defaults() {
         assert_eq!(RubySide::default(), RubySide::Right);
-        assert_eq!(AozoraHeadingStyle::default(), AozoraHeadingStyle::Standard);
+        assert_eq!(HeadingStyle::default(), HeadingStyle::Standard);
     }
 
     #[test]
@@ -538,13 +538,13 @@ mod tests {
             },
         };
         assert_eq!(
-            heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window),
-            heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window),
+            heading(HeadingKind::Medium, HeadingStyle::Window),
+            heading(HeadingKind::Medium, HeadingStyle::Window),
             "equal Heading containers compare equal"
         );
         assert_ne!(
-            heading(AozoraHeadingKind::Medium, AozoraHeadingStyle::Window),
-            heading(AozoraHeadingKind::Small, AozoraHeadingStyle::Window),
+            heading(HeadingKind::Medium, HeadingStyle::Window),
+            heading(HeadingKind::Small, HeadingStyle::Window),
             "different level ⇒ not equal"
         );
         let indent = Indent { amount: 4 };

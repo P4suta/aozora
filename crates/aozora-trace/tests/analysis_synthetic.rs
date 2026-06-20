@@ -428,12 +428,12 @@ fn rollup_empty_trace_total_zero_and_renders() {
 #[test]
 fn categorizer_first_match_wins_in_declaration_order() {
     let cat = RollupConfig::aozora_defaults().compile().expect("compile");
-    // AVX2 movemask is declared under phase1_scan ABOVE the generic
+    // AVX2 movemask is declared under scan ABOVE the generic
     // core_* buckets — first-match-wins must attribute it to phase1.
     assert_eq!(
         cat.classify("core::core_arch::x86::avx2::_mm256_movemask_epi8"),
-        "phase1_scan",
-        "avx2 intrinsic attributed to phase1_scan, not core_*"
+        "scan",
+        "avx2 intrinsic attributed to scan, not core_*"
     );
 }
 
@@ -458,16 +458,10 @@ fn categorizer_anchored_libc_patterns() {
 fn categorizer_default_buckets_spot_checks() {
     let cat = RollupConfig::aozora_defaults().compile().expect("compile");
     let cases = [
-        ("aozora_pipeline::lexer::phase0::run", "phase0_sanitize"),
-        ("aozora_pipeline::lexer::phase2_pair::pair", "phase2_pair"),
-        (
-            "aozora_pipeline::lexer::phase3::recognise",
-            "phase3_classify",
-        ),
-        (
-            "aozora_syntax::borrowed::intern::Interner::get",
-            "phase4_intern",
-        ),
+        ("aozora_pipeline::lexer::sanitize::run", "sanitize"),
+        ("aozora_pipeline::lexer::pair::pair", "pair"),
+        ("aozora_pipeline::lexer::classify::recognise", "classify"),
+        ("aozora_syntax::borrowed::intern::Interner::get", "intern"),
         ("memchr::memmem::find", "memchr_scan"),
         ("encoding_rs::Decoder::decode", "corpus_load_sjis"),
         ("aozora_corpus::iter::walk", "corpus_walk"),
@@ -493,11 +487,7 @@ fn categorizer_default_buckets_spot_checks() {
 fn categorizer_category_names_are_in_declaration_order() {
     let cat = RollupConfig::aozora_defaults().compile().expect("compile");
     let names = cat.category_names();
-    assert_eq!(
-        names.first().copied(),
-        Some("phase1_scan"),
-        "first category"
-    );
+    assert_eq!(names.first().copied(), Some("scan"), "first category");
     assert!(
         names.contains(&"rendering"),
         "rendering category is present"

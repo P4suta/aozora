@@ -53,7 +53,7 @@ use std::time::Instant;
 use clap::{Args, Subcommand};
 use rayon::prelude::*;
 
-use aozora::{AnnotationKind, AozoraNode, Document, NodeKind, NodeRef};
+use aozora::{DirectiveKind, Document, Node, NodeKind, NodeRef};
 use aozora_corpus::{
     Archive, ArchiveBuilder, CorpusItem, EntryMeta, FilesystemCorpus, archive, par_load_decoded,
 };
@@ -130,11 +130,11 @@ pub(crate) enum CorpusTarget {
     /// hand-written vector.
     ///
     /// Headline output: the distinct `［＃…］` bodies that fall through
-    /// to `AnnotationKind::Unknown` (the true unsupported set), with
+    /// to `DirectiveKind::Unknown` (the true unsupported set), with
     /// per-body counts, a first-seen `label:line`, and a normalized
     /// "shape" grouping (`「…」` → `「」`, digit runs → `N`) so families
     /// of unsupported directives surface. Also: per-`NodeKind`
-    /// frequency, the `AnnotationKind` breakdown, the 外字 address-form
+    /// frequency, the `DirectiveKind` breakdown, the 外字 address-form
     /// distribution (+ unresolved count), diagnostics by code, and
     /// decode-error / parse-panic counts.
     ///
@@ -162,7 +162,7 @@ pub(crate) enum CorpusTarget {
     /// Conformance regression gate: fail (exit 1) when the corpus
     /// per-file Unknown-degradation rate rises above a committed
     /// baseline — i.e. when a change pushed more notation into the
-    /// `AnnotationKind::Unknown` catch-all. Runs the full audit
+    /// `DirectiveKind::Unknown` catch-all. Runs the full audit
     /// (`$AOZORA_CORPUS_ROOT` or `--root`), so it needs a corpus; in
     /// CI that is a checkout of `P4suta/aozorabunko_text`, locally the
     /// developer's `$AOZORA_CORPUS_ROOT`.
@@ -788,7 +788,7 @@ impl PrevArchive {
 // corpus audit — empirical ground truth for spec-conformance work
 // ===========================================================================
 
-/// `AnnotationKind` variants, in the fixed order used by
+/// `DirectiveKind` variants, in the fixed order used by
 /// [`FileStat::annotation_kinds`] / the report's `annotation_kinds`
 /// table. `Unknown` is index 0 — it is the one that matters.
 const ANN_KIND_LABELS: [&str; 7] = [
@@ -943,7 +943,7 @@ fn audit(
 /// Unknown set; never raise it to paper over a regression.
 #[derive(Serialize, Deserialize)]
 struct Baseline {
-    /// Total `AnnotationKind::Unknown` occurrences captured at baseline.
+    /// Total `DirectiveKind::Unknown` occurrences captured at baseline.
     unknown_total: u64,
     /// Files analysed at baseline (the rate denominator).
     files_analyzed: usize,
@@ -1005,7 +1005,7 @@ fn audit_gate(
     if cur_rate > allowed {
         return Err(format!(
             "Unknown-degradation regression: current rate {cur_rate:.6} exceeds allowed {allowed:.6}. \
-             A recogniser change pushed more notation into the Annotation{{Unknown}} catch-all. \
+             A recogniser change pushed more notation into the Directive{{Unknown}} catch-all. \
              Fix the recogniser, or — if this is an intentional, justified shift — re-baseline with \
              `xtask corpus audit-gate --update`."
         ));
@@ -1074,24 +1074,25 @@ fn analyze(text: &str) -> FileStat {
             s.node_kinds[i] += 1;
         }
         match sn.node {
-            NodeRef::Inline(AozoraNode::Annotation(a))
-            | NodeRef::BlockLeaf(AozoraNode::Annotation(a)) => match a.kind {
-                AnnotationKind::Unknown => {
-                    s.annotation_kinds[0] += 1;
-                    let line = line_of(text, sn.source_span.start);
-                    s.unknown.push((a.raw.as_str().to_owned(), line));
+            NodeRef::Inline(Node::Directive(a)) | NodeRef::BlockLeaf(Node::Directive(a)) => {
+                match a.kind {
+                    DirectiveKind::Unknown => {
+                        s.annotation_kinds[0] += 1;
+                        let line = line_of(text, sn.source_span.start);
+                        s.unknown.push((a.raw.as_str().to_owned(), line));
+                    }
+                    DirectiveKind::Sic => s.annotation_kinds[1] += 1,
+                    DirectiveKind::BaseTextVariant => s.annotation_kinds[2] += 1,
+                    DirectiveKind::InvalidRubySpan => s.annotation_kinds[3] += 1,
+                    DirectiveKind::WarichuOpen => s.annotation_kinds[4] += 1,
+                    DirectiveKind::WarichuClose => s.annotation_kinds[5] += 1,
+                    DirectiveKind::Empty => s.annotation_kinds[6] += 1,
+                    // `DirectiveKind` is #[non_exhaustive]; a future variant
+                    // is simply not bucketed until this match is extended.
+                    _ => {}
                 }
-                AnnotationKind::AsIs => s.annotation_kinds[1] += 1,
-                AnnotationKind::TextualNote => s.annotation_kinds[2] += 1,
-                AnnotationKind::InvalidRubySpan => s.annotation_kinds[3] += 1,
-                AnnotationKind::WarichuOpen => s.annotation_kinds[4] += 1,
-                AnnotationKind::WarichuClose => s.annotation_kinds[5] += 1,
-                AnnotationKind::Empty => s.annotation_kinds[6] += 1,
-                // `AnnotationKind` is #[non_exhaustive]; a future variant
-                // is simply not bucketed until this match is extended.
-                _ => {}
-            },
-            NodeRef::Inline(AozoraNode::Gaiji(g)) | NodeRef::BlockLeaf(AozoraNode::Gaiji(g)) => {
+            }
+            NodeRef::Inline(Node::Gaiji(g)) | NodeRef::BlockLeaf(Node::Gaiji(g)) => {
                 s.gaiji_total += 1;
                 if g.ucs.is_none() {
                     s.gaiji_unresolved += 1;
@@ -1317,7 +1318,7 @@ fn merge(
             NodeKind::ALL
                 .iter()
                 .zip(node_kinds)
-                .map(|(k, c)| (k.as_camel_case().to_owned(), c)),
+                .map(|(k, c)| (k.as_wire_tag().to_owned(), c)),
         ),
         annotation_kinds: kv_sorted(
             ANN_KIND_LABELS
@@ -1361,7 +1362,7 @@ fn print_human_summary(r: &AuditReport, top: usize) {
     }
     eprintln!();
 
-    eprintln!("AnnotationKind breakdown:");
+    eprintln!("DirectiveKind breakdown:");
     for kv in &r.annotation_kinds {
         eprintln!("  {:<16} {:>10}", kv.key, kv.count);
     }
@@ -1741,7 +1742,7 @@ mod tests {
 
     #[test]
     fn analyze_unknown_annotation_records_body_and_line() {
-        // A nonsense directive falls through to AnnotationKind::Unknown.
+        // A nonsense directive falls through to DirectiveKind::Unknown.
         let stat = analyze("前置き\n［＃まったく未知の指示］");
         assert_eq!(stat.annotation_kinds[0], 1, "one Unknown annotation");
         assert_eq!(stat.unknown.len(), 1, "one unknown body captured");

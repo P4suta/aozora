@@ -1,4 +1,4 @@
-//! Phase 3 — classify the Phase 2 event stream into [`borrowed::AozoraNode`] spans.
+//! Phase 3 — classify the Phase 2 event stream into [`borrowed::Node`] spans.
 //!
 //! Walks the cross-linked [`PairEvent`] stream produced by Phase 2 and
 //! produces a contiguous vector of [`ClassifiedSpan`] whose
@@ -12,7 +12,7 @@
 //!   unclosed opens, unmatched closes) are merged into one span so
 //!   Phase 4 can emit them verbatim in a single write.
 //! * [`SpanKind::Aozora`] — a classified Aozora construct, carrying the
-//!   concrete [`borrowed::AozoraNode`] that Phase 4 will replace with a PUA
+//!   concrete [`borrowed::Node`] that Phase 4 will replace with a PUA
 //!   placeholder sentinel (see [`crate::INLINE_SENTINEL`] and friends).
 //! * [`SpanKind::Newline`] — a `\n` in the sanitized text, kept as its
 //!   own span kind because block-level annotations (Phase 4 block
@@ -44,18 +44,18 @@
 //!   (`一`/`二`/... plus okurigana `（X）`), indent / align-end
 //!   (`N字下げ` / `地からN字上げ`), sashie (`挿絵`), forward-ref
 //!   bouten, forward-ref TCY, paired-container open / close, and
-//!   an `Annotation{Unknown}` catch-all.
+//!   an `Directive{Unknown}` catch-all.
 //! * Gaiji — `※［＃...］` reference-mark + bracket combos.
 //! * Double-angle quotation `≪…≫` (displayed as `《…》`) (`AngleQuote`).
 //!
 //! The catch-all makes every well-formed `［＃…］` bracket produce
-//! *some* `AozoraNode`, so the Tier-A canary (no bare `［＃` in the
-//! HTML output outside an `aozora-annotation` wrapper) holds regardless
+//! *some* `Node`, so the Tier-A canary (no bare `［＃` in the
+//! HTML output outside an `aozora-directive` wrapper) holds regardless
 //! of which specialised recogniser claims the bracket.
 //!
 //! ## Inlining note (negative result)
 //!
-//! `phase3_subsystems` (instrumented) reports 88 % of classify wall in
+//! `classify_subsystems` (instrumented) reports 88 % of classify wall in
 //! "iterator-dispatch overhead" and only 9.4 % in actual recogniser
 //! leaves. The straightforward fix — sprinkle `#[inline]` on
 //! `recognize_and_emit` / `try_ruby_emit` / `try_bracket_emit` /
@@ -84,7 +84,7 @@ use core::mem;
 use core::ops::Range;
 use std::collections::VecDeque;
 
-#[cfg(feature = "phase3-instrument")]
+#[cfg(feature = "classify-instrument")]
 use super::instrumentation::{
     Subsystem, SubsystemGuard, YieldKind, record_pending_size, record_replay_body_size,
     record_yield,
@@ -95,9 +95,9 @@ use super::instrumentation::{
 // in F.4 once the owned-AST path was gone.
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
-use aozora_syntax::{AnnotationKind, ContainerKind, Span};
+use aozora_syntax::{ContainerKind, DirectiveKind, Span};
 
-use super::phase2_pair::{PairEvent, PairKind};
+use super::pair::{PairEvent, PairKind};
 use super::token::TriggerKind;
 use aozora_spec::Diagnostic;
 
@@ -119,7 +119,7 @@ pub struct ClassifiedSpan<'a> {
 
 /// Classification of a [`ClassifiedSpan`].
 ///
-/// Phase 4 (now folded into `aozora_lex::lex_into_arena`'s
+/// Phase 4 (now folded into `aozora_lex::lex`'s
 /// `ArenaNormalizer` walk) maps the variants to PUA sentinels as
 /// follows:
 ///
@@ -139,8 +139,8 @@ pub struct ClassifiedSpan<'a> {
 ///
 /// # Memory layout
 ///
-/// The `Aozora(borrowed::AozoraNode<'a>)` variant is *not* boxed —
-/// `borrowed::AozoraNode<'a>` is `Copy` and 16 bytes, so storing it
+/// The `Aozora(borrowed::Node<'a>)` variant is *not* boxed —
+/// `borrowed::Node<'a>` is `Copy` and 16 bytes, so storing it
 /// inline keeps `SpanKind` to `Aozora`-variant size while avoiding
 /// the `Box` indirection the legacy owned shape paid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,7 +154,7 @@ pub enum SpanKind<'a> {
     /// or `E002` (block-leaf) sentinel and records the node in the
     /// placeholder registry keyed at the sentinel's normalized
     /// position.
-    Aozora(borrowed::AozoraNode<'a>),
+    Aozora(borrowed::Node<'a>),
     /// Paired-container opener — `［＃ここから字下げ］`, `［＃罫囲み］`,
     /// etc. The normalizer emits an `E003` sentinel line; `post_process`
     /// matches it to the corresponding `BlockClose` via a balanced
@@ -521,7 +521,7 @@ where
     }
 
     fn push_output(&mut self, span: ClassifiedSpan<'a>) {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         record_yield(match &span.kind {
             SpanKind::Plain => YieldKind::Plain,
             SpanKind::Newline => YieldKind::Newline,
@@ -536,7 +536,7 @@ where
     /// pending refmark, if any, is folded into the plain run's coverage
     /// (its span is contiguous with the surrounding text).
     fn flush_plain_up_to(&mut self, end: u32) {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::FlushPlain);
         // A pending refmark contributes its bytes to the plain run.
         if let Some(rm) = self.pending_refmark.take()
@@ -558,7 +558,7 @@ where
     /// the outer open was preceded by a `Solo(RefMark)` waiting to be
     /// absorbed (the gaiji shape).
     fn open_frame(&mut self, open_event: PairEvent, gaiji_refmark: Option<Span>) {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::OpenFrame);
         let mut body: smallvec::SmallVec<[PairEvent; 16]> = smallvec::SmallVec::new();
         let mut links: smallvec::SmallVec<[u32; 16]> = smallvec::SmallVec::new();
@@ -586,7 +586,7 @@ where
     /// that the caller should run recognition on the now-complete
     /// buffer.
     fn append_to_frame(&mut self, event: PairEvent) -> bool {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::FrameAppend);
         let frame = self
             .frame
@@ -636,7 +636,7 @@ where
     /// Run recognition on the current frame's body buffer and emit the
     /// resulting span. Called when the OUTERMOST pair has just closed.
     fn recognize_and_emit(&mut self) {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::RecognizeAndEmit);
         let frame = self
             .frame
@@ -753,9 +753,9 @@ where
         body: smallvec::SmallVec<[PairEvent; 16]>,
         refmark: Option<Span>,
     ) {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::ReplayBody);
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         record_replay_body_size(body.len() as u64);
         if let Some(rm) = refmark
             && self.pending_plain_start.is_none()
@@ -942,7 +942,7 @@ where
         open_idx: usize,
         close_idx: usize,
     ) -> Option<ClassifiedSpan<'a>> {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::TryRubyEmit);
         // Ruby recognition uses the PRECEDING text (if any) as the
         // base — but in the streaming model we don't have that text in
@@ -1090,7 +1090,7 @@ where
         open_idx: usize,
         close_idx: usize,
     ) -> Option<ClassifiedSpan<'a>> {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::TryBracketEmit);
         let mut ctx = RecogniseCtx {
             alloc: self.alloc,
@@ -1111,7 +1111,7 @@ where
         // Surface any non-fatal warning the recogniser attached
         // (unrecognised container directive / 縦中横 target not found /
         // ambiguous bouten target). The emitted node is unaffected — for
-        // the catch-all cases it is still `Annotation{Unknown}`, so the
+        // the catch-all cases it is still `Directive{Unknown}`, so the
         // Tier-A "no bare ［＃" canary holds. `ctx`'s reborrow of
         // `self.alloc` ended at `recognize_annotation`, so pushing onto the
         // disjoint `self.diagnostics` is borrow-clear.
@@ -1121,7 +1121,7 @@ where
         // Record bracketed kaeriten for the end-of-document pairing /
         // context checks (`finalize_kaeriten`). The directive span is the
         // whole `［＃…］`.
-        if let SpanKind::Aozora(borrowed::AozoraNode::Kaeriten(k)) = kind {
+        if let SpanKind::Aozora(borrowed::Node::Kaeriten(k)) = kind {
             let span = Span::new(m.consume_start, m.consume_end);
             let (family, rank, is_ladder) = classify_kaeriten_mark(k.mark.as_str());
             self.kaeriten_obs.push(KaeritenObs {
@@ -1195,7 +1195,7 @@ where
     type Item = ClassifiedSpan<'a>;
 
     fn next(&mut self) -> Option<ClassifiedSpan<'a>> {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::IterDispatch);
         loop {
             if let Some(span) = self.pending_outputs_pop_front() {
@@ -1204,13 +1204,13 @@ where
             if self.finished {
                 return None;
             }
-            #[cfg(feature = "phase3-instrument")]
+            #[cfg(feature = "classify-instrument")]
             let events_next_guard = SubsystemGuard::new(Subsystem::EventsNext);
             let next_event = self.events.next();
-            #[cfg(feature = "phase3-instrument")]
+            #[cfg(feature = "classify-instrument")]
             drop(events_next_guard);
             if let Some(event) = next_event {
-                #[cfg(feature = "phase3-instrument")]
+                #[cfg(feature = "classify-instrument")]
                 let _phase3_loop_guard = SubsystemGuard::new(Subsystem::LoopBody);
                 self.process_event(event);
             } else {
@@ -1234,7 +1234,7 @@ where
     I: Iterator<Item = PairEvent>,
 {
     fn pending_outputs_pop_front(&mut self) -> Option<ClassifiedSpan<'a>> {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         {
             // Record pending_outputs.len() BEFORE the pop so the
             // distribution histogram tracks pre-pop sizes.
@@ -1305,7 +1305,7 @@ where
 /// already resolved into a `Content` via `build_content_from_body`.
 ///
 /// Collapsing inside the lexer (rather than leaving the splitting to
-/// the renderer) keeps the [`borrowed::AozoraNode`] payload self-contained:
+/// the renderer) keeps the [`borrowed::Node`] payload self-contained:
 /// Phase 4 stamps one PUA sentinel over the whole `｜…《…》` source
 /// span, and the inner gaiji/annotation never reach the top-level
 /// `spans` list or downstream consumers.
@@ -1331,7 +1331,7 @@ struct RubyMatch<'s, 'a> {
 ///
 /// The `《…》` reading body is walked with `build_content_from_body`
 /// so nested `※［＃…］` gaiji and `［＃…］` annotations fold into the
-/// returned `Content` as `Segment::Gaiji` / `Segment::Annotation`.
+/// returned `Content` as `Segment::Gaiji` / `Segment::Directive`.
 /// Pure-text readings collapse back to `Content::Plain` via
 /// `Content::from_segments`.
 ///
@@ -1344,7 +1344,7 @@ impl<'a, 's> RecogniseCtx<'_, 'a, 's> {
         open_idx: usize,
         close_idx: usize,
     ) -> Option<RubyMatch<'s, 'a>> {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::Ruby);
         let events = view.events;
         let PairEvent::PairOpen {
@@ -1438,16 +1438,16 @@ struct BodyWindow {
 ///
 /// Each nested `※［＃description、mencode］` reduces to a
 /// `Segment::Gaiji` via `recognize_gaiji`; each standalone
-/// `［＃…］` reduces to a `Segment::Annotation` via
+/// `［＃…］` reduces to a `Segment::Directive` via
 /// `recognize_annotation`. Every other byte (plain text, stray
 /// triggers, unmatched delimiters) is captured into adjacent
 /// `Segment::Text` runs by tracking a single "outstanding text
 /// start" byte offset and flushing only when a recognisable construct
 /// consumes the intervening bytes.
 ///
-/// Non-Annotation Aozora emits (a paired-container opener, a block
+/// Non-Directive Aozora emits (a paired-container opener, a block
 /// leaf, etc.) are *not* first-class segments and are folded back
-/// into `Annotation{Unknown}` with the raw bracket bytes — this keeps
+/// into `Directive{Unknown}` with the raw bracket bytes — this keeps
 /// the Tier-A canary intact inside a ruby body regardless of how
 /// unusual the inner annotation shape is.
 ///
@@ -1515,7 +1515,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         window: &BodyWindow,
     ) -> borrowed::Content<'a> {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::BuildContent);
         debug_assert!(
             window.events.start <= window.events.end,
@@ -1639,11 +1639,11 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     /// first claim on a leading bracket. `recognize_annotation` has an
     /// `Unknown` catch-all (only returns `None` for malformed brackets
     /// with no `＃` sentinel); on success the bracket folds into a
-    /// `Segment::Annotation` with the recogniser's payload (or a
+    /// `Segment::Directive` with the recogniser's payload (or a
     /// synthetic `Unknown` payload built from the raw source bytes
     /// when the recogniser left `annotation_payload` unset). The
     /// fallback synthesis preserves the Tier-A canary: no bare `［＃`
-    /// ever leaks outside an `aozora-annotation` wrapper.
+    /// ever leaks outside an `aozora-directive` wrapper.
     fn try_emit_annotation_at(
         &mut self,
         body: BodyWalkCtx<'_>,
@@ -1683,8 +1683,8 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // A no-`※` standalone gaiji (#122) reaches here as `Aozora(Gaiji)`;
         // wrap it as a `Segment::Gaiji` (not the `Unknown` annotation the
         // payload fallback would build) and flag an unresolved miss (#84).
-        // Every other recogniser keeps the `Segment::Annotation` path.
-        if let EmitKind::Aozora(borrowed::AozoraNode::Gaiji(g)) = a.emit {
+        // Every other recogniser keeps the `Segment::Directive` path.
+        if let EmitKind::Aozora(borrowed::Node::Gaiji(g)) = a.emit {
             build.segments.push(self.alloc.seg_gaiji(g));
             if g.ucs.is_none() {
                 self.diagnostics
@@ -1698,7 +1698,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 p
             } else {
                 let raw = &self.source[open_span.start as usize..close_span.end as usize];
-                self.alloc.make_annotation(raw, AnnotationKind::Unknown)
+                self.alloc.make_directive(raw, DirectiveKind::Unknown)
             };
             build.segments.push(self.alloc.seg_annotation(payload));
         }
@@ -1772,21 +1772,21 @@ fn trailing_kanji_start(text: &str) -> usize {
 ///
 /// `emit` decides which [`SpanKind`] the driver pushes for the
 /// top-level case. `annotation_payload` is `Some` exactly when the
-/// recogniser produced an `Annotation{…}` payload — the
+/// recogniser produced an `Directive{…}` payload — the
 /// `build_content_from_body` caller uses it to wrap the same payload
-/// as a `Segment::Annotation` without reconstructing it. The emit
-/// variants `BlockOpen` / `BlockClose` and non-`Annotation` `Aozora`
+/// as a `Segment::Directive` without reconstructing it. The emit
+/// variants `BlockOpen` / `BlockClose` and non-`Directive` `Aozora`
 /// nodes leave `annotation_payload` as `None`, so the body-builder
-/// falls back to its `Annotation{Unknown}` synthesis path.
+/// falls back to its `Directive{Unknown}` synthesis path.
 struct AnnotationMatch<'a> {
     emit: EmitKind<'a>,
-    annotation_payload: Option<&'a borrowed::Annotation<'a>>,
+    annotation_payload: Option<&'a borrowed::Directive<'a>>,
     consume_start: u32,
     consume_end: u32,
     /// A non-fatal warning to surface for this bracket, if any —
     /// `unrecognised_container_directive`, `tcy_target_not_found`, or
     /// `bouten_target_ambiguous`. The caller drains it into the diagnostic
-    /// stream; the emitted node (often the `Annotation{Unknown}` catch-all,
+    /// stream; the emitted node (often the `Directive{Unknown}` catch-all,
     /// canary intact) is unaffected.
     pending_diagnostic: Option<Diagnostic>,
 }
@@ -1794,7 +1794,7 @@ struct AnnotationMatch<'a> {
 /// What to emit for a matched annotation.
 enum EmitKind<'a> {
     /// Inline or block-leaf — becomes [`SpanKind::Aozora`].
-    Aozora(borrowed::AozoraNode<'a>),
+    Aozora(borrowed::Node<'a>),
     /// Paired-container opener — becomes [`SpanKind::BlockOpen`].
     BlockOpen(ContainerKind),
     /// Paired-container closer — becomes [`SpanKind::BlockClose`].
@@ -1828,21 +1828,21 @@ mod tests {
     use super::forward::emphasis_kind_from_suffix;
     use super::*;
     use aozora_syntax::{AlignEnd, BoutenKind, BoutenPosition, EmphasisKind, Indent, SectionKind};
-    // Borrowed-AST types pattern-matched throughout. `AozoraNode<'a>`
+    // Borrowed-AST types pattern-matched throughout. `Node<'a>`
     // is `Copy` and holds payloads via `&'a Ruby<'a>` etc., so tests
-    // pattern-match `AozoraNode::Ruby(r)` where `r` is already a
+    // pattern-match `Node::Ruby(r)` where `r` is already a
     // reference — no `Box` deref needed.
     #[allow(
         unused_imports,
         reason = "individual tests pattern-match on subsets; bringing them all in keeps the import block stable"
     )]
     use aozora_syntax::borrowed::{
-        AngleQuote, Annotation, AozoraNode, Arena, Bouten, Content, Gaiji, HeadingHint, Kaeriten,
-        Ruby, Sashie, Segment, TateChuYoko,
+        AngleQuote, Arena, Bouten, CombineUpright, Content, Directive, Gaiji, HeadingHint,
+        Illustration, Kaeriten, Node, Ruby, Segment,
     };
 
-    use crate::lexer::phase1_events::tokenize;
-    use crate::lexer::phase2_pair::pair;
+    use crate::lexer::pair::pair;
+    use crate::lexer::tokenize::tokenize;
 
     /// Test-only materialised classify output: collects `spans` from
     /// the streaming iterator and merges its post-exhaustion
@@ -1883,10 +1883,10 @@ mod tests {
     }
 
     /// Test-only helper: extract the `Aozora` variant's borrowed
-    /// `AozoraNode<'a>` (which is `Copy`) so tests can pattern-match
+    /// `Node<'a>` (which is `Copy`) so tests can pattern-match
     /// on it without spelling out the variant boilerplate at every
     /// call site.
-    fn aozora_node<'a>(span: &ClassifiedSpan<'a>) -> Option<AozoraNode<'a>> {
+    fn aozora_node<'a>(span: &ClassifiedSpan<'a>) -> Option<Node<'a>> {
         match span.kind {
             SpanKind::Aozora(node) => Some(node),
             _ => None,
@@ -1950,7 +1950,7 @@ mod tests {
         let SpanKind::Aozora(node) = out.spans[0].kind else {
             panic!("expected Aozora span, got {:?}", out.spans[0].kind);
         };
-        let AozoraNode::Ruby(ruby) = node else {
+        let Node::Ruby(ruby) = node else {
             panic!("expected Ruby variant, got {node:?}");
         };
         assert_eq!(ruby.base.as_plain(), Some("青梅"));
@@ -1970,7 +1970,7 @@ mod tests {
         let SpanKind::Aozora(node) = out.spans[1].kind else {
             panic!("expected Aozora span, got {:?}", out.spans[1].kind);
         };
-        let AozoraNode::Ruby(ruby) = node else {
+        let Node::Ruby(ruby) = node else {
             panic!("expected Ruby variant, got {node:?}");
         };
         assert_eq!(ruby.base.as_plain(), Some("漢字"));
@@ -2016,7 +2016,7 @@ mod tests {
         assert_eq!(out.spans.len(), 3);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
         assert_eq!(out.spans[1].kind, SpanKind::Newline);
-        let is_ruby = matches!(out.spans[2].kind, SpanKind::Aozora(AozoraNode::Ruby(_)));
+        let is_ruby = matches!(out.spans[2].kind, SpanKind::Aozora(Node::Ruby(_)));
         assert!(
             is_ruby,
             "expected Aozora(Ruby), got {:?}",
@@ -2050,7 +2050,7 @@ mod tests {
     fn only_ruby<'a>(out: &TestClassifyOutput<'a>) -> &'a Ruby<'a> {
         let mut found = None;
         for span in &out.spans {
-            if let SpanKind::Aozora(AozoraNode::Ruby(r)) = span.kind {
+            if let SpanKind::Aozora(Node::Ruby(r)) = span.kind {
                 assert!(found.is_none(), "more than one Ruby span: {:?}", out.spans);
                 found = Some(r);
             }
@@ -2153,8 +2153,8 @@ mod tests {
     #[test]
     fn ruby_reading_with_trailing_annotation_produces_annotation_segment() {
         // `［＃ママ］` inside a reading indicates editorial "sic" —
-        // must fold as `Segment::Annotation` so the renderer wraps it
-        // in the hidden `aozora-annotation` span (Tier A compliance).
+        // must fold as `Segment::Directive` so the renderer wraps it
+        // in the hidden `aozora-directive` span (Tier A compliance).
         run!(out, "｜日本《にほん［＃ママ］》");
         let r = only_ruby(&out);
         let Content::Segments(segs) = r.reading.get() else {
@@ -2166,8 +2166,8 @@ mod tests {
             "segment 0: {:?}",
             segs[0]
         );
-        let Segment::Annotation(a) = segs[1] else {
-            panic!("segment 1 should be Annotation, got {:?}", segs[1]);
+        let Segment::Directive(a) = segs[1] else {
+            panic!("segment 1 should be Directive, got {:?}", segs[1]);
         };
         assert_eq!(a.raw.as_str(), "［＃ママ］");
     }
@@ -2175,7 +2175,7 @@ mod tests {
     #[test]
     fn ruby_reading_with_gaiji_and_annotation_interleaved() {
         // Exercises the general Segments shape: Text, Gaiji, Text,
-        // Annotation. Proves the flusher preserves ordering and the
+        // Directive. Proves the flusher preserves ordering and the
         // `text_start` advancement correctly spans each gap.
         run!(out, "｜日本《に※［＃「ほ」、第3水準1-85-54］ん［＃ママ］》");
         let r = only_ruby(&out);
@@ -2186,7 +2186,7 @@ mod tests {
         assert!(matches!(&segs[0], Segment::Text(t) if &**t == "に"));
         assert!(matches!(&segs[1], Segment::Gaiji(_)));
         assert!(matches!(&segs[2], Segment::Text(t) if &**t == "ん"));
-        assert!(matches!(&segs[3], Segment::Annotation(_)));
+        assert!(matches!(&segs[3], Segment::Directive(_)));
     }
 
     #[test]
@@ -2240,8 +2240,8 @@ mod tests {
     fn ruby_reading_preserves_tier_a_even_for_nested_block_leaf() {
         // `［＃改ページ］` inside a ruby reading is nonsensical, but
         // real corpora have been known to carry freak shapes. The
-        // non-Annotation emit path in `build_content_from_body` must
-        // downgrade such shapes into `Annotation{Unknown}` so the
+        // non-Directive emit path in `build_content_from_body` must
+        // downgrade such shapes into `Directive{Unknown}` so the
         // bare `［＃` never reaches the rendered HTML through a
         // `Segment::Text` channel (Tier A canary).
         run!(out, "｜日本《にほん［＃改ページ］》");
@@ -2249,17 +2249,17 @@ mod tests {
         let Content::Segments(segs) = r.reading.get() else {
             panic!("expected Segments, got {:?}", r.reading);
         };
-        // Last segment must be an Annotation carrying the raw bytes.
+        // Last segment must be an Directive carrying the raw bytes.
         let last = segs.last().expect("non-empty segments");
-        let Segment::Annotation(a) = last else {
-            panic!("final segment should be Annotation, got {last:?}");
+        let Segment::Directive(a) = last else {
+            panic!("final segment should be Directive, got {last:?}");
         };
         assert_eq!(a.raw.as_str(), "［＃改ページ］");
-        assert_eq!(a.kind, AnnotationKind::Unknown);
+        assert_eq!(a.kind, DirectiveKind::Unknown);
     }
 
     /// 縦中横 paired range `［＃縦中横］ … ［＃縦中横終わり］` opens and closes a
-    /// `ContainerKind::TcyRange` (a corpus convention, tolerant extension);
+    /// `ContainerKind::CombineUprightRange` (a corpus convention, tolerant extension);
     /// the forward-reference `「X」は縦中横` leaf is unaffected. A longer
     /// needle-prefix body declines to Unknown.
     #[test]
@@ -2268,21 +2268,31 @@ mod tests {
         let opens = out
             .spans
             .iter()
-            .filter(|s| matches!(s.kind, SpanKind::BlockOpen(ContainerKind::TcyRange)))
+            .filter(|s| {
+                matches!(
+                    s.kind,
+                    SpanKind::BlockOpen(ContainerKind::CombineUprightRange)
+                )
+            })
             .count();
         let closes = out
             .spans
             .iter()
-            .filter(|s| matches!(s.kind, SpanKind::BlockClose(ContainerKind::TcyRange)))
+            .filter(|s| {
+                matches!(
+                    s.kind,
+                    SpanKind::BlockClose(ContainerKind::CombineUprightRange)
+                )
+            })
             .count();
-        assert_eq!(opens, 1, "one TcyRange open");
-        assert_eq!(closes, 1, "one TcyRange close");
+        assert_eq!(opens, 1, "one CombineUprightRange open");
+        assert_eq!(closes, 1, "one CombineUprightRange close");
         // A needle-prefix-but-longer body must not be claimed.
         run!(out, "x［＃縦中横ほげ］y");
         assert!(
             out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Annotation(a)) if a.kind == AnnotationKind::Unknown)),
+                .any(|s| matches!(aozora_node(s), Some(Node::Directive(a)) if a.kind == DirectiveKind::Unknown)),
             "縦中横ほげ should fall through to Unknown"
         );
     }
@@ -2295,10 +2305,7 @@ mod tests {
         assert_eq!(out.spans.len(), 5);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
         assert_eq!(out.spans[1].kind, SpanKind::Newline);
-        assert!(matches!(
-            aozora_node(&out.spans[2]),
-            Some(AozoraNode::PageBreak)
-        ));
+        assert!(matches!(aozora_node(&out.spans[2]), Some(Node::PageBreak)));
         assert_eq!(out.spans[2].source_span.slice(src), "［＃改ページ］");
         assert_eq!(out.spans[3].kind, SpanKind::Newline);
         assert_eq!(out.spans[4].kind, SpanKind::Plain);
@@ -2313,7 +2320,7 @@ mod tests {
         assert!(
             out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::PageBreak))),
+                .any(|s| matches!(aozora_node(s), Some(Node::PageBreak))),
             "改頁 should emit a PageBreak"
         );
         run!(out, "本文［＃地より２字上げ］続き");
@@ -2321,7 +2328,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::AlignEnd(a)) => Some(a.offset),
+                Some(Node::AlignEnd(a)) => Some(a.offset),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("地より should emit an AlignEnd"));
@@ -2334,7 +2341,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::SectionBreak(SectionKind::Kaicho))
+            Some(Node::SectionBreak(SectionKind::Kaicho))
         ));
     }
 
@@ -2344,7 +2351,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::SectionBreak(SectionKind::Kaidan))
+            Some(Node::SectionBreak(SectionKind::Kaidan))
         ));
     }
 
@@ -2354,7 +2361,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::SectionBreak(SectionKind::Kaimihiraki))
+            Some(Node::SectionBreak(SectionKind::Kaimihiraki))
         ));
     }
 
@@ -2374,19 +2381,19 @@ mod tests {
     #[test]
     fn unknown_annotation_keyword_is_promoted_to_annotation_unknown() {
         // The lexer claims every well-formed `［＃…］`: if no specialised
-        // recogniser matches, the `Annotation{Unknown}` fallback wraps
-        // the raw source so the renderer can emit an `aozora-annotation`
+        // recogniser matches, the `Directive{Unknown}` fallback wraps
+        // the raw source so the renderer can emit an `aozora-directive`
         // hidden span instead of leaking the brackets as plain text.
         run!(out, "［＃未知のキーワード］");
         let ann = out
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Annotation(a)) => Some(a),
+                Some(Node::Directive(a)) => Some(a),
                 _ => None,
             })
-            .expect("unknown keyword must promote to Annotation{Unknown}");
-        assert_eq!(ann.kind, AnnotationKind::Unknown);
+            .expect("unknown keyword must promote to Directive{Unknown}");
+        assert_eq!(ann.kind, DirectiveKind::Unknown);
         assert_eq!(ann.raw.as_str(), "［＃未知のキーワード］");
     }
 
@@ -2396,17 +2403,14 @@ mod tests {
         // trim the body to be lenient.
         run!(out, "［＃ 改ページ ］");
         assert_eq!(out.spans.len(), 1);
-        assert!(matches!(
-            aozora_node(&out.spans[0]),
-            Some(AozoraNode::PageBreak)
-        ));
+        assert!(matches!(aozora_node(&out.spans[0]), Some(Node::PageBreak)));
     }
 
     #[test]
     fn empty_bracket_with_hash_is_typed_as_empty() {
         // Real Aozora corpora use `［＃］` as the de-facto-standard symbol in
         // the file-header 凡例 (e.g. "［＃］：入力者注…"). It is typed as
-        // AnnotationKind::Empty — recognised, not the Unknown catch-all — while
+        // DirectiveKind::Empty — recognised, not the Unknown catch-all — while
         // the Tier-A canary still holds (raw `［＃］` bytes preserved for
         // round-trip, no bare `［＃` leaking into HTML).
         run!(out, "［＃］");
@@ -2414,11 +2418,11 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Annotation(a)) => Some(a),
+                Some(Node::Directive(a)) => Some(a),
                 _ => None,
             })
-            .expect("empty body must wrap as an Annotation");
-        assert_eq!(ann.kind, AnnotationKind::Empty);
+            .expect("empty body must wrap as an Directive");
+        assert_eq!(ann.kind, DirectiveKind::Empty);
         assert_eq!(ann.raw.as_str(), "［＃］");
     }
 
@@ -2428,7 +2432,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::Indent(Indent { amount: 2 }))
+            Some(Node::Indent(Indent { amount: 2 }))
         ));
     }
 
@@ -2438,32 +2442,32 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::Indent(Indent { amount: 10 }))
+            Some(Node::Indent(Indent { amount: 10 }))
         ));
     }
 
     #[test]
     fn indent_overflow_falls_back_to_annotation_unknown() {
         // 300 > 255, doesn't fit in u8 — the `N字下げ` recogniser
-        // declines. The `Annotation { Unknown }` catch-all then
+        // declines. The `Directive { Unknown }` catch-all then
         // claims the bracket so the renderer wraps the body in an
-        // aozora-annotation span instead of leaking raw brackets.
+        // aozora-directive span instead of leaking raw brackets.
         run!(out, "［＃300字下げ］");
         let ann = out
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Annotation(a)) => Some(a),
+                Some(Node::Directive(a)) => Some(a),
                 _ => None,
             })
-            .expect("overflow should fall back to Annotation{Unknown}");
-        assert_eq!(ann.kind, AnnotationKind::Unknown);
+            .expect("overflow should fall back to Directive{Unknown}");
+        assert_eq!(ann.kind, DirectiveKind::Unknown);
         assert_eq!(ann.raw.as_str(), "［＃300字下げ］");
         // The specialised Indent recogniser MUST NOT claim it.
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Indent(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Indent(_)))),
         );
     }
 
@@ -2475,7 +2479,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Indent(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Indent(_)))),
         );
     }
 
@@ -2486,19 +2490,19 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Indent(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Indent(_)))),
         );
     }
 
     #[test]
     fn align_end_zero_digit_falls_through() {
         // 地から0字上げ is redundant with 地付き and not spec-sanctioned —
-        // reject so the text falls through to a generic Annotation.
+        // reject so the text falls through to a generic Directive.
         run!(out, "［＃地から0字上げ］");
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::AlignEnd(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::AlignEnd(_)))),
         );
     }
 
@@ -2508,7 +2512,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::AlignEnd(AlignEnd { offset: 0 }))
+            Some(Node::AlignEnd(AlignEnd { offset: 0 }))
         ));
     }
 
@@ -2518,7 +2522,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(AozoraNode::AlignEnd(AlignEnd { offset: 3 }))
+            Some(Node::AlignEnd(AlignEnd { offset: 3 }))
         ));
     }
 
@@ -2531,7 +2535,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Indent(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Indent(_)))),
         );
     }
 
@@ -2545,7 +2549,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Bouten(b)) => Some(b),
+                Some(Node::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("expected a Bouten span");
@@ -2558,7 +2562,7 @@ mod tests {
         // 上付き/下付き小文字 (super/subscript) and 行右/行左小書き — the
         // four emphasis-page forward-reference families beyond 太字/斜体
         // (per <https://www.aozora.gr.jp/annotation/etc.html>). Each is a
-        // first-class `Emphasis` leaf, NOT an `Annotation{Unknown}`.
+        // first-class `Emphasis` leaf, NOT an `Directive{Unknown}`.
         for (src, want) in [
             ("x２［＃「２」は上付き小文字］", EmphasisKind::SuperScript),
             ("H２［＃「２」は下付き小文字］", EmphasisKind::SubScript),
@@ -2572,7 +2576,7 @@ mod tests {
                 .spans
                 .iter()
                 .find_map(|s| match aozora_node(s) {
-                    Some(AozoraNode::Emphasis(e)) => Some(e),
+                    Some(Node::Emphasis(e)) => Some(e),
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("expected an Emphasis span for {src:?}"));
@@ -2604,7 +2608,7 @@ mod tests {
                 .spans
                 .iter()
                 .find_map(|s| match aozora_node(s) {
-                    Some(AozoraNode::Emphasis(e)) => Some(e),
+                    Some(Node::Emphasis(e)) => Some(e),
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("expected an Emphasis span for {src:?}"));
@@ -2616,7 +2620,7 @@ mod tests {
     /// and bare-range 横組み (`［＃横組み］ … ［＃横組み終わり］`) — the
     /// ここから/ここで-less siblings of the block forms. Corpus-attested in
     /// bulk (e.g. 共産党宣言) but previously fell through to
-    /// `Annotation{Unknown}`, silently dropping the styling. They reuse the
+    /// `Directive{Unknown}`, silently dropping the styling. They reuse the
     /// existing `FontSize` / `Horizontal` containers; the close marker carries
     /// a ±1 placeholder magnitude (the open side is authoritative on pairing).
     #[test]
@@ -2667,7 +2671,7 @@ mod tests {
             let unknown = out.spans.iter().any(|s| {
                 matches!(
                     aozora_node(s),
-                    Some(AozoraNode::Annotation(a)) if a.kind == AnnotationKind::Unknown
+                    Some(Node::Directive(a)) if a.kind == DirectiveKind::Unknown
                 )
             });
             assert!(!unknown, "unexpected Unknown fall-through for {src:?}");
@@ -2710,14 +2714,14 @@ mod tests {
 
     /// The bare 横組み needle must NOT claim a compound like `横組みで、…`
     /// (the exact-match guard rejects it) — it degrades to
-    /// `Annotation{Unknown}` rather than wrongly opening a Horizontal range.
+    /// `Directive{Unknown}` rather than wrongly opening a Horizontal range.
     #[test]
     fn bare_horizontal_compound_stays_unknown() {
         run!(out, "あ［＃横組みで、ページの左右中央に］い");
         let unknown = out.spans.iter().any(|s| {
             matches!(
                 aozora_node(s),
-                Some(AozoraNode::Annotation(a)) if a.kind == AnnotationKind::Unknown
+                Some(Node::Directive(a)) if a.kind == DirectiveKind::Unknown
             )
         });
         let opened_horizontal = out
@@ -2726,7 +2730,7 @@ mod tests {
             .any(|s| matches!(s.kind, SpanKind::BlockOpen(ContainerKind::Horizontal)));
         assert!(
             unknown && !opened_horizontal,
-            "expected Annotation{{Unknown}} and no Horizontal open, got {:?}",
+            "expected Directive{{Unknown}} and no Horizontal open, got {:?}",
             out.spans
         );
     }
@@ -2786,26 +2790,29 @@ mod tests {
     }
 
     /// Input-editor notes type correctly instead of degrading to Unknown:
-    /// `「X」はママ` / bare `ママ` → `AsIs`; `…底本では…` → `TextualNote`.
-    /// These were previously dead `AnnotationKind` variants (emitted nowhere
+    /// `「X」はママ` / bare `ママ` → `Sic`; `…底本では…` → `BaseTextVariant`.
+    /// These were previously dead `DirectiveKind` variants (emitted nowhere
     /// on the whole corpus). The target text stays in place.
     #[test]
     fn editorial_notes_type_as_asis_and_textual_note() {
-        use aozora_syntax::borrowed::AozoraNode;
-        let cases: &[(&str, AnnotationKind)] = &[
-            ("誤［＃「誤」はママ］", AnnotationKind::AsIs),
-            ("あ［＃ママ］", AnnotationKind::AsIs),
+        use aozora_syntax::borrowed::Node;
+        let cases: &[(&str, DirectiveKind)] = &[
+            ("誤［＃「誤」はママ］", DirectiveKind::Sic),
+            ("あ［＃ママ］", DirectiveKind::Sic),
             // 底本のまま — kept-irregularity note, the same *sic* family as ママ.
-            ("綴り［＃底本のまま］", AnnotationKind::AsIs),
+            ("綴り［＃底本のまま］", DirectiveKind::Sic),
             (
                 "名刺［＃「名刺」は底本では「名剌」］",
-                AnnotationKind::TextualNote,
+                DirectiveKind::BaseTextVariant,
             ),
-            ("。［＃「。」は底本では脱落］", AnnotationKind::TextualNote),
+            (
+                "。［＃「。」は底本では脱落］",
+                DirectiveKind::BaseTextVariant,
+            ),
             // 初出では — the first-appearance divergence note, same shape as 底本では.
             (
                 "正字［＃「正字」は初出では「異字」］",
-                AnnotationKind::TextualNote,
+                DirectiveKind::BaseTextVariant,
             ),
         ];
         for (src, want) in cases {
@@ -2814,10 +2821,10 @@ mod tests {
                 .spans
                 .iter()
                 .find_map(|s| match aozora_node(s) {
-                    Some(AozoraNode::Annotation(a)) => Some(a.kind),
+                    Some(Node::Directive(a)) => Some(a.kind),
                     _ => None,
                 })
-                .unwrap_or_else(|| panic!("expected an Annotation for {src:?}"));
+                .unwrap_or_else(|| panic!("expected an Directive for {src:?}"));
             assert_eq!(kind, *want, "src = {src:?}");
         }
     }
@@ -2827,7 +2834,7 @@ mod tests {
     /// `Empty`, not the `Unknown` catch-all, while still round-tripping.
     #[test]
     fn empty_directive_types_as_empty() {
-        use aozora_syntax::borrowed::AozoraNode;
+        use aozora_syntax::borrowed::Node;
         // ［＃］ (入力者注), whitespace-only ［＃　］, ［＃…］ (返り点 legend
         // symbol), ［＃（…）］ (訓点送り仮名 legend symbol).
         for src in [
@@ -2841,11 +2848,11 @@ mod tests {
                 .spans
                 .iter()
                 .find_map(|s| match aozora_node(s) {
-                    Some(AozoraNode::Annotation(a)) => Some(a.kind),
+                    Some(Node::Directive(a)) => Some(a.kind),
                     _ => None,
                 })
-                .unwrap_or_else(|| panic!("expected an Annotation for {src:?}"));
-            assert_eq!(kind, AnnotationKind::Empty, "src = {src:?}");
+                .unwrap_or_else(|| panic!("expected an Directive for {src:?}"));
+            assert_eq!(kind, DirectiveKind::Empty, "src = {src:?}");
         }
     }
 
@@ -2854,7 +2861,7 @@ mod tests {
     /// indent, range bouten `「X」～「Y」に<kind>`, and `×傍点` (→ Cross).
     #[test]
     fn remaining_layout_and_range_forms_recognised() {
-        use aozora_syntax::borrowed::AozoraNode;
+        use aozora_syntax::borrowed::Node;
         let opens = |src: &str| -> Vec<ContainerKind> {
             run!(out, src);
             out.spans
@@ -2865,7 +2872,7 @@ mod tests {
                 })
                 .collect()
         };
-        assert!(opens("［＃ここから罫囲み］").contains(&ContainerKind::Keigakomi));
+        assert!(opens("［＃ここから罫囲み］").contains(&ContainerKind::Framed));
         assert!(opens("［＃ここから割り注］").contains(&ContainerKind::Warichu));
         assert!(
             opens("［＃改行天付き、折り返して２字下げ］").contains(&ContainerKind::Indent {
@@ -2878,7 +2885,7 @@ mod tests {
         run!(t, "［＃天から３字下げ］本文");
         assert!(t.spans.iter().any(|s| matches!(
             aozora_node(s),
-            Some(AozoraNode::Indent(i)) if i.amount == 3
+            Some(Node::Indent(i)) if i.amount == 3
         )));
         // range bouten and ×傍点 → Bouten leaf
         run!(
@@ -2888,12 +2895,12 @@ mod tests {
         assert!(
             r.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_))))
+                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_))))
         );
         run!(x, "天皇制［＃「天皇制」に×傍点］");
         assert!(x.spans.iter().any(|s| matches!(
             aozora_node(s),
-            Some(AozoraNode::Bouten(b)) if b.kind == BoutenKind::Cross
+            Some(Node::Bouten(b)) if b.kind == BoutenKind::Cross
         )));
     }
 
@@ -2902,7 +2909,7 @@ mod tests {
     /// the forward `「X」はキャプション` is an `Emphasis{Caption}` leaf.
     #[test]
     fn caption_range_block_and_forward_recognised() {
-        use aozora_syntax::borrowed::AozoraNode;
+        use aozora_syntax::borrowed::Node;
         // bare range → inline Caption container
         run!(a, "図［＃キャプション］第一図［＃キャプション終わり］");
         assert!(a.spans.iter().any(|s| matches!(
@@ -2922,7 +2929,7 @@ mod tests {
         run!(c, "第一図［＃「第一図」はキャプション］");
         assert!(c.spans.iter().any(|s| matches!(
             aozora_node(s),
-            Some(AozoraNode::Emphasis(e)) if e.kind == EmphasisKind::Caption
+            Some(Node::Emphasis(e)) if e.kind == EmphasisKind::Caption
         )));
     }
 
@@ -2932,7 +2939,7 @@ mod tests {
     /// 付き` form is left to `classify_caption_figure` (it earns a figcaption).
     #[test]
     fn general_image_form_recognised() {
-        use aozora_syntax::borrowed::AozoraNode;
+        use aozora_syntax::borrowed::Node;
         let cases = [
             (
                 "［＃図（fig1.png、横100×縦80）入る］",
@@ -2954,10 +2961,10 @@ mod tests {
                 .spans
                 .iter()
                 .find_map(|s| match aozora_node(s) {
-                    Some(AozoraNode::Sashie(s)) => Some(s),
+                    Some(Node::Illustration(s)) => Some(s),
                     _ => None,
                 })
-                .unwrap_or_else(|| panic!("expected a Sashie for {src:?}"));
+                .unwrap_or_else(|| panic!("expected a Illustration for {src:?}"));
             assert_eq!(s.description, Some(desc), "desc {src:?}");
             assert_eq!(s.file.as_str(), file, "file {src:?}");
             assert_eq!(s.dimensions, dims, "dims {src:?}");
@@ -2973,21 +2980,21 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Sashie(s)) => Some(s),
+                Some(Node::Illustration(s)) => Some(s),
                 _ => None,
             })
-            .unwrap_or_else(|| panic!("caption-figure should still be a Sashie"));
+            .unwrap_or_else(|| panic!("caption-figure should still be a Illustration"));
         assert!(
             cap.caption.is_some() && cap.description.is_none(),
             "caption-figure routes its 「caption」 to a figcaption, not the alt"
         );
     }
 
-    /// `「caption」のキャプション付きの(図|挿絵)（file）入る` is a Sashie whose
+    /// `「caption」のキャプション付きの(図|挿絵)（file）入る` is a Illustration whose
     /// caption precedes the figure.
     #[test]
     fn caption_before_figure_recognised() {
-        use aozora_syntax::borrowed::AozoraNode;
+        use aozora_syntax::borrowed::Node;
         for src in [
             "［＃「第一図」のキャプション付きの図（fig01.png）入る］",
             "［＃「絵」のキャプション付きの挿絵（fig02.png）入る］",
@@ -2997,10 +3004,10 @@ mod tests {
                 .spans
                 .iter()
                 .find_map(|s| match aozora_node(s) {
-                    Some(AozoraNode::Sashie(s)) => Some(s),
+                    Some(Node::Illustration(s)) => Some(s),
                     _ => None,
                 })
-                .unwrap_or_else(|| panic!("expected a Sashie for {src:?}"));
+                .unwrap_or_else(|| panic!("expected a Illustration for {src:?}"));
             assert!(sashie.caption.is_some(), "caption for {src:?}");
         }
     }
@@ -3009,32 +3016,32 @@ mod tests {
     /// recognised as 縦中横 (the dominant transform), not Unknown.
     #[test]
     fn tcy_small_script_compound_recognised_as_tcy() {
-        use aozora_syntax::borrowed::AozoraNode;
+        use aozora_syntax::borrowed::Node;
         run!(out, "１）［＃「１）」は縦中横、行右小書き］");
         let is_tcy = out
             .spans
             .iter()
-            .any(|s| matches!(aozora_node(s), Some(AozoraNode::TateChuYoko(_))));
+            .any(|s| matches!(aozora_node(s), Some(Node::CombineUpright(_))));
         let unknown = out.spans.iter().any(|s| {
             matches!(
                 aozora_node(s),
-                Some(AozoraNode::Annotation(a)) if a.kind == AnnotationKind::Unknown
+                Some(Node::Directive(a)) if a.kind == DirectiveKind::Unknown
             )
         });
         assert!(
             is_tcy && !unknown,
-            "expected TateChuYoko, got {:?}",
+            "expected CombineUpright, got {:?}",
             out.spans
         );
     }
 
     /// The bare `「X」に「Y」の注記` side-annotation (the corpus's dominant
-    /// shape) is recognised as a `SideNote`, like the explicit
-    /// `「X」の左に「Y」の注記` left form. `SideNote` has no side axis, so both
+    /// shape) is recognised as a `MarginNote`, like the explicit
+    /// `「X」の左に「Y」の注記` left form. `MarginNote` has no side axis, so both
     /// map to the same node.
     #[test]
     fn side_note_right_form_recognised() {
-        use aozora_syntax::borrowed::AozoraNode;
+        use aozora_syntax::borrowed::Node;
         for src in [
             "は［＃「は」に「ママ」の注記］",
             "は［＃「は」の左に「ママ」の注記］",
@@ -3043,32 +3050,32 @@ mod tests {
             let is_side_note = out
                 .spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::SideNote(_))));
+                .any(|s| matches!(aozora_node(s), Some(Node::MarginNote(_))));
             assert!(
                 is_side_note,
-                "expected a SideNote for {src:?}: {:?}",
+                "expected a MarginNote for {src:?}: {:?}",
                 out.spans
             );
         }
     }
 
     /// `「X」に「Y」の傍記` (issue #125, the censorship-marker form) is
-    /// recognised as a `SideNote` tagged [`SideNoteKind::Marginal`] —
+    /// recognised as a `MarginNote` tagged [`MarginNoteKind::Marginal`] —
     /// distinct from the 注記 flavour so it round-trips to `の傍記`.
     #[test]
     fn boki_form_recognised() {
-        use aozora_syntax::SideNoteKind;
-        use aozora_syntax::borrowed::AozoraNode;
+        use aozora_syntax::MarginNoteKind;
+        use aozora_syntax::borrowed::Node;
         run!(out, "資本主義の一般的危機［＃「危機」に「×」の傍記］");
         let marginal = out.spans.iter().any(|s| {
             matches!(
                 aozora_node(s),
-                Some(AozoraNode::SideNote(sn)) if sn.kind == SideNoteKind::Marginal
+                Some(Node::MarginNote(sn)) if sn.kind == MarginNoteKind::Marginal
             )
         });
         assert!(
             marginal,
-            "expected a Marginal SideNote, got {:?}",
+            "expected a Marginal MarginNote, got {:?}",
             out.spans
         );
     }
@@ -3099,19 +3106,19 @@ mod tests {
     /// the earlier recogniser — the editorial-note tail never sees it.
     #[test]
     fn mama_target_with_bouten_stays_bouten() {
-        use aozora_syntax::borrowed::AozoraNode;
+        use aozora_syntax::borrowed::Node;
         run!(out, "ママ［＃「ママ」に傍点］");
         let is_bouten = out
             .spans
             .iter()
-            .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_))));
+            .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_))));
         assert!(is_bouten, "expected a Bouten, got {:?}", out.spans);
     }
 
     #[test]
     fn forward_emphasis_font_size_zero_and_overflow_decline() {
         // 0段階 is degenerate and >127 overflows i8 — both decline cleanly
-        // to Annotation{Unknown} (no Emphasis node).
+        // to Directive{Unknown} (no Emphasis node).
         for src in [
             "甲［＃「甲」は0段階大きな文字］",
             "甲［＃「甲」は200段階大きな文字］",
@@ -3120,7 +3127,7 @@ mod tests {
             assert!(
                 !out.spans
                     .iter()
-                    .any(|s| matches!(aozora_node(s), Some(AozoraNode::Emphasis(_)))),
+                    .any(|s| matches!(aozora_node(s), Some(Node::Emphasis(_)))),
                 "src = {src:?} should not yield an Emphasis node",
             );
         }
@@ -3148,7 +3155,7 @@ mod tests {
             .map(|s| {
                 let kind_str = match s.kind {
                     SpanKind::Plain => "Plain",
-                    SpanKind::Aozora(AozoraNode::Bouten(_)) => "Bouten",
+                    SpanKind::Aozora(Node::Bouten(_)) => "Bouten",
                     _ => "Other",
                 };
                 let slice = &"前置きの青空［＃「青空」に傍点］後ろ"
@@ -3171,7 +3178,7 @@ mod tests {
         // The classifier must also flip the per-node consumed flag so the
         // serializer round-trips the literal back into place.
         let bouten_flag = out.spans.iter().find_map(|s| match s.kind {
-            SpanKind::Aozora(AozoraNode::Bouten(b)) => Some(b.consumed_predecessor),
+            SpanKind::Aozora(Node::Bouten(b)) => Some(b.consumed_predecessor),
             _ => None,
         });
         assert_eq!(
@@ -3194,7 +3201,7 @@ mod tests {
         let mut saw_plain_with_aozora = false;
         for s in &out.spans {
             match &s.kind {
-                SpanKind::Aozora(AozoraNode::Bouten(_)) => saw_bouten = true,
+                SpanKind::Aozora(Node::Bouten(_)) => saw_bouten = true,
                 SpanKind::Plain => {
                     let slice = &"青空の下を歩く［＃「青空」に傍点］"
                         [s.source_span.start as usize..s.source_span.end as usize];
@@ -3222,7 +3229,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Bouten(b)) => Some(b),
+                Some(Node::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("expected a Bouten span");
@@ -3235,7 +3242,7 @@ mod tests {
         // All eleven bouten kinds — the seven core shapes plus
         // 白ゴマ / ばつ / 白三角 / 二重傍線. Each suffix must promote
         // the bracket into a `Bouten` node rather than fall through
-        // to `Annotation{Unknown}`, lowering the sweep leak rate.
+        // to `Directive{Unknown}`, lowering the sweep leak rate.
         let cases = [
             ("傍点", BoutenKind::Goma),
             ("白ゴマ傍点", BoutenKind::WhiteSesame),
@@ -3253,7 +3260,7 @@ mod tests {
             let src = format!("t［＃「t」に{suffix}］");
             run!(out, &src);
             let Some(b) = out.spans.iter().find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Bouten(b)) => Some(b),
+                Some(Node::Bouten(b)) => Some(b),
                 _ => None,
             }) else {
                 panic!("no Bouten span for suffix {suffix:?}");
@@ -3274,7 +3281,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Bouten(b)) => Some(b),
+                Some(Node::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("Bouten expected");
@@ -3297,7 +3304,7 @@ mod tests {
             let src = format!("t［＃「t」の左に{suffix}］");
             run!(out, &src);
             let Some(b) = out.spans.iter().find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Bouten(b)) => Some(b),
+                Some(Node::Bouten(b)) => Some(b),
                 _ => None,
             }) else {
                 panic!("no Bouten span for left-side suffix {suffix:?}");
@@ -3319,7 +3326,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Bouten(b)) => Some(b),
+                Some(Node::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("multi-quote Bouten expected");
@@ -3333,13 +3340,13 @@ mod tests {
     fn forward_bouten_multi_quote_without_all_targets_preceded_falls_through() {
         // Only "A" appears before the bracket; "B" does not. The
         // classifier refuses to promote — the bracket is consumed as
-        // `Annotation{Unknown}` by the catch-all instead, preserving
+        // `Directive{Unknown}` by the catch-all instead, preserving
         // Tier-A without inventing a bouten target.
         run!(out, "A［＃「A」「B」に傍点］");
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_)))),
             "Bouten must not promote when any target is unreferenced"
         );
     }
@@ -3354,7 +3361,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Bouten(b)) => Some(b),
+                Some(Node::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("Bouten expected");
@@ -3370,7 +3377,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Bouten(b)) => Some(b),
+                Some(Node::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("Bouten expected");
@@ -3384,7 +3391,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_)))),
         );
     }
 
@@ -3394,7 +3401,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_)))),
         );
     }
 
@@ -3404,21 +3411,21 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_)))),
         );
     }
 
     #[test]
     fn forward_bouten_without_preceding_target_falls_through() {
         // Target 可哀想 never appears before the bracket — refusing to
-        // promote to Bouten lets the generic Annotation classifier
-        // wrap the raw `［＃…］` in an aozora-annotation span instead of
+        // promote to Bouten lets the generic Directive classifier
+        // wrap the raw `［＃…］` in an aozora-directive span instead of
         // styling a non-existent referent.
         run!(out, "［＃「可哀想」に傍点］後");
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_)))),
         );
     }
 
@@ -3432,7 +3439,7 @@ mod tests {
         assert!(
             out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_)))),
         );
     }
 
@@ -3442,7 +3449,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::TateChuYoko(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::CombineUpright(_)))),
         );
     }
 
@@ -3457,7 +3464,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Bouten(b)) => Some(b),
+                Some(Node::Bouten(b)) => Some(b),
                 _ => None,
             })
             .expect("expected a Bouten span");
@@ -3471,10 +3478,10 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::TateChuYoko(t)) => Some(t),
+                Some(Node::CombineUpright(t)) => Some(t),
                 _ => None,
             })
-            .expect("expected a TateChuYoko span");
+            .expect("expected a CombineUpright span");
         assert_eq!(tcy.text.as_plain(), Some("20"));
     }
 
@@ -3485,7 +3492,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::TateChuYoko(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::CombineUpright(_)))),
         );
     }
 
@@ -3495,7 +3502,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::TateChuYoko(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::CombineUpright(_)))),
         );
     }
 
@@ -3505,13 +3512,13 @@ mod tests {
     // paragraph promotion (docs/plan.md §M2): the classifier emits a
     // `HeadingHint { level: 1..=3 }` when the target is preceded by a
     // matching run in the source, otherwise falls through so the
-    // catch-all emits `Annotation { Unknown }` and the Tier-A canary
+    // catch-all emits `Directive { Unknown }` and the Tier-A canary
     // ([# never leaks) still holds.
     // ---------------------------------------------------------------
 
     fn find_heading_hint<'a>(out: &TestClassifyOutput<'a>) -> Option<&'a HeadingHint<'a>> {
         out.spans.iter().find_map(|s| match aozora_node(s) {
-            Some(AozoraNode::HeadingHint(h)) => Some(h),
+            Some(Node::HeadingHint(h)) => Some(h),
             _ => None,
         })
     }
@@ -3550,7 +3557,7 @@ mod tests {
         // No 「第一篇」 run in the preceding source — hint has no
         // referent; classifier must reject so the paragraph isn't
         // promoted to an empty heading. The catch-all then emits
-        // `Annotation { Unknown }` to preserve Tier-A.
+        // `Directive { Unknown }` to preserve Tier-A.
         run!(out, "［＃「第一篇」は大見出し］後");
         assert!(find_heading_hint(&out).is_none());
     }
@@ -3629,7 +3636,7 @@ mod tests {
             .spans
             .iter()
             .filter_map(|s| match aozora_node(s) {
-                Some(AozoraNode::HeadingHint(h)) => Some(h.level),
+                Some(Node::HeadingHint(h)) => Some(h.level),
                 _ => None,
             })
             .collect();
@@ -3643,10 +3650,10 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Sashie(s)) => Some(s),
+                Some(Node::Illustration(s)) => Some(s),
                 _ => None,
             })
-            .expect("expected a Sashie span");
+            .expect("expected a Illustration span");
         assert_eq!(sashie.file.as_str(), "fig01.png");
         assert!(sashie.number.is_none());
         assert!(sashie.caption.is_none());
@@ -3675,10 +3682,10 @@ mod tests {
                 .spans
                 .iter()
                 .find_map(|s| match aozora_node(s) {
-                    Some(AozoraNode::Sashie(s)) => Some(s),
+                    Some(Node::Illustration(s)) => Some(s),
                     _ => None,
                 })
-                .unwrap_or_else(|| panic!("expected a Sashie span for {src:?}"));
+                .unwrap_or_else(|| panic!("expected a Illustration span for {src:?}"));
             let num = sashie
                 .number
                 .unwrap_or_else(|| panic!("figure number present for {src:?}"));
@@ -3687,14 +3694,14 @@ mod tests {
             assert_eq!(sashie.dimensions, want_dims, "src={src:?}");
         }
         // A free description before `（…）入る` is the general image form
-        // (graphics.html): `女性の挿絵（fig.png）入る` → a Sashie whose leading
+        // (graphics.html): `女性の挿絵（fig.png）入る` → a Illustration whose leading
         // text is the alt (no 挿絵 keyword, no figure number).
         run!(out, "x［＃女性の挿絵（fig.png）入る］y");
         let general = out
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Sashie(s)) => Some(s),
+                Some(Node::Illustration(s)) => Some(s),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("general image form should be recognised"));
@@ -3709,11 +3716,11 @@ mod tests {
         // captured as plain content (rendered into <figcaption>, §8).
         run!(out, "［＃挿絵（fig01.png）「キャプション」入る］");
         let found = out.spans.iter().find_map(|s| match aozora_node(s) {
-            Some(AozoraNode::Sashie(s)) => Some(s),
+            Some(Node::Illustration(s)) => Some(s),
             _ => None,
         });
         let Some(sashie) = found else {
-            panic!("expected a Sashie span");
+            panic!("expected a Illustration span");
         };
         assert_eq!(sashie.file.as_str(), "fig01.png");
         let Some(caption) = sashie.caption else {
@@ -3728,10 +3735,10 @@ mod tests {
         // note rides in `dimensions`, keeping `file` a clean path.
         run!(out, "［＃挿絵（fig42_03.png、横480×縦640）入る］");
         let Some(sashie) = out.spans.iter().find_map(|s| match aozora_node(s) {
-            Some(AozoraNode::Sashie(s)) => Some(s),
+            Some(Node::Illustration(s)) => Some(s),
             _ => None,
         }) else {
-            panic!("expected a Sashie span");
+            panic!("expected a Illustration span");
         };
         assert_eq!(sashie.file.as_str(), "fig42_03.png");
         assert_eq!(sashie.dimensions, Some("横480×縦640"));
@@ -3745,7 +3752,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Sashie(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Illustration(_)))),
         );
     }
 
@@ -3755,7 +3762,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Sashie(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Illustration(_)))),
         );
     }
 
@@ -3765,7 +3772,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Sashie(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Illustration(_)))),
         );
     }
 
@@ -3777,7 +3784,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Gaiji(g)) => Some(g),
+                Some(Node::Gaiji(g)) => Some(g),
                 _ => None,
             })
             .expect("expected a Gaiji span");
@@ -3794,7 +3801,7 @@ mod tests {
     /// (`、U+74FC、372-10`): the full mencode is kept verbatim for round-trip,
     /// but the page-line is stripped for resolution so the codepoint still
     /// resolves. Previously the trailing suffix failed `is_mencode_shaped`
-    /// and the whole bracket degraded to `Annotation{Unknown}`.
+    /// and the whole bracket degraded to `Directive{Unknown}`.
     #[test]
     fn gaiji_composed_with_page_line_suffix() {
         use aozora_encoding::gaiji::Resolved;
@@ -3806,7 +3813,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Gaiji(g)) => Some(g),
+                Some(Node::Gaiji(g)) => Some(g),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
@@ -3824,7 +3831,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Gaiji(g)) => Some(g),
+                Some(Node::Gaiji(g)) => Some(g),
                 _ => None,
             })
             .expect("expected a Gaiji span");
@@ -3839,7 +3846,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Gaiji(g)) => Some(g),
+                Some(Node::Gaiji(g)) => Some(g),
                 _ => None,
             })
             .expect("expected a Gaiji span");
@@ -3854,7 +3861,7 @@ mod tests {
         let gaiji_span = out
             .spans
             .iter()
-            .find(|s| matches!(aozora_node(s), Some(AozoraNode::Gaiji(_))))
+            .find(|s| matches!(aozora_node(s), Some(Node::Gaiji(_))))
             .expect("expected a Gaiji span");
         // span must start at the ※ (after "a"), not at ［.
         assert_eq!(gaiji_span.source_span.slice(src), "※［＃「X」、m］");
@@ -3868,7 +3875,7 @@ mod tests {
         // everything after the first quote (a round-trip data loss).
         run!(out, "※［＃「比」の「ヒ」に代えて「く」、第4水準2-1-23］");
         let Some(g) = out.spans.iter().find_map(|s| match aozora_node(s) {
-            Some(AozoraNode::Gaiji(g)) => Some(g),
+            Some(Node::Gaiji(g)) => Some(g),
             _ => None,
         }) else {
             panic!("expected Gaiji node for the 代えて composed-glyph form");
@@ -3884,7 +3891,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Gaiji(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Gaiji(_)))),
         );
     }
 
@@ -3895,13 +3902,13 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Gaiji(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Gaiji(_)))),
         );
     }
 
     /// Standalone (no-`※`) external-character note (#122): a `［＃…］` whose
     /// body is a gaiji description with a trailing mencode / 底本ページ-行 is
-    /// recognised as a Gaiji, not an `Annotation{Unknown}`.
+    /// recognised as a Gaiji, not an `Directive{Unknown}`.
     #[test]
     fn standalone_gaiji_is_form_with_mencode_and_page_line() {
         run!(out, "［＃「※」は「祿－示」、第3水準1-84-27、144-上-9］");
@@ -3909,7 +3916,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Gaiji(g)) => Some(g),
+                Some(Node::Gaiji(g)) => Some(g),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a standalone Gaiji span, not Unknown"));
@@ -3925,7 +3932,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Gaiji(g)) => Some(g),
+                Some(Node::Gaiji(g)) => Some(g),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a standalone composed Gaiji span"));
@@ -3942,7 +3949,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Gaiji(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Gaiji(_)))),
             "plain quoted note must not become a gaiji: {:?}",
             out.spans
         );
@@ -3950,7 +3957,7 @@ mod tests {
 
     /// A standalone gaiji whose tail is a 底本ページ-行 only (`、N-下-N`, no JIS
     /// men-ku-ten) is still recognised as a gaiji (#122) rather than degrading
-    /// to `Annotation{Unknown}`; the page-line is kept verbatim in `mencode`
+    /// to `Directive{Unknown}`; the page-line is kept verbatim in `mencode`
     /// (resolution, if any, comes from the description).
     #[test]
     fn standalone_gaiji_page_line_only_tail() {
@@ -3959,7 +3966,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Gaiji(g)) => Some(g),
+                Some(Node::Gaiji(g)) => Some(g),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a page-line-only Gaiji span"));
@@ -3975,7 +3982,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Kaeriten(k)) => Some(k),
+                Some(Node::Kaeriten(k)) => Some(k),
                 _ => None,
             })
             .expect("expected a Kaeriten span");
@@ -3990,7 +3997,7 @@ mod tests {
             let src = format!("［＃{mark}］");
             run!(out, &src);
             let Some(k) = out.spans.iter().find_map(|s| match aozora_node(s) {
-                Some(AozoraNode::Kaeriten(k)) => Some(k),
+                Some(Node::Kaeriten(k)) => Some(k),
                 _ => None,
             }) else {
                 panic!("no Kaeriten span for mark {mark:?}");
@@ -4005,7 +4012,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Kaeriten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Kaeriten(_)))),
         );
     }
 
@@ -4023,7 +4030,7 @@ mod tests {
                 .spans
                 .iter()
                 .find_map(|s| match aozora_node(s) {
-                    Some(AozoraNode::Kaeriten(k)) => Some(k),
+                    Some(Node::Kaeriten(k)) => Some(k),
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("no Kaeriten span for mark {mark:?}"));
@@ -4034,7 +4041,7 @@ mod tests {
     #[test]
     fn kaeriten_okurigana_shape_recognized() {
         // `［＃（X）］` where X is 1–6 Japanese chars is treated as an
-        // okurigana marker — same AozoraNode::Kaeriten with the
+        // okurigana marker — same Node::Kaeriten with the
         // parenthesised payload kept verbatim for the renderer.
         let cases = [
             "（カ）",
@@ -4050,7 +4057,7 @@ mod tests {
                 .spans
                 .iter()
                 .find_map(|s| match aozora_node(s) {
-                    Some(AozoraNode::Kaeriten(k)) => Some(k),
+                    Some(Node::Kaeriten(k)) => Some(k),
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("no Kaeriten for okurigana {mark:?}"));
@@ -4062,12 +4069,12 @@ mod tests {
     fn kaeriten_okurigana_with_long_body_falls_through() {
         // 7+ character parenthesised content is almost always an
         // editorial gloss, not okurigana. Must fall through to
-        // Annotation{Unknown} so we don't mislabel it as kaeriten.
+        // Directive{Unknown} so we don't mislabel it as kaeriten.
         run!(out, "［＃（これはおくりがなではない）］");
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Kaeriten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Kaeriten(_)))),
             "long parenthesised bodies must not be Kaeriten: {:?}",
             out.spans
         );
@@ -4081,7 +4088,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Kaeriten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Kaeriten(_)))),
         );
     }
 
@@ -4091,7 +4098,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Kaeriten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Kaeriten(_)))),
         );
     }
 
@@ -4107,7 +4114,7 @@ mod tests {
             .iter()
             .find_map(aozora_node)
             .expect("AngleQuote expected");
-        let AozoraNode::AngleQuote(d) = aozora else {
+        let Node::AngleQuote(d) = aozora else {
             panic!("expected AngleQuote, got {aozora:?}");
         };
         assert_eq!(d.content.as_plain(), Some("強調"));
@@ -4150,7 +4157,7 @@ mod tests {
             .iter()
             .find_map(aozora_node)
             .expect("Aozora expected");
-        let AozoraNode::AngleQuote(d) = aozora else {
+        let Node::AngleQuote(d) = aozora else {
             panic!("expected AngleQuote, got {aozora:?}");
         };
         let Content::Segments(segs) = &d.content.get() else {
@@ -4255,11 +4262,11 @@ mod tests {
         run!(out, "［＃罫囲み］内部［＃罫囲み終わり］");
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Keigakomi)
+            SpanKind::BlockOpen(ContainerKind::Framed)
         ));
         assert!(matches!(
             out.spans[2].kind,
-            SpanKind::BlockClose(ContainerKind::Keigakomi)
+            SpanKind::BlockClose(ContainerKind::Framed)
         ));
     }
 
@@ -4295,24 +4302,24 @@ mod tests {
         // (`<span class="aozora-warichu">…</span>`). The legacy block
         // form (`ここから割り注` / `ここで割り注終わり`) is deprecated
         // and not classified here.
-        use aozora_syntax::AnnotationKind;
+        use aozora_syntax::DirectiveKind;
         run!(out, "［＃割り注］内部［＃割り注終わり］");
-        let Some(AozoraNode::Annotation(open)) = aozora_node(&out.spans[0]) else {
+        let Some(Node::Directive(open)) = aozora_node(&out.spans[0]) else {
             panic!(
-                "expected Aozora(Annotation) for ［＃割り注］, got {:?}",
+                "expected Aozora(Directive) for ［＃割り注］, got {:?}",
                 out.spans[0].kind,
             );
         };
-        assert_eq!(open.kind, AnnotationKind::WarichuOpen);
+        assert_eq!(open.kind, DirectiveKind::WarichuOpen);
         assert_eq!(open.raw.as_str(), "［＃割り注］");
 
-        let Some(AozoraNode::Annotation(close)) = aozora_node(&out.spans[2]) else {
+        let Some(Node::Directive(close)) = aozora_node(&out.spans[2]) else {
             panic!(
-                "expected Aozora(Annotation) for ［＃割り注終わり］, got {:?}",
+                "expected Aozora(Directive) for ［＃割り注終わり］, got {:?}",
                 out.spans[2].kind,
             );
         };
-        assert_eq!(close.kind, AnnotationKind::WarichuClose);
+        assert_eq!(close.kind, DirectiveKind::WarichuClose);
         assert_eq!(close.raw.as_str(), "［＃割り注終わり］");
     }
 
@@ -4323,7 +4330,7 @@ mod tests {
         run!(out, "［＃罫囲み終わり］");
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockClose(ContainerKind::Keigakomi)
+            SpanKind::BlockClose(ContainerKind::Framed)
         ));
     }
 
@@ -4421,7 +4428,7 @@ mod tests {
         ///
         /// Determinism is asserted span-by-span; we cannot direct-`==`
         /// the two `ClassifyOutput`s across separate arenas because
-        /// `borrowed::AozoraNode<'a>` `PartialEq` recurses through the
+        /// `borrowed::Node<'a>` `PartialEq` recurses through the
         /// arena-allocated payload pointers, which differ across runs
         /// even when the logical AST is identical. The pointer-aware
         /// equality is the right semantics — it lets the byte-identical
@@ -4499,7 +4506,7 @@ mod tests {
     ///   a Bouten span.
     /// * Without a preceding occurrence: `forward_target_is_preceded`
     ///   returns `false` and the recogniser falls through to
-    ///   `Annotation { kind: Unknown }` so the renderer doesn't apply
+    ///   `Directive { kind: Unknown }` so the renderer doesn't apply
     ///   styling to a non-existent referent.
     ///
     /// The two outcomes must differ observably — this is the public
@@ -4508,7 +4515,7 @@ mod tests {
     /// thread-local index (which is non-public).
     #[test]
     fn forward_target_lookup_changes_output_for_preceded_vs_absent() {
-        use aozora_syntax::borrowed::AozoraNode;
+        use aozora_syntax::borrowed::Node;
 
         // Case A: target exists earlier in source.
         let with_prior = "「青空」が見える。［＃「青空」に傍点］";
@@ -4516,11 +4523,11 @@ mod tests {
         let bouten_in_a = a
             .spans
             .iter()
-            .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_))));
+            .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_))));
         let unknown_in_a = a.spans.iter().any(|s| {
             matches!(
                 aozora_node(s),
-                Some(AozoraNode::Annotation(ann)) if ann.kind == AnnotationKind::Unknown
+                Some(Node::Directive(ann)) if ann.kind == DirectiveKind::Unknown
             )
         });
 
@@ -4530,11 +4537,11 @@ mod tests {
         let bouten_in_b = b
             .spans
             .iter()
-            .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_))));
+            .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_))));
         let unknown_in_b = b.spans.iter().any(|s| {
             matches!(
                 aozora_node(s),
-                Some(AozoraNode::Annotation(ann)) if ann.kind == AnnotationKind::Unknown
+                Some(Node::Directive(ann)) if ann.kind == DirectiveKind::Unknown
             )
         });
 
@@ -4546,7 +4553,7 @@ mod tests {
         );
         assert!(
             unknown_in_b && !bouten_in_b,
-            "without prior `「青空」`, expected fallback Annotation{{Unknown}} and no Bouten, \
+            "without prior `「青空」`, expected fallback Directive{{Unknown}} and no Bouten, \
              got spans={:?}",
             b.spans
         );
@@ -4564,15 +4571,15 @@ mod tests {
     /// than its first substring position; for the canonical shape that
     /// quote is the in-bracket one (past the cutoff), so
     /// `first_pos < cutoff` was always false and the bouten silently
-    /// degraded to `Annotation{Unknown}`. On real corpus this dropped
+    /// degraded to `Directive{Unknown}`. On real corpus this dropped
     /// ~114k 傍点/見出し/縦中横 occurrences (≈59 % of all
-    /// `Annotation{Unknown}`) the moment a work grew past 64 quotes —
+    /// `Directive{Unknown}`) the moment a work grew past 64 quotes —
     /// which every full-length work does. The short synthetic vectors
     /// never crossed the threshold, so the conformance suite stayed
     /// green throughout: this test deliberately crosses it.
     #[test]
     fn forward_bouten_recognised_above_ac_threshold_with_bare_target() {
-        use aozora_syntax::borrowed::AozoraNode;
+        use aozora_syntax::borrowed::Node;
 
         // 70 distinct quote bodies → forces the AC index to install
         // (threshold is 64). None of them is `語句`, so the target's
@@ -4591,11 +4598,11 @@ mod tests {
         let has_bouten = out
             .spans
             .iter()
-            .any(|s| matches!(aozora_node(s), Some(AozoraNode::Bouten(_))));
+            .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_))));
         let degraded = out.spans.iter().any(|s| {
             matches!(
                 aozora_node(s),
-                Some(AozoraNode::Annotation(ann)) if ann.kind == AnnotationKind::Unknown
+                Some(Node::Directive(ann)) if ann.kind == DirectiveKind::Unknown
             )
         });
         assert!(
@@ -4605,7 +4612,7 @@ mod tests {
         );
         assert!(
             !degraded,
-            "the 傍点 directive must not degrade to Annotation{{Unknown}}; spans={:?}",
+            "the 傍点 directive must not degrade to Directive{{Unknown}}; spans={:?}",
             out.spans
         );
     }

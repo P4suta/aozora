@@ -11,13 +11,13 @@
 //!
 //! The current `Diagnostic` enum (see `crates/aozora-spec/src/diagnostic.rs`)
 //! exposes no Phase-3 variant for "unrecognised annotation keyword"; an
-//! unknown body is folded into `AnnotationKind::Unknown` silently. We
+//! unknown body is folded into `DirectiveKind::Unknown` silently. We
 //! therefore pin the Phase 0 ↔ Phase 2 ordering only, with a
 //! `Phase 3` placeholder comment marking where a future variant would
 //! slot in. The insta snapshot freezes the multi-diagnostic shape
 //! end-to-end.
 
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_spec::{Diagnostic, DiagnosticSource, codes};
 use aozora_syntax::borrowed::Arena;
 
@@ -69,7 +69,7 @@ fn phase0_then_phase2_diagnostics_are_emitted_in_pipeline_order() {
     // re-sorts diagnostics by phase ordinal is what we'd notice.
     let src = "\u{E001}［＃unclosed";
     let arena = Arena::new();
-    let out = lex_into_arena(src, &arena);
+    let out = lex(src, &arena);
 
     let ordinals: Vec<u8> = out.diagnostics.iter().map(phase_ordinal).collect();
 
@@ -109,6 +109,6 @@ fn phase0_then_phase2_diagnostics_are_emitted_in_pipeline_order() {
 fn multi_diagnostic_snapshot_freezes_pipeline_order() {
     let src = "\u{E001}stray］then［＃tail";
     let arena = Arena::new();
-    let out = lex_into_arena(src, &arena);
+    let out = lex(src, &arena);
     insta::assert_snapshot!(format!("{:#?}", out.diagnostics));
 }

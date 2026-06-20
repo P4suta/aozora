@@ -47,4 +47,4 @@ can reconstruct the source form exactly.
 ## References
 
 - `crates/aozora-syntax/src/accent.rs` (the table).
-- `crates/aozora-pipeline/src/lexer/phase0_sanitize.rs`.
+- `crates/aozora-pipeline/src/lexer/sanitize.rs`.

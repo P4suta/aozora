@@ -27,10 +27,10 @@ use proptest::prelude::*;
 fn parse_serialise_parse(source: &str) -> (String, String) {
     let doc = Document::new(source.to_owned());
     let tree = doc.parse();
-    let first = tree.serialize();
+    let first = tree.to_source();
     let doc2 = Document::new(first.clone());
     let tree2 = doc2.parse();
-    let second = tree2.serialize();
+    let second = tree2.to_source();
     (first, second)
 }
 

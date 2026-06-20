@@ -47,10 +47,10 @@ The recipes mirror these runnable examples (authored under
 ## See also
 
 - [Library Quickstart](../getting-started/library.md) — the lifetime
-  model and the core `Document` → `AozoraTree` flow every recipe
+  model and the core `Document` → `Tree` flow every recipe
   assumes.
 - [Choosing a binding](../bindings/choosing.md) — picking the surface
   (Rust / CLI / wasm / Python / Go / Extism) before you start.
 - [Node reference](../nodes/index.md) — what each AST node represents.
 - [Wire format](../wire/overview.md) — the JSON envelope the
-  `aozora::wire` serialisers emit.
+  `aozora::json` serialisers emit.

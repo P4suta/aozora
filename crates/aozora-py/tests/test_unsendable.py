@@ -9,11 +9,11 @@ the bump arena unsoundly.
 
 import threading
 
-import aozora_py
+import aozora
 
 
 def test_cross_thread_access_is_rejected():
-    doc = aozora_py.Document("｜青梅《おうめ》")  # created on the main thread
+    doc = aozora.Document("｜青梅《おうめ》")  # created on the main thread
     captured: list[BaseException] = []
 
     def worker() -> None:
@@ -33,5 +33,5 @@ def test_cross_thread_access_is_rejected():
 
 
 def test_same_thread_access_is_fine():
-    doc = aozora_py.Document("｜青梅《おうめ》")
+    doc = aozora.Document("｜青梅《おうめ》")
     assert "ruby" in doc.to_html()  # no error on the creating thread

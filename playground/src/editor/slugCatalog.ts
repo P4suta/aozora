@@ -1,4 +1,4 @@
-import { slugs_json } from '../wasm-loader';
+import { slugsJson } from '../wasm-loader';
 import { warn } from '../logger';
 
 export interface SlugEntry {
@@ -21,8 +21,8 @@ let cache: SlugEntry[] | null = null;
 export function loadSlugCatalog(): SlugEntry[] {
   if (cache) return cache;
   try {
-    const env = JSON.parse(slugs_json()) as {
-      schema_version: number;
+    const env = JSON.parse(slugsJson()) as {
+      schemaVersion: number;
       data: SlugEntry[];
     };
     cache = env.data ?? [];

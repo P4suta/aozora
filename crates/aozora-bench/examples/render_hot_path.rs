@@ -3,10 +3,10 @@
 //! Mirror of `throughput_by_class.rs` but for `aozora_render::html`.
 //! For each corpus document the probe:
 //!
-//! 1. Pre-parses the doc once via `lex_into_arena` (untimed — the
+//! 1. Pre-parses the doc once via `lex` (untimed — the
 //!    parse perf story lives in the other probes; we want a clean
 //!    render-bound number here)
-//! 2. Renders the parsed `BorrowedLexOutput` to HTML via
+//! 2. Renders the parsed `LexOutput` to HTML via
 //!    `render_to_string`, repeating `AOZORA_RENDER_REPEAT` times so
 //!    the per-doc latency is stable and so a `samply` trace gets
 //!    enough render-bound wall time to attach to (without the repeat,
@@ -47,7 +47,7 @@ use std::time::Instant;
 use aozora::html;
 use aozora_bench::{SizeBand, SizeBandedCorpus, corpus_size_bands};
 use aozora_corpus::CorpusItem;
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_syntax::borrowed::Arena;
 
 const NS_PER_S: f64 = 1_000_000_000.0;
@@ -152,7 +152,7 @@ fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
             // line below; not on the render hot path itself).
             let arena = Arena::new();
             let t = Instant::now();
-            let out = lex_into_arena(text, &arena);
+            let out = lex(text, &arena);
             parse_ns.push(t.elapsed().as_nanos() as u64);
 
             // Render `repeat` times, keep the median ns.

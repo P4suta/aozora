@@ -151,7 +151,7 @@ mod tests {
     fn coordinate_spaces_are_disjoint() {
         // The newtypes share an underlying `u32` representation but
         // are distinct types. Callers translate between them via the
-        // `BorrowedLexOutput::source_nodes` side-table, never by
+        // `LexOutput::source_nodes` side-table, never by
         // direct casting.
         let s = SourceOffset::new(5);
         let n = NormalizedOffset::new(5);

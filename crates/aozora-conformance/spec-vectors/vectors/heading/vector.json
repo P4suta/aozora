@@ -8,18 +8,18 @@
   },
   "source": "［＃見出し］序章［＃見出し終わり］\n",
   "expected": {
-    "html": "<p><span class=\"aozora-annotation\" hidden>［＃見出し］</span>序章<span class=\"aozora-annotation\" hidden>［＃見出し終わり］</span></p>\n",
+    "html": "<p><span class=\"aozora-directive\" hidden>［＃見出し］</span>序章<span class=\"aozora-directive\" hidden>［＃見出し終わり］</span></p>\n",
     "serialize": "［＃見出し］序章［＃見出し終わり］\n",
     "nodes": [
       {
-        "kind": "annotation",
+        "kind": "directive",
         "span": {
           "start": 0,
           "end": 18
         }
       },
       {
-        "kind": "annotation",
+        "kind": "directive",
         "span": {
           "start": 24,
           "end": 51

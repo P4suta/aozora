@@ -27,7 +27,7 @@ function escapeHtml(s: string): string {
  * Hover tooltip for `※［＃...］` gaiji references.
  *
  * Delegates the actual resolution to aozora-wasm
- * (`Document.resolve_gaiji_at`), which scans a 512-byte window
+ * (`Document.resolveGaijiAt`), which scans a 512-byte window
  * around the byte offset and returns either `"null"` (not in a
  * gaiji span) or a JSON object with span/description/mencode/
  * codepoint/resolved.
@@ -36,7 +36,7 @@ export const aozoraHover = hoverTooltip((view, pos): Tooltip | null => {
   const ps: ParserState = view.state.field(parserStateField);
   if (!ps.doc) return null;
   const byteOffset = utf16ToByte(ps, pos);
-  const json = ps.doc.resolve_gaiji_at(byteOffset);
+  const json = ps.doc.resolveGaijiAt(byteOffset);
   if (!json || json === 'null') return null;
   let r: GaijiResolution;
   try {

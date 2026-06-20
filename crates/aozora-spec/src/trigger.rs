@@ -54,7 +54,7 @@ pub enum TriggerKind {
     /// `］` (U+FF3D). Square bracket close.
     BracketClose,
 
-    /// `＃` (U+FF03). Annotation keyword marker (meaningful after `［`).
+    /// `＃` (U+FF03). Directive keyword marker (meaningful after `［`).
     Hash,
 
     /// `※` (U+203B). Reference mark — prefix of a gaiji annotation.

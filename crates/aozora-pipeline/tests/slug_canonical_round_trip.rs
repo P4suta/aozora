@@ -3,7 +3,7 @@
 //! classifier.
 //!
 //! For each entry we wrap the canonical body in `［＃…］` (or, for
-//! forward-reference families like Bouten / `TateChuYoko`, in
+//! forward-reference families like Bouten / `CombineUpright`, in
 //! `［＃「対象」に…］` / `［＃「対象」は…］`) and assert that:
 //!
 //! 1. Parsing produces no `Internal` diagnostic with code
@@ -25,7 +25,7 @@
 
 use aozora_pipeline::{
     BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, INLINE_SENTINEL, SLUGS,
-    SlugFamily, lex_into_arena,
+    SlugFamily, lex,
 };
 use aozora_spec::codes;
 use aozora_syntax::borrowed::Arena;
@@ -41,19 +41,19 @@ fn instantiate(canonical: &str) -> String {
 fn wrap_for_family(family: SlugFamily, body: &str) -> String {
     match family {
         SlugFamily::Bouten => format!("対象［＃「対象」に{body}］"),
-        SlugFamily::TateChuYoko => format!("対象［＃「対象」は{body}］"),
+        SlugFamily::CombineUpright => format!("対象［＃「対象」は{body}］"),
         _ => format!("［＃{body}］"),
     }
 }
 
 /// Which sentinel kind the family is expected to land in. Returns
-/// `None` for the forward-reference families (Bouten / `TateChuYoko`)
+/// `None` for the forward-reference families (Bouten / `CombineUpright`)
 /// which attach to an existing inline span without emitting a
 /// dedicated sentinel of their own — those still need to *parse*
 /// cleanly but the sentinel-count assertion does not apply.
 fn expected_sentinel(family: SlugFamily) -> Option<char> {
     match family {
-        SlugFamily::PageBreak | SlugFamily::Section | SlugFamily::Sashie => {
+        SlugFamily::PageBreak | SlugFamily::Section | SlugFamily::Illustration => {
             Some(BLOCK_LEAF_SENTINEL)
         }
         SlugFamily::BlockContainerOpen => Some(BLOCK_OPEN_SENTINEL),
@@ -61,8 +61,8 @@ fn expected_sentinel(family: SlugFamily) -> Option<char> {
         SlugFamily::LeafAlign | SlugFamily::KaeritenSingle | SlugFamily::KaeritenCompound => {
             Some(INLINE_SENTINEL)
         }
-        // Forward-references (Bouten / TateChuYoko) don't emit a
-        // dedicated sentinel of their own, and Keigakomi / Warichu
+        // Forward-references (Bouten / CombineUpright) don't emit a
+        // dedicated sentinel of their own, and Framed / Warichu
         // open/close are paired containers whose sentinel kind depends
         // on canonical text — `#[non_exhaustive]` future families also
         // skip the sentinel-count check until an expectation is
@@ -77,7 +77,7 @@ fn every_canonical_slug_parses_without_residual_marker() {
         let body = instantiate(entry.canonical);
         let source = wrap_for_family(entry.family, &body);
         let arena = Arena::new();
-        let out = lex_into_arena(&source, &arena);
+        let out = lex(&source, &arena);
         for diag in &out.diagnostics {
             assert!(
                 diag.code() != codes::RESIDUAL_ANNOTATION_MARKER,
@@ -98,7 +98,7 @@ fn every_canonical_slug_lands_a_sentinel_when_expected() {
         let body = instantiate(entry.canonical);
         let source = wrap_for_family(entry.family, &body);
         let arena = Arena::new();
-        let out = lex_into_arena(&source, &arena);
+        let out = lex(&source, &arena);
         let count = out.normalized.matches(expected).count();
         assert!(
             count >= 1,
@@ -137,10 +137,10 @@ fn variant_canonicalisation_then_parse_matches_canonical_parse() {
         let canonical_source = wrap_for_family(entry.family, &instantiate(canonical));
         let arena_a = Arena::new();
         let arena_b = Arena::new();
-        let canonical_out = lex_into_arena(&canonical_source, &arena_a);
+        let canonical_out = lex(&canonical_source, &arena_a);
         // Re-parse the canonicalised text — for the LSP code action
         // this is the post-rewrite source the editor would apply.
-        let recanonical_out = lex_into_arena(&canonical_source, &arena_b);
+        let recanonical_out = lex(&canonical_source, &arena_b);
         assert_eq!(canonical_out.normalized, recanonical_out.normalized);
     }
 }

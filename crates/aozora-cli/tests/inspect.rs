@@ -1,10 +1,10 @@
-//! End-to-end tests for `aozora wire <kind>` — the document-data
-//! projection of the shared `aozora::wire` envelope.
+//! End-to-end tests for `aozora inspect <kind>` — the document-data
+//! projection of the shared `aozora::json` envelope.
 //!
 //! These verify the argv / dispatch / stdin / file plumbing and that
-//! the `{ "schema_version": 1, "data": [ … ] }` envelope reaches
+//! the `{ "schemaVersion": 1, "data": [ … ] }` envelope reaches
 //! stdout. The byte-level shape of each envelope is pinned by the unit
-//! tests in `aozora::wire`; here we only confirm the CLI surfaces it
+//! tests in `aozora::json`; here we only confirm the CLI surfaces it
 //! (and that `slugs` needs no input while `gaiji` resolves references).
 //!
 //! Pure stdlib (mirrors `smoke.rs`) so the test crate stays dep-light.
@@ -19,7 +19,7 @@ const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 /// Every wire envelope opens with this versioned header; asserting the
 /// literal prefix is a structural check that needs no JSON parser in
 /// the (deliberately dep-light) test crate.
-const ENVELOPE_PREFIX: &str = r#"{"schema_version":1,"#;
+const ENVELOPE_PREFIX: &str = r#"{"schemaVersion":1,"#;
 
 fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
     let mut cmd = Command::new(BIN);
@@ -46,7 +46,7 @@ fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
 
 fn write_temp(contents: &str) -> NamedTempFile {
     let mut f = tempfile::Builder::new()
-        .prefix("aozora-wire-test-")
+        .prefix("aozora-inspect-test-")
         .suffix(".txt")
         .tempfile()
         .expect("temp file");
@@ -56,16 +56,16 @@ fn write_temp(contents: &str) -> NamedTempFile {
 }
 
 #[test]
-fn wire_nodes_emits_ruby_kind_from_stdin() {
-    let (status, stdout, stderr) = run(&["wire", "nodes"], Some("｜青梅《おうめ》\n"));
+fn inspect_nodes_emits_ruby_kind_from_stdin() {
+    let (status, stdout, stderr) = run(&["inspect", "nodes"], Some("｜青梅《おうめ》\n"));
     assert!(status.success(), "wire nodes failed: {stderr:?}");
     assert!(stdout.starts_with(ENVELOPE_PREFIX), "envelope: {stdout:?}");
     assert!(stdout.contains(r#""kind":"ruby""#), "nodes: {stdout:?}");
 }
 
 #[test]
-fn wire_pairs_emits_ruby_pair_with_open_and_close() {
-    let (status, stdout, _) = run(&["wire", "pairs"], Some("｜青梅《おうめ》\n"));
+fn inspect_pairs_emits_ruby_pair_with_open_and_close() {
+    let (status, stdout, _) = run(&["inspect", "pairs"], Some("｜青梅《おうめ》\n"));
     assert!(status.success());
     assert!(stdout.starts_with(ENVELOPE_PREFIX), "envelope: {stdout:?}");
     assert!(stdout.contains(r#""kind":"ruby""#), "pairs: {stdout:?}");
@@ -76,9 +76,9 @@ fn wire_pairs_emits_ruby_pair_with_open_and_close() {
 }
 
 #[test]
-fn wire_container_pairs_emits_pair_offsets() {
+fn inspect_container_pairs_emits_pair_offsets() {
     let src = "［＃ここから２字下げ］\n本文\n［＃ここで字下げ終わり］\n";
-    let (status, stdout, stderr) = run(&["wire", "container-pairs"], Some(src));
+    let (status, stdout, stderr) = run(&["inspect", "container-pairs"], Some(src));
     assert!(status.success(), "container-pairs failed: {stderr:?}");
     assert!(stdout.starts_with(ENVELOPE_PREFIX), "envelope: {stdout:?}");
     assert!(
@@ -88,11 +88,11 @@ fn wire_container_pairs_emits_pair_offsets() {
 }
 
 #[test]
-fn wire_diagnostics_emits_data_for_pua_collision() {
+fn inspect_diagnostics_emits_data_for_pua_collision() {
     // `wire diagnostics` is a pure projection: it exits 0 regardless of
     // findings (unlike `check --strict`), and the PUA sentinel produces
     // a `source_contains_pua` entry.
-    let (status, stdout, _) = run(&["wire", "diagnostics"], Some("abc\u{E001}def"));
+    let (status, stdout, _) = run(&["inspect", "diagnostics"], Some("abc\u{E001}def"));
     assert!(status.success(), "diagnostics projection always exits 0");
     assert!(stdout.starts_with(ENVELOPE_PREFIX), "envelope: {stdout:?}");
     assert!(
@@ -102,43 +102,43 @@ fn wire_diagnostics_emits_data_for_pua_collision() {
 }
 
 #[test]
-fn wire_gaiji_resolves_reference() {
-    let (status, stdout, stderr) = run(&["wire", "gaiji"], Some("※［＃「々」］"));
+fn inspect_gaiji_resolves_reference() {
+    let (status, stdout, stderr) = run(&["inspect", "gaiji"], Some("※［＃「々」］"));
     assert!(status.success(), "gaiji failed: {stderr:?}");
     assert!(stdout.starts_with(ENVELOPE_PREFIX), "envelope: {stdout:?}");
     assert!(stdout.contains(r#""resolved":"々""#), "gaiji: {stdout:?}");
 }
 
 #[test]
-fn wire_gaiji_resolutions_is_an_accepted_alias() {
+fn inspect_gaiji_resolutions_is_an_accepted_alias() {
     // The wire-function name `gaiji-resolutions` is an alias for the
     // short, user-facing `gaiji`.
-    let (status, stdout, _) = run(&["wire", "gaiji-resolutions"], Some("※［＃「々」］"));
+    let (status, stdout, _) = run(&["inspect", "gaiji-resolutions"], Some("※［＃「々」］"));
     assert!(status.success());
     assert!(stdout.contains(r#""resolved":"々""#), "alias: {stdout:?}");
 }
 
 #[test]
-fn wire_slugs_needs_no_input() {
+fn inspect_slugs_needs_no_input() {
     // `slugs` is a static catalogue: it must succeed with neither stdin
     // nor a file argument.
-    let (status, stdout, stderr) = run(&["wire", "slugs"], None);
+    let (status, stdout, stderr) = run(&["inspect", "slugs"], None);
     assert!(status.success(), "slugs failed: {stderr:?}");
     assert!(stdout.starts_with(ENVELOPE_PREFIX), "envelope: {stdout:?}");
     assert!(stdout.contains(r#""canonical":"#), "slugs: {stdout:?}");
 }
 
 #[test]
-fn wire_reads_from_a_file_path() {
+fn inspect_reads_from_a_file_path() {
     let f = write_temp("｜青梅《おうめ》\n");
-    let (status, stdout, stderr) = run(&["wire", "nodes", f.path().to_str().unwrap()], None);
+    let (status, stdout, stderr) = run(&["inspect", "nodes", f.path().to_str().unwrap()], None);
     assert!(status.success(), "wire from file failed: {stderr:?}");
     assert!(stdout.contains(r#""kind":"ruby""#), "file path: {stdout:?}");
 }
 
 #[test]
-fn wire_rejects_unknown_kind() {
-    let (status, _, stderr) = run(&["wire", "bogus"], None);
+fn inspect_rejects_unknown_kind() {
+    let (status, _, stderr) = run(&["inspect", "bogus"], None);
     assert!(!status.success(), "unknown kind must fail");
     assert!(
         stderr.contains("invalid value") || stderr.contains("possible values"),

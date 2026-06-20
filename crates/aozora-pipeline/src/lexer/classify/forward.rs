@@ -9,7 +9,7 @@
 //! phase-3 classifier; recognised nodes build on the shared
 //! `RecogniseCtx`.
 
-#[cfg(feature = "phase3-instrument")]
+#[cfg(feature = "classify-instrument")]
 use super::super::instrumentation::{Subsystem, SubsystemGuard};
 
 use std::cell::RefCell;
@@ -19,10 +19,10 @@ use aozora_spec::Diagnostic;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
 use aozora_syntax::{
-    AnnotationKind, AozoraHeadingKind, BoutenPosition, EmphasisKind, SideNoteKind, Span,
+    BoutenPosition, DirectiveKind, EmphasisKind, HeadingKind, MarginNoteKind, Span,
 };
 
-use super::super::phase2_pair::{PairEvent, PairKind};
+use super::super::pair::{PairEvent, PairKind};
 use super::super::token::TriggerKind;
 use super::directive::{
     bouten_kind_from_suffix, classify_annotation_body, classify_general_image_body,
@@ -100,7 +100,7 @@ pub(super) fn install_forward_target_index_from_source(source: &str) {
     const QUOTE_OPEN: &[u8] = b"\xE3\x80\x8C";
     const QUOTE_CLOSE: &[u8] = b"\xE3\x80\x8D";
 
-    #[cfg(feature = "phase3-instrument")]
+    #[cfg(feature = "classify-instrument")]
     let _phase3_guard = SubsystemGuard::new(Subsystem::ForwardIndexInstall);
 
     let bytes = source.as_bytes();
@@ -142,7 +142,7 @@ pub(super) fn install_forward_target_index_from_source(source: &str) {
     // pair lives *inside* the directive (after `［`). Recording the
     // quote position there would put `first_position` past every
     // directive's cutoff, so `first_pos < cutoff` is always false and
-    // the bouten silently degrades to `Annotation{Unknown}` — exactly
+    // the bouten silently degrades to `Directive{Unknown}` — exactly
     // the bug that dropped ~half of all corpus 傍点/見出し once a
     // document crossed the 64-quote AC-install threshold. `memmem::find`
     // over the whole source picks up the bare referent.
@@ -185,14 +185,14 @@ pub(super) fn install_forward_target_index_from_source(source: &str) {
 /// [`PairEvent::Solo`] — the shape `［` `＃` `body` `］`. Bodies
 /// without a hash (plain `［…］`) are not annotations; bodies with a
 /// hash whose keyword no specialised recogniser matches fall through
-/// to the `Annotation { Unknown }` catch-all so the bracket is
-/// always consumed into some `AozoraNode`.
+/// to the `Directive { Unknown }` catch-all so the bracket is
+/// always consumed into some `Node`.
 impl<'a> RecogniseCtx<'_, 'a, '_> {
     /// Forward-reference dispatch for a well-formed `［＃…］` bracket.
     ///
     /// Tries the body-keyword classifier first, then a fixed cascade of
     /// forward-reference recognisers, falling through to the
-    /// `Annotation{Unknown}` catch-all. Cascade order:
+    /// `Directive{Unknown}` catch-all. Cascade order:
     ///
     /// 1. body keyword — `classify_annotation_body`
     /// 2. bouten (single) — `「X」に<kind>`
@@ -204,7 +204,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     /// 8. emphasis — `「X」は太字` / `斜体`
     /// 9. caption-figure — `「cap」のキャプション付きの…（file）入る`
     /// 10. general image — `<desc>（file）入る`
-    /// 11. empty / editorial-note / `Annotation{Unknown}` catch-all
+    /// 11. empty / editorial-note / `Directive{Unknown}` catch-all
     ///
     /// # Ordering contract
     ///
@@ -229,7 +229,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     ///   figcaption. Pinned by `caption_before_figure_recognised`.
     /// * target-bearing recogniser ≺ editorial-note — `「ママ」に傍点`
     ///   must be claimed as bouten before the `ママ` editorial note would
-    ///   type it as `AsIs`. Pinned by
+    ///   type it as `Sic`. Pinned by
     ///   `mama_target_with_bouten_stays_bouten`.
     /// * editorial-note ≺ `Unknown` — the editorial kinds refine the
     ///   catch-all, which would otherwise claim every body. Pinned by
@@ -239,7 +239,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     ///   `tcy_small_script_compound_recognised_as_tcy`.
     /// * 縦中横 `ShapedNoTarget` diagnostic survives the fall-through —
     ///   when the target is absent the directive degrades to
-    ///   `Annotation{Unknown}`, but its `tcy_target_not_found` warning is
+    ///   `Directive{Unknown}`, but its `tcy_target_not_found` warning is
     ///   carried through the later arms via `tcy_pending`. Pinned by
     ///   `tcy_target_not_found_fires_as_warning` (node-absence by
     ///   `forward_tcy_without_preceding_target_falls_through`).
@@ -248,7 +248,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         reason = "a flat dispatch chain over the forward-reference recognisers \
                   (body / bouten / 縦中横 / heading / emphasis) — each block is \
                   the same shape and splitting them would scatter the ordered \
-                  fall-through to the Annotation{Unknown} catch-all"
+                  fall-through to the Directive{Unknown} catch-all"
     )]
     pub(super) fn recognize_annotation(
         &mut self,
@@ -256,8 +256,8 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         open_idx: usize,
         close_idx: usize,
     ) -> Option<AnnotationMatch<'a>> {
-        #[cfg(feature = "phase3-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::Annotation);
+        #[cfg(feature = "classify-instrument")]
+        let _phase3_guard = SubsystemGuard::new(Subsystem::Directive);
         let events = view.events;
         let PairEvent::PairOpen {
             span: open_span, ..
@@ -297,12 +297,12 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 emit,
                 // For Warichu open / close the body classifier hands back
                 // a payload alongside the node; the body-builder uses it to
-                // wrap as a `Segment::Annotation` with the correct
+                // wrap as a `Segment::Directive` with the correct
                 // `WarichuOpen` / `WarichuClose` kind instead of the
                 // catch-all `Unknown` downgrade. Other body-keyword
                 // families (PageBreak, Indent, …) leave the payload as
                 // `None`, matching the legacy behaviour where the body-
-                // builder fell through to its `Annotation{Unknown}`
+                // builder fell through to its `Directive{Unknown}`
                 // synthesis path.
                 annotation_payload,
                 consume_start: open_span.start,
@@ -369,7 +369,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         }
         // 縦中横 is 3-state: a shape-matched directive whose target has no
         // referent (`ShapedNoTarget`) carries a warning down the
-        // fall-through path while still degrading to `Annotation{Unknown}`.
+        // fall-through path while still degrading to `Directive{Unknown}`.
         let tcy_pending = match self.classify_forward_tcy(view, open_idx, close_idx) {
             ForwardTcy::Recognised(node, consume_start) => {
                 return Some(AnnotationMatch {
@@ -407,7 +407,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         }
 
         // `「caption」のキャプション付きの(図|挿絵)（file）入る` — illustration
-        // whose caption precedes the figure. Emits a Sashie (consumes the whole
+        // whose caption precedes the figure. Emits a Illustration (consumes the whole
         // bracket); checked here, after the styling recognisers.
         if let Some(node) = self.classify_caption_figure(view, open_idx, close_idx) {
             return Some(AnnotationMatch {
@@ -440,11 +440,11 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // ellipsis placeholder — a de-facto-standard symbol, not unrecognised
         // notation. Type it as `Empty` rather than the `Unknown` catch-all.
         if body.is_empty() || body == "…" || body == "（…）" {
-            return Some(self.typed_annotation_match(directive_span, AnnotationKind::Empty));
+            return Some(self.typed_annotation_match(directive_span, DirectiveKind::Empty));
         }
         // Input-editor notes (`「X」はママ`, `「X」は底本では「Y」`, …). These
         // do not restyle their target — X stays in the text — so they emit a
-        // typed `Annotation` consuming only the bracket, exactly like the
+        // typed `Directive` consuming only the bracket, exactly like the
         // Unknown catch-all but with the correct kind. Checked here, after the
         // specialised recognisers, so `「ママ」に傍点` etc. are already claimed.
         if let Some(kind) = editorial_note_kind(body) {
@@ -471,7 +471,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         }
 
         // No specialised recogniser claimed the bracket — fall back to the
-        // `Annotation{Unknown}` catch-all.
+        // `Directive{Unknown}` catch-all.
         Some(self.unknown_annotation_match(directive_span, body, tcy_pending))
     }
 
@@ -484,7 +484,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         &mut self,
         view: BodyView<'_>,
         open_idx: usize,
-    ) -> Option<(borrowed::AozoraNode<'a>, bool)> {
+    ) -> Option<(borrowed::Node<'a>, bool)> {
         let &PairEvent::PairOpen {
             span: open_span, ..
         } = view.events.get(open_idx)?
@@ -505,7 +505,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     /// Catch-all for any well-formed `［＃…］` whose body no specialised
     /// recogniser claimed — including empty bodies (`［＃］`), which real
     /// Aozora corpora occasionally use as illustrative glyphs. Emitting
-    /// `Annotation{Unknown}` with the raw source slice keeps the Tier-A
+    /// `Directive{Unknown}` with the raw source slice keeps the Tier-A
     /// canary (no bare `［＃` in HTML output) intact. `directive_span` is the
     /// `open.start..close.end` extent of the bracket.
     ///
@@ -523,9 +523,9 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let raw = &self.source[directive_span.start as usize..directive_span.end as usize];
         // One payload for `emit`, one for `annotation_payload`, so the
         // body-builder can re-wrap without re-interning the raw string.
-        let payload = self.alloc.make_annotation(raw, AnnotationKind::Unknown);
+        let payload = self.alloc.make_directive(raw, DirectiveKind::Unknown);
         let node = self.alloc.annotation(payload);
-        let payload_for_seg = self.alloc.make_annotation(raw, AnnotationKind::Unknown);
+        let payload_for_seg = self.alloc.make_directive(raw, DirectiveKind::Unknown);
         let pending_diagnostic = tcy_pending.or_else(|| {
             body.starts_with("ここから")
                 .then(|| Diagnostic::unrecognised_container_directive(directive_span))
@@ -539,22 +539,22 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         }
     }
 
-    /// Emit a `［＃…］` as an `Annotation` carrying a *specific* kind
-    /// (`AsIs`, `TextualNote`, …) rather than the `Unknown` catch-all.
+    /// Emit a `［＃…］` as an `Directive` carrying a *specific* kind
+    /// (`Sic`, `BaseTextVariant`, …) rather than the `Unknown` catch-all.
     /// Same span discipline as [`Self::unknown_annotation_match`] — the
     /// whole bracket is consumed and the target text is left in place — so
     /// the raw round-trips and the HTML output is unchanged (these kinds
-    /// render hidden, as Unknown does); only the typed `AnnotationKind` the
+    /// render hidden, as Unknown does); only the typed `DirectiveKind` the
     /// AST / wire surfaces differs.
     fn typed_annotation_match(
         &mut self,
         directive_span: Span,
-        kind: AnnotationKind,
+        kind: DirectiveKind,
     ) -> AnnotationMatch<'a> {
         let raw = &self.source[directive_span.start as usize..directive_span.end as usize];
-        let payload = self.alloc.make_annotation(raw, kind);
+        let payload = self.alloc.make_directive(raw, kind);
         let node = self.alloc.annotation(payload);
-        let payload_for_seg = self.alloc.make_annotation(raw, kind);
+        let payload_for_seg = self.alloc.make_directive(raw, kind);
         AnnotationMatch {
             emit: EmitKind::Aozora(node),
             annotation_payload: Some(payload_for_seg),
@@ -594,7 +594,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+    ) -> Option<(borrowed::Node<'a>, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // Extraction stops at the `～`, so the first quote is X; the suffix is
         // `～「Y」に<kind>` (or `〜「Y」…`).
@@ -644,7 +644,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::AozoraNode<'a>, u32, bool)> {
+    ) -> Option<(borrowed::Node<'a>, u32, bool)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // Shape 1: `に<kind>` — default right-side placement.
         // Shape 2: `の左に<kind>` — left-side placement (position flipped).
@@ -658,7 +658,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let kind = bouten_kind_from_suffix(kind_suffix)?;
         // A forward-reference bouten only makes sense when every named
         // target actually appears in the preceding text. Otherwise it
-        // has no referent and we fall through to the Annotation{Unknown}
+        // has no referent and we fall through to the Directive{Unknown}
         // catch-all so the reader sees the raw `［＃…］` rather than a
         // mysterious styling applied to nothing. Each target is checked
         // independently so a partially-valid multi-quote bracket (rare
@@ -762,11 +762,11 @@ fn build_bouten_target<'a>(
 /// Distinguishes a recognised 縦中横 from a directive whose `は縦中横`
 /// shape matched but whose target is absent from the look-back (which
 /// still warrants a `tcy_target_not_found` warning even though the
-/// bracket degrades to `Annotation{Unknown}`), and from a bracket that is
+/// bracket degrades to `Directive{Unknown}`), and from a bracket that is
 /// not a 縦中横 directive at all (silent fall-through).
 enum ForwardTcy<'a> {
     /// A 縦中横 with a located target — the node plus its consume start.
-    Recognised(borrowed::AozoraNode<'a>, u32),
+    Recognised(borrowed::Node<'a>, u32),
     /// `は縦中横` shape matched but the target has no preceding referent.
     ShapedNoTarget,
     /// Not a 縦中横 directive.
@@ -784,7 +784,7 @@ enum ForwardTcy<'a> {
 /// Multi-quote `［＃「A」「B」は縦中横］` bodies are not standard Aozora
 /// spec; we accept the first target's text and ignore the rest for
 /// robustness rather than failing, so the bracket still consumes via
-/// `classify_forward_tcy` instead of leaking to `Annotation{Unknown}`.
+/// `classify_forward_tcy` instead of leaking to `Directive{Unknown}`.
 impl<'a> RecogniseCtx<'_, 'a, '_> {
     fn classify_forward_tcy(
         &mut self,
@@ -812,7 +812,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // The shape is a 縦中横 directive. If its target has no referent in
         // the preceding text the styling is meaningless — flag it (the
         // caller turns this into `tcy_target_not_found`) and let the bracket
-        // fall through to `Annotation{Unknown}`.
+        // fall through to `Directive{Unknown}`.
         if !forward_target_is_preceded(view.events, self.source, open_idx, first) {
             return ForwardTcy::ShapedNoTarget;
         }
@@ -851,7 +851,7 @@ fn forward_target_is_preceded(
     open_idx: usize,
     target: &str,
 ) -> bool {
-    #[cfg(feature = "phase3-instrument")]
+    #[cfg(feature = "classify-instrument")]
     let _phase3_guard = SubsystemGuard::new(Subsystem::ForwardTargetCheck);
     let Some(PairEvent::PairOpen { span, .. }) = events.get(open_idx) else {
         return false;
@@ -1062,7 +1062,7 @@ fn extract_forward_quote_targets<'s>(
 ///
 /// When the (single) referent is the bare line immediately above the
 /// directive, the line is promoted in place to a block
-/// `borrowed::AozoraHeading` (大→`<h1>` / 中→`<h2>` / 小→`<h3>`): the
+/// `borrowed::Heading` (大→`<h1>` / 中→`<h2>` / 小→`<h3>`): the
 /// consume span is pulled back over that line so the heading element is
 /// its sole rendered copy. When the referent is not a clean preceding
 /// line, the classifier keeps the inline `borrowed::HeadingHint` marker
@@ -1073,7 +1073,7 @@ fn extract_forward_quote_targets<'s>(
 /// hint that names a target which does not appear in the preceding
 /// source text is rejected — the annotation has no referent and the
 /// paragraph would promote to an empty heading. Falling through lets
-/// the catch-all emit `Annotation { Unknown }` so the reader at least
+/// the catch-all emit `Directive { Unknown }` so the reader at least
 /// sees the raw bracket text in diagnostics.
 impl<'a> RecogniseCtx<'_, 'a, '_> {
     fn classify_forward_heading(
@@ -1081,7 +1081,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+    ) -> Option<(borrowed::Node<'a>, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let rest = extracted.suffix.strip_prefix("は")?;
         let (style, kind) = parse_heading_keyword(rest)?;
@@ -1153,7 +1153,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+    ) -> Option<(borrowed::Node<'a>, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let [target] = extracted.targets.as_slice() else {
             return None;
@@ -1187,10 +1187,10 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 /// Classify a forward-reference **side annotation** — 注記 or 傍記. The
 /// structural twin of [`Self::classify_forward_left_ruby`] (same
 /// single-target pull-back), but the trailing keyword selects a distinct
-/// [`borrowed::AozoraNode::SideNote`] node and flavour:
+/// [`borrowed::Node::MarginNote`] node and flavour:
 /// - `「X」の左に「Y」の注記` / bare `「X」に「Y」の注記` →
-///   [`SideNoteKind::Annotation`] (editorial gloss; round-trips `の注記`).
-/// - `「X」に「Y」の傍記` → [`SideNoteKind::Marginal`] (the censorship-marker
+///   [`MarginNoteKind::Gloss`] (editorial gloss; round-trips `の注記`).
+/// - `「X」に「Y」の傍記` → [`MarginNoteKind::Marginal`] (the censorship-marker
 ///   form; round-trips bare `に…の傍記`).
 ///
 /// The `の注記` / `の傍記` suffixes are disjoint from `のルビ` and every
@@ -1202,23 +1202,23 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+    ) -> Option<(borrowed::Node<'a>, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let [target] = extracted.targets.as_slice() else {
             return None;
         };
         // Pick the flavour by trailing keyword, then the note text:
         //   注記: explicit `の左に「Y」の注記` or bare `に「Y」の注記` — both map
-        //         to the same node (`SideNote` has no side axis).
+        //         to the same node (`MarginNote` has no side axis).
         //   傍記: bare `に「Y」の傍記` only (the corpus's sole 傍記 shape; an
         //         unattested `の左に…の傍記` would be ambiguous to round-trip).
         let (kind, note_text) = if let Some(inner) = extracted.suffix.strip_suffix("」の注記") {
             let note = inner
                 .strip_prefix("の左に「")
                 .or_else(|| inner.strip_prefix("に「"))?;
-            (SideNoteKind::Annotation, note)
+            (MarginNoteKind::Gloss, note)
         } else if let Some(inner) = extracted.suffix.strip_suffix("」の傍記") {
-            (SideNoteKind::Marginal, inner.strip_prefix("に「")?)
+            (MarginNoteKind::Marginal, inner.strip_prefix("に「")?)
         } else {
             return None;
         };
@@ -1245,14 +1245,14 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     /// Classify a `「caption」のキャプション付きの(図|挿絵)（file）入る`
     /// illustration whose caption *precedes* the figure (distinct from the
     /// trailing `挿絵（file）「caption」入る` form `classify_sashie_body`
-    /// handles). Emits a `Sashie` with the leading quote as its caption and
+    /// handles). Emits a `Illustration` with the leading quote as its caption and
     /// the parenthesised path as its file; consumes only the bracket.
     fn classify_caption_figure(
         &mut self,
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<borrowed::AozoraNode<'a>> {
+    ) -> Option<borrowed::Node<'a>> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let [caption] = extracted.targets.as_slice() else {
             return None;
@@ -1287,7 +1287,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 ///
 /// Single-target only — `「A」「B」は太字` is not a real Aozora shape and
 /// would not round-trip byte-exactly, so it falls through to
-/// `Annotation{Unknown}`. The `forward_target_is_preceded` gate rejects a
+/// `Directive{Unknown}`. The `forward_target_is_preceded` gate rejects a
 /// target with no referent (emphasis over nothing); the
 /// `find_immediate_predecessor_target_position` pull-back swallows the
 /// immediately-preceding literal (the dominant
@@ -1299,7 +1299,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::AozoraNode<'a>, u32)> {
+    ) -> Option<(borrowed::Node<'a>, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let rest = extracted.suffix.strip_prefix("は")?;
         let kind = emphasis_kind_from_suffix(rest)?;
@@ -1327,12 +1327,12 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     }
 }
 
-/// Map an [`AozoraHeadingKind`] (大/中/小) to the numeric outline level
+/// Map an [`HeadingKind`] (大/中/小) to the numeric outline level
 /// (1/2/3) the inline `heading-hint` carries in `data-level`.
-const fn heading_level_u8(kind: AozoraHeadingKind) -> u8 {
+const fn heading_level_u8(kind: HeadingKind) -> u8 {
     match kind {
-        AozoraHeadingKind::Medium => 2,
-        AozoraHeadingKind::Small => 3,
+        HeadingKind::Medium => 2,
+        HeadingKind::Small => 3,
         // 大見出し and any future level default to the top level.
         _ => 1,
     }
@@ -1343,7 +1343,7 @@ const fn heading_level_u8(kind: AozoraHeadingKind) -> u8 {
 /// by a single `\n`, and itself starting at a line boundary (BOF or after
 /// a `\n`). The promoted heading's consume span is pulled back to this
 /// position so `序章\n［＃「序章」は…見出し］` collapses into one
-/// `AozoraHeading`; the mandatory `\n` keeps the serializer's round-trip
+/// `Heading`; the mandatory `\n` keeps the serializer's round-trip
 /// (`<text>\n［＃…］`) byte-identical to the source. Returns `None`
 /// (→ inline `HeadingHint` fallback) for any other shape.
 fn find_heading_predecessor_position(
@@ -1386,7 +1386,7 @@ fn find_heading_predecessor_position(
 /// `SuperScript`, 下付き小文字 → `SubScript`, 行右小書き → `SmallRight`,
 /// 行左小書き → `SmallLeft`, and `N段階大きな/小さな文字` → `FontSize`
 /// (per <https://www.aozora.gr.jp/annotation/etc.html>). Unknown suffixes
-/// return `None` (→ `Annotation{Unknown}`).
+/// return `None` (→ `Directive{Unknown}`).
 pub(super) fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
     Some(match s {
         "太字" | "ゴシック体" | "ゴチック" => EmphasisKind::Bold,
@@ -1405,7 +1405,7 @@ pub(super) fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
 /// Parse a `N段階大きな文字` / `N段階小さな文字` font-size suffix into an
 /// [`EmphasisKind::FontSize`]. `大きな` yields a positive stage count,
 /// `小さな` a negative one. Returns `None` for a missing/zero magnitude,
-/// an `i8` overflow, or any other suffix (→ `Annotation{Unknown}`).
+/// an `i8` overflow, or any other suffix (→ `Directive{Unknown}`).
 fn parse_font_size_suffix(s: &str) -> Option<EmphasisKind> {
     let (magnitude, rest) = parse_decimal_u8_prefix(s)?;
     let steps = i8::try_from(magnitude).ok()?;

@@ -59,11 +59,11 @@ fn timing_leaves_stdout_untouched() {
 }
 
 #[test]
-fn timing_json_is_a_wire_envelope() {
+fn timing_json_is_a_json_envelope() {
     let (_, stderr) = run(&["render", "--timing", "--timing-format", "json"], RUBY);
     let value: serde_json::Value = serde_json::from_str(stderr.trim()).expect("timing json parses");
     assert_eq!(
-        value["schema_version"], 1,
+        value["schemaVersion"], 1,
         "carries schema_version: {stderr:?}"
     );
     let names: Vec<&str> = value["phases"]
@@ -77,7 +77,7 @@ fn timing_json_is_a_wire_envelope() {
         "json names read/parse/render phases: {names:?}"
     );
     assert!(
-        value["total_nanos"].as_u64().is_some(),
+        value["totalNanos"].as_u64().is_some(),
         "total_nanos is a number: {stderr:?}"
     );
 }
@@ -93,7 +93,7 @@ fn timing_json_does_not_pollute_stdout() {
 fn slugs_timing_emits_no_phases() {
     // `wire slugs` neither reads nor parses, so --timing has nothing to
     // measure: stderr stays empty, the catalogue still lands on stdout.
-    let (stdout, stderr) = run(&["wire", "slugs", "--timing"], &[]);
+    let (stdout, stderr) = run(&["inspect", "slugs", "--timing"], &[]);
     assert!(
         stderr.is_empty(),
         "no phases to report for slugs: {stderr:?}"

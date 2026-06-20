@@ -4,7 +4,7 @@
 //! these single-character sentinels in the normalized text it hands to
 //! the downstream CommonMark parser. The placeholder registry maps each
 //! sentinel position back to the originating [`crate::Span`] +
-//! `AozoraNode`, so `post_process` can splice the construct back into
+//! `Node`, so `post_process` can splice the construct back into
 //! the AST after CommonMark parsing.
 //!
 //! All four sentinels live in the Unicode Private Use Area (`U+E000..U+F8FF`),

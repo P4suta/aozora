@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────
 
 /** Cross-cutting tag for an AST node or `NodeRef` projection. */
-export type NodeKind = "ruby" | "bouten" | "tateChuYoko" | "gaiji" | "indent" | "alignEnd" | "center" | "warichu" | "keigakomi" | "pageBreak" | "sectionBreak" | "heading" | "headingHint" | "sashie" | "kaeriten" | "annotation" | "angleQuote" | "emphasis" | "sideNote" | "container" | "containerOpen" | "containerClose";
+export type NodeKind = "ruby" | "bouten" | "combineUpright" | "gaiji" | "indent" | "alignEnd" | "center" | "warichu" | "framed" | "pageBreak" | "sectionBreak" | "heading" | "headingHint" | "illustration" | "kaeriten" | "directive" | "angleQuote" | "emphasis" | "marginNote" | "container" | "containerOpen" | "containerClose";
 
 /** Pair kind for `pairs_json` output. */
 export type PairKind = "bracket" | "ruby" | "angleQuote" | "tortoise" | "quote";
@@ -29,7 +29,7 @@ export type SentinelKind = "inline" | "blockLeaf" | "blockOpen" | "blockClose";
 // ─────────────────────────────────────────────────────────
 
 /** Half-open byte span `[start, end)` in the relevant coordinate system
-(sanitized source for diagnostics / nodes / pairs; see `aozora::wire` docs). */
+(sanitized source for diagnostics / nodes / pairs; see `aozora::json` docs). */
 export interface SpanWire {
   start: number;
   end: number;
@@ -40,7 +40,7 @@ export interface OffsetWire {
   offset: number;
 }
 
-/** One entry of `serialize_diagnostics` — `Diagnostic` projection. */
+/** One entry of `diagnostics` — `Diagnostic` projection. */
 export interface DiagnosticWire {
   /** Variant tag (last segment of `Diagnostic::code()`, e.g. `"source_contains_pua"`). */
   kind: string;
@@ -51,20 +51,20 @@ export interface DiagnosticWire {
   codepoint?: string;
 }
 
-/** One entry of `serialize_nodes` — classified `AozoraNode` span in source coords. */
+/** One entry of `nodes` — classified `Node` span in source coords. */
 export interface NodeWire {
   kind: NodeKind;
   span: SpanWire;
 }
 
-/** One entry of `serialize_pairs` — matched bracket pair link. */
+/** One entry of `pairs` — matched bracket pair link. */
 export interface PairWire {
   kind: PairKind;
   open: SpanWire;
   close: SpanWire;
 }
 
-/** One entry of `serialize_container_pairs` — paired container (open in normalized coords). */
+/** One entry of `container_pairs` — paired container (open in normalized coords). */
 export interface ContainerPairWire {
   kind: "indent" | "warichu" | "keigakomi" | "alignEnd" | "lineWidth" | "boutenRange" | "bold" | "italic" | "heading" | "columns" | "table" | "unknown";
   open: OffsetWire;

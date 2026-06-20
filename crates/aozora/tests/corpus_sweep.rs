@@ -33,12 +33,12 @@ fn corpus_round_trip_is_a_fixed_point() {
         // Parse must not panic and must produce a tree.
         let doc = Document::new(utf8);
         let tree = doc.parse();
-        let serialized = tree.serialize();
+        let serialized = tree.to_source();
 
         // Round-trip stability: parse ∘ serialize is a fixed point.
         let doc2 = Document::new(serialized.clone());
         let tree2 = doc2.parse();
-        let serialized2 = tree2.serialize();
+        let serialized2 = tree2.to_source();
 
         assert_eq!(
             serialized, serialized2,

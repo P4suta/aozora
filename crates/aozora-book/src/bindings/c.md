@@ -130,14 +130,14 @@ allocation that is a rounding error compared to the parse itself.
 
 ## Why opaque handle + bytes, not a flat C struct projection?
 
-A `flat C struct` projection of `AozoraTree` would require:
+A `flat C struct` projection of `Tree` would require:
 
 - Naming every Rust enum variant in C (not supported cleanly via
   cbindgen for tagged unions).
 - Translating the bumpalo arena into a malloc-backed block
   contiguous with the tree (which means copying the tree out).
 - Pinning the AST shape across the C ABI — internal refactors
-  (e.g. adding a new `AozoraNode` variant) would break ABI without
+  (e.g. adding a new `Node` variant) would break ABI without
   warning.
 
 The opaque-handle approach keeps the AST entirely Rust-side. C

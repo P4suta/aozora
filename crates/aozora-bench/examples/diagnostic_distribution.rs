@@ -1,7 +1,7 @@
 //! Histogram of corpus documents by phase-1..3 diagnostic count.
 //!
 //! Buckets are: 0, 1-5, 6-20, 21-100, 100+. For each bucket the report
-//! shows doc count, mean parse latency (`lex_into_arena`), and the
+//! shows doc count, mean parse latency (`lex`), and the
 //! bucket's share of the corpus. A separate "top-5" list calls out the
 //! single noisiest documents — useful when chasing a regression that
 //! manifests as a sudden diagnostic spike.
@@ -30,7 +30,7 @@ use std::time::Instant;
 
 use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_auto;
-use aozora_pipeline::lex_into_arena;
+use aozora_pipeline::lex;
 use aozora_syntax::borrowed::Arena;
 
 const NS_PER_MS: f64 = 1_000_000.0;
@@ -91,7 +91,7 @@ fn main() {
         };
         let arena = Arena::new();
         let t = Instant::now();
-        let out = lex_into_arena(&text, &arena);
+        let out = lex(&text, &arena);
         let parse_ns = t.elapsed().as_nanos() as u64;
         samples.push(Sample {
             diag_count: out.diagnostics.len(),

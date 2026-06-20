@@ -13,16 +13,16 @@
 //! * `.take(N)` and `.collect().into_iter().take(N)` agree.
 //! * EOF-time `Unclosed` synthesis is observable on the public stream.
 //! * The type-state [`Pipeline`] composition is byte-for-byte
-//!   equivalent to the one-shot [`lex_into_arena`] front door.
+//!   equivalent to the one-shot [`lex`] front door.
 //! * Diagnostics observed at intermediate states still surface in the
-//!   final [`BorrowedLexOutput::diagnostics`].
+//!   final [`LexOutput::diagnostics`].
 //!
 //! Each block below stays *semantic*: never inspect private fields
 //! (Pipeline is intentionally opaque past the public surface), only
 //! the behaviour visible to a real downstream caller.
 
 use aozora_pipeline::lexer::{PairEvent, PairKind, classify, pair, tokenize};
-use aozora_pipeline::{Pipeline, lex_into_arena};
+use aozora_pipeline::{Pipeline, lex};
 use aozora_spec::{Diagnostic, Sentinel};
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::Arena;
@@ -74,7 +74,7 @@ fn classify_stream_drop_partway_does_not_corrupt_global_state() {
     // A fresh end-to-end run over the same source must still behave
     // identically to a never-interrupted run.
     let arena2 = Arena::new();
-    let oneshot = lex_into_arena(src, &arena2);
+    let oneshot = lex(src, &arena2);
     assert_eq!(
         oneshot.registry.count_kind(Sentinel::Inline),
         1,
@@ -213,7 +213,7 @@ fn pair_stream_emits_one_unclosed_event_for_one_unclosed_bracket() {
 
 /// For several non-trivial inputs the explicit chain
 /// `Pipeline::new(s, &arena).sanitize().tokenize().pair().build()`
-/// must produce results identical to `lex_into_arena(s, &arena2)`.
+/// must produce results identical to `lex(s, &arena2)`.
 #[test]
 fn pipeline_chain_matches_lex_into_arena_for_corpus_shapes() {
     let inputs: &[&str] = &[
@@ -235,7 +235,7 @@ fn pipeline_chain_matches_lex_into_arena_for_corpus_shapes() {
             .pair()
             .build();
         let arena_one = Arena::new();
-        let oneshot = lex_into_arena(src, &arena_one);
+        let oneshot = lex(src, &arena_one);
         assert_eq!(
             chain.normalized, oneshot.normalized,
             "normalized text drift for input {src:?}"
@@ -277,7 +277,7 @@ fn pipeline_chain_matches_lex_into_arena_for_corpus_shapes() {
 // =====================================================================
 
 /// A Phase-0 diagnostic visible at the [`Sanitized`] state must also
-/// appear in the final [`BorrowedLexOutput::diagnostics`] after
+/// appear in the final [`LexOutput::diagnostics`] after
 /// `.build()`. This pins the contract that intermediate inspection
 /// does NOT consume diagnostics.
 #[test]

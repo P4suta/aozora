@@ -29,7 +29,7 @@ the host parser.
 
 Concretely:
 - `aozora-pipeline` owns the four phases (sanitize / events / pair /
-  classify) and emits a borrowed `AozoraNode` tree plus PUA sentinels.
+  classify) and emits a borrowed `Node` tree plus PUA sentinels.
 - The classifier's `Annotation::Unknown` catch-all claims every `［＃…］`,
   so a bare `［＃` can never leak to output (Tier-A invariant).
 - A host integrator (afm) runs its vanilla parser, then substitutes the

@@ -13,7 +13,7 @@ import NotationGuide from './components/NotationGuide';
 import SettingsPanel from './components/SettingsPanel';
 import { error as logError } from './logger';
 
-const EMPTY_ENVELOPE = '{"schema_version":1,"data":[]}';
+const EMPTY_ENVELOPE = '{"schemaVersion":1,"data":[]}';
 
 interface ParsePayload {
   html: string;

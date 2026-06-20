@@ -4,7 +4,7 @@
 //! `aozora-*` class [`crate::render_node`] / [`crate::html`] writes.
 //! Downstream consumers (e.g. the sibling `afm` crate) import it instead
 //! of hand-mirroring the contract. The `class_list_matches_emitted`
-//! test renders every `AozoraNode` + `ContainerKind` variant and asserts
+//! test renders every `Node` + `ContainerKind` variant and asserts
 //! the emitted class tokens are *exactly* this set, so the published
 //! list can never drift from the emit sites.
 
@@ -23,7 +23,6 @@
 pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-align-end",
     "aozora-angle-quote",
-    "aozora-annotation",
     "aozora-bold",
     "aozora-bouten",
     "aozora-bouten-batsu",
@@ -44,6 +43,7 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-bouten-shirosankaku",
     "aozora-caption",
     "aozora-center",
+    "aozora-combine-upright",
     "aozora-container",
     "aozora-container-align-end",
     "aozora-container-bold",
@@ -59,6 +59,7 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-container-table",
     "aozora-container-warichu",
     "aozora-container-wrap-indent",
+    "aozora-directive",
     "aozora-font-larger",
     "aozora-font-smaller",
     "aozora-gaiji",
@@ -70,23 +71,22 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-heading-small",
     "aozora-heading-window",
     "aozora-horizontal",
+    "aozora-illustration",
     "aozora-indent",
     "aozora-italic",
     "aozora-kaeriten",
     "aozora-keigakomi-inline",
     "aozora-kogaki-left",
     "aozora-kogaki-right",
+    "aozora-margin-note",
     "aozora-page-break",
     "aozora-ruby-left",
-    "aozora-sashie",
     "aozora-section-break",
     "aozora-section-break-kaicho",
     "aozora-section-break-kaidan",
     "aozora-section-break-kaimihiraki",
-    "aozora-sidenote",
     "aozora-subscript",
     "aozora-superscript",
-    "aozora-tcy",
     "aozora-warichu",
 ];
 
@@ -95,11 +95,10 @@ mod tests {
     use super::AOZORA_CLASSES;
     use crate::render_node::render;
     use aozora_syntax::alloc::BorrowedAllocator;
-    use aozora_syntax::borrowed::{AozoraNode, Arena};
+    use aozora_syntax::borrowed::{Arena, Node};
     use aozora_syntax::{
-        AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BOUTEN_KINDS,
-        BoutenPosition, Center, Container, ContainerKind, EmphasisKind, Indent, SectionKind,
-        SideNoteKind,
+        AlignEnd, BOUTEN_KINDS, BoutenPosition, Center, Container, ContainerKind, DirectiveKind,
+        EmphasisKind, HeadingKind, HeadingStyle, Indent, MarginNoteKind, SectionKind,
     };
     use std::collections::BTreeSet;
 
@@ -130,7 +129,7 @@ mod tests {
         }
     }
 
-    fn render_into(node: AozoraNode<'_>, set: &mut BTreeSet<String>) {
+    fn render_into(node: Node<'_>, set: &mut BTreeSet<String>) {
         let mut s = String::new();
         render(node, true, &mut s).expect("render into String is infallible");
         render(node, false, &mut s).expect("render into String is infallible");
@@ -140,7 +139,7 @@ mod tests {
     #[test]
     #[allow(
         clippy::too_many_lines,
-        reason = "one render call per AozoraNode + ContainerKind variant; \
+        reason = "one render call per Node + ContainerKind variant; \
                   splitting would scatter the exhaustive enumeration"
     )]
     fn class_list_matches_emitted() {
@@ -158,10 +157,7 @@ mod tests {
         render_into(a.align_end(AlignEnd { offset: 2 }), &mut emitted);
         render_into(a.sashie("f.png", None, None, None), &mut emitted);
         render_into(a.sashie_general("f.png", "図", None), &mut emitted);
-        render_into(
-            a.heading_hint(1, AozoraHeadingStyle::Standard, "x"),
-            &mut emitted,
-        );
+        render_into(a.heading_hint(1, HeadingStyle::Standard, "x"), &mut emitted);
 
         for k in [
             SectionKind::Kaicho,
@@ -174,11 +170,11 @@ mod tests {
         let g = a.make_gaiji("X", None, None, false);
         render_into(a.gaiji(g), &mut emitted);
         for kind in [
-            AnnotationKind::WarichuOpen,
-            AnnotationKind::WarichuClose,
-            AnnotationKind::Unknown,
+            DirectiveKind::WarichuOpen,
+            DirectiveKind::WarichuClose,
+            DirectiveKind::Unknown,
         ] {
-            let p = a.make_annotation("［＃注］", kind);
+            let p = a.make_directive("［＃注］", kind);
             render_into(a.annotation(p), &mut emitted);
         }
 
@@ -195,7 +191,7 @@ mod tests {
         let note_base = a.content_plain("孫");
         let note_text = a.content_plain("注");
         render_into(
-            a.side_note(SideNoteKind::Annotation, note_base, note_text),
+            a.side_note(MarginNoteKind::Gloss, note_base, note_text),
             &mut emitted,
         );
         let tcy = a.content_plain("囲");
@@ -224,15 +220,11 @@ mod tests {
             let t = a.content_plain("強");
             render_into(a.emphasis(kind, t, false), &mut emitted);
         }
-        for kind in [
-            AozoraHeadingKind::Large,
-            AozoraHeadingKind::Medium,
-            AozoraHeadingKind::Small,
-        ] {
+        for kind in [HeadingKind::Large, HeadingKind::Medium, HeadingKind::Small] {
             for style in [
-                AozoraHeadingStyle::Standard,
-                AozoraHeadingStyle::SameLine,
-                AozoraHeadingStyle::Window,
+                HeadingStyle::Standard,
+                HeadingStyle::SameLine,
+                HeadingStyle::Window,
             ] {
                 let t = a.content_plain("見");
                 render_into(a.aozora_heading(kind, style, t), &mut emitted);
@@ -252,7 +244,7 @@ mod tests {
                 center: true,
             },
             ContainerKind::Warichu,
-            ContainerKind::Keigakomi,
+            ContainerKind::Framed,
             ContainerKind::AlignEnd { offset: 0 },
             ContainerKind::AlignEnd { offset: 2 },
             ContainerKind::LineWidth { width: 30 },
@@ -273,22 +265,18 @@ mod tests {
             },
             ContainerKind::Caption { block: false },
             ContainerKind::Caption { block: true },
-            ContainerKind::TcyRange,
+            ContainerKind::CombineUprightRange,
         ];
         for &kind in BOUTEN_KINDS {
             for position in [BoutenPosition::Right, BoutenPosition::Left] {
                 containers.push(ContainerKind::BoutenRange { kind, position });
             }
         }
-        for kind in [
-            AozoraHeadingKind::Large,
-            AozoraHeadingKind::Medium,
-            AozoraHeadingKind::Small,
-        ] {
+        for kind in [HeadingKind::Large, HeadingKind::Medium, HeadingKind::Small] {
             for style in [
-                AozoraHeadingStyle::Standard,
-                AozoraHeadingStyle::SameLine,
-                AozoraHeadingStyle::Window,
+                HeadingStyle::Standard,
+                HeadingStyle::SameLine,
+                HeadingStyle::Window,
             ] {
                 containers.push(ContainerKind::Heading {
                     kind,

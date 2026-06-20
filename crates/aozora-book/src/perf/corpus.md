@@ -109,7 +109,7 @@ benchmark" a real, repeatable thing.
 
 | Probe | What |
 |---|---|
-| `throughput_by_class` | Per-band MB/s for `lex_into_arena`. Splits the corpus by document size (small / medium / large / huge). |
+| `throughput_by_class` | Per-band MB/s for `lex`. Splits the corpus by document size (small / medium / large / huge). |
 | `phase_breakdown` | Per-phase ms per doc. |
 | `latency_histogram` | Log-bucketed latency distribution per phase. |
 | `diagnostic_distribution` | What fraction of docs emit diagnostics? Histogram by diag count. |

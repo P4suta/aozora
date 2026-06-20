@@ -7,7 +7,7 @@
 //!   normalized text with Private-Use-Area sentinel characters at
 //!   Aozora construct positions, plus a side registry mapping sentinel
 //!   positions back to pre-classified
-//!   [`aozora_syntax::borrowed::AozoraNode`] values.
+//!   [`aozora_syntax::borrowed::Node`] values.
 //! - **Post-process AST walk** substitutes sentinels with the registry's
 //!   borrowed-AST values. That walk lives in `aozora`.
 //! - **Pure-functional pipeline**: every phase is `fn(input) -> output`
@@ -18,13 +18,13 @@
 //! | Phase | Responsibility |
 //! |-------|----------------|
 //! | 0 sanitize | BOM strip, CR/LF → LF, PUA collision pre-scan |
-//! | 1 events   | Linear tokenize — emit trigger events (`｜《》［］※〔〕「」`) |
+//! | 1 tokenize | Linear tokenize — emit trigger events (`｜《》［］※〔〕「」`) |
 //! | 2 pair     | Balanced-stack pairing across all delimiters |
-//! | 3 classify | Full-spec Aozora classification into [`aozora_syntax::borrowed::AozoraNode`] |
+//! | 3 classify | Full-spec Aozora classification into [`aozora_syntax::borrowed::Node`] |
 //!
 //! After F.3, the legacy phases 4 (normalize) / 5 (registry) /
 //! 6 (validate) live as a fused walk inside
-//! [`crate::lex_into_arena`] — they no longer have standalone phase
+//! [`crate::lex`] — they no longer have standalone phase
 //! functions in this crate.
 //!
 //! ## PUA sentinel scheme
@@ -48,12 +48,12 @@
 //! ## Public surface
 //!
 //! After F.3, the lexer module exposes only the per-phase functions
-//! used internally by [`crate::lex_into_arena`]. The "package
-//! result" (the legacy `LexOutput`) is replaced by
-//! [`crate::lex_into_arena`]'s `BorrowedLexOutput<'a>`. External
+//! used internally by [`crate::lex`]. The old owned
+//! "package result" type has been replaced by the borrowed
+//! `LexOutput<'a>` that [`crate::lex`] returns. External
 //! direct consumers of this module should be limited to the
 //! pipeline driver and benchmarks; everything else goes through
-//! [`crate::lex_into_arena`].
+//! [`crate::lex`].
 
 // PUA sentinel constants live in `aozora-spec` and are re-exported
 // here so the post-Phase-F `crate::lexer::INLINE_SENTINEL` etc.
@@ -63,27 +63,27 @@ pub use aozora_spec::{
     SlugEntry, SlugFamily, canonicalise_slug,
 };
 
-#[cfg(feature = "phase3-instrument")]
+pub mod classify;
+#[cfg(feature = "classify-instrument")]
 pub mod instrumentation;
 pub mod offset;
+pub mod pair;
 #[doc(hidden)]
-pub mod phase0_sanitize;
-mod phase1_events;
-pub mod phase2_pair;
-pub mod phase3_classify;
+pub mod sanitize;
 pub mod token;
+mod tokenize;
 
+pub use classify::{ClassifiedSpan, ClassifyStream, SpanKind, classify};
 pub use offset::{OffsetMap, offset_map};
-pub use phase0_sanitize::{SanitizeOutput, sanitize};
+pub use pair::{PairEvent, PairKind, PairOutputIn, PairStream, pair, pair_in};
+pub use sanitize::{SanitizeOutput, sanitize};
 #[doc(hidden)]
-pub use phase0_sanitize::{
+pub use sanitize::{
     has_long_rule_line, isolate_decorative_rules, normalize_line_endings, rewrite_accent_spans,
     scan_for_sentinel_collisions,
 };
-pub use phase1_events::{Tokenizer, tokenize, tokenize_in};
-pub use phase2_pair::{PairEvent, PairKind, PairOutputIn, PairStream, pair, pair_in};
-pub use phase3_classify::{ClassifiedSpan, ClassifyStream, SpanKind, classify};
 pub use token::{Token, TriggerKind};
+pub use tokenize::{Tokenizer, tokenize, tokenize_in};
 
 #[cfg(test)]
 mod tests {

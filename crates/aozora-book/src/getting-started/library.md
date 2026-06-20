@@ -21,11 +21,11 @@ the AST walk — three things you'll need once you do anything beyond
 ## The lifetime model
 
 `Document` owns two things: a [`bumpalo::Bump`](https://docs.rs/bumpalo)
-arena and the source `Box<str>`. `AozoraTree<'a>` borrows from both:
+arena and the source `Box<str>`. `Tree<'a>` borrows from both:
 
 ```rust
 let doc  = aozora::Document::new(source);   // Document: 'static
-let tree = doc.parse();                     // AozoraTree<'_> bound to &doc
+let tree = doc.parse();                     // Tree<'_> bound to &doc
 let html = tree.to_html();                  // walks the borrow
 
 // dropping doc releases every node in a single Bump::reset()
@@ -87,7 +87,7 @@ treat any diagnostic as an error themselves. See the
 
 ## Walking the AST
 
-`AozoraTree::source_nodes()` returns a source-ordered side table — one
+`Tree::source_nodes()` returns a source-ordered side table — one
 `SourceNode` per classified Aozora / container span (plain-text runs
 between constructs round-trip verbatim and are not listed). It is the
 surface editor tooling uses for semantic tokens and document symbols:
@@ -102,7 +102,7 @@ for entry in tree.source_nodes() {
 ```
 
 Match on `entry.node` (`NodeRef`) to destructure a specific construct —
-e.g. `NodeRef::Inline(AozoraNode::Ruby(r))` gives you the ruby base and
+e.g. `NodeRef::Inline(Node::Ruby(r))` gives you the ruby base and
 reading. A runnable version is `just example walk_ast`.
 
 The borrowed nodes are cheap to copy (they're effectively

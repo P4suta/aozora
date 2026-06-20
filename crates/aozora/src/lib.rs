@@ -3,7 +3,7 @@
 //! Single front door for parsing Aozora Bunko notation. Downstream
 //! consumers should depend on this crate alone; everything they need
 //! is re-exported through this surface or accessed via [`Document`]
-//! and [`AozoraTree`].
+//! and [`Tree`].
 //!
 //! ```
 //! use aozora::Document;
@@ -24,13 +24,13 @@
 //!     .diagnostic_policy(DiagnosticPolicy::DropInternal)
 //!     .build("｜青梅《おうめ》");
 //! let tree = doc.parse();
-//! assert!(!tree.serialize().is_empty());
+//! assert!(!tree.to_source().is_empty());
 //! ```
 //!
 //! # Architecture
 //!
 //! [`Document`] owns the source buffer plus a `bumpalo`-backed
-//! arena. [`AozoraTree`] borrows from that arena via the `&self`
+//! arena. [`Tree`] borrows from that arena via the `&self`
 //! lifetime returned by [`Document::parse`]. Every per-node
 //! allocation lives inside the arena, with the
 //! [`Interner`](aozora_syntax::borrowed::Interner) deduplicating
@@ -40,14 +40,14 @@
 //! Internal build-block crates (`aozora-spec`, `aozora-syntax`,
 //! `aozora-pipeline`, `aozora-render`, `aozora-encoding`) are
 //! `publish = false` and reachable only through this meta crate's
-//! [`pipeline`] / [`syntax`] / [`render`] / [`encoding`] / [`wire`]
+//! [`pipeline`] / [`syntax`] / [`render`] / [`encoding`] / [`json`]
 //! modules. Depend on `aozora` alone; see the
 //! [Architecture chapter of the handbook](https://p4suta.github.io/aozora/arch/pipeline.html)
 //! for the layered design.
 
 #![forbid(unsafe_code)]
 
-pub use aozora_pipeline::{BorrowedLexOutput, NodeRef, SourceNode, lex_into_arena};
+pub use aozora_pipeline::{LexOutput, NodeRef, SourceNode, lex};
 /// Per-node HTML writer: `render_node::render(node, entering, &mut w)`.
 ///
 /// The sanctioned surface for sibling composition layers — notably
@@ -68,7 +68,7 @@ pub use aozora_spec::{
 /// Bump-allocator arena that owns all borrowed-AST node storage.
 ///
 /// Sibling composition layers (notably `afm`, ADR-0010) that drive
-/// [`lex_into_arena`] directly construct the arena themselves via this
+/// [`lex`] directly construct the arena themselves via this
 /// re-export, instead of going through [`Document`] (which owns its own
 /// arena internally). Promoted to the curated front door alongside the
 /// per-node [`render_node`] path so the two have matching entry points
@@ -80,20 +80,20 @@ pub use aozora_syntax::borrowed::Arena;
 /// `aozora-syntax` directly — `aozora` is the single editor-facing
 /// front door.
 pub use aozora_syntax::{
-    AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Center, ContainerKind, Indent, NodeKind, RubySide, SectionKind,
+    AlignEnd, BoutenKind, BoutenPosition, Center, ContainerKind, DirectiveKind, HeadingKind,
+    HeadingStyle, Indent, NodeKind, RubySide, SectionKind,
     borrowed::{
-        AngleQuote, Annotation, AozoraHeading, AozoraNode, Bouten, Content, Gaiji, HeadingHint,
-        Kaeriten, Ruby, Sashie, Segment, SideNote, TateChuYoko, Warichu,
+        AngleQuote, Bouten, CombineUpright, Content, Directive, Gaiji, Heading, HeadingHint,
+        Illustration, Kaeriten, MarginNote, Node, Ruby, Segment, Warichu,
     },
 };
 
 mod document;
 
-#[cfg(feature = "wire")]
-pub mod wire;
+#[cfg(feature = "json")]
+pub mod json;
 
-pub use document::{AozoraTree, DiagnosticPolicy, Document, ParseOptions};
+pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
 
 /// Eagerly initialise the parser's process-global lazy tables.
 ///
@@ -135,7 +135,7 @@ pub mod pipeline {
 /// Re-export of [`aozora_syntax`] — AST node types, arena, interner.
 ///
 /// External callers normally reach through [`Document`] /
-/// [`AozoraTree`] for the borrowed-AST surface; this module exposes
+/// [`Tree`] for the borrowed-AST surface; this module exposes
 /// the underlying types when they need to construct nodes directly
 /// (visitor implementations, custom renderers).
 pub mod syntax {
@@ -186,7 +186,7 @@ pub mod cst {
     /// than asking callers to thread it through. Sanitize is a pure
     /// function; calling it again is cheap.
     #[must_use]
-    pub fn from_tree(tree: &crate::AozoraTree<'_>) -> SyntaxNode {
+    pub fn from_tree(tree: &crate::Tree<'_>) -> SyntaxNode {
         use crate::pipeline::lexer::sanitize;
         let sanitized = sanitize(tree.source());
         build_cst(&sanitized.text, tree.source_nodes())
@@ -240,7 +240,7 @@ mod tests {
         let doc = Document::new("hello, world");
         let tree = doc.parse();
         // Plain text round-trips intact.
-        assert_eq!(tree.serialize(), "hello, world");
+        assert_eq!(tree.to_source(), "hello, world");
     }
 
     #[test]
@@ -248,7 +248,7 @@ mod tests {
         let doc = Document::new("｜青梅《おうめ》");
         let tree = doc.parse();
         // Round-trip preserves the canonical form.
-        assert_eq!(tree.serialize(), "｜青梅《おうめ》");
+        assert_eq!(tree.to_source(), "｜青梅《おうめ》");
     }
 
     #[test]

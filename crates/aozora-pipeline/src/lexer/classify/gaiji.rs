@@ -5,9 +5,9 @@
 //! phase-3 classifier; recognised nodes are built on the shared
 //! [`RecogniseCtx`].
 
-#[cfg(feature = "phase3-instrument")]
+#[cfg(feature = "classify-instrument")]
 use super::super::instrumentation::{Subsystem, SubsystemGuard};
-use super::super::phase2_pair::{PairEvent, PairKind};
+use super::super::pair::{PairEvent, PairKind};
 use super::super::token::TriggerKind;
 use super::{BodyView, RecogniseCtx};
 use aozora_encoding::gaiji as gaiji_resolve;
@@ -74,7 +74,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         standalone: bool,
         bracket_open_idx: usize,
     ) -> Option<GaijiMatch<'a>> {
-        #[cfg(feature = "phase3-instrument")]
+        #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::Gaiji);
         let events = view.events;
         let &PairEvent::PairOpen {
@@ -153,7 +153,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             || !gaiji_description_serializable(&description, mencode.is_some())
         {
             // A non-serializable description (stray quote imbalance, an
-            // embedded `［＃`, …) falls through to `Annotation{Unknown}`,
+            // embedded `［＃`, …) falls through to `Directive{Unknown}`,
             // which round-trips byte-identical. See
             // [`gaiji_description_serializable`].
             return None;
@@ -194,7 +194,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     ///   - the mencode portion must look like a real JIS X 0213
     ///     reference (`N-N-N` / `第N水準N-N-N`) or a `U+XXXX`
     ///     codepoint. Random tail bytes (`》` etc.) get rejected,
-    ///     the whole bracket falls through to `Annotation::Unknown`,
+    ///     the whole bracket falls through to `Directive::Unknown`,
     ///     and the raw bytes round-trip byte-identical.
     fn extract_bare_gaiji_body(
         &self,
@@ -220,7 +220,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // level). Accept a page-line-only leading token too: it stays
         // `ucs = None` (unresolvable by design, rendered as the description),
         // but is recognised as a gaiji rather than degrading to
-        // `Annotation{Unknown}` (#122). Plain `N-N-N` tokens are already
+        // `Directive{Unknown}` (#122). Plain `N-N-N` tokens are already
         // `is_mencode_shaped`, so this only adds the 上/中/下 forms.
         if !is_mencode_shaped(mencode_token) && !is_page_line_shaped(mencode_token) {
             return None;
@@ -257,11 +257,11 @@ fn is_page_line_shaped(s: &str) -> bool {
 }
 
 /// Whether a gaiji `description` can be kept (it both serializes and
-/// round-trips); otherwise the bracket falls through to `Annotation{Unknown}`.
+/// round-trips); otherwise the bracket falls through to `Directive{Unknown}`.
 ///
 /// Rejects:
 ///   - a description embedding `［＃` (a nested annotation opener would leak a
-///     bare `［＃` outside the `aozora-annotation` wrapper, violating the Tier A
+///     bare `［＃` outside the `aozora-directive` wrapper, violating the Tier A
 ///     canary), and
 ///   - a description carrying structural `「…」` quotes, *except* the
 ///     composed-glyph form `「X」の「Y」に代えて「Z」` (corpus §6 external-character
@@ -289,7 +289,7 @@ fn gaiji_description_serializable(description: &str, has_mencode: bool) -> bool 
 ///
 /// Anything else — random kanji, half-/full-width punctuation, etc.
 /// — is rejected so the bare-description bracket falls through to
-/// `Annotation::Unknown` instead of getting serializer-promoted into
+/// `Directive::Unknown` instead of getting serializer-promoted into
 /// a quoted Gaiji. See `recognize_gaiji` for the I3-idempotency
 /// rationale.
 fn is_mencode_shaped(s: &str) -> bool {

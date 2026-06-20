@@ -10,7 +10,7 @@
 //! # Two entry shapes
 //!
 //! - [`Pipeline::run_to_completion`] — one-shot, equivalent to
-//!   [`crate::lex_into_arena`]. Used by `Document::parse` and the
+//!   [`crate::lex`]. Used by `Document::parse` and the
 //!   FFI / WASM / Python drivers.
 //! - [`Pipeline::new`] → `.sanitize()` → `.tokenize()` → `.pair()` →
 //!   `.build()` — explicit chain. Use for inspection / instrumentation:
@@ -91,7 +91,7 @@ use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, ContainerPair, Registry};
 use bumpalo::collections::Vec as BumpVec;
 
-use crate::BorrowedLexOutput;
+use crate::LexOutput;
 use crate::borrowed::{ArenaNormalizer, SourceNode};
 
 // =====================================================================
@@ -165,9 +165,9 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
     }
 
     /// One-shot driver: run every phase and return the final
-    /// [`BorrowedLexOutput`]. Equivalent to [`crate::lex_into_arena`].
+    /// [`LexOutput`]. Equivalent to [`crate::lex`].
     #[must_use]
-    pub fn run_to_completion(source: &'src str, arena: &'a Arena) -> BorrowedLexOutput<'a> {
+    pub fn run_to_completion(source: &'src str, arena: &'a Arena) -> LexOutput<'a> {
         Self::new(source, arena)
             .sanitize()
             .tokenize()
@@ -294,7 +294,7 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
     }
 
     /// Drive Phase 3 + the arena normalizer fold and return the final
-    /// [`BorrowedLexOutput`]. Terminal transition because
+    /// [`LexOutput`]. Terminal transition because
     /// `&mut BorrowedAllocator` cannot be safely held across an external
     /// pause without locking the pipeline into a single thread for the
     /// allocator's lifetime.
@@ -303,7 +303,7 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
     ///
     /// Sanitize (Phase 0) → Pair (Phase 2 unclosed/unmatched) →
     /// Classify (Phase 3 unknown annotations etc.). Matches the
-    /// pre-Pipeline `lex_into_arena` ordering.
+    /// pre-Pipeline `lex` ordering.
     ///
     /// # Panics
     ///
@@ -311,7 +311,7 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
     /// (the lexer's `Span` width contract). In practice unreachable;
     /// Phase 0 caps source length at the same boundary.
     #[must_use]
-    pub fn build(mut self) -> BorrowedLexOutput<'a> {
+    pub fn build(mut self) -> LexOutput<'a> {
         let Paired {
             sanitized_text,
             events,
@@ -382,7 +382,7 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
         // Freeze the arena `BumpVec<PairLink>` into a `&'a [PairLink]`.
         // `BumpVec::into_bump_slice` consumes self and returns a slice
         // alive for the bump allocator's lifetime, exactly the lifetime
-        // we need on `BorrowedLexOutput::pairs`.
+        // we need on `LexOutput::pairs`.
         let pairs: &'a [PairLink] = links.into_bump_slice();
         // Move the source-keyed side table out of the heap-backed
         // `Vec<SourceNode>` and into the arena, in one allocation.
@@ -393,7 +393,7 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
             self.arena.alloc_slice_copy(&builder.container_pairs);
         let intern_stats = alloc.into_interner().stats;
 
-        BorrowedLexOutput {
+        LexOutput {
             normalized,
             registry,
             diagnostics: self.diagnostics,

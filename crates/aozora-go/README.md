@@ -6,7 +6,7 @@ It runs the portable `aozora.wasm` Extism plugin through the pure-Go
 [wazero](https://wazero.io) runtime — **no cgo, no native `libextism`** —
 so a `go get` is all you need. Output is byte-identical to aozora's Rust /
 WASM / Python / C-ABI front doors: every binding funnels through the same
-`aozora::wire` authority and the same `aozora.wasm` bytes.
+`aozora::json` authority and the same `aozora.wasm` bytes.
 
 This is one spoke of aozora's polyglot binding strategy
 ([ADR-0006](../../docs/adr/0006-polyglot-bindings-via-extism.md)): one

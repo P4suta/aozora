@@ -6,7 +6,7 @@
 //! recogniser leaves (ruby / bouten / TCY / gaiji / kaeriten /
 //! annotation catch-all) in isolation. Targets the slice-indexing,
 //! char-boundary, and `as`-cast paths in
-//! `aozora_pipeline::lexer::phase3_classify` that consume
+//! `aozora_pipeline::lexer::classify` that consume
 //! source-derived `Span` offsets — the sites that, under
 //! `panic = "abort"`, would turn a malformed UTF-8 document into a
 //! hard crash.
@@ -28,7 +28,7 @@
 //! fresh arena per iteration so allocations are reclaimed in one
 //! `Bump::reset` on drop.
 //!
-//! Run via `just fuzz-quick aozora-pipeline classify_phase3` (or
+//! Run via `just fuzz-quick aozora-pipeline classify` (or
 //! `fuzz-deep` / `fuzz-marathon`).
 
 #![no_main]

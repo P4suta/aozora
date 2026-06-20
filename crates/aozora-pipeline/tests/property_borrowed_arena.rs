@@ -1,4 +1,4 @@
-//! Determinism + structural invariants for `lex_into_arena`.
+//! Determinism + structural invariants for `lex`.
 //!
 //! 1. Two independent runs over the same source produce byte-identical
 //!    normalised text and identical registry shape (positions + node
@@ -6,7 +6,7 @@
 //! 2. Every PUA sentinel in the normalised text has a registry entry,
 //!    and every registry entry's position points at a PUA sentinel.
 //!
-//! Together these gate any future change to `lex_into_arena` from
+//! Together these gate any future change to `lex` from
 //! introducing nondeterminism (e.g. iteration order over a `HashMap`)
 //! or from desynchronising the registry from the normalised text.
 
@@ -23,8 +23,8 @@ use proptest::prelude::*;
 fn assert_deterministic(source: &str) {
     let arena_a = Arena::new();
     let arena_b = Arena::new();
-    let a = aozora_pipeline::lex_into_arena(source, &arena_a);
-    let b = aozora_pipeline::lex_into_arena(source, &arena_b);
+    let a = aozora_pipeline::lex(source, &arena_a);
+    let b = aozora_pipeline::lex(source, &arena_b);
 
     assert_eq!(
         a.normalized, b.normalized,
@@ -80,7 +80,7 @@ fn assert_deterministic(source: &str) {
 
 fn assert_registry_aligned_with_sentinels(source: &str) {
     let arena = Arena::new();
-    let out = aozora_pipeline::lex_into_arena(source, &arena);
+    let out = aozora_pipeline::lex(source, &arena);
 
     // Every registry entry's position must land on the matching
     // sentinel byte in `normalized`.

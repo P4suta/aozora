@@ -1,6 +1,6 @@
 # NodeKind::Ruby
 
-Wire tag: `ruby` — base text + reading annotation. The most common
+Inspect tag: `ruby` — base text + reading annotation. The most common
 non-trivial variant in Aozora Bunko.
 
 ## Source examples
@@ -59,5 +59,5 @@ opener.
 
 - [AngleQuote](angle-quote.md) — `≪…≫` double-angle quotation
   (displays as `《…》`).
-- [Annotation::InvalidRubySpan](annotation.md) — fallback when the
+- [Directive::InvalidRubySpan](annotation.md) — fallback when the
   ruby pair could not be parsed cleanly.

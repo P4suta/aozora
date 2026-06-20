@@ -419,7 +419,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::lexer::phase1_events::tokenize;
+    use crate::lexer::tokenize::tokenize;
 
     /// Materialise the full stream + diagnostics for tests.
     fn run(src: &str) -> (Vec<PairEvent>, Vec<Diagnostic>) {

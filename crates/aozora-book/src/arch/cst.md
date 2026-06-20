@@ -8,7 +8,7 @@ for consumers that don't enable the feature.
 
 ## Why a CST exists
 
-The borrowed AST (`AozoraNode<'src>`) is great for renderers:
+The borrowed AST (`Node<'src>`) is great for renderers:
 classified spans, typed payload, no whitespace noise. It is the wrong
 shape for **source-faithful tooling**:
 

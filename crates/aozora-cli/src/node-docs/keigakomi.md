@@ -1,6 +1,6 @@
-# NodeKind::Keigakomi
+# NodeKind::Framed
 
-Wire tag: `keigakomi` — ruled-box annotation (罫囲み).
+Inspect tag: `keigakomi` — ruled-box annotation (罫囲み).
 
 ## Source examples
 
@@ -25,7 +25,7 @@ Round-trips to `［＃罫囲み］...［＃罫囲み終わり］`.
 ## AST shape
 
 ```rust,ignore
-pub struct Keigakomi;
+pub struct Framed;
 ```
 
 Marker struct with no payload — the surrounding text carries the
@@ -34,7 +34,7 @@ content.
 ## When emitted
 
 Phase 3 sees the inline form. Multi-line keigakomi blocks classify
-as [Container](container.md) `Keigakomi`.
+as [Container](container.md) `Framed`.
 
 ## Diagnostics
 

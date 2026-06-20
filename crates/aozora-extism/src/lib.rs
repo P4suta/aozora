@@ -6,7 +6,7 @@
 //! Aozora source text as input bytes and returns HTML or a wire-format
 //! JSON envelope as output bytes — the same "text in → bytes out"
 //! contract as the C ABI driver ([`aozora-ffi`]), and byte-identical to
-//! it because every JSON path delegates to [`aozora::wire`], the single
+//! it because every JSON path delegates to [`aozora::json`], the single
 //! cross-driver authority.
 //!
 //! ## Why Extism (and not just the C ABI)
@@ -40,18 +40,18 @@
 //!   protocol** for **polyglot host SDKs**. Browser-only primitives are
 //!   intentionally NOT duplicated here.
 //!
-//! Both share the same parser core and the same `aozora::wire`
+//! Both share the same parser core and the same `aozora::json`
 //! serialization, so neither duplicates parsing or rendering logic.
 //!
 //! ## Wire format
 //!
-//! Every JSON-returning plugin function delegates to [`aozora::wire`]:
+//! Every JSON-returning plugin function delegates to [`aozora::json`]:
 //!
 //! ```json
 //! { "schema_version": 1, "data": [ … ] }
 //! ```
 //!
-//! [`aozora::wire::SCHEMA_VERSION`] bumps on any breaking change to that
+//! [`aozora::json::SCHEMA_VERSION`] bumps on any breaking change to that
 //! shape. The `schema_version` plugin export lets a host assert wasm/SDK
 //! compatibility at load time.
 //!
@@ -68,7 +68,7 @@
 /// `aozora-wasm` gates its `MAX_SOURCE_BYTES` guard.
 #[cfg(any(target_arch = "wasm32", test))]
 mod logic {
-    use aozora::{Document, wire};
+    use aozora::{Document, json};
 
     /// Largest input the parser core accepts, in bytes. Its span
     /// offsets are `u32`, so a longer source trips a `u32::MAX` assert
@@ -119,11 +119,11 @@ mod logic {
     /// [`guard_len`]).
     pub(crate) fn render_serialize(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
-        Ok(Document::new(source).parse().serialize())
+        Ok(Document::new(source).parse().to_source())
     }
 
     /// Parse `source` and serialize its diagnostics through the shared
-    /// [`aozora::wire`] authority. Empty document →
+    /// [`aozora::json`] authority. Empty document →
     /// `{"schema_version":1,"data":[]}`.
     ///
     /// # Errors
@@ -132,13 +132,13 @@ mod logic {
     /// [`guard_len`]).
     pub(crate) fn render_diagnostics_json(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
-        Ok(wire::serialize_diagnostics(
+        Ok(json::diagnostics(
             Document::new(source).parse().diagnostics(),
         ))
     }
 
     /// Parse `source` and serialize its source-keyed nodes through the
-    /// shared [`aozora::wire`] authority.
+    /// shared [`aozora::json`] authority.
     ///
     /// # Errors
     ///
@@ -147,11 +147,11 @@ mod logic {
     pub(crate) fn render_nodes_json(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
         let doc = Document::new(source);
-        Ok(wire::serialize_nodes(&doc.parse()))
+        Ok(json::nodes(&doc.parse()))
     }
 
     /// Parse `source` and serialize its matched open/close pairs through
-    /// the shared [`aozora::wire`] authority.
+    /// the shared [`aozora::json`] authority.
     ///
     /// # Errors
     ///
@@ -160,11 +160,11 @@ mod logic {
     pub(crate) fn render_pairs_json(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
         let doc = Document::new(source);
-        Ok(wire::serialize_pairs(&doc.parse()))
+        Ok(json::pairs(&doc.parse()))
     }
 
     /// Parse `source` and serialize its container open/close pairs
-    /// through the shared [`aozora::wire`] authority.
+    /// through the shared [`aozora::json`] authority.
     ///
     /// # Errors
     ///
@@ -173,14 +173,14 @@ mod logic {
     pub(crate) fn render_container_pairs_json(source: String) -> Result<String, &'static str> {
         guard_len(source.len())?;
         let doc = Document::new(source);
-        Ok(wire::serialize_container_pairs(&doc.parse()))
+        Ok(json::container_pairs(&doc.parse()))
     }
 
     /// The wire-format schema version this plugin emits. Hosts assert it
-    /// against their own expected [`aozora::wire::SCHEMA_VERSION`] at
+    /// against their own expected [`aozora::json::SCHEMA_VERSION`] at
     /// load time to catch a plugin/SDK version skew.
     pub(crate) const fn schema_version() -> u32 {
-        wire::SCHEMA_VERSION
+        json::SCHEMA_VERSION
     }
 }
 
@@ -253,7 +253,7 @@ mod tests {
         render_diagnostics_json, render_html, render_nodes_json, render_pairs_json,
         render_serialize, schema_version,
     };
-    use aozora::{Document, wire};
+    use aozora::{Document, json};
 
     /// Inputs that, between them, exercise every serializer with
     /// non-empty data: plain text, a ruby span (nodes + pairs), a
@@ -266,7 +266,7 @@ mod tests {
         "［＃ここから2字下げ］あ［＃ここで字下げ終わり］",
     ];
 
-    /// The whole point of routing through `aozora::wire`: every plugin
+    /// The whole point of routing through `aozora::json`: every plugin
     /// output must be byte-identical to calling the parser / wire
     /// authority directly — which is in turn byte-identical to the FFI /
     /// WASM / `PyO3` drivers. One assertion per serializer, per input.
@@ -282,27 +282,27 @@ mod tests {
             );
             assert_eq!(
                 render_serialize(src.to_owned()).expect("within span limit"),
-                tree.serialize(),
+                tree.to_source(),
                 "serialize src: {src}"
             );
             assert_eq!(
                 render_diagnostics_json(src.to_owned()).expect("within span limit"),
-                wire::serialize_diagnostics(tree.diagnostics()),
+                json::diagnostics(tree.diagnostics()),
                 "diagnostics_json src: {src}"
             );
             assert_eq!(
                 render_nodes_json(src.to_owned()).expect("within span limit"),
-                wire::serialize_nodes(&tree),
+                json::nodes(&tree),
                 "nodes_json src: {src}"
             );
             assert_eq!(
                 render_pairs_json(src.to_owned()).expect("within span limit"),
-                wire::serialize_pairs(&tree),
+                json::pairs(&tree),
                 "pairs_json src: {src}"
             );
             assert_eq!(
                 render_container_pairs_json(src.to_owned()).expect("within span limit"),
-                wire::serialize_container_pairs(&tree),
+                json::container_pairs(&tree),
                 "container_pairs_json src: {src}"
             );
         }
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn schema_version_matches_wire() {
-        assert_eq!(schema_version(), wire::SCHEMA_VERSION);
+        assert_eq!(schema_version(), json::SCHEMA_VERSION);
     }
 
     #[test]

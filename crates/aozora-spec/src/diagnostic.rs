@@ -434,7 +434,7 @@ pub enum Diagnostic {
 
     /// A `［＃ここから…］` directive looked like a paired-container opener
     /// but named no known container kind (`字下げ` / `地付き` /
-    /// `地から…字上げ`). It is kept as an `Annotation{Unknown}` (so output
+    /// `地から…字上げ`). It is kept as an `Directive{Unknown}` (so output
     /// is preserved) but not treated as a container. The label spans the
     /// directive.
     #[error("unrecognised container directive")]
@@ -459,7 +459,7 @@ pub enum Diagnostic {
 
     /// A 縦中横 forward reference (`［＃「X」は縦中横］`) named a target `X`
     /// that does not appear anywhere in the preceding text, so it has no
-    /// run to style. The directive degrades to an `Annotation{Unknown}`.
+    /// run to style. The directive degrades to an `Directive{Unknown}`.
     /// The label spans the directive.
     #[error("縦中横 target not found in the preceding text")]
     #[diagnostic(

@@ -18,9 +18,9 @@
 //! ## Layout
 //!
 //! The wheel ships a **mixed layout** (see `pyproject.toml`
-//! `python-source`): the public, pure-Python package `aozora_py`
-//! (`python/aozora_py/__init__.py`) wraps the compiled extension,
-//! which is nested as the PRIVATE submodule `aozora_py._aozora_py`
+//! `python-source`): the public, pure-Python package `aozora`
+//! (`python/aozora/__init__.py`) wraps the compiled extension,
+//! which is nested as the PRIVATE submodule `aozora._aozora`
 //! built from this crate. The Python layer adds the idiomatic
 //! surface — `Document.diagnostics()` / `nodes()` / `pairs()` /
 //! `container_pairs()` return parsed `list[dict]`, while the raw,
@@ -29,12 +29,12 @@
 //!
 //! ## Wire format
 //!
-//! Every `*_json()` accessor delegates to [`aozora::wire`], the
+//! Every `*_json()` accessor delegates to [`aozora::json`], the
 //! single authority for the cross-driver wire shape. `aozora-ffi` /
 //! `aozora-wasm` / `aozora-py` emit byte-identical envelopes:
 //!
 //! ```json
-//! { "schema_version": 1, "data": [ … ] }
+//! { "schemaVersion": 1, "data": [ … ] }
 //! ```
 
 #![forbid(unsafe_code)]
@@ -45,7 +45,7 @@
     reason = "the #[pyfunction] / #[pymethods] macros expand each fn into a Python ABI wrapper that PyO3 fills with extra context args (Python token, args, kwargs, …). The warning fires on the macro-generated signature, not on user code; per-item allow doesn't reach inside the macro expansion."
 )]
 mod bindings {
-    use aozora::{Document as AozoraDoc, encoding, wire};
+    use aozora::{Document as AozoraDoc, encoding, json};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
 
@@ -86,7 +86,7 @@ mod bindings {
         /// Real 青空文庫 archive files are `Shift_JIS`; pre-converted
         /// corpora are UTF-8. [`encoding::decode_auto`] sniffs the two
         /// (valid UTF-8 wins, else `Shift_JIS`), so this accepts both.
-        /// Despite the `from_sjis` name it is encoding-agnostic — the
+        /// Despite the `from_bytes` name it is encoding-agnostic — the
         /// name reflects the common case (archive files).
         ///
         /// # Errors
@@ -95,7 +95,7 @@ mod bindings {
         /// nor valid `Shift_JIS`, or if the decoded text exceeds the
         /// 4 GiB (`u32::MAX`) span limit.
         #[staticmethod]
-        fn from_sjis(data: &[u8]) -> PyResult<Self> {
+        fn from_bytes(data: &[u8]) -> PyResult<Self> {
             let text = encoding::decode_auto(data)
                 .map_err(|err| PyValueError::new_err(err.to_string()))?;
             if text.len() > MAX_SOURCE_BYTES {
@@ -120,47 +120,47 @@ mod bindings {
         }
 
         /// Re-emit Aozora source text.
-        fn serialize(&self) -> String {
-            self.inner.parse().serialize()
+        fn to_source(&self) -> String {
+            self.inner.parse().to_source()
         }
 
         /// Diagnostics as a JSON envelope string. Empty parse →
-        /// `{"schema_version":1,"data":[]}`. Wire format defined in
-        /// [`aozora::wire`]. The Python wrapper's `diagnostics()`
+        /// `{"schemaVersion":1,"data":[]}`. Wire format defined in
+        /// [`aozora::json`]. The Python wrapper's `diagnostics()`
         /// returns the parsed `data` list; this is the raw,
         /// byte-identical accessor.
         fn diagnostics_json(&self) -> String {
-            wire::serialize_diagnostics(self.inner.parse().diagnostics())
+            json::diagnostics(self.inner.parse().diagnostics())
         }
 
         /// Source-keyed Aozora-node spans as a JSON envelope string.
-        /// See [`aozora::wire::serialize_nodes`] for the schema.
+        /// See [`aozora::json::nodes`] for the schema.
         fn nodes_json(&self) -> String {
-            wire::serialize_nodes(&self.inner.parse())
+            json::nodes(&self.inner.parse())
         }
 
         /// Matched open/close pair links as a JSON envelope string.
-        /// See [`aozora::wire::serialize_pairs`] for the schema.
+        /// See [`aozora::json::pairs`] for the schema.
         fn pairs_json(&self) -> String {
-            wire::serialize_pairs(&self.inner.parse())
+            json::pairs(&self.inner.parse())
         }
 
         /// Container open/close pairs (indent / warichu / keigakomi /
         /// alignEnd / …) as a JSON envelope string, in normalized
-        /// coordinates. See [`aozora::wire::serialize_container_pairs`].
+        /// coordinates. See [`aozora::json::container_pairs`].
         /// Brings the Python surface to parity with the Go / Extism
         /// drivers.
         fn container_pairs_json(&self) -> String {
-            wire::serialize_container_pairs(&self.inner.parse())
+            json::container_pairs(&self.inner.parse())
         }
 
         /// Resolved gaiji references (`※［＃…］`) as a JSON envelope
         /// string. Each entry is `{ span: { start, end }, description,
         /// mencode, codepoint, resolved }` in source-byte coordinates.
         /// Scans the raw source (no parse needed). See
-        /// [`aozora::wire::serialize_gaiji_resolutions`].
-        fn gaiji_resolutions_json(&self) -> String {
-            wire::serialize_gaiji_resolutions(self.inner.source())
+        /// [`aozora::json::gaiji`].
+        fn gaiji_json(&self) -> String {
+            json::gaiji(self.inner.source())
         }
 
         /// Source byte length.
@@ -169,12 +169,12 @@ mod bindings {
         }
     }
 
-    /// Module entry point — registered as `aozora_py._aozora_py` in
+    /// Module entry point — registered as `aozora._aozora` in
     /// Python (the private compiled submodule the pure-Python
-    /// `aozora_py` package wraps). The function name must match the
+    /// `aozora` package wraps). The function name must match the
     /// cdylib's `[lib] name` override in Cargo.toml.
     #[pymodule]
-    fn _aozora_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    fn _aozora(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<Document>()?;
         m.add_function(wrap_pyfunction!(parse_to_html, m)?)?;
         m.add_function(wrap_pyfunction!(prewarm, m)?)?;
@@ -214,7 +214,7 @@ mod bindings {
     /// Strict: no lossy replacement — callers need to know when they
     /// are looking at corrupted source rather than silently absorbing
     /// the damage. For encoding-agnostic decode (UTF-8 mirrors too),
-    /// construct via [`Document::from_sjis`] instead.
+    /// construct via [`Document::from_bytes`] instead.
     ///
     /// # Errors
     ///
@@ -227,22 +227,22 @@ mod bindings {
     /// Canonical slug catalogue (`［＃…］` annotations) as a JSON
     /// envelope string. Static — independent of any document; useful
     /// for driving editor completion menus. See
-    /// [`aozora::wire::serialize_slugs`].
+    /// [`aozora::json::slugs`].
     #[pyfunction]
     fn slugs_json() -> String {
-        wire::serialize_slugs()
+        json::slugs()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use aozora::{Document as AozoraDoc, wire};
+    use aozora::{Document as AozoraDoc, json};
 
-    /// Smoke: PUA collision shows up via `aozora::wire`.
+    /// Smoke: PUA collision shows up via `aozora::json`.
     #[test]
     fn diagnostics_through_wire_emits_pua_kind() {
         let doc = AozoraDoc::new("abc\u{E001}def".to_owned());
-        let json = wire::serialize_diagnostics(doc.parse().diagnostics());
+        let json = json::diagnostics(doc.parse().diagnostics());
         assert!(json.contains("source_contains_pua"), "json: {json}");
     }
 
@@ -250,12 +250,12 @@ mod tests {
     #[test]
     fn diagnostics_through_wire_is_empty_envelope_for_clean_input() {
         let doc = AozoraDoc::new("plain text".to_owned());
-        let json = wire::serialize_diagnostics(doc.parse().diagnostics());
-        assert_eq!(json, r#"{"schema_version":1,"data":[]}"#);
+        let json = json::diagnostics(doc.parse().diagnostics());
+        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
     }
 
     /// Smoke: `decode_auto` round-trips a `Shift_JIS` payload that
-    /// `Document::from_sjis` relies on.
+    /// `Document::from_bytes` relies on.
     #[test]
     fn decode_auto_round_trips_shift_jis() {
         use aozora::encoding::decode_auto;

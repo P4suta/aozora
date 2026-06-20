@@ -1,6 +1,6 @@
-# NodeKind::Sashie
+# NodeKind::Illustration
 
-Wire tag: `sashie` — illustration reference (挿絵).
+Inspect tag: `sashie` — illustration reference (挿絵).
 
 ## Source examples
 
@@ -12,7 +12,7 @@ Wire tag: `sashie` — illustration reference (挿絵).
 ## Rendered HTML
 
 ```html
-<figure class="aozora-sashie">
+<figure class="aozora-illustration">
   <img src="cover.png" alt="">
 </figure>
 ```
@@ -27,7 +27,7 @@ Round-trips to `［＃挿絵（path[、caption]）入る］`.
 ## AST shape
 
 ```rust,ignore
-pub struct Sashie<'src> {
+pub struct Illustration<'src> {
     pub file: NonEmptyStr<'src>,
     pub caption: Option<Content<'src>>,
 }
@@ -47,5 +47,5 @@ None on well-formed input.
 
 ## Related kinds
 
-- [Annotation](annotation.md) — fallback when the directive is
+- [Directive](annotation.md) — fallback when the directive is
   malformed.

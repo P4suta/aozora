@@ -1,16 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AozoraContainerPairsEnvelope",
-  "description": "Envelope returned by aozora::wire::serialize_container_pairs.",
+  "description": "Envelope returned by aozora::json::container_pairs.",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version",
+    "schemaVersion",
     "data"
   ],
   "properties": {
-    "schema_version": {
-      "description": "Wire schema version. See aozora::wire::SCHEMA_VERSION.",
+    "schemaVersion": {
+      "description": "Wire schema version. See aozora::json::SCHEMA_VERSION.",
       "type": "integer",
       "const": 1
     },

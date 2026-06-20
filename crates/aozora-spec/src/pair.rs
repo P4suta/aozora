@@ -12,7 +12,7 @@ use crate::Span;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum PairKind {
-    /// `［ … ］` (U+FF3B / U+FF3D). Annotation body container — always
+    /// `［ … ］` (U+FF3B / U+FF3D). Directive body container — always
     /// a bracket pair, with or without the leading `＃`.
     Bracket,
 
@@ -48,7 +48,7 @@ impl PairKind {
     /// formats. Centralised here so every driver agrees on the wire
     /// spelling without hand-maintaining a parallel match.
     #[must_use]
-    pub const fn as_camel_case(self) -> &'static str {
+    pub const fn as_wire_tag(self) -> &'static str {
         match self {
             Self::Bracket => "bracket",
             Self::Ruby => "ruby",

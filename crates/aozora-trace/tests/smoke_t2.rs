@@ -59,7 +59,7 @@ fn full_workflow_t2_trace() {
     // Rollup with built-in aozora defaults.
     let cat = RollupConfig::aozora_defaults().compile().expect("compile");
     let roll = analysis::rollup(&trace, &cat);
-    let known = ["phase1_scan", "phase1_walker", "memchr_scan"];
+    let known = ["scan", "tokenize", "memchr_scan"];
     for k in known {
         assert!(
             roll.rows.iter().any(|r| r.category == k),
@@ -117,11 +117,11 @@ fn category_compile_round_trips() {
     // Spot-check a known function name from the trace.
     assert_eq!(
         cat.classify("aho_corasick::packed::teddy::generic::Slim<V,3_usize>::find"),
-        "phase1_scan"
+        "scan"
     );
     assert_eq!(
-        cat.classify("aozora_pipeline::lexer::phase1_events::trigger_kind_at"),
-        "phase1_walker"
+        cat.classify("aozora_pipeline::lexer::tokenize::trigger_kind_at"),
+        "tokenize"
     );
     assert_eq!(
         cat.classify("encoding_rs::variant::VariantDecoder::decode_to_utf8_raw"),

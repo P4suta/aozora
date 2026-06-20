@@ -1,6 +1,6 @@
 # NodeKind::Container
 
-Wire tag: `container` — paired-container wrapping
+Inspect tag: `container` — paired-container wrapping
 (`［＃ここから...］...［＃ここで...終わり］`).
 
 ## Source examples
@@ -47,7 +47,7 @@ pub struct Container {
 pub enum ContainerKind {
     Indent { amount: u8 },
     Warichu,
-    Keigakomi,
+    Framed,
     AlignEnd { offset: u8 },
 }
 ```
@@ -73,4 +73,4 @@ this variant.
 - [ContainerClose](container-close.md) — `NodeRef` projection of the
   close boundary.
 - [Indent](indent.md), [AlignEnd](align-end.md), [Warichu](warichu.md),
-  [Keigakomi](keigakomi.md) — single-line counterparts.
+  [Framed](keigakomi.md) — single-line counterparts.

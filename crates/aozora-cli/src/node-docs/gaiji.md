@@ -1,6 +1,6 @@
 # NodeKind::Gaiji
 
-Wire tag: `gaiji` — out-of-character-set glyph reference. The
+Inspect tag: `gaiji` — out-of-character-set glyph reference. The
 historical Aozora-Bunko notation for characters Shift_JIS could
 not encode; modern files mostly use them for genuine non-Unicode
 glyphs.
@@ -54,9 +54,9 @@ mencode reference into a Unicode character when one exists.
 ## Diagnostics
 
 None on a well-formed `※[#...]`. Ambiguous descriptions land as
-`Annotation::Unknown` instead of `Gaiji`.
+`Directive::Unknown` instead of `Gaiji`.
 
 ## Related kinds
 
-- [Annotation](annotation.md) — fallback when description is
+- [Directive](annotation.md) — fallback when description is
   malformed.

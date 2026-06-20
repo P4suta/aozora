@@ -16,7 +16,7 @@
 //! `sanitize` function exactly.
 //!
 //! ```text
-//! AOZORA_CORPUS_ROOT=… cargo run --release --example phase0_impact -p aozora-bench
+//! AOZORA_CORPUS_ROOT=… cargo run --release --example sanitize_impact -p aozora-bench
 //! ```
 
 #![allow(
@@ -75,14 +75,14 @@ fn main() {
         .ok()
         .and_then(|s| s.trim().parse().ok());
 
-    eprintln!("phase0_impact: starting (limit = {limit:?})");
+    eprintln!("sanitize_impact: starting (limit = {limit:?})");
 
     let items: Vec<CorpusItem> = corpus
         .iter()
         .take(limit.unwrap_or(usize::MAX))
         .filter_map(Result::ok)
         .collect();
-    eprintln!("phase0_impact: loaded {} items, measuring…", items.len());
+    eprintln!("sanitize_impact: loaded {} items, measuring…", items.len());
 
     let mut buckets: [Bucket; 8] = Default::default();
     let mut decode_errors: u64 = 0;
@@ -153,7 +153,7 @@ fn main() {
         }
     }
     eprintln!(
-        "phase0_impact: done in {:.2}s, {decode_errors} decode errors",
+        "sanitize_impact: done in {:.2}s, {decode_errors} decode errors",
         wall_start.elapsed().as_secs_f64()
     );
 
@@ -161,7 +161,7 @@ fn main() {
 }
 
 fn print_report(buckets: &[Bucket; 8], decode_errors: u64) {
-    println!("=== phase0_impact (sub-pass → tokenize ns/byte) ===");
+    println!("=== sanitize_impact (sub-pass → tokenize ns/byte) ===");
     println!();
     println!("decode errors: {decode_errors}");
     println!();

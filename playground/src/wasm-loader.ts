@@ -1,4 +1,4 @@
-import init, { Document, slugs_json, prewarm } from 'aozora-wasm';
+import init, { Document, slugsJson, prewarm } from 'aozora-wasm';
 
 let initialized = false;
 let initPromise: Promise<void> | null = null;
@@ -18,4 +18,4 @@ export function ensureWasmReady(): Promise<void> {
   return p;
 }
 
-export { Document, slugs_json, prewarm };
+export { Document, slugsJson, prewarm };

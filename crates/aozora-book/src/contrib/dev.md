@@ -159,7 +159,7 @@ The `commit-msg` hook enforces:
 
 Where `<type>` ∈ `feat | fix | docs | style | refactor | perf | test | build | ci | chore | revert`,
 and `<scope>` is typically a crate name without the `aozora-` prefix
-(e.g. `feat(render): add aozora-tcy class hook`).
+(e.g. `feat(render): add aozora-combine-upright class hook`).
 
 git-cliff turns these into the [CHANGELOG](release.md#changelog-generation)
 on release.
@@ -172,7 +172,7 @@ End-to-end TDD flow:
    `crates/aozora-conformance/fixtures/render/` (and, for a normative
    case, a spec vector in `../aozora-notation-spec`, synced via
    `just sync-spec-vectors`).
-2. **AST variant.** Add a borrowed-arena variant to `AozoraNode` in
+2. **AST variant.** Add a borrowed-arena variant to `Node` in
    `crates/aozora-syntax/src/borrowed.rs`.
 3. **Lexer test (red).** Add a case to the relevant phase test
    under `crates/aozora-pipeline/tests/`.

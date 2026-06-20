@@ -34,11 +34,11 @@ dhat      = { workspace = true }
 
 [features]
 default = []
-# Activate the upstream `aozora-pipeline/phase3-instrument` so examples
+# Activate the upstream `aozora-pipeline/classify-instrument` so examples
 # (notably `pathological_probe`) can dump per-subsystem timings.
 # Use: `cargo run --release --example pathological_probe -p aozora-bench
 #       --features instrument`
-instrument = ["aozora-pipeline/phase3-instrument"]
+instrument = ["aozora-pipeline/classify-instrument"]
 
 [[bench]]
 name    = "crime_and_punishment"
@@ -48,10 +48,10 @@ harness = false
 name    = "synthetic_corpus"
 harness = false
 
-# `phase3_subsystems` requires the opt-in instrumentation feature on
+# `classify_subsystems` requires the opt-in instrumentation feature on
 # `aozora-pipeline`. Run with:
-# `cargo run --release --example phase3_subsystems -p aozora-bench \
-#    --features 'aozora-pipeline/phase3-instrument'`
+# `cargo run --release --example classify_subsystems -p aozora-bench \
+#    --features 'aozora-pipeline/classify-instrument'`
 [[example]]
-name             = "phase3_subsystems"
-required-features = ["aozora-pipeline/phase3-instrument"]
+name             = "classify_subsystems"
+required-features = ["aozora-pipeline/classify-instrument"]

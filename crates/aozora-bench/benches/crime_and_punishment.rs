@@ -58,7 +58,7 @@ fn bench_crime_and_punishment(c: &mut Criterion) {
         b.iter(|| {
             let doc = Document::new(black_box(utf8.as_ref()));
             let tree = doc.parse();
-            let out = tree.serialize();
+            let out = tree.to_source();
             black_box(out);
         });
     });

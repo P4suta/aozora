@@ -1,6 +1,6 @@
 //! Borrowed-AST HTML rendering.
 //!
-//! Consumes a [`BorrowedLexOutput`] directly and emits semantic HTML5.
+//! Consumes a [`LexOutput`] directly and emits semantic HTML5.
 //!
 //! # Algorithm
 //!
@@ -17,8 +17,8 @@
 
 use core::fmt;
 
-use aozora_pipeline::BorrowedLexOutput;
-use aozora_syntax::borrowed::{AozoraNode, NodeRef};
+use aozora_pipeline::LexOutput;
+use aozora_syntax::borrowed::{Node, NodeRef};
 use aozora_syntax::{Container, ContainerKind};
 use memchr::{memchr_iter, memchr3_iter};
 
@@ -40,7 +40,7 @@ const BLOCK_OPEN_SENTINEL_TAIL: u8 = 0x83;
 /// Third UTF-8 byte of `aozora_pipeline::BLOCK_CLOSE_SENTINEL` (U+E004).
 const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
 
-/// Render a `BorrowedLexOutput` into a fresh `String`.
+/// Render a `LexOutput` into a fresh `String`.
 ///
 /// Allocates roughly `2 × normalized.len()` upfront. For streaming
 /// consumers prefer [`render_into`] to avoid the intermediate `String`.
@@ -51,13 +51,13 @@ const BLOCK_CLOSE_SENTINEL_TAIL: u8 = 0x84;
 /// [`fmt::Write`] sink. The internal `expect` covers the trivially
 /// unreachable case.
 #[must_use]
-pub fn render_to_string(out: &BorrowedLexOutput<'_>) -> String {
+pub fn render_to_string(out: &LexOutput<'_>) -> String {
     let mut s = String::with_capacity(out.normalized.len().saturating_mul(2));
     render_into(out, &mut s).expect("writing to String never fails");
     s
 }
 
-/// Render a `BorrowedLexOutput` into the given writer.
+/// Render a `LexOutput` into the given writer.
 ///
 /// # Errors
 ///
@@ -68,7 +68,7 @@ pub fn render_to_string(out: &BorrowedLexOutput<'_>) -> String {
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited
 /// from the lexer's `Span` width contract; in practice unreachable
 /// (Phase 0 sanitize already gates on this bound).
-pub fn render_into<W: fmt::Write>(out: &BorrowedLexOutput<'_>, writer: &mut W) -> fmt::Result {
+pub fn render_into<W: fmt::Write>(out: &LexOutput<'_>, writer: &mut W) -> fmt::Result {
     let normalized = out.normalized;
     let registry = &out.registry;
     let mut state = RenderState::default();
@@ -255,7 +255,7 @@ impl RenderState {
     /// (`in_heading`); every other block container flushes and brackets its
     /// content as block paragraphs.
     fn open_container<W: fmt::Write>(&mut self, kind: ContainerKind, out: &mut W) -> fmt::Result {
-        let node = AozoraNode::Container(Container { kind });
+        let node = Node::Container(Container { kind });
         if kind.is_inline() {
             self.ensure_in_paragraph(out)?;
             return render_node::render(node, true, out);
@@ -272,7 +272,7 @@ impl RenderState {
 
     /// Emit a container's closing tag — the mirror of [`Self::open_container`].
     fn close_container<W: fmt::Write>(&mut self, kind: ContainerKind, out: &mut W) -> fmt::Result {
-        let node = AozoraNode::Container(Container { kind });
+        let node = Node::Container(Container { kind });
         if kind.is_inline() {
             self.ensure_in_paragraph(out)?;
             return render_node::render(node, false, out);
@@ -380,7 +380,7 @@ mod tests {
 
     fn render(src: &str) -> String {
         let arena = Arena::new();
-        let out = aozora_pipeline::lex_into_arena(src, &arena);
+        let out = aozora_pipeline::lex(src, &arena);
         render_to_string(&out)
     }
 

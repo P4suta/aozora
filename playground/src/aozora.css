@@ -259,7 +259,7 @@
 }
 
 /* ===== 縦中横 ===== */
-.aozora-tcy {
+.aozora-combine-upright {
   display: inline-block;
 }
 
@@ -295,6 +295,6 @@
 .aozora-section-break-kaimihiraki::before { content: '— 改見開き —'; }
 
 /* ===== 注記（aozora-render が hidden 付きで埋め込む） ===== */
-.aozora-annotation[hidden] {
+.aozora-directive[hidden] {
   display: none;
 }

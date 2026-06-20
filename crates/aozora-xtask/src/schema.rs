@@ -1,6 +1,6 @@
 //! JSON Schema artefact dump / drift gate.
 //!
-//! Bridges `aozora::wire::schema_*` → `crates/aozora-book/src/wire/schema-*.json`.
+//! Bridges `aozora::json::schema_*` → `crates/aozora-book/src/wire/schema-*.json`.
 //! `xtask schema dump` regenerates the four schema files; `xtask
 //! schema check` exits non-zero when the on-disk artefact has
 //! drifted from the live wire types.
@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use aozora::wire;
+use aozora::json;
 
 use crate::SchemaArgs;
 use crate::SchemaOp;
@@ -21,27 +21,27 @@ pub(crate) type SchemaGen = fn() -> serde_json::Value;
 
 /// Schema file relative paths under workspace root, paired with the
 /// generator function that produces the live schema. Order matches
-/// the wire endpoints (`serialize_diagnostics` →
-/// `serialize_container_pairs`).
+/// the wire endpoints (`diagnostics` →
+/// `container_pairs`).
 ///
 /// `pub(crate)` so the `types` module can read the same committed schema
 /// artefacts as the single source of truth for `quicktype` codegen.
 pub(crate) const SCHEMA_FILES: &[(&str, SchemaGen)] = &[
     (
         "crates/aozora-book/src/wire/schema-diagnostics.json",
-        wire::schema_diagnostics,
+        json::schema_diagnostics,
     ),
     (
         "crates/aozora-book/src/wire/schema-nodes.json",
-        wire::schema_nodes,
+        json::schema_nodes,
     ),
     (
         "crates/aozora-book/src/wire/schema-pairs.json",
-        wire::schema_pairs,
+        json::schema_pairs,
     ),
     (
         "crates/aozora-book/src/wire/schema-container-pairs.json",
-        wire::schema_container_pairs,
+        json::schema_container_pairs,
     ),
 ];
 

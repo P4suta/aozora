@@ -62,7 +62,7 @@ export PATH="$VENV/bin:$PATH"
 # ── build the abi3 wheel, then install it into the venv ───────────────
 note "building the wheel (maturin)"
 maturin build -F extension-module -m "$CRATE/Cargo.toml" -o "$ROOT/target/wheels"
-WHEEL="$(ls -t "$ROOT"/target/wheels/aozora_py-*.whl | head -1)"
+WHEEL="$(ls -t "$ROOT"/target/wheels/aozora-*.whl | head -1)"
 note "installing $(basename "$WHEEL")"
 pip_install "$WHEEL"
 
