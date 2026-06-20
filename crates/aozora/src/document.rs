@@ -305,18 +305,26 @@ impl<'a> Tree<'a> {
     /// Returns `None` if the offset falls inside a `SpanKind::Plain`
     /// run between Aozora constructs.
     ///
+    /// This is the canonical offset→node lookup: editor and LSP surfaces
+    /// work in source coordinates, so this is the position query to reach
+    /// for (the normalized-coordinate registry is a low-level internal).
+    ///
     /// `O(log n)` over the source-keyed side-table.
     #[must_use]
     pub fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNode<'a>> {
         self.inner.node_at_source(src_off)
     }
 
-    /// Find the registry entry at `normalized_off` — a byte offset
-    /// into the normalized PUA-rewritten text, typed as
-    /// [`aozora_spec::NormalizedOffset`] so callers
-    /// cannot pass a source-coordinate offset by mistake. For LSP
-    /// requests against the original source text, prefer
-    /// [`Self::node_at_source`].
+    /// Find the registry entry at `normalized_off` — a byte offset into
+    /// the normalized PUA-rewritten text.
+    ///
+    /// The normalized coordinate space is a low-level implementation
+    /// detail with no external consumer. Source-coordinate lookups should
+    /// use [`Self::node_at_source`]; a consumer that genuinely needs a
+    /// normalized-offset lookup (e.g. the afm integration) should reach
+    /// the `registry` through [`Self::lex_output`] directly.
+    #[doc(hidden)]
+    #[deprecated(note = "use lex_output().registry.node_at() for normalized-offset lookups")]
     #[must_use]
     pub fn node_at_normalized(&self, normalized_off: NormalizedOffset) -> Option<NodeRef<'a>> {
         self.inner.registry.node_at(normalized_off)
