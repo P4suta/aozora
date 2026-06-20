@@ -17,9 +17,11 @@ workspace = true
 [dependencies]
 # Document wraps `aozora_pipeline::lex` and Tree
 # borrows from a `bumpalo`-backed arena owned by Document. The five
-# internal crates below are `publish = false`; this meta crate is the
-# single front door, exposing them via the `aozora::pipeline` /
-# `aozora::syntax` / `aozora::render` / `aozora::encoding` modules.
+# building-block crates below are published in their own right (the
+# umbrella is on crates.io, so its transitive deps must be too); this
+# meta crate is the recommended single front door, re-exposing them via
+# the `aozora::pipeline` / `aozora::syntax` / `aozora::render` /
+# `aozora::encoding` modules so most consumers depend on just `aozora`.
 aozora-render   = { workspace = true }
 aozora-pipeline = { workspace = true }
 aozora-syntax   = { workspace = true }
