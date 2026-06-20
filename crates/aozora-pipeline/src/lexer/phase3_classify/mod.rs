@@ -3822,6 +3822,26 @@ mod tests {
         );
     }
 
+    /// A standalone gaiji whose tail is a 底本ページ-行 only (`、N-下-N`, no JIS
+    /// men-ku-ten) is still recognised as a gaiji (#122) rather than degrading
+    /// to `Annotation{Unknown}`; the page-line is kept verbatim in `mencode`
+    /// (resolution, if any, comes from the description).
+    #[test]
+    fn standalone_gaiji_page_line_only_tail() {
+        run!(out, "あ［＃小書き片仮名ヲ、5-下-3］");
+        let gaiji = out
+            .spans
+            .iter()
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Gaiji(g)) => Some(g),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a page-line-only Gaiji span"));
+        assert_eq!(gaiji.description, "小書き片仮名ヲ");
+        assert_eq!(gaiji.mencode, Some("5-下-3"));
+        assert!(gaiji.standalone);
+    }
+
     #[test]
     fn kaeriten_ichi_recognized() {
         run!(out, "之［＃一］");

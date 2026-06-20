@@ -214,7 +214,15 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             Some((m, pl)) => (m.trim(), Some(pl.trim())),
             None => (men, None),
         };
-        if !is_mencode_shaped(mencode_token) {
+        // The leading token is normally a JIS men-ku-ten / `U+XXXX` codepoint,
+        // but some 凡例 forms key a glyph by its 底本ページ-行 alone
+        // (`小書き片仮名ヲ、5-下-3`, with the 上/中/下 column marker and no JIS
+        // level). Accept a page-line-only leading token too: it stays
+        // `ucs = None` (unresolvable by design, rendered as the description),
+        // but is recognised as a gaiji rather than degrading to
+        // `Annotation{Unknown}` (#122). Plain `N-N-N` tokens are already
+        // `is_mencode_shaped`, so this only adds the 上/中/下 forms.
+        if !is_mencode_shaped(mencode_token) && !is_page_line_shaped(mencode_token) {
             return None;
         }
         if let Some(pl) = page_line
