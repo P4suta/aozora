@@ -22,8 +22,7 @@ Arguments:
           - slugs:           The static ［＃…］ slug catalogue — reads no document input
 
   [FILE]
-          Input path; pass `-` (or omit) to read from stdin. Unused by `slugs` (a static catalogue
-          with no document input)
+          Input path; pass `-` (or omit) to read from stdin
           
           [default: -]
 
@@ -39,6 +38,22 @@ Options:
           - sjis: Force Shift_JIS decoding
           
           [default: auto]
+
+      --timing
+          Print per-phase timing (read / parse / output) to stderr. Writes only to stderr, so stdout
+          stays byte-identical — safe to leave on inside a `render` / `wire` pipeline
+
+      --timing-format <TIMING_FORMAT>
+          Timing report format: `human` (aligned lines + total, the default) or `json` (a
+          `{schema_version, phases, total_nanos}` envelope for scripts and agents). Ignored without
+          `--timing`
+
+          Possible values:
+          - human: Aligned `name  duration` lines plus a total. The default
+          - json:  `{"schema_version":1,"phases":[{"name","nanos"}],"total_nanos"}` — the agent /
+            scripting view
+          
+          [default: human]
 
   -h, --help
           Print help (see a summary with '-h')

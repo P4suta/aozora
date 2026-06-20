@@ -13,9 +13,6 @@ Arguments:
           [default: -]
 
 Options:
-  -s, --strict
-          Exit non-zero on any diagnostic
-
   -E, --encoding <ENCODING>
           Source encoding
 
@@ -27,6 +24,25 @@ Options:
           - sjis: Force Shift_JIS decoding
           
           [default: auto]
+
+      --timing
+          Print per-phase timing (read / parse / output) to stderr. Writes only to stderr, so stdout
+          stays byte-identical — safe to leave on inside a `render` / `wire` pipeline
+
+      --timing-format <TIMING_FORMAT>
+          Timing report format: `human` (aligned lines + total, the default) or `json` (a
+          `{schema_version, phases, total_nanos}` envelope for scripts and agents). Ignored without
+          `--timing`
+
+          Possible values:
+          - human: Aligned `name  duration` lines plus a total. The default
+          - json:  `{"schema_version":1,"phases":[{"name","nanos"}],"total_nanos"}` — the agent /
+            scripting view
+          
+          [default: human]
+
+  -s, --strict
+          Exit non-zero on any diagnostic
 
       --diagnostic-format <DIAGNOSTIC_FORMAT>
           How to render diagnostics: `human` (graphical snippet, the default on a terminal), `json`
@@ -51,4 +67,5 @@ Examples:
   aozora check src.txt          # human on a TTY, json when piped
   aozora check --strict src.txt # any diagnostic -> exit 1
   aozora check -E sjis file.txt # Shift_JIS source
+  aozora check --timing src.txt # print read/parse/render timing
   cat src.txt | aozora check    # read from stdin

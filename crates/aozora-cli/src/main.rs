@@ -45,6 +45,7 @@ mod completions;
 mod diagnostics_render;
 mod introspect;
 mod manpage;
+mod timing;
 
 use std::borrow::Cow;
 use std::env;
@@ -63,6 +64,7 @@ use crate::completions::CompletionsArgs;
 use crate::diagnostics_render::DiagFormat;
 use crate::introspect::{ExplainArgs, KindsArgs, SchemaArgs};
 use crate::manpage::ManArgs;
+use crate::timing::{Timer, TimingFormat};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -126,24 +128,47 @@ enum Command {
     Man(ManArgs),
 }
 
+/// Flags shared by every document subcommand: where to read, how to
+/// decode, and whether to print timing. Flattened into each so `file`
+/// and `-E/--encoding` are declared once and `--timing` has a single
+/// home (it spans check / render / fmt / wire / pandoc).
+#[derive(Debug, Parser)]
+struct CommonArgs {
+    /// Input path; pass `-` (or omit) to read from stdin.
+    #[arg(default_value = "-")]
+    file: PathBuf,
+
+    /// Source encoding.
+    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
+    encoding: Encoding,
+
+    /// Print per-phase timing (read / parse / output) to stderr. Writes
+    /// only to stderr, so stdout stays byte-identical — safe to leave on
+    /// inside a `render` / `wire` pipeline.
+    #[arg(long)]
+    timing: bool,
+
+    /// Timing report format: `human` (aligned lines + total, the
+    /// default) or `json` (a `{schema_version, phases, total_nanos}`
+    /// envelope for scripts and agents). Ignored without `--timing`.
+    #[arg(long, value_enum, default_value_t = TimingFormat::Human)]
+    timing_format: TimingFormat,
+}
+
 #[derive(Debug, Parser)]
 #[command(after_long_help = "Examples:
   aozora check src.txt          # human on a TTY, json when piped
   aozora check --strict src.txt # any diagnostic -> exit 1
   aozora check -E sjis file.txt # Shift_JIS source
+  aozora check --timing src.txt # print read/parse/render timing
   cat src.txt | aozora check    # read from stdin")]
 struct CheckArgs {
-    /// Input path; pass `-` (or omit) to read from stdin.
-    #[arg(default_value = "-")]
-    file: PathBuf,
+    #[command(flatten)]
+    common: CommonArgs,
 
     /// Exit non-zero on any diagnostic.
     #[arg(long, short = 's')]
     strict: bool,
-
-    /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
-    encoding: Encoding,
 
     /// How to render diagnostics: `human` (graphical snippet, the
     /// default on a terminal), `json` (the `aozora::wire` envelope, the
@@ -155,9 +180,8 @@ struct CheckArgs {
 
 #[derive(Debug, Parser)]
 struct FmtArgs {
-    /// Input path; pass `-` (or omit) to read from stdin.
-    #[arg(default_value = "-")]
-    file: PathBuf,
+    #[command(flatten)]
+    common: CommonArgs,
 
     /// Exit non-zero if the formatted output differs from the input
     /// (after the lexer's sanitize phase: BOM strip, CRLF→LF). Mutually
@@ -169,21 +193,12 @@ struct FmtArgs {
     /// when reading from stdin.
     #[arg(long, conflicts_with = "check")]
     write: bool,
-
-    /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
-    encoding: Encoding,
 }
 
 #[derive(Debug, Parser)]
 struct RenderArgs {
-    /// Input path; pass `-` (or omit) to read from stdin.
-    #[arg(default_value = "-")]
-    file: PathBuf,
-
-    /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
-    encoding: Encoding,
+    #[command(flatten)]
+    common: CommonArgs,
 }
 
 /// `aozora wire <kind>` — which wire envelope to emit. The data
@@ -217,25 +232,16 @@ struct WireArgs {
     #[arg(value_enum)]
     which: WireKind,
 
-    /// Input path; pass `-` (or omit) to read from stdin. Unused by
-    /// `slugs` (a static catalogue with no document input).
-    #[arg(default_value = "-")]
-    file: PathBuf,
-
-    /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
-    encoding: Encoding,
+    // `common.file` is unused by `slugs` (a static catalogue with no
+    // document input); every other kind reads it.
+    #[command(flatten)]
+    common: CommonArgs,
 }
 
 #[derive(Debug, Parser)]
 struct PandocArgs {
-    /// Input path; pass `-` (or omit) to read from stdin.
-    #[arg(default_value = "-")]
-    file: PathBuf,
-
-    /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
-    encoding: Encoding,
+    #[command(flatten)]
+    common: CommonArgs,
 
     /// Pandoc output format (e.g. `html`, `epub`, `latex`, `docx`).
     /// When set, the binary spawns `pandoc -f json -t <FORMAT>` and
@@ -286,43 +292,59 @@ fn main() -> ExitCode {
 }
 
 fn run_check(args: &CheckArgs) -> Result<ExitCode> {
-    let source = read_source(&args.file, args.encoding)?;
+    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
+    let source = timer.measure("read", || {
+        read_source(&args.common.file, args.common.encoding)
+    })?;
     let doc = Document::new(source);
-    let tree = doc.parse();
+    let tree = timer.measure("parse", || doc.parse());
     let diagnostics = tree.diagnostics();
 
-    if diagnostics.is_empty() {
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    diagnostics_render::render(
-        args.diagnostic_format,
-        &display_path(&args.file),
-        &doc,
-        diagnostics,
-    )
-    .context("failed to write diagnostics")?;
-
-    // Exit-code contract (documented in `aozora check --help` and
-    // AGENTS.md): 3 = an Internal diagnostic fired (a library bug, not
-    // bad input), 1 = `--strict` with at least one diagnostic, 0 = input
-    // diagnostics were printed but tolerated.
-    if diagnostics
-        .iter()
-        .any(|d| d.source() == DiagnosticSource::Internal)
-    {
-        Ok(ExitCode::from(3))
-    } else if args.strict {
-        Ok(ExitCode::from(1))
+    let code = if diagnostics.is_empty() {
+        ExitCode::SUCCESS
     } else {
-        Ok(ExitCode::SUCCESS)
-    }
+        timer
+            .measure("render", || {
+                diagnostics_render::render(
+                    args.diagnostic_format,
+                    &display_path(&args.common.file),
+                    &doc,
+                    diagnostics,
+                )
+            })
+            .context("failed to write diagnostics")?;
+
+        // Exit-code contract (documented in `aozora check --help` and
+        // AGENTS.md): 3 = an Internal diagnostic fired (a library bug, not
+        // bad input), 1 = `--strict` with at least one diagnostic, 0 = input
+        // diagnostics were printed but tolerated.
+        if diagnostics
+            .iter()
+            .any(|d| d.source() == DiagnosticSource::Internal)
+        {
+            ExitCode::from(3)
+        } else if args.strict {
+            ExitCode::from(1)
+        } else {
+            ExitCode::SUCCESS
+        }
+    };
+
+    timer.report()?;
+    Ok(code)
 }
 
 fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
-    let source = read_source(&args.file, args.encoding)?;
+    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
+    let source = timer.measure("read", || {
+        read_source(&args.common.file, args.common.encoding)
+    })?;
     let doc = Document::new(source.clone());
-    let formatted = doc.parse().serialize();
+    let tree = timer.measure("parse", || doc.parse());
+    let formatted = timer.measure("serialize", || tree.serialize());
+    // Timing covers read/parse/serialize; the comparison and I/O below
+    // are not the parse cost a reader cares about, so report here.
+    timer.report()?;
 
     // The lexer's Phase 0 sanitize strips BOM and normalises CRLF→LF;
     // the canonical form is fixed-point on the sanitized input, not
@@ -340,14 +362,14 @@ fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
         let _drop = writeln!(
             io::stderr(),
             "aozora fmt: {} would be reformatted",
-            display_path(&args.file)
+            display_path(&args.common.file)
         );
         return Ok(ExitCode::from(1));
     }
 
-    if args.write && args.file.as_os_str() != "-" {
-        fs::write(&args.file, &formatted)
-            .with_context(|| format!("failed to write {}", display_path(&args.file)))?;
+    if args.write && args.common.file.as_os_str() != "-" {
+        fs::write(&args.common.file, &formatted)
+            .with_context(|| format!("failed to write {}", display_path(&args.common.file)))?;
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -359,20 +381,27 @@ fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
 }
 
 fn run_render(args: &RenderArgs) -> Result<ExitCode> {
-    let source = read_source(&args.file, args.encoding)?;
+    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
+    let source = timer.measure("read", || {
+        read_source(&args.common.file, args.common.encoding)
+    })?;
     let doc = Document::new(source);
-    let html = doc.parse().to_html();
+    let tree = timer.measure("parse", || doc.parse());
+    let html = timer.measure("render", || tree.to_html());
     let mut stdout = io::stdout().lock();
     stdout
         .write_all(html.as_bytes())
         .context("failed to write to stdout")?;
+    timer.report()?;
     Ok(ExitCode::SUCCESS)
 }
 
 fn run_wire(args: &WireArgs) -> Result<ExitCode> {
-    let json = wire_json(args)?;
+    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
+    let json = wire_json(args, &mut timer)?;
     let mut stdout = io::stdout().lock();
     writeln!(stdout, "{json}").context("failed to write to stdout")?;
+    timer.report()?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -381,17 +410,19 @@ fn run_wire(args: &WireArgs) -> Result<ExitCode> {
 /// other kind walks the parse tree. All arms delegate to
 /// `aozora::wire`, the single authority shared with the Python / WASM /
 /// C bindings, so the bytes are identical across every surface.
-fn wire_json(args: &WireArgs) -> Result<String> {
+fn wire_json(args: &WireArgs, timer: &mut Timer) -> Result<String> {
     if matches!(args.which, WireKind::Slugs) {
         return Ok(wire::serialize_slugs());
     }
-    let source = read_source(&args.file, args.encoding)?;
+    let source = timer.measure("read", || {
+        read_source(&args.common.file, args.common.encoding)
+    })?;
     if matches!(args.which, WireKind::GaijiResolutions) {
-        return Ok(wire::serialize_gaiji_resolutions(&source));
+        return Ok(timer.measure("serialize", || wire::serialize_gaiji_resolutions(&source)));
     }
     let doc = Document::new(source);
-    let tree = doc.parse();
-    Ok(match args.which {
+    let tree = timer.measure("parse", || doc.parse());
+    Ok(timer.measure("serialize", || match args.which {
         WireKind::Nodes => wire::serialize_nodes(&tree),
         WireKind::Pairs => wire::serialize_pairs(&tree),
         WireKind::ContainerPairs => wire::serialize_container_pairs(&tree),
@@ -399,14 +430,22 @@ fn wire_json(args: &WireArgs) -> Result<String> {
         WireKind::Slugs | WireKind::GaijiResolutions => {
             unreachable!("slugs and gaiji are emitted before the parse step")
         }
-    })
+    }))
 }
 
 fn run_pandoc(args: &PandocArgs) -> Result<ExitCode> {
-    let source = read_source(&args.file, args.encoding)?;
+    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
+    let source = timer.measure("read", || {
+        read_source(&args.common.file, args.common.encoding)
+    })?;
     let doc = Document::new(source);
-    let pandoc = aozora_pandoc::to_pandoc(&doc.parse());
-    let json = serde_json::to_string(&pandoc).context("serialize Pandoc AST")?;
+    let tree = timer.measure("parse", || doc.parse());
+    let json = timer
+        .measure("pandoc", || {
+            serde_json::to_string(&aozora_pandoc::to_pandoc(&tree))
+        })
+        .context("serialize Pandoc AST")?;
+    timer.report()?;
 
     let Some(format) = args.format.as_deref() else {
         // No --format: emit Pandoc JSON. Downstream invocations
