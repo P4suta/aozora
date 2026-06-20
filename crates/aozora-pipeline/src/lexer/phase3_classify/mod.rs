@@ -335,6 +335,13 @@ pub(crate) struct BodyView<'b> {
 pub(crate) struct RecogniseCtx<'al, 'a, 's> {
     pub alloc: &'al mut BorrowedAllocator<'a>,
     pub source: &'s str,
+    /// Non-fatal diagnostics raised while building *nested* content
+    /// (a gaiji inside a ruby / annotation reading). The owning
+    /// `ClassifyStream` drains this into its own sink after each
+    /// recognise call — a `RecogniseCtx` is a short-lived per-call view,
+    /// so an owned `Vec` avoids threading a `&mut` sink (and a fourth
+    /// lifetime) through every recogniser.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 /// One outermost open-pair frame currently being buffered.
@@ -985,6 +992,7 @@ where
         let mut ctx = RecogniseCtx {
             alloc: self.alloc,
             source: self.source,
+            diagnostics: Vec::new(),
         };
         let Some(m) = ctx.recognize_ruby(synth_view, synth_open_idx, synth_close_idx) else {
             // `recognize_ruby` rejects an empty `《》` reading; flag the
@@ -1006,6 +1014,8 @@ where
             }
             return None;
         };
+        // Drain diagnostics raised while building the nested ruby reading.
+        self.diagnostics.append(&mut ctx.diagnostics);
         // Truncate any in-progress plain run to end exactly where the ruby
         // takes over.
         self.flush_plain_up_to(m.consume_start);
@@ -1046,6 +1056,7 @@ where
         let mut ctx = RecogniseCtx {
             alloc: self.alloc,
             source: self.source,
+            diagnostics: Vec::new(),
         };
         let content = ctx.build_content_from_body(
             body,
@@ -1054,6 +1065,8 @@ where
                 bytes: open_span.end..close_span.start,
             },
         );
+        // Drain diagnostics raised while building the nested angle-quote body.
+        self.diagnostics.append(&mut ctx.diagnostics);
         // Empty `≪≫` is not a valid AngleQuote — let the bytes
         // flow through as plain text. The caller's fall-through path
         // (`replay_unrecognised_body`) handles the plain emission.
@@ -1082,8 +1095,12 @@ where
         let mut ctx = RecogniseCtx {
             alloc: self.alloc,
             source: self.source,
+            diagnostics: Vec::new(),
         };
         let m = ctx.recognize_annotation(body, open_idx, close_idx)?;
+        // Drain diagnostics raised while building nested reading content
+        // (a gaiji inside a left-ruby / annotation reading) into our sink.
+        self.diagnostics.append(&mut ctx.diagnostics);
         self.flush_plain_up_to(m.consume_start);
         let kind = match m.emit {
             EmitKind::Aozora(node) => SpanKind::Aozora(node),
@@ -1129,6 +1146,7 @@ where
         let mut ctx = RecogniseCtx {
             alloc: self.alloc,
             source: self.source,
+            diagnostics: Vec::new(),
         };
         let m = ctx.recognize_gaiji(body, refmark_span, bracket_open_idx)?;
         self.flush_plain_up_to(m.consume_start);
@@ -1602,13 +1620,17 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         );
         build.segments.push(self.alloc.seg_gaiji(g.payload));
         build.text_start = g.consume_end;
-        // NOTE: a nested gaiji is resolved and rendered here, but
-        // `RecogniseCtx` carries no diagnostics sink (only `alloc` / `source`),
-        // so an *unresolved* nested gaiji renders best-effort as its
-        // description WITHOUT the `unresolved-gaiji` (§9) warning the top-level
-        // `※［＃…］` scan raises. Closing that gap means threading a
-        // diagnostics sink through the content builder — deferred until corpus
-        // demand justifies it (nested unresolved gaiji are vanishingly rare).
+        // A nested gaiji whose mencode resolves nothing renders best-effort as
+        // its description; flag the miss so nested references match the
+        // top-level `※［＃…］` behaviour (#84). The owning `ClassifyStream`
+        // drains `self.diagnostics` after the recognise call.
+        if g.payload.ucs.is_none() {
+            self.diagnostics
+                .push(Diagnostic::unresolved_gaiji(Span::new(
+                    g.consume_start,
+                    g.consume_end,
+                )));
+        }
         Some(close_idx + 1)
     }
 
@@ -1652,19 +1674,34 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             // PairClose of the matching kind.
             unreachable!("PairOpen link must target a PairClose");
         };
-        let payload = if let Some(p) = a.annotation_payload {
-            p
-        } else {
-            let raw = &self.source[open_span.start as usize..close_span.end as usize];
-            self.alloc.make_annotation(raw, AnnotationKind::Unknown)
-        };
         push_text_segment(
             &mut build.segments,
             self.source,
             build.text_start..a.consume_start,
             self.alloc,
         );
-        build.segments.push(self.alloc.seg_annotation(payload));
+        // A no-`※` standalone gaiji (#122) reaches here as `Aozora(Gaiji)`;
+        // wrap it as a `Segment::Gaiji` (not the `Unknown` annotation the
+        // payload fallback would build) and flag an unresolved miss (#84).
+        // Every other recogniser keeps the `Segment::Annotation` path.
+        if let EmitKind::Aozora(borrowed::AozoraNode::Gaiji(g)) = a.emit {
+            build.segments.push(self.alloc.seg_gaiji(g));
+            if g.ucs.is_none() {
+                self.diagnostics
+                    .push(Diagnostic::unresolved_gaiji(Span::new(
+                        a.consume_start,
+                        a.consume_end,
+                    )));
+            }
+        } else {
+            let payload = if let Some(p) = a.annotation_payload {
+                p
+            } else {
+                let raw = &self.source[open_span.start as usize..close_span.end as usize];
+                self.alloc.make_annotation(raw, AnnotationKind::Unknown)
+            };
+            build.segments.push(self.alloc.seg_annotation(payload));
+        }
         build.text_start = a.consume_end;
         Some(close_idx + 1)
     }
@@ -2061,6 +2098,38 @@ mod tests {
             matches!(&segs[2], Segment::Text(t) if &**t == "ん"),
             "segment 2: {:?}",
             segs[2]
+        );
+    }
+
+    /// A no-`※` standalone gaiji (#122) nested in a ruby reading folds into a
+    /// `Segment::Gaiji` (not the `Unknown` annotation the payload fallback
+    /// would otherwise build).
+    #[test]
+    fn nested_standalone_gaiji_folds_into_gaiji_segment() {
+        run!(out, "｜日本《に［＃「ほ」、第3水準1-85-54］ん》");
+        let r = only_ruby(&out);
+        let Content::Segments(segs) = r.reading.get() else {
+            panic!("expected Segments, got {:?}", r.reading);
+        };
+        let Segment::Gaiji(g) = segs[1] else {
+            panic!("segment 1 should be Gaiji, got {:?}", segs[1]);
+        };
+        assert_eq!(g.description, "ほ");
+        assert!(g.standalone, "no `※` in source → standalone");
+    }
+
+    /// #84: an unresolved gaiji nested inside a ruby reading now raises the
+    /// `unresolved-gaiji` warning, matching the top-level `※［＃…］` scan
+    /// (previously the nested reference was silently best-effort rendered).
+    #[test]
+    fn nested_unresolved_gaiji_fires_diagnostic() {
+        run!(out, "｜謎《な※［＃「謎＋字」、99-99-99］ぞ》");
+        assert!(
+            out.diagnostics
+                .iter()
+                .any(|d| matches!(d, Diagnostic::UnresolvedGaiji { .. })),
+            "expected an unresolved-gaiji diagnostic, got {:?}",
+            out.diagnostics
         );
     }
 
