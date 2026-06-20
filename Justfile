@@ -1334,9 +1334,15 @@ ci-parallel:
     launch() { local n="$1"; shift; "$@" > "$(bglog "$n")" 2>&1 & PID[$n]=$!; }
 
     # Background lane — no /cargo/target build-lock contention.
-    for g in deny audit book-linkcheck smoke-ffi fmt-check typos strict-code playground-typecheck playground-test; do
+    for g in deny audit book-linkcheck smoke-ffi fmt-check typos strict-code; do
         launch "$g" just "$g"
     done
+    # playground-typecheck + playground-test share one `node_modules`
+    # volume; launching them as two concurrent gates makes their
+    # `_playground-ensure` (`bun install`) hard-link into that volume in
+    # parallel and intermittently fail with `EEXIST`. Run both through one
+    # sequential job so the install happens exactly once, single-threaded.
+    launch playground-ci just playground-ci
 
     # Foreground cargo chain — serial (shared build lock), fail-fast.
     fg_failed=""
@@ -1453,6 +1459,17 @@ playground-typecheck: _playground-ensure
 # Run vitest unit tests for the playground
 # (share / storage / parserState / utils — see src/__tests__/).
 playground-test: _playground-ensure
+    {{_pg}} bun run test
+
+# Combined playground gate for `ci-parallel`: ensure deps once, then
+# typecheck + test in a single sequential job. `ci-parallel` runs its
+# gates concurrently; if `playground-typecheck` and `playground-test`
+# launched separately, their `_playground-ensure` (`bun install`) would
+# hard-link into the shared `node_modules` volume in parallel and hit
+# `Failed to link …: EEXIST`. One job keeps the install single-threaded.
+# Standalone `playground-typecheck` / `playground-test` are unchanged.
+playground-ci: _playground-ensure
+    {{_pg}} bun run typecheck
     {{_pg}} bun run test
 
 # Production build of the playground. Regenerates the WASM bundle
