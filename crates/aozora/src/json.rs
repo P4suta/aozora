@@ -117,7 +117,7 @@ pub fn container_pairs(tree: &Tree<'_>) -> String {
         .container_pairs()
         .iter()
         .map(|pair| ContainerPairWire {
-            kind: container_kind_str(pair.kind),
+            kind: pair.kind.as_wire_tag(),
             open: OffsetWire {
                 offset: pair.open.get(),
             },
@@ -145,7 +145,7 @@ pub fn slugs() -> String {
         .iter()
         .map(|s| SlugWire {
             canonical: s.canonical,
-            family: slug_family_str(s.family),
+            family: s.family.as_wire_tag(),
             accepts_param: s.accepts_param,
             doc: s.doc,
             partner: s.partner,
@@ -196,53 +196,6 @@ pub fn gaiji_at(source: &str, byte_offset: usize) -> String {
                     .unwrap_or_else(|_| "null".to_owned())
             },
         )
-}
-
-const fn container_kind_str(kind: aozora_syntax::ContainerKind) -> &'static str {
-    use aozora_syntax::ContainerKind;
-    // `ContainerKind` is `#[non_exhaustive]` upstream — the wildcard
-    // arm covers any future variant by emitting `"unknown"` so wire
-    // consumers err on the side of surfacing it until they upgrade.
-    match kind {
-        ContainerKind::Indent { .. } => "indent",
-        ContainerKind::Warichu => "warichu",
-        ContainerKind::Framed => "framed",
-        ContainerKind::AlignEnd { .. } => "alignEnd",
-        ContainerKind::LineWidth { .. } => "lineWidth",
-        ContainerKind::BoutenRange { .. } => "boutenRange",
-        ContainerKind::Bold { .. } => "bold",
-        ContainerKind::Italic { .. } => "italic",
-        ContainerKind::Heading { .. } => "heading",
-        ContainerKind::Columns { .. } => "columns",
-        ContainerKind::Table => "table",
-        ContainerKind::Horizontal => "horizontal",
-        ContainerKind::FontSize { .. } => "fontSize",
-        ContainerKind::SmallScript { .. } => "smallScript",
-        ContainerKind::Caption { .. } => "caption",
-        _ => "unknown",
-    }
-}
-
-const fn slug_family_str(family: crate::SlugFamily) -> &'static str {
-    use crate::SlugFamily;
-    // `SlugFamily` is `#[non_exhaustive]` upstream — the wildcard arm
-    // emits "unknown" for any family added in a newer spec version so
-    // wire consumers can ignore unfamiliar entries without crashing.
-    match family {
-        SlugFamily::PageBreak => "pageBreak",
-        SlugFamily::Section => "section",
-        SlugFamily::BlockContainerOpen => "blockContainerOpen",
-        SlugFamily::BlockContainerClose => "blockContainerClose",
-        SlugFamily::LeafAlign => "leafAlign",
-        SlugFamily::Bouten => "bouten",
-        SlugFamily::Illustration => "illustration",
-        SlugFamily::Framed => "framed",
-        SlugFamily::Warichu => "warichu",
-        SlugFamily::CombineUpright => "combineUpright",
-        SlugFamily::KaeritenSingle => "kaeritenSingle",
-        SlugFamily::KaeritenCompound => "kaeritenCompound",
-        _ => "unknown",
-    }
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -641,31 +594,28 @@ mod tests {
     }
 
     #[test]
-    fn container_kind_str_maps_emphasis_and_bouten_range() {
+    fn container_kind_wire_tags_via_as_wire_tag() {
         use aozora_syntax::{BoutenKind, BoutenPosition, ContainerKind};
-        // Guard against the silent `_ => "unknown"` degrade: every shipped
-        // container family must carry an explicit wire string.
+        // The wire projection is the single authority on `ContainerKind`
+        // (no `_ => "unknown"` fallback — exhaustiveness is enforced in
+        // aozora-syntax). This is the aozora-layer smoke check that the
+        // `container_pairs` path reaches the same tags.
+        assert_eq!(ContainerKind::Bold { block: false }.as_wire_tag(), "bold");
+        assert_eq!(ContainerKind::Bold { block: true }.as_wire_tag(), "bold");
         assert_eq!(
-            container_kind_str(ContainerKind::Bold { block: false }),
-            "bold"
-        );
-        assert_eq!(
-            container_kind_str(ContainerKind::Bold { block: true }),
-            "bold"
-        );
-        assert_eq!(
-            container_kind_str(ContainerKind::Italic { block: false }),
+            ContainerKind::Italic { block: false }.as_wire_tag(),
             "italic"
         );
         assert_eq!(
-            container_kind_str(ContainerKind::Italic { block: true }),
+            ContainerKind::Italic { block: true }.as_wire_tag(),
             "italic"
         );
         assert_eq!(
-            container_kind_str(ContainerKind::BoutenRange {
+            ContainerKind::BoutenRange {
                 kind: BoutenKind::Goma,
                 position: BoutenPosition::Right,
-            }),
+            }
+            .as_wire_tag(),
             "boutenRange"
         );
     }

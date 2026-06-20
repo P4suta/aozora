@@ -26,7 +26,7 @@ use std::process::Command;
 use serde_json::{Map, Value};
 
 use aozora::pipeline::{NodeRef, PairKind};
-use aozora::syntax::NodeKind;
+use aozora::syntax::{ContainerKind, NodeKind};
 use aozora::{DiagnosticSource, InternalCheckCode, Sentinel, Severity};
 
 use crate::TypesArgs;
@@ -110,6 +110,12 @@ fn render_enums(out: &mut String) {
         "PairKind",
         &ts_string_union(&PairKind::ALL, PairKind::as_wire_tag),
     );
+    out.push_str("/** Container kind for `container_pairs` output. */\n");
+    push_export_type(
+        out,
+        "ContainerKind",
+        &ts_string_union(&ContainerKind::ALL, ContainerKind::as_wire_tag),
+    );
     out.push_str("/** Diagnostic severity tier (wire field `severity`). */\n");
     push_export_type(
         out,
@@ -172,7 +178,7 @@ fn render_wire_payloads(out: &mut String) {
         "/** One entry of `container_pairs` — paired container (open in normalized coords). */\n",
     );
     out.push_str(
-        "export interface ContainerPairWire {\n  kind: \"indent\" | \"warichu\" | \"keigakomi\" | \"alignEnd\" | \"lineWidth\" | \"boutenRange\" | \"bold\" | \"italic\" | \"heading\" | \"columns\" | \"table\" | \"unknown\";\n  open: OffsetWire;\n  close: OffsetWire;\n}\n\n",
+        "export interface ContainerPairWire {\n  kind: ContainerKind;\n  open: OffsetWire;\n  close: OffsetWire;\n}\n\n",
     );
 }
 
@@ -554,6 +560,7 @@ mod tests {
         for name in [
             "NodeKind",
             "PairKind",
+            "ContainerKind",
             "Severity",
             "DiagnosticSource",
             "InternalCheckCode",

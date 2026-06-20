@@ -154,6 +154,73 @@ impl ContainerKind {
         }
     }
 
+    /// Every variant, one representative instance per data-carrying
+    /// variant — the payload is irrelevant to [`Self::as_wire_tag`], which
+    /// matches on the discriminant only. Lets the wire-tag exhaustiveness
+    /// test and the TypeScript / JSON-Schema codegen enumerate the family
+    /// list without a hand-maintained parallel.
+    pub const ALL: [Self; 16] = [
+        Self::Indent {
+            amount: 0,
+            wrap: None,
+            center: false,
+        },
+        Self::Warichu,
+        Self::Framed,
+        Self::AlignEnd { offset: 0 },
+        Self::LineWidth { width: 0 },
+        Self::BoutenRange {
+            kind: BoutenKind::Goma,
+            position: BoutenPosition::Right,
+        },
+        Self::Bold { block: false },
+        Self::Italic { block: false },
+        Self::Heading {
+            kind: HeadingKind::Large,
+            style: HeadingStyle::Standard,
+            block: false,
+        },
+        Self::Columns { count: 0 },
+        Self::Table,
+        Self::Horizontal,
+        Self::FontSize { steps: 0 },
+        Self::SmallScript {
+            side: BoutenPosition::Right,
+        },
+        Self::Caption { block: false },
+        Self::CombineUprightRange,
+    ];
+
+    /// Stable camelCase identifier for the driver wire formats — the
+    /// machine-contract counterpart of the human-facing kebab
+    /// [`Self::kind_str`]. Lives in the enum's own crate so the wire
+    /// spelling has a single authority and the `match` is exhaustiveness-
+    /// checked at compile time: a new variant fails to build until it is
+    /// given a tag, which structurally prevents the silent `"unknown"`
+    /// fallback the host-side projection used to emit (the bug that left
+    /// `CombineUprightRange` unmapped).
+    #[must_use]
+    pub const fn as_wire_tag(self) -> &'static str {
+        match self {
+            Self::Indent { .. } => "indent",
+            Self::Warichu => "warichu",
+            Self::Framed => "framed",
+            Self::AlignEnd { .. } => "alignEnd",
+            Self::LineWidth { .. } => "lineWidth",
+            Self::BoutenRange { .. } => "boutenRange",
+            Self::Bold { .. } => "bold",
+            Self::Italic { .. } => "italic",
+            Self::Heading { .. } => "heading",
+            Self::Columns { .. } => "columns",
+            Self::Table => "table",
+            Self::Horizontal => "horizontal",
+            Self::FontSize { .. } => "fontSize",
+            Self::SmallScript { .. } => "smallScript",
+            Self::Caption { .. } => "caption",
+            Self::CombineUprightRange => "combineUprightRange",
+        }
+    }
+
     /// Whether this container's content is *phrasing* (inline) — rendered
     /// directly inside the block element rather than wrapped in `<p>`
     /// paragraphs.
@@ -260,5 +327,45 @@ mod tests {
         assert_eq!(ContainerKind::Bold { block: true }.kind_str(), "bold");
         assert_eq!(ContainerKind::Italic { block: false }.kind_str(), "italic");
         assert_eq!(ContainerKind::Italic { block: true }.kind_str(), "italic");
+    }
+
+    #[test]
+    fn wire_tags_complete_and_distinct() {
+        assert_eq!(
+            ContainerKind::ALL.len(),
+            16,
+            "every ContainerKind variant listed in ALL"
+        );
+        let mut tags: Vec<&str> = ContainerKind::ALL
+            .iter()
+            .map(|&k| k.as_wire_tag())
+            .collect();
+        for t in &tags {
+            assert!(!t.is_empty(), "empty wire tag");
+            assert_ne!(*t, "unknown", "wire tag must not be the dropped fallback");
+        }
+        let total = tags.len();
+        tags.sort_unstable();
+        tags.dedup();
+        assert_eq!(
+            tags.len(),
+            total,
+            "duplicate wire tag in ContainerKind::ALL"
+        );
+    }
+
+    #[test]
+    fn combine_upright_range_wire_tag_is_pinned() {
+        // Regression: this variant had no explicit arm in the host-side
+        // projection and silently fell through to `"unknown"`. The wire
+        // tag now lives on the enum with no `_` fallback. Pin both forms.
+        assert_eq!(
+            ContainerKind::CombineUprightRange.as_wire_tag(),
+            "combineUprightRange"
+        );
+        assert_eq!(
+            ContainerKind::CombineUprightRange.kind_str(),
+            "combine-upright-range"
+        );
     }
 }

@@ -12,6 +12,9 @@ export type NodeKind = "ruby" | "bouten" | "combineUpright" | "gaiji" | "indent"
 /** Pair kind for `pairs_json` output. */
 export type PairKind = "bracket" | "ruby" | "angleQuote" | "tortoise" | "quote";
 
+/** Container kind for `container_pairs` output. */
+export type ContainerKind = "indent" | "warichu" | "framed" | "alignEnd" | "lineWidth" | "boutenRange" | "bold" | "italic" | "heading" | "columns" | "table" | "horizontal" | "fontSize" | "smallScript" | "caption" | "combineUprightRange";
+
 /** Diagnostic severity tier (wire field `severity`). */
 export type Severity = "error" | "warning" | "note";
 
@@ -66,7 +69,7 @@ export interface PairWire {
 
 /** One entry of `container_pairs` — paired container (open in normalized coords). */
 export interface ContainerPairWire {
-  kind: "indent" | "warichu" | "keigakomi" | "alignEnd" | "lineWidth" | "boutenRange" | "bold" | "italic" | "heading" | "columns" | "table" | "unknown";
+  kind: ContainerKind;
   open: OffsetWire;
   close: OffsetWire;
 }

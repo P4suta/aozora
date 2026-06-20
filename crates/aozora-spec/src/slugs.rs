@@ -69,6 +69,48 @@ pub enum SlugFamily {
     KaeritenCompound,
 }
 
+impl SlugFamily {
+    /// Every variant in declaration order. Lets the wire-tag
+    /// exhaustiveness test and codegen enumerate the families without a
+    /// hand-maintained parallel.
+    pub const ALL: [Self; 12] = [
+        Self::PageBreak,
+        Self::Section,
+        Self::BlockContainerOpen,
+        Self::BlockContainerClose,
+        Self::LeafAlign,
+        Self::Bouten,
+        Self::Illustration,
+        Self::Framed,
+        Self::Warichu,
+        Self::CombineUpright,
+        Self::KaeritenSingle,
+        Self::KaeritenCompound,
+    ];
+
+    /// Stable camelCase identifier used by the driver wire formats.
+    /// Centralised in the enum's own crate so the wire spelling has a
+    /// single authority and the `match` is exhaustiveness-checked at
+    /// compile time (no `_` fallback — a new family must declare its tag).
+    #[must_use]
+    pub const fn as_wire_tag(self) -> &'static str {
+        match self {
+            Self::PageBreak => "pageBreak",
+            Self::Section => "section",
+            Self::BlockContainerOpen => "blockContainerOpen",
+            Self::BlockContainerClose => "blockContainerClose",
+            Self::LeafAlign => "leafAlign",
+            Self::Bouten => "bouten",
+            Self::Illustration => "illustration",
+            Self::Framed => "framed",
+            Self::Warichu => "warichu",
+            Self::CombineUpright => "combineUpright",
+            Self::KaeritenSingle => "kaeritenSingle",
+            Self::KaeritenCompound => "kaeritenCompound",
+        }
+    }
+}
+
 /// One row of the slug catalogue.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -796,6 +838,24 @@ pub fn roman_slug(canonical: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slug_family_wire_tags_complete_and_distinct() {
+        assert_eq!(
+            SlugFamily::ALL.len(),
+            12,
+            "every SlugFamily variant listed in ALL"
+        );
+        let mut tags: Vec<&str> = SlugFamily::ALL.iter().map(|&f| f.as_wire_tag()).collect();
+        for t in &tags {
+            assert!(!t.is_empty(), "empty wire tag");
+            assert_ne!(*t, "unknown", "wire tag must not be a fallback");
+        }
+        let total = tags.len();
+        tags.sort_unstable();
+        tags.dedup();
+        assert_eq!(tags.len(), total, "duplicate wire tag in SlugFamily::ALL");
+    }
 
     /// Minimal Hepburn romaniser (long vowel お／う段 + う dropped,
     /// matching the slug convention 改丁→`kaicho`). Test-only — the
