@@ -94,3 +94,14 @@ fn snapshot_completions_help() {
         insta::assert_snapshot!(run(&["completions", "--help"]));
     });
 }
+
+#[test]
+fn snapshot_explain_help() {
+    insta::with_settings!({
+        filters => vec![
+            (r"\d+\.\d+\.\d+(?:-[\w.]+)?", "[VERSION]"),
+        ],
+    }, {
+        insta::assert_snapshot!(run(&["explain", "--help"]));
+    });
+}

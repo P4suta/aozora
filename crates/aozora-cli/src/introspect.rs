@@ -50,6 +50,10 @@ pub(crate) struct KindsArgs;
 
 /// `aozora explain <target>` arguments.
 #[derive(Debug, Args)]
+#[command(after_long_help = "Examples:
+  aozora explain ruby                          # NodeKind handbook chapter
+  aozora explain aozora::lex::unclosed_bracket # diagnostic code -> help + URL
+  aozora explain unresolved_gaiji              # short form of the code")]
 pub(crate) struct ExplainArgs {
     /// A `NodeKind` camelCase tag (e.g. `ruby`, `angleQuote`; run
     /// `aozora kinds` for the list) or a diagnostic code (e.g.

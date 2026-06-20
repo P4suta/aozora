@@ -45,3 +45,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  aozora wire nodes src.txt           # source nodes as JSON
+  cat src.txt | aozora wire pairs     # matched pairs from stdin
+  aozora wire gaiji -E sjis file.txt  # resolved gaiji references
+  aozora wire slugs                   # the static slug catalogue

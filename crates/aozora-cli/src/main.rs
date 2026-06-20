@@ -69,7 +69,16 @@ use crate::manpage::ManArgs;
     name = "aozora",
     about = "Aozora Bunko notation parser CLI",
     version,
-    propagate_version = true
+    propagate_version = true,
+    after_long_help = "Examples:
+  aozora check FILE.txt              # lex + report diagnostics
+  aozora render FILE.txt > out.html  # render to HTML
+  aozora wire nodes FILE.txt         # parsed nodes as wire JSON
+  aozora fmt --check FILE.txt        # CI format gate
+  aozora explain unclosed_bracket    # explain a diagnostic code
+  aozora completions zsh             # shell completion script
+
+Document subcommands read stdin when given '-' or no path."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -118,6 +127,11 @@ enum Command {
 }
 
 #[derive(Debug, Parser)]
+#[command(after_long_help = "Examples:
+  aozora check src.txt          # human on a TTY, json when piped
+  aozora check --strict src.txt # any diagnostic -> exit 1
+  aozora check -E sjis file.txt # Shift_JIS source
+  cat src.txt | aozora check    # read from stdin")]
 struct CheckArgs {
     /// Input path; pass `-` (or omit) to read from stdin.
     #[arg(default_value = "-")]
@@ -193,6 +207,11 @@ enum WireKind {
 }
 
 #[derive(Debug, Parser)]
+#[command(after_long_help = "Examples:
+  aozora wire nodes src.txt           # source nodes as JSON
+  cat src.txt | aozora wire pairs     # matched pairs from stdin
+  aozora wire gaiji -E sjis file.txt  # resolved gaiji references
+  aozora wire slugs                   # the static slug catalogue")]
 struct WireArgs {
     /// Which wire envelope to emit.
     #[arg(value_enum)]

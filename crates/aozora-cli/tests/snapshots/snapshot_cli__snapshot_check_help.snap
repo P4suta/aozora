@@ -46,3 +46,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  aozora check src.txt          # human on a TTY, json when piped
+  aozora check --strict src.txt # any diagnostic -> exit 1
+  aozora check -E sjis file.txt # Shift_JIS source
+  cat src.txt | aozora check    # read from stdin
