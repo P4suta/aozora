@@ -203,11 +203,51 @@ fn human_format_renders_graphical_report() {
 #[test]
 fn human_format_renders_a_report_per_diagnostic() {
     let (_, stderr) = run(&["check", "--diagnostic-format", "human"], TWO_PUA);
-    let occurrences = stderr.matches("source_contains_pua").count();
+    // One graphical report per diagnostic. Exclude the explain-hint
+    // footer, which names the (deduped) code once more.
+    let occurrences = stderr
+        .lines()
+        .filter(|line| !line.contains("aozora explain"))
+        .filter(|line| line.contains("source_contains_pua"))
+        .count();
     assert_eq!(
         occurrences, 2,
         "one graphical report per diagnostic: {stderr:?}"
     );
+}
+
+#[test]
+fn human_format_appends_explain_hint() {
+    let (_, stderr) = run(&["check", "--diagnostic-format", "human"], ONE_PUA);
+    assert!(
+        stderr.contains("aozora explain source_contains_pua"),
+        "human report points the reader at `aozora explain <code>`: {stderr:?}"
+    );
+}
+
+#[test]
+fn human_explain_hint_dedupes_repeated_codes() {
+    // TWO_PUA fires two `source_contains_pua` diagnostics; the hint
+    // names the code exactly once.
+    let (_, stderr) = run(&["check", "--diagnostic-format", "human"], TWO_PUA);
+    assert_eq!(
+        stderr.matches("aozora explain source_contains_pua").count(),
+        1,
+        "the explain hint dedupes repeated codes: {stderr:?}"
+    );
+}
+
+#[test]
+fn explain_hint_absent_from_machine_formats() {
+    // The hint is human-only; `json` / `short` are machine contracts
+    // (ADR-0008) and must stay byte-identical — no hint.
+    for fmt in ["json", "short"] {
+        let (_, stderr) = run(&["check", "--diagnostic-format", fmt], ONE_PUA);
+        assert!(
+            !stderr.contains("aozora explain"),
+            "format {fmt:?} must not carry the explain hint: {stderr:?}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------

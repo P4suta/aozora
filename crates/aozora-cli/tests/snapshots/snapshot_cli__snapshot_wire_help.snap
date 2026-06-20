@@ -1,12 +1,26 @@
 ---
 source: crates/aozora-cli/tests/snapshot_cli.rs
-expression: "run(&[\"check\", \"--help\"])"
+expression: "run(&[\"wire\", \"--help\"])"
 ---
-Run the lexer over a file and report diagnostics
+Emit a parsed document's wire JSON for one `aozora::wire` envelope — `nodes` / `pairs` /
+`container-pairs` / `diagnostics` / `gaiji` — or the static `slugs` catalogue. The data counterpart
+to `schema`: `schema <kind>` prints the JSON Schema, `wire <kind>` prints a document's data in that
+schema, byte-identical to every binding's `*_json()` output
 
-Usage: aozora check [OPTIONS] [FILE]
+Usage: aozora wire [OPTIONS] <WHICH> [FILE]
 
 Arguments:
+  <WHICH>
+          Which wire envelope to emit
+
+          Possible values:
+          - diagnostics:     Per-diagnostic `{ kind, severity, source, span, codepoint? }`
+          - nodes:           Per-source-node `{ kind, span }`, sorted by `span.start`
+          - pairs:           Per-matched-pair `{ kind, open, close }`
+          - container-pairs: Per-container-pair `{ kind, open, close }` (normalized coordinates)
+          - gaiji:           Per-外字-reference `{ span, description, mencode, codepoint, resolved }`
+          - slugs:           The static ［＃…］ slug catalogue — reads no document input
+
   [FILE]
           Input path; pass `-` (or omit) to read from stdin
           
@@ -50,26 +64,6 @@ Options:
           Re-run on every change to the input file (foreground; Ctrl-C to stop). Requires a file
           path — not available on stdin
 
-  -s, --strict
-          Exit non-zero on any diagnostic. Also settable via `AOZORA_STRICT` or the `strict` key in
-          `.aozora.toml`
-          
-          [env: AOZORA_STRICT=]
-
-      --diagnostic-format <DIAGNOSTIC_FORMAT>
-          How to render diagnostics: `human` (graphical snippet, the default on a terminal), `json`
-          (the `aozora::wire` envelope, the default when stderr is piped — the machine / agent
-          path), or `short` (one grep-able line per diagnostic). Falls back to
-          `AOZORA_DIAGNOSTIC_FORMAT`, then `.aozora.toml`
-
-          Possible values:
-          - auto:  Graphical (`human`) on a terminal, machine (`json`) when piped
-          - human: miette graphical report — source snippet + caret + label + help
-          - json:  The `aozora::wire` JSON envelope — the cross-binding machine view
-          - short: One grep-able line per diagnostic: `path:offset: severity[code]: msg`
-          
-          [env: AOZORA_DIAGNOSTIC_FORMAT=]
-
   -h, --help
           Print help (see a summary with '-h')
 
@@ -77,8 +71,7 @@ Options:
           Print version
 
 Examples:
-  aozora check src.txt          # human on a TTY, json when piped
-  aozora check --strict src.txt # any diagnostic -> exit 1
-  aozora check -E sjis file.txt # Shift_JIS source
-  aozora check --timing src.txt # print read/parse/render timing
-  cat src.txt | aozora check    # read from stdin
+  aozora wire nodes src.txt           # source nodes as JSON
+  cat src.txt | aozora wire pairs     # matched pairs from stdin
+  aozora wire gaiji -E sjis file.txt  # resolved gaiji references
+  aozora wire slugs                   # the static slug catalogue

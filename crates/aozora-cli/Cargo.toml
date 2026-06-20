@@ -27,11 +27,17 @@ aozora          = { workspace = true, features = ["schema"] }
 aozora-encoding = { workspace = true }
 aozora-pandoc   = { workspace = true }
 clap            = { workspace = true }
+clap_complete   = { workspace = true }
+clap_complete_nushell = { workspace = true }
+clap_mangen     = { workspace = true }
 comfy-table     = { workspace = true }
 miette          = { workspace = true, features = ["fancy"] }
 anyhow          = { workspace = true }
 thiserror       = { workspace = true }
+serde           = { workspace = true }
 serde_json      = { workspace = true }
+toml            = { workspace = true }
+notify          = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -72,3 +72,36 @@ fn snapshot_fmt_help() {
         insta::assert_snapshot!(run(&["fmt", "--help"]));
     });
 }
+
+#[test]
+fn snapshot_wire_help() {
+    insta::with_settings!({
+        filters => vec![
+            (r"\d+\.\d+\.\d+(?:-[\w.]+)?", "[VERSION]"),
+        ],
+    }, {
+        insta::assert_snapshot!(run(&["wire", "--help"]));
+    });
+}
+
+#[test]
+fn snapshot_completions_help() {
+    insta::with_settings!({
+        filters => vec![
+            (r"\d+\.\d+\.\d+(?:-[\w.]+)?", "[VERSION]"),
+        ],
+    }, {
+        insta::assert_snapshot!(run(&["completions", "--help"]));
+    });
+}
+
+#[test]
+fn snapshot_explain_help() {
+    insta::with_settings!({
+        filters => vec![
+            (r"\d+\.\d+\.\d+(?:-[\w.]+)?", "[VERSION]"),
+        ],
+    }, {
+        insta::assert_snapshot!(run(&["explain", "--help"]));
+    });
+}

@@ -120,6 +120,7 @@ the per-language jump list.
 aozora check FILE.txt           # lex + report diagnostics
 aozora fmt --check FILE.txt     # round-trip parse ∘ serialize check
 aozora render FILE.txt          # render to HTML on stdout
+aozora wire nodes FILE.txt      # parsed nodes as wire JSON (pairs / gaiji / slugs …)
 aozora check -E sjis FILE.txt   # Shift_JIS source from Aozora Bunko
 ```
 
@@ -146,7 +147,7 @@ consumers usually import only this one.
 | [`crates/aozora-cst`](./crates/aozora-cst) | rowan-backed lossless concrete syntax tree. Editor/formatter surface. |
 | [`crates/aozora-query`](./crates/aozora-query) | Tree-sitter-style pattern DSL (`SyntaxKind` + capture) for queries over the CST. |
 | [`crates/aozora-pandoc`](./crates/aozora-pandoc) | Pandoc AST projection (`AozoraTree` → `pandoc_ast::Pandoc`); unlocks 50+ output formats via Pandoc writers. |
-| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` binary: `check` / `fmt` / `schema` / `kinds` / `explain` / `pandoc`. |
+| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` binary: `check` / `fmt` / `render` / `wire` / `schema` / `kinds` / `explain` / `pandoc`. |
 | [`crates/aozora-wasm`](./crates/aozora-wasm) | `wasm32-unknown-unknown` target for `wasm-pack build --target web`. |
 | [`crates/aozora-ffi`](./crates/aozora-ffi) | C ABI driver (opaque handle, JSON-encoded structured data). |
 | [`crates/aozora-extism`](./crates/aozora-extism) | Extism (WASM) plugin driver — one portable `aozora.wasm` for polyglot host SDKs (Go / Java / PHP / Ruby / …). The breadth strategy for new languages (ADR-0006). |
