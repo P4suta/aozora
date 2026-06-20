@@ -647,6 +647,27 @@ pub enum Diagnostic {
     },
 }
 
+/// Introspected metadata for a diagnostic code — the data behind
+/// `aozora explain <code>`.
+///
+/// Returned by [`Diagnostic::explain`]. `help` and `url` are read from
+/// the live [`miette::Diagnostic`] impl of a representative instance, so
+/// they cannot drift from what `aozora check` renders for the same
+/// diagnostic.
+#[derive(Debug, Clone)]
+pub struct DiagnosticInfo {
+    /// Stable `aozora::lex::*` code (see [`codes`]).
+    pub code: &'static str,
+    /// Severity routing axis.
+    pub severity: Severity,
+    /// Origin axis: user input vs. library-internal.
+    pub source: DiagnosticSource,
+    /// One-line remediation help — the `#[diagnostic(help(…))]` text.
+    pub help: String,
+    /// Documentation URL for the code, when the variant carries one.
+    pub url: Option<String>,
+}
+
 #[allow(
     clippy::same_name_method,
     reason = "intentional: our inherent severity() / code() return strongly-typed (Severity enum, &'static str) values that mirror miette::Diagnostic's loosely-typed defaults — callers prefer the inherent method"
@@ -937,6 +958,98 @@ impl Diagnostic {
             Self::Internal { check, .. } => check.as_code(),
         }
     }
+
+    /// Every stable diagnostic code [`Self::code`] can return, in
+    /// catalogue order: the fifteen source-level codes followed by the
+    /// four pipeline-internal check codes. Backs `aozora explain`'s
+    /// catalogue and the round-trip coverage test.
+    pub const ALL_CODES: [&'static str; 19] = [
+        codes::SOURCE_CONTAINS_PUA,
+        codes::UNCLOSED_BRACKET,
+        codes::UNMATCHED_CLOSE,
+        codes::ACCENT_DECOMPOSITION_APPLIED,
+        codes::UNRESOLVED_GAIJI,
+        codes::MISMATCHED_CONTAINER_CLOSE,
+        codes::EMPTY_RUBY_READING,
+        codes::NESTED_RUBY,
+        codes::UNRECOGNISED_CONTAINER_DIRECTIVE,
+        codes::TCY_TARGET_NOT_FOUND,
+        codes::BOUTEN_TARGET_AMBIGUOUS,
+        codes::BREAK_IN_SINGLE_LINE_CONTAINER,
+        codes::BRACKETED_KAERITEN_NO_PAIR,
+        codes::KAERITEN_OUTSIDE_KANBUN,
+        codes::MISMATCHED_BOUTEN_CONTAINER,
+        codes::RESIDUAL_ANNOTATION_MARKER,
+        codes::UNREGISTERED_SENTINEL,
+        codes::REGISTRY_OUT_OF_ORDER,
+        codes::REGISTRY_POSITION_MISMATCH,
+    ];
+
+    /// Introspect the diagnostic identified by `code` — one of
+    /// [`Self::ALL_CODES`] (equivalently a [`codes`] constant or an
+    /// [`InternalCheckCode::as_code`]). `None` for an unknown code.
+    ///
+    /// `severity` / `source` come from the inherent accessors; `help` /
+    /// `url` are read from the live [`miette::Diagnostic`] impl of a
+    /// representative instance, so the explanation always agrees with
+    /// what `aozora check` prints for the same diagnostic.
+    #[must_use]
+    pub fn explain(code: &str) -> Option<DiagnosticInfo> {
+        let sample = Self::sample_for_code(code)?;
+        Some(DiagnosticInfo {
+            code: sample.code(),
+            severity: sample.severity(),
+            source: sample.source(),
+            help: MietteDiagnostic::help(&sample)
+                .map(|h| h.to_string())
+                .unwrap_or_default(),
+            url: MietteDiagnostic::url(&sample).map(|u| u.to_string()),
+        })
+    }
+
+    /// A representative instance of the variant a `code` names, for
+    /// introspection (reading miette help/url without a real parse).
+    /// Spans are placeholder-empty; the four internal codes all map to
+    /// the single [`Self::Internal`] variant, which shares one help/url.
+    fn sample_for_code(code: &str) -> Option<Self> {
+        let at = Span::new(0, 0);
+        Some(match code {
+            codes::SOURCE_CONTAINS_PUA => Self::source_contains_pua(at, '\u{E001}'),
+            codes::UNCLOSED_BRACKET => Self::unclosed_bracket(at, PairKind::Bracket),
+            codes::UNMATCHED_CLOSE => Self::unmatched_close(at, PairKind::Bracket),
+            codes::ACCENT_DECOMPOSITION_APPLIED => Self::accent_decomposition_applied(at),
+            codes::UNRESOLVED_GAIJI => Self::unresolved_gaiji(at),
+            codes::MISMATCHED_CONTAINER_CLOSE => {
+                Self::mismatched_container_close(at, "indent", "align-end")
+            }
+            codes::EMPTY_RUBY_READING => Self::empty_ruby_reading(at),
+            codes::NESTED_RUBY => Self::nested_ruby(at),
+            codes::UNRECOGNISED_CONTAINER_DIRECTIVE => Self::unrecognised_container_directive(at),
+            codes::TCY_TARGET_NOT_FOUND => Self::tcy_target_not_found(at),
+            codes::BOUTEN_TARGET_AMBIGUOUS => Self::bouten_target_ambiguous(at),
+            codes::BREAK_IN_SINGLE_LINE_CONTAINER => {
+                Self::break_in_single_line_container(at, "align-end")
+            }
+            codes::BRACKETED_KAERITEN_NO_PAIR => Self::bracketed_kaeriten_no_pair(at),
+            codes::KAERITEN_OUTSIDE_KANBUN => Self::kaeriten_outside_kanbun(at),
+            codes::MISMATCHED_BOUTEN_CONTAINER => {
+                Self::mismatched_bouten_container(at, "傍点", "傍線")
+            }
+            codes::RESIDUAL_ANNOTATION_MARKER => {
+                Self::internal(at, InternalCheckCode::ResidualAnnotationMarker)
+            }
+            codes::UNREGISTERED_SENTINEL => {
+                Self::internal(at, InternalCheckCode::UnregisteredSentinel)
+            }
+            codes::REGISTRY_OUT_OF_ORDER => {
+                Self::internal(at, InternalCheckCode::RegistryOutOfOrder)
+            }
+            codes::REGISTRY_POSITION_MISMATCH => {
+                Self::internal(at, InternalCheckCode::RegistryPositionMismatch)
+            }
+            _ => return None,
+        })
+    }
 }
 
 /// Split a [`Span`] into the `(offset, length)` pair miette wants.
@@ -1225,5 +1338,54 @@ mod tests {
         let internal = Diagnostic::internal(Span::new(0, 3), InternalCheckCode::RegistryOutOfOrder);
         assert_eq!(internal.severity(), Severity::Error);
         assert_eq!(internal.source(), DiagnosticSource::Internal);
+    }
+
+    /// Every catalogued code resolves to a representative instance with
+    /// non-empty help and an https URL — guards `explain` against a code
+    /// that has no sample (and pins the catalogue length).
+    #[test]
+    fn explain_covers_every_catalogued_code() {
+        assert_eq!(
+            Diagnostic::ALL_CODES.len(),
+            19,
+            "ALL_CODES must list every code code() can return"
+        );
+        for &code in &Diagnostic::ALL_CODES {
+            let info = Diagnostic::explain(code)
+                .unwrap_or_else(|| panic!("catalogued code {code} is not explainable"));
+            assert_eq!(
+                info.code, code,
+                "explain echoed a different code for {code}"
+            );
+            assert!(!info.help.trim().is_empty(), "{code}: empty help text");
+            assert!(
+                info.url
+                    .as_deref()
+                    .is_some_and(|u| u.starts_with("https://")),
+                "{code}: missing or non-https url"
+            );
+        }
+    }
+
+    #[test]
+    fn explain_rejects_unknown_and_unprefixed_codes() {
+        // explain wants the full code; the CLI expands short forms.
+        assert!(Diagnostic::explain(codes::UNCLOSED_BRACKET).is_some());
+        assert!(Diagnostic::explain("unclosed_bracket").is_none());
+        assert!(Diagnostic::explain("ruby").is_none());
+        assert!(Diagnostic::explain("aozora::lex::does_not_exist").is_none());
+    }
+
+    #[test]
+    fn explain_internal_codes_share_help_but_keep_distinct_codes() {
+        let resid = Diagnostic::explain(codes::RESIDUAL_ANNOTATION_MARKER).unwrap();
+        let unreg = Diagnostic::explain(codes::UNREGISTERED_SENTINEL).unwrap();
+        assert_eq!(resid.source, DiagnosticSource::Internal);
+        assert_eq!(resid.code, codes::RESIDUAL_ANNOTATION_MARKER);
+        assert_eq!(unreg.code, codes::UNREGISTERED_SENTINEL);
+        // All four internal checks are one Diagnostic::Internal variant,
+        // so they share the umbrella help/url.
+        assert_eq!(resid.help, unreg.help);
+        assert_eq!(resid.url, unreg.url);
     }
 }

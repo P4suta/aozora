@@ -1,0 +1,17 @@
+---
+source: crates/aozora-cli/tests/snapshot_cli.rs
+expression: "run(&[\"completions\", \"--help\"])"
+---
+Print a shell completion script (`bash` / `zsh` / `fish` / `powershell` / `elvish` / `nushell`) on
+stdout. Generated from the live command tree, so it always matches the installed binary; release
+tarballs also ship these under `completions/`
+
+Usage: aozora completions <SHELL>
+
+Arguments:
+  <SHELL>  Shell dialect to emit a completion script for [possible values: bash, elvish, fish,
+           powershell, zsh, nushell]
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version

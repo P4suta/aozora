@@ -86,6 +86,7 @@ assert_eq!(canonical, "｜青梅《おうめ》");
 aozora check FILE.txt           # 字句解析・診断を出力
 aozora fmt --check FILE.txt     # parse ∘ serialize の往復チェック
 aozora render FILE.txt          # HTML を標準出力へ
+aozora wire nodes FILE.txt      # 解析ノードを wire JSON で出力 (pairs / gaiji / slugs …)
 aozora check -E sjis FILE.txt   # Shift_JIS ソース (青空文庫の標準)
 ```
 
@@ -112,7 +113,7 @@ aozora は21クレートの workspace です。
 | [`crates/aozora-cst`](./crates/aozora-cst) | rowan ベースのロスレス具象構文木 (CST)。エディタ/フォーマッタ向け。 |
 | [`crates/aozora-query`](./crates/aozora-query) | tree-sitter 風パターン DSL (`SyntaxKind` + capture)。CST に対するクエリ。 |
 | [`crates/aozora-pandoc`](./crates/aozora-pandoc) | Pandoc AST への射影 (`AozoraTree` → `pandoc_ast::Pandoc`)。50+ 出力フォーマットに繋がる。 |
-| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` バイナリ本体: `check` / `fmt` / `schema` / `kinds` / `explain` / `pandoc`。 |
+| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` バイナリ本体: `check` / `fmt` / `render` / `wire` / `schema` / `kinds` / `explain` / `pandoc`。 |
 | [`crates/aozora-wasm`](./crates/aozora-wasm) | `wasm32-unknown-unknown` ターゲット (`wasm-pack build --target web`)。 |
 | [`crates/aozora-ffi`](./crates/aozora-ffi) | C ABI ドライバ (オペーク・ハンドル + JSON 構造化データ)。 |
 | [`crates/aozora-py`](./crates/aozora-py) | PyO3 バインディング、`maturin` で配布。 |

@@ -14,10 +14,12 @@ aozora <SUBCOMMAND> [OPTIONS] [ARGS]
 | `check` | Lex + report diagnostics. |
 | `fmt` | Round-trip `parse ∘ serialize` (canonicalise). |
 | `render` | Render to HTML on stdout. |
+| `wire` | Emit a document's wire JSON (`nodes`/`pairs`/`container-pairs`/`diagnostics`/`gaiji`) or the static `slugs` catalogue. |
 | `pandoc` | Project to a Pandoc AST (JSON, or pipe through `pandoc`). |
 | `kinds` | Tabulate every `NodeKind` / `PairKind` / `Severity` / … wire tag. |
 | `schema` | Print the JSON Schema for a wire envelope. |
-| `explain` | Print short prose for a `NodeKind` tag. |
+| `explain` | Print prose for a `NodeKind` tag, or help / severity / URL for a diagnostic code. |
+| `completions` | Print a shell completion script (bash / zsh / fish / powershell / elvish / nushell). |
 
 There are **no global options** beyond clap's `-h`/`--help` and
 `-V`/`--version`; the input-shaping flags below are per-subcommand. All
@@ -25,7 +27,7 @@ document subcommands accept `-` (or no path) to read **stdin**.
 
 | Common flag | Subcommands | Effect |
 |---|---|---|
-| `-E`, `--encoding {auto,utf8,sjis}` | check / fmt / render / pandoc | Source encoding. **Default `auto`** — UTF-8 if the bytes are valid UTF-8, else Shift_JIS. |
+| `-E`, `--encoding {auto,utf8,sjis}` | check / fmt / render / wire / pandoc | Source encoding. **Default `auto`** — UTF-8 if the bytes are valid UTF-8, else Shift_JIS. |
 
 Colour follows the terminal and the `NO_COLOR` environment variable
 (miette honours it); there is no `--no-color` flag.
@@ -110,6 +112,42 @@ The output is semantic HTML5 with `aozora-*` class hooks (no inline
 styles). See [HTML renderer](../arch/renderer.md#class-name-scheme) for
 the class-name reference.
 
+## `aozora wire`
+
+```text
+aozora wire <KIND> [OPTIONS] [PATH]
+```
+
+Emit a parsed document's data as the shared `aozora::wire` JSON
+envelope — the **data** counterpart to `aozora schema` (which prints the
+*contract*). The bytes are identical to every binding's `*_json()`
+output (Python `.nodes_json()`, WASM `.nodes_json()`, the C FFI
+`aozora_nodes_json`), so the CLI is a first-class way to get structured
+parser output into a shell pipeline.
+
+| `KIND` | Envelope |
+|---|---|
+| `nodes` | Source-keyed nodes: `{ kind, span }`. |
+| `pairs` | Matched delimiter pairs: `{ kind, open, close }`. |
+| `container-pairs` | Container open/close pairs (normalized coordinates). |
+| `diagnostics` | The diagnostics stream as data (same shape as `check --diagnostic-format json`, but always exit `0`). |
+| `gaiji` | Resolved `※［＃…］` references: `{ span, description, mencode, codepoint, resolved }`. Alias: `gaiji-resolutions`. |
+| `slugs` | The static `［＃…］` slug catalogue — needs no input. |
+
+Every envelope is `{ "schema_version": 1, "data": [ … ] }`; the per-kind
+item schema is the one `aozora schema <kind>` prints (see
+[Wire format](../wire/overview.md)). `PATH` of `-` (or omitted) reads
+stdin and `--encoding`/`-E` applies; `slugs` ignores any input. Unlike
+`check`, `wire` is a pure projection — it always exits `0`.
+
+```sh
+aozora wire nodes src.txt                  # source nodes as JSON
+cat src.txt | aozora wire pairs            # matched pairs, from stdin
+aozora wire gaiji -E sjis crime.txt        # resolved 外字 references
+aozora wire slugs                          # the static slug catalogue
+aozora schema nodes                        # the *contract* for `wire nodes`
+```
+
 ## `aozora pandoc`
 
 ```text
@@ -128,11 +166,56 @@ aozora pandoc src.txt -t latex > src.tex          # spawns pandoc directly
 
 See [Bindings → Pandoc](../bindings/pandoc.md).
 
+## `aozora completions`
+
+```text
+aozora completions <SHELL>
+```
+
+Print a shell completion script for `<SHELL>` (`bash` / `zsh` / `fish` /
+`powershell` / `elvish` / `nushell`) on stdout. The script is generated
+from the live command tree, so it always matches the installed binary —
+there is no committed copy to drift (ADR-0012). Release tarballs also
+bundle these under `completions/`.
+
+```sh
+# bash — system-wide (or source the file from ~/.bashrc)
+aozora completions bash | sudo tee /etc/bash_completion.d/aozora >/dev/null
+
+# zsh — drop into a directory on your $fpath, then restart the shell
+aozora completions zsh > ~/.zfunc/_aozora
+
+# fish
+aozora completions fish > ~/.config/fish/completions/aozora.fish
+
+# nushell — save the module, then `use` it from your config
+aozora completions nushell | save -f ($nu.default-config-dir | path join aozora.nu)
+```
+
+The release archive likewise ships man pages under `man/man1/`
+(`aozora.1` plus one page per subcommand), generated the same way. The
+hidden `aozora man [SUBCOMMAND]` subcommand renders a page to stdout if
+you want to install one locally.
+
 ## Introspection subcommands
 
 `kinds`, `schema {diagnostics|nodes|pairs|container-pairs}`, and
-`explain <tag>` print typed contracts and need no input file. They back
-the drift-gated wire artefacts; see [Wire format](../wire/overview.md).
+`explain <target>` print typed contracts and need no input file. They
+back the drift-gated wire artefacts; see [Wire format](../wire/overview.md).
+The **data** counterpart to `schema` is [`aozora wire`](#aozora-wire),
+which projects a parsed document into those same envelopes.
+
+`aozora explain` accepts either a `NodeKind` camelCase tag (printing the
+node's handbook chapter) or a **diagnostic code** — the full
+`aozora::lex::unclosed_bracket` or the short `unclosed_bracket` —
+printing the same severity, help, and docs URL that `aozora check`
+attaches to that diagnostic:
+
+```sh
+aozora explain ruby                          # NodeKind handbook chapter
+aozora explain aozora::lex::unclosed_bracket # diagnostic code → help + URL
+aozora explain unresolved_gaiji              # short form of the code
+```
 
 ## Exit codes
 

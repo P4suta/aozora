@@ -11,6 +11,11 @@
 //!   output differs from `FILE`; `--write` overwrites `FILE`. Default
 //!   is print-to-stdout.
 //! - `aozora render FILE` — render `FILE` to HTML on stdout.
+//! - `aozora wire <kind> FILE` — emit the parsed document's wire JSON
+//!   for one `aozora::wire` envelope (`nodes` / `pairs` /
+//!   `container-pairs` / `diagnostics` / `gaiji`), or the static
+//!   `slugs` catalogue. The data counterpart to `aozora schema
+//!   <kind>`, byte-identical to every binding's `*_json()` output.
 //!
 //! Introspection (no input required, prints typed contracts):
 //! - `aozora kinds` — table of every `NodeKind` / `PairKind` /
@@ -24,6 +29,11 @@
 //! - `aozora explain <kind>` — embedded handbook chapter for the
 //!   given `NodeKind`, surfaced via `include_str!`.
 //!
+//! Tooling:
+//! - `aozora completions <shell>` — print a shell completion script
+//!   (bash / zsh / fish / powershell / elvish / nushell), generated
+//!   from the live command tree.
+//!
 //! All document-level subcommands accept `-` (or no path argument)
 //! to read from stdin. Encoding is auto-detected by default (UTF-8 if
 //! the bytes are valid UTF-8, otherwise Shift_JIS); pass
@@ -31,8 +41,13 @@
 
 #![forbid(unsafe_code)]
 
+mod completions;
+mod config;
 mod diagnostics_render;
 mod introspect;
+mod manpage;
+mod timing;
+mod watch;
 
 use std::borrow::Cow;
 use std::env;
@@ -42,20 +57,32 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode, Stdio};
 
-use aozora::{DiagnosticSource, Document};
+use aozora::{DiagnosticSource, Document, wire};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::completions::CompletionsArgs;
 use crate::diagnostics_render::DiagFormat;
 use crate::introspect::{ExplainArgs, KindsArgs, SchemaArgs};
+use crate::manpage::ManArgs;
+use crate::timing::{Timer, TimingFormat};
 
 #[derive(Debug, Parser)]
 #[command(
     name = "aozora",
     about = "Aozora Bunko notation parser CLI",
     version,
-    propagate_version = true
+    propagate_version = true,
+    after_long_help = "Examples:
+  aozora check FILE.txt              # lex + report diagnostics
+  aozora render FILE.txt > out.html  # render to HTML
+  aozora wire nodes FILE.txt         # parsed nodes as wire JSON
+  aozora fmt --check FILE.txt        # CI format gate
+  aozora explain unclosed_bracket    # explain a diagnostic code
+  aozora completions zsh             # shell completion script
+
+Document subcommands read stdin when given '-' or no path."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -70,48 +97,121 @@ enum Command {
     Fmt(FmtArgs),
     /// Render Aozora notation to HTML on stdout.
     Render(RenderArgs),
+    /// Emit a parsed document's wire JSON for one `aozora::wire`
+    /// envelope — `nodes` / `pairs` / `container-pairs` /
+    /// `diagnostics` / `gaiji` — or the static `slugs` catalogue. The
+    /// data counterpart to `schema`: `schema <kind>` prints the JSON
+    /// Schema, `wire <kind>` prints a document's data in that schema,
+    /// byte-identical to every binding's `*_json()` output.
+    Wire(WireArgs),
     /// Tabulate every `NodeKind` / `PairKind` / `Severity` /
     /// `DiagnosticSource` / `Sentinel` / `InternalCheckCode`
     /// variant with its wire tag.
     Kinds(KindsArgs),
     /// Pretty-print the JSON Schema for one of the four wire envelopes.
     Schema(SchemaArgs),
-    /// Print short prose for a `NodeKind` camelCase tag.
+    /// Print prose for a `NodeKind` tag, or help / severity / URL for a
+    /// diagnostic code.
     Explain(ExplainArgs),
     /// Project the parsed document to a Pandoc AST.
     /// Without `--format`, prints Pandoc JSON to stdout (consumable
     /// by `pandoc -f json -t <FORMAT>`); with `--format`, spawns
     /// pandoc and pipes the JSON through it.
     Pandoc(PandocArgs),
+    /// Print a shell completion script (`bash` / `zsh` / `fish` /
+    /// `powershell` / `elvish` / `nushell`) on stdout. Generated from
+    /// the live command tree, so it always matches the installed
+    /// binary; release tarballs also ship these under `completions/`.
+    Completions(CompletionsArgs),
+    /// Render a roff man page (the top-level page, or a named
+    /// subcommand's). Hidden: man pages ship in the release tarball
+    /// under `man/man1/` rather than being invoked by hand.
+    #[command(hide = true)]
+    Man(ManArgs),
 }
 
+/// Flags shared by every document subcommand: where to read, how to
+/// decode, and whether to print timing. Flattened into each so `file`
+/// and `-E/--encoding` are declared once and `--timing` has a single
+/// home (it spans check / render / fmt / wire / pandoc).
 #[derive(Debug, Parser)]
-struct CheckArgs {
+struct CommonArgs {
     /// Input path; pass `-` (or omit) to read from stdin.
     #[arg(default_value = "-")]
     file: PathBuf,
 
-    /// Exit non-zero on any diagnostic.
-    #[arg(long, short = 's')]
-    strict: bool,
+    /// Source encoding. Falls back to `AOZORA_ENCODING`, then the
+    /// `encoding` key in `.aozora.toml`, then auto-detection.
+    #[arg(long, short = 'E', value_enum, env = "AOZORA_ENCODING")]
+    encoding: Option<Encoding>,
 
-    /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
-    encoding: Encoding,
+    /// Read settings from this `.aozora.toml` instead of searching
+    /// upward from the working directory.
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
+
+    /// Print per-phase timing (read / parse / output) to stderr. Writes
+    /// only to stderr, so stdout stays byte-identical — safe to leave on
+    /// inside a `render` / `wire` pipeline.
+    #[arg(long)]
+    timing: bool,
+
+    /// Timing report format: `human` (aligned lines + total, the
+    /// default) or `json` (a `{schema_version, phases, total_nanos}`
+    /// envelope for scripts and agents). Ignored without `--timing`.
+    #[arg(long, value_enum, default_value_t = TimingFormat::Human)]
+    timing_format: TimingFormat,
+
+    /// Re-run on every change to the input file (foreground; Ctrl-C to
+    /// stop). Requires a file path — not available on stdin.
+    #[arg(long)]
+    watch: bool,
+}
+
+impl CommonArgs {
+    /// Load the effective `.aozora.toml`: an explicit `--config`, else an
+    /// upward search from the working directory, else all-default.
+    fn load_config(&self) -> Result<config::ConfigFile> {
+        let cwd = env::current_dir().context("failed to read the working directory")?;
+        config::ConfigFile::resolve(self.config.as_deref(), &cwd)
+    }
+
+    /// Effective encoding: `-E/--encoding` (or `AOZORA_ENCODING`, both via
+    /// clap), else the config's `encoding`, else auto-detect.
+    fn resolved_encoding(&self, cfg: &config::ConfigFile) -> Encoding {
+        self.encoding.or(cfg.encoding).unwrap_or_default()
+    }
+}
+
+#[derive(Debug, Parser)]
+#[command(after_long_help = "Examples:
+  aozora check src.txt          # human on a TTY, json when piped
+  aozora check --strict src.txt # any diagnostic -> exit 1
+  aozora check -E sjis file.txt # Shift_JIS source
+  aozora check --timing src.txt # print read/parse/render timing
+  cat src.txt | aozora check    # read from stdin")]
+struct CheckArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+
+    /// Exit non-zero on any diagnostic. Also settable via `AOZORA_STRICT`
+    /// or the `strict` key in `.aozora.toml`.
+    #[arg(long, short = 's', env = "AOZORA_STRICT")]
+    strict: bool,
 
     /// How to render diagnostics: `human` (graphical snippet, the
     /// default on a terminal), `json` (the `aozora::wire` envelope, the
     /// default when stderr is piped — the machine / agent path), or
-    /// `short` (one grep-able line per diagnostic).
-    #[arg(long, value_enum, default_value_t = DiagFormat::Auto)]
-    diagnostic_format: DiagFormat,
+    /// `short` (one grep-able line per diagnostic). Falls back to
+    /// `AOZORA_DIAGNOSTIC_FORMAT`, then `.aozora.toml`.
+    #[arg(long, value_enum, env = "AOZORA_DIAGNOSTIC_FORMAT")]
+    diagnostic_format: Option<DiagFormat>,
 }
 
 #[derive(Debug, Parser)]
 struct FmtArgs {
-    /// Input path; pass `-` (or omit) to read from stdin.
-    #[arg(default_value = "-")]
-    file: PathBuf,
+    #[command(flatten)]
+    common: CommonArgs,
 
     /// Exit non-zero if the formatted output differs from the input
     /// (after the lexer's sanitize phase: BOM strip, CRLF→LF). Mutually
@@ -123,32 +223,55 @@ struct FmtArgs {
     /// when reading from stdin.
     #[arg(long, conflicts_with = "check")]
     write: bool,
-
-    /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
-    encoding: Encoding,
 }
 
 #[derive(Debug, Parser)]
 struct RenderArgs {
-    /// Input path; pass `-` (or omit) to read from stdin.
-    #[arg(default_value = "-")]
-    file: PathBuf,
+    #[command(flatten)]
+    common: CommonArgs,
+}
 
-    /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
-    encoding: Encoding,
+/// `aozora wire <kind>` — which wire envelope to emit. The data
+/// counterpart to `SchemaKind`: `schema nodes` prints the contract,
+/// `wire nodes` prints a document's data in that contract.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum WireKind {
+    /// Per-diagnostic `{ kind, severity, source, span, codepoint? }`.
+    Diagnostics,
+    /// Per-source-node `{ kind, span }`, sorted by `span.start`.
+    Nodes,
+    /// Per-matched-pair `{ kind, open, close }`.
+    Pairs,
+    /// Per-container-pair `{ kind, open, close }` (normalized coordinates).
+    ContainerPairs,
+    /// Per-外字-reference `{ span, description, mencode, codepoint, resolved }`.
+    #[value(name = "gaiji", alias = "gaiji-resolutions")]
+    GaijiResolutions,
+    /// The static ［＃…］ slug catalogue — reads no document input.
+    Slugs,
+}
+
+#[derive(Debug, Parser)]
+#[command(after_long_help = "Examples:
+  aozora wire nodes src.txt           # source nodes as JSON
+  cat src.txt | aozora wire pairs     # matched pairs from stdin
+  aozora wire gaiji -E sjis file.txt  # resolved gaiji references
+  aozora wire slugs                   # the static slug catalogue")]
+struct WireArgs {
+    /// Which wire envelope to emit.
+    #[arg(value_enum)]
+    which: WireKind,
+
+    // `common.file` is unused by `slugs` (a static catalogue with no
+    // document input); every other kind reads it.
+    #[command(flatten)]
+    common: CommonArgs,
 }
 
 #[derive(Debug, Parser)]
 struct PandocArgs {
-    /// Input path; pass `-` (or omit) to read from stdin.
-    #[arg(default_value = "-")]
-    file: PathBuf,
-
-    /// Source encoding.
-    #[arg(long, short = 'E', value_enum, default_value_t = Encoding::Auto)]
-    encoding: Encoding,
+    #[command(flatten)]
+    common: CommonArgs,
 
     /// Pandoc output format (e.g. `html`, `epub`, `latex`, `docx`).
     /// When set, the binary spawns `pandoc -f json -t <FORMAT>` and
@@ -158,7 +281,8 @@ struct PandocArgs {
     format: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 enum Encoding {
     /// Detect the source encoding: valid UTF-8 is used as-is, otherwise
     /// the bytes are decoded as Shift_JIS. The right default — Aozora
@@ -180,10 +304,13 @@ fn main() -> ExitCode {
         Command::Check(opts) => run_check(&opts),
         Command::Fmt(opts) => run_fmt(&opts),
         Command::Render(opts) => run_render(&opts),
+        Command::Wire(opts) => run_wire(&opts),
         Command::Kinds(opts) => introspect::run_kinds(&opts),
         Command::Schema(opts) => introspect::run_schema(&opts),
         Command::Explain(opts) => introspect::run_explain(&opts),
         Command::Pandoc(opts) => run_pandoc(&opts),
+        Command::Completions(opts) => Ok(completions::run_completions(&opts)),
+        Command::Man(opts) => manpage::run_man(&opts),
     };
 
     match result {
@@ -195,44 +322,90 @@ fn main() -> ExitCode {
     }
 }
 
+/// Run `once`, or — with `--watch` — run it now and re-run on every
+/// change to the input file. `--watch` on stdin is a usage error (2).
+fn run_watched(common: &CommonArgs, once: impl Fn() -> Result<ExitCode>) -> Result<ExitCode> {
+    if !common.watch {
+        return once();
+    }
+    if common.file.as_os_str() == "-" {
+        let _drop = writeln!(
+            io::stderr(),
+            "aozora: --watch needs a file path; it cannot watch stdin"
+        );
+        return Ok(ExitCode::from(2));
+    }
+    watch::watch(&common.file, once)
+}
+
 fn run_check(args: &CheckArgs) -> Result<ExitCode> {
-    let source = read_source(&args.file, args.encoding)?;
+    run_watched(&args.common, || run_check_once(args))
+}
+
+fn run_check_once(args: &CheckArgs) -> Result<ExitCode> {
+    let cfg = args.common.load_config()?;
+    let encoding = args.common.resolved_encoding(&cfg);
+    let diagnostic_format = args
+        .diagnostic_format
+        .or(cfg.diagnostic_format)
+        .unwrap_or_default();
+    let strict = args.strict || cfg.strict.unwrap_or(false);
+
+    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
+    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let doc = Document::new(source);
-    let tree = doc.parse();
+    let tree = timer.measure("parse", || doc.parse());
     let diagnostics = tree.diagnostics();
 
-    if diagnostics.is_empty() {
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    diagnostics_render::render(
-        args.diagnostic_format,
-        &display_path(&args.file),
-        &doc,
-        diagnostics,
-    )
-    .context("failed to write diagnostics")?;
-
-    // Exit-code contract (documented in `aozora check --help` and
-    // AGENTS.md): 3 = an Internal diagnostic fired (a library bug, not
-    // bad input), 1 = `--strict` with at least one diagnostic, 0 = input
-    // diagnostics were printed but tolerated.
-    if diagnostics
-        .iter()
-        .any(|d| d.source() == DiagnosticSource::Internal)
-    {
-        Ok(ExitCode::from(3))
-    } else if args.strict {
-        Ok(ExitCode::from(1))
+    let code = if diagnostics.is_empty() {
+        ExitCode::SUCCESS
     } else {
-        Ok(ExitCode::SUCCESS)
-    }
+        timer
+            .measure("render", || {
+                diagnostics_render::render(
+                    diagnostic_format,
+                    &display_path(&args.common.file),
+                    &doc,
+                    diagnostics,
+                )
+            })
+            .context("failed to write diagnostics")?;
+
+        // Exit-code contract (documented in `aozora check --help` and
+        // AGENTS.md): 3 = an Internal diagnostic fired (a library bug, not
+        // bad input), 1 = `--strict` with at least one diagnostic, 0 = input
+        // diagnostics were printed but tolerated.
+        if diagnostics
+            .iter()
+            .any(|d| d.source() == DiagnosticSource::Internal)
+        {
+            ExitCode::from(3)
+        } else if strict {
+            ExitCode::from(1)
+        } else {
+            ExitCode::SUCCESS
+        }
+    };
+
+    timer.report()?;
+    Ok(code)
 }
 
 fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
-    let source = read_source(&args.file, args.encoding)?;
+    run_watched(&args.common, || run_fmt_once(args))
+}
+
+fn run_fmt_once(args: &FmtArgs) -> Result<ExitCode> {
+    let cfg = args.common.load_config()?;
+    let encoding = args.common.resolved_encoding(&cfg);
+    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
+    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let doc = Document::new(source.clone());
-    let formatted = doc.parse().serialize();
+    let tree = timer.measure("parse", || doc.parse());
+    let formatted = timer.measure("serialize", || tree.serialize());
+    // Timing covers read/parse/serialize; the comparison and I/O below
+    // are not the parse cost a reader cares about, so report here.
+    timer.report()?;
 
     // The lexer's Phase 0 sanitize strips BOM and normalises CRLF→LF;
     // the canonical form is fixed-point on the sanitized input, not
@@ -250,14 +423,14 @@ fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
         let _drop = writeln!(
             io::stderr(),
             "aozora fmt: {} would be reformatted",
-            display_path(&args.file)
+            display_path(&args.common.file)
         );
         return Ok(ExitCode::from(1));
     }
 
-    if args.write && args.file.as_os_str() != "-" {
-        fs::write(&args.file, &formatted)
-            .with_context(|| format!("failed to write {}", display_path(&args.file)))?;
+    if args.write && args.common.file.as_os_str() != "-" {
+        fs::write(&args.common.file, &formatted)
+            .with_context(|| format!("failed to write {}", display_path(&args.common.file)))?;
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -269,21 +442,83 @@ fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
 }
 
 fn run_render(args: &RenderArgs) -> Result<ExitCode> {
-    let source = read_source(&args.file, args.encoding)?;
+    run_watched(&args.common, || run_render_once(args))
+}
+
+fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
+    let cfg = args.common.load_config()?;
+    let encoding = args.common.resolved_encoding(&cfg);
+    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
+    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let doc = Document::new(source);
-    let html = doc.parse().to_html();
+    let tree = timer.measure("parse", || doc.parse());
+    let html = timer.measure("render", || tree.to_html());
     let mut stdout = io::stdout().lock();
     stdout
         .write_all(html.as_bytes())
         .context("failed to write to stdout")?;
+    timer.report()?;
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_pandoc(args: &PandocArgs) -> Result<ExitCode> {
-    let source = read_source(&args.file, args.encoding)?;
+fn run_wire(args: &WireArgs) -> Result<ExitCode> {
+    run_watched(&args.common, || run_wire_once(args))
+}
+
+fn run_wire_once(args: &WireArgs) -> Result<ExitCode> {
+    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
+    let json = wire_json(args, &mut timer)?;
+    let mut stdout = io::stdout().lock();
+    writeln!(stdout, "{json}").context("failed to write to stdout")?;
+    timer.report()?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Project the requested wire envelope to its JSON string. `slugs` is a
+/// static catalogue (no input read); `gaiji` scans raw source; every
+/// other kind walks the parse tree. All arms delegate to
+/// `aozora::wire`, the single authority shared with the Python / WASM /
+/// C bindings, so the bytes are identical across every surface.
+fn wire_json(args: &WireArgs, timer: &mut Timer) -> Result<String> {
+    if matches!(args.which, WireKind::Slugs) {
+        return Ok(wire::serialize_slugs());
+    }
+    let cfg = args.common.load_config()?;
+    let encoding = args.common.resolved_encoding(&cfg);
+    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
+    if matches!(args.which, WireKind::GaijiResolutions) {
+        return Ok(timer.measure("serialize", || wire::serialize_gaiji_resolutions(&source)));
+    }
     let doc = Document::new(source);
-    let pandoc = aozora_pandoc::to_pandoc(&doc.parse());
-    let json = serde_json::to_string(&pandoc).context("serialize Pandoc AST")?;
+    let tree = timer.measure("parse", || doc.parse());
+    Ok(timer.measure("serialize", || match args.which {
+        WireKind::Nodes => wire::serialize_nodes(&tree),
+        WireKind::Pairs => wire::serialize_pairs(&tree),
+        WireKind::ContainerPairs => wire::serialize_container_pairs(&tree),
+        WireKind::Diagnostics => wire::serialize_diagnostics(tree.diagnostics()),
+        WireKind::Slugs | WireKind::GaijiResolutions => {
+            unreachable!("slugs and gaiji are emitted before the parse step")
+        }
+    }))
+}
+
+fn run_pandoc(args: &PandocArgs) -> Result<ExitCode> {
+    run_watched(&args.common, || run_pandoc_once(args))
+}
+
+fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
+    let cfg = args.common.load_config()?;
+    let encoding = args.common.resolved_encoding(&cfg);
+    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
+    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
+    let doc = Document::new(source);
+    let tree = timer.measure("parse", || doc.parse());
+    let json = timer
+        .measure("pandoc", || {
+            serde_json::to_string(&aozora_pandoc::to_pandoc(&tree))
+        })
+        .context("serialize Pandoc AST")?;
+    timer.report()?;
 
     let Some(format) = args.format.as_deref() else {
         // No --format: emit Pandoc JSON. Downstream invocations

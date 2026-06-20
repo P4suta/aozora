@@ -1,8 +1,9 @@
 # Wire format
 
 aozora ships a stable JSON wire format used by every binding —
-`aozora-ffi` (C ABI), `aozora-wasm` (npm), `aozora-py` (PyO3) —
-to project the parser's output across language boundaries.
+`aozora-ffi` (C ABI), `aozora-wasm` (npm), `aozora-py` (PyO3) — and by
+the [`aozora wire <kind>`](../ref/cli.md#aozora-wire) CLI subcommand, to
+project the parser's output across language boundaries.
 [`aozora::wire`](https://docs.rs/aozora/latest/aozora/wire/index.html)
 is the single authority for that projection; downstream drivers
 call into it and receive bit-identical output.

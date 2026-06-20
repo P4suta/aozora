@@ -16,6 +16,7 @@
 //!
 //! Output goes to stdout; non-zero exit only on argument errors.
 
+use std::borrow::Cow;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
@@ -24,7 +25,7 @@ use clap::{Args, ValueEnum};
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 
 use aozora::{
-    DiagnosticSource, InternalCheckCode, NodeKind, PairKind, Sentinel, Severity,
+    Diagnostic, DiagnosticSource, InternalCheckCode, NodeKind, PairKind, Sentinel, Severity,
     wire::{schema_container_pairs, schema_diagnostics, schema_nodes, schema_pairs},
 };
 
@@ -47,11 +48,17 @@ pub(crate) enum SchemaKind {
 #[derive(Debug, Args)]
 pub(crate) struct KindsArgs;
 
-/// `aozora explain <kind>` arguments.
+/// `aozora explain <target>` arguments.
 #[derive(Debug, Args)]
+#[command(after_long_help = "Examples:
+  aozora explain ruby                          # NodeKind handbook chapter
+  aozora explain aozora::lex::unclosed_bracket # diagnostic code -> help + URL
+  aozora explain unresolved_gaiji              # short form of the code")]
 pub(crate) struct ExplainArgs {
-    /// camelCase tag from `aozora kinds` (e.g. `ruby`, `angleQuote`,
-    /// `containerOpen`). Run `aozora kinds` for the canonical list.
+    /// A `NodeKind` camelCase tag (e.g. `ruby`, `angleQuote`; run
+    /// `aozora kinds` for the list) or a diagnostic code (e.g.
+    /// `aozora::lex::unclosed_bracket`, or the short `unclosed_bracket`).
+    #[arg(value_name = "TARGET")]
     pub(crate) kind: String,
 }
 
@@ -137,7 +144,10 @@ pub(crate) fn run_schema(args: &SchemaArgs) -> Result<ExitCode> {
 /// tag exposed by `aozora kinds`. Returns a non-zero exit code when
 /// the tag is unknown, with a hint pointing back at `aozora kinds`.
 pub(crate) fn run_explain(args: &ExplainArgs) -> Result<ExitCode> {
-    let prose = explain_kind(&args.kind);
+    // NodeKind tags (camelCase, no `_`/`::`) and diagnostic codes (which
+    // always carry `_` and/or `::`) never collide, so try the node page
+    // first and fall back to a diagnostic-code lookup.
+    let prose = explain_kind(&args.kind).or_else(|| explain_diagnostic(&args.kind));
     let mut stdout = io::stdout().lock();
     match prose {
         Some(text) => {
@@ -146,7 +156,9 @@ pub(crate) fn run_explain(args: &ExplainArgs) -> Result<ExitCode> {
         }
         None => {
             bail!(
-                "unknown kind {:?}; run `aozora kinds` for the canonical list",
+                "unknown explain target {:?}; expected a NodeKind tag (run \
+                 `aozora kinds`) or a diagnostic code such as \
+                 `aozora::lex::unclosed_bracket`",
                 args.kind
             );
         }
@@ -300,4 +312,34 @@ fn explain_kind(tag: &str) -> Option<String> {
         .iter()
         .find(|(t, _)| *t == tag)
         .map(|(_, body)| (*body).to_owned())
+}
+
+/// Explain a diagnostic code: `aozora explain aozora::lex::unclosed_bracket`
+/// (or the short `unclosed_bracket`). Prints the same code / severity /
+/// help / URL that `aozora check` attaches to the diagnostic, sourced
+/// from [`aozora::Diagnostic::explain`] so the two never diverge.
+fn explain_diagnostic(arg: &str) -> Option<String> {
+    // Accept the full `aozora::lex::<token>` code or the bare trailing
+    // token; expand the short form to the canonical code.
+    let code: Cow<'_, str> = if arg.contains("::") {
+        Cow::Borrowed(arg)
+    } else {
+        Cow::Owned(format!("aozora::lex::{arg}"))
+    };
+    let info = Diagnostic::explain(&code)?;
+    let mut out = format!(
+        "{}\n{} · {}",
+        info.code,
+        info.severity.as_wire_str(),
+        info.source.as_wire_str()
+    );
+    if !info.help.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&info.help);
+    }
+    if let Some(url) = &info.url {
+        out.push_str("\n\nsee: ");
+        out.push_str(url);
+    }
+    Some(out)
 }

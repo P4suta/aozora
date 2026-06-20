@@ -7,18 +7,39 @@ Aozora Bunko notation parser CLI
 Usage: aozora <COMMAND>
 
 Commands:
-  check    Run the lexer over a file and report diagnostics
-  fmt      Round-trip parse ∘ serialize and emit the canonical form
-  render   Render Aozora notation to HTML on stdout
-  kinds    Tabulate every `NodeKind` / `PairKind` / `Severity` / `DiagnosticSource` / `Sentinel` /
-           `InternalCheckCode` variant with its wire tag
-  schema   Pretty-print the JSON Schema for one of the four wire envelopes
-  explain  Print short prose for a `NodeKind` camelCase tag
-  pandoc   Project the parsed document to a Pandoc AST. Without `--format`, prints Pandoc JSON to
-           stdout (consumable by `pandoc -f json -t <FORMAT>`); with `--format`, spawns pandoc and
-           pipes the JSON through it
-  help     Print this message or the help of the given subcommand(s)
+  check        Run the lexer over a file and report diagnostics
+  fmt          Round-trip parse ∘ serialize and emit the canonical form
+  render       Render Aozora notation to HTML on stdout
+  wire         Emit a parsed document's wire JSON for one `aozora::wire` envelope — `nodes` /
+               `pairs` / `container-pairs` / `diagnostics` / `gaiji` — or the static `slugs`
+               catalogue. The data counterpart to `schema`: `schema <kind>` prints the JSON Schema,
+               `wire <kind>` prints a document's data in that schema, byte-identical to every
+               binding's `*_json()` output
+  kinds        Tabulate every `NodeKind` / `PairKind` / `Severity` / `DiagnosticSource` / `Sentinel`
+               / `InternalCheckCode` variant with its wire tag
+  schema       Pretty-print the JSON Schema for one of the four wire envelopes
+  explain      Print prose for a `NodeKind` tag, or help / severity / URL for a diagnostic code
+  pandoc       Project the parsed document to a Pandoc AST. Without `--format`, prints Pandoc JSON
+               to stdout (consumable by `pandoc -f json -t <FORMAT>`); with `--format`, spawns
+               pandoc and pipes the JSON through it
+  completions  Print a shell completion script (`bash` / `zsh` / `fish` / `powershell` / `elvish` /
+               `nushell`) on stdout. Generated from the live command tree, so it always matches the
+               installed binary; release tarballs also ship these under `completions/`
+  help         Print this message or the help of the given subcommand(s)
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Examples:
+  aozora check FILE.txt              # lex + report diagnostics
+  aozora render FILE.txt > out.html  # render to HTML
+  aozora wire nodes FILE.txt         # parsed nodes as wire JSON
+  aozora fmt --check FILE.txt        # CI format gate
+  aozora explain unclosed_bracket    # explain a diagnostic code
+  aozora completions zsh             # shell completion script
+
+Document subcommands read stdin when given '-' or no path.
