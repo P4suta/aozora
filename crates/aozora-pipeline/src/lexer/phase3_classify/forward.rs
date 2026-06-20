@@ -18,7 +18,9 @@ use std::collections::HashMap;
 use aozora_spec::Diagnostic;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
-use aozora_syntax::{AnnotationKind, AozoraHeadingKind, BoutenPosition, EmphasisKind, Span};
+use aozora_syntax::{
+    AnnotationKind, AozoraHeadingKind, BoutenPosition, EmphasisKind, SideNoteKind, Span,
+};
 
 use super::super::phase2_pair::{PairEvent, PairKind};
 use super::super::token::TriggerKind;
@@ -1169,7 +1171,10 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 .unwrap_or(open_span.start);
         let base = self.alloc.content_plain(target);
         let note = self.alloc.content_plain(note_text);
-        Some((self.alloc.side_note(base, note), consume_start))
+        Some((
+            self.alloc.side_note(SideNoteKind::Annotation, base, note),
+            consume_start,
+        ))
     }
 
     /// Classify a `「caption」のキャプション付きの(図|挿絵)（file）入る`

@@ -177,6 +177,42 @@ pub enum RubySide {
     Left,
 }
 
+/// Which annotation flavour a [`crate::borrowed::SideNote`] carries.
+///
+/// 注記 and 傍記 share the `SideNote` structure (a note attached to a
+/// preceding run) but round-trip to distinct keywords, so the flavour is
+/// preserved here even though both render the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum SideNoteKind {
+    /// 注記 — `［＃「X」の左に「Y」の注記］`, a left-side editorial gloss.
+    #[default]
+    Annotation,
+    /// 傍記 — `［＃「X」に「Y」の傍記］`, a redaction marker (典型的に ×)
+    /// written beside X, used in censorship restoration.
+    Marginal,
+}
+
+impl SideNoteKind {
+    /// The `(connector, suffix)` source literals that wrap the note text
+    /// when a [`crate::borrowed::SideNote`] of this flavour round-trips
+    /// back to source as `base［＃「base{connector}note{suffix}`.
+    ///
+    /// Renderers call this instead of matching the (`non_exhaustive`)
+    /// variants, so a future flavour must add its affixes here — keeping
+    /// the round-trip vocabulary beside the variant definition.
+    #[must_use]
+    pub const fn serialize_affixes(self) -> (&'static str, &'static str) {
+        match self {
+            // 注記 normalises bare `に` input to the canonical `の左に…の注記`.
+            Self::Annotation => ("」の左に「", "」の注記］"),
+            // 傍記 keeps the bare `に` — there is no 左 in the source.
+            Self::Marginal => ("」に「", "」の傍記］"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Keigakomi;

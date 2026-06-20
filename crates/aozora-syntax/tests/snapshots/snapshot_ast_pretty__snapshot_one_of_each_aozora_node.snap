@@ -1,5 +1,6 @@
 ---
 source: crates/aozora-syntax/tests/snapshot_ast_pretty.rs
+assertion_line: 69
 expression: "format!(\"{nodes:#?}\")"
 ---
 [
@@ -21,6 +22,22 @@ expression: "format!(\"{nodes:#?}\")"
     ),
     SideNote(
         SideNote {
+            kind: Annotation,
+            base: NonEmpty(
+                Plain(
+                    "base",
+                ),
+            ),
+            note: NonEmpty(
+                Plain(
+                    "よみ",
+                ),
+            ),
+        },
+    ),
+    SideNote(
+        SideNote {
+            kind: Marginal,
             base: NonEmpty(
                 Plain(
                     "base",

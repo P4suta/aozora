@@ -33,7 +33,7 @@ use aozora_encoding::gaiji::Resolved;
 use crate::borrowed::{self, Arena, Interner};
 use crate::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Center, Container, EmphasisKind, Indent, Keigakomi, RubySide, SectionKind,
+    Center, Container, EmphasisKind, Indent, Keigakomi, RubySide, SectionKind, SideNoteKind,
 };
 
 /// Arena-backed builder for [`borrowed::AozoraNode<'a>`] and its
@@ -255,10 +255,10 @@ impl<'a> BorrowedAllocator<'a> {
         }))
     }
 
-    /// `AozoraNode::SideNote(SideNote { base, note })` — a left-side
-    /// annotation (注記) from the `［＃「base」の左に「note」の注記］`
-    /// forward-reference form. Placement parallels a left-side ruby, but a
-    /// 注記 is an editorial note rather than a phonetic reading.
+    /// `AozoraNode::SideNote(SideNote { kind, base, note })` — a note
+    /// attached to a preceding `base` run via a forward reference. `kind`
+    /// selects 注記 (`の左に…の注記`) or 傍記 (`に…の傍記`); both reuse the
+    /// left-side-ruby placement but round-trip to their own keyword.
     ///
     /// # Panics
     ///
@@ -267,6 +267,7 @@ impl<'a> BorrowedAllocator<'a> {
     #[must_use]
     pub fn side_note(
         &self,
+        kind: SideNoteKind,
         base: borrowed::Content<'a>,
         note: borrowed::Content<'a>,
     ) -> borrowed::AozoraNode<'a> {
@@ -274,7 +275,7 @@ impl<'a> BorrowedAllocator<'a> {
             borrowed::NonEmpty::new(base).expect("Phase 3 must emit SideNote with non-empty base");
         let note =
             borrowed::NonEmpty::new(note).expect("Phase 3 must emit SideNote with non-empty note");
-        borrowed::AozoraNode::SideNote(self.arena.alloc(borrowed::SideNote { base, note }))
+        borrowed::AozoraNode::SideNote(self.arena.alloc(borrowed::SideNote { kind, base, note }))
     }
 
     /// `AozoraNode::Bouten(Bouten { kind, target, position,

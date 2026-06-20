@@ -99,6 +99,7 @@ mod tests {
     use aozora_syntax::{
         AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BOUTEN_KINDS,
         BoutenPosition, Center, Container, ContainerKind, EmphasisKind, Indent, SectionKind,
+        SideNoteKind,
     };
     use std::collections::BTreeSet;
 
@@ -193,7 +194,10 @@ mod tests {
         render_into(a.left_ruby(lruby_base, lruby_reading), &mut emitted);
         let note_base = a.content_plain("孫");
         let note_text = a.content_plain("注");
-        render_into(a.side_note(note_base, note_text), &mut emitted);
+        render_into(
+            a.side_note(SideNoteKind::Annotation, note_base, note_text),
+            &mut emitted,
+        );
         let tcy = a.content_plain("囲");
         render_into(a.tate_chu_yoko(tcy, false), &mut emitted);
         let angle = a.content_plain("内");

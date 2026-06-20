@@ -205,15 +205,17 @@ fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
 }
 
 fn emit_side_note<W: Write>(s: &SideNote<'_>, out: &mut W) -> fmt::Result {
-    // Reconstruct `base［＃「base」の左に「note」の注記］`; the base is the
+    // Reconstruct `base［＃「base{connector}note{suffix}`; the base is the
     // pulled-back predecessor, so it precedes the directive (mirrors the
-    // left-side ruby round-trip in `emit_ruby`).
+    // left-side ruby round-trip in `emit_ruby`). The connector + keyword
+    // depend on the flavour (注記 vs 傍記) — see `SideNoteKind::serialize_affixes`.
+    let (connector, suffix) = s.kind.serialize_affixes();
     emit_content(s.base.get(), out)?;
     out.write_str("［＃「")?;
     emit_content(s.base.get(), out)?;
-    out.write_str("」の左に「")?;
+    out.write_str(connector)?;
     emit_content(s.note.get(), out)?;
-    out.write_str("」の注記］")
+    out.write_str(suffix)
 }
 
 fn emit_bouten<W: Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {

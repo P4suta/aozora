@@ -23,7 +23,7 @@ use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Content};
 use aozora_syntax::{
     AlignEnd, AnnotationKind, AozoraHeadingKind, AozoraHeadingStyle, BoutenKind, BoutenPosition,
-    Center, Container, ContainerKind, Indent, Keigakomi, SectionKind,
+    Center, Container, ContainerKind, Indent, Keigakomi, SectionKind, SideNoteKind,
 };
 use proptest::prelude::*;
 
@@ -47,7 +47,7 @@ fn xml_node_name_is_injective_over_all_variants() {
 
     let nodes = [
         alloc.ruby(base, reading, true),
-        alloc.side_note(base, reading),
+        alloc.side_note(SideNoteKind::Annotation, base, reading),
         alloc.bouten(BoutenKind::Goma, base, BoutenPosition::Right, false),
         alloc.tate_chu_yoko(base, false),
         alloc.gaiji(g),
