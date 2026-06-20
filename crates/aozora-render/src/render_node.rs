@@ -1080,7 +1080,7 @@ mod tests {
         use aozora_encoding::gaiji::Resolved;
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let g = alloc.make_gaiji("desc", Some(Resolved::Char('枘')), None);
+        let g = alloc.make_gaiji("desc", Some(Resolved::Char('枘')), None, false);
         let n = alloc.gaiji(g);
         assert_eq!(
             render_node_to_string(n),
@@ -1094,7 +1094,12 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         // A combining sequence: U+304B U+309A.
-        let g = alloc.make_gaiji("desc", Some(Resolved::Multi("\u{304B}\u{309A}")), None);
+        let g = alloc.make_gaiji(
+            "desc",
+            Some(Resolved::Multi("\u{304B}\u{309A}")),
+            None,
+            false,
+        );
         let n = alloc.gaiji(g);
         assert_eq!(
             render_node_to_string(n),
@@ -1106,7 +1111,7 @@ mod tests {
     fn gaiji_unresolved_falls_back_to_description() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let g = alloc.make_gaiji("第3水準", None, None);
+        let g = alloc.make_gaiji("第3水準", None, None, false);
         let n = alloc.gaiji(g);
         assert_eq!(
             render_node_to_string(n),
@@ -1118,7 +1123,7 @@ mod tests {
     fn gaiji_unresolved_escapes_description_in_both_slots() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let g = alloc.make_gaiji("a<b>&", None, None);
+        let g = alloc.make_gaiji("a<b>&", None, None, false);
         let n = alloc.gaiji(g);
         assert_eq!(
             render_node_to_string(n),
@@ -1455,7 +1460,7 @@ mod tests {
         // Annotation (hidden span).
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let g = alloc.make_gaiji("外字", None, None);
+        let g = alloc.make_gaiji("外字", None, None, false);
         let seg_g = alloc.seg_gaiji(g);
         let ann = alloc.make_annotation("［＃注］", AnnotationKind::Unknown);
         let seg_a = alloc.seg_annotation(ann);

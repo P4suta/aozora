@@ -170,7 +170,7 @@ mod tests {
             render_into(a.section_break(k), &mut emitted);
         }
 
-        let g = a.make_gaiji("X", None, None);
+        let g = a.make_gaiji("X", None, None, false);
         render_into(a.gaiji(g), &mut emitted);
         for kind in [
             AnnotationKind::WarichuOpen,
