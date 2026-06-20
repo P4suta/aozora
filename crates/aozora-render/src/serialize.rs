@@ -805,6 +805,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn boki_reconstructs_forward_directive() {
+        // 傍記 keeps the bare `に` (no 左) and its own keyword; the target
+        // is the immediate predecessor, so the round-trip is byte-identical.
+        assert_eq!(
+            ser("資本主義の一般的危機［＃「危機」に「×」の傍記］"),
+            "資本主義の一般的危機［＃「危機」に「×」の傍記］"
+        );
+    }
+
     // --- Bouten leaf (forward reference) -------------------------------
 
     #[test]

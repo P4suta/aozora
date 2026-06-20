@@ -3052,6 +3052,27 @@ mod tests {
         }
     }
 
+    /// `「X」に「Y」の傍記` (issue #125, the censorship-marker form) is
+    /// recognised as a `SideNote` tagged [`SideNoteKind::Marginal`] —
+    /// distinct from the 注記 flavour so it round-trips to `の傍記`.
+    #[test]
+    fn boki_form_recognised() {
+        use aozora_syntax::SideNoteKind;
+        use aozora_syntax::borrowed::AozoraNode;
+        run!(out, "資本主義の一般的危機［＃「危機」に「×」の傍記］");
+        let marginal = out.spans.iter().any(|s| {
+            matches!(
+                aozora_node(s),
+                Some(AozoraNode::SideNote(sn)) if sn.kind == SideNoteKind::Marginal
+            )
+        });
+        assert!(
+            marginal,
+            "expected a Marginal SideNote, got {:?}",
+            out.spans
+        );
+    }
+
     /// `［＃ここから改行天付き、折り返して{M}字下げ］` — the corpus's most
     /// common compound indent — opens an Indent container with the first
     /// line flush to the top (amount 0) and wrapped lines indented M.
