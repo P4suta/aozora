@@ -389,7 +389,7 @@ mod tests {
         let ttext = a.content_plain("12");
         let tcy = a.tate_chu_yoko(ttext, false);
 
-        let g = a.make_gaiji("外字", None, None);
+        let g = a.make_gaiji("外字", None, None, false);
         let gaiji = a.gaiji(g);
 
         let indent = a.indent(Indent { amount: 2 });

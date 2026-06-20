@@ -52,6 +52,28 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         refmark_span: Span,
         bracket_open_idx: usize,
     ) -> Option<GaijiMatch<'a>> {
+        self.recognize_gaiji_core(view, refmark_span.start, false, bracket_open_idx)
+    }
+
+    /// Core recogniser shared by the `※`-prefixed [`Self::recognize_gaiji`]
+    /// and the no-refmark standalone (#122) form. `consume_start` is the
+    /// byte the gaiji span folds back to (`※` start for the refmark form,
+    /// `［` start for standalone); `standalone` records whether the source
+    /// carried a `※` so the serializer can round-trip the bracket verbatim.
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::too_many_lines,
+        reason = "a flat gaiji body recogniser (quoted form, bare form, validation, \
+                  resolution) over four independent inputs; splitting it would scatter \
+                  the I3-idempotency reasoning"
+    )]
+    pub(super) fn recognize_gaiji_core(
+        &mut self,
+        view: BodyView<'_>,
+        consume_start: u32,
+        standalone: bool,
+        bracket_open_idx: usize,
+    ) -> Option<GaijiMatch<'a>> {
         #[cfg(feature = "phase3-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::Gaiji);
         let events = view.events;
@@ -150,10 +172,12 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             &description,
         );
 
-        let payload = self.alloc.make_gaiji(&description, ucs, mencode.as_deref());
+        let payload = self
+            .alloc
+            .make_gaiji(&description, ucs, mencode.as_deref(), standalone);
         Some(GaijiMatch {
             payload,
-            consume_start: refmark_span.start,
+            consume_start,
             consume_end: bracket_close_span.end,
         })
     }

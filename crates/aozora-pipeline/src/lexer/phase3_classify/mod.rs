@@ -3773,6 +3773,55 @@ mod tests {
         );
     }
 
+    /// Standalone (no-`※`) external-character note (#122): a `［＃…］` whose
+    /// body is a gaiji description with a trailing mencode / 底本ページ-行 is
+    /// recognised as a Gaiji, not an `Annotation{Unknown}`.
+    #[test]
+    fn standalone_gaiji_is_form_with_mencode_and_page_line() {
+        run!(out, "［＃「※」は「祿－示」、第3水準1-84-27、144-上-9］");
+        let gaiji = out
+            .spans
+            .iter()
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Gaiji(g)) => Some(g),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a standalone Gaiji span, not Unknown"));
+        assert_eq!(gaiji.description, "「※」は「祿－示」");
+        assert_eq!(gaiji.mencode, Some("第3水準1-84-27、144-上-9"));
+        assert!(gaiji.standalone, "no `※` in source → standalone");
+    }
+
+    #[test]
+    fn standalone_gaiji_composed_kaete_form() {
+        run!(out, "［＃「比」の「ヒ」に代えて「く」、第4水準2-1-23］");
+        let gaiji = out
+            .spans
+            .iter()
+            .find_map(|s| match aozora_node(s) {
+                Some(AozoraNode::Gaiji(g)) => Some(g),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a standalone composed Gaiji span"));
+        assert_eq!(gaiji.description, "「比」の「ヒ」に代えて「く」");
+        assert!(gaiji.standalone);
+    }
+
+    /// The standalone form needs a mencode / page-line tail (or a resolved
+    /// glyph): an ordinary quoted `［＃「…」］` note has no such tail and — with
+    /// no disambiguating `※` — must NOT be wrongly claimed as a gaiji.
+    #[test]
+    fn standalone_gaiji_declines_plain_note() {
+        run!(out, "［＃「これはただの注記」］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(aozora_node(s), Some(AozoraNode::Gaiji(_)))),
+            "plain quoted note must not become a gaiji: {:?}",
+            out.spans
+        );
+    }
+
     #[test]
     fn kaeriten_ichi_recognized() {
         run!(out, "之［＃一］");

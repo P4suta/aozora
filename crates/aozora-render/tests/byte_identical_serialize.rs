@@ -75,6 +75,19 @@ fn fixed_point_on_gaiji_reference() {
 }
 
 #[test]
+fn fixed_point_on_standalone_gaiji() {
+    // No-`※` standalone external-character notes (#122) must round-trip
+    // *without* gaining a `※` — the `standalone` flag suppresses it.
+    for src in [
+        "［＃「※」は「祿－示」、第3水準1-84-27、144-上-9］",
+        "［＃「比」の「ヒ」に代えて「く」、第4水準2-1-23］",
+    ] {
+        assert_eq!(round_trip(src), src, "standalone gaiji must not gain a ※");
+        assert!(fixed_point(src));
+    }
+}
+
+#[test]
 fn fixed_point_on_kaeriten() {
     let src = "学［＃二、レ点］而時習之";
     assert!(fixed_point(src));

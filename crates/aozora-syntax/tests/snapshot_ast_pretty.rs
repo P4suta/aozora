@@ -27,7 +27,7 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<AozoraNode<'a
     let reading = alloc.content_plain("よみ");
     let upper = alloc.content_plain("up");
     let lower = alloc.content_plain("lo");
-    let g = alloc.make_gaiji("木＋吶", Some(Resolved::Char('A')), Some("第3水準"));
+    let g = alloc.make_gaiji("木＋吶", Some(Resolved::Char('A')), Some("第3水準"), false);
     let a = alloc.make_annotation("annotation", AnnotationKind::Unknown);
 
     vec![

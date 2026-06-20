@@ -66,6 +66,7 @@ expression: "format!(\"{nodes:#?}\")"
             mencode: Some(
                 "第3水準",
             ),
+            standalone: false,
         },
     ),
     Indent(

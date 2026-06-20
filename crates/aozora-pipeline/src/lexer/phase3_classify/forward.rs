@@ -448,9 +448,55 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             return Some(self.typed_annotation_match(directive_span, kind));
         }
 
+        // Standalone external-character (#122): a no-`※` `［＃…］` whose body
+        // is a gaiji description with a trailing mencode / 底本ページ-行
+        // (`「※」は「祿－示」、第3水準1-84-27、144-上-9`, `「比」の「ヒ」に代えて「く」、
+        // 第4水準2-1-23`). Checked after the editorial notes so a `底本では` note
+        // with a coincidental code-like tail stays editorial, and just before
+        // the Unknown catch-all. `classify_standalone_gaiji` requires a
+        // resolvable glyph or a mencode/page-line tail, so an ordinary
+        // `［＃「…」］` note is never claimed.
+        if let Some((node, unresolved)) = self.classify_standalone_gaiji(view, open_idx) {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start: open_span.start,
+                consume_end: close_span.end,
+                pending_diagnostic: unresolved
+                    .then(|| Diagnostic::unresolved_gaiji(directive_span)),
+            });
+        }
+
         // No specialised recogniser claimed the bracket — fall back to the
         // `Annotation{Unknown}` catch-all.
         Some(self.unknown_annotation_match(directive_span, body, tcy_pending))
+    }
+
+    /// Standalone (no-`※`) external-character recogniser (#122). Reuses the
+    /// gaiji body parser with the bracket open as the consume start, and
+    /// declines unless the body resolves to a glyph or carries a mencode /
+    /// 底本ページ-行 tail — so an ordinary `［＃「…」］` note is never claimed.
+    /// Returns the gaiji node and whether it stayed unresolved.
+    fn classify_standalone_gaiji(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+    ) -> Option<(borrowed::AozoraNode<'a>, bool)> {
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        let m = self.recognize_gaiji_core(view, open_span.start, true, open_idx)?;
+        // Standalone has no `※` disambiguator, so an unqualified `［＃「…」］`
+        // is an ordinary note. Require a resolved glyph or a mencode /
+        // page-line tail before claiming it as a gaiji.
+        if m.payload.mencode.is_none() && m.payload.ucs.is_none() {
+            return None;
+        }
+        let unresolved = m.payload.ucs.is_none();
+        Some((self.alloc.gaiji(m.payload), unresolved))
     }
 
     /// Catch-all for any well-formed `［＃…］` whose body no specialised

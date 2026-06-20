@@ -302,7 +302,11 @@ fn emit_emphasis<W: Write>(e: &Emphasis<'_>, out: &mut W) -> fmt::Result {
 }
 
 fn emit_gaiji<W: Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
-    out.write_char('※')?;
+    // Standalone (#122) gaiji had no leading `※` in the source; omit it
+    // so `serialize ∘ parse` stays a fixed point.
+    if !g.standalone {
+        out.write_char('※')?;
+    }
     out.write_str("［＃")?;
     // The composed-glyph form (`「X」の「Y」に代えて「Z」`) is captured verbatim,
     // already carrying its own `「」` structure, so emit it raw — wrapping it in

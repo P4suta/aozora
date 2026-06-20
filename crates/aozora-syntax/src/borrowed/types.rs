@@ -274,6 +274,11 @@ pub struct Gaiji<'src> {
     pub ucs: Option<Resolved>,
     /// Raw mencode reference (e.g. "第3水準1-85-54", "U+XXXX page-line").
     pub mencode: Option<&'src str>,
+    /// `true` when the source had no leading `※` — the no-refmark
+    /// `［＃…］` external-character form (#122). Drives serialize to omit
+    /// the `※` so `parse ∘ serialize` stays a fixed point. Not a wire
+    /// field.
+    pub standalone: bool,
 }
 
 /// Warichu (split annotation).
@@ -602,6 +607,7 @@ mod tests {
             description: "木＋吶のつくり",
             ucs: Some(Resolved::Char('𠀋')),
             mencode: Some("第3水準1-85-54"),
+            standalone: false,
         };
         assert_eq!(g.description, "木＋吶のつくり");
         assert_eq!(g.ucs, Some(Resolved::Char('𠀋')));
@@ -620,6 +626,7 @@ mod tests {
             description: "か゚",
             ucs: Some(Resolved::Multi("\u{304B}\u{309A}")),
             mencode: Some("第3水準1-4-87"),
+            standalone: false,
         };
         assert_eq!(g.ucs, Some(Resolved::Multi("か゚")));
     }
