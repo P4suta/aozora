@@ -28,10 +28,10 @@ unless you're invoking cargo directly outside the dev container.
 
 | Variable | Set by | Purpose |
 |---|---|---|
-| `CARGO_HOME` | compose | `/workspace/.cargo` — registry + git deps cached on a named volume. |
-| `CARGO_TARGET_DIR` | compose | `/workspace/target` — build output cached on a named volume. |
+| `CARGO_HOME` | compose | `/cargo/home` — registry + git deps cached on a named volume. |
+| `CARGO_TARGET_DIR` | compose | `/cargo/target` — build output cached on a named volume. |
 | `RUSTC_WRAPPER` | compose | `sccache` — compile cache. |
-| `SCCACHE_DIR` | compose | `/workspace/.sccache` — sccache backing store on a named volume. |
+| `SCCACHE_DIR` | compose | `/cargo/sccache` — sccache backing store on a named volume. |
 | `SCCACHE_CACHE_SIZE` | compose | `10G` — default cap. |
 | `CARGO_INCREMENTAL` | compose | `0` — incremental compile defeats sccache; turning it off lets sccache cache the very crates we build most often. |
 | `RUST_BACKTRACE` | compose | `1` — full backtraces on panic. |
