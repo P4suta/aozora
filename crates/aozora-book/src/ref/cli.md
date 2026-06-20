@@ -18,7 +18,7 @@ aozora <SUBCOMMAND> [OPTIONS] [ARGS]
 | `pandoc` | Project to a Pandoc AST (JSON, or pipe through `pandoc`). |
 | `kinds` | Tabulate every `NodeKind` / `PairKind` / `Severity` / … wire tag. |
 | `schema` | Print the JSON Schema for a wire envelope. |
-| `explain` | Print short prose for a `NodeKind` tag. |
+| `explain` | Print prose for a `NodeKind` tag, or help / severity / URL for a diagnostic code. |
 
 There are **no global options** beyond clap's `-h`/`--help` and
 `-V`/`--version`; the input-shaping flags below are per-subcommand. All
@@ -168,10 +168,22 @@ See [Bindings → Pandoc](../bindings/pandoc.md).
 ## Introspection subcommands
 
 `kinds`, `schema {diagnostics|nodes|pairs|container-pairs}`, and
-`explain <tag>` print typed contracts and need no input file. They back
-the drift-gated wire artefacts; see [Wire format](../wire/overview.md).
+`explain <target>` print typed contracts and need no input file. They
+back the drift-gated wire artefacts; see [Wire format](../wire/overview.md).
 The **data** counterpart to `schema` is [`aozora wire`](#aozora-wire),
 which projects a parsed document into those same envelopes.
+
+`aozora explain` accepts either a `NodeKind` camelCase tag (printing the
+node's handbook chapter) or a **diagnostic code** — the full
+`aozora::lex::unclosed_bracket` or the short `unclosed_bracket` —
+printing the same severity, help, and docs URL that `aozora check`
+attaches to that diagnostic:
+
+```sh
+aozora explain ruby                          # NodeKind handbook chapter
+aozora explain aozora::lex::unclosed_bracket # diagnostic code → help + URL
+aozora explain unresolved_gaiji              # short form of the code
+```
 
 ## Exit codes
 

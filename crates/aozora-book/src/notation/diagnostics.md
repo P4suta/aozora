@@ -35,9 +35,19 @@ Exit codes: `0` (diagnostics printed but tolerated), `1` (`--strict` with
 at least one diagnostic), `2` (CLI usage error), `3` (an `Internal`
 diagnostic fired — a library bug). See the [CLI reference](../ref/cli.md).
 
+Looking up a code you saw in `check` output? `aozora explain <code>`
+prints its severity, help, and a link back to this page — pass the full
+`aozora::lex::unclosed_bracket` or just the short `unclosed_bracket`:
+
+```sh
+aozora explain aozora::lex::unclosed_bracket
+aozora explain unclosed_bracket              # short form
+```
+
 Library consumers get `tree.diagnostics() -> &[Diagnostic]` and reach the
-parts through `code()`, `severity()`, `source()`, and `span()`. All
-bindings carry the same structured data.
+parts through `code()`, `severity()`, `source()`, and `span()`; the same
+catalogue is available programmatically as `Diagnostic::explain(code) ->
+Option<DiagnosticInfo>`. All bindings carry the same structured data.
 
 # Source diagnostics
 

@@ -37,7 +37,9 @@ pub mod slugs;
 pub mod span;
 pub mod trigger;
 
-pub use diagnostic::{Diagnostic, DiagnosticSource, InternalCheckCode, Severity, codes};
+pub use diagnostic::{
+    Diagnostic, DiagnosticInfo, DiagnosticSource, InternalCheckCode, Severity, codes,
+};
 pub use offset::{NormalizedOffset, SourceOffset};
 pub use pair::{PairKind, PairLink};
 pub use sentinels::{

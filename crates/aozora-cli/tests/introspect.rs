@@ -119,3 +119,42 @@ fn explain_unknown_kind_fails_with_hint() {
         "expected hint pointing at `aozora kinds`: {stderr:?}",
     );
 }
+
+#[test]
+fn explain_diagnostic_code_prints_severity_and_url() {
+    let (status, stdout, stderr) = run(&["explain", "aozora::lex::unclosed_bracket"]);
+    assert!(status.success(), "explain by code must succeed: {stderr:?}");
+    assert!(
+        stdout.contains("aozora::lex::unclosed_bracket"),
+        "code echoed back: {stdout:?}"
+    );
+    assert!(stdout.contains("error"), "severity axis: {stdout:?}");
+    assert!(
+        stdout
+            .contains("https://p4suta.github.io/aozora/notation/diagnostics.html#unclosed-bracket"),
+        "docs url: {stdout:?}"
+    );
+}
+
+#[test]
+fn explain_short_diagnostic_code_form_succeeds() {
+    // The bare trailing token expands to the canonical aozora::lex::… code.
+    let (status, stdout, _) = run(&["explain", "unresolved_gaiji"]);
+    assert!(status.success(), "short-form code must succeed");
+    assert!(
+        stdout.contains("aozora::lex::unresolved_gaiji"),
+        "code: {stdout:?}"
+    );
+    assert!(stdout.contains("warning"), "severity: {stdout:?}");
+}
+
+#[test]
+fn explain_internal_diagnostic_code_succeeds() {
+    let (status, stdout, _) = run(&["explain", "unregistered_sentinel"]);
+    assert!(status.success(), "internal code must explain");
+    assert!(
+        stdout.contains("aozora::lex::unregistered_sentinel"),
+        "code: {stdout:?}"
+    );
+    assert!(stdout.contains("internal"), "source axis: {stdout:?}");
+}
