@@ -4,7 +4,7 @@
     "feature": "annotation",
     "level": "should",
     "spec_section": "6.14",
-    "note": "[provenance:reference-impl-aligned §6.14 + AOZORA-ANNOTATION 2026-06-17] ［＃「X」はママ］ is the editorial sic marker: the preceding text X is reproduced as-in-the-source (a preserved irregularity). It annotates without transforming — the node carries the raw directive (rendered as a hidden aozora-directive span) with the AnnotationKind::AsIs classification (pandoc/wire map `as-is`, not `unknown`). ~3k occurrences. Offsets from the §3 byte model; expected captured from the aozora #114/#118 reference implementation (the project's canonical processor)."
+    "note": "[provenance:reference-impl-aligned §6.14 + AOZORA-ANNOTATION 2026-06-17] ［＃「X」はママ］ is the editorial sic marker: the preceding text X is reproduced as-in-the-source (a preserved irregularity). It annotates without transforming — the node carries the raw directive (rendered as a hidden aozora-directive span) with the AnnotationKind::Sic classification (pandoc/wire map `sic`, not `unknown`). ~3k occurrences. Offsets from the §3 byte model; expected captured from the aozora #114/#118 reference implementation (the project's canonical processor)."
   },
   "source": "そういう風［＃「いう風」はママ］だ\n",
   "expected": {
