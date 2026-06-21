@@ -127,6 +127,16 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
                 if desc.is_empty() {
                     return None;
                 }
+                // A quoted body whose inner content itself carries `「」`
+                // structure is an outer-wrapped composed / 正字 form
+                // (`「…）、「柿」の正字」、mencode`). Stripping the outer `「…」`
+                // here would lose it on re-serialize: `emit_gaiji` writes a
+                // quote-bearing description verbatim (no wrapper). Decline so
+                // the bare extractor captures the whole `「…」`-wrapped body
+                // verbatim and the round-trip stays a fixed point.
+                if desc.contains(['「', '」']) {
+                    return None;
+                }
                 let tail = self.source[qcs.end as usize..bracket_close_span.start as usize].trim();
                 // The simple quoted form is `「desc」` optionally followed by
                 // `、mencode`. If extra structure follows the first quote
@@ -184,53 +194,57 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 
     /// Bare-form `※［＃DESC、MENCODE］` body extraction. Kept to
     /// accommodate the historical form `※［＃二の字点、1-2-23］` (no
-    /// `「…」` quotes) that some Aozora source uses, but tightened
-    /// so the I3 idempotency property holds:
+    /// `「…」` quotes) that some Aozora source uses, plus the composed-glyph
+    /// (`「X」の「Y」に代えて「Z」`) / 正字 / 屋号 forms the quoted extractor
+    /// declines, tightened so the I3 idempotency property holds.
     ///
-    ///   - body must split on `、` (description-only bodies like
-    ///     `※［＃ 1234《...］` are ambiguous: the serializer would
-    ///     wrap them in `「…」`, and the re-parse would lift them to
-    ///     a quoted Gaiji, drifting the annotation count)
-    ///   - the mencode portion must look like a real JIS X 0213
-    ///     reference (`N-N-N` / `第N水準N-N-N`) or a `U+XXXX`
-    ///     codepoint. Random tail bytes (`》` etc.) get rejected,
-    ///     the whole bracket falls through to `Directive::Unknown`,
-    ///     and the raw bytes round-trip byte-identical.
+    /// The body is split on `、` and the tokens are walked **from the right**:
+    /// the maximal trailing run that are each a JIS men-ku-ten / `U+XXXX`
+    /// (`is_mencode_shaped`) or a 底本ページ-行 (`is_page_line_shaped`) token
+    /// is the `mencode` (kept verbatim, joined with `、`); the text before it
+    /// is the `description`. Scanning from the right is what lets a `、` that
+    /// belongs to the *description* (`…面から一、二画目をとったもの`,
+    /// `…）、「柿」の正字`, `…読みは「はく」`, `…、屋号を示す記号`) stay in the
+    /// description instead of cutting it at the wrong `、`.
+    ///
+    /// Guarantees (round-trip / idempotency):
+    ///   - the run must be non-empty (a real JIS / U+ / page-line anchor) and
+    ///     there must be a description before it, else the bracket falls
+    ///     through to `Directive::Unknown` and round-trips byte-identical;
+    ///   - the last description token is non-shaped by construction, so
+    ///     re-parsing the serialised `DESC、MENCODE` re-splits at the same
+    ///     boundary (the trailing run is maximal and self-consistent).
+    ///
+    /// The 底本ページ-行 suffix is kept inside `mencode` verbatim; resolution
+    /// strips it via [`mencode_resolution_token`] (the men-ku-ten still maps
+    /// the glyph), so `小書き片仮名ヲ、5-下-3` stays `ucs = None` while
+    /// `…、第3水準1-85-57` resolves.
     fn extract_bare_gaiji_body(
         &self,
         hash_end: u32,
         bracket_close_start: u32,
     ) -> Option<(String, Option<String>)> {
         let body = self.source[hash_end as usize..bracket_close_start as usize].trim();
-        let (desc, men) = body.split_once('、')?;
-        let men = men.trim();
-        // The mencode may carry a trailing 底本ページ-行 reference
-        // (`第3水準1-84-27、144-上-9`, `U+74FC、372-10`) — the corpus' 凡例 keys
-        // each 外字 to its JIS men-ku-ten *and* the page/line where it occurs.
-        // Validate the leading JIS / U+ token, require the trailing part to be
-        // page-line shaped, and keep the whole `men` verbatim (round-trip + the
-        // documented `mencode` "… page-line" representation).
-        let (mencode_token, page_line) = match men.split_once('、') {
-            Some((m, pl)) => (m.trim(), Some(pl.trim())),
-            None => (men, None),
-        };
-        // The leading token is normally a JIS men-ku-ten / `U+XXXX` codepoint,
-        // but some 凡例 forms key a glyph by its 底本ページ-行 alone
-        // (`小書き片仮名ヲ、5-下-3`, with the 上/中/下 column marker and no JIS
-        // level). Accept a page-line-only leading token too: it stays
-        // `ucs = None` (unresolvable by design, rendered as the description),
-        // but is recognised as a gaiji rather than degrading to
-        // `Directive{Unknown}` (#122). Plain `N-N-N` tokens are already
-        // `is_mencode_shaped`, so this only adds the 上/中/下 forms.
-        if !is_mencode_shaped(mencode_token) && !is_page_line_shaped(mencode_token) {
+        let shaped = |t: &str| is_mencode_shaped(t) || is_page_line_shaped(t);
+        // Byte offsets of every `、` separator, and the trimmed tokens between
+        // them (trimming only affects shape-testing; the description / mencode
+        // are sliced from `body` so internal spacing round-trips).
+        let commas: Vec<usize> = body.match_indices('、').map(|(i, _)| i).collect();
+        let tokens: Vec<&str> = body.split('、').map(str::trim).collect();
+        // First token index (from the left) of the maximal trailing shaped run.
+        let mut run_start = tokens.len();
+        while run_start > 0 && shaped(tokens[run_start - 1]) {
+            run_start -= 1;
+        }
+        // Need a non-empty mencode run *and* a description before it.
+        if run_start == tokens.len() || run_start == 0 {
             return None;
         }
-        if let Some(pl) = page_line
-            && !pl.split('、').all(|p| is_page_line_shaped(p.trim()))
-        {
-            return None;
-        }
-        Some((desc.trim().to_owned(), Some(men.to_owned())))
+        // The separator before `tokens[run_start]` is the `run_start`-th `、`.
+        let boundary = commas[run_start - 1];
+        let description = body[..boundary].trim();
+        let mencode = body[boundary + '、'.len_utf8()..].trim();
+        Some((description.to_owned(), Some(mencode.to_owned())))
     }
 }
 
@@ -244,16 +258,29 @@ fn mencode_resolution_token(mencode: &str) -> &str {
 }
 
 /// Whether `s` is a 底本ページ-行 reference — the trailing column in the
-/// corpus' 外字 凡例 (`144-上-9`, `372-10`, `1-13-25`): `-`-joined parts,
-/// each a run of ASCII / full-width digits or a 上 / 中 / 下 column marker.
+/// corpus' 外字 凡例 (`144-上-9`, `372-10`, `1-13-25`): `-`-joined parts, each
+/// a run of ASCII / full-width digits, a 上 / 中 / 下 column marker, or a volume
+/// marker (`上巻` / `下巻` / `7巻` in multi-volume 底本 — `上巻-34-18`,
+/// `7巻-42-下-10`).
 fn is_page_line_shaped(s: &str) -> bool {
-    !s.is_empty()
-        && s.split('-').all(|p| {
-            matches!(p, "上" | "中" | "下")
-                || (!p.is_empty()
-                    && p.chars()
-                        .all(|c| c.is_ascii_digit() || ('０'..='９').contains(&c)))
-        })
+    !s.is_empty() && s.split('-').all(is_page_line_part)
+}
+
+/// One `-`-separated component of a 底本ページ-行 reference.
+fn is_page_line_part(p: &str) -> bool {
+    // A volume marker keeps the column / numbered prefix before `巻`
+    // (`上巻` → `上`, `7巻` → `7`).
+    if let Some(volume) = p.strip_suffix('巻') {
+        return matches!(volume, "上" | "中" | "下" | "前" | "後") || is_digit_run(volume);
+    }
+    matches!(p, "上" | "中" | "下") || is_digit_run(p)
+}
+
+/// A non-empty run of ASCII or full-width decimal digits.
+fn is_digit_run(p: &str) -> bool {
+    !p.is_empty()
+        && p.chars()
+            .all(|c| c.is_ascii_digit() || ('０'..='９').contains(&c))
 }
 
 /// Whether a gaiji `description` can be kept (it both serializes and
@@ -264,18 +291,21 @@ fn is_page_line_shaped(s: &str) -> bool {
 ///     bare `［＃` outside the `aozora-directive` wrapper, violating the Tier A
 ///     canary), and
 ///   - a description carrying structural `「…」` quotes, *except* the
-///     composed-glyph form `「X」の「Y」に代えて「Z」` (corpus §6 external-character
-///     form): balanced quotes, anchored by a trailing `、mencode`, and free of
-///     the `、` separator. `emit_gaiji` writes that form verbatim (no `「…」`
-///     wrapper), so it round-trips; any other quote-bearing description would
-///     unbalance the serializer's wrapper.
+///     composed-glyph / 正字 / 屋号 forms (`「X」の「Y」に代えて「Z」`,
+///     `「…）、「柿」の正字」`, `「…」、屋号を示す記号`; corpus §6 external-character
+///     forms): balanced quotes anchored by a trailing `、mencode`. `emit_gaiji`
+///     writes such a description verbatim (no `「…」` wrapper), so it round-trips
+///     even when it carries an internal `、` — the recogniser's right-to-left
+///     mencode scan (`extract_bare_gaiji_body`) re-splits at the same
+///     boundary. A quote-bearing description without a mencode anchor stays
+///     rejected (the serializer's wrapper would unbalance it).
 fn gaiji_description_serializable(description: &str, has_mencode: bool) -> bool {
     if description.contains("［＃") {
         return false;
     }
     if description.contains(['「', '」']) {
         let balanced = description.matches('「').count() == description.matches('」').count();
-        return balanced && has_mencode && !description.contains('、');
+        return balanced && has_mencode;
     }
     true
 }
@@ -322,9 +352,15 @@ mod is_mencode_shaped_tests {
         assert!(is_page_line_shaped("144-上-9"));
         assert!(is_page_line_shaped("1-13-25"));
         assert!(is_page_line_shaped("１４４-下-９"));
+        // Multi-volume 底本 carry a 巻 marker before the page/line.
+        assert!(is_page_line_shaped("上巻-34-18"));
+        assert!(is_page_line_shaped("下巻-68-4"));
+        assert!(is_page_line_shaped("7巻-42-下-10"));
         assert!(!is_page_line_shaped(""));
         assert!(!is_page_line_shaped("漢字"));
         assert!(!is_page_line_shaped("U+304B"));
+        // `巻` alone (no column / number prefix) is not a page-line part.
+        assert!(!is_page_line_shaped("巻-3-4"));
     }
 
     #[test]

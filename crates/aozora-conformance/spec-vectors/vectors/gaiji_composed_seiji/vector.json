@@ -1,0 +1,92 @@
+{
+  "name": "gaiji_composed_seiji",
+  "meta": {
+    "feature": "gaiji",
+    "level": "should",
+    "spec_section": "6.4",
+    "note": "[provenance:reference-impl-aligned §6.4 + JIS X 0213 + AOZORA-ANNOTATION external_character.html 2026-06-22] The 正字 external-character form wraps the whole composed-glyph body in an OUTER 「…」 and may carry an internal 、 (`※［＃「…）、「柿」の正字」、第N水準N-N-N］`). The mencode is the maximal trailing run of JIS men-ku-ten / U+XXXX / 底本ページ-行 tokens (scanned right-to-left); everything before is the description, kept verbatim WITH its outer 「…」 so serialize ∘ parse is a fixed point. men-ku-ten 1-85-57 -> U+67F9 柹 via JIS X 0213:2004 Annex B. ~150 occurrences across the corpus. Offsets from the §3 byte model; expected captured from the aozora #122 reference implementation."
+  },
+  "source": "※［＃「木＋（「第－竹」の「コ」に代えて「丿」）、「柿」の正字」、第3水準1-85-57］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-gaiji\" data-codepoint=\"U+67F9\">柹</span></p>\n",
+    "serialize": "※［＃「木＋（「第－竹」の「コ」に代えて「丿」）、「柿」の正字」、第3水準1-85-57］\n",
+    "nodes": [
+      {
+        "kind": "gaiji",
+        "span": {
+          "start": 0,
+          "end": 119
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 21,
+          "end": 24
+        },
+        "close": {
+          "start": 33,
+          "end": 36
+        }
+      },
+      {
+        "kind": "quote",
+        "open": {
+          "start": 39,
+          "end": 42
+        },
+        "close": {
+          "start": 45,
+          "end": 48
+        }
+      },
+      {
+        "kind": "quote",
+        "open": {
+          "start": 60,
+          "end": 63
+        },
+        "close": {
+          "start": 66,
+          "end": 69
+        }
+      },
+      {
+        "kind": "quote",
+        "open": {
+          "start": 75,
+          "end": 78
+        },
+        "close": {
+          "start": 81,
+          "end": 84
+        }
+      },
+      {
+        "kind": "quote",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 93,
+          "end": 96
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 116,
+          "end": 119
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
