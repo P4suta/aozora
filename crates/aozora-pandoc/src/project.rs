@@ -10,7 +10,8 @@
 use aozora::{
     AlignEnd, AngleQuote, Bouten, BoutenPosition, CombineUpright, ContainerKind, Directive,
     DirectiveKind, Gaiji, Heading, HeadingHint, HeadingKind, HeadingStyle, Illustration, Indent,
-    Kaeriten, MarginNote, NodeRef, Ruby, SectionKind, Segment, SourceNode, Span, Tree, Warichu,
+    IndentLayout, Kaeriten, MarginNote, NodeRef, Ruby, SectionKind, Segment, SourceNode, Span,
+    Tree, Warichu,
     pipeline::lexer::sanitize,
     roman_slug,
     syntax::borrowed::{Content, Node},
@@ -541,6 +542,7 @@ fn container_attr(kind: ContainerKind) -> Attr {
             amount,
             wrap,
             center,
+            layout,
         } => {
             let mut kvs = vec![("amount".to_owned(), amount.to_string())];
             if let Some(w) = wrap {
@@ -548,6 +550,16 @@ fn container_attr(kind: ContainerKind) -> Attr {
             }
             if center {
                 kvs.push(("center".to_owned(), "true".to_owned()));
+            }
+            match layout {
+                IndentLayout::Kumi { lines, width } => {
+                    kvs.push(("kumi-lines".to_owned(), lines.to_string()));
+                    kvs.push(("kumi-width".to_owned(), width.to_string()));
+                }
+                IndentLayout::LineWidth(width) => {
+                    kvs.push(("width".to_owned(), width.to_string()));
+                }
+                IndentLayout::None => {}
             }
             ("container-indent", kvs)
         }

@@ -23,7 +23,7 @@ use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Content};
 use aozora_syntax::{
     AlignEnd, BoutenKind, BoutenPosition, Center, Container, ContainerKind, DirectiveKind, Framed,
-    HeadingKind, HeadingStyle, Indent, MarginNoteKind, SectionKind,
+    HeadingKind, HeadingStyle, Indent, IndentLayout, MarginNoteKind, SectionKind,
 };
 use proptest::prelude::*;
 
@@ -69,6 +69,7 @@ fn xml_node_name_is_injective_over_all_variants() {
                 amount: 1,
                 wrap: None,
                 center: false,
+                layout: IndentLayout::None,
             },
         }),
     ];

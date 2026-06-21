@@ -587,7 +587,7 @@ mod tests {
     use crate::borrowed;
     use crate::{
         AlignEnd, BoutenKind, BoutenPosition, Container, ContainerKind, DirectiveKind,
-        EmphasisKind, Framed, HeadingKind, HeadingStyle, Indent, SectionKind,
+        EmphasisKind, Framed, HeadingKind, HeadingStyle, Indent, IndentLayout, SectionKind,
     };
 
     fn fresh_alloc(arena: &Arena) -> BorrowedAllocator<'_> {
@@ -871,6 +871,7 @@ mod tests {
                 amount: 1,
                 wrap: None,
                 center: false,
+                layout: IndentLayout::None,
             },
         };
         let n = a.container(c);

@@ -17,7 +17,7 @@ use aozora_syntax::borrowed::{
 };
 use aozora_syntax::{
     AlignEnd, BoutenPosition, Center, ContainerKind, EmphasisKind, HeadingKind, HeadingStyle,
-    Indent, RubySide, SectionKind,
+    Indent, IndentLayout, RubySide, SectionKind,
 };
 
 /// Serialize a `LexOutput` back to Aozora source text.
@@ -440,9 +440,26 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             bouten_left_prefix(position),
             kind.keyword()
         ),
+        // #78 line-layout compounds — checked first so the `..`-tolerant plain
+        // arms below cannot swallow a layout-bearing Indent and silently drop
+        // the secondary clause (a §7.6 fixed-point violation).
+        ContainerKind::Indent {
+            amount,
+            layout: IndentLayout::Kumi { lines, width },
+            ..
+        } => write!(
+            out,
+            "［＃ここから{amount}字下げ、{lines}行{width}字組みで］"
+        ),
+        ContainerKind::Indent {
+            amount,
+            layout: IndentLayout::LineWidth(width),
+            ..
+        } => write!(out, "［＃ここから{amount}字下げ、{width}字詰め］"),
         ContainerKind::Indent {
             amount,
             wrap: Some(wrap),
+            layout: IndentLayout::None,
             ..
         } => write!(out, "［＃ここから{amount}字下げ、折り返して{wrap}字下げ］"),
         // Combined 字下げ＋ページ左右中央 — an indented, page-centred block.
@@ -450,6 +467,7 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             amount,
             wrap: None,
             center: true,
+            layout: IndentLayout::None,
         } => write!(out, "［＃ここから{amount}字下げ、ページの左右中央に］"),
         // Plain 字下げ — preserve the amount. A bare container_open_marker
         // fallback collapses it to ［＃ここから字下げ］, dropping N (a §7.6
@@ -459,11 +477,13 @@ fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resul
             amount: 1,
             wrap: None,
             center: false,
+            layout: IndentLayout::None,
         } => out.write_str("［＃ここから字下げ］"),
         ContainerKind::Indent {
             amount,
             wrap: None,
             center: false,
+            layout: IndentLayout::None,
         } => write!(out, "［＃ここから{amount}字下げ］"),
         ContainerKind::Bold { block: false } => out.write_str("［＃太字］"),
         ContainerKind::Bold { block: true } => out.write_str("［＃ここから太字］"),
@@ -536,6 +556,14 @@ fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Resu
         ContainerKind::Bold { block: true } => out.write_str("［＃ここで太字終わり］"),
         ContainerKind::Italic { block: false } => out.write_str("［＃斜体終わり］"),
         ContainerKind::Italic { block: true } => out.write_str("［＃ここで斜体終わり］"),
+        // #78 字組み compound — the close marker carries the width so it
+        // round-trips byte-exact (unlike the other block closers, which the
+        // open side keeps authoritative). The 字詰め compound and the plain /
+        // 折り返して / 中央 indents all fall to the generic 字下げ終わり below.
+        ContainerKind::Indent {
+            layout: IndentLayout::Kumi { width, .. },
+            ..
+        } => write!(out, "［＃ここで字下げ、{width}字組み終わり］"),
         ContainerKind::LineWidth { .. } => out.write_str("［＃ここで字詰め終わり］"),
         ContainerKind::Heading { kind, style, block } => write!(
             out,
@@ -1024,6 +1052,26 @@ mod tests {
         assert_eq!(
             ser("［＃ここから20字詰め］\nA\n［＃ここで字詰め終わり］"),
             "\n\n［＃ここから20字詰め］\n\nA\n\n［＃ここで字詰め終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn indent_line_kumi_compound_keeps_both_params() {
+        // #78: the opener keeps amount + lines + width; the compound closer
+        // keeps the width (source-exact, unlike the generic family closers).
+        assert_eq!(
+            ser("［＃ここから3字下げ、1行20字組みで］\nA\n［＃ここで字下げ、20字組み終わり］"),
+            "\n\n［＃ここから3字下げ、1行20字組みで］\n\nA\n\n［＃ここで字下げ、20字組み終わり］\n\n"
+        );
+    }
+
+    #[test]
+    fn indent_line_width_compound_closes_generic() {
+        // #78: ここから{N}字下げ、{W}字詰め keeps both params on the opener and
+        // closes with the generic 字下げ終わり (matching the corpus).
+        assert_eq!(
+            ser("［＃ここから8字下げ、18字詰め］\nA\n［＃ここで字下げ終わり］"),
+            "\n\n［＃ここから8字下げ、18字詰め］\n\nA\n\n［＃ここで字下げ終わり］\n\n"
         );
     }
 

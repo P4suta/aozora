@@ -29,7 +29,7 @@ pub mod borrowed;
 mod extension;
 pub mod node_kind;
 
-pub use extension::ContainerKind;
+pub use extension::{ContainerKind, IndentLayout};
 pub use node_kind::NodeKind;
 
 /// Byte-range span into the original source document.

@@ -57,6 +57,7 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-container-indent",
     "aozora-container-italic",
     "aozora-container-keigakomi",
+    "aozora-container-line-kumi",
     "aozora-container-line-width",
     "aozora-container-table",
     "aozora-container-warichu",
@@ -156,7 +157,7 @@ mod tests {
     use aozora_syntax::{
         AlignEnd, BOUTEN_KINDS, BoutenKind, BoutenPosition, Center, Container, ContainerKind,
         DirectiveKind, EMPHASIS_KINDS, EmphasisKind, HEADING_KINDS, HEADING_STYLES, HeadingStyle,
-        Indent, MarginNoteKind, SECTION_KINDS,
+        Indent, IndentLayout, MarginNoteKind, SECTION_KINDS,
     };
     use std::collections::BTreeSet;
 
@@ -287,11 +288,30 @@ mod tests {
                 amount: 2,
                 wrap: None,
                 center: false,
+                layout: IndentLayout::None,
             },
             ContainerKind::Indent {
                 amount: 2,
                 wrap: Some(4),
                 center: true,
+                layout: IndentLayout::None,
+            },
+            // #78 line-layout compounds — exercise the new line-kumi class
+            // (字詰め reuses the standalone line-width class).
+            ContainerKind::Indent {
+                amount: 3,
+                wrap: None,
+                center: false,
+                layout: IndentLayout::Kumi {
+                    lines: 1,
+                    width: 20,
+                },
+            },
+            ContainerKind::Indent {
+                amount: 8,
+                wrap: None,
+                center: false,
+                layout: IndentLayout::LineWidth(18),
             },
             ContainerKind::Warichu,
             ContainerKind::Framed,

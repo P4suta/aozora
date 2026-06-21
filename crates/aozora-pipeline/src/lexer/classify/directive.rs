@@ -17,7 +17,7 @@ use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
 use aozora_syntax::{
     AlignEnd, BOUTEN_KINDS, BoutenKind, BoutenPosition, Center, ContainerKind, DirectiveKind,
-    EmphasisKind, HeadingKind, HeadingStyle, Indent, SectionKind,
+    EmphasisKind, HeadingKind, HeadingStyle, Indent, IndentLayout, SectionKind,
 };
 
 use super::EmitKind;
@@ -66,6 +66,7 @@ enum BodyFamily {
     SashiePrefix,             // 挿絵（ → 挿絵（X）入る
     IndentBlockParamPrefix,   // ここから → ここから{N}字下げ
     AlignEndBlockParamPrefix, // ここから地から → ここから地から{N}字上げ
+    IndentKumiBlockEnd,       // ここで字下げ、 → ここで字下げ、{W}字組み終わり (#78)
     OkuriganaPrefix,          // （ → kaeriten okurigana （X）
 
     // === Body-equals-pattern then parse from body[0] ===
@@ -160,6 +161,7 @@ const fn body_family_mode(family: BodyFamily) -> MatchMode {
         | BodyFamily::SashiePrefix
         | BodyFamily::IndentBlockParamPrefix
         | BodyFamily::AlignEndBlockParamPrefix
+        | BodyFamily::IndentKumiBlockEnd
         | BodyFamily::OkuriganaPrefix
         | BodyFamily::TopIndentPrefix
         | BodyFamily::KaigyouTentsukiPrefix => MatchMode::Prefix,
@@ -198,6 +200,13 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "ここで字下げ終わり",
         family: BodyFamily::IndentBlockEnd,
+    },
+    // The 字組み compound closer carries the width (`ここで字下げ、20字組み終わり`,
+    // #78). Distinct from the generic `ここで字下げ終わり` above — the char after
+    // `ここで字下げ` is `、` vs `終`, so the two needles never overlap.
+    BodyPattern {
+        needle: "ここで字下げ、",
+        family: BodyFamily::IndentKumiBlockEnd,
     },
     BodyPattern {
         needle: "ここで地付き終わり",
@@ -844,6 +853,7 @@ pub(super) fn classify_annotation_body<'a>(
                 amount: 1,
                 wrap: None,
                 center: false,
+                layout: IndentLayout::None,
             }),
             None,
         )),
@@ -856,6 +866,7 @@ pub(super) fn classify_annotation_body<'a>(
                 amount: 0,
                 wrap: None,
                 center: false,
+                layout: IndentLayout::None,
             }),
             None,
         )),
@@ -869,6 +880,25 @@ pub(super) fn classify_annotation_body<'a>(
             EmitKind::BlockClose(ContainerKind::LineWidth { width: 0 }),
             None,
         )),
+        BodyFamily::IndentKumiBlockEnd => {
+            // ここで字下げ、{W}字組み終わり (#78) — the 字組み compound closer.
+            // Unlike the other block closers it carries the `width`, so the
+            // marker round-trips byte-exact; pairing is still by the Indent
+            // family (the close payload only feeds serialize). Tolerate an
+            // optional leading `{L}行`. Declines (→ Unknown) on any other shape.
+            let rest = &body[match_end..];
+            let rest = rest.split_once('行').map_or(rest, |(_lines, after)| after);
+            let (width, tail) = parse_decimal_u8_prefix(rest)?;
+            (width >= 1 && tail == "字組み終わり").then_some((
+                EmitKind::BlockClose(ContainerKind::Indent {
+                    amount: 0,
+                    wrap: None,
+                    center: false,
+                    layout: IndentLayout::Kumi { lines: 0, width },
+                }),
+                None,
+            ))
+        }
         BodyFamily::TableBlockOpen => Some((EmitKind::BlockOpen(ContainerKind::Table), None)),
         BodyFamily::TableBlockEnd => Some((EmitKind::BlockClose(ContainerKind::Table), None)),
         BodyFamily::HorizontalBlockOpen => {
@@ -946,6 +976,7 @@ pub(super) fn classify_annotation_body<'a>(
                     amount: 0,
                     wrap: Some(m),
                     center: false,
+                    layout: IndentLayout::None,
                 }),
                 None,
             ))
@@ -967,6 +998,7 @@ pub(super) fn classify_annotation_body<'a>(
                         amount: 0,
                         wrap: Some(m),
                         center: false,
+                        layout: IndentLayout::None,
                     }),
                     None,
                 ));
@@ -978,6 +1010,7 @@ pub(super) fn classify_annotation_body<'a>(
                         amount: n,
                         wrap: None,
                         center: false,
+                        layout: IndentLayout::None,
                     }),
                     None,
                 ))
@@ -990,6 +1023,7 @@ pub(super) fn classify_annotation_body<'a>(
                         amount: n,
                         wrap: Some(m),
                         center: false,
+                        layout: IndentLayout::None,
                     }),
                     None,
                 ))
@@ -1005,9 +1039,29 @@ pub(super) fn classify_annotation_body<'a>(
                         amount: n,
                         wrap: None,
                         center: true,
+                        layout: IndentLayout::None,
                     }),
                     None,
                 ))
+            } else if let Some(after) = tail.strip_prefix("字下げ、") {
+                // ここから{N}字下げ、… line-layout compound (#78): an indented
+                // block that also constrains the line layout. Two corpus forms:
+                //   ・{W}字詰め         → LineWidth (generic 字下げ終わり closer)
+                //   ・{L}行{W}字組み[で] → Kumi (compound 字下げ、W字組み終わり closer)
+                // Checked after the 折り返して / 中央 compounds (which also start
+                // `字下げ、`) so those keep precedence; declines (→ Unknown) for
+                // any other `字下げ、X` (e.g. PR2's 小さい活字 / ゴシック体).
+                parse_indent_line_layout(after).map(|layout| {
+                    (
+                        EmitKind::BlockOpen(ContainerKind::Indent {
+                            amount: n,
+                            wrap: None,
+                            center: false,
+                            layout,
+                        }),
+                        None,
+                    )
+                })
             } else if tail == "字詰め" && n >= 1 {
                 // ここから{N}字詰め — line-width container (字詰め): N
                 // full-width characters per line. Shares the `ここから`
@@ -1402,6 +1456,33 @@ fn font_size_block_open_steps(tail: &str, magnitude: u8) -> Option<i8> {
         "段階小さな文字" => Some(-steps),
         _ => None,
     }
+}
+
+/// Parse the line-layout clause after `ここから{N}字下げ、` (#78).
+///
+/// `after` is the text following `字下げ、` in the opener body. Two
+/// corpus-attested forms:
+///   * `{W}字詰め`          → [`IndentLayout::LineWidth`] (`W` chars per line)
+///   * `{L}行{W}字組み[で]`  → [`IndentLayout::Kumi`] (`L` lines of `W` chars)
+///
+/// Returns `None` for anything else, so the bracket falls through to
+/// `Directive{Unknown}` (round-trips byte-identical) instead of being
+/// claimed in error.
+fn parse_indent_line_layout(after: &str) -> Option<IndentLayout> {
+    let (lead, rest) = parse_decimal_u8_prefix(after)?;
+    if lead < 1 {
+        return None;
+    }
+    if rest == "字詰め" {
+        return Some(IndentLayout::LineWidth(lead));
+    }
+    // `{L}行{W}字組み[で]` — the leading number is the line count.
+    let after_lines = rest.strip_prefix('行')?;
+    let (width, tail) = parse_decimal_u8_prefix(after_lines)?;
+    if width >= 1 && matches!(tail, "字組み" | "字組みで") {
+        return Some(IndentLayout::Kumi { lines: lead, width });
+    }
+    None
 }
 
 /// Map the trailing keyword (after `に`) to a [`BoutenKind`].

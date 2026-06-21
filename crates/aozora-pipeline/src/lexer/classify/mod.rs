@@ -1833,7 +1833,9 @@ mod tests {
     use super::directive::parse_emphasis_body;
     use super::forward::emphasis_kind_from_suffix;
     use super::*;
-    use aozora_syntax::{AlignEnd, BoutenKind, BoutenPosition, EmphasisKind, Indent, SectionKind};
+    use aozora_syntax::{
+        AlignEnd, BoutenKind, BoutenPosition, EmphasisKind, Indent, IndentLayout, SectionKind,
+    };
     // Borrowed-AST types pattern-matched throughout. `Node<'a>`
     // is `Copy` and holds payloads via `&'a Ruby<'a>` etc., so tests
     // pattern-match `Node::Ruby(r)` where `r` is already a
@@ -2885,6 +2887,7 @@ mod tests {
                 amount: 0,
                 wrap: Some(2),
                 center: false,
+                layout: IndentLayout::None,
             })
         );
         // 天から{N}字下げ → Indent leaf
@@ -3102,6 +3105,7 @@ mod tests {
                 amount: 0,
                 wrap: Some(2),
                 center: false,
+                layout: IndentLayout::None,
             }),
             "spans = {:?}",
             out.spans
@@ -4334,7 +4338,8 @@ mod tests {
             SpanKind::BlockOpen(ContainerKind::Indent {
                 amount: 1,
                 wrap: None,
-                center: false
+                center: false,
+                layout: IndentLayout::None,
             })
         ));
     }
@@ -4347,7 +4352,8 @@ mod tests {
             SpanKind::BlockOpen(ContainerKind::Indent {
                 amount: 3,
                 wrap: None,
-                center: false
+                center: false,
+                layout: IndentLayout::None,
             })
         ));
     }
@@ -4360,9 +4366,100 @@ mod tests {
             SpanKind::BlockOpen(ContainerKind::Indent {
                 amount: 2,
                 wrap: Some(4),
-                center: false
+                center: false,
+                layout: IndentLayout::None,
             })
         ));
+    }
+
+    #[test]
+    fn container_open_indent_line_kumi_compound() {
+        // #78: ここから{N}字下げ、{L}行{W}字組みで → Indent + Kumi layout.
+        run!(out, "［＃ここから3字下げ、1行20字組みで］");
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::Indent {
+                amount: 3,
+                wrap: None,
+                center: false,
+                layout: IndentLayout::Kumi {
+                    lines: 1,
+                    width: 20
+                },
+            })
+        ));
+    }
+
+    #[test]
+    fn container_open_indent_line_width_compound() {
+        // #78: ここから{N}字下げ、{W}字詰め → Indent + LineWidth layout.
+        run!(out, "［＃ここから8字下げ、18字詰め］");
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::Indent {
+                amount: 8,
+                wrap: None,
+                center: false,
+                layout: IndentLayout::LineWidth(18),
+            })
+        ));
+    }
+
+    #[test]
+    fn container_kumi_compound_closer_carries_width_and_pairs() {
+        // The compound closer ここで字下げ、{W}字組み終わり carries the width
+        // (so serialize round-trips) and pairs with the Indent open by family.
+        run!(
+            out,
+            "［＃ここから3字下げ、1行20字組みで］本文［＃ここで字下げ、20字組み終わり］"
+        );
+        assert_eq!(out.spans.len(), 3);
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(ContainerKind::Indent {
+                layout: IndentLayout::Kumi { width: 20, .. },
+                ..
+            })
+        ));
+        assert!(matches!(
+            out.spans[2].kind,
+            SpanKind::BlockClose(ContainerKind::Indent {
+                layout: IndentLayout::Kumi { width: 20, .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn container_line_width_compound_closes_generic() {
+        // The 字詰め compound closes with the GENERIC 字下げ終わり (no param),
+        // matching the corpus; it still pairs by the Indent family.
+        run!(
+            out,
+            "［＃ここから8字下げ、18字詰め］本文［＃ここで字下げ終わり］"
+        );
+        assert_eq!(out.spans.len(), 3);
+        assert!(matches!(
+            out.spans[2].kind,
+            SpanKind::BlockClose(ContainerKind::Indent {
+                layout: IndentLayout::None,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn indent_compound_unknown_form_declines() {
+        // PR2-deferred 字下げ、X (e.g. ゴシック体) is NOT yet a layout: it must
+        // stay Directive{Unknown}, never claimed as an Indent container.
+        run!(out, "［＃ここから3字下げ、ゴシック体］");
+        assert!(
+            !out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::BlockOpen(_))),
+            "unknown 字下げ compound must not open a container: {:?}",
+            out.spans
+        );
     }
 
     #[test]

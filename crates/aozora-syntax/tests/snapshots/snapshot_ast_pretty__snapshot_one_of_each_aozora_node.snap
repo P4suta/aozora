@@ -178,6 +178,7 @@ expression: "format!(\"{nodes:#?}\")"
                 amount: 1,
                 wrap: None,
                 center: false,
+                layout: None,
             },
         },
     ),

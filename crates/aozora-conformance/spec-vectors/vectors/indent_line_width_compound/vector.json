@@ -1,0 +1,55 @@
+{
+  "name": "indent_line_width_compound",
+  "meta": {
+    "feature": "container",
+    "level": "must",
+    "spec_section": "6.6",
+    "note": "[provenance:reference-impl-aligned §6.6 + AOZORA-ANNOTATION 2026-06-22] ［＃ここからN字下げ、W字詰め］ is the compound indent + line-width form (#78): an indented block that also sets W full-width characters per line. Unlike the 字組み compound it closes with the GENERIC ［＃ここで字下げ終わり］ (no param), matching the corpus; pairing is by the Indent family. Offsets from the §3 byte model; expected captured from the aozora #78 reference implementation."
+  },
+  "source": "本文。\n［＃ここから8字下げ、18字詰め］\n詰めた段落。\n別の行。\n［＃ここで字下げ終わり］\n通常段落。\n",
+  "expected": {
+    "html": "<p>本文。</p>\n<div class=\"aozora-container aozora-container-indent aozora-container-indent-8 aozora-container-line-width\" data-amount=\"8\" data-width=\"18\">\n<p>詰めた段落。<br />\n別の行。</p>\n</div>\n<p>通常段落。</p>\n",
+    "serialize": "本文。\n\n［＃ここから8字下げ、18字詰め］\n\n詰めた段落。\n別の行。\n\n［＃ここで字下げ終わり］\n\n通常段落。\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 10,
+          "end": 55
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 88,
+          "end": 124
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 10,
+          "end": 13
+        },
+        "close": {
+          "start": 52,
+          "end": 55
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 88,
+          "end": 91
+        },
+        "close": {
+          "start": 121,
+          "end": 124
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
