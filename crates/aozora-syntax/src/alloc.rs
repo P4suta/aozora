@@ -25,7 +25,7 @@
 //! (the concatenation is interned). The legacy owned `Content::from`
 //! / `Content::from_segments` helpers used the same canonicalisation;
 //! preserving it keeps the determinism + sentinel-alignment
-//! proptests in `aozora-lex/tests/property_borrowed_arena.rs` honest
+//! proptests in `aozora-pipeline/tests/property_borrowed_arena.rs` honest
 //! across edits.
 
 use aozora_encoding::gaiji::Resolved;
@@ -180,7 +180,7 @@ impl<'a> BorrowedAllocator<'a> {
     ///
     /// # Panics
     ///
-    /// Panics if `raw` is empty. Phase 3 emits annotation only after
+    /// Panics if `raw` is empty. The classify stage emits annotation only after
     /// at least one byte landed in the bracket body.
     pub fn make_directive(
         &mut self,
@@ -188,7 +188,7 @@ impl<'a> BorrowedAllocator<'a> {
         kind: DirectiveKind,
     ) -> &'a borrowed::Directive<'a> {
         let raw = borrowed::NonEmptyStr::new(self.interner.intern(raw))
-            .expect("Phase 3 must emit Directive with non-empty raw bytes");
+            .expect("classify stage must emit Directive with non-empty raw bytes");
         let a = borrowed::Directive { raw, kind };
         self.arena.alloc(a)
     }
@@ -200,14 +200,14 @@ impl<'a> BorrowedAllocator<'a> {
     /// `Node::Ruby(Ruby { base, reading, delim_explicit })`.
     ///
     /// `base` and `reading` carry the [`borrowed::NonEmpty`]
-    /// invariant. Phase 3 only emits Ruby once both are non-empty,
+    /// invariant. The classify stage only emits Ruby once both are non-empty,
     /// so this `expect` is a contract-check; an empty payload here
     /// signals a classifier bug.
     ///
     /// # Panics
     ///
-    /// Panics if `base` or `reading` is empty. Phase 3 emit-sites
-    /// classify only after the body is populated, so the panic
+    /// Panics if `base` or `reading` is empty. The classify-stage emit-sites
+    /// run only after the body is populated, so the panic
     /// represents a pipeline-internal bug — the
     /// [`borrowed::NonEmpty`] payload encodes this invariant at the
     /// type level.
@@ -218,10 +218,10 @@ impl<'a> BorrowedAllocator<'a> {
         reading: borrowed::Content<'a>,
         delim_explicit: bool,
     ) -> borrowed::Node<'a> {
-        let base =
-            borrowed::NonEmpty::new(base).expect("Phase 3 must emit Ruby with non-empty base");
+        let base = borrowed::NonEmpty::new(base)
+            .expect("classify stage must emit Ruby with non-empty base");
         let reading = borrowed::NonEmpty::new(reading)
-            .expect("Phase 3 must emit Ruby with non-empty reading");
+            .expect("classify stage must emit Ruby with non-empty reading");
         borrowed::Node::Ruby(self.arena.alloc(borrowed::Ruby {
             base,
             reading,
@@ -243,10 +243,10 @@ impl<'a> BorrowedAllocator<'a> {
         base: borrowed::Content<'a>,
         reading: borrowed::Content<'a>,
     ) -> borrowed::Node<'a> {
-        let base =
-            borrowed::NonEmpty::new(base).expect("Phase 3 must emit Ruby with non-empty base");
+        let base = borrowed::NonEmpty::new(base)
+            .expect("classify stage must emit Ruby with non-empty base");
         let reading = borrowed::NonEmpty::new(reading)
-            .expect("Phase 3 must emit Ruby with non-empty reading");
+            .expect("classify stage must emit Ruby with non-empty reading");
         borrowed::Node::Ruby(self.arena.alloc(borrowed::Ruby {
             base,
             reading,
@@ -263,7 +263,7 @@ impl<'a> BorrowedAllocator<'a> {
     /// # Panics
     ///
     /// Panics if `base` or `note` is empty (same contract as [`Self::ruby`];
-    /// Phase 3 rejects an empty note before emitting).
+    /// the classify stage rejects an empty note before emitting).
     #[must_use]
     pub fn side_note(
         &self,
@@ -272,9 +272,9 @@ impl<'a> BorrowedAllocator<'a> {
         note: borrowed::Content<'a>,
     ) -> borrowed::Node<'a> {
         let base = borrowed::NonEmpty::new(base)
-            .expect("Phase 3 must emit MarginNote with non-empty base");
+            .expect("classify stage must emit MarginNote with non-empty base");
         let note = borrowed::NonEmpty::new(note)
-            .expect("Phase 3 must emit MarginNote with non-empty note");
+            .expect("classify stage must emit MarginNote with non-empty note");
         borrowed::Node::MarginNote(self.arena.alloc(borrowed::MarginNote { kind, base, note }))
     }
 
@@ -282,7 +282,7 @@ impl<'a> BorrowedAllocator<'a> {
     /// consumed_predecessor })`.
     ///
     /// `target` carries the [`borrowed::NonEmpty`] invariant —
-    /// Phase 3 resolves the forward reference before emitting.
+    /// the classify stage resolves the forward reference before emitting.
     ///
     /// `consumed_predecessor` is `true` when the classifier pulled
     /// the node's source span back over the literal occurrence of
@@ -293,7 +293,7 @@ impl<'a> BorrowedAllocator<'a> {
     /// # Panics
     ///
     /// Panics if `target` is empty. The forward-reference resolver
-    /// in Phase 3 always lands a non-empty target before emit; an
+    /// in the classify stage always lands a non-empty target before emit; an
     /// empty payload here signals a classifier bug.
     #[must_use]
     #[allow(
@@ -308,7 +308,7 @@ impl<'a> BorrowedAllocator<'a> {
         consumed_predecessor: bool,
     ) -> borrowed::Node<'a> {
         let target = borrowed::NonEmpty::new(target)
-            .expect("Phase 3 must emit Bouten with a resolved non-empty target");
+            .expect("classify stage must emit Bouten with a resolved non-empty target");
         borrowed::Node::Bouten(self.arena.alloc(borrowed::Bouten {
             kind,
             target,
@@ -333,7 +333,7 @@ impl<'a> BorrowedAllocator<'a> {
         consumed_predecessor: bool,
     ) -> borrowed::Node<'a> {
         let text = borrowed::NonEmpty::new(text)
-            .expect("Phase 3 must emit CombineUpright with non-empty text");
+            .expect("classify stage must emit CombineUpright with non-empty text");
         borrowed::Node::CombineUpright(self.arena.alloc(borrowed::CombineUpright {
             text,
             consumed_predecessor,
@@ -358,8 +358,8 @@ impl<'a> BorrowedAllocator<'a> {
         text: borrowed::Content<'a>,
         consumed_predecessor: bool,
     ) -> borrowed::Node<'a> {
-        let text =
-            borrowed::NonEmpty::new(text).expect("Phase 3 must emit Emphasis with non-empty text");
+        let text = borrowed::NonEmpty::new(text)
+            .expect("classify stage must emit Emphasis with non-empty text");
         borrowed::Node::Emphasis(self.arena.alloc(borrowed::Emphasis {
             kind,
             text,
@@ -433,8 +433,8 @@ impl<'a> BorrowedAllocator<'a> {
         style: HeadingStyle,
         text: borrowed::Content<'a>,
     ) -> borrowed::Node<'a> {
-        let text =
-            borrowed::NonEmpty::new(text).expect("Phase 3 must emit Heading with non-empty text");
+        let text = borrowed::NonEmpty::new(text)
+            .expect("classify stage must emit Heading with non-empty text");
         borrowed::Node::Heading(self.arena.alloc(borrowed::Heading { kind, style, text }))
     }
 
@@ -444,7 +444,7 @@ impl<'a> BorrowedAllocator<'a> {
     ///
     /// # Panics
     ///
-    /// Panics if `target` is empty. Phase 3 emits the hint only
+    /// Panics if `target` is empty. The classify stage emits the hint only
     /// after the forward-reference target lands non-empty; an empty
     /// payload here signals a classifier bug.
     pub fn heading_hint(
@@ -454,7 +454,7 @@ impl<'a> BorrowedAllocator<'a> {
         target: &str,
     ) -> borrowed::Node<'a> {
         let target = borrowed::NonEmptyStr::new(self.interner.intern(target))
-            .expect("Phase 3 must emit HeadingHint with non-empty target");
+            .expect("classify stage must emit HeadingHint with non-empty target");
         borrowed::Node::HeadingHint(self.arena.alloc(borrowed::HeadingHint {
             level,
             style,
@@ -485,7 +485,7 @@ impl<'a> BorrowedAllocator<'a> {
         caption: Option<borrowed::Content<'a>>,
     ) -> borrowed::Node<'a> {
         let file = borrowed::NonEmptyStr::new(self.interner.intern(file))
-            .expect("Phase 3 must emit Illustration with non-empty file path");
+            .expect("classify stage must emit Illustration with non-empty file path");
         let number = number.and_then(|n| borrowed::NonEmptyStr::new(self.interner.intern(n)));
         let dimensions = dimensions.map(|d| self.interner.intern(d));
         borrowed::Node::Illustration(self.arena.alloc(borrowed::Illustration {
@@ -513,11 +513,11 @@ impl<'a> BorrowedAllocator<'a> {
         dimensions: Option<&str>,
     ) -> borrowed::Node<'a> {
         let file = borrowed::NonEmptyStr::new(self.interner.intern(file))
-            .expect("Phase 3 must emit Illustration with non-empty file path");
+            .expect("classify stage must emit Illustration with non-empty file path");
         let description = self.interner.intern(description);
         debug_assert!(
             !description.is_empty(),
-            "Phase 3 must emit a general Illustration with a non-empty description"
+            "classify stage must emit a general Illustration with a non-empty description"
         );
         let dimensions = dimensions.map(|d| self.interner.intern(d));
         borrowed::Node::Illustration(self.arena.alloc(borrowed::Illustration {
@@ -538,7 +538,7 @@ impl<'a> BorrowedAllocator<'a> {
     /// Panics if `mark` is empty.
     pub fn kaeriten(&mut self, mark: &str) -> borrowed::Node<'a> {
         let mark = borrowed::NonEmptyStr::new(self.interner.intern(mark))
-            .expect("Phase 3 must emit Kaeriten with non-empty mark");
+            .expect("classify stage must emit Kaeriten with non-empty mark");
         borrowed::Node::Kaeriten(self.arena.alloc(borrowed::Kaeriten { mark }))
     }
 
@@ -550,18 +550,18 @@ impl<'a> BorrowedAllocator<'a> {
 
     /// `Node::AngleQuote(AngleQuote { content })`.
     ///
-    /// `content` carries the [`borrowed::NonEmpty`] invariant — Phase 3
-    /// pre-filters `≪≫` with empty body into plain text so this
+    /// `content` carries the [`borrowed::NonEmpty`] invariant — the classify
+    /// stage pre-filters `≪≫` with empty body into plain text so this
     /// path is never reached with an empty payload.
     ///
     /// # Panics
     ///
-    /// Panics if `content` is empty. Phase 3's pre-filter is the
+    /// Panics if `content` is empty. The classify stage's pre-filter is the
     /// gate; an empty payload here signals a classifier bug.
     #[must_use]
     pub fn angle_quote(&self, content: borrowed::Content<'a>) -> borrowed::Node<'a> {
         let content = borrowed::NonEmpty::new(content)
-            .expect("Phase 3 pre-filters empty AngleQuote into plain");
+            .expect("classify stage pre-filters empty AngleQuote into plain");
         borrowed::Node::AngleQuote(self.arena.alloc(borrowed::AngleQuote { content }))
     }
 

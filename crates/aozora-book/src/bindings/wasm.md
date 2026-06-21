@@ -47,8 +47,8 @@ import init, { Document } from "./pkg/aozora_wasm.js";
 await init();                                  // load the .wasm
 
 const doc = new Document("｜青梅《おうめ》");
-const html = doc.to_html();
-const canonical = doc.serialize();
+const html = doc.toHtml();
+const canonical = doc.toSource();
 const diagnostics = JSON.parse(doc.diagnostics_json());
 console.log(html);
 doc.free();                                    // release the bumpalo arena
@@ -62,8 +62,8 @@ every method.
 | Method | Returns | Notes |
 |---|---|---|
 | `new Document(source: string)` | `Document` | Copies the JS string into a Rust `Box<str>`. |
-| `to_html()` | `string` | Renders to semantic HTML5 with `aozora-*` class hooks. |
-| `serialize()` | `string` | Re-emits canonical 青空文庫 source. |
+| `toHtml()` | `string` | Renders to semantic HTML5 with `aozora-*` class hooks. |
+| `toSource()` | `string` | Re-emits canonical 青空文庫 source. |
 | `diagnostics_json()` | `string` | JSON-encoded array of diagnostic objects. |
 | `source_byte_len()` | `number` | Source byte length, useful for progress UI. |
 | `free()` | — | Explicit drop; otherwise the JS GC eventually releases. |
@@ -88,7 +88,7 @@ it because:
 
 - It pulls in a meaningful chunk of `serde_json` machinery that
   bloats the wasm bundle by ~80 KiB.
-- The wire format (`{ code: "aozora::lex::unresolved_gaiji", level: "warning", … }`)
+- The JSON shape (`{ code: "aozora::lex::unresolved_gaiji", level: "warning", … }`)
   is exactly what every JS consumer is going to deserialise into
   anyway.
 - It would force a `serde::Serialize` derivation on every
@@ -138,7 +138,7 @@ the wasm build covers everywhere else — particularly:
   rendering.
 - Notebook environments (Jupyter via `pyodide`, Observable, Quarto).
 
-The same parser, same diagnostics, same canonical-serialise — across
+The same parser, same diagnostics, same canonical source — across
 every wasm-runtime host.
 
 ## See also

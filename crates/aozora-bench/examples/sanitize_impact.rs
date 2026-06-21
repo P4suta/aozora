@@ -1,15 +1,15 @@
-//! Phase 0 sub-pass downstream impact on phase 1 throughput.
+//! Sanitize-stage sub-pass downstream impact on tokenize-stage throughput.
 //!
 //! For each corpus document this probe detects which sanitize sub-passes
 //! actually fire — CRLF rewrite, decorative-rule isolation, accent
 //! decompose — and groups documents by the resulting bit-bucket. For
-//! each bucket it then re-times phase 1 (`tokenize`) on the post-sanitize
+//! each bucket it then re-times the tokenize stage (`tokenize`) on the post-sanitize
 //! text and reports the median ns/byte. The point is to answer
 //! "does triggering `rewrite_accent_spans` make the downstream
 //! tokenizer measurably slower?" — separating intrinsic
 //! document-shape variation from sub-pass-induced text rewriting.
 //!
-//! The doc-hidden phase 0 helpers (`normalize_line_endings`,
+//! The doc-hidden sanitize-stage helpers (`normalize_line_endings`,
 //! `has_long_rule_line`, `isolate_decorative_rules`,
 //! `rewrite_accent_spans`) are re-exported by `aozora_pipeline::lexer`; this probe
 //! drives them directly so the gating decisions match the production

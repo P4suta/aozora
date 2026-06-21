@@ -17,7 +17,7 @@ Inspect tag: `kaeriten` — kanbun reading-order marker (返り点).
 CSS positions the sup glyph appropriately for vertical / horizontal
 writing mode.
 
-## Serialize output
+## Source output
 
 Round-trips to `［＃返り点 mark］`.
 
@@ -31,7 +31,7 @@ pub struct Kaeriten<'src> {
 
 ## When emitted
 
-Phase 3 matches `返り点` keyword + marker payload. Empty marker
+The classify stage matches `返り点` keyword + marker payload. Empty marker
 rejected upstream.
 
 ## Diagnostics

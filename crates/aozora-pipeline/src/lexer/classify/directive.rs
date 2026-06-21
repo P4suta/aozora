@@ -4,7 +4,7 @@
 //! its Aho-Corasick DFA, `classify_annotation_body`, and the per-family
 //! body parsers. Operates purely on the trimmed body string (no event
 //! context); the forward-reference recognisers that need event context
-//! live in the parent module. Extracted verbatim from the phase-3
+//! live in the parent module. Extracted verbatim from the classify-stage
 //! classifier.
 
 #[cfg(feature = "classify-instrument")]

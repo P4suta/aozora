@@ -2,9 +2,9 @@
 
 aozora ships a stable JSON wire format used by every binding —
 `aozora-ffi` (C ABI), `aozora-wasm` (npm), `aozora-py` (PyO3) — and by
-the [`aozora wire <kind>`](../ref/cli.md#aozora-wire) CLI subcommand, to
+the [`aozora inspect <kind>`](../ref/cli.md#aozora-inspect) CLI subcommand, to
 project the parser's output across language boundaries.
-[`aozora::json`](https://docs.rs/aozora/latest/aozora/wire/index.html)
+[`aozora::json`](https://docs.rs/aozora/latest/aozora/json/index.html)
 is the single authority for that projection; downstream drivers
 call into it and receive bit-identical output.
 
@@ -58,6 +58,6 @@ format protects callers in two ways:
   the parser actually *does* after each diagnostic fires.
 - [Node reference](../nodes/index.md) — per-`NodeKind` documentation
   for every wire `kind` tag emitted by `nodes`.
-- [`aozora::json` rustdoc](https://docs.rs/aozora/latest/aozora/wire/index.html)
+- [`aozora::json` rustdoc](https://docs.rs/aozora/latest/aozora/json/index.html)
   — Rust API surface (envelope structs, the `schema_*` introspection
   helpers behind the `schema` Cargo feature).

@@ -4,7 +4,7 @@
 //! Each test parses a hand-crafted trigger string through
 //! [`lex`] and asserts that the expected
 //! [`aozora_spec::Diagnostic`] code shows up with the right severity. The
-//! exact span / wire shape is frozen separately by the conformance render
+//! exact span / JSON shape is frozen separately by the conformance render
 //! gate (`crates/aozora-conformance/fixtures/render/<case>/`); here we only
 //! pin *that* the detection triggers (and, for the negatives, that it does
 //! not).
@@ -39,7 +39,7 @@ fn one_diag_severity(src: &str, code: &str) -> Severity {
 }
 
 // ---------------------------------------------------------------------------
-// #8 accent_decomposition_applied (Note, Phase 0)
+// #8 accent_decomposition_applied (Note, sanitize stage)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -74,7 +74,7 @@ fn accent_span_without_digraph_is_silent() {
 }
 
 // ---------------------------------------------------------------------------
-// #6 unresolved_gaiji (Warning, Phase 3)
+// #6 unresolved_gaiji (Warning, classify stage)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -139,7 +139,7 @@ fn matched_container_close_is_silent() {
 }
 
 // ---------------------------------------------------------------------------
-// #1 empty_ruby_reading (Error, Phase 3)
+// #1 empty_ruby_reading (Error, classify stage)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -159,7 +159,7 @@ fn valid_and_baseless_empty_ruby_are_silent() {
 }
 
 // ---------------------------------------------------------------------------
-// #2 nested_ruby (Error, Phase 3)
+// #2 nested_ruby (Error, classify stage)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -183,7 +183,7 @@ fn flat_ruby_is_not_nested() {
 }
 
 // ---------------------------------------------------------------------------
-// #7 unrecognised_container_directive (Warning, Phase 3)
+// #7 unrecognised_container_directive (Warning, classify stage)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -218,7 +218,7 @@ fn known_and_non_container_directives_are_silent() {
 }
 
 // ---------------------------------------------------------------------------
-// #4 tcy_target_not_found (Warning, Phase 3)
+// #4 tcy_target_not_found (Warning, classify stage)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -238,7 +238,7 @@ fn tcy_with_present_target_is_silent() {
 }
 
 // ---------------------------------------------------------------------------
-// #5 bouten_target_ambiguous (Warning, Phase 3)
+// #5 bouten_target_ambiguous (Warning, classify stage)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -336,7 +336,7 @@ fn break_in_block_container_is_silent() {
 }
 
 // ---------------------------------------------------------------------------
-// bracketed_kaeriten_no_pair (Error, Phase 3 finalize)
+// bracketed_kaeriten_no_pair (Error, classify-stage finalize)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -394,7 +394,7 @@ fn kaeriten_base_presence_is_document_wide() {
 }
 
 // ---------------------------------------------------------------------------
-// kaeriten_outside_kanbun (Warning, Phase 3 finalize, conservative)
+// kaeriten_outside_kanbun (Warning, classify-stage finalize, conservative)
 // ---------------------------------------------------------------------------
 
 #[test]

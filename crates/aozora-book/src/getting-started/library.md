@@ -115,7 +115,7 @@ Every parse should round-trip:
 
 ```rust
 let parsed = doc.parse();
-let canonical: String = parsed.serialize();
+let canonical: String = parsed.to_source();
 assert_eq!(canonical, doc.source());     // for *canonical* input
 ```
 

@@ -4,9 +4,9 @@
 //! forward-reference recognisers (bouten, 縦中横, heading, emphasis,
 //! left-ruby / side-note, caption-figure) plus the source-scanned
 //! `FORWARD_TARGET_INDEX` that answers "does this target appear earlier
-//! in the source?". These need the Phase 2 event stream, unlike the
+//! in the source?". These need the pair-stage event stream, unlike the
 //! body-keyword `directive` classifier. Extracted verbatim from the
-//! phase-3 classifier; recognised nodes build on the shared
+//! classify-stage classifier; recognised nodes build on the shared
 //! `RecogniseCtx`.
 
 #[cfg(feature = "classify-instrument")]
@@ -39,7 +39,7 @@ thread_local! {
     /// means the lookup falls back to the legacy
     /// `source[..cutoff].contains` path for correctness.
     ///
-    /// Pre-I-2 the streaming Phase 3 entry point built this index from
+    /// Pre-I-2 the streaming classify-stage entry point built this index from
     /// a complete event slice up-front. Streaming has no event slice,
     /// so the index is left empty: every `forward_target_is_preceded`
     /// query falls back to substring scan. The pathological doc
@@ -162,7 +162,7 @@ pub(super) fn install_forward_target_index_from_source(source: &str) {
             // body provably occurs at `body_start` (its own quote), so
             // `find` never returns `None`; the fallback keeps it total.
             let first = memmem::find(bytes, body.as_bytes()).unwrap_or(body_start);
-            u32::try_from(first).expect("source positions fit in u32 per Phase 0 cap")
+            u32::try_from(first).expect("source positions fit in u32 per sanitize-stage cap")
         });
     }
 
@@ -570,7 +570,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 ///
 /// Uses the event-stream layout to find the target quote pair,
 /// avoiding the string-find-first-`」` pitfall when the target text
-/// itself contains nested `「…」`. Phase 2 has already balanced the
+/// itself contains nested `「…」`. The pair stage has already balanced the
 /// quotes so the target's extent is unambiguous.
 ///
 /// Expected event layout for a valid forward bouten:

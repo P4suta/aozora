@@ -18,7 +18,7 @@ writing-mode run (縦中横, "vertical-with-horizontal-inside").
 Downstream CSS gives the span `text-combine-upright: all` for proper
 vertical-writing display.
 
-## Serialize output
+## Source output
 
 Round-trips to `［＃「target」は縦中横］`.
 
@@ -32,7 +32,7 @@ pub struct CombineUpright<'src> {
 
 ## When emitted
 
-Phase 3 matches the directive `［＃「TARGET」は縦中横］` and resolves
+The classify stage matches the directive `［＃「TARGET」は縦中横］` and resolves
 TARGET in preceding text, then emits with the matched span.
 
 ## Diagnostics

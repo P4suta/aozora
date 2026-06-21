@@ -52,7 +52,7 @@ pub fn render_to_string(out: &LexOutput<'_>) -> String {
 ///
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited
 /// from the lexer's `Span` width contract; in practice unreachable
-/// (Phase 0 sanitize already gates on this bound).
+/// (the sanitize stage already gates on this bound).
 pub fn render_into<W: fmt::Write>(out: &LexOutput<'_>, writer: &mut W) -> fmt::Result {
     let mut sink = HtmlSink {
         out: writer,

@@ -23,10 +23,10 @@ when ambiguous neighbours could otherwise extend the base.
 `<rp>` parens are emitted so HTML clients without ruby support
 still display a readable fallback.
 
-## Serialize output
+## Source output
 
-`serialize()` always emits the explicit-delimiter form
-(`｜base《reading》`), so a parse → serialize → parse round-trip is
+`to_source()` always emits the explicit-delimiter form
+(`｜base《reading》`), so a parse → to_source → parse round-trip is
 a fixed point regardless of which form the source used.
 
 ## AST shape
@@ -45,7 +45,7 @@ empty base or reading is rejected upstream and never produces a
 
 ## When emitted
 
-Phase 3 classifies a `《…》` pair as ruby when the preceding run is a
+The classify stage classifies a `《…》` pair as ruby when the preceding run is a
 sequence of CJK / kana / latin glyphs and the close is followed by
 neither a glyph (which would extend the base further) nor a stray
 opener.

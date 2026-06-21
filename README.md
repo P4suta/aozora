@@ -5,7 +5,7 @@
   <a href="https://github.com/P4suta/aozora/actions/workflows/docs.yml"><img alt="docs deploy" src="https://github.com/P4suta/aozora/actions/workflows/docs.yml/badge.svg"></a>
   <a href="https://github.com/P4suta/aozora/releases/latest"><img alt="latest release" src="https://img.shields.io/github/v/release/P4suta/aozora?display_name=tag&sort=semver"></a>
   <a href="./LICENSE-APACHE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue"></a>
-  <a href="./rust-toolchain.toml"><img alt="msrv" src="https://img.shields.io/badge/rust-1.95-orange"></a>
+  <a href="./rust-toolchain.toml"><img alt="msrv" src="https://img.shields.io/badge/rust-1.96-orange"></a>
 </p>
 
 <p align="center">
@@ -67,7 +67,7 @@ npm install aozora-wasm
 import init, { Document } from "aozora-wasm";
 
 await init();
-const html = new Document("｜青梅《おうめ》").to_html();
+const html = new Document("｜青梅《おうめ》").toHtml();
 ```
 
 See the [WASM bindings chapter](https://p4suta.github.io/aozora/bindings/wasm.html)
@@ -83,7 +83,7 @@ let doc = Document::new(source);
 let tree = doc.parse();
 
 let html: String = tree.to_html();
-let canonical: String = tree.serialize();
+let canonical: String = tree.to_source();
 let diagnostics = tree.diagnostics();
 
 assert_eq!(canonical, "｜青梅《おうめ》");
@@ -96,7 +96,7 @@ borrows from it for the lifetime of the `Document`. Dropping the
 ## Choosing a binding
 
 There is **one parser** behind every surface: the HTML, the canonical
-serialise, and the diagnostic stream are byte-identical across all of
+source, and the diagnostic stream are byte-identical across all of
 them. Pick the one that fits the language and runtime you already have.
 
 | You are… | Use | Why |
@@ -118,9 +118,9 @@ the per-language jump list.
 
 ```sh
 aozora check FILE.txt           # lex + report diagnostics
-aozora fmt --check FILE.txt     # round-trip parse ∘ serialize check
+aozora fmt --check FILE.txt     # round-trip parse ∘ to_source check
 aozora render FILE.txt          # render to HTML on stdout
-aozora wire nodes FILE.txt      # parsed nodes as wire JSON (pairs / gaiji / slugs …)
+aozora inspect nodes FILE.txt   # parsed nodes as JSON (pairs / gaiji / slugs …)
 aozora check -E sjis FILE.txt   # Shift_JIS source from Aozora Bunko
 ```
 
@@ -130,31 +130,31 @@ for the full subcommand reference.
 
 ## Crate layout
 
-aozora is a 21-crate workspace.
+aozora is a 22-crate workspace.
 [`crates/aozora`](./crates/aozora) is the public facade — library
 consumers usually import only this one.
 
 | Crate | Purpose |
 |---|---|
-| [`crates/aozora`](./crates/aozora) | Top-level facade. `Document::parse() → AozoraTree<'_>`, structured `Diagnostic`s, `SLUGS` catalogue, `canonicalise_slug`. The single front door. |
+| [`crates/aozora`](./crates/aozora) | Top-level facade. `Document::parse() → Tree<'_>`, structured `Diagnostic`s, `SLUGS` catalogue, `canonicalise_slug`. The single front door. |
 | [`crates/aozora-spec`](./crates/aozora-spec) | Single source of truth for shared types: `Span`, `TriggerKind`, `PairKind`, `Diagnostic`, PUA sentinel codepoints, `SLUGS` dispatch table. No internal dependency. |
-| [`crates/aozora-syntax`](./crates/aozora-syntax) | AST types (`AozoraNode` borrowed-arena variants, `ContainerKind`, `BoutenKind`, `Indent`). |
+| [`crates/aozora-syntax`](./crates/aozora-syntax) | AST types (`Node` borrowed-arena variants, `ContainerKind`, `BoutenKind`, `Indent`). |
 | [`crates/aozora-encoding`](./crates/aozora-encoding) | Shift_JIS decoding + 外字 lookup (compile-time PHF, JIS X 0213 + UCS resolution). |
 | [`crates/aozora-scan`](./crates/aozora-scan) | SIMD-friendly multi-pattern scanner backends (Teddy / structural-bitmap / Hoehrmann DFA / naive fallback). |
 | [`crates/aozora-veb`](./crates/aozora-veb) | Eytzinger-layout sorted-set lookup (cache-friendly binary search). |
-| [`crates/aozora-pipeline`](./crates/aozora-pipeline) | 4-phase lexer (sanitize → events → pair → classify) plus the `lex_into_arena` orchestrator — pure `fn(&str, &Arena) -> BorrowedLexOutput<'_>`. |
+| [`crates/aozora-pipeline`](./crates/aozora-pipeline) | Lexer (sanitize → tokenize → pair → classify) plus the `lex` orchestrator — pure `fn(&str, &Arena) -> LexOutput<'_>`. |
 | [`crates/aozora-render`](./crates/aozora-render) | HTML and serialise renderers — `html::render_to_string`, `serialize::serialize`. |
 | [`crates/aozora-cst`](./crates/aozora-cst) | rowan-backed lossless concrete syntax tree. Editor/formatter surface. |
 | [`crates/aozora-query`](./crates/aozora-query) | Tree-sitter-style pattern DSL (`SyntaxKind` + capture) for queries over the CST. |
-| [`crates/aozora-pandoc`](./crates/aozora-pandoc) | Pandoc AST projection (`AozoraTree` → `pandoc_ast::Pandoc`); unlocks 50+ output formats via Pandoc writers. |
-| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` binary: `check` / `fmt` / `render` / `wire` / `schema` / `kinds` / `explain` / `pandoc`. |
+| [`crates/aozora-pandoc`](./crates/aozora-pandoc) | Pandoc AST projection (`Tree` → `pandoc_ast::Pandoc`); unlocks 50+ output formats via Pandoc writers. |
+| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` binary: `check` / `fmt` / `render` / `inspect` / `kinds` / `schema` / `explain` / `pandoc` / `completions`. |
 | [`crates/aozora-wasm`](./crates/aozora-wasm) | `wasm32-unknown-unknown` target for `wasm-pack build --target web`. |
 | [`crates/aozora-ffi`](./crates/aozora-ffi) | C ABI driver (opaque handle, JSON-encoded structured data). |
 | [`crates/aozora-extism`](./crates/aozora-extism) | Extism (WASM) plugin driver — one portable `aozora.wasm` for polyglot host SDKs (Go / Java / PHP / Ruby / …). The breadth strategy for new languages (ADR-0006). |
 | [`crates/aozora-go`](./crates/aozora-go) | Go host SDK over `aozora.wasm` via pure-Go wazero (no cgo). A Go module, not a cargo crate (in `exclude`). |
 | [`crates/aozora-py`](./crates/aozora-py) | PyO3 bindings, distributed via `maturin`. |
 | [`crates/aozora-bench`](./crates/aozora-bench) | Criterion + corpus-driven probes (PGO profile source). |
-| [`crates/aozora-conformance`](./crates/aozora-conformance) | WPT-style conformance fixture runner (golden HTML / serialize / diagnostics / wire across 23 fixtures). |
+| [`crates/aozora-conformance`](./crates/aozora-conformance) | WPT-style conformance fixture runner (golden HTML / serialize / diagnostics / JSON across 60 fixtures). |
 | [`crates/aozora-corpus`](./crates/aozora-corpus) | Corpus source abstraction for sweep tests (dev-only, set `AOZORA_CORPUS_ROOT`). |
 | [`crates/aozora-proptest`](./crates/aozora-proptest) | Shared proptest strategies (`aozora_fragment` / `pathological_aozora` / `unicode_adversarial` and friends; dev-only). |
 | [`crates/aozora-trace`](./crates/aozora-trace) | DWARF symbolicator for samply traces. |
@@ -177,7 +177,7 @@ just test           # cargo nextest run --workspace
 just prop           # property-based sweep (128 cases per block)
 just lint           # fmt + clippy pedantic+nursery + typos + strict-code
 just deny           # cargo-deny licenses + advisories + bans
-just coverage       # cargo llvm-cov branch coverage
+just coverage       # cargo llvm-cov region coverage
 just ci             # full CI replica
 just book-build     # render the mdbook handbook
 just book-serve     # live-preview the handbook at localhost:3000

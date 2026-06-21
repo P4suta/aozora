@@ -1,21 +1,21 @@
-//! Phase 0 — source sanitation.
+//! Sanitize stage — source sanitation.
 //!
-//! Prepares the raw source text for the downstream lexer phases:
+//! Prepares the raw source text for the downstream lexer stages:
 //!
 //! 1. **BOM strip** — every leading `U+FEFF` (UTF-8 BOM, 3 bytes each)
 //!    is consumed. Both single (`U+FEFF`) and stacked (`U+FEFF`+
 //!    `U+FEFF`+…) leading sequences resolve to the same empty prefix
-//!    so that `serialize(serialize(x))` round-trips byte-equal — a
+//!    so that `to_source(to_source(x))` round-trips byte-equal — a
 //!    single-strip would peel off one BOM per pass and break I3
 //!    fixed-point on inputs that carry more than one. Interior
 //!    `U+FEFF` (zero-width no-break space) is still preserved.
 //! 2. **CR/LF normalization** — `\r\n` → `\n`, lone `\r` → `\n`. Aozora
-//!    source comes from a variety of encoders; downstream phases assume
+//!    source comes from a variety of encoders; downstream stages assume
 //!    `\n` as the one line terminator so they don't have to handle three
 //!    variants each.
 //! 3. **Accent decomposition inside `〔...〕`** — ASCII accent digraphs
 //!    (`fune`+grave-accent → funèbre, `cafe`+apostrophe → café, …) are
-//!    rewritten to their Unicode-combined form before any later phase
+//!    rewritten to their Unicode-combined form before any later stage
 //!    sees them. Scope is deliberately restricted to tortoiseshell-
 //!    bracket spans; the function is the identity outside them.
 //! 4. **Decorative rule isolation** — lines composed entirely of 10 or
@@ -27,12 +27,12 @@
 //! 5. **PUA sentinel collision neutralization** — the lexer will shortly
 //!    inject [`crate::INLINE_SENTINEL`] / [`crate::BLOCK_LEAF_SENTINEL`] /
 //!    [`crate::BLOCK_OPEN_SENTINEL`] / [`crate::BLOCK_CLOSE_SENTINEL`] into
-//!    the normalized text (Phase 3). If the source already uses any of
-//!    those codepoints, a post-process splice can't tell source from
+//!    the normalized text (the classify stage). If the source already uses
+//!    any of those codepoints, a post-process splice can't tell source from
 //!    marker — a malicious source could desync the downstream registry
 //!    cursor or produce wrong output by smuggling in lexer-internal
 //!    markers. This
-//!    phase emits one [`aozora_spec::Diagnostic::SourceContainsPua`] per
+//!    stage emits one [`aozora_spec::Diagnostic::SourceContainsPua`] per
 //!    occurrence so the problem surfaces, **and** rewrites every raw
 //!    `U+E001..U+E004` to `U+FFFD` (REPLACEMENT CHARACTER) so no
 //!    source-side byte can masquerade as a sentinel downstream. All four
@@ -74,8 +74,8 @@ const TORTOISE_CLOSE: char = '〕';
 /// separator starts to appear in the 17 k-work corpus.
 const DECORATIVE_RULE_MIN_LEN: usize = 10;
 
-/// Output of Phase 0. `text` is what downstream phases consume; `diagnostics`
-/// carries any non-fatal observations gathered during sanitation.
+/// Output of the sanitize stage. `text` is what downstream stages consume;
+/// `diagnostics` carries any non-fatal observations gathered during sanitation.
 #[derive(Debug, Clone)]
 pub struct SanitizeOutput<'s> {
     pub text: Cow<'s, str>,
@@ -87,9 +87,9 @@ pub struct SanitizeOutput<'s> {
 #[must_use]
 pub fn sanitize(source: &str) -> SanitizeOutput<'_> {
     // Strip every leading `U+FEFF`. CommonMark / WHATWG-text-encoding
-    // both consider only one BOM, but the `serialize` round-trip would
+    // both consider only one BOM, but the `to_source` round-trip would
     // peel one off per pass without this loop, breaking the I3
-    // fixed-point invariant `serialize(serialize(x)) == serialize(x)`
+    // fixed-point invariant `to_source(to_source(x)) == to_source(x)`
     // on inputs that carry stacked BOMs (e.g. `\u{feff}\u{feff}` →
     // first pass yields `\u{feff}`, second yields `""`).
     let mut after_bom = source;
@@ -129,8 +129,8 @@ pub fn sanitize(source: &str) -> SanitizeOutput<'_> {
 
     let (text, pua_diagnostics) = neutralize_sentinel_collisions(text);
 
-    // Both accent notes and PUA-collision warnings are Phase-0 diagnostics
-    // (ordinal 0). The PUA scan runs on the post-accent buffer and its
+    // Both accent notes and PUA-collision warnings are sanitize-stage
+    // diagnostics. The PUA scan runs on the post-accent buffer and its
     // neutralization is byte-length-preserving, so the accent spans
     // (output coordinates) and the PUA spans share one coordinate system.
     // Order them in emission order: accent rewrite happens before the
@@ -234,7 +234,7 @@ pub fn rewrite_accent_spans(input: &str) -> String {
 /// Spans are reported in **output (post-decomposition) coordinates**.
 /// Accent decomposition is *not* byte-length-preserving (unlike the PUA
 /// neutralization pass), so an input-coordinate span would slide once the
-/// first digraph changes width. The downstream phases — and the CLI's
+/// first digraph changes width. The downstream stages — and the CLI's
 /// miette renderer — see the rewritten text, so output coordinates put
 /// the caret on the right characters. The span brackets the whole
 /// `〔decomposed〕` run (open through close).
@@ -415,8 +415,8 @@ pub fn isolate_decorative_rules(input: &str) -> String {
 /// **two** intermediate `String`s and walked the input twice. On the
 /// 17 k-document Aozora corpus — where every document arrives with
 /// CRLF line endings (the archive's house format) — this sub-pass is
-/// the dominant cost in phase 0; the single-pass form is ~2–3× faster
-/// at memory-bandwidth ceiling.
+/// the dominant cost in the sanitize stage; the single-pass form is
+/// ~2–3× faster at memory-bandwidth ceiling.
 ///
 /// `\r` (0x0D) is ASCII so `memchr` lands cleanly on UTF-8 boundaries;
 /// no need for `is_char_boundary` checks.
@@ -453,8 +453,8 @@ pub fn normalize_line_endings(input: &str) -> String {
 /// sentinel codepoints (`U+E001..U+E004`), emitting one diagnostic
 /// per hit.
 ///
-/// This is the detection half of Phase 0's PUA handling; the private
-/// `neutralize_sentinel_collisions` helper consumes the spans returned
+/// This is the detection half of the sanitize stage's PUA handling; the
+/// private `neutralize_sentinel_collisions` helper consumes the spans returned
 /// here to overwrite each raw sentinel with `U+FFFD`. The function is
 /// kept public for the per-sub-pass benchmark in `aozora-bench`, which
 /// times the scan in isolation.
@@ -542,8 +542,8 @@ mod tests {
 
     #[test]
     fn stacked_leading_boms_are_all_stripped() {
-        // I3 fixed-point regression: `serialize(serialize(x))` must
-        // byte-equal `serialize(x)`. Stacked leading BOMs would
+        // I3 fixed-point regression: `to_source(to_source(x))` must
+        // byte-equal `to_source(x)`. Stacked leading BOMs would
         // otherwise peel off one per round-trip pass, so the strip
         // loop has to consume every leading `U+FEFF`.
         let input = "\u{FEFF}\u{FEFF}\u{FEFF}hello";
@@ -649,7 +649,7 @@ mod tests {
     fn plain_text_without_sentinels_skips_neutralization_allocation() {
         // Direct fast-path pin for the neutralizer: ordinary prose with
         // no reserved sentinel must remain Cow::Borrowed all the way
-        // through Phase 0 (no defensive copy on the happy path).
+        // through the sanitize stage (no defensive copy on the happy path).
         let input = "ふつうの日本語 and some ASCII.";
         let out = sanitize(input);
         assert!(out.diagnostics.is_empty());
@@ -756,7 +756,7 @@ mod tests {
     #[test]
     fn unclosed_tortoiseshell_span_passes_through_verbatim() {
         // Graceful degradation — don't panic, emit the rest as-is so a
-        // later phase can surface a diagnostic.
+        // later stage can surface a diagnostic.
         let input = "tail 〔fune`bre without close";
         let out = sanitize(input);
         assert_eq!(out.text.as_ref(), input);

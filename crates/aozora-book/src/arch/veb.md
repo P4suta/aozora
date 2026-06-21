@@ -60,7 +60,7 @@ The aozora codebase uses Eytzinger for sub-256-entry tables and
 ## Why not a hash table?
 
 A `HashMap<&str, ()>` allocates and rehashes; `phf` and Eytzinger
-don't. In the lexer's Phase 3 classify, the placeholder registry
+don't. In the lexer's classify stage, the placeholder registry
 is hit once per `［＃…］` directive — measured as ~5 lookups per
 KB of source. A `HashMap`'s startup cost (build the table from a
 `const` array on first use, even with `OnceLock`) would dominate

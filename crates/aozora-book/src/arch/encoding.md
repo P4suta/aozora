@@ -18,9 +18,9 @@ flowchart TD
     raw["raw bytes<br/>(SJIS-encoded .txt from Aozora Bunko)"]
     sjis["encoding_rs::SHIFT_JIS<br/>or aozora-specific JIS X 0213 patch"]
     utf8["UTF-8 String"]
-    sanitize["Phase 0 sanitize<br/>(in aozora-pipeline)"]
+    sanitize["sanitize stage<br/>(in aozora-pipeline)"]
     pua["PUA assignment for 外字"]
-    classified["normalised &str ready for Phase 1 scan"]
+    classified["normalised &str ready for the tokenize-stage scan"]
 
     raw --> sjis --> utf8 --> sanitize --> pua --> classified
 ```
@@ -121,9 +121,9 @@ M[a!]ria   →  Maria
 
 The full mapping (114 entries — every digraph and ligature in the
 spec) is at `accent_separation.html` in the spec snapshot. aozora
-applies this decomposition during Phase 0 sanitize, *before* the
-trigger scan, so by Phase 1 the source is pure Unicode with no
-ASCII-encoded accents.
+applies this decomposition during the sanitize stage, *before* the
+trigger scan, so by the tokenize stage the source is pure Unicode
+with no ASCII-encoded accents.
 
 The lookup is also Eytzinger-laid (see
 [Eytzinger sorted-set lookup](veb.md)) since 114 entries is well
@@ -148,5 +148,5 @@ update surface predictable.
 
 - [Notation → Gaiji](../notation/gaiji.md) — author-facing notation
   reference.
-- [Four-phase lexer → Phase 0](lexer.md#phase-0-sanitize) — where
+- [Lexer → sanitize stage](lexer.md#sanitize-stage) — where
   the resolver is invoked.

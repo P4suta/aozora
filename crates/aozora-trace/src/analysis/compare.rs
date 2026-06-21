@@ -17,26 +17,40 @@ use crate::analysis::hot::hot_leaves;
 use crate::render::{Align, Column, TableBuilder};
 use crate::{TableRenderable, Trace};
 
+/// Result of diffing two traces, produced by [`compare`].
 #[derive(Debug, Clone)]
 pub struct ComparisonReport {
+    /// Total samples in the `before` trace (for context in the header).
     pub before_total: u64,
+    /// Total samples in the `after` trace.
     pub after_total: u64,
+    /// Per-function diff rows, sorted by descending absolute |Δ%|.
     pub rows: Vec<ComparisonRow>,
 }
 
+/// One function's before/after comparison.
 #[derive(Debug, Clone)]
 pub struct ComparisonRow {
+    /// Function (leaf-frame) label.
     pub label: String,
+    /// Its leaf-frame share of the `before` trace, in percent.
     pub before_pct: f64,
+    /// Its leaf-frame share of the `after` trace, in percent.
     pub after_pct: f64,
+    /// `after_pct - before_pct`. Positive means the function got hotter.
     pub delta_pct: f64,
+    /// Whether the function shifted, appeared, or disappeared.
     pub status: ChangeStatus,
 }
 
+/// How a function's presence changed between the two traces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeStatus {
+    /// Present in both traces; its percentage moved (possibly by zero).
     Shifted,
+    /// Present in `after` but not `before` (newly hot).
     Appeared,
+    /// Present in `before` but not `after` (no longer sampled).
     Disappeared,
 }
 

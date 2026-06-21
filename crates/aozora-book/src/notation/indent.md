@@ -58,7 +58,7 @@ pub enum ContainerKind {
 ## Why a small flat enum?
 
 `ContainerKind` is closed by spec. A flat `enum` (vs a trait object or
-string tag) gives the parser O(1) variant dispatch in the classify phase
+string tag) gives the parser O(1) variant dispatch in the classify stage
 and the renderer's HTML walk, *and* lets the compiler's exhaustiveness
 check enforce that every variant has a render path. The payloads are tiny
 (`u8` / `BoutenKind` / `BoutenPosition`), so the whole enum stays within a
@@ -107,9 +107,9 @@ implementation in Rust is a *recursive container node*. That choice:
 - Lets the renderer walk the tree once with a single match on
   `ContainerKind`, instead of maintaining a render-time stack.
 - Surfaces shape errors (mismatched closers, dangling openers) at
-  parse time — the lexer's classify phase already has all the
+  parse time — the lexer's classify stage already has all the
   information to decide.
-- Makes the canonical-serialise pass trivial (each container
+- Makes the canonical-source pass trivial (each container
   prints its opener, walks its children, prints its closer).
 
 The trade-off is one extra heap touch per container — a single

@@ -31,13 +31,13 @@ source text as input and returns a string:
 |---|---|---|---|
 | `to_html` | source | `string` | Semantic HTML5 with `aozora-*` class hooks. |
 | `serialize` | source | `string` | Canonical 青空文庫 source (round-trip). |
-| `diagnostics_json` | source | `string` | Wire envelope of diagnostics. |
-| `nodes_json` | source | `string` | Wire envelope of source-keyed nodes. |
-| `pairs_json` | source | `string` | Wire envelope of matched open/close pairs. |
-| `container_pairs_json` | source | `string` | Wire envelope of container open/close pairs. |
-| `schema_version` | *(ignored)* | `string` | The wire schema version as a decimal string. |
+| `diagnostics_json` | source | `string` | JSON envelope of diagnostics. |
+| `nodes_json` | source | `string` | JSON envelope of source-keyed nodes. |
+| `pairs_json` | source | `string` | JSON envelope of matched open/close pairs. |
+| `container_pairs_json` | source | `string` | JSON envelope of container open/close pairs. |
+| `schema_version` | *(ignored)* | `string` | The JSON schema version as a decimal string. |
 
-The four `*_json` exports each emit the standard wire envelope
+The four `*_json` exports each emit the standard JSON envelope
 
 ```json
 { "schemaVersion": 1, "data": [ /* … entries … */ ] }
@@ -53,7 +53,7 @@ A source larger than the parser's 4 GiB (`u32::MAX`) span limit is
 rejected on the Extism error channel rather than aborting the instance —
 the same guard the C ABI and browser WASM apply.
 
-## The schema_version wire contract
+## The schema_version JSON contract
 
 Every `*_json` export wraps its payload in
 `{ "schemaVersion": N, "data": [...] }`, where `N` is
@@ -68,7 +68,7 @@ returned integer equals the version its types were generated for:
 2. `schema_version` is a cheap, input-free probe — the canonical place
    to fail fast, before the first real parse.
 
-A `SCHEMA_VERSION` bump is a breaking change to the wire shape (a new
+A `SCHEMA_VERSION` bump is a breaking change to the JSON shape (a new
 `kind` value, a field rename, an envelope restructuring). Per
 [ADR-0006's consequences](#see-also), a bump forces:
 
@@ -144,7 +144,7 @@ pure-Go [`aozora-go`](go.md) reference. Browse the current set at the
 [Extism host-SDK docs](https://extism.org/docs/concepts/host-sdk).
 
 - **Types** for every supported language are generated from the
-  committed wire JSON Schema by `just types-langs` (the quicktype
+  committed JSON Schema by `just types-langs` (the quicktype
   driver), wired into the same drift-gate that guards the TypeScript
   `.d.ts`. Generate once per `SCHEMA_VERSION`; commit the output.
 - **The wasm** ships as a GitHub release asset (one artifact, all

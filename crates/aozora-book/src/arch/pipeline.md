@@ -13,7 +13,7 @@ per `Document`.
 flowchart TD
     src["source text<br/>(UTF-8 or Shift_JIS)"]
     decode["Shift_JIS decode<br/>(aozora-encoding)"]
-    lex["Lex<br/>(aozora-pipeline::lex)<br/>sanitize → events → pair → classify"]
+    lex["Lex<br/>(aozora-pipeline::lex)<br/>sanitize → tokenize → pair → classify"]
     tree["Tree&lt;'arena&gt;<br/>(borrowed AST)"]
     render["Render<br/>(aozora-render)<br/>html  /  serialize"]
     out["HTML  /  canonical 青空文庫 source"]
@@ -33,7 +33,7 @@ flowchart TD
     scan["aozora-scan<br/>SIMD multi-pattern"]
     veb["aozora-veb<br/>Eytzinger sorted-set"]
     syntax["aozora-syntax<br/>AST node types"]
-    pipeline["aozora-pipeline<br/>4-phase lexer +<br/>lex"]
+    pipeline["aozora-pipeline<br/>lexer (sanitize → tokenize →<br/>pair → classify) + lex"]
     render["aozora-render<br/>html / serialize"]
     facade["aozora<br/>public facade"]
     cli["aozora-cli"]
@@ -64,15 +64,15 @@ in `just lint`.
 
 ## What each layer does
 
-### Sanitize → Events → Pair → Classify
+### Sanitize → Tokenize → Pair → Classify
 
-The lexer pipeline is split into four phases because each stage has
+The lexer pipeline is split into four stages because each stage has
 a different cost / cache profile:
 
-| Phase | Input | Output | Why separate |
+| Stage | Input | Output | Why separate |
 |---|---|---|---|
-| Sanitize | raw `&str` | normalised `&str` + Phase-0 diagnostics | BOM / CRLF / accent decomposition / decorative-rule isolation / PUA collision pre-scan all happen here, *once*, before any expensive lookahead. Keeps later phases linear-time. |
-| Events | sanitised `&str` | `Iterator<Token>` | SIMD trigger scan (`aozora-scan`) fires here; the linear tokenise that follows fuses with the scan so no per-event vector is allocated. |
+| Sanitize | raw `&str` | normalised `&str` + sanitize-stage diagnostics | BOM / CRLF / accent decomposition / decorative-rule isolation / PUA collision pre-scan all happen here, *once*, before any expensive lookahead. Keeps later stages linear-time. |
+| Tokenize | sanitised `&str` | `Iterator<Token>` | SIMD trigger scan (`aozora-scan`) fires here; the linear tokenise that follows fuses with the scan so no per-token vector is allocated. |
 | Pair | `Iterator<Token>` | `Iterator<PairEvent>` | Balanced-stack bracket matching across all opener / closer pairs (`｜》《`, `［］`, `〔〕`, `「」`, `《《》》`). Recovery diagnostics for unclosed / unmatched fire here. |
 | Classify | `Iterator<PairEvent>` | `Iterator<ClassifiedSpan>` (→ `Node<'arena>`) | Decides "is this `［＃…］` an indent opener, a bouten directive, a tcy directive, …" via the slug-canonicalised dispatch table. |
 
@@ -80,19 +80,19 @@ Splitting them lets the parser ship two surface APIs without code
 duplication:
 
 - [`lex`] — fused, allocates one borrowed-AST tree.
-- Per-phase calls (`sanitize`, `tokenize`, `pair`, `classify`) —
-  used by the bench harness's per-phase probes and the integration
+- Per-stage calls (`sanitize`, `tokenize`, `pair`, `classify`) —
+  used by the bench harness's per-stage probes and the integration
   tests in `crates/aozora-pipeline/tests/`.
 
 ### Sanitize details
 
-Phase 0 sanitize covers:
+The sanitize stage covers:
 
 - **BOM strip** — UTF-8 BOM detection at the head.
 - **CRLF normalisation** — CRLF → LF in one `memchr2` pass.
 - **Decorative rule isolation** — separates long horizontal-rule
-  patterns from neighbouring text so Phase 1's trigger scan does not
-  split them mid-glyph.
+  patterns from neighbouring text so the tokenize stage's trigger
+  scan does not split them mid-glyph.
 - **Accent decomposition** — ASCII digraphs / ligatures → Unicode
   (see [Gaiji](../notation/gaiji.md)).
 - **PUA collision pre-scan** — emits
@@ -100,7 +100,7 @@ Phase 0 sanitize covers:
   in the source so they can never be confused with the lexer's own
   sentinel insertions later.
 
-### Events: SIMD scan
+### Tokenize: SIMD scan
 
 Trigger byte detection runs the SIMD multi-pattern scanner from
 [`aozora-scan`](scanner.md). Multiple backends share a common
@@ -145,7 +145,7 @@ borrowed-arena AST (next chapter) work without `RefCell` or
 
 - [Borrowed-arena AST](arena.md) — what `Tree<'arena>`
   actually points at.
-- [Four-phase lexer](lexer.md) — the inside of the Lex box.
+- [Lexer (sanitize → tokenize → pair → classify)](lexer.md) — the inside of the Lex box.
 - [Crate map](crates.md) — every crate, its purpose, what depends
   on what.
 

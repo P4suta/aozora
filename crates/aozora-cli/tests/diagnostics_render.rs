@@ -105,7 +105,7 @@ fn short_format_uses_the_file_path() {
 
 #[test]
 fn short_format_renders_note_severity() {
-    // 〔e^〕 accent digraph → Phase 0 decomposition `note` diagnostic.
+    // 〔e^〕 accent digraph → sanitize-stage decomposition `note` diagnostic.
     let (_, stderr) = run(
         &["check", "--diagnostic-format", "short"],
         "〔e^〕".as_bytes(),

@@ -15,7 +15,11 @@ use std::path::PathBuf;
 /// A loaded samply trace.
 #[derive(Debug, Clone)]
 pub struct Trace {
+    /// Loaded objects, indexed by the `lib_idx` stored in each
+    /// thread's `resource_table`. Position is the canonical library id.
     pub libs: Vec<Library>,
+    /// Profiled threads, each carrying its own sample stream and the
+    /// stack/frame/func tables those samples index into.
     pub threads: Vec<Thread>,
     /// Source file the trace was loaded from. Drives sidecar-cache
     /// path resolution and shows up in diagnostic prints.
@@ -25,8 +29,15 @@ pub struct Trace {
 /// A loaded library (ELF file, vdso, or anonymous mapping).
 #[derive(Debug, Clone)]
 pub struct Library {
+    /// Short library name (e.g. `libc.so.6`, the binary's file name).
+    /// Used as the cross-reference key against [`crate::Symbolicator`]
+    /// registrations and [`crate::SymbolCache`] entries.
     pub name: String,
+    /// Filesystem path the object was loaded from at record time.
+    /// [`crate::Symbolicator::add_libs_from`] re-opens it for DWARF.
     pub path: String,
+    /// Path to the separate debuginfo file, when the recorder split
+    /// it out. Often equal to `path` or empty.
     pub debug_path: String,
     /// Breakpad-style debug id (UPPER hex + age). Often empty in
     /// samply-recorded traces — `code_id` is the field that actually
@@ -41,18 +52,34 @@ pub struct Library {
 /// One profiled thread with its sample stream + stack tables.
 #[derive(Debug, Clone)]
 pub struct Thread {
+    /// OS thread id as recorded by samply.
     pub tid: i64,
+    /// Thread name (e.g. `main`, a tokio worker name), or empty.
     pub name: String,
+    /// Whether this is the process main thread.
     pub is_main: bool,
+    /// The CPU sample stream. Each [`Sample`] points (via `stack_idx`)
+    /// into `stack_table`; analyses iterate this to count time.
     pub samples: Vec<Sample>,
 
     // Internal tables — exposed `pub` because the analysis modules
     // consult them directly. Mutating from outside the crate is
     // unsupported (no invariant checking).
+    /// String interning pool. `FuncRow::name_idx` and other tables
+    /// index into this rather than carrying owned strings.
     pub string_array: Vec<String>,
+    /// Stack-table tree: each [`StackEntry`] is `(prefix, frame)`,
+    /// so a stack id chains up its `prefix` to the root. Walked by
+    /// [`Thread::walk_stack`].
     pub stack_table: Vec<StackEntry>,
+    /// Frame table: per-frame `(address, func_idx)`. Indexed by
+    /// `StackEntry::frame_idx`.
     pub frame_table: Vec<FrameRow>,
+    /// Function table: per-function `(name_idx, resource_idx)`.
+    /// Indexed by `FrameRow::func_idx`.
     pub func_table: Vec<FuncRow>,
+    /// Resource table mapping a function back to its owning library.
+    /// Indexed by `FuncRow::resource_idx`.
     pub resource_table: Vec<ResourceRow>,
     /// Resolved function names per frame index — `None` until
     /// [`crate::Symbolicator`] fills them in. Same length as
@@ -63,8 +90,17 @@ pub struct Thread {
 /// A single CPU sample.
 #[derive(Debug, Clone, Copy)]
 pub struct Sample {
+    /// Absolute timestamp in milliseconds. Reconstructed from the
+    /// trace's `time` or `timeDeltas` column; `0.0` when the trace
+    /// carried no timeline (timestamps aren't load-bearing for the
+    /// sample-counting analyses).
     pub time_ms: f64,
+    /// Leaf stack id (index into `stack_table`), or `None` for an
+    /// empty/idle sample with no captured stack.
     pub stack_idx: Option<usize>,
+    /// Sample weight, i.e. how many raw samples this row represents
+    /// (samply may coalesce identical consecutive samples). Defaults
+    /// to `1`. Analyses sum this rather than counting rows.
     pub weight: u64,
 }
 
@@ -72,7 +108,10 @@ pub struct Sample {
 /// terminates at `None` (the root).
 #[derive(Debug, Clone, Copy)]
 pub struct StackEntry {
+    /// Parent stack id (the caller frame's stack node), or `None` at
+    /// the root. Following `prefix` repeatedly walks leaf → root.
     pub prefix: Option<usize>,
+    /// The frame at this stack depth (index into `frame_table`).
     pub frame_idx: usize,
 }
 

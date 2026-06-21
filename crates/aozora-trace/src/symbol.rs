@@ -128,19 +128,36 @@ impl std::fmt::Debug for Symbolicator {
     }
 }
 
+/// Symbolication failures from [`Symbolicator`].
 #[derive(Debug, thiserror::Error)]
 pub enum SymbolError {
+    /// `addr2line` could not open the binary (missing file, not an
+    /// ELF, unreadable DWARF). Raised by [`Symbolicator::add_binary`].
     #[error("addr2line loader for {path}: {message}")]
-    Loader { path: PathBuf, message: String },
+    Loader {
+        /// Path to the binary that failed to open.
+        path: PathBuf,
+        /// `addr2line`'s error rendered as a string.
+        message: String,
+    },
+    /// The registered binary's build-id disagrees with the one the
+    /// trace recorded for the same library — the binary was rebuilt
+    /// after recording, so its addresses no longer match and
+    /// symbolication would yield wrong names. Raised by
+    /// [`Symbolicator::verify_against`].
     #[error(
         "build-id mismatch for `{lib_name}`: trace expects `{trace}`, binary at {binary} is `{found}` — \
          the binary was rebuilt after the trace was recorded; symbolication would return wrong names. \
          Re-run samply against the current binary, or check out the commit that produced this trace."
     )]
     BuildIdMismatch {
+        /// Library whose build-id failed to match.
         lib_name: String,
+        /// Build-id (or debug-id) the trace recorded.
         trace: String,
+        /// Build-id read from the registered binary on disk.
         found: String,
+        /// Path to that binary.
         binary: PathBuf,
     },
 }

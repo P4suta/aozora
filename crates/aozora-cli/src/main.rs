@@ -7,7 +7,7 @@
 //!   report diagnostics. Exit 0 when no diagnostics; exit 1 otherwise
 //!   if `--strict`, else exit 0 with diagnostics on stderr.
 //! - `aozora fmt FILE [--check | --write]` — round-trip
-//!   `parse ∘ serialize`. `--check` exits non-zero if the formatted
+//!   `parse ∘ to_source`. `--check` exits non-zero if the formatted
 //!   output differs from `FILE`; `--write` overwrites `FILE`. Default
 //!   is print-to-stdout.
 //! - `aozora render FILE` — render `FILE` to HTML on stdout.
@@ -39,6 +39,14 @@
 //! the bytes are valid UTF-8, otherwise Shift_JIS); pass
 //! `--encoding {utf8,sjis}` (or `-E …`) to force a specific decoder.
 
+#![allow(
+    missing_docs,
+    reason = "CLI binary — internal pub items are not a documented public API surface"
+)]
+#![allow(
+    clippy::doc_markdown,
+    reason = "--help text is human-facing prose; identifiers like to_source need not be code-spanned in command help"
+)]
 #![forbid(unsafe_code)]
 
 mod completions;
@@ -93,7 +101,7 @@ struct Cli {
 enum Command {
     /// Run the lexer over a file and report diagnostics.
     Check(CheckArgs),
-    /// Round-trip parse ∘ serialize and emit the canonical form.
+    /// Round-trip parse ∘ to_source and emit the canonical form.
     Fmt(FmtArgs),
     /// Render Aozora notation to HTML on stdout.
     Render(RenderArgs),
@@ -214,7 +222,7 @@ struct FmtArgs {
     common: CommonArgs,
 
     /// Exit non-zero if the formatted output differs from the input
-    /// (after the lexer's sanitize phase: BOM strip, CRLF→LF). Mutually
+    /// (after the lexer's sanitize stage: BOM strip, CRLF→LF). Mutually
     /// exclusive with `--write`.
     #[arg(long, conflicts_with = "write")]
     check: bool,
@@ -407,7 +415,7 @@ fn run_fmt_once(args: &FmtArgs) -> Result<ExitCode> {
     // are not the parse cost a reader cares about, so report here.
     timer.report()?;
 
-    // The lexer's Phase 0 sanitize strips BOM and normalises CRLF→LF;
+    // The lexer's sanitize stage strips BOM and normalises CRLF→LF;
     // the canonical form is fixed-point on the sanitized input, not
     // the raw bytes — apply the same normalisation to compare apples
     // to apples.

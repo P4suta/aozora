@@ -6,7 +6,7 @@
 //! `aozora_document_pairs_json` → the matching `*_free`) exactly as a
 //! non-Rust host (Ruby / Node / Go / JVM) would. The crate is built
 //! with `panic = "abort"` in release, so a panic anywhere on a parse /
-//! render / wire-serialize path reachable from these functions would
+//! render / JSON-serialize path reachable from these functions would
 //! `abort()` the host process — a denial-of-service for every embedder.
 //! This target makes libFuzzer surface such an input as a crash
 //! artifact.
@@ -164,8 +164,8 @@ fuzz_target!(|data: &[u8]| {
     );
 
     // The three JSON accessors: assert no-abort + buffer consistency.
-    // Their bytes are not re-parsed here (the wire-format round-trip is
-    // covered elsewhere); reaching them at all proves the parse + wire
+    // Their bytes are not re-parsed here (the JSON-format round-trip is
+    // covered elsewhere); reaching them at all proves the parse + JSON
     // serialize paths are panic-free through the C ABI.
     for (accessor, label) in [
         (

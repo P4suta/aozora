@@ -1,6 +1,6 @@
-//! Phase 1 throughput sentinel.
+//! Tokenize-stage throughput sentinel.
 //!
-//! Single-shape throughput regression gate over `aozora_lexer::tokenize`
+//! Single-shape throughput regression gate over `aozora_pipeline::lexer::tokenize`
 //! (the SIMD-scan tokeniser). Three input bands cover the corpus
 //! distribution.
 

@@ -102,10 +102,10 @@ me-zin       ← in others
 The full table is at
 <https://www.aozora.gr.jp/accent_separation.html> — 114 ASCII
 digraphs / ligatures mapping to Unicode. aozora applies this
-decomposition during the lexer's Phase 0 (sanitize), so by the time
+decomposition during the lexer's sanitize stage, so by the time
 classification runs the source is pure Unicode. See
-[Architecture → Seven-phase lexer](../arch/lexer.md) for the phase
-ordering.
+[Architecture → Lexer (sanitize → tokenize → pair → classify)](../arch/lexer.md)
+for the stage ordering.
 
 ## See also
 

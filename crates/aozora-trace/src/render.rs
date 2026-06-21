@@ -9,6 +9,8 @@
 /// Implemented by every analysis report. Render to stdout-friendly
 /// text or to a structured serializable form (planned).
 pub trait TableRenderable {
+    /// Render the report as a self-contained, fixed-width text block
+    /// (title, header, separator, rows), ready to print to stdout.
     fn render_table(&self) -> String;
 }
 

@@ -24,7 +24,7 @@ fuzz_target!(|data: &[u8]| {
     // lexer is free to consume those codepoints — they are reserved
     // markers, not user content. The serialize round-trip therefore
     // can't promise idempotency on such inputs: round 1's lex strips
-    // them, leaving a different line shape for round 2's Phase 0
+    // them, leaving a different line shape for round 2's sanitize-stage
     // decorative-rule isolator to classify (see the
     // `crash-dcbadd08c7424e68f0820311a2cd78274aa87e52` regression
     // case). I3 is a contract over user-meaningful aozora source,

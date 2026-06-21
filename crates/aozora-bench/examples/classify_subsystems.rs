@@ -1,4 +1,4 @@
-//! Phase 3 sub-system per-recogniser breakdown.
+//! Classify-stage sub-system per-recogniser breakdown.
 //!
 //! Requires the `aozora-pipeline/classify-instrument` feature (enforced via
 //! `required-features` in `aozora-bench/Cargo.toml`). When the feature
@@ -6,7 +6,7 @@
 //! emits an [`instrumentation::SubsystemGuard`] that records elapsed
 //! nanoseconds into a thread-local table. This probe drains the table
 //! per document, accumulates totals across the corpus, and reports
-//! per-subsystem call count + total ns + percentage of phase 3 + average
+//! per-subsystem call count + total ns + percentage of the classify stage + average
 //! call duration.
 //!
 //! Instrumented sub-systems (9 total):
@@ -135,7 +135,7 @@ fn main() {
 }
 
 fn print_report(agg: &Aggregate, docs: u64, decode_errors: u64) {
-    println!("=== phase3 subsystems breakdown ===");
+    println!("=== classify subsystems breakdown ===");
     println!();
     println!("documents processed : {docs}");
     println!("decode errors       : {decode_errors}");

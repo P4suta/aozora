@@ -171,7 +171,7 @@ Each invariant is asserted from multiple angles (see user memory
    parse / render / round-trip invariants.
 3. **Corpus sweep** via `just corpus-sweep` — every document in
    `AOZORA_CORPUS_ROOT` must (a) parse without panicking and
-   (b) round-trip through `parse ∘ serialize`. The loader lives in
+   (b) round-trip through `parse ∘ to_source`. The loader lives in
    `aozora-corpus`.
 4. **Fuzz harness** at `crates/*/fuzz/fuzz_targets/*.rs` for
    parse + render + Shift_JIS decode paths.
@@ -195,22 +195,22 @@ PR or split them into a chain referencing the predicate.
   without an issue reference, `unsafe` outside the carved-out
   crates, etc.
 
-`just deny`, `just audit`, `just udeps`, and `just semver` cover
+`just deny`, `just audit`, `just shear`, and `just semver` cover
 dependency licensing, advisories, unused deps, and SemVer breakage
 respectively. CI runs all of these in `just ci`.
 
 ## Coding standards
 
-- **Borrowed-arena AST.** Parsers return `AozoraTree<'arena>` borrowed
+- **Borrowed-arena AST.** Parsers return `Tree<'arena>` borrowed
   from the `Document`'s [`bumpalo`](https://docs.rs/bumpalo) arena.
   No owned-AST mirror exists; downstream consumers either walk the
-  borrow or call `tree.serialize() / tree.to_html()`.
+  borrow or call `tree.to_source() / tree.to_html()`.
 - **`aozora-spec` is the single source of truth.** `Span`,
   `TriggerKind`, `PairKind`, `Diagnostic`, and PUA sentinel
   codepoints live there. New shared types belong in `aozora-spec`,
-  never in `aozora-lexer` or `aozora-syntax`.
-- **Pure functions over mutation.** `lex_into_arena(&str, &Bump) ->
-  BorrowedLexOutput<'_>` and `html::render_to_string(&str) -> String`
+  never in `aozora-pipeline` or `aozora-syntax`.
+- **Pure functions over mutation.** `lex(&str, &Arena) ->
+  LexOutput<'_>` and `html::render_to_string(&LexOutput) -> String`
   are pure. Avoid hidden global state, thread-locals, or
   `OnceCell`-backed caches.
 - **No comments that just restate the code.** A short `//` line is
@@ -229,12 +229,12 @@ The end-to-end TDD flow is roughly:
    [`crates/aozora-conformance/fixtures/render/`](./crates/aozora-conformance/)
    (and a spec vector in `../aozora-notation-spec` for normative cases,
    synced via `just sync-spec-vectors`).
-2. **AST variant** — add a borrowed-arena variant to `AozoraNode` in
-   `crates/aozora-syntax/src/borrowed.rs`.
-3. **Lexer test (red)** — add a case to the relevant phase test
-   under `crates/aozora-lexer/tests/`.
+2. **AST variant** — add a borrowed-arena variant to `Node` in
+   `crates/aozora-syntax/src/borrowed/types.rs`.
+3. **Lexer test (red)** — add a case to the relevant stage test
+   under `crates/aozora-pipeline/tests/`.
 4. **Lexer impl (green)** — wire the recogniser into the appropriate
-   phase (sanitize → tokenize → pair → classify).
+   stage (sanitize → tokenize → pair → classify).
 5. **Renderer** — emit the new HTML shape in
    `crates/aozora-render/src/html.rs` and the canonical
    serialisation in `crates/aozora-render/src/serialize.rs`.

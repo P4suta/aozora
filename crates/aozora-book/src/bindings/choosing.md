@@ -5,7 +5,7 @@ them. Every surface — the Rust library, the CLI, the wasm package, the
 PyO3 module, the Go module, the C ABI, the Extism plugin — funnels the same
 source text through the same lexer and renders it through the same
 [`aozora::json`](../wire/overview.md) authority. The HTML, the canonical
-serialise, and the diagnostic stream are therefore **byte-identical across
+source, and the diagnostic stream are therefore **byte-identical across
 every binding**. What differs between them is only the *host language* you
 write in and the *overhead* you pay to cross the language boundary.
 

@@ -30,7 +30,7 @@ pub struct Tree<'a> { /* borrows from Document */ }
 impl<'a> Tree<'a> {
     pub fn nodes(&self) -> impl Iterator<Item = Node<'a>>;
     pub fn to_html(&self) -> String;
-    pub fn serialize(&self) -> String;
+    pub fn to_source(&self) -> String;
     pub fn diagnostics(&self) -> &[Diagnostic];
 }
 

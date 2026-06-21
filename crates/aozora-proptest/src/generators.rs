@@ -93,7 +93,7 @@ pub fn hiragana_fragment(max_len: usize) -> impl Strategy<Value = String> {
 /// well-formedness gate on the lexer's own diagnostics.
 ///
 /// The decorative rule atoms (≥ 10 repeats of `-`/`=`/`_`) are the
-/// bait for Tier H — the phase0 sanitize pass must isolate them so
+/// bait for Tier H — the sanitize stage must isolate them so
 /// CommonMark does not promote the preceding paragraph into a setext
 /// heading. Inputs like `prose\n----------\nbody` must stay as three
 /// paragraphs + `<hr>`, not `<h2>prose</h2>`.
@@ -135,7 +135,7 @@ pub fn aozora_fragment(max_atoms: usize) -> impl Strategy<Value = String> {
 /// Specifically emits:
 ///
 /// * Long runs of the same trigger glyph (`［＃［＃［＃…`) that stack
-///   up on the phase2 pair stack without any matching close.
+///   up on the pair stage's pair stack without any matching close.
 /// * Adjacent paired-container opens (`［＃ここから字下げ］`) without
 ///   the expected close (`［＃ここで字下げ終わり］`), and vice versa.
 /// * Ruby delimiters in permutations that the classifier must reject
@@ -243,8 +243,8 @@ pub fn xss_payload() -> impl Strategy<Value = String> {
 /// private-use-area codepoints (including the PUA sentinels the lexer
 /// uses internally), and full-width bracket variants.
 ///
-/// The PUA range U+E000–U+F8FF is intentionally included. Phase 0 of
-/// the lexer emits a diagnostic when a source string already contains
+/// The PUA range U+E000–U+F8FF is intentionally included. The sanitize
+/// stage of the lexer emits a diagnostic when a source string already contains
 /// the PUA sentinels (U+E001–U+E004) but must not panic — this
 /// strategy drives that property.
 pub fn unicode_adversarial() -> impl Strategy<Value = String> {

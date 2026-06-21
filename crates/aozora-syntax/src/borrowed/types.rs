@@ -132,8 +132,11 @@ impl Default for Content<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Segment<'src> {
+    /// A plain-text run between nested constructs.
     Text(&'src str),
+    /// A nested 外字 reference. See [`Gaiji`].
     Gaiji(&'src Gaiji<'src>),
+    /// A nested generic annotation. See [`Directive`].
     Directive(&'src Directive<'src>),
 }
 
@@ -172,14 +175,20 @@ impl<'src> IntoIterator for Content<'src> {
 
 /// Ruby (furigana).
 ///
-/// `base` and `reading` are [`super::NonEmpty`] — Phase 3 only emits
-/// a Ruby node once both have content. The wrapper makes the
+/// `base` and `reading` are [`super::NonEmpty`] — the classify stage
+/// only emits a Ruby node once both have content. The wrapper makes the
 /// invariant a build-time fact so renderers never see an empty
 /// payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ruby<'src> {
+    /// The base text the reading annotates.
     pub base: super::NonEmpty<Content<'src>>,
+    /// The furigana reading shown over (or beside) the base.
     pub reading: super::NonEmpty<Content<'src>>,
+    /// `true` when the base was delimited by an explicit `｜` (`｜base《…》`);
+    /// `false` when the base was inferred by consuming a trailing kanji run
+    /// (`漢字《…》`). Preserved so `serialize` reproduces the original
+    /// delimiter and the parse∘serialize fixed point holds.
     pub delim_explicit: bool,
     /// Which side the reading sits on. `Right` for the `｜《》` / implicit
     /// forms; `Left` for the `［＃「X」の左に「Y」のルビ］` saidoku building block.
@@ -197,22 +206,24 @@ pub struct Ruby<'src> {
 /// - [`MarginNoteKind::Marginal`] — `［＃「base」に「note」の傍記］`, a redaction
 ///   marker (典型的に ×) written beside `base`.
 ///
-/// Both `base` and `note` are [`super::NonEmpty`]: Phase 3 emits the node
-/// only once both have content.
+/// Both `base` and `note` are [`super::NonEmpty`]: the classify stage emits
+/// the node only once both have content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MarginNote<'src> {
     /// 注記 vs 傍記 — preserved for faithful round-trip; both render alike.
     pub kind: MarginNoteKind,
+    /// The preceding run the note is attached to.
     pub base: super::NonEmpty<Content<'src>>,
+    /// The gloss / redaction text shown beside `base`.
     pub note: super::NonEmpty<Content<'src>>,
 }
 
 /// Emphasis dots / sidelines.
 ///
-/// `target` is [`super::NonEmpty`] — Phase 3 resolves the forward
+/// `target` is [`super::NonEmpty`] — the classify stage resolves the forward
 /// reference (`［＃「対象」に傍点］`) before emitting the node.
 ///
-/// `consumed_predecessor` records whether the Phase 3 classifier
+/// `consumed_predecessor` records whether the classifier
 /// pulled this node's source span back over an immediately-preceding
 /// literal of `target` (the canonical `target［＃「target」に傍点］`
 /// shape). When true, the renderer's `<em class="bouten">target</em>`
@@ -225,9 +236,14 @@ pub struct MarginNote<'src> {
 /// serializer emits only the bracket form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bouten<'src> {
+    /// Which 傍点 / 傍線 mark decorates the run.
     pub kind: BoutenKind,
+    /// The run the marks are applied to.
     pub target: super::NonEmpty<Content<'src>>,
+    /// Which side of the base text the marks sit on (`左に` ⇒ `Left`).
     pub position: BoutenPosition,
+    /// Whether the classifier pulled this node's span back over an
+    /// immediately-preceding literal of `target`; see the struct docs.
     pub consumed_predecessor: bool,
 }
 
@@ -242,7 +258,10 @@ pub struct Bouten<'src> {
 /// round-trip contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CombineUpright<'src> {
+    /// The run set horizontally within the vertical line.
     pub text: super::NonEmpty<Content<'src>>,
+    /// Whether the classifier pulled this node's span back over an
+    /// immediately-preceding literal of `text`; see the struct docs.
     pub consumed_predecessor: bool,
 }
 
@@ -258,14 +277,18 @@ pub struct CombineUpright<'src> {
 /// `text` is [`super::NonEmpty`] — empty emphasis is a parse bug.
 ///
 /// `consumed_predecessor` mirrors [`Bouten::consumed_predecessor`] and
-/// [`CombineUpright::consumed_predecessor`]: when Phase 3 pulled the node's
+/// [`CombineUpright::consumed_predecessor`]: when the classify stage pulled the node's
 /// source span back over the immediately-preceding literal of `text`,
 /// the serializer re-emits that literal before `［＃「text」は太字］` to
 /// hold the parse∘serialize fixed point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Emphasis<'src> {
+    /// Which typographic treatment (太字 / 斜体 / 上付き …) applies.
     pub kind: EmphasisKind,
+    /// The emphasised run.
     pub text: super::NonEmpty<Content<'src>>,
+    /// Whether the classifier pulled this node's span back over an
+    /// immediately-preceding literal of `text`; see the struct docs.
     pub consumed_predecessor: bool,
 }
 
@@ -292,7 +315,9 @@ pub struct Gaiji<'src> {
 /// Warichu (split annotation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Warichu<'src> {
+    /// First (upper / right) of the two stacked half-size lines.
     pub upper: Content<'src>,
+    /// Second (lower / left) of the two stacked half-size lines.
     pub lower: Content<'src>,
 }
 
@@ -302,20 +327,26 @@ pub struct Warichu<'src> {
 /// `text` is [`super::NonEmpty`] — every heading carries a label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Heading<'src> {
+    /// The 大 / 中 / 小 outline level.
     pub kind: HeadingKind,
+    /// Standard / 同行 / 窓 style.
     pub style: HeadingStyle,
+    /// The heading label.
     pub text: super::NonEmpty<Content<'src>>,
 }
 
 /// Forward-reference heading hint, carrying the intended outline `level`
 /// (1 / 2 / 3) and `style` (standard / 同行 / 窓).
 ///
-/// `target` is [`super::NonEmptyStr`] — Phase 3 only emits the hint
+/// `target` is [`super::NonEmptyStr`] — the classify stage only emits the hint
 /// after a `「対象」` quoted target landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadingHint<'src> {
+    /// Intended outline level: `1` = 大, `2` = 中, `3` = 小.
     pub level: u8,
+    /// Standard / 同行 / 窓 style.
     pub style: HeadingStyle,
+    /// The quoted target run the hint promotes to a heading.
     pub target: super::NonEmptyStr<'src>,
 }
 
@@ -325,6 +356,7 @@ pub struct HeadingHint<'src> {
 /// path is a parse bug, not a valid state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Illustration<'src> {
+    /// Image path / filename (becomes the `<img src>`).
     pub file: super::NonEmptyStr<'src>,
     /// Optional figure number from the `［＃挿絵{N}（…）入る］` numbered form,
     /// kept as the raw digit string (so `０１` / `10` round-trip verbatim).
@@ -334,6 +366,8 @@ pub struct Illustration<'src> {
     /// `［＃挿絵（file、横W×縦H）入る］` form, kept out of `file` so the
     /// rendered `<img src>` stays a clean path. `None` when absent.
     pub dimensions: Option<&'src str>,
+    /// Optional figure caption (`「caption」入る` / キャプション付き forms),
+    /// rendered as a `<figcaption>`. `None` when the figure has no caption.
     pub caption: Option<Content<'src>>,
     /// The free-text description that precedes `（…）入る` in the *general*
     /// image form `［＃<説明>（file）入る］` — 図 / 地図 / 口絵 / コンドル博士の図
@@ -350,7 +384,9 @@ pub struct Illustration<'src> {
 /// raw bytes between `［＃` and `］`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Directive<'src> {
+    /// The raw bytes between `［＃` and `］` (kept verbatim for round-trip).
     pub raw: super::NonEmptyStr<'src>,
+    /// How this annotation is classified. See [`DirectiveKind`].
     pub kind: DirectiveKind,
 }
 
@@ -359,16 +395,18 @@ pub struct Directive<'src> {
 /// `mark` is [`super::NonEmptyStr`] — empty kaeriten is a parse bug.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Kaeriten<'src> {
+    /// The kanbun reading-order mark (e.g. `レ`, `一`, `上`).
     pub mark: super::NonEmptyStr<'src>,
 }
 
 /// Double-angle quotation payload (input `≪…≫`, display `《…》`).
 ///
-/// `content` is [`super::NonEmpty`] — Phase 3 pre-filters empty
+/// `content` is [`super::NonEmpty`] — the classify stage pre-filters empty
 /// `≪≫` to plain text before allocation, so a `AngleQuote`
 /// node is never emitted with empty content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AngleQuote<'src> {
+    /// The quoted run (input `≪…≫`, displayed as `《…》`).
     pub content: super::NonEmpty<Content<'src>>,
 }
 

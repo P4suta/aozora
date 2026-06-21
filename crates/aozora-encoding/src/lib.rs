@@ -18,6 +18,12 @@ use thiserror::Error;
 #[derive(Debug, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum DecodeError {
+    /// The input was not valid `Shift_JIS`: `encoding_rs` reported a malformed
+    /// byte sequence (or, in [`decode_sjis_into`], an output-buffer overflow).
+    ///
+    /// Carries no position payload — the decode path is deliberately strict and
+    /// all-or-nothing rather than offering lossy replacement, so callers learn
+    /// they're looking at corrupted source rather than silently absorbing it.
     #[error("Shift_JIS からの変換に失敗しました (不正なバイト列)")]
     #[diagnostic(code(aozora::encoding::sjis_invalid))]
     ShiftJisInvalid,

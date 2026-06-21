@@ -2,7 +2,7 @@
 //!
 //! The `※［＃<description>、<mencode>］` glyph-reference form plus the
 //! `mencode` / 底本ページ-行 validators. Extracted verbatim from the
-//! phase-3 classifier; recognised nodes are built on the shared
+//! classify-stage classifier; recognised nodes are built on the shared
 //! [`RecogniseCtx`].
 
 #[cfg(feature = "classify-instrument")]

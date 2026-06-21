@@ -37,7 +37,7 @@ parse it.
 The runner pins six axes per fixture:
 
 1. `tree.to_html()` byte-identical to `expected.html`.
-2. `tree.serialize()` byte-identical to `expected.serialize.txt`.
+2. `tree.to_source()` byte-identical to `expected.serialize.txt`.
 3. `aozora::json::diagnostics(tree.diagnostics())`
    byte-identical to `expected.diagnostics.json`.
 4. `aozora::json::nodes(&tree)` byte-identical to
@@ -49,7 +49,7 @@ The runner pins six axes per fixture:
 
 Axes 1–2 anchor the human-readable surface; axes 3–6 pin the JSON
 projections that drivers (FFI / WASM / PyO3) consume in production,
-so a regression that survives the renderer gate but breaks a wire
+so a regression that survives the renderer gate but breaks a JSON
 client lights up here.
 
 All six goldens regenerate via

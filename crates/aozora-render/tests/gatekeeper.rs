@@ -122,7 +122,7 @@ fn gatekeeper_serialize_is_fixed_point_for_canonical_markup() {
 
 #[test]
 fn gatekeeper_pua_sentinel_codepoints_in_source_dont_emit_block_tags() {
-    // Phase 0 records a diagnostic but does not strip raw U+E001..
+    // The sanitize stage records a diagnostic but does not strip raw U+E001..
     // U+E004 from input, so they must flow through as PLAIN text
     // and never accidentally trigger structural rendering. This
     // pins "PUA collision tolerance".

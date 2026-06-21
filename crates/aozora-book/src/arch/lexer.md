@@ -1,59 +1,58 @@
-# Four-phase lexer
+# Lexer (sanitize → tokenize → pair → classify)
 
-`aozora-pipeline` runs the lexer as four pure-functional phases,
+`aozora-pipeline` runs the lexer as four pure-functional stages,
 each `fn(input) -> output` with no shared mutable state. The split
-keeps the dominant hot path (Phase 1 events / Phase 3 classify)
-tight, lets the bench harness measure each phase independently, and
-maps every diagnostic to a single phase boundary.
+keeps the dominant hot path (tokenize / classify) tight, lets the
+bench harness measure each stage independently, and maps every
+diagnostic to a single stage boundary.
 
-The single public entry [`lex`] drives all four phases
+The single public entry [`lex`] drives all four stages
 and lands the resulting borrowed AST inside an
 `aozora_syntax::borrowed::Arena` provided by the caller. The legacy
-"phase 4 normalize / phase 5 registry / phase 6 validate" steps
-disappeared into a fused walk inside `lex`; they no
-longer have standalone phase functions.
+"normalize / registry / validate" steps disappeared into a fused
+walk inside `lex`; they no longer have standalone stage functions.
 
-## Phase ordering
+## Stage ordering
 
 ```mermaid
 flowchart LR
-    p0["Phase 0<br/>sanitize"]
-    p1["Phase 1<br/>events"]
-    p2["Phase 2<br/>pair"]
-    p3["Phase 3<br/>classify"]
+    p0["sanitize"]
+    p1["tokenize"]
+    p2["pair"]
+    p3["classify"]
     fused["lex<br/>(fused walk:<br/>normalize + registry + validate)"]
 
     p0 --> p1 --> p2 --> p3 --> fused
 ```
 
 Each arrow carries a small data structure (sanitised text, trigger
-events, pair events, classified spans); no phase reads back into a
-previous phase's output.
+tokens, pair events, classified spans); no stage reads back into a
+previous stage's output.
 
-| Phase | Input | Output | Responsibility |
+| Stage | Input | Output | Responsibility |
 |---|---|---|---|
-| 0 — Sanitize | raw `&str` | `SanitizeOutput { sanitized: &str, .. }` | BOM strip, CRLF → LF, accent decomposition, decorative-rule isolation, PUA collision pre-scan |
-| 1 — Events | sanitised `&str` | `Iterator<Item = Token>` | SIMD trigger scan (`aozora-scan`) followed by linear tokenise into `Plain` / trigger events |
-| 2 — Pair | `Iterator<Token>` | `Iterator<Item = PairEvent>` | Balanced-stack pairing for all opener/closer trigrams (`｜》《`, `［］`, `〔〕`, `「」`, `《《》》`) |
-| 3 — Classify | `Iterator<PairEvent>` | `Iterator<Item = ClassifiedSpan>` | Full-spec Aozora classification into [`Node`] variants (ruby, bouten, gaiji, tcy, kaeriten, sashie, annotation, …) |
+| sanitize | raw `&str` | `SanitizeOutput { sanitized: &str, .. }` | BOM strip, CRLF → LF, accent decomposition, decorative-rule isolation, PUA collision pre-scan |
+| tokenize | sanitised `&str` | `Iterator<Item = Token>` | SIMD trigger scan (`aozora-scan`) followed by linear tokenise into `Plain` / trigger events |
+| pair | `Iterator<Token>` | `Iterator<Item = PairEvent>` | Balanced-stack pairing for all opener/closer trigrams (`｜》《`, `［］`, `〔〕`, `「」`, `《《》》`) |
+| classify | `Iterator<PairEvent>` | `Iterator<Item = ClassifiedSpan>` | Full-spec Aozora classification into [`Node`] variants (ruby, bouten, gaiji, tcy, kaeriten, sashie, annotation, …) |
 
-The orchestrator [`lex`] consumes the Phase 3 stream,
+The orchestrator [`lex`] consumes the classify stream,
 substitutes PUA sentinels into the normalised text, builds the
 side-table registry that maps sentinel positions back to
 classified `Node` values, and accumulates diagnostics — all
 in a single fused walk over the classified-span stream.
 
-## Phase 0: sanitize
+## sanitize stage
 
-The most varied phase by what it touches. Sub-passes (in order):
+The most varied stage by what it touches. Sub-passes (in order):
 
 - **bom_strip** — UTF-8 BOM detection and removal at the head.
 - **normalize_line_endings** — CRLF → LF in one `memchr2` pass.
 - **rewrite_accent_spans** — ASCII digraph / ligature decomposition
   for [accent gaiji](../notation/gaiji.md#accent-decomposition).
 - **isolate_decorative_rules** — long horizontal-rule lines (`──────────`
-  patterns) get separated from neighbouring text so Phase 1's
-  trigger scan does not split them mid-glyph.
+  patterns) get separated from neighbouring text so the tokenize
+  stage's trigger scan does not split them mid-glyph.
 - **scan_for_sentinel_collisions** — pre-scan for stray PUA codepoints
   (`U+E001..U+E004`); any hit emits `Diagnostic::SourceContainsPua`
   and the colliding bytes flow through verbatim (the registry has
@@ -63,7 +62,7 @@ Each sub-pass is independent and runs over the same buffer. The
 output `SanitizeOutput` carries the rewritten text alongside any
 diagnostics emitted along the way.
 
-## Phase 1: events
+## tokenize stage
 
 The hot path. SIMD multi-pattern scan from
 [`aozora-scan`](scanner.md) finds every trigger byte position; a
@@ -77,18 +76,18 @@ pub enum Token<'src> {
 ```
 
 The trigger scan and the tokenise loop fuse so the output stream
-allocates no per-event vector — downstream phases consume the
+allocates no per-event vector — downstream stages consume the
 iterator directly. See [SIMD scanner backends](scanner.md) for the
 runtime backend selection.
 
 Throughput on a typical mid-size work (`crime_and_punishment.txt`,
 ~600 KiB UTF-8): on the order of GB/s for the SIMD backends, which
-is well above the rest of the pipeline's throughput; Phase 1 is
-essentially free at the corpus level. Concrete numbers are pinned
-by `cargo bench -p aozora-bench --bench crime_and_punishment` and
-the synthetic corpus bench.
+is well above the rest of the pipeline's throughput; the tokenize
+stage is essentially free at the corpus level. Concrete numbers are
+pinned by `cargo bench -p aozora-bench --bench crime_and_punishment`
+and the synthetic corpus bench.
 
-## Phase 2: pair
+## pair stage
 
 Balanced-stack bracket matching. Walk the trigger event stream,
 push openers onto a `SmallVec<[(PairKind, Span); 8]>` (inline
@@ -96,14 +95,14 @@ capacity 8 covers 99th-percentile bracket nesting in real corpus),
 pop on closers, and emit a `PairEvent::Solo` / `Matched` /
 `Unmatched` / `Unclosed` for every trigger.
 
-Phase 2 is also the first place [recovery semantics](error-recovery.md)
+The pair stage is also the first place [recovery semantics](error-recovery.md)
 fire: stray closers and unmatched openers each emit a structured
 diagnostic but never abort, so downstream consumers see a complete
 event stream regardless of input wellformedness.
 
-## Phase 3: classify
+## classify stage
 
-The most code-heavy phase. The classifier maps `PairEvent`s to
+The most code-heavy stage. The classifier maps `PairEvent`s to
 [`Node`] variants via a slug-canonicalised dispatch table
 ([`SLUGS`] / `canonicalise_slug`). Recognisers are organised per
 construct family:
@@ -125,8 +124,8 @@ sanitised text in the same walk.
 
 ## Fused finishing walk
 
-After Phase 3, [`lex`] runs a single output-build walk
-that does what was once three separate phases:
+After classify, [`lex`] runs a single output-build walk
+that does what was once three separate stages:
 
 - **Normalise** — substitute each Aozora span with its PUA sentinel
   (`U+E001`/`E002`/`E003`/`E004` for inline / block-leaf / block-open
@@ -136,8 +135,8 @@ that does what was once three separate phases:
   see [van Emde Boas / Eytzinger layout](veb.md)) keyed by sentinel
   byte position so the post-process walk can recover the borrowed-AST
   node from a normalised position in `O(log n)`.
-- **Validate + diagnostics** — collect every Phase-0 / Phase-2 /
-  Phase-3 diagnostic, sort by span, and pin stable codes
+- **Validate + diagnostics** — collect every sanitize / pair /
+  classify diagnostic, sort by span, and pin stable codes
   (`aozora::lex::source_contains_pua`, `aozora::lex::unclosed_bracket`,
   …; see [diagnostics](../notation/diagnostics.md)).
 
@@ -145,27 +144,27 @@ Performing all three in one walk avoids three extra passes over
 the (potentially MB-class) source and keeps the `Registry`'s
 `EytzingerMap` build amortised.
 
-## Why four phases, not one big function?
+## Why four stages, not one big function?
 
 Three reasons.
 
-1. **Bench-driven optimisation.** Per-phase boundaries let
-   `cargo bench -p aozora-bench` measure each phase's wall time
+1. **Bench-driven optimisation.** Per-stage boundaries let
+   `cargo bench -p aozora-bench` measure each stage's wall time
    independently. Knowing that "this document spends 80 % of parse
-   time in Phase 3 classify" tells you where the next perf PR
+   time in the classify stage" tells you where the next perf PR
    belongs. A monolithic `lex()` would force re-instrumentation in
    every PR.
-2. **Spec compliance.** Each phase corresponds to a discrete
+2. **Spec compliance.** Each stage corresponds to a discrete
    transformation the spec describes. Spec gaps in production
-   almost always land in one phase, and the
+   almost always land in one stage, and the
    [conformance suite](../conformance.md) can pin regression
-   fixtures targeting that phase only.
+   fixtures targeting that stage only.
 3. **Composability.** `aozora-pipeline` exposes both the fused
-   [`lex`] entry and the per-phase functions
+   [`lex`] entry and the per-stage functions
    (`sanitize`, `tokenize` / `tokenize_in`, `pair` / `pair_in`,
    `classify`). Production code uses the fused entry; benchmarks
    and the [type-state Pipeline state machine](pipeline.md) use
-   per-phase calls to isolate regressions.
+   per-stage calls to isolate regressions.
 
 The cost is conceptual (more API surface internal to the crate);
 the win is that every perf decision in the parser has a
@@ -175,11 +174,11 @@ measurement attached.
 
 - [Pipeline overview](pipeline.md) — how the lexer fits into the
   full parse layer.
-- [SIMD scanner backends](scanner.md) — Phase 1's trigger scan.
-- [Error recovery](error-recovery.md) — what each phase does when a
+- [SIMD scanner backends](scanner.md) — the tokenize stage's trigger scan.
+- [Error recovery](error-recovery.md) — what each stage does when a
   diagnostic fires.
 - [Performance → Profiling with samply](../perf/samply.md) — how to
-  measure the per-phase cost on your own workload.
+  measure the per-stage cost on your own workload.
 
 [`lex`]: https://docs.rs/aozora-pipeline/latest/aozora_pipeline/fn.lex.html
 [`Node`]: https://docs.rs/aozora-syntax/latest/aozora_syntax/borrowed/enum.Node.html

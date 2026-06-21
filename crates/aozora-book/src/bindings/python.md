@@ -25,7 +25,7 @@ from aozora_py import Document
 
 doc = Document("｜青梅《おうめ》")
 print(doc.to_html())          # <ruby>青梅<rt>おうめ</rt></ruby>
-print(doc.serialize())        # ｜青梅《おうめ》
+print(doc.to_source())        # ｜青梅《おうめ》
 print(doc.diagnostics())      # JSON-encoded list of diagnostic dicts
 ```
 
@@ -35,7 +35,7 @@ print(doc.diagnostics())      # JSON-encoded list of diagnostic dicts
 |---|---|---|
 | `Document(source: str)` | `Document` | The constructor copies `source` into a Rust `Box<str>`. |
 | `to_html() -> str` | str | Renders to semantic HTML5 with `aozora-*` class hooks. |
-| `serialize() -> str` | str | Re-emits canonical 青空文庫 source. |
+| `to_source() -> str` | str | Re-emits canonical 青空文庫 source. |
 | `diagnostics() -> str` | str | JSON-encoded list (same schema as the WASM and FFI bindings). |
 | `source_byte_len() -> int` | int | Source byte length. |
 
@@ -83,7 +83,7 @@ binding types. We don't enable it because:
 
 Same reason as the [WASM binding](wasm.md#why-a-hand-written-json-projection-over-serde-wasm-bindgen):
 
-- The wire shape is stable across every binding.
+- The JSON shape is stable across every binding.
 - Avoids forcing a `pyclass` declaration on every diagnostic-related
   type.
 - Downstream Python consumers `json.loads()` once and work with

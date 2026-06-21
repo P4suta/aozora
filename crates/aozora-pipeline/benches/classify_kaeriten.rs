@@ -13,7 +13,7 @@
 //!   negative path where the length prefilter or hash miss returns
 //!   `None` quickly.
 //!
-//! Run via `cargo bench -p aozora-pipelineer`.
+//! Run via `cargo bench -p aozora-pipeline --bench classify_kaeriten`.
 
 use aozora_pipeline::lex;
 use aozora_syntax::borrowed::Arena;

@@ -12,7 +12,7 @@ Each `Diagnostic` carries:
 - a **severity**: `Error` / `Warning` / `Note`.
 - a **source axis**: `Source` (your input tripped it) or `Internal` (a
   library-bug sanity check — see [Internal](#internal)).
-- a **span** — a byte range in the *sanitized* source (the Phase 0
+- a **span** — a byte range in the *sanitized* source (the sanitize-stage
   output: BOM stripped, CRLF→LF, 〔…〕 accents decomposed). For input with
   none of those, the sanitized bytes equal the original bytes.
 
@@ -105,12 +105,12 @@ stack top of a different `PairKind`. The label points at the stray close.
 ```
 
 A `〔…〕` accent digraph was rewritten to its Unicode-combined form during
-Phase 0 sanitize (`cafe'` → `café`, `fune` + backtick → `funè`, …). This is
+the sanitize stage (`cafe'` → `café`, `fune` + backtick → `funè`, …). This is
 **intended behaviour**, not an error — it is surfaced as a `Note` so an
 editor can show *what* changed. One note fires per `〔…〕` span that actually
 contained a digraph; a `〔…〕` with no accent digraph is silent. The span is
 in sanitized (post-decomposition) coordinates. The transform is loss-free:
-the serializer reconstructs the original `〔…〕` source form. See
+`to_source` reconstructs the original `〔…〕` source form. See
 [ADR-0003](https://github.com/P4suta/aozora/blob/main/docs/adr/0003-accent-decomposition-preparse.md).
 **No action required.**
 

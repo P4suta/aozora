@@ -19,7 +19,7 @@ beginning of next chapter
 CSS gives the div a `page-break-before: always` for paged media
 (EPUB / print).
 
-## Serialize output
+## Source output
 
 Round-trips to `［＃改ページ］\n`.
 
@@ -29,7 +29,7 @@ Round-trips to `［＃改ページ］\n`.
 
 ## When emitted
 
-Phase 3 sees `［＃改ページ］` and emits a single `BlockLeaf`
+The classify stage sees `［＃改ページ］` and emits a single `BlockLeaf`
 classification covering the whole bracket span.
 
 ## Diagnostics

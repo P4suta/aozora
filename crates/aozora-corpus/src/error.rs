@@ -21,7 +21,10 @@ pub enum CorpusError {
     /// from `PermissionDenied`).
     #[error("failed to read corpus item at {path}: {source}")]
     Io {
+        /// Path of the corpus item whose I/O call failed.
         path: PathBuf,
+        /// Underlying OS error; inspect its [`io::ErrorKind`] to
+        /// distinguish causes such as `NotFound` vs `PermissionDenied`.
         #[source]
         source: io::Error,
     },
@@ -32,7 +35,10 @@ pub enum CorpusError {
     /// made (the caller's configuration code, not deep inside a sweep
     /// loop).
     #[error("corpus root is not a directory: {path}")]
-    RootNotDirectory { path: PathBuf },
+    RootNotDirectory {
+        /// The configured root path that was missing or not a directory.
+        path: PathBuf,
+    },
 }
 
 #[cfg(test)]

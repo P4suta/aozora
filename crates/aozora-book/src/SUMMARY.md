@@ -46,7 +46,7 @@
 
 - [Pipeline overview](arch/pipeline.md)
 - [Borrowed-arena AST](arch/arena.md)
-- [Seven-phase lexer](arch/lexer.md)
+- [Lexer pipeline](arch/lexer.md)
 - [SIMD scanner backends](arch/scanner.md)
 - [Eytzinger sorted-set lookup](arch/veb.md)
 - [Shift_JIS + 外字 resolver](arch/encoding.md)

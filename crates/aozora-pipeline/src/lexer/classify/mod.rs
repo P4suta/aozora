@@ -1,6 +1,6 @@
-//! Phase 3 — classify the Phase 2 event stream into [`borrowed::Node`] spans.
+//! Classify stage — classify the pair-stage event stream into [`borrowed::Node`] spans.
 //!
-//! Walks the cross-linked [`PairEvent`] stream produced by Phase 2 and
+//! Walks the cross-linked [`PairEvent`] stream produced by the pair stage and
 //! produces a contiguous vector of [`ClassifiedSpan`] whose
 //! `source_span` values tile every byte of the sanitized source
 //! end-to-end, in byte-offset order.
@@ -10,12 +10,12 @@
 //! * [`SpanKind::Plain`] — a run of text that carries no Aozora
 //!   construct. Adjacent un-classified events (text, stray triggers,
 //!   unclosed opens, unmatched closes) are merged into one span so
-//!   Phase 4 can emit them verbatim in a single write.
+//!   the normalize stage can emit them verbatim in a single write.
 //! * [`SpanKind::Aozora`] — a classified Aozora construct, carrying the
-//!   concrete [`borrowed::Node`] that Phase 4 will replace with a PUA
-//!   placeholder sentinel (see [`crate::INLINE_SENTINEL`] and friends).
+//!   concrete [`borrowed::Node`] that the normalize stage will replace
+//!   with a PUA placeholder sentinel (see [`crate::INLINE_SENTINEL`] and friends).
 //! * [`SpanKind::Newline`] — a `\n` in the sanitized text, kept as its
-//!   own span kind because block-level annotations (Phase 4 block
+//!   own span kind because block-level annotations (normalize-stage block
 //!   sentinel substitution) care about line boundaries.
 //!
 //! ## Span-coverage invariant
@@ -28,8 +28,8 @@
 //!
 //! When `source.is_empty()`, `spans` is empty.
 //!
-//! Phase 4 relies on this invariant to emit `normalized` text without
-//! ever re-scanning `source`.
+//! The normalize stage relies on this invariant to emit `normalized` text
+//! without ever re-scanning `source`.
 //!
 //! ## Recogniser layout
 //!
@@ -64,7 +64,7 @@
 //! aggressive inlining regressed throughput by 1–6 % across all
 //! bands. Selective inline (only the *small* helpers `push_output` /
 //! `flush_plain_up_to` / `append_to_frame` / `pending_outputs_pop_front`
-//! plus Phase 1 `flush_text` / `pair_text_then` / `try_merge_double`)
+//! plus tokenize-stage `flush_text` / `pair_text_then` / `try_merge_double`)
 //! brought it within ±1.3 % of baseline — neutral.
 //!
 //! Conclusion: **LLVM's default inline judgement is already optimal
@@ -77,7 +77,7 @@
 //! attacking it with attributes alone doesn't move it.
 //!
 //! The remaining headroom requires *structural* changes (Vec-passing
-//! between phases, removing iterator chains) rather than attribute
+//! between stages, removing iterator chains) rather than attribute
 //! hints.
 
 use core::mem;
@@ -90,7 +90,7 @@ use super::instrumentation::{
     record_yield,
 };
 
-// Phase 3 builds borrowed AST directly via `BorrowedAllocator`'s
+// The classify stage builds borrowed AST directly via `BorrowedAllocator`'s
 // inherent methods. The `NodeAllocator` trait abstraction was retired
 // in F.4 once the owned-AST path was gone.
 use aozora_syntax::alloc::BorrowedAllocator;
@@ -113,13 +113,19 @@ use kaeriten::{KaeritenObs, classify_kaeriten_mark, family_index, looks_like_kan
 /// One classified slice of the sanitized source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassifiedSpan<'a> {
+    /// What the slice is (plain run, newline, or a concrete Aozora
+    /// construct / container marker). Drives which sentinel, if any,
+    /// the normalizer emits.
     pub kind: SpanKind<'a>,
+    /// Half-open sanitized-source byte range this slice covers.
+    /// Consecutive spans tile the source contiguously (see the
+    /// span-coverage invariant in the module docs).
     pub source_span: Span,
 }
 
 /// Classification of a [`ClassifiedSpan`].
 ///
-/// Phase 4 (now folded into `aozora_lex::lex`'s
+/// The normalize stage (now folded into `crate::lex`'s
 /// `ArenaNormalizer` walk) maps the variants to PUA sentinels as
 /// follows:
 ///
@@ -171,7 +177,7 @@ pub enum SpanKind<'a> {
     Newline,
 }
 
-/// Classify a streaming Phase 2 [`PairEvent`] iterator against the
+/// Classify a streaming pair-stage [`PairEvent`] iterator against the
 /// sanitized source.
 ///
 /// Returns a [`ClassifyStream`] iterator yielding one [`ClassifiedSpan`]
@@ -180,7 +186,7 @@ pub enum SpanKind<'a> {
 /// accumulated during recognition. The upstream pair stream's
 /// diagnostics are NOT forwarded automatically — the caller is
 /// responsible for calling `pair_stream.take_diagnostics()` after the
-/// classify stream is dropped (the fused pipeline in `aozora-lex` does
+/// classify stream is dropped (the fused pipeline in `aozora-pipeline` does
 /// this).
 ///
 /// Pure function; no I/O. The yielded spans byte-contiguously cover
@@ -209,7 +215,7 @@ where
     ClassifyStream::new(events.into_iter(), source, alloc)
 }
 
-/// Streaming Phase 3 classifier.
+/// Streaming classify-stage classifier.
 ///
 /// Owns the upstream [`PairEvent`] iterator and consumes it lazily,
 /// yielding one [`ClassifiedSpan`] per [`Iterator::next`] call. The
@@ -304,7 +310,7 @@ struct StreamingFrame {
 /// paired event (`u32::MAX` otherwise). Both slices are the same
 /// length and are constructed by [`ClassifyStream`]'s frame buffers.
 ///
-/// The split keeps [`PairEvent`] free of cross-link fields (Phase 2
+/// The split keeps [`PairEvent`] free of cross-link fields (the pair stage
 /// can stream events one-at-a-time without back-patching) while still
 /// giving recogniser helpers O(1) "jump to my matching delimiter"
 /// access via the parallel side-table.
@@ -316,7 +322,7 @@ pub(crate) struct BodyView<'b> {
 
 /// Per-recognise-call shared context.
 ///
-/// Bundles the (allocator, sanitized source) pair that every Phase 3
+/// Bundles the (allocator, sanitized source) pair that every classify-stage
 /// recogniser / classifier helper needs but doesn't vary per call
 /// within a single recognise pass. Threading it as a single `&mut`
 /// argument keeps each helper's signature at ≤4 args (project-rule
@@ -601,7 +607,7 @@ where
                 frame.links.push(u32::MAX);
             }
             PairEvent::PairClose { kind, .. } => {
-                // Find the matching open via the inner stack. Phase 2
+                // Find the matching open via the inner stack. The pair stage
                 // guarantees that a PairClose only arrives when the
                 // top of the global stack matches its kind, but inside
                 // the body buffer we may have nested opens of various
@@ -617,7 +623,7 @@ where
                     frame.links[open_body_idx] = body_idx_u32;
                 } else {
                     // No matching open in this buffer — should not
-                    // happen because Phase 2's stack-balance contract
+                    // happen because the pair stage's stack-balance contract
                     // means a PairClose only arrives when the outer
                     // stack matches; but be defensive and append as-is.
                     frame.body.push(event);
@@ -902,7 +908,7 @@ where
                 }
             }
             PairEvent::Unclosed { kind, .. } => {
-                // Phase 2 emits synthetic Unclosed events when EOF
+                // The pair stage emits synthetic Unclosed events when EOF
                 // arrives mid-frame, one per still-open pair. Each
                 // one's span aliases its original PairOpen — those
                 // bytes were already folded into the plain run when
@@ -1306,7 +1312,7 @@ where
 ///
 /// Collapsing inside the lexer (rather than leaving the splitting to
 /// the renderer) keeps the [`borrowed::Node`] payload self-contained:
-/// Phase 4 stamps one PUA sentinel over the whole `｜…《…》` source
+/// The normalize stage stamps one PUA sentinel over the whole `｜…《…》` source
 /// span, and the inner gaiji/annotation never reach the top-level
 /// `spans` list or downstream consumers.
 struct RubyMatch<'s, 'a> {
@@ -1467,7 +1473,7 @@ struct BodyWindow {
 /// tracks the earliest byte that has not yet been committed to a Text
 /// segment; flushing is strictly triggered by a *recognised* nested
 /// construct, so unrelated events cost a single index increment. Each
-/// recognition jumps to `close_idx + 1` using Phase 2's pre-linked
+/// recognition jumps to `close_idx + 1` using the pair stage's pre-linked
 /// pair indices, keeping the sweep strictly forward-only regardless
 /// of nesting depth.
 ///
@@ -1670,7 +1676,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             span: close_span, ..
         } = body.view.events[close_idx]
         else {
-            // Phase 2 invariant: PairOpen's link always targets a
+            // Pair-stage invariant: PairOpen's link always targets a
             // PairClose of the matching kind.
             unreachable!("PairOpen link must target a PairClose");
         };
@@ -1707,7 +1713,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     }
 }
 
-/// Whether `body` could host a nested gaiji / annotation. The Phase 2
+/// Whether `body` could host a nested gaiji / annotation. The pair-stage
 /// event model guarantees that:
 ///
 /// * `※［＃…］` always emits a `Solo(RefMark)` event at its `※`.
@@ -2210,8 +2216,8 @@ mod tests {
     #[test]
     fn ruby_reading_consume_span_still_covers_outer_source_bytes() {
         // The Segments lift must not disturb the outer `source_span`
-        // of the classified span: Phase 4 still needs to replace the
-        // full `｜…《…》` bytes with a single PUA sentinel, and the
+        // of the classified span: the normalize stage still needs to replace
+        // the full `｜…《…》` bytes with a single PUA sentinel, and the
         // inner gaiji/annotation source bytes are folded into the
         // Ruby payload — not re-exposed to the outer classifier.
         let src = "｜日本《に※［＃「ほ」、第3水準1-85-54］ん》";
@@ -3455,7 +3461,7 @@ mod tests {
 
     #[test]
     fn forward_bouten_with_nested_quote_in_target_uses_outer_quote() {
-        // Phase 2 balances 「「」」 correctly. The target is the full
+        // The pair stage balances 「「」」 correctly. The target is the full
         // outer-quote contents including the inner 「inner」 — not
         // truncated at the first 」. The preceding copy of the target
         // is required so the classifier's target-exists check passes.
@@ -4325,7 +4331,7 @@ mod tests {
 
     #[test]
     fn container_close_without_matching_open_still_emits_close() {
-        // Phase 3 does not pair opens with closes — that's `post_process`.
+        // The classify stage does not pair opens with closes — that's `post_process`.
         // A bare `［＃罫囲み終わり］` is still classified.
         run!(out, "［＃罫囲み終わり］");
         assert!(matches!(
@@ -4357,7 +4363,7 @@ mod tests {
     #[test]
     fn diagnostics_from_phase2_are_forwarded() {
         run!(out, "stray］");
-        // Phase 2 emits an UnmatchedClose diagnostic for `］`. The
+        // The pair stage emits an UnmatchedClose diagnostic for `］`. The
         // classifier must propagate it (and not swallow it silently).
         assert!(
             out.diagnostics.iter().any(|d| matches!(
@@ -4399,7 +4405,7 @@ mod tests {
         /// No empty-range spans leak into the output. An empty span
         /// would usually indicate a double-flush bug and breaks the
         /// "each span represents at least one source byte" expectation
-        /// Phase 4 holds.
+        /// the normalize stage holds.
         #[test]
         fn proptest_no_empty_spans(src in source_strategy()) {
             run!(out, &src);
@@ -4432,7 +4438,7 @@ mod tests {
         /// arena-allocated payload pointers, which differ across runs
         /// even when the logical AST is identical. The pointer-aware
         /// equality is the right semantics — it lets the byte-identical
-        /// proptest in `aozora-lex` pin pointer dedup. Here we want
+        /// proptest in `aozora-pipeline` pin pointer dedup. Here we want
         /// logical equality, so we compare via the `Debug` shape, which
         /// formats payload values rather than addresses.
         #[test]
@@ -4472,7 +4478,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Forward-target index threshold smoke tests (G.4 / phase3 mod).
+    // Forward-target index threshold smoke tests (G.4 / classify mod).
     //
     // The forward-reference target index is only built when a source
     // contains at least `FORWARD_QUOTE_BODY_THRESHOLD` (= 64) distinct

@@ -9,10 +9,10 @@
 //!
 //! ## Pipeline
 //!
-//! 1. Phases 0-2 (sanitize / tokenize / pair) run as owned-data
+//! 1. The sanitize / tokenize / pair stages run as owned-data
 //!    helpers operating on byte spans and event indices — they never
 //!    construct AST.
-//! 2. Phase 3 classification is invoked with an
+//! 2. The classify stage is invoked with an
 //!    [`aozora_syntax::alloc::BorrowedAllocator`] backed by `arena`.
 //!    Borrowed AST nodes land directly in the arena; strings flow
 //!    through the [`aozora_syntax::borrowed::Interner`] owned by
@@ -51,16 +51,16 @@ pub struct LexOutput<'a> {
     pub normalized: &'a str,
     /// Cache-friendly sentinel-position → node lookup tables.
     pub registry: Registry<'a>,
-    /// Non-fatal observations from every phase. Owned `Vec` because
+    /// Non-fatal observations from every stage. Owned `Vec` because
     /// `Diagnostic` carries non-`Copy` `miette::SourceSpan` data and
     /// the bump arena cannot drop those correctly. Diagnostics are
     /// rare (typically 0–3 per document) so the small heap allocation
     /// is negligible.
     pub diagnostics: Vec<Diagnostic>,
-    /// Byte length of the Phase 0 sanitized buffer.
+    /// Byte length of the sanitize-stage sanitized buffer.
     pub sanitized_len: u32,
-    /// Resolved (open, close) pair side-table from Phase 2 (in close
-    /// order — the order matches close events as the stack drains).
+    /// Resolved (open, close) pair side-table from the pair stage (in
+    /// close order — the order matches close events as the stack drains).
     /// Built by [`crate::lexer::pair_in`] and forwarded verbatim. Lives
     /// in the same arena as `normalized`. Editor surfaces (LSP
     /// `linkedEditingRange` / `documentHighlight`) consume this
@@ -69,7 +69,7 @@ pub struct LexOutput<'a> {
     /// editor.
     pub pairs: &'a [PairLink],
     /// Source-keyed node side-table: one entry per emitted Aozora /
-    /// container span, in source order. Built during the Phase 3 →
+    /// container span, in source order. Built during the classify →
     /// arena-normalize fold so editor surfaces can answer "what node
     /// is at this source byte offset?" without re-walking the
     /// registries.
@@ -85,7 +85,7 @@ pub struct LexOutput<'a> {
     /// a sanitization-rewriting input must do their own translation.
     pub source_nodes: &'a [SourceNode<'a>],
     /// Resolved container open/close pairs in normalized
-    /// coordinates. Built during the Phase 3 → arena-normalize fold
+    /// coordinates. Built during the classify → arena-normalize fold
     /// from a stack the normalizer maintains. One entry per balanced
     /// pair; if the input is well-formed (every block-open has a
     /// matching block-close) the entry count equals the number of
@@ -110,7 +110,12 @@ pub struct LexOutput<'a> {
 /// classified node landed there. Lives in the bumpalo arena.
 #[derive(Debug, Clone, Copy)]
 pub struct SourceNode<'a> {
+    /// Half-open byte range, in **sanitized-source** coordinates, that
+    /// this node was classified from. Entries are sorted by `start`.
     pub source_span: Span,
+    /// The classified node landed at `source_span`, tagged with where
+    /// it sits in the normalized stream (inline / block-leaf /
+    /// block-open / block-close).
     pub node: NodeRef<'a>,
 }
 
@@ -154,10 +159,10 @@ impl<'a> LexOutput<'a> {
 ///
 /// Pipeline:
 ///
-/// 1. Sanitize / tokenize / pair (Phases 0-2) — owned-data helpers
+/// 1. Sanitize / tokenize / pair stages — owned-data helpers
 ///    operating on byte spans and event indices.
-/// 2. `classify_with::<BorrowedAllocator>` — Phase 3 builds borrowed
-///    `Node<'a>` directly into `arena`, with strings interned
+/// 2. `classify_with::<BorrowedAllocator>` — the classify stage builds
+///    borrowed `Node<'a>` directly into `arena`, with strings interned
 ///    through the `Interner` owned by the allocator.
 /// 3. Single fused normalize walk: build the four borrowed-registry
 ///    tables and stream the PUA-rewritten text into `arena` in one
@@ -166,7 +171,7 @@ impl<'a> LexOutput<'a> {
 #[must_use]
 pub fn lex<'a>(source: &str, arena: &'a Arena) -> LexOutput<'a> {
     // Thin wrapper around the canonical Pipeline. The Pipeline owns
-    // the type-state machine that enforces phase order at compile
+    // the type-state machine that enforces stage order at compile
     // time; this function exists for API compatibility and is what
     // `Document::parse` calls.
     crate::pipeline::Pipeline::run_to_completion(source, arena)
@@ -180,8 +185,8 @@ pub fn lex<'a>(source: &str, arena: &'a Arena) -> LexOutput<'a> {
 /// strictly greater than the previous, and the [`Registry`] consumes
 /// the slice via `from_sorted_slice` without re-sorting. The nodes
 /// themselves are allocated upstream by
-/// [`aozora_syntax::alloc::BorrowedAllocator`] during Phase 3; this
-/// walker is strictly the PUA-rewriter + position-recorder, doing
+/// [`aozora_syntax::alloc::BorrowedAllocator`] during the classify
+/// stage; this walker is strictly the PUA-rewriter + position-recorder, doing
 /// zero AST allocation of its own.
 pub(crate) struct ArenaNormalizer<'src, 'a> {
     pub(crate) out: String,
@@ -205,11 +210,11 @@ pub(crate) struct ArenaNormalizer<'src, 'a> {
     /// into the arena `&'a [ContainerPair]` at pipeline-build time.
     /// One entry per balanced pair.
     pub(crate) container_pairs: Vec<ContainerPair>,
-    /// Diagnostics observed during the fold (post-Phase-3). Currently
+    /// Diagnostics observed during the fold (post-classify). Currently
     /// `mismatched_container_close`, `mismatched_bouten_container`, and
     /// `break_in_single_line_container`. Drained into the pipeline's
-    /// diagnostic stream after the Phase-3 classify set so the final
-    /// order stays phase-monotone.
+    /// diagnostic stream after the classify-stage set so the final
+    /// order stays stage-monotone.
     pub(crate) diagnostics: Vec<Diagnostic>,
     /// Family tag of the most recent single-line layout directive
     /// (`indent` / `align-end`) seen on the *current* source line, if
@@ -252,7 +257,7 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
     }
 
     fn current_pos(&self) -> u32 {
-        u32::try_from(self.out.len()).expect("normalized fits u32 per Phase 0 cap")
+        u32::try_from(self.out.len()).expect("normalized fits u32 per sanitize-stage cap")
     }
 
     pub(crate) fn emit(&mut self, span: &ClassifiedSpan<'a>) {
@@ -271,8 +276,8 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 // before emitting (the break itself is a standalone
                 // block leaf handled below).
                 self.track_single_line_break(*node, span.source_span);
-                // Phase 3 has already allocated the borrowed node into
-                // the arena via `BorrowedAllocator`. We only have to
+                // The classify stage has already allocated the borrowed
+                // node into the arena via `BorrowedAllocator`. We only have to
                 // emit the appropriate sentinel and remember the
                 // position. No conversion, no per-node allocation.
                 if is_standalone_block_for_render_borrowed(*node) {
@@ -345,7 +350,7 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     source_span: span.source_span,
                     node: nref,
                 });
-                // Pop the matching open. Phase 2 already balanced
+                // Pop the matching open. The pair stage already balanced
                 // the bracket stream so an empty stack here would
                 // signal a pipeline-internal mismatch; we degrade
                 // gracefully by skipping the pair (the close marker
@@ -668,16 +673,16 @@ mod tests {
         assert_eq!(chain.diagnostics.len(), oneshot.diagnostics.len());
     }
 
-    /// Phase 0 (sanitize) rewrites CR/LF to LF. Inspect the
+    /// The sanitize stage rewrites CR/LF to LF. Inspect the
     /// intermediate `Sanitized` state and confirm `sanitized_text()`
     /// reflects the rewrite — the Pipeline accessor is the supported
-    /// way to peek between phases.
+    /// way to peek between stages.
     #[test]
     fn pipeline_intermediate_inspection_after_sanitize() {
         let arena = Arena::new();
         let src = "line1\r\nline2\rline3\n";
         let p = crate::pipeline::Pipeline::new(src, &arena).sanitize();
-        // After Phase 0, every CR / CRLF is collapsed to a single LF.
+        // After the sanitize stage, every CR / CRLF is collapsed to a single LF.
         assert_eq!(p.sanitized_text(), "line1\nline2\nline3\n");
         // Drive the rest to make sure the inspection didn't consume
         // anything required downstream.

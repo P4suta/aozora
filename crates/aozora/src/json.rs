@@ -8,7 +8,7 @@
 //!
 //! # Schema envelope
 //!
-//! Every wire JSON has the shape
+//! Every JSON envelope has the shape
 //!
 //! ```json
 //! { "schemaVersion": 1, "data": [ /* …entries… */ ] }

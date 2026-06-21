@@ -27,7 +27,7 @@ fn main() {
 }
 ```
 
-> The `wire` module is behind the `wire` Cargo feature on `aozora`.
+> The `json` module is behind the `json` Cargo feature on `aozora`.
 
 ## Expected output
 

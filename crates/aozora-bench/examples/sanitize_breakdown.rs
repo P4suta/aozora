@@ -1,6 +1,6 @@
-//! Per-sub-pass timing breakdown of phase 0 sanitize.
+//! Per-sub-pass timing breakdown of the sanitize stage.
 //!
-//! Phase 0 currently accounts for ~18.9% of corpus parse wall-clock.
+//! The sanitize stage currently accounts for ~18.9% of corpus parse wall-clock.
 //! After Plan E (memchr-based PUA collision scan, ~580 MB/s), the
 //! residual cost is split across the remaining sub-passes:
 //!
@@ -211,12 +211,12 @@ fn print_report(samples: &[Sub]) {
     let rule_taken_ct = samples.iter().filter(|s| s.rule_taken).count();
     let accent_taken_ct = samples.iter().filter(|s| s.accent_taken).count();
 
-    println!("=== Phase 0 sub-pass breakdown (corpus aggregate) ===");
+    println!("=== sanitize sub-pass breakdown (corpus aggregate) ===");
     println!(
         "documents     : {n}, total bytes {bytes} ({:.1} MB)",
         bytes as f64 / 1_000_000.0
     );
-    println!("phase 0 total : {:.0} ms", total_ns as f64 / NS_PER_MS);
+    println!("sanitize total : {:.0} ms", total_ns as f64 / NS_PER_MS);
     println!();
     println!("--- per sub-pass ---");
     line("bom_strip", bom_ns, total_ns, bytes, "always");

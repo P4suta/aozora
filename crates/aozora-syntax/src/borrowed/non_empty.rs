@@ -8,7 +8,7 @@
 //! the `NonEmpty::new` constructor returns `Option`, so empty content
 //! cannot enter the AST without a deliberate `unwrap` / `expect`. The
 //! allocator (`aozora_syntax::alloc`) does the `expect` exactly once
-//! per node variant — Phase 3's classifier guarantees the input is
+//! per node variant — the classifier guarantees the input is
 //! non-empty, and an empty payload at allocation time signals a
 //! pipeline-internal bug rather than valid input.
 //!
@@ -24,7 +24,7 @@ use super::types::Content;
 ///
 /// Only constructable through [`Self::new`] (returns `Option`) or
 /// [`Self::new_unchecked`] (caller-asserted, used only by the
-/// allocator after Phase 3 classification has guaranteed the
+/// allocator after the classify stage has guaranteed the
 /// non-emptiness). Auto-derefs to the inner payload for read access.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NonEmpty<T>(T);
