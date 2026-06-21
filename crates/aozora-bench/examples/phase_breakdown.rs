@@ -1,6 +1,6 @@
 //! Per-phase timing breakdown of the lex pipeline.
 //!
-//! The aggregate `profile_corpus` example measures parse + to_source
+//! The aggregate `profile_corpus` example measures parse + `to_source`
 //! at the public API boundary; this example reaches inside the lex
 //! pipeline and times each phase function individually so we can see
 //! which phase actually dominates wall-clock — replacing speculation
