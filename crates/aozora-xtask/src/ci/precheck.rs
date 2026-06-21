@@ -90,9 +90,9 @@ const JOBS: &[JobSpec] = &[
         argv: &["just", "audit"],
     },
     JobSpec {
-        name: "audit-udeps",
-        summary: "cargo-udeps unused-dependency scan (nightly)",
-        argv: &["just", "udeps"],
+        name: "audit-shear",
+        summary: "cargo-shear unused-dependency scan",
+        argv: &["just", "shear"],
     },
     JobSpec {
         name: "smoke-ffi",

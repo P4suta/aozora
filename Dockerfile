@@ -143,7 +143,7 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
         cargo-llvm-cov \
         cargo-deny \
         cargo-audit \
-        cargo-udeps \
+        cargo-shear \
         cargo-semver-checks \
         cargo-insta \
         cargo-release \
@@ -205,7 +205,7 @@ COPY --from=cargo-tools /usr/local/bin/ /usr/local/bin/
 # pinned toolchain had to be re-installed in this stage; holding base ==
 # pin removes that download and the dead base-default toolchain entirely.)
 
-# nightly toolchain is needed for cargo-udeps and cargo-fuzz harnesses
+# nightly toolchain is needed for the cargo-fuzz harnesses
 RUN rustup toolchain install nightly --component rust-src --profile minimal
 
 # Bun for the playground frontend. The upstream installer drops the

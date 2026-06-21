@@ -20,7 +20,6 @@ workspace = true
 # pipeline crates directly keeps the dep graph acyclic.
 [dependencies]
 aozora-pipeline = { workspace = true }
-aozora-spec     = { workspace = true }
 rowan           = { workspace = true }
 
 [dev-dependencies]

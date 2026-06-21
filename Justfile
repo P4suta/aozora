@@ -114,7 +114,7 @@ doctor:
 # Build all workspace crates.
 #
 # `aozora-bench` is excluded from every workspace-wide CI gate
-# (build / test / coverage / clippy / udeps) because it's a
+# (build / test / coverage / clippy / shear) because it's a
 # bench-only harness whose dep tree pulls in `zstd-sys`,
 # `criterion`, `addr2line`, `gimli`, `object`, and `ruzstd` —
 # adding ~100 s of cold-cache compile time that no other crate in
@@ -945,18 +945,13 @@ deny:
 audit:
     {{_dev}} cargo audit
 
-# Unused dependency scan (requires nightly).
-# `aozora-bench` is excluded for the same reason build / test / clippy
-# exclude it (heavy bench dep tree). The bench crate gets its own
-# udeps run through `just udeps-bench` when needed.
-udeps:
-    {{_dev}} cargo +nightly udeps --workspace --exclude aozora-bench --all-targets
-
-# Unused-dep scan limited to the bench crate. Run before cutting a
-# release if `aozora-bench` had dep changes; not part of the per-PR
-# CI gate (cf. `just udeps`).
-udeps-bench:
-    {{_dev}} cargo +nightly udeps -p aozora-bench --all-targets
+# Unused-dependency scan. cargo-shear is stable (no nightly), fast, and
+# also flags unlinked source files; it replaces the former nightly
+# cargo-udeps gate. Covers the whole workspace — `aozora-bench` included
+# — in a single pass, so no separate bench run is needed. Intentional
+# optional deps are carved out via `[package.metadata.cargo-shear]`.
+shear:
+    {{_dev}} cargo shear
 
 # Semver break detection (runs against published baseline once crates are on crates.io)
 semver:
@@ -1163,6 +1158,28 @@ book-linkcheck: mermaid-install
     {{_book}} mdbook build
     {{_book}} lychee --config lychee.toml 'book/**/*.html'
 
+# Compile + run the handbook's plain `rust` code blocks as doctests,
+# linking against the freshly-built aozora rlib. Catches handbook example
+# drift the same way `test-doc` catches rustdoc drift. Runs in the dev
+# image (not the lean `book` image) because `mdbook test` needs cargo's
+# target/deps.
+#
+# aozora is built into a DEDICATED target dir so the search path holds
+# exactly ONE `libaozora` rlib. The shared `/cargo/target/debug/deps`
+# accumulates many hash-suffixed `libaozora-*.rlib` (one per feature /
+# profile build across the workspace), and `mdbook test` only forwards
+# `-L` to rustdoc — never `--extern` — so an `extern crate aozora;` in an
+# example would hit E0464 "multiple candidates" against the shared dir.
+# The keep-newest sweep guards the dedicated dir against a stale rlib
+# lingering after a source change. Build + sweep + test share ONE
+# container so the test sees the freshly-pruned deps.
+#
+# Each runnable example therefore opens with a hidden `# extern crate
+# aozora;` (edition 2024 won't auto-link, and `--extern` is unavailable);
+# illustrative / internal-crate blocks are marked `rust,ignore`.
+book-test:
+    {{_dev}} bash -c 'set -euo pipefail; cargo build -p aozora --all-features --target-dir /cargo/target/book-test; ls -t /cargo/target/book-test/debug/deps/libaozora-*.rlib | tail -n +2 | xargs -r rm -f; mdbook test crates/aozora-book -L /cargo/target/book-test/debug/deps'
+
 # --- ci instrumentation (host-only — uses gh CLI auth) ----------------
 # `aozora-xtask ci …` is the data-driven CI surface: profile a finished
 # workflow run, run every CI job locally before pushing, or replay a
@@ -1262,8 +1279,11 @@ ci:
     # job.
     just extism-build
     just test
+    just test-doc
+    just test-doc-all
+    just book-test
     just prop
-    just udeps
+    just shear
     just coverage
     # Playground gates — TypeScript typecheck + vitest unit tests.
     # `docs.yml` workflow runs the same two commands; failing here
@@ -1320,7 +1340,7 @@ ci:
 #   3. The 4096-case `prop-deep` sweep launches AFTER the foreground
 #      `prop` gate (so it reuses the just-built `property_*` binaries —
 #      no build-lock contention) and runs in the background, overlapping
-#      udeps / extism-build / doc instead of adding 3-5 min to the tail.
+#      shear / extism-build / doc instead of adding 3-5 min to the tail.
 #
 # Foreground stays serial + cheap→expensive so a failure aborts the push
 # fast. `SKIP_TAGS=deep just ci-parallel` opts out of prop-deep (the
@@ -1359,7 +1379,7 @@ ci-parallel:
         else
             echo ":: prop-deep skipped via SKIP_TAGS=deep"
         fi
-        for gate in udeps extism-build doc corpus-sweep; do
+        for gate in shear test-doc book-test extism-build doc corpus-sweep; do
             echo ":: [fg] just $gate"
             if ! just "$gate"; then fg_failed="$gate"; break; fi
         done
