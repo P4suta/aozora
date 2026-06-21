@@ -11,7 +11,7 @@ use aozora_syntax::borrowed::{
 };
 use aozora_syntax::{
     AlignEnd, Container, ContainerKind, DirectiveKind, EmphasisKind, HeadingKind, HeadingStyle,
-    Indent, RubySide,
+    Indent, IndentLayout, RubySide,
 };
 
 use crate::classes;
@@ -248,6 +248,7 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
             amount,
             wrap,
             center,
+            layout,
         } => {
             write!(
                 writer,
@@ -259,9 +260,32 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
             if center {
                 writer.write_str(" aozora-container-center")?;
             }
+            // #78 secondary line-layout: 字組み grid gets its own class,
+            // 字詰め reuses the standalone line-width class (same semantics).
+            match layout {
+                IndentLayout::Kumi { .. } => {
+                    writer.write_str(" aozora-container-line-kumi")?;
+                }
+                IndentLayout::LineWidth(_) => {
+                    writer.write_str(" aozora-container-line-width")?;
+                }
+                IndentLayout::None => {}
+            }
             write!(writer, r#"" data-amount="{amount}""#)?;
             if let Some(w) = wrap {
                 write!(writer, r#" data-wrap="{w}""#)?;
+            }
+            match layout {
+                IndentLayout::Kumi { lines, width } => {
+                    write!(
+                        writer,
+                        r#" data-kumi-lines="{lines}" data-kumi-width="{width}""#
+                    )?;
+                }
+                IndentLayout::LineWidth(width) => {
+                    write!(writer, r#" data-width="{width}""#)?;
+                }
+                IndentLayout::None => {}
             }
             writer.write_str(">")
         }
@@ -762,6 +786,7 @@ mod tests {
                 amount: 2,
                 wrap: Some(4),
                 center: false,
+                layout: IndentLayout::None,
             },
         });
         let mut open = String::new();
@@ -835,6 +860,7 @@ mod tests {
                 amount: 2,
                 wrap: None,
                 center: false,
+                layout: IndentLayout::None,
             },
         });
         let mut open = String::new();
@@ -1256,6 +1282,7 @@ mod tests {
                 amount: 2,
                 wrap: None,
                 center: true,
+                layout: IndentLayout::None,
             }),
             r#"<div class="aozora-container aozora-container-indent aozora-container-indent-2 aozora-container-center" data-amount="2">"#
         );

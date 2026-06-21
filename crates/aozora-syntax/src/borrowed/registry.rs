@@ -225,7 +225,7 @@ impl ContainerPair {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Indent;
+    use crate::{Indent, IndentLayout};
 
     #[test]
     fn empty_registry_reports_empty() {
@@ -290,6 +290,7 @@ mod tests {
                     amount: 2,
                     wrap: None,
                     center: false,
+                    layout: IndentLayout::None,
                 }),
             ),
             (10u32, NodeRef::BlockOpen(ContainerKind::Framed)),

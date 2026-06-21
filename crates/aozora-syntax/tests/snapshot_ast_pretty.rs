@@ -19,7 +19,7 @@ use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Node};
 use aozora_syntax::{
     AlignEnd, BoutenKind, BoutenPosition, Center, Container, ContainerKind, DirectiveKind, Framed,
-    HeadingKind, HeadingStyle, Indent, MarginNoteKind, SectionKind,
+    HeadingKind, HeadingStyle, Indent, IndentLayout, MarginNoteKind, SectionKind,
 };
 
 fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<Node<'a>> {
@@ -56,6 +56,7 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<Node<'a>> {
                 amount: 1,
                 wrap: None,
                 center: false,
+                layout: IndentLayout::None,
             },
         }),
     ]

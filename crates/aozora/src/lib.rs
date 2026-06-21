@@ -90,7 +90,7 @@ pub use aozora_syntax::borrowed::Arena;
 /// front door.
 pub use aozora_syntax::{
     AlignEnd, BoutenKind, BoutenPosition, Center, ContainerKind, DirectiveKind, HeadingKind,
-    HeadingStyle, Indent, NodeKind, RubySide, SectionKind,
+    HeadingStyle, Indent, IndentLayout, NodeKind, RubySide, SectionKind,
     borrowed::{
         AngleQuote, Bouten, CombineUpright, Content, Directive, Gaiji, Heading, HeadingHint,
         Illustration, Kaeriten, MarginNote, Node, Ruby, Segment, Warichu,

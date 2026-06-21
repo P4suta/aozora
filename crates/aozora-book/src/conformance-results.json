@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 61,
-  "passed": 61,
+  "total": 63,
+  "passed": 63,
   "failed": 0,
   "by_level": {
     "may": {
@@ -10,8 +10,8 @@
       "failed": 0
     },
     "must": {
-      "total": 21,
-      "passed": 21,
+      "total": 23,
+      "passed": 23,
       "failed": 0
     },
     "should": {
@@ -233,6 +233,20 @@
     },
     {
       "case": "indent_container",
+      "feature": "container",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "indent_line_kumi",
+      "feature": "container",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "indent_line_width_compound",
       "feature": "container",
       "level": "must",
       "passed": true,

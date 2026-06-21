@@ -1,0 +1,55 @@
+{
+  "name": "indent_line_kumi",
+  "meta": {
+    "feature": "container",
+    "level": "must",
+    "spec_section": "6.6",
+    "note": "[provenance:reference-impl-aligned §6.6 + AOZORA-ANNOTATION 2026-06-22] ［＃ここからN字下げ、L行W字組みで］ is the compound indent + line-grid form (#78): an indented block that also sets L lines of W full-width characters. The compound closer ［＃ここで字下げ、W字組み終わり］ carries the width so the marker round-trips byte-exact (the open-side amount/lines/width are authoritative when pairing, which is by the Indent family). Offsets from the §3 byte model; expected captured from the aozora #78 reference implementation."
+  },
+  "source": "本文。\n［＃ここから3字下げ、1行20字組みで］\n組んだ段落。\n別の行。\n［＃ここで字下げ、20字組み終わり］\n通常段落。\n",
+  "expected": {
+    "html": "<p>本文。</p>\n<div class=\"aozora-container aozora-container-indent aozora-container-indent-3 aozora-container-line-kumi\" data-amount=\"3\" data-kumi-lines=\"1\" data-kumi-width=\"20\">\n<p>組んだ段落。<br />\n別の行。</p>\n</div>\n<p>通常段落。</p>\n",
+    "serialize": "本文。\n\n［＃ここから3字下げ、1行20字組みで］\n\n組んだ段落。\n別の行。\n\n［＃ここで字下げ、20字組み終わり］\n\n通常段落。\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 10,
+          "end": 62
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 95,
+          "end": 145
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 10,
+          "end": 13
+        },
+        "close": {
+          "start": 59,
+          "end": 62
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 95,
+          "end": 98
+        },
+        "close": {
+          "start": 142,
+          "end": 145
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

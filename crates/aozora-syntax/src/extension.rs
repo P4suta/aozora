@@ -7,6 +7,37 @@
 
 use crate::{BoutenKind, BoutenPosition, HeadingKind, HeadingStyle};
 
+/// The secondary line-layout attribute of an [`ContainerKind::Indent`] block —
+/// the `、…` clause some `［＃ここから N字下げ、…］` openers carry (#78).
+///
+/// An indent block can additionally constrain the line layout of its enclosed
+/// run. This is a single-region compound (one indent block that also sets a
+/// line attribute), not a nested container, so it lives on the `Indent` payload
+/// alongside `wrap` / `center` rather than as its own [`ContainerKind`].
+// Deliberately NOT `#[non_exhaustive]`: serialize / render must handle every
+// arm explicitly so a future layout (PR2's 小さい活字 / ゴシック体 / …) is
+// compiler-flagged at every site rather than silently dropped by a `_` fallback
+// (the §7.6 param-drop bug class).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum IndentLayout {
+    /// A plain `［＃ここから N字下げ］` block — no secondary layout.
+    None,
+    /// `［＃ここから N字下げ、M字詰め］` — the block also sets `M` full-width
+    /// characters per line. Closes with the generic `［＃ここで字下げ終わり］`.
+    LineWidth(u8),
+    /// `［＃ここから N字下げ、L行W字組みで］` — the block is set `L` lines of
+    /// `W` full-width characters. Closes with the compound
+    /// `［＃ここで字下げ、W字組み終わり］`, which carries `width` (so the close
+    /// marker round-trips). `lines` is `0` on the close (open is authoritative).
+    Kumi {
+        /// Line count `L` from the `L行` clause; `0` on the close marker.
+        lines: u8,
+        /// Full-width characters per line `W` from the `W字組み` clause.
+        width: u8,
+    },
+}
+
 /// The kinds of Aozora container blocks the lexer classifies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -27,6 +58,11 @@ pub enum ContainerKind {
         wrap: Option<u8>,
         /// `true` for the combined `…、ページの左右中央` form (also page-centred).
         center: bool,
+        /// Secondary line-layout clause (`、N字詰め` / `、L行W字組みで`); see
+        /// [`IndentLayout`]. `None` for a plain indent. The compound 字組み
+        /// closer carries it so its marker round-trips; the 字詰め compound and
+        /// the plain indent share the generic `字下げ終わり` closer.
+        layout: IndentLayout,
     },
     /// `［＃割り注］ ... ［＃割り注終わり］` (when spanning multiple lines)
     Warichu,
@@ -201,6 +237,7 @@ impl ContainerKind {
             amount: 0,
             wrap: None,
             center: false,
+            layout: IndentLayout::None,
         },
         Self::Warichu,
         Self::Framed,
@@ -308,9 +345,10 @@ mod tests {
         // u8 + discriminant, must fit in a few bytes so downstream
         // vector entries stay tight.
         // The combined 字下げ＋ページ左右中央 form adds a `center` flag to
-        // `Indent`, nudging the widest variant past 4 bytes; 8 keeps the tag
-        // register-friendly while leaving room for the payload.
-        assert!(size_of::<ContainerKind>() <= 8);
+        // `Indent`, and the #78 compound `layout: IndentLayout` adds the
+        // `、N字詰め` / `、L行W字組み` clause (≤ 2 payload bytes + discriminant);
+        // 12 keeps the tag register-friendly while leaving room for the payload.
+        assert!(size_of::<ContainerKind>() <= 12);
     }
 
     #[test]
@@ -320,6 +358,7 @@ mod tests {
                 amount: 2,
                 wrap: None,
                 center: false,
+                layout: IndentLayout::None,
             }
             .kind_str(),
             "indent"
@@ -329,6 +368,7 @@ mod tests {
                 amount: 0,
                 wrap: None,
                 center: false,
+                layout: IndentLayout::None,
             }
             .kind_str(),
             "indent"
@@ -338,6 +378,30 @@ mod tests {
                 amount: 2,
                 wrap: Some(4),
                 center: false,
+                layout: IndentLayout::None,
+            }
+            .kind_str(),
+            "indent"
+        );
+        assert_eq!(
+            ContainerKind::Indent {
+                amount: 8,
+                wrap: None,
+                center: false,
+                layout: IndentLayout::LineWidth(18),
+            }
+            .kind_str(),
+            "indent"
+        );
+        assert_eq!(
+            ContainerKind::Indent {
+                amount: 3,
+                wrap: None,
+                center: false,
+                layout: IndentLayout::Kumi {
+                    lines: 1,
+                    width: 20
+                },
             }
             .kind_str(),
             "indent"
