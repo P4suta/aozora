@@ -71,13 +71,21 @@ jobs:
           # grants rights), so exempt the package by purl. The Go SDK is a
           # separate module, not linked into the published Rust crates.
           #
+          # `const-siphasher` declares its license as `MIT/Apache-2.0` (the
+          # deprecated slash form, not valid SPDX), so GitHub's detector reads
+          # it as `LicenseRef-bad-mitapache-2.0` and rejects it — even though it
+          # is plainly MIT OR Apache-2.0 (both allowed above). cargo-deny
+          # normalises the slash form and accepts it; exempt it here by purl to
+          # mirror that. (A transitive dep pulled in via the LSP/`phf` graph.)
+          #
           # The runtime-crate license policy stays enforced by
           # `allow-licenses` above and authoritatively by cargo-deny (the
           # `audit (deny)` gate). If a future dependency carries a copyleft
           # license, append its purl here.
           allow-dependencies-licenses: >-
             pkg:githubactions/Swatinem/rust-cache,
-            pkg:golang/google.golang.org/protobuf
+            pkg:golang/google.golang.org/protobuf,
+            pkg:cargo/const-siphasher
 
           # Post a summary comment only on failure so clean PRs don't
           # get a no-op drive-by from the bot.
