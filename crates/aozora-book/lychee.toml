@@ -105,13 +105,4 @@ exclude = [
     # rationale as pyo3.rs above). The only npmjs.com link in the
     # handbook is the published `aozora-wasm` package.
     "^https?://(www\\.)?npmjs\\.com/",
-
-    # no-color.org is the canonical NO_COLOR convention site, linked
-    # once from `ref/env.md` as documentation. The host (a small
-    # single-maintainer site) intermittently fails DNS / connection
-    # resolution even with max_retries=5 — every *other* external host
-    # in the handbook resolves in the same run, so it is the host, not
-    # the network. Documentation-only; a manual click at release
-    # review is the verification path.
-    "^https?://no-color\\.org(/|$)",
 ]
