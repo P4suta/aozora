@@ -68,7 +68,7 @@ The hot path. SIMD multi-pattern scan from
 [`aozora-scan`](scanner.md) finds every trigger byte position; a
 single linear walk converts those positions into `Token` events:
 
-```rust
+```rust,ignore
 pub enum Token<'src> {
     Plain(&'src str),
     Trigger(TriggerKind, Span),

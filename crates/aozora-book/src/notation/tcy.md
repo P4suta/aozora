@@ -91,7 +91,7 @@ defers presentation to the consumer.
 
 ## AST shape
 
-```rust
+```rust,ignore
 pub struct Tcy<'src> {
     pub text: &'src str,
     pub form: TcyForm,    // Inline | Container

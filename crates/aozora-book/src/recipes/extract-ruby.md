@@ -13,6 +13,7 @@ Walk `source_nodes()` (see [Walk the AST](walk-ast.md)), keep only the
 constructs.
 
 ```rust
+# extern crate aozora;
 use aozora::{Document, Node, NodeRef};
 
 fn main() {
@@ -56,6 +57,7 @@ fn main() {
   the top-level re-export set):
 
   ```rust
+  # extern crate aozora;
   use aozora::syntax::borrowed::Segment;
 
   fn text_of(content: aozora::Content<'_>) -> String {

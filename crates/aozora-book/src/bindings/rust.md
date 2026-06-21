@@ -18,7 +18,7 @@ tag form documented there is the canonical entry point.
 The public surface is small by design — three types and four
 methods cover everything:
 
-```rust
+```rust,ignore
 pub struct Document { /* opaque */ }
 impl Document {
     pub fn new(source: String) -> Self;

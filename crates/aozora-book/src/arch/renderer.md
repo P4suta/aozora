@@ -90,7 +90,7 @@ prevents.
 
 Both walkers follow the same shape:
 
-```rust
+```rust,ignore
 pub fn render_to_string(tree: &Tree<'_>) -> String {
     let mut buf = String::with_capacity(tree.estimated_html_size());
     walk(tree, &mut buf);

@@ -21,7 +21,8 @@
 //! 3. A single fused walk emits the PUA-rewritten text into the arena
 //!    and builds the four borrowed-registry tables.
 //! 4. Each per-kind position list is wrapped in an
-//!    [`aozora_veb::EytzingerMap`] for cache-friendly lookup.
+//!    `EytzingerMap` (in `aozora-syntax`'s borrowed registry) for
+//!    cache-friendly lookup.
 //!
 //! The interner's diagnostic counters (cache hits, table hits, allocs,
 //! avg probe length) are exposed via [`LexOutput::intern_stats`]

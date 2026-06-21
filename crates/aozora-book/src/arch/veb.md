@@ -68,7 +68,7 @@ the parser's per-`Document::parse` cost on tiny inputs.
 
 ## API
 
-```rust
+```rust,ignore
 pub struct EytzingerSet<'a> {
     entries: &'a [&'a str],   // already in Eytzinger order
 }
@@ -89,7 +89,7 @@ end up in `.rodata`. Lookup is a single function with no allocation.
 The crate ships a build-time helper that takes a sorted slice and
 produces the Eytzinger permutation:
 
-```rust
+```rust,ignore
 const PLACEHOLDERS: &[&str] = aozora_veb::eytzinger_layout!(
     "ここから", "ここで", "傍点", "傍線", "字下げ", …
 );

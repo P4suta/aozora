@@ -41,7 +41,7 @@ A paired block container is one `Container` node tagging the wrapped
 children (the lexer splices the enclosed siblings under it during
 post-processing); single-line forms and breaks are leaf nodes:
 
-```rust
+```rust,ignore
 pub struct Container {
     pub kind: ContainerKind,
 }

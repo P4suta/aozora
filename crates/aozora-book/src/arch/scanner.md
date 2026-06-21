@@ -94,7 +94,7 @@ unicode-adversarial distributions).
 
 ## Verifying the scanner is firing
 
-```rust
+```rust,ignore
 println!("{}", aozora_scan::BackendChoice::detect().name());
 // "teddy-avx2" | "teddy-ssse3" | "teddy-neon" | "teddy-wasm" | "scalar-teddy"
 ```

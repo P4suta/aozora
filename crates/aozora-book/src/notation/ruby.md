@@ -68,7 +68,7 @@ construct — [double-bracket bouten](bouten.md) — not nested ruby.)
 
 ## AST shape
 
-```rust
+```rust,ignore
 pub struct Ruby<'src> {
     pub base:           NonEmpty<Content<'src>>,  // never empty
     pub reading:        NonEmpty<Content<'src>>,  // never empty

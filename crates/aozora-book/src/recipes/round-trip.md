@@ -12,6 +12,7 @@ calling `to_source` on it returns the same bytes, and calling it again
 changes nothing.
 
 ```rust
+# extern crate aozora;
 use aozora::Document;
 
 fn main() {
@@ -39,12 +40,18 @@ and the bare-vs-explicit ruby delimiter (`青梅《おうめ》` vs
 `｜青梅《おうめ》`). For *raw* input, therefore:
 
 ```rust
-// Not guaranteed for arbitrary raw input:
-assert_eq!(Document::new(raw).parse().to_source(), raw);   // may differ
+# extern crate aozora;
+# use aozora::Document;
+# fn main() {
+# let raw = String::from("青梅《おうめ》"); // bare (no explicit ｜) delimiter
+// Raw input is NOT guaranteed to be its own canonical form: here the
+// bare ruby gains an explicit ｜ delimiter on the first pass.
+let canonical = Document::new(raw.clone()).parse().to_source();
+assert_ne!(canonical, raw);   // differs for this raw input
 
-// Guaranteed: the SECOND pass is a fixed point.
-let canonical = Document::new(raw).parse().to_source();
+// Guaranteed: from the canonical form on, to_source is a fixed point.
 assert_eq!(Document::new(canonical.clone()).parse().to_source(), canonical);
+# }
 ```
 
 The first `to_source()` *is* the canonical form (e.g. it always emits

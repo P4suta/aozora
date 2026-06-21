@@ -115,7 +115,7 @@ binutils. We don't because:
 
 ## Verifying the SIMD scanner is firing
 
-```rust
+```rust,ignore
 // In any binary or test
 println!("{}", aozora_scan::BackendChoice::detect().name());
 // "teddy-avx2" | "teddy-ssse3" | "teddy-neon" | "teddy-wasm" | "scalar-teddy"

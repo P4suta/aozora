@@ -65,7 +65,7 @@ For a reference like `※［＃「魚＋師のつくり」、第3水準1-94-37�
 
 ## AST shape
 
-```rust
+```rust,ignore
 pub struct Gaiji<'src> {
     /// Free-form description from the source (e.g. "魚＋師のつくり").
     pub description: &'src str,

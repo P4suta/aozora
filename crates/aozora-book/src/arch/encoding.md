@@ -37,7 +37,7 @@ X 0213 territory; encoding_rs keeps the strict cp932 surface).
 
 The reference table contains ~14 000 entries:
 
-```rust
+```rust,ignore
 static GAIJI_TABLE: phf::Map<&'static str, GaijiEntry> = phf_map! {
     "1-94-37" => GaijiEntry::JisX0213 { plane: 1, row: 94, cell: 37, codepoint: '⿰魚師' },
     "U+5F85"  => GaijiEntry::Direct   { codepoint: '待' },
@@ -81,7 +81,7 @@ incremental) is paid once per workspace build, not per-invocation.
 
 ## Resolution order
 
-```rust
+```rust,ignore
 pub fn resolve(reference: &str) -> Resolved {
     // 1. Direct codepoint (U+XXXX) wins outright.
     if let Some(c) = parse_unicode_form(reference) { return Resolved::Direct(c); }
