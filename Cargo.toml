@@ -229,7 +229,7 @@ phf = { version = "0.13", features = ["macros"] }
 walkdir = "2.5"
 
 # aozora-fmt: coloured unified diff for `--diff`, TTY-aware stdout
-similar  = { version = "2.7", default-features = false, features = ["text"] }
+similar  = { version = "3.1", default-features = false, features = ["text"] }
 anstream = "1.0"
 anstyle  = "1.0"
 
