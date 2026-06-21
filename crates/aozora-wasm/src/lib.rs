@@ -72,6 +72,9 @@ const fn source_len_within_span_limit(byte_len: usize) -> Result<(), &'static st
     Ok(())
 }
 
+/// `wasm-bindgen` exports — the JavaScript-facing surface of the parser.
+/// Each function takes/returns JSON strings in the standard wire
+/// envelope (`aozora::json`); only compiled for the `wasm32` target.
 #[cfg(target_arch = "wasm32")]
 pub mod bindings {
     use aozora::{Document as AozoraDoc, json};
