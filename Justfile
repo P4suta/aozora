@@ -1148,13 +1148,25 @@ book-build: mermaid-install
 book-serve: mermaid-install
     docker compose up book
 
-# Crawl every internal + external link in the rendered handbook.
-# Run after `book-build`; lychee uses the generated HTML, not the source
-# Markdown, so cross-page anchors are validated post-render.
-# Concurrency / retries / 404-skip / accept policy live in
-# `crates/aozora-book/lychee.toml` so the same config applies to
-# `just book-linkcheck` and the `book` CI job.
+# Verify the rendered handbook's INTERNAL links (offline, deterministic).
+# This is the gating check — it mirrors the `book` CI job and crawls the
+# generated HTML (not the source Markdown) so cross-page links are
+# validated post-render. `--offline` skips every network probe: external
+# URLs are NOT the gate's concern (a host outage / rate-limit must never
+# block a PR), only internal `.html` cross-references + local assets are.
+# Shared policy (excludes, accept codes) lives in
+# `crates/aozora-book/lychee.toml`; external rot is audited separately
+# (see `book-linkcheck-external` and `.github/workflows/link-audit.yml`).
 book-linkcheck: mermaid-install
+    {{_book}} mdbook build
+    {{_book}} lychee --offline --config lychee.toml 'book/**/*.html'
+
+# Audit EXTERNAL links too (online) — the local mirror of the weekly
+# `link-audit.yml` workflow. NOT part of any gate: external reachability
+# is non-deterministic, so this is a manual / scheduled check (run it at
+# release review). Same `lychee.toml` config as the offline gate, minus
+# `--offline`, so retries / accept(429,999) / exclude policy all apply.
+book-linkcheck-external: mermaid-install
     {{_book}} mdbook build
     {{_book}} lychee --config lychee.toml 'book/**/*.html'
 

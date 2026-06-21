@@ -499,13 +499,21 @@ jobs:
         run: docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook-mermaid install .
       - name: mdbook build
         run: docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook build
-      - name: lychee link verification (internal + external)
-        # Configuration (concurrency, retries, accept codes, exclude
-        # paths) lives in `crates/aozora-book/lychee.toml` — same file
-        # `just book-linkcheck` reads, so local + CI behaviour match.
+      - name: lychee internal-link verification (offline)
+        # The PR/push gate runs OFFLINE: it checks only internal links
+        # (relative `.html` cross-references + local assets), which is
+        # fully deterministic. External URLs are deliberately NOT probed
+        # here — network reachability (host outages, rate limits, UA
+        # gating) is the sole source of flaky link-check failures, and a
+        # transient external blip must never block an unrelated PR. The
+        # external surface is audited out-of-band by `link-audit.yml`
+        # (weekly cron, non-blocking, opens an issue on rot). Shared
+        # config lives in `crates/aozora-book/lychee.toml` (same file
+        # `just book-linkcheck` reads); `--offline` is the only
+        # gate-vs-audit difference.
         run: |
           docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local \
-            lychee --config lychee.toml 'book/**/*.html'
+            lychee --offline --config lychee.toml 'book/**/*.html'
 
   # Handbook code-example gate. The `book` job above only `mdbook build`s
   # (lean image, no cargo); this compiles + runs the handbook's plain
