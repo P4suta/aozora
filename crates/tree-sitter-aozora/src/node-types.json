@@ -1,0 +1,173 @@
+[
+  {
+    "type": "document",
+    "named": true,
+    "root": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "explicit_ruby",
+          "named": true
+        },
+        {
+          "type": "gaiji",
+          "named": true
+        },
+        {
+          "type": "implicit_ruby",
+          "named": true
+        },
+        {
+          "type": "newline",
+          "named": true
+        },
+        {
+          "type": "slug",
+          "named": true
+        },
+        {
+          "type": "text",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "explicit_ruby",
+    "named": true,
+    "fields": {
+      "base": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ruby_base_explicit",
+            "named": true
+          }
+        ]
+      },
+      "reading": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ruby_reading",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "gaiji",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "gaiji_marker",
+          "named": true
+        },
+        {
+          "type": "slug",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "implicit_ruby",
+    "named": true,
+    "fields": {
+      "base": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ruby_base_implicit",
+            "named": true
+          }
+        ]
+      },
+      "reading": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "ruby_reading",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "slug",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "slug_body",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "gaiji_marker",
+    "named": true
+  },
+  {
+    "type": "newline",
+    "named": true
+  },
+  {
+    "type": "ruby_base_explicit",
+    "named": true
+  },
+  {
+    "type": "ruby_base_implicit",
+    "named": true
+  },
+  {
+    "type": "ruby_reading",
+    "named": true
+  },
+  {
+    "type": "slug_body",
+    "named": true
+  },
+  {
+    "type": "text",
+    "named": true
+  },
+  {
+    "type": "《",
+    "named": false
+  },
+  {
+    "type": "》",
+    "named": false
+  },
+  {
+    "type": "［＃",
+    "named": false
+  },
+  {
+    "type": "］",
+    "named": false
+  },
+  {
+    "type": "｜",
+    "named": false
+  }
+]

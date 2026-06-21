@@ -1,0 +1,221 @@
+# VS Code extension release workflow.
+#
+# Cross-compiles `aozora-lsp` to all platforms VS Code supports as
+# extension targets, packages one platform-specific `.vsix` per target
+# with the binary bundled at `editors/vscode/server/aozora-lsp(.exe)`,
+# and on a `vscode-v*` tag publishes every `.vsix` to both the VS Code
+# Marketplace and Open VSX. Marketplace fans the right platform out
+# automatically based on the user's editor at install time, so the
+# end-user install experience is "one click → it just works".
+#
+# Trigger: push of `vscode-v<semver>` tags (publishes), or manual
+# `workflow_dispatch` (builds artefacts only — no publish).
+
+name: release-vscode
+
+on:
+  push:
+    tags:
+      - "vscode-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-vscode-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  build:
+    name: build ${{ matrix.vsce_target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux gnu ----------------------------------------------------
+          - vsce_target: linux-x64
+            cargo_target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: false
+          - vsce_target: linux-arm64
+            cargo_target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: true
+          # Linux musl (Alpine, distroless, scratch images) -------------
+          - vsce_target: alpine-x64
+            cargo_target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            cross: true
+          - vsce_target: alpine-arm64
+            cargo_target: aarch64-unknown-linux-musl
+            runner: ubuntu-latest
+            cross: true
+          # macOS -------------------------------------------------------
+          # `macos-latest` is arm64 native (macos-14+); cross-compiling
+          # to x86_64-apple-darwin only needs `rustup target add`, the
+          # Apple-supplied clang handles the SDK switch automatically.
+          - vsce_target: darwin-x64
+            cargo_target: x86_64-apple-darwin
+            runner: macos-latest
+            cross: false
+          - vsce_target: darwin-arm64
+            cargo_target: aarch64-apple-darwin
+            runner: macos-latest
+            cross: false
+          # Windows -----------------------------------------------------
+          - vsce_target: win32-x64
+            cargo_target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            cross: false
+          - vsce_target: win32-arm64
+            cargo_target: aarch64-pc-windows-msvc
+            runner: windows-latest
+            cross: false
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read Rust toolchain version
+        id: toolchain
+        shell: bash
+        run: |
+          version=$(awk -F'"' '/^channel/ { print $2; exit }' rust-toolchain.toml)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          targets: ${{ matrix.cargo_target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Per-target cache, keyed off the VS Code-facing target name
+          # so cache restoration is unambiguous across the matrix.
+          shared-key: vscode-${{ matrix.vsce_target }}
+          save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
+
+      # `cross` (Docker-based) is the cleanest path for Linux cross-
+      # compile targets: it brings its own glibc/musl sysroots so we
+      # don't need to apt-install per-target gcc cross packages.
+      - name: Install `cross`
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build aozora-lsp (dist profile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.cross }}" == "true" ]]; then
+            cross build --locked --profile dist --target ${{ matrix.cargo_target }} --bin aozora-lsp
+          else
+            cargo build --locked --profile dist --target ${{ matrix.cargo_target }} --bin aozora-lsp
+          fi
+
+      - name: Stage binary into editors/vscode/server/
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p editors/vscode/server
+          src="target/${{ matrix.cargo_target }}/dist/aozora-lsp"
+          dst="editors/vscode/server/aozora-lsp"
+          if [[ "${{ matrix.cargo_target }}" == *-windows-* ]]; then
+            cp "${src}.exe" "${dst}.exe"
+          else
+            cp "${src}" "${dst}"
+            chmod 0755 "${dst}"
+          fi
+          ls -la editors/vscode/server/
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install + compile extension
+        working-directory: editors/vscode
+        run: |
+          bun install --frozen-lockfile
+          bun run compile
+
+      - name: Package platform-specific .vsix
+        working-directory: editors/vscode
+        run: bunx @vscode/vsce package --target ${{ matrix.vsce_target }} --no-yarn
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vsix-${{ matrix.vsce_target }}
+          path: editors/vscode/*.vsix
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    name: publish to Marketplace + Open VSX
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/vscode-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # provenance attestation (Sigstore OIDC)
+      attestations: write # record the attestation against the repo
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: vsix-*
+          merge-multiple: true
+          path: vsix
+
+      - name: List artefacts
+        run: ls -la vsix/
+
+      # SLSA-style provenance for each .vsix before it ships to the
+      # Marketplace / Open VSX. Verify with
+      # `gh attestation verify <file> --repo P4suta/aozora`.
+      - name: Attest VSIX provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "vsix/*.vsix"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${VSCE_PAT}" ]]; then
+            echo "::error::VSCE_PAT secret is not set; cannot publish to Marketplace"
+            exit 1
+          fi
+          for vsix in vsix/*.vsix; do
+            echo "::group::Publishing ${vsix}"
+            bunx @vscode/vsce publish --packagePath "${vsix}" --pat "${VSCE_PAT}"
+            echo "::endgroup::"
+          done
+
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        # Skip silently if OVSX_PAT not configured — Marketplace publish
+        # is the primary surface, Open VSX is a nice-to-have for the
+        # VSCodium / Cursor / Theia crowd. We don't want a missing
+        # OVSX_PAT to fail the whole release.
+        if: env.OVSX_PAT != ''
+        run: |
+          set -euo pipefail
+          for vsix in vsix/*.vsix; do
+            echo "::group::Publishing ${vsix} to Open VSX"
+            bunx ovsx publish "${vsix}" -p "${OVSX_PAT}" || {
+              echo "::warning::ovsx publish failed for ${vsix}; continuing with the rest"
+            }
+            echo "::endgroup::"
+          done

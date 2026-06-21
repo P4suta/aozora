@@ -23,6 +23,10 @@ members = [
     "crates/aozora-pandoc",
     "crates/aozora-cst",
     "crates/aozora-query",
+    "crates/aozora-fmt",
+    "crates/tree-sitter-aozora",
+    "crates/aozora-diagnostics",
+    "crates/aozora-lsp",
 ]
 # `aozora-book` is the mdbook source tree and `aozora-go` is a standalone
 # Go module (host SDK) — neither has a Cargo manifest. Listed in `exclude`
@@ -178,6 +182,9 @@ aozora-pandoc       = { version = "0.4.1", path = "crates/aozora-pandoc" }
 aozora-cst          = { version = "0.4.1", path = "crates/aozora-cst" }
 aozora-query        = { version = "0.4.1", path = "crates/aozora-query" }
 aozora-proptest = { version = "0.4.1", path = "crates/aozora-proptest" }
+aozora-fmt          = { version = "0.4.1", path = "crates/aozora-fmt" }
+aozora-diagnostics  = { version = "0.4.1", path = "crates/aozora-diagnostics" }
+tree-sitter-aozora  = { version = "0.4.1", path = "crates/tree-sitter-aozora" }
 
 # Error handling
 thiserror = "2.0.18"
@@ -217,8 +224,26 @@ encoding_rs = "0.8.35"
 # Compile-time hash maps (gaiji UCS lookup table, kaeriten/bouten slugs)
 phf = { version = "0.13", features = ["macros"] }
 
-# Filesystem walking — used by aozora-corpus to iterate test corpora
+# Filesystem walking — used by aozora-corpus to iterate test corpora and by
+# aozora-fmt to recurse directories
 walkdir = "2.5"
+
+# aozora-fmt: coloured unified diff for `--diff`, TTY-aware stdout
+similar  = { version = "2.7", default-features = false, features = ["text"] }
+anstream = "1.0"
+anstyle  = "1.0"
+
+# aozora-lsp runtime (language server: tower-lsp over tokio stdio)
+tower-lsp          = "0.20"
+tokio              = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "sync", "time"] }
+dashmap            = "6"
+parking_lot        = "0.12"   # non-poisoning Mutex for the writer-only buffer state
+arc-swap           = "1.7"    # wait-free read snapshot swap
+ropey              = "1.6"    # chunked Rope feeding tree-sitter without a contiguous String
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+hdrhistogram       = { version = "7.5", default-features = false }   # constant-memory percentile metrics
+shuttle            = "0.9"    # randomized concurrency model checker (aozora-lsp shuttle-tests feature)
 
 # Lossless syntax tree backbone for `aozora-cst` (Phase N1).
 # rowan over cstree: 86 reverse deps vs ~3, maintained by the
@@ -320,6 +345,17 @@ codegen-units = 1
 strip         = "symbols"
 panic         = "abort"
 opt-level     = 3
+
+# Distribution profile for the binary bundled in the VS Code extension's .vsix
+# (`aozora-lsp`, built by `release-vscode.yml`). Optimises for size over speed.
+# Overrides `panic = "unwind"`: a language server is a long-lived daemon, so a
+# panic in one request handler should unwind (tower-lsp keeps serving) rather
+# than abort the whole process and drop the editor's language features.
+[profile.dist]
+inherits      = "release"
+opt-level     = "z"
+panic         = "unwind"
+strip         = "symbols"
 
 [profile.bench]
 inherits = "release"

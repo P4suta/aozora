@@ -1,0 +1,141 @@
+[package]
+name         = "aozora-lsp"
+description  = "Language Server Protocol implementation for aozora-flavored-markdown"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+keywords.workspace     = true
+categories.workspace   = true
+readme       = "README.md"
+
+[[bin]]
+name = "aozora-lsp"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+aozora             = { workspace = true }
+aozora-diagnostics = { workspace = true }   # shared diagnostic catalogue (describe/payload)
+tree-sitter-aozora = { workspace = true }
+tree-sitter        = "0.26"
+
+clap               = { workspace = true }   # --version/--help/--stdio argv handling
+
+tower-lsp          = { workspace = true }
+tokio              = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+dashmap            = { workspace = true }
+parking_lot        = { workspace = true }
+arc-swap           = { workspace = true }
+ropey              = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+hdrhistogram       = { workspace = true }
+thiserror          = "2"
+# Optional: enabled via `--features shuttle-tests` to run the
+# randomized-schedule check in tests/shuttle_doc_state.rs. Off by
+# default so routine `cargo test` doesn't pull in the shuttle dep.
+shuttle            = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Dev-only: the formatter is no longer a runtime dependency (the handler calls
+# `aozora` directly), but `tests/guardian.rs` cross-checks the server's output
+# against `aozora_fmt::format_source`, so it stays in the test graph only.
+aozora-fmt = { workspace = true }
+proptest  = { workspace = true }
+criterion = { version = "0.8", features = ["html_reports"] }
+# In-process LSP harness (backend.rs `#[cfg(test)] mod e2e`): drives the
+# `LspService` as a `tower::Service` and drains the loopback `ClientSocket`.
+# `tower` gives the `Service` trait (poll_ready/call via `std::future::poll_fn`,
+# no `util` feature needed); `futures` gives `StreamExt`/`SinkExt` for the
+# socket split. Both already resolve in the lockfile via tower-lsp.
+tower     = "0.4"
+futures   = "0.3"
+# Snapshot tests (tests/snapshots.rs): lock the structured shape of
+# semantic-token deltas, the document-symbol outline, and the diagnostic
+# catalogue so a regression in any of them is a reviewable diff.
+insta     = "1"
+
+[[bench]]
+name             = "burst"
+path             = "benches/burst.rs"
+harness          = false
+required-features = ["internals"]
+
+# Integration tests, benches, and examples live in their own crates and so can
+# only reach `pub` items — never `pub(crate)`. They consume the internal API
+# through the `internals` module, so every one of them is gated on the
+# `internals` feature: a plain `cargo test` (no feature) skips them and runs
+# only the in-crate unit tests; CI runs `cargo test --features internals`.
+[[test]]
+name             = "guardian"
+required-features = ["internals"]
+
+[[test]]
+name             = "smoke"
+required-features = ["internals"]
+
+[[test]]
+name             = "property_invariants"
+required-features = ["internals"]
+
+[[test]]
+name             = "differential"
+required-features = ["internals"]
+
+[[test]]
+name             = "snapshots"
+required-features = ["internals"]
+
+[[test]]
+name             = "fuzz_regressions"
+required-features = ["internals"]
+
+[[test]]
+name             = "concurrent_lsp"
+required-features = ["internals"]
+
+[[test]]
+name             = "concurrency_regressions"
+required-features = ["internals"]
+
+[[test]]
+name             = "shuttle_doc_state"
+required-features = ["internals", "shuttle-tests"]
+
+[[example]]
+name             = "measure_incremental"
+required-features = ["internals"]
+
+[features]
+default       = []
+# Exposes the `internals` module (internal API for the crate's own tests,
+# benches, examples, and fuzz targets). `#[doc(hidden)]` and carries NO semver
+# guarantee — see the module docs. Off by default so the stable surface stays
+# `Cli` + `run()`.
+internals     = []
+# Opt-in: enables the `shuttle_doc_state` randomized-schedule test
+# (the only test that depends on the shuttle crate). Gating it
+# behind a feature keeps the default `cargo test` fast and avoids
+# pulling shuttle into the dependency graph for routine builds.
+# Run it with `cargo test --features internals,shuttle-tests`.
+shuttle-tests = ["dep:shuttle"]
+
+[package.metadata.cargo-shear]
+# `shuttle` is an *intentional* optional dependency: it is only used by the
+# feature-gated `shuttle_doc_state` test, and `shuttle-tests = ["dep:shuttle"]`
+# (above) is the standard way to make a test-only dep opt-in without compiling
+# it for routine `cargo test`. cargo-shear flags this as a "misplaced optional
+# dependency" and suggests `[dev-dependencies]`, but that would force shuttle
+# into every test build — exactly what the feature gate exists to avoid.
+ignored = ["shuttle"]
+
+[lints]
+workspace = true

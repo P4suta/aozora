@@ -681,6 +681,10 @@ strict-code:
     # so the compiler still gates each unsafe block:
     #
     #   - aozora-ffi   : C ABI bindings (`unsafe extern "C"`)
+    #   - tree-sitter-aozora : C parser FFI binding — the standard
+    #                    tree-sitter-language pattern (`unsafe extern "C"`
+    #                    for the generated `tree_sitter_aozora()` symbol,
+    #                    `LanguageFn::from_raw` to wrap it)
     #   - aozora-scan  : x86_64 AVX2 intrinsics (SIMD scanner)
     #   - aozora-xtask : dev-tooling binary; `#[allow(reason=...)]`
     #                    for narrow clippy carve-outs is acceptable
@@ -694,7 +698,7 @@ strict-code:
     # universal "no unsafe" gate.
     is_unsafe_exempt() {
         case "$1" in
-            crates/aozora-ffi/*|crates/aozora-scan/*|crates/aozora-xtask/*) return 0 ;;
+            crates/aozora-ffi/*|crates/tree-sitter-aozora/*|crates/aozora-scan/*|crates/aozora-xtask/*) return 0 ;;
             crates/*/fuzz/*) return 0 ;;
             *) return 1 ;;
         esac
