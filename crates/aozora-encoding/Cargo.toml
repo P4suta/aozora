@@ -23,7 +23,7 @@ miette    = { workspace = true }
 # runtime uses only `phf::Map`, consumed by the `include!`d codegen output.
 # cargo-shear's source scan cannot see that generated usage — see the
 # `[package.metadata.cargo-shear]` ignore at the foot of this manifest.
-phf = { version = "0.13", default-features = false }
+phf = { version = "0.14", default-features = false }
 
 [build-dependencies]
 # Codegen-time PHF builder — runs in `build.rs` to emit the gaiji
@@ -31,7 +31,7 @@ phf = { version = "0.13", default-features = false }
 # `include!()`. Moves the perfect-hash construction out of the
 # rustc proc-macro phase, which on the macro path was ~30–60 s of
 # `cargo check` time on cold caches.
-phf_codegen = "0.13"
+phf_codegen = "0.14"
 
 [dev-dependencies]
 proptest = { workspace = true }

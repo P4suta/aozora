@@ -56,7 +56,7 @@ criterion = { version = "0.8", features = ["html_reports"] }
 # `tower` gives the `Service` trait (poll_ready/call via `std::future::poll_fn`,
 # no `util` feature needed); `futures` gives `StreamExt`/`SinkExt` for the
 # socket split. Both already resolve in the lockfile via tower-lsp.
-tower     = "0.4"
+tower     = "0.5"
 futures   = "0.3"
 # Snapshot tests (tests/snapshots.rs): lock the structured shape of
 # semantic-token deltas, the document-symbol outline, and the diagnostic
