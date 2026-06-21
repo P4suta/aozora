@@ -222,14 +222,14 @@ object     = { version = "0.39", default-features = false, features = ["read"] }
 encoding_rs = "0.8.35"
 
 # Compile-time hash maps (gaiji UCS lookup table, kaeriten/bouten slugs)
-phf = { version = "0.13", features = ["macros"] }
+phf = { version = "0.14", features = ["macros"] }
 
 # Filesystem walking — used by aozora-corpus to iterate test corpora and by
 # aozora-fmt to recurse directories
 walkdir = "2.5"
 
 # aozora-fmt: coloured unified diff for `--diff`, TTY-aware stdout
-similar  = { version = "2.7", default-features = false, features = ["text"] }
+similar  = { version = "3.1", default-features = false, features = ["text"] }
 anstream = "1.0"
 anstyle  = "1.0"
 
