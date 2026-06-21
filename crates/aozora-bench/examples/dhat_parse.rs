@@ -6,7 +6,7 @@
 //! (`synthetic_corpus`) and the `latency_histogram` percentiles. Most of
 //! the parser's working set lives in the bumpalo arena, so dhat shows the
 //! arena chunk allocations plus any per-parse heap `Vec`s (e.g. the
-//! Phase-4 `ArenaNormalizer` builder buffers). Also writes
+//! post-classify `ArenaNormalizer` builder buffers). Also writes
 //! `dhat-heap.json` (viewable at <https://nnethercote.github.io/dh_view/dh_view.html>).
 //!
 //! ```text

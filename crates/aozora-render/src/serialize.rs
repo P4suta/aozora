@@ -32,11 +32,11 @@ use aozora_syntax::{
 /// over the serialized output once before returning. Without that, an
 /// inline annotation (e.g. an unmatched ruby trigger `｜...`) sitting
 /// directly above a decorative-rule line would emit
-/// `…\n----------\n========…` here while the next cycle's Phase 0
+/// `…\n----------\n========…` here while the next cycle's sanitize stage
 /// would inject a blank to produce `…\n----------\n\n========…`,
 /// peeling one extra blank in per round-trip and breaking I3. Running
 /// the isolator once at serialize time aligns serialize's output with
-/// what Phase 0 will produce on the next cycle, so a second cycle
+/// what the sanitize stage will produce on the next cycle, so a second cycle
 /// observes a no-op isolator and the byte sequence converges. The
 /// `has_long_rule_line` fast-path keeps the cost O(1) for
 /// rule-line-free outputs (the dominant case).
@@ -170,7 +170,7 @@ fn emit_side_note<W: Write>(s: &MarginNote<'_>, out: &mut W) -> fmt::Result {
 
 fn emit_bouten<W: Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {
     if b.consumed_predecessor {
-        // Phase 3 pulled this node's source span back over the literal
+        // The classify stage pulled this node's source span back over the literal
         // occurrence of `target` that sat immediately before the `［`.
         // Re-emit the literal so the serialized output round-trips back
         // to the original source: `<target>［＃「<target>」に傍点］`
@@ -591,7 +591,7 @@ fn emit_content_as_plain<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
 
 /// Output buffer that caps consecutive `\n` runs at two on-the-fly.
 ///
-/// Phase 4 of the lexer pads every block sentinel with `\n\n`
+/// The classify stage pads every block sentinel with `\n\n`
 /// unconditionally, so naively round-tripping the serializer's
 /// output back through parse inflates the blank-line run by two
 /// per iteration. Capping at 2 here makes `serialize ∘ parse` a
@@ -720,7 +720,7 @@ mod tests {
     // container kind and serializes back to the canonical fixed-point
     // source. The exact `assert_eq!` pins every `emit_*` arm.
     //
-    // Block sentinels carry `\n\n` padding from Phase 4, capped at two by
+    // Block sentinels carry `\n\n` padding from the classify stage, capped at two by
     // the NewlineCappedWriter, so a standalone block node serializes
     // wrapped in `\n\n…\n\n`. Inline / block-leaf-without-padding nodes
     // serialize bare.

@@ -24,7 +24,7 @@ use crate::AOZORA_CLASS_PREFIX;
 /// See the crate-level docs for the projection rules.
 #[must_use]
 pub fn to_pandoc(tree: &Tree<'_>) -> Pandoc {
-    // `source_nodes` indexes into Phase 0's sanitized buffer, not the
+    // `source_nodes` indexes into the sanitize stage's buffer, not the
     // raw user-supplied source. For typical input the two are
     // byte-identical (no BOM, only LF, no `〔..〕` accent rewrites),
     // but adversarial input that triggers a sanitize rewrite leaves

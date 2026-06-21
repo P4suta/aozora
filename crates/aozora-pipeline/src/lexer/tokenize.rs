@@ -1,6 +1,6 @@
-//! Phase 1 — linear tokenization of sanitized source into a token stream.
+//! Tokenize stage — linear tokenization of sanitized source into a token stream.
 //!
-//! Walks the Phase 0 sanitized text via the SIMD-accelerated
+//! Walks the sanitize-stage text via the SIMD-accelerated
 //! [`aozora_scan`] crate and exposes a stateful iterator yielding one
 //! [`Token`] per delimiter or contiguous text run. Triggers are the
 //! Aozora notation marker characters listed in [`TriggerKind`];
@@ -36,7 +36,7 @@
 //!
 //! `［＃` is NOT emitted as a merged trigger: `Hash` after
 //! `BracketOpen` is common but not universal (a stray `［` followed
-//! by plain text is legal). Phase 2 inspects the two tokens together.
+//! by plain text is legal). The pair stage inspects the two tokens together.
 //!
 //! ## Backend
 //!
@@ -55,10 +55,10 @@ use super::token::{Token, TriggerKind};
 
 /// Streaming tokeniser over sanitized source text.
 ///
-/// The input is expected to already be Phase 0 output (BOM-stripped,
+/// The input is expected to already be sanitize-stage output (BOM-stripped,
 /// LF-normalized). Giving raw source to this iterator is not wrong but
 /// means diagnostics and positions reference pre-normalization bytes,
-/// which will confuse downstream phases.
+/// which will confuse downstream stages.
 ///
 /// # Panics
 ///
@@ -71,7 +71,7 @@ pub fn tokenize(source: &str) -> Tokenizer<'_> {
     Tokenizer::new(source)
 }
 
-/// Materialise every Phase 1 token into an arena-backed
+/// Materialise every tokenize-stage token into an arena-backed
 /// [`bumpalo::collections::Vec`] in one pass.
 ///
 /// The token list lives inside the caller's arena; the scratch
@@ -174,7 +174,7 @@ pub fn tokenize_in<'a>(source: &str, arena: &'a Arena) -> BumpVec<'a, Token> {
     out
 }
 
-/// Streaming Phase 1 tokeniser over the merge of two pre-collected
+/// Streaming tokenize-stage tokeniser over the merge of two pre-collected
 /// offset streams: trigger positions (from the SIMD scanner) and
 /// newline positions (from `memchr`).
 ///

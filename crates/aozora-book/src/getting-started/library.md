@@ -2,7 +2,8 @@
 
 The minimal Rust use of aozora is six lines:
 
-```rust
+```rust,no_run
+# extern crate aozora;
 use aozora::Document;
 
 fn main() {
@@ -24,9 +25,12 @@ the AST walk — three things you'll need once you do anything beyond
 arena and the source `Box<str>`. `Tree<'a>` borrows from both:
 
 ```rust
+# extern crate aozora;
+# let source = String::from("｜青空《あおぞら》文庫");
 let doc  = aozora::Document::new(source);   // Document: 'static
 let tree = doc.parse();                     // Tree<'_> bound to &doc
 let html = tree.to_html();                  // walks the borrow
+# let _ = (&tree, &html);
 
 // dropping doc releases every node in a single Bump::reset()
 drop(doc);
@@ -46,7 +50,9 @@ Aozora Bunko ships its corpus as Shift_JIS. Decode through the umbrella
 `aozora::encoding` module first (consumers depend on `aozora` alone —
 never on the internal `aozora-encoding` crate directly):
 
-```rust
+```rust,no_run
+# extern crate aozora;
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 use aozora::Document;
 use aozora::encoding::decode_sjis;
 
@@ -54,6 +60,8 @@ let bytes = std::fs::read("src.sjis.txt")?;
 let utf8  = decode_sjis(&bytes)?;   // -> String; Err(DecodeError) on bad input
 let doc   = Document::new(utf8);
 let tree  = doc.parse();
+# let _ = tree;
+# Ok(()) }
 ```
 
 `decode_sjis` handles BOM stripping, JIS X 0213 codepoints, and the
@@ -66,6 +74,9 @@ substituting replacement characters. A runnable version is
 ## Diagnostics
 
 ```rust
+# extern crate aozora;
+# let doc = aozora::Document::new("｜青空《あおぞら》文庫");
+# let tree = doc.parse();
 use aozora::Diagnostic;
 
 let diags: &[Diagnostic] = tree.diagnostics();
@@ -93,6 +104,9 @@ between constructs round-trip verbatim and are not listed). It is the
 surface editor tooling uses for semantic tokens and document symbols:
 
 ```rust
+# extern crate aozora;
+# let doc = aozora::Document::new("｜青空《あおぞら》文庫");
+# let tree = doc.parse();
 for entry in tree.source_nodes() {
     let span = entry.source_span;            // byte range into the source
     // `entry.node` is a `NodeRef`: Inline / BlockLeaf / BlockOpen /
@@ -114,8 +128,10 @@ freely as long as the `Document` lives.
 Every parse should round-trip:
 
 ```rust
+# extern crate aozora;
+# let doc = aozora::Document::new("｜青梅《おうめ》");
 let parsed = doc.parse();
-let canonical: String = parsed.serialize();
+let canonical: String = parsed.to_source();
 assert_eq!(canonical, doc.source());     // for *canonical* input
 ```
 

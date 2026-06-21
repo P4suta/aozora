@@ -61,3 +61,10 @@ extism = { version = "1", optional = true, default-features = false, features = 
 
 [lib]
 crate-type = ["cdylib", "lib"]
+
+[package.metadata.cargo-shear]
+# `extism` is an intentional optional host-SDK dependency, pulled only by
+# the `host-smoke` feature's integration test. cargo-shear flags it as a
+# misplaced optional dep, but moving it to dev-dependencies would drop the
+# feature gate that keeps wasmtime out of the default build.
+ignored = ["extism"]

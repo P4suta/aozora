@@ -7,7 +7,7 @@
 //!    handed to [`Document::new`](`crate`)<!-- doc-link via meta crate -->.
 //!    BOM, CRLF and decorative-rule positions are still in their
 //!    original positions.
-//! 2. **Sanitized source** — bytes of the Phase 0 output.
+//! 2. **Sanitized source** — bytes of the sanitize-stage output.
 //!    BOM-stripped, CR/LF-normalised, accent-decomposed,
 //!    decorative-rule-isolated. For the typical document
 //!    (no BOM, only LF, no `〔...〕` accent spans, no long
@@ -39,9 +39,9 @@
 //! - Both newtypes expose a [`get`](SourceOffset::get) accessor for
 //!   internal arithmetic.
 
-/// Byte offset into the **sanitized source** text (Phase 0 output).
+/// Byte offset into the **sanitized source** text (sanitize-stage output).
 ///
-/// For the typical document where Phase 0 is the identity (no BOM,
+/// For the typical document where the sanitize stage is the identity (no BOM,
 /// only LF, no `〔...〕` accent spans, no long decorative rule lines)
 /// the sanitized-source coordinate space coincides with the original
 /// source the caller passed in.

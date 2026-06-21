@@ -26,7 +26,7 @@ Japanese typesetting placeholder for missing glyphs. When the
 resolver finds a Unicode mapping the inner text becomes the
 resolved character instead of the geta mark.
 
-## Serialize output
+## Source output
 
 Round-trips to `※［＃description、mencode］`.
 
@@ -47,7 +47,7 @@ stays `Copy`).
 
 ## When emitted
 
-Phase 3 sees the `※[#…]` digraph and parses the description /
+The classify stage sees the `※[#…]` digraph and parses the description /
 mencode payload. The encoding crate's gaiji resolver lifts the
 mencode reference into a Unicode character when one exists.
 

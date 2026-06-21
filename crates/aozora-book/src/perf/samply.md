@@ -115,7 +115,7 @@ binutils. We don't because:
 
 ## Verifying the SIMD scanner is firing
 
-```rust
+```rust,ignore
 // In any binary or test
 println!("{}", aozora_scan::BackendChoice::detect().name());
 // "teddy-avx2" | "teddy-ssse3" | "teddy-neon" | "teddy-wasm" | "scalar-teddy"
@@ -148,7 +148,7 @@ AOZORA_CORPUS_ROOT=… AOZORA_PROBE_DOC=000286/files/49178_ruby_58807/49178_ruby
 ### "Where is `lex` spending its time?"
 
 ```sh
-# Macroscopic per-phase split
+# Macroscopic per-stage split
 AOZORA_CORPUS_ROOT=… cargo run --release --example phase_breakdown -p aozora-bench
 
 # Latency tail shape

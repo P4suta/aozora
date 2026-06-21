@@ -18,7 +18,7 @@ Inspect tag: `keigakomi` — ruled-box annotation (罫囲み).
 `<div class="aozora-container-keigakomi">` wrapper instead — see
 [Container](container.md).)
 
-## Serialize output
+## Source output
 
 Round-trips to `［＃罫囲み］...［＃罫囲み終わり］`.
 
@@ -33,7 +33,7 @@ content.
 
 ## When emitted
 
-Phase 3 sees the inline form. Multi-line keigakomi blocks classify
+The classify stage sees the inline form. Multi-line keigakomi blocks classify
 as [Container](container.md) `Framed`.
 
 ## Diagnostics

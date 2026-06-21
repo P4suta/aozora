@@ -1,12 +1,12 @@
-//! Phase 2 — streaming balanced-stack pairing over the Phase 1 token stream.
+//! Pair stage — streaming balanced-stack pairing over the tokenize-stage token stream.
 //!
-//! Consumes the [`Token`] iterator produced by Phase 1 and emits a
+//! Consumes the [`Token`] iterator produced by the tokenize stage and emits a
 //! parallel [`PairEvent`] iterator: [`Token::Text`] / [`Token::Newline`]
 //! pass through unchanged, and each [`Token::Trigger`] is classified
 //! into [`PairEvent::PairOpen`] / [`PairEvent::PairClose`] /
 //! [`PairEvent::Solo`] / [`PairEvent::Unmatched`] / [`PairEvent::Unclosed`].
 //!
-//! Two production-ready surfaces sit side by side, mirroring Phase 1:
+//! Two production-ready surfaces sit side by side, mirroring the tokenize stage:
 //!
 //! - [`pair`] — streaming `PairStream` for FFI / incremental consumers.
 //! - [`pair_in`] — arena-batch [`PairOutputIn<'a>`] whose `events` is
@@ -28,7 +28,7 @@
 //! ```
 //!
 //! A naïve "find the next `］`" scan hits the *first* `］` even when it
-//! closes an inner bracket, yielding a truncated body. This phase runs
+//! closes an inner bracket, yielding a truncated body. This stage runs
 //! a proper balanced stack so a body's extent is fixed before any
 //! classifier tries to parse it.
 //!
@@ -38,7 +38,7 @@
 //!   `PairOpen` event has already been streamed downstream by the time
 //!   we discover the open never closes; instead, on EOF we emit a
 //!   synthetic [`PairEvent::Unclosed`] for each still-open frame and
-//!   push a [`Diagnostic::UnclosedBracket`]. Phase 3's stack-aware
+//!   push a [`Diagnostic::UnclosedBracket`]. The classify stage's stack-aware
 //!   classifier interprets the trailing `Unclosed` as "the matching
 //!   open never closed; treat its accumulated body events as plain".
 //! * **Stray close** (empty stack or kind-mismatched top): emitted as
@@ -62,49 +62,81 @@ use aozora_spec::Diagnostic;
 // resolved (open, close) view zipped during the pair pass.
 pub use aozora_spec::{PairKind, PairLink};
 
-/// One event in the Phase 2 stream.
+/// One event in the pair-stage stream.
 ///
 /// `PairOpen` and `PairClose` carry only their `kind` and `span`.
 /// Body cross-link information (which `PairOpen` matches which
 /// `PairClose` inside a body buffer) is maintained out-of-band by
-/// Phase 3 in a parallel `pair_links` side-table inside the
+/// the classify stage in a parallel `pair_links` side-table inside the
 /// classifier's `BodyView`. This keeps `PairEvent`'s API clean (no
-/// dual-meaning fields between phase 2 emission and phase 3
+/// dual-meaning fields between pair-stage emission and classify-stage
 /// internal patching).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PairEvent {
     /// Unchanged from [`Token::Text`] — a byte run between triggers.
-    Text { range: Span },
+    Text {
+        /// Sanitized-source byte span of the run; may be empty.
+        range: Span,
+    },
 
     /// A trigger with no opposing pair on its own (`｜`, `＃`, `※`).
-    Solo { kind: TriggerKind, span: Span },
+    Solo {
+        /// The standalone trigger's role.
+        kind: TriggerKind,
+        /// Sanitized-source byte span of the trigger.
+        span: Span,
+    },
 
-    /// Matched open delimiter. Phase 3 pushes a new body-buffer frame
-    /// onto its own stack on this event. The matching close's
+    /// Matched open delimiter. The classify stage pushes a new body-buffer
+    /// frame onto its own stack on this event. The matching close's
     /// body-local index is recorded in the parallel `links` side-table
     /// once the close arrives.
-    PairOpen { kind: PairKind, span: Span },
+    PairOpen {
+        /// Bracket family this open belongs to.
+        kind: PairKind,
+        /// Sanitized-source byte span of the opening delimiter.
+        span: Span,
+    },
 
-    /// Matched close delimiter. Phase 3 pops the corresponding body
-    /// frame on this event and runs recognition on the buffered body.
+    /// Matched close delimiter. The classify stage pops the corresponding
+    /// body frame on this event and runs recognition on the buffered body.
     /// The matching open's body-local index lives in the parallel
     /// `links` side-table.
-    PairClose { kind: PairKind, span: Span },
+    PairClose {
+        /// Bracket family this close belongs to (matches its open).
+        kind: PairKind,
+        /// Sanitized-source byte span of the closing delimiter.
+        span: Span,
+    },
 
     /// End-of-stream synthetic event indicating that an earlier
     /// [`PairEvent::PairOpen`] of the carried `kind` was never closed.
-    /// Phase 3 treats the corresponding body buffer as having no
+    /// The classify stage treats the corresponding body buffer as having no
     /// matching close and re-fires the buffered events as plain.
-    Unclosed { kind: PairKind, span: Span },
+    Unclosed {
+        /// Bracket family of the open that never closed.
+        kind: PairKind,
+        /// Sanitized-source byte span of the original (still-open) open
+        /// delimiter — *not* an end-of-input position.
+        span: Span,
+    },
 
     /// Close delimiter that hit an empty stack or a kind-mismatched
     /// stack top. Classifier treats the span as plain text.
-    Unmatched { kind: PairKind, span: Span },
+    Unmatched {
+        /// Bracket family the stray close would have closed.
+        kind: PairKind,
+        /// Sanitized-source byte span of the stray close delimiter.
+        span: Span,
+    },
 
-    /// Unchanged from [`Token::Newline`] — kept so Phase 3 can attach
-    /// line structure to block-level annotations.
-    Newline { pos: u32 },
+    /// Unchanged from [`Token::Newline`] — kept so the classify stage can
+    /// attach line structure to block-level annotations.
+    Newline {
+        /// Sanitized-source byte offset of the `\n`.
+        pos: u32,
+    },
 }
 
 impl PairEvent {
@@ -125,7 +157,7 @@ impl PairEvent {
     }
 }
 
-/// Run the streaming balanced-stack pass over a Phase 1 token stream.
+/// Run the streaming balanced-stack pass over a tokenize-stage token stream.
 ///
 /// The returned [`PairStream`] is an iterator yielding one
 /// [`PairEvent`] per call to [`Iterator::next`]. After the iterator is
@@ -152,15 +184,22 @@ where
 /// copy.
 #[derive(Debug)]
 pub struct PairOutputIn<'a> {
+    /// One [`PairEvent`] per input [`Token`], in source order, plus a
+    /// trailing [`PairEvent::Unclosed`] per still-open frame at EOF.
+    /// Arena-allocated.
     pub events: BumpVec<'a, PairEvent>,
+    /// Resolved (open, close) pairs, one per matched bracket, in close
+    /// order. Arena-allocated alongside `events`.
     pub links: BumpVec<'a, PairLink>,
+    /// Non-fatal observations (unclosed opens, unmatched closes). Kept
+    /// on the heap because they outlive the arena.
     pub diagnostics: Vec<Diagnostic>,
 }
 
-/// Materialise every Phase 2 event from a `&[Token]` slice into a
+/// Materialise every pair-stage event from a `&[Token]` slice into a
 /// single arena-backed `PairOutputIn { events: BumpVec, diagnostics }`.
 ///
-/// Production entry point for Phase 2.
+/// Production entry point for the pair stage.
 /// The borrowed pipeline owns the [`Arena`] and forwards it here;
 /// the resulting `BumpVec<'a, PairEvent>` lives next to the AST it
 /// will be folded into.
@@ -739,7 +778,7 @@ mod tests {
     }
 
     /// A purely textual input emits exactly one `Text` event covering
-    /// every byte. Exercises the Phase 1 → Phase 2 pass-through path.
+    /// every byte. Exercises the tokenize → pair pass-through path.
     #[test]
     fn pair_stream_text_event_byte_coverage() {
         let (events, diagnostics) = run("abcdef");

@@ -10,18 +10,18 @@
 //!   (`｜《》［］＃※〔〕「」`) plus the const-PHF byte-sequence lookup
 //!   table that maps a UTF-8 trigger byte sequence to its kind.
 //! - **[`PairKind`]** — categories of balanced open/close delimiters.
-//! - **[`Diagnostic`]** — every non-fatal observation any phase can emit.
+//! - **[`Diagnostic`]** — every non-fatal observation any pipeline stage can emit.
 //!
 //! ## Why a separate crate
 //!
 //! Pre-0.2 these types lived scattered between `aozora-syntax` (`Span`)
-//! and `aozora-lexer` (`Diagnostic`, sentinels, `TriggerKind`,
+//! and `aozora-pipeline` (`Diagnostic`, sentinels, `TriggerKind`,
 //! `PairKind`). The result: any crate that wanted a [`Diagnostic`] had
 //! to depend on the full lexer, which transitively dragged in the
-//! 7-phase pipeline. The new layered architecture requires
-//! `aozora-syntax`, `aozora-scan`, `aozora-lex`, `aozora-render`,
-//! `aozora-parallel`, and `aozora` itself to all reference these
-//! shared types without depending on the engine.
+//! whole pipeline (sanitize → tokenize → pair → classify). The new
+//! layered architecture requires `aozora-syntax`, `aozora-scan`,
+//! `aozora-pipeline`, `aozora-render`, and `aozora` itself to all
+//! reference these shared types without depending on the engine.
 //!
 //! Concretely, this crate has **no internal dependency** on any other
 //! `aozora-*` crate, only on `miette`/`thiserror`. Every other crate

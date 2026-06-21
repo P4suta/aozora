@@ -62,7 +62,7 @@ The recognised marks (single `一 二 三 四 上 中 下 甲 乙 丙 丁 レ`, 
 compounds, and `（…）` okurigana) all produce one node that stores the raw
 mark text:
 
-```rust
+```rust,ignore
 pub struct Kaeriten<'src> {
     pub mark: NonEmptyStr<'src>,   // the raw mark, e.g. "二" / "一レ" / "（リ）"
 }

@@ -1,15 +1,15 @@
 //! Function-name categoriser.
 //!
 //! Bucketise function names into named groups. Drives the `rollup`
-//! analysis ("how much CPU does *Phase 1* spend?" rather than
-//! "how much CPU does specifically `aho_corasick::packed::teddy::…`
-//! spend?").
+//! analysis ("how much CPU does the *tokenize stage* spend?" rather
+//! than "how much CPU does specifically
+//! `aho_corasick::packed::teddy::…` spend?").
 //!
 //! ## Two ways to define categories
 //!
 //! - **Built-in defaults** ([`RollupConfig::aozora_defaults`]):
-//!   matches the project's known phase / library structure. Good
-//!   for "I just want a phase breakdown of my own trace right now".
+//!   matches the project's known stage / library structure. Good
+//!   for "I just want a stage breakdown of my own trace right now".
 //! - **TOML config** ([`RollupConfig::from_toml`]): users / projects
 //!   override or supply their own. The format is intentionally
 //!   simple — a list of categories, each with a name + ordered
@@ -188,7 +188,7 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
         ],
     ),
     ("rendering", &[r"aozora_render"]),
-    // Generic helpers that can't be attributed to a specific phase
+    // Generic helpers that can't be attributed to a specific stage
     // because the same primitive is called from many places. Useful
     // to surface as a single bucket so they don't drown in `unknown`.
     (
@@ -267,19 +267,28 @@ pub enum CategoryError {
 /// once and reuse across analyses.
 #[derive(Debug, Clone)]
 pub struct RollupConfig {
+    /// Ordered category definitions. Order is significant: the
+    /// compiled [`Categorizer`] is first-match-wins, so earlier
+    /// categories claim a function before later ones.
     pub categories: Vec<CategorySpec>,
 }
 
+/// One named category: a label plus the regex patterns that map a
+/// function name into it.
 #[derive(Debug, Clone)]
 pub struct CategorySpec {
+    /// Category label shown in the rollup report.
     pub name: String,
+    /// Regex patterns (matched against function names) that fall into
+    /// this category. Any match assigns the function here.
     pub patterns: Vec<String>,
 }
 
 impl RollupConfig {
-    /// Built-in defaults tuned for the aozora workspace's phase
-    /// structure. Useful as a starting point even outside aozora —
-    /// the `unknown` fallback always catches anything unmatched.
+    /// Built-in defaults tuned for the aozora workspace's pipeline
+    /// stage structure (sanitize → tokenize → pair → classify).
+    /// Useful as a starting point even outside aozora — the `unknown`
+    /// fallback always catches anything unmatched.
     #[must_use]
     pub fn aozora_defaults() -> Self {
         Self {

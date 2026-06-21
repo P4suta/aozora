@@ -15,7 +15,7 @@
 //! `memchr` finds candidate lead bytes at memory-bandwidth speed (SIMD
 //! via the `memchr` crate); each candidate is validated with two byte
 //! loads before it is treated as a sentinel, so a PUA collision in the
-//! source (Phase 0 records a diagnostic but does not delete the bytes)
+//! source (the sanitize stage records a diagnostic but does not delete the bytes)
 //! flows through as plain text via the cursor advance.
 //!
 //! # Newlines
@@ -134,7 +134,7 @@ fn handle_sentinel<S: WalkSink>(
     if *cursor < cand {
         sink.on_text(&normalized[*cursor..cand])?;
     }
-    let byte_pos = u32::try_from(cand).expect("normalized fits u32 per Phase 0 cap");
+    let byte_pos = u32::try_from(cand).expect("normalized fits u32 per sanitize-stage cap");
     if let Some(node) = out.registry.node_at(NormalizedOffset::new(byte_pos)) {
         sink.on_node(kind, node)?;
     }
@@ -152,7 +152,7 @@ fn handle_sentinel<S: WalkSink>(
 ///
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited
 /// from the lexer's `Span` width contract; in practice unreachable
-/// (Phase 0 sanitize already gates on this bound).
+/// (the sanitize stage already gates on this bound).
 pub(crate) fn walk<S: WalkSink>(out: &LexOutput<'_>, sink: &mut S) -> fmt::Result {
     let normalized = out.normalized;
     let bytes = normalized.as_bytes();

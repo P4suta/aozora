@@ -18,9 +18,9 @@ flowchart TD
     raw["raw bytes<br/>(SJIS-encoded .txt from Aozora Bunko)"]
     sjis["encoding_rs::SHIFT_JIS<br/>or aozora-specific JIS X 0213 patch"]
     utf8["UTF-8 String"]
-    sanitize["Phase 0 sanitize<br/>(in aozora-pipeline)"]
+    sanitize["sanitize stage<br/>(in aozora-pipeline)"]
     pua["PUA assignment for 外字"]
-    classified["normalised &str ready for Phase 1 scan"]
+    classified["normalised &str ready for the tokenize-stage scan"]
 
     raw --> sjis --> utf8 --> sanitize --> pua --> classified
 ```
@@ -37,7 +37,7 @@ X 0213 territory; encoding_rs keeps the strict cp932 surface).
 
 The reference table contains ~14 000 entries:
 
-```rust
+```rust,ignore
 static GAIJI_TABLE: phf::Map<&'static str, GaijiEntry> = phf_map! {
     "1-94-37" => GaijiEntry::JisX0213 { plane: 1, row: 94, cell: 37, codepoint: '⿰魚師' },
     "U+5F85"  => GaijiEntry::Direct   { codepoint: '待' },
@@ -81,7 +81,7 @@ incremental) is paid once per workspace build, not per-invocation.
 
 ## Resolution order
 
-```rust
+```rust,ignore
 pub fn resolve(reference: &str) -> Resolved {
     // 1. Direct codepoint (U+XXXX) wins outright.
     if let Some(c) = parse_unicode_form(reference) { return Resolved::Direct(c); }
@@ -121,9 +121,9 @@ M[a!]ria   →  Maria
 
 The full mapping (114 entries — every digraph and ligature in the
 spec) is at `accent_separation.html` in the spec snapshot. aozora
-applies this decomposition during Phase 0 sanitize, *before* the
-trigger scan, so by Phase 1 the source is pure Unicode with no
-ASCII-encoded accents.
+applies this decomposition during the sanitize stage, *before* the
+trigger scan, so by the tokenize stage the source is pure Unicode
+with no ASCII-encoded accents.
 
 The lookup is also Eytzinger-laid (see
 [Eytzinger sorted-set lookup](veb.md)) since 114 entries is well
@@ -148,5 +148,5 @@ update surface predictable.
 
 - [Notation → Gaiji](../notation/gaiji.md) — author-facing notation
   reference.
-- [Four-phase lexer → Phase 0](lexer.md#phase-0-sanitize) — where
+- [Lexer → sanitize stage](lexer.md#sanitize-stage) — where
   the resolver is invoked.

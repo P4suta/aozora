@@ -13,6 +13,7 @@ into the shared [wire envelope](../wire/overview.md) — the exact JSON
 every binding (FFI, wasm, Python, Extism) emits.
 
 ```rust
+# extern crate aozora;
 use aozora::Document;
 use aozora::json::diagnostics;
 
@@ -27,7 +28,7 @@ fn main() {
 }
 ```
 
-> The `wire` module is behind the `wire` Cargo feature on `aozora`.
+> The `json` module is behind the `json` Cargo feature on `aozora`.
 
 ## Expected output
 
@@ -46,12 +47,17 @@ If you are staying in Rust, you usually do not need JSON at all — read
 the typed slice directly:
 
 ```rust
+# extern crate aozora;
+# fn main() {
+# let doc = aozora::Document::new("abc\u{E001}def");
+# let tree = doc.parse();
 for d in tree.diagnostics() {
     // `Diagnostic` is an enum: `{d}` is the human message (thiserror),
     // `code()` the stable id, `span()` the byte range.
     let span = d.span();
     eprintln!("[{}] {d} @ {}..{}", d.code(), span.start, span.end);
 }
+# }
 ```
 
 Diagnostics are **non-fatal by design**: callers that want strict

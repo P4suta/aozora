@@ -1,8 +1,8 @@
 //! Single-doc probe for the pathological annotation outlier.
 //!
-//! Phase breakdown shows doc #5667 (`明治人物月旦`) consumes 170 ms
-//! in phase 3 classify alone — 98% of its parse wall-clock. This
-//! probe loads that single file and times each phase 1000 times to
+//! The `phase_breakdown` probe shows doc #5667 (`明治人物月旦`) consumes 170 ms
+//! in the classify stage alone — 98% of its parse wall-clock. This
+//! probe loads that single file and times each stage 1000 times to
 //! get a stable per-call cost, plus emits classify call counts for
 //! Aho-Corasick design.
 
@@ -151,7 +151,7 @@ fn main() {
         pct(classify_total, standalone)
     );
     println!("  ──────────────────────────────────────");
-    println!("  4-PHASE TOTAL  : {:>7.2} ms", avg(standalone));
+    println!("  STAGE TOTAL    : {:>7.2} ms", avg(standalone));
     println!("  lex : {:>7.2} ms", avg(full_total));
     println!(
         "  post-classify ∼: {:>7.2} ms",

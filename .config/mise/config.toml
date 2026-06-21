@@ -5,10 +5,12 @@
 # dev-image CI builds and runs every job inside it); this manifest lets
 # contributors run the fast inner loop on the host via mise, while
 # `just ci` in the container stays the authoritative merge gate. The rust
-# version mirrors rust-toolchain.toml. cargo-udeps is intentionally absent
-# (nightly-only, owned by the audit workflow).
+# version mirrors rust-toolchain.toml. cargo-shear (stable) is the
+# unused-dependency gate — it runs both in the host inner loop and the
+# audit workflow, replacing the former nightly-only cargo-udeps.
 [tools]
 rust = "1.96.0"
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-llvm-cov" = "latest"
+"cargo:cargo-shear" = "latest"

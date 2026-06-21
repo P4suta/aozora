@@ -9,7 +9,7 @@ publishes the GitHub Release.
 
 ```sh
 # 1. Pre-flight (everything green locally)
-just ci                          # lint + build + test + prop + deny + audit + udeps + coverage + book-build
+just ci                          # lint + build + test + prop + deny + audit + shear + coverage + book-build
 just prop-deep                   # 4096 cases per proptest block
 AOZORA_CORPUS_ROOT=… just corpus-sweep
 just smoke-py                    # host-side: abi3 wheel build + mypy + pytest (not in `just ci`)

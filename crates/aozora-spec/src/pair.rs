@@ -1,8 +1,8 @@
 //! Categories of balanced open/close delimiter pairs in Aozora notation.
 //!
 //! Trigger characters that always appear in isolation (`｜`, `＃`, `※`)
-//! do not have a corresponding [`PairKind`]; they emit a "solo" event in
-//! the lex pipeline.
+//! do not have a corresponding [`PairKind`]; the tokenize stage emits
+//! them as a "solo" token.
 
 use crate::Span;
 
@@ -59,11 +59,11 @@ impl PairKind {
     }
 }
 
-/// Resolved open/close pair, as observed by Phase 2.
+/// Resolved open/close pair, as observed by the pair stage.
 ///
 /// Both `open` and `close` are byte-spans in the *sanitized* source
-/// (the same coordinate system every other phase-2 / phase-3 `Span`
-/// lives in). Used downstream by editor surfaces such as LSP
+/// (the same coordinate system every other pair-stage / classify-stage
+/// `Span` lives in). Used downstream by editor surfaces such as LSP
 /// `textDocument/linkedEditingRange` and `documentHighlight`.
 ///
 /// `Unclosed` opens (no matching close was found before EOF) and stray
@@ -72,12 +72,18 @@ impl PairKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PairLink {
+    /// Which delimiter family this pair belongs to.
     pub kind: PairKind,
+    /// Byte-span of the open delimiter in the sanitized source.
     pub open: Span,
+    /// Byte-span of the close delimiter in the sanitized source.
     pub close: Span,
 }
 
 impl PairLink {
+    /// Construct a link between an `open` and `close` span of the same
+    /// `kind`. The caller guarantees the two spans are a genuinely
+    /// matched pair; this constructor does no validation.
     #[must_use]
     pub const fn new(kind: PairKind, open: Span, close: Span) -> Self {
         Self { kind, open, close }

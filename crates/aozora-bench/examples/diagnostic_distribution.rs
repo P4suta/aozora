@@ -1,4 +1,4 @@
-//! Histogram of corpus documents by phase-1..3 diagnostic count.
+//! Histogram of corpus documents by tokenize-through-classify diagnostic count.
 //!
 //! Buckets are: 0, 1-5, 6-20, 21-100, 100+. For each bucket the report
 //! shows doc count, mean parse latency (`lex`), and the

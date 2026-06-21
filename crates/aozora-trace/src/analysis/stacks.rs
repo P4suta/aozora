@@ -23,11 +23,17 @@ pub struct MatchedStack {
     pub pct: f64,
 }
 
+/// Result of [`matching_stacks`]: the call stacks containing a frame
+/// that matched the filter regex.
 #[derive(Debug, Clone)]
 pub struct MatchedStacksReport {
+    /// The filter regex source that was matched against frame labels.
     pub filter: String,
+    /// Total sample weight across the trace (matched or not).
     pub total_samples: u64,
+    /// Sample weight whose stack contained at least one matching frame.
     pub matched_samples: u64,
+    /// The top distinct matching stacks, sorted by descending samples.
     pub stacks: Vec<MatchedStack>,
 }
 

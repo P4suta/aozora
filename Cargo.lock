@@ -164,7 +164,6 @@ dependencies = [
  "dhat",
  "memchr",
  "rayon",
- "zstd",
 ]
 
 [[package]]
@@ -186,7 +185,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
  "toml 1.1.2+spec-1.1.0",
 ]
 
@@ -220,7 +218,6 @@ dependencies = [
  "aozora",
  "aozora-pipeline",
  "aozora-proptest",
- "aozora-spec",
  "proptest",
  "rowan",
 ]
@@ -276,16 +273,12 @@ dependencies = [
  "aozora-scan",
  "aozora-spec",
  "aozora-syntax",
- "aozora-veb",
  "bumpalo",
  "criterion",
  "insta",
  "memchr",
- "miette",
- "phf",
  "proptest",
  "smallvec",
- "thiserror 2.0.18",
 ]
 
 [[package]]

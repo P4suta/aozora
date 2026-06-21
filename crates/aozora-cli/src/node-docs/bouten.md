@@ -23,7 +23,7 @@ The two trailing class slots carry the bouten kind (`goma`,
 `circle`, `wavy-line`, …) and the position (`right` for vertical
 text, `left` for the rare under-side variant).
 
-## Serialize output
+## Source output
 
 Round-trips to the explicit `［＃「target」に<kind>傍点］` form.
 
@@ -43,7 +43,7 @@ or `Left`.
 
 ## When emitted
 
-Phase 3 sees `［＃「QUOTE」に <slug>傍点］` / `［＃「QUOTE」に <slug>傍線］`,
+The classify stage sees `［＃「QUOTE」に <slug>傍点］` / `［＃「QUOTE」に <slug>傍線］`,
 walks back through the recent text to find QUOTE, and emits the
 node with the matched span.
 

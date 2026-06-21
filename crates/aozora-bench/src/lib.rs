@@ -16,6 +16,7 @@
 //!   `cargo bench -p aozora-bench` and have one place to point CI's
 //!   regression-detection workflow at.
 
+#![allow(missing_docs, reason = "dev bench harness — not a public API surface")]
 #![forbid(unsafe_code)]
 
 use std::hint::black_box;

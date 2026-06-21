@@ -49,7 +49,7 @@ pub enum DiagnosticPolicy {
     CollectAll,
     /// Drop diagnostics whose [`Diagnostic::source`] is
     /// [`DiagnosticSource::Internal`](aozora_spec::DiagnosticSource::Internal).
-    /// Library bugs (the four legacy "Phase 6" sanity checks) are
+    /// Library bugs (the four legacy internal sanity checks) are
     /// hidden from the result; CLI / batch consumers that prefer a
     /// terser stream can opt in.
     DropInternal,
@@ -276,7 +276,7 @@ impl<'a> Tree<'a> {
         &self.inner.diagnostics
     }
 
-    /// Resolved (open, close) delimiter pairs as observed by Phase 2.
+    /// Resolved (open, close) delimiter pairs as observed by the pair stage.
     /// One entry per matched pair, in close order. Unmatched closes
     /// and unclosed opens are excluded — they have no partner span and
     /// would only confuse editor surfaces.
@@ -284,7 +284,7 @@ impl<'a> Tree<'a> {
     /// Spans use the same coordinate system as
     /// [`Self::diagnostics`]: byte offsets in the *sanitized* source
     /// (which equals the original source on every input that did not
-    /// trigger BOM/CRLF/accent rewriting in Phase 0). Editor-facing
+    /// trigger BOM/CRLF/accent rewriting in the sanitize stage). Editor-facing
     /// LSP requests like `textDocument/linkedEditingRange` and
     /// `textDocument/documentHighlight` consume this directly.
     #[must_use]
@@ -449,7 +449,7 @@ mod tests {
         let from_scratch = Document::new(spliced_source);
 
         assert_eq!(edited.source(), from_scratch.source());
-        // Same serialize output → AST shape is equivalent.
+        // Same to_source output → AST shape is equivalent.
         assert_eq!(
             edited.parse().to_source(),
             from_scratch.parse().to_source(),

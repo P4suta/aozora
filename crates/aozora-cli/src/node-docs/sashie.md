@@ -20,7 +20,7 @@ Inspect tag: `sashie` — illustration reference (挿絵).
 When a caption is present it lands as a `<figcaption>` next to the
 `<img>`.
 
-## Serialize output
+## Source output
 
 Round-trips to `［＃挿絵（path[、caption]）入る］`.
 
@@ -38,7 +38,7 @@ nameless image.
 
 ## When emitted
 
-Phase 3 matches the `挿絵（…）入る` digraph and parses out the path
+The classify stage matches the `挿絵（…）入る` digraph and parses out the path
 + optional caption.
 
 ## Diagnostics

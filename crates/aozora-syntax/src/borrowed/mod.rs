@@ -1,6 +1,6 @@
 //! Zero-copy, arena-allocated AST.
 //!
-//! This module is the AST that the `aozora-lex` pipeline produces and
+//! This module is the AST that the `aozora-pipeline` lexer produces and
 //! that downstream consumers (`aozora-render`, `aozora`, the FFI /
 //! WASM / Python drivers) walk.
 //!

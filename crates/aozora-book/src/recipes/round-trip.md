@@ -2,25 +2,26 @@
 
 **Problem.** You want to confirm a file is already in canonical
 Aozora form — or to canonicalise it — and to rely on parse ∘
-serialize being lossless.
+to_source being lossless.
 
 ## The property
 
-`Tree::serialize` re-emits Aozora source from the parsed tree.
+`Tree::to_source` re-emits Aozora source from the parsed tree.
 The guarantee is a **fixed point**: parsing a *canonical* document and
-serialising it returns the same bytes, and serialising again changes
-nothing.
+calling `to_source` on it returns the same bytes, and calling it again
+changes nothing.
 
 ```rust
+# extern crate aozora;
 use aozora::Document;
 
 fn main() {
     let source = "｜青梅《おうめ》";
 
-    let once = Document::new(source).parse().serialize();
-    let twice = Document::new(once.clone()).parse().serialize();
+    let once = Document::new(source).parse().to_source();
+    let twice = Document::new(once.clone()).parse().to_source();
 
-    assert_eq!(once, twice, "serialize is a fixed point");
+    assert_eq!(once, twice, "to_source is a fixed point");
     println!("{twice}");
 }
 ```
@@ -39,15 +40,21 @@ and the bare-vs-explicit ruby delimiter (`青梅《おうめ》` vs
 `｜青梅《おうめ》`). For *raw* input, therefore:
 
 ```rust
-// Not guaranteed for arbitrary raw input:
-assert_eq!(Document::new(raw).parse().serialize(), raw);   // may differ
+# extern crate aozora;
+# use aozora::Document;
+# fn main() {
+# let raw = String::from("青梅《おうめ》"); // bare (no explicit ｜) delimiter
+// Raw input is NOT guaranteed to be its own canonical form: here the
+// bare ruby gains an explicit ｜ delimiter on the first pass.
+let canonical = Document::new(raw.clone()).parse().to_source();
+assert_ne!(canonical, raw);   // differs for this raw input
 
-// Guaranteed: the SECOND pass is a fixed point.
-let canonical = Document::new(raw).parse().serialize();
-assert_eq!(Document::new(canonical.clone()).parse().serialize(), canonical);
+// Guaranteed: from the canonical form on, to_source is a fixed point.
+assert_eq!(Document::new(canonical.clone()).parse().to_source(), canonical);
+# }
 ```
 
-The first `serialize()` *is* the canonical form (e.g. it always emits
+The first `to_source()` *is* the canonical form (e.g. it always emits
 the explicit `｜` ruby delimiter — see the
 [Ruby node chapter](../nodes/ruby.md)); from there it is stable. This
 fixed-point property is what the corpus sweep verifies across the full

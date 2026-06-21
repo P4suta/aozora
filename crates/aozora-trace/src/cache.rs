@@ -148,6 +148,10 @@ impl SymbolCache {
 /// lint happy.
 #[derive(Debug, Clone, Copy)]
 pub struct LibIdent<'a> {
+    /// Library name — the cache map key (matches `Library.name`).
     pub name: &'a str,
+    /// The library's debug-id (build-id), stored so a later
+    /// [`SymbolCache::apply`] can reject a cache entry whose binary
+    /// has since been rebuilt.
     pub debug_id: &'a str,
 }

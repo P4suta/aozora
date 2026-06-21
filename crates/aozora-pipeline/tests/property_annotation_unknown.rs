@@ -1,5 +1,5 @@
 //! Invariants for `DirectiveKind::Unknown` — the catch-all that
-//! Phase 3 emits when no recogniser claimed an `［＃…］` annotation.
+//! the classify stage emits when no recogniser claimed an `［＃…］` annotation.
 //!
 //! The catch-all is a deliberate decision: every bracket annotation is
 //! claimed *somewhere* in the AST so the Tier-A canary (no bare `［＃`

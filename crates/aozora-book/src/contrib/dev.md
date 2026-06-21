@@ -36,7 +36,7 @@ just build                      # cargo build --workspace --all-targets
 just test                       # workspace nextest
 just lint                       # fmt + clippy + typos + strict-code
 just prop                       # property-based sweep (128 cases / block)
-just ci                         # full CI replica (lint + build + test + prop + deny + audit + udeps + coverage + book-build)
+just ci                         # full CI replica (lint + build + test + prop + deny + audit + shear + coverage + book-build)
 ```
 
 `just --list` enumerates everything available; `just --list --unsorted`
@@ -68,7 +68,7 @@ Three reasons.
 
 1. **Toolchain reproducibility.** The dev image pins
    `rust:1.96.0-bookworm` plus exact versions of `cargo-nextest`,
-   `cargo-llvm-cov`, `cargo-deny`, `cargo-audit`, `cargo-udeps`,
+   `cargo-llvm-cov`, `cargo-deny`, `cargo-audit`, `cargo-shear`,
    `cargo-semver-checks`, `cargo-fuzz`, `mdbook`, `mdbook-mermaid`,
    `lychee`, `git-cliff`, `bacon`, and `lefthook`. A fresh checkout
    on any machine produces *identical* tool behaviour.
@@ -173,11 +173,11 @@ End-to-end TDD flow:
    case, a spec vector in `../aozora-notation-spec`, synced via
    `just sync-spec-vectors`).
 2. **AST variant.** Add a borrowed-arena variant to `Node` in
-   `crates/aozora-syntax/src/borrowed.rs`.
-3. **Lexer test (red).** Add a case to the relevant phase test
+   `crates/aozora-syntax/src/borrowed/types.rs`.
+3. **Lexer test (red).** Add a case to the relevant stage test
    under `crates/aozora-pipeline/tests/`.
 4. **Lexer impl (green).** Wire the recogniser into the appropriate
-   phase (sanitize → events → pair → classify).
+   stage (sanitize → tokenize → pair → classify).
 5. **Renderer.** Emit the new HTML shape in
    `crates/aozora-render/src/html.rs` and the canonical
    serialisation in `crates/aozora-render/src/serialize.rs`.

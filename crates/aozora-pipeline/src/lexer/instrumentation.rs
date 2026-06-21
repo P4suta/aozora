@@ -1,4 +1,4 @@
-//! Opt-in phase 3 sub-system instrumentation.
+//! Opt-in classify-stage sub-system instrumentation.
 //!
 //! Compiled in only when the `classify-instrument` feature is on. When
 //! enabled, every recogniser entry point inside [`crate::lexer::classify`](mod@crate::lexer::classify)
@@ -24,7 +24,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::Instant;
 
-/// Phase 3 recogniser subsystem identifier.
+/// Classify-stage recogniser subsystem identifier.
 ///
 /// One variant per major recogniser entry point. The set is closed —
 /// adding a new variant is an explicit decision because each variant
@@ -240,16 +240,26 @@ thread_local! {
 /// docs in the corpus.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PendingSizeHistogram {
+    /// Observations where the queue was empty (`len == 0`).
     pub size_0: u64,
+    /// Observations of `len == 1`.
     pub size_1: u64,
+    /// Observations of `len` in `2..=4`.
     pub size_2_4: u64,
+    /// Observations of `len` in `5..=15`.
     pub size_5_15: u64,
+    /// Observations of `len` in `16..=63`.
     pub size_16_63: u64,
+    /// Observations of `len` in `64..=255`.
     pub size_64_255: u64,
+    /// Observations of `len >= 256`.
     pub size_256_plus: u64,
+    /// Largest `len` seen across all observations.
     pub max_seen: u64,
 }
 
+/// Record one `pending_outputs.len()` observation into the thread-local
+/// histogram, bumping the matching bucket and updating `max_seen`.
 pub fn record_pending_size(len: u64) {
     PENDING_SIZE_HIST.with(|h| {
         let mut hist = h.borrow_mut();
@@ -269,13 +279,17 @@ pub fn record_pending_size(len: u64) {
 }
 
 impl PendingSizeHistogram {
+    /// Snapshot the current thread's histogram (a `Copy`).
     #[must_use]
     pub fn snapshot() -> Self {
         PENDING_SIZE_HIST.with(|h| *h.borrow())
     }
+    /// Reset the current thread's histogram to all-zero.
     pub fn reset() {
         PENDING_SIZE_HIST.with(|h| *h.borrow_mut() = Self::default());
     }
+    /// Total number of observations across every bucket (excludes
+    /// `max_seen`, which is not a count).
     #[must_use]
     pub fn total(self) -> u64 {
         self.size_0
@@ -292,15 +306,21 @@ thread_local! {
     static REPLAY_SIZES: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Append one replayed-body size (the event count of a frame whose
+/// recogniser declined and was walked back as Plain spans — see
+/// [`Subsystem::ReplayBody`]) to the thread-local sample list.
 pub fn record_replay_body_size(size: u64) {
     REPLAY_SIZES.with(|v| v.borrow_mut().push(size));
 }
 
+/// Clone the current thread's recorded replay-body sizes, in
+/// observation order.
 #[must_use]
 pub fn snapshot_replay_sizes() -> Vec<u64> {
     REPLAY_SIZES.with(|v| v.borrow().clone())
 }
 
+/// Clear the current thread's recorded replay-body sizes.
 pub fn reset_replay_sizes() {
     REPLAY_SIZES.with(|v| v.borrow_mut().clear());
 }
@@ -311,10 +331,15 @@ pub fn reset_replay_sizes() {
 /// expected" patterns. Each variant maps to a `SpanKind` arm.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct YieldCounters {
+    /// `SpanKind::Plain` spans yielded.
     pub plain: u64,
+    /// `SpanKind::Newline` spans yielded.
     pub newline: u64,
+    /// `SpanKind::Aozora` spans yielded.
     pub aozora: u64,
+    /// `SpanKind::BlockOpen` spans yielded.
     pub block_open: u64,
+    /// `SpanKind::BlockClose` spans yielded.
     pub block_close: u64,
 }
 
@@ -323,10 +348,15 @@ pub struct YieldCounters {
 /// concrete variant set.
 #[derive(Debug, Clone, Copy)]
 pub enum YieldKind {
+    /// Bumps [`YieldCounters::plain`].
     Plain,
+    /// Bumps [`YieldCounters::newline`].
     Newline,
+    /// Bumps [`YieldCounters::aozora`].
     Aozora,
+    /// Bumps [`YieldCounters::block_open`].
     BlockOpen,
+    /// Bumps [`YieldCounters::block_close`].
     BlockClose,
 }
 

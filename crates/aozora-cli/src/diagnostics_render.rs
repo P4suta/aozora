@@ -63,8 +63,8 @@ pub(crate) fn render(
 }
 
 fn render_human(path: &str, doc: &Document, diagnostics: &[aozora::Diagnostic]) -> io::Result<()> {
-    // Diagnostic spans live in SANITIZED coordinates: Phase 0 strips the
-    // BOM, folds CRLF→LF, and decomposes 〔…〕 accent digraphs — each of
+    // Diagnostic spans live in SANITIZED coordinates: the sanitize stage
+    // strips the BOM, folds CRLF→LF, and decomposes 〔…〕 accent digraphs — each of
     // which shifts byte offsets. Aozora Bunko files ship as CRLF, so
     // attaching the *raw* bytes would slide every caret right by the
     // number of preceding line breaks. Re-derive the sanitized text (the

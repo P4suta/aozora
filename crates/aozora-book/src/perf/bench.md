@@ -52,15 +52,15 @@ slice of the workload. All read `AOZORA_CORPUS_ROOT`; most accept
 | Probe | Question it answers | Output shape |
 |---|---|---|
 | `throughput_by_class` | Per-band MB/s for `lex` | 4-band table + p50 / p90 / p99 / max + ns/byte |
-| `phase_breakdown` | Per-phase ms for sanitize / events / pair / classify | per-doc latencies + top-5 worst classify / sanitize |
-| `latency_histogram` | Log-bucketed latency distribution per phase | bar histogram, 10 buckets, 1 µs … 1 s |
-| `pathological_probe` | Single-doc 100-iter avg per phase | tight per-call numbers; takes `AOZORA_PROBE_DOC` for any corpus path |
-| `sanitize_breakdown` | Per-sub-pass cost inside Phase 0 sanitize | bom_strip / crlf / rule_isolate / accent / pua_scan |
-| `sanitize_impact` | Does Phase 0 sub-pass firing change Phase 1 cost? | bucketed by which sub-passes fired |
+| `phase_breakdown` | Per-stage ms for sanitize / tokenize / pair / classify | per-doc latencies + top-5 worst classify / sanitize |
+| `latency_histogram` | Log-bucketed latency distribution per stage | bar histogram, 10 buckets, 1 µs … 1 s |
+| `pathological_probe` | Single-doc 100-iter avg per stage | tight per-call numbers; takes `AOZORA_PROBE_DOC` for any corpus path |
+| `sanitize_breakdown` | Per-sub-pass cost inside the sanitize stage | bom_strip / crlf / rule_isolate / accent / pua_scan |
+| `sanitize_impact` | Does sanitize-stage sub-pass firing change tokenize-stage cost? | bucketed by which sub-passes fired |
 | `classify_subsystems` | Per-recogniser ms inside classify | requires `--features instrument` |
 | `diagnostic_distribution` | What fraction of docs emit diagnostics? | histogram by diag count; latency-by-diag-bucket |
 | `allocator_pressure` | Arena bytes / source byte ratio + intern dedup | per-doc histograms |
-| `fused_vs_materialized` | Does the deforestation actually win? | per-band gap % between fused (`lex`) and materialized (per-phase collect) |
+| `fused_vs_materialized` | Does the deforestation actually win? | per-band gap % between fused (`lex`) and materialized (per-stage collect) |
 | `intern_dedup_ratio` | How well does the interner dedup short strings? | corpus-aggregate (cache + table) / calls |
 | `render_hot_path` | Per-band MB/s for HTML render | 4-band MB/s + render/parse ratio + out/in size ratio |
 
@@ -94,7 +94,7 @@ A perf PR that wins on criterion but loses on the corpus is
 suspicious — usually it's optimised the small-input path at the
 cost of the large-input path. The corpus probe catches it.
 
-## Phase 3 instrumentation caveat
+## Classify-stage instrumentation caveat
 
 `classify-instrument` wraps every recogniser entry in a
 `SubsystemGuard` that calls `Instant::now()` on construction +
@@ -117,8 +117,8 @@ just trace-rollup /tmp/aozora-corpus-<ts>.json.gz
 ```
 
 The `trace-rollup` analysis groups samples into aozora's built-in
-categories (Phase 0/1/2/3 + corpus_load + intern + alloc + …) so a
-regression's category jumps out at a glance.
+categories (sanitize / tokenize / pair / classify + corpus_load +
+intern + alloc + …) so a regression's category jumps out at a glance.
 
 ## See also
 

@@ -71,7 +71,7 @@ allocation strategy.
 
 ## How the AST shape interacts with the lifetime
 
-```rust
+```rust,ignore
 pub enum Node<'src> {
     Plain(&'src str),
     Ruby(Ruby<'src>),
@@ -124,7 +124,7 @@ serve them better.
 
 The `'src` parameter prevents these shapes at compile time:
 
-```rust
+```rust,ignore
 fn bad() -> Tree<'static> {
     let doc = aozora::Document::new("…".into());
     doc.parse()        // ERROR: cannot return value referencing local

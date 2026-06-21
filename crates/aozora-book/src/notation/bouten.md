@@ -91,7 +91,7 @@ keyword plus `終わり`. The closer's **family** must match the opener's: a
 Both the indirect (`［＃「X」に傍点］`) and range (`［＃傍点］…［＃傍点終わり］`)
 forms produce `Bouten` nodes:
 
-```rust
+```rust,ignore
 pub struct Bouten<'src> {
     pub kind:     BoutenKind,            // one of 11 variants (点 / 線)
     pub target:   NonEmpty<Content<'src>>, // the emphasised run

@@ -18,7 +18,7 @@ no inner content. They appear on their own line in the source.
 `［＃改ページ］` is its own borrowed-AST node; the three 段 / 丁 / 見開き
 breaks share one `SectionBreak` node tagged by [`SectionKind`]:
 
-```rust
+```rust,ignore
 // borrowed::Node variants
 Node::PageBreak,                  // ［＃改ページ］
 Node::SectionBreak(SectionKind),  // ［＃改丁 / 改段 / 改見開き］

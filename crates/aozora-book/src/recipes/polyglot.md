@@ -8,7 +8,7 @@ further down the long tail.
 
 There is exactly **one parser**. Every binding funnels the same source
 text through the same lexer and emits the same HTML, the same canonical
-serialise, and the same [wire-envelope](../wire/overview.md) JSON —
+source, and the same [wire-envelope](../wire/overview.md) JSON —
 **byte-identical across every language**. So the decision is not
 "which binding is more correct"; it is "which fits the language and
 runtime I already have." [Choosing a binding](../bindings/choosing.md)
@@ -58,7 +58,7 @@ change:
 
 1. Obtain `aozora.wasm` (a GitHub release asset).
 2. Load it with your host SDK's plugin constructor (no WASI needed).
-3. Assert `schema_version` matches the wire schema you compiled
+3. Assert `schema_version` matches the JSON Schema you compiled
    against.
 4. Call an export with the source string:
    - `to_html` / `serialize` → a bare string;

@@ -99,3 +99,11 @@ query = ["cst", "dep:aozora-query"]
 aozora-corpus   = { path = "../aozora-corpus" }
 proptest        = { workspace = true }
 aozora-proptest = { path = "../aozora-proptest" }
+
+[package.metadata.cargo-shear]
+# `proptest` is an intentional optional dependency exposed via the
+# `proptest` feature (aozora::proptest::*) for downstream property tests.
+# It also appears in dev-dependencies for this crate's own tests, so
+# cargo-shear sees only the dev usage and flags the optional [dependencies]
+# entry as misplaced — but the feature gate is the supported public surface.
+ignored = ["proptest"]

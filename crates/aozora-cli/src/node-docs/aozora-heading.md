@@ -16,7 +16,7 @@ Inspect tag: `heading` — Aozora 見出し (window / sub heading).
 
 The Pandoc projection uses level 2 for `Window`, level 3 for `Sub`.
 
-## Serialize output
+## Source output
 
 Round-trips to `［＃<kind>見出し］...［＃<kind>見出し終わり］`.
 
@@ -33,7 +33,7 @@ pub struct Heading<'src> {
 
 ## When emitted
 
-Phase 3 matches the keyword `見出し` family and binds the body run.
+The classify stage matches the keyword `見出し` family and binds the body run.
 
 ## Diagnostics
 

@@ -17,7 +17,7 @@ Inspect tag: `indent` — single-line `［＃N字下げ］` indent marker.
 
 CSS controls the actual padding (typically `padding-inline-start: Nem`).
 
-## Serialize output
+## Source output
 
 Round-trips to `［＃N字下げ］`.
 
@@ -31,7 +31,7 @@ pub struct Indent {
 
 ## When emitted
 
-Phase 3 matches the digraph plus a numeric prefix and emits a
+The classify stage matches the digraph plus a numeric prefix and emits a
 single inline marker. For *paired* indent regions (`［＃ここから2字下げ］`
 … `［＃ここで字下げ終わり］`), see [Container](container.md).
 

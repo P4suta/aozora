@@ -38,6 +38,10 @@
     clippy::disallowed_methods,
     reason = "xtask binary uses std::process::exit / std::env::set_var to wire up the spawned `cargo` and `samply` invocations; both are appropriate here, in the dev-tooling crate, but disallowed elsewhere"
 )]
+#![allow(
+    missing_docs,
+    reason = "host dev-tool binary — not a public API surface"
+)]
 
 use std::env;
 use std::ffi::OsString;

@@ -41,8 +41,8 @@ classifier could no longer tell user-text occurrences from
 lexer-inserted markers.
 
 **Recovery:** the colliding bytes are *kept verbatim* in the
-sanitised text — Phase 0 does not delete them. Downstream the
-character flows through as plain text (the registry has no entry
+sanitised text — the sanitize stage does not delete them. Downstream
+the character flows through as plain text (the registry has no entry
 for the position so it is treated as ordinary content). Editors
 that want to surface the collision visually can match on this
 code; ordinary HTML rendering is unaffected.
@@ -58,9 +58,9 @@ end-of-input with no matching close on the pairing stack.
 
 **Recovery:** no [`PairLink`][pair-link] is emitted for the orphaned
 opener (`Unclosed` opens have no partner span and would only
-confuse editor highlights). Phase 3 then sees no Aozora construct
-covering the unclosed open and degrades the whole region to plain
-text — the bytes from the opener to EOF are preserved literally,
+confuse editor highlights). The classify stage then sees no Aozora
+construct covering the unclosed open and degrades the whole region to
+plain text — the bytes from the opener to EOF are preserved literally,
 just without ruby / annotation classification.
 
 ### `aozora::lex::unmatched_close`
@@ -119,8 +119,8 @@ correction.
 - [Diagnostics catalogue](../notation/diagnostics.md) — code-by-code
   reference, including the `［＃改ページ］`-family directives this
   page does not cover.
-- [Architecture → Seven-phase lexer](lexer.md) — which pipeline
-  phase emits which code.
+- [Architecture → Lexer (sanitize → tokenize → pair → classify)](lexer.md) —
+  which pipeline stage emits which code.
 - [Wire format → DiagnosticWire](../wire/overview.md) — the JSON
   shape every binding (FFI, WASM, Python) carries diagnostics over.
 

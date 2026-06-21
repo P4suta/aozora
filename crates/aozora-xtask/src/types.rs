@@ -248,7 +248,7 @@ fn check() -> Result<(), String> {
 // The TypeScript `.d.ts` above is hand-rolled from the live Rust enums
 // (it needs the string-literal unions for `NodeKind` etc. that the JSON
 // Schema erases to plain `string`). Every *other* host-SDK language is
-// generated mechanically by `quicktype` from the committed wire JSON
+// generated mechanically by `quicktype` from the committed JSON
 // Schema — one generator, all languages — so adding a language is a
 // single row in `LANG_TYPES`, not a new codegen backend.
 

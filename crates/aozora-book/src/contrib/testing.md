@@ -215,7 +215,7 @@ Where the output is a multi-line string that's tedious to inline
 (rendered HTML, diagnostic-formatted text), we use
 [`insta`](https://insta.rs/):
 
-```rust
+```rust,ignore
 insta::assert_snapshot!(tree.to_html());
 ```
 

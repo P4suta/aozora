@@ -2,7 +2,7 @@
 
 aozora exposes 19 [`NodeKind`][nodekind] variants. Each is documented
 on its own page with source examples, the rendered HTML, the
-serialize round-trip output, the in-memory AST shape, and the
+source round-trip output, the in-memory AST shape, and the
 diagnostics it can fire alongside.
 
 The page layout matches the `aozora explain <kind>` CLI subcommand:
@@ -39,9 +39,9 @@ Every node page follows the same skeleton:
 | --- | --- |
 | Source examples | One or two minimal Aozora-notation strings that produce this variant. |
 | Rendered HTML | What `Document::new(src).parse().to_html()` emits. |
-| Serialize output | What `serialize()` emits — typically the canonical form of the source. |
+| Source output | What `to_source()` emits — typically the canonical form of the source. |
 | AST shape | The borrowed-AST struct fields the variant carries. |
-| When emitted | Phase 3 classification rule that produces this variant. |
+| When emitted | Classify-stage rule that produces this variant. |
 | Diagnostics | Codes that may accompany this variant. |
 | Related kinds | Cross-links to neighbours (`Bouten` ↔ `Bousen`, `Indent` ↔ `Container::Indent`, etc.). |
 

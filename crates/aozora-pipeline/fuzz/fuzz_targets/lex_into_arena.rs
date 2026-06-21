@@ -6,7 +6,7 @@
 //! checked: the lexer must terminate without panicking, the
 //! normalized text must remain valid UTF-8, and every reported
 //! diagnostic span must be in-bounds. Targets parser-side panics in
-//! the trigger / pair / classify phases plus arena-bounds bugs.
+//! the trigger / pair / classify stages plus arena-bounds bugs.
 //!
 //! Run with the standard `just fuzz-{quick,deep,marathon,triage,
 //! promote}` family from the workspace root, e.g.
@@ -27,14 +27,14 @@ fuzz_target!(|data: &[u8]| {
     // Invariants:
     //
     // 1. The normalized text must remain valid UTF-8 (the lexer never
-    //    re-encodes; if this trips, a phase corrupted the buffer).
+    //    re-encodes; if this trips, a stage corrupted the buffer).
     assert!(
         std::str::from_utf8(out.normalized.as_bytes()).is_ok(),
         "lex returned invalid UTF-8 in normalized text",
     );
     // 2. Every diagnostic must report a non-inverted span. We
     //    deliberately do not bound `span.end` against the normalized
-    //    length: Phase 0 normalization (CRLF → LF, leading BOM strip)
+    //    length: sanitize-stage normalization (CRLF → LF, leading BOM strip)
     //    shrinks the buffer, but diagnostics are emitted in source
     //    coordinates so they can point past the normalized end.
     //    Bounding against the source length isn't useful either —

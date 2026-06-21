@@ -20,8 +20,12 @@ pub enum ContainerKind {
     /// 中央］` form — the indented block is also page-centred; it still closes
     /// with the shared `字下げ終わり`.
     Indent {
+        /// Full-width characters the block is indented by.
         amount: u8,
+        /// Hanging-indent continuation width: `Some(M)` for the
+        /// `折り返して M字下げ` form, `None` for a plain indent / the closer.
         wrap: Option<u8>,
+        /// `true` for the combined `…、ページの左右中央` form (also page-centred).
         center: bool,
     },
     /// `［＃割り注］ ... ［＃割り注終わり］` (when spanning multiple lines)
@@ -29,7 +33,10 @@ pub enum ContainerKind {
     /// `［＃罫囲み］ ... ［＃罫囲み終わり］`
     Framed,
     /// `［＃ここから地付き］` / `［＃ここから地から N 字上げ］`
-    AlignEnd { offset: u8 },
+    AlignEnd {
+        /// Chars lifted off the foot edge. `0` = 地付き, `n` = 地から n 字上げ.
+        offset: u8,
+    },
     /// `［＃ここから N字詰め］ ... ［＃ここで字詰め終わり］` — line-width
     /// (字詰め): sets the number of full-width characters per line for the
     /// enclosed run. Block-only (no single-line form), so `is_inline` is
@@ -39,7 +46,11 @@ pub enum ContainerKind {
     /// authoritative when pairing, mirroring the generic `字下げ終わり`
     /// closer). Renders as
     /// `<div class="aozora-container aozora-container-line-width" data-width="N">`.
-    LineWidth { width: u8 },
+    LineWidth {
+        /// Full-width characters per line from the opener; the closer
+        /// re-emits `0` as a placeholder (the open side is authoritative).
+        width: u8,
+    },
     /// 傍点 / 傍線 range form: `［＃傍点］ ... ［＃傍点終わり］`,
     /// `［＃二重傍線］ ... ［＃二重傍線終わり］`, `［＃左に傍線］ ...`, etc.
     /// The `kind` is the emphasis variant (its 点/線 family drives the
@@ -47,7 +58,9 @@ pub enum ContainerKind {
     /// left-side modifier. The renderer wraps the run in
     /// `<em class="aozora-bouten-…">`.
     BoutenRange {
+        /// The 傍点 / 傍線 mark; its 点/線 family drives the mismatch check.
         kind: BoutenKind,
+        /// `Left` for the `左に` modifier, else `Right`.
         position: BoutenPosition,
     },
     /// 太字 (bold) range / block. `block` distinguishes the bare inline
@@ -58,13 +71,19 @@ pub enum ContainerKind {
     /// so the wrapped paragraphs nest validly). A separate variant from
     /// [`Self::Italic`] so a 太字-open closed by a 斜体-close trips
     /// `mismatched_container_close` (different discriminant).
-    Bold { block: bool },
+    Bold {
+        /// `false` = inline bare range (`<b>`); `true` = `ここから` block (`<div>`).
+        block: bool,
+    },
     /// 斜体 (italic) range / block — the slant counterpart of
     /// [`Self::Bold`]. `［＃斜体］ ... ［＃斜体終わり］` (inline
     /// `<i class="aozora-italic">`) / `［＃ここから斜体］ ...
     /// ［＃ここで斜体終わり］` (block
     /// `<div class="aozora-container aozora-container-italic">`).
-    Italic { block: bool },
+    Italic {
+        /// `false` = inline bare range (`<i>`); `true` = `ここから` block (`<div>`).
+        block: bool,
+    },
     /// Delimited heading. The **paired** form `［＃窓中見出し］ ...
     /// ［＃窓中見出し終わり］` (`block: false`) and the **block** form
     /// `［＃ここから大見出し］ ... ［＃ここで大見出し終わり］` (`block: true`)
@@ -74,8 +93,11 @@ pub enum ContainerKind {
     /// style. Its content is *phrasing* (rendered directly inside the
     /// `<hN>` / `<div>`, not wrapped in a `<p>`) — see [`Self::content_is_phrasing`].
     Heading {
+        /// The 大 / 中 / 小 outline level.
         kind: HeadingKind,
+        /// Standard / 同行 / 窓 style.
         style: HeadingStyle,
+        /// `false` = paired `［＃窓中見出し］…終わり` form; `true` = `ここから` block form.
         block: bool,
     },
     /// `［＃ここからN段組(み)］ ... ［＃ここで段組(み)終わり］` — a multi-column
@@ -83,7 +105,10 @@ pub enum ContainerKind {
     /// container only: the enclosed content is plain text with no per-column
     /// markup. Renders as
     /// `<div class="aozora-container aozora-container-columns" data-columns="N">`.
-    Columns { count: u8 },
+    Columns {
+        /// Number of columns in the 段組 region.
+        count: u8,
+    },
     /// `［＃ここから表］ ... ［＃ここで表終わり］` — a table region. A layout
     /// container only: there is no cell / row / column markup, so the enclosed
     /// content is plain text. Renders as
@@ -100,20 +125,32 @@ pub enum ContainerKind {
     /// marker carries only the direction (its magnitude is a `±1` placeholder).
     /// Renders as
     /// `<div class="aozora-container aozora-container-font-larger" data-steps="N">`.
-    FontSize { steps: i8 },
+    FontSize {
+        /// Signed stage count: positive = 大きな (larger), negative = 小さな
+        /// (smaller). The close marker carries only the sign (magnitude is a
+        /// `±1` placeholder).
+        steps: i8,
+    },
     /// `［＃行右小書き］ ... ［＃行右小書き終わり］` (and the 行左 variant) —
     /// the range counterpart of the forward-reference small-script emphasis
     /// (`「X」は行右小書き` → [`crate::EmphasisKind::SmallRight`]). `side`
     /// records 右 / 左. Inline (sits within a line, like the 傍点 range), so
     /// it gets no block padding and renders as
     /// `<span class="aozora-kogaki-right">` / `…-left`.
-    SmallScript { side: BoutenPosition },
+    SmallScript {
+        /// 右 (`Right`) or 左 (`Left`) — which side of the line the small
+        /// glyphs sit on.
+        side: BoutenPosition,
+    },
     /// Caption region. The bare range `［＃キャプション］ … ［＃キャプション終わり］`
     /// (`block: false`, inline `<span class="aozora-caption">`) and the block
     /// form `［＃ここからキャプション］ … ［＃ここでキャプション終わり］`
     /// (`block: true`, `<div class="aozora-container aozora-caption">`) mark the
     /// enclosed run as the caption of an adjacent figure.
-    Caption { block: bool },
+    Caption {
+        /// `false` = inline bare range (`<span>`); `true` = `ここから` block (`<div>`).
+        block: bool,
+    },
     /// 縦中横 range form `［＃縦中横］ … ［＃縦中横終わり］` — sets the enclosed
     /// run horizontally within vertical text. The forward-reference leaf
     /// `「X」は縦中横` ([`super::borrowed::CombineUpright`]) is the official form;

@@ -52,57 +52,93 @@ use aozora_syntax::{AlignEnd, Center, Container, Framed, Indent, SectionKind};
     reason = "every visit_* method shares the trait-level # Errors contract above (propagates the underlying fmt::Write sink's error). Per-method # Errors lines would be 17 redundant duplicates."
 )]
 pub trait AozoraVisitor<'src> {
+    /// Visit a ruby (furigana) node: a `base` run with its `reading`.
     fn visit_ruby(&mut self, r: &Ruby<'src>) -> fmt::Result {
         Ok(())
     }
+    /// Visit a side annotation — 注記 / 傍記, a left-side gloss or
+    /// redaction marker attached to a preceding run. Named `side_note`;
+    /// the payload type is [`MarginNote`].
     fn visit_side_note(&mut self, s: &MarginNote<'src>) -> fmt::Result {
         Ok(())
     }
+    /// Visit a 傍点 / 傍線 node: emphasis dots or sidelines over `target`.
     fn visit_bouten(&mut self, b: &Bouten<'src>) -> fmt::Result {
         Ok(())
     }
+    /// Visit a 縦中横 (tate-chu-yoko) node — a short run set horizontally
+    /// inside vertical text. Named `tate_chu_yoko`; the payload type is
+    /// [`CombineUpright`].
     fn visit_tate_chu_yoko(&mut self, t: &CombineUpright<'src>) -> fmt::Result {
         Ok(())
     }
+    /// Visit a gaiji node — a glyph outside the character range, carrying
+    /// its source description and any resolved Unicode / mencode reference.
     fn visit_gaiji(&mut self, g: &Gaiji<'src>) -> fmt::Result {
         Ok(())
     }
+    /// Visit a 字下げ (indent) marker opening an indented run of `amount`
+    /// chars. A leaf event; the indented body follows as sibling nodes.
     fn visit_indent(&mut self, i: Indent) -> fmt::Result {
         Ok(())
     }
+    /// Visit a 地付き / 地上げ (bottom-aligned) marker. `offset` is the gap
+    /// from the right edge in chars (`0` = 地付き, `n` = n 字上げ).
     fn visit_align_end(&mut self, a: AlignEnd) -> fmt::Result {
         Ok(())
     }
+    /// Visit a single-line centring marker — `中央揃え` or, when
+    /// [`Center::page`] is set, `ページの左右中央`.
     fn visit_center(&mut self, c: Center) -> fmt::Result {
         Ok(())
     }
+    /// Visit a 割り注 (warichu) node — a two-line split annotation with
+    /// `upper` and `lower` rows.
     fn visit_warichu(&mut self, w: &Warichu<'src>) -> fmt::Result {
         Ok(())
     }
+    /// Visit a 罫囲み (keigakomi) marker — a ruled box around the run.
+    /// Named `keigakomi`; the payload type is the unit struct [`Framed`].
     fn visit_keigakomi(&mut self, k: Framed) -> fmt::Result {
         Ok(())
     }
+    /// Visit a 改ページ (page break) marker. Takes no payload.
     fn visit_page_break(&mut self) -> fmt::Result {
         Ok(())
     }
+    /// Visit a section break — 改丁 / 改段 / 改見開き, selected by `k`.
     fn visit_section_break(&mut self, k: SectionKind) -> fmt::Result {
         Ok(())
     }
+    /// Visit an Aozora heading — a 大 / 中 / 小 level paired with a style
+    /// (standard / 同行 / 窓) and its label. Named `aozora_heading`; the
+    /// payload type is [`Heading`].
     fn visit_aozora_heading(&mut self, h: &Heading<'src>) -> fmt::Result {
         Ok(())
     }
+    /// Visit a forward-reference heading hint — the intended outline
+    /// `level` and `style` for a quoted target that was promoted to a
+    /// heading.
     fn visit_heading_hint(&mut self, h: &HeadingHint<'src>) -> fmt::Result {
         Ok(())
     }
+    /// Visit a 挿絵 (illustration) node — image path plus optional number,
+    /// dimensions, caption, and alt description. Named `sashie`; the
+    /// payload type is [`Illustration`].
     fn visit_sashie(&mut self, s: &Illustration<'src>) -> fmt::Result {
         Ok(())
     }
+    /// Visit a 返り点 (kaeriten) node — a Chinese-reading-order mark.
     fn visit_kaeriten(&mut self, k: &Kaeriten<'src>) -> fmt::Result {
         Ok(())
     }
+    /// Visit a generic annotation — an Aozora-shaped `［＃…］` directive
+    /// (sic / 底本では / unknown, …) carrying its raw body. Named
+    /// `annotation`; the payload type is [`Directive`].
     fn visit_annotation(&mut self, a: &Directive<'src>) -> fmt::Result {
         Ok(())
     }
+    /// Visit a double-angle quotation node — source `≪…≫`, displayed `《…》`.
     fn visit_angle_quote(&mut self, d: &AngleQuote<'src>) -> fmt::Result {
         Ok(())
     }
@@ -112,6 +148,10 @@ pub trait AozoraVisitor<'src> {
     fn visit_container_open(&mut self, c: Container) -> fmt::Result {
         Ok(())
     }
+    /// Container-close event. Fires on the exiting pass for
+    /// `Node::Container` nodes, pairing the earlier
+    /// `visit_container_open`. Carries the same [`Container`] so the
+    /// visitor can emit the matching close markup.
     fn visit_container_close(&mut self, c: Container) -> fmt::Result {
         Ok(())
     }

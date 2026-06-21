@@ -31,7 +31,7 @@ Phase 2（CodeMirror 6 + aozora-tools 機能移植 + Docker 化）は完了済�
 |---|---|---|
 | **LSP の WASM 化** (`aozora-lsp` を web worker で動かす) | tower-lsp + tokio の WASM 化が重い。aozora-wasm の JSON API でほぼ同等のことができる | 「LSP 機能（formatting / code actions）が真に必要」となった時 |
 | **tree-sitter-aozora を Lezer に移植** | aozora-wasm の `nodes_json` が source-keyed の正解を返すので二重実装になる | `nodes_json` の精度・粒度が足りないハイライト要求が出た時 |
-| **aozora-fmt を WASM 化** （フォーマッタ） | コード量が大きく、`serialize()` で round-trip 整形済み | aozora-fmt 独自のフォーマット結果が serialize() と乖離する事例が出た時 |
+| **aozora-fmt を WASM 化** （フォーマッタ） | コード量が大きく、`toSource()` で round-trip 整形済み | aozora-fmt 独自のフォーマット結果が toSource() と乖離する事例が出た時 |
 | **Pandoc 出力タブ** | `aozora-pandoc` は workspace member だが WASM ビルド対象外、別 crate の WASM 化が必要 | Pandoc 連携ニーズの強い要望が出た時 |
 | **VSCode 拡張側のコマンド全 13 個移植** | `preview.ts`, `outline.ts`, `notationGuide.ts` 等は webview/extension API 依存。Web playground の UI 文脈で再設計が必要 | 個別機能の要求がきた時に CM6 native で書き直し |
 
@@ -53,7 +53,7 @@ Phase 2（CodeMirror 6 + aozora-tools 機能移植 + Docker 化）は完了済�
 - **Yjs + CodeMirror collab で共同編集** — 教育・校正ワークフローに直結
 - **入力履歴・undo の永続化** — エディタの履歴がブラウザリロード後も残る
 - **スナップショット diff** — source 変更前後の AST diff を可視化
-- **性能プロファイル可視化** — sanitize → events → pair → classify の各 phase の時間を表示
+- **性能プロファイル可視化** — sanitize → tokenize → pair → classify の各 stage の時間を表示
 
 ### 出力の拡張
 

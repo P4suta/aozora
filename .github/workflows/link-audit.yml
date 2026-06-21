@@ -1,0 +1,110 @@
+name: link-audit
+
+# Weekly EXTERNAL-link rot audit for the handbook — the non-blocking
+# complement to the `book` job in `ci.yml`.
+#
+# `ci.yml`'s `book` job gates PRs with an OFFLINE (internal-only) lychee
+# run, which is fully deterministic. This workflow does the opposite: it
+# probes the EXTERNAL links too (online). Because a third-party host's
+# uptime / rate-limit / UA-gating is not a sane merge gate, a failure
+# here does NOT block anything — it opens (or updates) a tracking issue
+# labelled `link-audit`, and closes it again once the links are healthy.
+#
+# Shares `crates/aozora-book/lychee.toml` with the gate; the only
+# difference is the absence of `--offline`.
+
+on:
+  schedule:
+    - cron: "41 5 * * 2"  # weekly, Tuesday 05:41 UTC (offset from codeql Mon 04:23)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: link-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
+      - uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
+        with:
+          context: .
+          target: book
+          tags: aozora-book:local
+          load: true
+          cache-from: type=gha,scope=book
+          cache-to: type=gha,mode=max,scope=book
+      - name: Install mermaid assets into the book directory
+        run: docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook-mermaid install .
+      - name: mdbook build
+        run: docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook build
+      - name: lychee external-link audit (online)
+        id: lychee
+        # Do not fail the job on broken links — the tracking issue is the
+        # signal, not a red check. Capture the exit code for the reporter.
+        run: |
+          set +e
+          docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local \
+            lychee --config lychee.toml --format markdown --output lychee-report.md 'book/**/*.html'
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo "lychee exited with $code"
+      - name: Open / update / close tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LYCHEE_EXIT: ${{ steps.lychee.outputs.exit_code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          LABEL="link-audit"
+          TITLE="External link audit: broken links in the handbook"
+          REPORT="crates/aozora-book/lychee-report.md"
+
+          # Idempotent label (issues:write covers labels).
+          gh label create "$LABEL" -c FBCA04 \
+            -d "Handbook external link rot found by the link-audit workflow" 2>/dev/null || true
+
+          existing=$(gh issue list --label "$LABEL" --state open --json number --jq '.[0].number // empty')
+
+          if [ "${LYCHEE_EXIT}" != "0" ]; then
+            {
+              echo "The weekly external-link audit found broken links in the rendered handbook."
+              echo
+              echo "Workflow run: ${RUN_URL}"
+              echo
+              echo "These are EXTERNAL links only — internal links are gated on every PR by the"
+              echo "\`book\` job (offline). A broken external link is often a transient host outage"
+              echo "or a genuine rot; verify before editing the handbook. Fixes: repoint the link,"
+              echo "or, if the host is chronically unreachable, exclude it in"
+              echo "\`crates/aozora-book/lychee.toml\`."
+              echo
+              echo "<details><summary>lychee report</summary>"
+              echo
+              if [ -f "$REPORT" ]; then sed -n '1,500p' "$REPORT"; else echo "(report file missing)"; fi
+              echo
+              echo "</details>"
+            } > issue-body.md
+
+            if [ -n "$existing" ]; then
+              gh issue edit "$existing" --body-file issue-body.md
+              gh issue comment "$existing" --body "Re-audited $(date -u +%Y-%m-%d): still failing. See ${RUN_URL}"
+              echo "Updated issue #${existing}"
+            else
+              gh issue create --title "$TITLE" --label "$LABEL" --body-file issue-body.md
+              echo "Opened a new tracking issue"
+            fi
+          else
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --body "External link audit is green again ($(date -u +%Y-%m-%d), ${RUN_URL}). Closing."
+              gh issue close "$existing"
+              echo "Closed issue #${existing}"
+            else
+              echo "All external links healthy; no open issue to manage."
+            fi
+          fi

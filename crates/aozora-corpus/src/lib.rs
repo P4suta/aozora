@@ -62,7 +62,13 @@ pub const ENV_CORPUS_ROOT: &str = "AOZORA_CORPUS_ROOT";
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct CorpusItem {
+    /// Human-readable identifier, used only in diagnostics when an
+    /// invariant fails. Not a stable key — for filesystem sources it is
+    /// conventionally the path relative to the corpus root, for in-memory
+    /// sources any caller-chosen string.
     pub label: String,
+    /// Raw file content in its original encoding (typically Shift_JIS).
+    /// Decoding is the caller's responsibility (see `aozora-encoding`).
     pub bytes: Vec<u8>,
 }
 

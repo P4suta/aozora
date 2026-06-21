@@ -18,7 +18,7 @@ are stacked into a single line of the surrounding text.
 </span>
 ```
 
-## Serialize output
+## Source output
 
 Round-trips to the explicit `［＃割り注］...／...［＃割り注終わり］`.
 

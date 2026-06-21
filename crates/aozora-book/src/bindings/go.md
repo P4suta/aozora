@@ -51,17 +51,17 @@ func main() {
 `Open(ctx)` instantiates the plugin once; reuse the returned `Parser`
 across calls and `Close(ctx)` it when done. Beyond `ToHTML` and `Nodes`,
 a `Parser` exposes `Serialize`, `Diagnostics`, `Pairs`, and
-`ContainerPairs` — each returning the matching wire envelope decoded into
+`ContainerPairs` — each returning the matching JSON envelope decoded into
 the generated Go types:
 
 | Method | Returns | Notes |
 |---|---|---|
 | `ToHTML(src)` | `string` | Semantic HTML5 with `aozora-*` class hooks. |
-| `Serialize(src)` | wire envelope | Canonical 青空文庫 source round-trip. |
-| `Nodes(src)` | wire envelope | Borrowed-AST nodes with `Kind` + `Span`. |
-| `Diagnostics(src)` | wire envelope | Same diagnostic schema as every other binding (see [WASM → API surface](wasm.md#api-surface)). |
-| `Pairs(src)` | wire envelope | Matched ruby / bracket / quote pairs. |
-| `ContainerPairs(src)` | wire envelope | Matched indent / align-end container pairs. |
+| `Serialize(src)` | JSON envelope | Canonical 青空文庫 source round-trip. |
+| `Nodes(src)` | JSON envelope | Borrowed-AST nodes with `Kind` + `Span`. |
+| `Diagnostics(src)` | JSON envelope | Same diagnostic schema as every other binding (see [WASM → API surface](wasm.md#api-surface)). |
+| `Pairs(src)` | JSON envelope | Matched ruby / bracket / quote pairs. |
+| `ContainerPairs(src)` | JSON envelope | Matched indent / align-end container pairs. |
 
 ## Concurrency
 
@@ -75,13 +75,13 @@ intended one; instances do not contend.
 
 `Open(ctx)` loads the embedded `aozora.wasm` plugin into a fresh wazero
 runtime. Every method serialises its argument, calls the corresponding
-plugin export, and decodes the JSON envelope into a Go type. Those wire
+plugin export, and decodes the JSON envelope into a Go type. Those JSON
 types live in `wire_gen.go` and are **generated** by `just types-langs`
-(quicktype, fed from the wire JSON Schema) — they are not hand-maintained,
+(quicktype, fed from the JSON Schema) — they are not hand-maintained,
 so they cannot drift from the Rust `aozora::json` definitions. Because the
-plugin bytes and the wire schema are shared, the Go output is
+plugin bytes and the JSON schema are shared, the Go output is
 **byte-identical** to the Rust, WASM, Python, and C-ABI front doors:
-same HTML, same canonical serialisation, same diagnostics.
+same HTML, same canonical source, same diagnostics.
 
 ## Building / contributing
 

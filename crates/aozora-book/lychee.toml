@@ -1,17 +1,25 @@
 # lychee configuration for the aozora-book handbook.
 #
-# Used by:
-#   - `just book-linkcheck`              (host-side via Docker book service)
-#   - `.github/workflows/ci.yml` `book` job (Docker book stage on the runner)
+# ONE config, TWO modes:
 #
-# Two design goals:
+#   - GATE (deterministic, blocking): `just book-linkcheck` and the
+#     `book` job in `.github/workflows/ci.yml` run lychee with
+#     `--offline`. Only INTERNAL links (relative `.html` cross-references
+#     + local assets) are checked — no network probe ever runs, so the
+#     gate cannot flake. This is the merge-blocking check.
+#   - AUDIT (informational, non-blocking): `just book-linkcheck-external`
+#     and the weekly `.github/workflows/link-audit.yml` run lychee WITHOUT
+#     `--offline`, so external URLs are probed too. A failure opens a
+#     tracking issue rather than blocking a PR.
 #
-#   1. Be tight enough to catch real link rot (Hyperscan docs 404 etc.).
-#   2. Be loose enough to absorb transient network glitches that only
-#      happen on the GitHub Actions runner (random connection drops on
-#      pyo3.rs etc.). A single transient failure must NOT fail the gate
-#      — that is the smell of CI-as-discovery, the opposite of how the
-#      pipeline should work.
+# Why split: external link checking is inherently non-deterministic (host
+# outages, rate limits, UA gating). Retries / cache / accept-codes /
+# excludes below soften that for the AUDIT, but no amount of softening
+# makes a third-party host's uptime a sane PR gate. The keys below
+# (retries, accept, exclude) therefore only matter in AUDIT mode; under
+# `--offline` they are inert. The remaining design goal applies to AUDIT:
+# be loose enough that one transient network glitch does not turn the
+# audit into noise.
 
 # --- output ------------------------------------------------------------
 no_progress = true

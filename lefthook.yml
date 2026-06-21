@@ -147,7 +147,7 @@ pre-push:
         re-baseline with `just audit-gate-update` and commit corpus/baseline.json.
     # Mirror every CI job that's reachable from inside the dev image
     # (lint / build / test / prop / drift-gate / conformance /
-    # smoke-ffi / deny / audit / udeps / coverage / book-build /
+    # smoke-ffi / deny / audit / shear / coverage / book-build /
     # playground-typecheck / playground-test). The three CI-only jobs
     # that need extra runtime (pandoc-smoke / wasm-build /
     # python-wheel) stay unreachable here — the dev image

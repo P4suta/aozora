@@ -21,16 +21,15 @@ workspace = true
 aozora          = { workspace = true }
 aozora-corpus   = { workspace = true }
 aozora-encoding = { workspace = true }
-aozora-syntax   = { workspace = true }
-aozora-pipeline = { workspace = true }
-aozora-scan     = { workspace = true }
-memchr          = { workspace = true }
 rayon           = { workspace = true }
-zstd            = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 dhat      = { workspace = true }
+aozora-pipeline = { workspace = true }
+aozora-scan = { workspace = true }
+aozora-syntax = { workspace = true }
+memchr = { workspace = true }
 
 [features]
 default = []

@@ -1,6 +1,6 @@
 # Crate map
 
-aozora is a 21-crate workspace. The split exists for three reasons:
+aozora is a 22-crate workspace. The split exists for three reasons:
 narrow each crate's compile surface (faster `cargo check`), pin
 dependency boundaries (cycles are forbidden by the layout), and let
 each binding (CLI, WASM, FFI, Python) compose only the layers it
@@ -38,6 +38,7 @@ flowchart TD
       ffi
       wasm
       py
+      extism
     end
     subgraph dev
       bench
@@ -62,6 +63,7 @@ flowchart TD
     aozora_facade --> ffi
     aozora_facade --> wasm
     aozora_facade --> py
+    aozora_facade --> extism
     aozora_facade --> bench
     pipeline --> cst
     cst --> query
@@ -87,13 +89,13 @@ flowchart TD
 | `aozora-veb` | `no_std` Eytzinger-layout sorted-set lookup. Cache-friendly binary search for sub-256-entry registries. |
 | `aozora-syntax` | AST node types — `Node<'src>`, `Container<'src>`, `Bouten<'src>`, `Ruby<'src>`, …. Borrows from the bumpalo arena. |
 | `aozora-encoding` | Shift_JIS decoding, JIS X 0213 patch, 外字 PHF resolver, accent decomposition. |
-| `aozora-scan` | SIMD-friendly multi-pattern byte scanner (Phase 1's trigger scan). One of three crates that locally relaxes `unsafe_code` — for aligned-load SIMD intrinsics. |
+| `aozora-scan` | SIMD-friendly multi-pattern byte scanner (the tokenize stage's trigger scan). One of three crates that locally relaxes `unsafe_code` — for aligned-load SIMD intrinsics. |
 
 ### Parser
 
 | Crate | Role |
 |---|---|
-| `aozora-pipeline` | Four-phase lexer (sanitize → events → pair → classify) plus the `lex` orchestrator that fuses normalize + registry + diagnostics into a single output walk. |
+| `aozora-pipeline` | Lexer (sanitize → tokenize → pair → classify) plus the `lex` orchestrator that fuses normalize + registry + diagnostics into a single output walk. |
 | `aozora-render` | HTML and canonical-serialisation walkers. Single O(n) tree pass each; no allocation outside the output buffer. |
 
 ### Editor-grade surface
@@ -107,35 +109,36 @@ flowchart TD
 
 | Crate | Role |
 |---|---|
-| `aozora-pandoc` | Pandoc AST projection — turns an `Tree` into `pandoc_ast::Pandoc`, unlocking 50+ output formats via Pandoc's writer matrix. |
+| `aozora-pandoc` | Pandoc AST projection — turns a `Tree` into `pandoc_ast::Pandoc`, unlocking 50+ output formats via Pandoc's writer matrix. |
 
 ### Facade
 
 | Crate | Role |
 |---|---|
-| `aozora` | Public facade. `Document::parse() -> Tree<'_>`, `tree.to_html()`, `tree.serialize()`, `tree.diagnostics()`. The single import for library consumers. |
+| `aozora` | Public facade. `Document::parse() -> Tree<'_>`, `tree.to_html()`, `tree.to_source()`, `tree.diagnostics()`. The single import for library consumers. |
 
 ### Bindings
 
 | Crate | Role |
 |---|---|
-| `aozora-cli` | The `aozora` binary (`check` / `fmt` / `schema` / `kinds` / `explain` / `pandoc`). |
+| `aozora-cli` | The `aozora` binary (`check` / `fmt` / `render` / `inspect` / `kinds` / `schema` / `explain` / `pandoc` / `completions`). |
 | `aozora-ffi` | C ABI driver. Opaque handles, JSON-encoded structured data. Locally relaxes `unsafe_code`; every block carries a `// SAFETY:` comment. |
 | `aozora-wasm` | `wasm32-unknown-unknown` target with `wasm-bindgen` exports. |
 | `aozora-py` | PyO3 binding shipped via `maturin`. |
+| `aozora-extism` | Extism (WASM) plugin driver — one portable `aozora.wasm` consumed by polyglot host SDKs (Go / Java / PHP / Ruby / …). The breadth strategy for new languages (ADR-0006). |
 
 ### Development-only
 
 | Crate | Role |
 |---|---|
 | `aozora-bench` | Criterion + corpus-driven probes. Source of the PGO training data. |
-| `aozora-conformance` | WPT-style fixture runner; pins golden HTML / serialise / diagnostics / wire output across 23 fixtures. |
+| `aozora-conformance` | WPT-style fixture runner; pins golden HTML / serialize / diagnostics / JSON output across 60 fixtures. |
 | `aozora-corpus` | Corpus source abstraction (zstd-archived, blake3-pinned). Dev-only. |
 | `aozora-proptest` | Shared proptest strategies (`aozora_fragment`, `pathological_aozora`, `unicode_adversarial`, `xss_payload`). Dev-only. |
 | `aozora-trace` | DWARF symbolicator + samply gecko-trace loader. Dev-only. |
 | `aozora-xtask` | Host-side dev tooling (samply wrapper, trace analysis, corpus pack/unpack, schema dumps). Not on the `just build` path. |
 
-## Why 21 crates?
+## Why 22 crates?
 
 Three concrete wins from the split.
 
@@ -173,10 +176,10 @@ A few things stay co-located despite plausible split points:
 - **HTML render and canonical serialise** in `aozora-render`. Both
   are tree walkers; sharing the visitor helper between them keeps
   the implementation small.
-- **Phase 0 sanitize sub-passes** in `aozora-pipeline`. Each sub-pass
+- **Sanitize-stage sub-passes** in `aozora-pipeline`. Each sub-pass
   is < 100 LOC and operates on the same `&str` slice; pulling them
   out would create a 5-crate ecosystem for a transformation that's
-  conceptually one phase.
+  conceptually one stage.
 - **Trigger-byte enum and pair-kind enum** in `aozora-spec`. They're
   used by both `aozora-scan` (which produces them) and
   `aozora-pipeline` (which consumes them); putting them in `spec`

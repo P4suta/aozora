@@ -2,7 +2,7 @@
 
 aozora's tier-A acceptance gate is a **corpus sweep**: every Aozora
 Bunko work parses without panicking, and the
-`parse ∘ serialize ∘ parse` round-trip is stable. The corpus has
+`parse ∘ to_source ∘ parse` round-trip is stable. The corpus has
 ~17 000 works in active rotation; sweeping the lot takes ~90 s on a
 modern x86_64 desktop.
 
@@ -45,7 +45,7 @@ every `.txt` file under `$AOZORA_CORPUS_ROOT`, parses it, verifies:
 
 - No panic.
 - `tree.diagnostics()` count is within an expected envelope.
-- `parse(serialize(parse(source))) == parse(source)` (round-trip
+- `parse(to_source(parse(source))) == parse(source)` (round-trip
   property).
 - Render emits valid UTF-8 HTML (no broken byte sequences).
 
@@ -110,8 +110,8 @@ benchmark" a real, repeatable thing.
 | Probe | What |
 |---|---|
 | `throughput_by_class` | Per-band MB/s for `lex`. Splits the corpus by document size (small / medium / large / huge). |
-| `phase_breakdown` | Per-phase ms per doc. |
-| `latency_histogram` | Log-bucketed latency distribution per phase. |
+| `phase_breakdown` | Per-stage ms per doc. |
+| `latency_histogram` | Log-bucketed latency distribution per stage. |
 | `diagnostic_distribution` | What fraction of docs emit diagnostics? Histogram by diag count. |
 | `allocator_pressure` | Arena bytes / source byte ratio + intern dedup ratio. |
 | `render_hot_path` | Per-band render MB/s. |

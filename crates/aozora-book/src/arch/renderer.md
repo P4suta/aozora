@@ -70,7 +70,7 @@ It exists for three reasons:
 
 ### Why a separate walker, not "render with a different visitor"?
 
-The HTML and canonical-serialise outputs differ on every node type:
+The HTML and canonical-source outputs differ on every node type:
 
 - HTML wraps `Ruby { target, reading }` in `<ruby>X<rt>Y</rt></ruby>`;
   serialise emits `｜X《Y》` (or auto-detect form).
@@ -90,7 +90,7 @@ prevents.
 
 Both walkers follow the same shape:
 
-```rust
+```rust,ignore
 pub fn render_to_string(tree: &Tree<'_>) -> String {
     let mut buf = String::with_capacity(tree.estimated_html_size());
     walk(tree, &mut buf);
