@@ -14,20 +14,18 @@ fn aozora_lsp() -> Command {
 }
 
 #[test]
-fn version_flag_prints_pinned_rev_and_exits_zero() {
+fn version_flag_prints_version_and_exits_zero() {
     let out = aozora_lsp()
         .arg("--version")
         .output()
         .expect("spawn --version");
     assert!(out.status.success(), "exit: {:?}", out.status);
     let stdout = String::from_utf8(out.stdout).expect("utf8");
+    // In the monorepo the crate version *is* the parser version, so
+    // `--version` reports it plainly (e.g. `aozora-lsp 0.4.1`).
     assert!(
         stdout.contains(env!("CARGO_PKG_VERSION")),
         "version output should carry the crate version: {stdout:?}",
-    );
-    assert!(
-        stdout.contains("aozora "),
-        "version output should name the pinned parser: {stdout:?}",
     );
 }
 
