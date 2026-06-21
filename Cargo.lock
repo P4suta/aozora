@@ -252,6 +252,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "aozora-fmt"
+version = "0.4.1"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "anyhow",
+ "aozora",
+ "clap",
+ "proptest",
+ "serde",
+ "serde_json",
+ "similar",
+ "walkdir",
+]
+
+[[package]]
 name = "aozora-pandoc"
 version = "0.4.1"
 dependencies = [

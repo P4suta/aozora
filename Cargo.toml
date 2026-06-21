@@ -23,6 +23,7 @@ members = [
     "crates/aozora-pandoc",
     "crates/aozora-cst",
     "crates/aozora-query",
+    "crates/aozora-fmt",
 ]
 # `aozora-book` is the mdbook source tree and `aozora-go` is a standalone
 # Go module (host SDK) — neither has a Cargo manifest. Listed in `exclude`
@@ -217,8 +218,14 @@ encoding_rs = "0.8.35"
 # Compile-time hash maps (gaiji UCS lookup table, kaeriten/bouten slugs)
 phf = { version = "0.13", features = ["macros"] }
 
-# Filesystem walking — used by aozora-corpus to iterate test corpora
+# Filesystem walking — used by aozora-corpus to iterate test corpora and by
+# aozora-fmt to recurse directories
 walkdir = "2.5"
+
+# aozora-fmt: coloured unified diff for `--diff`, TTY-aware stdout
+similar  = { version = "2.7", default-features = false, features = ["text"] }
+anstream = "1.0"
+anstyle  = "1.0"
 
 # Lossless syntax tree backbone for `aozora-cst` (Phase N1).
 # rowan over cstree: 86 reverse deps vs ~3, maintained by the

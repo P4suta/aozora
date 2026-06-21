@@ -1,0 +1,37 @@
+[package]
+name         = "aozora-fmt"
+description  = "Idempotent formatter for aozora-flavored-markdown"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+keywords.workspace     = true
+categories.workspace   = true
+readme       = "README.md"
+
+[[bin]]
+name = "aozora-fmt"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+aozora     = { workspace = true }
+clap       = { workspace = true }
+anyhow     = { workspace = true }
+similar    = { workspace = true }   # unified diff for --diff
+walkdir    = { workspace = true }   # directory recursion
+anstream   = { workspace = true }   # TTY-aware stdout for coloured diffs
+anstyle    = { workspace = true }   # diff colour styling
+serde      = { workspace = true }   # --json report
+serde_json = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true
