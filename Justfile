@@ -909,11 +909,12 @@ clippy:
     {{_dev}} cargo clippy --workspace --exclude aozora-bench --lib --bins --tests --all-features -- -D warnings
 
 # Strict variant: full `--all-targets` (lib + bins + tests + examples
-# + benches), and the bench crate is no longer excluded. Used by
-# lefthook pre-commit so the bench / example targets that the CI
-# `clippy` recipe skips still get a lint pass before the commit
-# lands. Slower per-commit, but the matrix-split CI lint job is
-# correspondingly leaner.
+# + benches), and the bench crate is no longer excluded. This is the
+# AUTHORITATIVE lint surface — it matches GitHub's `lint (clippy-strict)`
+# cell exactly and is run by the pre-push gate (`ci-parallel`), so a
+# doc_markdown / missing_docs slip in a bench or example target is
+# caught locally before the push, not by CI. The per-commit hook stays
+# on the lighter `clippy` (no bench dep tree) for fast feedback.
 clippy-strict:
     {{_dev}} cargo clippy --workspace --all-targets --all-features -- -D warnings
 
@@ -929,8 +930,9 @@ clippy-wasm:
 # Thorough local lint — the --all-targets clippy surface (bench /
 # example targets included) plus fmt / typos / strict-code / doc. Run
 # before cutting a release or after touching a bench / example target.
-# The per-commit hook runs only the lighter `clippy`; CI's
-# `lint (clippy-strict)` cell is the authoritative --all-targets gate.
+# The per-commit hook runs only the lighter `clippy`; the pre-push gate
+# (`ci-parallel`) runs `clippy-strict` + `clippy-wasm`, matching CI's
+# authoritative --all-targets + wasm32 lint cells.
 lint-full: fmt-check clippy-strict typos strict-code doc
 
 # Typo check
@@ -1275,8 +1277,10 @@ ci:
 
     # Foreground cargo chain in the same cheap-to-expensive order
     # that the original sequential `ci` used, so an early failure
-    # still short-circuits before the heavy gates.
-    just lint
+    # still short-circuits before the heavy gates. `lint-full` (not
+    # `lint`) so the bench / example targets get the authoritative
+    # `clippy-strict` pass, matching CI and the `ci-parallel` gate.
+    just lint-full
     just clippy-wasm
     just build
     just drift-gate
@@ -1377,8 +1381,16 @@ ci-parallel:
     launch playground-ci just playground-ci
 
     # Foreground cargo chain — serial (shared build lock), fail-fast.
+    # Lint runs the AUTHORITATIVE surface, not the lighter per-commit
+    # `clippy`: `clippy-strict` is `--all-targets` (examples + benches,
+    # aozora-bench included) and `clippy-wasm` lints the wasm32-only
+    # binding modules — exactly the two cells (`lint (clippy-strict)` +
+    # `wasm-build`'s clippy step) that GitHub runs. Keeping them here
+    # means a doc_markdown / missing_docs slip in a bench example or a
+    # wasm32 cfg module is caught BEFORE the push, not by CI. CI is the
+    # insurance, the pre-push gate is the guarantee.
     fg_failed=""
-    for gate in clippy check drift-gate conformance coverage prop; do
+    for gate in clippy-strict clippy-wasm check drift-gate conformance coverage prop; do
         echo ":: [fg] just $gate"
         if ! just "$gate"; then fg_failed="$gate"; break; fi
     done
@@ -1391,7 +1403,7 @@ ci-parallel:
         else
             echo ":: prop-deep skipped via SKIP_TAGS=deep"
         fi
-        for gate in shear test-doc book-test extism-build doc corpus-sweep; do
+        for gate in shear test-doc test-doc-all book-test extism-build doc corpus-sweep; do
             echo ":: [fg] just $gate"
             if ! just "$gate"; then fg_failed="$gate"; break; fi
         done
