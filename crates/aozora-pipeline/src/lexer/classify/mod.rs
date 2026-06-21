@@ -3981,6 +3981,138 @@ mod tests {
         assert!(gaiji.standalone);
     }
 
+    /// A composed-glyph description that itself carries a `、`
+    /// (`…「面から一、二画目をとったもの」`) must not be cut at that inner comma.
+    /// The right-to-left mencode scan keeps it in the description and pins the
+    /// trailing page-line-only tail as the mencode.
+    #[test]
+    fn standalone_gaiji_composed_with_comma_in_description() {
+        run!(
+            out,
+            "已に字［＃「圖」の「回」に代えて「面から一、二画目をとったもの」、116-5］"
+        );
+        let gaiji = out
+            .spans
+            .iter()
+            .find_map(|s| match aozora_node(s) {
+                Some(Node::Gaiji(g)) => Some(g),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
+        assert_eq!(
+            gaiji.description,
+            "「圖」の「回」に代えて「面から一、二画目をとったもの」"
+        );
+        assert_eq!(gaiji.mencode, Some("116-5"));
+        assert!(gaiji.standalone);
+    }
+
+    /// The 正字 form wraps the whole composed description in an outer `「…」`
+    /// (`「…）、「柿」の正字」、mencode`). The outer wrapper must survive the
+    /// round-trip (the recogniser keeps it verbatim instead of stripping it via
+    /// the quoted path), and the JIS men-ku-ten still resolves.
+    #[test]
+    fn standalone_gaiji_seiji_outer_wrapped_resolves() {
+        use aozora_encoding::gaiji::Resolved;
+        run!(
+            out,
+            "南方の字［＃「木＋（「第－竹」の「コ」に代えて「丿」）、「柿」の正字」、第3水準1-85-57］"
+        );
+        let gaiji = out
+            .spans
+            .iter()
+            .find_map(|s| match aozora_node(s) {
+                Some(Node::Gaiji(g)) => Some(g),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a 正字 Gaiji span, not Unknown"));
+        // Outer `「…」` wrapper kept verbatim so serialize ∘ parse is a fixed point.
+        assert_eq!(
+            gaiji.description,
+            "「木＋（「第－竹」の「コ」に代えて「丿」）、「柿」の正字」"
+        );
+        assert_eq!(gaiji.mencode, Some("第3水準1-85-57"));
+        assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{67F9}')));
+        assert!(gaiji.standalone);
+    }
+
+    /// The `※`-refmark 正字 form with a `U+XXXX` codepoint and a trailing
+    /// 底本ページ-行 (`、U+59CA、648-5`): the page-line is stripped for resolution
+    /// (→ U+59CA) while the whole mencode is kept verbatim.
+    #[test]
+    fn gaiji_seiji_outer_wrapped_u_plus_with_page_line() {
+        use aozora_encoding::gaiji::Resolved;
+        run!(
+            out,
+            "※［＃「女＋（「第－竹」の「コ」に代えて「ノ」）、「姉」の正字」、U+59CA、648-5］"
+        );
+        let gaiji = out
+            .spans
+            .iter()
+            .find_map(|s| match aozora_node(s) {
+                Some(Node::Gaiji(g)) => Some(g),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a 正字 Gaiji span, not Unknown"));
+        assert_eq!(
+            gaiji.description,
+            "「女＋（「第－竹」の「コ」に代えて「ノ」）、「姉」の正字」"
+        );
+        assert_eq!(gaiji.mencode, Some("U+59CA、648-5"));
+        assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{59CA}')));
+        assert!(!gaiji.standalone, "leading `※` → not standalone");
+    }
+
+    /// A descriptive (non-JIS) token before the page-line (`屋号を示す記号、N-N`)
+    /// is part of the glyph identity, not the mencode. The right-to-left scan
+    /// stops at the first non-shaped token, keeping `屋号を示す記号` in the
+    /// description and the page-line as the mencode.
+    #[test]
+    fn standalone_gaiji_descriptive_token_before_page_line() {
+        run!(
+            out,
+            "屋号字［＃「仝」の「工」に代えて「小」、屋号を示す記号、260-16］"
+        );
+        let gaiji = out
+            .spans
+            .iter()
+            .find_map(|s| match aozora_node(s) {
+                Some(Node::Gaiji(g)) => Some(g),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
+        assert_eq!(
+            gaiji.description,
+            "「仝」の「工」に代えて「小」、屋号を示す記号"
+        );
+        assert_eq!(gaiji.mencode, Some("260-16"));
+        assert!(gaiji.standalone);
+    }
+
+    /// A `読みは「…」` clause sits inside the description, before the men-ku-ten.
+    /// Splitting on the first `、` would have mistaken it for the mencode.
+    #[test]
+    fn standalone_gaiji_reading_clause_before_mencode() {
+        run!(
+            out,
+            "読み字［＃「溥」の「さんずい」に代えて「かねへん」、読みは「はく」、第3水準1-93-32］"
+        );
+        let gaiji = out
+            .spans
+            .iter()
+            .find_map(|s| match aozora_node(s) {
+                Some(Node::Gaiji(g)) => Some(g),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
+        assert_eq!(
+            gaiji.description,
+            "「溥」の「さんずい」に代えて「かねへん」、読みは「はく」"
+        );
+        assert_eq!(gaiji.mencode, Some("第3水準1-93-32"));
+        assert!(gaiji.standalone);
+    }
+
     #[test]
     fn kaeriten_ichi_recognized() {
         run!(out, "之［＃一］");
