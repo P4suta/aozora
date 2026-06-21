@@ -10,6 +10,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **api**: ⚠ BREAKING (source-only) — complete the `wire` → `json` migration by
+  dropping the `*Wire` type suffix. `aozora::json::{SpanWire, DiagnosticWire,
+  NodeWire, PairWire, ContainerPairWire, OffsetWire, SlugWire, ByteSpanWire,
+  GaijiResolutionWire}` become `json::{Span, Diagnostic, Node, Pair,
+  ContainerPair, Offset, Slug, ByteSpan, GaijiResolution}` (qualify by module —
+  idiomatic Rust). The tag accessors `as_wire_tag` / `as_wire_str` (on
+  `NodeKind` / `ContainerKind` / `PairKind` / `SlugFamily` / `Severity` /
+  `DiagnosticSource`) become `as_json_tag` / `as_json_str`. Generated bindings
+  follow: Go `wire_gen.go` → `json_gen.go` (top-level `AozoraWire` →
+  `AozoraJSON`); TypeScript `WireEnvelope<T>` → `JsonEnvelope<T>`. **The emitted
+  JSON is unchanged** — field names, `kind` / `severity` tag strings, and
+  `schemaVersion` (= 1) are byte-identical, so JSON consumers are unaffected;
+  only source that *names* these symbols needs updating. Upgrading from 0.4.x
+  also picks up the earlier feature/module rename: Cargo feature `["wire"]` →
+  `["json"]` and module path `aozora::wire::` → `aozora::json::`. This is a 0.x
+  breaking change, so the next release is **0.5.0** (never 0.4.2). See #176.
 - **notation**: ⚠ BREAKING — 二重山括弧 is now the `≪…≫` (U+226A/U+226B) input
   encoding, rendered as `《…》` (U+300A/U+300B) — correcting a model that was
   inverted and misnamed. The node / wire kind `DoubleRuby` / `doubleRuby` is
@@ -17,6 +33,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `aozora-angle-quote`; the pandoc `Span` class `double-ruby` → `angle-quote`.
   A literal `《《…》》` in source is now a `nested-ruby` diagnostic with plain
   recovery. See ADR-0011.
+
+
+### Fixed
+
+- **go**: The Go host SDK's `Open` called a non-existent `schemaVersion`
+  plugin export and failed with `unknown function: schemaVersion` on every
+  use; the Extism plugin exports `schema_version` (snake_case, matching every
+  other export). Pre-existing — it survived because no gate exercised the Go
+  SDK at runtime (CodeQL only compiles it); now covered by `smoke-go`.
 
 
 ### Build
@@ -27,6 +52,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### CI
 
+- **ci**: Gate the Go host SDK at runtime — add `smoke-go` (gofmt + go vet +
+  go test against the freshly-built wasm) to `just ci` and the pre-push
+  `ci-parallel`, alongside `smoke-ffi`. Previously CodeQL only compiled it.
 - **release**: Publish the whole workspace to crates.io in topological order
 - Harden release workflow (Node24 attest, pin windows-2025, cargo net retry) (#71) (#71)
 

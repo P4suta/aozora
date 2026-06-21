@@ -1,4 +1,4 @@
-//! Pin the cross-driver wire format. Every driver (`aozora-ffi`,
+//! Pin the cross-driver JSON format. Every driver (`aozora-ffi`,
 //! `aozora-wasm`, `aozora-py`) calls into [`aozora::json`] for JSON
 //! projection; these tests fix that projection's byte-shape so future
 //! drift is caught before drivers diverge.
@@ -19,7 +19,7 @@ fn empty_parse_serialises_to_canonical_envelope() {
     assert_eq!(json::pairs(&tree), canonical);
 }
 
-/// Schema version is one. Bumped only when wire shape changes.
+/// Schema version is one. Bumped only when JSON shape changes.
 #[test]
 fn schema_version_is_pinned_to_one() {
     assert_eq!(json::SCHEMA_VERSION, 1);
@@ -45,7 +45,7 @@ fn pua_collision_diagnostic_byte_shape() {
 
 /// Severity / source axes are present and correctly classified.
 #[test]
-fn diagnostic_wire_has_severity_and_source_axes() {
+fn diagnostic_json_has_severity_and_source_axes() {
     let doc = Document::new("a\u{E001}b");
     let tree = doc.parse();
     let json = json::diagnostics(tree.diagnostics());
@@ -101,7 +101,7 @@ fn all_three_channels_emit_valid_json() {
         json::pairs(&tree),
     ] {
         let value: serde_json::Value =
-            serde_json::from_str(&json).expect("wire output must be valid JSON");
+            serde_json::from_str(&json).expect("JSON output must be valid JSON");
         assert!(value.is_object(), "envelope must be JSON object");
         assert_eq!(
             value

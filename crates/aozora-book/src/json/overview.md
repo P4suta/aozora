@@ -1,6 +1,6 @@
-# Wire format
+# JSON output
 
-aozora ships a stable JSON wire format used by every binding —
+aozora ships a stable JSON output format used by every binding —
 `aozora-ffi` (C ABI), `aozora-wasm` (npm), `aozora-py` (PyO3) — and by
 the [`aozora inspect <kind>`](../ref/cli.md#aozora-inspect) CLI subcommand, to
 project the parser's output across language boundaries.
@@ -10,13 +10,13 @@ call into it and receive bit-identical output.
 
 ## Envelope shape
 
-Every wire JSON has the form
+Every JSON envelope has the form
 
 ```json
 { "schemaVersion": 1, "data": [ /* … entries … */ ] }
 ```
 
-where `schema_version` is the major version of the wire contract and
+where `schema_version` is the major version of the JSON contract and
 `data` is the per-endpoint payload array.
 
 The four endpoint envelopes are:
@@ -41,23 +41,23 @@ guarantees with later schemas.
 
 [`Diagnostic`](https://docs.rs/aozora/latest/aozora/enum.Diagnostic.html)
 and [`Node`](https://docs.rs/aozora/latest/aozora/syntax/borrowed/enum.Node.html)
-are `#[non_exhaustive]` — minor releases can add variants. The wire
+are `#[non_exhaustive]` — minor releases can add variants. The JSON
 format protects callers in two ways:
 
 1. Unrecognised variants emit `kind: "unknown"` rather than failing to
    serialise, so an old client never sees parse-time data loss.
-2. `SCHEMA_VERSION` bumps when new variants ship in the wire surface,
+2. `SCHEMA_VERSION` bumps when new variants ship in the JSON surface,
    giving version-branching clients a chance to react before
    `"unknown"` shows up in production traffic.
 
 ## See also
 
 - [Diagnostics catalogue](../notation/diagnostics.md) — the source-code
-  identifiers each `DiagnosticWire` entry's `kind` field carries.
+  identifiers each `Diagnostic` entry's `kind` field carries.
 - [Architecture → Error recovery](../arch/error-recovery.md) — what
   the parser actually *does* after each diagnostic fires.
 - [Node reference](../nodes/index.md) — per-`NodeKind` documentation
-  for every wire `kind` tag emitted by `nodes`.
+  for every JSON `kind` tag emitted by `nodes`.
 - [`aozora::json` rustdoc](https://docs.rs/aozora/latest/aozora/json/index.html)
   — Rust API surface (envelope structs, the `schema_*` introspection
   helpers behind the `schema` Cargo feature).

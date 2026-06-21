@@ -487,7 +487,7 @@ impl Node<'_> {
     ///
     /// Driver wire formats (`aozora-ffi` / `aozora-wasm` / `aozora-py`)
     /// project to the camelCase string via
-    /// [`NodeKind::as_wire_tag`](crate::NodeKind::as_wire_tag);
+    /// [`NodeKind::as_json_tag`](crate::NodeKind::as_json_tag);
     /// internal consumers can `match` on the typed enum directly.
     #[must_use]
     pub const fn kind(&self) -> crate::NodeKind {

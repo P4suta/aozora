@@ -10,7 +10,7 @@ WASM / Python / C-ABI front doors: every binding funnels through the same
 
 This is one spoke of aozora's polyglot binding strategy
 ([ADR-0006](../../docs/adr/0006-polyglot-bindings-via-extism.md)): one
-portable wasm artifact + types generated from the wire JSON Schema, rather
+portable wasm artifact + types generated from the JSON Schema, rather
 than a hand-written native binding per language.
 
 ## Usage
@@ -44,7 +44,7 @@ func main() {
 ```
 
 `Parser` also exposes `Serialize`, `Diagnostics`, `Pairs`, and
-`ContainerPairs`, each returning the matching wire envelope. A `Parser` is
+`ContainerPairs`, each returning the matching JSON envelope. A `Parser` is
 not safe for concurrent use — open one per goroutine.
 
 ## Layout
@@ -52,7 +52,7 @@ not safe for concurrent use — open one per goroutine.
 | File | Source |
 |---|---|
 | `aozora.go` | Hand-written transport wrapper (Extism / wazero). |
-| `wire_gen.go` | **Generated** wire types — `just types-langs` (quicktype from the wire JSON Schema). Do not edit. |
+| `json_gen.go` | **Generated** JSON types — `just types-langs` (quicktype from the JSON Schema). Do not edit. |
 | `aozora.wasm` | The plugin artifact — `just extism-build` / the release workflow drops it in (git-ignored locally). |
 
 ## Development

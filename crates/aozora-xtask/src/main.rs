@@ -101,7 +101,7 @@ enum Cmd {
     Ci(CiArgs),
     /// JSON Schema artefact dump / drift gate for the `aozora::json`
     /// envelopes. Generates schema files under
-    /// `crates/aozora-book/src/wire/schema-*.json` and CI-checks
+    /// `crates/aozora-book/src/json/schema-*.json` and CI-checks
     /// that they stay in sync with the live wire shape.
     Schema(SchemaArgs),
     /// TypeScript types artefact dump / drift gate. Generates
@@ -127,7 +127,7 @@ struct SchemaArgs {
 #[derive(Subcommand)]
 enum SchemaOp {
     /// Generate the four wire-format schemas and write them to
-    /// `crates/aozora-book/src/wire/schema-*.json`. Overwrites
+    /// `crates/aozora-book/src/json/schema-*.json`. Overwrites
     /// existing files; commit the diff.
     Dump,
     /// Compare on-disk schemas against freshly-generated ones; exit
@@ -175,7 +175,7 @@ enum TypesOp {
     /// Generate native wire types for every host-SDK language from the
     /// committed JSON Schema via `quicktype` (one generator, all
     /// languages). Writes one file per language (e.g.
-    /// `crates/aozora-go/aozora/wire_gen.go`); overwrites it, commit
+    /// `crates/aozora-go/json_gen.go`); overwrites it, commit
     /// the diff.
     Langs,
     /// Compare each on-disk per-language wire types file against fresh

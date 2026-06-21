@@ -68,7 +68,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 }
 
-func hasNodeKind(nodes []NodeWire, kind string) bool {
+func hasNodeKind(nodes []Node, kind string) bool {
 	for _, n := range nodes {
 		if n.Kind == kind {
 			return true
@@ -77,7 +77,7 @@ func hasNodeKind(nodes []NodeWire, kind string) bool {
 	return false
 }
 
-func hasDiagKind(diags []DiagnosticWire, kind string) bool {
+func hasDiagKind(diags []Diagnostic, kind string) bool {
 	for _, d := range diags {
 		if d.Kind == kind {
 			return true

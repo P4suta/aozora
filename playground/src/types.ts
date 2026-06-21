@@ -14,7 +14,7 @@ export interface NodeEntry {
   span: Span;
 }
 
-export interface WireEnvelope<T> {
+export interface JsonEnvelope<T> {
   schemaVersion: number;
   data: T[];
 }

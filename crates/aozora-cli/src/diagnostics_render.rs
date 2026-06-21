@@ -129,7 +129,7 @@ fn render_short(path: &str, diagnostics: &[aozora::Diagnostic]) -> io::Result<()
             stderr,
             "{path}:{}: {}[{}]: {diag}",
             span.start,
-            diag.severity().as_wire_str(),
+            diag.severity().as_json_str(),
             diag.code(),
         )?;
     }

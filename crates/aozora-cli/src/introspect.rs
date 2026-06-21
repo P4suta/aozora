@@ -32,13 +32,13 @@ use aozora::{
 /// `aozora schema <which>` subcommand argument.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum SchemaKind {
-    /// `WireEnvelope<DiagnosticWire>` — `diagnostics` output shape.
+    /// `JsonEnvelope<Diagnostic>` — `diagnostics` output shape.
     Diagnostics,
-    /// `WireEnvelope<NodeWire>` — `nodes` output shape.
+    /// `JsonEnvelope<Node>` — `nodes` output shape.
     Nodes,
-    /// `WireEnvelope<PairWire>` — `pairs` output shape.
+    /// `JsonEnvelope<Pair>` — `pairs` output shape.
     Pairs,
-    /// `WireEnvelope<ContainerPairWire>` — `container_pairs` output shape.
+    /// `JsonEnvelope<ContainerPair>` — `container_pairs` output shape.
     ContainerPairs,
 }
 
@@ -80,31 +80,31 @@ pub(crate) fn run_kinds(_args: &KindsArgs) -> Result<ExitCode> {
         "AST node / NodeRef projection tag",
         NodeKind::ALL
             .iter()
-            .map(|k| (k.as_wire_tag(), describe_node(*k))),
+            .map(|k| (k.as_json_tag(), describe_node(*k))),
     )?;
     write_table(
         &mut stdout,
         "PairKind",
-        "Balanced delimiter pair tag (PairWire)",
+        "Balanced delimiter pair tag (Pair)",
         PairKind::ALL
             .iter()
-            .map(|k| (k.as_wire_tag(), describe_pair(*k))),
+            .map(|k| (k.as_json_tag(), describe_pair(*k))),
     )?;
     write_table(
         &mut stdout,
         "Severity",
-        "Diagnostic severity tier (DiagnosticWire.severity)",
+        "Diagnostic severity tier (Diagnostic.severity)",
         Severity::ALL
             .iter()
-            .map(|s| (s.as_wire_str(), describe_severity(*s))),
+            .map(|s| (s.as_json_str(), describe_severity(*s))),
     )?;
     write_table(
         &mut stdout,
         "DiagnosticSource",
-        "Diagnostic origin (DiagnosticWire.source)",
+        "Diagnostic origin (Diagnostic.source)",
         DiagnosticSource::ALL
             .iter()
-            .map(|s| (s.as_wire_str(), describe_source(*s))),
+            .map(|s| (s.as_json_str(), describe_source(*s))),
     )?;
     write_table(
         &mut stdout,
@@ -330,8 +330,8 @@ fn explain_diagnostic(arg: &str) -> Option<String> {
     let mut out = format!(
         "{}\n{} · {}",
         info.code,
-        info.severity.as_wire_str(),
-        info.source.as_wire_str()
+        info.severity.as_json_str(),
+        info.source.as_json_str()
     );
     if !info.help.is_empty() {
         out.push_str("\n\n");

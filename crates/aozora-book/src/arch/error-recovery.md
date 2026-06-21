@@ -121,7 +121,7 @@ correction.
   page does not cover.
 - [Architecture → Lexer (sanitize → tokenize → pair → classify)](lexer.md) —
   which pipeline stage emits which code.
-- [Wire format → DiagnosticWire](../wire/overview.md) — the JSON
+- [JSON output → Diagnostic](../json/overview.md) — the JSON
   shape every binding (FFI, WASM, Python) carries diagnostics over.
 
 [tree]: https://docs.rs/aozora/latest/aozora/struct.Tree.html

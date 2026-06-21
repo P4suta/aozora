@@ -64,9 +64,9 @@ default = []
 # `serde_json/preserve_order` makes `serde_json::Value` keep insertion
 # order (IndexMap, not the default sorted BTreeMap). The wire functions
 # emit from structs, so their field order is already canonical; this
-# only matters for callers (and the `property_wire_round_trip` test)
+# only matters for callers (and the `property_json_round_trip` test)
 # that round-trip the envelope through `Value` and rely on byte-stable
-# key order. Pinning it to `wire` makes the byte-canonical contract
+# key order. Pinning it to `json` makes the byte-canonical contract
 # self-contained instead of silently depending on `schema` pulling in
 # schemars (which also enables `preserve_order`).
 json = ["dep:serde", "dep:serde_json", "serde_json/preserve_order"]

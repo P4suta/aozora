@@ -18,7 +18,7 @@ artifact and mechanically generated types.
 The contract is the same "text in → bytes out" waist as the C ABI: each
 export takes the Aozora source as input bytes and returns either HTML, a
 round-tripped source string, or a versioned JSON envelope. Every JSON
-path delegates to [`aozora::json`](../wire/overview.md) — the single
+path delegates to [`aozora::json`](../json/overview.md) — the single
 cross-driver authority — so the output is byte-identical to the C ABI,
 the browser WASM, and the PyO3 drivers.
 
@@ -44,7 +44,7 @@ The four `*_json` exports each emit the standard JSON envelope
 ```
 
 The per-endpoint `data` entry shapes — and the committed JSON Schema for
-each — are documented in the [Wire format](../wire/overview.md) chapter.
+each — are documented in the [JSON output](../json/overview.md) chapter.
 `to_html` and `serialize` return a bare string (no envelope), and
 `schema_version` returns just the integer rendered as text (e.g.
 `"1"`); it ignores its input, so a host calls it with an empty buffer.
@@ -128,7 +128,7 @@ html    = plugin.call("to_html", source)          // step 4
 
 env     = json_parse(plugin.call("nodes_json", source))   // step 5
 assert env.schema_version == EXPECTED_SCHEMA_VERSION
-nodes   = decode<NodeWire[]>(env.data)            // step 6
+nodes   = decode<Node[]>(env.data)            // step 6
 ```
 
 > **One plugin instance is not concurrency-safe.** A single Extism
@@ -176,7 +176,7 @@ host.
 - [Choosing a binding](choosing.md) — native vs. C ABI vs. Extism, and
   when to reach for each.
 - [Go SDK](go.md) — the reference Extism host SDK (pure-Go wazero).
-- [Wire format](../wire/overview.md) — the envelope shape, the four
+- [JSON output](../json/overview.md) — the envelope shape, the four
   endpoint payloads, and their JSON Schemas.
 - [C ABI](c.md) — the in-process alternative for embedders that ship a
   native library.

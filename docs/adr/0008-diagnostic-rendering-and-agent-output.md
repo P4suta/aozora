@@ -42,7 +42,7 @@ diagnostics and a *meaningful exit code*, not prose scraped from stderr.
      `miette::Report` with the source attached and render the graphical
      snippet + caret + label + help (`fancy`).
    - **`json`** (default when stderr is piped) — emit
-     `aozora::wire::serialize_diagnostics`, byte-identical to what the
+     `aozora::json::serialize_diagnostics`, byte-identical to what the
      FFI / WASM / PyO3 / Extism front doors produce. This is the
      machine / agent path; piping makes it the default with no flag.
    - **`short`** — one grep-able line per diagnostic,
@@ -116,7 +116,7 @@ diagnostics and a *meaningful exit code*, not prose scraped from stderr.
   fix-it — must map through Phase 0, not the raw bytes. This is a contract
   the catalogue and the renderer's source comment both record.
 - **`json` is bound to `SCHEMA_VERSION`.** The agent view rides the same
-  `aozora::wire` envelope as every binding (ADR-0006), so a schema bump
+  `aozora::json` envelope as every binding (ADR-0006), so a schema bump
   versions the CLI's machine output in lockstep with the SDKs.
 - **The catalogue is a roadmap, not just a reference.** The handbook
   specifies ~12 authoring-error diagnostics (empty ruby, nested ruby,
@@ -162,7 +162,7 @@ belongs to an opt-in higher layer (formatter / LSP).
 
 - CLI renderer: `crates/aozora-cli/src/diagnostics_render.rs`
   (the three views; `Auto` → TTY check; sanitized-source attach).
-- Wire authority (machine view): `crates/aozora/src/wire.rs`
+- Wire authority (machine view): `crates/aozora/src/json.rs`
   (`serialize_diagnostics`, `SCHEMA_VERSION`).
 - Sanitize phase (span coordinate origin):
   `crates/aozora-pipeline/src/lexer/sanitize.rs`.

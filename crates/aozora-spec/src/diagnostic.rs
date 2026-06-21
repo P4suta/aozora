@@ -153,9 +153,9 @@ impl Severity {
 
     /// Stable lowercase wire-format identifier ("error" / "warning"
     /// / "note"). The same string the driver wire format emits in
-    /// the `severity` field of `DiagnosticWire`.
+    /// the `severity` field of `Diagnostic`.
     #[must_use]
-    pub const fn as_wire_str(self) -> &'static str {
+    pub const fn as_json_str(self) -> &'static str {
         match self {
             Self::Error => "error",
             Self::Warning => "warning",
@@ -186,9 +186,9 @@ impl DiagnosticSource {
     pub const ALL: [Self; 2] = [Self::Source, Self::Internal];
 
     /// Stable lowercase wire-format identifier ("source" /
-    /// "internal"). Matches the `source` field of `DiagnosticWire`.
+    /// "internal"). Matches the `source` field of `Diagnostic`.
     #[must_use]
-    pub const fn as_wire_str(self) -> &'static str {
+    pub const fn as_json_str(self) -> &'static str {
         match self {
             Self::Source => "source",
             Self::Internal => "internal",

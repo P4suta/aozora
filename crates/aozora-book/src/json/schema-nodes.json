@@ -24,7 +24,7 @@
             "type": "string"
           },
           "span": {
-            "$ref": "#/$defs/SpanWire"
+            "$ref": "#/$defs/Span"
           }
         },
         "required": [
@@ -32,12 +32,12 @@
           "span"
         ],
         "description": "One `nodes` envelope entry — a classified node span in source coords.",
-        "title": "NodeWire"
+        "title": "Node"
       }
     }
   },
   "$defs": {
-    "SpanWire": {
+    "Span": {
       "type": "object",
       "properties": {
         "start": {

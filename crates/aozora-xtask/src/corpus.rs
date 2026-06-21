@@ -1318,7 +1318,7 @@ fn merge(
             NodeKind::ALL
                 .iter()
                 .zip(node_kinds)
-                .map(|(k, c)| (k.as_wire_tag().to_owned(), c)),
+                .map(|(k, c)| (k.as_json_tag().to_owned(), c)),
         ),
         annotation_kinds: kv_sorted(
             ANN_KIND_LABELS

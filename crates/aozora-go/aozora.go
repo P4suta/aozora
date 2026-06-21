@@ -9,7 +9,7 @@
 // Rust / WASM / Python / C-ABI front doors (all funnel through
 // `aozora::json`).
 //
-// The generated wire types live in wire_gen.go (regenerate with
+// The generated JSON types live in json_gen.go (regenerate with
 // `just types-langs`). This file is the hand-written transport wrapper.
 package aozora
 
@@ -52,7 +52,7 @@ func Open(ctx context.Context) (*Parser, error) {
 		return nil, fmt.Errorf("aozora: instantiate plugin: %w", err)
 	}
 	p := &Parser{plugin: plugin}
-	version, err := p.call("schemaVersion", "")
+	version, err := p.call("schema_version", "")
 	if err != nil {
 		_ = plugin.Close(ctx)
 		return nil, err

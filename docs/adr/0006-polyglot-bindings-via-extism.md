@@ -17,7 +17,7 @@ its own `(OS × arch)` native-build-and-publish matrix (the C ABI path
 already pays this in `release.yml`).
 
 The forces in our favour: the binding surface is already a **narrow,
-serialized waist**. Every driver funnels through `aozora::wire` (the
+serialized waist**. Every driver funnels through `aozora::json` (the
 single cross-driver authority), so the data crossing any language
 boundary is just *text in → a versioned JSON envelope out*
 (`{ "schema_version": 1, "data": [ … ] }`). That JSON is described by a
@@ -35,7 +35,7 @@ generate mechanically.
    `#[plugin_fn]` entry points (`to_html`, `serialize`,
    `diagnostics_json`, `nodes_json`, `pairs_json`,
    `container_pairs_json`, `schema_version`). Each is a thin wrapper that
-   delegates to `aozora::wire` — **no new serialization logic** — so its
+   delegates to `aozora::json` — **no new serialization logic** — so its
    output is byte-identical to the FFI / WASM / PyO3 drivers. Any
    language with an Extism host SDK (Go / Java / PHP / Ruby / … ~15)
    loads the same bytes.
@@ -48,7 +48,7 @@ generate mechanically.
 
 3. **Native bindings are retained where they already exist.**
    `aozora-py` (PyO3) and `aozora-wasm` (wasm-bindgen) stay native: they
-   are in-process, faster, already funnel through `aozora::wire`, and
+   are in-process, faster, already funnel through `aozora::json`, and
    already share `SCHEMA_VERSION`. The browser playground keeps
    wasm-bindgen unconditionally (Extism is a host-side runtime, not a
    browser one). "Formalizing" Python/Node means aligning them to the
@@ -106,13 +106,13 @@ could complement it for mobile later.
 ## References
 
 - Plan: `~/.claude/plans/python-npm-go-java-php-ruby-kind-iverson.md`
-- Single wire authority: `crates/aozora/src/wire.rs` (`SCHEMA_VERSION`,
+- Single wire authority: `crates/aozora/src/json.rs` (`SCHEMA_VERSION`,
   `serialize_*`)
 - Schema artefacts + codegen: `crates/aozora-xtask/src/schema.rs`,
-  `crates/aozora-xtask/src/types.rs`, `crates/aozora-book/src/wire/`
+  `crates/aozora-xtask/src/types.rs`, `crates/aozora-book/src/json/`
 - Guest plugin: `crates/aozora-extism/`, build via `just extism-build`
 - Type generation: `xtask types langs` (quicktype), drift-gated; the
-  combined-schema build hoists `$defs` (see `aozora::wire::envelope_schema`)
+  combined-schema build hoists `$defs` (see `aozora::json::envelope_schema`)
 - First host SDK: `crates/aozora-go/` (pure-Go wazero), `just smoke-go`
 - Distribution: `.github/workflows/publish-extism-wasm.yml` (one wasm →
   release asset)

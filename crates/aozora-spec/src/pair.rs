@@ -48,7 +48,7 @@ impl PairKind {
     /// formats. Centralised here so every driver agrees on the wire
     /// spelling without hand-maintaining a parallel match.
     #[must_use]
-    pub const fn as_wire_tag(self) -> &'static str {
+    pub const fn as_json_tag(self) -> &'static str {
         match self {
             Self::Bracket => "bracket",
             Self::Ruby => "ruby",
