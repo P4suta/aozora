@@ -19,7 +19,7 @@ the closing `</div>` of the
 `<div class="aozora-container-...">` opened by the matching
 `ContainerOpen`.
 
-## Serialize output
+## Source output
 
 Round-trips with the matching open.
 
@@ -29,8 +29,8 @@ Round-trips with the matching open.
 
 ## When emitted
 
-Phase 3 normalised-text emits a `BlockClose` PUA sentinel at the
-matching close position.
+The classify stage's normalised text emits a `BlockClose` PUA sentinel
+at the matching close position.
 
 ## Diagnostics
 

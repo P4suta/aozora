@@ -8,7 +8,7 @@ Usage: aozora <COMMAND>
 
 Commands:
   check        Run the lexer over a file and report diagnostics
-  fmt          Round-trip parse ∘ serialize and emit the canonical form
+  fmt          Round-trip parse ∘ to_source and emit the canonical form
   render       Render Aozora notation to HTML on stdout
   inspect      Emit a parsed document's JSON for one `aozora::json` envelope — `nodes` / `pairs` /
                `container-pairs` / `diagnostics` / `gaiji` — or the static `slugs` catalogue. The

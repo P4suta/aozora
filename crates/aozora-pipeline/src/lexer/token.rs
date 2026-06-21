@@ -1,9 +1,9 @@
 //! Lexer token types.
 //!
-//! Phase 1 emits a `BumpVec<'a, Token>` (arena-backed) where each
-//! token is either a plain [`Token::Text`] range (a run of source
+//! The tokenize stage emits a `BumpVec<'a, Token>` (arena-backed) where
+//! each token is either a plain [`Token::Text`] range (a run of source
 //! bytes between triggers) or a [`Token::Trigger`] carrying the
-//! specific delimiter kind that caused the break. Phase 2 consumes
+//! specific delimiter kind that caused the break. The pair stage consumes
 //! this stream and applies balanced-stack pairing to build
 //! structured events.
 //!
@@ -19,21 +19,33 @@ pub use aozora_spec::TriggerKind;
 #[non_exhaustive]
 pub enum Token {
     /// Text between triggers. `range` is a byte-offset span in the
-    /// sanitized source (Phase 0 output). May be empty if two triggers
-    /// are adjacent.
-    Text { range: Span },
+    /// sanitized source (sanitize-stage output). May be empty if two
+    /// triggers are adjacent.
+    Text {
+        /// Sanitized-source byte span of the run; may be empty.
+        range: Span,
+    },
 
     /// A delimiter character. `pos` is the start byte offset of the
     /// token in the sanitized source; `kind` carries its role. For
     /// multi-character triggers (`［＃`) the span covers
     /// all constituent characters.
-    Trigger { kind: TriggerKind, span: Span },
+    Trigger {
+        /// Which delimiter this is (`｜`, `《`, `［＃`, …).
+        kind: TriggerKind,
+        /// Sanitized-source byte span covering every constituent
+        /// character of the trigger.
+        span: Span,
+    },
 
     /// Line-feed (`\n`). Emitted as its own token rather than folded
     /// into the surrounding Text because line-structure matters for
-    /// block-level container recognition (Phase 2 pairs block-opener /
-    /// block-closer lines by position).
-    Newline { pos: u32 },
+    /// block-level container recognition (the pair stage pairs
+    /// block-opener / block-closer lines by position).
+    Newline {
+        /// Sanitized-source byte offset of the `\n`.
+        pos: u32,
+    },
 }
 
 #[cfg(test)]

@@ -68,7 +68,7 @@ construct — [double-bracket bouten](bouten.md) — not nested ruby.)
 
 ## AST shape
 
-```rust
+```rust,ignore
 pub struct Ruby<'src> {
     pub base:           NonEmpty<Content<'src>>,  // never empty
     pub reading:        NonEmpty<Content<'src>>,  // never empty
@@ -78,11 +78,11 @@ pub struct Ruby<'src> {
 
 `base` and `reading` are [`Content`] (a `Plain(&str)` fast path or a
 `Segments` run carrying nested gaiji / annotations), wrapped in
-`NonEmpty` so an empty payload is unrepresentable — Phase 3 only emits a
-`Ruby` once both sides have content (an empty reading takes the
-[empty-reading](#empty-reading) path instead). `delim_explicit` records
-whether the source used the `｜…《…》` form so the serializer re-emits the
-`｜` only when the original did.
+`NonEmpty` so an empty payload is unrepresentable — the classify stage
+only emits a `Ruby` once both sides have content (an empty reading takes
+the [empty-reading](#empty-reading) path instead). `delim_explicit`
+records whether the source used the `｜…《…》` form so `to_source`
+re-emits the `｜` only when the original did.
 
 ## Edge cases
 
@@ -102,5 +102,5 @@ whether the source used the `｜…《…》` form so the serializer re-emits th
 
 - [Bouten / bousen](bouten.md) — emphasis annotations that share the
   `「X」に…` indirection idiom.
-- [Architecture → Seven-phase lexer](../arch/lexer.md) — where ruby
-  recognition fits in the classifier pipeline.
+- [Architecture → Lexer (sanitize → tokenize → pair → classify)](../arch/lexer.md)
+  — where ruby recognition fits in the classifier pipeline.

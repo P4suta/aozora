@@ -12,6 +12,7 @@ classified construct, sorted by source position. Each carries a
 `NodeRef` tagging the sentinel kind that fired.
 
 ```rust
+# extern crate aozora;
 use aozora::{Document, NodeRef};
 
 fn main() {
@@ -32,6 +33,9 @@ fn main() {
             NodeRef::BlockClose(kind) => {
                 println!("{:>3}..{:<3} close {kind:?}", span.start, span.end);
             }
+            // `NodeRef` is `#[non_exhaustive]`: a wildcard keeps the match
+            // valid as future sentinel kinds are added.
+            _ => {}
         }
     }
 }

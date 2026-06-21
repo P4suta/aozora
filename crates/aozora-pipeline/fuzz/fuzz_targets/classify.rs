@@ -1,6 +1,6 @@
-//! Fuzz target — Phase 3 classify body-recognition on arbitrary UTF-8.
+//! Fuzz target — classify-stage body-recognition on arbitrary UTF-8.
 //!
-//! Drives the full Phase 1 → Phase 2 → Phase 3 streaming chain
+//! Drives the full streaming chain
 //! (`tokenize` → `pair` → `classify`) directly, bypassing the
 //! arena-normalize fold so the fuzzer hammers the classifier's
 //! recogniser leaves (ruby / bouten / TCY / gaiji / kaeriten /
@@ -18,8 +18,8 @@
 //!    `spans[0].start == 0`, `spans[i].end == spans[i+1].start`, and
 //!    `spans[last].end == source.len()`. When `source` is empty the
 //!    span list is empty. This is the module-level coverage invariant
-//!    Phase 4 relies on; a classify bug that drops or overlaps bytes
-//!    breaks it here before it can corrupt the normalized buffer.
+//!    the arena-normalize fold relies on; a classify bug that drops or
+//!    overlaps bytes breaks it here before it can corrupt the normalized buffer.
 //! 2. **Char-boundary spans.** Every span edge lands on a UTF-8 char
 //!    boundary of `source`, so the byte ranges are always sliceable.
 //! 3. **In-bounds diagnostics.** Every diagnostic span is non-inverted.
@@ -42,13 +42,13 @@ fuzz_target!(|data: &[u8]| {
     let Ok(src) = core::str::from_utf8(data) else {
         return;
     };
-    // Phase 3 consumes Phase 0 *sanitized* text in production, but it
-    // is a pure function of whatever `&str` it is handed — every
-    // recogniser reads `Span` offsets back out of the same `source`.
-    // Feeding it raw (un-sanitized) UTF-8 is therefore a strictly
-    // wider adversarial surface than the sanitized path: it exercises
-    // the same slice / cast / char-boundary code with positions that
-    // need not respect any Phase 0 post-condition.
+    // The classify stage consumes sanitize-stage *sanitized* text in
+    // production, but it is a pure function of whatever `&str` it is
+    // handed — every recogniser reads `Span` offsets back out of the
+    // same `source`. Feeding it raw (un-sanitized) UTF-8 is therefore a
+    // strictly wider adversarial surface than the sanitized path: it
+    // exercises the same slice / cast / char-boundary code with
+    // positions that need not respect any sanitize-stage post-condition.
     let arena = Arena::new();
     let mut alloc = BorrowedAllocator::new(&arena);
     let mut pair_stream = pair(tokenize(src));

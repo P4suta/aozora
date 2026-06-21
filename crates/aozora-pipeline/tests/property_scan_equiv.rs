@@ -1,12 +1,12 @@
-//! Cross-checks between Phase 1's trigger scan and the brute-force
+//! Cross-checks between the tokenize-stage trigger scan and the brute-force
 //! [`NaiveScanner`] reference, projected through the whole
 //! `lex` pipeline.
 //!
 //! `aozora-scan/tests/property_backend_equiv.rs` already proves that
 //! the production `scan_offsets` agrees byte-for-byte with
 //! [`NaiveScanner`] on raw source bytes. That covers a *single layer*
-//! — the scanner — and says nothing about how Phase 1's output
-//! flows through Phase 2 / Phase 3 on into the lexer's normalized
+//! — the scanner — and says nothing about how the tokenize stage's output
+//! flows through pair / classify on into the lexer's normalized
 //! buffer.
 //!
 //! The properties here close the gap by reasoning about the *whole*
@@ -19,16 +19,16 @@
 //!    length from the source; a regression that left dangling bytes
 //!    or invalidated boundaries would surface here.
 //!
-//! 2. **Phase 1 monotonicity.** The Aozora pipeline can only *consume*
+//! 2. **Tokenize-stage monotonicity.** The Aozora pipeline can only *consume*
 //!    triggers (replacing them with PUA sentinels) — it never adds
 //!    new ones. Therefore the count of triggers in the *normalized*
-//!    buffer is at most the count in the *source* (modulo Phase 0's
-//!    sanitize rewrites: BOM strip, CRLF→LF, accent decomposition).
+//!    buffer is at most the count in the *source* (modulo the sanitize
+//!    stage's rewrites: BOM strip, CRLF→LF, accent decomposition).
 //!    A regression that emitted a trigger in the normalized output
 //!    where none existed in source would shift this delta.
 //!
 //! Both properties are deliberately stated as inequalities rather than
-//! equalities. Phase 0 sanitize can drop bytes (BOM, CR) and rewrite
+//! equalities. The sanitize stage can drop bytes (BOM, CR) and rewrite
 //! sequences (`〔NFC〕` → combining), so a strict "trigger count is
 //! equal" property would have many false positives. The inequality
 //! properties remain decisive: any regression that *adds* triggers
@@ -76,13 +76,13 @@ fn assert_scan_invariants(source: &str) {
     let norm_offsets = NaiveScanner.scan_offsets(out.normalized);
     assert_offsets_are_char_boundaries("normalized", out.normalized, &norm_offsets);
 
-    // (2) Phase 1 monotonicity: the pipeline consumes (or passes
-    // through) triggers but never invents new ones. The Phase 0
-    // sanitize layer can rewrite sequences in ways that *add*
+    // (2) tokenize-stage monotonicity: the pipeline consumes (or passes
+    // through) triggers but never invents new ones. The sanitize-stage
+    // layer can rewrite sequences in ways that *add*
     // characters from the lexer's reserved trigger set in principle —
     // accent decomposition expands `〔NFC〕` into combining sequences
     // that are not themselves triggers, so this concern is theoretical
-    // — but the property catches any future Phase 0 / Phase 1 change
+    // — but the property catches any future sanitize / tokenize change
     // that accidentally synthesises trigger glyphs.
     let source_triggers = scan_count(source);
     let normalized_triggers = norm_offsets.len();
@@ -112,7 +112,7 @@ fn plain_text_satisfies_invariants() {
 #[test]
 fn explicit_ruby_satisfies_invariants() {
     // `｜青梅《おうめ》` — three triggers in source (`｜`, `《`, `》`),
-    // all consumed into PUA sentinels by Phase 3 → zero triggers in
+    // all consumed into PUA sentinels by the classify stage → zero triggers in
     // normalized. Property: 0 ≤ 3.
     assert_scan_invariants("｜青梅《おうめ》");
 }
@@ -128,11 +128,11 @@ fn paired_container_satisfies_invariants() {
 
 #[test]
 fn pua_neutralization_keeps_invariants() {
-    // Raw reserved sentinels in source — Phase 0 emits a
+    // Raw reserved sentinels in source — the sanitize stage emits a
     // SourceContainsPua diagnostic per hit and neutralizes each to
     // U+FFFD (byte-length-preserving). Neither the sentinel nor U+FFFD
     // is in the trigger set, so the scan-count inequalities are
-    // unaffected; the security rewrite is invisible to the Phase 1
+    // unaffected; the security rewrite is invisible to the tokenize-stage
     // monotonicity duality.
     assert_scan_invariants("a\u{E001}b\u{E004}c");
 }
@@ -140,7 +140,7 @@ fn pua_neutralization_keeps_invariants() {
 proptest! {
     #![proptest_config(default_config())]
 
-    /// Workhorse — the SIMD scan / phase-1 monotonicity duality must
+    /// Workhorse — the SIMD scan / tokenize-stage monotonicity duality must
     /// hold over every Aozora-shaped fragment.
     #[test]
     fn aozora_fragment_scan_invariants_hold(s in aozora_fragment(120)) {
@@ -148,7 +148,7 @@ proptest! {
     }
 
     /// Pathological — runs of unbalanced trigger glyphs (the case that
-    /// most stresses Phase 1 → Phase 2 → Phase 3 trigger-consumption
+    /// most stresses tokenize → pair → classify trigger-consumption
     /// accounting).
     #[test]
     fn pathological_input_scan_invariants_hold(s in pathological_aozora(120)) {

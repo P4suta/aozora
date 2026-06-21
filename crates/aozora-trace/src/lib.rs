@@ -12,7 +12,8 @@
 //! - [`analysis::library_distribution`] — share of samples spent in
 //!   each loaded library (binary vs libc vs vdso vs …).
 //! - [`analysis::rollup`] — categorise functions into named buckets
-//!   (Phase 1 / Phase 3 / `corpus_load` / etc.) via [`Categorizer`].
+//!   (tokenize stage / classify stage / `corpus_load` / etc.) via
+//!   [`Categorizer`].
 //! - [`analysis::matching_stacks`] — print full call stacks where
 //!   any frame matches a regex; useful for "why is X being called?".
 //! - [`analysis::folded_stacks`] — emit the folded-stack format that

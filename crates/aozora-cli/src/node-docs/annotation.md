@@ -19,7 +19,7 @@ text［＃ふりがな付きの説明］more
 The default renderer suppresses the body; downstream filters can
 match on `aozora-directive` to surface the comment.
 
-## Serialize output
+## Source output
 
 Round-trips to `［＃<raw>］`.
 
@@ -38,7 +38,7 @@ carries the raw bracket body for any further analysis.
 
 ## When emitted
 
-Phase 3 reaches `［＃...］` after no specific recogniser matched.
+The classify stage reaches `［＃...］` after no specific recogniser matched.
 `Directive` is the fallback that *always* preserves the user's
 content rather than dropping it.
 

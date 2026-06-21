@@ -18,7 +18,8 @@ bytes and see how each gaiji reference resolved.
 
 ## Solution (library)
 
-```rust
+```rust,no_run
+# extern crate aozora;
 use aozora::{Document, Node, NodeRef};
 use aozora::encoding::decode_sjis;
 

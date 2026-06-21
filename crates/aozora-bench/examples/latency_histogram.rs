@@ -111,10 +111,10 @@ fn main() {
     );
     println!();
 
-    print_one("phase 0 sanitize", &sanitize_ns);
-    print_one("phase 1 tokenize", &tokenize_ns);
-    print_one("phase 2 pair", &pair_ns);
-    print_one("phase 3 classify", &classify_ns);
+    print_one("sanitize", &sanitize_ns);
+    print_one("tokenize", &tokenize_ns);
+    print_one("pair", &pair_ns);
+    print_one("classify", &classify_ns);
     print_one("lex (total)", &full_ns);
 }
 

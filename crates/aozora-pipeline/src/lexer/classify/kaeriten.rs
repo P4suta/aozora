@@ -1,7 +1,7 @@
 //! Kaeriten (返り点) classification helpers.
 //!
 //! Ladder-family classification and the kana-prose heuristic used by
-//! the phase-3 stream's end-of-document kaeriten pairing checks
+//! the classify-stage stream's end-of-document kaeriten pairing checks
 //! (`ClassifyStream::finalize_kaeriten`).
 
 use aozora_syntax::Span;

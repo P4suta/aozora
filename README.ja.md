@@ -5,7 +5,7 @@
   <a href="https://github.com/P4suta/aozora/actions/workflows/docs.yml"><img alt="docs deploy" src="https://github.com/P4suta/aozora/actions/workflows/docs.yml/badge.svg"></a>
   <a href="https://github.com/P4suta/aozora/releases/latest"><img alt="latest release" src="https://img.shields.io/github/v/release/P4suta/aozora?display_name=tag&sort=semver"></a>
   <a href="./LICENSE-APACHE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue"></a>
-  <a href="./rust-toolchain.toml"><img alt="msrv" src="https://img.shields.io/badge/rust-1.95-orange"></a>
+  <a href="./rust-toolchain.toml"><img alt="msrv" src="https://img.shields.io/badge/rust-1.96-orange"></a>
 </p>
 
 <p align="center">
@@ -70,7 +70,7 @@ let doc = Document::new(source);
 let tree = doc.parse();
 
 let html: String = tree.to_html();
-let canonical: String = tree.serialize();
+let canonical: String = tree.to_source();
 let diagnostics = tree.diagnostics();
 
 assert_eq!(canonical, "｜青梅《おうめ》");
@@ -84,9 +84,9 @@ assert_eq!(canonical, "｜青梅《おうめ》");
 
 ```sh
 aozora check FILE.txt           # 字句解析・診断を出力
-aozora fmt --check FILE.txt     # parse ∘ serialize の往復チェック
+aozora fmt --check FILE.txt     # parse ∘ to_source の往復チェック
 aozora render FILE.txt          # HTML を標準出力へ
-aozora wire nodes FILE.txt      # 解析ノードを wire JSON で出力 (pairs / gaiji / slugs …)
+aozora inspect nodes FILE.txt   # 解析ノードを JSON で出力 (pairs / gaiji / slugs …)
 aozora check -E sjis FILE.txt   # Shift_JIS ソース (青空文庫の標準)
 ```
 
@@ -96,29 +96,29 @@ aozora check -E sjis FILE.txt   # Shift_JIS ソース (青空文庫の標準)
 
 ## クレート構成
 
-aozora は21クレートの workspace です。
+aozora は22クレートの workspace です。
 [`crates/aozora`](./crates/aozora) が公開ファサードで、ライブラリ
 利用者は通常このひとつだけインポートします。
 
 | クレート | 役割 |
 |---|---|
-| [`crates/aozora`](./crates/aozora) | 公開ファサード。`Document::parse() → AozoraTree<'_>` と `Diagnostic` 型、`SLUGS` カタログを提供。 |
+| [`crates/aozora`](./crates/aozora) | 公開ファサード。`Document::parse() → Tree<'_>` と `Diagnostic` 型、`SLUGS` カタログを提供。 |
 | [`crates/aozora-spec`](./crates/aozora-spec) | 共有型の単一の出所: `Span`, `TriggerKind`, `PairKind`, `Diagnostic`, PUA センチネル、`SLUGS` ディスパッチテーブル。内部依存なし。 |
-| [`crates/aozora-syntax`](./crates/aozora-syntax) | AST ノード型 (`AozoraNode` 借用アリーナ variants, `ContainerKind`, `BoutenKind`, `Indent`)。 |
+| [`crates/aozora-syntax`](./crates/aozora-syntax) | AST ノード型 (`Node` 借用アリーナ variants, `ContainerKind`, `BoutenKind`, `Indent`)。 |
 | [`crates/aozora-encoding`](./crates/aozora-encoding) | Shift_JIS デコード + 外字解決 (PHF テーブル、JIS X 0213 + UCS フォールバック)。 |
 | [`crates/aozora-scan`](./crates/aozora-scan) | SIMD 対応マルチパターンスキャナ (Teddy / structural-bitmap / Hoehrmann-DFA / naive フォールバック)。 |
 | [`crates/aozora-veb`](./crates/aozora-veb) | Eytzinger 配置の sorted-set 検索 (キャッシュ親和的二分探索)。 |
-| [`crates/aozora-pipeline`](./crates/aozora-pipeline) | 4-phase 字句解析 (sanitize → events → pair → classify) + `lex_into_arena` オーケストレータ。 |
+| [`crates/aozora-pipeline`](./crates/aozora-pipeline) | 字句解析 (sanitize → tokenize → pair → classify) + `lex` オーケストレータ。 |
 | [`crates/aozora-render`](./crates/aozora-render) | HTML / canonical シリアライザ ―― `html::render_to_string`, `serialize::serialize`。 |
 | [`crates/aozora-cst`](./crates/aozora-cst) | rowan ベースのロスレス具象構文木 (CST)。エディタ/フォーマッタ向け。 |
 | [`crates/aozora-query`](./crates/aozora-query) | tree-sitter 風パターン DSL (`SyntaxKind` + capture)。CST に対するクエリ。 |
-| [`crates/aozora-pandoc`](./crates/aozora-pandoc) | Pandoc AST への射影 (`AozoraTree` → `pandoc_ast::Pandoc`)。50+ 出力フォーマットに繋がる。 |
-| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` バイナリ本体: `check` / `fmt` / `render` / `wire` / `schema` / `kinds` / `explain` / `pandoc`。 |
+| [`crates/aozora-pandoc`](./crates/aozora-pandoc) | Pandoc AST への射影 (`Tree` → `pandoc_ast::Pandoc`)。50+ 出力フォーマットに繋がる。 |
+| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` バイナリ本体: `check` / `fmt` / `render` / `inspect` / `kinds` / `schema` / `explain` / `pandoc` / `completions`。 |
 | [`crates/aozora-wasm`](./crates/aozora-wasm) | `wasm32-unknown-unknown` ターゲット (`wasm-pack build --target web`)。 |
 | [`crates/aozora-ffi`](./crates/aozora-ffi) | C ABI ドライバ (オペーク・ハンドル + JSON 構造化データ)。 |
 | [`crates/aozora-py`](./crates/aozora-py) | PyO3 バインディング、`maturin` で配布。 |
 | [`crates/aozora-bench`](./crates/aozora-bench) | Criterion + コーパス駆動プローブ (PGO トレーニング元)。 |
-| [`crates/aozora-conformance`](./crates/aozora-conformance) | WPT 形式の準拠スイートランナー (HTML / serialize / diagnostics / wire を 4 軸でゴールデン比較)。 |
+| [`crates/aozora-conformance`](./crates/aozora-conformance) | WPT 形式の準拠スイートランナー (HTML / serialize / diagnostics / JSON を 60 fixtures でゴールデン比較)。 |
 | [`crates/aozora-corpus`](./crates/aozora-corpus) | コーパス抽象化 (sweep テスト用、dev 限定。`AOZORA_CORPUS_ROOT` で参照)。 |
 | [`crates/aozora-proptest`](./crates/aozora-proptest) | proptest 用ストラテジ共有 (`aozora_fragment` / `pathological_aozora` / `unicode_adversarial` ほか、 dev 限定)。 |
 | [`crates/aozora-trace`](./crates/aozora-trace) | samply トレース用 DWARF シンボリケータ。 |
@@ -141,7 +141,7 @@ just test           # cargo nextest run --workspace
 just prop           # property ベースのスイープ (block あたり 128 ケース)
 just lint           # fmt + clippy pedantic+nursery + typos + strict-code
 just deny           # cargo-deny licenses + advisories + bans
-just coverage       # cargo llvm-cov による branch coverage
+just coverage       # cargo llvm-cov による region coverage
 just ci             # CI パイプラインの完全レプリカ
 just book-build     # mdbook ハンドブックをビルド
 just book-serve     # localhost:3000 でハンドブックをライブプレビュー

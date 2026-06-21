@@ -2,7 +2,7 @@
 source: crates/aozora-cli/tests/snapshot_cli.rs
 expression: "run(&[\"fmt\", \"--help\"])"
 ---
-Round-trip parse ∘ serialize and emit the canonical form
+Round-trip parse ∘ to_source and emit the canonical form
 
 Usage: aozora fmt [OPTIONS] [FILE]
 
@@ -52,7 +52,7 @@ Options:
 
       --check
           Exit non-zero if the formatted output differs from the input (after the lexer's sanitize
-          phase: BOM strip, CRLF→LF). Mutually exclusive with `--write`
+          stage: BOM strip, CRLF→LF). Mutually exclusive with `--write`
 
       --write
           Overwrite the input file with the formatted output. Ignored when reading from stdin

@@ -203,6 +203,22 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just doc
 
+  # PR-time doctest gate. `coverage` runs `cargo llvm-cov nextest`, and
+  # nextest SKIPS doctests by design — so rustdoc / README code examples
+  # were never compiled in CI and could silently rot out of sync with the
+  # API. This job compiles + runs them: `test-doc` across the workspace
+  # plus `test-doc-all` for the umbrella crate's feature-gated examples.
+  # Mirrors the sibling aozora-tools repo's doctest job.
+  doctest:
+    needs: [changes, dev-image]
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: ./.github/actions/setup-dev-image
+      - run: just test-doc
+      - run: just test-doc-all
+
   audit:
     needs: [changes, dev-image]
     if: needs.changes.outputs.rust == 'true'
@@ -210,7 +226,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [deny, audit, udeps]
+        target: [deny, audit, shear]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
       - uses: ./.github/actions/setup-dev-image
@@ -483,13 +499,38 @@ jobs:
         run: docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook-mermaid install .
       - name: mdbook build
         run: docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local mdbook build
-      - name: lychee link verification (internal + external)
-        # Configuration (concurrency, retries, accept codes, exclude
-        # paths) lives in `crates/aozora-book/lychee.toml` — same file
-        # `just book-linkcheck` reads, so local + CI behaviour match.
+      - name: lychee internal-link verification (offline)
+        # The PR/push gate runs OFFLINE: it checks only internal links
+        # (relative `.html` cross-references + local assets), which is
+        # fully deterministic. External URLs are deliberately NOT probed
+        # here — network reachability (host outages, rate limits, UA
+        # gating) is the sole source of flaky link-check failures, and a
+        # transient external blip must never block an unrelated PR. The
+        # external surface is audited out-of-band by `link-audit.yml`
+        # (weekly cron, non-blocking, opens an issue on rot). Shared
+        # config lives in `crates/aozora-book/lychee.toml` (same file
+        # `just book-linkcheck` reads); `--offline` is the only
+        # gate-vs-audit difference.
         run: |
           docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace/crates/aozora-book aozora-book:local \
-            lychee --config lychee.toml 'book/**/*.html'
+            lychee --offline --config lychee.toml 'book/**/*.html'
+
+  # Handbook code-example gate. The `book` job above only `mdbook build`s
+  # (lean image, no cargo); this compiles + runs the handbook's plain
+  # `rust` code blocks as doctests against the live aozora rlib, so an
+  # example that drifts from the API fails the PR. Runs in the dev image
+  # (cargo + mdbook) via `just book-test`. Gated on `rust` (not `book`)
+  # because it needs the dev image — handbook-only edits can't break the
+  # examples without an API change, and pre-push `ci-parallel` runs it
+  # unconditionally as the local backstop.
+  book-test:
+    needs: [changes, dev-image]
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: ./.github/actions/setup-dev-image
+      - run: just book-test
 
   # Single required status check. Every ci.yml job feeds in; this gate
   # passes iff none of them FAILED — a job that change-aware gating
@@ -508,6 +549,7 @@ jobs:
       - lint
       - coverage
       - doc
+      - doctest
       - audit
       - drift-gate
       - conformance
@@ -519,6 +561,7 @@ jobs:
       - wasm-test
       - python-wheel
       - book
+      - book-test
     runs-on: ubuntu-latest
     steps:
       # Fail iff a job that actually RAN ended in failure/cancelled. Jobs

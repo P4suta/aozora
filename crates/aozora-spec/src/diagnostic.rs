@@ -7,8 +7,8 @@
 //! consumers can ignore them.
 //!
 //! Every variant carries a byte-range [`Span`] in the *sanitized* source
-//! — the Phase 0 output (BOM stripped, CRLF→LF, 〔…〕 accents decomposed),
-//! which is the text the later phases tokenize. To render a snippet,
+//! — the sanitize-stage output (BOM stripped, CRLF→LF, 〔…〕 accents decomposed),
+//! which is the text the later stages tokenize. To render a snippet,
 //! attach that sanitized text (e.g. via `aozora::pipeline::lexer::sanitize`)
 //! so miette's caret lands on the right character; for input with no BOM /
 //! CRLF / accent digraphs the sanitized text equals the original bytes.
@@ -64,7 +64,7 @@ pub mod codes {
     /// Close delimiter saw an empty stack or a mismatched stack top.
     pub const UNMATCHED_CLOSE: &str = "aozora::lex::unmatched_close";
 
-    /// A `〔…〕` accent digraph was decomposed during Phase 0 sanitize.
+    /// A `〔…〕` accent digraph was decomposed during the sanitize stage.
     pub const ACCENT_DECOMPOSITION_APPLIED: &str = "aozora::lex::accent_decomposition_applied";
 
     /// A 外字 (gaiji) reference resolved to neither Unicode nor JIS X 0213.
@@ -244,7 +244,7 @@ impl InternalCheckCode {
     }
 }
 
-/// Observation emitted by any lexer phase.
+/// Observation emitted by any lexer stage.
 #[derive(Debug, Clone, Error, MietteDiagnostic)]
 #[non_exhaustive]
 pub enum Diagnostic {
@@ -252,7 +252,7 @@ pub enum Diagnostic {
     /// lexer's PUA sentinel reservations
     /// ([`crate::INLINE_SENTINEL`], [`crate::BLOCK_LEAF_SENTINEL`],
     /// [`crate::BLOCK_OPEN_SENTINEL`], [`crate::BLOCK_CLOSE_SENTINEL`]).
-    /// Downstream phases will emit those same codepoints into normalized
+    /// Downstream stages will emit those same codepoints into normalized
     /// text, so a collision means the placeholder registry can no longer
     /// distinguish source-text occurrences from lexer-inserted markers.
     #[error("source contains lexer PUA sentinel codepoint {codepoint:?}")]
@@ -266,8 +266,12 @@ pub enum Diagnostic {
         )
     )]
     SourceContainsPua {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("here")]
         at: miette::SourceSpan,
+        /// The offending PUA codepoint found in the source.
         codepoint: char,
         /// Byte-range in the sanitized source for programmatic consumers
         /// that don't need miette's [`miette::SourceSpan`].
@@ -286,8 +290,12 @@ pub enum Diagnostic {
         )
     )]
     UnclosedBracket {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("opened here")]
         at: miette::SourceSpan,
+        /// Delimiter family of the unmatched opener.
         kind: PairKind,
         /// Byte-range of the unmatched *open* delimiter in the sanitized
         /// source.
@@ -306,20 +314,24 @@ pub enum Diagnostic {
         )
     )]
     UnmatchedClose {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("close here")]
         at: miette::SourceSpan,
+        /// Delimiter family of the stray closer.
         kind: PairKind,
         /// Byte-range of the stray *close* delimiter.
         span: Span,
     },
 
     /// A `〔…〕` accent digraph (e.g. `〔e'〕` → `é`) was decomposed into
-    /// its Unicode-combined form during Phase 0 sanitize. Purely
+    /// its Unicode-combined form during the sanitize stage. Purely
     /// informational: the decomposition is intended behaviour (ADR-0003),
     /// surfaced as a `Note` so an editor can show what changed. The
     /// serializer reconstructs the original `〔…〕` form, so the transform
     /// is loss-free.
-    #[error("accent digraph decomposed in Phase 0 sanitize")]
+    #[error("accent digraph decomposed in sanitize stage")]
     #[diagnostic(
         code("aozora::lex::accent_decomposition_applied"),
         url(
@@ -332,6 +344,9 @@ pub enum Diagnostic {
         )
     )]
     AccentDecompositionApplied {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("decomposed here")]
         at: miette::SourceSpan,
         /// Byte-range of the `〔…〕` span in the sanitized (post-decomposition)
@@ -354,6 +369,9 @@ pub enum Diagnostic {
         )
     )]
     UnresolvedGaiji {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("unresolved gaiji")]
         at: miette::SourceSpan,
         /// Byte-range of the `※［＃…］` reference in the sanitized source.
@@ -381,6 +399,9 @@ pub enum Diagnostic {
         )
     )]
     MismatchedContainerClose {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("mismatched close")]
         at: miette::SourceSpan,
         /// Container family of the *open* marker on the pairing stack.
@@ -406,6 +427,9 @@ pub enum Diagnostic {
         )
     )]
     EmptyRubyReading {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("empty reading")]
         at: miette::SourceSpan,
         /// Byte-range of the `｜base《》` construct in the sanitized source.
@@ -426,6 +450,9 @@ pub enum Diagnostic {
         )
     )]
     NestedRuby {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("nested ruby opens here")]
         at: miette::SourceSpan,
         /// Byte-range of the inner `《` opener in the sanitized source.
@@ -450,6 +477,9 @@ pub enum Diagnostic {
         )
     )]
     UnrecognisedContainerDirective {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("unrecognised directive")]
         at: miette::SourceSpan,
         /// Byte-range of the `［＃ここから…］` directive in the sanitized
@@ -472,6 +502,9 @@ pub enum Diagnostic {
         )
     )]
     TcyTargetNotFound {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("target has no referent")]
         at: miette::SourceSpan,
         /// Byte-range of the `［＃「X」は縦中横］` directive in the sanitized
@@ -495,6 +528,9 @@ pub enum Diagnostic {
         )
     )]
     BoutenTargetAmbiguous {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("ambiguous target")]
         at: miette::SourceSpan,
         /// Byte-range of the `［＃「X」に傍点］` directive in the sanitized
@@ -524,6 +560,9 @@ pub enum Diagnostic {
         )
     )]
     BreakInSingleLineContainer {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("break drops the container")]
         at: miette::SourceSpan,
         /// Stable family tag of the dropped single-line container
@@ -553,6 +592,9 @@ pub enum Diagnostic {
         )
     )]
     BracketedKaeritenNoPair {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("unpaired kaeriten")]
         at: miette::SourceSpan,
         /// Byte-range of the `［＃…］` kaeriten directive in the sanitized
@@ -578,6 +620,9 @@ pub enum Diagnostic {
         )
     )]
     KaeritenOutsideKanbun {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("isolated kaeriten")]
         at: miette::SourceSpan,
         /// Byte-range of the `［＃…］` kaeriten directive in the sanitized
@@ -605,6 +650,9 @@ pub enum Diagnostic {
         )
     )]
     MismatchedBoutenContainer {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("mismatched close")]
         at: miette::SourceSpan,
         /// Family of the *open* marker (`傍点` / `傍線`).
@@ -635,6 +683,9 @@ pub enum Diagnostic {
         )
     )]
     Internal {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
         #[label("at this position")]
         at: miette::SourceSpan,
         /// Typed identifier for the specific check that fired. Pin

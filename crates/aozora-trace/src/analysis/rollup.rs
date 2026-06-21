@@ -1,9 +1,9 @@
 //! Category rollup — group function names into named buckets.
 //!
 //! `hot_leaves` shows individual functions; `rollup` shows
-//! *categories of functions* (Phase 1 / Phase 3 / `corpus_load` /
-//! allocation / etc.). Drives the high-level "where is the time
-//! conceptually going?" view in PROFILING.md.
+//! *categories of functions* (tokenize stage / classify stage /
+//! `corpus_load` / allocation / etc.). Drives the high-level "where
+//! is the time conceptually going?" view in PROFILING.md.
 //!
 //! Categorisation is driven by [`crate::Categorizer`]; pass either
 //! [`crate::RollupConfig::aozora_defaults`] or a user TOML.
@@ -13,16 +13,25 @@ use std::collections::HashMap;
 use crate::render::{Align, Column, TableBuilder};
 use crate::{Categorizer, TableRenderable, Trace};
 
+/// Per-category sample rollup, produced by [`rollup`].
 #[derive(Debug, Clone)]
 pub struct RollupReport {
+    /// Total sample weight across the trace (the percentage denominator).
     pub total_samples: u64,
+    /// One row per category: declared categories first (in config
+    /// order), then any leftover buckets by descending sample count.
     pub rows: Vec<RollupRow>,
 }
 
+/// One category's aggregated samples.
 #[derive(Debug, Clone)]
 pub struct RollupRow {
+    /// Category label (a [`crate::RollupConfig`] category, or
+    /// `unknown` for unmatched functions).
     pub category: String,
+    /// Leaf-frame sample weight whose function fell in this category.
     pub samples: u64,
+    /// `samples` as a percentage of [`RollupReport::total_samples`].
     pub pct: f64,
     /// How many distinct functions matched this category. Useful
     /// sanity check: a category with `distinct_funcs = 1` is

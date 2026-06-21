@@ -1,17 +1,17 @@
 //! Aozora notation lex pipeline — borrowed-AST front door.
 //!
-//! Both the orchestrator and the per-phase pipeline impl live in
+//! Both the orchestrator and the per-stage pipeline impl live in
 //! this single crate:
 //!
 //! - The orchestrator (`pipeline` / `borrowed` modules at the crate
-//!   root) drives the borrowed-AST pipeline through its 4 phase
-//!   stages. The single public entry [`lex`] runs the
-//!   whole thing and lands the resulting borrowed AST inside an
-//!   `aozora_syntax::borrowed::Arena` provided by the caller.
-//! - The phase implementations live under [`lexer`] (`lexer::sanitize`
+//!   root) drives the borrowed-AST pipeline through its stages
+//!   (sanitize → tokenize → pair → classify). The single public entry
+//!   [`lex`] runs the whole thing and lands the resulting borrowed AST
+//!   inside an `aozora_syntax::borrowed::Arena` provided by the caller.
+//! - The stage implementations live under [`lexer`] (`lexer::sanitize`
 //!   through `lexer::classify`). External consumers should reach for
 //!   [`lex`] or the [`Pipeline`] state machine; the
-//!   per-phase functions are exposed for benchmarks and the
+//!   per-stage functions are exposed for benchmarks and the
 //!   instrumentation feature.
 //!
 //! [`aozora_scan`] still ships as a separate `no_std` crate — the
@@ -38,9 +38,9 @@ pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 
 /// Eagerly initialise every lazily-built parser table.
 ///
-/// Forces the Phase-1 SIMD backend choice (`aozora_scan`) and the
-/// Phase-3 annotation-classifier Aho-Corasick DFA, so the first
-/// [`lex`] does not pay the one-time build cost on its
+/// Forces the tokenize-stage SIMD backend choice (`aozora_scan`) and
+/// the classify-stage annotation-classifier Aho-Corasick DFA, so the
+/// first [`lex`] does not pay the one-time build cost on its
 /// critical path. Idempotent and cheap to call repeatedly.
 ///
 /// Lexing stays lazy by default; this is opt-in for latency-sensitive
@@ -50,8 +50,8 @@ pub fn prewarm() {
     lexer::classify::prewarm();
 }
 
-/// Re-exports of the Phase 0 decorative-rule isolator, surfaced so
-/// downstream `aozora-render::serialize` can run the same idempotent
+/// Re-exports of the sanitize-stage decorative-rule isolator, surfaced
+/// so downstream `aozora-render::serialize` can run the same idempotent
 /// blank-line-injection pass on its output and converge to a parser
 /// fixed point in one cycle. The helpers are otherwise pipeline
 /// internals — keep the public surface narrow.
@@ -69,9 +69,10 @@ mod tests {
     use aozora_syntax::borrowed::Arena;
 
     /// `aozora_scan::scan_offsets` MUST yield the exact same byte
-    /// offsets that the legacy phase-1 tokeniser uses for its trigger
-    /// positions. We don't have a public hook into phase 1's offsets,
-    /// so we cross-check at the [`LexOutput`] level: every PUA
+    /// offsets that the legacy tokenize-stage tokeniser uses for its
+    /// trigger positions. We don't have a public hook into the
+    /// tokenize stage's offsets, so we cross-check at the
+    /// [`LexOutput`] level: every PUA
     /// sentinel in `normalized` must correspond to a consumed source
     /// trigger.
     #[test]
@@ -101,7 +102,7 @@ mod tests {
     fn lex_re_exports_sentinel_constants() {
         // Sanity: the constants re-exported from aozora-spec match
         // the values the lexer actually emits, so downstream
-        // consumers can use them either via `aozora_lex::*` or
+        // consumers can use them either via `aozora_pipeline::*` or
         // `aozora_spec::*` interchangeably.
         assert_eq!(INLINE_SENTINEL, '\u{E001}');
         assert_eq!(BLOCK_LEAF_SENTINEL, '\u{E002}');

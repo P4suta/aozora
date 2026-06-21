@@ -4,7 +4,7 @@ The `aozora` binary covers three operations:
 
 ```sh
 aozora check  FILE.txt          # lex + report diagnostics on stderr
-aozora fmt    FILE.txt          # round-trip parse ∘ serialize, print to stdout
+aozora fmt    FILE.txt          # round-trip parse ∘ to_source, print to stdout
 aozora render FILE.txt          # render to HTML on stdout
 ```
 

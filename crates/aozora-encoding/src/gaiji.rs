@@ -8,7 +8,7 @@
 //!   ※［＃「description」、U+XXXX、page-line］ ← explicit Unicode codepoint
 //! ```
 //!
-//! The lexer's Phase 3 recogniser (`aozora-lexer::classify::recognize_gaiji`)
+//! The lexer's classify-stage recogniser (`aozora-pipeline::lexer::classify::recognize_gaiji`)
 //! captures `description` and `mencode` verbatim and leaves `ucs = None`;
 //! this module turns that reference into a concrete [`Resolved`] by
 //! consulting two `phf::Map`s compiled into the binary
@@ -107,7 +107,7 @@ impl Resolved {
     }
 }
 
-/// Pure-function lookup used by `aozora-lexer`'s Phase 3 classifier
+/// Pure-function lookup used by `aozora-pipeline`'s classify stage
 /// to populate `borrowed::Gaiji::ucs` at construction time.
 ///
 /// `existing` is the short-circuit for callers that already extracted

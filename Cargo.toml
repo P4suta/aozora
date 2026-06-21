@@ -75,6 +75,7 @@ variant_size_differences   = "allow"
 ambiguous_negative_literals = "warn"
 
 dead_code = "deny"
+missing_docs = "warn"
 
 rust_2024_compatibility = { level = "warn", priority = -1 }
 
@@ -152,7 +153,6 @@ aozora-scan       = { version = "0.4.1", path = "crates/aozora-scan" }
 aozora-pipeline   = { version = "0.4.1", path = "crates/aozora-pipeline" }
 aozora-render     = { version = "0.4.1", path = "crates/aozora-render" }
 aozora            = { version = "0.4.1", path = "crates/aozora" }
-aozora-wasm       = { version = "0.4.1", path = "crates/aozora-wasm" }
 aozora-trace      = { version = "0.4.1", path = "crates/aozora-trace" }
 
 # Memory management
@@ -172,15 +172,8 @@ memchr = "2.8"
 # at the workspace level so each consumer (aozora-lexer / aozora-scan)
 # opts into exactly the features it needs.
 aho-corasick = { version = "1.1", default-features = false }
-# Byte-DFA construction (used by aozora-scan's DfaScanner backend).
-# Compiled to a Hoehrmann-style multi-pattern automaton: O(1) byte
-# transitions, no backtracking, table-driven — the right shape for
-# the lexer's mixed-trigger search where Teddy's SIMD prefilter
-# alone would still need a follow-up confirmation pass.
-regex-automata = { version = "0.4", default-features = false }
 aozora-encoding   = { version = "0.4.1", path = "crates/aozora-encoding" }
 aozora-corpus       = { version = "0.4.1", path = "crates/aozora-corpus" }
-aozora-conformance  = { version = "0.4.1", path = "crates/aozora-conformance" }
 aozora-pandoc       = { version = "0.4.1", path = "crates/aozora-pandoc" }
 aozora-cst          = { version = "0.4.1", path = "crates/aozora-cst" }
 aozora-query        = { version = "0.4.1", path = "crates/aozora-query" }
@@ -196,10 +189,6 @@ anyhow    = "1.0"
 # into every downstream library consumer (afm, the WASM / Python builds).
 # Only `aozora-cli` opts into `fancy` — it renders diagnostics to a TTY.
 miette    = { version = "7.6.0" }
-
-# Parsing helpers
-winnow                = "1.0"
-unicode-segmentation  = "1.13"
 regex                 = "1.12"
 
 # Serialization / data
@@ -289,10 +278,6 @@ rustix = { version = "1.1", features = ["fs"] }
 
 # Test helpers
 tempfile = "3.27"
-
-# Observability
-tracing            = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Parallelism — workspace-default work-stealing thread pool. Retained
 # for batch tooling (corpus sweeps, doc-parallel benchmark drivers).

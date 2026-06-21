@@ -39,29 +39,43 @@ use crate::{TableRenderable, Trace};
 /// Aggregated top-N hot-frame report.
 #[derive(Debug, Clone)]
 pub struct HotReport {
+    /// Whether rows were aggregated leaf-only or inclusively.
     pub mode: HotMode,
+    /// Total sample weight across the whole trace — the denominator
+    /// behind every row's percentage.
     pub total_samples: u64,
+    /// The top-N rows, sorted by descending inclusive sample count.
     pub rows: Vec<HotRow>,
 }
 
+/// Which counting view a [`HotReport`] used.
 #[derive(Debug, Clone, Copy)]
 pub enum HotMode {
+    /// Count only the leaf-most frame of each sample.
     Leaf,
+    /// Count every distinct frame on each sample's stack.
     Inclusive,
 }
 
+/// One function's entry in a [`HotReport`].
 #[derive(Debug, Clone)]
 pub struct HotRow {
+    /// Function label (symbolicated name, or a hex address if
+    /// unresolved).
     pub label: String,
-    /// Display annotation: `[entry]`, `[trampoline]`, `[unresolved]`,
-    /// or empty for a normal function. Computed by `classify_row_kind`.
+    /// How this row reads against the hot path — leaf-hot vs wrapper
+    /// vs trampoline vs unresolved. Derived by `classify_row_kind`
+    /// from the self/inclusive ratio and label shape, and rendered as
+    /// a two-letter tag via [`RowKind::tag`].
     pub kind: RowKind,
     /// Inclusive: the frame appears anywhere on the stack.
     pub incl_samples: u64,
+    /// `incl_samples` as a percentage of [`HotReport::total_samples`].
     pub incl_pct: f64,
     /// Self: the frame is the leaf of the stack (where the CPU was).
     /// For `HotMode::Leaf` this equals `incl_*`.
     pub self_samples: u64,
+    /// `self_samples` as a percentage of [`HotReport::total_samples`].
     pub self_pct: f64,
 }
 

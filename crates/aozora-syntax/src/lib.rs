@@ -45,9 +45,18 @@ pub use aozora_spec::Span;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Container {
+    /// Which container family this open marker begins.
     pub kind: ContainerKind,
 }
 
+/// Which 傍点 (emphasis dot) or 傍線 (sideline) mark decorates a run.
+///
+/// Carried by both the forward-reference [`borrowed::Bouten`] leaf and the
+/// paired [`ContainerKind::BoutenRange`]. The 点 (dot) vs 線 (line) split —
+/// see [`Self::is_line`] — is the family boundary the
+/// `mismatched_bouten_container` diagnostic enforces. Each variant maps to a
+/// canonical 青空文庫 keyword via [`Self::keyword`]; [`BOUTEN_KINDS`] is the
+/// single declaration-order list the rest of the workspace derives from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -138,17 +147,30 @@ pub const BOUTEN_KINDS: &[BoutenKind] = &[
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum BoutenPosition {
+    /// Right of (in horizontal terms, above) the base text — the
+    /// default side, the bare `［＃「X」に傍点］` form.
     #[default]
     Right,
+    /// Left of (below) the base text — the `左に` modifier
+    /// (`［＃「X」の左に傍点］`).
     Left,
 }
 
+/// Single-line indentation marker (`［＃N字下げ］`).
+///
+/// The one-line counterpart of the [`ContainerKind::Indent`] block range;
+/// indents only the line it sits on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Indent {
+    /// Number of full-width characters to indent by.
     pub amount: u8,
 }
 
+/// Single-line end-alignment marker (`［＃地付き］` / `［＃地から N字上げ］`).
+///
+/// Pushes the line to the foot (地, the bottom of the column / page) — the
+/// one-line counterpart of the [`ContainerKind::AlignEnd`] block range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AlignEnd {
@@ -213,10 +235,20 @@ impl MarginNoteKind {
     }
 }
 
+/// Single-line 罫囲み (ruled box) marker (`［＃罫囲み］`).
+///
+/// A fieldless tag: it boxes the line it sits on. The multi-line range
+/// form is the [`ContainerKind::Framed`] paired container.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Framed;
 
+/// Which section-break directive a [`borrowed::Node::SectionBreak`] carries —
+/// the stronger page-structure breaks beyond the plain `［＃改ページ］`.
+///
+/// Each variant maps to its canonical keyword via [`Self::keyword`];
+/// [`SECTION_KINDS`] is the declaration-order list the renderer derives its
+/// class list from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -422,6 +454,14 @@ impl SectionKind {
     }
 }
 
+/// Classifies a generic [`borrowed::Directive`] annotation that no more
+/// specific node recogniser claimed.
+///
+/// [`Unknown`](Self::Unknown) is the catch-all for Aozora-shaped `［＃…］`
+/// notation the parser does not model; the remaining variants tag the
+/// handful of annotations kept as raw `Directive`s (sic markers, warichu
+/// delimiters, the header 凡例 `［＃］`, …) so consumers can act on them
+/// without re-parsing the raw bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -450,9 +490,16 @@ pub enum DirectiveKind {
 #[derive(Debug, Error, Diagnostic)]
 #[non_exhaustive]
 pub enum SyntaxError {
+    /// A node-kind tag string did not resolve to a known node kind. The
+    /// offending tag is carried verbatim in [`kind`](Self::UnknownKind::kind)
+    /// and echoed in the `未知のノード種別です` message; the diagnostic code is
+    /// `aozora::syntax::unknown_kind`.
     #[error("未知のノード種別です: {kind}")]
     #[diagnostic(code(aozora::syntax::unknown_kind))]
-    UnknownKind { kind: Box<str> },
+    UnknownKind {
+        /// The unrecognised tag string, as received.
+        kind: Box<str>,
+    },
 }
 
 #[cfg(test)]

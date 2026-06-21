@@ -16,7 +16,7 @@
 //!   `[#[#[#...]]]`
 //!
 //! Each `[#...]` is a `PairOpen(Bracket) + Solo(Hash) + body +
-//! PairClose(Bracket)`; the whole thing is unrecognised by Phase 3
+//! PairClose(Bracket)`; the whole thing is unrecognised by the classify stage
 //! (no keyword matches), so it folds into a single `Directive { kind:
 //! Unknown }` for the OUTERMOST bracket. The innermost-out annotation
 //! is what we care about for the iterative-classify smoke; the

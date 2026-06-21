@@ -10,19 +10,30 @@ use std::collections::HashMap;
 use crate::render::{Align, Column, TableBuilder};
 use crate::{TableRenderable, Trace};
 
+/// Per-library sample distribution, produced by [`library_distribution`].
 #[derive(Debug, Clone)]
 pub struct LibraryReport {
+    /// Total sample weight across the trace (the percentage denominator).
     pub total_samples: u64,
+    /// One row per library, sorted by descending sample count.
     pub rows: Vec<LibraryRow>,
 }
 
+/// One library's share of the samples.
 #[derive(Debug, Clone)]
 pub struct LibraryRow {
+    /// Library name, or `(unattributed)` for samples whose leaf frame
+    /// maps to no library.
     pub library: String,
+    /// Leaf-frame sample weight attributed to this library.
     pub samples: u64,
+    /// `samples` as a percentage of [`LibraryReport::total_samples`].
     pub pct: f64,
 }
 
+/// Attribute every leaf-frame sample to its owning library and
+/// summarise the per-library shares. Samples with no captured stack,
+/// or whose leaf frame maps to no library, fall under `(unattributed)`.
 #[must_use]
 pub fn library_distribution(trace: &Trace) -> LibraryReport {
     let mut counts: HashMap<String, u64> = HashMap::new();

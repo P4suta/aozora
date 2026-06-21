@@ -21,7 +21,7 @@ the hint elevate the previously-matched span to a `<h2>` /
 `<h3>` retroactively. The default HTML renderer in `aozora-render`
 emits a structural marker comment.
 
-## Serialize output
+## Source output
 
 Round-trips to `［＃「target」は<level>見出し］`.
 
@@ -39,7 +39,7 @@ pub struct HeadingHint<'src> {
 
 ## When emitted
 
-Phase 3 matches the directive and records the level + target. Empty
+The classify stage matches the directive and records the level + target. Empty
 target is rejected and falls through to plain text.
 
 ## Diagnostics

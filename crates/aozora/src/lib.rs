@@ -44,7 +44,16 @@
 //! modules. Depend on `aozora` alone; see the
 //! [Architecture chapter of the handbook](https://p4suta.github.io/aozora/arch/pipeline.html)
 //! for the layered design.
-
+//!
+//! ---
+//!
+//! The project README follows; its Quickstart example is compiled and
+//! run as a doctest so it can never drift from the live API.
+#![allow(
+    clippy::doc_markdown,
+    reason = "the included README is human-facing prose; proper nouns (PyO3, x86_64, macOS, …) are intentionally not code-spanned"
+)]
+#![doc = include_str!("../../../README.md")]
 #![forbid(unsafe_code)]
 
 pub use aozora_pipeline::{LexOutput, NodeRef, SourceNode, lex};
@@ -106,8 +115,8 @@ pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
 /// the parser before the first keystroke). It is idempotent and
 /// thread-safe; redundant calls are effectively free.
 ///
-/// It warms the SIMD trigger-scan backend selection (Phase 1) and the
-/// annotation-classifier Aho-Corasick DFA (Phase 3) — the latter is the
+/// It warms the SIMD trigger-scan backend selection (tokenize stage) and
+/// the annotation-classifier Aho-Corasick DFA (classify stage) — the latter is the
 /// bulk of the cost (~150 microseconds; the `aozora-pipeline` `boot`
 /// bench measures it).
 ///
@@ -155,8 +164,8 @@ pub mod render {
 /// Re-export of [`aozora_encoding`] — Shift_JIS decoding and gaiji
 /// resolution.
 ///
-/// Phase 0 of the lex pipeline runs encoding detection first;
-/// callers that want to drive encoding without parsing can reach
+/// The sanitize stage of the lex pipeline runs encoding detection
+/// first; callers that want to drive encoding without parsing can reach
 /// through this module.
 pub mod encoding {
     pub use aozora_encoding::*;
@@ -181,7 +190,7 @@ pub mod cst {
 
     /// Convenience wrapper over [`aozora_cst::build_cst`].
     ///
-    /// Runs Phase 0 sanitize internally — `source_nodes` coordinates
+    /// Runs the sanitize stage internally — `source_nodes` coordinates
     /// live in sanitized bytes, so we re-derive that text here rather
     /// than asking callers to thread it through. Sanitize is a pure
     /// function; calling it again is cheap.

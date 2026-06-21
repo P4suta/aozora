@@ -1,10 +1,10 @@
 //! Per-phase timing breakdown of the lex pipeline.
 //!
-//! The aggregate `profile_corpus` example measures parse + serialize
+//! The aggregate `profile_corpus` example measures parse + `to_source`
 //! at the public API boundary; this example reaches inside the lex
 //! pipeline and times each phase function individually so we can see
 //! which phase actually dominates wall-clock — replacing speculation
-//! ("phase 3 is probably 30-40% of parse") with measurement.
+//! ("the classify stage is probably 30-40% of parse") with measurement.
 //!
 //! NOTE (post I-2 deforestation): the production pipeline fuses
 //! tokenize → pair → classify into a single iterator chain with no
@@ -17,7 +17,7 @@
 //!
 //! Reads `AOZORA_CORPUS_ROOT` (same convention as `profile_corpus`),
 //! walks every `.txt` under it, decodes Shift_JIS, and runs the
-//! six lex phases manually with [`Instant::now`] around each call.
+//! four lex stages manually with [`Instant::now`] around each call.
 //!
 //! ```text
 //! AOZORA_CORPUS_ROOT=… cargo run --release --example phase_breakdown -p aozora-bench
@@ -65,7 +65,7 @@ use rayon::prelude::*;
 
 // One arena per worker thread per measurement role. Reused across
 // docs by resetting between parses. The two arenas
-// are kept separate because the Phase 3 measurement and the full
+// are kept separate because the classify-stage measurement and the full
 // pipeline measurement run back-to-back inside a single
 // `measure_one` call — sharing one arena would force a reset
 // mid-call, after which the prior measurement's borrowed output
@@ -99,7 +99,7 @@ struct PhaseSample {
     full_ns: u64,
     /// Derived: `full_ns - (sanitize + tokenize + pair + classify)`.
     /// Estimate of the post-classify normalize+registry-build cost
-    /// that was the legacy phase 4-6.
+    /// that the legacy post-classify stages used to perform.
     post_classify_ns: u64,
     /// Sum of the four standalone phases.
     total_ns: u64,
@@ -195,30 +195,30 @@ fn measure_corpus(items: &[CorpusItem], parallel: bool) -> (Vec<PhaseSample>, Ve
 fn measure_one(text: &str) -> PhaseSample {
     let bytes_in = text.len() as u64;
 
-    // Phase 0
+    // sanitize stage
     let t = Instant::now();
     let sanitized = sanitize(text);
     let sanitize_ns = t.elapsed().as_nanos() as u64;
 
-    // Phase 1 — collect into a Vec for per-phase isolation. Production
+    // tokenize stage — collect into a Vec for per-stage isolation. Production
     // pipeline (`lex`) does NOT materialise; see the file
     // header.
     let t = Instant::now();
     let tokens: Vec<Token> = tokenize(&sanitized.text).collect();
     let tokenize_ns = t.elapsed().as_nanos() as u64;
 
-    // Phase 2 — same caveat as Phase 1.
+    // pair stage — same caveat as the tokenize stage.
     let t = Instant::now();
     let mut pair_stream = pair(tokens.into_iter());
     let pair_events: Vec<PairEvent> = (&mut pair_stream).collect();
     drop(pair_stream.take_diagnostics());
     let pair_ns = t.elapsed().as_nanos() as u64;
 
-    // Phase 3 — needs an arena + allocator. Borrows the per-worker
+    // classify stage — needs an arena + allocator. Borrows the per-worker
     // reusable arena and resets it before parsing so the prior doc's
     // allocations don't bloat this measurement. The arena is
     // pre-sized to `text.len() * 4` so the chunk-grow `mmap` fires
-    // before the per-phase timer rather than inside it.
+    // before the per-stage timer rather than inside it.
     let classify_ns = WORKER_ARENA_PHASE3.with(|cell| {
         let mut arena = cell.borrow_mut();
         arena.reset_with_hint(text.len().saturating_mul(4));
@@ -232,10 +232,10 @@ fn measure_one(text: &str) -> PhaseSample {
 
     // Full pipeline (sanitize → arena registry build). Includes the
     // post-classify ArenaNormalizer walk (the work that the legacy
-    // phases 4–6 used to perform). Subtracting the four standalone
-    // phases from `full_ns` gives an estimate of the post-classify
+    // post-classify stages used to perform). Subtracting the four standalone
+    // stages from `full_ns` gives an estimate of the post-classify
     // cost without us having to reach into `aozora-pipeline`'s private
-    // builder. Same per-worker arena reuse as the Phase 3 block —
+    // builder. Same per-worker arena reuse as the classify-stage block —
     // separate cell because the two measurements would otherwise
     // share one arena and reset mid-call.
     let full_ns = WORKER_ARENA_FULL.with(|cell| {
@@ -310,10 +310,10 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64, parall
     println!();
 
     println!("Per-phase totals (sum across all docs)");
-    print_phase_row("phase 0 sanitize ", sanitize, total, total_bytes);
-    print_phase_row("phase 1 tokenize ", tokenize, total, total_bytes);
-    print_phase_row("phase 2 pair     ", pair_, total, total_bytes);
-    print_phase_row("phase 3 classify ", classify_, total, total_bytes);
+    print_phase_row("sanitize ", sanitize, total, total_bytes);
+    print_phase_row("tokenize ", tokenize, total, total_bytes);
+    print_phase_row("pair     ", pair_, total, total_bytes);
+    print_phase_row("classify ", classify_, total, total_bytes);
     println!("  ─────────────────────────────────────────────────");
     print_phase_row("4 standalone sum ", total, total, total_bytes);
     print_phase_row("post-classify (∼) ", post_classify_, full_, total_bytes);
@@ -339,17 +339,14 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64, parall
         samples.iter().map(|s| s.post_classify_ns).collect(),
     );
     print_phase_quantiles("lex", samples.iter().map(|s| s.full_ns).collect());
-    print_phase_quantiles(
-        "4-PHASE TOTAL",
-        samples.iter().map(|s| s.total_ns).collect(),
-    );
+    print_phase_quantiles("STAGE TOTAL", samples.iter().map(|s| s.total_ns).collect());
     println!();
 
     // Identify the top-3 docs by classify_ns — likely the
     // pathological annotation-density outliers.
     let mut by_classify: Vec<(usize, &PhaseSample)> = samples.iter().enumerate().collect();
     by_classify.sort_by_key(|(_, s)| Reverse(s.classify_ns));
-    println!("Top-5 docs by phase 3 classify cost");
+    println!("Top-5 docs by classify cost");
     for (idx, s) in by_classify.iter().take(5) {
         let label = labels.get(*idx).map_or("?", String::as_str);
         println!(
@@ -361,7 +358,7 @@ fn print_report(samples: &[PhaseSample], labels: &[String], wall_ns: u64, parall
     }
 
     println!();
-    println!("Top-5 docs by sanitize cost (phase 0 was unexpectedly hot)");
+    println!("Top-5 docs by sanitize cost (the sanitize stage was unexpectedly hot)");
     let mut by_sanitize: Vec<(usize, &PhaseSample)> = samples.iter().enumerate().collect();
     by_sanitize.sort_by_key(|(_, s)| Reverse(s.sanitize_ns));
     for (idx, s) in by_sanitize.iter().take(5) {

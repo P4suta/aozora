@@ -110,8 +110,17 @@ pub struct AozoraDocument {
 #[repr(C)]
 #[derive(Debug)]
 pub struct AozoraBytes {
+    /// Pointer to the start of the owned allocation. Null only on the
+    /// caller-zeroed sentinel value (which [`aozora_bytes_free`] treats
+    /// as a no-op); on any value returned by an `aozora_*` function it
+    /// is non-null and valid for `cap` bytes.
     pub ptr: *mut u8,
+    /// Number of initialised, readable bytes — the length of the
+    /// returned payload (HTML or JSON). May be less than `cap`.
     pub len: usize,
+    /// Total capacity of the allocation, in bytes. Must be passed back
+    /// unchanged to [`aozora_bytes_free`]: it reconstructs the `Vec`
+    /// with `(ptr, len, cap)`, so a wrong `cap` corrupts the allocator.
     pub cap: usize,
 }
 

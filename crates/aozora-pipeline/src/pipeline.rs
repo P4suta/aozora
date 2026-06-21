@@ -1,8 +1,8 @@
 //! Type-state lex pipeline.
 //!
-//! `Pipeline<'src, 'a, S>` makes the lex phase order enforceable at
+//! `Pipeline<'src, 'a, S>` makes the lex stage order enforceable at
 //! compile time. The state markers [`Source`], [`Sanitized`],
-//! [`Tokenized`], [`Paired`] track which phases have run; methods
+//! [`Tokenized`], [`Paired`] track which stages have run; methods
 //! consume `self` and return the next state. Calling `.pair()` on a
 //! `Source` is a type error; calling `.tokenize()` twice is a type
 //! error; etc.
@@ -20,12 +20,13 @@
 //!
 //! # Arena-batch passing
 //!
-//! Every inter-phase boundary materialises a [`bumpalo::collections::Vec`]
-//! inside the pipeline's [`Arena`]. Phase 1 emits `BumpVec<'a, Token>`;
-//! Phase 2 emits `BumpVec<'a, PairEvent>`; Phase 3 streams its
-//! `ClassifiedSpan`s through the `ArenaNormalizer`
-//! callback (no third Vec materialisation — the streaming `classify`
-//! Iterator path is the cheapest shape on the corpus).
+//! Every inter-stage boundary materialises a [`bumpalo::collections::Vec`]
+//! inside the pipeline's [`Arena`]. The tokenize stage emits
+//! `BumpVec<'a, Token>`; the pair stage emits `BumpVec<'a, PairEvent>`;
+//! the classify stage streams its `ClassifiedSpan`s through the
+//! `ArenaNormalizer` callback (no third Vec materialisation — the
+//! streaming `classify` Iterator path is the cheapest shape on the
+//! corpus).
 //!
 //! Net effect on the corpus profile: per-parse `malloc`/`free`
 //! traffic collapses into a single bump-pointer advance per element.
@@ -33,7 +34,7 @@
 //! # State carries its own payload
 //!
 //! Each state marker is a field-bound struct holding exactly the
-//! phase outputs it has produced (`Sanitized` carries the arena
+//! stage outputs it has produced (`Sanitized` carries the arena
 //! `&'a str`; `Tokenized` adds the token `BumpVec`; …). Reading
 //! `.sanitized_text()` from `Pipeline<'_, '_, Sanitized>` is a
 //! field projection on the state struct — no `Option::expect`
@@ -46,12 +47,12 @@
 //! `'src` is the original source text lifetime; `'a` is the arena
 //! lifetime. The sanitized text is materialised into the arena at the
 //! `Sanitized` transition (cost: one `arena.alloc_str` of
-//! `sanitize(source).text`), so all downstream phases borrow from the
+//! `sanitize(source).text`), so all downstream stages borrow from the
 //! arena rather than from in-Pipeline storage. This eliminates the
 //! self-referential-struct problem `Tokenizer<'sanitized>` would
 //! otherwise impose.
 //!
-//! # Compile-time phase-order enforcement
+//! # Compile-time stage-order enforcement
 //!
 //! Calling `.pair()` on a fresh [`Source`] (without going through
 //! `.sanitize().tokenize()`) is a *type error*: there is no
@@ -60,22 +61,22 @@
 //! future would silently break the type-state guarantee:
 //!
 //! ```compile_fail
-//! use aozora_lex::Pipeline;
+//! use aozora_pipeline::Pipeline;
 //! use aozora_syntax::borrowed::Arena;
 //!
 //! let arena = Arena::new();
-//! // .pair() on Source skips Phase 0 + Phase 1 — must not compile.
+//! // .pair() on Source skips the sanitize + tokenize stages — must not compile.
 //! let _ = Pipeline::new("plain", &arena).pair();
 //! ```
 //!
 //! # Why `build` is the terminal transition
 //!
-//! Phase 3 (classify) requires `&mut BorrowedAllocator<'a>`. The
+//! The classify stage requires `&mut BorrowedAllocator<'a>`. The
 //! allocator owns the `Interner<'a>` whose internal `RefCell` makes
 //! it `!Sync`; threading `&mut alloc` through Pipeline states would
 //! force the allocator to live as long as the pipeline, blocking any
-//! external pause-and-inspect between Phase 2 and Phase 3. We
-//! collapse Phase 3 + the `ArenaNormalizer` fold
+//! external pause-and-inspect between the pair and classify stages. We
+//! collapse the classify stage + the `ArenaNormalizer` fold
 //! into a single terminal `.build()` call instead — inspection up
 //! through `Paired` works freely; the final allocation pass is
 //! atomic.
@@ -95,30 +96,30 @@ use crate::LexOutput;
 use crate::borrowed::{ArenaNormalizer, SourceNode};
 
 // =====================================================================
-// State markers (field-bound — each state carries the phase output it
+// State markers (field-bound — each state carries the stage output it
 // is responsible for. No `Option` / `expect` chain in production code:
 // the type system guarantees the field is present whenever the state
 // type can be named).
 // =====================================================================
 
-/// Initial state — no phase has run yet.
+/// Initial state — no stage has run yet.
 #[derive(Debug, Clone, Copy)]
 pub struct Source;
 
-/// Phase 0 has run; sanitized text is materialised in the arena.
+/// The sanitize stage has run; sanitized text is materialised in the arena.
 #[derive(Debug, Clone, Copy)]
 pub struct Sanitized<'a> {
     sanitized_text: &'a str,
 }
 
-/// Phase 1 has run; the token list is materialised inside the arena.
+/// The tokenize stage has run; the token list is materialised inside the arena.
 #[derive(Debug)]
 pub struct Tokenized<'a> {
     sanitized_text: &'a str,
     tokens: BumpVec<'a, Token>,
 }
 
-/// Phase 2 has run; the event list and the resolved (open, close)
+/// The pair stage has run; the event list and the resolved (open, close)
 /// link side-table are materialised inside the arena.
 #[derive(Debug)]
 pub struct Paired<'a> {
@@ -132,7 +133,7 @@ pub struct Paired<'a> {
 // =====================================================================
 
 /// Type-state lex pipeline. Each state's transition method consumes
-/// `self`, materialises its phase output into the next state struct,
+/// `self`, materialises its stage output into the next state struct,
 /// and returns a new pipeline in the next state.
 #[derive(Debug)]
 pub struct Pipeline<'src, 'a, S> {
@@ -151,8 +152,8 @@ pub struct Pipeline<'src, 'a, S> {
 // ---------------------------------------------------------------------
 
 impl<'src, 'a> Pipeline<'src, 'a, Source> {
-    /// Wrap a source string for type-state-driven lex. Phase 0 has not
-    /// yet run; only `source` and `arena` are set.
+    /// Wrap a source string for type-state-driven lex. The sanitize
+    /// stage has not yet run; only `source` and `arena` are set.
     #[must_use]
     pub fn new(source: &'src str, arena: &'a Arena) -> Self {
         Self {
@@ -164,7 +165,7 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
         }
     }
 
-    /// One-shot driver: run every phase and return the final
+    /// One-shot driver: run every stage and return the final
     /// [`LexOutput`]. Equivalent to [`crate::lex`].
     #[must_use]
     pub fn run_to_completion(source: &'src str, arena: &'a Arena) -> LexOutput<'a> {
@@ -181,8 +182,8 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
         self.source
     }
 
-    /// Run Phase 0 (sanitize). Materialises the sanitized text in the
-    /// arena so downstream phases borrow from the arena, not from the
+    /// Run the sanitize stage. Materialises the sanitized text in the
+    /// arena so downstream stages borrow from the arena, not from the
     /// Pipeline struct (which would be self-referential).
     #[must_use]
     pub fn sanitize(mut self) -> Pipeline<'src, 'a, Sanitized<'a>> {
@@ -212,13 +213,13 @@ impl<'src, 'a> Pipeline<'src, 'a, Sanitized<'a>> {
         self.state.sanitized_text
     }
 
-    /// Diagnostics accumulated through Phase 0.
+    /// Diagnostics accumulated through the sanitize stage.
     #[must_use]
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
 
-    /// Run Phase 1 (tokenize). Materialises the full
+    /// Run the tokenize stage. Materialises the full
     /// `BumpVec<'a, Token>` inside `arena` via [`tokenize_in`].
     #[must_use]
     pub fn tokenize(self) -> Pipeline<'src, 'a, Tokenized<'a>> {
@@ -248,8 +249,8 @@ impl<'src, 'a> Pipeline<'src, 'a, Tokenized<'a>> {
         &self.state.tokens
     }
 
-    /// Run Phase 2 (pair). Materialises a paired-event stream
-    /// inside `arena` via [`pair_in`]. Phase 2's
+    /// Run the pair stage. Materialises a paired-event stream
+    /// inside `arena` via [`pair_in`]. The pair stage's
     /// diagnostics are drained into the pipeline's diagnostic
     /// accumulator immediately.
     #[must_use]
@@ -293,23 +294,23 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
         &self.state.links
     }
 
-    /// Drive Phase 3 + the arena normalizer fold and return the final
-    /// [`LexOutput`]. Terminal transition because
+    /// Drive the classify stage + the arena normalizer fold and return
+    /// the final [`LexOutput`]. Terminal transition because
     /// `&mut BorrowedAllocator` cannot be safely held across an external
     /// pause without locking the pipeline into a single thread for the
     /// allocator's lifetime.
     ///
     /// # Diagnostic order
     ///
-    /// Sanitize (Phase 0) → Pair (Phase 2 unclosed/unmatched) →
-    /// Classify (Phase 3 unknown annotations etc.). Matches the
+    /// Sanitize stage → pair stage (unclosed/unmatched) →
+    /// classify stage (unknown annotations etc.). Matches the
     /// pre-Pipeline `lex` ordering.
     ///
     /// # Panics
     ///
     /// Panics if the sanitized source exceeds `u32::MAX` bytes
     /// (the lexer's `Span` width contract). In practice unreachable;
-    /// Phase 0 caps source length at the same boundary.
+    /// the sanitize stage caps source length at the same boundary.
     #[must_use]
     pub fn build(mut self) -> LexOutput<'a> {
         let Paired {
@@ -369,9 +370,9 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
         self.diagnostics.extend(classify_diagnostics);
         // Normalizer diagnostics (e.g. mismatched container close) are
         // produced during the `emit` fold above but buffered on the
-        // builder; append them *after* the Phase-3 classify set so the
-        // final vector stays in pipeline-phase order (the normalizer is
-        // the post-Phase-3 fold). See `tests/diagnostic_ordering.rs`.
+        // builder; append them *after* the classify-stage set so the
+        // final vector stays in pipeline-stage order (the normalizer is
+        // the post-classify fold). See `tests/diagnostic_ordering.rs`.
         self.diagnostics.extend(take(&mut builder.diagnostics));
 
         let normalized: &'a str = self.arena.alloc_str(&builder.out);

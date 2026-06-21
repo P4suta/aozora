@@ -27,20 +27,35 @@ use crate::trace::{FrameRow, FuncRow, Library, ResourceRow, Sample, StackEntry, 
 /// Load failures.
 #[derive(Debug, thiserror::Error)]
 pub enum TraceLoadError {
+    /// Opening the trace file failed. Read/decode failures that
+    /// happen *while* streaming (including corrupt `.gz` data, which
+    /// `serde_json::from_reader` reports as an i/o-category error)
+    /// surface as [`TraceLoadError::Json`] instead.
     #[error("io error reading {path}: {source}")]
     Io {
+        /// The trace path that failed to read.
         path: PathBuf,
+        /// Underlying I/O error.
         #[source]
         source: std::io::Error,
     },
+    /// The file was read but is not valid JSON.
     #[error("json parse error in {path}: {source}")]
     Json {
+        /// The trace path whose contents failed to parse.
         path: PathBuf,
+        /// Underlying `serde_json` parse error.
         #[source]
         source: serde_json::Error,
     },
+    /// The JSON parsed but a required gecko table/column was missing
+    /// or had the wrong shape (e.g. mismatched column lengths).
     #[error("gecko schema: missing or malformed `{field}`")]
-    BadSchema { field: &'static str },
+    BadSchema {
+        /// Name of the missing/malformed field, or a short phrase
+        /// describing the structural problem.
+        field: &'static str,
+    },
 }
 
 impl Trace {

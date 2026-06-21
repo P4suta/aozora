@@ -33,7 +33,7 @@ The wrapping div carries the kind-specific class
 `aozora-container-keigakomi`, `aozora-container-align-end`) plus
 any structural data (indent amount, align offset) on `data-*`.
 
-## Serialize output
+## Source output
 
 Round-trips to the explicit-paired directive form.
 
@@ -58,9 +58,9 @@ walker driver fires `visit_container_open` on enter and
 
 ## When emitted
 
-Phase 2 pairs the `［＃ここから…］` / `［＃ここで…終わり］` openers
-and closers; Phase 3's `BlockOpen` / `BlockClose` events project to
-this variant.
+The pair stage pairs the `［＃ここから…］` / `［＃ここで…終わり］` openers
+and closers; the classify stage's `BlockOpen` / `BlockClose` events
+project to this variant.
 
 ## Diagnostics
 

@@ -17,7 +17,7 @@ Inspect tag: `alignEnd` — right-edge alignment marker (字上げ).
 
 `offset` is `0` for 地付き, `N` for 地から N 字上げ.
 
-## Serialize output
+## Source output
 
 Round-trips to `［＃地付き］` / `［＃地からN字上げ］`.
 
@@ -31,7 +31,7 @@ pub struct AlignEnd {
 
 ## When emitted
 
-Phase 3 matches the directive form. Paired alignment regions
+The classify stage matches the directive form. Paired alignment regions
 (`［＃ここから地から N 字上げ］` … `［＃ここで字上げ終わり］`) are
 [Container](container.md) instead.
 

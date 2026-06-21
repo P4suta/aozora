@@ -16,13 +16,14 @@ workspace = true
 
 [dependencies]
 encoding_rs = { workspace = true }
-# Runtime PHF — `default-features = false, features = []` strips the
-# proc-macro backend (`phf_macros`) since the gaiji table is now
-# emitted via `phf_codegen` in `build.rs`. The runtime crate carries
-# only the `phf::Map` type + the perfect-hash lookup, no codegen.
-phf       = { version = "0.13", default-features = false }
 thiserror = { workspace = true }
 miette    = { workspace = true }
+# Runtime PHF — `default-features = false` strips the proc-macro backend;
+# the gaiji table is emitted via `phf_codegen` in `build.rs` and the
+# runtime uses only `phf::Map`, consumed by the `include!`d codegen output.
+# cargo-shear's source scan cannot see that generated usage — see the
+# `[package.metadata.cargo-shear]` ignore at the foot of this manifest.
+phf = { version = "0.13", default-features = false }
 
 [build-dependencies]
 # Codegen-time PHF builder — runs in `build.rs` to emit the gaiji
@@ -34,3 +35,8 @@ phf_codegen = "0.13"
 
 [dev-dependencies]
 proptest = { workspace = true }
+
+[package.metadata.cargo-shear]
+# `phf` is used only through the `build.rs`-generated, `include!`d gaiji
+# table (`phf::Map`), invisible to cargo-shear's source scan.
+ignored = ["phf"]

@@ -11,21 +11,36 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Span {
+    /// Inclusive start byte offset into the source buffer.
     pub start: u32,
+    /// Exclusive end byte offset. Always `>= start` for parser-produced
+    /// spans, so [`len`](Self::len) does not underflow.
     pub end: u32,
 }
 
 impl Span {
+    /// Construct a span from its `start` (inclusive) and `end`
+    /// (exclusive) byte offsets. Callers are responsible for passing
+    /// `end >= start`; the parser always does.
     #[must_use]
     pub const fn new(start: u32, end: u32) -> Self {
         Self { start, end }
     }
 
+    /// Length of the span in bytes (`end - start`).
+    ///
+    /// # Panics
+    ///
+    /// Underflows (panicking in debug, wrapping in release) if
+    /// `end < start`. Parser-produced spans never violate this.
     #[must_use]
     pub const fn len(self) -> u32 {
         self.end - self.start
     }
 
+    /// Whether the span covers zero bytes (`start == end`). An empty
+    /// span still carries a position — e.g. a marker inserted between
+    /// two characters.
     #[must_use]
     pub const fn is_empty(self) -> bool {
         self.start == self.end

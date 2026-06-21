@@ -21,7 +21,10 @@ use crate::Trace;
 /// One row in the folded output.
 #[derive(Debug, Clone)]
 pub struct FoldedStack {
+    /// Frame labels in root → leaf order (the order the folded-stack
+    /// format expects), ready to join with `;`.
     pub stack: Vec<String>,
+    /// Total sample weight that landed on this exact stack.
     pub samples: u64,
 }
 

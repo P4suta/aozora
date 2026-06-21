@@ -114,7 +114,7 @@ doctor:
 # Build all workspace crates.
 #
 # `aozora-bench` is excluded from every workspace-wide CI gate
-# (build / test / coverage / clippy / udeps) because it's a
+# (build / test / coverage / clippy / shear) because it's a
 # bench-only harness whose dep tree pulls in `zstd-sys`,
 # `criterion`, `addr2line`, `gimli`, `object`, and `ruzstd` —
 # adding ~100 s of cold-cache compile time that no other crate in
@@ -909,11 +909,12 @@ clippy:
     {{_dev}} cargo clippy --workspace --exclude aozora-bench --lib --bins --tests --all-features -- -D warnings
 
 # Strict variant: full `--all-targets` (lib + bins + tests + examples
-# + benches), and the bench crate is no longer excluded. Used by
-# lefthook pre-commit so the bench / example targets that the CI
-# `clippy` recipe skips still get a lint pass before the commit
-# lands. Slower per-commit, but the matrix-split CI lint job is
-# correspondingly leaner.
+# + benches), and the bench crate is no longer excluded. This is the
+# AUTHORITATIVE lint surface — it matches GitHub's `lint (clippy-strict)`
+# cell exactly and is run by the pre-push gate (`ci-parallel`), so a
+# doc_markdown / missing_docs slip in a bench or example target is
+# caught locally before the push, not by CI. The per-commit hook stays
+# on the lighter `clippy` (no bench dep tree) for fast feedback.
 clippy-strict:
     {{_dev}} cargo clippy --workspace --all-targets --all-features -- -D warnings
 
@@ -929,8 +930,9 @@ clippy-wasm:
 # Thorough local lint — the --all-targets clippy surface (bench /
 # example targets included) plus fmt / typos / strict-code / doc. Run
 # before cutting a release or after touching a bench / example target.
-# The per-commit hook runs only the lighter `clippy`; CI's
-# `lint (clippy-strict)` cell is the authoritative --all-targets gate.
+# The per-commit hook runs only the lighter `clippy`; the pre-push gate
+# (`ci-parallel`) runs `clippy-strict` + `clippy-wasm`, matching CI's
+# authoritative --all-targets + wasm32 lint cells.
 lint-full: fmt-check clippy-strict typos strict-code doc
 
 # Typo check
@@ -945,18 +947,13 @@ deny:
 audit:
     {{_dev}} cargo audit
 
-# Unused dependency scan (requires nightly).
-# `aozora-bench` is excluded for the same reason build / test / clippy
-# exclude it (heavy bench dep tree). The bench crate gets its own
-# udeps run through `just udeps-bench` when needed.
-udeps:
-    {{_dev}} cargo +nightly udeps --workspace --exclude aozora-bench --all-targets
-
-# Unused-dep scan limited to the bench crate. Run before cutting a
-# release if `aozora-bench` had dep changes; not part of the per-PR
-# CI gate (cf. `just udeps`).
-udeps-bench:
-    {{_dev}} cargo +nightly udeps -p aozora-bench --all-targets
+# Unused-dependency scan. cargo-shear is stable (no nightly), fast, and
+# also flags unlinked source files; it replaces the former nightly
+# cargo-udeps gate. Covers the whole workspace — `aozora-bench` included
+# — in a single pass, so no separate bench run is needed. Intentional
+# optional deps are carved out via `[package.metadata.cargo-shear]`.
+shear:
+    {{_dev}} cargo shear
 
 # Semver break detection (runs against published baseline once crates are on crates.io)
 semver:
@@ -1153,15 +1150,49 @@ book-build: mermaid-install
 book-serve: mermaid-install
     docker compose up book
 
-# Crawl every internal + external link in the rendered handbook.
-# Run after `book-build`; lychee uses the generated HTML, not the source
-# Markdown, so cross-page anchors are validated post-render.
-# Concurrency / retries / 404-skip / accept policy live in
-# `crates/aozora-book/lychee.toml` so the same config applies to
-# `just book-linkcheck` and the `book` CI job.
+# Verify the rendered handbook's INTERNAL links (offline, deterministic).
+# This is the gating check — it mirrors the `book` CI job and crawls the
+# generated HTML (not the source Markdown) so cross-page links are
+# validated post-render. `--offline` skips every network probe: external
+# URLs are NOT the gate's concern (a host outage / rate-limit must never
+# block a PR), only internal `.html` cross-references + local assets are.
+# Shared policy (excludes, accept codes) lives in
+# `crates/aozora-book/lychee.toml`; external rot is audited separately
+# (see `book-linkcheck-external` and `.github/workflows/link-audit.yml`).
 book-linkcheck: mermaid-install
     {{_book}} mdbook build
+    {{_book}} lychee --offline --config lychee.toml 'book/**/*.html'
+
+# Audit EXTERNAL links too (online) — the local mirror of the weekly
+# `link-audit.yml` workflow. NOT part of any gate: external reachability
+# is non-deterministic, so this is a manual / scheduled check (run it at
+# release review). Same `lychee.toml` config as the offline gate, minus
+# `--offline`, so retries / accept(429,999) / exclude policy all apply.
+book-linkcheck-external: mermaid-install
+    {{_book}} mdbook build
     {{_book}} lychee --config lychee.toml 'book/**/*.html'
+
+# Compile + run the handbook's plain `rust` code blocks as doctests,
+# linking against the freshly-built aozora rlib. Catches handbook example
+# drift the same way `test-doc` catches rustdoc drift. Runs in the dev
+# image (not the lean `book` image) because `mdbook test` needs cargo's
+# target/deps.
+#
+# aozora is built into a DEDICATED target dir so the search path holds
+# exactly ONE `libaozora` rlib. The shared `/cargo/target/debug/deps`
+# accumulates many hash-suffixed `libaozora-*.rlib` (one per feature /
+# profile build across the workspace), and `mdbook test` only forwards
+# `-L` to rustdoc — never `--extern` — so an `extern crate aozora;` in an
+# example would hit E0464 "multiple candidates" against the shared dir.
+# The keep-newest sweep guards the dedicated dir against a stale rlib
+# lingering after a source change. Build + sweep + test share ONE
+# container so the test sees the freshly-pruned deps.
+#
+# Each runnable example therefore opens with a hidden `# extern crate
+# aozora;` (edition 2024 won't auto-link, and `--extern` is unavailable);
+# illustrative / internal-crate blocks are marked `rust,ignore`.
+book-test:
+    {{_dev}} bash -c 'set -euo pipefail; cargo build -p aozora --all-features --target-dir /cargo/target/book-test; ls -t /cargo/target/book-test/debug/deps/libaozora-*.rlib | tail -n +2 | xargs -r rm -f; mdbook test crates/aozora-book -L /cargo/target/book-test/debug/deps'
 
 # --- ci instrumentation (host-only — uses gh CLI auth) ----------------
 # `aozora-xtask ci …` is the data-driven CI surface: profile a finished
@@ -1246,8 +1277,10 @@ ci:
 
     # Foreground cargo chain in the same cheap-to-expensive order
     # that the original sequential `ci` used, so an early failure
-    # still short-circuits before the heavy gates.
-    just lint
+    # still short-circuits before the heavy gates. `lint-full` (not
+    # `lint`) so the bench / example targets get the authoritative
+    # `clippy-strict` pass, matching CI and the `ci-parallel` gate.
+    just lint-full
     just clippy-wasm
     just build
     just drift-gate
@@ -1262,8 +1295,11 @@ ci:
     # job.
     just extism-build
     just test
+    just test-doc
+    just test-doc-all
+    just book-test
     just prop
-    just udeps
+    just shear
     just coverage
     # Playground gates — TypeScript typecheck + vitest unit tests.
     # `docs.yml` workflow runs the same two commands; failing here
@@ -1320,7 +1356,7 @@ ci:
 #   3. The 4096-case `prop-deep` sweep launches AFTER the foreground
 #      `prop` gate (so it reuses the just-built `property_*` binaries —
 #      no build-lock contention) and runs in the background, overlapping
-#      udeps / extism-build / doc instead of adding 3-5 min to the tail.
+#      shear / extism-build / doc instead of adding 3-5 min to the tail.
 #
 # Foreground stays serial + cheap→expensive so a failure aborts the push
 # fast. `SKIP_TAGS=deep just ci-parallel` opts out of prop-deep (the
@@ -1345,8 +1381,16 @@ ci-parallel:
     launch playground-ci just playground-ci
 
     # Foreground cargo chain — serial (shared build lock), fail-fast.
+    # Lint runs the AUTHORITATIVE surface, not the lighter per-commit
+    # `clippy`: `clippy-strict` is `--all-targets` (examples + benches,
+    # aozora-bench included) and `clippy-wasm` lints the wasm32-only
+    # binding modules — exactly the two cells (`lint (clippy-strict)` +
+    # `wasm-build`'s clippy step) that GitHub runs. Keeping them here
+    # means a doc_markdown / missing_docs slip in a bench example or a
+    # wasm32 cfg module is caught BEFORE the push, not by CI. CI is the
+    # insurance, the pre-push gate is the guarantee.
     fg_failed=""
-    for gate in clippy check drift-gate conformance coverage prop; do
+    for gate in clippy-strict clippy-wasm check drift-gate conformance coverage prop; do
         echo ":: [fg] just $gate"
         if ! just "$gate"; then fg_failed="$gate"; break; fi
     done
@@ -1359,7 +1403,7 @@ ci-parallel:
         else
             echo ":: prop-deep skipped via SKIP_TAGS=deep"
         fi
-        for gate in udeps extism-build doc corpus-sweep; do
+        for gate in shear test-doc test-doc-all book-test extism-build doc corpus-sweep; do
             echo ":: [fg] just $gate"
             if ! just "$gate"; then fg_failed="$gate"; break; fi
         done

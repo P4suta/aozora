@@ -9,7 +9,7 @@
 //!
 //! All four sentinels live in the Unicode Private Use Area (`U+E000..U+F8FF`),
 //! which is guaranteed to be unassigned and therefore safe to use as
-//! application-internal markers. A pre-scan in Phase 0 (sanitize)
+//! application-internal markers. A pre-scan in the sanitize stage
 //! emits `Diagnostic::SourceContainsPua` if the source already
 //! contains any of these codepoints — a future enhancement can fall
 //! back to Unicode noncharacters (`U+FDD0..U+FDEF`) when collisions

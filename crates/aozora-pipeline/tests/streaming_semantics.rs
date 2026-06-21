@@ -1,5 +1,5 @@
 //! Streaming-API semantics for [`aozora_pipeline::Pipeline`] and the
-//! [`aozora_lexer`] streaming building blocks (`tokenize` / `pair` /
+//! [`aozora_pipeline::lexer`] streaming building blocks (`tokenize` / `pair` /
 //! `classify`).
 //!
 //! Plan G.4 deliverable. These tests pin the *behaviour* of the
@@ -276,8 +276,8 @@ fn pipeline_chain_matches_lex_into_arena_for_corpus_shapes() {
 // 6. Diagnostic survives intermediate inspection
 // =====================================================================
 
-/// A Phase-0 diagnostic visible at the [`Sanitized`] state must also
-/// appear in the final [`LexOutput::diagnostics`] after
+/// A sanitize-stage diagnostic visible at the [`Sanitized`] state must
+/// also appear in the final [`LexOutput::diagnostics`] after
 /// `.build()`. This pins the contract that intermediate inspection
 /// does NOT consume diagnostics.
 #[test]
@@ -299,7 +299,7 @@ fn pipeline_phase0_diagnostic_observed_at_sanitized_also_present_after_build() {
         sanitized.diagnostics()
     );
 
-    // Drive to completion. The phase-0 diagnostic must still be there.
+    // Drive to completion. The sanitize-stage diagnostic must still be there.
     let final_out = sanitized.tokenize().pair().build();
     let phase0_count_at_build = final_out
         .diagnostics

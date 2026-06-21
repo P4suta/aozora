@@ -9,7 +9,7 @@
 //!
 //! The two tables stay in sync via the
 //! `every_slug_dispatches_in_phase3_body_dispatcher` integration test
-//! living in `aozora-lex`.
+//! living in `aozora-pipeline`.
 //!
 //! ## Why a separate table
 //!
@@ -17,7 +17,7 @@
 //!   a parameter), not ten distinct rows for each digit prefix.
 //! - **Documentation**: each entry carries a Japanese `doc` string that
 //!   becomes the LSP completion item's `documentation` field.
-//! - **Stability**: `BODY_PATTERNS`'s exact shape is tied to phase-3
+//! - **Stability**: `BODY_PATTERNS`'s exact shape is tied to classify-stage
 //!   internals (`LeftmostLongest` dispatch order, `BodyFamily` variants);
 //!   downstream editor consumers should not depend on it.
 //!

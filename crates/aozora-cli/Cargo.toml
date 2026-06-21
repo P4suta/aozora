@@ -33,7 +33,6 @@ clap_mangen     = { workspace = true }
 comfy-table     = { workspace = true }
 miette          = { workspace = true, features = ["fancy"] }
 anyhow          = { workspace = true }
-thiserror       = { workspace = true }
 serde           = { workspace = true }
 serde_json      = { workspace = true }
 toml            = { workspace = true }

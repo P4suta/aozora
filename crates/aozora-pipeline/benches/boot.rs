@@ -7,13 +7,13 @@
 //! and stays invisible. This bench measures the dominant, isolable half
 //! directly:
 //!
-//! - **`aho_corasick_build`** — the Phase-3 annotation-classifier DFA
+//! - **`aho_corasick_build`** — the classify-stage annotation-classifier DFA
 //!   built from the full `BODY_PATTERNS` set, the bulk of boot cost. The
 //!   process `OnceLock` behind `body_dispatcher` is unresettable, so the
 //!   bench calls the (doc-hidden) builder directly, rebuilding a fresh
 //!   automaton each iteration rather than reading the cached getter.
 //!
-//! The other lazy init `prewarm` forces — the Phase-1 SIMD backend
+//! The other lazy init `prewarm` forces — the tokenize-stage SIMD backend
 //! choice (`aozora_scan`) — is a single `is_x86_feature_detected!` probe
 //! whose result `std_detect` caches in a process-global atomic on first
 //! use. That cache is unresettable, so the cold one-time cost cannot be

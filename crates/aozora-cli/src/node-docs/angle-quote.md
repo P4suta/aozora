@@ -24,7 +24,7 @@ as `≪…≫` (U+226A/U+226B). The renderer restores the **display** form
 The `《…》` display glyphs (U+300A/U+300B) are restored inside the span;
 stylesheets target `.aozora-angle-quote` for any further treatment.
 
-## Serialize output
+## Source output
 
 Round-trips to the input form `≪content≫` (U+226A/U+226B).
 
@@ -41,8 +41,9 @@ through to plain text rather than producing an empty node.
 
 ## When emitted
 
-Phase 1 tokenises `≪` / `≫` (U+226A/U+226B) as ordinary single-character
-triggers; Phase 3 pairs `≪…≫` into one `AngleQuote` node. A stray
+The tokenize stage tokenises `≪` / `≫` (U+226A/U+226B) as ordinary
+single-character triggers; the classify stage pairs `≪…≫` into one
+`AngleQuote` node. A stray
 底本-style `《《…》》` is **not** this node — it is two ruby openers and
 yields a `nested-ruby` diagnostic with plain fallback.
 

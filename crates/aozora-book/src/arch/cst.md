@@ -2,9 +2,9 @@
 
 A [rowan][rowan]-backed lossless syntax tree lives under the `cst`
 Cargo feature on the `aozora` crate. The CST is a **pure projection**
-over the existing parse output — Phase 3 classification is unchanged,
-the AST stays the perf-critical path, and the CST adds zero overhead
-for consumers that don't enable the feature.
+over the existing parse output — classify-stage classification is
+unchanged, the AST stays the perf-critical path, and the CST adds
+zero overhead for consumers that don't enable the feature.
 
 ## Why a CST exists
 
@@ -31,13 +31,13 @@ The contract is sharp:
 > Concatenating every leaf token's text yields the **sanitized**
 > source bytes the parser actually saw.
 
-"Sanitized" matters: Phase 0 normalises CRLF→LF, strips a leading
-BOM, isolates long decorative rule lines with a leading blank line,
-and rewrites `〔…〕` accent spans through accent decomposition. These
-transformations happen *before* classification, so `source_nodes`
+"Sanitized" matters: the sanitize stage normalises CRLF→LF, strips a
+leading BOM, isolates long decorative rule lines with a leading blank
+line, and rewrites `〔…〕` accent spans through accent decomposition.
+These transformations happen *before* classification, so `source_nodes`
 coordinates address sanitized bytes. The CST tracks that coordinate
 system; an editor that wants to map back to the user's raw bytes
-runs the same Phase 0 transformation and inverts where needed.
+runs the same sanitize-stage transformation and inverts where needed.
 
 The proptest in `tests/property_lossless.rs` runs the invariant
 across the full Aozora-shaped input distribution
@@ -57,9 +57,9 @@ The crate stays decoupled by design:
   the lower-level bits explicitly so consumers writing custom
   pipelines can reach in.
 - `aozora::cst::from_tree(&tree) -> SyntaxNode` is the ergonomic
-  entry point; it runs Phase 0 sanitize internally and forwards.
-- The Phase 3 classifier sees no changes — adding / removing CST
-  consumers cannot perturb AST perf.
+  entry point; it runs the sanitize stage internally and forwards.
+- The classify-stage classifier sees no changes — adding / removing
+  CST consumers cannot perturb AST perf.
 
 ## SyntaxKind granularity
 
@@ -80,7 +80,7 @@ can land later once a concrete consumer needs it. The lossless
 property holds at any granularity, so widening the leaf set is
 non-breaking for downstream tooling that walks `preorder_with_tokens`.
 
-## Why rowan, not Phase 3 integration
+## Why rowan, not classify-stage integration
 
 The bumpalo-arena AST stays the hot path; the CST sits on top as an
 editor-grade convenience layer rather than coupling lossless-tree
@@ -93,8 +93,8 @@ dual-allocator overhead is the price for keeping the AST untouched.
 
 - [Architecture → Borrowed-arena AST](arena.md) — the underlying
   perf-critical tree.
-- [Architecture → Four-phase lexer](lexer.md) — where Phase 0
-  sanitize and Phase 3 classify do their work.
+- [Architecture → Lexer (sanitize → tokenize → pair → classify)](lexer.md) —
+  where the sanitize and classify stages do their work.
 - [`Document::edit`](https://docs.rs/aozora/latest/aozora/struct.Document.html#method.edit)
   — the incremental-parse counterpart that reuses the same CST.
 

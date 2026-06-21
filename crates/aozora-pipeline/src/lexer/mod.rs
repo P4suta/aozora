@@ -10,21 +10,21 @@
 //!   [`aozora_syntax::borrowed::Node`] values.
 //! - **Post-process AST walk** substitutes sentinels with the registry's
 //!   borrowed-AST values. That walk lives in `aozora`.
-//! - **Pure-functional pipeline**: every phase is `fn(input) -> output`
+//! - **Pure-functional pipeline**: every stage is `fn(input) -> output`
 //!   with no shared mutable state. Unit-testable and deterministic.
 //!
-//! ## Pipeline (4 phases)
+//! ## Pipeline (sanitize → tokenize → pair → classify)
 //!
-//! | Phase | Responsibility |
+//! | Stage | Responsibility |
 //! |-------|----------------|
-//! | 0 sanitize | BOM strip, CR/LF → LF, PUA collision pre-scan |
-//! | 1 tokenize | Linear tokenize — emit trigger events (`｜《》［］※〔〕「」`) |
-//! | 2 pair     | Balanced-stack pairing across all delimiters |
-//! | 3 classify | Full-spec Aozora classification into [`aozora_syntax::borrowed::Node`] |
+//! | sanitize | BOM strip, CR/LF → LF, PUA collision pre-scan |
+//! | tokenize | Linear tokenize — emit trigger events (`｜《》［］※〔〕「」`) |
+//! | pair     | Balanced-stack pairing across all delimiters |
+//! | classify | Full-spec Aozora classification into [`aozora_syntax::borrowed::Node`] |
 //!
-//! After F.3, the legacy phases 4 (normalize) / 5 (registry) /
-//! 6 (validate) live as a fused walk inside
-//! [`crate::lex`] — they no longer have standalone phase
+//! After classify, the legacy normalize / registry / validate stages
+//! live as a fused walk inside
+//! [`crate::lex`] — they no longer have standalone stage
 //! functions in this crate.
 //!
 //! ## PUA sentinel scheme
@@ -42,12 +42,12 @@
 //! | [`BLOCK_OPEN_SENTINEL`] (U+E003) | Paired-container open line |
 //! | [`BLOCK_CLOSE_SENTINEL`] (U+E004)| Paired-container close line |
 //!
-//! Phase 0 pre-scans source for existing PUA usage; any hit triggers a
-//! `Diagnostic::SourceContainsPua`.
+//! The sanitize stage pre-scans source for existing PUA usage; any hit
+//! triggers a `Diagnostic::SourceContainsPua`.
 //!
 //! ## Public surface
 //!
-//! After F.3, the lexer module exposes only the per-phase functions
+//! After classify, the lexer module exposes only the per-stage functions
 //! used internally by [`crate::lex`]. The old owned
 //! "package result" type has been replaced by the borrowed
 //! `LexOutput<'a>` that [`crate::lex`] returns. External
@@ -88,8 +88,8 @@ pub use tokenize::{Tokenizer, tokenize, tokenize_in};
 #[cfg(test)]
 mod tests {
     //! Sentinel-constant invariants. Other crate-public surface is
-    //! covered by per-phase tests and the borrowed-pipeline tests in
-    //! `aozora-lex`; this block keeps the structural invariants that
+    //! covered by per-stage tests and the borrowed-pipeline tests in
+    //! `aozora-pipeline`; this block keeps the structural invariants that
     //! every downstream consumer relies on (PUA range membership +
     //! pairwise distinctness) co-located with the re-exports.
     use super::*;

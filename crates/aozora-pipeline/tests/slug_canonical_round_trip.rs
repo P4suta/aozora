@@ -1,5 +1,5 @@
 //! Phase 1.3 (editor-integration sprint) — pin every entry in the
-//! canonical [`aozora_spec::SLUGS`] table against the live phase-3
+//! canonical [`aozora_spec::SLUGS`] table against the live classify-stage
 //! classifier.
 //!
 //! For each entry we wrap the canonical body in `［＃…］` (or, for

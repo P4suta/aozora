@@ -1,6 +1,6 @@
 # SIMD scanner backends
 
-Phase 1 of the lexer is a multi-pattern byte scan: find every
+The tokenize stage of the lexer is a multi-pattern byte scan: find every
 occurrence of the 11 Aozora trigger characters (`｜《》＃※［］〔〕「」`)
 in the source. On a typical Japanese corpus document — where every
 codepoint is a 3-byte UTF-8 sequence and trigger characters appear
@@ -94,7 +94,7 @@ unicode-adversarial distributions).
 
 ## Verifying the scanner is firing
 
-```rust
+```rust,ignore
 println!("{}", aozora_scan::BackendChoice::detect().name());
 // "teddy-avx2" | "teddy-ssse3" | "teddy-neon" | "teddy-wasm" | "scalar-teddy"
 ```
@@ -114,4 +114,4 @@ lives.
 ## See also
 
 - [Pipeline overview](pipeline.md)
-- [Four-phase lexer](lexer.md) — Phase 1 events fits in here.
+- [Lexer (sanitize → tokenize → pair → classify)](lexer.md) — the tokenize stage fits in here.

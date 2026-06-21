@@ -87,7 +87,7 @@ fn assert_registry_aligned_with_sentinels(source: &str) {
     //
     // We assert the forward direction only ("every registry entry sits
     // on its matching sentinel"), not the reverse ("every sentinel byte
-    // has a registry entry"). Phase 0 now neutralizes raw source
+    // has a registry entry"). The sanitize stage now neutralizes raw source
     // sentinels to U+FFFD, so the historical unsoundness of the reverse
     // direction (source PUA leaking sentinel-shaped bytes the registry
     // never registered) no longer applies; the forward direction is
