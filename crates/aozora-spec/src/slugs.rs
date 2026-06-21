@@ -93,7 +93,7 @@ impl SlugFamily {
     /// single authority and the `match` is exhaustiveness-checked at
     /// compile time (no `_` fallback — a new family must declare its tag).
     #[must_use]
-    pub const fn as_wire_tag(self) -> &'static str {
+    pub const fn as_json_tag(self) -> &'static str {
         match self {
             Self::PageBreak => "pageBreak",
             Self::Section => "section",
@@ -846,7 +846,7 @@ mod tests {
             12,
             "every SlugFamily variant listed in ALL"
         );
-        let mut tags: Vec<&str> = SlugFamily::ALL.iter().map(|&f| f.as_wire_tag()).collect();
+        let mut tags: Vec<&str> = SlugFamily::ALL.iter().map(|&f| f.as_json_tag()).collect();
         for t in &tags {
             assert!(!t.is_empty(), "empty wire tag");
             assert_ne!(*t, "unknown", "wire tag must not be a fallback");

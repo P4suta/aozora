@@ -33,30 +33,30 @@
 
 use serde::Serialize;
 
-use crate::encoding::gaiji::{GaijiResolution, find_span, gaiji_resolutions, resolve_at};
-use crate::{Diagnostic, DiagnosticSource, Severity, Span, Tree};
+use crate::encoding::gaiji::{self, find_span, gaiji_resolutions, resolve_at};
+use crate::{DiagnosticSource, Severity, Tree};
 
 /// Wire-format schema version. Bumped on any breaking change to the
 /// serialised shape (variant additions, field renames, envelope
 /// changes).
 pub const SCHEMA_VERSION: u32 = 1;
 
-/// Project a slice of [`Diagnostic`] into a `{ schema_version, data }`
+/// Project a slice of [`crate::Diagnostic`] into a `{ schema_version, data }`
 /// JSON envelope. Every entry has the shape
 /// `{ kind, span: { start, end }, codepoint? }`.
 ///
 /// Empty input → `{"schemaVersion":1,"data":[]}`.
 #[must_use]
-pub fn diagnostics(diagnostics: &[Diagnostic]) -> String {
+pub fn diagnostics(diagnostics: &[crate::Diagnostic]) -> String {
     serialize_envelope(&diagnostic_entries(diagnostics))
 }
 
-/// The structured `DiagnosticWire` records that back `diagnostics()` —
+/// The structured `Diagnostic` records that back `diagnostics()` —
 /// prefer this to re-parsing the JSON when a caller needs the values
 /// directly (e.g. a Wasm binding building JS objects).
 #[must_use]
-pub fn diagnostic_entries(diagnostics: &[Diagnostic]) -> Vec<DiagnosticWire> {
-    diagnostics.iter().map(DiagnosticWire::from).collect()
+pub fn diagnostic_entries(diagnostics: &[crate::Diagnostic]) -> Vec<Diagnostic> {
+    diagnostics.iter().map(Diagnostic::from).collect()
 }
 
 /// Project an [`Tree`]'s source-keyed node side-table into a
@@ -70,14 +70,14 @@ pub fn nodes(tree: &Tree<'_>) -> String {
     serialize_envelope(&node_entries(tree))
 }
 
-/// The structured `NodeWire` records that back `nodes()` — prefer this to
+/// The structured `Node` records that back `nodes()` — prefer this to
 /// re-parsing the JSON when a caller needs the values directly.
 #[must_use]
-pub fn node_entries(tree: &Tree<'_>) -> Vec<NodeWire> {
+pub fn node_entries(tree: &Tree<'_>) -> Vec<Node> {
     tree.source_nodes()
         .iter()
-        .map(|sn| NodeWire {
-            kind: sn.node.kind().as_wire_tag(),
+        .map(|sn| Node {
+            kind: sn.node.kind().as_json_tag(),
             span: sn.source_span.into(),
         })
         .collect()
@@ -99,14 +99,14 @@ pub fn pairs(tree: &Tree<'_>) -> String {
     serialize_envelope(&pair_entries(tree))
 }
 
-/// The structured `PairWire` records that back `pairs()` — prefer this to
+/// The structured `Pair` records that back `pairs()` — prefer this to
 /// re-parsing the JSON when a caller needs the values directly.
 #[must_use]
-pub fn pair_entries(tree: &Tree<'_>) -> Vec<PairWire> {
+pub fn pair_entries(tree: &Tree<'_>) -> Vec<Pair> {
     tree.pairs()
         .iter()
-        .map(|link| PairWire {
-            kind: link.kind.as_wire_tag(),
+        .map(|link| Pair {
+            kind: link.kind.as_json_tag(),
             open: link.open.into(),
             close: link.close.into(),
         })
@@ -133,19 +133,19 @@ pub fn container_pairs(tree: &Tree<'_>) -> String {
     serialize_envelope(&container_pair_entries(tree))
 }
 
-/// The structured `ContainerPairWire` records that back
+/// The structured `ContainerPair` records that back
 /// `container_pairs()` — prefer this to re-parsing the JSON when a caller
 /// needs the values directly.
 #[must_use]
-pub fn container_pair_entries(tree: &Tree<'_>) -> Vec<ContainerPairWire> {
+pub fn container_pair_entries(tree: &Tree<'_>) -> Vec<ContainerPair> {
     tree.container_pairs()
         .iter()
-        .map(|pair| ContainerPairWire {
-            kind: pair.kind.as_wire_tag(),
-            open: OffsetWire {
+        .map(|pair| ContainerPair {
+            kind: pair.kind.as_json_tag(),
+            open: Offset {
                 offset: pair.open.get(),
             },
-            close: OffsetWire {
+            close: Offset {
                 offset: pair.close.get(),
             },
         })
@@ -167,15 +167,15 @@ pub fn slugs() -> String {
     serialize_envelope(&slug_entries())
 }
 
-/// The structured `SlugWire` records that back `slugs()` — prefer this to
+/// The structured `Slug` records that back `slugs()` — prefer this to
 /// re-parsing the JSON when a caller needs the catalogue directly.
 #[must_use]
-pub fn slug_entries() -> Vec<SlugWire> {
+pub fn slug_entries() -> Vec<Slug> {
     crate::SLUGS
         .iter()
-        .map(|s| SlugWire {
+        .map(|s| Slug {
             canonical: s.canonical,
-            family: s.family.as_wire_tag(),
+            family: s.family.as_json_tag(),
             accepts_param: s.accepts_param,
             doc: s.doc,
             partner: s.partner,
@@ -201,11 +201,11 @@ pub fn gaiji(source: &str) -> String {
     serialize_envelope(&gaiji_entries(source))
 }
 
-/// The structured `GaijiResolutionWire` records that back `gaiji()` —
+/// The structured `GaijiResolution` records that back `gaiji()` —
 /// prefer this to re-parsing the JSON when a caller needs the values
 /// directly.
 #[must_use]
-pub fn gaiji_entries(source: &str) -> Vec<GaijiResolutionWire> {
+pub fn gaiji_entries(source: &str) -> Vec<GaijiResolution> {
     gaiji_resolutions(source)
         .into_iter()
         .map(Into::into)
@@ -220,7 +220,7 @@ pub fn gaiji_entries(source: &str) -> Vec<GaijiResolutionWire> {
 ///
 /// For editor cursor-hover: the scan is bounded to a window around the
 /// cursor, so cost is independent of document size (unlike
-/// [`gaiji`], which walks the whole source).
+/// [`gaiji()`], which walks the whole source).
 #[must_use]
 pub fn gaiji_at(source: &str, byte_offset: usize) -> String {
     find_span(source, byte_offset)
@@ -228,7 +228,7 @@ pub fn gaiji_at(source: &str, byte_offset: usize) -> String {
         .map_or_else(
             || "null".to_owned(),
             |g| {
-                serde_json::to_string(&GaijiResolutionWire::from(g))
+                serde_json::to_string(&GaijiResolution::from(g))
                     .unwrap_or_else(|_| "null".to_owned())
             },
         )
@@ -253,7 +253,7 @@ struct Envelope<'a, T> {
 /// [`diagnostics`] envelope output.
 ///
 /// Schema-feature only. Used by `xtask schema dump` to commit the
-/// schema artefact under `crates/aozora-book/src/wire/`, and by the
+/// schema artefact under `crates/aozora-book/src/json/`, and by the
 /// `aozora schema` CLI subcommand for ad-hoc introspection.
 #[cfg(feature = "schema")]
 #[must_use]
@@ -261,7 +261,7 @@ pub fn schema_diagnostics() -> serde_json::Value {
     envelope_schema(
         "AozoraDiagnosticsEnvelope",
         "Envelope returned by aozora::json::diagnostics.",
-        schemars::schema_for!(DiagnosticWire),
+        schemars::schema_for!(Diagnostic),
     )
 }
 
@@ -272,7 +272,7 @@ pub fn schema_nodes() -> serde_json::Value {
     envelope_schema(
         "AozoraNodesEnvelope",
         "Envelope returned by aozora::json::nodes.",
-        schemars::schema_for!(NodeWire),
+        schemars::schema_for!(Node),
     )
 }
 
@@ -283,7 +283,7 @@ pub fn schema_pairs() -> serde_json::Value {
     envelope_schema(
         "AozoraPairsEnvelope",
         "Envelope returned by aozora::json::pairs.",
-        schemars::schema_for!(PairWire),
+        schemars::schema_for!(Pair),
     )
 }
 
@@ -294,7 +294,7 @@ pub fn schema_container_pairs() -> serde_json::Value {
     envelope_schema(
         "AozoraContainerPairsEnvelope",
         "Envelope returned by aozora::json::container_pairs.",
-        schemars::schema_for!(ContainerPairWire),
+        schemars::schema_for!(ContainerPair),
     )
 }
 
@@ -309,7 +309,7 @@ fn envelope_schema(
     item_schema: schemars::Schema,
 ) -> serde_json::Value {
     // `schema_for!(ItemWire)` returns a self-contained document: its
-    // shared sub-types (e.g. `SpanWire`) live under a root `$defs` and
+    // shared sub-types (e.g. `Span`) live under a root `$defs` and
     // are referenced as `#/$defs/…`. Embedding it verbatim as `items`
     // would bury that `$defs` under `properties/data/items`, leaving the
     // `#/$defs/…` refs — which resolve against the *document* root —
@@ -362,13 +362,13 @@ fn serialize_envelope<T: Serialize>(data: &[T]) -> String {
 /// One half-open `[start, end)` byte span in a wire envelope.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct SpanWire {
+pub struct Span {
     start: u32,
     end: u32,
 }
 
-impl From<Span> for SpanWire {
-    fn from(s: Span) -> Self {
+impl From<crate::Span> for Span {
+    fn from(s: crate::Span) -> Self {
         Self {
             start: s.start,
             end: s.end,
@@ -376,26 +376,26 @@ impl From<Span> for SpanWire {
     }
 }
 
-/// One `diagnostics` envelope entry — a projected [`Diagnostic`].
+/// One `diagnostics` envelope entry — a projected [`crate::Diagnostic`].
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct DiagnosticWire {
+pub struct Diagnostic {
     kind: &'static str,
     severity: &'static str,
     source: &'static str,
-    span: SpanWire,
+    span: Span,
     #[serde(skip_serializing_if = "Option::is_none")]
     codepoint: Option<char>,
 }
 
-impl From<&Diagnostic> for DiagnosticWire {
-    fn from(d: &Diagnostic) -> Self {
+impl From<&crate::Diagnostic> for Diagnostic {
+    fn from(d: &crate::Diagnostic) -> Self {
         // Pull the codepoint payload off the variants that carry one.
         // The accessors collapse the Internal/Source distinction for
         // severity/source/code; the codepoint is the only payload that
         // survives variant-by-variant.
         let codepoint = match d {
-            Diagnostic::SourceContainsPua { codepoint, .. } => Some(*codepoint),
+            crate::Diagnostic::SourceContainsPua { codepoint, .. } => Some(*codepoint),
             _ => None,
         };
         // Strip the `aozora::lex::` / `aozora::internal` prefix so the
@@ -441,42 +441,42 @@ const fn source_str(s: DiagnosticSource) -> &'static str {
 /// One `nodes` envelope entry — a classified node span in source coords.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct NodeWire {
+pub struct Node {
     kind: &'static str,
-    span: SpanWire,
+    span: Span,
 }
 
 /// One `pairs` envelope entry — a matched bracket pair.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct PairWire {
+pub struct Pair {
     kind: &'static str,
-    open: SpanWire,
-    close: SpanWire,
+    open: Span,
+    close: Span,
 }
 
 /// One `container_pairs` envelope entry — a paired container, open/close
 /// in normalized coordinates.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct ContainerPairWire {
+pub struct ContainerPair {
     kind: &'static str,
-    open: OffsetWire,
-    close: OffsetWire,
+    open: Offset,
+    close: Offset,
 }
 
 /// A single byte offset (a `container_pairs` open/close in normalized
 /// coordinates).
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct OffsetWire {
+pub struct Offset {
     offset: u32,
 }
 
 /// One `slugs` envelope entry — a row of the annotation slug catalogue.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct SlugWire {
+pub struct Slug {
     canonical: &'static str,
     family: &'static str,
     accepts_param: bool,
@@ -486,15 +486,15 @@ pub struct SlugWire {
     partner: Option<&'static str>,
 }
 
-/// Source-byte span carried by [`GaijiResolutionWire`].
+/// Source-byte span carried by [`GaijiResolution`].
 ///
-/// Distinct from [`SpanWire`] (whose `u32` fields cover sanitized-source
+/// Distinct from [`Span`] (whose `u32` fields cover sanitized-source
 /// spans): gaiji offsets are raw `usize` byte positions into the original
 /// source, kept as-is to stay byte-identical to the prior aozora-wasm
 /// projection.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct ByteSpanWire {
+pub struct ByteSpan {
     start: usize,
     end: usize,
 }
@@ -502,8 +502,8 @@ pub struct ByteSpanWire {
 /// One `gaiji` envelope entry — a resolved `※［＃…］` reference.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct GaijiResolutionWire {
-    span: ByteSpanWire,
+pub struct GaijiResolution {
+    span: ByteSpan,
     description: String,
     // Nulls (not skipped) so the shape is fixed across entries.
     mencode: Option<String>,
@@ -511,10 +511,10 @@ pub struct GaijiResolutionWire {
     resolved: Option<String>,
 }
 
-impl From<GaijiResolution> for GaijiResolutionWire {
-    fn from(g: GaijiResolution) -> Self {
+impl From<gaiji::GaijiResolution> for GaijiResolution {
+    fn from(g: gaiji::GaijiResolution) -> Self {
         Self {
-            span: ByteSpanWire {
+            span: ByteSpan {
                 start: g.start,
                 end: g.end,
             },
@@ -634,28 +634,28 @@ mod tests {
     #[test]
     fn pair_kind_camel_case_covers_all_known_kinds() {
         use crate::PairKind;
-        assert_eq!(PairKind::Bracket.as_wire_tag(), "bracket");
-        assert_eq!(PairKind::Ruby.as_wire_tag(), "ruby");
-        assert_eq!(PairKind::AngleQuote.as_wire_tag(), "angleQuote");
-        assert_eq!(PairKind::Tortoise.as_wire_tag(), "tortoise");
-        assert_eq!(PairKind::Quote.as_wire_tag(), "quote");
+        assert_eq!(PairKind::Bracket.as_json_tag(), "bracket");
+        assert_eq!(PairKind::Ruby.as_json_tag(), "ruby");
+        assert_eq!(PairKind::AngleQuote.as_json_tag(), "angleQuote");
+        assert_eq!(PairKind::Tortoise.as_json_tag(), "tortoise");
+        assert_eq!(PairKind::Quote.as_json_tag(), "quote");
     }
 
     #[test]
-    fn container_kind_wire_tags_via_as_wire_tag() {
+    fn container_kind_wire_tags_via_as_json_tag() {
         use aozora_syntax::{BoutenKind, BoutenPosition, ContainerKind};
         // The wire projection is the single authority on `ContainerKind`
         // (no `_ => "unknown"` fallback — exhaustiveness is enforced in
         // aozora-syntax). This is the aozora-layer smoke check that the
         // `container_pairs` path reaches the same tags.
-        assert_eq!(ContainerKind::Bold { block: false }.as_wire_tag(), "bold");
-        assert_eq!(ContainerKind::Bold { block: true }.as_wire_tag(), "bold");
+        assert_eq!(ContainerKind::Bold { block: false }.as_json_tag(), "bold");
+        assert_eq!(ContainerKind::Bold { block: true }.as_json_tag(), "bold");
         assert_eq!(
-            ContainerKind::Italic { block: false }.as_wire_tag(),
+            ContainerKind::Italic { block: false }.as_json_tag(),
             "italic"
         );
         assert_eq!(
-            ContainerKind::Italic { block: true }.as_wire_tag(),
+            ContainerKind::Italic { block: true }.as_json_tag(),
             "italic"
         );
         assert_eq!(
@@ -663,7 +663,7 @@ mod tests {
                 kind: BoutenKind::Goma,
                 position: BoutenPosition::Right,
             }
-            .as_wire_tag(),
+            .as_json_tag(),
             "boutenRange"
         );
     }

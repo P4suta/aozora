@@ -77,7 +77,7 @@ The `mismatched_bouten_container` diagnostic is scoped to the 点/線
   normalizer's padding and the HTML renderer's paragraph handling),
   keyed off the single `matches!(kind, BoutenRange { .. })` test. New
   container kinds must decide which side they fall on.
-- No wire drift: `ContainerPairWire.kind` is an unconstrained string, so
+- No wire drift: `ContainerPair.kind` is an unconstrained string, so
   adding the `"boutenRange"` tag leaves the JSON schema / `.d.ts`
   unchanged.
 - `鎖線` / `破線` / `黒三角傍点` range variants are not yet in

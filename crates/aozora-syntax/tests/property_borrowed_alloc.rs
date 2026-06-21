@@ -93,7 +93,7 @@ fn xml_node_name_is_injective_over_all_variants() {
         .iter()
         .map(aozora_syntax::borrowed::Node::kind)
         .collect();
-    kinds.sort_by_key(|k| k.as_wire_tag());
+    kinds.sort_by_key(|k| k.as_json_tag());
     let len_kinds_before = kinds.len();
     kinds.dedup();
     assert_eq!(

@@ -16,7 +16,7 @@ aozora <SUBCOMMAND> [OPTIONS] [ARGS]
 | `render` | Render to HTML on stdout. |
 | `inspect` | Emit a document's JSON (`nodes`/`pairs`/`container-pairs`/`diagnostics`/`gaiji`) or the static `slugs` catalogue. |
 | `pandoc` | Project to a Pandoc AST (JSON, or pipe through `pandoc`). |
-| `kinds` | Tabulate every `NodeKind` / `PairKind` / `Severity` / … wire tag. |
+| `kinds` | Tabulate every `NodeKind` / `PairKind` / `Severity` / … JSON tag. |
 | `schema` | Print the JSON Schema for a JSON envelope. |
 | `explain` | Print prose for a `NodeKind` tag, or help / severity / URL for a diagnostic code. |
 | `completions` | Print a shell completion script (bash / zsh / fish / powershell / elvish / nushell). |
@@ -136,7 +136,7 @@ parser output into a shell pipeline.
 
 Every envelope is `{ "schemaVersion": 1, "data": [ … ] }`; the per-kind
 item schema is the one `aozora schema <kind>` prints (see
-[Wire format](../wire/overview.md)). `PATH` of `-` (or omitted) reads
+[JSON output](../json/overview.md)). `PATH` of `-` (or omitted) reads
 stdin and `--encoding`/`-E` applies; `slugs` ignores any input. Unlike
 `check`, `inspect` is a pure projection — it always exits `0`.
 
@@ -201,7 +201,7 @@ you want to install one locally.
 
 `kinds`, `schema {diagnostics|nodes|pairs|container-pairs}`, and
 `explain <target>` print typed contracts and need no input file. They
-back the drift-gated JSON artefacts; see [Wire format](../wire/overview.md).
+back the drift-gated JSON artefacts; see [JSON output](../json/overview.md).
 The **data** counterpart to `schema` is [`aozora inspect`](#aozora-inspect),
 which projects a parsed document into those same envelopes.
 

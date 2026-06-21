@@ -33,45 +33,45 @@ export type SentinelKind = "inline" | "blockLeaf" | "blockOpen" | "blockClose";
 
 /** Half-open byte span `[start, end)` in the relevant coordinate system
 (sanitized source for diagnostics / nodes / pairs; see `aozora::json` docs). */
-export interface SpanWire {
+export interface Span {
   start: number;
   end: number;
 }
 
-/** Single byte offset (used by `ContainerPairWire` open / close in normalized coords). */
-export interface OffsetWire {
+/** Single byte offset (used by `ContainerPair` open / close in normalized coords). */
+export interface Offset {
   offset: number;
 }
 
 /** One entry of `diagnostics` — `Diagnostic` projection. */
-export interface DiagnosticWire {
+export interface Diagnostic {
   /** Variant tag (last segment of `Diagnostic::code()`, e.g. `"source_contains_pua"`). */
   kind: string;
   severity: Severity;
   source: DiagnosticSource;
-  span: SpanWire;
+  span: Span;
   /** Codepoint payload (only `SourceContainsPua` carries one today). */
   codepoint?: string;
 }
 
 /** One entry of `nodes` — classified `Node` span in source coords. */
-export interface NodeWire {
+export interface Node {
   kind: NodeKind;
-  span: SpanWire;
+  span: Span;
 }
 
 /** One entry of `pairs` — matched bracket pair link. */
-export interface PairWire {
+export interface Pair {
   kind: PairKind;
-  open: SpanWire;
-  close: SpanWire;
+  open: Span;
+  close: Span;
 }
 
 /** One entry of `container_pairs` — paired container (open in normalized coords). */
-export interface ContainerPairWire {
+export interface ContainerPair {
   kind: ContainerKind;
-  open: OffsetWire;
-  close: OffsetWire;
+  open: Offset;
+  close: Offset;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -79,12 +79,12 @@ export interface ContainerPairWire {
 // ─────────────────────────────────────────────────────────
 
 /** Generic wire envelope. Every endpoint emits this top-level shape. */
-export interface WireEnvelope<T> {
+export interface JsonEnvelope<T> {
   schema_version: 1;
   data: ReadonlyArray<T>;
 }
 
-export type DiagnosticsEnvelope    = WireEnvelope<DiagnosticWire>;
-export type NodesEnvelope          = WireEnvelope<NodeWire>;
-export type PairsEnvelope          = WireEnvelope<PairWire>;
-export type ContainerPairsEnvelope = WireEnvelope<ContainerPairWire>;
+export type DiagnosticsEnvelope    = JsonEnvelope<Diagnostic>;
+export type NodesEnvelope          = JsonEnvelope<Node>;
+export type PairsEnvelope          = JsonEnvelope<Pair>;
+export type ContainerPairsEnvelope = JsonEnvelope<ContainerPair>;

@@ -1,6 +1,6 @@
 //! JSON Schema artefact dump / drift gate.
 //!
-//! Bridges `aozora::json::schema_*` → `crates/aozora-book/src/wire/schema-*.json`.
+//! Bridges `aozora::json::schema_*` → `crates/aozora-book/src/json/schema-*.json`.
 //! `xtask schema dump` regenerates the four schema files; `xtask
 //! schema check` exits non-zero when the on-disk artefact has
 //! drifted from the live wire types.
@@ -28,19 +28,19 @@ pub(crate) type SchemaGen = fn() -> serde_json::Value;
 /// artefacts as the single source of truth for `quicktype` codegen.
 pub(crate) const SCHEMA_FILES: &[(&str, SchemaGen)] = &[
     (
-        "crates/aozora-book/src/wire/schema-diagnostics.json",
+        "crates/aozora-book/src/json/schema-diagnostics.json",
         json::schema_diagnostics,
     ),
     (
-        "crates/aozora-book/src/wire/schema-nodes.json",
+        "crates/aozora-book/src/json/schema-nodes.json",
         json::schema_nodes,
     ),
     (
-        "crates/aozora-book/src/wire/schema-pairs.json",
+        "crates/aozora-book/src/json/schema-pairs.json",
         json::schema_pairs,
     ),
     (
-        "crates/aozora-book/src/wire/schema-container-pairs.json",
+        "crates/aozora-book/src/json/schema-container-pairs.json",
         json::schema_container_pairs,
     ),
 ];
@@ -162,8 +162,8 @@ mod tests {
                 "schema artefact path must be a .json file: {rel}"
             );
             assert!(
-                rel.contains("wire/schema-"),
-                "schema artefact lives under wire/: {rel}"
+                rel.contains("json/schema-"),
+                "schema artefact lives under json/: {rel}"
             );
         }
     }

@@ -5,7 +5,7 @@
 //! discriminated-union `.d.ts` for downstream TypeScript consumers:
 //!
 //! ```text
-//! import type { NodeKind, DiagnosticWire } from "aozora-wasm/aozora_types";
+//! import type { NodeKind, Diagnostic } from "aozora-wasm/aozora_types";
 //! ```
 //!
 //! The source of truth lives outside `pkg/` because `wasm-pack`
@@ -102,25 +102,25 @@ fn render_enums(out: &mut String) {
     push_export_type(
         out,
         "NodeKind",
-        &ts_string_union(&NodeKind::ALL, NodeKind::as_wire_tag),
+        &ts_string_union(&NodeKind::ALL, NodeKind::as_json_tag),
     );
     out.push_str("/** Pair kind for `pairs_json` output. */\n");
     push_export_type(
         out,
         "PairKind",
-        &ts_string_union(&PairKind::ALL, PairKind::as_wire_tag),
+        &ts_string_union(&PairKind::ALL, PairKind::as_json_tag),
     );
     out.push_str("/** Container kind for `container_pairs` output. */\n");
     push_export_type(
         out,
         "ContainerKind",
-        &ts_string_union(&ContainerKind::ALL, ContainerKind::as_wire_tag),
+        &ts_string_union(&ContainerKind::ALL, ContainerKind::as_json_tag),
     );
     out.push_str("/** Diagnostic severity tier (wire field `severity`). */\n");
     push_export_type(
         out,
         "Severity",
-        &ts_string_union(&Severity::ALL, Severity::as_wire_str),
+        &ts_string_union(&Severity::ALL, Severity::as_json_str),
     );
     out.push_str(
         "/** Diagnostic origin (wire field `source`). `internal` indicates a library bug. */\n",
@@ -128,7 +128,7 @@ fn render_enums(out: &mut String) {
     push_export_type(
         out,
         "DiagnosticSource",
-        &ts_string_union(&DiagnosticSource::ALL, DiagnosticSource::as_wire_str),
+        &ts_string_union(&DiagnosticSource::ALL, DiagnosticSource::as_json_str),
     );
     out.push_str("/** Stable namespaced ID for an Internal sanity-check failure. */\n");
     push_export_type(
@@ -159,26 +159,26 @@ fn render_wire_payloads(out: &mut String) {
         "/** Half-open byte span `[start, end)` in the relevant coordinate system\n\
          (sanitized source for diagnostics / nodes / pairs; see `aozora::json` docs). */\n",
     );
-    out.push_str("export interface SpanWire {\n  start: number;\n  end: number;\n}\n\n");
+    out.push_str("export interface Span {\n  start: number;\n  end: number;\n}\n\n");
     out.push_str(
-        "/** Single byte offset (used by `ContainerPairWire` open / close in normalized coords). */\n",
+        "/** Single byte offset (used by `ContainerPair` open / close in normalized coords). */\n",
     );
-    out.push_str("export interface OffsetWire {\n  offset: number;\n}\n\n");
+    out.push_str("export interface Offset {\n  offset: number;\n}\n\n");
     out.push_str("/** One entry of `diagnostics` — `Diagnostic` projection. */\n");
     out.push_str(
-        "export interface DiagnosticWire {\n  /** Variant tag (last segment of `Diagnostic::code()`, e.g. `\"source_contains_pua\"`). */\n  kind: string;\n  severity: Severity;\n  source: DiagnosticSource;\n  span: SpanWire;\n  /** Codepoint payload (only `SourceContainsPua` carries one today). */\n  codepoint?: string;\n}\n\n",
+        "export interface Diagnostic {\n  /** Variant tag (last segment of `Diagnostic::code()`, e.g. `\"source_contains_pua\"`). */\n  kind: string;\n  severity: Severity;\n  source: DiagnosticSource;\n  span: Span;\n  /** Codepoint payload (only `SourceContainsPua` carries one today). */\n  codepoint?: string;\n}\n\n",
     );
     out.push_str("/** One entry of `nodes` — classified `Node` span in source coords. */\n");
-    out.push_str("export interface NodeWire {\n  kind: NodeKind;\n  span: SpanWire;\n}\n\n");
+    out.push_str("export interface Node {\n  kind: NodeKind;\n  span: Span;\n}\n\n");
     out.push_str("/** One entry of `pairs` — matched bracket pair link. */\n");
     out.push_str(
-        "export interface PairWire {\n  kind: PairKind;\n  open: SpanWire;\n  close: SpanWire;\n}\n\n",
+        "export interface Pair {\n  kind: PairKind;\n  open: Span;\n  close: Span;\n}\n\n",
     );
     out.push_str(
         "/** One entry of `container_pairs` — paired container (open in normalized coords). */\n",
     );
     out.push_str(
-        "export interface ContainerPairWire {\n  kind: ContainerKind;\n  open: OffsetWire;\n  close: OffsetWire;\n}\n\n",
+        "export interface ContainerPair {\n  kind: ContainerKind;\n  open: Offset;\n  close: Offset;\n}\n\n",
     );
 }
 
@@ -189,17 +189,17 @@ fn render_envelopes(out: &mut String) {
     out.push('\n');
     out.push_str("/** Generic wire envelope. Every endpoint emits this top-level shape. */\n");
     out.push_str(
-        "export interface WireEnvelope<T> {\n  schema_version: 1;\n  data: ReadonlyArray<T>;\n}\n\n",
+        "export interface JsonEnvelope<T> {\n  schema_version: 1;\n  data: ReadonlyArray<T>;\n}\n\n",
     );
-    out.push_str("export type DiagnosticsEnvelope    = WireEnvelope<DiagnosticWire>;\n");
-    out.push_str("export type NodesEnvelope          = WireEnvelope<NodeWire>;\n");
-    out.push_str("export type PairsEnvelope          = WireEnvelope<PairWire>;\n");
-    out.push_str("export type ContainerPairsEnvelope = WireEnvelope<ContainerPairWire>;\n");
+    out.push_str("export type DiagnosticsEnvelope    = JsonEnvelope<Diagnostic>;\n");
+    out.push_str("export type NodesEnvelope          = JsonEnvelope<Node>;\n");
+    out.push_str("export type PairsEnvelope          = JsonEnvelope<Pair>;\n");
+    out.push_str("export type ContainerPairsEnvelope = JsonEnvelope<ContainerPair>;\n");
 }
 
 fn sentinel_to_wire(s: Sentinel) -> &'static str {
     // Sentinels don't have a public wire string of their own (the
-    // wire NodeWire kind already covers ContainerOpen/Close); we
+    // wire Node kind already covers ContainerOpen/Close); we
     // emit lowercase variant names here so the `SentinelKind` TS
     // type stays useful for reading raw NormalizedOffset coordinate
     // metadata.
@@ -277,10 +277,10 @@ struct LangType {
 const LANG_TYPES: &[LangType] = &[LangType {
     name: "go",
     quicktype_lang: "go",
-    out: "crates/aozora-go/wire_gen.go",
+    out: "crates/aozora-go/json_gen.go",
     comment: "// ",
     prelude: "package aozora\n\n",
-    extra: &["--just-types", "--top-level", "AozoraWire"],
+    extra: &["--just-types", "--top-level", "AozoraJson"],
     gofmt: true,
 }];
 
@@ -338,7 +338,7 @@ fn langs_check() -> Result<(), String> {
 /// Why combine: feeding the four schema files to `quicktype` separately
 /// makes it invent distinct names for the structurally-identical inner
 /// types (`PurpleSpan`, `FluffySpan`, …). One document with a shared
-/// `$defs` yields a single `SpanWire` / `OffsetWire`. Two transforms make
+/// `$defs` yields a single `Span` / `Offset`. Two transforms make
 /// it digestible: every `$def` gets a `title` equal to its key (so
 /// `quicktype` names types from the key, not the referencing property),
 /// and `schema_version`'s integer `const` is dropped (`quicktype` chokes
@@ -361,14 +361,14 @@ fn write_combined_schema(root: &Path) -> Result<PathBuf, String> {
             .and_then(Value::as_str)
             .ok_or_else(|| format!("{}: schema missing root title", path.display()))?
             .to_owned();
-        // Shared sub-types (SpanWire / OffsetWire), hoisted to root in the
+        // Shared sub-types (Span / Offset), hoisted to root in the
         // committed schema — merge, first definition wins (they're identical).
         if let Some(file_defs) = obj.get("$defs").and_then(Value::as_object) {
             for (key, value) in file_defs {
                 defs.entry(key.clone()).or_insert_with(|| value.clone());
             }
         }
-        // The per-entry item type (DiagnosticWire / NodeWire / …).
+        // The per-entry item type (Diagnostic / Node / …).
         let mut items = obj
             .get("properties")
             .and_then(|p| p.get("data"))
@@ -413,13 +413,13 @@ fn write_combined_schema(root: &Path) -> Result<PathBuf, String> {
     }
     let combined = serde_json::json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "AozoraWire",
+        "title": "AozoraJson",
         "type": "object",
         "additionalProperties": false,
         "properties": props,
         "$defs": defs,
     });
-    let combined_path = env::temp_dir().join("aozora_wire_combined.schema.json");
+    let combined_path = env::temp_dir().join("aozora_json_combined.schema.json");
     let pretty = serde_json::to_string_pretty(&combined).map_err(|err| err.to_string())?;
     fs::write(&combined_path, pretty)
         .map_err(|err| format!("write combined schema {}: {err}", combined_path.display()))?;
@@ -577,7 +577,7 @@ mod tests {
     fn render_enums_projects_node_kind_via_camel_case() {
         let mut out = String::new();
         render_enums(&mut out);
-        // `as_wire_tag` projects Ruby → "ruby"; the union must carry it.
+        // `as_json_tag` projects Ruby → "ruby"; the union must carry it.
         assert!(
             out.contains("\"ruby\""),
             "NodeKind union must contain camelCase ruby: {out}"
@@ -589,12 +589,12 @@ mod tests {
         let mut out = String::new();
         render_wire_payloads(&mut out);
         for iface in [
-            "interface SpanWire",
-            "interface OffsetWire",
-            "interface DiagnosticWire",
-            "interface NodeWire",
-            "interface PairWire",
-            "interface ContainerPairWire",
+            "interface Span",
+            "interface Offset",
+            "interface Diagnostic",
+            "interface Node",
+            "interface Pair",
+            "interface ContainerPair",
         ] {
             assert!(out.contains(iface), "missing `{iface}`: {out}");
         }
@@ -605,7 +605,7 @@ mod tests {
         let mut out = String::new();
         render_envelopes(&mut out);
         assert!(
-            out.contains("interface WireEnvelope<T>"),
+            out.contains("interface JsonEnvelope<T>"),
             "generic envelope"
         );
         for alias in [
@@ -627,11 +627,8 @@ mod tests {
         // Header first, enums + payloads + envelopes all present.
         assert!(dts.starts_with("// AUTO-GENERATED"), "header leads: {dts}");
         assert!(dts.contains("export type NodeKind ="), "enums section");
-        assert!(dts.contains("interface SpanWire"), "payload section");
-        assert!(
-            dts.contains("WireEnvelope<DiagnosticWire>"),
-            "envelope section"
-        );
+        assert!(dts.contains("interface Span"), "payload section");
+        assert!(dts.contains("JsonEnvelope<Diagnostic>"), "envelope section");
     }
 
     #[test]

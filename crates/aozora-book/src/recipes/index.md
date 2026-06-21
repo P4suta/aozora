@@ -52,5 +52,5 @@ The recipes mirror these runnable examples (authored under
 - [Choosing a binding](../bindings/choosing.md) — picking the surface
   (Rust / CLI / wasm / Python / Go / Extism) before you start.
 - [Node reference](../nodes/index.md) — what each AST node represents.
-- [Wire format](../wire/overview.md) — the JSON envelope the
+- [JSON output](../json/overview.md) — the JSON envelope the
   `aozora::json` serialisers emit.

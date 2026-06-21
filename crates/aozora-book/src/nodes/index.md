@@ -9,7 +9,7 @@ The page layout matches the `aozora explain <kind>` CLI subcommand:
 once you find the variant in the table, the deep dive is one click —
 or one shell invocation — away.
 
-| Variant | Wire tag | Notation |
+| Variant | JSON tag | Notation |
 | --- | --- | --- |
 | [Ruby](ruby.md) | `ruby` | `｜base《reading》` |
 | [Bouten](bouten.md) | `bouten` | `［＃「target」に傍点］` |

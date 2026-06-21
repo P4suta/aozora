@@ -192,7 +192,7 @@ impl ContainerKind {
     }
 
     /// Every variant, one representative instance per data-carrying
-    /// variant — the payload is irrelevant to [`Self::as_wire_tag`], which
+    /// variant — the payload is irrelevant to [`Self::as_json_tag`], which
     /// matches on the discriminant only. Lets the wire-tag exhaustiveness
     /// test and the TypeScript / JSON-Schema codegen enumerate the family
     /// list without a hand-maintained parallel.
@@ -237,7 +237,7 @@ impl ContainerKind {
     /// fallback the host-side projection used to emit (the bug that left
     /// `CombineUprightRange` unmapped).
     #[must_use]
-    pub const fn as_wire_tag(self) -> &'static str {
+    pub const fn as_json_tag(self) -> &'static str {
         match self {
             Self::Indent { .. } => "indent",
             Self::Warichu => "warichu",
@@ -375,7 +375,7 @@ mod tests {
         );
         let mut tags: Vec<&str> = ContainerKind::ALL
             .iter()
-            .map(|&k| k.as_wire_tag())
+            .map(|&k| k.as_json_tag())
             .collect();
         for t in &tags {
             assert!(!t.is_empty(), "empty wire tag");
@@ -397,7 +397,7 @@ mod tests {
         // projection and silently fell through to `"unknown"`. The wire
         // tag now lives on the enum with no `_` fallback. Pin both forms.
         assert_eq!(
-            ContainerKind::CombineUprightRange.as_wire_tag(),
+            ContainerKind::CombineUprightRange.as_json_tag(),
             "combineUprightRange"
         );
         assert_eq!(

@@ -8,7 +8,7 @@ further down the long tail.
 
 There is exactly **one parser**. Every binding funnels the same source
 text through the same lexer and emits the same HTML, the same canonical
-source, and the same [wire-envelope](../wire/overview.md) JSON —
+source, and the same [JSON envelope](../json/overview.md) JSON —
 **byte-identical across every language**. So the decision is not
 "which binding is more correct"; it is "which fits the language and
 runtime I already have." [Choosing a binding](../bindings/choosing.md)
@@ -64,7 +64,7 @@ change:
    - `to_html` / `serialize` → a bare string;
    - `diagnostics_json` / `nodes_json` / `pairs_json` /
      `container_pairs_json` → a `{ schema_version, data }`
-     [wire envelope](../wire/overview.md).
+     [JSON envelope](../json/overview.md).
 5. Parse the envelope `data` with types generated from the committed
    JSON Schema.
 
@@ -86,5 +86,5 @@ the short version is in
 - [Go](../bindings/go.md) · [Python](../bindings/python.md) ·
   [WASM](../bindings/wasm.md) · [C ABI](../bindings/c.md) — the
   native / in-process bindings.
-- [Wire format](../wire/overview.md) — the JSON envelope every binding
+- [JSON output](../json/overview.md) — the JSON envelope every binding
   agrees on.

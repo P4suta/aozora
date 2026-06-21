@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "AozoraContainerPairsEnvelope",
-  "description": "Envelope returned by aozora::json::container_pairs.",
+  "title": "AozoraDiagnosticsEnvelope",
+  "description": "Envelope returned by aozora::json::diagnostics.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,37 +23,55 @@
           "kind": {
             "type": "string"
           },
-          "open": {
-            "$ref": "#/$defs/OffsetWire"
+          "severity": {
+            "type": "string"
           },
-          "close": {
-            "$ref": "#/$defs/OffsetWire"
+          "source": {
+            "type": "string"
+          },
+          "span": {
+            "$ref": "#/$defs/Span"
+          },
+          "codepoint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 1
           }
         },
         "required": [
           "kind",
-          "open",
-          "close"
+          "severity",
+          "source",
+          "span"
         ],
-        "description": "One `container_pairs` envelope entry — a paired container, open/close\nin normalized coordinates.",
-        "title": "ContainerPairWire"
+        "description": "One `diagnostics` envelope entry — a projected [`crate::Diagnostic`].",
+        "title": "Diagnostic"
       }
     }
   },
   "$defs": {
-    "OffsetWire": {
+    "Span": {
       "type": "object",
       "properties": {
-        "offset": {
+        "start": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "end": {
           "type": "integer",
           "format": "uint32",
           "minimum": 0
         }
       },
       "required": [
-        "offset"
+        "start",
+        "end"
       ],
-      "description": "A single byte offset (a `container_pairs` open/close in normalized\ncoordinates)."
+      "description": "One half-open `[start, end)` byte span in a wire envelope."
     }
   }
 }

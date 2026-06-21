@@ -234,12 +234,12 @@ jobs:
 
   # Phase L4 — wire-format / TS-types drift gate.
   #
-  # Both artefacts are committed to the repo (`crates/aozora-book/src/wire/
+  # Both artefacts are committed to the repo (`crates/aozora-book/src/json/
   # schema-*.json` and `crates/aozora-wasm/types/aozora_types.d.ts`)
   # and must stay in sync with the live Rust types they're generated
   # from. This job re-runs codegen and `git diff`-style asserts the
   # output is byte-identical to what's checked in. Forgetting to
-  # regenerate after touching `aozora::wire::*` or any `pub const ALL`
+  # regenerate after touching `aozora::json::*` or any `pub const ALL`
   # array now fails CI rather than landing silently.
   drift-gate:
     needs: [changes, dev-image]

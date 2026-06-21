@@ -3,7 +3,7 @@
 
 package aozora
 
-type AozoraWire struct {
+type AozoraJSON struct {
 	AozoraContainerPairsEnvelope *AozoraContainerPairsEnvelope `json:"AozoraContainerPairsEnvelope,omitempty"`
 	AozoraDiagnosticsEnvelope    *AozoraDiagnosticsEnvelope    `json:"AozoraDiagnosticsEnvelope,omitempty"`
 	AozoraNodesEnvelope          *AozoraNodesEnvelope          `json:"AozoraNodesEnvelope,omitempty"`
@@ -11,63 +11,63 @@ type AozoraWire struct {
 }
 
 type AozoraContainerPairsEnvelope struct {
-	Data          []ContainerPairWire `json:"data"`
-	SchemaVersion int64               `json:"schemaVersion"`
+	Data          []ContainerPair `json:"data"`
+	SchemaVersion int64           `json:"schemaVersion"`
 }
 
 // One `container_pairs` envelope entry — a paired container, open/close
 // in normalized coordinates.
-type ContainerPairWire struct {
-	Close OffsetWire `json:"close"`
-	Kind  string     `json:"kind"`
-	Open  OffsetWire `json:"open"`
+type ContainerPair struct {
+	Close Offset `json:"close"`
+	Kind  string `json:"kind"`
+	Open  Offset `json:"open"`
 }
 
 // A single byte offset (a `container_pairs` open/close in normalized
 // coordinates).
-type OffsetWire struct {
+type Offset struct {
 	Offset int64 `json:"offset"`
 }
 
 type AozoraDiagnosticsEnvelope struct {
-	Data          []DiagnosticWire `json:"data"`
-	SchemaVersion int64            `json:"schemaVersion"`
+	Data          []Diagnostic `json:"data"`
+	SchemaVersion int64        `json:"schemaVersion"`
 }
 
-// One `diagnostics` envelope entry — a projected [`Diagnostic`].
-type DiagnosticWire struct {
-	Codepoint *string  `json:"codepoint"`
-	Kind      string   `json:"kind"`
-	Severity  string   `json:"severity"`
-	Source    string   `json:"source"`
-	Span      SpanWire `json:"span"`
+// One `diagnostics` envelope entry — a projected [`crate::Diagnostic`].
+type Diagnostic struct {
+	Codepoint *string `json:"codepoint"`
+	Kind      string  `json:"kind"`
+	Severity  string  `json:"severity"`
+	Source    string  `json:"source"`
+	Span      Span    `json:"span"`
 }
 
 // One half-open `[start, end)` byte span in a wire envelope.
-type SpanWire struct {
+type Span struct {
 	End   int64 `json:"end"`
 	Start int64 `json:"start"`
 }
 
 type AozoraNodesEnvelope struct {
-	Data          []NodeWire `json:"data"`
-	SchemaVersion int64      `json:"schemaVersion"`
+	Data          []Node `json:"data"`
+	SchemaVersion int64  `json:"schemaVersion"`
 }
 
 // One `nodes` envelope entry — a classified node span in source coords.
-type NodeWire struct {
-	Kind string   `json:"kind"`
-	Span SpanWire `json:"span"`
+type Node struct {
+	Kind string `json:"kind"`
+	Span Span   `json:"span"`
 }
 
 type AozoraPairsEnvelope struct {
-	Data          []PairWire `json:"data"`
-	SchemaVersion int64      `json:"schemaVersion"`
+	Data          []Pair `json:"data"`
+	SchemaVersion int64  `json:"schemaVersion"`
 }
 
 // One `pairs` envelope entry — a matched bracket pair.
-type PairWire struct {
-	Close SpanWire `json:"close"`
-	Kind  string   `json:"kind"`
-	Open  SpanWire `json:"open"`
+type Pair struct {
+	Close Span   `json:"close"`
+	Kind  string `json:"kind"`
+	Open  Span   `json:"open"`
 }

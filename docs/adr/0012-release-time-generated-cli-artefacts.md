@@ -14,7 +14,7 @@ the generated files come from, and do we commit them to the repo?
 The repo already has a strong pattern for generated artefacts. The wire
 JSON Schema (`xtask schema`) and the per-language wire types
 (`xtask types`) are generated, **committed** under
-`crates/aozora-book/src/wire/` and `…/types/`, and **drift-gated** — CI
+`crates/aozora-book/src/json/` and `…/types/`, and **drift-gated** — CI
 fails if a committed copy diverges from the live types (`just
 drift-gate`). That gate earns its keep because those artefacts cross a
 *serialization boundary* (Rust structs → JSON Schema → other-language

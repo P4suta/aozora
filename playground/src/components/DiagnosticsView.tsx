@@ -1,5 +1,5 @@
 import { createMemo, For, Show } from 'solid-js';
-import type { DiagnosticEntry, WireEnvelope } from '../types';
+import type { DiagnosticEntry, JsonEnvelope } from '../types';
 
 interface DiagnosticsViewProps {
   json: string;
@@ -8,7 +8,7 @@ interface DiagnosticsViewProps {
 export default function DiagnosticsView(props: DiagnosticsViewProps) {
   const data = createMemo<DiagnosticEntry[]>(() => {
     try {
-      const env: WireEnvelope<DiagnosticEntry> = JSON.parse(props.json);
+      const env: JsonEnvelope<DiagnosticEntry> = JSON.parse(props.json);
       return env.data ?? [];
     } catch {
       return [];

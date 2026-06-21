@@ -9,7 +9,7 @@ or a cross-language tool.
 The parser always produces a tree, even from malformed input;
 diagnostics ride alongside it. `Tree::diagnostics` is the typed
 slice, and `aozora::json::diagnostics` projects that slice
-into the shared [wire envelope](../wire/overview.md) — the exact JSON
+into the shared [JSON envelope](../json/overview.md) — the exact JSON
 every binding (FFI, wasm, Python, Extism) emits.
 
 ```rust
@@ -38,7 +38,7 @@ fn main() {
 
 Each entry is `{ kind, severity, source, span: { start, end },
 codepoint? }`. `schema_version` lets a consumer branch before an added
-variant shows up; see the [Wire format](../wire/overview.md) chapter
+variant shows up; see the [JSON output](../json/overview.md) chapter
 for the full schema and the `"unknown"` fallback contract.
 
 ## Walking diagnostics without serialising
@@ -101,7 +101,7 @@ exit-code table.
   (`crates/aozora/examples/diagnostics.rs`).
 - [Diagnostics catalogue](../notation/diagnostics.md) — every code,
   severity, and what triggers it.
-- [Wire format](../wire/overview.md) — the envelope schema and version
+- [JSON output](../json/overview.md) — the envelope schema and version
   contract.
 - [CLI reference → `aozora check`](../ref/cli.md) — flags and exit
   codes.

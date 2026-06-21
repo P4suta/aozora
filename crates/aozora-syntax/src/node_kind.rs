@@ -5,7 +5,7 @@
 //! ([`Node::kind`](crate::borrowed::Node::kind),
 //! [`NodeRef::kind`](crate::borrowed::NodeRef::kind)) and for the
 //! **driver wire format** ([`crate`]'s host crate `aozora` projects
-//! the tag to a stable camelCase string via [`NodeKind::as_wire_tag`]).
+//! the tag to a stable camelCase string via [`NodeKind::as_json_tag`]).
 //!
 //! The typed enum (rather than a `&'static str` constant) lets every
 //! consumer pattern-match the tag exhaustively — the compiler points
@@ -116,7 +116,7 @@ impl NodeKind {
     /// downstream TypeScript / Python / C consumers can switch on the
     /// tag without consulting an out-of-band table.
     #[must_use]
-    pub const fn as_wire_tag(self) -> &'static str {
+    pub const fn as_json_tag(self) -> &'static str {
         match self {
             Self::Ruby => "ruby",
             Self::Bouten => "bouten",
@@ -153,27 +153,27 @@ mod tests {
     /// switches on the tag.
     #[test]
     fn camel_case_strings_are_stable() {
-        assert_eq!(NodeKind::Ruby.as_wire_tag(), "ruby");
-        assert_eq!(NodeKind::Bouten.as_wire_tag(), "bouten");
-        assert_eq!(NodeKind::CombineUpright.as_wire_tag(), "combineUpright");
-        assert_eq!(NodeKind::Gaiji.as_wire_tag(), "gaiji");
-        assert_eq!(NodeKind::Indent.as_wire_tag(), "indent");
-        assert_eq!(NodeKind::AlignEnd.as_wire_tag(), "alignEnd");
-        assert_eq!(NodeKind::Center.as_wire_tag(), "center");
-        assert_eq!(NodeKind::Warichu.as_wire_tag(), "warichu");
-        assert_eq!(NodeKind::Framed.as_wire_tag(), "framed");
-        assert_eq!(NodeKind::PageBreak.as_wire_tag(), "pageBreak");
-        assert_eq!(NodeKind::SectionBreak.as_wire_tag(), "sectionBreak");
-        assert_eq!(NodeKind::Heading.as_wire_tag(), "heading");
-        assert_eq!(NodeKind::HeadingHint.as_wire_tag(), "headingHint");
-        assert_eq!(NodeKind::Illustration.as_wire_tag(), "illustration");
-        assert_eq!(NodeKind::Kaeriten.as_wire_tag(), "kaeriten");
-        assert_eq!(NodeKind::Directive.as_wire_tag(), "directive");
-        assert_eq!(NodeKind::AngleQuote.as_wire_tag(), "angleQuote");
-        assert_eq!(NodeKind::Emphasis.as_wire_tag(), "emphasis");
-        assert_eq!(NodeKind::MarginNote.as_wire_tag(), "marginNote");
-        assert_eq!(NodeKind::Container.as_wire_tag(), "container");
-        assert_eq!(NodeKind::ContainerOpen.as_wire_tag(), "containerOpen");
-        assert_eq!(NodeKind::ContainerClose.as_wire_tag(), "containerClose");
+        assert_eq!(NodeKind::Ruby.as_json_tag(), "ruby");
+        assert_eq!(NodeKind::Bouten.as_json_tag(), "bouten");
+        assert_eq!(NodeKind::CombineUpright.as_json_tag(), "combineUpright");
+        assert_eq!(NodeKind::Gaiji.as_json_tag(), "gaiji");
+        assert_eq!(NodeKind::Indent.as_json_tag(), "indent");
+        assert_eq!(NodeKind::AlignEnd.as_json_tag(), "alignEnd");
+        assert_eq!(NodeKind::Center.as_json_tag(), "center");
+        assert_eq!(NodeKind::Warichu.as_json_tag(), "warichu");
+        assert_eq!(NodeKind::Framed.as_json_tag(), "framed");
+        assert_eq!(NodeKind::PageBreak.as_json_tag(), "pageBreak");
+        assert_eq!(NodeKind::SectionBreak.as_json_tag(), "sectionBreak");
+        assert_eq!(NodeKind::Heading.as_json_tag(), "heading");
+        assert_eq!(NodeKind::HeadingHint.as_json_tag(), "headingHint");
+        assert_eq!(NodeKind::Illustration.as_json_tag(), "illustration");
+        assert_eq!(NodeKind::Kaeriten.as_json_tag(), "kaeriten");
+        assert_eq!(NodeKind::Directive.as_json_tag(), "directive");
+        assert_eq!(NodeKind::AngleQuote.as_json_tag(), "angleQuote");
+        assert_eq!(NodeKind::Emphasis.as_json_tag(), "emphasis");
+        assert_eq!(NodeKind::MarginNote.as_json_tag(), "marginNote");
+        assert_eq!(NodeKind::Container.as_json_tag(), "container");
+        assert_eq!(NodeKind::ContainerOpen.as_json_tag(), "containerOpen");
+        assert_eq!(NodeKind::ContainerClose.as_json_tag(), "containerClose");
     }
 }

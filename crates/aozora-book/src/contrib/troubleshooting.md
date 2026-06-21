@@ -90,9 +90,9 @@ to its recovery recipe:
 |---|---|---|
 | coverage | Region coverage below the floor | `just coverage-html`, open `coverage/html/index.html`, add tests for the uncovered regions |
 | clippy / fmt | `cargo fmt --check` diff or clippy denial | `just fmt` to auto-format, fix any clippy findings, then re-run `just lint` |
-| drift-gate (schema) | `wire` JSON Schema is stale | `just schema` to regenerate, then commit the diff |
+| drift-gate (schema) | JSON Schema is stale | `just schema` to regenerate, then commit the diff |
 | drift-gate (types) | TypeScript `.d.ts` drift | `just types` to regenerate, then commit the diff |
-| drift-gate (langs) | Generated host-SDK wire types are stale | `just types-langs` to regenerate, then commit the diff |
+| drift-gate (langs) | Generated host-SDK JSON types are stale | `just types-langs` to regenerate, then commit the diff |
 | typos | Spelling hit | `just typos` to see every hit; fix, or add a genuine term to `typos.toml` |
 | strict-code | A forbidden source pattern (see below) | `just strict-code` prints each hit as `==> forbidden: <label>` with its `file:line`; fix per the list below |
 | deny / audit | License / advisory failure | Read the captured log under `/tmp` (the recipe writes the full `cargo deny` / `cargo audit` output there), then update the dependency or the `deny.toml` exception |
@@ -100,7 +100,7 @@ to its recovery recipe:
 For the schema / types gates, the regenerate-then-commit step is the
 fix — the gate only checks that the committed artefact matches what the
 generator would emit, so a stale checkout fails until you regenerate
-and stage it. See [Wire format](../wire/overview.md) for what `wire` /
+and stage it. See [JSON output](../json/overview.md) for what schema /
 `.d.ts` / langs each cover.
 
 ### strict-code violations

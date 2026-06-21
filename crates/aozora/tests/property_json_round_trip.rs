@@ -1,32 +1,32 @@
-//! Wire-format round-trip invariants.
+//! JSON-format round-trip invariants.
 //!
-//! `tests/wire_format.rs` pins the wire output for a fixed family of
+//! `tests/json_format.rs` pins the JSON output for a fixed family of
 //! 23 hand-curated fixtures (severity / source axis / per-variant tag
 //! shape). That gives a strong contract for *known* shapes but says
 //! nothing about Aozora source the fixture set hasn't enumerated.
 //!
-//! The properties below project the four wire envelopes
+//! The properties below project the four JSON envelopes
 //! ([`diagnostics`], [`nodes`], [`pairs`],
 //! [`container_pairs`]) onto *arbitrary* Aozora input drawn
 //! from the workhorse generators, and assert two cross-cutting
 //! invariants on each:
 //!
-//! 1. **Always parses as JSON.** Whatever the source, the wire output
+//! 1. **Always parses as JSON.** Whatever the source, the JSON output
 //!    is a syntactically valid JSON document. A regression that emits
 //!    an unescaped control byte or a trailing comma corrupts every
 //!    driver (`aozora-ffi` / `aozora-wasm` / `aozora-py`) at once and
 //!    is caught here under shrinking.
-//! 2. **Round-trip is canonical.** Parsing the wire output as
+//! 2. **Round-trip is canonical.** Parsing the JSON output as
 //!    `serde_json::Value` and re-serialising it via `serde_json::to_string`
-//!    yields a byte-identical envelope (we use the wire crate's own
+//!    yields a byte-identical envelope (we use the JSON projection's own
 //!    canonical-key ordering by re-projecting through `Value`'s
 //!    `Serialize` impl, which preserves the source object key order).
 //!    A regression that introduces non-canonical key ordering breaks
 //!    cross-driver byte parity even when each driver still parses
 //!    valid JSON.
 //!
-//! Together these close the gap between "fixture-checked wire shape"
-//! and "wire output stable across the entire input space".
+//! Together these close the gap between "fixture-checked JSON shape"
+//! and "JSON output stable across the entire input space".
 
 #![cfg(feature = "json")]
 
@@ -41,7 +41,7 @@ fn assert_envelope_is_well_formed_json(label: &str, source: &str, json: &str) {
     });
     // Envelope shape contract: top-level object with `schema_version`
     // = 1 and a `data` array. A regression that drops either is a
-    // wire-shape break.
+    // JSON-shape break.
     let obj = parsed.as_object().unwrap_or_else(|| {
         panic!("{label} envelope must be a JSON object for source {source:?}\n---\n{json}")
     });
@@ -70,7 +70,7 @@ fn assert_envelope_round_trips(label: &str, source: &str, json: &str) {
         panic!("{label} envelope refused to re-serialise for source {source:?}\n{e}")
     });
     // `serde_json::Value` preserves insertion order on its `Map`
-    // backing store, so a wire output whose key order is canonical
+    // backing store, so a JSON output whose key order is canonical
     // round-trips byte-equal. A regression that introduces dynamic
     // key ordering (e.g. a `HashMap` variant) breaks this.
     assert_eq!(
@@ -80,7 +80,7 @@ fn assert_envelope_round_trips(label: &str, source: &str, json: &str) {
     );
 }
 
-fn assert_wire_round_trip(source: &str) {
+fn assert_json_round_trip(source: &str) {
     let doc = Document::new(source);
     let tree = doc.parse();
 
@@ -108,24 +108,24 @@ fn assert_wire_round_trip(source: &str) {
 
 #[test]
 fn empty_input_round_trips() {
-    assert_wire_round_trip("");
+    assert_json_round_trip("");
 }
 
 #[test]
 fn plain_text_round_trips() {
-    assert_wire_round_trip("Hello, world.");
-    assert_wire_round_trip("こんにちは。\n\n本日は晴れ。");
+    assert_json_round_trip("Hello, world.");
+    assert_json_round_trip("こんにちは。\n\n本日は晴れ。");
 }
 
 #[test]
 fn ruby_round_trips() {
-    assert_wire_round_trip("｜青梅《おうめ》");
-    assert_wire_round_trip("青梅《おうめ》");
+    assert_json_round_trip("｜青梅《おうめ》");
+    assert_json_round_trip("青梅《おうめ》");
 }
 
 #[test]
 fn paired_container_round_trips() {
-    assert_wire_round_trip(
+    assert_json_round_trip(
         "［＃ここから2字下げ］\n\
          body\n\
          ［＃ここで字下げ終わり］",
@@ -136,7 +136,7 @@ fn paired_container_round_trips() {
 fn diagnostic_carrying_input_round_trips() {
     // Source that triggers a SourceContainsPua diagnostic — exercises
     // the diagnostics envelope on a non-empty data slice.
-    assert_wire_round_trip("a\u{E001}b");
+    assert_json_round_trip("a\u{E001}b");
 }
 
 proptest! {
@@ -146,16 +146,16 @@ proptest! {
     /// envelopes that are valid JSON and byte-canonical after a
     /// `serde_json::Value` round-trip.
     #[test]
-    fn aozora_fragment_wire_round_trips(s in aozora_fragment(120)) {
-        assert_wire_round_trip(&s);
+    fn aozora_fragment_json_round_trips(s in aozora_fragment(120)) {
+        assert_json_round_trip(&s);
     }
 
     /// Pathological — unbalanced bracket shapes drive the diagnostics
     /// envelope hardest. Every diagnostic emitted must serialise into
     /// well-formed JSON regardless of how many fire.
     #[test]
-    fn pathological_input_wire_round_trips(s in pathological_aozora(120)) {
-        assert_wire_round_trip(&s);
+    fn pathological_input_json_round_trips(s in pathological_aozora(120)) {
+        assert_json_round_trip(&s);
     }
 
     /// Unicode adversarial — combining marks, RTL overrides, PUA
@@ -163,7 +163,7 @@ proptest! {
     /// envelope's `codepoint` field (which must JSON-escape the
     /// payload).
     #[test]
-    fn unicode_adversarial_wire_round_trips(s in unicode_adversarial()) {
-        assert_wire_round_trip(&s);
+    fn unicode_adversarial_json_round_trips(s in unicode_adversarial()) {
+        assert_json_round_trip(&s);
     }
 }

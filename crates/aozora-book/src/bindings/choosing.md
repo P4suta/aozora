@@ -4,7 +4,7 @@ aozora reaches a lot of languages, but there is only **one parser** behind
 them. Every surface — the Rust library, the CLI, the wasm package, the
 PyO3 module, the Go module, the C ABI, the Extism plugin — funnels the same
 source text through the same lexer and renders it through the same
-[`aozora::json`](../wire/overview.md) authority. The HTML, the canonical
+[`aozora::json`](../json/overview.md) authority. The HTML, the canonical
 source, and the diagnostic stream are therefore **byte-identical across
 every binding**. What differs between them is only the *host language* you
 write in and the *overhead* you pay to cross the language boundary.
@@ -117,5 +117,5 @@ constant overhead disappear into the noise.
 - [C ABI](c.md) — opaque handle over a stable C header.
 - [Extism plugin](extism.md) — one wasm for the polyglot long tail.
 - [Pandoc AST projection](pandoc.md) — every non-HTML output format.
-- [Wire format](../wire/overview.md) — the shared JSON envelope every
+- [JSON output](../json/overview.md) — the shared JSON envelope every
   binding agrees on.

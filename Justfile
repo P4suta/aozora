@@ -204,8 +204,8 @@ render-gate-update:
     {{_dev}} env UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test render_gate
 
 # Phase L1 — regenerate the wire JSON Schema artefacts under
-# crates/aozora-book/src/wire/. Run after touching any wire struct
-# or `aozora::wire::SCHEMA_VERSION`; commit the resulting diff so
+# crates/aozora-book/src/json/. Run after touching any wire struct
+# or `aozora::json::SCHEMA_VERSION`; commit the resulting diff so
 # `schema-check` (drift gate) stays green.
 schema:
     {{_dev}} cargo run -p aozora-xtask -q -- schema dump
@@ -1081,7 +1081,7 @@ extism-build:
 # End-to-end cross-language ABI check (the Extism analogue of smoke-ffi):
 # build the plugin, then load the built aozora.wasm through the Extism
 # (Rust) host SDK and assert every export is byte-identical to calling
-# aozora::wire in-process. The `host-smoke` feature pulls wasmtime, so it
+# aozora::json in-process. The `host-smoke` feature pulls wasmtime, so it
 # is opt-in and never burdens `just test` / `just ci`.
 smoke-extism: extism-build
     {{_dev}} cargo test -p aozora-extism --features host-smoke --test host_smoke -- --nocapture
@@ -1294,6 +1294,12 @@ ci:
     # is too slow for the inline gate; run it manually / in a dedicated CI
     # job.
     just extism-build
+    # Go host SDK runtime gate: gofmt + go vet + go test against the
+    # freshly-built wasm. CodeQL only *compiles* the Go binding; this is
+    # the only gate that runs it, so a host/plugin export-name skew (the
+    # SDK calling a function the wasm doesn't export) fails here instead
+    # of in a downstream `go get`. Reuses the wasm extism-build produced.
+    just smoke-go
     just test
     just test-doc
     just test-doc-all
@@ -1403,7 +1409,7 @@ ci-parallel:
         else
             echo ":: prop-deep skipped via SKIP_TAGS=deep"
         fi
-        for gate in shear test-doc test-doc-all book-test extism-build doc corpus-sweep; do
+        for gate in shear test-doc test-doc-all book-test extism-build smoke-go doc corpus-sweep; do
             echo ":: [fg] just $gate"
             if ! just "$gate"; then fg_failed="$gate"; break; fi
         done
