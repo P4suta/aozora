@@ -1,0 +1,395 @@
+{
+  "name": "aozora-vscode",
+  "displayName": "aozora — aozora-flavored markdown",
+  "description": "Formatter, diagnostics, and gaiji hover for aozora-flavored-markdown documents, powered by aozora-lsp.",
+  "version": "0.1.0",
+  "publisher": "yasunobu-sakashita",
+  "license": "Apache-2.0",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/P4suta/aozora.git",
+    "directory": "editors/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/P4suta/aozora/issues"
+  },
+  "homepage": "https://github.com/P4suta/aozora/tree/main/editors/vscode#readme",
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Linters"
+  ],
+  "galleryBanner": {
+    "color": "#E8F1F5",
+    "theme": "light"
+  },
+  "keywords": [
+    "aozora",
+    "aozora-bunko",
+    "japanese",
+    "markdown",
+    "ruby",
+    "bouten",
+    "lsp",
+    "青空文庫"
+  ],
+  "activationEvents": [
+    "onLanguage:aozora",
+    "onLanguage:plaintext"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "aozora",
+        "aliases": [
+          "Aozora",
+          "aozora-flavored-markdown",
+          "aozora"
+        ],
+        "extensions": [
+          ".afm",
+          ".aozora",
+          ".aozora.txt"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "aozora.setLanguageMode",
+        "title": "Aozora: Set language mode to aozora",
+        "category": "Aozora"
+      },
+      {
+        "command": "aozora.openPreview",
+        "title": "Aozora: Open Preview",
+        "category": "Aozora"
+      },
+      {
+        "command": "aozora.preview.toggleWritingMode",
+        "title": "Aozora: プレビューの縦書き／横書きを切り替え",
+        "category": "Aozora"
+      },
+      {
+        "command": "aozora.canonicalizeSlugAtCursor",
+        "title": "Aozora: Canonicalize slug at cursor",
+        "category": "Aozora"
+      },
+      {
+        "command": "aozora.exportHtml",
+        "title": "Aozora: Export HTML…",
+        "category": "Aozora",
+        "enablement": "editorLangId == aozora"
+      },
+      {
+        "command": "aozora.lintWorkspace",
+        "title": "Aozora: Lint workspace",
+        "category": "Aozora"
+      },
+      {
+        "command": "aozora.openNotationGuide",
+        "title": "Aozora: 記法ガイドを開く",
+        "category": "Aozora"
+      },
+      {
+        "command": "aozora.showOutline",
+        "title": "Aozora: アウトラインを表示 (見出しの一覧)",
+        "category": "Aozora"
+      },
+      {
+        "command": "aozora.foldAll",
+        "title": "Aozora: 全段落を折りたたむ",
+        "category": "Aozora",
+        "enablement": "editorLangId == aozora"
+      },
+      {
+        "command": "aozora.unfoldAll",
+        "title": "Aozora: 全段落を展開する",
+        "category": "Aozora",
+        "enablement": "editorLangId == aozora"
+      },
+      {
+        "command": "aozora.wrap.ruby",
+        "title": "選択した字にルビをふる (例: 青空 → ｜青空《あおぞら》)",
+        "category": "Aozora",
+        "enablement": "editorLangId == aozora && editorHasSelection"
+      },
+      {
+        "command": "aozora.wrap.doubleRuby",
+        "title": "選択した字に二重ルビをふる (例: 青空 → ｜青空《《あおぞら》》)",
+        "category": "Aozora",
+        "enablement": "editorLangId == aozora && editorHasSelection"
+      },
+      {
+        "command": "aozora.wrap.bouten",
+        "title": "選択した字に傍点をつける (例: 重要 → 重要［＃「重要」に傍点］)",
+        "category": "Aozora",
+        "enablement": "editorLangId == aozora && editorHasSelection"
+      },
+      {
+        "command": "aozora.wrap.kagikakko",
+        "title": "選択を「」で囲む (例: ほら → 「ほら」)",
+        "category": "Aozora",
+        "enablement": "editorLangId == aozora && editorHasSelection"
+      },
+      {
+        "command": "aozora.wrap.kikkou",
+        "title": "選択を〔〕で囲む — アクセント分解 (例: cafe → 〔cafe〕)",
+        "category": "Aozora",
+        "enablement": "editorLangId == aozora && editorHasSelection"
+      },
+      {
+        "command": "aozora.wrap.chuki",
+        "title": "選択を［＃...］注記にする",
+        "category": "Aozora",
+        "enablement": "editorLangId == aozora && editorHasSelection"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "aozora.wrapMenu",
+        "label": "Aozora: 選択にルビ・傍点・括弧をつける"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "aozora.openPreview",
+          "when": "editorLangId == aozora",
+          "group": "navigation@1"
+        },
+        {
+          "command": "aozora.exportHtml",
+          "when": "editorLangId == aozora",
+          "group": "navigation@2"
+        },
+        {
+          "submenu": "aozora.wrapMenu",
+          "when": "editorLangId == aozora && editorHasSelection",
+          "group": "1_modification@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "aozora.openPreview",
+          "when": "editorLangId == aozora",
+          "group": "navigation"
+        },
+        {
+          "command": "aozora.exportHtml",
+          "when": "editorLangId == aozora",
+          "group": "navigation@15"
+        },
+        {
+          "command": "aozora.showOutline",
+          "when": "editorLangId == aozora",
+          "group": "navigation@2"
+        },
+        {
+          "command": "aozora.openNotationGuide",
+          "when": "editorLangId == aozora",
+          "group": "navigation@9"
+        }
+      ],
+      "aozora.wrapMenu": [
+        {
+          "command": "aozora.wrap.ruby",
+          "group": "1_ruby@1"
+        },
+        {
+          "command": "aozora.wrap.doubleRuby",
+          "group": "1_ruby@2"
+        },
+        {
+          "command": "aozora.wrap.bouten",
+          "group": "2_emphasis@1"
+        },
+        {
+          "command": "aozora.wrap.kagikakko",
+          "group": "3_brackets@1"
+        },
+        {
+          "command": "aozora.wrap.kikkou",
+          "group": "3_brackets@2"
+        },
+        {
+          "command": "aozora.wrap.chuki",
+          "group": "3_brackets@3"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "aozora.wrap.ruby",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
+        "when": "editorLangId == aozora && editorHasSelection"
+      },
+      {
+        "command": "aozora.wrap.bouten",
+        "key": "ctrl+alt+b",
+        "mac": "cmd+alt+b",
+        "when": "editorLangId == aozora && editorHasSelection"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "aozora",
+      "properties": {
+        "aozora.lsp.path": {
+          "type": "string",
+          "default": "aozora-lsp",
+          "description": "Path to the aozora-lsp executable. Defaults to looking it up on PATH."
+        },
+        "aozora.cli.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the `aozora` CLI used by 'Aozora: Lint workspace'. Empty = look up `aozora` on PATH."
+        },
+        "aozora.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace LSP messages between VS Code and aozora-lsp."
+        },
+        "aozora.autoDetect.plaintext": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open-time heuristic: if a plaintext .txt file's leading content contains aozora annotation markers (［＃, ｜X《, or the standard header-separator line), switch the document to the aozora language automatically."
+        },
+        "aozora.gaijiFold.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Visually collapse `※［＃description、mencode］` gaiji notations to their resolved character when the cursor is elsewhere. The source re-appears when the cursor enters the span. Disable to always show the raw notation."
+        },
+        "aozora.preview.writingMode": {
+          "type": "string",
+          "enum": [
+            "vertical",
+            "horizontal"
+          ],
+          "enumDescriptions": [
+            "縦書き (右上から下へ、青空文庫の本来の方向)",
+            "横書き (左上から右へ)"
+          ],
+          "default": "vertical",
+          "description": "プレビュー WebView の組み方向。`Aozora: プレビューの縦書き／横書きを切り替え` コマンドで一時的に切り替えられる (この設定は次回プレビューを開いたときの初期値)。"
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[aozora]": {
+        "editor.semanticHighlighting.enabled": true,
+        "editor.foldingStrategy": "auto",
+        "editor.showFoldingControls": "mouseover",
+        "editor.unicodeHighlight.ambiguousCharacters": false,
+        "editor.unicodeHighlight.invisibleCharacters": false,
+        "editor.unicodeHighlight.nonBasicASCII": false,
+        "editor.formatOnType": true,
+        "editor.suggestOnTriggerCharacters": true,
+        "editor.quickSuggestions": {
+          "other": "on",
+          "comments": "off",
+          "strings": "off"
+        },
+        "editor.autoClosingDelete": "always"
+      },
+      "editor.semanticTokenColorCustomizations": {
+        "rules": {
+          "*.aozora": {
+            "fontStyle": ""
+          }
+        }
+      }
+    },
+    "walkthroughs": [
+      {
+        "id": "aozora.welcome",
+        "title": "Aozora — はじめての青空文庫記法",
+        "description": "プラグインで使える機能と、青空文庫記法の書き方をひと通り紹介します。",
+        "steps": [
+          {
+            "id": "open-guide",
+            "title": "記法ガイドを開く",
+            "description": "注記 / ルビ / 外字 / アクセント分解 — 全部入りの完全リファレンスを開きます。\n[記法ガイドを開く](command:aozora.openNotationGuide)",
+            "media": {
+              "markdown": "media/walkthrough/01-guide.md"
+            },
+            "completionEvents": [
+              "onCommand:aozora.openNotationGuide"
+            ]
+          },
+          {
+            "id": "type-half-width",
+            "title": "半角キーで全角入力",
+            "description": "`[#` を打ってみてください。slug カタログが候補に出て、Enter で `［＃canonical］` に変換されます。同様に `<<` → `《》`、`|` → `｜` です。",
+            "media": {
+              "markdown": "media/walkthrough/02-emmet.md"
+            }
+          },
+          {
+            "id": "wrap-selection",
+            "title": "選択を括弧で囲む",
+            "description": "テキストを選択して右クリ → **「Aozora: 選択を括弧で囲む」** から、ルビ / 鉤括弧 / 注記など 7 種類でラップできます。\n\nキーバインド:\n- `Ctrl+Alt+R` ルビ\n- `Ctrl+Alt+B` 傍点",
+            "media": {
+              "markdown": "media/walkthrough/03-wrap.md"
+            }
+          },
+          {
+            "id": "preview",
+            "title": "プレビューを開く",
+            "description": "右クリ → **Aozora: Open Preview** で HTML プレビューを横に開きます。編集に追従してリアルタイム更新されます。",
+            "media": {
+              "markdown": "media/walkthrough/04-preview.md"
+            },
+            "completionEvents": [
+              "onCommand:aozora.openPreview"
+            ]
+          },
+          {
+            "id": "gaiji-fold",
+            "title": "外字の折りたたみ",
+            "description": "`※[#…]` のような外字注記は、カーソルが上にない時は **解決字 1 文字** に折りたたまれて表示されます。Settings の `aozora.gaijiFold.enabled` で切替可能。",
+            "media": {
+              "markdown": "media/walkthrough/05-gaiji-fold.md"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "node esbuild.mjs --production",
+    "bundle": "node esbuild.mjs --production",
+    "bundle:dev": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc -p ./ --noEmit",
+    "build": "bun run compile",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "test": "node --test",
+    "check": "biome check . && tsc -p ./ --noEmit",
+    "check:fix": "biome check --write . && tsc -p ./ --noEmit"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^10.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.13",
+    "@types/node": "^25.6.0",
+    "@types/vscode": "^1.91.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^6.0.3"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    // Pin the ambient type packages explicitly. vscode-languageclient v10
+    // perturbs the node_modules/@types layout enough that the implicit
+    // "include every @types package" default stops surfacing Node's
+    // globals (process, setTimeout, node: imports). Listing them keeps the
+    // extension host (Node) + VS Code API types resolving deterministically.
+    "types": ["node", "vscode"],
+    "outDir": "out",
+    "rootDir": "src",
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // ── Industry-strict TypeScript ──────────────────────────────
+    // Each switch is opt-in by default; enabling them collectively
+    // catches a class of real bugs (off-by-one indexing, override
+    // mismatches, optional-property strictness) that the default
+    // `strict` flag does not cover.
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "useUnknownInCatchVariables": true,
+
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+
+    // verbatimModuleSyntax intentionally OFF: VS Code extensions
+    // ship as CommonJS, and that flag rejects ESM-style imports
+    // when the target is commonjs. The `useImportType` /
+    // `useExportType` Biome rules already enforce explicit `type`
+    // imports without needing the strictest TS gate.
+    "isolatedModules": true,
+    "useDefineForClassFields": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", ".vscode-test", "out"]
+}

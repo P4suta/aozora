@@ -346,6 +346,17 @@ strip         = "symbols"
 panic         = "abort"
 opt-level     = 3
 
+# Distribution profile for the binary bundled in the VS Code extension's .vsix
+# (`aozora-lsp`, built by `release-vscode.yml`). Optimises for size over speed.
+# Overrides `panic = "unwind"`: a language server is a long-lived daemon, so a
+# panic in one request handler should unwind (tower-lsp keeps serving) rather
+# than abort the whole process and drop the editor's language features.
+[profile.dist]
+inherits      = "release"
+opt-level     = "z"
+panic         = "unwind"
+strip         = "symbols"
+
 [profile.bench]
 inherits = "release"
 strip    = "none"
