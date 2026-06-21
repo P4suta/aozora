@@ -334,7 +334,7 @@ FROM dev AS ci
 # `docker buildx imagetools inspect ubuntu:26.04`.
 ########################################################################
 # ubuntu:26.04 (digest pinned; tag kept for humans / Dependabot)
-FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64 AS book
+FROM ubuntu:26.04@sha256:53958ec7b67c2c9355df922dd08dbf0360611f8c3cdb656875e81873db9ffdba AS book
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
