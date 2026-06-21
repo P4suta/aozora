@@ -1,0 +1,40 @@
+[package]
+name        = "tree-sitter-aozora"
+description = "Tree-sitter grammar for aozora-flavored markdown — used by aozora-lsp for incremental parsing"
+# Inherit the unified workspace version (mirrors the pinned `aozora` parser), so
+# there is a single number to bump — same as the other workspace members.
+version.workspace = true
+edition     = "2024"
+license     = "Apache-2.0 OR MIT"
+# Publishable to crates.io: `aozora-lsp` depends on it by path, so it has to be
+# a published crate for `aozora-lsp` itself to publish. Metadata mirrors the
+# other members (repository/homepage/authors) for a clean crates.io listing.
+authors.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+readme      = "README.md"
+keywords    = ["tree-sitter", "aozora", "japanese", "grammar", "parsing"]
+categories  = ["parser-implementations", "text-editors"]
+# Keep the published package small: ship only what the build needs (the grammar
+# is committed as generated C, so no node toolchain is required downstream).
+include = [
+    "bindings/rust/**",
+    "src/**",
+    "build.rs",
+    "grammar.js",
+    "README.md",
+]
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[build-dependencies]
+cc = { version = "1", features = ["parallel"] }
+
+[dev-dependencies]
+tree-sitter = "0.26"
+
+# parser.c is committed (generated from grammar.js); building needs only a C toolchain.

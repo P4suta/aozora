@@ -1,0 +1,26 @@
+[package]
+name         = "aozora-diagnostics"
+description  = "Renderer-agnostic diagnostic catalogue for aozora-flavored-markdown"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+keywords.workspace     = true
+categories.workspace   = true
+readme       = "README.md"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+aozora = { workspace = true }
+serde  = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }   # payload round-trip test
+
+[lints]
+workspace = true

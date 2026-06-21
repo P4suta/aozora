@@ -1,0 +1,186 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/grammar.schema.json",
+  "name": "aozora",
+  "rules": {
+    "document": {
+      "type": "REPEAT",
+      "content": {
+        "type": "SYMBOL",
+        "name": "_element"
+      }
+    },
+    "_element": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "gaiji"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "slug"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "explicit_ruby"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "implicit_ruby"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "text"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "newline"
+        }
+      ]
+    },
+    "gaiji": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "gaiji_marker"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "slug"
+        }
+      ]
+    },
+    "gaiji_marker": {
+      "type": "STRING",
+      "value": "※"
+    },
+    "slug": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "［＃"
+        },
+        {
+          "type": "FIELD",
+          "name": "body",
+          "content": {
+            "type": "SYMBOL",
+            "name": "slug_body"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "］"
+        }
+      ]
+    },
+    "slug_body": {
+      "type": "IMMEDIATE_TOKEN",
+      "content": {
+        "type": "PATTERN",
+        "value": "[^］\\n]+"
+      }
+    },
+    "explicit_ruby": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "｜"
+        },
+        {
+          "type": "FIELD",
+          "name": "base",
+          "content": {
+            "type": "SYMBOL",
+            "name": "ruby_base_explicit"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "《"
+        },
+        {
+          "type": "FIELD",
+          "name": "reading",
+          "content": {
+            "type": "SYMBOL",
+            "name": "ruby_reading"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "》"
+        }
+      ]
+    },
+    "ruby_base_explicit": {
+      "type": "IMMEDIATE_TOKEN",
+      "content": {
+        "type": "PATTERN",
+        "value": "[^《｜\\n]+"
+      }
+    },
+    "implicit_ruby": {
+      "type": "PREC",
+      "value": 1,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "FIELD",
+            "name": "base",
+            "content": {
+              "type": "SYMBOL",
+              "name": "ruby_base_implicit"
+            }
+          },
+          {
+            "type": "STRING",
+            "value": "《"
+          },
+          {
+            "type": "FIELD",
+            "name": "reading",
+            "content": {
+              "type": "SYMBOL",
+              "name": "ruby_reading"
+            }
+          },
+          {
+            "type": "STRING",
+            "value": "》"
+          }
+        ]
+      }
+    },
+    "ruby_base_implicit": {
+      "type": "PATTERN",
+      "value": "[\\u4E00-\\u9FFF\\u3400-\\u4DBF\\uF900-\\uFAFF\\u3005\\u30F5\\u30F6]+"
+    },
+    "ruby_reading": {
+      "type": "IMMEDIATE_TOKEN",
+      "content": {
+        "type": "PATTERN",
+        "value": "[^》\\n]+"
+      }
+    },
+    "text": {
+      "type": "PATTERN",
+      "value": "[^\\n《》｜［］＃※]+|[》］＃]"
+    },
+    "newline": {
+      "type": "PATTERN",
+      "value": "\\n"
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": [],
+  "reserved": {}
+}
