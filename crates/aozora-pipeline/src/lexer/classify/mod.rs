@@ -95,7 +95,7 @@ use super::instrumentation::{
 // in F.4 once the owned-AST path was gone.
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
-use aozora_syntax::{ContainerKind, DirectiveKind, Span};
+use aozora_syntax::{DirectiveKind, RegionClose, RegionFormat, Span};
 
 use super::pair::{PairEvent, PairKind};
 use super::token::TriggerKind;
@@ -165,13 +165,13 @@ pub enum SpanKind<'a> {
     /// etc. The normalizer emits an `E003` sentinel line; `post_process`
     /// matches it to the corresponding `BlockClose` via a balanced
     /// stack walk of the AST.
-    BlockOpen(ContainerKind),
+    BlockOpen(RegionFormat),
     /// Paired-container closer — `［＃ここで字下げ終わり］`,
     /// `［＃罫囲み終わり］`, etc. The normalizer emits an `E004`
-    /// sentinel line; the carried `ContainerKind` is a hint used by
+    /// sentinel line; the carried [`RegionClose`] is a hint used by
     /// `post_process` to diagnose `［＃罫囲み終わり］` closing an
     /// `Indent` opener (kind mismatch).
-    BlockClose(ContainerKind),
+    BlockClose(RegionClose),
     /// A `\n` in the sanitized text. Retained as its own span kind
     /// because block-level recognizers need line boundaries.
     Newline,
@@ -1026,7 +1026,7 @@ where
         // takes over.
         self.flush_plain_up_to(m.consume_start);
         let base_content = self.alloc.content_plain(m.base);
-        let node = self.alloc.ruby(base_content, m.reading, m.explicit);
+        let node = self.alloc.ruby(base_content, m.reading);
         self.pending_plain_start = None;
         Some(ClassifiedSpan {
             kind: SpanKind::Aozora(node),
@@ -1168,7 +1168,7 @@ where
         // body are still resolved + rendered (by `build_content_from_body`),
         // but without this diagnostic; a gaiji buried in a forward-reference
         // quote target (nested `［＃…］` breaks pairing) falls to `Unknown`.
-        if m.payload.ucs.is_none() {
+        if m.payload.resolve().is_none() {
             self.diagnostics
                 .push(Diagnostic::unresolved_gaiji(Span::new(
                     m.consume_start,
@@ -1318,7 +1318,6 @@ where
 struct RubyMatch<'s, 'a> {
     base: &'s str,
     reading: borrowed::Content<'a>,
-    explicit: bool,
     consume_start: u32,
     consume_end: u32,
 }
@@ -1402,7 +1401,6 @@ impl<'a, 's> RecogniseCtx<'_, 'a, 's> {
             return Some(RubyMatch {
                 base: prev_text,
                 reading,
-                explicit: true,
                 consume_start: bar_span.start,
                 consume_end: close_span.end,
             });
@@ -1418,7 +1416,6 @@ impl<'a, 's> RecogniseCtx<'_, 'a, 's> {
         Some(RubyMatch {
             base: &prev_text[kanji_offset..],
             reading,
-            explicit: false,
             consume_start,
             consume_end: close_span.end,
         })
@@ -1630,7 +1627,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // its description; flag the miss so nested references match the
         // top-level `※［＃…］` behaviour (#84). The owning `ClassifyStream`
         // drains `self.diagnostics` after the recognise call.
-        if g.payload.ucs.is_none() {
+        if g.payload.resolve().is_none() {
             self.diagnostics
                 .push(Diagnostic::unresolved_gaiji(Span::new(
                     g.consume_start,
@@ -1692,7 +1689,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // Every other recogniser keeps the `Segment::Directive` path.
         if let EmitKind::Aozora(borrowed::Node::Gaiji(g)) = a.emit {
             build.segments.push(self.alloc.seg_gaiji(g));
-            if g.ucs.is_none() {
+            if g.resolve().is_none() {
                 self.diagnostics
                     .push(Diagnostic::unresolved_gaiji(Span::new(
                         a.consume_start,
@@ -1801,10 +1798,12 @@ struct AnnotationMatch<'a> {
 enum EmitKind<'a> {
     /// Inline or block-leaf — becomes [`SpanKind::Aozora`].
     Aozora(borrowed::Node<'a>),
-    /// Paired-container opener — becomes [`SpanKind::BlockOpen`].
-    BlockOpen(ContainerKind),
-    /// Paired-container closer — becomes [`SpanKind::BlockClose`].
-    BlockClose(ContainerKind),
+    /// Paired-container opener — becomes [`SpanKind::BlockOpen`]. Carries the
+    /// authoritative open [`RegionFormat`].
+    BlockOpen(RegionFormat),
+    /// Paired-container closer — becomes [`SpanKind::BlockClose`]. Carries the
+    /// [`RegionClose`] discriminant (the open payload stays authoritative).
+    BlockClose(RegionClose),
 }
 
 /// Characters eligible as an implicit-ruby base. Covers:
@@ -1831,11 +1830,25 @@ mod tests {
     use proptest::prelude::*;
 
     use super::directive::parse_emphasis_body;
-    use super::forward::emphasis_kind_from_suffix;
+    use super::forward::forward_attr_from_suffix;
     use super::*;
     use aozora_syntax::{
-        AlignEnd, BoutenKind, BoutenPosition, EmphasisKind, Indent, IndentLayout, SectionKind,
+        BoutenKind, BoutenPosition, FontShift, ForwardAttr, GaijiCanonical, IndentBlock,
+        IndentLayout, LineFormat, MenKuTen, RegionClose, RegionFormat, SectionKind,
     };
+    use core::num::NonZeroI8;
+
+    fn fs(steps: i8) -> FontShift {
+        FontShift(NonZeroI8::new(steps).expect("non-zero"))
+    }
+    /// Extract the 傍点 / 傍線 `(kind, position)` from a forward-format leaf,
+    /// panicking if it is not a `ForwardAttr::Bouten`.
+    fn bouten_attr(f: &ForwardFormat<'_>) -> (BoutenKind, BoutenPosition) {
+        match f.attr {
+            ForwardAttr::Bouten { kind, position } => (kind, position),
+            other => panic!("expected a Bouten forward format, got {other:?}"),
+        }
+    }
     // Borrowed-AST types pattern-matched throughout. `Node<'a>`
     // is `Copy` and holds payloads via `&'a Ruby<'a>` etc., so tests
     // pattern-match `Node::Ruby(r)` where `r` is already a
@@ -1845,8 +1858,8 @@ mod tests {
         reason = "individual tests pattern-match on subsets; bringing them all in keeps the import block stable"
     )]
     use aozora_syntax::borrowed::{
-        AngleQuote, Arena, Bouten, CombineUpright, Content, Directive, Gaiji, HeadingHint,
-        Illustration, Kaeriten, Node, Ruby, Segment,
+        AngleQuote, Arena, Content, Directive, ForwardFormat, Gaiji, HeadingHint, Illustration,
+        Kaeriten, Node, Ruby, Segment,
     };
 
     use crate::lexer::pair::pair;
@@ -1963,7 +1976,6 @@ mod tests {
         };
         assert_eq!(ruby.base.as_plain(), Some("青梅"));
         assert_eq!(ruby.reading.as_plain(), Some("おうめ"));
-        assert!(ruby.delim_explicit);
         assert_eq!(out.spans[0].source_span.end as usize, src.len());
     }
 
@@ -1983,7 +1995,6 @@ mod tests {
         };
         assert_eq!(ruby.base.as_plain(), Some("漢字"));
         assert_eq!(ruby.reading.as_plain(), Some("かんじ"));
-        assert!(!ruby.delim_explicit);
         // Plain covers "あいう"; ruby covers "漢字《かんじ》".
         assert_eq!(out.spans[0].source_span.slice(src), "あいう");
     }
@@ -2100,8 +2111,15 @@ mod tests {
         let Segment::Gaiji(g) = segs[1] else {
             panic!("segment 1 should be Gaiji, got {:?}", segs[1]);
         };
-        assert_eq!(g.description, "ほ");
-        assert_eq!(g.mencode, Some("第3水準1-85-54"));
+        assert_eq!(g.hint, "ほ");
+        assert_eq!(
+            g.canonical,
+            GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 1,
+                ku: 85,
+                ten: 54,
+            })
+        );
         assert!(
             matches!(&segs[2], Segment::Text(t) if &**t == "ん"),
             "segment 2: {:?}",
@@ -2122,7 +2140,7 @@ mod tests {
         let Segment::Gaiji(g) = segs[1] else {
             panic!("segment 1 should be Gaiji, got {:?}", segs[1]);
         };
-        assert_eq!(g.description, "ほ");
+        assert_eq!(g.hint, "ほ");
         assert!(g.standalone, "no `※` in source → standalone");
     }
 
@@ -2155,7 +2173,7 @@ mod tests {
         let Segment::Gaiji(g) = segs[0] else {
             panic!("expected Gaiji, got {:?}", segs[0]);
         };
-        assert_eq!(g.description, "にほん");
+        assert_eq!(g.hint, "にほん");
     }
 
     #[test]
@@ -2205,7 +2223,6 @@ mod tests {
         run!(out, "日本《に※［＃「ほ」、第3水準1-85-54］ん》");
         let r = only_ruby(&out);
         assert_eq!(r.base.as_plain(), Some("日本"));
-        assert!(!r.delim_explicit);
         let Content::Segments(segs) = r.reading.get() else {
             panic!("expected Segments, got {:?}", r.reading);
         };
@@ -2267,7 +2284,7 @@ mod tests {
     }
 
     /// 縦中横 paired range `［＃縦中横］ … ［＃縦中横終わり］` opens and closes a
-    /// `ContainerKind::CombineUprightRange` (a corpus convention, tolerant extension);
+    /// `RegionFormat::CombineUpright` (a corpus convention, tolerant extension);
     /// the forward-reference `「X」は縦中横` leaf is unaffected. A longer
     /// needle-prefix body declines to Unknown.
     #[test]
@@ -2276,22 +2293,12 @@ mod tests {
         let opens = out
             .spans
             .iter()
-            .filter(|s| {
-                matches!(
-                    s.kind,
-                    SpanKind::BlockOpen(ContainerKind::CombineUprightRange)
-                )
-            })
+            .filter(|s| matches!(s.kind, SpanKind::BlockOpen(RegionFormat::CombineUpright)))
             .count();
         let closes = out
             .spans
             .iter()
-            .filter(|s| {
-                matches!(
-                    s.kind,
-                    SpanKind::BlockClose(ContainerKind::CombineUprightRange)
-                )
-            })
+            .filter(|s| matches!(s.kind, SpanKind::BlockClose(RegionClose::CombineUpright)))
             .count();
         assert_eq!(opens, 1, "one CombineUprightRange open");
         assert_eq!(closes, 1, "one CombineUprightRange close");
@@ -2336,7 +2343,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(Node::AlignEnd(a)) => Some(a.offset),
+                Some(Node::Line(LineFormat::AlignEnd { offset })) => Some(offset),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("地より should emit an AlignEnd"));
@@ -2440,7 +2447,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(Node::Indent(Indent { amount: 2 }))
+            Some(Node::Line(LineFormat::Indent { amount: 2 }))
         ));
     }
 
@@ -2450,7 +2457,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(Node::Indent(Indent { amount: 10 }))
+            Some(Node::Line(LineFormat::Indent { amount: 10 }))
         ));
     }
 
@@ -2475,7 +2482,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Indent(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Line(LineFormat::Indent { .. })))),
         );
     }
 
@@ -2487,7 +2494,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Indent(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Line(LineFormat::Indent { .. })))),
         );
     }
 
@@ -2498,7 +2505,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Indent(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Line(LineFormat::Indent { .. })))),
         );
     }
 
@@ -2507,11 +2514,10 @@ mod tests {
         // 地から0字上げ is redundant with 地付き and not spec-sanctioned —
         // reject so the text falls through to a generic Directive.
         run!(out, "［＃地から0字上げ］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::AlignEnd(_)))),
-        );
+        assert!(!out.spans.iter().any(|s| matches!(
+            aozora_node(s),
+            Some(Node::Line(LineFormat::AlignEnd { .. }))
+        )),);
     }
 
     #[test]
@@ -2520,7 +2526,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(Node::AlignEnd(AlignEnd { offset: 0 }))
+            Some(Node::Line(LineFormat::AlignEnd { offset: 0 }))
         ));
     }
 
@@ -2530,7 +2536,7 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             aozora_node(&out.spans[0]),
-            Some(Node::AlignEnd(AlignEnd { offset: 3 }))
+            Some(Node::Line(LineFormat::AlignEnd { offset: 3 }))
         ));
     }
 
@@ -2543,7 +2549,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Indent(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Line(LineFormat::Indent { .. })))),
         );
     }
 
@@ -2557,11 +2563,11 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(Node::Bouten(b)) => Some(b),
+                Some(Node::Format(b)) => Some(b),
                 _ => None,
             })
             .expect("expected a Bouten span");
-        assert_eq!(bouten.kind, BoutenKind::Goma);
+        assert_eq!(bouten_attr(bouten).0, BoutenKind::Goma);
         assert_eq!(bouten.target.as_plain(), Some("青空"));
     }
 
@@ -2572,23 +2578,29 @@ mod tests {
         // (per <https://www.aozora.gr.jp/annotation/etc.html>). Each is a
         // first-class `Emphasis` leaf, NOT an `Directive{Unknown}`.
         for (src, want) in [
-            ("x２［＃「２」は上付き小文字］", EmphasisKind::SuperScript),
-            ("H２［＃「２」は下付き小文字］", EmphasisKind::SubScript),
-            ("あ［＃「あ」は行右小書き］", EmphasisKind::SmallRight),
-            ("い［＃「い」は行左小書き］", EmphasisKind::SmallLeft),
-            ("注意［＃「注意」は罫囲み］", EmphasisKind::KeigakomiInline),
-            ("西暦［＃「西暦」は横組み］", EmphasisKind::HorizontalInline),
+            ("x２［＃「２」は上付き小文字］", ForwardAttr::SuperScript),
+            ("H２［＃「２」は下付き小文字］", ForwardAttr::SubScript),
+            (
+                "あ［＃「あ」は行右小書き］",
+                ForwardAttr::SmallScript(BoutenPosition::Right),
+            ),
+            (
+                "い［＃「い」は行左小書き］",
+                ForwardAttr::SmallScript(BoutenPosition::Left),
+            ),
+            ("注意［＃「注意」は罫囲み］", ForwardAttr::Framed),
+            ("西暦［＃「西暦」は横組み］", ForwardAttr::Horizontal),
         ] {
             run!(out, src);
             let emphasis = out
                 .spans
                 .iter()
                 .find_map(|s| match aozora_node(s) {
-                    Some(Node::Emphasis(e)) => Some(e),
+                    Some(Node::Format(f)) => Some(f),
                     _ => None,
                 })
-                .unwrap_or_else(|| panic!("expected an Emphasis span for {src:?}"));
-            assert_eq!(emphasis.kind, want, "src = {src:?}");
+                .unwrap_or_else(|| panic!("expected a Format span for {src:?}"));
+            assert_eq!(emphasis.attr, want, "src = {src:?}");
         }
     }
 
@@ -2600,15 +2612,15 @@ mod tests {
         for (src, want) in [
             (
                 "甲［＃「甲」は2段階大きな文字］",
-                EmphasisKind::FontSize { steps: 2 },
+                ForwardAttr::FontSize(fs(2)),
             ),
             (
                 "乙［＃「乙」は1段階小さな文字］",
-                EmphasisKind::FontSize { steps: -1 },
+                ForwardAttr::FontSize(fs(-1)),
             ),
             (
                 "丙［＃「丙」は３段階大きな文字］",
-                EmphasisKind::FontSize { steps: 3 },
+                ForwardAttr::FontSize(fs(3)),
             ),
         ] {
             run!(out, src);
@@ -2616,11 +2628,11 @@ mod tests {
                 .spans
                 .iter()
                 .find_map(|s| match aozora_node(s) {
-                    Some(Node::Emphasis(e)) => Some(e),
+                    Some(Node::Format(f)) => Some(f),
                     _ => None,
                 })
-                .unwrap_or_else(|| panic!("expected an Emphasis span for {src:?}"));
-            assert_eq!(emphasis.kind, want, "src = {src:?}");
+                .unwrap_or_else(|| panic!("expected a Format span for {src:?}"));
+            assert_eq!(emphasis.attr, want, "src = {src:?}");
         }
     }
 
@@ -2633,26 +2645,26 @@ mod tests {
     /// a ±1 placeholder magnitude (the open side is authoritative on pairing).
     #[test]
     fn bare_range_font_size_and_horizontal_recognised() {
-        let cases: &[(&str, ContainerKind, ContainerKind)] = &[
+        let cases: &[(&str, RegionFormat, RegionClose)] = &[
             (
                 "あ［＃１段階小さな文字］x［＃小さな文字終わり］い",
-                ContainerKind::FontSize { steps: -1 },
-                ContainerKind::FontSize { steps: -1 },
+                RegionFormat::FontSize(fs(-1)),
+                RegionClose::FontSize { larger: false },
             ),
             (
                 "あ［＃２段階大きな文字］x［＃大きな文字終わり］い",
-                ContainerKind::FontSize { steps: 2 },
-                ContainerKind::FontSize { steps: 1 },
+                RegionFormat::FontSize(fs(2)),
+                RegionClose::FontSize { larger: true },
             ),
             (
                 "あ［＃横組み］x［＃横組み終わり］い",
-                ContainerKind::Horizontal,
-                ContainerKind::Horizontal,
+                RegionFormat::Horizontal,
+                RegionClose::Horizontal,
             ),
         ];
         for (src, want_open, want_close) in cases {
             run!(out, src);
-            let opens: Vec<ContainerKind> = out
+            let opens: Vec<RegionFormat> = out
                 .spans
                 .iter()
                 .filter_map(|s| match s.kind {
@@ -2660,7 +2672,7 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            let closes: Vec<ContainerKind> = out
+            let closes: Vec<RegionClose> = out
                 .spans
                 .iter()
                 .filter_map(|s| match s.kind {
@@ -2687,37 +2699,39 @@ mod tests {
     }
 
     /// ゴシック体 / ゴチック are corpus spellings of 太字 (bold): the official
-    /// guide writes 太字（ゴシック）. Both map to `EmphasisKind::Bold` in the
+    /// guide writes 太字（ゴシック）. Both map to `ForwardAttr::Bold` in the
     /// forward-reference suffix and in every range / block body, and
     /// canonicalise to 太字 on serialize (`Bold.keyword()`).
     #[test]
     fn gothic_spellings_map_to_bold() {
         assert_eq!(
-            emphasis_kind_from_suffix("ゴシック体"),
-            Some(EmphasisKind::Bold)
+            forward_attr_from_suffix("ゴシック体"),
+            Some(ForwardAttr::Bold)
         );
         assert_eq!(
-            emphasis_kind_from_suffix("ゴチック"),
-            Some(EmphasisKind::Bold)
+            forward_attr_from_suffix("ゴチック"),
+            Some(ForwardAttr::Bold)
         );
+        // `parse_emphasis_body` returns `(is_italic, padded, is_close)`; 太字
+        // spellings are `is_italic = false`.
         assert_eq!(
             parse_emphasis_body("ゴシック体"),
-            Some((EmphasisKind::Bold, false, false))
+            Some((false, false, false))
         );
         assert_eq!(
             parse_emphasis_body("ゴチック終わり"),
-            Some((EmphasisKind::Bold, false, true))
+            Some((false, false, true))
         );
         assert_eq!(
             parse_emphasis_body("ここからゴシック体"),
-            Some((EmphasisKind::Bold, true, false))
+            Some((false, true, false))
         );
         assert_eq!(
             parse_emphasis_body("ここでゴチック終わり"),
-            Some((EmphasisKind::Bold, true, true))
+            Some((false, true, true))
         );
         // Every spelling serializes back to the canonical 太字.
-        assert_eq!(EmphasisKind::Bold.keyword(), "太字");
+        assert_eq!(ForwardAttr::Bold.keyword(), "太字");
     }
 
     /// The bare 横組み needle must NOT claim a compound like `横組みで、…`
@@ -2735,7 +2749,7 @@ mod tests {
         let opened_horizontal = out
             .spans
             .iter()
-            .any(|s| matches!(s.kind, SpanKind::BlockOpen(ContainerKind::Horizontal)));
+            .any(|s| matches!(s.kind, SpanKind::BlockOpen(RegionFormat::Horizontal)));
         assert!(
             unknown && !opened_horizontal,
             "expected Directive{{Unknown}} and no Horizontal open, got {:?}",
@@ -2748,23 +2762,19 @@ mod tests {
     /// opens an inline `SmallScript` container carrying the 右/左 side.
     #[test]
     fn small_script_range_recognised() {
-        let cases: &[(&str, ContainerKind)] = &[
+        let cases: &[(&str, RegionFormat)] = &[
             (
                 "x［＃行右小書き］２）［＃行右小書き終わり］y",
-                ContainerKind::SmallScript {
-                    side: BoutenPosition::Right,
-                },
+                RegionFormat::SmallScript(BoutenPosition::Right),
             ),
             (
                 "x［＃行左小書き］左［＃行左小書き終わり］y",
-                ContainerKind::SmallScript {
-                    side: BoutenPosition::Left,
-                },
+                RegionFormat::SmallScript(BoutenPosition::Left),
             ),
         ];
-        for (src, want) in cases {
+        for (src, want_open) in cases {
             run!(out, src);
-            let opens: Vec<ContainerKind> = out
+            let opens: Vec<RegionFormat> = out
                 .spans
                 .iter()
                 .filter_map(|s| match s.kind {
@@ -2772,7 +2782,7 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            let closes: Vec<ContainerKind> = out
+            let closes: Vec<RegionClose> = out
                 .spans
                 .iter()
                 .filter_map(|s| match s.kind {
@@ -2780,17 +2790,18 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert!(opens.contains(want), "open for {src:?}: {opens:?}");
-            assert!(closes.contains(want), "close for {src:?}: {closes:?}");
+            assert!(opens.contains(want_open), "open for {src:?}: {opens:?}");
+            assert!(
+                closes.contains(&RegionClose::of(*want_open)),
+                "close for {src:?}: {closes:?}"
+            );
         }
         // A needle-prefix-but-longer body must not be claimed.
         run!(out, "x［＃行右小書きほげ］y");
-        let opened = out.spans.iter().any(|s| {
-            matches!(
-                s.kind,
-                SpanKind::BlockOpen(ContainerKind::SmallScript { .. })
-            )
-        });
+        let opened = out
+            .spans
+            .iter()
+            .any(|s| matches!(s.kind, SpanKind::BlockOpen(RegionFormat::SmallScript(_))));
         assert!(
             !opened,
             "行右小書きほげ must not open a SmallScript container"
@@ -2870,7 +2881,7 @@ mod tests {
     #[test]
     fn remaining_layout_and_range_forms_recognised() {
         use aozora_syntax::borrowed::Node;
-        let opens = |src: &str| -> Vec<ContainerKind> {
+        let opens = |src: &str| -> Vec<RegionFormat> {
             run!(out, src);
             out.spans
                 .iter()
@@ -2880,36 +2891,37 @@ mod tests {
                 })
                 .collect()
         };
-        assert!(opens("［＃ここから罫囲み］").contains(&ContainerKind::Framed));
-        assert!(opens("［＃ここから割り注］").contains(&ContainerKind::Warichu));
+        assert!(opens("［＃ここから罫囲み］").contains(&RegionFormat::Framed));
+        assert!(opens("［＃ここから割り注］").contains(&RegionFormat::Warichu));
         assert!(
-            opens("［＃改行天付き、折り返して２字下げ］").contains(&ContainerKind::Indent {
-                amount: 0,
-                wrap: Some(2),
-                center: false,
-                layout: IndentLayout::None,
-            })
+            opens("［＃改行天付き、折り返して２字下げ］").contains(&RegionFormat::Indent(
+                IndentBlock {
+                    amount: 0,
+                    wrap: Some(2),
+                    center: false,
+                    layout: IndentLayout::None,
+                }
+            ))
         );
-        // 天から{N}字下げ → Indent leaf
+        // 天から{N}字下げ → Line(Indent) leaf
         run!(t, "［＃天から３字下げ］本文");
         assert!(t.spans.iter().any(|s| matches!(
             aozora_node(s),
-            Some(Node::Indent(i)) if i.amount == 3
+            Some(Node::Line(LineFormat::Indent { amount: 3 }))
         )));
-        // range bouten and ×傍点 → Bouten leaf
+        // range bouten and ×傍点 → Format(Bouten) leaf
         run!(
             r,
             "あ實は中身呉れるのである［＃「實は」～「呉れるのである」に傍点］"
         );
-        assert!(
-            r.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_))))
-        );
+        assert!(r.spans.iter().any(|s| matches!(
+            aozora_node(s),
+            Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. })
+        )));
         run!(x, "天皇制［＃「天皇制」に×傍点］");
         assert!(x.spans.iter().any(|s| matches!(
             aozora_node(s),
-            Some(Node::Bouten(b)) if b.kind == BoutenKind::Cross
+            Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { kind: BoutenKind::Cross, .. })
         )));
     }
 
@@ -2923,7 +2935,7 @@ mod tests {
         run!(a, "図［＃キャプション］第一図［＃キャプション終わり］");
         assert!(a.spans.iter().any(|s| matches!(
             s.kind,
-            SpanKind::BlockOpen(ContainerKind::Caption { block: false })
+            SpanKind::BlockOpen(RegionFormat::Caption { padded: false })
         )));
         // block → block Caption container
         run!(
@@ -2932,13 +2944,13 @@ mod tests {
         );
         assert!(b.spans.iter().any(|s| matches!(
             s.kind,
-            SpanKind::BlockOpen(ContainerKind::Caption { block: true })
+            SpanKind::BlockOpen(RegionFormat::Caption { padded: true })
         )));
         // forward leaf
         run!(c, "第一図［＃「第一図」はキャプション］");
         assert!(c.spans.iter().any(|s| matches!(
             aozora_node(s),
-            Some(Node::Emphasis(e)) if e.kind == EmphasisKind::Caption
+            Some(Node::Format(f)) if f.attr == ForwardAttr::Caption
         )));
     }
 
@@ -3030,7 +3042,7 @@ mod tests {
         let is_tcy = out
             .spans
             .iter()
-            .any(|s| matches!(aozora_node(s), Some(Node::CombineUpright(_))));
+            .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::CombineUpright)));
         let unknown = out.spans.iter().any(|s| {
             matches!(
                 aozora_node(s),
@@ -3101,12 +3113,12 @@ mod tests {
         });
         assert_eq!(
             open,
-            Some(ContainerKind::Indent {
+            Some(RegionFormat::Indent(IndentBlock {
                 amount: 0,
                 wrap: Some(2),
                 center: false,
                 layout: IndentLayout::None,
-            }),
+            })),
             "spans = {:?}",
             out.spans
         );
@@ -3121,7 +3133,7 @@ mod tests {
         let is_bouten = out
             .spans
             .iter()
-            .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_))));
+            .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. })));
         assert!(is_bouten, "expected a Bouten, got {:?}", out.spans);
     }
 
@@ -3137,7 +3149,7 @@ mod tests {
             assert!(
                 !out.spans
                     .iter()
-                    .any(|s| matches!(aozora_node(s), Some(Node::Emphasis(_)))),
+                    .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if !matches!(f.attr, ForwardAttr::Bouten { .. } | ForwardAttr::CombineUpright))),
                 "src = {src:?} should not yield an Emphasis node",
             );
         }
@@ -3165,7 +3177,7 @@ mod tests {
             .map(|s| {
                 let kind_str = match s.kind {
                     SpanKind::Plain => "Plain",
-                    SpanKind::Aozora(Node::Bouten(_)) => "Bouten",
+                    SpanKind::Aozora(Node::Format(_)) => "Bouten",
                     _ => "Other",
                 };
                 let slice = &"前置きの青空［＃「青空」に傍点］後ろ"
@@ -3188,7 +3200,7 @@ mod tests {
         // The classifier must also flip the per-node consumed flag so the
         // serializer round-trips the literal back into place.
         let bouten_flag = out.spans.iter().find_map(|s| match s.kind {
-            SpanKind::Aozora(Node::Bouten(b)) => Some(b.consumed_predecessor),
+            SpanKind::Aozora(Node::Format(b)) => Some(b.consumed_predecessor),
             _ => None,
         });
         assert_eq!(
@@ -3211,7 +3223,7 @@ mod tests {
         let mut saw_plain_with_aozora = false;
         for s in &out.spans {
             match &s.kind {
-                SpanKind::Aozora(Node::Bouten(_)) => saw_bouten = true,
+                SpanKind::Aozora(Node::Format(_)) => saw_bouten = true,
                 SpanKind::Plain => {
                     let slice = &"青空の下を歩く［＃「青空」に傍点］"
                         [s.source_span.start as usize..s.source_span.end as usize];
@@ -3239,11 +3251,11 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(Node::Bouten(b)) => Some(b),
+                Some(Node::Format(b)) => Some(b),
                 _ => None,
             })
             .expect("expected a Bouten span");
-        assert_eq!(bouten.kind, BoutenKind::Circle);
+        assert_eq!(bouten_attr(bouten).0, BoutenKind::Circle);
         assert_eq!(bouten.target.as_plain(), Some("X"));
     }
 
@@ -3270,14 +3282,14 @@ mod tests {
             let src = format!("t［＃「t」に{suffix}］");
             run!(out, &src);
             let Some(b) = out.spans.iter().find_map(|s| match aozora_node(s) {
-                Some(Node::Bouten(b)) => Some(b),
+                Some(Node::Format(b)) => Some(b),
                 _ => None,
             }) else {
                 panic!("no Bouten span for suffix {suffix:?}");
             };
-            assert_eq!(b.kind, expected_kind, "suffix {suffix:?}");
+            assert_eq!(bouten_attr(b).0, expected_kind, "suffix {suffix:?}");
             // All default `に` shapes produce right-side position.
-            assert_eq!(b.position, BoutenPosition::Right, "suffix {suffix:?}");
+            assert_eq!(bouten_attr(b).1, BoutenPosition::Right, "suffix {suffix:?}");
         }
     }
 
@@ -3291,12 +3303,12 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(Node::Bouten(b)) => Some(b),
+                Some(Node::Format(b)) => Some(b),
                 _ => None,
             })
             .expect("Bouten expected");
-        assert_eq!(b.kind, BoutenKind::Goma);
-        assert_eq!(b.position, BoutenPosition::Left);
+        assert_eq!(bouten_attr(b).0, BoutenKind::Goma);
+        assert_eq!(bouten_attr(b).1, BoutenPosition::Left);
         assert_eq!(b.target.as_plain(), Some("X"));
     }
 
@@ -3314,13 +3326,13 @@ mod tests {
             let src = format!("t［＃「t」の左に{suffix}］");
             run!(out, &src);
             let Some(b) = out.spans.iter().find_map(|s| match aozora_node(s) {
-                Some(Node::Bouten(b)) => Some(b),
+                Some(Node::Format(b)) => Some(b),
                 _ => None,
             }) else {
                 panic!("no Bouten span for left-side suffix {suffix:?}");
             };
-            assert_eq!(b.kind, expected_kind);
-            assert_eq!(b.position, BoutenPosition::Left);
+            assert_eq!(bouten_attr(b).0, expected_kind);
+            assert_eq!(bouten_attr(b).1, BoutenPosition::Left);
         }
     }
 
@@ -3336,11 +3348,11 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(Node::Bouten(b)) => Some(b),
+                Some(Node::Format(b)) => Some(b),
                 _ => None,
             })
             .expect("multi-quote Bouten expected");
-        assert_eq!(b.kind, BoutenKind::Goma);
+        assert_eq!(bouten_attr(b).0, BoutenKind::Goma);
         // Targets collapse to `A、B` through `Content::from_segments`
         // (all-Text segments → `Plain`).
         assert_eq!(b.target.as_plain(), Some("A、B"));
@@ -3356,7 +3368,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. }))),
             "Bouten must not promote when any target is unreferenced"
         );
     }
@@ -3371,7 +3383,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(Node::Bouten(b)) => Some(b),
+                Some(Node::Format(b)) => Some(b),
                 _ => None,
             })
             .expect("Bouten expected");
@@ -3387,11 +3399,11 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(Node::Bouten(b)) => Some(b),
+                Some(Node::Format(b)) => Some(b),
                 _ => None,
             })
             .expect("Bouten expected");
-        assert_eq!(b.position, BoutenPosition::Left);
+        assert_eq!(bouten_attr(b).1, BoutenPosition::Left);
         assert_eq!(b.target.as_plain(), Some("A、B"));
     }
 
@@ -3401,7 +3413,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. }))),
         );
     }
 
@@ -3411,7 +3423,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. }))),
         );
     }
 
@@ -3421,7 +3433,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. }))),
         );
     }
 
@@ -3435,7 +3447,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. }))),
         );
     }
 
@@ -3449,7 +3461,7 @@ mod tests {
         assert!(
             out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. }))),
         );
     }
 
@@ -3459,7 +3471,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::CombineUpright(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::CombineUpright))),
         );
     }
 
@@ -3474,7 +3486,7 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(Node::Bouten(b)) => Some(b),
+                Some(Node::Format(b)) => Some(b),
                 _ => None,
             })
             .expect("expected a Bouten span");
@@ -3488,11 +3500,11 @@ mod tests {
             .spans
             .iter()
             .find_map(|s| match aozora_node(s) {
-                Some(Node::CombineUpright(t)) => Some(t),
+                Some(Node::Format(t)) => Some(t),
                 _ => None,
             })
             .expect("expected a CombineUpright span");
-        assert_eq!(tcy.text.as_plain(), Some("20"));
+        assert_eq!(tcy.target.as_plain(), Some("20"));
     }
 
     #[test]
@@ -3502,7 +3514,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::CombineUpright(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::CombineUpright))),
         );
     }
 
@@ -3512,7 +3524,7 @@ mod tests {
         assert!(
             !out.spans
                 .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::CombineUpright(_)))),
+                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::CombineUpright))),
         );
     }
 
@@ -3798,13 +3810,20 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Gaiji span");
-        assert_eq!(gaiji.description, "木＋吶のつくり");
-        assert_eq!(gaiji.mencode, Some("第3水準1-85-54"));
+        assert_eq!(gaiji.hint, "木＋吶のつくり");
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 1,
+                ku: 85,
+                ten: 54,
+            })
+        );
         // JIS X 0213:2004 plane 1 row 85 cell 54 = 枘 (U+6798).
         // (Pre-regen seed had U+6903 (椃) — that was a different
         // character, U+6903 = 木+室. The corrected mapping is sourced
         // from glibc's EUC-JISX0213 charmap = the spec.)
-        assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{6798}')));
+        assert_eq!(gaiji.resolve(), Some(Resolved::Char('\u{6798}')));
     }
 
     /// A composed-glyph gaiji with a trailing 底本ページ-行 suffix
@@ -3827,11 +3846,16 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
-        assert_eq!(gaiji.description, "「瓰」の「扮のつくり」に代えて「里」");
+        assert_eq!(gaiji.hint, "「瓰」の「扮のつくり」に代えて「里」");
         // Full mencode (incl. page-line) kept verbatim for the round-trip.
-        assert_eq!(gaiji.mencode, Some("U+74FC、372-10"));
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("U+74FC、372-10"),
+            }
+        );
         // The page-line is stripped for resolution → U+74FC still resolves.
-        assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{74FC}')));
+        assert_eq!(gaiji.resolve(), Some(Resolved::Char('\u{74FC}')));
     }
 
     #[test]
@@ -3845,8 +3869,11 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Gaiji span");
-        assert_eq!(gaiji.description, "試");
-        assert!(gaiji.mencode.is_none());
+        assert_eq!(gaiji.hint, "試");
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved { mencode: None }
+        );
     }
 
     #[test]
@@ -3860,8 +3887,13 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Gaiji span");
-        assert_eq!(gaiji.description, "二の字点");
-        assert_eq!(gaiji.mencode, Some("1-2-23"));
+        assert_eq!(gaiji.hint, "二の字点");
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("1-2-23"),
+            }
+        );
     }
 
     #[test]
@@ -3890,8 +3922,15 @@ mod tests {
         }) else {
             panic!("expected Gaiji node for the 代えて composed-glyph form");
         };
-        assert_eq!(g.description, "「比」の「ヒ」に代えて「く」");
-        assert_eq!(g.mencode, Some("第4水準2-1-23"));
+        assert_eq!(g.hint, "「比」の「ヒ」に代えて「く」");
+        assert_eq!(
+            g.canonical,
+            GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 2,
+                ku: 1,
+                ten: 23,
+            })
+        );
     }
 
     #[test]
@@ -3930,8 +3969,13 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a standalone Gaiji span, not Unknown"));
-        assert_eq!(gaiji.description, "「※」は「祿－示」");
-        assert_eq!(gaiji.mencode, Some("第3水準1-84-27、144-上-9"));
+        assert_eq!(gaiji.hint, "「※」は「祿－示」");
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("第3水準1-84-27、144-上-9"),
+            }
+        );
         assert!(gaiji.standalone, "no `※` in source → standalone");
     }
 
@@ -3946,7 +3990,7 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a standalone composed Gaiji span"));
-        assert_eq!(gaiji.description, "「比」の「ヒ」に代えて「く」");
+        assert_eq!(gaiji.hint, "「比」の「ヒ」に代えて「く」");
         assert!(gaiji.standalone);
     }
 
@@ -3980,8 +4024,13 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a page-line-only Gaiji span"));
-        assert_eq!(gaiji.description, "小書き片仮名ヲ");
-        assert_eq!(gaiji.mencode, Some("5-下-3"));
+        assert_eq!(gaiji.hint, "小書き片仮名ヲ");
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("5-下-3"),
+            }
+        );
         assert!(gaiji.standalone);
     }
 
@@ -4004,10 +4053,15 @@ mod tests {
             })
             .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
         assert_eq!(
-            gaiji.description,
+            gaiji.hint,
             "「圖」の「回」に代えて「面から一、二画目をとったもの」"
         );
-        assert_eq!(gaiji.mencode, Some("116-5"));
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("116-5"),
+            }
+        );
         assert!(gaiji.standalone);
     }
 
@@ -4032,11 +4086,18 @@ mod tests {
             .unwrap_or_else(|| panic!("expected a 正字 Gaiji span, not Unknown"));
         // Outer `「…」` wrapper kept verbatim so serialize ∘ parse is a fixed point.
         assert_eq!(
-            gaiji.description,
+            gaiji.hint,
             "「木＋（「第－竹」の「コ」に代えて「丿」）、「柿」の正字」"
         );
-        assert_eq!(gaiji.mencode, Some("第3水準1-85-57"));
-        assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{67F9}')));
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 1,
+                ku: 85,
+                ten: 57,
+            })
+        );
+        assert_eq!(gaiji.resolve(), Some(Resolved::Char('\u{67F9}')));
         assert!(gaiji.standalone);
     }
 
@@ -4059,11 +4120,16 @@ mod tests {
             })
             .unwrap_or_else(|| panic!("expected a 正字 Gaiji span, not Unknown"));
         assert_eq!(
-            gaiji.description,
+            gaiji.hint,
             "「女＋（「第－竹」の「コ」に代えて「ノ」）、「姉」の正字」"
         );
-        assert_eq!(gaiji.mencode, Some("U+59CA、648-5"));
-        assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{59CA}')));
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("U+59CA、648-5"),
+            }
+        );
+        assert_eq!(gaiji.resolve(), Some(Resolved::Char('\u{59CA}')));
         assert!(!gaiji.standalone, "leading `※` → not standalone");
     }
 
@@ -4085,11 +4151,13 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
+        assert_eq!(gaiji.hint, "「仝」の「工」に代えて「小」、屋号を示す記号");
         assert_eq!(
-            gaiji.description,
-            "「仝」の「工」に代えて「小」、屋号を示す記号"
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("260-16"),
+            }
         );
-        assert_eq!(gaiji.mencode, Some("260-16"));
         assert!(gaiji.standalone);
     }
 
@@ -4110,10 +4178,17 @@ mod tests {
             })
             .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
         assert_eq!(
-            gaiji.description,
+            gaiji.hint,
             "「溥」の「さんずい」に代えて「かねへん」、読みは「はく」"
         );
-        assert_eq!(gaiji.mencode, Some("第3水準1-93-32"));
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 1,
+                ku: 93,
+                ten: 32,
+            })
+        );
         assert!(gaiji.standalone);
     }
 
@@ -4335,12 +4410,12 @@ mod tests {
         assert_eq!(out.spans.len(), 1);
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Indent {
+            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
                 amount: 1,
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
-            })
+            }))
         ));
     }
 
@@ -4349,12 +4424,12 @@ mod tests {
         run!(out, "［＃ここから３字下げ］");
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Indent {
+            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
                 amount: 3,
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
-            })
+            }))
         ));
     }
 
@@ -4363,12 +4438,12 @@ mod tests {
         run!(out, "［＃ここから２字下げ、折り返して４字下げ］");
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Indent {
+            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
                 amount: 2,
                 wrap: Some(4),
                 center: false,
                 layout: IndentLayout::None,
-            })
+            }))
         ));
     }
 
@@ -4378,15 +4453,12 @@ mod tests {
         run!(out, "［＃ここから3字下げ、1行20字組みで］");
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Indent {
+            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
                 amount: 3,
                 wrap: None,
                 center: false,
-                layout: IndentLayout::Kumi {
-                    lines: 1,
-                    width: 20
-                },
-            })
+                layout: IndentLayout::Kumi(_),
+            }))
         ));
     }
 
@@ -4396,19 +4468,19 @@ mod tests {
         run!(out, "［＃ここから8字下げ、18字詰め］");
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Indent {
+            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
                 amount: 8,
                 wrap: None,
                 center: false,
-                layout: IndentLayout::LineWidth(18),
-            })
+                layout: IndentLayout::LineWidth(_),
+            }))
         ));
     }
 
     #[test]
-    fn container_kumi_compound_closer_carries_width_and_pairs() {
-        // The compound closer ここで字下げ、{W}字組み終わり carries the width
-        // (so serialize round-trips) and pairs with the Indent open by family.
+    fn container_kumi_compound_open_carries_width_and_pairs() {
+        // The OPEN carries the 字組み width (open-authoritative — the close is
+        // a discriminant; serialize reconstructs the marker from the open).
         run!(
             out,
             "［＃ここから3字下げ、1行20字組みで］本文［＃ここで字下げ、20字組み終わり］"
@@ -4416,17 +4488,14 @@ mod tests {
         assert_eq!(out.spans.len(), 3);
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Indent {
-                layout: IndentLayout::Kumi { width: 20, .. },
+            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
+                layout: IndentLayout::Kumi(_),
                 ..
-            })
+            }))
         ));
         assert!(matches!(
             out.spans[2].kind,
-            SpanKind::BlockClose(ContainerKind::Indent {
-                layout: IndentLayout::Kumi { width: 20, .. },
-                ..
-            })
+            SpanKind::BlockClose(RegionClose::Indent { .. })
         ));
     }
 
@@ -4441,10 +4510,7 @@ mod tests {
         assert_eq!(out.spans.len(), 3);
         assert!(matches!(
             out.spans[2].kind,
-            SpanKind::BlockClose(ContainerKind::Indent {
-                layout: IndentLayout::None,
-                ..
-            })
+            SpanKind::BlockClose(RegionClose::Indent { .. })
         ));
     }
 
@@ -4469,12 +4535,12 @@ mod tests {
         assert_eq!(out.spans.len(), 3);
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Indent { .. })
+            SpanKind::BlockOpen(RegionFormat::Indent(_))
         ));
         assert_eq!(out.spans[1].kind, SpanKind::Plain);
         assert!(matches!(
             out.spans[2].kind,
-            SpanKind::BlockClose(ContainerKind::Indent { .. })
+            SpanKind::BlockClose(RegionClose::Indent { .. })
         ));
     }
 
@@ -4483,12 +4549,12 @@ mod tests {
         run!(out, "［＃ここから地付き］");
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::AlignEnd { offset: 0 })
+            SpanKind::BlockOpen(RegionFormat::AlignEnd { offset: 0 })
         ));
         run!(out2, "［＃ここから地から2字上げ］");
         assert!(matches!(
             out2.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::AlignEnd { offset: 2 })
+            SpanKind::BlockOpen(RegionFormat::AlignEnd { offset: 2 })
         ));
     }
 
@@ -4497,11 +4563,11 @@ mod tests {
         run!(out, "［＃罫囲み］内部［＃罫囲み終わり］");
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::Framed)
+            SpanKind::BlockOpen(RegionFormat::Framed)
         ));
         assert!(matches!(
             out.spans[2].kind,
-            SpanKind::BlockClose(ContainerKind::Framed)
+            SpanKind::BlockClose(RegionClose::Framed)
         ));
     }
 
@@ -4515,11 +4581,11 @@ mod tests {
         );
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::FontSize { steps: 2 })
+            SpanKind::BlockOpen(RegionFormat::FontSize(_))
         ));
         assert!(matches!(
             out.spans[2].kind,
-            SpanKind::BlockClose(ContainerKind::FontSize { steps: 1 })
+            SpanKind::BlockClose(RegionClose::FontSize { .. })
         ));
         run!(
             out2,
@@ -4527,7 +4593,7 @@ mod tests {
         );
         assert!(matches!(
             out2.spans[0].kind,
-            SpanKind::BlockOpen(ContainerKind::FontSize { steps: -1 })
+            SpanKind::BlockOpen(RegionFormat::FontSize(shift)) if !shift.larger()
         ));
     }
 
@@ -4565,7 +4631,7 @@ mod tests {
         run!(out, "［＃罫囲み終わり］");
         assert!(matches!(
             out.spans[0].kind,
-            SpanKind::BlockClose(ContainerKind::Framed)
+            SpanKind::BlockClose(RegionClose::Framed)
         ));
     }
 
@@ -4758,7 +4824,7 @@ mod tests {
         let bouten_in_a = a
             .spans
             .iter()
-            .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_))));
+            .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. })));
         let unknown_in_a = a.spans.iter().any(|s| {
             matches!(
                 aozora_node(s),
@@ -4772,7 +4838,7 @@ mod tests {
         let bouten_in_b = b
             .spans
             .iter()
-            .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_))));
+            .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. })));
         let unknown_in_b = b.spans.iter().any(|s| {
             matches!(
                 aozora_node(s),
@@ -4833,7 +4899,7 @@ mod tests {
         let has_bouten = out
             .spans
             .iter()
-            .any(|s| matches!(aozora_node(s), Some(Node::Bouten(_))));
+            .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. })));
         let degraded = out.spans.iter().any(|s| {
             matches!(
                 aozora_node(s),

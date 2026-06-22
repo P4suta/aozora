@@ -89,11 +89,12 @@ pub use aozora_syntax::borrowed::Arena;
 /// `aozora-syntax` directly — `aozora` is the single editor-facing
 /// front door.
 pub use aozora_syntax::{
-    AlignEnd, BoutenKind, BoutenPosition, Center, ContainerKind, DirectiveKind, HeadingKind,
-    HeadingStyle, Indent, IndentLayout, NodeKind, RubySide, SectionKind,
+    BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, FontShift, Format, ForwardAttr,
+    HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, NodeKind,
+    RegionClose, RegionFormat, RubySide, SectionKind,
     borrowed::{
-        AngleQuote, Bouten, CombineUpright, Content, Directive, Gaiji, Heading, HeadingHint,
-        Illustration, Kaeriten, MarginNote, Node, Ruby, Segment, Warichu,
+        AngleQuote, Content, Directive, ForwardFormat, Gaiji, Heading, HeadingHint, Illustration,
+        Kaeriten, MarginNote, Node, Ruby, Segment, Warichu,
     },
 };
 

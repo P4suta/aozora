@@ -8,13 +8,12 @@
 //! block construct as documented in [`crate`].
 
 use aozora::{
-    AlignEnd, AngleQuote, Bouten, BoutenPosition, CombineUpright, ContainerKind, Directive,
-    DirectiveKind, Gaiji, Heading, HeadingHint, HeadingKind, HeadingStyle, Illustration, Indent,
-    IndentLayout, Kaeriten, MarginNote, NodeRef, Ruby, SectionKind, Segment, SourceNode, Span,
-    Tree, Warichu,
+    AngleQuote, BoutenPosition, Directive, DirectiveKind, ForwardAttr, Gaiji, Heading, HeadingHint,
+    HeadingKind, HeadingStyle, Illustration, IndentBlock, IndentLayout, Kaeriten, LineFormat,
+    MarginNote, NodeRef, RegionFormat, Ruby, SectionKind, Segment, SourceNode, Span, Tree, Warichu,
     pipeline::lexer::sanitize,
     roman_slug,
-    syntax::borrowed::{Content, Node},
+    syntax::borrowed::{Content, ForwardFormat, Node},
 };
 use pandoc_ast::{Attr, Block, Inline, Pandoc};
 
@@ -62,7 +61,7 @@ struct Frame {
     inlines: Option<Vec<Inline>>,
     /// Container kind for the wrapping `Div` (if any). The root
     /// frame carries `None`.
-    container: Option<ContainerKind>,
+    container: Option<RegionFormat>,
 }
 
 impl Frame {
@@ -74,7 +73,7 @@ impl Frame {
         }
     }
 
-    fn child(kind: ContainerKind) -> Self {
+    fn child(kind: RegionFormat) -> Self {
         Self {
             blocks: Vec::new(),
             inlines: None,
@@ -189,14 +188,10 @@ impl<'src> Converter<'src> {
         let inline = match node {
             N::Ruby(r) => ruby_inline(r),
             N::MarginNote(s) => side_note_inline(s),
-            N::Bouten(b) => bouten_inline(b),
-            N::CombineUpright(t) => tate_chu_yoko_inline(t),
+            N::Format(f) => format_inline(f),
             N::Gaiji(g) => gaiji_inline(*g),
-            N::Indent(i) => indent_inline(i),
-            N::AlignEnd(a) => align_end_inline(a),
-            N::Center(_) => center_inline(),
+            N::Line(lf) => line_inline(lf),
             N::Warichu(w) => warichu_inline(w),
-            N::Framed(_) => keigakomi_inline(),
             N::Directive(a) => annotation_inline(*a),
             N::Kaeriten(k) => kaeriten_inline(*k),
             N::AngleQuote(d) => angle_quote_inline(*d),
@@ -229,7 +224,7 @@ impl<'src> Converter<'src> {
         self.current_frame_mut().blocks.push(block);
     }
 
-    fn open_container(&mut self, kind: ContainerKind) {
+    fn open_container(&mut self, kind: RegionFormat) {
         // A new container starts a new block context; flush any
         // in-flight paragraph in the current frame first.
         self.current_frame_mut().flush_paragraph();
@@ -316,20 +311,7 @@ fn ruby_inline(r: &Ruby<'_>) -> Inline {
         Inline::Span(class_attr("ruby-base"), base_inlines),
         Inline::Span(class_attr("ruby-reading"), reading_inlines),
     ];
-    Inline::Span(
-        class_attr_kv(
-            "ruby",
-            vec![(
-                "delim".to_owned(),
-                if r.delim_explicit {
-                    "explicit".to_owned()
-                } else {
-                    "implicit".to_owned()
-                },
-            )],
-        ),
-        inner,
-    )
+    Inline::Span(class_attr("ruby"), inner)
 }
 
 fn side_note_inline(s: &MarginNote<'_>) -> Inline {
@@ -342,21 +324,33 @@ fn side_note_inline(s: &MarginNote<'_>) -> Inline {
     Inline::Span(class_attr("sidenote"), inner)
 }
 
-fn bouten_inline(b: &Bouten<'_>) -> Inline {
-    let attr = class_attr_kv(
-        "bouten",
-        vec![
-            (
-                "kind".to_owned(),
-                roman_slug(b.kind.keyword()).unwrap_or("unknown").to_owned(),
-            ),
-            (
-                "position".to_owned(),
-                bouten_position_slug(b.position).to_owned(),
-            ),
-        ],
-    );
-    Inline::Span(attr, content_to_inlines(b.target.get()))
+/// Project a forward-reference emphasis node. 傍点 / 傍線 and 縦中横 carry
+/// dedicated spans; every other attribute (太字 / 斜体 / 小書き / …) falls
+/// through to a debug span, the legacy pandoc behaviour.
+fn format_inline(f: &ForwardFormat<'_>) -> Inline {
+    match f.attr {
+        ForwardAttr::Bouten { kind, position } => {
+            let attr = class_attr_kv(
+                "bouten",
+                vec![
+                    (
+                        "kind".to_owned(),
+                        roman_slug(kind.keyword()).unwrap_or("unknown").to_owned(),
+                    ),
+                    (
+                        "position".to_owned(),
+                        bouten_position_slug(position).to_owned(),
+                    ),
+                ],
+            );
+            Inline::Span(attr, content_to_inlines(f.target.get()))
+        }
+        ForwardAttr::CombineUpright => Inline::Span(
+            class_attr("tate-chu-yoko"),
+            content_to_inlines(f.target.get()),
+        ),
+        _ => Inline::Span(plain_attr(), vec![Inline::Str(format!("{f:?}"))]),
+    }
 }
 
 fn bouten_position_slug(p: BoutenPosition) -> &'static str {
@@ -367,54 +361,42 @@ fn bouten_position_slug(p: BoutenPosition) -> &'static str {
     }
 }
 
-fn tate_chu_yoko_inline(t: &CombineUpright<'_>) -> Inline {
-    Inline::Span(
-        class_attr("tate-chu-yoko"),
-        content_to_inlines(t.text.get()),
-    )
-}
-
 fn gaiji_inline(g: Gaiji<'_>) -> Inline {
-    let mut kvs = vec![("description".to_owned(), g.description.to_owned())];
-    if let Some(mencode) = g.mencode {
-        kvs.push(("mencode".to_owned(), mencode.to_owned()));
+    let mut kvs = vec![("description".to_owned(), g.hint.to_owned())];
+    if g.canonical.has_mencode() {
+        let mut mencode = String::new();
+        g.canonical
+            .write_mencode(&mut mencode)
+            .expect("write_mencode into String is infallible");
+        kvs.push(("mencode".to_owned(), mencode));
     }
-    let inner = g.ucs.map_or_else(
+    let inner = g.resolve().map_or_else(
         || vec![Inline::Str("〓".to_owned())],
         |resolved| vec![Inline::Str(format!("{resolved:?}"))],
     );
     Inline::Span(class_attr_kv("gaiji", kvs), inner)
 }
 
-fn indent_inline(i: Indent) -> Inline {
-    Inline::Span(
-        class_attr_kv("indent", vec![("amount".to_owned(), i.amount.to_string())]),
-        Vec::new(),
-    )
-}
-
-fn align_end_inline(a: AlignEnd) -> Inline {
-    Inline::Span(
-        class_attr_kv(
-            "align-end",
-            vec![("offset".to_owned(), a.offset.to_string())],
-        ),
-        Vec::new(),
-    )
-}
-
-fn center_inline() -> Inline {
-    Inline::Span(class_attr_kv("center", Vec::new()), Vec::new())
+/// Project a single-line layout directive (字下げ / 地付き / 中央 / 罫囲み).
+fn line_inline(lf: LineFormat) -> Inline {
+    let attr = match lf {
+        LineFormat::Indent { amount } => {
+            class_attr_kv("indent", vec![("amount".to_owned(), amount.to_string())])
+        }
+        LineFormat::AlignEnd { offset } => {
+            class_attr_kv("align-end", vec![("offset".to_owned(), offset.to_string())])
+        }
+        LineFormat::Center { .. } => class_attr_kv("center", Vec::new()),
+        LineFormat::Framed => class_attr("keigakomi"),
+        _ => plain_attr(),
+    };
+    Inline::Span(attr, Vec::new())
 }
 
 fn warichu_inline(w: &Warichu<'_>) -> Inline {
     let upper = Inline::Span(class_attr("warichu-upper"), content_to_inlines(w.upper));
     let lower = Inline::Span(class_attr("warichu-lower"), content_to_inlines(w.lower));
     Inline::Span(class_attr("warichu"), vec![upper, lower])
-}
-
-fn keigakomi_inline() -> Inline {
-    Inline::Span(class_attr("keigakomi"), Vec::new())
 }
 
 fn annotation_inline(a: Directive<'_>) -> Inline {
@@ -536,14 +518,14 @@ fn sashie_block(s: Illustration<'_>) -> Block {
     Block::Para(vec![Inline::Image(class_attr("sashie"), alt, target)])
 }
 
-fn container_attr(kind: ContainerKind) -> Attr {
+fn container_attr(kind: RegionFormat) -> Attr {
     let (slug, kvs): (&str, Vec<(String, String)>) = match kind {
-        ContainerKind::Indent {
+        RegionFormat::Indent(IndentBlock {
             amount,
             wrap,
             center,
             layout,
-        } => {
+        }) => {
             let mut kvs = vec![("amount".to_owned(), amount.to_string())];
             if let Some(w) = wrap {
                 kvs.push(("wrap".to_owned(), w.to_string()));
@@ -552,24 +534,24 @@ fn container_attr(kind: ContainerKind) -> Attr {
                 kvs.push(("center".to_owned(), "true".to_owned()));
             }
             match layout {
-                IndentLayout::Kumi { lines, width } => {
-                    kvs.push(("kumi-lines".to_owned(), lines.to_string()));
-                    kvs.push(("kumi-width".to_owned(), width.to_string()));
+                IndentLayout::Kumi(kumi) => {
+                    kvs.push(("kumi-lines".to_owned(), kumi.lines.to_string()));
+                    kvs.push(("kumi-width".to_owned(), kumi.width.to_string()));
                 }
                 IndentLayout::LineWidth(width) => {
-                    kvs.push(("width".to_owned(), width.to_string()));
+                    kvs.push(("width".to_owned(), width.0.to_string()));
                 }
                 IndentLayout::None => {}
             }
             ("container-indent", kvs)
         }
-        ContainerKind::Warichu => ("container-warichu", Vec::new()),
-        ContainerKind::Framed => ("container-keigakomi", Vec::new()),
-        ContainerKind::AlignEnd { offset } => (
+        RegionFormat::Warichu => ("container-warichu", Vec::new()),
+        RegionFormat::Framed => ("container-keigakomi", Vec::new()),
+        RegionFormat::AlignEnd { offset } => (
             "container-align-end",
             vec![("offset".to_owned(), offset.to_string())],
         ),
-        ContainerKind::BoutenRange { kind, position } => {
+        RegionFormat::Bouten { kind, position } => {
             let mut kvs = vec![(
                 "variant".to_owned(),
                 roman_slug(kind.keyword()).unwrap_or("unknown").to_owned(),
@@ -770,18 +752,17 @@ mod tests {
     // -----------------------------------------------------------------
 
     #[test]
-    fn implicit_ruby_carries_implicit_delim() {
+    fn implicit_ruby_projects_base_and_reading() {
         let blocks = project("青梅《おうめ》という地名。\n");
-        let (attr, inner) = find_span(&blocks, "ruby").expect("ruby span");
-        assert_eq!(kv(attr, "delim"), Some("implicit"), "implicit ruby delim");
+        let (_, inner) = find_span(&blocks, "ruby").expect("ruby span");
         assert_eq!(inner.len(), 2, "ruby has base + reading children");
     }
 
     #[test]
-    fn explicit_ruby_carries_explicit_delim() {
+    fn explicit_ruby_projects_as_ruby_span() {
         let blocks = project("｜青梅《おうめ》\n");
-        let (attr, _) = find_span(&blocks, "ruby").expect("ruby span");
-        assert_eq!(kv(attr, "delim"), Some("explicit"), "explicit ruby delim");
+        let (_, inner) = find_span(&blocks, "ruby").expect("ruby span");
+        assert_eq!(inner.len(), 2, "ruby has base + reading children");
     }
 
     #[test]
@@ -991,8 +972,8 @@ mod tests {
             .expect("debug fallback span with empty class list");
         match dbg.as_slice() {
             [Inline::Str(s)] => assert!(
-                s.contains("Emphasis") && s.contains("FontSize"),
-                "fallback renders the node's Debug form, got {s:?}"
+                s.contains("ForwardFormat") && s.contains("FontSize"),
+                "fallback renders the forward format's Debug form, got {s:?}"
             ),
             other => panic!("expected single debug Str, got {other:?}"),
         }
@@ -1279,8 +1260,8 @@ mod tests {
     // -----------------------------------------------------------------
 
     #[test]
-    fn indent_inline_builder_carries_amount() {
-        let inline = indent_inline(Indent { amount: 4 });
+    fn line_inline_indent_carries_amount() {
+        let inline = line_inline(LineFormat::Indent { amount: 4 });
         match inline {
             Inline::Span(attr, inner) => {
                 assert!(has_class(&attr, "indent"), "indent class: {:?}", attr.1);
@@ -1292,8 +1273,8 @@ mod tests {
     }
 
     #[test]
-    fn align_end_inline_builder_carries_offset() {
-        let inline = align_end_inline(AlignEnd { offset: 7 });
+    fn line_inline_align_end_carries_offset() {
+        let inline = line_inline(LineFormat::AlignEnd { offset: 7 });
         match inline {
             Inline::Span(attr, _) => {
                 assert!(has_class(&attr, "align-end"), "align-end class");
@@ -1304,8 +1285,8 @@ mod tests {
     }
 
     #[test]
-    fn center_inline_builder_is_empty_marker() {
-        match center_inline() {
+    fn line_inline_center_is_empty_marker() {
+        match line_inline(LineFormat::Center { page: false }) {
             Inline::Span(attr, inner) => {
                 assert!(has_class(&attr, "center"), "center class");
                 assert!(inner.is_empty(), "center marker span is empty");
@@ -1315,8 +1296,8 @@ mod tests {
     }
 
     #[test]
-    fn keigakomi_inline_builder_is_empty_marker() {
-        match keigakomi_inline() {
+    fn line_inline_keigakomi_is_empty_marker() {
+        match line_inline(LineFormat::Framed) {
             Inline::Span(attr, inner) => {
                 assert!(has_class(&attr, "keigakomi"), "keigakomi class");
                 assert!(inner.is_empty(), "keigakomi marker span is empty");

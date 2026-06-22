@@ -34,9 +34,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for sn in tree.source_nodes() {
         if let NodeRef::Inline(Node::Gaiji(g)) = sn.node {
-            match g.ucs.and_then(|r| r.as_char()) {
-                Some(ch) => println!("{} → {ch}", g.description),
-                None => println!("{} → (unresolved)", g.description),
+            match g.resolve().and_then(|r| r.as_char()) {
+                Some(ch) => println!("{} → {ch}", g.hint),
+                None => println!("{} → (unresolved)", g.hint),
             }
         }
     }

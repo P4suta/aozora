@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use aozora::encoding::gaiji::{GaijiBody, parse_gaiji_body};
 use tree_sitter::{Node, Tree};
 use tree_sitter_aozora::kind;
 
@@ -86,19 +87,17 @@ fn build_span(gaiji: Node<'_>, text: &str) -> Option<GaijiSpan> {
     })
 }
 
-/// Split `description, mencode` from a slug body. The first `、`
-/// delimits description from mencode; if absent, the whole body is
-/// the description and mencode is `None`. Strips the surrounding
-/// `「…」` from the description if present.
+/// Split `(description, mencode)` from a slug body via the single
+/// authority in `aozora-encoding` (shared with the parser and the
+/// `gaiji()` wire). Replaces a naive first-`、` split that wrongly cut
+/// the composed-glyph forms (`「X」の「Y」に代えて「Z」、mencode`) — #181.
 fn parse_body(body: &str) -> (Arc<str>, Option<Arc<str>>) {
-    let (description, rest) = body.find('、').map_or((body, None), |i| {
-        let head = body[..i].trim();
-        let tail = body[i + '、'.len_utf8()..].trim();
-        (head, Some(tail))
-    });
-    let description = description.trim().trim_matches(|c| c == '「' || c == '」');
-    let mencode = rest.map(str::trim).filter(|s| !s.is_empty()).map(Arc::from);
-    (Arc::from(description), mencode)
+    let GaijiBody {
+        description,
+        mencode,
+        ..
+    } = parse_gaiji_body(body);
+    (Arc::from(description), mencode.map(Arc::from))
 }
 
 /// Filter `spans` to those whose `start_byte` lies in

@@ -155,11 +155,28 @@ mod tests {
     use aozora_syntax::alloc::BorrowedAllocator;
     use aozora_syntax::borrowed::{Arena, Node};
     use aozora_syntax::{
-        AlignEnd, BOUTEN_KINDS, BoutenKind, BoutenPosition, Center, Container, ContainerKind,
-        DirectiveKind, EMPHASIS_KINDS, EmphasisKind, HEADING_KINDS, HEADING_STYLES, HeadingKind,
-        HeadingStyle, Indent, IndentLayout, MarginNoteKind, SECTION_KINDS,
+        BOUTEN_KINDS, BoutenKind, BoutenPosition, ColumnCount, Container, DirectiveKind, FontShift,
+        ForwardAttr, HEADING_KINDS, HEADING_STYLES, HeadingKind, HeadingStyle, IndentBlock,
+        IndentLayout, Kumi, LineFormat, LineWidth, MarginNoteKind, RegionFormat, SECTION_KINDS,
     };
+    use core::num::{NonZeroI8, NonZeroU8};
     use std::collections::BTreeSet;
+
+    fn fs(steps: i8) -> FontShift {
+        FontShift(NonZeroI8::new(steps).expect("non-zero"))
+    }
+    fn lw(n: u8) -> LineWidth {
+        LineWidth(NonZeroU8::new(n).expect("non-zero"))
+    }
+    fn cc(n: u8) -> ColumnCount {
+        ColumnCount(NonZeroU8::new(n).expect("non-zero"))
+    }
+    fn kumi(lines: u8, width: u8) -> Kumi {
+        Kumi {
+            lines: NonZeroU8::new(lines).expect("non-zero"),
+            width: NonZeroU8::new(width).expect("non-zero"),
+        }
+    }
 
     /// Pull the `aozora-*` tokens out of every `class="…"` attribute in
     /// `html`, collapsing a trailing `-<digits>` run to its stem so
@@ -213,11 +230,11 @@ mod tests {
         // --- leaf nodes ---
         render_into(a.page_break(), &mut emitted);
         render_into(a.kaeriten("一"), &mut emitted);
-        render_into(a.center(Center { page: true }), &mut emitted);
-        render_into(a.center(Center { page: false }), &mut emitted);
-        render_into(a.indent(Indent { amount: 2 }), &mut emitted);
-        render_into(a.align_end(AlignEnd { offset: 0 }), &mut emitted);
-        render_into(a.align_end(AlignEnd { offset: 2 }), &mut emitted);
+        render_into(a.line(LineFormat::Center { page: true }), &mut emitted);
+        render_into(a.line(LineFormat::Center { page: false }), &mut emitted);
+        render_into(a.line(LineFormat::Indent { amount: 2 }), &mut emitted);
+        render_into(a.line(LineFormat::AlignEnd { offset: 0 }), &mut emitted);
+        render_into(a.line(LineFormat::AlignEnd { offset: 2 }), &mut emitted);
         render_into(a.sashie("f.png", None, None, None), &mut emitted);
         render_into(a.sashie_general("f.png", "図", None), &mut emitted);
         render_into(
@@ -229,7 +246,7 @@ mod tests {
             render_into(a.section_break(k), &mut emitted);
         }
 
-        let g = a.make_gaiji("X", None, None, false);
+        let g = a.make_gaiji("X", None, false);
         render_into(a.gaiji(g), &mut emitted);
         for kind in [
             DirectiveKind::WarichuOpen,
@@ -246,7 +263,7 @@ mod tests {
         // plain sequential lets compile.
         let ruby_base = a.content_plain("親");
         let ruby_reading = a.content_plain("おや");
-        render_into(a.ruby(ruby_base, ruby_reading, true), &mut emitted);
+        render_into(a.ruby(ruby_base, ruby_reading), &mut emitted);
         let lruby_base = a.content_plain("子");
         let lruby_reading = a.content_plain("こ");
         render_into(a.left_ruby(lruby_base, lruby_reading), &mut emitted);
@@ -266,16 +283,27 @@ mod tests {
                 render_into(a.bouten(kind, t, pos, false), &mut emitted);
             }
         }
-        for &kind in EMPHASIS_KINDS {
+        // Every forward-emphasis attribute that produces a distinct class.
+        for attr in [
+            ForwardAttr::Bold,
+            ForwardAttr::Italic,
+            ForwardAttr::SuperScript,
+            ForwardAttr::SubScript,
+            ForwardAttr::SmallScript(BoutenPosition::Right),
+            ForwardAttr::SmallScript(BoutenPosition::Left),
+            ForwardAttr::Framed,
+            ForwardAttr::Horizontal,
+            ForwardAttr::Caption,
+            ForwardAttr::FontSize(fs(1)),
+        ] {
             let t = a.content_plain("強");
-            render_into(a.emphasis(kind, t, false), &mut emitted);
+            render_into(a.forward_format(attr, t, false), &mut emitted);
         }
-        // `EMPHASIS_KINDS` carries one `FontSize` (positive → font-larger);
-        // its negative magnitude (font-smaller) is the only other class the
-        // variant produces, so exercise that sign explicitly.
+        // FontSize positive → font-larger above; its negative magnitude
+        // (font-smaller) is the only other class the variant produces.
         let smaller = a.content_plain("小");
         render_into(
-            a.emphasis(EmphasisKind::FontSize { steps: -1 }, smaller, false),
+            a.forward_format(ForwardAttr::FontSize(fs(-1)), smaller, false),
             &mut emitted,
         );
         for &kind in HEADING_KINDS {
@@ -287,70 +315,63 @@ mod tests {
 
         // --- containers (open + close) ---
         let mut containers = vec![
-            ContainerKind::Indent {
+            RegionFormat::Indent(IndentBlock {
                 amount: 2,
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
-            },
-            ContainerKind::Indent {
+            }),
+            RegionFormat::Indent(IndentBlock {
                 amount: 2,
                 wrap: Some(4),
                 center: true,
                 layout: IndentLayout::None,
-            },
+            }),
             // #78 line-layout compounds — exercise the new line-kumi class
             // (字詰め reuses the standalone line-width class).
-            ContainerKind::Indent {
+            RegionFormat::Indent(IndentBlock {
                 amount: 3,
                 wrap: None,
                 center: false,
-                layout: IndentLayout::Kumi {
-                    lines: 1,
-                    width: 20,
-                },
-            },
-            ContainerKind::Indent {
+                layout: IndentLayout::Kumi(kumi(1, 20)),
+            }),
+            RegionFormat::Indent(IndentBlock {
                 amount: 8,
                 wrap: None,
                 center: false,
-                layout: IndentLayout::LineWidth(18),
-            },
-            ContainerKind::Warichu,
-            ContainerKind::Framed,
-            ContainerKind::AlignEnd { offset: 0 },
-            ContainerKind::AlignEnd { offset: 2 },
-            ContainerKind::LineWidth { width: 30 },
-            ContainerKind::Bold { block: false },
-            ContainerKind::Bold { block: true },
-            ContainerKind::Italic { block: false },
-            ContainerKind::Italic { block: true },
-            ContainerKind::Columns { count: 2 },
-            ContainerKind::Table,
-            ContainerKind::Horizontal,
-            ContainerKind::FontSize { steps: 2 },
-            ContainerKind::FontSize { steps: -2 },
-            ContainerKind::SmallScript {
-                side: BoutenPosition::Right,
-            },
-            ContainerKind::SmallScript {
-                side: BoutenPosition::Left,
-            },
-            ContainerKind::Caption { block: false },
-            ContainerKind::Caption { block: true },
-            ContainerKind::CombineUprightRange,
+                layout: IndentLayout::LineWidth(lw(18)),
+            }),
+            RegionFormat::Warichu,
+            RegionFormat::Framed,
+            RegionFormat::AlignEnd { offset: 0 },
+            RegionFormat::AlignEnd { offset: 2 },
+            RegionFormat::LineWidth(lw(30)),
+            RegionFormat::Bold { padded: false },
+            RegionFormat::Bold { padded: true },
+            RegionFormat::Italic { padded: false },
+            RegionFormat::Italic { padded: true },
+            RegionFormat::Columns(cc(2)),
+            RegionFormat::Table,
+            RegionFormat::Horizontal,
+            RegionFormat::FontSize(fs(2)),
+            RegionFormat::FontSize(fs(-2)),
+            RegionFormat::SmallScript(BoutenPosition::Right),
+            RegionFormat::SmallScript(BoutenPosition::Left),
+            RegionFormat::Caption { padded: false },
+            RegionFormat::Caption { padded: true },
+            RegionFormat::CombineUpright,
         ];
         for &kind in BOUTEN_KINDS {
             for position in [BoutenPosition::Right, BoutenPosition::Left] {
-                containers.push(ContainerKind::BoutenRange { kind, position });
+                containers.push(RegionFormat::Bouten { kind, position });
             }
         }
-        for &kind in HEADING_KINDS {
+        for &level in HEADING_KINDS {
             for &style in HEADING_STYLES {
-                containers.push(ContainerKind::Heading {
-                    kind,
+                containers.push(RegionFormat::Heading {
+                    level,
                     style,
-                    block: true,
+                    padded: true,
                 });
             }
         }

@@ -118,7 +118,7 @@ pub fn pair_entries(tree: &Tree<'_>) -> Vec<Pair> {
 ///
 /// Each entry has the shape
 /// `{ kind, open: { offset }, close: { offset } }` where `kind` is
-/// the [`crate::ContainerKind`] discriminant (one of `"indent"` /
+/// the [`crate::RegionFormat`] discriminant (one of `"indent"` /
 /// `"warichu"` / `"framed"` / `"alignEnd"`) and the offsets are
 /// **normalized-coordinate** byte positions that index the PUA
 /// sentinel positions — not the source span the user wrote.
@@ -643,28 +643,33 @@ mod tests {
 
     #[test]
     fn container_kind_wire_tags_via_as_json_tag() {
-        use aozora_syntax::{BoutenKind, BoutenPosition, ContainerKind};
-        // The wire projection is the single authority on `ContainerKind`
-        // (no `_ => "unknown"` fallback — exhaustiveness is enforced in
-        // aozora-syntax). This is the aozora-layer smoke check that the
-        // `container_pairs` path reaches the same tags.
-        assert_eq!(ContainerKind::Bold { block: false }.as_json_tag(), "bold");
-        assert_eq!(ContainerKind::Bold { block: true }.as_json_tag(), "bold");
+        use aozora_syntax::{BoutenKind, BoutenPosition, RegionFormat};
+        // `RegionFormat::as_json_tag` is the single authority on the
+        // container-pairs wire tag (no `_ => "unknown"` fallback —
+        // exhaustiveness is enforced in aozora-syntax). The scope-specific
+        // `boutenRange` / `combineUprightRange` strings are preserved verbatim
+        // so SCHEMA_VERSION=1 stays byte-stable.
+        assert_eq!(RegionFormat::Bold { padded: false }.as_json_tag(), "bold");
+        assert_eq!(RegionFormat::Bold { padded: true }.as_json_tag(), "bold");
         assert_eq!(
-            ContainerKind::Italic { block: false }.as_json_tag(),
+            RegionFormat::Italic { padded: false }.as_json_tag(),
             "italic"
         );
         assert_eq!(
-            ContainerKind::Italic { block: true }.as_json_tag(),
+            RegionFormat::Italic { padded: true }.as_json_tag(),
             "italic"
         );
         assert_eq!(
-            ContainerKind::BoutenRange {
+            RegionFormat::Bouten {
                 kind: BoutenKind::Goma,
                 position: BoutenPosition::Right,
             }
             .as_json_tag(),
             "boutenRange"
+        );
+        assert_eq!(
+            RegionFormat::CombineUpright.as_json_tag(),
+            "combineUprightRange"
         );
     }
 }

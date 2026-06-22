@@ -309,13 +309,10 @@ fn main() {
             aozora_count += 1;
             let name = match node {
                 Node::Ruby(_) => "Ruby",
-                Node::Bouten(_) => "Bouten",
-                Node::CombineUpright(_) => "CombineUpright",
+                Node::Format(_) => "Format",
                 Node::Gaiji(_) => "Gaiji",
-                Node::Indent(_) => "Indent",
-                Node::AlignEnd(_) => "AlignEnd",
+                Node::Line(_) => "Line",
                 Node::Warichu(_) => "Warichu",
-                Node::Framed(_) => "Framed",
                 Node::PageBreak => "PageBreak",
                 Node::SectionBreak(_) => "SectionBreak",
                 Node::Heading(_) => "Heading",

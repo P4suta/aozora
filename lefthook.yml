@@ -145,6 +145,16 @@ pre-push:
         the Annotation{Unknown} catch-all than corpus/baseline.json allows.
         Fix the recogniser, or — if the shift is intentional and justified —
         re-baseline with `just audit-gate-update` and commit corpus/baseline.json.
+    # Verbatim-provenance gate (I5): fail the push when any corpus
+    # document's Tree::to_source_verbatim() no longer equals a fresh
+    # sanitize() of its decoded source. Same corpus bind-mount + runtime-
+    # skip (no-op when AOZORA_CORPUS_ROOT unset) as audit-gate.
+    verbatim-gate:
+      run: just verbatim-gate
+      fail_text: |
+        Verbatim-provenance regression: Tree::to_source_verbatim() no longer
+        equals a fresh sanitize() of the source for one or more corpus docs.
+        The I5 verbatim==sanitize invariant must hold byte-exact.
     # Mirror every CI job that's reachable from inside the dev image
     # (lint / build / test / prop / drift-gate / conformance /
     # smoke-ffi / deny / audit / shear / coverage / book-build /

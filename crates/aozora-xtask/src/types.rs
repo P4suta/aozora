@@ -26,7 +26,7 @@ use std::process::Command;
 use serde_json::{Map, Value};
 
 use aozora::pipeline::{NodeRef, PairKind};
-use aozora::syntax::{ContainerKind, NodeKind};
+use aozora::syntax::{NodeKind, RegionFormat};
 use aozora::{DiagnosticSource, InternalCheckCode, Sentinel, Severity};
 
 use crate::TypesArgs;
@@ -114,7 +114,7 @@ fn render_enums(out: &mut String) {
     push_export_type(
         out,
         "ContainerKind",
-        &ts_string_union(&ContainerKind::ALL, ContainerKind::as_json_tag),
+        &ts_string_union(&RegionFormat::ALL, RegionFormat::as_json_tag),
     );
     out.push_str("/** Diagnostic severity tier (wire field `severity`). */\n");
     push_export_type(

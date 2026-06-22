@@ -28,12 +28,13 @@
 //! proptests in `aozora-pipeline/tests/property_borrowed_arena.rs` honest
 //! across edits.
 
-use aozora_encoding::gaiji::Resolved;
+use aozora_encoding::gaiji::GaijiCanonical;
 
 use crate::borrowed::{self, Arena, Interner};
+use crate::format::{ForwardAttr, LineFormat};
 use crate::{
-    AlignEnd, BoutenKind, BoutenPosition, Center, Container, DirectiveKind, EmphasisKind, Framed,
-    HeadingKind, HeadingStyle, Indent, MarginNoteKind, RubySide, SectionKind,
+    BoutenKind, BoutenPosition, Container, DirectiveKind, HeadingKind, HeadingStyle,
+    MarginNoteKind, RubySide, SectionKind,
 };
 
 /// Arena-backed builder for [`borrowed::Node<'a>`] and its
@@ -152,22 +153,18 @@ impl<'a> BorrowedAllocator<'a> {
 
     /// Build a `Gaiji` payload. Use [`Self::seg_gaiji`] to wrap as a
     /// segment, or [`Self::gaiji`] to wrap as a node.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "a Gaiji payload is its description, resolved UCS, raw mencode, \
-                  and the standalone (#122, no-`※`) flag — four independent inputs"
-    )]
+    ///
+    /// `mencode` is classified into its [`GaijiCanonical`] form (the
+    /// resolved glyph is derived on demand via [`borrowed::Gaiji::resolve`]).
     pub fn make_gaiji(
         &mut self,
         description: &str,
-        ucs: Option<Resolved>,
         mencode: Option<&str>,
         standalone: bool,
     ) -> &'a borrowed::Gaiji<'a> {
         let g = borrowed::Gaiji {
-            description: self.interner.intern(description),
-            ucs,
-            mencode: mencode.map(|s| self.interner.intern(s)),
+            hint: self.interner.intern(description),
+            canonical: GaijiCanonical::from_mencode(mencode.map(|s| self.interner.intern(s))),
             standalone,
         };
         self.arena.alloc(g)
@@ -197,7 +194,7 @@ impl<'a> BorrowedAllocator<'a> {
     // Node variant constructors (18 — matches the Node enum)
     // ---------------------------------------------------------------------
 
-    /// `Node::Ruby(Ruby { base, reading, delim_explicit })`.
+    /// `Node::Ruby(Ruby { base, reading })`.
     ///
     /// `base` and `reading` carry the [`borrowed::NonEmpty`]
     /// invariant. The classify stage only emits Ruby once both are non-empty,
@@ -216,7 +213,6 @@ impl<'a> BorrowedAllocator<'a> {
         &self,
         base: borrowed::Content<'a>,
         reading: borrowed::Content<'a>,
-        delim_explicit: bool,
     ) -> borrowed::Node<'a> {
         let base = borrowed::NonEmpty::new(base)
             .expect("classify stage must emit Ruby with non-empty base");
@@ -225,7 +221,6 @@ impl<'a> BorrowedAllocator<'a> {
         borrowed::Node::Ruby(self.arena.alloc(borrowed::Ruby {
             base,
             reading,
-            delim_explicit,
             side: RubySide::Right,
         }))
     }
@@ -250,7 +245,6 @@ impl<'a> BorrowedAllocator<'a> {
         borrowed::Node::Ruby(self.arena.alloc(borrowed::Ruby {
             base,
             reading,
-            delim_explicit: false,
             side: RubySide::Left,
         }))
     }
@@ -287,7 +281,7 @@ impl<'a> BorrowedAllocator<'a> {
     /// `consumed_predecessor` is `true` when the classifier pulled
     /// the node's source span back over the literal occurrence of
     /// `target` that sits immediately before the `［`. See the field
-    /// docstring on [`borrowed::Bouten`] for the serializer
+    /// docstring on [`borrowed::ForwardFormat`] for the serializer
     /// round-trip contract that depends on this flag.
     ///
     /// # Panics
@@ -307,18 +301,14 @@ impl<'a> BorrowedAllocator<'a> {
         position: BoutenPosition,
         consumed_predecessor: bool,
     ) -> borrowed::Node<'a> {
-        let target = borrowed::NonEmpty::new(target)
-            .expect("classify stage must emit Bouten with a resolved non-empty target");
-        borrowed::Node::Bouten(self.arena.alloc(borrowed::Bouten {
-            kind,
+        self.forward_format(
+            ForwardAttr::Bouten { kind, position },
             target,
-            position,
             consumed_predecessor,
-        }))
+        )
     }
 
-    /// `Node::CombineUpright(CombineUpright { text,
-    /// consumed_predecessor })`.
+    /// `Node::Format` with a 縦中横 (`「text」は縦中横`) attribute.
     ///
     /// `text` carries the [`borrowed::NonEmpty`] invariant.
     /// `consumed_predecessor` mirrors [`Self::bouten`]'s flag.
@@ -332,37 +322,32 @@ impl<'a> BorrowedAllocator<'a> {
         text: borrowed::Content<'a>,
         consumed_predecessor: bool,
     ) -> borrowed::Node<'a> {
-        let text = borrowed::NonEmpty::new(text)
-            .expect("classify stage must emit CombineUpright with non-empty text");
-        borrowed::Node::CombineUpright(self.arena.alloc(borrowed::CombineUpright {
-            text,
-            consumed_predecessor,
-        }))
+        self.forward_format(ForwardAttr::CombineUpright, text, consumed_predecessor)
     }
 
-    /// `Node::Emphasis(Emphasis { kind, text, consumed_predecessor })`.
+    /// `Node::Format` with the given forward-scope `attr` applied to `text`.
     ///
-    /// The forward-reference leaf form of 太字 / 斜体
-    /// (`X［＃「X」は太字／斜体］`). `text` carries the
-    /// [`borrowed::NonEmpty`] invariant; `consumed_predecessor` mirrors
-    /// [`Self::tate_chu_yoko`]'s flag (see [`borrowed::Emphasis`] for the
-    /// serializer round-trip contract).
+    /// The unified builder for every `「X」は…` / `「X」に…` forward reference
+    /// (太字 / 斜体 / 傍点 / 小書き / …). `text` carries the
+    /// [`borrowed::NonEmpty`] invariant; `consumed_predecessor` records the
+    /// back-ref consume (see [`borrowed::ForwardFormat`] for the round-trip
+    /// contract).
     ///
     /// # Panics
     ///
     /// Panics if `text` is empty.
     #[must_use]
-    pub fn emphasis(
+    pub fn forward_format(
         &self,
-        kind: EmphasisKind,
+        attr: ForwardAttr,
         text: borrowed::Content<'a>,
         consumed_predecessor: bool,
     ) -> borrowed::Node<'a> {
-        let text = borrowed::NonEmpty::new(text)
-            .expect("classify stage must emit Emphasis with non-empty text");
-        borrowed::Node::Emphasis(self.arena.alloc(borrowed::Emphasis {
-            kind,
-            text,
+        let target = borrowed::NonEmpty::new(text)
+            .expect("classify stage must emit a forward format with a non-empty target");
+        borrowed::Node::Format(self.arena.alloc(borrowed::ForwardFormat {
+            attr,
+            target,
             consumed_predecessor,
         }))
     }
@@ -373,22 +358,11 @@ impl<'a> BorrowedAllocator<'a> {
         borrowed::Node::Gaiji(g)
     }
 
-    /// `Node::Indent(i)`.
+    /// `Node::Line(lf)` — a single-line layout directive (字下げ / 地付き /
+    /// 中央 / 罫囲み).
     #[must_use]
-    pub fn indent(&self, i: Indent) -> borrowed::Node<'a> {
-        borrowed::Node::Indent(i)
-    }
-
-    /// `Node::AlignEnd(a)`.
-    #[must_use]
-    pub fn align_end(&self, a: AlignEnd) -> borrowed::Node<'a> {
-        borrowed::Node::AlignEnd(a)
-    }
-
-    /// `Node::Center(c)`.
-    #[must_use]
-    pub fn center(&self, c: Center) -> borrowed::Node<'a> {
-        borrowed::Node::Center(c)
+    pub fn line(&self, lf: LineFormat) -> borrowed::Node<'a> {
+        borrowed::Node::Line(lf)
     }
 
     /// `Node::Warichu(Warichu { upper, lower })`.
@@ -399,12 +373,6 @@ impl<'a> BorrowedAllocator<'a> {
         lower: borrowed::Content<'a>,
     ) -> borrowed::Node<'a> {
         borrowed::Node::Warichu(self.arena.alloc(borrowed::Warichu { upper, lower }))
-    }
-
-    /// `Node::Framed(k)`.
-    #[must_use]
-    pub fn keigakomi(&self, k: Framed) -> borrowed::Node<'a> {
-        borrowed::Node::Framed(k)
     }
 
     /// `Node::PageBreak`.
@@ -585,9 +553,10 @@ mod tests {
 
     use super::*;
     use crate::borrowed;
+    use crate::format::{ForwardAttr, IndentBlock, IndentLayout, LineFormat, RegionFormat};
     use crate::{
-        AlignEnd, BoutenKind, BoutenPosition, Container, ContainerKind, DirectiveKind,
-        EmphasisKind, Framed, HeadingKind, HeadingStyle, Indent, IndentLayout, SectionKind,
+        BoutenKind, BoutenPosition, Container, DirectiveKind, HeadingKind, HeadingStyle,
+        SectionKind,
     };
 
     fn fresh_alloc(arena: &Arena) -> BorrowedAllocator<'_> {
@@ -600,12 +569,11 @@ mod tests {
         let mut a = fresh_alloc(&arena);
         let base = a.content_plain("青梅");
         let reading = a.content_plain("おうめ");
-        let n = a.ruby(base, reading, true);
+        let n = a.ruby(base, reading);
         match n {
             borrowed::Node::Ruby(r) => {
                 assert_eq!(r.base.as_plain(), Some("青梅"));
                 assert_eq!(r.reading.as_plain(), Some("おうめ"));
-                assert!(r.delim_explicit);
             }
             other => panic!("expected Ruby, got {other:?}"),
         }
@@ -618,13 +586,18 @@ mod tests {
         let target = a.content_plain("青空");
         let n = a.bouten(BoutenKind::Goma, target, BoutenPosition::Right, false);
         match n {
-            borrowed::Node::Bouten(b) => {
-                assert_eq!(b.kind, BoutenKind::Goma);
+            borrowed::Node::Format(b) => {
+                assert_eq!(
+                    b.attr,
+                    ForwardAttr::Bouten {
+                        kind: BoutenKind::Goma,
+                        position: BoutenPosition::Right,
+                    }
+                );
                 assert_eq!(b.target.as_plain(), Some("青空"));
-                assert_eq!(b.position, BoutenPosition::Right);
                 assert!(!b.consumed_predecessor);
             }
-            other => panic!("expected Bouten, got {other:?}"),
+            other => panic!("expected Format(Bouten), got {other:?}"),
         }
     }
 
@@ -635,10 +608,11 @@ mod tests {
         let text = a.content_plain("12");
         let n = a.tate_chu_yoko(text, false);
         match n {
-            borrowed::Node::CombineUpright(t) => {
-                assert_eq!(t.text.as_plain(), Some("12"));
+            borrowed::Node::Format(t) => {
+                assert_eq!(t.attr, ForwardAttr::CombineUpright);
+                assert_eq!(t.target.as_plain(), Some("12"));
             }
-            other => panic!("expected CombineUpright, got {other:?}"),
+            other => panic!("expected Format(CombineUpright), got {other:?}"),
         }
     }
 
@@ -647,33 +621,35 @@ mod tests {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
         let text = a.content_plain("重要");
-        let n = a.emphasis(EmphasisKind::Bold, text, true);
+        let n = a.forward_format(ForwardAttr::Bold, text, true);
         match n {
-            borrowed::Node::Emphasis(e) => {
-                assert_eq!(e.kind, EmphasisKind::Bold);
-                assert_eq!(e.text.as_plain(), Some("重要"));
+            borrowed::Node::Format(e) => {
+                assert_eq!(e.attr, ForwardAttr::Bold);
+                assert_eq!(e.target.as_plain(), Some("重要"));
                 assert!(e.consumed_predecessor);
             }
-            other => panic!("expected Emphasis, got {other:?}"),
+            other => panic!("expected Format(Bold), got {other:?}"),
         }
     }
 
     #[test]
     fn gaiji_full_metadata() {
+        use aozora_encoding::gaiji::MenKuTen;
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let g = a.make_gaiji(
-            "木＋吶のつくり",
-            Some(Resolved::Char('𠀋')),
-            Some("第3水準1-85-54"),
-            false,
-        );
+        let g = a.make_gaiji("木＋吶のつくり", Some("第3水準1-85-54"), false);
         let n = a.gaiji(g);
         match n {
             borrowed::Node::Gaiji(gn) => {
-                assert_eq!(gn.description, "木＋吶のつくり");
-                assert_eq!(gn.ucs, Some(Resolved::Char('𠀋')));
-                assert_eq!(gn.mencode, Some("第3水準1-85-54"));
+                assert_eq!(gn.hint, "木＋吶のつくり");
+                assert_eq!(
+                    gn.canonical,
+                    GaijiCanonical::MenKuTen(MenKuTen {
+                        plane: 1,
+                        ku: 85,
+                        ten: 54,
+                    })
+                );
             }
             other => panic!("expected Gaiji, got {other:?}"),
         }
@@ -683,13 +659,13 @@ mod tests {
     fn gaiji_no_mencode() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let g = a.make_gaiji("desc", None, None, false);
+        let g = a.make_gaiji("desc", None, false);
         let n = a.gaiji(g);
         match n {
             borrowed::Node::Gaiji(gn) => {
-                assert_eq!(gn.description, "desc");
-                assert!(gn.ucs.is_none());
-                assert!(gn.mencode.is_none());
+                assert_eq!(gn.hint, "desc");
+                assert_eq!(gn.canonical, GaijiCanonical::Unresolved { mencode: None });
+                assert!(gn.resolve().is_none());
             }
             other => panic!("expected Gaiji, got {other:?}"),
         }
@@ -699,18 +675,21 @@ mod tests {
     fn indent_round_trip() {
         let arena = Arena::new();
         let a = fresh_alloc(&arena);
-        let n = a.indent(Indent { amount: 3 });
-        assert!(matches!(n, borrowed::Node::Indent(Indent { amount: 3 })));
+        let n = a.line(LineFormat::Indent { amount: 3 });
+        assert!(matches!(
+            n,
+            borrowed::Node::Line(LineFormat::Indent { amount: 3 })
+        ));
     }
 
     #[test]
     fn align_end_round_trip() {
         let arena = Arena::new();
         let a = fresh_alloc(&arena);
-        let n = a.align_end(AlignEnd { offset: 2 });
+        let n = a.line(LineFormat::AlignEnd { offset: 2 });
         assert!(matches!(
             n,
-            borrowed::Node::AlignEnd(AlignEnd { offset: 2 })
+            borrowed::Node::Line(LineFormat::AlignEnd { offset: 2 })
         ));
     }
 
@@ -734,8 +713,8 @@ mod tests {
     fn keigakomi_round_trip() {
         let arena = Arena::new();
         let a = fresh_alloc(&arena);
-        let n = a.keigakomi(Framed);
-        assert!(matches!(n, borrowed::Node::Framed(Framed)));
+        let n = a.line(LineFormat::Framed);
+        assert!(matches!(n, borrowed::Node::Line(LineFormat::Framed)));
     }
 
     #[test]
@@ -867,12 +846,12 @@ mod tests {
         let arena = Arena::new();
         let a = fresh_alloc(&arena);
         let c = Container {
-            kind: ContainerKind::Indent {
+            kind: RegionFormat::Indent(IndentBlock {
                 amount: 1,
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
-            },
+            }),
         };
         let n = a.container(c);
         assert!(matches!(n, borrowed::Node::Container(cc) if cc == c));
@@ -902,7 +881,7 @@ mod tests {
     fn content_segments_preserves_order_and_kind() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let g = a.make_gaiji("X", None, None, false);
+        let g = a.make_gaiji("X", None, false);
         let seg_g = a.seg_gaiji(g);
         let seg_t1 = a.seg_text("before ");
         let seg_t2 = a.seg_text(" after");
@@ -948,10 +927,10 @@ mod tests {
         let mut a = fresh_alloc(&arena);
         let base1 = a.content_plain("青梅");
         let reading1 = a.content_plain("おうめ");
-        let n1 = a.ruby(base1, reading1, false);
+        let n1 = a.ruby(base1, reading1);
         let base2 = a.content_plain("青梅");
         let reading2 = a.content_plain("おうめ");
-        let n2 = a.ruby(base2, reading2, false);
+        let n2 = a.ruby(base2, reading2);
         let borrowed::Node::Ruby(r1) = n1 else {
             unreachable!();
         };

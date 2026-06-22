@@ -45,6 +45,6 @@ pub use intern::{InternStats, Interner};
 pub use non_empty::{NonEmpty, NonEmptyStr};
 pub use registry::{ContainerPair, NodeRef, Registry};
 pub use types::{
-    AngleQuote, Bouten, CombineUpright, Content, Directive, Emphasis, Gaiji, Heading, HeadingHint,
-    Illustration, Kaeriten, MarginNote, Node, Ruby, Segment, Warichu,
+    AngleQuote, Content, Directive, ForwardFormat, Gaiji, Heading, HeadingHint, Illustration,
+    Kaeriten, MarginNote, Node, Ruby, Segment, Warichu,
 };

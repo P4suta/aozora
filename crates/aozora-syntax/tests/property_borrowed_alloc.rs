@@ -17,13 +17,13 @@
 //! single-valued — same variant always produces same kind, same XML
 //! name, regardless of the payload.
 
-use aozora_encoding::gaiji::Resolved;
 use aozora_proptest::config::default_config;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Content};
+use aozora_syntax::format::{IndentBlock, IndentLayout, LineFormat, RegionFormat};
 use aozora_syntax::{
-    AlignEnd, BoutenKind, BoutenPosition, Center, Container, ContainerKind, DirectiveKind, Framed,
-    HeadingKind, HeadingStyle, Indent, IndentLayout, MarginNoteKind, SectionKind,
+    BoutenKind, BoutenPosition, Container, DirectiveKind, HeadingKind, HeadingStyle,
+    MarginNoteKind, SectionKind,
 };
 use proptest::prelude::*;
 
@@ -42,20 +42,20 @@ fn xml_node_name_is_injective_over_all_variants() {
     let reading = alloc.content_plain("よみ");
     let upper = alloc.content_plain("up");
     let lower = alloc.content_plain("lo");
-    let g = alloc.make_gaiji("木＋吶", Some(Resolved::Char('A')), Some("第3水準"), false);
+    let g = alloc.make_gaiji("木＋吶", Some("第3水準"), false);
     let a = alloc.make_directive("annotation", DirectiveKind::Unknown);
 
     let nodes = [
-        alloc.ruby(base, reading, true),
+        alloc.ruby(base, reading),
         alloc.side_note(MarginNoteKind::Gloss, base, reading),
         alloc.bouten(BoutenKind::Goma, base, BoutenPosition::Right, false),
         alloc.tate_chu_yoko(base, false),
         alloc.gaiji(g),
-        alloc.indent(Indent { amount: 2 }),
-        alloc.align_end(AlignEnd { offset: 2 }),
-        alloc.center(Center { page: true }),
+        alloc.line(LineFormat::Indent { amount: 2 }),
+        alloc.line(LineFormat::AlignEnd { offset: 2 }),
+        alloc.line(LineFormat::Center { page: true }),
         alloc.warichu(upper, lower),
-        alloc.keigakomi(Framed),
+        alloc.line(LineFormat::Framed),
         alloc.page_break(),
         alloc.section_break(SectionKind::Kaicho),
         alloc.aozora_heading(HeadingKind::Medium, HeadingStyle::Window, base),
@@ -65,12 +65,12 @@ fn xml_node_name_is_injective_over_all_variants() {
         alloc.annotation(a),
         alloc.angle_quote(base),
         alloc.container(Container {
-            kind: ContainerKind::Indent {
+            kind: RegionFormat::Indent(IndentBlock {
                 amount: 1,
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
-            },
+            }),
         }),
     ];
 

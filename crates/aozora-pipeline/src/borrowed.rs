@@ -37,7 +37,7 @@ use crate::lexer::{
 };
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset, Span};
 use aozora_syntax::borrowed::{self, Arena, ContainerPair, InternStats, NodeRef, Registry};
-use aozora_syntax::{ContainerKind, DirectiveKind};
+use aozora_syntax::{DirectiveKind, LineFormat, RegionClose, RegionFormat};
 
 /// Borrowed-AST output of the lex pipeline.
 ///
@@ -50,6 +50,15 @@ use aozora_syntax::{ContainerKind, DirectiveKind};
 pub struct LexOutput<'a> {
     /// Normalized text with PUA sentinels. Allocated in `arena`.
     pub normalized: &'a str,
+    /// The sanitized source buffer — the exact bytes downstream stages
+    /// classified, after the sanitize stage (BOM-strip, CRLF→LF,
+    /// `〔...〕` accent decomposition, decorative-rule isolation, PUA
+    /// neutralization). Allocated in `arena`. Unlike [`Self::normalized`]
+    /// it carries **no** PUA sentinels and **no** synthesized block
+    /// padding — it is the verbatim post-sanitize text, the coordinate
+    /// space every `source_span` indexes. Returned verbatim by callers
+    /// that need the round-trip basis `verbatim == sanitize(source)`.
+    pub sanitized: &'a str,
     /// Cache-friendly sentinel-position → node lookup tables.
     pub registry: Registry<'a>,
     /// Non-fatal observations from every stage. Owned `Vec` because
@@ -202,11 +211,11 @@ pub(crate) struct ArenaNormalizer<'src, 'a> {
     /// because the classifier emits spans in source order.
     pub(crate) source_nodes: Vec<SourceNode<'a>>,
     /// Stack of in-flight container opens awaiting their matching
-    /// close. Each entry is the (open `NormalizedOffset`,
-    /// `ContainerKind`) pushed by [`SpanKind::BlockOpen`] emission;
+    /// close. Each entry is the (open `NormalizedOffset`, open
+    /// [`RegionFormat`]) pushed by [`SpanKind::BlockOpen`] emission;
     /// [`SpanKind::BlockClose`] pops and emits a [`ContainerPair`]
-    /// into [`Self::container_pairs`].
-    open_stack: Vec<(NormalizedOffset, ContainerKind)>,
+    /// into [`Self::container_pairs`]. The open payload is authoritative.
+    open_stack: Vec<(NormalizedOffset, RegionFormat)>,
     /// Resolved container open/close pairs in close order. Drained
     /// into the arena `&'a [ContainerPair]` at pipeline-build time.
     /// One entry per balanced pair.
@@ -311,7 +320,7 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 // 斜体) skip the block-leaf `\n\n` padding so the renderer
                 // keeps them in-paragraph; block forms (字下げ, 罫囲み,
                 // ここから-block emphasis) get the padding. See
-                // [`ContainerKind::is_inline`].
+                // [`RegionFormat::is_inline`].
                 let inline = container.is_inline();
                 if !inline {
                     self.out.push_str("\n\n");
@@ -335,8 +344,11 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 self.open_stack
                     .push((NormalizedOffset::new(pos), *container));
             }
-            SpanKind::BlockClose(container) => {
-                let inline = container.is_inline();
+            SpanKind::BlockClose(close) => {
+                // The close marker carries its own form, so its inline-ness is
+                // self-sufficient (a matched pair shares it with the open; an
+                // unmatched stray close still pads correctly).
+                let inline = close.is_inline();
                 if !inline {
                     self.out.push_str("\n\n");
                 }
@@ -345,7 +357,7 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 if !inline {
                     self.out.push_str("\n\n");
                 }
-                let nref = NodeRef::BlockClose(*container);
+                let nref = NodeRef::BlockClose(*close);
                 self.entries.push((pos, nref));
                 self.source_nodes.push(SourceNode {
                     source_span: span.source_span,
@@ -358,7 +370,7 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 // still lands in `entries` via the push above so
                 // renderer correctness is unchanged).
                 if let Some((open_pos, open_kind)) = self.open_stack.pop() {
-                    self.push_container_mismatch(open_kind, *container, span.source_span);
+                    self.push_container_mismatch(open_kind, *close, span.source_span);
                     self.container_pairs.push(ContainerPair {
                         kind: open_kind,
                         open: open_pos,
@@ -372,10 +384,12 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
     /// Flag a container close whose family differs from its matched open
     /// (recovery is unchanged — the pair is still keyed by the open kind).
     /// `字下げ` / `地付き` / `罫囲み` families differ by discriminant; the two
-    /// `BoutenRange` ends share a discriminant, so the 点/線 family is
-    /// compared separately. `span` is the close marker's sanitized span.
-    fn push_container_mismatch(&mut self, open: ContainerKind, close: ContainerKind, span: Span) {
-        if discriminant(&open) != discriminant(&close) {
+    /// `傍点` / `傍線` ends share a discriminant, so the 点/線 family is
+    /// compared separately. The open's expected close ([`RegionClose::of`]) is
+    /// compared against the actual close. `span` is the close marker's span.
+    fn push_container_mismatch(&mut self, open: RegionFormat, close: RegionClose, span: Span) {
+        let expected = RegionClose::of(open);
+        if discriminant(&expected) != discriminant(&close) {
             self.diagnostics
                 .push(Diagnostic::mismatched_container_close(
                     span,
@@ -383,18 +397,22 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     close.kind_str(),
                 ));
         } else if let (
-            ContainerKind::BoutenRange { kind: open_b, .. },
-            ContainerKind::BoutenRange { kind: close_b, .. },
-        ) = (open, close)
-            && open_b.is_line() != close_b.is_line()
+            RegionClose::Bouten {
+                kind: open_kind, ..
+            },
+            RegionClose::Bouten {
+                kind: close_kind, ..
+            },
+        ) = (expected, close)
+            && open_kind.is_line() != close_kind.is_line()
         {
             // `［＃傍点］` closed by `［＃傍線終わり］` (or vice-versa) — the
             // discriminant matches but the 点/線 family does not.
             self.diagnostics
                 .push(Diagnostic::mismatched_bouten_container(
                     span,
-                    open_b.family_str(),
-                    close_b.family_str(),
+                    open_kind.family_str(),
+                    close_kind.family_str(),
                 ));
         }
     }
@@ -408,9 +426,17 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
     /// break node's sanitized `source_span`.
     fn track_single_line_break(&mut self, node: borrowed::Node<'a>, break_span: Span) {
         match node {
-            borrowed::Node::Indent(_) => self.pending_single_line = Some("indent"),
-            borrowed::Node::AlignEnd(_) => self.pending_single_line = Some("align-end"),
-            borrowed::Node::Center(_) => self.pending_single_line = Some("center"),
+            // 罫囲み (LineFormat::Framed) is not a break-tracked single-line
+            // layout, so it falls through to the default no-op arm.
+            borrowed::Node::Line(LineFormat::Indent { .. }) => {
+                self.pending_single_line = Some("indent");
+            }
+            borrowed::Node::Line(LineFormat::AlignEnd { .. }) => {
+                self.pending_single_line = Some("align-end");
+            }
+            borrowed::Node::Line(LineFormat::Center { .. }) => {
+                self.pending_single_line = Some("center");
+            }
             borrowed::Node::Directive(ann) => match ann.kind {
                 DirectiveKind::WarichuOpen => self.warichu_depth += 1,
                 DirectiveKind::WarichuClose => {
@@ -450,19 +476,21 @@ fn is_standalone_block_for_render_borrowed(node: borrowed::Node<'_>) -> bool {
     )
 }
 
-// Container registries: pure copy of (u32, ContainerKind) — both are
-// already `Copy`. We don't strictly need a helper, but a static
-// assertion against the type pins the no-conversion expectation so a
-// future ContainerKind change that makes it non-Copy would surface here.
+// Container registries: pure copy of (u32, RegionFormat) / RegionClose —
+// all `Copy`. We don't strictly need a helper, but a static assertion
+// pins the no-conversion expectation so a future change that makes a
+// container marker non-Copy would surface here.
 const _: fn() = || {
     fn assert_copy<T: Copy>() {}
-    assert_copy::<(u32, ContainerKind)>();
+    assert_copy::<(u32, RegionFormat)>();
+    assert_copy::<RegionClose>();
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use aozora_spec::Sentinel;
+    use aozora_syntax::IndentBlock;
 
     #[test]
     fn empty_source_round_trips() {
@@ -532,7 +560,10 @@ mod tests {
         let NodeRef::BlockOpen(kind) = nr else {
             panic!("expected NodeRef::BlockOpen, got {nr:?}");
         };
-        assert!(matches!(kind, ContainerKind::Indent { amount: 2, .. }));
+        assert!(matches!(
+            kind,
+            RegionFormat::Indent(IndentBlock { amount: 2, .. })
+        ));
     }
 
     #[test]
@@ -612,7 +643,7 @@ mod tests {
             panic!("expected NodeRef::BlockOpen, got {nr:?}");
         };
         match kind {
-            ContainerKind::Indent { amount, .. } => assert_eq!(amount, 3),
+            RegionFormat::Indent(IndentBlock { amount, .. }) => assert_eq!(amount, 3),
             other => panic!("expected Indent {{ amount: 3 }}, got {other:?}"),
         }
     }

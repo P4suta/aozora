@@ -53,6 +53,7 @@ use std::time::Instant;
 use clap::{Args, Subcommand};
 use rayon::prelude::*;
 
+use aozora::pipeline::lexer::sanitize::sanitize;
 use aozora::{DirectiveKind, Document, Node, NodeKind, NodeRef};
 use aozora_corpus::{
     Archive, ArchiveBuilder, CorpusItem, EntryMeta, FilesystemCorpus, archive, par_load_decoded,
@@ -182,6 +183,17 @@ pub(crate) enum CorpusTarget {
         #[arg(long, default_value_t = 0.02)]
         tolerance: f64,
     },
+    /// Verbatim-provenance gate: fail (exit 1) when any corpus document's
+    /// `Tree::to_source_verbatim()` no longer equals a fresh `sanitize()`
+    /// of its decoded source (the I5 invariant). Binary — one byte of
+    /// drift fails. Needs a corpus (`$AOZORA_CORPUS_ROOT` or `--root`);
+    /// gracefully skips (exit 0) when none is set.
+    Verbatim {
+        /// Corpus root directory of `.txt` files. Defaults to
+        /// `$AOZORA_CORPUS_ROOT`.
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
 }
 
 pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
@@ -207,6 +219,7 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             update,
             tolerance,
         } => audit_gate(root.as_deref(), baseline, *update, *tolerance),
+        CorpusTarget::Verbatim { root } => verbatim_gate(root.as_deref()),
     }
 }
 
@@ -1022,6 +1035,122 @@ fn audit_gate(
     Ok(())
 }
 
+/// Outcome of checking one document's verbatim-provenance invariant.
+enum VerbatimOutcome {
+    /// `to_source_verbatim()` equalled the fresh `sanitize()`.
+    Match,
+    /// Source decoded as neither UTF-8 nor Shift_JIS — skipped, not a
+    /// failure (mirrors the `corpus_sweep` test's decode-skip).
+    DecodeSkipped,
+    /// The invariant broke (or the parse panicked); carries the label.
+    Mismatch(String),
+}
+
+/// Verbatim-provenance gate: assert `tree.to_source_verbatim() ==
+/// sanitize(decoded_source).text` for **every** corpus document.
+///
+/// The oracle is a *fresh* `sanitize()` of the decoded source, not
+/// `tree.sanitized()` (which returns the same buffer
+/// `to_source_verbatim()` does — comparing them would be a tautology).
+/// Binary: a single byte of drift on a single document fails the gate.
+/// Independent of the round-trip fixed-point (`corpus_sweep`), which is
+/// allowed to diverge on the known `consumed_predecessor` documents.
+fn verbatim_gate(root: Option<&Path>) -> Result<(), String> {
+    // Graceful skip when no corpus is available — mirrors the
+    // `corpus-sweep` / `audit-gate` recipes, so a corpus-less environment
+    // (GitHub CI) is a no-op rather than a hard failure.
+    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
+        eprintln!(
+            "xtask corpus verbatim: skipped — pass --root or set $AOZORA_CORPUS_ROOT (no corpus to walk)"
+        );
+        return Ok(());
+    }
+
+    let corpus = resolve_corpus(root)?;
+    let root_display = corpus.root().display().to_string();
+    eprintln!("xtask corpus verbatim: walking {root_display} …");
+    let start = Instant::now();
+
+    // Per-document parse panics are folded into `Mismatch` (see
+    // `verbatim_one`); silence the default backtrace printer so a
+    // pathological doc does not flood stderr. Restored after the run.
+    let prev_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+
+    let results: Vec<Result<VerbatimOutcome, aozora_corpus::CorpusError>> =
+        par_load_decoded(&corpus, verbatim_one);
+
+    panic::set_hook(prev_hook);
+
+    let mut checked = 0usize;
+    let mut decode_skipped = 0usize;
+    let mut walk_errors = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+    for r in results {
+        match r {
+            Ok(VerbatimOutcome::Match) => checked += 1,
+            Ok(VerbatimOutcome::DecodeSkipped) => decode_skipped += 1,
+            Ok(VerbatimOutcome::Mismatch(label)) => {
+                checked += 1;
+                failures.push(label);
+            }
+            Err(_) => walk_errors += 1,
+        }
+    }
+    let elapsed = start.elapsed().as_secs_f64();
+
+    if !failures.is_empty() {
+        failures.sort();
+        let list = failures
+            .iter()
+            .take(10)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("\n  ");
+        let more = failures.len().saturating_sub(10);
+        let tail = if more > 0 {
+            format!("\n  … and {more} more")
+        } else {
+            String::new()
+        };
+        return Err(format!(
+            "verbatim-provenance regression: {} of {checked} document(s) have \
+             to_source_verbatim() != sanitize():\n  {list}{tail}\n\
+             The I5 verbatim==sanitize invariant must hold byte-exact.",
+            failures.len()
+        ));
+    }
+
+    eprintln!(
+        "xtask corpus verbatim: PASS — {checked} docs, all to_source_verbatim() == sanitize() \
+         ({decode_skipped} undecodable skipped, {walk_errors} walk error(s), {elapsed:.1}s)"
+    );
+    Ok(())
+}
+
+/// Check one document's verbatim invariant. The fresh `sanitize()` is
+/// computed before the source is moved into the parser; the parse +
+/// verbatim recovery are `catch_unwind`-guarded so a pathological doc is
+/// a `Mismatch` rather than aborting the sweep.
+fn verbatim_one(item: CorpusItem) -> VerbatimOutcome {
+    let label = item.label;
+    let text = match decode_auto(&item.bytes) {
+        Ok(t) => t.into_owned(),
+        Err(_) => return VerbatimOutcome::DecodeSkipped,
+    };
+    let expected = sanitize(&text).text.into_owned();
+    let Ok(got) = panic::catch_unwind(AssertUnwindSafe(|| {
+        Document::new(text).parse().to_source_verbatim()
+    })) else {
+        return VerbatimOutcome::Mismatch(label);
+    };
+    if got == expected {
+        VerbatimOutcome::Match
+    } else {
+        VerbatimOutcome::Mismatch(label)
+    }
+}
+
 fn resolve_corpus(root: Option<&Path>) -> Result<FilesystemCorpus, String> {
     let path: PathBuf = match root {
         Some(p) => p.to_path_buf(),
@@ -1094,10 +1223,19 @@ fn analyze(text: &str) -> FileStat {
             }
             NodeRef::Inline(Node::Gaiji(g)) | NodeRef::BlockLeaf(Node::Gaiji(g)) => {
                 s.gaiji_total += 1;
-                if g.ucs.is_none() {
+                if g.resolve().is_none() {
                     s.gaiji_unresolved += 1;
                 }
-                s.gaiji_forms[gaiji_bucket(g.mencode)] += 1;
+                // Reconstruct the mencode tail from the canonical value so the
+                // shape buckets stay keyed on the same source token.
+                let mencode = g.canonical.has_mencode().then(|| {
+                    let mut m = String::new();
+                    g.canonical
+                        .write_mencode(&mut m)
+                        .expect("write_mencode into String is infallible");
+                    m
+                });
+                s.gaiji_forms[gaiji_bucket(mencode.as_deref())] += 1;
             }
             _ => {}
         }

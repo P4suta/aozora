@@ -379,6 +379,31 @@ audit-gate-update:
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo run -p aozora-xtask -q -- corpus audit-gate --root /corpus --baseline corpus/baseline.json --update
 
+# Verbatim-provenance gate: fail when any corpus document's
+# `Tree::to_source_verbatim()` no longer equals a fresh `sanitize()` of
+# its decoded source (the I5 invariant). Binary — one byte of drift
+# fails; needs no baseline. Same corpus bind-mount and runtime-skip
+# (NOT a failure when AOZORA_CORPUS_ROOT is unset) as `audit-gate`.
+#
+# Usage:
+#   export AOZORA_CORPUS_ROOT=$HOME/aozora-corpus
+#   just verbatim-gate
+verbatim-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; verbatim-gate skipped (no corpus to walk)."
+        exit 0
+    fi
+    if [[ ! -d "$AOZORA_CORPUS_ROOT" ]]; then
+        echo "AOZORA_CORPUS_ROOT=$AOZORA_CORPUS_ROOT is not a directory." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus verbatim --root /corpus
+
 # --- fuzzing -----------------------------------------------------------------
 #
 # cargo-fuzz harnesses live under `crates/<crate>/fuzz/` as
@@ -869,10 +894,17 @@ strict-code:
     # in-source `#[cfg(test)] mod tests` assertions. The baseline
     # gates against new state-assertion-style expects landing in
     # production paths.
+    #
+    # 51 (was 50): the coremodel Format unification (#189) made
+    # `FontShift` wrap a `NonZeroI8`, so the classify test module gained
+    # one `fs(steps)` data-builder helper bridging an i8 literal to the
+    # now-type-safe constructor (`NonZeroI8::new(steps).expect(..)`). A
+    # test-data helper, not a production state-assertion — exactly the
+    # invariant-in-the-type move this gate rewards.
     expect_files=(crates/aozora-pipeline/src/**/*.rs)
     expect_count=$(grep -hcE '\.expect\(' "${expect_files[@]}" 2>/dev/null \
         | awk '{s+=$1} END {print s+0}')
-    expect_baseline=50
+    expect_baseline=51
     if [[ "$expect_count" -gt "$expect_baseline" ]]; then
         echo "==> forbidden: expect() count in aozora-pipeline source grew" >&2
         echo "    baseline: $expect_baseline, found: $expect_count" >&2

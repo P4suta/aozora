@@ -19,7 +19,7 @@ use core::fmt;
 
 use aozora_pipeline::LexOutput;
 use aozora_syntax::borrowed::{Node, NodeRef};
-use aozora_syntax::{Container, ContainerKind};
+use aozora_syntax::{Container, RegionFormat};
 use memchr::{memchr_iter, memchr3_iter};
 
 use crate::render_node;
@@ -101,11 +101,11 @@ impl<W: fmt::Write> WalkSink for HtmlSink<'_, W> {
                 self.state.after_block_emit();
                 Ok(())
             }
-            (SentinelKind::BlockOpen, NodeRef::BlockOpen(kind)) => {
-                self.state.open_container(kind, self.out)
+            (SentinelKind::BlockOpen, NodeRef::BlockOpen(open)) => {
+                self.state.open_container(open, self.out)
             }
-            (SentinelKind::BlockClose, NodeRef::BlockClose(kind)) => {
-                self.state.close_container(kind, self.out)
+            (SentinelKind::BlockClose, NodeRef::BlockClose(_close)) => {
+                self.state.close_container(self.out)
             }
             // Sentinel without a matching registry entry: best-effort
             // skip, mirroring the legacy walker.
@@ -128,6 +128,10 @@ struct RenderState {
     /// Inside a phrasing-content container (a heading): its `<hN>` is the
     /// inline context, so [`Self::ensure_in_paragraph`] suppresses `<p>`.
     in_heading: bool,
+    /// In-flight container opens. The close marker reads the matched open
+    /// [`RegionFormat`] (open-authoritative — `is_inline` / phrasing / the
+    /// close tag all derive from the open, not the discriminant-only close).
+    open_stack: Vec<RegionFormat>,
 }
 
 impl RenderState {
@@ -177,7 +181,8 @@ impl RenderState {
     /// paragraph and then holds its content inline under the `<hN>`
     /// (`in_heading`); every other block container flushes and brackets its
     /// content as block paragraphs.
-    fn open_container<W: fmt::Write>(&mut self, kind: ContainerKind, out: &mut W) -> fmt::Result {
+    fn open_container<W: fmt::Write>(&mut self, kind: RegionFormat, out: &mut W) -> fmt::Result {
+        self.open_stack.push(kind);
         let node = Node::Container(Container { kind });
         if kind.is_inline() {
             self.ensure_in_paragraph(out)?;
@@ -193,8 +198,13 @@ impl RenderState {
         Ok(())
     }
 
-    /// Emit a container's closing tag — the mirror of [`Self::open_container`].
-    fn close_container<W: fmt::Write>(&mut self, kind: ContainerKind, out: &mut W) -> fmt::Result {
+    /// Emit a container's closing tag — the mirror of [`Self::open_container`],
+    /// reconstructed from the matched open [`RegionFormat`] popped off the
+    /// stack (open-authoritative). A degraded empty stack best-effort skips.
+    fn close_container<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
+        let Some(kind) = self.open_stack.pop() else {
+            return Ok(());
+        };
         let node = Node::Container(Container { kind });
         if kind.is_inline() {
             self.ensure_in_paragraph(out)?;
