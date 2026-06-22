@@ -64,8 +64,8 @@ construct landed:
 - `BlockLeaf` — a standalone block construct (page break, section
   break, heading) carrying an `Node`.
 - `BlockOpen` / `BlockClose` — the two ends of a paired container
-  (`［＃ここから…］` / `［＃ここで…終わり］`), each carrying a
-  `ContainerKind`.
+  (`［＃ここから…］` / `［＃ここで…終わり］`), carrying a `RegionFormat`
+  (open) and a `RegionClose` (close) respectively.
 
 `NodeRef::kind()` collapses all four into a single
 [`NodeKind`][nodekind] tag when you only need the discriminant;

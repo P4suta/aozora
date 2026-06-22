@@ -73,6 +73,7 @@
   - [Extract ruby readings](recipes/extract-ruby.md)
   - [Diagnostics as JSON](recipes/diagnostics-json.md)
   - [Walk the AST](recipes/walk-ast.md)
+  - [Notations in host literal contexts](recipes/literal-contexts.md)
   - [Shift_JIS & 外字 input](recipes/sjis-gaiji.md)
   - [EPUB via Pandoc](recipes/epub-pandoc.md)
   - [Byte-exact round-trip](recipes/round-trip.md)

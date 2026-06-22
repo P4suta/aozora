@@ -25,6 +25,7 @@ says so — e.g. *run with `just example walk_ast`*.
 | Pull every ruby base + reading pair out of a document | [Extract ruby pairs](extract-ruby.md)             |
 | Get diagnostics as machine-readable JSON              | [Diagnostics as JSON](diagnostics-json.md)        |
 | Walk the parsed tree node by node                     | [Walk the AST](walk-ast.md)                       |
+| Show a notation verbatim in a host literal context    | [Notations in host literal contexts](literal-contexts.md) |
 | Parse a Shift_JIS file and resolve 外字               | [Shift_JIS & gaiji](sjis-gaiji.md)                |
 | Convert to EPUB / LaTeX / DOCX                        | [EPUB via Pandoc](epub-pandoc.md)                 |
 | Check that a file is already canonical                | [Round-trip & fmt --check](round-trip.md)         |
