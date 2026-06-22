@@ -1,0 +1,741 @@
+//! Attribute-major formatting model: one `Format` attribute, typed
+//! per-scope sums.
+//!
+//! Aozora's typographic notations (太字, 傍点, 字下げ, …) each apply at one
+//! or more *scopes* — forward-reference (`「X」は太字`), single line
+//! (`［＃地付き］`), or a paired range / block (`［＃ここから太字］ …
+//! ［＃ここで太字終わり］`). The legacy model defined the same attribute
+//! once per scope (`EmphasisKind::Bold` + `ContainerKind::Bold`), letting an
+//! illegal `(attribute, scope)` pair and placeholder close payloads
+//! (`steps: ±1`, `width: 0`) be representable.
+//!
+//! This module separates the two axes:
+//!
+//! - [`Format`] names the **attribute** once, scope-independent — the source
+//!   of the canonical keyword and the attribute-identity tag.
+//! - [`ForwardAttr`], [`LineFormat`], [`RegionFormat`] each enumerate **only
+//!   the attributes legal at that scope**, so an illegal pair is unrepresentable.
+//!   Every scope sum projects back via `fn format() -> Format`.
+//! - [`RegionClose`] is the close-marker discriminant; the open
+//!   [`RegionFormat`] payload stays authoritative (see [`RegionClose::of`]).
+//! - The scalar parameters ([`FontShift`], [`ColumnCount`], [`LineWidth`],
+//!   [`Kumi`]) are `NonZero`, so the `0` / `±1` placeholders the close markers
+//!   used to carry cannot be constructed.
+
+use core::num::{NonZeroI8, NonZeroU8};
+
+use crate::{BoutenKind, BoutenPosition, HeadingKind, HeadingStyle};
+
+// ----------------------------------------------------------------------
+// Scalar parameters — NonZero so placeholders are unconstructable
+// ----------------------------------------------------------------------
+
+/// Signed relative font-size shift (旧 `steps: i8`).
+///
+/// Positive = 大きな (larger), negative = 小さな (smaller). `NonZero` because
+/// a zero-stage shift is not a font-size change — the close marker used to
+/// carry a `±1` placeholder, which this type makes unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FontShift(pub NonZeroI8);
+
+impl FontShift {
+    /// `true` when the shift enlarges (大きな); `false` when it shrinks (小さな).
+    #[must_use]
+    pub const fn larger(self) -> bool {
+        self.0.get() > 0
+    }
+
+    /// The unsigned stage count.
+    #[must_use]
+    pub const fn magnitude(self) -> u8 {
+        self.0.get().unsigned_abs()
+    }
+}
+
+/// Number of columns in a 段組 region. `1` is not a multi-column layout, so
+/// `NonZero` rules out the degenerate case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ColumnCount(pub NonZeroU8);
+
+/// Full-width characters per line (字詰め / 字組み width). `NonZero` because a
+/// zero-width line is meaningless — the close marker's `0` placeholder is gone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LineWidth(pub NonZeroU8);
+
+/// The `L行W字組み` clause: `lines` lines of `width` full-width characters.
+///
+/// Both `NonZero` — the close marker used to re-emit `lines: 0`, which this
+/// type makes unrepresentable (the open side is authoritative on close).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Kumi {
+    /// Line count `L` from the `L行` clause.
+    pub lines: NonZeroU8,
+    /// Full-width characters per line `W` from the `W字組み` clause.
+    pub width: NonZeroU8,
+}
+
+/// Secondary line-layout clause of an indent block (`、N字詰め` / `、L行W字組みで`).
+// Deliberately NOT `#[non_exhaustive]`: serialize / render must handle every
+// arm explicitly so a future layout is compiler-flagged at every site rather
+// than silently dropped by a `_` fallback (the §7.6 param-drop bug class).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum IndentLayout {
+    /// A plain `［＃ここから N字下げ］` block — no secondary layout.
+    None,
+    /// `［＃ここから N字下げ、M字詰め］` — also sets `M` full-width chars per line.
+    LineWidth(LineWidth),
+    /// `［＃ここから N字下げ、L行W字組みで］` — sets `L` lines of `W` chars.
+    Kumi(Kumi),
+}
+
+/// The block-only payload of an indent region.
+///
+/// `wrap` / `layout` live here rather than on the single-line `Indent` so the
+/// block-only clauses cannot leak into the line scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct IndentBlock {
+    /// Full-width characters the block is indented by.
+    pub amount: u8,
+    /// Hanging-indent continuation width: `Some(M)` for `折り返して M字下げ`.
+    pub wrap: Option<u8>,
+    /// `true` for the combined `…、ページの左右中央` form (also page-centred).
+    pub center: bool,
+    /// Secondary line-layout clause; see [`IndentLayout`].
+    pub layout: IndentLayout,
+}
+
+// ----------------------------------------------------------------------
+// Format — the attribute identity (scope-independent)
+// ----------------------------------------------------------------------
+
+/// The typographic attribute, independent of the scope it applies at.
+///
+/// The single source of the attribute-identity tag ([`Self::as_json_tag`]).
+/// Each scope sum ([`ForwardAttr`] / [`LineFormat`] / [`RegionFormat`])
+/// projects to this via its `format()` method, so cross-scope grouping
+/// (e.g. "is this the same attribute as that one?") keys on one enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum Format {
+    /// 太字 (bold).
+    Bold,
+    /// 斜体 (italic).
+    Italic,
+    /// 傍点 / 傍線 (emphasis dots / sidelines).
+    Bouten(BoutenKind),
+    /// 罫囲み (ruled box).
+    Framed,
+    /// 横組み (horizontal writing).
+    Horizontal,
+    /// N段階大きな / 小さな文字 (relative font size).
+    FontSize(FontShift),
+    /// キャプション (caption).
+    Caption,
+    /// 上付き小文字 (superscript).
+    SuperScript,
+    /// 下付き小文字 (subscript).
+    SubScript,
+    /// 行右 / 行左小書き (small side-script).
+    SmallScript(BoutenPosition),
+    /// 縦中横 (tate-chu-yoko).
+    CombineUpright,
+    /// 字下げ (indent).
+    Indent,
+    /// 地付き / 地から N 字上げ (end alignment).
+    AlignEnd,
+    /// 中央 (centring).
+    Center,
+    /// 字詰め (line width).
+    LineWidth,
+    /// 表 (table).
+    Table,
+    /// 段組 (multi-column).
+    Columns(ColumnCount),
+    /// 割り注 (split annotation).
+    Warichu,
+    /// 見出し (heading).
+    Heading {
+        /// The 大 / 中 / 小 outline level.
+        level: HeadingKind,
+        /// Standard / 同行 / 窓 style.
+        style: HeadingStyle,
+    },
+}
+
+impl Format {
+    /// Stable camelCase attribute-identity tag (exhaustive — no `_` fallback,
+    /// so a new attribute fails to build until it is given a tag).
+    #[must_use]
+    pub const fn as_json_tag(self) -> &'static str {
+        match self {
+            Self::Bold => "bold",
+            Self::Italic => "italic",
+            Self::Bouten(_) => "bouten",
+            Self::Framed => "framed",
+            Self::Horizontal => "horizontal",
+            Self::FontSize(_) => "fontSize",
+            Self::Caption => "caption",
+            Self::SuperScript => "superScript",
+            Self::SubScript => "subScript",
+            Self::SmallScript(_) => "smallScript",
+            Self::CombineUpright => "combineUpright",
+            Self::Indent => "indent",
+            Self::AlignEnd => "alignEnd",
+            Self::Center => "center",
+            Self::LineWidth => "lineWidth",
+            Self::Table => "table",
+            Self::Columns(_) => "columns",
+            Self::Warichu => "warichu",
+            Self::Heading { .. } => "heading",
+        }
+    }
+}
+
+// ----------------------------------------------------------------------
+// Forward scope — `「X」は…` reference-attached emphasis
+// ----------------------------------------------------------------------
+
+/// The attributes legal at the forward-reference scope (`「X」は太字` etc.).
+///
+/// The content-carrying leaf that pairs an attribute with its target run is
+/// [`crate::borrowed::ForwardFormat`]; this enum is the attribute alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum ForwardAttr {
+    /// 太字.
+    Bold,
+    /// 斜体.
+    Italic,
+    /// 上付き小文字.
+    SuperScript,
+    /// 下付き小文字.
+    SubScript,
+    /// 行右 / 行左小書き.
+    SmallScript(BoutenPosition),
+    /// 罫囲み.
+    Framed,
+    /// 横組み.
+    Horizontal,
+    /// キャプション.
+    Caption,
+    /// N段階大きな / 小さな文字.
+    FontSize(FontShift),
+    /// 傍点 / 傍線.
+    Bouten(BoutenKind),
+    /// 縦中横.
+    CombineUpright,
+}
+
+impl ForwardAttr {
+    /// Project to the scope-independent [`Format`] attribute.
+    #[must_use]
+    pub const fn format(self) -> Format {
+        match self {
+            Self::Bold => Format::Bold,
+            Self::Italic => Format::Italic,
+            Self::SuperScript => Format::SuperScript,
+            Self::SubScript => Format::SubScript,
+            Self::SmallScript(p) => Format::SmallScript(p),
+            Self::Framed => Format::Framed,
+            Self::Horizontal => Format::Horizontal,
+            Self::Caption => Format::Caption,
+            Self::FontSize(f) => Format::FontSize(f),
+            Self::Bouten(k) => Format::Bouten(k),
+            Self::CombineUpright => Format::CombineUpright,
+        }
+    }
+
+    /// Canonical 青空文庫 keyword for the treatment (the body of
+    /// `「X」は〈keyword〉` / `「X」に〈keyword〉`).
+    ///
+    /// [`Self::FontSize`] carries a magnitude and is serialized separately, so
+    /// it falls through to the 太字 default here (the serializer never calls
+    /// this for it).
+    #[must_use]
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::Italic => "斜体",
+            Self::SuperScript => "上付き小文字",
+            Self::SubScript => "下付き小文字",
+            Self::SmallScript(BoutenPosition::Right) => "行右小書き",
+            Self::SmallScript(BoutenPosition::Left) => "行左小書き",
+            Self::Framed => "罫囲み",
+            Self::Horizontal => "横組み",
+            Self::Caption => "キャプション",
+            Self::CombineUpright => "縦中横",
+            Self::Bouten(k) => k.keyword(),
+            // Bold, FontSize, and any future weight default to 太字.
+            _ => "太字",
+        }
+    }
+}
+
+// ----------------------------------------------------------------------
+// Line scope — single-line layout directives
+// ----------------------------------------------------------------------
+
+/// The attributes legal at the single-line scope (`［＃地付き］` etc.).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum LineFormat {
+    /// `［＃天から N字下げ］` — indent the line by `amount` full-width chars.
+    Indent {
+        /// Full-width characters to indent by.
+        amount: u8,
+    },
+    /// `［＃地付き］` / `［＃地から N字上げ］` — end alignment.
+    AlignEnd {
+        /// Chars lifted off the foot edge. `0` = 地付き, `n` = 地から n 字上げ.
+        offset: u8,
+    },
+    /// `中央揃え` / `ページの左右中央` — centring.
+    Center {
+        /// `true` for `ページの左右中央` (page centre), `false` for `中央揃え`.
+        page: bool,
+    },
+    /// `［＃罫囲み］` — box the single line it sits on.
+    Framed,
+}
+
+impl LineFormat {
+    /// Project to the scope-independent [`Format`] attribute.
+    #[must_use]
+    pub const fn format(self) -> Format {
+        match self {
+            Self::Indent { .. } => Format::Indent,
+            Self::AlignEnd { .. } => Format::AlignEnd,
+            Self::Center { .. } => Format::Center,
+            Self::Framed => Format::Framed,
+        }
+    }
+}
+
+// ----------------------------------------------------------------------
+// Region scope — paired range / block containers
+// ----------------------------------------------------------------------
+
+/// The attributes legal at the paired range / block scope.
+///
+/// The open marker of a `［＃ここから…］ … ［＃ここで…終わり］` (or bare
+/// `［＃…］ … ［＃…終わり］`) pair. The matching close is a [`RegionClose`];
+/// the open payload here stays authoritative when the pair round-trips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum RegionFormat {
+    /// 太字 range / block. `padded` = block-level (`<div>`, `\n\n` padded);
+    /// `!padded` = inline bare range (`<b>`).
+    Bold {
+        /// `true` = `ここから` block; `false` = inline bare range.
+        padded: bool,
+    },
+    /// 斜体 range / block — the slant counterpart of [`Self::Bold`].
+    Italic {
+        /// `true` = `ここから` block; `false` = inline bare range.
+        padded: bool,
+    },
+    /// キャプション range / block.
+    Caption {
+        /// `true` = `ここから` block; `false` = inline bare range.
+        padded: bool,
+    },
+    /// 見出し (delimited heading) range / block.
+    Heading {
+        /// The 大 / 中 / 小 outline level.
+        level: HeadingKind,
+        /// Standard / 同行 / 窓 style.
+        style: HeadingStyle,
+        /// `true` = `ここから` block; `false` = paired `窓中見出し…終わり`.
+        padded: bool,
+    },
+    /// 傍点 / 傍線 range (`［＃傍点］ … ［＃傍点終わり］`, `［＃左に傍線］ …`).
+    Bouten {
+        /// The 傍点 / 傍線 mark; its 点/線 family drives the mismatch check.
+        kind: BoutenKind,
+        /// `Left` for the `左に` modifier, else `Right`.
+        position: BoutenPosition,
+    },
+    /// 行右 / 行左小書き range.
+    SmallScript(BoutenPosition),
+    /// 縦中横 range (`［＃縦中横］ … ［＃縦中横終わり］`).
+    CombineUpright,
+    /// 字下げ block (`［＃ここから N字下げ］ …`).
+    Indent(IndentBlock),
+    /// 地付き / 地から N 字上げ block.
+    AlignEnd {
+        /// Chars lifted off the foot edge. `0` = 地付き, `n` = 地から n 字上げ.
+        offset: u8,
+    },
+    /// 字詰め block (`［＃ここから N字詰め］ …`).
+    LineWidth(LineWidth),
+    /// 表 block.
+    Table,
+    /// 段組 block.
+    Columns(ColumnCount),
+    /// 横組み block.
+    Horizontal,
+    /// N段階大きな / 小さな文字 block.
+    FontSize(FontShift),
+    /// 罫囲み block / range.
+    Framed,
+    /// 割り注 block (multi-line `［＃割り注］ … ［＃割り注終わり］`).
+    Warichu,
+}
+
+impl RegionFormat {
+    /// Project to the scope-independent [`Format`] attribute.
+    #[must_use]
+    pub const fn format(self) -> Format {
+        match self {
+            Self::Bold { .. } => Format::Bold,
+            Self::Italic { .. } => Format::Italic,
+            Self::Caption { .. } => Format::Caption,
+            Self::Heading { level, style, .. } => Format::Heading { level, style },
+            Self::Bouten { kind, .. } => Format::Bouten(kind),
+            Self::SmallScript(p) => Format::SmallScript(p),
+            Self::CombineUpright => Format::CombineUpright,
+            Self::Indent(_) => Format::Indent,
+            Self::AlignEnd { .. } => Format::AlignEnd,
+            Self::LineWidth(_) => Format::LineWidth,
+            Self::Table => Format::Table,
+            Self::Columns(c) => Format::Columns(c),
+            Self::Horizontal => Format::Horizontal,
+            Self::FontSize(f) => Format::FontSize(f),
+            Self::Framed => Format::Framed,
+            Self::Warichu => Format::Warichu,
+        }
+    }
+
+    /// Stable camelCase wire tag — the machine-contract counterpart used by the
+    /// `container_pairs` driver endpoint. Scope-specific (`boutenRange`,
+    /// `combineUprightRange`), distinct from the attribute-level
+    /// [`Format::as_json_tag`]; exhaustive so a new variant cannot fall through
+    /// to a silent `"unknown"`.
+    #[must_use]
+    pub const fn as_json_tag(self) -> &'static str {
+        match self {
+            Self::Indent(_) => "indent",
+            Self::Warichu => "warichu",
+            Self::Framed => "framed",
+            Self::AlignEnd { .. } => "alignEnd",
+            Self::LineWidth(_) => "lineWidth",
+            Self::Bouten { .. } => "boutenRange",
+            Self::Bold { .. } => "bold",
+            Self::Italic { .. } => "italic",
+            Self::Heading { .. } => "heading",
+            Self::Columns(_) => "columns",
+            Self::Table => "table",
+            Self::Horizontal => "horizontal",
+            Self::FontSize(_) => "fontSize",
+            Self::SmallScript(_) => "smallScript",
+            Self::Caption { .. } => "caption",
+            Self::CombineUpright => "combineUprightRange",
+        }
+    }
+
+    /// Stable lowercase kebab family tag for human-facing diagnostics (the
+    /// mismatched open/close pair names). Payload-independent.
+    #[must_use]
+    pub const fn kind_str(self) -> &'static str {
+        match self {
+            Self::Indent(_) => "indent",
+            Self::Warichu => "warichu",
+            Self::Framed => "framed",
+            Self::AlignEnd { .. } => "align-end",
+            Self::LineWidth(_) => "line-width",
+            Self::Bouten { .. } => "bouten-range",
+            Self::Bold { .. } => "bold",
+            Self::Italic { .. } => "italic",
+            Self::Heading { .. } => "heading",
+            Self::Columns(_) => "columns",
+            Self::Table => "table",
+            Self::Horizontal => "horizontal",
+            Self::FontSize(_) => "font-size",
+            Self::SmallScript(_) => "small-script",
+            Self::Caption { .. } => "caption",
+            Self::CombineUpright => "combine-upright-range",
+        }
+    }
+
+    /// Whether this region renders *inline* (within the current paragraph)
+    /// rather than as a block wrapper.
+    ///
+    /// The 傍点 / 傍線 range, the bare-range 太字 / 斜体 / キャプション forms
+    /// (`!padded`), the 小書き range, and the 縦中横 range sit within a line;
+    /// every other region is block-level (gets `\n\n` padding + a `<div>`).
+    #[must_use]
+    pub const fn is_inline(self) -> bool {
+        matches!(
+            self,
+            Self::Bouten { .. }
+                | Self::Bold { padded: false }
+                | Self::Italic { padded: false }
+                | Self::SmallScript(_)
+                | Self::Caption { padded: false }
+                | Self::CombineUpright
+        )
+    }
+
+    /// Whether this region's content is *phrasing* (rendered directly inside
+    /// the block element rather than wrapped in `<p>` paragraphs).
+    ///
+    /// Only [`Self::Heading`] is phrasing: a heading element holds its title
+    /// directly, so `<h1><p>…</p></h1>` would be invalid.
+    #[must_use]
+    pub const fn content_is_phrasing(self) -> bool {
+        matches!(self, Self::Heading { .. })
+    }
+
+    /// Every variant, one representative instance per data-carrying variant —
+    /// the payload is irrelevant to the discriminant-only tag projections. Lets
+    /// the wire-tag exhaustiveness test and the codegen enumerate the family
+    /// list without a hand-maintained parallel.
+    pub const ALL: [Self; 16] = [
+        Self::Indent(IndentBlock {
+            amount: 0,
+            wrap: None,
+            center: false,
+            layout: IndentLayout::None,
+        }),
+        Self::Warichu,
+        Self::Framed,
+        Self::AlignEnd { offset: 0 },
+        Self::LineWidth(LineWidth(NonZeroU8::MIN)),
+        Self::Bouten {
+            kind: BoutenKind::Goma,
+            position: BoutenPosition::Right,
+        },
+        Self::Bold { padded: false },
+        Self::Italic { padded: false },
+        Self::Heading {
+            level: HeadingKind::Large,
+            style: HeadingStyle::Standard,
+            padded: false,
+        },
+        Self::Columns(ColumnCount(NonZeroU8::MIN)),
+        Self::Table,
+        Self::Horizontal,
+        Self::FontSize(FontShift(NonZeroI8::MIN)),
+        Self::SmallScript(BoutenPosition::Right),
+        Self::Caption { padded: false },
+        Self::CombineUpright,
+    ];
+}
+
+// ----------------------------------------------------------------------
+// Region close — discriminant-only; the open payload stays authoritative
+// ----------------------------------------------------------------------
+
+/// The close marker of a paired region.
+///
+/// Discriminant-only: the open [`RegionFormat`] payload is authoritative when
+/// the pair round-trips (see [`Self::of`]), so the close carries no scalar
+/// values. The one bit it does keep — the 点/線 family of a [`Self::Bouten`]
+/// close — drives the `mismatched_bouten_container` diagnostic, which compares
+/// `［＃傍点終わり］` against `［＃傍線終わり］`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum RegionClose {
+    /// `字下げ終わり`.
+    Indent,
+    /// `割り注終わり`.
+    Warichu,
+    /// `罫囲み終わり`.
+    Framed,
+    /// `字上げ終わり` / 地付き close.
+    AlignEnd,
+    /// `字詰め終わり`.
+    LineWidth,
+    /// `傍点終わり` / `傍線終わり`.
+    Bouten {
+        /// `true` for the 傍線 (line) family, `false` for 傍点 (dot); the only
+        /// payload, kept for the 点/線 mismatch diagnostic.
+        is_line: bool,
+    },
+    /// `太字終わり`.
+    Bold,
+    /// `斜体終わり`.
+    Italic,
+    /// `見出し終わり`.
+    Heading,
+    /// `段組終わり`.
+    Columns,
+    /// `表終わり`.
+    Table,
+    /// `横組み終わり`.
+    Horizontal,
+    /// `大きな文字終わり` / `小さな文字終わり`.
+    FontSize,
+    /// `小書き終わり`.
+    SmallScript,
+    /// `キャプション終わり`.
+    Caption,
+    /// `縦中横終わり`.
+    CombineUpright,
+}
+
+impl RegionClose {
+    /// The close discriminant expected for a given open [`RegionFormat`].
+    ///
+    /// Projects the open attribute, dropping every scalar but the 傍点/傍線
+    /// family bit. A matched pair satisfies `actual_close == of(open)`; any
+    /// other close is a mismatch.
+    #[must_use]
+    pub const fn of(open: RegionFormat) -> Self {
+        match open {
+            RegionFormat::Indent(_) => Self::Indent,
+            RegionFormat::Warichu => Self::Warichu,
+            RegionFormat::Framed => Self::Framed,
+            RegionFormat::AlignEnd { .. } => Self::AlignEnd,
+            RegionFormat::LineWidth(_) => Self::LineWidth,
+            RegionFormat::Bouten { kind, .. } => Self::Bouten {
+                is_line: kind.is_line(),
+            },
+            RegionFormat::Bold { .. } => Self::Bold,
+            RegionFormat::Italic { .. } => Self::Italic,
+            RegionFormat::Heading { .. } => Self::Heading,
+            RegionFormat::Columns(_) => Self::Columns,
+            RegionFormat::Table => Self::Table,
+            RegionFormat::Horizontal => Self::Horizontal,
+            RegionFormat::FontSize(_) => Self::FontSize,
+            RegionFormat::SmallScript(_) => Self::SmallScript,
+            RegionFormat::Caption { .. } => Self::Caption,
+            RegionFormat::CombineUpright => Self::CombineUpright,
+        }
+    }
+
+    /// Stable lowercase kebab family tag for human-facing diagnostics (mirrors
+    /// [`RegionFormat::kind_str`] so an open/close mismatch names both sides
+    /// consistently).
+    #[must_use]
+    pub const fn kind_str(self) -> &'static str {
+        match self {
+            Self::Indent => "indent",
+            Self::Warichu => "warichu",
+            Self::Framed => "framed",
+            Self::AlignEnd => "align-end",
+            Self::LineWidth => "line-width",
+            Self::Bouten { .. } => "bouten-range",
+            Self::Bold => "bold",
+            Self::Italic => "italic",
+            Self::Heading => "heading",
+            Self::Columns => "columns",
+            Self::Table => "table",
+            Self::Horizontal => "horizontal",
+            Self::FontSize => "font-size",
+            Self::SmallScript => "small-script",
+            Self::Caption => "caption",
+            Self::CombineUpright => "combine-upright-range",
+        }
+    }
+
+    /// The 傍点 / 傍線 family label for the `mismatched_bouten_container`
+    /// diagnostic — only meaningful for [`Self::Bouten`].
+    #[must_use]
+    pub const fn bouten_family_str(is_line: bool) -> &'static str {
+        if is_line { "傍線" } else { "傍点" }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `RegionFormat` stays small and `Copy` — pinned so a payload that bloats
+    /// the registry's per-node footprint trips here.
+    #[test]
+    fn region_format_is_copy_and_small() {
+        const fn assert_copy<T: Copy>() {}
+        assert_copy::<RegionFormat>();
+        assert_copy::<Format>();
+        assert_copy::<ForwardAttr>();
+        assert_copy::<LineFormat>();
+        assert_copy::<RegionClose>();
+        assert!(size_of::<RegionFormat>() <= 12);
+    }
+
+    /// The container-pairs wire tags are pinned: an accidental rename breaks
+    /// this test instead of silently shifting the `SCHEMA_VERSION=1` wire.
+    #[test]
+    fn region_format_wire_tags_are_stable() {
+        assert_eq!(
+            RegionFormat::Bouten {
+                kind: BoutenKind::Goma,
+                position: BoutenPosition::Right,
+            }
+            .as_json_tag(),
+            "boutenRange"
+        );
+        assert_eq!(
+            RegionFormat::CombineUpright.as_json_tag(),
+            "combineUprightRange"
+        );
+        assert_eq!(
+            RegionFormat::LineWidth(LineWidth(NonZeroU8::MIN)).as_json_tag(),
+            "lineWidth"
+        );
+        assert_eq!(RegionFormat::Bold { padded: true }.as_json_tag(), "bold");
+        assert_eq!(RegionFormat::Bold { padded: false }.as_json_tag(), "bold");
+    }
+
+    /// Every open round-trips to a close discriminant and back to the same
+    /// family kebab tag (the open/close diagnostic vocabulary agrees).
+    #[test]
+    fn region_close_of_round_trips_kind_str() {
+        for open in RegionFormat::ALL {
+            assert_eq!(
+                RegionClose::of(open).kind_str(),
+                open.kind_str(),
+                "close family must mirror open family for {open:?}"
+            );
+        }
+    }
+
+    /// The 傍点/傍線 family bit survives the open → close projection.
+    #[test]
+    fn region_close_preserves_bouten_family() {
+        let dot = RegionFormat::Bouten {
+            kind: BoutenKind::Goma,
+            position: BoutenPosition::Right,
+        };
+        let line = RegionFormat::Bouten {
+            kind: BoutenKind::UnderLine,
+            position: BoutenPosition::Right,
+        };
+        assert_eq!(RegionClose::of(dot), RegionClose::Bouten { is_line: false });
+        assert_eq!(RegionClose::of(line), RegionClose::Bouten { is_line: true });
+    }
+
+    /// Attribute-level tags are exhaustive and distinct from the scope wire
+    /// tags (e.g. `bouten` vs `boutenRange`).
+    #[test]
+    fn format_attribute_tags() {
+        assert_eq!(Format::Bouten(BoutenKind::Goma).as_json_tag(), "bouten");
+        assert_eq!(Format::CombineUpright.as_json_tag(), "combineUpright");
+        assert_eq!(Format::Warichu.as_json_tag(), "warichu");
+        assert_eq!(Format::Center.as_json_tag(), "center");
+    }
+
+    /// Each scope sum projects onto a `Format` attribute (no panics / total).
+    #[test]
+    fn scope_projections_are_total() {
+        assert_eq!(ForwardAttr::Bold.format(), Format::Bold);
+        assert_eq!(LineFormat::Framed.format(), Format::Framed);
+        assert_eq!(RegionFormat::Warichu.format(), Format::Warichu);
+        assert_eq!(
+            RegionFormat::Bold { padded: true }.format(),
+            Format::Bold,
+            "range and forward Bold share the attribute identity"
+        );
+    }
+}

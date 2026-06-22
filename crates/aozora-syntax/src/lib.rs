@@ -27,6 +27,7 @@ pub mod accent;
 pub mod alloc;
 pub mod borrowed;
 mod extension;
+pub mod format;
 pub mod node_kind;
 
 pub use extension::{ContainerKind, IndentLayout};
