@@ -209,8 +209,18 @@ pub fn table_sizes() -> (usize, usize, usize) {
 // next to [`lookup`] so the scan and the table it consults share one
 // home.
 
-/// Opening delimiter of a gaiji reference (`※［＃`).
+/// Opening delimiter of a *refmark* gaiji reference (`※［＃`).
 pub const GAIJI_OPEN: &str = "※［＃";
+/// The bracket-hash annotation opener (`［＃`).
+///
+/// Shared by the refmark form (`※` + this) and the standalone
+/// external-character form (#122), which carries no `※`. The standalone form
+/// needs the [`recognize_gaiji_body`] gate to tell it apart from a plain
+/// directive (`［＃改ページ］`).
+pub const BRACKET_HASH: &str = "［＃";
+/// The refmark prefix (`※`) that distinguishes a refmark gaiji from the
+/// standalone form.
+pub const GAIJI_REFMARK: &str = "※";
 /// Closing delimiter of a gaiji reference (`］`).
 pub const GAIJI_CLOSE: &str = "］";
 /// Window half-width (bytes) for the cursor-local [`find_span`] scan. A
@@ -321,6 +331,52 @@ pub fn parse_gaiji_body(body: &str) -> GaijiBody<'_> {
         mencode: Some(body[boundary + '、'.len_utf8()..].trim()),
         quoted: false,
     }
+}
+
+/// Whether a gaiji `description` can be kept (it both serializes and
+/// round-trips); otherwise the bracket falls through to a plain directive.
+///
+/// Rejects:
+///   - a description embedding `［＃` (a nested annotation opener would leak a
+///     bare `［＃` outside the directive wrapper, violating the Tier A canary),
+///     and
+///   - a description carrying structural `「…」` quotes, *except* the
+///     composed-glyph / 正字 / 屋号 forms (balanced quotes anchored by a
+///     trailing `、mencode`; a quote-bearing description without a mencode
+///     anchor stays rejected, since the serializer's wrapper would unbalance
+///     it).
+#[must_use]
+pub fn gaiji_description_serializable(description: &str, has_mencode: bool) -> bool {
+    if description.contains("［＃") {
+        return false;
+    }
+    if description.contains(['「', '」']) {
+        let balanced = description.matches('「').count() == description.matches('」').count();
+        return balanced && has_mencode;
+    }
+    true
+}
+
+/// Parse a `［＃…］` body and decide whether it is a recognised gaiji reference.
+///
+/// The single recognition gate shared by the parser's recogniser, the
+/// standalone scan in [`gaiji_resolutions`] / [`resolve_at`], and the LSP /
+/// wire resolution view.
+///
+/// Returns the parsed [`GaijiBody`] iff the body is a gaiji; `None` for a
+/// plain directive (e.g. `改ページ`). A gaiji needs a non-empty description
+/// and either the simple `「…」`-quoted form *or* a trailing mencode anchor,
+/// and the description must round-trip ([`gaiji_description_serializable`]).
+#[must_use]
+pub fn recognize_gaiji_body(body: &str) -> Option<GaijiBody<'_>> {
+    let parsed = parse_gaiji_body(body);
+    if parsed.description.is_empty()
+        || (!parsed.quoted && parsed.mencode.is_none())
+        || !gaiji_description_serializable(parsed.description, parsed.mencode.is_some())
+    {
+        return None;
+    }
+    Some(parsed)
 }
 
 /// The JIS / U+ token of a `mencode`, dropping any trailing 底本ページ-行
@@ -517,14 +573,25 @@ fn is_digit_run(p: &str) -> bool {
             .all(|c| c.is_ascii_digit() || ('０'..='９').contains(&c))
 }
 
-/// Resolve the `※［＃…］` span at `[start..end)`.
+/// Resolve the gaiji span at `[start..end)` — either the refmark form
+/// (`※［＃…］`) or the standalone form (`［＃…］`, #122).
 ///
-/// Returns `None` if the delimiters don't bracket a parseable body —
-/// defensive, since offsets from [`gaiji_resolutions`] / [`find_span`]
-/// always satisfy it.
+/// The refmark `※` is itself the gaiji marker, so a `※［＃…］` span is always
+/// resolved. A standalone `［＃…］` must pass [`recognize_gaiji_body`] (else it
+/// is a plain directive like `［＃改ページ］` and yields `None`). Also `None`
+/// if the delimiters don't bracket a parseable body — defensive, since
+/// offsets from [`gaiji_resolutions`] / [`find_span`] always satisfy it.
 #[must_use]
 pub fn resolve_at(source: &str, start: usize, end: usize) -> Option<GaijiResolution> {
-    let body_start = start.checked_add(GAIJI_OPEN.len())?;
+    let span = source.get(start..end)?;
+    let (open, standalone) = if span.starts_with(GAIJI_OPEN) {
+        (GAIJI_OPEN, false)
+    } else if span.starts_with(BRACKET_HASH) {
+        (BRACKET_HASH, true)
+    } else {
+        return None;
+    };
+    let body_start = start.checked_add(open.len())?;
     let body_end = end.checked_sub(GAIJI_CLOSE.len())?;
     if body_end <= body_start || body_end > source.len() {
         return None;
@@ -534,7 +601,11 @@ pub fn resolve_at(source: &str, start: usize, end: usize) -> Option<GaijiResolut
         description,
         mencode,
         ..
-    } = parse_gaiji_body(body);
+    } = if standalone {
+        recognize_gaiji_body(body)?
+    } else {
+        parse_gaiji_body(body)
+    };
     let (resolved, codepoint) = lookup(None, mencode.map(mencode_resolution_token), description)
         .map_or((None, None), |r| {
             let mut s = String::new();
@@ -557,9 +628,17 @@ pub fn resolve_at(source: &str, start: usize, end: usize) -> Option<GaijiResolut
 pub fn gaiji_resolutions(source: &str) -> Vec<GaijiResolution> {
     let mut out = Vec::new();
     let mut cursor = 0usize;
-    while let Some(rel) = source[cursor..].find(GAIJI_OPEN) {
-        let span_start = cursor + rel;
-        let body_start = span_start + GAIJI_OPEN.len();
+    // Scan the bracket-hash opener so both the refmark (`※［＃`) and the
+    // standalone (`［＃`, #122) forms are seen; `resolve_at` folds a preceding
+    // `※` into the span and gates the standalone form against recognition.
+    while let Some(rel) = source[cursor..].find(BRACKET_HASH) {
+        let hash_open = cursor + rel;
+        let span_start = if source[..hash_open].ends_with(GAIJI_REFMARK) {
+            hash_open - GAIJI_REFMARK.len()
+        } else {
+            hash_open
+        };
+        let body_start = hash_open + BRACKET_HASH.len();
         let Some(close_rel) = source[body_start..].find(GAIJI_CLOSE) else {
             break;
         };
@@ -593,12 +672,18 @@ pub fn find_span(source: &str, byte_offset: usize) -> Option<(usize, usize)> {
     let window = &source[win_start..win_end];
     let win_offset = byte_offset.saturating_sub(win_start);
 
-    for (start_in_win, _) in window.match_indices(GAIJI_OPEN) {
-        let after_open = start_in_win + GAIJI_OPEN.len();
+    for (hash_in_win, _) in window.match_indices(BRACKET_HASH) {
+        let after_open = hash_in_win + BRACKET_HASH.len();
         let Some(end_rel) = window.get(after_open..).and_then(|s| s.find(GAIJI_CLOSE)) else {
             continue;
         };
         let end_in_win = after_open + end_rel + GAIJI_CLOSE.len();
+        // Fold a preceding `※` into the span (refmark form).
+        let start_in_win = if window[..hash_in_win].ends_with(GAIJI_REFMARK) {
+            hash_in_win - GAIJI_REFMARK.len()
+        } else {
+            hash_in_win
+        };
         if (start_in_win..end_in_win).contains(&win_offset) {
             return Some((win_start + start_in_win, win_start + end_in_win));
         }
@@ -712,6 +797,56 @@ mod tests {
         assert_eq!(g.codepoint, Some('々' as u32));
         // Offsets bracket the literal `※［＃…］` span.
         assert_eq!(&src[g.start..g.end], "※［＃「々」］");
+    }
+
+    #[test]
+    fn gaiji_resolutions_includes_standalone_form() {
+        // Standalone `［＃…］` (no `※`) external-character form (#122/#181):
+        // previously invisible to the resolution view.
+        let src = "前［＃「木＋吶のつくり」、第3水準1-85-54］後";
+        let res = gaiji_resolutions(src);
+        assert_eq!(res.len(), 1);
+        let g = &res[0];
+        assert_eq!(g.description, "木＋吶のつくり");
+        assert_eq!(g.mencode.as_deref(), Some("第3水準1-85-54"));
+        assert_eq!(g.resolved.as_deref(), Some("枘"));
+        // The span has no `※`, so it starts at the `［`.
+        assert_eq!(
+            &src[g.start..g.end],
+            "［＃「木＋吶のつくり」、第3水準1-85-54］"
+        );
+    }
+
+    #[test]
+    fn gaiji_resolutions_excludes_plain_directives() {
+        // A bracket-hash directive is NOT a gaiji — the standalone gate
+        // (recognize_gaiji_body) declines it, so it never enters the view.
+        assert!(gaiji_resolutions("本文［＃改ページ］続き").is_empty());
+        assert!(gaiji_resolutions("［＃ここから2字下げ］字下げ").is_empty());
+        // A forward-reference bouten directive (balanced quotes, no mencode)
+        // is likewise declined.
+        assert!(gaiji_resolutions("東京［＃「東京」に傍点］へ").is_empty());
+    }
+
+    #[test]
+    fn gaiji_resolutions_mixes_refmark_and_standalone_in_order() {
+        // Both forms in one document, source order preserved.
+        let src = "※［＃「々」］と［＃「木＋吶のつくり」、第3水準1-85-54］";
+        let res = gaiji_resolutions(src);
+        assert_eq!(res.len(), 2);
+        assert_eq!(&src[res[0].start..res[0].end], "※［＃「々」］");
+        assert_eq!(
+            &src[res[1].start..res[1].end],
+            "［＃「木＋吶のつくり」、第3水準1-85-54］"
+        );
+    }
+
+    #[test]
+    fn recognize_gaiji_body_gates_directives() {
+        assert!(recognize_gaiji_body("改ページ").is_none());
+        assert!(recognize_gaiji_body("ここから2字下げ").is_none());
+        assert!(recognize_gaiji_body("「々」").is_some()); // quoted form, no mencode
+        assert!(recognize_gaiji_body("「desc」、第3水準1-85-54").is_some());
     }
 
     #[test]

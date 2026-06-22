@@ -110,24 +110,19 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // composed-glyph / 正字 / 屋号 forms, and the bare form with one
         // right-to-left mencode scan (the naive first-`、` split it replaces
         // wrongly cut composed forms — #181).
+        // Recognition gate (I3 idempotency) via the single authority in
+        // aozora-encoding — shared with the resolution view (#181) and the
+        // gaiji() wire. The simple `「desc」` quoted form is a gaiji even
+        // without a mencode; the composed / bare forms need a trailing mencode
+        // anchor; a non-serializable description (stray quote imbalance, an
+        // embedded `［＃`) is declined. Declined brackets fall through to
+        // `Directive{Unknown}` and round-trip byte-identical.
         let body = &self.source[hash_end as usize..bracket_close_span.start as usize];
         let gaiji_resolve::GaijiBody {
             description,
             mencode,
-            quoted,
-        } = gaiji_resolve::parse_gaiji_body(body);
-
-        // Recognition gate (I3 idempotency): the simple `「desc」` quoted form
-        // is a gaiji even without a mencode; the composed / bare forms need a
-        // trailing mencode anchor. A non-serializable description (stray quote
-        // imbalance, an embedded `［＃`) is also declined. Declined brackets
-        // fall through to `Directive{Unknown}` and round-trip byte-identical.
-        if description.is_empty()
-            || (!quoted && mencode.is_none())
-            || !gaiji_description_serializable(description, mencode.is_some())
-        {
-            return None;
-        }
+            ..
+        } = gaiji_resolve::recognize_gaiji_body(body)?;
 
         // The mencode is kept verbatim (a trailing 底本ページ-行 suffix and
         // all) inside the GaijiCanonical; resolution to a glyph happens
@@ -140,34 +135,6 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             consume_end: bracket_close_span.end,
         })
     }
-}
-
-/// Whether a gaiji `description` can be kept (it both serializes and
-/// round-trips); otherwise the bracket falls through to `Directive{Unknown}`.
-///
-/// Rejects:
-///   - a description embedding `［＃` (a nested annotation opener would leak a
-///     bare `［＃` outside the `aozora-directive` wrapper, violating the Tier A
-///     canary), and
-///   - a description carrying structural `「…」` quotes, *except* the
-///     composed-glyph / 正字 / 屋号 forms (`「X」の「Y」に代えて「Z」`,
-///     `「…）、「柿」の正字」`, `「…」、屋号を示す記号`; corpus §6 external-character
-///     forms): balanced quotes anchored by a trailing `、mencode`. `emit_gaiji`
-///     writes such a description verbatim (no `「…」` wrapper), so it round-trips
-///     even when it carries an internal `、` — the recogniser's right-to-left
-///     mencode scan (`parse_gaiji_body`, the aozora-encoding authority)
-///     re-splits at the same boundary. A quote-bearing description without a
-///     mencode anchor stays
-///     rejected (the serializer's wrapper would unbalance it).
-fn gaiji_description_serializable(description: &str, has_mencode: bool) -> bool {
-    if description.contains("［＃") {
-        return false;
-    }
-    if description.contains(['「', '」']) {
-        let balanced = description.matches('「').count() == description.matches('」').count();
-        return balanced && has_mencode;
-    }
-    true
 }
 
 #[cfg(test)]
