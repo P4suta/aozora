@@ -261,19 +261,26 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just conformance
 
-  # Phase O5 — Unknown-degradation budget gate. The empirical,
-  # non-circular complement to the vector suite: walks the *whole*
-  # P4suta/aozorabunko_text corpus and fails if the per-file
-  # `Annotation{Unknown}` rate rose above the committed
-  # `corpus/baseline.json`. This is what stops a recogniser change from
-  # silently shoving real notation into the catch-all (where the vector
-  # suite, being hand-written, would never notice). The corpus is too
-  # large to vendor, so we check it out here; the same gate runs at
-  # pre-push against the developer's local $AOZORA_CORPUS_ROOT.
+  # Phase O5 — whole-corpus gates over P4suta/aozorabunko_text. Two
+  # complementary checks that the hand-written vector suite cannot see:
+  #   1. Unknown-degradation budget — fails if the per-file
+  #      `Annotation{Unknown}` rate rose above committed
+  #      `corpus/baseline.json` (a recogniser silently shoving real
+  #      notation into the catch-all).
+  #   2. Round-trip fixed point (#191) — `parse∘serialize` must be a
+  #      fixed point for every document, modulo the shrink-only
+  #      `corpus/roundtrip-allowlist.json` (the normalization-waist epic
+  #      drives that list to empty). Previously this test silently
+  #      no-op'd in CI because `AOZORA_CORPUS_ROOT` was unset; the corpus
+  #      checkout below now makes it a visible gate.
+  # The corpus is too large to vendor, so we check it out here; the same
+  # gates run at pre-push against the developer's local $AOZORA_CORPUS_ROOT.
   corpus-audit-gate:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    env:
+      AOZORA_CORPUS_ROOT: ${{ github.workspace }}/.corpus
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - name: Check out the conformance corpus
@@ -287,7 +294,9 @@ jobs:
         with:
           key: corpus-audit-gate
       - name: Unknown-degradation budget gate
-        run: cargo run -p aozora-xtask -q -- corpus audit-gate --root "$GITHUB_WORKSPACE/.corpus" --baseline corpus/baseline.json
+        run: cargo run -p aozora-xtask -q -- corpus audit-gate --root "$AOZORA_CORPUS_ROOT" --baseline corpus/baseline.json
+      - name: Round-trip fixed-point gate (#191)
+        run: cargo test -p aozora --release --test corpus_sweep -- --nocapture
 
   # Phase M1 — Pandoc end-to-end smoke. Builds the CLI, runs
   # `aozora pandoc input.txt --format html` against a tiny ruby
