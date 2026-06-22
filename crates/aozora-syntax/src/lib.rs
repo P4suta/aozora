@@ -11,12 +11,13 @@
 //! # Top-level surface
 //!
 //! Only the **shared `Copy`-able payloads** referenced by the borrowed
-//! AST (`BoutenKind`, `BoutenPosition`, `Indent`, `AlignEnd`,
-//! `Container`, `ContainerKind`, `Framed`, `SectionKind`,
-//! `HeadingKind`, `EmphasisKind`, `DirectiveKind`) live at the
-//! top level. The
-//! borrowed-AST node types live under `borrowed::`. The arena-backed
-//! builder lives under `alloc::`.
+//! AST (`BoutenKind`, `BoutenPosition`, `Container`, `SectionKind`,
+//! `HeadingKind`, `HeadingStyle`, `MarginNoteKind`, `RubySide`,
+//! `DirectiveKind`) live at the top level. The attribute × scope
+//! formatting model (`Format` / `ForwardAttr` / `LineFormat` /
+//! `RegionFormat` / `RegionClose` and their `NonZero` parameters) lives
+//! under [`format`]. The borrowed-AST node types live under `borrowed::`;
+//! the arena-backed builder under `alloc::`.
 
 #![forbid(unsafe_code)]
 
@@ -26,11 +27,13 @@ use thiserror::Error;
 pub mod accent;
 pub mod alloc;
 pub mod borrowed;
-mod extension;
 pub mod format;
 pub mod node_kind;
 
-pub use extension::{ContainerKind, IndentLayout};
+pub use format::{
+    ColumnCount, FontShift, Format, ForwardAttr, IndentBlock, IndentLayout, Kumi, LineFormat,
+    LineWidth, RegionClose, RegionFormat,
+};
 pub use node_kind::NodeKind;
 
 /// The typed canonical value of a gaiji reference and its building
@@ -54,8 +57,9 @@ pub use aozora_spec::Span;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Container {
-    /// Which container family this open marker begins.
-    pub kind: ContainerKind,
+    /// Which container family this open marker begins. The open
+    /// [`RegionFormat`] payload is authoritative when the pair round-trips.
+    pub kind: RegionFormat,
 }
 
 /// Which 傍点 (emphasis dot) or 傍線 (sideline) mark decorates a run.
@@ -165,36 +169,6 @@ pub enum BoutenPosition {
     Left,
 }
 
-/// Single-line indentation marker (`［＃N字下げ］`).
-///
-/// The one-line counterpart of the [`ContainerKind::Indent`] block range;
-/// indents only the line it sits on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Indent {
-    /// Number of full-width characters to indent by.
-    pub amount: u8,
-}
-
-/// Single-line end-alignment marker (`［＃地付き］` / `［＃地から N字上げ］`).
-///
-/// Pushes the line to the foot (地, the bottom of the column / page) — the
-/// one-line counterpart of the [`ContainerKind::AlignEnd`] block range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct AlignEnd {
-    /// Offset in chars from the right edge. `0` = 地付き, `n` = 地から n 字上げ.
-    pub offset: u8,
-}
-
-/// Single-line centring marker (`［＃ページの左右中央］` / `［＃中央揃え］`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Center {
-    /// `true` for `ページの左右中央` (page centre), `false` for `中央揃え`.
-    pub page: bool,
-}
-
 /// Which side of the base text a ruby reading sits on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -243,14 +217,6 @@ impl MarginNoteKind {
         }
     }
 }
-
-/// Single-line 罫囲み (ruled box) marker (`［＃罫囲み］`).
-///
-/// A fieldless tag: it boxes the line it sits on. The multi-line range
-/// form is the [`ContainerKind::Framed`] paired container.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Framed;
 
 /// Which section-break directive a [`borrowed::Node::SectionBreak`] carries —
 /// the stronger page-structure breaks beyond the plain `［＃改ページ］`.
@@ -322,55 +288,6 @@ pub enum HeadingStyle {
     Window,
 }
 
-/// Inline typographic treatment carried by the forward-reference leaf
-/// node [`borrowed::Emphasis`] (`X［＃「X」は…］`).
-///
-/// Covers text-weight / slant (太字 / 斜体), super- and sub-script
-/// (上付き小文字 / 下付き小文字), and the vertical-writing small side
-/// glyphs (行右小書き / 行左小書き). Distinct from [`BoutenKind`]
-/// (傍点 / 傍線 decorative marks): emphasis is a typographic treatment of
-/// a whole span, not a per-character mark. The weight range / block forms
-/// (`［＃太字］…［＃太字終わり］`, `［＃ここから太字］…`) pair as
-/// [`ContainerKind::Bold`] / [`ContainerKind::Italic`]; the script and
-/// 小書き forms are forward-reference only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[non_exhaustive]
-pub enum EmphasisKind {
-    /// 太字 (bold / ゴシック).
-    Bold,
-    /// 斜体 (italic / イタリック).
-    Italic,
-    /// 上付き小文字 (superscript — exponents, ordinals; 横組み).
-    SuperScript,
-    /// 下付き小文字 (subscript — chemical formulae; 横組み).
-    SubScript,
-    /// 行右小書き (small glyph set to the line's right in vertical writing).
-    SmallRight,
-    /// 行左小書き (small glyph set to the line's left in vertical writing).
-    SmallLeft,
-    /// 文字サイズ変更 (`●段階大きな/小さな文字`) — a relative size shift of
-    /// `steps` stages: positive enlarges (大きな), negative shrinks (小さな).
-    /// Never zero.
-    FontSize {
-        /// Signed stage count; `+N` = `N段階大きな文字`, `-N` = `N段階小さな文字`.
-        steps: i8,
-    },
-    /// 行中 罫囲み (`「X」は罫囲み`) — the inline forward-reference box, the
-    /// span-level counterpart of the block [`ContainerKind::Framed`]
-    /// (just as [`Bold`](Self::Bold) is the leaf counterpart of
-    /// [`ContainerKind::Bold`]).
-    KeigakomiInline,
-    /// 横組み (`「X」は横組み`) — an inline run set horizontally inside vertical
-    /// text, the span-level counterpart of the block
-    /// [`ContainerKind::Horizontal`].
-    HorizontalInline,
-    /// キャプション (`「X」はキャプション`) — the inline forward-reference
-    /// caption, the leaf counterpart of the block / range
-    /// [`ContainerKind::Caption`].
-    Caption,
-}
-
 /// Every [`SectionKind`] variant in declaration order.
 ///
 /// Drives the renderer's class-list derivation (and any codegen) so a new
@@ -392,24 +309,6 @@ pub const HEADING_STYLES: &[HeadingStyle] = &[
     HeadingStyle::Standard,
     HeadingStyle::SameLine,
     HeadingStyle::Window,
-];
-
-/// Every [`EmphasisKind`] variant in declaration order.
-///
-/// `FontSize` appears once with a representative magnitude — the
-/// renderer's larger/smaller split is driven by the sign, exercised
-/// explicitly where it matters. See [`BOUTEN_KINDS`].
-pub const EMPHASIS_KINDS: &[EmphasisKind] = &[
-    EmphasisKind::Bold,
-    EmphasisKind::Italic,
-    EmphasisKind::SuperScript,
-    EmphasisKind::SubScript,
-    EmphasisKind::SmallRight,
-    EmphasisKind::SmallLeft,
-    EmphasisKind::KeigakomiInline,
-    EmphasisKind::HorizontalInline,
-    EmphasisKind::Caption,
-    EmphasisKind::FontSize { steps: 1 },
 ];
 
 // --- enum → canonical 青空文庫 keyword ---------------------------------------
@@ -440,27 +339,6 @@ impl BoutenKind {
             Self::BlackTriangle => "黒三角傍点",
             // Goma (無印) and any future kind default to the bare 傍点.
             _ => "傍点",
-        }
-    }
-}
-
-impl EmphasisKind {
-    /// Canonical 青空文庫 keyword for the emphasis treatment. `FontSize`
-    /// is serialized separately (it carries a magnitude) and falls through
-    /// to the 太字 default here.
-    #[must_use]
-    pub const fn keyword(self) -> &'static str {
-        match self {
-            Self::Italic => "斜体",
-            Self::SuperScript => "上付き小文字",
-            Self::SubScript => "下付き小文字",
-            Self::SmallRight => "行右小書き",
-            Self::SmallLeft => "行左小書き",
-            Self::KeigakomiInline => "罫囲み",
-            Self::HorizontalInline => "横組み",
-            Self::Caption => "キャプション",
-            // Bold, FontSize, and any future weight default to 太字.
-            _ => "太字",
         }
     }
 }
@@ -613,23 +491,37 @@ mod tests {
     }
 
     #[test]
-    fn emphasis_keyword_is_exhaustive_and_stable() {
+    fn forward_attr_keyword_is_exhaustive_and_stable() {
+        use core::num::NonZeroI8;
         let cases = [
-            (EmphasisKind::Bold, "太字"),
-            (EmphasisKind::Italic, "斜体"),
-            (EmphasisKind::SuperScript, "上付き小文字"),
-            (EmphasisKind::SubScript, "下付き小文字"),
-            (EmphasisKind::SmallRight, "行右小書き"),
-            (EmphasisKind::SmallLeft, "行左小書き"),
-            (EmphasisKind::KeigakomiInline, "罫囲み"),
-            (EmphasisKind::HorizontalInline, "横組み"),
-            (EmphasisKind::Caption, "キャプション"),
+            (ForwardAttr::Bold, "太字"),
+            (ForwardAttr::Italic, "斜体"),
+            (ForwardAttr::SuperScript, "上付き小文字"),
+            (ForwardAttr::SubScript, "下付き小文字"),
+            (
+                ForwardAttr::SmallScript(BoutenPosition::Right),
+                "行右小書き",
+            ),
+            (ForwardAttr::SmallScript(BoutenPosition::Left), "行左小書き"),
+            (ForwardAttr::Framed, "罫囲み"),
+            (ForwardAttr::Horizontal, "横組み"),
+            (ForwardAttr::Caption, "キャプション"),
+            (ForwardAttr::CombineUpright, "縦中横"),
+            (
+                ForwardAttr::Bouten {
+                    kind: BoutenKind::Goma,
+                    position: BoutenPosition::Right,
+                },
+                "傍点",
+            ),
             // FontSize carries a magnitude and falls through to 太字.
-            (EmphasisKind::FontSize { steps: 3 }, "太字"),
-            (EmphasisKind::FontSize { steps: -2 }, "太字"),
+            (
+                ForwardAttr::FontSize(FontShift(NonZeroI8::new(3).unwrap())),
+                "太字",
+            ),
         ];
-        for (kind, kw) in cases {
-            assert_eq!(kind.keyword(), kw, "keyword mismatch for {kind:?}");
+        for (attr, kw) in cases {
+            assert_eq!(attr.keyword(), kw, "keyword mismatch for {attr:?}");
         }
     }
 
@@ -644,11 +536,11 @@ mod tests {
     fn heading_kind_and_style_are_orthogonal_copies() {
         // Cheap structural smoke: every level pairs with every style and
         // the payload structs are Copy + Eq as the AST relies on.
-        let heading = |kind, style| Container {
-            kind: ContainerKind::Heading {
-                kind,
+        let heading = |level, style| Container {
+            kind: RegionFormat::Heading {
+                level,
                 style,
-                block: true,
+                padded: true,
             },
         };
         assert_eq!(
@@ -661,12 +553,18 @@ mod tests {
             heading(HeadingKind::Small, HeadingStyle::Window),
             "different level ⇒ not equal"
         );
-        let indent = Indent { amount: 4 };
-        assert_eq!(indent, Indent { amount: 4 });
-        let align = AlignEnd { offset: 0 };
-        assert_eq!(align.offset, 0);
-        let center = Center { page: true };
-        assert!(center.page, "page-centre flag round-trips");
+        assert_eq!(
+            LineFormat::Indent { amount: 4 },
+            LineFormat::Indent { amount: 4 }
+        );
+        assert!(matches!(
+            LineFormat::AlignEnd { offset: 0 },
+            LineFormat::AlignEnd { offset: 0 }
+        ));
+        assert!(matches!(
+            LineFormat::Center { page: true },
+            LineFormat::Center { page: true }
+        ));
     }
 
     #[test]

@@ -48,21 +48,24 @@ expression: "format!(\"{nodes:#?}\")"
             ),
         },
     ),
-    Bouten(
-        Bouten {
-            kind: Goma,
+    Format(
+        ForwardFormat {
+            attr: Bouten {
+                kind: Goma,
+                position: Right,
+            },
             target: NonEmpty(
                 Plain(
                     "base",
                 ),
             ),
-            position: Right,
             consumed_predecessor: false,
         },
     ),
-    CombineUpright(
-        CombineUpright {
-            text: NonEmpty(
+    Format(
+        ForwardFormat {
+            attr: CombineUpright,
+            target: NonEmpty(
                 Plain(
                     "base",
                 ),
@@ -81,17 +84,17 @@ expression: "format!(\"{nodes:#?}\")"
             standalone: false,
         },
     ),
-    Indent(
+    Line(
         Indent {
             amount: 2,
         },
     ),
-    AlignEnd(
+    Line(
         AlignEnd {
             offset: 2,
         },
     ),
-    Center(
+    Line(
         Center {
             page: true,
         },
@@ -106,7 +109,7 @@ expression: "format!(\"{nodes:#?}\")"
             ),
         },
     ),
-    Framed(
+    Line(
         Framed,
     ),
     PageBreak,
@@ -170,12 +173,14 @@ expression: "format!(\"{nodes:#?}\")"
     ),
     Container(
         Container {
-            kind: Indent {
-                amount: 1,
-                wrap: None,
-                center: false,
-                layout: None,
-            },
+            kind: Indent(
+                IndentBlock {
+                    amount: 1,
+                    wrap: None,
+                    center: false,
+                    layout: None,
+                },
+            ),
         },
     ),
 ]

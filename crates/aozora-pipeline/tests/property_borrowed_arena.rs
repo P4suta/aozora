@@ -67,9 +67,17 @@ fn assert_deterministic(source: &str) {
                     "registry[{pos_a}] inline / block-leaf payload kind drift"
                 );
             }
-            (NodeRef::BlockOpen(kind_a), NodeRef::BlockOpen(kind_b))
-            | (NodeRef::BlockClose(kind_a), NodeRef::BlockClose(kind_b)) => {
-                assert_eq!(kind_a, kind_b, "registry[{pos_a}] container kind drift");
+            (NodeRef::BlockOpen(kind_a), NodeRef::BlockOpen(kind_b)) => {
+                assert_eq!(
+                    kind_a, kind_b,
+                    "registry[{pos_a}] container open kind drift"
+                );
+            }
+            (NodeRef::BlockClose(kind_a), NodeRef::BlockClose(kind_b)) => {
+                assert_eq!(
+                    kind_a, kind_b,
+                    "registry[{pos_a}] container close kind drift"
+                );
             }
             _ => {
                 panic!("registry[{pos_a}] cross-variant drift: {nr_a:?} vs {nr_b:?}");

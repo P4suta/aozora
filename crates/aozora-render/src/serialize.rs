@@ -12,12 +12,12 @@ use core::fmt::{self, Write};
 use crate::walk::{SentinelKind, WalkSink, walk};
 use aozora_pipeline::{LexOutput, has_long_rule_line, isolate_decorative_rules};
 use aozora_syntax::borrowed::{
-    AngleQuote, Bouten, CombineUpright, Content, Directive, Emphasis, Gaiji, Heading, HeadingHint,
-    Illustration, Kaeriten, MarginNote, Node, NodeRef, Ruby, Segment,
+    AngleQuote, Content, Directive, ForwardFormat, Gaiji, Heading, HeadingHint, Illustration,
+    Kaeriten, MarginNote, Node, NodeRef, Ruby, Segment,
 };
 use aozora_syntax::{
-    AlignEnd, BoutenPosition, Center, ContainerKind, EmphasisKind, HeadingKind, HeadingStyle,
-    Indent, IndentLayout, RubySide, SectionKind,
+    BoutenPosition, ForwardAttr, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, LineFormat,
+    RegionClose, RegionFormat, RubySide, SectionKind,
 };
 
 /// Serialize a `LexOutput` back to Aozora source text.
@@ -74,7 +74,10 @@ pub fn serialize_into<W: Write>(out: &LexOutput<'_>, writer: &mut W) -> fmt::Res
 
 /// [`WalkSink`] that re-emits Aozora source text: plain runs are copied
 /// verbatim (newlines included — [`Self::WANTS_NEWLINES`] is `false`) and
-/// each sentinel is reconstructed through the `emit_*` helpers.
+/// each sentinel is reconstructed through the `emit_*` helpers. The close
+/// marker is reconstructed from the close's own [`RegionClose`] (self-
+/// sufficient — an unmatched stray close, and a mismatched 傍線終わり closing a
+/// 傍点 open, both round-trip byte-exact).
 struct SerializeSink<'w, W: Write> {
     out: &'w mut W,
 }
@@ -91,11 +94,11 @@ impl<W: Write> WalkSink for SerializeSink<'_, W> {
         match (kind, node) {
             (SentinelKind::Inline, NodeRef::Inline(node))
             | (SentinelKind::BlockLeaf, NodeRef::BlockLeaf(node)) => emit_aozora(node, self.out),
-            (SentinelKind::BlockOpen, NodeRef::BlockOpen(kind)) => {
-                emit_container_open(kind, self.out)
+            (SentinelKind::BlockOpen, NodeRef::BlockOpen(open)) => {
+                emit_container_open(open, self.out)
             }
-            (SentinelKind::BlockClose, NodeRef::BlockClose(kind)) => {
-                emit_container_close(kind, self.out)
+            (SentinelKind::BlockClose, NodeRef::BlockClose(close)) => {
+                emit_container_close(close, self.out)
             }
             // Sentinel hit without a corresponding registry entry, or a
             // kind/variant mismatch — best-effort skip (the per-table
@@ -108,19 +111,15 @@ impl<W: Write> WalkSink for SerializeSink<'_, W> {
 fn emit_aozora<W: Write>(node: Node<'_>, out: &mut W) -> fmt::Result {
     match node {
         Node::Ruby(r) => emit_ruby(r, out),
-        Node::Bouten(b) => emit_bouten(b, out),
-        Node::CombineUpright(t) => emit_tate_chu_yoko(t, out),
+        Node::Format(f) => emit_format(f, out),
         Node::Gaiji(g) => emit_gaiji(g, out),
         Node::Kaeriten(k) => emit_kaeriten(k, out),
         Node::Directive(a) => emit_annotation(a, out),
         Node::AngleQuote(d) => emit_angle_quote(d, out),
-        Node::Emphasis(e) => emit_emphasis(e, out),
         Node::MarginNote(s) => emit_side_note(s, out),
         Node::PageBreak => out.write_str("［＃改ページ］"),
         Node::SectionBreak(kind) => emit_section_break(kind, out),
-        Node::Indent(i) => emit_indent(i, out),
-        Node::AlignEnd(a) => emit_align_end(a, out),
-        Node::Center(c) => emit_center(c, out),
+        Node::Line(lf) => emit_line(lf, out),
         Node::Illustration(s) => emit_sashie(s, out),
         Node::HeadingHint(h) => emit_heading_hint(h, out),
         Node::Heading(h) => emit_aozora_heading(h, out),
@@ -168,22 +167,41 @@ fn emit_side_note<W: Write>(s: &MarginNote<'_>, out: &mut W) -> fmt::Result {
     out.write_str(suffix)
 }
 
-fn emit_bouten<W: Write>(b: &Bouten<'_>, out: &mut W) -> fmt::Result {
-    if b.consumed_predecessor {
-        // The classify stage pulled this node's source span back over the literal
-        // occurrence of `target` that sat immediately before the `［`.
-        // Re-emit the literal so the serialized output round-trips back
-        // to the original source: `<target>［＃「<target>」に傍点］`
-        // becomes the canonical fixed-point shape.
-        emit_content_as_plain(b.target.get(), out)?;
+/// Re-emit a forward-reference leaf (`<target>［＃「<target>」は…／に…］`).
+///
+/// `consumed_predecessor` drives the leading-literal re-emit that holds the
+/// parse∘serialize fixed point. The attribute selects the shape: 傍点 / 傍線
+/// take the multi-`「」` target + `に` / `の左に` connector; every other
+/// forward attribute takes the `「target」は<keyword>` shape (with the
+/// magnitude spelled out for 文字サイズ).
+fn emit_format<W: Write>(f: &ForwardFormat<'_>, out: &mut W) -> fmt::Result {
+    if f.consumed_predecessor {
+        emit_content_as_plain(f.target.get(), out)?;
     }
-    out.write_str("［＃")?;
-    emit_bouten_targets(b.target.get(), out)?;
-    match b.position {
-        BoutenPosition::Left => out.write_str("の左に")?,
-        _ => out.write_char('に')?,
+    if let ForwardAttr::Bouten { kind, position } = f.attr {
+        out.write_str("［＃")?;
+        emit_bouten_targets(f.target.get(), out)?;
+        match position {
+            BoutenPosition::Left => out.write_str("の左に")?,
+            _ => out.write_char('に')?,
+        }
+        out.write_str(kind.keyword())?;
+        return out.write_char('］');
     }
-    out.write_str(b.kind.keyword())?;
+    out.write_str("［＃「")?;
+    emit_content_as_plain(f.target.get(), out)?;
+    out.write_str("」は")?;
+    // 文字サイズ carries a magnitude the static keyword table can't hold.
+    if let ForwardAttr::FontSize(shift) = f.attr {
+        let word = if shift.larger() {
+            "大きな"
+        } else {
+            "小さな"
+        };
+        write!(out, "{}段階{word}文字", shift.magnitude())?;
+    } else {
+        out.write_str(f.attr.keyword())?;
+    }
     out.write_char('］')
 }
 
@@ -216,41 +234,6 @@ fn emit_bouten_targets<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
         }
         _ => Ok(()),
     }
-}
-
-fn emit_tate_chu_yoko<W: Write>(t: &CombineUpright<'_>, out: &mut W) -> fmt::Result {
-    if t.consumed_predecessor {
-        // Same back-ref re-emit as `emit_bouten` — see that function's
-        // comment for the round-trip rationale.
-        emit_content_as_plain(t.text.get(), out)?;
-    }
-    out.write_str("［＃「")?;
-    emit_content_as_plain(t.text.get(), out)?;
-    out.write_str("」は縦中横］")
-}
-
-/// Re-emit a forward-reference 太字 / 斜体 leaf as
-/// `<text>［＃「<text>」は太字／斜体］`. `consumed_predecessor` drives the
-/// leading literal re-emit, identical to `emit_bouten` / `emit_tate_chu_yoko`.
-fn emit_emphasis<W: Write>(e: &Emphasis<'_>, out: &mut W) -> fmt::Result {
-    if e.consumed_predecessor {
-        emit_content_as_plain(e.text.get(), out)?;
-    }
-    out.write_str("［＃「")?;
-    emit_content_as_plain(e.text.get(), out)?;
-    out.write_str("」は")?;
-    // 文字サイズ carries a magnitude that the static keyword table can't hold.
-    if let EmphasisKind::FontSize { steps } = e.kind {
-        let (magnitude, word) = if steps >= 0 {
-            (steps, "大きな")
-        } else {
-            (-steps, "小さな")
-        };
-        write!(out, "{magnitude}段階{word}文字")?;
-    } else {
-        out.write_str(e.kind.keyword())?;
-    }
-    out.write_char('］')
 }
 
 fn emit_gaiji<W: Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
@@ -300,28 +283,18 @@ fn emit_section_break<W: Write>(kind: SectionKind, out: &mut W) -> fmt::Result {
     out.write_char('］')
 }
 
-fn emit_indent<W: Write>(i: Indent, out: &mut W) -> fmt::Result {
-    if i.amount == 1 {
-        out.write_str("［＃字下げ］")
-    } else {
-        write!(out, "［＃{}字下げ］", i.amount)
+fn emit_line<W: Write>(lf: LineFormat, out: &mut W) -> fmt::Result {
+    match lf {
+        LineFormat::Indent { amount: 1 } => out.write_str("［＃字下げ］"),
+        LineFormat::Indent { amount } => write!(out, "［＃{amount}字下げ］"),
+        LineFormat::AlignEnd { offset: 0 } => out.write_str("［＃地付き］"),
+        LineFormat::AlignEnd { offset } => write!(out, "［＃地から{offset}字上げ］"),
+        LineFormat::Center { page: true } => out.write_str("［＃ページの左右中央］"),
+        LineFormat::Center { page: false } => out.write_str("［＃中央揃え］"),
+        LineFormat::Framed => out.write_str("［＃罫囲み］"),
+        // `LineFormat` is `#[non_exhaustive]`; forward-compat skip.
+        _ => Ok(()),
     }
-}
-
-fn emit_align_end<W: Write>(a: AlignEnd, out: &mut W) -> fmt::Result {
-    if a.offset == 0 {
-        out.write_str("［＃地付き］")
-    } else {
-        write!(out, "［＃地から{}字上げ］", a.offset)
-    }
-}
-
-fn emit_center<W: Write>(c: Center, out: &mut W) -> fmt::Result {
-    out.write_str(if c.page {
-        "［＃ページの左右中央］"
-    } else {
-        "［＃中央揃え］"
-    })
 }
 
 fn emit_sashie<W: Write>(s: &Illustration<'_>, out: &mut W) -> fmt::Result {
@@ -397,26 +370,6 @@ fn emit_heading_hint<W: Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result 
     out.write_str("］")
 }
 
-const fn container_open_marker(kind: ContainerKind) -> &'static str {
-    match kind {
-        ContainerKind::AlignEnd { .. } => "［＃ここから地付き］",
-        ContainerKind::Framed => "［＃罫囲み］",
-        ContainerKind::Warichu => "［＃割り注］",
-        ContainerKind::CombineUprightRange => "［＃縦中横］",
-        _ => "［＃ここから字下げ］",
-    }
-}
-
-const fn container_close_marker(kind: ContainerKind) -> &'static str {
-    match kind {
-        ContainerKind::AlignEnd { .. } => "［＃ここで地付き終わり］",
-        ContainerKind::Framed => "［＃罫囲み終わり］",
-        ContainerKind::Warichu => "［＃割り注終わり］",
-        ContainerKind::CombineUprightRange => "［＃縦中横終わり］",
-        _ => "［＃ここで字下げ終わり］",
-    }
-}
-
 /// `左に` left-side prefix for a bouten range marker, or `""`.
 const fn bouten_left_prefix(position: BoutenPosition) -> &'static str {
     match position {
@@ -425,108 +378,109 @@ const fn bouten_left_prefix(position: BoutenPosition) -> &'static str {
     }
 }
 
-/// Serialize a container open marker. 傍点 / 傍線 ranges reconstruct
-/// `［＃<左に?><variant>］`; the fixed-family containers use the static
-/// [`container_open_marker`].
-fn emit_container_open<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Result {
-    match kind {
-        ContainerKind::BoutenRange { kind, position } => write!(
+/// Serialize a container open marker from its [`RegionFormat`]. 傍点 / 傍線
+/// ranges reconstruct `［＃<左に?><variant>］`; every other family spells its
+/// own opener (preserving every payload — dropping N / width / offset / the
+/// 字組み clause would be a §7.6 fixed-point violation).
+fn emit_container_open<W: Write>(open: RegionFormat, out: &mut W) -> fmt::Result {
+    match open {
+        RegionFormat::Bouten { kind, position } => write!(
             out,
             "［＃{}{}］",
             bouten_left_prefix(position),
             kind.keyword()
         ),
-        // #78 line-layout compounds — checked first so the `..`-tolerant plain
-        // arms below cannot swallow a layout-bearing Indent and silently drop
-        // the secondary clause (a §7.6 fixed-point violation).
-        ContainerKind::Indent {
+        RegionFormat::Indent(block) => emit_indent_open(block, out),
+        RegionFormat::Bold { padded: false } => out.write_str("［＃太字］"),
+        RegionFormat::Bold { padded: true } => out.write_str("［＃ここから太字］"),
+        RegionFormat::Italic { padded: false } => out.write_str("［＃斜体］"),
+        RegionFormat::Italic { padded: true } => out.write_str("［＃ここから斜体］"),
+        RegionFormat::AlignEnd { offset: 0 } => out.write_str("［＃ここから地付き］"),
+        RegionFormat::AlignEnd { offset } => write!(out, "［＃ここから地から{offset}字上げ］"),
+        RegionFormat::LineWidth(width) => write!(out, "［＃ここから{}字詰め］", width.0),
+        RegionFormat::Heading {
+            level,
+            style,
+            padded,
+        } => write!(
+            out,
+            "［＃{}{}{}］",
+            if padded { "ここから" } else { "" },
+            heading_style_keyword(style),
+            heading_level_word(level),
+        ),
+        RegionFormat::Columns(count) => write!(out, "［＃ここから{}段組み］", count.0),
+        RegionFormat::Table => out.write_str("［＃ここから表］"),
+        RegionFormat::Horizontal => out.write_str("［＃ここから横組み］"),
+        RegionFormat::FontSize(shift) => {
+            let word = if shift.larger() {
+                "大きな"
+            } else {
+                "小さな"
+            };
+            write!(out, "［＃ここから{}段階{word}文字］", shift.magnitude())
+        }
+        RegionFormat::SmallScript(side) => {
+            write!(out, "［＃行{}小書き］", small_script_side_word(side))
+        }
+        RegionFormat::Caption { padded: true } => out.write_str("［＃ここからキャプション］"),
+        RegionFormat::Caption { padded: false } => out.write_str("［＃キャプション］"),
+        // `Warichu` is the block 割り注 region (the inline ［＃割り注］ is an
+        // `Directive{WarichuOpen}`), so it serializes to the ここから form.
+        RegionFormat::Warichu => out.write_str("［＃ここから割り注］"),
+        RegionFormat::Framed => out.write_str("［＃罫囲み］"),
+        RegionFormat::CombineUpright => out.write_str("［＃縦中横］"),
+        // `RegionFormat` is `#[non_exhaustive]`; a future family falls back to
+        // the most common opener until it is given a spelling here.
+        _ => out.write_str("［＃ここから字下げ］"),
+    }
+}
+
+/// Serialize a `［＃ここから…字下げ…］` opener from its [`IndentBlock`]. The
+/// #78 line-layout compounds are checked first so the `..`-tolerant plain arms
+/// cannot swallow a layout-bearing indent and drop the secondary clause.
+fn emit_indent_open<W: Write>(block: IndentBlock, out: &mut W) -> fmt::Result {
+    match block {
+        IndentBlock {
             amount,
-            layout: IndentLayout::Kumi { lines, width },
+            layout: IndentLayout::Kumi(kumi),
             ..
         } => write!(
             out,
-            "［＃ここから{amount}字下げ、{lines}行{width}字組みで］"
+            "［＃ここから{amount}字下げ、{}行{}字組みで］",
+            kumi.lines, kumi.width
         ),
-        ContainerKind::Indent {
+        IndentBlock {
             amount,
             layout: IndentLayout::LineWidth(width),
             ..
-        } => write!(out, "［＃ここから{amount}字下げ、{width}字詰め］"),
-        ContainerKind::Indent {
+        } => write!(out, "［＃ここから{amount}字下げ、{}字詰め］", width.0),
+        IndentBlock {
             amount,
             wrap: Some(wrap),
             layout: IndentLayout::None,
             ..
         } => write!(out, "［＃ここから{amount}字下げ、折り返して{wrap}字下げ］"),
         // Combined 字下げ＋ページ左右中央 — an indented, page-centred block.
-        ContainerKind::Indent {
+        IndentBlock {
             amount,
             wrap: None,
             center: true,
             layout: IndentLayout::None,
         } => write!(out, "［＃ここから{amount}字下げ、ページの左右中央に］"),
-        // Plain 字下げ — preserve the amount. A bare container_open_marker
-        // fallback collapses it to ［＃ここから字下げ］, dropping N (a §7.6
-        // fixed-point violation). `amount == 1` keeps the idiomatic
-        // no-number 字下げ form (the IndentBlock1 opener).
-        ContainerKind::Indent {
+        // `amount == 1` keeps the idiomatic no-number 字下げ form.
+        IndentBlock {
             amount: 1,
             wrap: None,
             center: false,
             layout: IndentLayout::None,
         } => out.write_str("［＃ここから字下げ］"),
-        ContainerKind::Indent {
+        IndentBlock {
             amount,
             wrap: None,
             center: false,
             layout: IndentLayout::None,
         } => write!(out, "［＃ここから{amount}字下げ］"),
-        ContainerKind::Bold { block: false } => out.write_str("［＃太字］"),
-        ContainerKind::Bold { block: true } => out.write_str("［＃ここから太字］"),
-        ContainerKind::Italic { block: false } => out.write_str("［＃斜体］"),
-        ContainerKind::Italic { block: true } => out.write_str("［＃ここから斜体］"),
-        // Preserve the 地から N 字上げ offset. A bare fallback collapses
-        // every AlignEnd opener to ［＃ここから地付き］, silently dropping a
-        // non-zero offset (a §7.6 fixed-point violation). The close marker
-        // canonicalises to ［＃ここで地付き終わり］ for both forms (the
-        // close node carries no offset; the open-side payload is
-        // authoritative).
-        ContainerKind::AlignEnd { offset: 0 } => out.write_str("［＃ここから地付き］"),
-        ContainerKind::AlignEnd { offset } => write!(out, "［＃ここから地から{offset}字上げ］"),
-        // Preserve the width (byte-exact). A bare fallback would emit the
-        // 字下げ opener and silently mislabel the family.
-        ContainerKind::LineWidth { width } => write!(out, "［＃ここから{width}字詰め］"),
-        ContainerKind::Heading { kind, style, block } => write!(
-            out,
-            "［＃{}{}{}］",
-            if block { "ここから" } else { "" },
-            heading_style_keyword(style),
-            heading_level_word(kind),
-        ),
-        ContainerKind::Columns { count } => write!(out, "［＃ここから{count}段組み］"),
-        ContainerKind::Table => out.write_str("［＃ここから表］"),
-        ContainerKind::Horizontal => out.write_str("［＃ここから横組み］"),
-        ContainerKind::FontSize { steps } => {
-            let (magnitude, word) = if steps >= 0 {
-                (steps, "大きな")
-            } else {
-                (-steps, "小さな")
-            };
-            write!(out, "［＃ここから{magnitude}段階{word}文字］")
-        }
-        ContainerKind::SmallScript { side } => {
-            write!(out, "［＃行{}小書き］", small_script_side_word(side))
-        }
-        ContainerKind::Caption { block } => out.write_str(if block {
-            "［＃ここからキャプション］"
-        } else {
-            "［＃キャプション］"
-        }),
-        // `ContainerKind::Warichu` is the block 割り注 region (the inline
-        // ［＃割り注］ is an `Directive{WarichuOpen}`), so it serializes to
-        // the ここから form.
-        ContainerKind::Warichu => out.write_str("［＃ここから割り注］"),
-        _ => out.write_str(container_open_marker(kind)),
     }
 }
 
@@ -538,54 +492,59 @@ const fn small_script_side_word(side: BoutenPosition) -> &'static str {
     }
 }
 
-/// Serialize a container close marker — the bouten range close adds the
-/// `終わり` suffix to the same `［＃<左に?><variant>…］` form.
-fn emit_container_close<W: Write>(kind: ContainerKind, out: &mut W) -> fmt::Result {
-    match kind {
-        ContainerKind::BoutenRange { kind, position } => write!(
+/// Serialize a container close marker from the close's own [`RegionClose`].
+///
+/// Self-sufficient: the 字組み close keeps its own width, the 太字/斜体
+/// block-vs-inline form its own `padded`, the 傍点/傍線 close its own family
+/// (so a mismatched `［＃傍線終わり］` closing a `［＃傍点］` round-trips), and
+/// a stray close with no matching open still emits its marker.
+fn emit_container_close<W: Write>(close: RegionClose, out: &mut W) -> fmt::Result {
+    match close {
+        RegionClose::Bouten { kind, position } => write!(
             out,
             "［＃{}{}終わり］",
             bouten_left_prefix(position),
             kind.keyword()
         ),
-        ContainerKind::Bold { block: false } => out.write_str("［＃太字終わり］"),
-        ContainerKind::Bold { block: true } => out.write_str("［＃ここで太字終わり］"),
-        ContainerKind::Italic { block: false } => out.write_str("［＃斜体終わり］"),
-        ContainerKind::Italic { block: true } => out.write_str("［＃ここで斜体終わり］"),
-        // #78 字組み compound — the close marker carries the width so it
-        // round-trips byte-exact (unlike the other block closers, which the
-        // open side keeps authoritative). The 字詰め compound and the plain /
-        // 折り返して / 中央 indents all fall to the generic 字下げ終わり below.
-        ContainerKind::Indent {
-            layout: IndentLayout::Kumi { width, .. },
-            ..
-        } => write!(out, "［＃ここで字下げ、{width}字組み終わり］"),
-        ContainerKind::LineWidth { .. } => out.write_str("［＃ここで字詰め終わり］"),
-        ContainerKind::Heading { kind, style, block } => write!(
+        RegionClose::Bold { padded: false } => out.write_str("［＃太字終わり］"),
+        RegionClose::Bold { padded: true } => out.write_str("［＃ここで太字終わり］"),
+        RegionClose::Italic { padded: false } => out.write_str("［＃斜体終わり］"),
+        RegionClose::Italic { padded: true } => out.write_str("［＃ここで斜体終わり］"),
+        // #78 字組み compound — the close keeps its own width so the marker
+        // round-trips byte-exact; every other indent close is the generic form.
+        RegionClose::Indent {
+            kumi_width: Some(width),
+        } => write!(out, "［＃ここで字下げ、{}字組み終わり］", width.0),
+        RegionClose::LineWidth => out.write_str("［＃ここで字詰め終わり］"),
+        RegionClose::Heading {
+            level,
+            style,
+            padded,
+        } => write!(
             out,
             "［＃{}{}{}終わり］",
-            if block { "ここで" } else { "" },
+            if padded { "ここで" } else { "" },
             heading_style_keyword(style),
-            heading_level_word(kind),
+            heading_level_word(level),
         ),
-        ContainerKind::Columns { .. } => out.write_str("［＃ここで段組み終わり］"),
-        ContainerKind::Table => out.write_str("［＃ここで表終わり］"),
-        ContainerKind::Horizontal => out.write_str("［＃ここで横組み終わり］"),
-        ContainerKind::FontSize { steps } => out.write_str(if steps >= 0 {
-            "［＃ここで大きな文字終わり］"
-        } else {
-            "［＃ここで小さな文字終わり］"
-        }),
-        ContainerKind::SmallScript { side } => {
+        RegionClose::Columns => out.write_str("［＃ここで段組み終わり］"),
+        RegionClose::Table => out.write_str("［＃ここで表終わり］"),
+        RegionClose::Horizontal => out.write_str("［＃ここで横組み終わり］"),
+        RegionClose::FontSize { larger: true } => out.write_str("［＃ここで大きな文字終わり］"),
+        RegionClose::FontSize { larger: false } => out.write_str("［＃ここで小さな文字終わり］"),
+        RegionClose::SmallScript(side) => {
             write!(out, "［＃行{}小書き終わり］", small_script_side_word(side))
         }
-        ContainerKind::Caption { block } => out.write_str(if block {
-            "［＃ここでキャプション終わり］"
-        } else {
-            "［＃キャプション終わり］"
-        }),
-        ContainerKind::Warichu => out.write_str("［＃ここで割り注終わり］"),
-        _ => out.write_str(container_close_marker(kind)),
+        RegionClose::Caption { padded: true } => out.write_str("［＃ここでキャプション終わり］"),
+        RegionClose::Caption { padded: false } => out.write_str("［＃キャプション終わり］"),
+        RegionClose::Warichu => out.write_str("［＃ここで割り注終わり］"),
+        RegionClose::Framed => out.write_str("［＃罫囲み終わり］"),
+        RegionClose::AlignEnd => out.write_str("［＃ここで地付き終わり］"),
+        RegionClose::CombineUpright => out.write_str("［＃縦中横終わり］"),
+        // The generic `字下げ終わり` — the `Indent { kumi_width: None }` close
+        // (plain / 字詰め / 折り返して / 中央 indents) and the `#[non_exhaustive]`
+        // forward-compat fallback.
+        _ => out.write_str("［＃ここで字下げ終わり］"),
     }
 }
 

@@ -1,8 +1,9 @@
 //! Sentinel-position → [`Node`] lookup table.
 //!
 //! The registry pairs every PUA sentinel position written into the
-//! lexer's normalized text with the [`Node`] (or
-//! [`crate::extension::ContainerKind`]) that originated it.
+//! lexer's normalized text with the [`Node`] (or the
+//! [`crate::format::RegionFormat`] / [`crate::format::RegionClose`]
+//! container marker) that originated it.
 //! Downstream renderers walk the normalized text, encounter a
 //! sentinel, and `node_at(pos)` to recover the structured node.
 //!
@@ -26,7 +27,7 @@
 //! [`aozora_veb::EytzingerMap`] for cache-friendly lookups during
 //! render-time traversal.
 
-use crate::extension::ContainerKind;
+use crate::format::{RegionClose, RegionFormat};
 
 use aozora_spec::{NormalizedOffset, Sentinel};
 use aozora_veb::EytzingerMap;
@@ -49,11 +50,13 @@ pub enum NodeRef<'src> {
     /// ([`aozora_spec::Sentinel::BlockLeaf`]).
     BlockLeaf(Node<'src>),
     /// Hit on a block-container-open position
-    /// ([`aozora_spec::Sentinel::BlockOpen`]).
-    BlockOpen(ContainerKind),
+    /// ([`aozora_spec::Sentinel::BlockOpen`]). Carries the authoritative
+    /// open [`RegionFormat`].
+    BlockOpen(RegionFormat),
     /// Hit on a block-container-close position
-    /// ([`aozora_spec::Sentinel::BlockClose`]).
-    BlockClose(ContainerKind),
+    /// ([`aozora_spec::Sentinel::BlockClose`]). Carries the [`RegionClose`]
+    /// discriminant; the open payload stays authoritative when pairing.
+    BlockClose(RegionClose),
 }
 
 impl NodeRef<'_> {
@@ -203,10 +206,10 @@ impl Default for Registry<'_> {
 /// the [`Registry`] uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContainerPair {
-    /// The container kind. The builder constructs the pair from the
-    /// open-stack pop, so `kind` reflects the open marker
-    /// authoritatively (rather than the close-side payload).
-    pub kind: ContainerKind,
+    /// The open container format. The builder constructs the pair from the
+    /// open-stack pop, so `kind` reflects the open marker authoritatively
+    /// (the close side is a discriminant; see [`RegionClose`]).
+    pub kind: RegionFormat,
     /// Normalized byte offset of the open sentinel (`U+E003`).
     pub open: NormalizedOffset,
     /// Normalized byte offset of the close sentinel (`U+E004`).
@@ -217,7 +220,7 @@ impl ContainerPair {
     /// Construct a pair. Helper for builder tests; in production the
     /// pipeline emits these directly.
     #[must_use]
-    pub const fn new(kind: ContainerKind, open: NormalizedOffset, close: NormalizedOffset) -> Self {
+    pub const fn new(kind: RegionFormat, open: NormalizedOffset, close: NormalizedOffset) -> Self {
         Self { kind, open, close }
     }
 }
@@ -225,7 +228,7 @@ impl ContainerPair {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Indent, IndentLayout};
+    use crate::format::{IndentBlock, IndentLayout, LineFormat};
 
     #[test]
     fn empty_registry_reports_empty() {
@@ -243,9 +246,15 @@ mod tests {
     #[test]
     fn node_at_returns_inline_payload_for_inline_sentinel_position() {
         let r: Registry<'static> = Registry::from_sorted_slice(&[
-            (10u32, NodeRef::Inline(Node::Indent(Indent { amount: 1 }))),
+            (
+                10u32,
+                NodeRef::Inline(Node::Line(LineFormat::Indent { amount: 1 })),
+            ),
             (20u32, NodeRef::Inline(Node::PageBreak)),
-            (30u32, NodeRef::Inline(Node::Indent(Indent { amount: 3 }))),
+            (
+                30u32,
+                NodeRef::Inline(Node::Line(LineFormat::Indent { amount: 3 })),
+            ),
         ]);
         assert!(!r.is_empty());
         assert_eq!(r.len(), 3);
@@ -259,8 +268,8 @@ mod tests {
         let r: Registry<'static> = Registry::from_sorted_slice(&[
             (10u32, NodeRef::Inline(Node::PageBreak)),
             (20u32, NodeRef::BlockLeaf(Node::PageBreak)),
-            (30u32, NodeRef::BlockOpen(ContainerKind::Framed)),
-            (40u32, NodeRef::BlockClose(ContainerKind::Framed)),
+            (30u32, NodeRef::BlockOpen(RegionFormat::Framed)),
+            (40u32, NodeRef::BlockClose(RegionClose::Framed)),
         ]);
         assert!(matches!(
             r.node_at(NormalizedOffset::new(10)),
@@ -272,11 +281,11 @@ mod tests {
         ));
         assert!(matches!(
             r.node_at(NormalizedOffset::new(30)),
-            Some(NodeRef::BlockOpen(ContainerKind::Framed))
+            Some(NodeRef::BlockOpen(RegionFormat::Framed))
         ));
         assert!(matches!(
             r.node_at(NormalizedOffset::new(40)),
-            Some(NodeRef::BlockClose(ContainerKind::Framed))
+            Some(NodeRef::BlockClose(RegionClose::Framed))
         ));
         assert!(r.node_at(NormalizedOffset::new(99)).is_none());
     }
@@ -286,16 +295,16 @@ mod tests {
         let r: Registry<'static> = Registry::from_sorted_slice(&[
             (
                 5u32,
-                NodeRef::BlockOpen(ContainerKind::Indent {
+                NodeRef::BlockOpen(RegionFormat::Indent(IndentBlock {
                     amount: 2,
                     wrap: None,
                     center: false,
                     layout: IndentLayout::None,
-                }),
+                })),
             ),
-            (10u32, NodeRef::BlockOpen(ContainerKind::Framed)),
+            (10u32, NodeRef::BlockOpen(RegionFormat::Framed)),
             (15u32, NodeRef::Inline(Node::PageBreak)),
-            (20u32, NodeRef::BlockClose(ContainerKind::Framed)),
+            (20u32, NodeRef::BlockClose(RegionClose::Framed)),
         ]);
         assert_eq!(r.count_kind(Sentinel::BlockOpen), 2);
         assert_eq!(r.count_kind(Sentinel::Inline), 1);
@@ -307,8 +316,8 @@ mod tests {
     fn node_ref_sentinel_kind_round_trips() {
         let inline = NodeRef::Inline(Node::PageBreak);
         let block_leaf = NodeRef::BlockLeaf(Node::PageBreak);
-        let block_open = NodeRef::BlockOpen(ContainerKind::Framed);
-        let block_close = NodeRef::BlockClose(ContainerKind::Framed);
+        let block_open = NodeRef::BlockOpen(RegionFormat::Framed);
+        let block_close = NodeRef::BlockClose(RegionClose::Framed);
         assert_eq!(inline.sentinel_kind(), Sentinel::Inline);
         assert_eq!(block_leaf.sentinel_kind(), Sentinel::BlockLeaf);
         assert_eq!(block_open.sentinel_kind(), Sentinel::BlockOpen);

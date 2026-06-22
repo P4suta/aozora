@@ -13,11 +13,14 @@ use super::super::instrumentation::{Subsystem, SubsystemGuard};
 use std::sync::OnceLock;
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, Anchored, Input, MatchKind, StartKind};
+use core::num::{NonZeroI8, NonZeroU8};
+
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
 use aozora_syntax::{
-    AlignEnd, BOUTEN_KINDS, BoutenKind, BoutenPosition, Center, ContainerKind, DirectiveKind,
-    EmphasisKind, HeadingKind, HeadingStyle, Indent, IndentLayout, SectionKind,
+    BOUTEN_KINDS, BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, FontShift, HeadingKind,
+    HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, RegionClose,
+    RegionFormat, SectionKind,
 };
 
 use super::EmitKind;
@@ -799,11 +802,11 @@ pub(super) fn classify_annotation_body<'a>(
     // `ContainerKind::Heading`. Tried before the body dispatcher: their
     // keywords overlap the `ここから…` / `…終わり` shapes but always carry a
     // `見出し` keyword, so a non-heading `ここから…` body falls through.
-    if let Some((container, is_open)) = parse_heading_directive(body) {
+    if let Some((region, is_open)) = parse_heading_directive(body) {
         let emit = if is_open {
-            EmitKind::BlockOpen(container)
+            EmitKind::BlockOpen(region)
         } else {
-            EmitKind::BlockClose(container)
+            EmitKind::BlockClose(RegionClose::of(region))
         };
         return Some((emit, None));
     }
@@ -835,94 +838,84 @@ pub(super) fn classify_annotation_body<'a>(
             None,
         )),
         BodyFamily::AlignEnd0 => Some((
-            EmitKind::Aozora(alloc.align_end(AlignEnd { offset: 0 })),
+            EmitKind::Aozora(alloc.line(LineFormat::AlignEnd { offset: 0 })),
             None,
         )),
         BodyFamily::CenterMarker => {
             // ページの左右中央 (page centre) vs 中央揃え — a single-line
             // zero-width centring marker.
             let page = body == "ページの左右中央";
-            Some((EmitKind::Aozora(alloc.center(Center { page })), None))
+            Some((
+                EmitKind::Aozora(alloc.line(LineFormat::Center { page })),
+                None,
+            ))
         }
-        BodyFamily::KeigakomiOpen => Some((EmitKind::BlockOpen(ContainerKind::Framed), None)),
-        BodyFamily::KeigakomiClose => Some((EmitKind::BlockClose(ContainerKind::Framed), None)),
-        BodyFamily::WarichuBlockOpen => Some((EmitKind::BlockOpen(ContainerKind::Warichu), None)),
-        BodyFamily::WarichuBlockEnd => Some((EmitKind::BlockClose(ContainerKind::Warichu), None)),
+        BodyFamily::KeigakomiOpen => Some((EmitKind::BlockOpen(RegionFormat::Framed), None)),
+        BodyFamily::KeigakomiClose => Some((EmitKind::BlockClose(RegionClose::Framed), None)),
+        BodyFamily::WarichuBlockOpen => Some((EmitKind::BlockOpen(RegionFormat::Warichu), None)),
+        BodyFamily::WarichuBlockEnd => Some((EmitKind::BlockClose(RegionClose::Warichu), None)),
         BodyFamily::IndentBlock1 => Some((
-            EmitKind::BlockOpen(ContainerKind::Indent {
+            EmitKind::BlockOpen(RegionFormat::Indent(IndentBlock {
                 amount: 1,
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
-            }),
+            })),
             None,
         )),
         BodyFamily::AlignEndBlock0 => Some((
-            EmitKind::BlockOpen(ContainerKind::AlignEnd { offset: 0 }),
+            EmitKind::BlockOpen(RegionFormat::AlignEnd { offset: 0 }),
             None,
         )),
         BodyFamily::IndentBlockEnd => Some((
-            EmitKind::BlockClose(ContainerKind::Indent {
-                amount: 0,
-                wrap: None,
-                center: false,
-                layout: IndentLayout::None,
-            }),
+            EmitKind::BlockClose(RegionClose::Indent { kumi_width: None }),
             None,
         )),
-        BodyFamily::AlignEndBlockEnd => Some((
-            EmitKind::BlockClose(ContainerKind::AlignEnd { offset: 0 }),
-            None,
-        )),
-        BodyFamily::LineWidthBlockEnd => Some((
+        BodyFamily::AlignEndBlockEnd => Some((EmitKind::BlockClose(RegionClose::AlignEnd), None)),
+        BodyFamily::LineWidthBlockEnd => {
             // The close marker carries no width; the open-side payload is
             // authoritative when pairing (mirrors the generic 字下げ終わり).
-            EmitKind::BlockClose(ContainerKind::LineWidth { width: 0 }),
-            None,
-        )),
+            Some((EmitKind::BlockClose(RegionClose::LineWidth), None))
+        }
         BodyFamily::IndentKumiBlockEnd => {
             // ここで字下げ、{W}字組み終わり (#78) — the 字組み compound closer.
-            // Unlike the other block closers it carries the `width`, so the
-            // marker round-trips byte-exact; pairing is still by the Indent
-            // family (the close payload only feeds serialize). Tolerate an
-            // optional leading `{L}行`. Declines (→ Unknown) on any other shape.
+            // The close carries its own `W` so the marker round-trips byte-exact
+            // (it pairs with the Indent open by family). Tolerate an optional
+            // leading `{L}行`. Declines (→ Unknown) on any other shape.
             let rest = &body[match_end..];
             let rest = rest.split_once('行').map_or(rest, |(_lines, after)| after);
             let (width, tail) = parse_decimal_u8_prefix(rest)?;
-            (width >= 1 && tail == "字組み終わり").then_some((
-                EmitKind::BlockClose(ContainerKind::Indent {
-                    amount: 0,
-                    wrap: None,
-                    center: false,
-                    layout: IndentLayout::Kumi { lines: 0, width },
-                }),
-                None,
-            ))
+            (tail == "字組み終わり")
+                .then(|| NonZeroU8::new(width))
+                .flatten()
+                .map(|w| {
+                    (
+                        EmitKind::BlockClose(RegionClose::Indent {
+                            kumi_width: Some(LineWidth(w)),
+                        }),
+                        None,
+                    )
+                })
         }
-        BodyFamily::TableBlockOpen => Some((EmitKind::BlockOpen(ContainerKind::Table), None)),
-        BodyFamily::TableBlockEnd => Some((EmitKind::BlockClose(ContainerKind::Table), None)),
+        BodyFamily::TableBlockOpen => Some((EmitKind::BlockOpen(RegionFormat::Table), None)),
+        BodyFamily::TableBlockEnd => Some((EmitKind::BlockClose(RegionClose::Table), None)),
         BodyFamily::HorizontalBlockOpen => {
-            Some((EmitKind::BlockOpen(ContainerKind::Horizontal), None))
+            Some((EmitKind::BlockOpen(RegionFormat::Horizontal), None))
         }
         BodyFamily::HorizontalBlockEnd => {
-            Some((EmitKind::BlockClose(ContainerKind::Horizontal), None))
+            Some((EmitKind::BlockClose(RegionClose::Horizontal), None))
         }
         BodyFamily::FontSizeBlockEnd => {
-            // The close marker carries only the direction; its magnitude is a
-            // ±1 placeholder (the open-side stage count is authoritative).
-            // Matches both ここで…終わり and the bare …終わり sibling, so key
-            // on the direction word rather than the whole literal.
-            let steps = if body.contains("小さな") { -1 } else { 1 };
-            Some((
-                EmitKind::BlockClose(ContainerKind::FontSize { steps }),
-                None,
-            ))
+            // The close marker carries only the direction (大きな / 小さな);
+            // its magnitude is the open's. Matches both ここで…終わり and the
+            // bare …終わり sibling, so key on the direction word.
+            let larger = !body.contains("小さな");
+            Some((EmitKind::BlockClose(RegionClose::FontSize { larger }), None))
         }
-        BodyFamily::ColumnsBlockEnd => Some((
+        BodyFamily::ColumnsBlockEnd => {
             // Close marker carries no count; the open-side payload is authoritative.
-            EmitKind::BlockClose(ContainerKind::Columns { count: 0 }),
-            None,
-        )),
+            Some((EmitKind::BlockClose(RegionClose::Columns), None))
+        }
         BodyFamily::WarichuOpen => {
             let p = alloc.make_directive("［＃割り注］", DirectiveKind::WarichuOpen);
             let node = alloc.annotation(p);
@@ -951,7 +944,7 @@ pub(super) fn classify_annotation_body<'a>(
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
             (tail == "字上げ" && n >= 1).then(|| {
                 (
-                    EmitKind::Aozora(alloc.align_end(AlignEnd { offset: n })),
+                    EmitKind::Aozora(alloc.line(LineFormat::AlignEnd { offset: n })),
                     None,
                 )
             })
@@ -961,8 +954,12 @@ pub(super) fn classify_annotation_body<'a>(
             // margin, identical to a plain {N}字下げ (Indent leaf).
             let rest = &body[match_end..];
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
-            (tail == "字下げ" && n >= 1)
-                .then(|| (EmitKind::Aozora(alloc.indent(Indent { amount: n })), None))
+            (tail == "字下げ" && n >= 1).then(|| {
+                (
+                    EmitKind::Aozora(alloc.line(LineFormat::Indent { amount: n })),
+                    None,
+                )
+            })
         }
         BodyFamily::KaigyouTentsukiPrefix => {
             // body == 改行天付き、折り返して{N}字下げ — the ここから-less bare
@@ -972,12 +969,12 @@ pub(super) fn classify_annotation_body<'a>(
             let after = rest.strip_prefix("、折り返して")?;
             let (m, tail) = parse_decimal_u8_prefix(after)?;
             (tail == "字下げ").then_some((
-                EmitKind::BlockOpen(ContainerKind::Indent {
+                EmitKind::BlockOpen(RegionFormat::Indent(IndentBlock {
                     amount: 0,
                     wrap: Some(m),
                     center: false,
                     layout: IndentLayout::None,
-                }),
+                })),
                 None,
             ))
         }
@@ -994,24 +991,24 @@ pub(super) fn classify_annotation_body<'a>(
             if let Some(after) = rest.strip_prefix("改行天付き、折り返して") {
                 let (m, tail2) = parse_decimal_u8_prefix(after)?;
                 return (tail2 == "字下げ").then_some((
-                    EmitKind::BlockOpen(ContainerKind::Indent {
+                    EmitKind::BlockOpen(RegionFormat::Indent(IndentBlock {
                         amount: 0,
                         wrap: Some(m),
                         center: false,
                         layout: IndentLayout::None,
-                    }),
+                    })),
                     None,
                 ));
             }
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
             if tail == "字下げ" {
                 Some((
-                    EmitKind::BlockOpen(ContainerKind::Indent {
+                    EmitKind::BlockOpen(RegionFormat::Indent(IndentBlock {
                         amount: n,
                         wrap: None,
                         center: false,
                         layout: IndentLayout::None,
-                    }),
+                    })),
                     None,
                 ))
             } else if let Some(after) = tail.strip_prefix("字下げ、折り返して") {
@@ -1019,12 +1016,12 @@ pub(super) fn classify_annotation_body<'a>(
                 // the first line indents `n`, wrapped continuation lines `m`.
                 let (m, tail2) = parse_decimal_u8_prefix(after)?;
                 (tail2 == "字下げ").then_some((
-                    EmitKind::BlockOpen(ContainerKind::Indent {
+                    EmitKind::BlockOpen(RegionFormat::Indent(IndentBlock {
                         amount: n,
                         wrap: Some(m),
                         center: false,
                         layout: IndentLayout::None,
-                    }),
+                    })),
                     None,
                 ))
             } else if matches!(
@@ -1035,12 +1032,12 @@ pub(super) fn classify_annotation_body<'a>(
                 // also page-centred. The combined opener still closes with the
                 // shared 字下げ終わり (pairing is by family).
                 Some((
-                    EmitKind::BlockOpen(ContainerKind::Indent {
+                    EmitKind::BlockOpen(RegionFormat::Indent(IndentBlock {
                         amount: n,
                         wrap: None,
                         center: true,
                         layout: IndentLayout::None,
-                    }),
+                    })),
                     None,
                 ))
             } else if let Some(after) = tail.strip_prefix("字下げ、") {
@@ -1053,38 +1050,48 @@ pub(super) fn classify_annotation_body<'a>(
                 // any other `字下げ、X` (e.g. PR2's 小さい活字 / ゴシック体).
                 parse_indent_line_layout(after).map(|layout| {
                     (
-                        EmitKind::BlockOpen(ContainerKind::Indent {
+                        EmitKind::BlockOpen(RegionFormat::Indent(IndentBlock {
                             amount: n,
                             wrap: None,
                             center: false,
                             layout,
-                        }),
+                        })),
                         None,
                     )
                 })
-            } else if tail == "字詰め" && n >= 1 {
+            } else if tail == "字詰め" {
                 // ここから{N}字詰め — line-width container (字詰め): N
                 // full-width characters per line. Shares the `ここから`
                 // opener prefix with 字下げ; block-only, closes with
-                // `ここで字詰め終わり`.
-                Some((
-                    EmitKind::BlockOpen(ContainerKind::LineWidth { width: n }),
-                    None,
-                ))
-            } else if (tail == "段組" || tail == "段組み") && n >= 1 {
+                // `ここで字詰め終わり`. `NonZero` folds the `N >= 1` guard.
+                NonZeroU8::new(n).map(|w| {
+                    (
+                        EmitKind::BlockOpen(RegionFormat::LineWidth(LineWidth(w))),
+                        None,
+                    )
+                })
+            } else if tail == "段組" || tail == "段組み" {
                 // ここから{N}段組(み) — multi-column container (段組): N
                 // columns. Shares the `ここから` prefix; closes with
-                // `ここで段組(み)終わり`.
-                Some((
-                    EmitKind::BlockOpen(ContainerKind::Columns { count: n }),
-                    None,
-                ))
+                // `ここで段組(み)終わり`. `NonZero` folds the `N >= 1` guard.
+                NonZeroU8::new(n).map(|c| {
+                    (
+                        EmitKind::BlockOpen(RegionFormat::Columns(ColumnCount(c))),
+                        None,
+                    )
+                })
             } else {
                 // ここから{N}段階大きな/小さな文字 — block font-size shift.
                 // Shares the `ここから` prefix; closes with the direction-only
                 // `ここで大きな/小さな文字終わり`.
                 font_size_block_open_steps(tail, n)
-                    .map(|steps| (EmitKind::BlockOpen(ContainerKind::FontSize { steps }), None))
+                    .and_then(NonZeroI8::new)
+                    .map(|s| {
+                        (
+                            EmitKind::BlockOpen(RegionFormat::FontSize(FontShift(s))),
+                            None,
+                        )
+                    })
             }
         }
         BodyFamily::AlignEndBlockParamPrefix => {
@@ -1092,7 +1099,7 @@ pub(super) fn classify_annotation_body<'a>(
             let rest = &body[match_end..];
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
             (tail == "字上げ").then_some((
-                EmitKind::BlockOpen(ContainerKind::AlignEnd { offset: n }),
+                EmitKind::BlockOpen(RegionFormat::AlignEnd { offset: n }),
                 None,
             ))
         }
@@ -1107,14 +1114,23 @@ pub(super) fn classify_annotation_body<'a>(
             // for full multi-digit support.
             let (n, tail) = parse_decimal_u8_prefix(body)?;
             if tail == "字下げ" && n >= 1 {
-                Some((EmitKind::Aozora(alloc.indent(Indent { amount: n })), None))
+                Some((
+                    EmitKind::Aozora(alloc.line(LineFormat::Indent { amount: n })),
+                    None,
+                ))
             } else {
                 // Bare-range font-size open: ［＃{N}段階大きな/小さな文字］ —
                 // the ここから-less sibling of the block opener, closed by the
                 // bare ［＃大きな/小さな文字終わり］. Reuses the FontSize
-                // container so render / pairing / serialize already apply.
+                // region so render / pairing / serialize already apply.
                 font_size_block_open_steps(tail, n)
-                    .map(|steps| (EmitKind::BlockOpen(ContainerKind::FontSize { steps }), None))
+                    .and_then(NonZeroI8::new)
+                    .map(|s| {
+                        (
+                            EmitKind::BlockOpen(RegionFormat::FontSize(FontShift(s))),
+                            None,
+                        )
+                    })
             }
         }
         BodyFamily::BoutenRange => {
@@ -1122,13 +1138,8 @@ pub(super) fn classify_annotation_body<'a>(
             // `終わり` close suffix. Re-parse the full body for the variant,
             // the `左に` position, and open vs close.
             let (kind, position, is_close) = parse_bouten_range_body(body)?;
-            let container = ContainerKind::BoutenRange { kind, position };
             Some((
-                if is_close {
-                    EmitKind::BlockClose(container)
-                } else {
-                    EmitKind::BlockOpen(container)
-                },
+                open_or_close(RegionFormat::Bouten { kind, position }, is_close),
                 None,
             ))
         }
@@ -1136,48 +1147,30 @@ pub(super) fn classify_annotation_body<'a>(
             // `太字` / `斜体` / `ここから太字` / `ここで斜体終わり` … —
             // re-parse the full body for the kind, the block vs inline
             // form, and open vs close.
-            let (kind, block, is_close) = parse_emphasis_body(body)?;
-            let container = match kind {
-                EmphasisKind::Italic => ContainerKind::Italic { block },
-                // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any
-                // future weight pair as the bold container.
-                _ => ContainerKind::Bold { block },
+            let (is_italic, padded, is_close) = parse_emphasis_body(body)?;
+            let region = if is_italic {
+                RegionFormat::Italic { padded }
+            } else {
+                RegionFormat::Bold { padded }
             };
-            Some((
-                if is_close {
-                    EmitKind::BlockClose(container)
-                } else {
-                    EmitKind::BlockOpen(container)
-                },
-                None,
-            ))
+            Some((open_or_close(region, is_close), None))
         }
         BodyFamily::SmallScriptRange => {
             // `行右小書き` / `行左小書き` with an optional `終わり` close.
             // Re-parse the full body so `行右小書きほげ` (needle prefix but
             // longer body) declines to Directive{Unknown}.
             let (side, is_close) = parse_small_script_range_body(body)?;
-            let container = ContainerKind::SmallScript { side };
             Some((
-                if is_close {
-                    EmitKind::BlockClose(container)
-                } else {
-                    EmitKind::BlockOpen(container)
-                },
+                open_or_close(RegionFormat::SmallScript(side), is_close),
                 None,
             ))
         }
         BodyFamily::CaptionRange => {
             // `キャプション` (inline) / `ここからキャプション` (block) with an
             // optional `終わり` close; re-parse the full body.
-            let (block, is_close) = parse_caption_body(body)?;
-            let container = ContainerKind::Caption { block };
+            let (padded, is_close) = parse_caption_body(body)?;
             Some((
-                if is_close {
-                    EmitKind::BlockClose(container)
-                } else {
-                    EmitKind::BlockOpen(container)
-                },
+                open_or_close(RegionFormat::Caption { padded }, is_close),
                 None,
             ))
         }
@@ -1186,15 +1179,19 @@ pub(super) fn classify_annotation_body<'a>(
             // `縦中横` open / `縦中横終わり` close — re-parse the full body so a
             // needle-prefix-but-longer body (`縦中横ほげ`) declines cleanly.
             let is_close = parse_tcy_range_body(body)?;
-            Some((
-                if is_close {
-                    EmitKind::BlockClose(ContainerKind::CombineUprightRange)
-                } else {
-                    EmitKind::BlockOpen(ContainerKind::CombineUprightRange)
-                },
-                None,
-            ))
+            Some((open_or_close(RegionFormat::CombineUpright, is_close), None))
         }
+    }
+}
+
+/// Wrap an open [`RegionFormat`] as the matching [`EmitKind`]: the open marker
+/// carries the full payload; the close projects to its [`RegionClose`]
+/// discriminant via [`RegionClose::of`] (the open side stays authoritative).
+fn open_or_close(region: RegionFormat, is_close: bool) -> EmitKind<'static> {
+    if is_close {
+        EmitKind::BlockClose(RegionClose::of(region))
+    } else {
+        EmitKind::BlockOpen(region)
     }
 }
 
@@ -1397,46 +1394,46 @@ pub(super) fn parse_heading_keyword(s: &str) -> Option<(HeadingStyle, HeadingKin
 /// matches here; a `ここから…` / `…終わり` body that is not a heading keyword
 /// (e.g. `ここから2字下げ`) fails `parse_heading_keyword` and falls through to
 /// the body dispatcher.
-fn parse_heading_directive(body: &str) -> Option<(ContainerKind, bool)> {
+fn parse_heading_directive(body: &str) -> Option<(RegionFormat, bool)> {
     if let Some(rest) = body.strip_prefix("ここから") {
-        let (style, kind) = parse_heading_keyword(rest)?;
+        let (style, level) = parse_heading_keyword(rest)?;
         return Some((
-            ContainerKind::Heading {
-                kind,
+            RegionFormat::Heading {
+                level,
                 style,
-                block: true,
+                padded: true,
             },
             true,
         ));
     }
     if let Some(rest) = body.strip_prefix("ここで") {
-        let (style, kind) = parse_heading_keyword(rest.strip_suffix("終わり")?)?;
+        let (style, level) = parse_heading_keyword(rest.strip_suffix("終わり")?)?;
         return Some((
-            ContainerKind::Heading {
-                kind,
+            RegionFormat::Heading {
+                level,
                 style,
-                block: true,
+                padded: true,
             },
             false,
         ));
     }
     if let Some(inner) = body.strip_suffix("終わり") {
-        let (style, kind) = parse_heading_keyword(inner)?;
+        let (style, level) = parse_heading_keyword(inner)?;
         return Some((
-            ContainerKind::Heading {
-                kind,
+            RegionFormat::Heading {
+                level,
                 style,
-                block: false,
+                padded: false,
             },
             false,
         ));
     }
-    let (style, kind) = parse_heading_keyword(body)?;
+    let (style, level) = parse_heading_keyword(body)?;
     Some((
-        ContainerKind::Heading {
-            kind,
+        RegionFormat::Heading {
+            level,
             style,
-            block: false,
+            padded: false,
         },
         true,
     ))
@@ -1470,17 +1467,16 @@ fn font_size_block_open_steps(tail: &str, magnitude: u8) -> Option<i8> {
 /// claimed in error.
 fn parse_indent_line_layout(after: &str) -> Option<IndentLayout> {
     let (lead, rest) = parse_decimal_u8_prefix(after)?;
-    if lead < 1 {
-        return None;
-    }
+    let lead = NonZeroU8::new(lead)?; // folds the `lead >= 1` guard
     if rest == "字詰め" {
-        return Some(IndentLayout::LineWidth(lead));
+        return Some(IndentLayout::LineWidth(LineWidth(lead)));
     }
     // `{L}行{W}字組み[で]` — the leading number is the line count.
     let after_lines = rest.strip_prefix('行')?;
     let (width, tail) = parse_decimal_u8_prefix(after_lines)?;
-    if width >= 1 && matches!(tail, "字組み" | "字組みで") {
-        return Some(IndentLayout::Kumi { lines: lead, width });
+    let width = NonZeroU8::new(width)?; // folds the `width >= 1` guard
+    if matches!(tail, "字組み" | "字組みで") {
+        return Some(IndentLayout::Kumi(Kumi { lines: lead, width }));
     }
     None
 }
@@ -1563,22 +1559,26 @@ fn parse_tcy_range_body(body: &str) -> Option<bool> {
     }
 }
 
-pub(super) fn parse_emphasis_body(body: &str) -> Option<(EmphasisKind, bool, bool)> {
+/// Parse a 太字 / 斜体 range / block body into `(is_italic, padded, is_close)`.
+/// `padded` is `true` for the `ここから…` / `ここで…終わり` block form, `false`
+/// for the bare inline range. Returns `None` (→ `Directive{Unknown}`) for any
+/// non-emphasis body.
+pub(super) fn parse_emphasis_body(body: &str) -> Option<(bool, bool, bool)> {
     Some(match body {
-        "太字" | "ゴシック体" | "ゴチック" => (EmphasisKind::Bold, false, false),
+        "太字" | "ゴシック体" | "ゴチック" => (false, false, false),
         "太字終わり" | "ゴシック体終わり" | "ゴチック終わり" => {
-            (EmphasisKind::Bold, false, true)
+            (false, false, true)
         }
         "ここから太字" | "ここからゴシック体" | "ここからゴチック" => {
-            (EmphasisKind::Bold, true, false)
+            (false, true, false)
         }
         "ここで太字終わり" | "ここでゴシック体終わり" | "ここでゴチック終わり" => {
-            (EmphasisKind::Bold, true, true)
+            (false, true, true)
         }
-        "斜体" => (EmphasisKind::Italic, false, false),
-        "斜体終わり" => (EmphasisKind::Italic, false, true),
-        "ここから斜体" => (EmphasisKind::Italic, true, false),
-        "ここで斜体終わり" => (EmphasisKind::Italic, true, true),
+        "斜体" => (true, false, false),
+        "斜体終わり" => (true, false, true),
+        "ここから斜体" => (true, true, false),
+        "ここで斜体終わり" => (true, true, true),
         _ => return None,
     })
 }

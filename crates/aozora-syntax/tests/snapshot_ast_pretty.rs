@@ -16,9 +16,10 @@
 
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Node};
+use aozora_syntax::format::{IndentBlock, IndentLayout, LineFormat, RegionFormat};
 use aozora_syntax::{
-    AlignEnd, BoutenKind, BoutenPosition, Center, Container, ContainerKind, DirectiveKind, Framed,
-    HeadingKind, HeadingStyle, Indent, IndentLayout, MarginNoteKind, SectionKind,
+    BoutenKind, BoutenPosition, Container, DirectiveKind, HeadingKind, HeadingStyle,
+    MarginNoteKind, SectionKind,
 };
 
 fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<Node<'a>> {
@@ -37,11 +38,11 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<Node<'a>> {
         alloc.bouten(BoutenKind::Goma, base, BoutenPosition::Right, false),
         alloc.tate_chu_yoko(base, false),
         alloc.gaiji(g),
-        alloc.indent(Indent { amount: 2 }),
-        alloc.align_end(AlignEnd { offset: 2 }),
-        alloc.center(Center { page: true }),
+        alloc.line(LineFormat::Indent { amount: 2 }),
+        alloc.line(LineFormat::AlignEnd { offset: 2 }),
+        alloc.line(LineFormat::Center { page: true }),
         alloc.warichu(upper, lower),
-        alloc.keigakomi(Framed),
+        alloc.line(LineFormat::Framed),
         alloc.page_break(),
         alloc.section_break(SectionKind::Kaicho),
         alloc.aozora_heading(HeadingKind::Medium, HeadingStyle::Window, base),
@@ -51,12 +52,12 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<Node<'a>> {
         alloc.annotation(a),
         alloc.angle_quote(base),
         alloc.container(Container {
-            kind: ContainerKind::Indent {
+            kind: RegionFormat::Indent(IndentBlock {
                 amount: 1,
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
-            },
+            }),
         }),
     ]
 }

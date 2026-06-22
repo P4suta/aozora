@@ -85,7 +85,6 @@ use core::marker::PhantomData;
 
 use crate::lexer::{ClassifiedSpan, PairEvent, Token, classify, pair_in, sanitize, tokenize_in};
 use aozora_spec::{Diagnostic, PairLink};
-use aozora_syntax::ContainerKind;
 use core::mem::take;
 
 use aozora_syntax::alloc::BorrowedAllocator;
@@ -407,11 +406,6 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
         }
     }
 }
-
-// Suppress an unused-import warning when the only use of `ContainerKind`
-// is through the `Registry` field types — the import is still needed for
-// the trait-impl resolution but the analyser doesn't see it.
-const _CONTAINER_KIND_USE_MARKER: usize = size_of::<ContainerKind>();
 
 #[cfg(test)]
 mod tests {

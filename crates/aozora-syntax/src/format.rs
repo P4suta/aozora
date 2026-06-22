@@ -228,8 +228,13 @@ pub enum ForwardAttr {
     Caption,
     /// N段階大きな / 小さな文字.
     FontSize(FontShift),
-    /// 傍点 / 傍線.
-    Bouten(BoutenKind),
+    /// 傍点 / 傍線. `position` records a `左に` left-side modifier.
+    Bouten {
+        /// The 傍点 / 傍線 mark.
+        kind: BoutenKind,
+        /// `Left` for the `左に` modifier, else `Right`.
+        position: BoutenPosition,
+    },
     /// 縦中横.
     CombineUpright,
 }
@@ -248,7 +253,7 @@ impl ForwardAttr {
             Self::Horizontal => Format::Horizontal,
             Self::Caption => Format::Caption,
             Self::FontSize(f) => Format::FontSize(f),
-            Self::Bouten(k) => Format::Bouten(k),
+            Self::Bouten { kind, .. } => Format::Bouten(kind),
             Self::CombineUpright => Format::CombineUpright,
         }
     }
@@ -271,7 +276,7 @@ impl ForwardAttr {
             Self::Horizontal => "横組み",
             Self::Caption => "キャプション",
             Self::CombineUpright => "縦中横",
-            Self::Bouten(k) => k.keyword(),
+            Self::Bouten { kind, .. } => kind.keyword(),
             // Bold, FontSize, and any future weight default to 太字.
             _ => "太字",
         }
@@ -532,84 +537,131 @@ impl RegionFormat {
 }
 
 // ----------------------------------------------------------------------
-// Region close — discriminant-only; the open payload stays authoritative
+// Region close — self-sufficient; carries the close marker's own data
 // ----------------------------------------------------------------------
 
 /// The close marker of a paired region.
 ///
-/// Discriminant-only: the open [`RegionFormat`] payload is authoritative when
-/// the pair round-trips (see [`Self::of`]), so the close carries no scalar
-/// values. The one bit it does keep — the 点/線 family of a [`Self::Bouten`]
-/// close — drives the `mismatched_bouten_container` diagnostic, which compares
-/// `［＃傍点終わり］` against `［＃傍線終わり］`.
+/// Carries exactly what the close marker (and HTML close tag) reproduce from
+/// the **close** source text — never a placeholder. A close can appear without
+/// a matching open (a stray `［＃…終わり］`) and a mismatched close keeps its
+/// own family (`［＃傍線終わり］` closing a `［＃傍点］`), so the close must be
+/// self-sufficient; it is *not* reconstructed from the open. `Option` /
+/// `NonZero` / `bool` make the former `width: 0` / `steps: ±1` / `lines: 0`
+/// placeholder states unrepresentable, which was Pillar 1's actual goal.
+///
+/// It stays meaningfully smaller than [`RegionFormat`] (the indent, line-width,
+/// columns, align-end, and font-size closes all shed payload), so the separate
+/// type still earns its keep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum RegionClose {
-    /// `字下げ終わり`.
-    Indent,
+    /// `字下げ終わり`, or the `字下げ、{W}字組み終わり` compound (the close
+    /// carries `W`, so the marker round-trips byte-exact).
+    Indent {
+        /// The `W` of a `字組み終わり` compound; `None` for the generic
+        /// `字下げ終わり` (plain / 字詰め / 折り返して / 中央 indents).
+        kumi_width: Option<LineWidth>,
+    },
     /// `割り注終わり`.
     Warichu,
     /// `罫囲み終わり`.
     Framed,
-    /// `字上げ終わり` / 地付き close.
+    /// `字上げ終わり` / 地付き close (no offset — the close marker carries none).
     AlignEnd,
     /// `字詰め終わり`.
     LineWidth,
-    /// `傍点終わり` / `傍線終わり`.
+    /// `傍点終わり` / `傍線終わり` / `波線終わり` … — the close's own mark and
+    /// `左に` side. The 点/線 family (`kind.is_line()`) drives the
+    /// `mismatched_bouten_container` diagnostic.
     Bouten {
-        /// `true` for the 傍線 (line) family, `false` for 傍点 (dot); the only
-        /// payload, kept for the 点/線 mismatch diagnostic.
-        is_line: bool,
+        /// The close marker's own 傍点 / 傍線 mark.
+        kind: BoutenKind,
+        /// `Left` for the close's `左に` modifier, else `Right`.
+        position: BoutenPosition,
     },
-    /// `太字終わり`.
-    Bold,
-    /// `斜体終わり`.
-    Italic,
-    /// `見出し終わり`.
-    Heading,
+    /// `太字終わり` (`!padded`) / `ここで太字終わり` (`padded`).
+    Bold {
+        /// `true` = `ここで` block close; `false` = inline bare-range close.
+        padded: bool,
+    },
+    /// `斜体終わり` / `ここで斜体終わり`.
+    Italic {
+        /// `true` = `ここで` block close; `false` = inline bare-range close.
+        padded: bool,
+    },
+    /// `<見出し>終わり` / `ここで<見出し>終わり`.
+    Heading {
+        /// The 大 / 中 / 小 outline level.
+        level: HeadingKind,
+        /// Standard / 同行 / 窓 style.
+        style: HeadingStyle,
+        /// `true` = `ここで` block close; `false` = paired `…終わり` close.
+        padded: bool,
+    },
     /// `段組終わり`.
     Columns,
     /// `表終わり`.
     Table,
     /// `横組み終わり`.
     Horizontal,
-    /// `大きな文字終わり` / `小さな文字終わり`.
-    FontSize,
-    /// `小書き終わり`.
-    SmallScript,
-    /// `キャプション終わり`.
-    Caption,
+    /// `大きな文字終わり` (`larger`) / `小さな文字終わり`.
+    FontSize {
+        /// `true` = 大きな (larger); `false` = 小さな (smaller).
+        larger: bool,
+    },
+    /// `行右 / 行左小書き終わり`.
+    SmallScript(BoutenPosition),
+    /// `キャプション終わり` (`!padded`) / `ここでキャプション終わり` (`padded`).
+    Caption {
+        /// `true` = `ここで` block close; `false` = inline bare-range close.
+        padded: bool,
+    },
     /// `縦中横終わり`.
     CombineUpright,
 }
 
 impl RegionClose {
-    /// The close discriminant expected for a given open [`RegionFormat`].
+    /// The close that matches a given open [`RegionFormat`], preserving the
+    /// open's payload.
     ///
-    /// Projects the open attribute, dropping every scalar but the 傍点/傍線
-    /// family bit. A matched pair satisfies `actual_close == of(open)`; any
-    /// other close is a mismatch.
+    /// Used two ways: in the classifier, on the [`RegionFormat`] parsed from
+    /// the *close* marker (so it carries the close's own data); and in the
+    /// pairing-mismatch check, on the *open* (to derive the expected close).
     #[must_use]
-    pub const fn of(open: RegionFormat) -> Self {
-        match open {
-            RegionFormat::Indent(_) => Self::Indent,
+    pub const fn of(region: RegionFormat) -> Self {
+        match region {
+            RegionFormat::Indent(block) => Self::Indent {
+                kumi_width: match block.layout {
+                    IndentLayout::Kumi(kumi) => Some(LineWidth(kumi.width)),
+                    IndentLayout::LineWidth(_) | IndentLayout::None => None,
+                },
+            },
             RegionFormat::Warichu => Self::Warichu,
             RegionFormat::Framed => Self::Framed,
             RegionFormat::AlignEnd { .. } => Self::AlignEnd,
             RegionFormat::LineWidth(_) => Self::LineWidth,
-            RegionFormat::Bouten { kind, .. } => Self::Bouten {
-                is_line: kind.is_line(),
+            RegionFormat::Bouten { kind, position } => Self::Bouten { kind, position },
+            RegionFormat::Bold { padded } => Self::Bold { padded },
+            RegionFormat::Italic { padded } => Self::Italic { padded },
+            RegionFormat::Heading {
+                level,
+                style,
+                padded,
+            } => Self::Heading {
+                level,
+                style,
+                padded,
             },
-            RegionFormat::Bold { .. } => Self::Bold,
-            RegionFormat::Italic { .. } => Self::Italic,
-            RegionFormat::Heading { .. } => Self::Heading,
             RegionFormat::Columns(_) => Self::Columns,
             RegionFormat::Table => Self::Table,
             RegionFormat::Horizontal => Self::Horizontal,
-            RegionFormat::FontSize(_) => Self::FontSize,
-            RegionFormat::SmallScript(_) => Self::SmallScript,
-            RegionFormat::Caption { .. } => Self::Caption,
+            RegionFormat::FontSize(shift) => Self::FontSize {
+                larger: shift.larger(),
+            },
+            RegionFormat::SmallScript(side) => Self::SmallScript(side),
+            RegionFormat::Caption { padded } => Self::Caption { padded },
             RegionFormat::CombineUpright => Self::CombineUpright,
         }
     }
@@ -620,30 +672,44 @@ impl RegionClose {
     #[must_use]
     pub const fn kind_str(self) -> &'static str {
         match self {
-            Self::Indent => "indent",
+            Self::Indent { .. } => "indent",
             Self::Warichu => "warichu",
             Self::Framed => "framed",
             Self::AlignEnd => "align-end",
             Self::LineWidth => "line-width",
             Self::Bouten { .. } => "bouten-range",
-            Self::Bold => "bold",
-            Self::Italic => "italic",
-            Self::Heading => "heading",
+            Self::Bold { .. } => "bold",
+            Self::Italic { .. } => "italic",
+            Self::Heading { .. } => "heading",
             Self::Columns => "columns",
             Self::Table => "table",
             Self::Horizontal => "horizontal",
-            Self::FontSize => "font-size",
-            Self::SmallScript => "small-script",
-            Self::Caption => "caption",
+            Self::FontSize { .. } => "font-size",
+            Self::SmallScript(_) => "small-script",
+            Self::Caption { .. } => "caption",
             Self::CombineUpright => "combine-upright-range",
         }
     }
 
-    /// The 傍点 / 傍線 family label for the `mismatched_bouten_container`
-    /// diagnostic — only meaningful for [`Self::Bouten`].
+    /// Whether the close renders inline (mirrors [`RegionFormat::is_inline`] so
+    /// the close marker's `\n\n` padding / `<p>` handling matches the open).
     #[must_use]
-    pub const fn bouten_family_str(is_line: bool) -> &'static str {
-        if is_line { "傍線" } else { "傍点" }
+    pub const fn is_inline(self) -> bool {
+        matches!(
+            self,
+            Self::Bouten { .. }
+                | Self::Bold { padded: false }
+                | Self::Italic { padded: false }
+                | Self::SmallScript(_)
+                | Self::Caption { padded: false }
+                | Self::CombineUpright
+        )
+    }
+
+    /// Whether the close's content was *phrasing* — only [`Self::Heading`].
+    #[must_use]
+    pub const fn content_is_phrasing(self) -> bool {
+        matches!(self, Self::Heading { .. })
     }
 }
 
@@ -701,19 +767,51 @@ mod tests {
         }
     }
 
-    /// The 傍点/傍線 family bit survives the open → close projection.
+    /// The 傍点/傍線 kind + position survive the open → close projection (so a
+    /// mismatched close keeps its own family for round-trip and diagnostics).
     #[test]
-    fn region_close_preserves_bouten_family() {
-        let dot = RegionFormat::Bouten {
-            kind: BoutenKind::Goma,
-            position: BoutenPosition::Right,
-        };
+    fn region_close_preserves_bouten_kind() {
         let line = RegionFormat::Bouten {
             kind: BoutenKind::UnderLine,
-            position: BoutenPosition::Right,
+            position: BoutenPosition::Left,
         };
-        assert_eq!(RegionClose::of(dot), RegionClose::Bouten { is_line: false });
-        assert_eq!(RegionClose::of(line), RegionClose::Bouten { is_line: true });
+        assert_eq!(
+            RegionClose::of(line),
+            RegionClose::Bouten {
+                kind: BoutenKind::UnderLine,
+                position: BoutenPosition::Left,
+            }
+        );
+    }
+
+    /// The 字組み close keeps its own width; every other indent close is generic.
+    #[test]
+    fn region_close_indent_keeps_kumi_width() {
+        let kumi = RegionFormat::Indent(IndentBlock {
+            amount: 2,
+            wrap: None,
+            center: false,
+            layout: IndentLayout::Kumi(Kumi {
+                lines: NonZeroU8::MIN,
+                width: NonZeroU8::new(20).unwrap(),
+            }),
+        });
+        assert_eq!(
+            RegionClose::of(kumi),
+            RegionClose::Indent {
+                kumi_width: Some(LineWidth(NonZeroU8::new(20).unwrap())),
+            }
+        );
+        let plain = RegionFormat::Indent(IndentBlock {
+            amount: 2,
+            wrap: None,
+            center: false,
+            layout: IndentLayout::None,
+        });
+        assert_eq!(
+            RegionClose::of(plain),
+            RegionClose::Indent { kumi_width: None }
+        );
     }
 
     /// Attribute-level tags are exhaustive and distinct from the scope wire

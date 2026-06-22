@@ -15,10 +15,12 @@ use super::super::instrumentation::{Subsystem, SubsystemGuard};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use core::num::NonZeroI8;
+
 use aozora_spec::Diagnostic;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
-use aozora_syntax::{BoutenPosition, DirectiveKind, EmphasisKind, MarginNoteKind, Span};
+use aozora_syntax::{BoutenPosition, DirectiveKind, FontShift, ForwardAttr, MarginNoteKind, Span};
 
 use super::super::pair::{PairEvent, PairKind};
 use super::super::token::TriggerKind;
@@ -1299,7 +1301,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     ) -> Option<(borrowed::Node<'a>, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let rest = extracted.suffix.strip_prefix("は")?;
-        let kind = emphasis_kind_from_suffix(rest)?;
+        let attr = forward_attr_from_suffix(rest)?;
         let [only] = extracted.targets.as_slice() else {
             return None;
         };
@@ -1318,7 +1320,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let consumed_predecessor = consume_start < open_span.start;
         let text = self.alloc.content_plain(only);
         Some((
-            self.alloc.emphasis(kind, text, consumed_predecessor),
+            self.alloc.forward_format(attr, text, consumed_predecessor),
             consume_start,
         ))
     }
@@ -1363,44 +1365,42 @@ fn find_heading_predecessor_position(
     u32::try_from(candidate_start).ok()
 }
 
-/// Map the keyword after `は` to an [`EmphasisKind`].
+/// Map the keyword after `は` to a forward-scope [`ForwardAttr`].
 ///
 /// 太字 → Bold, 斜体 → Italic (per
 /// <https://www.aozora.gr.jp/annotation/emphasis.html>). ゴシック体 / ゴチック
 /// are corpus spellings of bold — the guide writes 太字（ゴシック） — so both
 /// map to Bold and canonicalise to `太字` on serialize. 上付き小文字 →
-/// `SuperScript`, 下付き小文字 → `SubScript`, 行右小書き → `SmallRight`,
-/// 行左小書き → `SmallLeft`, and `N段階大きな/小さな文字` → `FontSize`
+/// `SuperScript`, 下付き小文字 → `SubScript`, 行右小書き → `SmallScript(Right)`,
+/// 行左小書き → `SmallScript(Left)`, and `N段階大きな/小さな文字` → `FontSize`
 /// (per <https://www.aozora.gr.jp/annotation/etc.html>). Unknown suffixes
 /// return `None` (→ `Directive{Unknown}`).
-pub(super) fn emphasis_kind_from_suffix(s: &str) -> Option<EmphasisKind> {
+pub(super) fn forward_attr_from_suffix(s: &str) -> Option<ForwardAttr> {
     Some(match s {
-        "太字" | "ゴシック体" | "ゴチック" => EmphasisKind::Bold,
-        "斜体" => EmphasisKind::Italic,
-        "上付き小文字" => EmphasisKind::SuperScript,
-        "下付き小文字" => EmphasisKind::SubScript,
-        "行右小書き" => EmphasisKind::SmallRight,
-        "行左小書き" => EmphasisKind::SmallLeft,
-        "罫囲み" => EmphasisKind::KeigakomiInline,
-        "横組み" => EmphasisKind::HorizontalInline,
-        "キャプション" => EmphasisKind::Caption,
+        "太字" | "ゴシック体" | "ゴチック" => ForwardAttr::Bold,
+        "斜体" => ForwardAttr::Italic,
+        "上付き小文字" => ForwardAttr::SuperScript,
+        "下付き小文字" => ForwardAttr::SubScript,
+        "行右小書き" => ForwardAttr::SmallScript(BoutenPosition::Right),
+        "行左小書き" => ForwardAttr::SmallScript(BoutenPosition::Left),
+        "罫囲み" => ForwardAttr::Framed,
+        "横組み" => ForwardAttr::Horizontal,
+        "キャプション" => ForwardAttr::Caption,
         _ => return parse_font_size_suffix(s),
     })
 }
 
-/// Parse a `N段階大きな文字` / `N段階小さな文字` font-size suffix into an
-/// [`EmphasisKind::FontSize`]. `大きな` yields a positive stage count,
-/// `小さな` a negative one. Returns `None` for a missing/zero magnitude,
-/// an `i8` overflow, or any other suffix (→ `Directive{Unknown}`).
-fn parse_font_size_suffix(s: &str) -> Option<EmphasisKind> {
+/// Parse a `N段階大きな文字` / `N段階小さな文字` font-size suffix into a
+/// [`ForwardAttr::FontSize`]. `大きな` yields a positive stage count, `小さな`
+/// a negative one. Returns `None` for a missing/zero magnitude, an `i8`
+/// overflow, or any other suffix (→ `Directive{Unknown}`).
+fn parse_font_size_suffix(s: &str) -> Option<ForwardAttr> {
     let (magnitude, rest) = parse_decimal_u8_prefix(s)?;
     let steps = i8::try_from(magnitude).ok()?;
-    if steps == 0 {
-        return None;
-    }
+    let shift = FontShift(NonZeroI8::new(steps)?);
     match rest {
-        "段階大きな文字" => Some(EmphasisKind::FontSize { steps }),
-        "段階小さな文字" => Some(EmphasisKind::FontSize { steps: -steps }),
+        "段階大きな文字" => Some(ForwardAttr::FontSize(shift)),
+        "段階小さな文字" => Some(ForwardAttr::FontSize(FontShift(NonZeroI8::new(-steps)?))),
         _ => None,
     }
 }

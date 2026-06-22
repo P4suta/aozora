@@ -6,12 +6,12 @@
 use core::fmt::{self, Write};
 
 use aozora_syntax::borrowed::{
-    AngleQuote, Bouten, Content, Directive, Emphasis, Gaiji, Heading, HeadingHint, Illustration,
+    AngleQuote, Content, Directive, ForwardFormat, Gaiji, Heading, HeadingHint, Illustration,
     Kaeriten, MarginNote, Node, Ruby, Segment,
 };
 use aozora_syntax::{
-    AlignEnd, Container, ContainerKind, DirectiveKind, EmphasisKind, HeadingKind, HeadingStyle,
-    Indent, IndentLayout, RubySide,
+    Container, DirectiveKind, ForwardAttr, HeadingKind, HeadingStyle, IndentBlock, IndentLayout,
+    LineFormat, RegionFormat, RubySide,
 };
 
 use crate::classes;
@@ -33,18 +33,10 @@ pub fn render<W: Write>(node: Node<'_>, entering: bool, writer: &mut W) -> fmt::
         Node::Container(c) => render_container(c, entering, writer),
         _ if !entering => Ok(()),
         Node::Ruby(r) => render_ruby(r, writer),
-        Node::Bouten(b) => render_bouten(b, writer),
-        Node::Emphasis(e) => render_emphasis(e, writer),
+        Node::Format(f) => render_format(f, writer),
         Node::MarginNote(s) => render_side_note(s, writer),
-        Node::CombineUpright(t) => {
-            writer.write_str(r#"<span class="aozora-combine-upright">"#)?;
-            render_content(t.text.get(), writer)?;
-            writer.write_str("</span>")
-        }
         Node::Gaiji(g) => render_gaiji(g, writer),
-        Node::Indent(i) => render_indent(i, writer),
-        Node::AlignEnd(a) => render_align_end(a, writer),
-        Node::Center(_) => render_center(writer),
+        Node::Line(lf) => render_line(lf, writer),
         Node::PageBreak => writer.write_str(r#"<div class="aozora-page-break"></div>"#),
         Node::SectionBreak(k) => {
             // Single source of truth for the romaji slug: the spec slug
@@ -95,56 +87,66 @@ fn render_side_note<W: Write>(s: &MarginNote<'_>, writer: &mut W) -> fmt::Result
     writer.write_str("</rt><rp>)</rp></ruby>")
 }
 
-fn render_bouten<W: Write>(b: &Bouten<'_>, writer: &mut W) -> fmt::Result {
-    write!(
-        writer,
-        r#"<em class="aozora-bouten aozora-bouten-{kind} aozora-bouten-{pos}">"#,
-        kind = classes::bouten_kind_slug(b.kind),
-        pos = classes::bouten_position_slug(b.position),
-    )?;
-    render_content(b.target.get(), writer)?;
-    writer.write_str("</em>")
-}
-
-/// Render a forward-reference emphasis run. 太字 maps to the presentational
-/// `<b>` element, 斜体 to `<i>`, 上付き/下付き小文字 to `<sup>` / `<sub>`,
-/// 行右/行左小書き to a side `<span>`, and `N段階大きな/小さな文字` to a
-/// `<span class="aozora-font-larger|smaller" data-steps="N">` — each carries
-/// an `aozora-*` class so a stylesheet can theme them, and none collides with
-/// the `<em class="aozora-bouten …">` that [`render_bouten`] owns.
-fn render_emphasis<W: Write>(e: &Emphasis<'_>, writer: &mut W) -> fmt::Result {
-    // 文字サイズ carries a magnitude, so its open tag is dynamic.
-    if let EmphasisKind::FontSize { steps } = e.kind {
-        let (class, magnitude) = if steps >= 0 {
-            ("aozora-font-larger", steps)
-        } else {
-            ("aozora-font-smaller", -steps)
-        };
-        write!(writer, r#"<span class="{class}" data-steps="{magnitude}">"#)?;
-        render_content(e.text.get(), writer)?;
-        return writer.write_str("</span>");
+/// Render a forward-reference emphasis run.
+///
+/// 傍点 / 傍線 take the `<em class="aozora-bouten …">`; 縦中横 a
+/// combine-upright `<span>`; `N段階大きな/小さな文字` a
+/// `<span class="aozora-font-larger|smaller" data-steps="N">`; and 太字 → `<b>`,
+/// 斜体 → `<i>`, 上付き/下付き小文字 → `<sup>`/`<sub>`, the small-glyph /
+/// box / caption forms → a side `<span>`. Each carries an `aozora-*` class so
+/// a stylesheet can theme it.
+fn render_format<W: Write>(f: &ForwardFormat<'_>, writer: &mut W) -> fmt::Result {
+    match f.attr {
+        ForwardAttr::Bouten { kind, position } => {
+            write!(
+                writer,
+                r#"<em class="aozora-bouten aozora-bouten-{kind} aozora-bouten-{pos}">"#,
+                kind = classes::bouten_kind_slug(kind),
+                pos = classes::bouten_position_slug(position),
+            )?;
+            render_content(f.target.get(), writer)?;
+            writer.write_str("</em>")
+        }
+        ForwardAttr::CombineUpright => {
+            writer.write_str(r#"<span class="aozora-combine-upright">"#)?;
+            render_content(f.target.get(), writer)?;
+            writer.write_str("</span>")
+        }
+        // 文字サイズ carries a magnitude, so its open tag is dynamic.
+        ForwardAttr::FontSize(shift) => {
+            let class = if shift.larger() {
+                "aozora-font-larger"
+            } else {
+                "aozora-font-smaller"
+            };
+            write!(
+                writer,
+                r#"<span class="{class}" data-steps="{}">"#,
+                shift.magnitude()
+            )?;
+            render_content(f.target.get(), writer)?;
+            writer.write_str("</span>")
+        }
+        // The HTML element is semantic; the `aozora-*` slug comes from the
+        // spec slug table, keyed by the canonical keyword.
+        attr => {
+            let (el, close) = match attr {
+                ForwardAttr::Italic => ("i", "</i>"),
+                ForwardAttr::SuperScript => ("sup", "</sup>"),
+                ForwardAttr::SubScript => ("sub", "</sub>"),
+                ForwardAttr::SmallScript(_)
+                | ForwardAttr::Framed
+                | ForwardAttr::Horizontal
+                | ForwardAttr::Caption => ("span", "</span>"),
+                // Bold and any future weight default to the bold element.
+                _ => ("b", "</b>"),
+            };
+            let slug = aozora_spec::roman_slug(attr.keyword()).unwrap_or("bold");
+            write!(writer, r#"<{el} class="aozora-{slug}">"#)?;
+            render_content(f.target.get(), writer)?;
+            writer.write_str(close)
+        }
     }
-    // The HTML element is semantic (italic→<i>, super/sub→<sup>/<sub>,
-    // 太字→<b>, the small-glyph / inline-box / caption forms→<span>) and
-    // stays here; the `aozora-*` class slug comes from the single source
-    // of truth (the spec slug table), keyed by the canonical keyword.
-    let (el, close) = match e.kind {
-        EmphasisKind::Italic => ("i", "</i>"),
-        EmphasisKind::SuperScript => ("sup", "</sup>"),
-        EmphasisKind::SubScript => ("sub", "</sub>"),
-        EmphasisKind::SmallRight
-        | EmphasisKind::SmallLeft
-        | EmphasisKind::KeigakomiInline
-        | EmphasisKind::HorizontalInline
-        | EmphasisKind::Caption => ("span", "</span>"),
-        // `EmphasisKind` is `#[non_exhaustive]`; 太字 and any future
-        // weight default to the bold element.
-        _ => ("b", "</b>"),
-    };
-    let slug = aozora_spec::roman_slug(e.kind.keyword()).unwrap_or("bold");
-    write!(writer, r#"<{el} class="aozora-{slug}">"#)?;
-    render_content(e.text.get(), writer)?;
-    writer.write_str(close)
 }
 
 /// Render a [`Content`] by walking its segments in order.
@@ -239,17 +241,17 @@ fn render_container<W: Write>(c: Container, entering: bool, writer: &mut W) -> f
 /// bare 太字 / 斜体, 小書き) render their inline element directly.
 #[allow(
     clippy::too_many_lines,
-    reason = "one match arm per ContainerKind — splitting would scatter the \
+    reason = "one match arm per RegionFormat — splitting would scatter the \
               1:1 kind→markup mapping that mirrors emit_container_open"
 )]
-fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::Result {
+fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::Result {
     match kind {
-        ContainerKind::Indent {
+        RegionFormat::Indent(IndentBlock {
             amount,
             wrap,
             center,
             layout,
-        } => {
+        }) => {
             write!(
                 writer,
                 r#"<div class="aozora-container aozora-container-indent aozora-container-indent-{amount}"#,
@@ -263,7 +265,7 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
             // #78 secondary line-layout: 字組み grid gets its own class,
             // 字詰め reuses the standalone line-width class (same semantics).
             match layout {
-                IndentLayout::Kumi { .. } => {
+                IndentLayout::Kumi(_) => {
                     writer.write_str(" aozora-container-line-kumi")?;
                 }
                 IndentLayout::LineWidth(_) => {
@@ -276,38 +278,40 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
                 write!(writer, r#" data-wrap="{w}""#)?;
             }
             match layout {
-                IndentLayout::Kumi { lines, width } => {
+                IndentLayout::Kumi(kumi) => {
                     write!(
                         writer,
-                        r#" data-kumi-lines="{lines}" data-kumi-width="{width}""#
+                        r#" data-kumi-lines="{}" data-kumi-width="{}""#,
+                        kumi.lines, kumi.width
                     )?;
                 }
                 IndentLayout::LineWidth(width) => {
-                    write!(writer, r#" data-width="{width}""#)?;
+                    write!(writer, r#" data-width="{}""#, width.0)?;
                 }
                 IndentLayout::None => {}
             }
             writer.write_str(">")
         }
-        ContainerKind::AlignEnd { offset } => {
+        RegionFormat::AlignEnd { offset } => {
             write!(
                 writer,
                 r#"<div class="aozora-container aozora-container-align-end" data-offset="{offset}">"#,
             )
         }
-        ContainerKind::LineWidth { width } => {
+        RegionFormat::LineWidth(width) => {
             write!(
                 writer,
-                r#"<div class="aozora-container aozora-container-line-width" data-width="{width}">"#,
+                r#"<div class="aozora-container aozora-container-line-width" data-width="{}">"#,
+                width.0,
             )
         }
-        ContainerKind::Framed => {
+        RegionFormat::Framed => {
             writer.write_str(r#"<div class="aozora-container aozora-container-keigakomi">"#)
         }
-        ContainerKind::Warichu => {
+        RegionFormat::Warichu => {
             writer.write_str(r#"<div class="aozora-container aozora-container-warichu">"#)
         }
-        ContainerKind::BoutenRange { kind, position } => {
+        RegionFormat::Bouten { kind, position } => {
             // Range-form 傍点 / 傍線: an inline `<em>` matching the
             // forward-reference bouten markup so a stylesheet picks the
             // same per-variant treatment.
@@ -325,56 +329,56 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
         // block `<div>` (an inline `<b>` around `<p>` would be invalid),
         // following the indent / keigakomi container convention; the
         // `aozora-container-bold` / `-italic` class carries the styling.
-        ContainerKind::Bold { block: false } => writer.write_str(r#"<b class="aozora-bold">"#),
-        ContainerKind::Italic { block: false } => writer.write_str(r#"<i class="aozora-italic">"#),
-        ContainerKind::Bold { block: true } => {
+        RegionFormat::Bold { padded: false } => writer.write_str(r#"<b class="aozora-bold">"#),
+        RegionFormat::Italic { padded: false } => writer.write_str(r#"<i class="aozora-italic">"#),
+        RegionFormat::Bold { padded: true } => {
             writer.write_str(r#"<div class="aozora-container aozora-container-bold">"#)
         }
-        ContainerKind::Italic { block: true } => {
+        RegionFormat::Italic { padded: true } => {
             writer.write_str(r#"<div class="aozora-container aozora-container-italic">"#)
         }
-        ContainerKind::Columns { count } => write!(
+        RegionFormat::Columns(count) => write!(
             writer,
-            r#"<div class="aozora-container aozora-container-columns" data-columns="{count}">"#,
+            r#"<div class="aozora-container aozora-container-columns" data-columns="{}">"#,
+            count.0,
         ),
-        ContainerKind::Table => {
+        RegionFormat::Table => {
             writer.write_str(r#"<div class="aozora-container aozora-container-table">"#)
         }
-        ContainerKind::Horizontal => {
+        RegionFormat::Horizontal => {
             writer.write_str(r#"<div class="aozora-container aozora-container-horizontal">"#)
         }
-        ContainerKind::FontSize { steps } => {
-            let (class, magnitude) = if steps >= 0 {
-                ("aozora-container-font-larger", steps)
+        RegionFormat::FontSize(shift) => {
+            let class = if shift.larger() {
+                "aozora-container-font-larger"
             } else {
-                ("aozora-container-font-smaller", -steps)
+                "aozora-container-font-smaller"
             };
             write!(
                 writer,
-                r#"<div class="aozora-container {class}" data-steps="{magnitude}">"#,
+                r#"<div class="aozora-container {class}" data-steps="{}">"#,
+                shift.magnitude(),
             )
         }
         // Paired / block heading — same element as the forward-reference
         // leaf, but wrapping the delimited content (phrasing).
-        ContainerKind::Heading { kind, style, .. } => write_heading_open(kind, style, writer),
+        RegionFormat::Heading { level, style, .. } => write_heading_open(level, style, writer),
         // 小書き range — inline `<span>`, matching the forward-reference
-        // `EmphasisKind::SmallRight` / `SmallLeft` leaf classes.
-        ContainerKind::SmallScript {
-            side: aozora_syntax::BoutenPosition::Left,
-        } => writer.write_str(r#"<span class="aozora-kogaki-left">"#),
-        ContainerKind::SmallScript { .. } => {
-            writer.write_str(r#"<span class="aozora-kogaki-right">"#)
+        // small-script leaf classes.
+        RegionFormat::SmallScript(aozora_syntax::BoutenPosition::Left) => {
+            writer.write_str(r#"<span class="aozora-kogaki-left">"#)
         }
+        RegionFormat::SmallScript(_) => writer.write_str(r#"<span class="aozora-kogaki-right">"#),
         // Caption: inline `<span>` for the bare range, block `<div>` for ここから.
-        ContainerKind::Caption { block: false } => {
+        RegionFormat::Caption { padded: false } => {
             writer.write_str(r#"<span class="aozora-caption">"#)
         }
-        ContainerKind::Caption { block: true } => {
+        RegionFormat::Caption { padded: true } => {
             writer.write_str(r#"<div class="aozora-container aozora-caption">"#)
         }
         // 縦中横 range — inline `<span>`, matching the forward-reference
-        // [`CombineUpright`] leaf class so a stylesheet treats both alike.
-        ContainerKind::CombineUprightRange => {
+        // combine-upright leaf class so a stylesheet treats both alike.
+        RegionFormat::CombineUpright => {
             writer.write_str(r#"<span class="aozora-combine-upright">"#)
         }
         _ => writer.write_str(r#"<div class="aozora-container">"#),
@@ -383,16 +387,16 @@ fn render_container_open<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::
 
 /// Emit a container's closing tag — `</em>` / `</b>` / `</i>` for the inline
 /// range forms, the heading element for a block heading, `</div>` otherwise.
-fn render_container_close<W: Write>(kind: ContainerKind, writer: &mut W) -> fmt::Result {
+fn render_container_close<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::Result {
     match kind {
-        ContainerKind::Heading { kind, style, .. } => write_heading_close(kind, style, writer),
+        RegionFormat::Heading { level, style, .. } => write_heading_close(level, style, writer),
         _ => writer.write_str(match kind {
-            ContainerKind::BoutenRange { .. } => "</em>",
-            ContainerKind::Bold { block: false } => "</b>",
-            ContainerKind::Italic { block: false } => "</i>",
-            ContainerKind::SmallScript { .. }
-            | ContainerKind::Caption { block: false }
-            | ContainerKind::CombineUprightRange => "</span>",
+            RegionFormat::Bouten { .. } => "</em>",
+            RegionFormat::Bold { padded: false } => "</b>",
+            RegionFormat::Italic { padded: false } => "</i>",
+            RegionFormat::SmallScript(_)
+            | RegionFormat::Caption { padded: false }
+            | RegionFormat::CombineUpright => "</span>",
             _ => "</div>",
         }),
     }
@@ -521,30 +525,28 @@ fn render_heading_hint<W: Write>(h: &HeadingHint<'_>, writer: &mut W) -> fmt::Re
     writer.write_str(r#"" hidden></span>"#)
 }
 
-fn render_indent<W: Write>(i: Indent, writer: &mut W) -> fmt::Result {
-    write!(
-        writer,
-        r#"<span class="aozora-indent aozora-indent-{n}" data-amount="{n}"></span>"#,
-        n = i.amount,
-    )
-}
-
-fn render_align_end<W: Write>(a: AlignEnd, writer: &mut W) -> fmt::Result {
-    if a.offset == 0 {
-        writer.write_str(r#"<span class="aozora-align-end" data-offset="0"></span>"#)
-    } else {
-        write!(
+/// Render a single-line layout directive (字下げ / 地付き / 中央 / 罫囲み) as
+/// a zero-width hook span; the actual layout is left to a stylesheet.
+fn render_line<W: Write>(lf: LineFormat, writer: &mut W) -> fmt::Result {
+    match lf {
+        LineFormat::Indent { amount } => write!(
             writer,
-            r#"<span class="aozora-align-end aozora-align-end-{n}" data-offset="{n}"></span>"#,
-            n = a.offset,
-        )
+            r#"<span class="aozora-indent aozora-indent-{amount}" data-amount="{amount}"></span>"#,
+        ),
+        LineFormat::AlignEnd { offset: 0 } => {
+            writer.write_str(r#"<span class="aozora-align-end" data-offset="0"></span>"#)
+        }
+        LineFormat::AlignEnd { offset } => write!(
+            writer,
+            r#"<span class="aozora-align-end aozora-align-end-{offset}" data-offset="{offset}"></span>"#,
+        ),
+        LineFormat::Center { .. } => writer.write_str(r#"<span class="aozora-center"></span>"#),
+        // 罫囲み (line) routes through the paired 罫囲み container in practice,
+        // so this hook is classifier-unreachable; render a matching span.
+        LineFormat::Framed => writer.write_str(r#"<span class="aozora-keigakomi"></span>"#),
+        // `LineFormat` is `#[non_exhaustive]`; forward-compat skip.
+        _ => Ok(()),
     }
-}
-
-/// Render a single-line centring marker (`ページの左右中央` / `中央揃え`). A
-/// zero-width hook; the actual centring is left to a stylesheet.
-fn render_center<W: Write>(writer: &mut W) -> fmt::Result {
-    writer.write_str(r#"<span class="aozora-center"></span>"#)
 }
 
 fn fallback<W: Write>(node: Node<'_>, writer: &mut W) -> fmt::Result {
@@ -584,7 +586,27 @@ mod tests {
     use super::*;
     use aozora_syntax::alloc::BorrowedAllocator;
     use aozora_syntax::borrowed::{Arena, Node};
-    use aozora_syntax::{AlignEnd, BoutenKind, BoutenPosition, DirectiveKind, Indent, SectionKind};
+    use aozora_syntax::{
+        BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, FontShift, ForwardAttr,
+        IndentBlock, IndentLayout, LineFormat, LineWidth, RegionFormat, SectionKind,
+    };
+
+    use core::num::{NonZeroI8, NonZeroU8};
+
+    /// Build a [`FontShift`] for tests (the magnitude is always non-zero).
+    fn font_shift(steps: i8) -> FontShift {
+        FontShift(NonZeroI8::new(steps).expect("test font shift is non-zero"))
+    }
+
+    /// Build a [`LineWidth`] for tests (always non-zero).
+    fn lw(n: u8) -> LineWidth {
+        LineWidth(NonZeroU8::new(n).expect("test line width is non-zero"))
+    }
+
+    /// Build a [`ColumnCount`] for tests (always non-zero).
+    fn cc(n: u8) -> ColumnCount {
+        ColumnCount(NonZeroU8::new(n).expect("test column count is non-zero"))
+    }
 
     fn render_node_to_string(node: Node<'_>) -> String {
         let mut out = String::new();
@@ -674,7 +696,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("重要");
-        let n = alloc.emphasis(EmphasisKind::Bold, text, false);
+        let n = alloc.forward_format(ForwardAttr::Bold, text, false);
         assert_eq!(
             render_node_to_string(n),
             r#"<b class="aozora-bold">重要</b>"#
@@ -686,7 +708,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("e");
-        let n = alloc.emphasis(EmphasisKind::Italic, text, false);
+        let n = alloc.forward_format(ForwardAttr::Italic, text, false);
         assert_eq!(
             render_node_to_string(n),
             r#"<i class="aozora-italic">e</i>"#
@@ -698,7 +720,7 @@ mod tests {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.container(Container {
-            kind: ContainerKind::Bold { block: false },
+            kind: RegionFormat::Bold { padded: false },
         });
         let mut open = String::new();
         render(n, true, &mut open).unwrap();
@@ -716,7 +738,7 @@ mod tests {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.container(Container {
-            kind: ContainerKind::Italic { block: true },
+            kind: RegionFormat::Italic { padded: true },
         });
         let mut open = String::new();
         render(n, true, &mut open).unwrap();
@@ -782,12 +804,12 @@ mod tests {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.container(Container {
-            kind: ContainerKind::Indent {
+            kind: RegionFormat::Indent(IndentBlock {
                 amount: 2,
                 wrap: Some(4),
                 center: false,
                 layout: IndentLayout::None,
-            },
+            }),
         });
         let mut open = String::new();
         render(n, true, &mut open).unwrap();
@@ -805,7 +827,7 @@ mod tests {
     fn indent_emits_marker_with_amount_attr() {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
-        let n = alloc.indent(Indent { amount: 2 });
+        let n = alloc.line(LineFormat::Indent { amount: 2 });
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-indent aozora-indent-2" data-amount="2"></span>"#
@@ -816,7 +838,7 @@ mod tests {
     fn align_end_zero_omits_numeric_class() {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
-        let n = alloc.align_end(AlignEnd { offset: 0 });
+        let n = alloc.line(LineFormat::AlignEnd { offset: 0 });
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-align-end" data-offset="0"></span>"#
@@ -827,7 +849,7 @@ mod tests {
     fn align_end_nonzero_offset_appends_numeric_class() {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
-        let n = alloc.align_end(AlignEnd { offset: 2 });
+        let n = alloc.line(LineFormat::AlignEnd { offset: 2 });
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-align-end aozora-align-end-2" data-offset="2"></span>"#
@@ -856,12 +878,12 @@ mod tests {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.container(Container {
-            kind: ContainerKind::Indent {
+            kind: RegionFormat::Indent(IndentBlock {
                 amount: 2,
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
-            },
+            }),
         });
         let mut open = String::new();
         render(n, true, &mut open).unwrap();
@@ -883,7 +905,7 @@ mod tests {
     }
 
     // Helpers to render a container's open / close tag.
-    fn open_tag(kind: ContainerKind) -> String {
+    fn open_tag(kind: RegionFormat) -> String {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.container(Container { kind });
@@ -892,7 +914,7 @@ mod tests {
         out
     }
 
-    fn close_tag(kind: ContainerKind) -> String {
+    fn close_tag(kind: RegionFormat) -> String {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
         let n = alloc.container(Container { kind });
@@ -958,13 +980,13 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let exponent = alloc.content_plain("2");
-        let sup = alloc.emphasis(EmphasisKind::SuperScript, exponent, false);
+        let sup = alloc.forward_format(ForwardAttr::SuperScript, exponent, false);
         assert_eq!(
             render_node_to_string(sup),
             r#"<sup class="aozora-superscript">2</sup>"#
         );
         let index = alloc.content_plain("3");
-        let sub = alloc.emphasis(EmphasisKind::SubScript, index, false);
+        let sub = alloc.forward_format(ForwardAttr::SubScript, index, false);
         assert_eq!(
             render_node_to_string(sub),
             r#"<sub class="aozora-subscript">3</sub>"#
@@ -973,21 +995,27 @@ mod tests {
 
     #[test]
     fn emphasis_span_forms_use_span_with_slug() {
-        for (kind, slug) in [
-            (EmphasisKind::SmallRight, "kogaki-right"),
-            (EmphasisKind::SmallLeft, "kogaki-left"),
-            (EmphasisKind::KeigakomiInline, "keigakomi-inline"),
-            (EmphasisKind::HorizontalInline, "horizontal"),
-            (EmphasisKind::Caption, "caption"),
+        for (attr, slug) in [
+            (
+                ForwardAttr::SmallScript(BoutenPosition::Right),
+                "kogaki-right",
+            ),
+            (
+                ForwardAttr::SmallScript(BoutenPosition::Left),
+                "kogaki-left",
+            ),
+            (ForwardAttr::Framed, "keigakomi-inline"),
+            (ForwardAttr::Horizontal, "horizontal"),
+            (ForwardAttr::Caption, "caption"),
         ] {
             let arena = Arena::new();
             let mut alloc = BorrowedAllocator::new(&arena);
             let text = alloc.content_plain("X");
-            let n = alloc.emphasis(kind, text, false);
+            let n = alloc.forward_format(attr, text, false);
             assert_eq!(
                 render_node_to_string(n),
                 format!(r#"<span class="aozora-{slug}">X</span>"#),
-                "emphasis span slug mismatch for {kind:?}"
+                "emphasis span slug mismatch for {attr:?}"
             );
         }
     }
@@ -997,7 +1025,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("大");
-        let n = alloc.emphasis(EmphasisKind::FontSize { steps: 3 }, text, false);
+        let n = alloc.forward_format(ForwardAttr::FontSize(font_shift(3)), text, false);
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-font-larger" data-steps="3">大</span>"#
@@ -1009,7 +1037,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("小");
-        let n = alloc.emphasis(EmphasisKind::FontSize { steps: -2 }, text, false);
+        let n = alloc.forward_format(ForwardAttr::FontSize(font_shift(-2)), text, false);
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-font-smaller" data-steps="2">小</span>"#
@@ -1175,7 +1203,7 @@ mod tests {
         let arena = Arena::new();
         let alloc = BorrowedAllocator::new(&arena);
         for page in [true, false] {
-            let n = alloc.center(aozora_syntax::Center { page });
+            let n = alloc.line(LineFormat::Center { page });
             assert_eq!(
                 render_node_to_string(n),
                 r#"<span class="aozora-center"></span>"#,
@@ -1272,12 +1300,12 @@ mod tests {
     #[test]
     fn container_indent_center_adds_center_class() {
         assert_eq!(
-            open_tag(ContainerKind::Indent {
+            open_tag(RegionFormat::Indent(IndentBlock {
                 amount: 2,
                 wrap: None,
                 center: true,
                 layout: IndentLayout::None,
-            }),
+            })),
             r#"<div class="aozora-container aozora-container-indent aozora-container-indent-2 aozora-container-center" data-amount="2">"#
         );
     }
@@ -1285,38 +1313,38 @@ mod tests {
     #[test]
     fn container_align_end_open_carries_offset() {
         assert_eq!(
-            open_tag(ContainerKind::AlignEnd { offset: 3 }),
+            open_tag(RegionFormat::AlignEnd { offset: 3 }),
             r#"<div class="aozora-container aozora-container-align-end" data-offset="3">"#
         );
-        assert_eq!(close_tag(ContainerKind::AlignEnd { offset: 3 }), "</div>");
+        assert_eq!(close_tag(RegionFormat::AlignEnd { offset: 3 }), "</div>");
     }
 
     #[test]
     fn container_line_width_open_carries_width() {
         assert_eq!(
-            open_tag(ContainerKind::LineWidth { width: 20 }),
+            open_tag(RegionFormat::LineWidth(lw(20))),
             r#"<div class="aozora-container aozora-container-line-width" data-width="20">"#
         );
-        assert_eq!(close_tag(ContainerKind::LineWidth { width: 20 }), "</div>");
+        assert_eq!(close_tag(RegionFormat::LineWidth(lw(20))), "</div>");
     }
 
     #[test]
     fn container_keigakomi_and_warichu_open_close() {
         assert_eq!(
-            open_tag(ContainerKind::Framed),
+            open_tag(RegionFormat::Framed),
             r#"<div class="aozora-container aozora-container-keigakomi">"#
         );
-        assert_eq!(close_tag(ContainerKind::Framed), "</div>");
+        assert_eq!(close_tag(RegionFormat::Framed), "</div>");
         assert_eq!(
-            open_tag(ContainerKind::Warichu),
+            open_tag(RegionFormat::Warichu),
             r#"<div class="aozora-container aozora-container-warichu">"#
         );
-        assert_eq!(close_tag(ContainerKind::Warichu), "</div>");
+        assert_eq!(close_tag(RegionFormat::Warichu), "</div>");
     }
 
     #[test]
     fn container_bouten_range_uses_em_with_slugs() {
-        let kind = ContainerKind::BoutenRange {
+        let kind = RegionFormat::Bouten {
             kind: BoutenKind::UnderLine,
             position: BoutenPosition::Left,
         };
@@ -1330,64 +1358,64 @@ mod tests {
     #[test]
     fn container_bold_block_uses_div() {
         assert_eq!(
-            open_tag(ContainerKind::Bold { block: true }),
+            open_tag(RegionFormat::Bold { padded: true }),
             r#"<div class="aozora-container aozora-container-bold">"#
         );
-        assert_eq!(close_tag(ContainerKind::Bold { block: true }), "</div>");
+        assert_eq!(close_tag(RegionFormat::Bold { padded: true }), "</div>");
     }
 
     #[test]
     fn container_italic_bare_range_uses_i() {
         assert_eq!(
-            open_tag(ContainerKind::Italic { block: false }),
+            open_tag(RegionFormat::Italic { padded: false }),
             r#"<i class="aozora-italic">"#
         );
-        assert_eq!(close_tag(ContainerKind::Italic { block: false }), "</i>");
+        assert_eq!(close_tag(RegionFormat::Italic { padded: false }), "</i>");
     }
 
     #[test]
     fn container_columns_carries_count() {
         assert_eq!(
-            open_tag(ContainerKind::Columns { count: 2 }),
+            open_tag(RegionFormat::Columns(cc(2))),
             r#"<div class="aozora-container aozora-container-columns" data-columns="2">"#
         );
-        assert_eq!(close_tag(ContainerKind::Columns { count: 2 }), "</div>");
+        assert_eq!(close_tag(RegionFormat::Columns(cc(2))), "</div>");
     }
 
     #[test]
     fn container_table_and_horizontal() {
         assert_eq!(
-            open_tag(ContainerKind::Table),
+            open_tag(RegionFormat::Table),
             r#"<div class="aozora-container aozora-container-table">"#
         );
-        assert_eq!(close_tag(ContainerKind::Table), "</div>");
+        assert_eq!(close_tag(RegionFormat::Table), "</div>");
         assert_eq!(
-            open_tag(ContainerKind::Horizontal),
+            open_tag(RegionFormat::Horizontal),
             r#"<div class="aozora-container aozora-container-horizontal">"#
         );
-        assert_eq!(close_tag(ContainerKind::Horizontal), "</div>");
+        assert_eq!(close_tag(RegionFormat::Horizontal), "</div>");
     }
 
     #[test]
     fn container_font_size_positive_and_negative() {
         assert_eq!(
-            open_tag(ContainerKind::FontSize { steps: 3 }),
+            open_tag(RegionFormat::FontSize(font_shift(3))),
             r#"<div class="aozora-container aozora-container-font-larger" data-steps="3">"#
         );
-        assert_eq!(close_tag(ContainerKind::FontSize { steps: 3 }), "</div>");
+        assert_eq!(close_tag(RegionFormat::FontSize(font_shift(3))), "</div>");
         assert_eq!(
-            open_tag(ContainerKind::FontSize { steps: -2 }),
+            open_tag(RegionFormat::FontSize(font_shift(-2))),
             r#"<div class="aozora-container aozora-container-font-smaller" data-steps="2">"#
         );
-        assert_eq!(close_tag(ContainerKind::FontSize { steps: -2 }), "</div>");
+        assert_eq!(close_tag(RegionFormat::FontSize(font_shift(-2))), "</div>");
     }
 
     #[test]
     fn container_heading_block_uses_heading_element() {
-        let kind = ContainerKind::Heading {
-            kind: HeadingKind::Large,
+        let kind = RegionFormat::Heading {
+            level: HeadingKind::Large,
             style: HeadingStyle::Standard,
-            block: true,
+            padded: true,
         };
         assert_eq!(
             open_tag(kind),
@@ -1398,10 +1426,10 @@ mod tests {
 
     #[test]
     fn container_heading_window_uses_div_element() {
-        let kind = ContainerKind::Heading {
-            kind: HeadingKind::Medium,
+        let kind = RegionFormat::Heading {
+            level: HeadingKind::Medium,
             style: HeadingStyle::Window,
-            block: false,
+            padded: false,
         };
         assert_eq!(
             open_tag(kind),
@@ -1413,21 +1441,15 @@ mod tests {
     #[test]
     fn container_small_script_left_and_right() {
         assert_eq!(
-            open_tag(ContainerKind::SmallScript {
-                side: BoutenPosition::Left,
-            }),
+            open_tag(RegionFormat::SmallScript(BoutenPosition::Left)),
             r#"<span class="aozora-kogaki-left">"#
         );
         assert_eq!(
-            open_tag(ContainerKind::SmallScript {
-                side: BoutenPosition::Right,
-            }),
+            open_tag(RegionFormat::SmallScript(BoutenPosition::Right)),
             r#"<span class="aozora-kogaki-right">"#
         );
         assert_eq!(
-            close_tag(ContainerKind::SmallScript {
-                side: BoutenPosition::Right,
-            }),
+            close_tag(RegionFormat::SmallScript(BoutenPosition::Right)),
             "</span>"
         );
     }
@@ -1435,27 +1457,27 @@ mod tests {
     #[test]
     fn container_caption_range_and_block() {
         assert_eq!(
-            open_tag(ContainerKind::Caption { block: false }),
+            open_tag(RegionFormat::Caption { padded: false }),
             r#"<span class="aozora-caption">"#
         );
         assert_eq!(
-            close_tag(ContainerKind::Caption { block: false }),
+            close_tag(RegionFormat::Caption { padded: false }),
             "</span>"
         );
         assert_eq!(
-            open_tag(ContainerKind::Caption { block: true }),
+            open_tag(RegionFormat::Caption { padded: true }),
             r#"<div class="aozora-container aozora-caption">"#
         );
-        assert_eq!(close_tag(ContainerKind::Caption { block: true }), "</div>");
+        assert_eq!(close_tag(RegionFormat::Caption { padded: true }), "</div>");
     }
 
     #[test]
     fn container_tcy_range_uses_tcy_span() {
         assert_eq!(
-            open_tag(ContainerKind::CombineUprightRange),
+            open_tag(RegionFormat::CombineUpright),
             r#"<span class="aozora-combine-upright">"#
         );
-        assert_eq!(close_tag(ContainerKind::CombineUprightRange), "</span>");
+        assert_eq!(close_tag(RegionFormat::CombineUpright), "</span>");
     }
 
     #[test]

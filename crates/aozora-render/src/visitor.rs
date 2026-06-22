@@ -24,10 +24,10 @@
 use core::fmt;
 
 use aozora_syntax::borrowed::{
-    AngleQuote, Bouten, CombineUpright, Directive, Gaiji, Heading, HeadingHint, Illustration,
-    Kaeriten, MarginNote, Node, Ruby, Warichu,
+    AngleQuote, Directive, ForwardFormat, Gaiji, Heading, HeadingHint, Illustration, Kaeriten,
+    MarginNote, Node, Ruby, Warichu,
 };
-use aozora_syntax::{AlignEnd, Center, Container, Framed, Indent, SectionKind};
+use aozora_syntax::{Container, LineFormat, SectionKind};
 
 /// Tree-walker visitor for borrowed Aozora AST nodes.
 ///
@@ -62,14 +62,11 @@ pub trait AozoraVisitor<'src> {
     fn visit_side_note(&mut self, s: &MarginNote<'src>) -> fmt::Result {
         Ok(())
     }
-    /// Visit a 傍点 / 傍線 node: emphasis dots or sidelines over `target`.
-    fn visit_bouten(&mut self, b: &Bouten<'src>) -> fmt::Result {
-        Ok(())
-    }
-    /// Visit a 縦中横 (tate-chu-yoko) node — a short run set horizontally
-    /// inside vertical text. Named `tate_chu_yoko`; the payload type is
-    /// [`CombineUpright`].
-    fn visit_tate_chu_yoko(&mut self, t: &CombineUpright<'src>) -> fmt::Result {
+    /// Visit a forward-reference emphasis node — 傍点 / 傍線, 太字 / 斜体,
+    /// 上付き / 下付き, 小書き, 罫囲み, 横組み, キャプション, or 縦中横 — the
+    /// attribute paired with its `target` run. The payload is a
+    /// [`ForwardFormat`]; its [`ForwardFormat::attr`] selects the treatment.
+    fn visit_format(&mut self, f: &ForwardFormat<'src>) -> fmt::Result {
         Ok(())
     }
     /// Visit a gaiji node — a glyph outside the character range, carrying
@@ -77,29 +74,15 @@ pub trait AozoraVisitor<'src> {
     fn visit_gaiji(&mut self, g: &Gaiji<'src>) -> fmt::Result {
         Ok(())
     }
-    /// Visit a 字下げ (indent) marker opening an indented run of `amount`
-    /// chars. A leaf event; the indented body follows as sibling nodes.
-    fn visit_indent(&mut self, i: Indent) -> fmt::Result {
-        Ok(())
-    }
-    /// Visit a 地付き / 地上げ (bottom-aligned) marker. `offset` is the gap
-    /// from the right edge in chars (`0` = 地付き, `n` = n 字上げ).
-    fn visit_align_end(&mut self, a: AlignEnd) -> fmt::Result {
-        Ok(())
-    }
-    /// Visit a single-line centring marker — `中央揃え` or, when
-    /// [`Center::page`] is set, `ページの左右中央`.
-    fn visit_center(&mut self, c: Center) -> fmt::Result {
+    /// Visit a single-line layout directive — 字下げ / 地付き / 中央 / 罫囲み.
+    /// A leaf event; the affected body follows as sibling nodes. The payload
+    /// is a [`LineFormat`].
+    fn visit_line(&mut self, lf: LineFormat) -> fmt::Result {
         Ok(())
     }
     /// Visit a 割り注 (warichu) node — a two-line split annotation with
     /// `upper` and `lower` rows.
     fn visit_warichu(&mut self, w: &Warichu<'src>) -> fmt::Result {
-        Ok(())
-    }
-    /// Visit a 罫囲み (keigakomi) marker — a ruled box around the run.
-    /// Named `keigakomi`; the payload type is the unit struct [`Framed`].
-    fn visit_keigakomi(&mut self, k: Framed) -> fmt::Result {
         Ok(())
     }
     /// Visit a 改ページ (page break) marker. Takes no payload.
@@ -183,14 +166,10 @@ pub fn dispatch_node<'src, V: AozoraVisitor<'src>>(
         _ if !entering => Ok(()),
         Node::Ruby(r) => v.visit_ruby(r),
         Node::MarginNote(s) => v.visit_side_note(s),
-        Node::Bouten(b) => v.visit_bouten(b),
-        Node::CombineUpright(t) => v.visit_tate_chu_yoko(t),
+        Node::Format(f) => v.visit_format(f),
         Node::Gaiji(g) => v.visit_gaiji(g),
-        Node::Indent(i) => v.visit_indent(i),
-        Node::AlignEnd(a) => v.visit_align_end(a),
-        Node::Center(c) => v.visit_center(c),
+        Node::Line(lf) => v.visit_line(lf),
         Node::Warichu(w) => v.visit_warichu(w),
-        Node::Framed(k) => v.visit_keigakomi(k),
         Node::PageBreak => v.visit_page_break(),
         Node::SectionBreak(k) => v.visit_section_break(k),
         Node::Heading(h) => v.visit_aozora_heading(h),
@@ -240,7 +219,7 @@ mod tests {
             self.containers_closed += 1;
             Ok(())
         }
-        fn visit_bouten(&mut self, _b: &Bouten<'src>) -> fmt::Result {
+        fn visit_format(&mut self, _f: &ForwardFormat<'src>) -> fmt::Result {
             self.any_other += 1;
             Ok(())
         }
@@ -262,7 +241,7 @@ mod tests {
         dispatch_node(Node::PageBreak, true, &mut counter).unwrap();
         dispatch_node(
             Node::Container(Container {
-                kind: aozora_syntax::ContainerKind::Framed,
+                kind: aozora_syntax::RegionFormat::Framed,
             }),
             true,
             &mut counter,
@@ -270,7 +249,7 @@ mod tests {
         .unwrap();
         dispatch_node(
             Node::Container(Container {
-                kind: aozora_syntax::ContainerKind::Framed,
+                kind: aozora_syntax::RegionFormat::Framed,
             }),
             false,
             &mut counter,
@@ -320,36 +299,20 @@ mod tests {
             self.log.push("side_note");
             Ok(())
         }
-        fn visit_bouten(&mut self, _b: &Bouten<'src>) -> fmt::Result {
-            self.log.push("bouten");
-            Ok(())
-        }
-        fn visit_tate_chu_yoko(&mut self, _t: &CombineUpright<'src>) -> fmt::Result {
-            self.log.push("tcy");
+        fn visit_format(&mut self, _f: &ForwardFormat<'src>) -> fmt::Result {
+            self.log.push("format");
             Ok(())
         }
         fn visit_gaiji(&mut self, _g: &Gaiji<'src>) -> fmt::Result {
             self.log.push("gaiji");
             Ok(())
         }
-        fn visit_indent(&mut self, _i: Indent) -> fmt::Result {
-            self.log.push("indent");
-            Ok(())
-        }
-        fn visit_align_end(&mut self, _a: AlignEnd) -> fmt::Result {
-            self.log.push("align_end");
-            Ok(())
-        }
-        fn visit_center(&mut self, _c: Center) -> fmt::Result {
-            self.log.push("center");
+        fn visit_line(&mut self, _lf: LineFormat) -> fmt::Result {
+            self.log.push("line");
             Ok(())
         }
         fn visit_warichu(&mut self, _w: &Warichu<'src>) -> fmt::Result {
             self.log.push("warichu");
-            Ok(())
-        }
-        fn visit_keigakomi(&mut self, _k: Framed) -> fmt::Result {
-            self.log.push("keigakomi");
             Ok(())
         }
         fn visit_page_break(&mut self) -> fmt::Result {
@@ -394,17 +357,17 @@ mod tests {
         }
     }
 
-    /// Build one of every dispatchable `Node` variant (skipping
-    /// `Emphasis`, which `dispatch_node` deliberately has no visit method
-    /// for — its enter pass no-ops via the `#[non_exhaustive]` `_` arm).
+    /// Build one of every dispatchable `Node` variant. 傍点 / 縦中横 route
+    /// through `visit_format` (the unified forward-emphasis event); the
+    /// single-line layout markers through `visit_line`.
     #[allow(
         clippy::too_many_lines,
         reason = "exhaustive variant construction for dispatch coverage"
     )]
     fn dispatch_every_variant_into(recorder: &mut Recorder) {
         use aozora_syntax::{
-            BoutenKind, BoutenPosition, ContainerKind, DirectiveKind, HeadingKind, HeadingStyle,
-            MarginNoteKind,
+            BoutenKind, BoutenPosition, DirectiveKind, HeadingKind, HeadingStyle, LineFormat,
+            MarginNoteKind, RegionFormat,
         };
 
         let arena = Arena::new();
@@ -427,15 +390,15 @@ mod tests {
         let g = a.make_gaiji("外字", None, false);
         let gaiji = a.gaiji(g);
 
-        let indent = a.indent(Indent { amount: 2 });
-        let align_end = a.align_end(AlignEnd { offset: 1 });
-        let center = a.center(Center { page: true });
+        let indent = a.line(LineFormat::Indent { amount: 2 });
+        let align_end = a.line(LineFormat::AlignEnd { offset: 1 });
+        let center = a.line(LineFormat::Center { page: true });
 
         let upper = a.content_plain("上");
         let lower = a.content_plain("下");
         let warichu = a.warichu(upper, lower);
 
-        let keigakomi = a.keigakomi(Framed);
+        let keigakomi = a.line(LineFormat::Framed);
         let page_break = a.page_break();
         let section_break = a.section_break(SectionKind::Kaicho);
 
@@ -453,7 +416,7 @@ mod tests {
         let angle_quote = a.angle_quote(qcontent);
 
         let container = a.container(Container {
-            kind: ContainerKind::Framed,
+            kind: RegionFormat::Framed,
         });
 
         let nodes = [
@@ -493,14 +456,14 @@ mod tests {
             vec![
                 "ruby",
                 "side_note",
-                "bouten",
-                "tcy",
+                "format", // bouten → visit_format
+                "format", // 縦中横 → visit_format
                 "gaiji",
-                "indent",
-                "align_end",
-                "center",
+                "line", // indent → visit_line
+                "line", // align_end → visit_line
+                "line", // center → visit_line
                 "warichu",
-                "keigakomi",
+                "line", // keigakomi → visit_line
                 "page_break",
                 "section_break",
                 "aozora_heading",
@@ -544,19 +507,21 @@ mod tests {
     }
 
     #[test]
-    fn emphasis_variant_has_no_visit_method_and_no_ops() {
-        // `dispatch_node` has no `visit_emphasis` arm — an Emphasis node
-        // falls through the `#[non_exhaustive]` catch-all on both passes.
+    fn emphasis_routes_to_visit_format_on_enter_only() {
+        // 太字 / 斜体 / … now unify into `Node::Format`, so they route to
+        // `visit_format` on enter; the exit pass no-ops via the shared
+        // `_ if !entering` arm.
         let arena = Arena::new();
         let mut a = BorrowedAllocator::new(&arena);
         let text = a.content_plain("重要");
-        let emphasis = a.emphasis(aozora_syntax::EmphasisKind::Bold, text, false);
+        let emphasis = a.forward_format(aozora_syntax::ForwardAttr::Bold, text, false);
         let mut recorder = Recorder::default();
         dispatch_node(emphasis, true, &mut recorder).expect("enter dispatch never fails");
         dispatch_node(emphasis, false, &mut recorder).expect("exit dispatch never fails");
-        assert!(
-            recorder.log.is_empty(),
-            "Emphasis has no visit method and must no-op, got {:?}",
+        assert_eq!(
+            recorder.log,
+            vec!["format"],
+            "Emphasis enters once via visit_format and no-ops on exit, got {:?}",
             recorder.log
         );
     }
@@ -581,7 +546,7 @@ mod tests {
         dispatch_node(ruby, true, &mut visitor).expect("default visit_ruby");
         dispatch_node(Node::PageBreak, true, &mut visitor).expect("default visit_page_break");
         let container = a.container(Container {
-            kind: aozora_syntax::ContainerKind::Framed,
+            kind: aozora_syntax::RegionFormat::Framed,
         });
         dispatch_node(container, true, &mut visitor).expect("default container_open");
         dispatch_node(container, false, &mut visitor).expect("default container_close");

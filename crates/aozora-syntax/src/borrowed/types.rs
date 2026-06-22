@@ -15,9 +15,9 @@ use core::slice;
 
 use aozora_encoding::gaiji::{GaijiCanonical, Resolved};
 
+use crate::format::{ForwardAttr, LineFormat};
 use crate::{
-    AlignEnd, BoutenKind, BoutenPosition, Center, Container, DirectiveKind, EmphasisKind, Framed,
-    HeadingKind, HeadingStyle, Indent, MarginNoteKind, RubySide, SectionKind,
+    Container, DirectiveKind, HeadingKind, HeadingStyle, MarginNoteKind, RubySide, SectionKind,
 };
 
 // ----------------------------------------------------------------------
@@ -34,23 +34,16 @@ use crate::{
 pub enum Node<'src> {
     /// Ruby (furigana). See [`Ruby`].
     Ruby(&'src Ruby<'src>),
-    /// Emphasis dots / sidelines. See [`Bouten`].
-    Bouten(&'src Bouten<'src>),
-    /// Tate-chu-yoko (horizontal embedding inside vertical text).
-    CombineUpright(&'src CombineUpright<'src>),
+    /// Forward-reference emphasis (`X［＃「X」は太字／傍点／縦中横…］`) — the
+    /// attribute paired with its target run. See [`ForwardFormat`].
+    Format(&'src ForwardFormat<'src>),
     /// Out-of-character-range glyph reference. See [`Gaiji`].
     Gaiji(&'src Gaiji<'src>),
-    /// Indentation marker. Carries no string content; uses the legacy
-    /// owned [`Indent`] type unchanged.
-    Indent(Indent),
-    /// End-aligned text marker.
-    AlignEnd(AlignEnd),
-    /// Centring marker (`ページの左右中央` / `中央揃え`). See [`Center`].
-    Center(Center),
+    /// Single-line layout directive (字下げ / 地付き / 中央 / 罫囲み). Carries
+    /// no string content. See [`LineFormat`].
+    Line(LineFormat),
     /// Warichu (split annotation). See [`Warichu`].
     Warichu(&'src Warichu<'src>),
-    /// Framed (boxed text marker, no fields).
-    Framed(Framed),
     /// Page break (`［＃改ページ］`).
     PageBreak,
     /// Section break — `［＃改丁／改段／改見開き］`.
@@ -67,8 +60,6 @@ pub enum Node<'src> {
     Directive(&'src Directive<'src>),
     /// `≪…≫` double-angle quotation (displays as `《…》`). See [`AngleQuote`].
     AngleQuote(&'src AngleQuote<'src>),
-    /// Bold / italic emphasis (`X［＃「X」は太字／斜体］`). See [`Emphasis`].
-    Emphasis(&'src Emphasis<'src>),
     /// Left-side annotation (注記). See [`MarginNote`].
     MarginNote(&'src MarginNote<'src>),
     /// Paired-container open (`［＃ここから字下げ］` etc.).
@@ -213,77 +204,34 @@ pub struct MarginNote<'src> {
     pub note: super::NonEmpty<Content<'src>>,
 }
 
-/// Emphasis dots / sidelines.
+/// Forward-reference emphasis: an attribute paired with its target run.
+///
+/// The unified leaf for every `「X」は…` / `「X」に…` forward reference —
+/// 傍点 / 傍線, 太字 / 斜体, 上付き / 下付き, 小書き, 罫囲み, 横組み,
+/// キャプション, 縦中横 — selected by [`attr`](Self::attr). The range /
+/// block forms (`［＃太字］…終わり`, `［＃ここから太字］…`) are paired
+/// containers ([`crate::format::RegionFormat`]), not this node.
 ///
 /// `target` is [`super::NonEmpty`] — the classify stage resolves the forward
-/// reference (`［＃「対象」に傍点］`) before emitting the node.
+/// reference before emitting the node; empty emphasis is a parse bug.
 ///
-/// `consumed_predecessor` records whether the classifier
-/// pulled this node's source span back over an immediately-preceding
-/// literal of `target` (the canonical `target［＃「target」に傍点］`
-/// shape). When true, the renderer's `<em class="bouten">target</em>`
-/// is the *sole* visible copy of the literal — the surrounding plain
-/// run was truncated to make room. The serializer reads this flag to
-/// re-emit the literal before `［＃「target」に傍点］`, preserving
-/// the parse∘serialize fixed-point invariant. When false (target
-/// appears earlier in the paragraph but not immediately before the
-/// bracket), the literal stays in the preceding plain run and the
-/// serializer emits only the bracket form.
+/// `consumed_predecessor` records whether the classifier pulled this node's
+/// source span back over an immediately-preceding literal of `target` (the
+/// canonical `target［＃「target」に傍点］` shape). When true, the renderer's
+/// decorated run is the *sole* visible copy of the literal — the surrounding
+/// plain run was truncated to make room — and the serializer re-emits the
+/// literal before the bracket to preserve the parse∘serialize fixed point.
+/// When false the literal stays in the preceding plain run and only the
+/// bracket form is emitted. (This 1-bit is the irreducible provenance the
+/// reframe could not fold away without a deferred-commit buffer.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Bouten<'src> {
-    /// Which 傍点 / 傍線 mark decorates the run.
-    pub kind: BoutenKind,
-    /// The run the marks are applied to.
+pub struct ForwardFormat<'src> {
+    /// Which forward-scope attribute decorates the run.
+    pub attr: ForwardAttr,
+    /// The run the attribute is applied to.
     pub target: super::NonEmpty<Content<'src>>,
-    /// Which side of the base text the marks sit on (`左に` ⇒ `Left`).
-    pub position: BoutenPosition,
     /// Whether the classifier pulled this node's span back over an
     /// immediately-preceding literal of `target`; see the struct docs.
-    pub consumed_predecessor: bool,
-}
-
-/// Tate-chu-yoko (horizontal embedding).
-///
-/// `text` is [`super::NonEmpty`] — empty TCY is a parse bug, not a
-/// valid state.
-///
-/// `consumed_predecessor` mirrors [`Bouten::consumed_predecessor`] —
-/// see that docstring. Forward-reference TCY (`text［＃「text」は縦
-/// 中横］`) follows the same back-ref consume model and the same
-/// round-trip contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CombineUpright<'src> {
-    /// The run set horizontally within the vertical line.
-    pub text: super::NonEmpty<Content<'src>>,
-    /// Whether the classifier pulled this node's span back over an
-    /// immediately-preceding literal of `text`; see the struct docs.
-    pub consumed_predecessor: bool,
-}
-
-/// Bold / italic emphasis.
-///
-/// The forward-reference leaf form of 太字 / 斜体
-/// (`X［＃「X」は太字］` / `X［＃「X」は斜体］`). `kind` selects 太字
-/// (`<b>`) or 斜体 (`<i>`); `text` is the emphasised run. The range /
-/// block forms (`［＃太字］…［＃太字終わり］`, `［＃ここから太字］…`)
-/// are paired containers ([`crate::ContainerKind::Bold`] /
-/// [`crate::ContainerKind::Italic`]), not this node.
-///
-/// `text` is [`super::NonEmpty`] — empty emphasis is a parse bug.
-///
-/// `consumed_predecessor` mirrors [`Bouten::consumed_predecessor`] and
-/// [`CombineUpright::consumed_predecessor`]: when the classify stage pulled the node's
-/// source span back over the immediately-preceding literal of `text`,
-/// the serializer re-emits that literal before `［＃「text」は太字］` to
-/// hold the parse∘serialize fixed point.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Emphasis<'src> {
-    /// Which typographic treatment (太字 / 斜体 / 上付き …) applies.
-    pub kind: EmphasisKind,
-    /// The emphasised run.
-    pub text: super::NonEmpty<Content<'src>>,
-    /// Whether the classifier pulled this node's span back over an
-    /// immediately-preceding literal of `text`; see the struct docs.
     pub consumed_predecessor: bool,
 }
 
@@ -433,11 +381,8 @@ impl Node<'_> {
     pub const fn is_block(&self) -> bool {
         matches!(
             self,
-            Self::Indent(_)
-                | Self::AlignEnd(_)
-                | Self::Center(_)
+            Self::Line(_)
                 | Self::Warichu(_)
-                | Self::Framed(_)
                 | Self::PageBreak
                 | Self::SectionBreak(_)
                 | Self::Heading(_)
@@ -453,15 +398,7 @@ impl Node<'_> {
     /// so it answers `false` here.
     #[must_use]
     pub const fn contains_inlines(&self) -> bool {
-        matches!(
-            self,
-            Self::Heading(_)
-                | Self::AlignEnd(_)
-                | Self::Center(_)
-                | Self::Warichu(_)
-                | Self::Framed(_)
-                | Self::Indent(_)
-        )
+        matches!(self, Self::Heading(_) | Self::Line(_) | Self::Warichu(_))
     }
 
     /// Stable XML/element-style node name used by HTML / serialiser /
@@ -472,14 +409,19 @@ impl Node<'_> {
     pub const fn xml_node_name(&self) -> &'static str {
         match self {
             Self::Ruby(_) => "aozora_ruby",
-            Self::Bouten(_) => "aozora_bouten",
-            Self::CombineUpright(_) => "aozora_tcy",
+            Self::Format(f) => match f.attr {
+                ForwardAttr::Bouten { .. } => "aozora_bouten",
+                ForwardAttr::CombineUpright => "aozora_tcy",
+                _ => "aozora_emphasis",
+            },
             Self::Gaiji(_) => "aozora_gaiji",
-            Self::Indent(_) => "aozora_indent",
-            Self::AlignEnd(_) => "aozora_align_end",
-            Self::Center(_) => "aozora_center",
+            Self::Line(l) => match l {
+                LineFormat::Indent { .. } => "aozora_indent",
+                LineFormat::AlignEnd { .. } => "aozora_align_end",
+                LineFormat::Center { .. } => "aozora_center",
+                LineFormat::Framed => "aozora_keigakomi",
+            },
             Self::Warichu(_) => "aozora_warichu",
-            Self::Framed(_) => "aozora_keigakomi",
             Self::PageBreak => "aozora_page_break",
             Self::SectionBreak(_) => "aozora_section_break",
             Self::Heading(_) => "aozora_heading",
@@ -488,7 +430,6 @@ impl Node<'_> {
             Self::Kaeriten(_) => "aozora_kaeriten",
             Self::Directive(_) => "aozora_annotation",
             Self::AngleQuote(_) => "aozora_angle_quote",
-            Self::Emphasis(_) => "aozora_emphasis",
             Self::MarginNote(_) => "aozora_side_note",
             Self::Container(_) => "aozora_container",
         }
@@ -505,14 +446,19 @@ impl Node<'_> {
         use crate::NodeKind;
         match self {
             Self::Ruby(_) => NodeKind::Ruby,
-            Self::Bouten(_) => NodeKind::Bouten,
-            Self::CombineUpright(_) => NodeKind::CombineUpright,
+            Self::Format(f) => match f.attr {
+                ForwardAttr::Bouten { .. } => NodeKind::Bouten,
+                ForwardAttr::CombineUpright => NodeKind::CombineUpright,
+                _ => NodeKind::Emphasis,
+            },
             Self::Gaiji(_) => NodeKind::Gaiji,
-            Self::Indent(_) => NodeKind::Indent,
-            Self::AlignEnd(_) => NodeKind::AlignEnd,
-            Self::Center(_) => NodeKind::Center,
+            Self::Line(l) => match l {
+                LineFormat::Indent { .. } => NodeKind::Indent,
+                LineFormat::AlignEnd { .. } => NodeKind::AlignEnd,
+                LineFormat::Center { .. } => NodeKind::Center,
+                LineFormat::Framed => NodeKind::Framed,
+            },
             Self::Warichu(_) => NodeKind::Warichu,
-            Self::Framed(_) => NodeKind::Framed,
             Self::PageBreak => NodeKind::PageBreak,
             Self::SectionBreak(_) => NodeKind::SectionBreak,
             Self::Heading(_) => NodeKind::Heading,
@@ -521,7 +467,6 @@ impl Node<'_> {
             Self::Kaeriten(_) => NodeKind::Kaeriten,
             Self::Directive(_) => NodeKind::Directive,
             Self::AngleQuote(_) => NodeKind::AngleQuote,
-            Self::Emphasis(_) => NodeKind::Emphasis,
             Self::MarginNote(_) => NodeKind::MarginNote,
             Self::Container(_) => NodeKind::Container,
         }
@@ -541,8 +486,7 @@ mod tests {
         assert_copy::<Node<'static>>();
         assert_copy::<Content<'static>>();
         assert_copy::<Ruby<'static>>();
-        assert_copy::<Bouten<'static>>();
-        assert_copy::<Emphasis<'static>>();
+        assert_copy::<ForwardFormat<'static>>();
         assert_copy::<Gaiji<'static>>();
     }
 
@@ -624,7 +568,7 @@ mod tests {
 
     #[test]
     fn block_variants_report_block() {
-        assert!(Node::Indent(Indent { amount: 2 }).is_block());
+        assert!(Node::Line(LineFormat::Indent { amount: 2 }).is_block());
         assert!(Node::SectionBreak(SectionKind::Kaicho).is_block());
     }
 
