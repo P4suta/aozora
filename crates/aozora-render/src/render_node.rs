@@ -598,7 +598,7 @@ mod tests {
         let mut alloc = BorrowedAllocator::new(&arena);
         let base = alloc.content_plain("青梅");
         let reading = alloc.content_plain("おうめ");
-        let n = alloc.ruby(base, reading, true);
+        let n = alloc.ruby(base, reading);
         assert_eq!(
             render_node_to_string(n),
             "<ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby>"
@@ -611,7 +611,7 @@ mod tests {
         let mut alloc = BorrowedAllocator::new(&arena);
         let base = alloc.content_plain("<x>");
         let reading = alloc.content_plain("&y");
-        let n = alloc.ruby(base, reading, true);
+        let n = alloc.ruby(base, reading);
         let out = render_node_to_string(n);
         assert!(out.contains("&lt;x&gt;"));
         assert!(out.contains("&amp;y"));
@@ -1478,7 +1478,7 @@ mod tests {
         let seg_t = alloc.seg_text("前<");
         let base = alloc.content_segments(&[seg_t, seg_g, seg_a]);
         let reading = alloc.content_plain("よ");
-        let n = alloc.ruby(base, reading, true);
+        let n = alloc.ruby(base, reading);
         assert_eq!(
             render_node_to_string(n),
             concat!(

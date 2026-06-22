@@ -46,7 +46,7 @@ fn xml_node_name_is_injective_over_all_variants() {
     let a = alloc.make_directive("annotation", DirectiveKind::Unknown);
 
     let nodes = [
-        alloc.ruby(base, reading, true),
+        alloc.ruby(base, reading),
         alloc.side_note(MarginNoteKind::Gloss, base, reading),
         alloc.bouten(BoutenKind::Goma, base, BoutenPosition::Right, false),
         alloc.tate_chu_yoko(base, false),

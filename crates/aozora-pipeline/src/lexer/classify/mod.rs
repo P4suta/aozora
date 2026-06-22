@@ -1026,7 +1026,7 @@ where
         // takes over.
         self.flush_plain_up_to(m.consume_start);
         let base_content = self.alloc.content_plain(m.base);
-        let node = self.alloc.ruby(base_content, m.reading, m.explicit);
+        let node = self.alloc.ruby(base_content, m.reading);
         self.pending_plain_start = None;
         Some(ClassifiedSpan {
             kind: SpanKind::Aozora(node),
@@ -1318,7 +1318,6 @@ where
 struct RubyMatch<'s, 'a> {
     base: &'s str,
     reading: borrowed::Content<'a>,
-    explicit: bool,
     consume_start: u32,
     consume_end: u32,
 }
@@ -1402,7 +1401,6 @@ impl<'a, 's> RecogniseCtx<'_, 'a, 's> {
             return Some(RubyMatch {
                 base: prev_text,
                 reading,
-                explicit: true,
                 consume_start: bar_span.start,
                 consume_end: close_span.end,
             });
@@ -1418,7 +1416,6 @@ impl<'a, 's> RecogniseCtx<'_, 'a, 's> {
         Some(RubyMatch {
             base: &prev_text[kanji_offset..],
             reading,
-            explicit: false,
             consume_start,
             consume_end: close_span.end,
         })
@@ -1963,7 +1960,6 @@ mod tests {
         };
         assert_eq!(ruby.base.as_plain(), Some("青梅"));
         assert_eq!(ruby.reading.as_plain(), Some("おうめ"));
-        assert!(ruby.delim_explicit);
         assert_eq!(out.spans[0].source_span.end as usize, src.len());
     }
 
@@ -1983,7 +1979,6 @@ mod tests {
         };
         assert_eq!(ruby.base.as_plain(), Some("漢字"));
         assert_eq!(ruby.reading.as_plain(), Some("かんじ"));
-        assert!(!ruby.delim_explicit);
         // Plain covers "あいう"; ruby covers "漢字《かんじ》".
         assert_eq!(out.spans[0].source_span.slice(src), "あいう");
     }
@@ -2205,7 +2200,6 @@ mod tests {
         run!(out, "日本《に※［＃「ほ」、第3水準1-85-54］ん》");
         let r = only_ruby(&out);
         assert_eq!(r.base.as_plain(), Some("日本"));
-        assert!(!r.delim_explicit);
         let Content::Segments(segs) = r.reading.get() else {
             panic!("expected Segments, got {:?}", r.reading);
         };

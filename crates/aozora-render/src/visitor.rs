@@ -256,7 +256,7 @@ mod tests {
         let mut alloc = BorrowedAllocator::new(&arena);
         let base = alloc.content_plain("x");
         let reading = alloc.content_plain("y");
-        let borrowed_ruby = alloc.ruby(base, reading, false);
+        let borrowed_ruby = alloc.ruby(base, reading);
         let mut counter = Counter::default();
         dispatch_node(borrowed_ruby, true, &mut counter).unwrap();
         dispatch_node(Node::PageBreak, true, &mut counter).unwrap();
@@ -412,7 +412,7 @@ mod tests {
 
         let base = a.content_plain("基");
         let reading = a.content_plain("よ");
-        let ruby = a.ruby(base, reading, true);
+        let ruby = a.ruby(base, reading);
 
         let nbase = a.content_plain("底");
         let note = a.content_plain("注");
@@ -524,7 +524,7 @@ mod tests {
         let mut a = BorrowedAllocator::new(&arena);
         let base = a.content_plain("基");
         let reading = a.content_plain("よ");
-        let ruby = a.ruby(base, reading, true);
+        let ruby = a.ruby(base, reading);
         let btarget = a.content_plain("点");
         let bouten = a.bouten(
             aozora_syntax::BoutenKind::Goma,
@@ -577,7 +577,7 @@ mod tests {
         // no-op methods (which return Ok(()) for every variant).
         let base = a.content_plain("基");
         let reading = a.content_plain("よ");
-        let ruby = a.ruby(base, reading, true);
+        let ruby = a.ruby(base, reading);
         dispatch_node(ruby, true, &mut visitor).expect("default visit_ruby");
         dispatch_node(Node::PageBreak, true, &mut visitor).expect("default visit_page_break");
         let container = a.container(Container {

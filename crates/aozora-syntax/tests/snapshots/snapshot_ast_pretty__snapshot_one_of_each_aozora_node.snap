@@ -15,7 +15,6 @@ expression: "format!(\"{nodes:#?}\")"
                     "よみ",
                 ),
             ),
-            delim_explicit: true,
             side: Right,
         },
     ),

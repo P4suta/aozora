@@ -197,7 +197,7 @@ impl<'a> BorrowedAllocator<'a> {
     // Node variant constructors (18 — matches the Node enum)
     // ---------------------------------------------------------------------
 
-    /// `Node::Ruby(Ruby { base, reading, delim_explicit })`.
+    /// `Node::Ruby(Ruby { base, reading })`.
     ///
     /// `base` and `reading` carry the [`borrowed::NonEmpty`]
     /// invariant. The classify stage only emits Ruby once both are non-empty,
@@ -216,7 +216,6 @@ impl<'a> BorrowedAllocator<'a> {
         &self,
         base: borrowed::Content<'a>,
         reading: borrowed::Content<'a>,
-        delim_explicit: bool,
     ) -> borrowed::Node<'a> {
         let base = borrowed::NonEmpty::new(base)
             .expect("classify stage must emit Ruby with non-empty base");
@@ -225,7 +224,6 @@ impl<'a> BorrowedAllocator<'a> {
         borrowed::Node::Ruby(self.arena.alloc(borrowed::Ruby {
             base,
             reading,
-            delim_explicit,
             side: RubySide::Right,
         }))
     }
@@ -250,7 +248,6 @@ impl<'a> BorrowedAllocator<'a> {
         borrowed::Node::Ruby(self.arena.alloc(borrowed::Ruby {
             base,
             reading,
-            delim_explicit: false,
             side: RubySide::Left,
         }))
     }
@@ -600,12 +597,11 @@ mod tests {
         let mut a = fresh_alloc(&arena);
         let base = a.content_plain("青梅");
         let reading = a.content_plain("おうめ");
-        let n = a.ruby(base, reading, true);
+        let n = a.ruby(base, reading);
         match n {
             borrowed::Node::Ruby(r) => {
                 assert_eq!(r.base.as_plain(), Some("青梅"));
                 assert_eq!(r.reading.as_plain(), Some("おうめ"));
-                assert!(r.delim_explicit);
             }
             other => panic!("expected Ruby, got {other:?}"),
         }
@@ -948,10 +944,10 @@ mod tests {
         let mut a = fresh_alloc(&arena);
         let base1 = a.content_plain("青梅");
         let reading1 = a.content_plain("おうめ");
-        let n1 = a.ruby(base1, reading1, false);
+        let n1 = a.ruby(base1, reading1);
         let base2 = a.content_plain("青梅");
         let reading2 = a.content_plain("おうめ");
-        let n2 = a.ruby(base2, reading2, false);
+        let n2 = a.ruby(base2, reading2);
         let borrowed::Node::Ruby(r1) = n1 else {
             unreachable!();
         };

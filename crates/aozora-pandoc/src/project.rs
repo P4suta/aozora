@@ -316,20 +316,7 @@ fn ruby_inline(r: &Ruby<'_>) -> Inline {
         Inline::Span(class_attr("ruby-base"), base_inlines),
         Inline::Span(class_attr("ruby-reading"), reading_inlines),
     ];
-    Inline::Span(
-        class_attr_kv(
-            "ruby",
-            vec![(
-                "delim".to_owned(),
-                if r.delim_explicit {
-                    "explicit".to_owned()
-                } else {
-                    "implicit".to_owned()
-                },
-            )],
-        ),
-        inner,
-    )
+    Inline::Span(class_attr("ruby"), inner)
 }
 
 fn side_note_inline(s: &MarginNote<'_>) -> Inline {
@@ -770,18 +757,17 @@ mod tests {
     // -----------------------------------------------------------------
 
     #[test]
-    fn implicit_ruby_carries_implicit_delim() {
+    fn implicit_ruby_projects_base_and_reading() {
         let blocks = project("青梅《おうめ》という地名。\n");
-        let (attr, inner) = find_span(&blocks, "ruby").expect("ruby span");
-        assert_eq!(kv(attr, "delim"), Some("implicit"), "implicit ruby delim");
+        let (_, inner) = find_span(&blocks, "ruby").expect("ruby span");
         assert_eq!(inner.len(), 2, "ruby has base + reading children");
     }
 
     #[test]
-    fn explicit_ruby_carries_explicit_delim() {
+    fn explicit_ruby_projects_as_ruby_span() {
         let blocks = project("｜青梅《おうめ》\n");
-        let (attr, _) = find_span(&blocks, "ruby").expect("ruby span");
-        assert_eq!(kv(attr, "delim"), Some("explicit"), "explicit ruby delim");
+        let (_, inner) = find_span(&blocks, "ruby").expect("ruby span");
+        assert_eq!(inner.len(), 2, "ruby has base + reading children");
     }
 
     #[test]

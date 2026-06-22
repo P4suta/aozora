@@ -246,7 +246,7 @@ mod tests {
         // plain sequential lets compile.
         let ruby_base = a.content_plain("親");
         let ruby_reading = a.content_plain("おや");
-        render_into(a.ruby(ruby_base, ruby_reading, true), &mut emitted);
+        render_into(a.ruby(ruby_base, ruby_reading), &mut emitted);
         let lruby_base = a.content_plain("子");
         let lruby_reading = a.content_plain("こ");
         render_into(a.left_ruby(lruby_base, lruby_reading), &mut emitted);

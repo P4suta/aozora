@@ -31,7 +31,7 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<Node<'a>> {
     let a = alloc.make_directive("annotation", DirectiveKind::Unknown);
 
     vec![
-        alloc.ruby(base, reading, true),
+        alloc.ruby(base, reading),
         // Both MarginNote flavours — pin each kind's Debug shape.
         alloc.side_note(MarginNoteKind::Gloss, base, reading),
         alloc.side_note(MarginNoteKind::Marginal, base, reading),
