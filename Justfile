@@ -869,10 +869,17 @@ strict-code:
     # in-source `#[cfg(test)] mod tests` assertions. The baseline
     # gates against new state-assertion-style expects landing in
     # production paths.
+    #
+    # 51 (was 50): the coremodel Format unification (#189) made
+    # `FontShift` wrap a `NonZeroI8`, so the classify test module gained
+    # one `fs(steps)` data-builder helper bridging an i8 literal to the
+    # now-type-safe constructor (`NonZeroI8::new(steps).expect(..)`). A
+    # test-data helper, not a production state-assertion — exactly the
+    # invariant-in-the-type move this gate rewards.
     expect_files=(crates/aozora-pipeline/src/**/*.rs)
     expect_count=$(grep -hcE '\.expect\(' "${expect_files[@]}" 2>/dev/null \
         | awk '{s+=$1} END {print s+0}')
-    expect_baseline=50
+    expect_baseline=51
     if [[ "$expect_count" -gt "$expect_baseline" ]]; then
         echo "==> forbidden: expect() count in aozora-pipeline source grew" >&2
         echo "    baseline: $expect_baseline, found: $expect_count" >&2

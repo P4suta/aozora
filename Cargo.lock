@@ -367,7 +367,6 @@ dependencies = [
 name = "aozora-render"
 version = "0.4.1"
 dependencies = [
- "aozora-encoding",
  "aozora-pipeline",
  "aozora-proptest",
  "aozora-spec",
