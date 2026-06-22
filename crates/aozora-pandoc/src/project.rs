@@ -462,7 +462,7 @@ fn heading_hint_inline(h: HeadingHint<'_>) -> Inline {
         class_attr_kv(
             "heading-hint",
             vec![
-                ("level".to_owned(), h.level.to_string()),
+                ("level".to_owned(), h.level.outline_level().to_string()),
                 ("target".to_owned(), h.target.as_str().to_owned()),
             ],
         ),

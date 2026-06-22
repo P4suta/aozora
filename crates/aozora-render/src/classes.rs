@@ -156,8 +156,8 @@ mod tests {
     use aozora_syntax::borrowed::{Arena, Node};
     use aozora_syntax::{
         AlignEnd, BOUTEN_KINDS, BoutenKind, BoutenPosition, Center, Container, ContainerKind,
-        DirectiveKind, EMPHASIS_KINDS, EmphasisKind, HEADING_KINDS, HEADING_STYLES, HeadingStyle,
-        Indent, IndentLayout, MarginNoteKind, SECTION_KINDS,
+        DirectiveKind, EMPHASIS_KINDS, EmphasisKind, HEADING_KINDS, HEADING_STYLES, HeadingKind,
+        HeadingStyle, Indent, IndentLayout, MarginNoteKind, SECTION_KINDS,
     };
     use std::collections::BTreeSet;
 
@@ -220,7 +220,10 @@ mod tests {
         render_into(a.align_end(AlignEnd { offset: 2 }), &mut emitted);
         render_into(a.sashie("f.png", None, None, None), &mut emitted);
         render_into(a.sashie_general("f.png", "図", None), &mut emitted);
-        render_into(a.heading_hint(1, HeadingStyle::Standard, "x"), &mut emitted);
+        render_into(
+            a.heading_hint(HeadingKind::Large, HeadingStyle::Standard, "x"),
+            &mut emitted,
+        );
 
         for &k in SECTION_KINDS {
             render_into(a.section_break(k), &mut emitted);

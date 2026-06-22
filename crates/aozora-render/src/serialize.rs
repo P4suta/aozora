@@ -393,11 +393,7 @@ fn emit_heading_hint<W: Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result 
     out.write_str(h.target.as_str())?;
     out.write_str("」は")?;
     out.write_str(heading_style_keyword(h.style))?;
-    out.write_str(match h.level {
-        2 => "中見出し",
-        3 => "小見出し",
-        _ => "大見出し",
-    })?;
+    out.write_str(heading_level_word(h.level))?;
     out.write_str("］")
 }
 

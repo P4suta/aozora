@@ -509,7 +509,7 @@ fn render_heading_hint<W: Write>(h: &HeadingHint<'_>, writer: &mut W) -> fmt::Re
     write!(
         writer,
         r#"<span class="aozora-heading-hint" data-level="{level}""#,
-        level = h.level,
+        level = h.level.outline_level(),
     )?;
     // `data-style` is emitted only for a non-standard style, so a standard
     // hint's markup is unchanged.
@@ -1253,7 +1253,7 @@ mod tests {
     fn heading_hint_standard_omits_data_style() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let n = alloc.heading_hint(1, HeadingStyle::Standard, "対象");
+        let n = alloc.heading_hint(HeadingKind::Large, HeadingStyle::Standard, "対象");
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-heading-hint" data-level="1" data-target="対象" hidden></span>"#
@@ -1264,7 +1264,7 @@ mod tests {
     fn heading_hint_styled_includes_data_style_and_escapes_target() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let n = alloc.heading_hint(2, HeadingStyle::Window, "a<b>");
+        let n = alloc.heading_hint(HeadingKind::Medium, HeadingStyle::Window, "a<b>");
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-heading-hint" data-level="2" data-style="window" data-target="a&lt;b&gt;" hidden></span>"#

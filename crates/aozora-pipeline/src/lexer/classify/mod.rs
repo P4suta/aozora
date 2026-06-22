@@ -3540,7 +3540,7 @@ mod tests {
         // forward-bouten.
         run!(out, "第一篇［＃「第一篇」は大見出し］");
         let h = find_heading_hint(&out).expect("expected HeadingHint");
-        assert_eq!(h.level, 1);
+        assert_eq!(h.level.outline_level(), 1);
         assert_eq!(h.target.as_str(), "第一篇");
     }
 
@@ -3549,7 +3549,7 @@ mod tests {
         // 中見出し → H2.
         run!(out, "一［＃「一」は中見出し］");
         let h = find_heading_hint(&out).expect("expected HeadingHint");
-        assert_eq!(h.level, 2);
+        assert_eq!(h.level.outline_level(), 2);
         assert_eq!(h.target.as_str(), "一");
     }
 
@@ -3558,7 +3558,7 @@ mod tests {
         // 小見出し → H3.
         run!(out, "小題［＃「小題」は小見出し］");
         let h = find_heading_hint(&out).expect("expected HeadingHint");
-        assert_eq!(h.level, 3);
+        assert_eq!(h.level.outline_level(), 3);
         assert_eq!(h.target.as_str(), "小題");
     }
 
@@ -3608,7 +3608,7 @@ mod tests {
             "○　両頭《りやうとう》の蛇《へび》［＃「○　両頭の蛇」は中見出し］"
         );
         let hit = find_heading_hint(&out)
-            .is_some_and(|h| h.level == 2 && h.target.as_str() == "○　両頭の蛇");
+            .is_some_and(|h| h.level.outline_level() == 2 && h.target.as_str() == "○　両頭の蛇");
         assert!(hit, "expected a 中見出し HeadingHint, got {:?}", out.spans);
     }
 
@@ -3617,8 +3617,8 @@ mod tests {
         // Explicit-base ruby `序｜章《しよう》`: the `｜` marker is also
         // stripped so the target `序章` matches the look-back.
         run!(out, "序｜章《しよう》［＃「序章」は大見出し］");
-        let hit =
-            find_heading_hint(&out).is_some_and(|h| h.level == 1 && h.target.as_str() == "序章");
+        let hit = find_heading_hint(&out)
+            .is_some_and(|h| h.level.outline_level() == 1 && h.target.as_str() == "序章");
         assert!(hit, "expected a 大見出し HeadingHint, got {:?}", out.spans);
     }
 
@@ -3646,7 +3646,7 @@ mod tests {
             .spans
             .iter()
             .filter_map(|s| match aozora_node(s) {
-                Some(Node::HeadingHint(h)) => Some(h.level),
+                Some(Node::HeadingHint(h)) => Some(h.level.outline_level()),
                 _ => None,
             })
             .collect();

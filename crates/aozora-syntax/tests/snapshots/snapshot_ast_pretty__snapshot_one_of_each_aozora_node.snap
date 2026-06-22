@@ -130,7 +130,7 @@ expression: "format!(\"{nodes:#?}\")"
     ),
     HeadingHint(
         HeadingHint {
-            level: 2,
+            level: Medium,
             style: SameLine,
             target: NonEmptyStr(
                 "対象",
