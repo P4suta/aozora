@@ -4,11 +4,11 @@
     "feature": "horizontal",
     "level": "should",
     "spec_section": "6.18",
-    "note": "[provenance:hand-derived §6.18 + AOZORA-ANNOTATION 2026-06-17] The inline forward-reference 横組み ［＃「X」は横組み］ (https://www.aozora.gr.jp/annotation/etc.html) sets a single run horizontally inside vertical text. Per §7.5 it consumes the preceding target literal 西暦 and yields an emphasis node; §8 renders <span class=\"aozora-horizontal\">. Offsets computed from the §3 byte model; cross-checked against the reference processor."
+    "note": "[provenance:hand-derived §6.18 + AOZORA-ANNOTATION 2026-06-17] The inline forward-reference 横組み ［＃「X」は横組み］ (https://www.aozora.gr.jp/annotation/etc.html) sets a single run horizontally inside vertical text. Per §7.5 it consumes the preceding target literal 西暦 and yields an emphasis node; §8 renders <span class=\"aozora-yokogumi\">. Offsets computed from the §3 byte model; cross-checked against the reference processor."
   },
   "source": "西暦［＃「西暦」は横組み］。\n",
   "expected": {
-    "html": "<p><span class=\"aozora-horizontal\">西暦</span>。</p>\n",
+    "html": "<p><span class=\"aozora-yokogumi\">西暦</span>。</p>\n",
     "serialize": "西暦［＃「西暦」は横組み］。\n",
     "nodes": [
       {

@@ -8,7 +8,7 @@
   },
   "source": "値は［＃斜体］ｅ［＃斜体終わり］である。\n",
   "expected": {
-    "html": "<p>値は<i class=\"aozora-italic\">ｅ</i>である。</p>\n",
+    "html": "<p>値は<i class=\"aozora-shatai\">ｅ</i>である。</p>\n",
     "serialize": "値は［＃斜体］ｅ［＃斜体終わり］である。\n",
     "nodes": [
       {

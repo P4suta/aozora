@@ -4,11 +4,11 @@
     "feature": "emphasis",
     "level": "should",
     "spec_section": "6.16",
-    "note": "[provenance:hand-derived §6.16 + AOZORA-ANNOTATION 2026-06-17] 上付き小文字 (superscript) is a forward-reference emphasis-page family (https://www.aozora.gr.jp/annotation/etc.html), particle は, single target, inline. Per §7.5 it consumes the immediately preceding target literal ２ (byte 3) and yields an emphasis node over ｅ²; §8 reference rendering is <sup class=\"aozora-superscript\">. Offsets computed from the §3 byte model (each fullwidth char = 3 bytes); cross-checked against the reference processor. New family — no prior implementation-derived draft."
+    "note": "[provenance:hand-derived §6.16 + AOZORA-ANNOTATION 2026-06-17] 上付き小文字 (superscript) is a forward-reference emphasis-page family (https://www.aozora.gr.jp/annotation/etc.html), particle は, single target, inline. Per §7.5 it consumes the immediately preceding target literal ２ (byte 3) and yields an emphasis node over ｅ²; §8 reference rendering is <sup class=\"aozora-uwatsuki\">. Offsets computed from the §3 byte model (each fullwidth char = 3 bytes); cross-checked against the reference processor. New family — no prior implementation-derived draft."
   },
   "source": "ｅ２［＃「２」は上付き小文字］\n",
   "expected": {
-    "html": "<p>ｅ<sup class=\"aozora-superscript\">２</sup></p>\n",
+    "html": "<p>ｅ<sup class=\"aozora-uwatsuki\">２</sup></p>\n",
     "serialize": "ｅ２［＃「２」は上付き小文字］\n",
     "nodes": [
       {

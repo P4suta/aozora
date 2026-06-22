@@ -4,11 +4,11 @@
     "feature": "emphasis",
     "level": "should",
     "spec_section": "6.16",
-    "note": "[provenance:hand-derived §6.16 + AOZORA-ANNOTATION 2026-06-17] 下付き小文字 (subscript) is a forward-reference emphasis-page family (https://www.aozora.gr.jp/annotation/etc.html), particle は, single target, inline. Per §7.5 it consumes the immediately preceding target literal ２ (byte 3) and yields an emphasis node over Ｈ²; §8 reference rendering is <sub class=\"aozora-subscript\">. Offsets computed from the §3 byte model; cross-checked against the reference processor. New family — no prior implementation-derived draft."
+    "note": "[provenance:hand-derived §6.16 + AOZORA-ANNOTATION 2026-06-17] 下付き小文字 (subscript) is a forward-reference emphasis-page family (https://www.aozora.gr.jp/annotation/etc.html), particle は, single target, inline. Per §7.5 it consumes the immediately preceding target literal ２ (byte 3) and yields an emphasis node over Ｈ²; §8 reference rendering is <sub class=\"aozora-shitatsuki\">. Offsets computed from the §3 byte model; cross-checked against the reference processor. New family — no prior implementation-derived draft."
   },
   "source": "Ｈ２［＃「２」は下付き小文字］\n",
   "expected": {
-    "html": "<p>Ｈ<sub class=\"aozora-subscript\">２</sub></p>\n",
+    "html": "<p>Ｈ<sub class=\"aozora-shitatsuki\">２</sub></p>\n",
     "serialize": "Ｈ２［＃「２」は下付き小文字］\n",
     "nodes": [
       {

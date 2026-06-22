@@ -8,7 +8,7 @@
   },
   "source": "作者附記［＃「作者附記」は太字］――以下略。\n",
   "expected": {
-    "html": "<p><b class=\"aozora-bold\">作者附記</b>――以下略。</p>\n",
+    "html": "<p><b class=\"aozora-futoji\">作者附記</b>――以下略。</p>\n",
     "serialize": "作者附記［＃「作者附記」は太字］――以下略。\n",
     "nodes": [
       {

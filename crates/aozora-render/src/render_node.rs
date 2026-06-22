@@ -141,7 +141,7 @@ fn render_format<W: Write>(f: &ForwardFormat<'_>, writer: &mut W) -> fmt::Result
                 // Bold and any future weight default to the bold element.
                 _ => ("b", "</b>"),
             };
-            let slug = aozora_spec::roman_slug(attr.keyword()).unwrap_or("bold");
+            let slug = aozora_spec::roman_slug(attr.keyword()).unwrap_or("futoji");
             write!(writer, r#"<{el} class="aozora-{slug}">"#)?;
             render_content(f.target.get(), writer)?;
             writer.write_str(close)
@@ -328,14 +328,14 @@ fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::R
         // form (`block: true`) wraps whole paragraphs, so it takes a
         // block `<div>` (an inline `<b>` around `<p>` would be invalid),
         // following the indent / keigakomi container convention; the
-        // `aozora-container-bold` / `-italic` class carries the styling.
-        RegionFormat::Bold { padded: false } => writer.write_str(r#"<b class="aozora-bold">"#),
-        RegionFormat::Italic { padded: false } => writer.write_str(r#"<i class="aozora-italic">"#),
+        // `aozora-container-futoji` / `-shatai` class carries the styling.
+        RegionFormat::Bold { padded: false } => writer.write_str(r#"<b class="aozora-futoji">"#),
+        RegionFormat::Italic { padded: false } => writer.write_str(r#"<i class="aozora-shatai">"#),
         RegionFormat::Bold { padded: true } => {
-            writer.write_str(r#"<div class="aozora-container aozora-container-bold">"#)
+            writer.write_str(r#"<div class="aozora-container aozora-container-futoji">"#)
         }
         RegionFormat::Italic { padded: true } => {
-            writer.write_str(r#"<div class="aozora-container aozora-container-italic">"#)
+            writer.write_str(r#"<div class="aozora-container aozora-container-shatai">"#)
         }
         RegionFormat::Columns(count) => write!(
             writer,
@@ -346,7 +346,7 @@ fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::R
             writer.write_str(r#"<div class="aozora-container aozora-container-table">"#)
         }
         RegionFormat::Horizontal => {
-            writer.write_str(r#"<div class="aozora-container aozora-container-horizontal">"#)
+            writer.write_str(r#"<div class="aozora-container aozora-container-yokogumi">"#)
         }
         RegionFormat::FontSize(shift) => {
             let class = if shift.larger() {
@@ -699,7 +699,7 @@ mod tests {
         let n = alloc.forward_format(ForwardAttr::Bold, text, false);
         assert_eq!(
             render_node_to_string(n),
-            r#"<b class="aozora-bold">重要</b>"#
+            r#"<b class="aozora-futoji">重要</b>"#
         );
     }
 
@@ -711,7 +711,7 @@ mod tests {
         let n = alloc.forward_format(ForwardAttr::Italic, text, false);
         assert_eq!(
             render_node_to_string(n),
-            r#"<i class="aozora-italic">e</i>"#
+            r#"<i class="aozora-shatai">e</i>"#
         );
     }
 
@@ -726,7 +726,7 @@ mod tests {
         render(n, true, &mut open).unwrap();
         let mut close = String::new();
         render(n, false, &mut close).unwrap();
-        assert_eq!(open, r#"<b class="aozora-bold">"#);
+        assert_eq!(open, r#"<b class="aozora-futoji">"#);
         assert_eq!(close, "</b>");
     }
 
@@ -746,7 +746,7 @@ mod tests {
         render(n, false, &mut close).unwrap();
         assert_eq!(
             open,
-            r#"<div class="aozora-container aozora-container-italic">"#
+            r#"<div class="aozora-container aozora-container-shatai">"#
         );
         assert_eq!(close, "</div>");
     }
@@ -983,13 +983,13 @@ mod tests {
         let sup = alloc.forward_format(ForwardAttr::SuperScript, exponent, false);
         assert_eq!(
             render_node_to_string(sup),
-            r#"<sup class="aozora-superscript">2</sup>"#
+            r#"<sup class="aozora-uwatsuki">2</sup>"#
         );
         let index = alloc.content_plain("3");
         let sub = alloc.forward_format(ForwardAttr::SubScript, index, false);
         assert_eq!(
             render_node_to_string(sub),
-            r#"<sub class="aozora-subscript">3</sub>"#
+            r#"<sub class="aozora-shitatsuki">3</sub>"#
         );
     }
 
@@ -1005,7 +1005,7 @@ mod tests {
                 "kogaki-left",
             ),
             (ForwardAttr::Framed, "keigakomi-inline"),
-            (ForwardAttr::Horizontal, "horizontal"),
+            (ForwardAttr::Horizontal, "yokogumi"),
             (ForwardAttr::Caption, "caption"),
         ] {
             let arena = Arena::new();
@@ -1359,7 +1359,7 @@ mod tests {
     fn container_bold_block_uses_div() {
         assert_eq!(
             open_tag(RegionFormat::Bold { padded: true }),
-            r#"<div class="aozora-container aozora-container-bold">"#
+            r#"<div class="aozora-container aozora-container-futoji">"#
         );
         assert_eq!(close_tag(RegionFormat::Bold { padded: true }), "</div>");
     }
@@ -1368,7 +1368,7 @@ mod tests {
     fn container_italic_bare_range_uses_i() {
         assert_eq!(
             open_tag(RegionFormat::Italic { padded: false }),
-            r#"<i class="aozora-italic">"#
+            r#"<i class="aozora-shatai">"#
         );
         assert_eq!(close_tag(RegionFormat::Italic { padded: false }), "</i>");
     }
@@ -1391,7 +1391,7 @@ mod tests {
         assert_eq!(close_tag(RegionFormat::Table), "</div>");
         assert_eq!(
             open_tag(RegionFormat::Horizontal),
-            r#"<div class="aozora-container aozora-container-horizontal">"#
+            r#"<div class="aozora-container aozora-container-yokogumi">"#
         );
         assert_eq!(close_tag(RegionFormat::Horizontal), "</div>");
     }

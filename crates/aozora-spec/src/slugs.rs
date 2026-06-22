@@ -761,35 +761,35 @@ pub const RENDER_SLUGS: &[RenderSlug] = &[
         jis: Some("07.16"),
     },
     // --- Emphasis / inline ---------------------------------------------------
-    // These keep their established English slugs: they are translations,
-    // not misreadings, and span three emit paths (forward / range / block)
-    // plus the `aozora-container-*` class family, so reading-based renaming
-    // is tracked separately. `reading: None` keeps them out of the
-    // Hepburn-consistency check. Only 行右/行左小書き carry a reading —
-    // their slug once carried an over-long misspelling, now corrected
-    // to `kogaki` (小書き＝こがき).
+    // The emphasis family now uses reading-based romaji slugs (#115),
+    // matching the bouten kinds (#114): the slug is `hepburn(reading)`,
+    // enforced by `render_slug_matches_reading`. Two stay on their existing
+    // slugs deliberately — `caption` (a loanword, キャプション) and
+    // `keigakomi` (罫囲み＝けいがこみ, a valid reading already serving as the
+    // wire/API identifier). The slug is the CSS class only (`aozora-<slug>`);
+    // the wire `as_json_tag` is a separate, frozen vocabulary.
     RenderSlug {
         canonical: "斜体",
-        reading: None,
-        roman: "italic",
+        reading: Some("しゃたい"),
+        roman: "shatai",
         jis: None,
     },
     RenderSlug {
         canonical: "太字",
-        reading: None,
-        roman: "bold",
+        reading: Some("ふとじ"),
+        roman: "futoji",
         jis: None,
     },
     RenderSlug {
         canonical: "上付き小文字",
-        reading: None,
-        roman: "superscript",
+        reading: Some("うわつき"),
+        roman: "uwatsuki",
         jis: Some("07.12.01"),
     },
     RenderSlug {
         canonical: "下付き小文字",
-        reading: None,
-        roman: "subscript",
+        reading: Some("したつき"),
+        roman: "shitatsuki",
         jis: Some("07.12.02"),
     },
     RenderSlug {
@@ -812,8 +812,8 @@ pub const RENDER_SLUGS: &[RenderSlug] = &[
     },
     RenderSlug {
         canonical: "横組み",
-        reading: None,
-        roman: "horizontal",
+        reading: Some("よこぐみ"),
+        roman: "yokogumi",
         jis: None,
     },
     RenderSlug {
