@@ -126,6 +126,16 @@ the whole pipeline. It is **not yet implemented**. The conservatism (and
 the CI backstop, which always runs the full matrix) make it safe to add
 incrementally later, so it is deferred rather than built now.
 
+> **Update (#81, 2026-06-23):** implemented — but **inverted to opt-in**.
+> `AOZORA_CI_FAST=1 just ci-parallel` enables the change-aware skip; the
+> default push stays the full gate. The default-on design sketched above
+> would make every push skip something, eroding the pre-push gate's role as
+> the *complete* local guarantee (the project's standing policy); opt-in
+> keeps the guarantee while still letting a dev scope a run down. The
+> classifier is `scripts/ci-classify.sh` (self-tested by
+> `just ci-fast-selftest`); a gate-definition (infra) change or an
+> undeterminable range forces the full matrix, and cloud CI always runs it.
+
 ## References
 
 - Recipes: `just ci-parallel`, `just ci`, `just prop` / `just prop-deep`,

@@ -1411,16 +1411,56 @@ ci-parallel:
     declare -A PID
     launch() { local n="$1"; shift; "$@" > "$(bglog "$n")" 2>&1 & PID[$n]=$!; }
 
+    # Opt-in change-aware fast mode (#81, ADR-0007). DEFAULT is the full
+    # gate — the pre-push guarantee ("ローカルで品質完全担保"). When a dev
+    # in a hurry sets `AOZORA_CI_FAST=1`, scope the run to gates whose
+    # inputs the push range (`origin/main..HEAD`) touched. Safety rails:
+    # an unresolvable/empty range, or any change to the gate definitions
+    # themselves (infra), forces the full matrix; the cloud CI always runs
+    # the full matrix as the backstop, so a too-aggressive skip is caught.
+    # (ADR-0007 sketched this as default-on; we inverted it to opt-in so the
+    # default push never silently drops coverage — see the ADR follow-up.)
+    run_all=1 cats=""
+    if [[ -n "${AOZORA_CI_FAST:-}" ]]; then
+        base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+        changed=""
+        [[ -n "$base" ]] && changed="$(git diff --name-only "$base"..HEAD 2>/dev/null || true)"
+        if [[ -n "$changed" ]]; then
+            cats="$(printf '%s\n' "$changed" | bash scripts/ci-classify.sh)"
+            run_all=0
+            [[ " $cats " == *" infra "* ]] && run_all=1
+        fi
+        if [[ "$run_all" -eq 1 ]]; then
+            echo ":: AOZORA_CI_FAST set, but running the FULL matrix (range undeterminable or gate-definition/infra change)."
+        else
+            echo ":: AOZORA_CI_FAST: change-aware run — touched categories: [${cats:-none}] (cloud CI still runs the full matrix)."
+        fi
+    fi
+    # want <category> — 0 = run this gate, 1 = skip. Full mode runs all;
+    # `book` runs when book content OR Rust (doctests) changed.
+    want() {
+        [[ "$run_all" -eq 1 ]] && return 0
+        case "$1" in
+            code) [[ " $cats " == *" code "* ]] ;;
+            play) [[ " $cats " == *" play "* ]] ;;
+            book) [[ " $cats " == *" code "* || " $cats " == *" book "* ]] ;;
+            *) return 0 ;;
+        esac
+    }
+    skip() { echo ":: [skip] $1 (AOZORA_CI_FAST: inputs untouched)"; }
+
     # Background lane — no /cargo/target build-lock contention.
-    for g in deny audit book-linkcheck smoke-ffi fmt-check typos strict-code; do
-        launch "$g" just "$g"
-    done
+    for g in deny audit smoke-ffi; do want code && launch "$g" just "$g"; done
+    want book && launch book-linkcheck just book-linkcheck
+    # fmt-check / typos / strict-code are cheap and apply to any file — always run.
+    # ci-fast-selftest guards the change-aware classifier itself (instant host bash).
+    for g in fmt-check typos strict-code ci-fast-selftest; do launch "$g" just "$g"; done
     # playground-typecheck + playground-test share one `node_modules`
     # volume; launching them as two concurrent gates makes their
     # `_playground-ensure` (`bun install`) hard-link into that volume in
     # parallel and intermittently fail with `EEXIST`. Run both through one
     # sequential job so the install happens exactly once, single-threaded.
-    launch playground-ci just playground-ci
+    if want play; then launch playground-ci just playground-ci; else skip playground-ci; fi
 
     # Foreground cargo chain — serial (shared build lock), fail-fast.
     # Lint runs the AUTHORITATIVE surface, not the lighter per-commit
@@ -1433,6 +1473,7 @@ ci-parallel:
     # insurance, the pre-push gate is the guarantee.
     fg_failed=""
     for gate in clippy-strict clippy-wasm check drift-gate conformance coverage prop; do
+        want code || { skip "$gate"; continue; }
         echo ":: [fg] just $gate"
         if ! just "$gate"; then fg_failed="$gate"; break; fi
     done
@@ -1440,12 +1481,16 @@ ci-parallel:
     # property_* binaries are now built → deep sweep reuses them (no
     # rebuild) and overlaps the remaining foreground gates.
     if [[ -z "$fg_failed" ]]; then
-        if [[ "${SKIP_TAGS:-}" != *deep* ]]; then
+        if want code && [[ "${SKIP_TAGS:-}" != *deep* ]]; then
             launch prop-deep just prop-deep
         else
-            echo ":: prop-deep skipped via SKIP_TAGS=deep"
+            echo ":: prop-deep skipped (SKIP_TAGS=deep or AOZORA_CI_FAST: no code change)"
         fi
         for gate in shear test-doc test-doc-all book-test extism-build smoke-go doc corpus-sweep; do
+            case "$gate" in
+                book-test) want book || { skip "$gate"; continue; } ;;
+                *) want code || { skip "$gate"; continue; } ;;
+            esac
             echo ":: [fg] just $gate"
             if ! just "$gate"; then fg_failed="$gate"; break; fi
         done
@@ -1469,6 +1514,43 @@ ci-parallel:
     rm -f /tmp/aozora-cip-*.log
     [[ $failed -eq 0 ]] || { echo "ci-parallel: a background gate failed (see above)"; exit 1; }
     echo "ci-parallel: all gates passed ✔"
+
+# Self-check for the change-aware classifier (`scripts/ci-classify.sh`)
+# that `AOZORA_CI_FAST=1 just ci-parallel` relies on. Asserts the category
+# set for representative diffs so a misclassification can never silently
+# widen a skip. Pure host bash; runs in `ci-parallel`'s always-on lane.
+ci-fast-selftest:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail=0
+    check() {
+        local label="$1" expected="$2"; shift 2
+        local got; got="$(printf '%s\n' "$@" | bash scripts/ci-classify.sh)"
+        if [[ "$got" == "$expected" ]]; then
+            echo "ok   $label → [$got]"
+        else
+            echo "FAIL $label → got [$got] want [$expected]"; fail=1
+        fi
+    }
+    check "rust source"        "code"       "crates/aozora-syntax/src/format.rs"
+    check "rust doc comment"   "code"       "crates/aozora/src/document.rs"
+    check "Cargo manifest"     "code"       "crates/aozora/Cargo.toml"
+    check "conformance vector" "code"       "crates/aozora-conformance/spec-vectors/x.json"
+    check "playground only"    "play"       "playground/src/App.tsx"
+    check "handbook md"        "book"       "crates/aozora-book/src/recipes/walk-ast.md"
+    check "ADR / docs"         "book"       "docs/adr/0017-x.md"
+    check "root README"        "code"       "README.md"
+    check "Justfile = infra"   "infra"      "Justfile"
+    check "workflow = infra"   "infra"      ".github/workflows/ci.yml"
+    check "scripts = infra"    "infra"      "scripts/ci-classify.sh"
+    check "docs + code"        "code book"  "crates/aozora/src/document.rs" "docs/adr/0017-x.md"
+    check "play + docs"        "play book"  "playground/src/App.tsx" "docs/x.md"
+    check "infra forces full"  "code infra" "crates/x/src/a.rs" "lefthook.yml"
+    if [[ $fail -eq 0 ]]; then
+        echo "ci-fast-selftest: all classifications correct ✔"
+    else
+        echo "ci-fast-selftest: classifier regression — fix scripts/ci-classify.sh"; exit 1
+    fi
 
 # --- developer workflow helpers ----------------------------------------------
 
