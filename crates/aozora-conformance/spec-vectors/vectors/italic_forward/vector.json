@@ -8,7 +8,7 @@
   },
   "source": "序文［＃「序文」は斜体］。\n",
   "expected": {
-    "html": "<p><i class=\"aozora-italic\">序文</i>。</p>\n",
+    "html": "<p><i class=\"aozora-shatai\">序文</i>。</p>\n",
     "serialize": "序文［＃「序文」は斜体］。\n",
     "nodes": [
       {

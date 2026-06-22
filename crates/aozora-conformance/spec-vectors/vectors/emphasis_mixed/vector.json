@@ -8,7 +8,7 @@
   },
   "source": "本文の［＃太字］甲［＃太字終わり］と［＃斜体］乙［＃斜体終わり］と重要［＃「重要」に傍点］。\n",
   "expected": {
-    "html": "<p>本文の<b class=\"aozora-bold\">甲</b>と<i class=\"aozora-italic\">乙</i>と<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">重要</em>。</p>\n",
+    "html": "<p>本文の<b class=\"aozora-futoji\">甲</b>と<i class=\"aozora-shatai\">乙</i>と<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">重要</em>。</p>\n",
     "serialize": "本文の［＃太字］甲［＃太字終わり］と［＃斜体］乙［＃斜体終わり］と重要［＃「重要」に傍点］。\n",
     "nodes": [
       {

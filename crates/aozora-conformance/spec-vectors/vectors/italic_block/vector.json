@@ -4,11 +4,11 @@
     "feature": "emphasis",
     "level": "should",
     "spec_section": "6.12",
-    "note": "[provenance:hand-derived §6.12 + AOZORA-ANNOTATION 2026-06-17] ［＃ここから斜体］…［＃ここで斜体終わり］ wraps paragraphs as a block 斜体 container, rendering aozora-container-italic. Offsets from the §3 byte model; not read back from a processor."
+    "note": "[provenance:hand-derived §6.12 + AOZORA-ANNOTATION 2026-06-17] ［＃ここから斜体］…［＃ここで斜体終わり］ wraps paragraphs as a block 斜体 container, rendering aozora-container-shatai. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "［＃ここから斜体］\n斜体の段落。\n［＃ここで斜体終わり］\n",
   "expected": {
-    "html": "<div class=\"aozora-container aozora-container-italic\">\n<p>斜体の段落。</p>\n</div>",
+    "html": "<div class=\"aozora-container aozora-container-shatai\">\n<p>斜体の段落。</p>\n</div>",
     "serialize": "\n\n［＃ここから斜体］\n\n斜体の段落。\n\n［＃ここで斜体終わり］\n\n",
     "nodes": [
       {

@@ -8,7 +8,7 @@
   },
   "source": "本文［＃太字］註［＃太字終わり］。\n",
   "expected": {
-    "html": "<p>本文<b class=\"aozora-bold\">註</b>。</p>\n",
+    "html": "<p>本文<b class=\"aozora-futoji\">註</b>。</p>\n",
     "serialize": "本文［＃太字］註［＃太字終わり］。\n",
     "nodes": [
       {

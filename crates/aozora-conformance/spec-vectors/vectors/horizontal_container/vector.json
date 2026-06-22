@@ -4,11 +4,11 @@
     "feature": "horizontal",
     "level": "should",
     "spec_section": "6.18",
-    "note": "[provenance:hand-derived §6.18 + AOZORA-ANNOTATION 2026-06-17] The block 横組み region ［＃ここから横組み］ … ［＃ここで横組み終わり］ (https://www.aozora.gr.jp/annotation/etc.html, ~29 corpus openers) sets enclosed paragraphs horizontally. It pairs by the horizontal family (§7.1) and renders <div class=\"aozora-container aozora-container-horizontal\"> wrapping <p> content (§8). Serialize adds the §7 block padding. Offsets computed from the §3 byte model; cross-checked against the reference processor."
+    "note": "[provenance:hand-derived §6.18 + AOZORA-ANNOTATION 2026-06-17] The block 横組み region ［＃ここから横組み］ … ［＃ここで横組み終わり］ (https://www.aozora.gr.jp/annotation/etc.html, ~29 corpus openers) sets enclosed paragraphs horizontally. It pairs by the horizontal family (§7.1) and renders <div class=\"aozora-container aozora-container-yokogumi\"> wrapping <p> content (§8). Serialize adds the §7 block padding. Offsets computed from the §3 byte model; cross-checked against the reference processor."
   },
   "source": "［＃ここから横組み］\n2024年1月\n［＃ここで横組み終わり］\n",
   "expected": {
-    "html": "<div class=\"aozora-container aozora-container-horizontal\">\n<p>2024年1月</p>\n</div>",
+    "html": "<div class=\"aozora-container aozora-container-yokogumi\">\n<p>2024年1月</p>\n</div>",
     "serialize": "\n\n［＃ここから横組み］\n\n2024年1月\n\n［＃ここで横組み終わり］\n\n",
     "nodes": [
       {

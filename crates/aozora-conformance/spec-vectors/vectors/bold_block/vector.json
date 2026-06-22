@@ -4,11 +4,11 @@
     "feature": "emphasis",
     "level": "should",
     "spec_section": "6.12",
-    "note": "[provenance:hand-derived §6.12 + AOZORA-ANNOTATION 2026-06-17] ［＃ここから太字］…［＃ここで太字終わり］ wraps whole paragraphs as a block 太字 container, rendering aozora-container-bold. Offsets from the §3 byte model; not read back from a processor."
+    "note": "[provenance:hand-derived §6.12 + AOZORA-ANNOTATION 2026-06-17] ［＃ここから太字］…［＃ここで太字終わり］ wraps whole paragraphs as a block 太字 container, rendering aozora-container-futoji. Offsets from the §3 byte model; not read back from a processor."
   },
   "source": "［＃ここから太字］\n強調する段落。\n［＃ここで太字終わり］\n",
   "expected": {
-    "html": "<div class=\"aozora-container aozora-container-bold\">\n<p>強調する段落。</p>\n</div>",
+    "html": "<div class=\"aozora-container aozora-container-futoji\">\n<p>強調する段落。</p>\n</div>",
     "serialize": "\n\n［＃ここから太字］\n\n強調する段落。\n\n［＃ここで太字終わり］\n\n",
     "nodes": [
       {

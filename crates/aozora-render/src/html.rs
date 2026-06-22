@@ -376,7 +376,7 @@ mod tests {
         // surrounding `<p>`, not flush it.
         let html = render("前［＃太字］中［＃太字終わり］後");
         assert_eq!(
-            html, "<p>前<b class=\"aozora-bold\">中</b>後</p>\n",
+            html, "<p>前<b class=\"aozora-futoji\">中</b>後</p>\n",
             "inline container must stay within the paragraph",
         );
     }
