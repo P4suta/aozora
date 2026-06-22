@@ -127,6 +127,14 @@ diagnostics and a *meaningful exit code*, not prose scraped from stderr.
   variant + detection in the owning pipeline phase + a spec fixture,
   needing no further rendering work.
 
+> **Update (#84, 2026-06-23):** the "3 `Source` + 4 `Internal`, rest
+> Planned" count is a snapshot from this ADR's writing and is now stale —
+> the full authoring-diagnostic catalogue has since landed (Phase A/B), and
+> `unresolved_gaiji` fires for both top-level `※［＃…］` references and gaiji
+> nested inside a ruby / bouten reading. The roadmap framing stands: the
+> catalogue remains open-ended, and a new detection still lands as a
+> `Diagnostic` variant + a phase-specific detection + a spec fixture.
+
 ## Alternatives considered
 
 **Keep `Display`-only printing.** One line per diagnostic, no source
