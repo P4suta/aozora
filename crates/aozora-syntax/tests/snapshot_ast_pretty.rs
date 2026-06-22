@@ -46,7 +46,7 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<Node<'a>> {
         alloc.page_break(),
         alloc.section_break(SectionKind::Kaicho),
         alloc.aozora_heading(HeadingKind::Medium, HeadingStyle::Window, base),
-        alloc.heading_hint(2, HeadingStyle::SameLine, "対象"),
+        alloc.heading_hint(HeadingKind::Medium, HeadingStyle::SameLine, "対象"),
         alloc.sashie("file.png", None, None, None),
         alloc.kaeriten("一"),
         alloc.annotation(a),

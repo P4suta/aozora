@@ -336,14 +336,16 @@ pub struct Heading<'src> {
 }
 
 /// Forward-reference heading hint, carrying the intended outline `level`
-/// (1 / 2 / 3) and `style` (standard / 同行 / 窓).
+/// (大 / 中 / 小) and `style` (standard / 同行 / 窓).
 ///
 /// `target` is [`super::NonEmptyStr`] — the classify stage only emits the hint
 /// after a `「対象」` quoted target landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadingHint<'src> {
-    /// Intended outline level: `1` = 大, `2` = 中, `3` = 小.
-    pub level: u8,
+    /// Intended outline level — 大 / 中 / 小. Typed as [`HeadingKind`] (not a
+    /// raw `u8`) so an out-of-range level is unrepresentable; the numeric
+    /// `data-level` is derived via [`HeadingKind::outline_level`].
+    pub level: HeadingKind,
     /// Standard / 同行 / 窓 style.
     pub style: HeadingStyle,
     /// The quoted target run the hint promotes to a heading.
