@@ -1168,7 +1168,7 @@ where
         // body are still resolved + rendered (by `build_content_from_body`),
         // but without this diagnostic; a gaiji buried in a forward-reference
         // quote target (nested `［＃…］` breaks pairing) falls to `Unknown`.
-        if m.payload.ucs.is_none() {
+        if m.payload.resolve().is_none() {
             self.diagnostics
                 .push(Diagnostic::unresolved_gaiji(Span::new(
                     m.consume_start,
@@ -1627,7 +1627,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // its description; flag the miss so nested references match the
         // top-level `※［＃…］` behaviour (#84). The owning `ClassifyStream`
         // drains `self.diagnostics` after the recognise call.
-        if g.payload.ucs.is_none() {
+        if g.payload.resolve().is_none() {
             self.diagnostics
                 .push(Diagnostic::unresolved_gaiji(Span::new(
                     g.consume_start,
@@ -1689,7 +1689,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // Every other recogniser keeps the `Segment::Directive` path.
         if let EmitKind::Aozora(borrowed::Node::Gaiji(g)) = a.emit {
             build.segments.push(self.alloc.seg_gaiji(g));
-            if g.ucs.is_none() {
+            if g.resolve().is_none() {
                 self.diagnostics
                     .push(Diagnostic::unresolved_gaiji(Span::new(
                         a.consume_start,
@@ -1831,7 +1831,8 @@ mod tests {
     use super::forward::emphasis_kind_from_suffix;
     use super::*;
     use aozora_syntax::{
-        AlignEnd, BoutenKind, BoutenPosition, EmphasisKind, Indent, IndentLayout, SectionKind,
+        AlignEnd, BoutenKind, BoutenPosition, EmphasisKind, GaijiCanonical, Indent, IndentLayout,
+        MenKuTen, SectionKind,
     };
     // Borrowed-AST types pattern-matched throughout. `Node<'a>`
     // is `Copy` and holds payloads via `&'a Ruby<'a>` etc., so tests
@@ -2095,8 +2096,15 @@ mod tests {
         let Segment::Gaiji(g) = segs[1] else {
             panic!("segment 1 should be Gaiji, got {:?}", segs[1]);
         };
-        assert_eq!(g.description, "ほ");
-        assert_eq!(g.mencode, Some("第3水準1-85-54"));
+        assert_eq!(g.hint, "ほ");
+        assert_eq!(
+            g.canonical,
+            GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 1,
+                ku: 85,
+                ten: 54,
+            })
+        );
         assert!(
             matches!(&segs[2], Segment::Text(t) if &**t == "ん"),
             "segment 2: {:?}",
@@ -2117,7 +2125,7 @@ mod tests {
         let Segment::Gaiji(g) = segs[1] else {
             panic!("segment 1 should be Gaiji, got {:?}", segs[1]);
         };
-        assert_eq!(g.description, "ほ");
+        assert_eq!(g.hint, "ほ");
         assert!(g.standalone, "no `※` in source → standalone");
     }
 
@@ -2150,7 +2158,7 @@ mod tests {
         let Segment::Gaiji(g) = segs[0] else {
             panic!("expected Gaiji, got {:?}", segs[0]);
         };
-        assert_eq!(g.description, "にほん");
+        assert_eq!(g.hint, "にほん");
     }
 
     #[test]
@@ -3792,13 +3800,20 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Gaiji span");
-        assert_eq!(gaiji.description, "木＋吶のつくり");
-        assert_eq!(gaiji.mencode, Some("第3水準1-85-54"));
+        assert_eq!(gaiji.hint, "木＋吶のつくり");
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 1,
+                ku: 85,
+                ten: 54,
+            })
+        );
         // JIS X 0213:2004 plane 1 row 85 cell 54 = 枘 (U+6798).
         // (Pre-regen seed had U+6903 (椃) — that was a different
         // character, U+6903 = 木+室. The corrected mapping is sourced
         // from glibc's EUC-JISX0213 charmap = the spec.)
-        assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{6798}')));
+        assert_eq!(gaiji.resolve(), Some(Resolved::Char('\u{6798}')));
     }
 
     /// A composed-glyph gaiji with a trailing 底本ページ-行 suffix
@@ -3821,11 +3836,16 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
-        assert_eq!(gaiji.description, "「瓰」の「扮のつくり」に代えて「里」");
+        assert_eq!(gaiji.hint, "「瓰」の「扮のつくり」に代えて「里」");
         // Full mencode (incl. page-line) kept verbatim for the round-trip.
-        assert_eq!(gaiji.mencode, Some("U+74FC、372-10"));
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("U+74FC、372-10"),
+            }
+        );
         // The page-line is stripped for resolution → U+74FC still resolves.
-        assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{74FC}')));
+        assert_eq!(gaiji.resolve(), Some(Resolved::Char('\u{74FC}')));
     }
 
     #[test]
@@ -3839,8 +3859,11 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Gaiji span");
-        assert_eq!(gaiji.description, "試");
-        assert!(gaiji.mencode.is_none());
+        assert_eq!(gaiji.hint, "試");
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved { mencode: None }
+        );
     }
 
     #[test]
@@ -3854,8 +3877,13 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Gaiji span");
-        assert_eq!(gaiji.description, "二の字点");
-        assert_eq!(gaiji.mencode, Some("1-2-23"));
+        assert_eq!(gaiji.hint, "二の字点");
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("1-2-23"),
+            }
+        );
     }
 
     #[test]
@@ -3884,8 +3912,15 @@ mod tests {
         }) else {
             panic!("expected Gaiji node for the 代えて composed-glyph form");
         };
-        assert_eq!(g.description, "「比」の「ヒ」に代えて「く」");
-        assert_eq!(g.mencode, Some("第4水準2-1-23"));
+        assert_eq!(g.hint, "「比」の「ヒ」に代えて「く」");
+        assert_eq!(
+            g.canonical,
+            GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 2,
+                ku: 1,
+                ten: 23,
+            })
+        );
     }
 
     #[test]
@@ -3924,8 +3959,13 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a standalone Gaiji span, not Unknown"));
-        assert_eq!(gaiji.description, "「※」は「祿－示」");
-        assert_eq!(gaiji.mencode, Some("第3水準1-84-27、144-上-9"));
+        assert_eq!(gaiji.hint, "「※」は「祿－示」");
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("第3水準1-84-27、144-上-9"),
+            }
+        );
         assert!(gaiji.standalone, "no `※` in source → standalone");
     }
 
@@ -3940,7 +3980,7 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a standalone composed Gaiji span"));
-        assert_eq!(gaiji.description, "「比」の「ヒ」に代えて「く」");
+        assert_eq!(gaiji.hint, "「比」の「ヒ」に代えて「く」");
         assert!(gaiji.standalone);
     }
 
@@ -3974,8 +4014,13 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a page-line-only Gaiji span"));
-        assert_eq!(gaiji.description, "小書き片仮名ヲ");
-        assert_eq!(gaiji.mencode, Some("5-下-3"));
+        assert_eq!(gaiji.hint, "小書き片仮名ヲ");
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("5-下-3"),
+            }
+        );
         assert!(gaiji.standalone);
     }
 
@@ -3998,10 +4043,15 @@ mod tests {
             })
             .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
         assert_eq!(
-            gaiji.description,
+            gaiji.hint,
             "「圖」の「回」に代えて「面から一、二画目をとったもの」"
         );
-        assert_eq!(gaiji.mencode, Some("116-5"));
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("116-5"),
+            }
+        );
         assert!(gaiji.standalone);
     }
 
@@ -4026,11 +4076,18 @@ mod tests {
             .unwrap_or_else(|| panic!("expected a 正字 Gaiji span, not Unknown"));
         // Outer `「…」` wrapper kept verbatim so serialize ∘ parse is a fixed point.
         assert_eq!(
-            gaiji.description,
+            gaiji.hint,
             "「木＋（「第－竹」の「コ」に代えて「丿」）、「柿」の正字」"
         );
-        assert_eq!(gaiji.mencode, Some("第3水準1-85-57"));
-        assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{67F9}')));
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 1,
+                ku: 85,
+                ten: 57,
+            })
+        );
+        assert_eq!(gaiji.resolve(), Some(Resolved::Char('\u{67F9}')));
         assert!(gaiji.standalone);
     }
 
@@ -4053,11 +4110,16 @@ mod tests {
             })
             .unwrap_or_else(|| panic!("expected a 正字 Gaiji span, not Unknown"));
         assert_eq!(
-            gaiji.description,
+            gaiji.hint,
             "「女＋（「第－竹」の「コ」に代えて「ノ」）、「姉」の正字」"
         );
-        assert_eq!(gaiji.mencode, Some("U+59CA、648-5"));
-        assert_eq!(gaiji.ucs, Some(Resolved::Char('\u{59CA}')));
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("U+59CA、648-5"),
+            }
+        );
+        assert_eq!(gaiji.resolve(), Some(Resolved::Char('\u{59CA}')));
         assert!(!gaiji.standalone, "leading `※` → not standalone");
     }
 
@@ -4079,11 +4141,13 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
+        assert_eq!(gaiji.hint, "「仝」の「工」に代えて「小」、屋号を示す記号");
         assert_eq!(
-            gaiji.description,
-            "「仝」の「工」に代えて「小」、屋号を示す記号"
+            gaiji.canonical,
+            GaijiCanonical::Unresolved {
+                mencode: Some("260-16"),
+            }
         );
-        assert_eq!(gaiji.mencode, Some("260-16"));
         assert!(gaiji.standalone);
     }
 
@@ -4104,10 +4168,17 @@ mod tests {
             })
             .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
         assert_eq!(
-            gaiji.description,
+            gaiji.hint,
             "「溥」の「さんずい」に代えて「かねへん」、読みは「はく」"
         );
-        assert_eq!(gaiji.mencode, Some("第3水準1-93-32"));
+        assert_eq!(
+            gaiji.canonical,
+            GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 1,
+                ku: 93,
+                ten: 32,
+            })
+        );
         assert!(gaiji.standalone);
     }
 

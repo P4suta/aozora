@@ -180,7 +180,7 @@ fn render_gaiji<W: Write>(g: &Gaiji<'_>, writer: &mut W) -> fmt::Result {
     // The `<span class="aozora-gaiji">…</span>` wrapper plus the
     // displayed text content stay byte-for-byte equivalent to the
     // pre-Plan-B.5 shape — the data attributes are additive.
-    if let Some(resolved) = g.ucs {
+    if let Some(resolved) = g.resolve() {
         writer.write_str(r#"<span class="aozora-gaiji" data-codepoint=""#)?;
         // Round-trip Resolved through a tiny String buffer so we
         // can iterate its scalars without re-implementing the
@@ -202,9 +202,9 @@ fn render_gaiji<W: Write>(g: &Gaiji<'_>, writer: &mut W) -> fmt::Result {
         resolved.write_to(writer)?;
     } else {
         writer.write_str(r#"<span class="aozora-gaiji" data-description=""#)?;
-        escape_text(g.description, writer)?;
+        escape_text(g.hint, writer)?;
         writer.write_str(r#"">"#)?;
-        escape_text(g.description, writer)?;
+        escape_text(g.hint, writer)?;
     }
     writer.write_str("</span>")
 }
@@ -1087,10 +1087,10 @@ mod tests {
 
     #[test]
     fn gaiji_resolved_char_emits_single_codepoint() {
-        use aozora_encoding::gaiji::Resolved;
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let g = alloc.make_gaiji("desc", Some(Resolved::Char('枘')), None, false);
+        // 第3水準1-85-54 resolves to 枘 = U+6798 via the men-ku-ten table.
+        let g = alloc.make_gaiji("desc", Some("第3水準1-85-54"), false);
         let n = alloc.gaiji(g);
         assert_eq!(
             render_node_to_string(n),
@@ -1100,16 +1100,10 @@ mod tests {
 
     #[test]
     fn gaiji_resolved_multi_lists_each_scalar() {
-        use aozora_encoding::gaiji::Resolved;
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        // A combining sequence: U+304B U+309A.
-        let g = alloc.make_gaiji(
-            "desc",
-            Some(Resolved::Multi("\u{304B}\u{309A}")),
-            None,
-            false,
-        );
+        // 第3水準1-4-87 resolves to the combining sequence U+304B U+309A.
+        let g = alloc.make_gaiji("desc", Some("第3水準1-4-87"), false);
         let n = alloc.gaiji(g);
         assert_eq!(
             render_node_to_string(n),
@@ -1121,7 +1115,7 @@ mod tests {
     fn gaiji_unresolved_falls_back_to_description() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let g = alloc.make_gaiji("第3水準", None, None, false);
+        let g = alloc.make_gaiji("第3水準", None, false);
         let n = alloc.gaiji(g);
         assert_eq!(
             render_node_to_string(n),
@@ -1133,7 +1127,7 @@ mod tests {
     fn gaiji_unresolved_escapes_description_in_both_slots() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let g = alloc.make_gaiji("a<b>&", None, None, false);
+        let g = alloc.make_gaiji("a<b>&", None, false);
         let n = alloc.gaiji(g);
         assert_eq!(
             render_node_to_string(n),
@@ -1471,7 +1465,7 @@ mod tests {
         // Directive (hidden span).
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
-        let g = alloc.make_gaiji("外字", None, None, false);
+        let g = alloc.make_gaiji("外字", None, false);
         let seg_g = alloc.seg_gaiji(g);
         let ann = alloc.make_directive("［＃注］", DirectiveKind::Unknown);
         let seg_a = alloc.seg_annotation(ann);

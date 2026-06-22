@@ -1094,10 +1094,19 @@ fn analyze(text: &str) -> FileStat {
             }
             NodeRef::Inline(Node::Gaiji(g)) | NodeRef::BlockLeaf(Node::Gaiji(g)) => {
                 s.gaiji_total += 1;
-                if g.ucs.is_none() {
+                if g.resolve().is_none() {
                     s.gaiji_unresolved += 1;
                 }
-                s.gaiji_forms[gaiji_bucket(g.mencode)] += 1;
+                // Reconstruct the mencode tail from the canonical value so the
+                // shape buckets stay keyed on the same source token.
+                let mencode = g.canonical.has_mencode().then(|| {
+                    let mut m = String::new();
+                    g.canonical
+                        .write_mencode(&mut m)
+                        .expect("write_mencode into String is infallible");
+                    m
+                });
+                s.gaiji_forms[gaiji_bucket(mencode.as_deref())] += 1;
             }
             _ => {}
         }

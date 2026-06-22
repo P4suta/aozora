@@ -264,16 +264,16 @@ fn emit_gaiji<W: Write>(g: &Gaiji<'_>, out: &mut W) -> fmt::Result {
     // already carrying its own `「」` structure, so emit it raw — wrapping it in
     // another `「…」` would double-quote and break the round-trip. The simple
     // form's description is bare text and gets the `「…」` wrapper.
-    if g.description.contains(['「', '」']) {
-        out.write_str(g.description)?;
+    if g.hint.contains(['「', '」']) {
+        out.write_str(g.hint)?;
     } else {
         out.write_char('「')?;
-        out.write_str(g.description)?;
+        out.write_str(g.hint)?;
         out.write_char('」')?;
     }
-    if let Some(m) = g.mencode {
+    if g.canonical.has_mencode() {
         out.write_char('、')?;
-        out.write_str(m)?;
+        g.canonical.write_mencode(out)?;
     }
     out.write_char('］')
 }
@@ -605,7 +605,7 @@ fn emit_content_as_plain<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
     for seg in c {
         match seg {
             Segment::Text(t) => out.write_str(t)?,
-            Segment::Gaiji(g) => out.write_str(g.description)?,
+            Segment::Gaiji(g) => out.write_str(g.hint)?,
             Segment::Directive(a) => out.write_str(a.raw.as_str())?,
             _ => {}
         }

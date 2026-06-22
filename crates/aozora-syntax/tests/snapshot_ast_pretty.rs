@@ -14,7 +14,6 @@
 //! fields are present, in what order, what types) rather than on
 //! incidental string content.
 
-use aozora_encoding::gaiji::Resolved;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Node};
 use aozora_syntax::{
@@ -27,7 +26,7 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<Node<'a>> {
     let reading = alloc.content_plain("よみ");
     let upper = alloc.content_plain("up");
     let lower = alloc.content_plain("lo");
-    let g = alloc.make_gaiji("木＋吶", Some(Resolved::Char('A')), Some("第3水準"), false);
+    let g = alloc.make_gaiji("木＋吶", Some("第3水準"), false);
     let a = alloc.make_directive("annotation", DirectiveKind::Unknown);
 
     vec![

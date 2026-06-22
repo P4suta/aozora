@@ -32,6 +32,14 @@ pub mod node_kind;
 pub use extension::{ContainerKind, IndentLayout};
 pub use node_kind::NodeKind;
 
+/// The typed canonical value of a gaiji reference and its building
+/// blocks, re-exported from [`aozora_encoding::gaiji`].
+///
+/// [`GaijiCanonical`] is the structured replacement for the former
+/// `(ucs, mencode)` pair on [`borrowed::Gaiji`]; [`MenKuTen`] is its
+/// `第N水準P-K-T` payload and [`Resolved`] the resolved-glyph result.
+pub use aozora_encoding::gaiji::{GaijiCanonical, MenKuTen, Resolved};
+
 /// Byte-range span into the original source document.
 ///
 /// Re-exported from [`aozora_spec::Span`] — see that module for the

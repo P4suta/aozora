@@ -28,7 +28,7 @@
 //! proptests in `aozora-pipeline/tests/property_borrowed_arena.rs` honest
 //! across edits.
 
-use aozora_encoding::gaiji::Resolved;
+use aozora_encoding::gaiji::GaijiCanonical;
 
 use crate::borrowed::{self, Arena, Interner};
 use crate::{
@@ -152,22 +152,18 @@ impl<'a> BorrowedAllocator<'a> {
 
     /// Build a `Gaiji` payload. Use [`Self::seg_gaiji`] to wrap as a
     /// segment, or [`Self::gaiji`] to wrap as a node.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "a Gaiji payload is its description, resolved UCS, raw mencode, \
-                  and the standalone (#122, no-`※`) flag — four independent inputs"
-    )]
+    ///
+    /// `mencode` is classified into its [`GaijiCanonical`] form (the
+    /// resolved glyph is derived on demand via [`borrowed::Gaiji::resolve`]).
     pub fn make_gaiji(
         &mut self,
         description: &str,
-        ucs: Option<Resolved>,
         mencode: Option<&str>,
         standalone: bool,
     ) -> &'a borrowed::Gaiji<'a> {
         let g = borrowed::Gaiji {
-            description: self.interner.intern(description),
-            ucs,
-            mencode: mencode.map(|s| self.interner.intern(s)),
+            hint: self.interner.intern(description),
+            canonical: GaijiCanonical::from_mencode(mencode.map(|s| self.interner.intern(s))),
             standalone,
         };
         self.arena.alloc(g)
@@ -656,20 +652,22 @@ mod tests {
 
     #[test]
     fn gaiji_full_metadata() {
+        use aozora_encoding::gaiji::MenKuTen;
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let g = a.make_gaiji(
-            "木＋吶のつくり",
-            Some(Resolved::Char('𠀋')),
-            Some("第3水準1-85-54"),
-            false,
-        );
+        let g = a.make_gaiji("木＋吶のつくり", Some("第3水準1-85-54"), false);
         let n = a.gaiji(g);
         match n {
             borrowed::Node::Gaiji(gn) => {
-                assert_eq!(gn.description, "木＋吶のつくり");
-                assert_eq!(gn.ucs, Some(Resolved::Char('𠀋')));
-                assert_eq!(gn.mencode, Some("第3水準1-85-54"));
+                assert_eq!(gn.hint, "木＋吶のつくり");
+                assert_eq!(
+                    gn.canonical,
+                    GaijiCanonical::MenKuTen(MenKuTen {
+                        plane: 1,
+                        ku: 85,
+                        ten: 54,
+                    })
+                );
             }
             other => panic!("expected Gaiji, got {other:?}"),
         }
@@ -679,13 +677,13 @@ mod tests {
     fn gaiji_no_mencode() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let g = a.make_gaiji("desc", None, None, false);
+        let g = a.make_gaiji("desc", None, false);
         let n = a.gaiji(g);
         match n {
             borrowed::Node::Gaiji(gn) => {
-                assert_eq!(gn.description, "desc");
-                assert!(gn.ucs.is_none());
-                assert!(gn.mencode.is_none());
+                assert_eq!(gn.hint, "desc");
+                assert_eq!(gn.canonical, GaijiCanonical::Unresolved { mencode: None });
+                assert!(gn.resolve().is_none());
             }
             other => panic!("expected Gaiji, got {other:?}"),
         }
@@ -898,7 +896,7 @@ mod tests {
     fn content_segments_preserves_order_and_kind() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let g = a.make_gaiji("X", None, None, false);
+        let g = a.make_gaiji("X", None, false);
         let seg_g = a.seg_gaiji(g);
         let seg_t1 = a.seg_text("before ");
         let seg_t2 = a.seg_text(" after");

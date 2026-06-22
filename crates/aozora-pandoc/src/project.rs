@@ -362,11 +362,15 @@ fn tate_chu_yoko_inline(t: &CombineUpright<'_>) -> Inline {
 }
 
 fn gaiji_inline(g: Gaiji<'_>) -> Inline {
-    let mut kvs = vec![("description".to_owned(), g.description.to_owned())];
-    if let Some(mencode) = g.mencode {
-        kvs.push(("mencode".to_owned(), mencode.to_owned()));
+    let mut kvs = vec![("description".to_owned(), g.hint.to_owned())];
+    if g.canonical.has_mencode() {
+        let mut mencode = String::new();
+        g.canonical
+            .write_mencode(&mut mencode)
+            .expect("write_mencode into String is infallible");
+        kvs.push(("mencode".to_owned(), mencode));
     }
-    let inner = g.ucs.map_or_else(
+    let inner = g.resolve().map_or_else(
         || vec![Inline::Str("〓".to_owned())],
         |resolved| vec![Inline::Str(format!("{resolved:?}"))],
     );

@@ -32,10 +32,10 @@ pub(super) struct GaijiMatch<'a> {
 /// appear bare. `<mencode>` is the mencode reference (`第3水準1-85-54`,
 /// `U+XXXX`, etc.) appearing after a `、` separator.
 ///
-/// The UCS resolution column of `Gaiji` is populated by
-/// `aozora_encoding::gaiji::lookup` before the recogniser returns, so
-/// downstream consumers receive a resolved `Option<char>` without
-/// having to re-probe the mencode table.
+/// The mencode tail is classified into its `GaijiCanonical` form by
+/// `make_gaiji`; the resolved glyph is derived on demand via
+/// `Gaiji::resolve` (which calls the same `aozora_encoding::gaiji`
+/// lookup authority), so the recogniser stores no eager `ucs` column.
 ///
 /// Event preconditions (checked):
 /// * `events[refmark_idx]` is `Solo(RefMark)` [done by caller]
@@ -129,18 +129,11 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             return None;
         }
 
-        // Resolve the Unicode scalar at lex time via the static table in
-        // aozora-encoding so the downstream AST / renderer never has to
-        // re-probe. A trailing 底本ページ-行 suffix is stripped for resolution
-        // (the men-ku-ten still maps the glyph) while the full mencode is
-        // stored verbatim for round-trip.
-        let ucs = gaiji_resolve::lookup(
-            None,
-            mencode.map(gaiji_resolve::mencode_resolution_token),
-            description,
-        );
-
-        let payload = self.alloc.make_gaiji(description, ucs, mencode, standalone);
+        // The mencode is kept verbatim (a trailing 底本ページ-行 suffix and
+        // all) inside the GaijiCanonical; resolution to a glyph happens
+        // lazily via `Gaiji::resolve`, which strips the suffix for the
+        // men-ku-ten lookup. No eager `ucs` column is stored.
+        let payload = self.alloc.make_gaiji(description, mencode, standalone);
         Some(GaijiMatch {
             payload,
             consume_start,

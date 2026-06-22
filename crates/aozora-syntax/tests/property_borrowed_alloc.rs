@@ -17,7 +17,6 @@
 //! single-valued — same variant always produces same kind, same XML
 //! name, regardless of the payload.
 
-use aozora_encoding::gaiji::Resolved;
 use aozora_proptest::config::default_config;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Content};
@@ -42,7 +41,7 @@ fn xml_node_name_is_injective_over_all_variants() {
     let reading = alloc.content_plain("よみ");
     let upper = alloc.content_plain("up");
     let lower = alloc.content_plain("lo");
-    let g = alloc.make_gaiji("木＋吶", Some(Resolved::Char('A')), Some("第3水準"), false);
+    let g = alloc.make_gaiji("木＋吶", Some("第3水準"), false);
     let a = alloc.make_directive("annotation", DirectiveKind::Unknown);
 
     let nodes = [

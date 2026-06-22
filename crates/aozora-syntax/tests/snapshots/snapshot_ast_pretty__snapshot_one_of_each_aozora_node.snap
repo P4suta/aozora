@@ -72,15 +72,12 @@ expression: "format!(\"{nodes:#?}\")"
     ),
     Gaiji(
         Gaiji {
-            description: "木＋吶",
-            ucs: Some(
-                Char(
-                    'A',
+            hint: "木＋吶",
+            canonical: Unresolved {
+                mencode: Some(
+                    "第3水準",
                 ),
-            ),
-            mencode: Some(
-                "第3水準",
-            ),
+            },
             standalone: false,
         },
     ),

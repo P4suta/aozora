@@ -493,10 +493,10 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // Standalone has no `※` disambiguator, so an unqualified `［＃「…」］`
         // is an ordinary note. Require a resolved glyph or a mencode /
         // page-line tail before claiming it as a gaiji.
-        if m.payload.mencode.is_none() && m.payload.ucs.is_none() {
+        if !m.payload.canonical.has_mencode() && m.payload.resolve().is_none() {
             return None;
         }
-        let unresolved = m.payload.ucs.is_none();
+        let unresolved = m.payload.resolve().is_none();
         Some((self.alloc.gaiji(m.payload), unresolved))
     }
 

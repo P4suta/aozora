@@ -13,7 +13,7 @@
 
 use core::slice;
 
-use aozora_encoding::gaiji::Resolved;
+use aozora_encoding::gaiji::{GaijiCanonical, Resolved};
 
 use crate::{
     AlignEnd, BoutenKind, BoutenPosition, Center, Container, DirectiveKind, EmphasisKind, Framed,
@@ -290,21 +290,35 @@ pub struct Emphasis<'src> {
 /// Gaiji (out-of-character-range glyph).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gaiji<'src> {
-    /// Free-form description from the source (e.g. "木＋吶のつくり").
-    pub description: &'src str,
-    /// Resolved Unicode value — either a single scalar or a static
-    /// combining sequence (the 25 plane-1 cells like か゚, IPA tone
-    /// marks). `None` when the resolver could not match any path.
-    /// `Resolved` is `Copy`, so the surrounding `Content`-tree's
-    /// `Copy` chain is preserved.
-    pub ucs: Option<Resolved>,
-    /// Raw mencode reference (e.g. "第3水準1-85-54", "U+XXXX page-line").
-    pub mencode: Option<&'src str>,
+    /// Free-form description from the source (e.g. "木＋吶のつくり"),
+    /// kept as the human-facing hint and the resolver's fallback key.
+    pub hint: &'src str,
+    /// The typed canonical value of the reference.
+    ///
+    /// Structured men-ku-ten / `U+XXXX`, or the verbatim tail when the
+    /// shape is unstructured. Replaces the former `(ucs, mencode)` pair:
+    /// the resolved glyph is derived on demand via [`Self::resolve`] and
+    /// the source mencode is reproduced via
+    /// [`GaijiCanonical::write_mencode`]. `Copy`, so the surrounding
+    /// `Content`-tree's `Copy` chain is preserved.
+    pub canonical: GaijiCanonical<'src>,
     /// `true` when the source had no leading `※` — the no-refmark
     /// `［＃…］` external-character form (#122). Drives serialize to omit
     /// the `※` so `parse ∘ serialize` stays a fixed point. Not a wire
     /// field.
     pub standalone: bool,
+}
+
+impl Gaiji<'_> {
+    /// Resolve to a concrete glyph via the canonical value.
+    ///
+    /// Delegates to [`GaijiCanonical::resolve`], passing [`Self::hint`]
+    /// as the resolver's description fallback. Reproduces the former
+    /// eagerly-computed `ucs` field on demand.
+    #[must_use]
+    pub fn resolve(&self) -> Option<Resolved> {
+        self.canonical.resolve(self.hint)
+    }
 }
 
 /// Warichu (split annotation).
@@ -641,33 +655,46 @@ mod tests {
     }
 
     #[test]
-    fn gaiji_holds_optional_ucs_and_mencode() {
-        use aozora_encoding::gaiji::Resolved;
+    fn gaiji_holds_canonical_and_hint() {
+        use aozora_encoding::gaiji::MenKuTen;
         let g = Gaiji {
-            description: "木＋吶のつくり",
-            ucs: Some(Resolved::Char('𠀋')),
-            mencode: Some("第3水準1-85-54"),
+            hint: "木＋吶のつくり",
+            canonical: GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 1,
+                ku: 85,
+                ten: 54,
+            }),
             standalone: false,
         };
-        assert_eq!(g.description, "木＋吶のつくり");
-        assert_eq!(g.ucs, Some(Resolved::Char('𠀋')));
-        assert_eq!(g.mencode, Some("第3水準1-85-54"));
+        assert_eq!(g.hint, "木＋吶のつくり");
+        assert_eq!(
+            g.canonical,
+            GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 1,
+                ku: 85,
+                ten: 54,
+            })
+        );
     }
 
     #[test]
     fn gaiji_can_carry_combining_sequence_resolution() {
         // The 25 plane-1 combining-sequence cells (か゚, IPA tone marks,
         // accented Latin) need to round-trip through the Gaiji
-        // structure intact. `Resolved::Multi` carries them; without
-        // this variant the parser would lose precision on the
-        // ~0.6% gaiji corpus that sits on these cells.
-        use aozora_encoding::gaiji::Resolved;
+        // structure intact. `resolve()` returns `Resolved::Multi` for
+        // them; without this path the parser would lose precision on the
+        // ~0.6% gaiji corpus that sits on these cells. 第3水準1-4-87
+        // resolves to か゚ = U+304B U+309A.
+        use aozora_encoding::gaiji::MenKuTen;
         let g = Gaiji {
-            description: "か゚",
-            ucs: Some(Resolved::Multi("\u{304B}\u{309A}")),
-            mencode: Some("第3水準1-4-87"),
+            hint: "か゚",
+            canonical: GaijiCanonical::MenKuTen(MenKuTen {
+                plane: 1,
+                ku: 4,
+                ten: 87,
+            }),
             standalone: false,
         };
-        assert_eq!(g.ucs, Some(Resolved::Multi("か゚")));
+        assert_eq!(g.resolve(), Some(Resolved::Multi("か゚")));
     }
 }
