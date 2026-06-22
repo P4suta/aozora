@@ -83,7 +83,9 @@
 
 use core::marker::PhantomData;
 
-use crate::lexer::{ClassifiedSpan, PairEvent, Token, classify, pair_in, sanitize, tokenize_in};
+use crate::lexer::{
+    ClassifiedSpan, PairEvent, SpanKind, Token, classify, pair_in, sanitize, tokenize_in,
+};
 use aozora_spec::{Diagnostic, PairLink};
 use core::mem::take;
 
@@ -405,10 +407,24 @@ fn lower_spans(spans: Vec<ClassifiedSpan<'_>>) -> Vec<ClassifiedSpan<'_>> {
     for span in spans {
         while let Some(back) = out.last() {
             let (bs, be) = (back.source_span.start, back.source_span.end);
+            let back_is_plain = matches!(back.kind, SpanKind::Plain);
             let (ss, se) = (span.source_span.start, span.source_span.end);
-            // `span` is a *proper* superset of `back` in source bytes.
             if ss <= bs && be <= se && (ss < bs || se > be) {
+                // Full superset: `span` reclaimed all of `back` (a promoted
+                // heading swallowing its referent line). Drop `back`.
                 out.pop();
+            } else if back_is_plain && bs < ss && ss < be {
+                // Partial overlap: `span` (a consumed_predecessor forward
+                // node) pulled its source region back into the *tail* of a
+                // committed plain run — the streaming flush could not splice
+                // the hole, so the reclaimed literal sits in BOTH the plain
+                // tail and the node, doubling on serialize (issue #180,
+                // unbounded growth). Truncate the plain to end where the node
+                // begins so the literal is emitted once, by the node.
+                if let Some(last) = out.last_mut() {
+                    last.source_span.end = ss;
+                }
+                break;
             } else {
                 break;
             }

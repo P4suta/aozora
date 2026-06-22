@@ -1,24 +1,4 @@
 {
-  "note": "Round-trip (parse∘serialize fixed-point) divergences pending the normalization-waist epic (consumed_predecessor / forward-strand growth). Tracking: #180 (root) + #189 umbrella. SHRINK-ONLY: never add; the epic drives this to empty (Sfinal), then the file is deleted.",
-  "allow": [
-    "作品/中原中也/我が詩観.txt",
-    "作品/南部修太郎/三作家に就ての感想.txt",
-    "作品/堀辰雄/「浴泉記」など.txt",
-    "作品/寺田寅彦/五月の唯物観.txt",
-    "作品/岩野泡鳴/神秘的半獣主義（733_ruby）.txt",
-    "作品/折口信夫/「とこよ」と「まれびと」と.txt",
-    "作品/折口信夫/三郷巷談.txt",
-    "作品/折口信夫/国文学の発生（第三稿）.txt",
-    "作品/折口信夫/妣が国へ・常世へ.txt",
-    "作品/折口信夫/方言.txt",
-    "作品/折口信夫/琉球の宗教.txt",
-    "作品/折口信夫/用言の発展.txt",
-    "作品/折口信夫/翁の発生.txt",
-    "作品/押川春浪/海島冒険奇譚　海底軍艦.txt",
-    "作品/時枝誠記/国語学と国語教育との交渉.txt",
-    "作品/森林太郎/「言語の起原」附記.txt",
-    "作品/海野十三/間諜座事件.txt",
-    "作品/豊島与志雄/死刑囚最後の日解説.txt",
-    "作品/長塚節/記憶のまゝ.txt"
-  ]
+  "note": "Round-trip (parse∘serialize fixed-point) divergences. EMPTY: the normalization-waist lowering pass (lower_spans overlap-truncate) dissolved the #180 consumed_predecessor forward-strand class, so every corpus document is a fixed point by construction. SHRINK-ONLY: never add entries; fix the serializer/lowering pass instead.",
+  "allow": []
 }
