@@ -41,6 +41,18 @@ fn render_gate_serialize_matches_golden() {
             "serialize drift for fixture {}",
             fixture.name,
         );
+        // Contract unification (#190): the golden must be its OWN fixed
+        // point — re-parsing and re-serialising the canonical form returns
+        // it unchanged. This folds the "source-exact" check into the single
+        // canonical-idempotence invariant: a golden is legal only when it is
+        // the canonical fixed point of its source, so an "idempotent but ≠
+        // golden" middle state cannot exist.
+        let reserialised = Document::new(expected.clone()).parse().to_source();
+        assert_eq!(
+            reserialised, expected,
+            "golden is not a serialize fixed point for fixture {}",
+            fixture.name,
+        );
     }
 }
 

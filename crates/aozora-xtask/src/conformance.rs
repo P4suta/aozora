@@ -431,13 +431,19 @@ fn compare_vector(vector: &Vector) -> Result<(Vec<String>, Option<String>), Stri
     let tree = doc.parse();
     let mut mismatches = Vec::new();
 
-    if vector
-        .expected
-        .serialize
-        .as_ref()
-        .is_some_and(|expected| tree.to_source() != *expected)
-    {
-        mismatches.push("serialize".to_owned());
+    if let Some(expected) = vector.expected.serialize.as_ref() {
+        // The canonical serialize of the source matches the pinned golden.
+        if tree.to_source() != *expected {
+            mismatches.push("serialize".to_owned());
+        }
+        // Contract unification (#190): the golden is its own fixed point —
+        // re-serialising the canonical form returns it unchanged. Folds the
+        // "source-exact" check into the single canonical-idempotence
+        // invariant, so a golden that is idempotent yet differs from the
+        // canonical form of its source is unrepresentable.
+        if aozora::Document::new(expected.clone()).parse().to_source() != *expected {
+            mismatches.push("serialize-fixed-point".to_owned());
+        }
     }
     if let Some(expected) = &vector.expected.nodes {
         let actual = Value::Array(wire_data(&nodes(&tree))?);
