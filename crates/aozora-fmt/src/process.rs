@@ -108,11 +108,9 @@ mod tests {
 
     #[test]
     fn format_guarded_canonicalises_ruby() {
-        let out = format_guarded("日本《にほん》").expect("format ok");
-        assert!(
-            out.starts_with('｜'),
-            "explicit delimiter expected: {out:?}"
-        );
+        // A redundant explicit ｜ canonicalises to the bare ruby form.
+        let out = format_guarded("｜日本《にほん》").expect("format ok");
+        assert_eq!(out, "日本《にほん》", "bare canonical expected: {out:?}");
     }
 
     #[test]
@@ -143,10 +141,10 @@ mod tests {
     #[test]
     fn read_and_format_reads_then_canonicalises() {
         let path = scratch("read.afm");
-        fs::write(&path, "日本《にほん》").expect("seed file");
+        fs::write(&path, "｜日本《にほん》").expect("seed file");
         let fmt = read_and_format(&path).expect("read+format");
-        assert_eq!(fmt.old, "日本《にほん》");
-        assert!(fmt.new.starts_with('｜'));
+        assert_eq!(fmt.old, "｜日本《にほん》");
+        assert_eq!(fmt.new, "日本《にほん》");
         assert!(fmt.changed());
         fs::remove_file(&path).ok();
     }
@@ -178,12 +176,12 @@ mod tests {
     #[test]
     fn write_back_rewrites_when_changed() {
         let path = scratch("write.afm");
-        fs::write(&path, "日本《にほん》").expect("seed file");
+        fs::write(&path, "｜日本《にほん》").expect("seed file");
         let fmt = read_and_format(&path).expect("read+format");
         write_back(&path, &fmt).expect("write_back");
         let written = fs::read_to_string(&path).expect("read back");
         assert_eq!(written, fmt.new);
-        assert!(written.starts_with('｜'));
+        assert_eq!(written, "日本《にほん》");
         fs::remove_file(&path).ok();
     }
 
@@ -199,8 +197,9 @@ mod tests {
         fs::write(&path, "original").expect("seed file");
         let fmt = Formatted {
             old: "original".to_owned(),
-            // Non-canonical on purpose: format_guarded(new) != new.
-            new: "日本《にほん》".to_owned(),
+            // Non-canonical on purpose: a redundant ｜ canonicalises away,
+            // so format_guarded(new) != new.
+            new: "｜日本《にほん》".to_owned(),
         };
         let err = write_back(&path, &fmt).expect_err("non-idempotent output must be refused");
         assert!(

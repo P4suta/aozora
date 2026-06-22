@@ -80,9 +80,13 @@ pub struct Ruby<'src> {
 `Segments` run carrying nested gaiji / annotations), wrapped in
 `NonEmpty` so an empty payload is unrepresentable — the classify stage
 only emits a `Ruby` once both sides have content (an empty reading takes
-the [empty-reading](#empty-reading) path instead). `delim_explicit`
-records whether the source used the `｜…《…》` form so `to_source`
-re-emits the `｜` only when the original did.
+the [empty-reading](#empty-reading) path instead). The node does not
+record which surface form the author used: `to_source` emits the
+**canonical bare** form `base《reading》` and only adds an explicit `｜`
+when a bare reading would re-parse to a *different* base (a base that
+mixes character classes, or one preceded by another base char / `｜`) —
+see ADR 0002/0003. `to_source_verbatim` preserves the author's exact
+bytes, including any redundant `｜`.
 
 ## Edge cases
 

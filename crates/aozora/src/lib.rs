@@ -257,8 +257,11 @@ mod tests {
     fn document_parse_handles_ruby() {
         let doc = Document::new("｜青梅《おうめ》");
         let tree = doc.parse();
-        // Round-trip preserves the canonical form.
-        assert_eq!(tree.to_source(), "｜青梅《おうめ》");
+        // Canonical right-side ruby is the bare form — the redundant `｜`
+        // (all-kanji base at line start) is dropped (ADR 0002/0003);
+        // `to_source_verbatim` preserves the author's `｜`.
+        assert_eq!(tree.to_source(), "青梅《おうめ》");
+        assert_eq!(tree.to_source_verbatim(), "｜青梅《おうめ》");
     }
 
     #[test]
