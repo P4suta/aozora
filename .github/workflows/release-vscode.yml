@@ -92,7 +92,7 @@ jobs:
           toolchain: ${{ steps.toolchain.outputs.version }}
           targets: ${{ matrix.cargo_target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           # Per-target cache, keyed off the VS Code-facing target name
           # so cache restoration is unambiguous across the matrix.
@@ -104,7 +104,7 @@ jobs:
       # don't need to apt-install per-target gcc cross packages.
       - name: Install `cross`
         if: matrix.cross
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912  # v2.81.10
         with:
           tool: cross
 
@@ -133,7 +133,7 @@ jobs:
           fi
           ls -la editors/vscode/server/
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
           bun-version: latest
 
@@ -147,7 +147,7 @@ jobs:
         working-directory: editors/vscode
         run: bunx @vscode/vsce package --target ${{ matrix.vsce_target }} --no-yarn
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: vsix-${{ matrix.vsce_target }}
           path: editors/vscode/*.vsix
@@ -166,7 +166,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           pattern: vsix-*
           merge-multiple: true
@@ -179,11 +179,11 @@ jobs:
       # Marketplace / Open VSX. Verify with
       # `gh attestation verify <file> --repo P4suta/aozora`.
       - name: Attest VSIX provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
         with:
           subject-path: "vsix/*.vsix"
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
           bun-version: latest
 
