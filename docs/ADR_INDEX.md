@@ -19,6 +19,11 @@ back.
 | [0010](./adr/0010-bouten-and-bousen-range-containers-as-a-first-class-notation-feature.md) | Bouten / bousen range containers as a first-class notation feature | accepted |
 | [0011](./adr/0011-double-angle-quotation-input-encoding.md)                          | Double-angle quotation: `≪≫` input encoding, `《》` display            | accepted |
 | [0012](./adr/0012-release-time-generated-cli-artefacts.md)                           | Release-time generated CLI artefacts (completions, man pages)         | accepted |
+| [0013](./adr/0013-cli-configuration-file.md)                                         | CLI configuration file (`.aozora.toml`)                               | accepted |
+| [0014](./adr/0014-cli-watch-mode.md)                                                 | CLI watch mode and the `notify` dependency                            | accepted |
+| [0015](./adr/0015-spec-syntax-layer-boundary.md)                                     | The spec / syntax layer boundary                                      | accepted |
+| [0016](./adr/0016-consolidate-tooling-into-the-aozora-monorepo.md)                   | Consolidate the editor/CLI tooling into the aozora monorepo           | accepted |
+| [0017](./adr/0017-ecosystem-dependency-pin-policy.md)                                | Ecosystem dependency-pin policy                                       | accepted |
 
 ## Authoring a new ADR
 

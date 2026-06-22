@@ -334,6 +334,18 @@ impl<'a> Tree<'a> {
     /// `source_span.start`; useful for editor surfaces that want to
     /// iterate every classified node (semantic tokens, document
     /// symbols, …).
+    ///
+    /// **Host literal contexts.** A host that embeds aozora into a larger
+    /// grammar (e.g. CommonMark via comrak) collapses each notation into a
+    /// PUA sentinel before its own parse. When the host routes a sentinel
+    /// into a *literal* field — a code span `` `…` `` or a link/image
+    /// destination — the notation must appear as its **original source**, not
+    /// be interpreted. Such a host must resolve *every* sentinel it emits
+    /// (including ones in literal regions) and recover the original text from
+    /// `SourceNode::source_span` + [`Span::slice`](crate::Span::slice);
+    /// resolving only "normal"-text sentinels leaks the raw sentinel and
+    /// desyncs the registry cursor. See the *Notations in host literal
+    /// contexts* recipe in the handbook.
     #[must_use]
     pub fn source_nodes(&self) -> &'a [SourceNode<'a>] {
         self.inner.source_nodes
