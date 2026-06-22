@@ -187,8 +187,15 @@ pub struct Ruby<'src> {
     pub reading: super::NonEmpty<Content<'src>>,
     /// `true` when the base was delimited by an explicit `｜` (`｜base《…》`);
     /// `false` when the base was inferred by consuming a trailing kanji run
-    /// (`漢字《…》`). Preserved so `serialize` reproduces the original
-    /// delimiter and the parse∘serialize fixed point holds.
+    /// (`漢字《…》`).
+    ///
+    /// Not a round-trip field: the canonical serializer in `aozora-render`
+    /// always emits the explicit `｜` form, so this flag does not affect
+    /// `parse ∘ serialize` (the contract is a canonical *fixed point*, not
+    /// byte-exact provenance). Its only consumer is the `aozora-pandoc`
+    /// projection, which echoes the original delimiter style as an inline
+    /// attribute. Scheduled for removal once pandoc derives that another
+    /// way (#197).
     pub delim_explicit: bool,
     /// Which side the reading sits on. `Right` for the `｜《》` / implicit
     /// forms; `Left` for the `［＃「X」の左に「Y」のルビ］` saidoku building block.

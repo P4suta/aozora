@@ -4,8 +4,8 @@
 //! each PUA sentinel through the borrowed registry, bulk-copy plain
 //! runs between hits.
 //!
-//! Round-trip fixed-point pinned by the `byte_identical_serialize`
-//! proptest in `tests/byte_identical_serialize.rs`.
+//! Round-trip fixed-point pinned by the `serialize_fixed_point`
+//! proptest in `tests/serialize_fixed_point.rs`.
 
 use core::fmt::{self, Write};
 
