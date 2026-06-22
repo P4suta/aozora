@@ -50,6 +50,15 @@ use aozora_syntax::{ContainerKind, DirectiveKind};
 pub struct LexOutput<'a> {
     /// Normalized text with PUA sentinels. Allocated in `arena`.
     pub normalized: &'a str,
+    /// The sanitized source buffer — the exact bytes downstream stages
+    /// classified, after the sanitize stage (BOM-strip, CRLF→LF,
+    /// `〔...〕` accent decomposition, decorative-rule isolation, PUA
+    /// neutralization). Allocated in `arena`. Unlike [`Self::normalized`]
+    /// it carries **no** PUA sentinels and **no** synthesized block
+    /// padding — it is the verbatim post-sanitize text, the coordinate
+    /// space every `source_span` indexes. Returned verbatim by callers
+    /// that need the round-trip basis `verbatim == sanitize(source)`.
+    pub sanitized: &'a str,
     /// Cache-friendly sentinel-position → node lookup tables.
     pub registry: Registry<'a>,
     /// Non-fatal observations from every stage. Owned `Vec` because

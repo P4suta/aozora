@@ -396,6 +396,7 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
 
         LexOutput {
             normalized,
+            sanitized: sanitized_text,
             registry,
             diagnostics: self.diagnostics,
             sanitized_len,
