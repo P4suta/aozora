@@ -59,7 +59,7 @@ fn xml_node_name_is_injective_over_all_variants() {
         alloc.page_break(),
         alloc.section_break(SectionKind::Kaicho),
         alloc.aozora_heading(HeadingKind::Medium, HeadingStyle::Window, base),
-        alloc.heading_hint(2, HeadingStyle::SameLine, "対象"),
+        alloc.heading_hint(HeadingKind::Medium, HeadingStyle::SameLine, "対象"),
         alloc.sashie("file.png", None, None, None),
         alloc.kaeriten("一"),
         alloc.annotation(a),

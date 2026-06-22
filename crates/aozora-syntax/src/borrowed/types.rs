@@ -187,8 +187,15 @@ pub struct Ruby<'src> {
     pub reading: super::NonEmpty<Content<'src>>,
     /// `true` when the base was delimited by an explicit `｜` (`｜base《…》`);
     /// `false` when the base was inferred by consuming a trailing kanji run
-    /// (`漢字《…》`). Preserved so `serialize` reproduces the original
-    /// delimiter and the parse∘serialize fixed point holds.
+    /// (`漢字《…》`).
+    ///
+    /// Not a round-trip field: the canonical serializer in `aozora-render`
+    /// always emits the explicit `｜` form, so this flag does not affect
+    /// `parse ∘ serialize` (the contract is a canonical *fixed point*, not
+    /// byte-exact provenance). Its only consumer is the `aozora-pandoc`
+    /// projection, which echoes the original delimiter style as an inline
+    /// attribute. Scheduled for removal once pandoc derives that another
+    /// way (#197).
     pub delim_explicit: bool,
     /// Which side the reading sits on. `Right` for the `｜《》` / implicit
     /// forms; `Left` for the `［＃「X」の左に「Y」のルビ］` saidoku building block.
@@ -336,14 +343,16 @@ pub struct Heading<'src> {
 }
 
 /// Forward-reference heading hint, carrying the intended outline `level`
-/// (1 / 2 / 3) and `style` (standard / 同行 / 窓).
+/// (大 / 中 / 小) and `style` (standard / 同行 / 窓).
 ///
 /// `target` is [`super::NonEmptyStr`] — the classify stage only emits the hint
 /// after a `「対象」` quoted target landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadingHint<'src> {
-    /// Intended outline level: `1` = 大, `2` = 中, `3` = 小.
-    pub level: u8,
+    /// Intended outline level — 大 / 中 / 小. Typed as [`HeadingKind`] (not a
+    /// raw `u8`) so an out-of-range level is unrepresentable; the numeric
+    /// `data-level` is derived via [`HeadingKind::outline_level`].
+    pub level: HeadingKind,
     /// Standard / 同行 / 窓 style.
     pub style: HeadingStyle,
     /// The quoted target run the hint promotes to a heading.

@@ -449,7 +449,7 @@ impl<'a> BorrowedAllocator<'a> {
     /// payload here signals a classifier bug.
     pub fn heading_hint(
         &mut self,
-        level: u8,
+        level: HeadingKind,
         style: HeadingStyle,
         target: &str,
     ) -> borrowed::Node<'a> {
@@ -777,10 +777,10 @@ mod tests {
     fn heading_hint_round_trip() {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
-        let n = a.heading_hint(2, HeadingStyle::SameLine, "対象");
+        let n = a.heading_hint(HeadingKind::Medium, HeadingStyle::SameLine, "対象");
         match n {
             borrowed::Node::HeadingHint(h) => {
-                assert_eq!(h.level, 2);
+                assert_eq!(h.level, HeadingKind::Medium);
                 assert_eq!(h.style, HeadingStyle::SameLine);
                 assert_eq!(h.target.as_str(), "対象");
             }

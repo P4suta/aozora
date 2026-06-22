@@ -277,6 +277,23 @@ pub enum HeadingKind {
     Small,
 }
 
+impl HeadingKind {
+    /// The numeric outline level — `1` = 大, `2` = 中, `3` = 小 — carried by
+    /// the inline [`crate::borrowed::HeadingHint`]'s `data-level` attribute.
+    ///
+    /// The single source of the 大/中/小 → 1/2/3 mapping (the renderer and the
+    /// classifier both key on this instead of an ad-hoc local table).
+    #[must_use]
+    pub const fn outline_level(self) -> u8 {
+        match self {
+            Self::Medium => 2,
+            Self::Small => 3,
+            // 大見出し and any future top level default to 1.
+            _ => 1,
+        }
+    }
+}
+
 /// Heading *style* — standard, 同行 (same-line), or 窓 (window).
 ///
 /// Orthogonal to [`HeadingKind`] (the 大 / 中 / 小 level): each style

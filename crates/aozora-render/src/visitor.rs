@@ -441,7 +441,7 @@ mod tests {
 
         let htext = a.content_plain("見出し");
         let heading = a.aozora_heading(HeadingKind::Large, HeadingStyle::Standard, htext);
-        let heading_hint = a.heading_hint(1, HeadingStyle::Standard, "対象");
+        let heading_hint = a.heading_hint(HeadingKind::Large, HeadingStyle::Standard, "対象");
 
         let sashie = a.sashie("fig.png", None, None, None);
         let kaeriten = a.kaeriten("レ");

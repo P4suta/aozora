@@ -18,9 +18,7 @@ use std::collections::HashMap;
 use aozora_spec::Diagnostic;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
-use aozora_syntax::{
-    BoutenPosition, DirectiveKind, EmphasisKind, HeadingKind, MarginNoteKind, Span,
-};
+use aozora_syntax::{BoutenPosition, DirectiveKind, EmphasisKind, MarginNoteKind, Span};
 
 use super::super::pair::{PairEvent, PairKind};
 use super::super::token::TriggerKind;
@@ -1135,8 +1133,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             return None;
         }
         Some((
-            self.alloc
-                .heading_hint(heading_level_u8(kind), style, &combined),
+            self.alloc.heading_hint(kind, style, &combined),
             open_span.start,
         ))
     }
@@ -1324,17 +1321,6 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             self.alloc.emphasis(kind, text, consumed_predecessor),
             consume_start,
         ))
-    }
-}
-
-/// Map an [`HeadingKind`] (大/中/小) to the numeric outline level
-/// (1/2/3) the inline `heading-hint` carries in `data-level`.
-const fn heading_level_u8(kind: HeadingKind) -> u8 {
-    match kind {
-        HeadingKind::Medium => 2,
-        HeadingKind::Small => 3,
-        // 大見出し and any future level default to the top level.
-        _ => 1,
     }
 }
 

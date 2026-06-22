@@ -4,8 +4,8 @@
 //! each PUA sentinel through the borrowed registry, bulk-copy plain
 //! runs between hits.
 //!
-//! Round-trip fixed-point pinned by the `byte_identical_serialize`
-//! proptest in `tests/byte_identical_serialize.rs`.
+//! Round-trip fixed-point pinned by the `serialize_fixed_point`
+//! proptest in `tests/serialize_fixed_point.rs`.
 
 use core::fmt::{self, Write};
 
@@ -393,11 +393,7 @@ fn emit_heading_hint<W: Write>(h: &HeadingHint<'_>, out: &mut W) -> fmt::Result 
     out.write_str(h.target.as_str())?;
     out.write_str("」は")?;
     out.write_str(heading_style_keyword(h.style))?;
-    out.write_str(match h.level {
-        2 => "中見出し",
-        3 => "小見出し",
-        _ => "大見出し",
-    })?;
+    out.write_str(heading_level_word(h.level))?;
     out.write_str("］")
 }
 
