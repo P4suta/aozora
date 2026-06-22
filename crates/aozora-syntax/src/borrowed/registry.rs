@@ -39,7 +39,7 @@ use super::types::Node;
 /// Each variant tags the sentinel kind that fired; renderers
 /// pattern-match the variant once, then handle the inline payload
 /// (a borrowed [`Node`]) or the container payload (a
-/// [`ContainerKind`] enum) accordingly.
+/// [`crate::format::RegionFormat`] enum) accordingly.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum NodeRef<'src> {

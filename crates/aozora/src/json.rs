@@ -118,7 +118,7 @@ pub fn pair_entries(tree: &Tree<'_>) -> Vec<Pair> {
 ///
 /// Each entry has the shape
 /// `{ kind, open: { offset }, close: { offset } }` where `kind` is
-/// the [`crate::ContainerKind`] discriminant (one of `"indent"` /
+/// the [`crate::RegionFormat`] discriminant (one of `"indent"` /
 /// `"warichu"` / `"framed"` / `"alignEnd"`) and the offsets are
 /// **normalized-coordinate** byte positions that index the PUA
 /// sentinel positions — not the source span the user wrote.

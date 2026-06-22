@@ -281,7 +281,7 @@ impl<'a> BorrowedAllocator<'a> {
     /// `consumed_predecessor` is `true` when the classifier pulled
     /// the node's source span back over the literal occurrence of
     /// `target` that sits immediately before the `［`. See the field
-    /// docstring on [`borrowed::Bouten`] for the serializer
+    /// docstring on [`borrowed::ForwardFormat`] for the serializer
     /// round-trip contract that depends on this flag.
     ///
     /// # Panics

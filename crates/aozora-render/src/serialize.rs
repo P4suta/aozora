@@ -338,7 +338,7 @@ const fn heading_style_keyword(style: HeadingStyle) -> &'static str {
 }
 
 /// The `大 / 中 / 小見出し` level keyword (no delimiter), shared by the leaf
-/// heading, the hint, and the paired / block [`ContainerKind::Heading`].
+/// heading, the hint, and the paired / block [`RegionFormat::Heading`].
 const fn heading_level_word(kind: HeadingKind) -> &'static str {
     match kind {
         HeadingKind::Medium => "中見出し",

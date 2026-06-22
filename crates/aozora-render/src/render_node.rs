@@ -467,7 +467,7 @@ fn heading_tag(kind: HeadingKind, style: HeadingStyle) -> &'static str {
 /// `aozora-heading-<large|medium|small>` class plus an
 /// `aozora-heading-<same-line|window>` modifier for a non-standard style.
 /// Shared by the forward-reference leaf [`render_aozora_heading`] and the
-/// paired / block [`ContainerKind::Heading`] container so both render
+/// paired / block [`RegionFormat::Heading`] container so both render
 /// identically.
 fn write_heading_open<W: Write>(
     kind: HeadingKind,

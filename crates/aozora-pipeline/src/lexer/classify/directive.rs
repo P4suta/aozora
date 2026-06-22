@@ -1388,7 +1388,7 @@ pub(super) fn parse_heading_keyword(s: &str) -> Option<(HeadingStyle, HeadingKin
 /// (`ここからSTYLEレベル見出し` / `ここでSTYLEレベル見出し終わり`) heading
 /// directive body, returning `(container, is_open)`. These delimit their
 /// content and route through the container pairing machinery as
-/// [`ContainerKind::Heading`] (the counterpart of the `は`-form leaf heading).
+/// [`RegionFormat::Heading`] (the counterpart of the `は`-form leaf heading).
 ///
 /// The forward-reference `「X」は…見出し` hint starts with `「`, so it never
 /// matches here; a `ここから…` / `…終わり` body that is not a heading keyword

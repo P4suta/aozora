@@ -16,7 +16,7 @@
 //! `DirectiveKind`) live at the top level. The attribute × scope
 //! formatting model (`Format` / `ForwardAttr` / `LineFormat` /
 //! `RegionFormat` / `RegionClose` and their `NonZero` parameters) lives
-//! under [`format`]. The borrowed-AST node types live under `borrowed::`;
+//! under [`mod@format`]. The borrowed-AST node types live under `borrowed::`;
 //! the arena-backed builder under `alloc::`.
 
 #![forbid(unsafe_code)]
@@ -64,8 +64,8 @@ pub struct Container {
 
 /// Which 傍点 (emphasis dot) or 傍線 (sideline) mark decorates a run.
 ///
-/// Carried by both the forward-reference [`borrowed::Bouten`] leaf and the
-/// paired [`ContainerKind::BoutenRange`]. The 点 (dot) vs 線 (line) split —
+/// Carried by both the forward-reference [`borrowed::ForwardFormat`] leaf and the
+/// paired [`crate::RegionFormat::Bouten`]. The 点 (dot) vs 線 (line) split —
 /// see [`Self::is_line`] — is the family boundary the
 /// `mismatched_bouten_container` diagnostic enforces. Each variant maps to a
 /// canonical 青空文庫 keyword via [`Self::keyword`]; [`BOUTEN_KINDS`] is the
