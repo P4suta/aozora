@@ -379,6 +379,31 @@ audit-gate-update:
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo run -p aozora-xtask -q -- corpus audit-gate --root /corpus --baseline corpus/baseline.json --update
 
+# Verbatim-provenance gate: fail when any corpus document's
+# `Tree::to_source_verbatim()` no longer equals a fresh `sanitize()` of
+# its decoded source (the I5 invariant). Binary — one byte of drift
+# fails; needs no baseline. Same corpus bind-mount and runtime-skip
+# (NOT a failure when AOZORA_CORPUS_ROOT is unset) as `audit-gate`.
+#
+# Usage:
+#   export AOZORA_CORPUS_ROOT=$HOME/aozora-corpus
+#   just verbatim-gate
+verbatim-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; verbatim-gate skipped (no corpus to walk)."
+        exit 0
+    fi
+    if [[ ! -d "$AOZORA_CORPUS_ROOT" ]]; then
+        echo "AOZORA_CORPUS_ROOT=$AOZORA_CORPUS_ROOT is not a directory." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus verbatim --root /corpus
+
 # --- fuzzing -----------------------------------------------------------------
 #
 # cargo-fuzz harnesses live under `crates/<crate>/fuzz/` as
