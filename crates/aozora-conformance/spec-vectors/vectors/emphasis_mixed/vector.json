@@ -4,38 +4,24 @@
     "feature": "emphasis",
     "level": "should",
     "spec_section": "6.12",
-    "note": "[provenance:hand-derived §6.12 + AOZORA-ANNOTATION 2026-06-17] Inline 太字 and 斜体 ranges and a forward 傍点 coexist in one line without interfering, each over its own run. Offsets from the §3 byte model; not read back from a processor."
+    "note": "[provenance:hand-derived §6.12 + AOZORA-ANNOTATION 2026-06-17] Inline 太字 and 斜体 ranges and a forward 傍点 coexist in one line without interfering, each over its own run. Offsets from the §3 byte model; not read back from a processor. Canonical serialize folds the bare inline range to the forward form `…［＃「…」は…］` (ADR 0003); the fold applies only to a text-only enclosed run."
   },
   "source": "本文の［＃太字］甲［＃太字終わり］と［＃斜体］乙［＃斜体終わり］と重要［＃「重要」に傍点］。\n",
   "expected": {
     "html": "<p>本文の<b class=\"aozora-futoji\">甲</b>と<i class=\"aozora-shatai\">乙</i>と<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">重要</em>。</p>\n",
-    "serialize": "本文の［＃太字］甲［＃太字終わり］と［＃斜体］乙［＃斜体終わり］と重要［＃「重要」に傍点］。\n",
+    "serialize": "本文の甲［＃「甲」は太字］と乙［＃「乙」は斜体］と重要［＃「重要」に傍点］。\n",
     "nodes": [
       {
-        "kind": "containerOpen",
+        "kind": "emphasis",
         "span": {
           "start": 9,
-          "end": 24
-        }
-      },
-      {
-        "kind": "containerClose",
-        "span": {
-          "start": 27,
           "end": 51
         }
       },
       {
-        "kind": "containerOpen",
+        "kind": "emphasis",
         "span": {
           "start": 54,
-          "end": 69
-        }
-      },
-      {
-        "kind": "containerClose",
-        "span": {
-          "start": 72,
           "end": 96
         }
       },

@@ -4,24 +4,17 @@
     "feature": "emphasis",
     "level": "should",
     "spec_section": "6.12",
-    "note": "[provenance:hand-derived §6.12 + AOZORA-ANNOTATION 2026-06-17] Bare ［＃斜体］…［＃斜体終わり］ is an inline 斜体 range, rendering <i>. Offsets from the §3 byte model; not read back from a processor."
+    "note": "[provenance:hand-derived §6.12 + AOZORA-ANNOTATION 2026-06-17] Bare ［＃斜体］…［＃斜体終わり］ is an inline 斜体 range, rendering <i>. Offsets from the §3 byte model; not read back from a processor. Canonical serialize folds the bare inline range to the forward form `…［＃「…」は…］` (ADR 0003); the fold applies only to a text-only enclosed run."
   },
   "source": "値は［＃斜体］ｅ［＃斜体終わり］である。\n",
   "expected": {
     "html": "<p>値は<i class=\"aozora-shatai\">ｅ</i>である。</p>\n",
-    "serialize": "値は［＃斜体］ｅ［＃斜体終わり］である。\n",
+    "serialize": "値はｅ［＃「ｅ」は斜体］である。\n",
     "nodes": [
       {
-        "kind": "containerOpen",
+        "kind": "emphasis",
         "span": {
           "start": 6,
-          "end": 21
-        }
-      },
-      {
-        "kind": "containerClose",
-        "span": {
-          "start": 24,
           "end": 48
         }
       }

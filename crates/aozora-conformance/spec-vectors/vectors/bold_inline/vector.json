@@ -4,24 +4,17 @@
     "feature": "emphasis",
     "level": "should",
     "spec_section": "6.12",
-    "note": "[provenance:hand-derived §6.12 + AOZORA-ANNOTATION 2026-06-17] Bare ［＃太字］…［＃太字終わり］ is an inline 太字 range over the enclosed run, rendering <b>; the corpus-dominant form. Offsets from the §3 byte model; not read back from a processor."
+    "note": "[provenance:hand-derived §6.12 + AOZORA-ANNOTATION 2026-06-17] Bare ［＃太字］…［＃太字終わり］ is an inline 太字 range over the enclosed run, rendering <b>; the corpus-dominant form. Offsets from the §3 byte model; not read back from a processor. Canonical serialize folds the bare inline range to the forward form `…［＃「…」は…］` (ADR 0003); the fold applies only to a text-only enclosed run."
   },
   "source": "本文［＃太字］註［＃太字終わり］。\n",
   "expected": {
     "html": "<p>本文<b class=\"aozora-futoji\">註</b>。</p>\n",
-    "serialize": "本文［＃太字］註［＃太字終わり］。\n",
+    "serialize": "本文註［＃「註」は太字］。\n",
     "nodes": [
       {
-        "kind": "containerOpen",
+        "kind": "emphasis",
         "span": {
           "start": 6,
-          "end": 21
-        }
-      },
-      {
-        "kind": "containerClose",
-        "span": {
-          "start": 24,
           "end": 48
         }
       }
