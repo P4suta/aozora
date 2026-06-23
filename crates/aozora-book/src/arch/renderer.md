@@ -73,7 +73,8 @@ It exists for three reasons:
 The HTML and canonical-source outputs differ on every node type:
 
 - HTML wraps `Ruby { target, reading }` in `<ruby>X<rt>Y</rt></ruby>`;
-  serialise emits `｜X《Y》` (or auto-detect form).
+  serialise emits the canonical bare `X《Y》` (an explicit `｜` only
+  when a bare reading would re-parse to a different base).
 - HTML wraps `Container { kind: Indent { n } }` in
   `<div class="aozora-indent-N">…</div>`; serialise emits the
   bracketed directives `［＃ここからN字下げ］…［＃ここで字下げ終わり］`.

@@ -16,12 +16,13 @@ changes nothing.
 use aozora::Document;
 
 fn main() {
-    let source = "｜青梅《おうめ》";
+    let source = "青梅《おうめ》";
 
     let once = Document::new(source).parse().to_source();
     let twice = Document::new(once.clone()).parse().to_source();
 
     assert_eq!(once, twice, "to_source is a fixed point");
+    assert_eq!(once, source, "this input is already canonical");
     println!("{twice}");
 }
 ```
@@ -29,7 +30,7 @@ fn main() {
 ## Expected output
 
 ```text
-｜青梅《おうめ》
+青梅《おうめ》
 ```
 
 ## Canonical vs. raw input
@@ -43,19 +44,19 @@ and the bare-vs-explicit ruby delimiter (`青梅《おうめ》` vs
 # extern crate aozora;
 # use aozora::Document;
 # fn main() {
-# let raw = String::from("青梅《おうめ》"); // bare (no explicit ｜) delimiter
+# let raw = String::from("｜青梅《おうめ》"); // redundant explicit ｜ delimiter
 // Raw input is NOT guaranteed to be its own canonical form: here the
-// bare ruby gains an explicit ｜ delimiter on the first pass.
+// redundant `｜` on an all-kanji base is dropped on the first pass.
 let canonical = Document::new(raw.clone()).parse().to_source();
-assert_ne!(canonical, raw);   // differs for this raw input
+assert_ne!(canonical, raw);   // differs: canonical is the bare form
 
 // Guaranteed: from the canonical form on, to_source is a fixed point.
 assert_eq!(Document::new(canonical.clone()).parse().to_source(), canonical);
 # }
 ```
 
-The first `to_source()` *is* the canonical form (e.g. it always emits
-the explicit `｜` ruby delimiter — see the
+The first `to_source()` *is* the canonical form (e.g. it drops a
+redundant `｜` on an all-kanji base — see the
 [Ruby node chapter](../nodes/ruby.md)); from there it is stable. This
 fixed-point property is what the corpus sweep verifies across the full
 ~17 000-work catalogue.

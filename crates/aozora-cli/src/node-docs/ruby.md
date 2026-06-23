@@ -25,9 +25,11 @@ still display a readable fallback.
 
 ## Source output
 
-`to_source()` always emits the explicit-delimiter form
-(`｜base《reading》`), so a parse → to_source → parse round-trip is
-a fixed point regardless of which form the source used.
+`to_source()` emits the **canonical bare** form `base《reading》`,
+adding an explicit `｜` only when a bare reading would re-parse to a
+different base (see ADR 0002/0003). The parse → to_source → parse
+round-trip is a fixed point regardless of which form the source used;
+`to_source_verbatim()` instead replays the author's exact bytes.
 
 ## AST shape
 

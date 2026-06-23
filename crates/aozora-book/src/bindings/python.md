@@ -25,7 +25,7 @@ from aozora_py import Document
 
 doc = Document("｜青梅《おうめ》")
 print(doc.to_html())          # <ruby>青梅<rt>おうめ</rt></ruby>
-print(doc.to_source())        # ｜青梅《おうめ》
+print(doc.to_source())        # 青梅《おうめ》 (canonical: redundant ｜ dropped)
 print(doc.diagnostics())      # JSON-encoded list of diagnostic dicts
 ```
 
