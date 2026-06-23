@@ -441,17 +441,22 @@ fn lower_spans<'a>(
     fold_inline_emphasis(out, source, alloc)
 }
 
-/// The forward-scope attribute an S4-foldable inline-range region folds to.
+/// The forward-scope attribute an inline-range region folds to.
 ///
-/// Only the bare-range (`padded: false`) 太字 / 斜体 / キャプション forms fold;
+/// The bare-range (`padded: false`) 太字 / 斜体 / キャプション forms and the
+/// 傍点 / 傍線 range (always inline — no `padded`) fold to their forward leaf;
 /// the block (`padded: true`) forms and every other region stay
-/// [`SpanKind::BlockOpen`] / [`SpanKind::BlockClose`] containers. 傍点 / 傍線
-/// ranges are out of scope here — they fold in a later step.
+/// [`SpanKind::BlockOpen`] / [`SpanKind::BlockClose`] containers. A 傍点 range
+/// projects to [`ForwardAttr::Bouten`] with the same `kind` / `position`, so a
+/// 左に / 点-vs-線 mismatch is handled by the caller's close-match check exactly
+/// as for the other families. Multi-target 傍点 (`「A」「B」に傍点`) is a
+/// forward-only shape and is untouched here.
 const fn foldable_inline_attr(region: RegionFormat) -> Option<ForwardAttr> {
     match region {
         RegionFormat::Bold { padded: false } => Some(ForwardAttr::Bold),
         RegionFormat::Italic { padded: false } => Some(ForwardAttr::Italic),
         RegionFormat::Caption { padded: false } => Some(ForwardAttr::Caption),
+        RegionFormat::Bouten { kind, position } => Some(ForwardAttr::Bouten { kind, position }),
         _ => None,
     }
 }
