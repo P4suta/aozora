@@ -90,7 +90,7 @@ use aozora_spec::{Diagnostic, PairLink};
 use core::mem::take;
 
 use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::{Arena, ContainerPair, Registry};
+use aozora_syntax::borrowed::{Arena, ContainerPair, Node, Registry};
 use aozora_syntax::{ForwardAttr, RegionClose, RegionFormat, Span};
 use bumpalo::collections::Vec as BumpVec;
 
@@ -408,6 +408,12 @@ fn lower_spans<'a>(
     source: &'a str,
     alloc: &mut BorrowedAllocator<'a>,
 ) -> Vec<ClassifiedSpan<'a>> {
+    // Phase 0: resolve forward heading hints whose referent is the bare line
+    // directly above the directive into promoted `Heading` nodes — the
+    // position judgment the classifier used to make inline. The back-reaching
+    // source span lets the superset-drop below reclaim the referent line,
+    // exactly as when the classifier emitted the promoted heading.
+    let spans = promote_headings(spans, source, alloc);
     let mut out: Vec<ClassifiedSpan<'a>> = Vec::with_capacity(spans.len());
     for span in spans {
         while let Some(back) = out.last() {
@@ -439,6 +445,66 @@ fn lower_spans<'a>(
     // Second phase: fold S4-foldable inline-range emphasis (`［＃太字］ … ［＃太字終わり］`
     // bare ranges over 太字 / 斜体 / キャプション) into canonical forward leaves.
     fold_inline_emphasis(out, source, alloc)
+}
+
+/// Byte position where `target` begins, **only if** it is the bare line
+/// immediately preceding the `［` at `bracket_start` — `target` followed by a
+/// single `\n`, itself starting at a line boundary (BOF or after a `\n`). This
+/// is the heading-promotion test the classifier used to apply inline; it now
+/// runs in the lowering pass against the hint span's own start offset (which is
+/// the directive's `［`), so the decision is byte-identical. `None` → the hint
+/// stays inline.
+fn find_heading_predecessor_position_at(
+    source: &str,
+    bracket_start: u32,
+    target: &str,
+) -> Option<u32> {
+    let bytes = source.as_bytes();
+    let cutoff = bracket_start as usize;
+    if cutoff == 0 || bytes[cutoff - 1] != b'\n' {
+        return None;
+    }
+    let text_end = cutoff - 1;
+    let len = target.len();
+    if text_end < len {
+        return None;
+    }
+    let candidate_start = text_end - len;
+    if &bytes[candidate_start..text_end] != target.as_bytes() {
+        return None;
+    }
+    if candidate_start != 0 && bytes[candidate_start - 1] != b'\n' {
+        return None;
+    }
+    u32::try_from(candidate_start).ok()
+}
+
+/// Promote each forward heading hint whose target is the bare line directly
+/// above it into a `Heading`, reaching the span back over `target\n` so the
+/// superset-drop pass reclaims the referent line. Mirrors the classifier's old
+/// promotion exactly (same byte test, same back-reaching span); a hint that
+/// fails the test stays a `HeadingHint`.
+fn promote_headings<'a>(
+    mut spans: Vec<ClassifiedSpan<'a>>,
+    source: &'a str,
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Vec<ClassifiedSpan<'a>> {
+    for span in &mut spans {
+        let SpanKind::Aozora(Node::HeadingHint(hint)) = span.kind else {
+            continue;
+        };
+        let Some(referent_start) = find_heading_predecessor_position_at(
+            source,
+            span.source_span.start,
+            hint.target.as_str(),
+        ) else {
+            continue;
+        };
+        let text = alloc.content_plain(hint.target.as_str());
+        span.kind = SpanKind::Aozora(alloc.aozora_heading(hint.level, hint.style, text));
+        span.source_span.start = referent_start;
+    }
+    spans
 }
 
 /// The forward-scope attribute an inline-range region folds to.

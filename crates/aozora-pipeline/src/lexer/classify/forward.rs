@@ -1114,22 +1114,13 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             return None;
         };
 
-        // Promote when the single referent is the bare line right above
-        // the directive: pull the consume span back over `序章\n` so the
-        // `<hN>` (carrying the heading text) is the sole rendered copy.
-        if let [only] = extracted.targets.as_slice()
-            && let Some(consume_start) =
-                find_heading_predecessor_position(view.events, self.source, open_idx, only)
-        {
-            let text = self.alloc.content_plain(only);
-            let node = self.alloc.aozora_heading(kind, style, text);
-            return Some((node, consume_start));
-        }
-
-        // Fallback: keep the inline hint marker at the directive position.
-        // Concatenate targets in the (rare) multi-quote case so the full
-        // named run drives the hint content. The 同行 / 窓 styles run into
-        // the body on their own line, so they land here rather than promoting.
+        // The promotion decision — whether the single referent is the bare
+        // line directly above the directive — now lives in the lowering pass
+        // (`promote_headings` in `pipeline.rs`), so the classifier always emits
+        // the unresolved hint at the directive position. Concatenate targets in
+        // the (rare) multi-quote case so the full named run drives the hint
+        // content. The 同行 / 窓 styles run into the body on their own line, so
+        // they too land here as hints.
         let combined: String = extracted.targets.iter().copied().collect();
         if combined.is_empty() {
             return None;
@@ -1324,45 +1315,6 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
             consume_start,
         ))
     }
-}
-
-/// Byte position where `target` begins, **only if** it is the bare line
-/// immediately preceding the `［` at `open_idx` — i.e. `target` followed
-/// by a single `\n`, and itself starting at a line boundary (BOF or after
-/// a `\n`). The promoted heading's consume span is pulled back to this
-/// position so `序章\n［＃「序章」は…見出し］` collapses into one
-/// `Heading`; the mandatory `\n` keeps the serializer's round-trip
-/// (`<text>\n［＃…］`) byte-identical to the source. Returns `None`
-/// (→ inline `HeadingHint` fallback) for any other shape.
-fn find_heading_predecessor_position(
-    events: &[PairEvent],
-    source: &str,
-    open_idx: usize,
-    target: &str,
-) -> Option<u32> {
-    let &PairEvent::PairOpen { span, .. } = events.get(open_idx)? else {
-        return None;
-    };
-    let bytes = source.as_bytes();
-    let cutoff = span.start as usize;
-    // The heading sits on its own line directly above the directive.
-    if cutoff == 0 || bytes[cutoff - 1] != b'\n' {
-        return None;
-    }
-    let text_end = cutoff - 1;
-    let len = target.len();
-    if text_end < len {
-        return None;
-    }
-    let candidate_start = text_end - len;
-    if &bytes[candidate_start..text_end] != target.as_bytes() {
-        return None;
-    }
-    // The target must occupy the whole line (BOF or preceded by `\n`).
-    if candidate_start != 0 && bytes[candidate_start - 1] != b'\n' {
-        return None;
-    }
-    u32::try_from(candidate_start).ok()
 }
 
 /// Map the keyword after `は` to a forward-scope [`ForwardAttr`].
