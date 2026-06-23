@@ -444,19 +444,22 @@ fn lower_spans<'a>(
 /// The forward-scope attribute an inline-range region folds to.
 ///
 /// The bare-range (`padded: false`) 太字 / 斜体 / キャプション forms and the
-/// 傍点 / 傍線 range (always inline — no `padded`) fold to their forward leaf;
-/// the block (`padded: true`) forms and every other region stay
-/// [`SpanKind::BlockOpen`] / [`SpanKind::BlockClose`] containers. A 傍点 range
-/// projects to [`ForwardAttr::Bouten`] with the same `kind` / `position`, so a
-/// 左に / 点-vs-線 mismatch is handled by the caller's close-match check exactly
-/// as for the other families. Multi-target 傍点 (`「A」「B」に傍点`) is a
-/// forward-only shape and is untouched here.
+/// always-inline 傍点 / 傍線, 行右 / 行左小書き, and 縦中横 ranges fold to their
+/// forward leaf; the block (`padded: true`) forms and every other region stay
+/// [`SpanKind::BlockOpen`] / [`SpanKind::BlockClose`] containers. Each projects
+/// to its [`ForwardAttr`] counterpart with the same payload, so a `左に` /
+/// point-vs-line mismatch is caught by the caller's close-match check exactly as
+/// for the other families. 文字サイズ / 横組み / 罫囲み have no bare inline range
+/// (block-only) and 上付き / 下付き小文字 are forward-only, so neither reaches
+/// here. Multi-target 傍点 (`「A」「B」に傍点`) is a forward-only shape, untouched.
 const fn foldable_inline_attr(region: RegionFormat) -> Option<ForwardAttr> {
     match region {
         RegionFormat::Bold { padded: false } => Some(ForwardAttr::Bold),
         RegionFormat::Italic { padded: false } => Some(ForwardAttr::Italic),
         RegionFormat::Caption { padded: false } => Some(ForwardAttr::Caption),
         RegionFormat::Bouten { kind, position } => Some(ForwardAttr::Bouten { kind, position }),
+        RegionFormat::SmallScript(position) => Some(ForwardAttr::SmallScript(position)),
+        RegionFormat::CombineUpright => Some(ForwardAttr::CombineUpright),
         _ => None,
     }
 }

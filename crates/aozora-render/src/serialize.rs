@@ -1300,15 +1300,48 @@ mod tests {
     }
 
     #[test]
-    fn small_script_range_round_trips() {
+    fn small_script_inline_range_folds_to_forward() {
+        // S6: the inline 行右 / 行左小書き range folds to its forward leaf, and
+        // the forward leaf is a fixed point. Both sides exercise the position axis.
         assert_eq!(
             ser("［＃行右小書き］A［＃行右小書き終わり］"),
-            "［＃行右小書き］A［＃行右小書き終わり］"
+            "A［＃「A」は行右小書き］"
         );
+        assert_eq!(ser("A［＃「A」は行右小書き］"), "A［＃「A」は行右小書き］");
         assert_eq!(
             ser("［＃行左小書き］A［＃行左小書き終わり］"),
-            "［＃行左小書き］A［＃行左小書き終わり］"
+            "A［＃「A」は行左小書き］"
         );
+    }
+
+    #[test]
+    fn tcy_inline_range_folds_to_forward() {
+        // S6: the bare inline 縦中横 range folds; the block (`ここから…`) form and
+        // any range spanning a line break (non-text content) stay containers.
+        assert_eq!(
+            ser("12［＃縦中横］34［＃縦中横終わり］"),
+            "1234［＃「34」は縦中横］"
+        );
+        assert_eq!(ser("1234［＃「34」は縦中横］"), "1234［＃「34」は縦中横］");
+    }
+
+    /// S6 fold must stay a fixed point on script / tcy edges: quote-in-target
+    /// (via `emit_format`'s `「…」は…` path) and the non-foldable cases (ruby
+    /// content stays a container).
+    #[test]
+    fn s6_fold_round_trips_script_and_tcy_edges() {
+        for input in [
+            "本文［＃行右小書き］「引」［＃行右小書き終わり］。",
+            "本文［＃縦中横］「ロ」［＃縦中横終わり］。",
+            "本文［＃縦中横］｜base《ruby》［＃縦中横終わり］。",
+        ] {
+            let once = ser(input);
+            let twice = ser(&once);
+            assert_eq!(
+                once, twice,
+                "\n  input: {input}\n  once:  {once}\n  twice: {twice}"
+            );
+        }
     }
 
     #[test]
