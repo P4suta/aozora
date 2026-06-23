@@ -37,11 +37,11 @@ round-trip is a fixed point regardless of which form the source used;
 pub struct Ruby<'src> {
     pub base: NonEmpty<Content<'src>>,
     pub reading: NonEmpty<Content<'src>>,
-    pub delim_explicit: bool,
+    pub side: RubySide,   // Right for ｜《》/implicit; Left for 左ルビ (saidoku)
 }
 ```
 
-Both fields are [`NonEmpty<Content>`](../arch/arena.md#non-empty-content);
+`base` and `reading` are [`NonEmpty<Content>`](../arch/arena.md#non-empty-content);
 empty base or reading is rejected upstream and never produces a
 `Ruby` node.
 

@@ -70,9 +70,9 @@ construct — [double-bracket bouten](bouten.md) — not nested ruby.)
 
 ```rust,ignore
 pub struct Ruby<'src> {
-    pub base:           NonEmpty<Content<'src>>,  // never empty
-    pub reading:        NonEmpty<Content<'src>>,  // never empty
-    pub delim_explicit: bool,                     // true for the ｜…《…》 form
+    pub base:    NonEmpty<Content<'src>>,  // never empty
+    pub reading: NonEmpty<Content<'src>>,  // never empty
+    pub side:    RubySide,                 // Right for ｜《》/implicit; Left 左ルビ
 }
 ```
 
