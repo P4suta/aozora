@@ -4,24 +4,17 @@
     "feature": "emphasis",
     "level": "should",
     "spec_section": "6.16",
-    "note": "[provenance:reference-impl-aligned §6.16 + AOZORA-ANNOTATION 2026-06-17] ［＃行左小書き］ ... ［＃行左小書き終わり］ is the left-side counterpart of the bare-range small script glyph; it renders to the inline aozora-kogaki-left span, mirroring the forward-reference 「X」は行左小書き leaf. Offsets from the §3 byte model; expected captured from the aozora #114/#118 reference implementation (the project's canonical processor)."
+    "note": "[provenance:reference-impl-aligned §6.16 + AOZORA-ANNOTATION 2026-06-17] ［＃行左小書き］ ... ［＃行左小書き終わり］ is the left-side counterpart of the bare-range small script glyph; it renders to the inline aozora-kogaki-left span, mirroring the forward-reference 「X」は行左小書き leaf. Offsets from the §3 byte model; expected captured from the aozora #114/#118 reference implementation (the project's canonical processor). Canonical serialize folds the bare inline range to the forward form `…［＃「…」は…］` (ADR 0003); a text-only enclosed run only."
   },
   "source": "X［＃行左小書き］YZ［＃行左小書き終わり］W\n",
   "expected": {
     "html": "<p>X<span class=\"aozora-kogaki-left\">YZ</span>W</p>\n",
-    "serialize": "X［＃行左小書き］YZ［＃行左小書き終わり］W\n",
+    "serialize": "XYZ［＃「YZ」は行左小書き］W\n",
     "nodes": [
       {
-        "kind": "containerOpen",
+        "kind": "emphasis",
         "span": {
           "start": 1,
-          "end": 25
-        }
-      },
-      {
-        "kind": "containerClose",
-        "span": {
-          "start": 27,
           "end": 60
         }
       }
