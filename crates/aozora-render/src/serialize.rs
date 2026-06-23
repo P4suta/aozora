@@ -1133,10 +1133,67 @@ mod tests {
     }
 
     #[test]
-    fn bold_inline_range_round_trips() {
+    fn bold_inline_range_folds_to_forward_and_is_idempotent() {
+        // S4: a text-only bare ［＃太字］…［＃太字終わり］ range folds to the
+        // canonical forward leaf, and that leaf is itself a fixed point.
         assert_eq!(
             ser("本文［＃太字］註［＃太字終わり］。"),
-            "本文［＃太字］註［＃太字終わり］。"
+            "本文註［＃「註」は太字］。"
+        );
+        assert_eq!(
+            ser("本文註［＃「註」は太字］。"),
+            "本文註［＃「註」は太字］。"
+        );
+    }
+
+    /// The S4 fold must stay a `parse ∘ serialize` fixed point on the synthetic
+    /// edges the corpus does not exercise: targets carrying 「」 quotes (which the
+    /// forward form re-quotes as `［＃「「…」」は…］`), embedded quote pairs, and
+    /// the non-foldable cases (ruby / nested / crossed / unclosed / stray) that
+    /// must round-trip verbatim. Each must satisfy `ser(ser(x)) == ser(x)`.
+    #[test]
+    fn s4_fold_round_trips_quote_and_structural_edges() {
+        for input in [
+            // Quote-bearing fold targets — fold, then the forward form is stable.
+            "［＃太字］「引用」［＃太字終わり］",
+            "［＃斜体］あ「い」う［＃斜体終わり］",
+            "［＃キャプション］「図一」と「図二」［＃キャプション終わり］",
+            "［＃太字］text ［＃太字終わり］",
+            // Non-foldable: ruby content keeps the range a container.
+            "［＃太字］｜base《ruby》［＃太字終わり］",
+            // Nested: inner folds, outer then holds a non-text child → stays range.
+            "a［＃太字］b［＃斜体］c［＃斜体終わり］d［＃太字終わり］",
+            // Crossed / mismatched: no fold, every marker survives verbatim.
+            "［＃太字］X［＃斜体］Y［＃太字終わり］Z［＃斜体終わり］",
+            // Unclosed open and a stray close.
+            "［＃太字］tail",
+            "head［＃太字終わり］",
+        ] {
+            let once = ser(input);
+            let twice = ser(&once);
+            assert_eq!(
+                once, twice,
+                "\n  input: {input}\n  once:  {once}\n  twice: {twice}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_inline_range_stays_a_container() {
+        // No enclosed run → nothing to fold; the bare range round-trips.
+        assert_eq!(
+            ser("［＃太字］［＃太字終わり］"),
+            "［＃太字］［＃太字終わり］"
+        );
+    }
+
+    #[test]
+    fn mismatched_inline_range_close_does_not_fold() {
+        // ［＃太字］ closed by ［＃斜体終わり］ is a family mismatch → no fold;
+        // both markers survive for the normalizer's mismatch diagnostic.
+        assert_eq!(
+            ser("本文［＃太字］註［＃斜体終わり］。"),
+            "本文［＃太字］註［＃斜体終わり］。"
         );
     }
 
@@ -1149,10 +1206,14 @@ mod tests {
     }
 
     #[test]
-    fn italic_inline_range_round_trips() {
+    fn italic_inline_range_folds_to_forward_and_is_idempotent() {
         assert_eq!(
             ser("本文［＃斜体］註［＃斜体終わり］。"),
-            "本文［＃斜体］註［＃斜体終わり］。"
+            "本文註［＃「註」は斜体］。"
+        );
+        assert_eq!(
+            ser("本文註［＃「註」は斜体］。"),
+            "本文註［＃「註」は斜体］。"
         );
     }
 
@@ -1229,10 +1290,16 @@ mod tests {
     }
 
     #[test]
-    fn caption_range_and_block_round_trip() {
+    fn caption_inline_range_folds_block_stays_container() {
+        // S4: the inline bare キャプション range folds to a forward leaf;
+        // the block (`ここから…`) form stays a padded container.
         assert_eq!(
             ser("［＃キャプション］A［＃キャプション終わり］"),
-            "［＃キャプション］A［＃キャプション終わり］"
+            "A［＃「A」はキャプション］"
+        );
+        assert_eq!(
+            ser("A［＃「A」はキャプション］"),
+            "A［＃「A」はキャプション］"
         );
         assert_eq!(
             ser("［＃ここからキャプション］\nA\n［＃ここでキャプション終わり］"),

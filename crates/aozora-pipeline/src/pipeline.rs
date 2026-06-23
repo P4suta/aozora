@@ -91,6 +91,7 @@ use core::mem::take;
 
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, ContainerPair, Registry};
+use aozora_syntax::{ForwardAttr, RegionClose, RegionFormat, Span};
 use bumpalo::collections::Vec as BumpVec;
 
 use crate::LexOutput;
@@ -333,18 +334,18 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
         // Drain the arena-allocated `BumpVec<PairEvent>` through the
         // streaming `classify` Iterator path.
         let mut events_iter = events.into_iter();
-        let classify_diagnostics: Vec<Diagnostic> = {
-            let mut classify_stream = classify(&mut events_iter, sanitized_text, &mut alloc);
-            // Materialise the classified spans, then run the NORMALIZE
-            // (lowering) pass over the whole list before emitting. This is
-            // the seam the normalization waist builds on; today it only
-            // performs the source-byte drop-superset (see `lower_spans`).
-            let spans: Vec<ClassifiedSpan<'a>> = (&mut classify_stream).collect();
-            for span in &lower_spans(spans) {
-                builder.emit(span);
-            }
-            classify_stream.take_diagnostics()
-        };
+        let mut classify_stream = classify(&mut events_iter, sanitized_text, &mut alloc);
+        // Materialise the classified spans and drain the stream's
+        // diagnostics, then drop the stream so its `&mut alloc` borrow is
+        // released before the NORMALIZE (lowering) pass — the pass folds
+        // surface dialects into canonical core nodes (e.g. inline-range
+        // emphasis → forward leaf) and needs the allocator to mint them.
+        let spans: Vec<ClassifiedSpan<'a>> = (&mut classify_stream).collect();
+        let classify_diagnostics: Vec<Diagnostic> = classify_stream.take_diagnostics();
+        drop(classify_stream);
+        for span in &lower_spans(spans, sanitized_text, &mut alloc) {
+            builder.emit(span);
+        }
         self.diagnostics.extend(classify_diagnostics);
         // Normalizer diagnostics (e.g. mismatched container close) are
         // produced during the `emit` fold above but buffered on the
@@ -402,8 +403,12 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
 /// folds extend: a forward directive's target span(s) will be wrapped into
 /// a scope-free region here instead of via the classifier's streaming
 /// pull-back, dissolving the `consumed_predecessor` round-trip pathology.
-fn lower_spans(spans: Vec<ClassifiedSpan<'_>>) -> Vec<ClassifiedSpan<'_>> {
-    let mut out: Vec<ClassifiedSpan<'_>> = Vec::with_capacity(spans.len());
+fn lower_spans<'a>(
+    spans: Vec<ClassifiedSpan<'a>>,
+    source: &'a str,
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Vec<ClassifiedSpan<'a>> {
+    let mut out: Vec<ClassifiedSpan<'a>> = Vec::with_capacity(spans.len());
     for span in spans {
         while let Some(back) = out.last() {
             let (bs, be) = (back.source_span.start, back.source_span.end);
@@ -431,7 +436,147 @@ fn lower_spans(spans: Vec<ClassifiedSpan<'_>>) -> Vec<ClassifiedSpan<'_>> {
         }
         out.push(span);
     }
-    out
+    // Second phase: fold S4-foldable inline-range emphasis (`［＃太字］ … ［＃太字終わり］`
+    // bare ranges over 太字 / 斜体 / キャプション) into canonical forward leaves.
+    fold_inline_emphasis(out, source, alloc)
+}
+
+/// The forward-scope attribute an S4-foldable inline-range region folds to.
+///
+/// Only the bare-range (`padded: false`) 太字 / 斜体 / キャプション forms fold;
+/// the block (`padded: true`) forms and every other region stay
+/// [`SpanKind::BlockOpen`] / [`SpanKind::BlockClose`] containers. 傍点 / 傍線
+/// ranges are out of scope here — they fold in a later step.
+const fn foldable_inline_attr(region: RegionFormat) -> Option<ForwardAttr> {
+    match region {
+        RegionFormat::Bold { padded: false } => Some(ForwardAttr::Bold),
+        RegionFormat::Italic { padded: false } => Some(ForwardAttr::Italic),
+        RegionFormat::Caption { padded: false } => Some(ForwardAttr::Caption),
+        _ => None,
+    }
+}
+
+/// An open inline-range marker awaiting its close, with the spans seen since.
+struct OpenFrame<'a> {
+    /// The `BlockOpen` span itself (re-emitted verbatim if the pair does not fold).
+    open: ClassifiedSpan<'a>,
+    /// The open marker's region (drives foldability and the close-match check).
+    region: RegionFormat,
+    /// Spans between this open and its eventual close, in source order.
+    collected: Vec<ClassifiedSpan<'a>>,
+}
+
+/// Push a finished span onto the innermost open frame, or to `output` at top level.
+fn emit_to<'a>(
+    stack: &mut [OpenFrame<'a>],
+    output: &mut Vec<ClassifiedSpan<'a>>,
+    span: ClassifiedSpan<'a>,
+) {
+    if let Some(top) = stack.last_mut() {
+        top.collected.push(span);
+    } else {
+        output.push(span);
+    }
+}
+
+/// Fold a matched inline-range pair into a forward leaf, or `None` to keep it
+/// as a container.
+///
+/// Folds only when (a) the open is an S4-foldable bare range, (b) the close's
+/// family matches the open (an `［＃太字］…［＃斜体終わり］` mismatch keeps both
+/// markers so the normalizer still diagnoses it), and (c) the enclosed run is a
+/// non-empty, *text-only* (`Plain`) sequence. The text-only bound is load-
+/// bearing: the serializer's `emit_content_as_plain` reproduces gaiji / 注記
+/// bodies bare (no `※［＃…］` / `［＃…］`), so absorbing a non-text segment into a
+/// forward target would silently drop its notation on serialize. Ruby / nested
+/// formats cannot be a `Segment` at all. Such ranges stay containers.
+fn try_fold_inline<'a>(
+    frame: &OpenFrame<'a>,
+    close: &ClassifiedSpan<'a>,
+    source: &'a str,
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Option<ClassifiedSpan<'a>> {
+    let attr = foldable_inline_attr(frame.region)?;
+    let SpanKind::BlockClose(close_region) = close.kind else {
+        return None;
+    };
+    if RegionClose::of(frame.region) != close_region {
+        return None;
+    }
+    if frame.collected.is_empty()
+        || !frame
+            .collected
+            .iter()
+            .all(|s| matches!(s.kind, SpanKind::Plain))
+    {
+        return None;
+    }
+    let mut text = String::new();
+    for s in &frame.collected {
+        text.push_str(&source[s.source_span.start as usize..s.source_span.end as usize]);
+    }
+    if text.is_empty() {
+        return None;
+    }
+    let content = alloc.content_plain(&text);
+    let node = alloc.forward_format(attr, content, true);
+    Some(ClassifiedSpan {
+        kind: SpanKind::Aozora(node),
+        source_span: Span::new(frame.open.source_span.start, close.source_span.end),
+    })
+}
+
+/// Fold S4-foldable inline-range emphasis pairs into forward leaves.
+///
+/// A balanced-stack walk mirroring the normalizer's container pairing: each
+/// `BlockClose` pops the nearest open (regardless of kind). A matched pair
+/// folds when [`try_fold_inline`] allows it; otherwise the open marker, its
+/// collected spans, and the close marker flow through verbatim, so mismatched /
+/// non-foldable / unclosed ranges behave exactly as before. Innermost pairs
+/// fold first, so a nested range leaves its parent's enclosed run non-text-only
+/// (it now holds an `Aozora` node) — which correctly blocks the outer fold.
+fn fold_inline_emphasis<'a>(
+    spans: Vec<ClassifiedSpan<'a>>,
+    source: &'a str,
+    alloc: &mut BorrowedAllocator<'a>,
+) -> Vec<ClassifiedSpan<'a>> {
+    let mut output: Vec<ClassifiedSpan<'a>> = Vec::with_capacity(spans.len());
+    let mut stack: Vec<OpenFrame<'a>> = Vec::new();
+    for span in spans {
+        match span.kind {
+            SpanKind::BlockOpen(region) => {
+                stack.push(OpenFrame {
+                    open: span,
+                    region,
+                    collected: Vec::new(),
+                });
+            }
+            SpanKind::BlockClose(_) => {
+                if let Some(frame) = stack.pop() {
+                    if let Some(folded) = try_fold_inline(&frame, &span, source, alloc) {
+                        emit_to(&mut stack, &mut output, folded);
+                    } else {
+                        emit_to(&mut stack, &mut output, frame.open);
+                        for c in frame.collected {
+                            emit_to(&mut stack, &mut output, c);
+                        }
+                        emit_to(&mut stack, &mut output, span);
+                    }
+                } else {
+                    // Stray close with no open on the stack — pass through.
+                    output.push(span);
+                }
+            }
+            _ => emit_to(&mut stack, &mut output, span),
+        }
+    }
+    // Flush any unclosed opens (bottom-to-top reconstructs source order: an
+    // inner open's frame holds only the spans after it opened).
+    for frame in stack {
+        output.push(frame.open);
+        output.extend(frame.collected);
+    }
+    output
 }
 
 #[cfg(test)]
