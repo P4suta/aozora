@@ -1151,9 +1151,13 @@ mod tests {
         assert_eq!(kv(attr, "offset"), Some("3"), "align-end offset");
     }
 
+    // Post-S5, a *text-only* bouten range folds to an inline forward span (see
+    // `bouten_carries_kind_and_position`), so the `container-bouten` div path is
+    // reached only by a range whose run is non-foldable. Embedded ruby keeps the
+    // range a container while leaving the open marker's variant / position intact.
     #[test]
     fn bouten_range_container_carries_variant() {
-        let blocks = project("本文［＃傍点］甲［＃傍点終わり］。");
+        let blocks = project("本文［＃傍点］甲《こう》［＃傍点終わり］。");
         let (attr, _) = find_div(&blocks, "container-bouten").expect("bouten range div");
         assert_eq!(kv(attr, "variant"), Some("goma"), "default bouten variant");
         assert!(
@@ -1164,7 +1168,7 @@ mod tests {
 
     #[test]
     fn bouten_range_left_position_kv() {
-        let blocks = project("本文［＃左に傍線］丙［＃左に傍線終わり］。");
+        let blocks = project("本文［＃左に傍線］丙《へい》［＃左に傍線終わり］。");
         let (attr, _) = find_div(&blocks, "container-bouten").expect("bouten range div");
         assert_eq!(kv(attr, "variant"), Some("bosen"), "傍線 variant slug");
         assert_eq!(kv(attr, "position"), Some("left"), "left-side range kv");

@@ -1117,19 +1117,41 @@ mod tests {
     }
 
     #[test]
-    fn bouten_range_inline_and_left_round_trip() {
-        assert_eq!(
-            ser("［＃傍点］A［＃傍点終わり］"),
-            "［＃傍点］A［＃傍点終わり］"
-        );
-        assert_eq!(
-            ser("［＃傍線］A［＃傍線終わり］"),
-            "［＃傍線］A［＃傍線終わり］"
-        );
+    fn bouten_inline_range_folds_to_forward() {
+        // S5: a text-only bare 傍点 / 傍線 range folds to the canonical forward
+        // leaf (kind + 左に position preserved), and that leaf is a fixed point.
+        assert_eq!(ser("［＃傍点］A［＃傍点終わり］"), "A［＃「A」に傍点］");
+        assert_eq!(ser("A［＃「A」に傍点］"), "A［＃「A」に傍点］");
+        assert_eq!(ser("［＃傍線］A［＃傍線終わり］"), "A［＃「A」に傍線］");
         assert_eq!(
             ser("［＃左に傍線］A［＃左に傍線終わり］"),
-            "［＃左に傍線］A［＃左に傍線終わり］"
+            "A［＃「A」の左に傍線］"
         );
+        assert_eq!(ser("A［＃「A」の左に傍線］"), "A［＃「A」の左に傍線］");
+    }
+
+    /// S5 fold must stay a fixed point on bouten edges the corpus may under-cover.
+    /// Bouten serializes through `emit_bouten_targets` (not S4's
+    /// `emit_content_as_plain`), so quote-in-target and `、`-bearing targets must
+    /// be re-verified, not inferred from S4. The non-foldable cases (点/線 family
+    /// mismatch, ruby content) must round-trip verbatim as containers.
+    #[test]
+    fn s5_fold_round_trips_bouten_edges() {
+        for input in [
+            "本文［＃傍点］「引用」［＃傍点終わり］。", // quote-in-target → 「「引用」」に傍点
+            "［＃二重傍線］乙［＃二重傍線終わり］",     // non-Goma kind
+            "［＃左に傍点］X［＃左に傍点終わり］",      // left-side 傍点
+            "甲、乙［＃傍点］丙、丁［＃傍点終わり］",   // 、 around + in target (Plain, no split)
+            "本文［＃傍点］註［＃傍線終わり］",         // 点/線 mismatch → stays container
+            "［＃傍点］｜base《ruby》［＃傍点終わり］", // ruby content → stays container
+        ] {
+            let once = ser(input);
+            let twice = ser(&once);
+            assert_eq!(
+                once, twice,
+                "\n  input: {input}\n  once:  {once}\n  twice: {twice}"
+            );
+        }
     }
 
     #[test]
