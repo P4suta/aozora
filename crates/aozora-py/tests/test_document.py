@@ -16,8 +16,11 @@ def test_to_html_renders_ruby():
 
 
 def test_serialize_round_trips():
-    src = "｜青梅《おうめ》の街"
+    # Canonical bare ruby round-trips to itself.
+    src = "青梅《おうめ》の街"
     assert aozora.Document(src).to_source() == src
+    # The redundant `｜` on an all-kanji base is dropped (ADR 0003).
+    assert aozora.Document("｜青梅《おうめ》の街").to_source() == src
 
 
 def test_repr_mentions_document():

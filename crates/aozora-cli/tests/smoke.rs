@@ -138,20 +138,21 @@ fn check_strict_fails_on_pua_collision() {
 
 #[test]
 fn fmt_default_prints_canonical_form_on_stdout() {
-    // Implicit-delimiter ruby canonicalises to explicit; stdout must
-    // carry the canonical form.
-    let (status, stdout, _) = run(&["fmt"], Some("日本《にほん》"));
+    // A redundant explicit `｜` (all-kanji base at line start) canonicalises
+    // to the bare ruby form (ADR 0002/0003); stdout carries the canonical
+    // form with the `｜` dropped.
+    let (status, stdout, _) = run(&["fmt"], Some("｜日本《にほん》"));
     assert!(status.success(), "fmt should succeed");
     assert!(
-        stdout.contains('｜'),
-        "expected explicit delimiter in canonical form: {stdout:?}"
+        stdout.contains("日本《にほん》") && !stdout.contains('｜'),
+        "expected bare canonical form: {stdout:?}"
     );
 }
 
 #[test]
 fn fmt_check_succeeds_on_already_canonical_input() {
-    // Canonical input → stdout silent, exit 0.
-    let canonical = "｜青梅《おうめ》\n";
+    // Canonical (bare) input → stdout silent, exit 0.
+    let canonical = "日本《にほん》\n";
     let (status, stdout, stderr) = run(&["fmt", "--check"], Some(canonical));
     assert!(
         status.success(),
@@ -165,7 +166,7 @@ fn fmt_check_succeeds_on_already_canonical_input() {
 
 #[test]
 fn fmt_check_fails_on_non_canonical_input() {
-    let non_canonical = "日本《にほん》"; // missing explicit ｜
+    let non_canonical = "｜日本《にほん》"; // redundant ｜ (canonical form is bare)
     let (status, _, stderr) = run(&["fmt", "--check"], Some(non_canonical));
     assert!(!status.success(), "non-canonical input must fail --check");
     assert!(
@@ -189,14 +190,14 @@ fn fmt_check_and_write_are_mutually_exclusive() {
 
 #[test]
 fn fmt_write_overwrites_file_on_disk() {
-    let f = write_temp("日本《にほん》");
+    let f = write_temp("｜日本《にほん》");
     let path = f.path().to_str().unwrap();
     let (status, _, stderr) = run(&["fmt", "--write", path], None);
     assert!(status.success(), "fmt --write must succeed: {stderr:?}");
     let written = fs::read_to_string(path).expect("read back");
     assert!(
-        written.contains('｜'),
-        "file must contain canonical output: {written:?}"
+        written.contains("日本《にほん》") && !written.contains('｜'),
+        "file must contain bare canonical output: {written:?}"
     );
 }
 

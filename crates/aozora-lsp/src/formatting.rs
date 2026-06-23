@@ -36,16 +36,20 @@ mod tests {
 
     #[test]
     fn canonical_input_produces_no_edits() {
-        assert!(format_edits("｜日本《にほん》").is_empty());
+        // Bare ruby is canonical (all-kanji base at line start, ADR 0002/0003).
+        assert!(format_edits("日本《にほん》").is_empty());
     }
 
     #[test]
     fn non_canonical_ruby_produces_one_replace_edit() {
-        let src = "日本《にほん》";
+        // A redundant explicit ｜ canonicalises to the bare form.
+        let src = "｜日本《にほん》";
         let edits = format_edits(src);
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].range.start, Position::new(0, 0));
-        assert!(edits[0].new_text.starts_with('｜'));
+        assert!(
+            edits[0].new_text.starts_with("日本《にほん》") && !edits[0].new_text.contains('｜')
+        );
     }
 
     #[test]

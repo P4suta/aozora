@@ -1,0 +1,4 @@
+{
+  "note": "Round-trip (parse∘serialize fixed-point) divergences. EMPTY: the normalization-waist lowering pass (lower_spans overlap-truncate) dissolved the #180 consumed_predecessor forward-strand class, so every corpus document is a fixed point by construction. SHRINK-ONLY: never add entries; fix the serializer/lowering pass instead.",
+  "allow": []
+}

@@ -95,7 +95,7 @@ use super::instrumentation::{
 // in F.4 once the owned-AST path was gone.
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
-use aozora_syntax::{DirectiveKind, RegionClose, RegionFormat, Span};
+use aozora_syntax::{DirectiveKind, RegionClose, RegionFormat, Span, is_ruby_base_char};
 
 use super::pair::{PairEvent, PairKind};
 use super::token::TriggerKind;
@@ -1806,24 +1806,9 @@ enum EmitKind<'a> {
     BlockClose(RegionClose),
 }
 
-/// Characters eligible as an implicit-ruby base. Covers:
-///
-/// * CJK Unified Ideographs (main block + Extension A)
-/// * CJK Compatibility Ideographs
-/// * CJK Unified Ideographs Extension B..F (supplementary plane)
-/// * `々` (U+3005) ideographic iteration mark — usually kanji-like
-/// * `〆` (U+3006) ideographic closing mark — sometimes used as kanji
-const fn is_ruby_base_char(ch: char) -> bool {
-    matches!(
-        ch,
-        '\u{3400}'..='\u{4DBF}'
-        | '\u{4E00}'..='\u{9FFF}'
-        | '\u{F900}'..='\u{FAFF}'
-        | '\u{20000}'..='\u{2FFFF}'
-        | '々'
-        | '〆'
-    )
-}
+// `is_ruby_base_char` now lives in `aozora_syntax` (single source of
+// truth shared with the serializer's bare-vs-`｜` decision); imported
+// at the top of this module.
 
 #[cfg(test)]
 mod tests {

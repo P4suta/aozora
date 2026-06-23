@@ -16,8 +16,9 @@
 use aozora::Document;
 
 fn main() {
-    // A canonical Aozora source: explicit ruby plus trailing plain text.
-    let source = "｜青梅《おうめ》街道を行く。";
+    // A canonical Aozora source: bare ruby (the all-kanji base needs no
+    // explicit `｜`) plus trailing plain text.
+    let source = "青梅《おうめ》街道を行く。";
 
     // First pass: parse the original, serialize back to Aozora source.
     let first = Document::new(source).parse().to_source();

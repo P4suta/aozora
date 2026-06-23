@@ -182,6 +182,32 @@ pub enum RubySide {
     Left,
 }
 
+/// Characters eligible as an implicit-ruby base (the run a bare
+/// `《reading》` attaches to). Covers:
+///
+/// * CJK Unified Ideographs (main block + Extension A)
+/// * CJK Compatibility Ideographs
+/// * CJK Unified Ideographs Extension B..F (supplementary plane)
+/// * `々` (U+3005) ideographic iteration mark — usually kanji-like
+/// * `〆` (U+3006) ideographic closing mark — sometimes used as kanji
+///
+/// Single source of truth shared by the classifier's implicit-base
+/// detection and the serializer's canonical bare-vs-`｜` decision
+/// (ADR 0002): the serializer drops `｜` only when a bare reading would
+/// re-parse to the *same* base, which is decided with this predicate.
+#[must_use]
+pub const fn is_ruby_base_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{3400}'..='\u{4DBF}'
+        | '\u{4E00}'..='\u{9FFF}'
+        | '\u{F900}'..='\u{FAFF}'
+        | '\u{20000}'..='\u{2FFFF}'
+        | '々'
+        | '〆'
+    )
+}
+
 /// Which annotation flavour a [`crate::borrowed::MarginNote`] carries.
 ///
 /// 注記 and 傍記 share the `MarginNote` structure (a note attached to a

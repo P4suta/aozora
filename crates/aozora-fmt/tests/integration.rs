@@ -10,10 +10,11 @@ fn aozora_fmt() -> Command {
     Command::new(env!("CARGO_BIN_EXE_aozora-fmt"))
 }
 
-/// Non-canonical ruby: `日本《にほん》` formats to `｜日本《にほん》`.
-const DIRTY: &str = "日本《にほん》\n";
-/// The canonical form of [`DIRTY`].
-const DIRTY_CANONICAL: &str = "｜日本《にほん》\n";
+/// Non-canonical ruby: the redundant `｜日本《にほん》` formats to the bare
+/// `日本《にほん》` (all-kanji base, ADR 0002/0003).
+const DIRTY: &str = "｜日本《にほん》\n";
+/// The canonical (bare) form of [`DIRTY`].
+const DIRTY_CANONICAL: &str = "日本《にほん》\n";
 /// Already-canonical plain text (a fixed point of the formatter).
 const CLEAN: &str = "plain text\n";
 
@@ -29,14 +30,14 @@ fn stdin_to_stdout_prints_canonical_form() {
         .stdin
         .as_mut()
         .expect("stdin piped")
-        .write_all("日本《にほん》".as_bytes())
+        .write_all("｜日本《にほん》".as_bytes())
         .unwrap();
     let out = child.wait_with_output().expect("wait");
     assert!(out.status.success(), "exit: {:?}", out.status);
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(
-        stdout.starts_with('｜'),
-        "expected canonical explicit delimiter, got {stdout:?}",
+        stdout.starts_with("日本《にほん》") && !stdout.contains('｜'),
+        "expected bare canonical form, got {stdout:?}",
     );
 }
 
@@ -67,7 +68,7 @@ fn check_on_non_canonical_input_exits_one() {
         .stdin
         .as_mut()
         .unwrap()
-        .write_all("日本《にほん》".as_bytes())
+        .write_all("｜日本《にほん》".as_bytes())
         .unwrap();
     let out = child.wait_with_output().unwrap();
     assert_eq!(
@@ -89,7 +90,7 @@ fn temp_file(name: &str, contents: &str) -> PathBuf {
 
 #[test]
 fn write_canonicalizes_in_place_and_is_idempotent() {
-    let path = temp_file("write-roundtrip", "日本《にほん》");
+    let path = temp_file("write-roundtrip", "｜日本《にほん》");
 
     // First --write rewrites the file to canonical form and exits 0.
     let out = aozora_fmt().arg("--write").arg(&path).output().unwrap();
@@ -100,8 +101,8 @@ fn write_canonicalizes_in_place_and_is_idempotent() {
     );
     let after_first = fs::read_to_string(&path).unwrap();
     assert!(
-        after_first.starts_with('｜'),
-        "expected canonical explicit delimiter, got {after_first:?}",
+        after_first.starts_with("日本《にほん》") && !after_first.contains('｜'),
+        "expected bare canonical form, got {after_first:?}",
     );
 
     // Second --write must be a byte-identical no-op: the on-disk output
@@ -170,13 +171,10 @@ fn check_diff_prints_unified_diff_and_exits_one() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.starts_with("--- "), "diff has a header: {stdout:?}");
     assert!(
-        stdout.contains("-日本《にほん》"),
+        stdout.contains("-｜日本《にほん》"),
         "removed line: {stdout:?}"
     );
-    assert!(
-        stdout.contains("+｜日本《にほん》"),
-        "added line: {stdout:?}"
-    );
+    assert!(stdout.contains("+日本《にほん》"), "added line: {stdout:?}");
     fs::remove_file(&path).ok();
 }
 
@@ -192,7 +190,7 @@ fn diff_without_check_implies_check() {
     assert!(
         String::from_utf8(out.stdout)
             .unwrap()
-            .contains("+｜日本《にほん》")
+            .contains("+日本《にほん》")
     );
     fs::remove_file(&path).ok();
 }
@@ -431,7 +429,7 @@ fn stdin_diff_prints_unified_diff() {
     assert!(
         String::from_utf8(out.stdout)
             .unwrap()
-            .contains("+｜日本《にほん》")
+            .contains("+日本《にほん》")
     );
 }
 

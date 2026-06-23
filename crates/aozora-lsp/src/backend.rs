@@ -1458,7 +1458,7 @@ mod e2e {
         let mut server = TestServer::new();
         server.handshake().await;
 
-        server.did_open("日本《にほん》").await;
+        server.did_open("｜日本《にほん》").await;
         let edits = server
             .request(
                 "textDocument/formatting",
@@ -1473,7 +1473,7 @@ mod e2e {
         assert!(
             edits[0]["newText"]
                 .as_str()
-                .is_some_and(|t| t.starts_with('｜'))
+                .is_some_and(|t| t.starts_with("日本《にほん》") && !t.contains('｜'))
         );
     }
 

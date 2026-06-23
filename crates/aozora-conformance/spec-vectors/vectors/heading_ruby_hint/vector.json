@@ -4,12 +4,12 @@
     "feature": "heading",
     "level": "should",
     "spec_section": "6.10",
-    "note": "[provenance:reference-impl-aligned §6.10 + §7.5 + AOZORA-ANNOTATION 2026-06-20] A heading whose title carries ruby quotes the ruby-STRIPPED target (○　両頭の蛇), while the source has ruby (両頭《りやうとう》の蛇《へび》). Per §7.5 the look-back is over the base text, so the target resolves ruby-stripped and the directive is a heading hint, not a generic annotation. The corpus's single largest forward-reference family. Offsets from the §3 byte model; serialize is the canonical explicit-ruby form (｜ inserted)."
+    "note": "[provenance:reference-impl-aligned §6.10 + §7.5 + AOZORA-ANNOTATION 2026-06-20] A heading whose title carries ruby quotes the ruby-STRIPPED target (○　両頭の蛇), while the source has ruby (両頭《りやうとう》の蛇《へび》). Per §7.5 the look-back is over the base text, so the target resolves ruby-stripped and the directive is a heading hint, not a generic annotation. The corpus's single largest forward-reference family. Offsets from the §3 byte model; serialize is the canonical explicit-ruby form (｜ inserted). Serialize canonicalises right-side ruby to the BARE form (the explicit ｜ is dropped) per ADR 0003 §6.1 / ADR 0002: ｜ is emitted only when a bare 《reading》 would re-parse to a different base; here every base is an all-kanji run whose preceding char is non-base (line start / 　 / の), so the bare form re-parses identically."
   },
   "source": "○　両頭《りやうとう》の蛇《へび》［＃「○　両頭の蛇」は中見出し］\n",
   "expected": {
     "html": "<p>○　<ruby>両頭<rp>(</rp><rt>りやうとう</rt><rp>)</rp></ruby>の<ruby>蛇<rp>(</rp><rt>へび</rt><rp>)</rp></ruby><span class=\"aozora-heading-hint\" data-level=\"2\" data-target=\"○　両頭の蛇\" hidden></span></p>\n",
-    "serialize": "○　｜両頭《りやうとう》の｜蛇《へび》［＃「○　両頭の蛇」は中見出し］\n",
+    "serialize": "○　両頭《りやうとう》の蛇《へび》［＃「○　両頭の蛇」は中見出し］\n",
     "nodes": [
       {
         "kind": "ruby",

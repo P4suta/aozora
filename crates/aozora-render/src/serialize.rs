@@ -17,7 +17,7 @@ use aozora_syntax::borrowed::{
 };
 use aozora_syntax::{
     BoutenPosition, ForwardAttr, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, LineFormat,
-    RegionClose, RegionFormat, RubySide, SectionKind,
+    RegionClose, RegionFormat, RubySide, SectionKind, is_ruby_base_char,
 };
 
 /// Serialize a `LexOutput` back to Aozora source text.
@@ -68,8 +68,33 @@ pub fn serialize(out: &LexOutput<'_>) -> String {
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited
 /// from the lexer's `Span` width contract; in practice unreachable.
 pub fn serialize_into<W: Write>(out: &LexOutput<'_>, writer: &mut W) -> fmt::Result {
-    let mut sink = SerializeSink { out: writer };
+    let mut tracking = TrackingWriter {
+        inner: writer,
+        last: None,
+    };
+    let mut sink = SerializeSink { out: &mut tracking };
     walk(out, &mut sink)
+}
+
+/// Wraps the serialize output and remembers the last `char` emitted.
+///
+/// `emit_ruby` reads it to decide whether a bare `《reading》` would
+/// re-parse to the *same* base (drop `｜`) or a different one (keep `｜`)
+/// — ADR 0002. The predecessor may be a preceding NODE (e.g. a kaeriten
+/// `二`, which is a ruby-base char) and not just text, so the last char
+/// must be tracked at the writer, not per `on_text`.
+struct TrackingWriter<W: Write> {
+    inner: W,
+    last: Option<char>,
+}
+
+impl<W: Write> Write for TrackingWriter<W> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        if let Some(c) = s.chars().next_back() {
+            self.last = Some(c);
+        }
+        self.inner.write_str(s)
+    }
 }
 
 /// [`WalkSink`] that re-emits Aozora source text: plain runs are copied
@@ -79,7 +104,7 @@ pub fn serialize_into<W: Write>(out: &LexOutput<'_>, writer: &mut W) -> fmt::Res
 /// sufficient — an unmatched stray close, and a mismatched 傍線終わり closing a
 /// 傍点 open, both round-trip byte-exact).
 struct SerializeSink<'w, W: Write> {
-    out: &'w mut W,
+    out: &'w mut TrackingWriter<W>,
 }
 
 impl<W: Write> WalkSink for SerializeSink<'_, W> {
@@ -108,7 +133,7 @@ impl<W: Write> WalkSink for SerializeSink<'_, W> {
     }
 }
 
-fn emit_aozora<W: Write>(node: Node<'_>, out: &mut W) -> fmt::Result {
+fn emit_aozora<W: Write>(node: Node<'_>, out: &mut TrackingWriter<W>) -> fmt::Result {
     match node {
         Node::Ruby(r) => emit_ruby(r, out),
         Node::Format(f) => emit_format(f, out),
@@ -135,7 +160,7 @@ fn emit_aozora<W: Write>(node: Node<'_>, out: &mut W) -> fmt::Result {
     }
 }
 
-fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
+fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut TrackingWriter<W>) -> fmt::Result {
     if matches!(r.side, RubySide::Left) {
         // Left-side ruby: reconstruct `base［＃「base」の左に「reading」のルビ］`.
         // The base is the pulled-back predecessor, so it precedes the directive.
@@ -146,11 +171,34 @@ fn emit_ruby<W: Write>(r: &Ruby<'_>, out: &mut W) -> fmt::Result {
         emit_content(r.reading.get(), out)?;
         return out.write_str("」のルビ］");
     }
-    out.write_char('｜')?;
+    // Canonical right-side ruby is BARE `base《reading》` (ADR 0003); the
+    // explicit base marker `｜` is emitted only when omitting it would let
+    // the implicit-base scan re-parse a *different* base (ADR 0002). Read
+    // the preceding char BEFORE writing anything.
+    if ruby_needs_bar(r.base.get(), out.last) {
+        out.write_char('｜')?;
+    }
     emit_content(r.base.get(), out)?;
     out.write_char('《')?;
     emit_content(r.reading.get(), out)?;
     out.write_char('》')
+}
+
+/// True when a bare `base《reading》` would NOT re-parse to `base` as its
+/// implicit base, so the explicit `｜` must be kept (ADR 0002). Cases:
+/// (a) `base` carries a non-base char — the implicit scan (a trailing
+/// run of [`is_ruby_base_char`]) cannot select this exact run; (b) the
+/// char immediately before `base` is itself a base char — the implicit
+/// scan would greedily extend leftward past `base`; (c) the char
+/// immediately before `base` is a `｜` — dropping our own `｜` would let
+/// that preceding bar become the base marker on re-parse, shedding one
+/// bar per round-trip (non-idempotent). A non-`Plain` base (defensive;
+/// right-side bases are always `Plain`) always keeps `｜`.
+fn ruby_needs_bar(base: Content<'_>, prev: Option<char>) -> bool {
+    base.as_plain().is_none_or(|s| {
+        s.chars().any(|c| !is_ruby_base_char(c))
+            || prev.is_some_and(|c| is_ruby_base_char(c) || c == '｜')
+    })
 }
 
 fn emit_side_note<W: Write>(s: &MarginNote<'_>, out: &mut W) -> fmt::Result {
@@ -662,8 +710,12 @@ mod tests {
 
     #[test]
     fn explicit_ruby_round_trips() {
+        // Canonical bare form (the redundant `｜` is dropped).
         let out = ser("｜青梅《おうめ》");
-        assert!(out.contains("｜青梅《おうめ》"), "got {out:?}");
+        assert!(
+            out.contains("青梅《おうめ》") && !out.contains('｜'),
+            "got {out:?}"
+        );
     }
 
     #[test]
@@ -712,14 +764,40 @@ mod tests {
     // --- Ruby (right + left) + side note -------------------------------
 
     #[test]
-    fn explicit_ruby_exact() {
-        assert_eq!(ser("｜青梅《おうめ》"), "｜青梅《おうめ》");
+    fn redundant_bar_is_dropped_to_canonical_bare() {
+        // The `｜` before an all-kanji base at line start is redundant — a
+        // bare `青梅《おうめ》` re-parses to the same base — so the canonical
+        // form (ADR 0002/0003) drops it.
+        assert_eq!(ser("｜青梅《おうめ》"), "青梅《おうめ》");
     }
 
     #[test]
-    fn implicit_ruby_canonicalises_to_explicit_delimiter() {
-        // No `｜`: the serializer re-emits the canonical explicit form.
-        assert_eq!(ser("青梅《おうめ》"), "｜青梅《おうめ》");
+    fn implicit_ruby_stays_bare() {
+        // Already canonical; no `｜` is introduced.
+        assert_eq!(ser("青梅《おうめ》"), "青梅《おうめ》");
+    }
+
+    #[test]
+    fn bar_is_kept_when_base_char_precedes_base() {
+        // `頃` is a kanji (ruby-base char); without `｜` the implicit scan
+        // would extend the base to `頃青梅`, so the `｜` is mandatory.
+        assert_eq!(ser("頃｜青梅《おうめ》"), "頃｜青梅《おうめ》");
+    }
+
+    #[test]
+    fn bar_is_kept_when_base_mixes_classes() {
+        // A base with a non-base char (kana `め`) cannot be re-derived by
+        // the trailing-kanji scan, so `｜` stays.
+        assert_eq!(ser("｜お目《おめ》"), "｜お目《おめ》");
+    }
+
+    #[test]
+    fn bar_is_kept_after_a_preceding_bar_so_count_is_stable() {
+        // A `｜` immediately before the base would become the marker on
+        // re-parse if we dropped our own; keeping it makes the bar count a
+        // fixed point (regression: `｜｜｜｜青空…` shed one bar per pass).
+        assert_eq!(ser("｜｜｜｜青空《あおぞら》"), "｜｜｜｜青空《あおぞら》");
+        assert_eq!(ser("｜｜青空《あおぞら》"), "｜｜青空《あおぞら》");
     }
 
     #[test]
@@ -1188,8 +1266,10 @@ mod tests {
         let first = ser(src);
         let second = ser(&first);
         assert_eq!(first, second, "mixed document must reach a fixed point");
-        // Spot-check that the headline constructs survived the round-trip.
-        assert!(first.contains("｜青梅《おうめ》"), "ruby lost: {first:?}");
+        // Spot-check that the headline constructs survived the round-trip
+        // (ruby canonicalises to the bare form — `青梅` is an all-kanji base
+        // at line start, so the `｜` is dropped per ADR 0002/0003).
+        assert!(first.contains("青梅《おうめ》"), "ruby lost: {first:?}");
         assert!(
             first.contains("可哀想［＃「可哀想」に傍点］"),
             "bouten lost: {first:?}"

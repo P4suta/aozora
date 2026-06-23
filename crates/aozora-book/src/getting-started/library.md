@@ -129,10 +129,10 @@ Every parse should round-trip:
 
 ```rust
 # extern crate aozora;
-# let doc = aozora::Document::new("｜青梅《おうめ》");
+# let doc = aozora::Document::new("青梅《おうめ》");
 let parsed = doc.parse();
 let canonical: String = parsed.to_source();
-assert_eq!(canonical, doc.source());     // for *canonical* input
+assert_eq!(canonical, doc.source());     // for *canonical* input (bare ruby)
 ```
 
 Real Aozora Bunko sources contain stylistic variations (CRLF vs LF,

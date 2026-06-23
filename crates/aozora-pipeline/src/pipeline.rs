@@ -83,7 +83,9 @@
 
 use core::marker::PhantomData;
 
-use crate::lexer::{ClassifiedSpan, PairEvent, Token, classify, pair_in, sanitize, tokenize_in};
+use crate::lexer::{
+    ClassifiedSpan, PairEvent, SpanKind, Token, classify, pair_in, sanitize, tokenize_in,
+};
 use aozora_spec::{Diagnostic, PairLink};
 use core::mem::take;
 
@@ -333,35 +335,12 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
         let mut events_iter = events.into_iter();
         let classify_diagnostics: Vec<Diagnostic> = {
             let mut classify_stream = classify(&mut events_iter, sanitized_text, &mut alloc);
-            // Hold a small window of classified spans so a node that pulled
-            // its consume span back across a newline — a promoted 大/中/小
-            // heading reclaiming its referent line `序章\n` — can drop the
-            // Plain + Newline spans it now subsumes before they reach the
-            // normalizer (which appends in source order and would otherwise
-            // duplicate the heading text). Same-line pull-backs (forward
-            // bouten / 縦中横) keep their target in the pending plain run and
-            // never yield a subsumed span, so nothing is dropped for them. A
-            // pull-back reaches only the immediately-preceding line, so a
-            // 4-span tail is always enough to catch the subsumed spans.
-            let mut window: Vec<ClassifiedSpan<'a>> = Vec::new();
-            for span in &mut classify_stream {
-                while let Some(back) = window.last() {
-                    let (bs, be) = (back.source_span.start, back.source_span.end);
-                    let (ss, se) = (span.source_span.start, span.source_span.end);
-                    // `span` is a *proper* superset of `back` in source bytes
-                    // (a backward pull-back that reclaimed `back`'s text).
-                    if ss <= bs && be <= se && (ss < bs || se > be) {
-                        window.pop();
-                    } else {
-                        break;
-                    }
-                }
-                window.push(span);
-                if window.len() > 4 {
-                    builder.emit(&window.remove(0));
-                }
-            }
-            for span in &window {
+            // Materialise the classified spans, then run the NORMALIZE
+            // (lowering) pass over the whole list before emitting. This is
+            // the seam the normalization waist builds on; today it only
+            // performs the source-byte drop-superset (see `lower_spans`).
+            let spans: Vec<ClassifiedSpan<'a>> = (&mut classify_stream).collect();
+            for span in &lower_spans(spans) {
                 builder.emit(span);
             }
             classify_stream.take_diagnostics()
@@ -405,6 +384,54 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
             intern_stats,
         }
     }
+}
+
+/// NORMALIZE (lowering) pass over the materialized classified-span list.
+///
+/// This is the seam the normalization waist is built on. Today it performs
+/// only the source-byte **drop-superset** the streaming 4-span window did:
+/// when a later span's source span is a proper superset of an earlier one
+/// — a backward pull-back, e.g. a promoted 大/中/小 heading reclaiming its
+/// referent line `序章\n`, or a forward node reclaiming its predecessor
+/// literal — the subsumed earlier span is dropped, so the normalizer (which
+/// appends in source order) does not emit the reclaimed text twice.
+///
+/// Running over the whole list rather than a depth-4 tail is behaviour-
+/// preserving (a pull-back reaches only the immediately-preceding line, so
+/// nothing more than 4 spans back was ever subsumed) and is what later
+/// folds extend: a forward directive's target span(s) will be wrapped into
+/// a scope-free region here instead of via the classifier's streaming
+/// pull-back, dissolving the `consumed_predecessor` round-trip pathology.
+fn lower_spans(spans: Vec<ClassifiedSpan<'_>>) -> Vec<ClassifiedSpan<'_>> {
+    let mut out: Vec<ClassifiedSpan<'_>> = Vec::with_capacity(spans.len());
+    for span in spans {
+        while let Some(back) = out.last() {
+            let (bs, be) = (back.source_span.start, back.source_span.end);
+            let back_is_plain = matches!(back.kind, SpanKind::Plain);
+            let (ss, se) = (span.source_span.start, span.source_span.end);
+            if ss <= bs && be <= se && (ss < bs || se > be) {
+                // Full superset: `span` reclaimed all of `back` (a promoted
+                // heading swallowing its referent line). Drop `back`.
+                out.pop();
+            } else if back_is_plain && bs < ss && ss < be {
+                // Partial overlap: `span` (a consumed_predecessor forward
+                // node) pulled its source region back into the *tail* of a
+                // committed plain run — the streaming flush could not splice
+                // the hole, so the reclaimed literal sits in BOTH the plain
+                // tail and the node, doubling on serialize (issue #180,
+                // unbounded growth). Truncate the plain to end where the node
+                // begins so the literal is emitted once, by the node.
+                if let Some(last) = out.last_mut() {
+                    last.source_span.end = ss;
+                }
+                break;
+            } else {
+                break;
+            }
+        }
+        out.push(span);
+    }
+    out
 }
 
 #[cfg(test)]

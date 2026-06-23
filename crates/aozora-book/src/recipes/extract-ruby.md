@@ -76,10 +76,11 @@ fn main() {
   `Content::iter()` yields a `Segment` per logical run; the `Plain`
   case yields exactly one `Text` segment, so the loop is uniform.
 
-- **`delim_explicit`.** `ruby.delim_explicit` records whether the
-  source used the explicit `｜` base delimiter. It does not affect the
-  base/reading text — see [the Ruby node chapter](../nodes/ruby.md) for
-  why both source forms classify identically.
+- **`side`.** `ruby.side` is `RubySide::Right` for the standard
+  `｜base《reading》` / implicit forms and `RubySide::Left` for the
+  `［＃「X」の左に「Y」のルビ］` saidoku building block; a furigana
+  glossary usually keeps only `Right` — see
+  [the Ruby node chapter](../nodes/ruby.md).
 
 ## See also
 

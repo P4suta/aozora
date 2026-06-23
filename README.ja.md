@@ -73,7 +73,11 @@ let html: String = tree.to_html();
 let canonical: String = tree.to_source();
 let diagnostics = tree.diagnostics();
 
-assert_eq!(canonical, "｜青梅《おうめ》");
+// `to_source` は*正準*形へ再シリアライズする: 全漢字 base では先頭の
+// `｜` は冗長なので落とされる（ADR 0003）。
+assert_eq!(canonical, "青梅《おうめ》");
+// `to_source_verbatim` は著者のバイト列をそのまま再生する。
+assert_eq!(tree.to_source_verbatim(), "｜青梅《おうめ》");
 ```
 
 `Document` は [`bumpalo`](https://docs.rs/bumpalo) アリーナを所有し、

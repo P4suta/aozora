@@ -86,7 +86,11 @@ let html: String = tree.to_html();
 let canonical: String = tree.to_source();
 let diagnostics = tree.diagnostics();
 
-assert_eq!(canonical, "｜青梅《おうめ》");
+// `to_source` re-serialises to the *canonical* form: the leading `｜`
+// is redundant for an all-kanji base, so it is dropped (ADR 0003).
+assert_eq!(canonical, "青梅《おうめ》");
+// `to_source_verbatim` instead replays the author's exact bytes.
+assert_eq!(tree.to_source_verbatim(), "｜青梅《おうめ》");
 ```
 
 `Document` owns a [`bumpalo`](https://docs.rs/bumpalo) arena; `tree`

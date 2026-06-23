@@ -4,12 +4,12 @@
     "feature": "composite",
     "level": "must",
     "spec_section": "6.1",
-    "note": "[provenance:hand-derived §6.1+§6.2 + AOZORA-ANNOTATION 2026-06-17] An explicit ruby ｜青梅《おうめ》 and a later forward bouten both reference 青梅 independently; the ruby reading and the bouten target do not interfere. Offsets from the §3 byte model."
+    "note": "[provenance:hand-derived §6.1+§6.2 + AOZORA-ANNOTATION 2026-06-17] An explicit ruby ｜青梅《おうめ》 and a later forward bouten both reference 青梅 independently; the ruby reading and the bouten target do not interfere. Offsets from the §3 byte model. Serialize canonicalises right-side ruby to the BARE form (the explicit ｜ is dropped) per ADR 0003 §6.1 / ADR 0002: ｜ is emitted only when a bare 《reading》 would re-parse to a different base; here every base is an all-kanji run whose preceding char is non-base (line start / 　 / の), so the bare form re-parses identically."
   },
   "source": "｜青梅《おうめ》には［＃「青梅」に傍点］という街道がある。\n",
   "expected": {
     "html": "<p><ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby>には<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">青梅</em>という街道がある。</p>\n",
-    "serialize": "｜青梅《おうめ》には［＃「青梅」に傍点］という街道がある。\n",
+    "serialize": "青梅《おうめ》には［＃「青梅」に傍点］という街道がある。\n",
     "nodes": [
       {
         "kind": "ruby",
