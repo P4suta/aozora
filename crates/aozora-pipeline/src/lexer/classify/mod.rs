@@ -3182,16 +3182,16 @@ mod tests {
             ],
             "spans drift from the consume_start=literal_start contract",
         );
-        // The classifier must also flip the per-node consumed flag so the
+        // The classifier must also set the per-node provenance so the
         // serializer round-trips the literal back into place.
-        let bouten_flag = out.spans.iter().find_map(|s| match s.kind {
-            SpanKind::Aozora(Node::Format(b)) => Some(b.consumed_predecessor),
+        let bouten_origin = out.spans.iter().find_map(|s| match s.kind {
+            SpanKind::Aozora(Node::Format(b)) => Some(b.origin),
             _ => None,
         });
         assert_eq!(
-            bouten_flag,
-            Some(true),
-            "consume_start shrunk → consumed_predecessor must be true",
+            bouten_origin,
+            Some(borrowed::ForwardOrigin::Reclaimed),
+            "consume_start shrunk → origin must be Reclaimed",
         );
     }
 

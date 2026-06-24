@@ -272,17 +272,15 @@ impl<'a> BorrowedAllocator<'a> {
         borrowed::Node::MarginNote(self.arena.alloc(borrowed::MarginNote { kind, base, note }))
     }
 
-    /// `Node::Bouten(Bouten { kind, target, position,
-    /// consumed_predecessor })`.
+    /// `Node::Bouten(Bouten { kind, target, position, origin })`.
     ///
     /// `target` carries the [`borrowed::NonEmpty`] invariant —
     /// the classify stage resolves the forward reference before emitting.
     ///
-    /// `consumed_predecessor` is `true` when the classifier pulled
-    /// the node's source span back over the literal occurrence of
-    /// `target` that sits immediately before the `［`. See the field
-    /// docstring on [`borrowed::ForwardFormat`] for the serializer
-    /// round-trip contract that depends on this flag.
+    /// `origin` is [`borrowed::ForwardOrigin::Reclaimed`] when the classifier
+    /// pulled the node's source span back over the literal occurrence of
+    /// `target` that sits immediately before the `［`. See [`borrowed::ForwardOrigin`]
+    /// for the serializer round-trip contract that depends on it.
     ///
     /// # Panics
     ///
@@ -292,26 +290,22 @@ impl<'a> BorrowedAllocator<'a> {
     #[must_use]
     #[allow(
         clippy::too_many_arguments,
-        reason = "every parameter is part of the public bouten contract — kind / target / position / consumed_predecessor each carry independent semantics and grouping them into a builder would add a layer without saving the caller anything"
+        reason = "every parameter is part of the public bouten contract — kind / target / position / origin each carry independent semantics and grouping them into a builder would add a layer without saving the caller anything"
     )]
     pub fn bouten(
         &self,
         kind: BoutenKind,
         target: borrowed::Content<'a>,
         position: BoutenPosition,
-        consumed_predecessor: bool,
+        origin: borrowed::ForwardOrigin,
     ) -> borrowed::Node<'a> {
-        self.forward_format(
-            ForwardAttr::Bouten { kind, position },
-            target,
-            consumed_predecessor,
-        )
+        self.forward_format(ForwardAttr::Bouten { kind, position }, target, origin)
     }
 
     /// `Node::Format` with a 縦中横 (`「text」は縦中横`) attribute.
     ///
     /// `text` carries the [`borrowed::NonEmpty`] invariant.
-    /// `consumed_predecessor` mirrors [`Self::bouten`]'s flag.
+    /// `origin` mirrors [`Self::bouten`]'s provenance.
     ///
     /// # Panics
     ///
@@ -320,18 +314,17 @@ impl<'a> BorrowedAllocator<'a> {
     pub fn tate_chu_yoko(
         &self,
         text: borrowed::Content<'a>,
-        consumed_predecessor: bool,
+        origin: borrowed::ForwardOrigin,
     ) -> borrowed::Node<'a> {
-        self.forward_format(ForwardAttr::CombineUpright, text, consumed_predecessor)
+        self.forward_format(ForwardAttr::CombineUpright, text, origin)
     }
 
     /// `Node::Format` with the given forward-scope `attr` applied to `text`.
     ///
     /// The unified builder for every `「X」は…` / `「X」に…` forward reference
     /// (太字 / 斜体 / 傍点 / 小書き / …). `text` carries the
-    /// [`borrowed::NonEmpty`] invariant; `consumed_predecessor` records the
-    /// back-ref consume (see [`borrowed::ForwardFormat`] for the round-trip
-    /// contract).
+    /// [`borrowed::NonEmpty`] invariant; `origin` records the back-ref
+    /// provenance (see [`borrowed::ForwardOrigin`] for the round-trip contract).
     ///
     /// # Panics
     ///
@@ -341,14 +334,14 @@ impl<'a> BorrowedAllocator<'a> {
         &self,
         attr: ForwardAttr,
         text: borrowed::Content<'a>,
-        consumed_predecessor: bool,
+        origin: borrowed::ForwardOrigin,
     ) -> borrowed::Node<'a> {
         let target = borrowed::NonEmpty::new(text)
             .expect("classify stage must emit a forward format with a non-empty target");
         borrowed::Node::Format(self.arena.alloc(borrowed::ForwardFormat {
             attr,
             target,
-            consumed_predecessor,
+            origin,
         }))
     }
 
@@ -584,7 +577,12 @@ mod tests {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
         let target = a.content_plain("青空");
-        let n = a.bouten(BoutenKind::Goma, target, BoutenPosition::Right, false);
+        let n = a.bouten(
+            BoutenKind::Goma,
+            target,
+            BoutenPosition::Right,
+            borrowed::ForwardOrigin::Referenced,
+        );
         match n {
             borrowed::Node::Format(b) => {
                 assert_eq!(
@@ -595,7 +593,7 @@ mod tests {
                     }
                 );
                 assert_eq!(b.target.as_plain(), Some("青空"));
-                assert!(!b.consumed_predecessor);
+                assert_eq!(b.origin, borrowed::ForwardOrigin::Referenced);
             }
             other => panic!("expected Format(Bouten), got {other:?}"),
         }
@@ -606,7 +604,7 @@ mod tests {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
         let text = a.content_plain("12");
-        let n = a.tate_chu_yoko(text, false);
+        let n = a.tate_chu_yoko(text, borrowed::ForwardOrigin::Referenced);
         match n {
             borrowed::Node::Format(t) => {
                 assert_eq!(t.attr, ForwardAttr::CombineUpright);
@@ -621,12 +619,12 @@ mod tests {
         let arena = Arena::new();
         let mut a = fresh_alloc(&arena);
         let text = a.content_plain("重要");
-        let n = a.forward_format(ForwardAttr::Bold, text, true);
+        let n = a.forward_format(ForwardAttr::Bold, text, borrowed::ForwardOrigin::Reclaimed);
         match n {
             borrowed::Node::Format(e) => {
                 assert_eq!(e.attr, ForwardAttr::Bold);
                 assert_eq!(e.target.as_plain(), Some("重要"));
-                assert!(e.consumed_predecessor);
+                assert_eq!(e.origin, borrowed::ForwardOrigin::Reclaimed);
             }
             other => panic!("expected Format(Bold), got {other:?}"),
         }

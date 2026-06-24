@@ -12,8 +12,8 @@ use core::fmt::{self, Write};
 use crate::walk::{SentinelKind, WalkSink, walk};
 use aozora_pipeline::{LexOutput, has_long_rule_line, isolate_decorative_rules};
 use aozora_syntax::borrowed::{
-    AngleQuote, Content, Directive, ForwardFormat, Gaiji, Heading, HeadingHint, Illustration,
-    Kaeriten, MarginNote, Node, NodeRef, Ruby, Segment,
+    AngleQuote, Content, Directive, ForwardFormat, ForwardOrigin, Gaiji, Heading, HeadingHint,
+    Illustration, Kaeriten, MarginNote, Node, NodeRef, Ruby, Segment,
 };
 use aozora_syntax::{
     BoutenPosition, ForwardAttr, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, LineFormat,
@@ -217,13 +217,13 @@ fn emit_side_note<W: Write>(s: &MarginNote<'_>, out: &mut W) -> fmt::Result {
 
 /// Re-emit a forward-reference leaf (`<target>［＃「<target>」は…／に…］`).
 ///
-/// `consumed_predecessor` drives the leading-literal re-emit that holds the
-/// parse∘serialize fixed point. The attribute selects the shape: 傍点 / 傍線
-/// take the multi-`「」` target + `に` / `の左に` connector; every other
-/// forward attribute takes the `「target」は<keyword>` shape (with the
-/// magnitude spelled out for 文字サイズ).
+/// A [`Reclaimed`](ForwardOrigin::Reclaimed) origin drives the leading-literal
+/// re-emit that holds the parse∘serialize fixed point. The attribute selects
+/// the shape: 傍点 / 傍線 take the multi-`「」` target + `に` / `の左に` connector;
+/// every other forward attribute takes the `「target」は<keyword>` shape (with
+/// the magnitude spelled out for 文字サイズ).
 fn emit_format<W: Write>(f: &ForwardFormat<'_>, out: &mut W) -> fmt::Result {
-    if f.consumed_predecessor {
+    if matches!(f.origin, ForwardOrigin::Reclaimed) {
         emit_content_as_plain(f.target.get(), out)?;
     }
     if let ForwardAttr::Bouten { kind, position } = f.attr {

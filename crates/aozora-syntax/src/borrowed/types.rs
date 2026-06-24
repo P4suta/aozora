@@ -204,6 +204,59 @@ pub struct MarginNote<'src> {
     pub note: super::NonEmpty<Content<'src>>,
 }
 
+/// A forward emphasis node's target-text provenance — whether `serialize`
+/// must re-emit the leading literal to reconstruct the source.
+///
+/// A forward reference is recognized **only** when its target appears
+/// *contiguously* in the source before the bracket. A directive whose quoted
+/// target is absent (`（例）［＃「国境が消える」に傍点］`) or split by a ruby run
+/// (`牛《ベゴ》の舌［＃「牛の舌」に傍点］`) is left an unresolved `Directive`, not a
+/// forward node, so it never reaches this type.
+///
+/// This is the one irreducible provenance the normalization waist could not
+/// fold away — it cannot collapse to a constant in either direction:
+/// - **Not always `Reclaimed`** (node owns the literal): when the recognized
+///   target occurrence is itself a **ruby base**
+///   (`我《が》…我［＃「我」に傍点］`; ≥34 in the 17,889-work `aozorabunko_text`
+///   mirror, see #202) it cannot be pulled into a text-only forward leaf
+///   (bouten-over-ruby is not representable), so it must stay `Referenced`.
+/// - **Not always `Referenced`** (literal left upstream): an adjacent forward
+///   had its literal pulled into the node and the surrounding plain run
+///   truncated, so without re-emit the literal would be lost.
+///
+/// Deriving it at serialize from a non-local preceding-content scan would
+/// re-introduce exactly the lookback the scope-free core removes, so it is
+/// materialized here as explicit provenance. (The #180 unbounded-growth
+/// pathology — a `Reclaimed` literal doubled in the plain tail — is separately
+/// cured by the lowering pass's overlap-truncate.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForwardOrigin {
+    /// The classifier pulled the literal out of the immediately-preceding
+    /// source (`青空［＃「青空」に傍点］`): the surrounding plain run was truncated,
+    /// so the decorated run is the *sole* visible copy and the serializer
+    /// re-emits the literal before the bracket.
+    Reclaimed,
+    /// The target is recognized contiguously before the bracket but is *not*
+    /// byte-adjacent to it, so the literal stays in the preceding run; the
+    /// serializer emits the bracket form alone.
+    Referenced,
+}
+
+impl ForwardOrigin {
+    /// Derive the provenance from the classifier's consume window:
+    /// [`Reclaimed`](Self::Reclaimed) iff `consume_start` was pulled back
+    /// before the directive's `［` at `bracket_start`, otherwise
+    /// [`Referenced`](Self::Referenced).
+    #[must_use]
+    pub const fn from_consume(consume_start: u32, bracket_start: u32) -> Self {
+        if consume_start < bracket_start {
+            Self::Reclaimed
+        } else {
+            Self::Referenced
+        }
+    }
+}
+
 /// Forward-reference emphasis: an attribute paired with its target run.
 ///
 /// The unified leaf for every `「X」は…` / `「X」に…` forward reference —
@@ -215,24 +268,17 @@ pub struct MarginNote<'src> {
 /// `target` is [`super::NonEmpty`] — the classify stage resolves the forward
 /// reference before emitting the node; empty emphasis is a parse bug.
 ///
-/// `consumed_predecessor` records whether the classifier pulled this node's
-/// source span back over an immediately-preceding literal of `target` (the
-/// canonical `target［＃「target」に傍点］` shape). When true, the renderer's
-/// decorated run is the *sole* visible copy of the literal — the surrounding
-/// plain run was truncated to make room — and the serializer re-emits the
-/// literal before the bracket to preserve the parse∘serialize fixed point.
-/// When false the literal stays in the preceding plain run and only the
-/// bracket form is emitted. (This 1-bit is the irreducible provenance the
-/// reframe could not fold away without a deferred-commit buffer.)
+/// [`origin`](Self::origin) carries the target-text provenance that holds the
+/// parse∘serialize fixed point; see [`ForwardOrigin`] for why it is irreducible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ForwardFormat<'src> {
     /// Which forward-scope attribute decorates the run.
     pub attr: ForwardAttr,
     /// The run the attribute is applied to.
     pub target: super::NonEmpty<Content<'src>>,
-    /// Whether the classifier pulled this node's span back over an
-    /// immediately-preceding literal of `target`; see the struct docs.
-    pub consumed_predecessor: bool,
+    /// The target text's provenance — whether `serialize` re-emits the leading
+    /// literal to reconstruct the source. See [`ForwardOrigin`].
+    pub origin: ForwardOrigin,
 }
 
 /// Gaiji (out-of-character-range glyph).
