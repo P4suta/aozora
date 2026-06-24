@@ -6,8 +6,8 @@
 use core::fmt::{self, Write};
 
 use aozora_syntax::borrowed::{
-    AngleQuote, Content, Directive, ForwardFormat, Gaiji, Heading, HeadingHint, Illustration,
-    Kaeriten, MarginNote, Node, Ruby, Segment,
+    AngleQuote, Content, Directive, ForwardFormat, ForwardOrigin, Gaiji, Heading, HeadingHint,
+    Illustration, Kaeriten, MarginNote, Node, Ruby, Segment,
 };
 use aozora_syntax::{
     Container, DirectiveKind, ForwardAttr, HeadingKind, HeadingStyle, IndentBlock, IndentLayout,
@@ -95,7 +95,25 @@ fn render_side_note<W: Write>(s: &MarginNote<'_>, writer: &mut W) -> fmt::Result
 /// 斜体 → `<i>`, 上付き/下付き小文字 → `<sup>`/`<sub>`, the small-glyph /
 /// box / caption forms → a side `<span>`. Each carries an `aozora-*` class so
 /// a stylesheet can theme it.
+///
+/// A [`Referenced`](ForwardOrigin::Referenced) origin emits **nothing**: its
+/// target literal already lives in the upstream plain run (or a ruby base), so
+/// re-rendering it here doubles the text (#228). This mirrors
+/// [`serialize::emit_format`](crate::serialize), which re-emits the leading
+/// literal only for [`Reclaimed`](ForwardOrigin::Reclaimed). Two caveats for a
+/// future reader who might want to "fix" the asymmetry:
+///   - **Asymmetry vs. `emit_format`**: `emit_format` still writes the bracket
+///     directive for `Referenced` (round-trip), but HTML has no visible bracket
+///     equivalent and the streaming renderer cannot retroactively style the
+///     already-emitted upstream copy, so the emphasis markup is dropped.
+///   - **Contract dependency**: `Referenced` ⟹ the literal is present upstream
+///     (see [`ForwardOrigin`]). If that ever breaks, HTML silently loses text
+///     and no serialize-based gate catches it — the targeted `Referenced` tests
+///     in this module and in `html.rs` are load-bearing.
 fn render_format<W: Write>(f: &ForwardFormat<'_>, writer: &mut W) -> fmt::Result {
+    if matches!(f.origin, ForwardOrigin::Referenced) {
+        return Ok(());
+    }
     match f.attr {
         ForwardAttr::Bouten { kind, position } => {
             write!(
@@ -671,7 +689,7 @@ mod tests {
             BoutenKind::Goma,
             target,
             BoutenPosition::Right,
-            ForwardOrigin::Referenced,
+            ForwardOrigin::Reclaimed,
         );
         assert_eq!(
             render_node_to_string(n),
@@ -688,7 +706,7 @@ mod tests {
             BoutenKind::BlackTriangle,
             target,
             BoutenPosition::Right,
-            ForwardOrigin::Referenced,
+            ForwardOrigin::Reclaimed,
         );
         assert_eq!(
             render_node_to_string(n),
@@ -697,11 +715,47 @@ mod tests {
     }
 
     #[test]
+    fn referenced_forward_emits_nothing() {
+        // A `Referenced` forward's target literal already lives in the upstream
+        // plain run (or a ruby base); re-rendering it here would double the text
+        // (#228). The node must emit the empty string — not even an empty
+        // `<em></em>` wrapper. Pinned per attribute family so a future renderer
+        // edit can't silently re-introduce the duplication for one arm.
+        let arena = Arena::new();
+        let mut alloc = BorrowedAllocator::new(&arena);
+
+        let bouten_target = alloc.content_plain("青空");
+        let bouten = alloc.bouten(
+            BoutenKind::Goma,
+            bouten_target,
+            BoutenPosition::Right,
+            ForwardOrigin::Referenced,
+        );
+        assert_eq!(render_node_to_string(bouten), "", "bouten Referenced");
+
+        let bold_target = alloc.content_plain("重要");
+        let bold = alloc.forward_format(ForwardAttr::Bold, bold_target, ForwardOrigin::Referenced);
+        assert_eq!(render_node_to_string(bold), "", "bold Referenced");
+
+        let font_target = alloc.content_plain("大");
+        let font = alloc.forward_format(
+            ForwardAttr::FontSize(font_shift(2)),
+            font_target,
+            ForwardOrigin::Referenced,
+        );
+        assert_eq!(render_node_to_string(font), "", "font-size Referenced");
+
+        let tcy_target = alloc.content_plain("12");
+        let tcy = alloc.tate_chu_yoko(tcy_target, ForwardOrigin::Referenced);
+        assert_eq!(render_node_to_string(tcy), "", "tcy Referenced");
+    }
+
+    #[test]
     fn emphasis_bold_leaf_emits_b_tag() {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("重要");
-        let n = alloc.forward_format(ForwardAttr::Bold, text, ForwardOrigin::Referenced);
+        let n = alloc.forward_format(ForwardAttr::Bold, text, ForwardOrigin::Reclaimed);
         assert_eq!(
             render_node_to_string(n),
             r#"<b class="aozora-futoji">重要</b>"#
@@ -713,7 +767,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("e");
-        let n = alloc.forward_format(ForwardAttr::Italic, text, ForwardOrigin::Referenced);
+        let n = alloc.forward_format(ForwardAttr::Italic, text, ForwardOrigin::Reclaimed);
         assert_eq!(
             render_node_to_string(n),
             r#"<i class="aozora-shatai">e</i>"#
@@ -957,7 +1011,7 @@ mod tests {
                 kind,
                 target,
                 BoutenPosition::Right,
-                ForwardOrigin::Referenced,
+                ForwardOrigin::Reclaimed,
             );
             assert_eq!(
                 render_node_to_string(n),
@@ -978,7 +1032,7 @@ mod tests {
             BoutenKind::Goma,
             target,
             BoutenPosition::Left,
-            ForwardOrigin::Referenced,
+            ForwardOrigin::Reclaimed,
         );
         assert_eq!(
             render_node_to_string(n),
@@ -995,17 +1049,14 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let exponent = alloc.content_plain("2");
-        let sup = alloc.forward_format(
-            ForwardAttr::SuperScript,
-            exponent,
-            ForwardOrigin::Referenced,
-        );
+        let sup =
+            alloc.forward_format(ForwardAttr::SuperScript, exponent, ForwardOrigin::Reclaimed);
         assert_eq!(
             render_node_to_string(sup),
             r#"<sup class="aozora-uwatsuki">2</sup>"#
         );
         let index = alloc.content_plain("3");
-        let sub = alloc.forward_format(ForwardAttr::SubScript, index, ForwardOrigin::Referenced);
+        let sub = alloc.forward_format(ForwardAttr::SubScript, index, ForwardOrigin::Reclaimed);
         assert_eq!(
             render_node_to_string(sub),
             r#"<sub class="aozora-shitatsuki">3</sub>"#
@@ -1030,7 +1081,7 @@ mod tests {
             let arena = Arena::new();
             let mut alloc = BorrowedAllocator::new(&arena);
             let text = alloc.content_plain("X");
-            let n = alloc.forward_format(attr, text, ForwardOrigin::Referenced);
+            let n = alloc.forward_format(attr, text, ForwardOrigin::Reclaimed);
             assert_eq!(
                 render_node_to_string(n),
                 format!(r#"<span class="aozora-{slug}">X</span>"#),
@@ -1047,7 +1098,7 @@ mod tests {
         let n = alloc.forward_format(
             ForwardAttr::FontSize(font_shift(3)),
             text,
-            ForwardOrigin::Referenced,
+            ForwardOrigin::Reclaimed,
         );
         assert_eq!(
             render_node_to_string(n),
@@ -1063,7 +1114,7 @@ mod tests {
         let n = alloc.forward_format(
             ForwardAttr::FontSize(font_shift(-2)),
             text,
-            ForwardOrigin::Referenced,
+            ForwardOrigin::Reclaimed,
         );
         assert_eq!(
             render_node_to_string(n),
@@ -1080,7 +1131,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("12");
-        let n = alloc.tate_chu_yoko(text, ForwardOrigin::Referenced);
+        let n = alloc.tate_chu_yoko(text, ForwardOrigin::Reclaimed);
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-combine-upright">12</span>"#

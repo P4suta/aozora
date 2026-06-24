@@ -67,3 +67,18 @@ fn snapshot_xss_payload_is_escaped() {
     // the renderer emits for hostile input.
     insta::assert_snapshot!(render("<script>alert(1)</script>"));
 }
+
+#[test]
+fn snapshot_referenced_contiguous_forward_no_double_render() {
+    // #228: a non-adjacent (`Referenced`) forward leaves its literal in the
+    // upstream plain run; the styled copy is dropped, not duplicated.
+    insta::assert_snapshot!(render("青空の下を歩く［＃「青空」に傍点］"));
+}
+
+#[test]
+fn snapshot_referenced_ruby_base_forward_no_double_render() {
+    // #228: the bouten target resolves to a ruby base (not representable as a
+    // text-only leaf), so it stays `Referenced` — the ruby renders once with
+    // no trailing emphasis wrapper.
+    insta::assert_snapshot!(render("我《われ》の名は［＃「我」に傍点］"));
+}

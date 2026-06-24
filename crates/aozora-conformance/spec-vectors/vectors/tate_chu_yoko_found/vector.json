@@ -4,11 +4,11 @@
     "feature": "tate_chu_yoko",
     "level": "must",
     "spec_section": "6.3",
-    "note": "[provenance:hand-derived §6.3 + AOZORA-ANNOTATION 2026-06-17] Happy-path 縦中横: the target ３３ precedes the directive (明治３３年…), so it is recognised and the directive consumed with no diagnostic. Complements the recovery case (vector tate_chu_yoko) where the target is absent and tcy-target-not-found is raised."
+    "note": "[provenance:hand-derived §6.3 + AOZORA-ANNOTATION 2026-06-17] Happy-path 縦中横: the target ３３ precedes the directive (明治３３年…), so it is recognised and the directive consumed with no diagnostic. The target is non-adjacent (年 intervenes before the bracket), so the forward node stays Referenced (ADR 0003 §6.2): HTML renders ３３ once in the surrounding run and drops the combine-upright styling — re-rendering the target would double ３３ (the duplication bug fixed in reference impl #228). serialize re-emits the bracket form unchanged with the literal left upstream. Complements the recovery case (vector tate_chu_yoko) where the target is absent and tcy-target-not-found is raised."
   },
   "source": "明治３３年［＃「３３」は縦中横］に。\n",
   "expected": {
-    "html": "<p>明治３３年<span class=\"aozora-combine-upright\">３３</span>に。</p>\n",
+    "html": "<p>明治３３年に。</p>\n",
     "serialize": "明治３３年［＃「３３」は縦中横］に。\n",
     "nodes": [
       {

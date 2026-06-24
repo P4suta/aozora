@@ -455,4 +455,50 @@ mod tests {
         let html = render("it's");
         assert_eq!(html, "<p>it&#x27;s</p>\n", "lone apostrophe must escape");
     }
+
+    // ------------------------------------------------------------------
+    // #228 — a non-adjacent (`Referenced`) forward must not double-render
+    // its target. The literal stays in the upstream plain run / ruby base;
+    // `render_format` emits nothing for `Referenced`, so the styled copy is
+    // dropped rather than duplicated. These full-pipeline assertions are
+    // load-bearing — the serialize/corpus gates are blind to HTML output.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn referenced_contiguous_forward_does_not_double_render() {
+        // `青空` sits at the head of the run, far from the bracket → the
+        // classifier leaves the literal in place (`Referenced`). The target
+        // must appear exactly once, with no emphasis wrapper.
+        let html = render("青空の下を歩く［＃「青空」に傍点］");
+        assert_eq!(html, "<p>青空の下を歩く</p>\n");
+        assert_eq!(html.matches("青空").count(), 1, "青空 must not duplicate");
+        assert!(!html.contains("<em"), "no emphasis wrapper: {html}");
+    }
+
+    #[test]
+    fn referenced_ruby_base_forward_does_not_double_render() {
+        // The bouten target `我` resolves to the ruby base (a ruby base cannot
+        // be pulled into a text-only forward leaf — `bouten`-over-ruby is not
+        // representable), so it stays `Referenced`. The ruby renders once and
+        // no trailing `<em>我</em>` is appended.
+        let html = render("我《われ》の名は［＃「我」に傍点］");
+        assert_eq!(
+            html,
+            "<p><ruby>我<rp>(</rp><rt>われ</rt><rp>)</rp></ruby>の名は</p>\n"
+        );
+        assert_eq!(html.matches("我").count(), 1, "我 must not duplicate");
+        assert!(!html.contains("<em"), "no emphasis wrapper: {html}");
+    }
+
+    #[test]
+    fn reclaimed_adjacent_forward_still_renders_emphasis() {
+        // Regression guard: the adjacent (`Reclaimed`) form is unchanged — the
+        // plain run was truncated, so the node is the sole copy and must keep
+        // its `<em>` wrapper.
+        let html = render("青空［＃「青空」に傍点］を見上げる。");
+        assert_eq!(
+            html,
+            "<p><em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">青空</em>を見上げる。</p>\n"
+        );
+    }
 }
