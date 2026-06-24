@@ -634,7 +634,8 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let phrase = &self.source[x_start..cutoff];
         let content = self.alloc.content_plain(phrase);
         Some((
-            self.alloc.bouten(kind, content, position, true),
+            self.alloc
+                .bouten(kind, content, position, borrowed::ForwardOrigin::Reclaimed),
             u32::try_from(x_start).ok()?,
         ))
     }
@@ -699,7 +700,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         } else {
             open_span.start
         };
-        let consumed_predecessor = consume_start < open_span.start;
+        let origin = borrowed::ForwardOrigin::from_consume(consume_start, open_span.start);
         // Ambiguity: a *single* target that occurs more than once in the
         // look-back window has no unique referent. Multi-target brackets
         // (`「A」「B」`) name distinct runs and are not "ambiguous" in this
@@ -715,8 +716,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         };
         let target = build_bouten_target(&extracted.targets, self.alloc);
         Some((
-            self.alloc
-                .bouten(kind, target, position, consumed_predecessor),
+            self.alloc.bouten(kind, target, position, origin),
             consume_start,
             ambiguous,
         ))
@@ -829,12 +829,9 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let consume_start =
             find_immediate_predecessor_target_position(view.events, self.source, open_idx, first)
                 .unwrap_or(open_span.start);
-        let consumed_predecessor = consume_start < open_span.start;
+        let origin = borrowed::ForwardOrigin::from_consume(consume_start, open_span.start);
         let text = self.alloc.content_plain(first);
-        ForwardTcy::Recognised(
-            self.alloc.tate_chu_yoko(text, consumed_predecessor),
-            consume_start,
-        )
+        ForwardTcy::Recognised(self.alloc.tate_chu_yoko(text, origin), consume_start)
     }
 }
 
@@ -1308,12 +1305,9 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let consume_start =
             find_immediate_predecessor_target_position(view.events, self.source, open_idx, only)
                 .unwrap_or(open_span.start);
-        let consumed_predecessor = consume_start < open_span.start;
+        let origin = borrowed::ForwardOrigin::from_consume(consume_start, open_span.start);
         let text = self.alloc.content_plain(only);
-        Some((
-            self.alloc.forward_format(attr, text, consumed_predecessor),
-            consume_start,
-        ))
+        Some((self.alloc.forward_format(attr, text, origin), consume_start))
     }
 }
 

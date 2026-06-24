@@ -188,7 +188,7 @@ pub fn dispatch_node<'src, V: AozoraVisitor<'src>>(
 mod tests {
     use super::*;
     use aozora_syntax::alloc::BorrowedAllocator;
-    use aozora_syntax::borrowed::Arena;
+    use aozora_syntax::borrowed::{Arena, ForwardOrigin};
 
     /// Demonstration visitor: count one tick per node visited. Proves
     /// that adding a new "renderer" via the trait is a one-impl
@@ -382,10 +382,15 @@ mod tests {
         let side_note = a.side_note(MarginNoteKind::Gloss, nbase, note);
 
         let btarget = a.content_plain("点");
-        let bouten = a.bouten(BoutenKind::Goma, btarget, BoutenPosition::Right, false);
+        let bouten = a.bouten(
+            BoutenKind::Goma,
+            btarget,
+            BoutenPosition::Right,
+            ForwardOrigin::Referenced,
+        );
 
         let ttext = a.content_plain("12");
-        let tcy = a.tate_chu_yoko(ttext, false);
+        let tcy = a.tate_chu_yoko(ttext, ForwardOrigin::Referenced);
 
         let g = a.make_gaiji("外字", None, false);
         let gaiji = a.gaiji(g);
@@ -493,7 +498,7 @@ mod tests {
             aozora_syntax::BoutenKind::Goma,
             btarget,
             aozora_syntax::BoutenPosition::Right,
-            false,
+            ForwardOrigin::Referenced,
         );
         let mut recorder = Recorder::default();
         for n in [ruby, bouten, Node::PageBreak] {
@@ -514,7 +519,11 @@ mod tests {
         let arena = Arena::new();
         let mut a = BorrowedAllocator::new(&arena);
         let text = a.content_plain("重要");
-        let emphasis = a.forward_format(aozora_syntax::ForwardAttr::Bold, text, false);
+        let emphasis = a.forward_format(
+            aozora_syntax::ForwardAttr::Bold,
+            text,
+            ForwardOrigin::Referenced,
+        );
         let mut recorder = Recorder::default();
         dispatch_node(emphasis, true, &mut recorder).expect("enter dispatch never fails");
         dispatch_node(emphasis, false, &mut recorder).expect("exit dispatch never fails");

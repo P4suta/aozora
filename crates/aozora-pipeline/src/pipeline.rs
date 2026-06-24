@@ -90,7 +90,7 @@ use aozora_spec::{Diagnostic, PairLink};
 use core::mem::take;
 
 use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::{Arena, ContainerPair, Node, Registry};
+use aozora_syntax::borrowed::{Arena, ContainerPair, ForwardOrigin, Node, Registry};
 use aozora_syntax::{ForwardAttr, RegionClose, RegionFormat, Span};
 use bumpalo::collections::Vec as BumpVec;
 
@@ -399,10 +399,12 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
 ///
 /// Running over the whole list rather than a depth-4 tail is behaviour-
 /// preserving (a pull-back reaches only the immediately-preceding line, so
-/// nothing more than 4 spans back was ever subsumed) and is what later
-/// folds extend: a forward directive's target span(s) will be wrapped into
-/// a scope-free region here instead of via the classifier's streaming
-/// pull-back, dissolving the `consumed_predecessor` round-trip pathology.
+/// nothing more than 4 spans back was ever subsumed). This overlap-truncate is
+/// what cured the #180 round-trip pathology (a reclaimed literal sitting in
+/// both the plain tail and the node, doubling every serialize round); the
+/// surviving [`ForwardOrigin`] on each forward leaf is necessary provenance,
+/// not a pathology — non-adjacent targets that are a ruby base keep
+/// `Referenced` reachable, so it cannot collapse to a constant (#202).
 fn lower_spans<'a>(
     spans: Vec<ClassifiedSpan<'a>>,
     source: &'a str,
@@ -425,7 +427,7 @@ fn lower_spans<'a>(
                 // heading swallowing its referent line). Drop `back`.
                 out.pop();
             } else if back_is_plain && bs < ss && ss < be {
-                // Partial overlap: `span` (a consumed_predecessor forward
+                // Partial overlap: `span` (a `Reclaimed` forward
                 // node) pulled its source region back into the *tail* of a
                 // committed plain run — the streaming flush could not splice
                 // the hole, so the reclaimed literal sits in BOTH the plain
@@ -593,7 +595,9 @@ fn try_fold_inline<'a>(
         return None;
     }
     let content = alloc.content_plain(&text);
-    let node = alloc.forward_format(attr, content, true);
+    // An inline-range fold is adjacent by construction: the opener sits right
+    // before the enclosed run, so the leaf reclaims its literal.
+    let node = alloc.forward_format(attr, content, ForwardOrigin::Reclaimed);
     Some(ClassifiedSpan {
         kind: SpanKind::Aozora(node),
         source_span: Span::new(frame.open.source_span.start, close.source_span.end),

@@ -15,7 +15,7 @@
 //! incidental string content.
 
 use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::{Arena, Node};
+use aozora_syntax::borrowed::{Arena, ForwardOrigin, Node};
 use aozora_syntax::format::{IndentBlock, IndentLayout, LineFormat, RegionFormat};
 use aozora_syntax::{
     BoutenKind, BoutenPosition, Container, DirectiveKind, HeadingKind, HeadingStyle,
@@ -35,8 +35,13 @@ fn build_one_of_each<'a>(alloc: &mut BorrowedAllocator<'a>) -> Vec<Node<'a>> {
         // Both MarginNote flavours — pin each kind's Debug shape.
         alloc.side_note(MarginNoteKind::Gloss, base, reading),
         alloc.side_note(MarginNoteKind::Marginal, base, reading),
-        alloc.bouten(BoutenKind::Goma, base, BoutenPosition::Right, false),
-        alloc.tate_chu_yoko(base, false),
+        alloc.bouten(
+            BoutenKind::Goma,
+            base,
+            BoutenPosition::Right,
+            ForwardOrigin::Referenced,
+        ),
+        alloc.tate_chu_yoko(base, ForwardOrigin::Referenced),
         alloc.gaiji(g),
         alloc.line(LineFormat::Indent { amount: 2 }),
         alloc.line(LineFormat::AlignEnd { offset: 2 }),

@@ -96,7 +96,7 @@ pub struct Bouten<'src> {
     pub kind:     BoutenKind,            // one of 11 variants (点 / 線)
     pub target:   NonEmpty<Content<'src>>, // the emphasised run
     pub position: BoutenPosition,        // Right (default) | Left (左に…)
-    pub consumed_predecessor: bool,      // whether it absorbed the run before it
+    pub origin:   ForwardOrigin,         // Reclaimed if it absorbed the preceding run, else Referenced
 }
 ```
 

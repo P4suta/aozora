@@ -59,7 +59,7 @@ expression: "format!(\"{nodes:#?}\")"
                     "base",
                 ),
             ),
-            consumed_predecessor: false,
+            origin: Referenced,
         },
     ),
     Format(
@@ -70,7 +70,7 @@ expression: "format!(\"{nodes:#?}\")"
                     "base",
                 ),
             ),
-            consumed_predecessor: false,
+            origin: Referenced,
         },
     ),
     Gaiji(

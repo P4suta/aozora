@@ -585,7 +585,7 @@ const fn html_entity(c: char) -> &'static str {
 mod tests {
     use super::*;
     use aozora_syntax::alloc::BorrowedAllocator;
-    use aozora_syntax::borrowed::{Arena, Node};
+    use aozora_syntax::borrowed::{Arena, ForwardOrigin, Node};
     use aozora_syntax::{
         BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, FontShift, ForwardAttr,
         IndentBlock, IndentLayout, LineFormat, LineWidth, RegionFormat, SectionKind,
@@ -667,7 +667,12 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let target = alloc.content_plain("可哀想");
-        let n = alloc.bouten(BoutenKind::Goma, target, BoutenPosition::Right, false);
+        let n = alloc.bouten(
+            BoutenKind::Goma,
+            target,
+            BoutenPosition::Right,
+            ForwardOrigin::Referenced,
+        );
         assert_eq!(
             render_node_to_string(n),
             r#"<em class="aozora-bouten aozora-bouten-goma aozora-bouten-right">可哀想</em>"#
@@ -683,7 +688,7 @@ mod tests {
             BoutenKind::BlackTriangle,
             target,
             BoutenPosition::Right,
-            false,
+            ForwardOrigin::Referenced,
         );
         assert_eq!(
             render_node_to_string(n),
@@ -696,7 +701,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("重要");
-        let n = alloc.forward_format(ForwardAttr::Bold, text, false);
+        let n = alloc.forward_format(ForwardAttr::Bold, text, ForwardOrigin::Referenced);
         assert_eq!(
             render_node_to_string(n),
             r#"<b class="aozora-futoji">重要</b>"#
@@ -708,7 +713,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("e");
-        let n = alloc.forward_format(ForwardAttr::Italic, text, false);
+        let n = alloc.forward_format(ForwardAttr::Italic, text, ForwardOrigin::Referenced);
         assert_eq!(
             render_node_to_string(n),
             r#"<i class="aozora-shatai">e</i>"#
@@ -948,7 +953,12 @@ mod tests {
             let arena = Arena::new();
             let mut alloc = BorrowedAllocator::new(&arena);
             let target = alloc.content_plain("対象");
-            let n = alloc.bouten(kind, target, BoutenPosition::Right, false);
+            let n = alloc.bouten(
+                kind,
+                target,
+                BoutenPosition::Right,
+                ForwardOrigin::Referenced,
+            );
             assert_eq!(
                 render_node_to_string(n),
                 format!(
@@ -964,7 +974,12 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let target = alloc.content_plain("対象");
-        let n = alloc.bouten(BoutenKind::Goma, target, BoutenPosition::Left, false);
+        let n = alloc.bouten(
+            BoutenKind::Goma,
+            target,
+            BoutenPosition::Left,
+            ForwardOrigin::Referenced,
+        );
         assert_eq!(
             render_node_to_string(n),
             r#"<em class="aozora-bouten aozora-bouten-goma aozora-bouten-left">対象</em>"#
@@ -980,13 +995,17 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let exponent = alloc.content_plain("2");
-        let sup = alloc.forward_format(ForwardAttr::SuperScript, exponent, false);
+        let sup = alloc.forward_format(
+            ForwardAttr::SuperScript,
+            exponent,
+            ForwardOrigin::Referenced,
+        );
         assert_eq!(
             render_node_to_string(sup),
             r#"<sup class="aozora-uwatsuki">2</sup>"#
         );
         let index = alloc.content_plain("3");
-        let sub = alloc.forward_format(ForwardAttr::SubScript, index, false);
+        let sub = alloc.forward_format(ForwardAttr::SubScript, index, ForwardOrigin::Referenced);
         assert_eq!(
             render_node_to_string(sub),
             r#"<sub class="aozora-shitatsuki">3</sub>"#
@@ -1011,7 +1030,7 @@ mod tests {
             let arena = Arena::new();
             let mut alloc = BorrowedAllocator::new(&arena);
             let text = alloc.content_plain("X");
-            let n = alloc.forward_format(attr, text, false);
+            let n = alloc.forward_format(attr, text, ForwardOrigin::Referenced);
             assert_eq!(
                 render_node_to_string(n),
                 format!(r#"<span class="aozora-{slug}">X</span>"#),
@@ -1025,7 +1044,11 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("大");
-        let n = alloc.forward_format(ForwardAttr::FontSize(font_shift(3)), text, false);
+        let n = alloc.forward_format(
+            ForwardAttr::FontSize(font_shift(3)),
+            text,
+            ForwardOrigin::Referenced,
+        );
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-font-larger" data-steps="3">大</span>"#
@@ -1037,7 +1060,11 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("小");
-        let n = alloc.forward_format(ForwardAttr::FontSize(font_shift(-2)), text, false);
+        let n = alloc.forward_format(
+            ForwardAttr::FontSize(font_shift(-2)),
+            text,
+            ForwardOrigin::Referenced,
+        );
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-font-smaller" data-steps="2">小</span>"#
@@ -1053,7 +1080,7 @@ mod tests {
         let arena = Arena::new();
         let mut alloc = BorrowedAllocator::new(&arena);
         let text = alloc.content_plain("12");
-        let n = alloc.tate_chu_yoko(text, false);
+        let n = alloc.tate_chu_yoko(text, ForwardOrigin::Referenced);
         assert_eq!(
             render_node_to_string(n),
             r#"<span class="aozora-combine-upright">12</span>"#

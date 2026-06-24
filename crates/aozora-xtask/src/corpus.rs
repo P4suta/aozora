@@ -1053,8 +1053,8 @@ enum VerbatimOutcome {
 /// `tree.sanitized()` (which returns the same buffer
 /// `to_source_verbatim()` does — comparing them would be a tautology).
 /// Binary: a single byte of drift on a single document fails the gate.
-/// Independent of the round-trip fixed-point (`corpus_sweep`), which is
-/// allowed to diverge on the known `consumed_predecessor` documents.
+/// Independent of the round-trip fixed-point (`corpus_sweep`), which the
+/// lowering pass holds for every document (the allowlist is empty).
 fn verbatim_gate(root: Option<&Path>) -> Result<(), String> {
     // Graceful skip when no corpus is available — mirrors the
     // `corpus-sweep` / `audit-gate` recipes, so a corpus-less environment

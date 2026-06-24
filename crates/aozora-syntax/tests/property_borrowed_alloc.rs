@@ -19,7 +19,7 @@
 
 use aozora_proptest::config::default_config;
 use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::{Arena, Content};
+use aozora_syntax::borrowed::{Arena, Content, ForwardOrigin};
 use aozora_syntax::format::{IndentBlock, IndentLayout, LineFormat, RegionFormat};
 use aozora_syntax::{
     BoutenKind, BoutenPosition, Container, DirectiveKind, HeadingKind, HeadingStyle,
@@ -48,8 +48,13 @@ fn xml_node_name_is_injective_over_all_variants() {
     let nodes = [
         alloc.ruby(base, reading),
         alloc.side_note(MarginNoteKind::Gloss, base, reading),
-        alloc.bouten(BoutenKind::Goma, base, BoutenPosition::Right, false),
-        alloc.tate_chu_yoko(base, false),
+        alloc.bouten(
+            BoutenKind::Goma,
+            base,
+            BoutenPosition::Right,
+            ForwardOrigin::Referenced,
+        ),
+        alloc.tate_chu_yoko(base, ForwardOrigin::Referenced),
         alloc.gaiji(g),
         alloc.line(LineFormat::Indent { amount: 2 }),
         alloc.line(LineFormat::AlignEnd { offset: 2 }),

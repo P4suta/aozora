@@ -153,7 +153,7 @@ mod tests {
     use super::{AOZORA_CLASSES, bouten_kind_slug, bouten_position_slug};
     use crate::render_node::render;
     use aozora_syntax::alloc::BorrowedAllocator;
-    use aozora_syntax::borrowed::{Arena, Node};
+    use aozora_syntax::borrowed::{Arena, ForwardOrigin, Node};
     use aozora_syntax::{
         BOUTEN_KINDS, BoutenKind, BoutenPosition, ColumnCount, Container, DirectiveKind, FontShift,
         ForwardAttr, HEADING_KINDS, HEADING_STYLES, HeadingKind, HeadingStyle, IndentBlock,
@@ -274,13 +274,19 @@ mod tests {
             &mut emitted,
         );
         let tcy = a.content_plain("囲");
-        render_into(a.tate_chu_yoko(tcy, false), &mut emitted);
+        render_into(
+            a.tate_chu_yoko(tcy, ForwardOrigin::Referenced),
+            &mut emitted,
+        );
         let angle = a.content_plain("内");
         render_into(a.angle_quote(angle), &mut emitted);
         for &kind in BOUTEN_KINDS {
             for pos in [BoutenPosition::Right, BoutenPosition::Left] {
                 let t = a.content_plain("文");
-                render_into(a.bouten(kind, t, pos, false), &mut emitted);
+                render_into(
+                    a.bouten(kind, t, pos, ForwardOrigin::Referenced),
+                    &mut emitted,
+                );
             }
         }
         // Every forward-emphasis attribute that produces a distinct class.
@@ -297,13 +303,20 @@ mod tests {
             ForwardAttr::FontSize(fs(1)),
         ] {
             let t = a.content_plain("強");
-            render_into(a.forward_format(attr, t, false), &mut emitted);
+            render_into(
+                a.forward_format(attr, t, ForwardOrigin::Referenced),
+                &mut emitted,
+            );
         }
         // FontSize positive → font-larger above; its negative magnitude
         // (font-smaller) is the only other class the variant produces.
         let smaller = a.content_plain("小");
         render_into(
-            a.forward_format(ForwardAttr::FontSize(fs(-1)), smaller, false),
+            a.forward_format(
+                ForwardAttr::FontSize(fs(-1)),
+                smaller,
+                ForwardOrigin::Referenced,
+            ),
             &mut emitted,
         );
         for &kind in HEADING_KINDS {
