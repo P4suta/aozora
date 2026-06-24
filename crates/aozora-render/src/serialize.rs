@@ -76,6 +76,46 @@ pub fn serialize_into<W: Write>(out: &LexOutput<'_>, writer: &mut W) -> fmt::Res
     walk(out, &mut sink)
 }
 
+/// The source text of the container **open** marker for `open`.
+///
+/// `RegionFormat::Indent(2字下げ)` → `［＃ここから2字下げ］`, preserving every
+/// payload (N / width / offset / 字組み clause). The inverse of the
+/// classifier's open recognition.
+///
+/// Used by the minimal-diff source splice (#202) to canonicalize a
+/// container's open marker. The serialization rule lives here (the single
+/// source of truth for marker spelling); the splice layer only calls it.
+///
+/// # Panics
+///
+/// Does not panic in normal use: `String` cannot fail as a [`Write`] sink.
+#[must_use]
+pub fn container_open_source(open: RegionFormat) -> String {
+    let mut s = String::new();
+    emit_container_open(open, &mut s).expect("String write is infallible");
+    s
+}
+
+/// The source text of the container **close** marker that matches `open`.
+///
+/// `RegionFormat::Indent(2字下げ)` → `［＃ここで字下げ終わり］`; a 字組み compound
+/// keeps its width. The close is a pure function of the open
+/// ([`RegionClose::of`]).
+///
+/// Used by the minimal-diff source splice (#202): when a container's family
+/// changes, the paired close marker must be rewritten to match the new open,
+/// and this derives it without the splice layer re-implementing the spelling.
+///
+/// # Panics
+///
+/// Does not panic in normal use: `String` cannot fail as a [`Write`] sink.
+#[must_use]
+pub fn container_close_source(open: RegionFormat) -> String {
+    let mut s = String::new();
+    emit_container_close(RegionClose::of(open), &mut s).expect("String write is infallible");
+    s
+}
+
 /// Wraps the serialize output and remembers the last `char` emitted.
 ///
 /// `emit_ruby` reads it to decide whether a bare `《reading》` would

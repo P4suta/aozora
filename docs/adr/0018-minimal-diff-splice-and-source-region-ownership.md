@@ -89,11 +89,13 @@ full corpus (17,889 works at time of writing).
 - The irreducible `ForwardOrigin` provenance is exactly what makes the
   Safe/Deferred decision local and total — the split-ownership cases are
   precisely the ones the provenance bit flags.
-- A phased roadmap remains under #202: coupled splice for `Referenced`
-  forwards (promotes them from Deferred to Safe), container splice
-  (normalized↔source coordinate bridge), and finally incremental re-parse
-  — the last gated behind the v0.5.0 release (#99) and a real consumer
-  (the LSP `ParseCache`'s cache-hit path).
+- The phased roadmap under #202 continues in **ADR-0019** (coupled splice for
+  `Referenced` forwards / heading hints / margin notes, and container splice —
+  the terminal `Direct`/`Coupled`/`Opaque` model that supersedes this ADR's
+  `Safe`/`Deferred`). Incremental re-parse (reusing the unaffected tree across
+  an edit) remains a separate performance concern, gated behind the v0.5.0
+  release (#99), the `!Sync` arena rework, and a real consumer (the LSP
+  `ParseCache`'s cache-hit path) — not part of the splice *model*.
 - Cost: split / paired regions are not yet editable through this API; a
   consumer that needs them edits the verbatim bytes directly until the
   coupled-splice phase lands.
