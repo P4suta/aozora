@@ -11,7 +11,7 @@ a vertical paragraph.
 The annotation always uses the indirect-quoting form:
 
 ```text
-昭和27年生まれ［＃「27」は縦中横］
+昭和27［＃「27」は縦中横］年生まれ
 ```
 
 Renders as:
@@ -22,8 +22,14 @@ Renders as:
 
 The `［＃…］` directive looks back through the most recent text and
 applies the tcy treatment to the most recent occurrence of the
-quoted run. The target text is *not* re-emitted — the wrapper is
-applied in place, unlike bouten.
+quoted run. When the target sits **immediately before** the bracket
+(as above) the lowering pass folds it into the node, so the
+combine-upright `<span>` is the sole copy — the same forward-reference
+mechanism bouten uses. When the target is recognised earlier but **not**
+adjacent (e.g. `昭和27年生まれ［＃「27」は縦中横］`, where 年生まれ
+intervenes), it stays `ForwardOrigin::Referenced`: the literal is left in
+its run and the streaming renderer drops the markup rather than
+duplicating the text — see [傍点](bouten.md#default-rendering).
 
 ## Container form
 
@@ -50,7 +56,7 @@ Renders as:
 | Source | Output |
 |---|---|
 | `27［＃「27」は縦中横］` | `<span class="aozora-combine-upright">27</span>` |
-| `100％［＃「100」は縦中横］` | `<span class="aozora-combine-upright">100</span>％` |
+| `100［＃「100」は縦中横］％` | `<span class="aozora-combine-upright">100</span>％` |
 | `A4［＃「A4」は縦中横］` | `<span class="aozora-combine-upright">A4</span>` |
 | `&［＃「&」は縦中横］` | `<span class="aozora-combine-upright">&amp;</span>` |
 

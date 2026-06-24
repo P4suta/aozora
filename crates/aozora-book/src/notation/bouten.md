@@ -51,15 +51,26 @@ external stylesheet can pick the visual treatment per variant.
 Default CSS hooks live at the consumer side; the parser ships no
 stylesheet of its own.
 
+When the target sits **immediately before** the `［＃…］` (the common
+case), the lowering pass folds the literal into the node, so the
+emphasised run is the sole copy — no leading duplicate:
+
 ```html
 <!-- 平和［＃「平和」に傍点］ -->
-平和<em class="aozora-bouten aozora-bouten-goma aozora-bouten-right">平和</em>
+<em class="aozora-bouten aozora-bouten-goma aozora-bouten-right">平和</em>
 ```
 
-(The redundant copy is intentional — the `［＃…］` indirection
-*re-emits* the target wrapped in `<em>`, leaving the original run
-in place. The HTML rendering matches what print Aozora Bunko output
-does in practice.)
+When the target is recognised **earlier** in the line but not adjacent
+to the bracket — other text intervenes, or the target is a ruby base —
+the literal stays in its original run (`ForwardOrigin::Referenced`). The
+streaming renderer cannot retroactively wrap an already-emitted run, so
+HTML renders the text once *without* the `<em>` and the emphasis markup
+is dropped rather than duplicated:
+
+```html
+<!-- 平和な世界［＃「平和」に傍点］ -->
+平和な世界
+```
 
 ## Range form
 

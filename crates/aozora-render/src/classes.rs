@@ -274,17 +274,14 @@ mod tests {
             &mut emitted,
         );
         let tcy = a.content_plain("囲");
-        render_into(
-            a.tate_chu_yoko(tcy, ForwardOrigin::Referenced),
-            &mut emitted,
-        );
+        render_into(a.tate_chu_yoko(tcy, ForwardOrigin::Reclaimed), &mut emitted);
         let angle = a.content_plain("内");
         render_into(a.angle_quote(angle), &mut emitted);
         for &kind in BOUTEN_KINDS {
             for pos in [BoutenPosition::Right, BoutenPosition::Left] {
                 let t = a.content_plain("文");
                 render_into(
-                    a.bouten(kind, t, pos, ForwardOrigin::Referenced),
+                    a.bouten(kind, t, pos, ForwardOrigin::Reclaimed),
                     &mut emitted,
                 );
             }
@@ -304,7 +301,7 @@ mod tests {
         ] {
             let t = a.content_plain("強");
             render_into(
-                a.forward_format(attr, t, ForwardOrigin::Referenced),
+                a.forward_format(attr, t, ForwardOrigin::Reclaimed),
                 &mut emitted,
             );
         }
@@ -315,7 +312,7 @@ mod tests {
             a.forward_format(
                 ForwardAttr::FontSize(fs(-1)),
                 smaller,
-                ForwardOrigin::Referenced,
+                ForwardOrigin::Reclaimed,
             ),
             &mut emitted,
         );
