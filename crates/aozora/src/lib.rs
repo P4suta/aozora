@@ -99,11 +99,14 @@ pub use aozora_syntax::{
 };
 
 mod document;
+mod splice;
 
 #[cfg(feature = "json")]
 pub mod json;
 
 pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
+/// Source-region ownership and minimal-diff source splicing (#202).
+pub use splice::{DeferredReason, OwnedRegion, RegionRole, SpliceError, SpliceSafety};
 
 /// Eagerly initialise the parser's process-global lazy tables.
 ///
