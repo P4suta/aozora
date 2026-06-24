@@ -205,6 +205,11 @@ back the drift-gated JSON artefacts; see [JSON output](../json/overview.md).
 The **data** counterpart to `schema` is [`aozora inspect`](#aozora-inspect),
 which projects a parsed document into those same envelopes.
 
+`kinds` defaults to human tables; `aozora kinds --format json` emits the
+machine envelope `{"schemaVersion":1,"data":{"nodeKinds":[{"tag","summary"}],
+"pairKinds":[…],"severities":[…],"diagnosticSources":[…],"sentinels":[…],
+"internalCheckCodes":[…]}}` (one line, like the `inspect` envelopes).
+
 `aozora explain` accepts either a `NodeKind` camelCase tag (printing the
 node's handbook chapter) or a **diagnostic code** — the full
 `aozora::lex::unclosed_bracket` or the short `unclosed_bracket` —

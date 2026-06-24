@@ -42,11 +42,29 @@ pub(crate) enum SchemaKind {
     ContainerPairs,
 }
 
-/// `aozora kinds` arguments. No flags today — the table is one
-/// fixed shape. Kept as a struct so future filters (`--enum NodeKind`,
-/// `--format json`) compose without breaking the subcommand surface.
+/// Output format for `aozora kinds`: the human tables (default) or the
+/// machine `{"schemaVersion":1,"data":{…}}` envelope. Mirrors
+/// [`crate::timing::TimingFormat`]'s two-value shape; `check`'s richer
+/// `DiagFormat` (with `auto` / `short`) is diagnostic-specific and does not
+/// apply here.
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub(crate) enum OutputFormat {
+    /// `comfy-table` tables, one per enum. The default.
+    #[default]
+    Human,
+    /// The `{"schemaVersion":1,"data":{nodeKinds,pairKinds,…}}` envelope —
+    /// the agent / scripting view.
+    Json,
+}
+
+/// `aozora kinds` arguments. The table set is one fixed shape; `--format`
+/// selects the human tables or the JSON envelope.
 #[derive(Debug, Args)]
-pub(crate) struct KindsArgs;
+pub(crate) struct KindsArgs {
+    /// Output format: `human` (tables, the default) or `json`.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+    format: OutputFormat,
+}
 
 /// `aozora explain <target>` arguments.
 #[derive(Debug, Args)]
@@ -70,59 +88,109 @@ pub(crate) struct SchemaArgs {
     pub(crate) which: SchemaKind,
 }
 
-/// Render the unified introspection tables to stdout.
-pub(crate) fn run_kinds(_args: &KindsArgs) -> Result<ExitCode> {
-    let mut stdout = io::stdout().lock();
+/// One introspection table: a human title + blurb, a camelCase JSON key,
+/// and the `(wire tag, summary)` rows. Both the `human` and `json` renderers
+/// consume the same set so the two never drift.
+struct KindTable {
+    title: &'static str,
+    json_key: &'static str,
+    blurb: &'static str,
+    rows: Vec<(&'static str, &'static str)>,
+}
 
-    write_table(
-        &mut stdout,
-        "NodeKind",
-        "AST node / NodeRef projection tag",
-        NodeKind::ALL
-            .iter()
-            .map(|k| (k.as_json_tag(), describe_node(*k))),
-    )?;
-    write_table(
-        &mut stdout,
-        "PairKind",
-        "Balanced delimiter pair tag (Pair)",
-        PairKind::ALL
-            .iter()
-            .map(|k| (k.as_json_tag(), describe_pair(*k))),
-    )?;
-    write_table(
-        &mut stdout,
-        "Severity",
-        "Diagnostic severity tier (Diagnostic.severity)",
-        Severity::ALL
-            .iter()
-            .map(|s| (s.as_json_str(), describe_severity(*s))),
-    )?;
-    write_table(
-        &mut stdout,
-        "DiagnosticSource",
-        "Diagnostic origin (Diagnostic.source)",
-        DiagnosticSource::ALL
-            .iter()
-            .map(|s| (s.as_json_str(), describe_source(*s))),
-    )?;
-    write_table(
-        &mut stdout,
-        "Sentinel",
-        "PUA sentinel kind (U+E001..U+E004 markers)",
-        Sentinel::ALL
-            .iter()
-            .map(|s| (sentinel_label(*s), describe_sentinel(*s))),
-    )?;
-    write_table(
-        &mut stdout,
-        "InternalCheckCode",
-        "Library-internal sanity-check identifier",
-        InternalCheckCode::ALL
-            .iter()
-            .map(|c| (c.as_code(), describe_internal(*c))),
-    )?;
+/// The six introspection tables, in display order. Single source of truth
+/// for `aozora kinds` (both `--format human` and `--format json`).
+fn kind_tables() -> Vec<KindTable> {
+    vec![
+        KindTable {
+            title: "NodeKind",
+            json_key: "nodeKinds",
+            blurb: "AST node / NodeRef projection tag",
+            rows: NodeKind::ALL
+                .iter()
+                .map(|k| (k.as_json_tag(), describe_node(*k)))
+                .collect(),
+        },
+        KindTable {
+            title: "PairKind",
+            json_key: "pairKinds",
+            blurb: "Balanced delimiter pair tag (Pair)",
+            rows: PairKind::ALL
+                .iter()
+                .map(|k| (k.as_json_tag(), describe_pair(*k)))
+                .collect(),
+        },
+        KindTable {
+            title: "Severity",
+            json_key: "severities",
+            blurb: "Diagnostic severity tier (Diagnostic.severity)",
+            rows: Severity::ALL
+                .iter()
+                .map(|s| (s.as_json_str(), describe_severity(*s)))
+                .collect(),
+        },
+        KindTable {
+            title: "DiagnosticSource",
+            json_key: "diagnosticSources",
+            blurb: "Diagnostic origin (Diagnostic.source)",
+            rows: DiagnosticSource::ALL
+                .iter()
+                .map(|s| (s.as_json_str(), describe_source(*s)))
+                .collect(),
+        },
+        KindTable {
+            title: "Sentinel",
+            json_key: "sentinels",
+            blurb: "PUA sentinel kind (U+E001..U+E004 markers)",
+            rows: Sentinel::ALL
+                .iter()
+                .map(|s| (sentinel_label(*s), describe_sentinel(*s)))
+                .collect(),
+        },
+        KindTable {
+            title: "InternalCheckCode",
+            json_key: "internalCheckCodes",
+            blurb: "Library-internal sanity-check identifier",
+            rows: InternalCheckCode::ALL
+                .iter()
+                .map(|c| (c.as_code(), describe_internal(*c)))
+                .collect(),
+        },
+    ]
+}
+
+/// Render the unified introspection tables to stdout, as human tables or a
+/// JSON envelope per `--format`.
+pub(crate) fn run_kinds(args: &KindsArgs) -> Result<ExitCode> {
+    let tables = kind_tables();
+    let mut stdout = io::stdout().lock();
+    match args.format {
+        OutputFormat::Human => {
+            for t in &tables {
+                write_table(&mut stdout, t.title, t.blurb, t.rows.iter().copied())?;
+            }
+        }
+        OutputFormat::Json => write_kinds_json(&mut stdout, &tables)?,
+    }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Emit the `{"schemaVersion":1,"data":{<jsonKey>:[{tag,summary}]}}` envelope.
+/// Single-line / compact, matching the `inspect` JSON envelopes (the
+/// `aozora::json::*` outputs) rather than the pretty-printed `schema` dump.
+fn write_kinds_json(out: &mut dyn Write, tables: &[KindTable]) -> Result<()> {
+    let mut data = serde_json::Map::new();
+    for t in tables {
+        let rows: Vec<serde_json::Value> = t
+            .rows
+            .iter()
+            .map(|(tag, summary)| serde_json::json!({ "tag": tag, "summary": summary }))
+            .collect();
+        data.insert(t.json_key.to_owned(), serde_json::Value::Array(rows));
+    }
+    let envelope = serde_json::json!({ "schemaVersion": 1, "data": data });
+    let line = serde_json::to_string(&envelope).context("serialize kinds envelope as JSON")?;
+    writeln!(out, "{line}").context("write kinds JSON to stdout")
 }
 
 /// Pretty-print the requested JSON envelope schema as JSON.
