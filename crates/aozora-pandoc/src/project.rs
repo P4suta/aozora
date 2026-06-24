@@ -13,7 +13,7 @@ use aozora::{
     MarginNote, NodeRef, RegionFormat, Ruby, SectionKind, Segment, SourceNode, Span, Tree, Warichu,
     pipeline::lexer::sanitize,
     roman_slug,
-    syntax::borrowed::{Content, ForwardFormat, Node},
+    syntax::borrowed::{Content, ForwardFormat, ForwardOrigin, Node},
 };
 use pandoc_ast::{Attr, Block, Inline, Pandoc};
 
@@ -185,6 +185,20 @@ impl<'src> Converter<'src> {
 
     fn dispatch_inline_node(&mut self, node: Node<'src>, _span: Span) {
         use Node as N;
+        // A `Referenced` forward keeps its target literal in the upstream plain
+        // run (or a ruby base); projecting `f.target` here would double it
+        // (#231). Mirror the HTML renderer's origin gate (#228,
+        // `aozora-render::render_node::render_format`): emit nothing for
+        // `Referenced` so the literal is rendered once, upstream. Gated before
+        // the `format_inline` attr match so the debug-span fallback can't leak
+        // a duplicate either. The emphasis markup is dropped rather than
+        // duplicated — a value-returning projection cannot retroactively wrap an
+        // already-emitted run, same as the streaming HTML path.
+        if let N::Format(f) = node
+            && matches!(f.origin, ForwardOrigin::Referenced)
+        {
+            return;
+        }
         let inline = match node {
             N::Ruby(r) => ruby_inline(r),
             N::MarginNote(s) => side_note_inline(s),
@@ -829,12 +843,37 @@ mod tests {
 
     #[test]
     fn tate_chu_yoko_projects_to_tcy_span() {
-        let blocks = project("明治３３年［＃「３３」は縦中横］に。\n");
+        // The directive sits immediately after ３３, so the literal folds into
+        // the node (`Reclaimed`) and the tcy span is the sole copy. (The
+        // non-adjacent `明治３３年［＃…］` form is `Referenced` — covered by
+        // `referenced_forward_is_not_double_projected`.)
+        let blocks = project("明治３３［＃「３３」は縦中横］年に。\n");
         let (_, inner) = find_span(&blocks, "tate-chu-yoko").expect("tcy span");
         assert_eq!(
             inner,
             &[Inline::Str("３３".to_owned())],
             "tcy embedded text"
+        );
+    }
+
+    #[test]
+    fn referenced_forward_is_not_double_projected() {
+        // #231: a non-adjacent forward (`Referenced`) keeps its target literal
+        // in the upstream run, so the projection must render it once with no
+        // styled span. Projecting `f.target` too would double 青空 — the same
+        // root cause as the HTML bug #228.
+        let blocks = project("青空の下を歩く［＃「青空」に傍点］");
+        assert!(
+            find_span(&blocks, "bouten").is_none(),
+            "Referenced bouten must not emit a styled span: {blocks:?}"
+        );
+        let Some(Block::Para(inlines)) = blocks.first() else {
+            panic!("expected a single Para, got {blocks:?}");
+        };
+        assert_eq!(
+            inlines.as_slice(),
+            &[Inline::Str("青空の下を歩く".to_owned())],
+            "the literal 青空 must appear exactly once, upstream"
         );
     }
 
