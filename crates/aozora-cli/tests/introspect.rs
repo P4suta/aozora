@@ -57,6 +57,44 @@ fn kinds_lists_concrete_node_tags() {
     }
 }
 
+#[test]
+fn kinds_format_json_emits_valid_envelope() {
+    let (status, stdout, stderr) = run(&["kinds", "--format", "json"]);
+    assert!(status.success(), "kinds --format json failed: {stderr:?}");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("kinds --format json must be valid JSON");
+    assert_eq!(
+        parsed["schemaVersion"], 1,
+        "envelope schemaVersion: {parsed}"
+    );
+    // Every section appears as a camelCase array under `data`.
+    for key in [
+        "nodeKinds",
+        "pairKinds",
+        "severities",
+        "diagnosticSources",
+        "sentinels",
+        "internalCheckCodes",
+    ] {
+        assert!(
+            parsed["data"][key].is_array(),
+            "data.{key} must be an array: {parsed}",
+        );
+    }
+    // Rows are `{tag, summary}` objects; spot-check a known node tag.
+    let node_kinds = parsed["data"]["nodeKinds"]
+        .as_array()
+        .expect("nodeKinds array");
+    assert!(
+        node_kinds
+            .iter()
+            .any(|r| r["tag"] == "ruby" && r["summary"].is_string()),
+        "nodeKinds must carry the ruby tag with a summary: {parsed}",
+    );
+    // Compact single line (matches the `inspect` envelopes, not pretty `schema`).
+    assert_eq!(stdout.lines().count(), 1, "envelope must be one line");
+}
+
 // ---------------------------------------------------------------------
 // `aozora schema`
 // ---------------------------------------------------------------------
