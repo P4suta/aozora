@@ -25,6 +25,7 @@ back.
 | [0016](./adr/0016-consolidate-tooling-into-the-aozora-monorepo.md)                   | Consolidate the editor/CLI tooling into the aozora monorepo           | accepted |
 | [0017](./adr/0017-ecosystem-dependency-pin-policy.md)                                | Ecosystem dependency-pin policy                                       | accepted |
 | [0018](./adr/0018-minimal-diff-splice-and-source-region-ownership.md)                | Minimal-diff splice and source-region ownership                       | accepted |
+| [0019](./adr/0019-coupled-and-container-minimal-diff-splice.md)                      | Coupled and container minimal-diff splice                             | accepted |
 
 ## Authoring a new ADR
 

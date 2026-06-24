@@ -225,6 +225,41 @@ impl Document {
             .build(new_source.into_boxed_str())
     }
 
+    /// Apply a node-aware minimal-diff edit and return a fresh [`Document`].
+    ///
+    /// `region` must come from this document's
+    /// [`Tree::owned_regions`](crate::Tree::owned_regions) /
+    /// [`Tree::owned_region_at`](crate::Tree::owned_region_at); `replacement`
+    /// is the new source for the region's own bytes. Unlike [`Self::edit`] —
+    /// which takes a raw byte span and trusts the caller — this routes through
+    /// [`Tree::splice`](crate::Tree::splice): a
+    /// [`Coupled`](crate::SpliceSafety::Coupled) region's partner (a forward
+    /// reference's upstream literal, a container's matching close) is derived
+    /// and the edit is verified by re-parse, so the result cannot silently
+    /// desync.
+    ///
+    /// The returned document's source is the **sanitized**-then-spliced text:
+    /// byte-identical to [`Self::edit`] on inputs that triggered no sanitize
+    /// rewrite, and equal to `splice + Document::new` otherwise (a
+    /// sanitized-coordinate region cannot be applied to un-sanitized bytes).
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`SpliceError`](crate::SpliceError) from
+    /// [`Tree::splice`](crate::Tree::splice): an unverifiable coupled edit or
+    /// an opaque node kind. On error the original document is unchanged (the
+    /// caller still owns `self`).
+    pub fn edit_region(
+        &self,
+        region: crate::OwnedRegion,
+        replacement: &str,
+    ) -> Result<Self, crate::SpliceError> {
+        let spliced = self.parse().splice(region, replacement)?;
+        Ok(ParseOptions::new()
+            .diagnostic_policy(self.diagnostic_policy)
+            .build(spliced))
+    }
+
     /// Parse the document, returning a borrowed-AST view bound to
     /// `&self`'s lifetime.
     #[must_use]

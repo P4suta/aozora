@@ -1,18 +1,25 @@
 //! Walks `AOZORA_CORPUS_ROOT` and verifies the source-region ownership
-//! tiling (#202) holds for every real document:
+//! tiling and minimal-diff splice (#202) hold for every real document:
 //!
 //! * [`aozora::Tree::owned_regions`] is a complete, gap-free, ordered,
 //!   non-overlapping cover of the verbatim (sanitized) source — the
 //!   region byte-slices concatenate back to it exactly.
-//! * Replacing any self-contained region's bytes with themselves (an
-//!   identity splice) reproduces the verbatim source, and a split /
-//!   paired region declines the splice.
+//! * No region is unclassified (`Opaque`) — every real construct is editable.
+//! * The **identity splice** reproduces the verbatim source. `check_tiling`
+//!   already proves the byte-level tiling for *every* region; this additionally
+//!   runs the real `Tree::splice` machinery (a `Direct` byte replacement, or a
+//!   `Coupled` partner-derivation + scoped verification) on a representative
+//!   sample — one region per safety class per document. The splice itself is
+//!   already `O(marker)` (it verifies in a scoped context, never re-parsing the
+//!   whole document); sampling bounds the *number* of splice calls so the
+//!   full-corpus sweep stays well under a minute rather than calling `splice`
+//!   for every one of the corpus's millions of coupled regions.
 //!
 //! This extends the property-test coverage in `aozora-cst`'s lossless
 //! invariant to the full 青空文庫 corpus. Skipped silently when
 //! `AOZORA_CORPUS_ROOT` is unset; never hard-fails on missing corpus.
 
-use aozora::{Document, OwnedRegion, SpliceSafety};
+use aozora::{CoupledKind, Document, OwnedRegion, RegionRole, SpliceSafety};
 use aozora_encoding::decode_auto;
 
 /// Cap the collected failures so a systemic regression does not produce
@@ -43,7 +50,7 @@ fn corpus_owned_regions_tile_the_source() {
 
         if let Err(why) = check_tiling(&verbatim, &regions) {
             failures.push(format!("{}: {why}", item.label));
-        } else if let Err(why) = check_identity_splice(&tree, &verbatim, &regions) {
+        } else if let Err(why) = check_splice_sampled(&tree, &verbatim, &regions) {
             failures.push(format!("{}: {why}", item.label));
         }
 
@@ -101,33 +108,62 @@ fn check_tiling(verbatim: &str, regions: &[OwnedRegion]) -> Result<(), String> {
     Ok(())
 }
 
-/// The identity splice of every `Safe` region must reproduce the verbatim
-/// source; a `Deferred` region must decline.
-fn check_identity_splice(
+/// One representative region per safety class — containers split into open vs
+/// close, the two marker shapes the edit path handles differently.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sample {
+    Direct,
+    ContainerOpen,
+    ContainerClose,
+    Forward,
+    HeadingHint,
+    MarginNote,
+}
+
+/// The sample bucket for a region, or `None` for ones covered structurally
+/// elsewhere (e.g. a leaf container).
+fn sample_of(r: &OwnedRegion) -> Option<Sample> {
+    match (r.safety, r.role) {
+        (SpliceSafety::Direct, _) => Some(Sample::Direct),
+        (SpliceSafety::Coupled(CoupledKind::Container), RegionRole::ContainerOpen) => {
+            Some(Sample::ContainerOpen)
+        }
+        (SpliceSafety::Coupled(CoupledKind::Container), RegionRole::ContainerClose) => {
+            Some(Sample::ContainerClose)
+        }
+        (SpliceSafety::Coupled(CoupledKind::ForwardReference), _) => Some(Sample::Forward),
+        (SpliceSafety::Coupled(CoupledKind::HeadingHint), _) => Some(Sample::HeadingHint),
+        (SpliceSafety::Coupled(CoupledKind::MarginNote), _) => Some(Sample::MarginNote),
+        _ => None,
+    }
+}
+
+/// No region is `Opaque` (checked for *every* region), and the identity splice
+/// of one representative region per safety class reproduces the verbatim source
+/// through the real `Tree::splice` machinery. `check_tiling` already proves the
+/// byte-level tiling for all regions; this proves the *machinery* is sound on
+/// real constructs while bounding the number of `splice` calls (≤ 6 per doc).
+fn check_splice_sampled(
     tree: &aozora::Tree<'_>,
     verbatim: &str,
     regions: &[OwnedRegion],
 ) -> Result<(), String> {
+    let mut sampled: Vec<Sample> = Vec::with_capacity(6);
     for r in regions {
+        if r.safety == SpliceSafety::Opaque {
+            return Err(format!("region {:?} classified Opaque", r.role));
+        }
+        let Some(bucket) = sample_of(r) else { continue };
+        if sampled.contains(&bucket) {
+            continue;
+        }
+        sampled.push(bucket);
+
         let same = &verbatim[r.span.start as usize..r.span.end as usize];
-        let result = tree.splice_source(*r, same);
-        match r.safety {
-            SpliceSafety::Safe => match result {
-                Ok(out) if out == verbatim => {}
-                Ok(_) => {
-                    return Err(format!(
-                        "identity splice of Safe {:?} changed bytes",
-                        r.role
-                    ));
-                }
-                Err(e) => return Err(format!("Safe {:?} declined splice: {e}", r.role)),
-            },
-            SpliceSafety::Deferred(_) if result.is_ok() => {
-                return Err(format!("Deferred {:?} accepted splice", r.role));
-            }
-            // Deferred + declined (the expected case), or — since
-            // `SpliceSafety` is `#[non_exhaustive]` — a future variant.
-            _ => {}
+        match tree.splice(*r, same) {
+            Ok(out) if out == verbatim => {}
+            Ok(_) => return Err(format!("identity splice of {:?} changed bytes", r.role)),
+            Err(e) => return Err(format!("identity splice of {:?} failed: {e}", r.role)),
         }
     }
     Ok(())
