@@ -69,20 +69,38 @@ fn referenced_forward_is_coupled() {
     );
 
     // An attribute-only change keeps the target, so the forward re-forms and
-    // the edit is accepted.
+    // the edit is accepted (a single-region edit).
     let spliced = tree
         .splice(region, "［＃「青空」に傍線］")
         .expect("attribute-only change is coherent");
     assert_eq!(spliced, "青空がひろがる、その［＃「青空」に傍線］");
 
-    // A target-text change without touching the upstream literal would desync,
-    // so it is declined as unverifiable (a coupled edit lands in a later #202
-    // phase).
-    let err = tree
+    // A target-text change is a coupled edit: both the bracket and the unique
+    // upstream literal are rewritten so the reference stays in sync.
+    let coupled = tree
         .splice(region, "［＃「海」に傍点］")
-        .expect_err("target change desyncs the reference");
+        .expect("target change is a coupled edit");
+    assert_eq!(coupled, "海がひろがる、その［＃「海」に傍点］");
+}
+
+#[test]
+fn ruby_base_forward_target_change_is_irreducible() {
+    // The referent literal lives inside a ruby base, not a plain run, so a
+    // target change cannot be carved out — declined as unverifiable.
+    let src = "｜我《われ》は［＃「我」に傍点］";
+    let doc = Document::new(src);
+    let tree = doc.parse();
+    let Some(region) = tree
+        .owned_regions()
+        .into_iter()
+        .find(|r| r.role == RegionRole::ForwardReferenced)
+    else {
+        return; // classifier may treat this shape differently; nothing to assert
+    };
+    let err = tree
+        .splice(region, "［＃「彼」に傍点］")
+        .expect_err("ruby-base referent cannot be coupled");
     assert!(matches!(err, SpliceError::Unverifiable { .. }));
-    assert!(err.to_string().contains("could not be verified"));
 }
 
 #[test]

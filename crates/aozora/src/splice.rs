@@ -414,8 +414,19 @@ impl Tree<'_> {
     pub fn coupling(&self, region: OwnedRegion) -> Option<Coupling> {
         match region.safety {
             SpliceSafety::Coupled(CoupledKind::Container) => self.container_coupling(region.span),
-            // Forward / heading-hint / margin-note literal recovery lands with
-            // their coupled-edit phases (#202 PR2/PR3).
+            SpliceSafety::Coupled(kind) => {
+                // Forward reference / heading hint / margin note: the partner is
+                // the unique upstream plain occurrence of the node's target.
+                // `None` for the irreducible cases (ambiguous referent, a
+                // ruby-base literal, a multi-segment target).
+                let target = self.coupled_target_text(region.span)?;
+                let partner = self.unique_upstream_plain(region.span.start, &target)?;
+                Some(Coupling {
+                    kind,
+                    primary: region.span,
+                    partner,
+                })
+            }
             _ => None,
         }
     }
@@ -570,14 +581,19 @@ impl Tree<'_> {
     /// Split-ownership edit (forward reference / heading hint / margin note).
     ///
     /// Removing the directive (`""`) is coherent — the upstream literal simply
-    /// becomes plain. Otherwise the edit is accepted only if it keeps the
-    /// construct in its family, **verified in a scoped context**: the new
-    /// bracket is parsed against the node's own target text
-    /// (`<target><replacement>`, the minimal window that re-forms the
-    /// reference), never the whole document. An attribute-only change keeps the
-    /// target and re-forms; a target-text change does not (the context no
-    /// longer supplies the referenced text) and is declined as unverifiable
-    /// until the coupled two-region edit lands (#202 PR2/PR3).
+    /// becomes plain. An identity or attribute-only change is a single-region
+    /// edit, **verified in a scoped context**: the new bracket parsed against
+    /// the node's own target (`<target><replacement>`, the minimal window that
+    /// re-forms the reference), never the whole document.
+    ///
+    /// A target-text change is a **coupled two-region edit**: the new target is
+    /// recovered from the replacement and the *unique* upstream plain
+    /// occurrence of the old target; both are rewritten and the reference is
+    /// re-verified in a window bounded by their distance. The irreducible cases
+    /// — an ambiguous referent (the target occurs more than once), a ruby-base
+    /// literal (the occurrence is not a lone plain run), or a multi-segment
+    /// target — are declined as [`SpliceError::Unverifiable`] rather than
+    /// silently desynced.
     fn splice_split(
         &self,
         region: OwnedRegion,
@@ -592,19 +608,45 @@ impl Tree<'_> {
             role: region.role,
             kind,
         };
-        // The node's own target text, placed byte-adjacent to the new bracket,
-        // is the minimal context that re-forms the reference. `None` for a
-        // multi-segment target (the 、-joined case), which is declined.
-        let target = self.coupled_target_text(region.span).ok_or(unverifiable)?;
-        let bracket_at = u32::try_from(target.len()).map_err(|_| unverifiable)?;
-        let ctx = format!("{target}{replacement}");
-        let doc = Document::new(ctx.as_str());
-        let reformed = doc
-            .parse()
-            .node_at_source(SourceOffset::new(bracket_at))
-            .is_some_and(|sn| reparsed_in_family(sn.node, kind));
+        // The node's own target text. `None` for a multi-segment target (the
+        // 、-joined case), which is declined.
+        let old_target = self.coupled_target_text(region.span).ok_or(unverifiable)?;
+
+        // Single-region attempt: with the node's own target byte-adjacent to the
+        // new bracket (`<target><replacement>`, the minimal context that
+        // re-forms the reference), an identity or attribute-only change keeps
+        // the construct in its family.
+        let bracket_at = u32::try_from(old_target.len()).map_err(|_| unverifiable)?;
+        let ctx = format!("{old_target}{replacement}");
+        if reparsed_family_at(&ctx, bracket_at, kind) {
+            return Ok(splice_one(src, region.span, replacement));
+        }
+
+        // Coupled two-region attempt: the bracket's target changed, so the
+        // upstream literal must change with it. Recover the new target from the
+        // replacement and the *unique* upstream plain occurrence of the old
+        // target, rewrite both, and verify the reference re-forms — declining
+        // the irreducible cases (ambiguous referent, ruby-base literal) where
+        // the occurrence is not a lone plain run.
+        let new_target = first_quoted(replacement).ok_or(unverifiable)?;
+        let occ = self
+            .unique_upstream_plain(region.span.start, &old_target)
+            .ok_or(unverifiable)?;
+        let candidate = splice_two(src, (occ, new_target), (region.span, replacement));
+
+        // Scoped verify: a window from the rewritten literal to the new
+        // directive's end (bounded by the reference distance, not the document
+        // size) must re-parse to a `kind` node referencing `new_target`. The
+        // occurrence precedes the directive, so every offset is non-negative.
+        let win_start = occ.start as usize;
+        let interstice = region.span.start as usize - occ.end as usize;
+        let new_directive_start = win_start + new_target.len() + interstice;
+        let win_end = new_directive_start + replacement.len();
+        let reformed = candidate
+            .get(win_start..win_end)
+            .is_some_and(|w| window_reforms_coupled(w, kind, new_target));
         if reformed {
-            Ok(splice_one(src, region.span, replacement))
+            Ok(candidate)
         } else {
             Err(unverifiable)
         }
@@ -626,6 +668,30 @@ impl Tree<'_> {
             Node::MarginNote(m) => m.base.get().as_plain().map(str::to_owned),
             _ => None,
         }
+    }
+
+    /// The span of the **unique** occurrence of `target` in the sanitized
+    /// source before `before`, but only when it lies wholly within a single
+    /// plain interstitial run. `None` if the target is absent, appears more
+    /// than once (an ambiguous referent), or its occurrence falls inside a
+    /// classified construct (e.g. a ruby base) — the irreducible cases a
+    /// coupled edit must decline rather than guess.
+    fn unique_upstream_plain(&self, before: u32, target: &str) -> Option<Span> {
+        let prefix = self.sanitized().get(..before as usize)?;
+        let mut hit: Option<usize> = None;
+        let mut from = 0usize;
+        while let Some(rel) = prefix.get(from..)?.find(target) {
+            let at = from + rel;
+            if hit.is_some() {
+                return None; // more than one occurrence — ambiguous
+            }
+            hit = Some(at);
+            from = at + target.len();
+        }
+        let start = u32::try_from(hit?).ok()?;
+        let span = Span::new(start, start + u32::try_from(target.len()).ok()?);
+        let region = self.owned_region_at(SourceOffset::new(span.start))?;
+        (region.role == RegionRole::Interstitial && span.end <= region.span.end).then_some(span)
     }
 }
 
@@ -664,6 +730,44 @@ fn marker_in_family(marker: &str, kind: CoupledKind) -> bool {
         .source_nodes()
         .first()
         .is_some_and(|sn| sn.source_span.start == 0 && reparsed_in_family(sn.node, kind))
+}
+
+/// Parse `ctx` and report whether the node covering sanitized offset `off` is
+/// in `kind`'s construct family. The single-region split-edit verify, in a
+/// minimal `<target><replacement>` context.
+fn reparsed_family_at(ctx: &str, off: u32, kind: CoupledKind) -> bool {
+    let doc = Document::new(ctx);
+    doc.parse()
+        .node_at_source(SourceOffset::new(off))
+        .is_some_and(|sn| reparsed_in_family(sn.node, kind))
+}
+
+/// The text inside the first `「…」` of a directive (the quoted target / base of
+/// a forward reference, heading hint, or margin note). `None` if absent.
+fn first_quoted(directive: &str) -> Option<&str> {
+    let after_open = directive.split_once('「')?.1;
+    Some(after_open.split_once('」')?.0)
+}
+
+/// Parse `window` and report whether it re-forms a `kind` construct whose
+/// target / base text equals `new_target`. The coupled split-edit verify, in a
+/// window bounded by the reference distance rather than the whole document.
+fn window_reforms_coupled(window: &str, kind: CoupledKind, new_target: &str) -> bool {
+    let doc = Document::new(window);
+    doc.parse().source_nodes().iter().any(|sn| {
+        let (NodeRef::Inline(leaf) | NodeRef::BlockLeaf(leaf)) = sn.node else {
+            return false;
+        };
+        let text = match (kind, leaf) {
+            (CoupledKind::ForwardReference, Node::Format(f)) => f.target.get().as_plain(),
+            (CoupledKind::HeadingHint, Node::HeadingHint(h)) => Some(h.target.as_str()),
+            // A promoted heading is an equally valid re-formation of the hint.
+            (CoupledKind::HeadingHint, Node::Heading(h)) => h.text.get().as_plain(),
+            (CoupledKind::MarginNote, Node::MarginNote(m)) => m.base.get().as_plain(),
+            _ => None,
+        };
+        text == Some(new_target)
+    })
 }
 
 /// Replace `span`'s bytes in `src` with `replacement`. Panics (via slicing) if
@@ -932,19 +1036,39 @@ mod tests {
     }
 
     #[test]
-    fn referenced_forward_target_change_declines_until_coupled() {
-        // Changing the target without touching the upstream literal would
-        // desync — declined as unverifiable (PR2 promotes this to a coupled
-        // edit).
+    fn referenced_forward_target_change_is_coupled() {
+        // Changing the target rewrites BOTH the bracket and the unique upstream
+        // literal so the reference stays in sync.
         let src = "青空がひろがる、その［＃「青空」に傍点］";
+        let doc = Document::new(src);
+        let tree = doc.parse();
+        let r = role_of(src, RegionRole::ForwardReferenced);
+        let spliced = tree
+            .splice(r, "［＃「海」に傍点］")
+            .expect("target change is a coupled edit");
+        assert_eq!(spliced, "海がひろがる、その［＃「海」に傍点］");
+        // It re-parses to a forward reference again (now to 海).
+        let rt = Document::new(spliced.as_str());
+        assert!(
+            rt.parse()
+                .owned_regions()
+                .iter()
+                .any(|r| r.role == RegionRole::ForwardReferenced)
+        );
+    }
+
+    #[test]
+    fn ambiguous_referent_target_change_declines() {
+        // 青空 appears twice upstream — no unique referent, so a target change
+        // is honestly declined rather than guessing which copy to rewrite.
+        let src = "青空と青空、その［＃「青空」に傍点］";
         let doc = Document::new(src);
         let tree = doc.parse();
         let r = role_of(src, RegionRole::ForwardReferenced);
         let err = tree
             .splice(r, "［＃「海」に傍点］")
-            .expect_err("target change without the literal desyncs");
+            .expect_err("ambiguous referent declines");
         assert!(matches!(err, SpliceError::Unverifiable { .. }));
-        assert!(err.to_string().contains("could not be verified"));
     }
 
     #[test]
