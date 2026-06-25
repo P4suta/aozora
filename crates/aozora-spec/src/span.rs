@@ -62,6 +62,43 @@ impl Span {
             .get(start..end)
             .expect("span must align to UTF-8 char boundaries in source")
     }
+
+    /// Translate both endpoints by `by` bytes, saturating at the `u32`
+    /// range. A uniform shift preserves `end >= start`, so [`len`](Self::len)
+    /// stays well-defined.
+    ///
+    /// Used by the incremental re-parse engine ([`aozora`'s segment
+    /// cache](https://p4suta.github.io/aozora/), #237) to rebase a span
+    /// produced by lexing a document *segment* (segment-local coordinates)
+    /// back into whole-document coordinates by adding the segment's start
+    /// offset. `by` is `i64` because a rebase can move a span either way;
+    /// the clamp keeps a negative shift from underflowing the `u32`
+    /// endpoints.
+    #[must_use]
+    pub const fn shifted(self, by: i64) -> Self {
+        Self {
+            start: shift_clamp(self.start, by),
+            end: shift_clamp(self.end, by),
+        }
+    }
+}
+
+/// Add `by` to `endpoint`, saturating into the `u32` range. `const`-safe
+/// (no `Ord::clamp`, which is not yet const-stable).
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the bounds check guarantees 0 <= shifted <= u32::MAX before the cast"
+)]
+const fn shift_clamp(endpoint: u32, by: i64) -> u32 {
+    let shifted = endpoint as i64 + by;
+    if shifted < 0 {
+        0
+    } else if shifted > u32::MAX as i64 {
+        u32::MAX
+    } else {
+        shifted as u32
+    }
 }
 
 #[cfg(test)]
@@ -108,6 +145,21 @@ mod tests {
         // The slice is `#[must_use]` but the body is the panic, not
         // the return value — assign to a typed binding to consume it.
         let _slice: &str = Span::new(1, 4).slice(src);
+    }
+
+    #[test]
+    fn shifted_translates_both_endpoints() {
+        assert_eq!(Span::new(3, 7).shifted(10), Span::new(13, 17));
+        assert_eq!(Span::new(13, 17).shifted(-10), Span::new(3, 7));
+        // length is preserved under a uniform shift
+        assert_eq!(Span::new(3, 7).shifted(100).len(), 4);
+    }
+
+    #[test]
+    fn shifted_clamps_at_zero_on_underflow() {
+        // A negative shift larger than `start` clamps both endpoints at 0
+        // rather than wrapping the `u32`.
+        assert_eq!(Span::new(2, 5).shifted(-100), Span::new(0, 0));
     }
 
     #[test]
