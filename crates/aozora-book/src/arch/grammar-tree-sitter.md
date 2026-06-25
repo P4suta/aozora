@@ -1,7 +1,7 @@
 # tree-sitter reference grammar
 
 aozora ships a [tree-sitter][tree-sitter] grammar at
-`grammars/aozora.tree-sitter/grammar.js` as a **reference
+`crates/tree-sitter-aozora/grammar.js` as a **reference
 implementation** alongside the canonical Rust parser. When the two
 disagree the Rust parser wins; this grammar exists to plug Aozora
 documents into the tree-sitter ecosystem (neovim, helix,
@@ -70,13 +70,12 @@ higher ceiling.
   in-process equivalent.
 - [Conformance suite](../conformance.md) —
   `xtask conformance run --implementation tree-sitter` runs the
-  fixture set against the buildable grammar crate
-  (`crates/tree-sitter-aozora`; the `grammars/aozora.tree-sitter/`
-  copy below is a stale duplicate). It reports the per-tier
-  (`must` / `should` / `may`) pass rate — a fixture passes when the
-  grammar parses it without ERROR nodes — and gates on a per-fixture
-  S-expression snapshot so grammar drift is caught.
-- [`grammars/aozora.tree-sitter/README.md`](https://github.com/P4suta/aozora/blob/main/grammars/aozora.tree-sitter/README.md)
+  fixture set against the grammar crate (`crates/tree-sitter-aozora`).
+  It reports the per-tier (`must` / `should` / `may`) pass rate — a
+  fixture passes when the grammar parses it without ERROR nodes — and
+  gates on a per-fixture S-expression snapshot so grammar drift is
+  caught.
+- [`crates/tree-sitter-aozora/README.md`](https://github.com/P4suta/aozora/blob/main/crates/tree-sitter-aozora/README.md)
   — build instructions.
 
 [tree-sitter]: https://tree-sitter.github.io/

@@ -295,8 +295,8 @@ fn print_summary(summary: &Summary) {
 // tree-sitter reference grammar
 // ────────────────────────────────────────────────────────────────────
 //
-// The buildable reference grammar is `crates/tree-sitter-aozora` (the
-// `grammars/aozora.tree-sitter/` copy is a stale duplicate). It is a
+// The reference grammar lives in `crates/tree-sitter-aozora` (built
+// from its `grammar.js` into the committed `src/parser.c`). It is a
 // *syntactic skeleton* — it classifies bracket structure but cannot
 // render HTML, so the byte-equality comparison the Rust path uses does
 // not apply. Two orthogonal signals replace it:
