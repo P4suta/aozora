@@ -113,7 +113,7 @@ pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
 /// document's safe segmentation into independently-lexable spans, plus
 /// the diagnostics-merge primitive that is byte-for-byte equivalent to a
 /// whole-document parse.
-pub use segmented::SegmentedParse;
+pub use segmented::{IncrementalOutcome, SegmentedParse};
 /// Source-region ownership and minimal-diff source splicing (#202).
 pub use splice::{CoupledKind, Coupling, OwnedRegion, RegionRole, SpliceError, SpliceSafety};
 

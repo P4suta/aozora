@@ -81,6 +81,10 @@ struct Segment {
     /// whole-document sanitized buffer — the amount each cached diagnostic
     /// is shifted by to reach whole-document coordinates.
     san_start: u32,
+    /// This segment's own sanitized length (the next segment's `san_start`
+    /// minus this one's). Cached so an incremental re-lex can shift the
+    /// trailing segments by the sanitized-length delta.
+    san_len: u32,
     /// This segment's diagnostics, in segment-local sanitized coordinates.
     diagnostics: Vec<Diagnostic>,
 }
@@ -206,6 +210,179 @@ impl SegmentedParse {
         merged.sort_by(diagnostic_order);
         merged
     }
+
+    /// Recompute the segmentation for `new_text` after the single-region edit
+    /// that replaced `edit_old` (a byte range in *this* segmentation's
+    /// source) with the corresponding slice of `new_text`, reusing the cached
+    /// diagnostics of every segment the edit does not touch.
+    ///
+    /// Falls back to a full [`SegmentedParse::of`] — always correct — whenever
+    /// the fast path cannot be proven safe:
+    ///
+    /// - the cached document has whole-document-scoped diagnostics
+    ///   (forward-reference / container pairing), which any edit can perturb;
+    /// - the edit is not contained in a single segment's interior; or
+    /// - the edited bytes (old or new) carry document structure — a line break
+    ///   (`\n` / `\r`, which could move a blank-line boundary) or a directive
+    ///   opener `［` (which could introduce a container or forward reference).
+    ///
+    /// Under the fast path exactly one segment is re-lexed; the rest are
+    /// reused with their byte ranges and sanitized offsets shifted by the
+    /// edit's length deltas. The returned [`IncrementalOutcome`] reports how
+    /// many segments were reused. The `reparse_incremental_equals_full_parse`
+    /// corpus gate proves the result's diagnostics equal a from-scratch parse
+    /// of `new_text`.
+    #[must_use]
+    pub fn reparse_incremental(
+        &self,
+        new_text: &str,
+        edit_old: Range<usize>,
+    ) -> (Self, IncrementalOutcome) {
+        if let Some(fast) = self.try_reuse(new_text, &edit_old) {
+            return fast;
+        }
+        let full = Self::of(new_text);
+        let relexed = u64::try_from(full.segments.len()).unwrap_or(u64::MAX);
+        (
+            full,
+            IncrementalOutcome {
+                reused_segments: 0,
+                relexed_segments: relexed,
+                reused: false,
+            },
+        )
+    }
+
+    /// The fast path of [`Self::reparse_incremental`]; `None` when a
+    /// precondition fails (the caller then does a full parse).
+    fn try_reuse(
+        &self,
+        new_text: &str,
+        edit_old: &Range<usize>,
+    ) -> Option<(Self, IncrementalOutcome)> {
+        // (1) whole-document-scoped diagnostics make any edit unsafe to localise.
+        if !self.whole_scoped.is_empty() {
+            return None;
+        }
+        // Validate the edit range against the cached source.
+        let old_source = self.source.as_ref();
+        if edit_old.start > edit_old.end || edit_old.end > old_source.len() {
+            return None;
+        }
+        let old_len = edit_old.end - edit_old.start;
+        // Replacement length: new_text == old with `edit_old` swapped out.
+        let new_total = i64::try_from(new_text.len()).ok()?;
+        let old_total = i64::try_from(old_source.len()).ok()?;
+        let new_len = new_total - old_total + i64::try_from(old_len).ok()?;
+        let new_len = usize::try_from(new_len).ok()?;
+        let new_edit_end = edit_old.start.checked_add(new_len)?;
+        if new_edit_end > new_text.len() {
+            return None;
+        }
+
+        // The edit must actually transform `old_source` into `new_text`: the
+        // bytes outside `edit_old` are unchanged. Verifying this makes the
+        // fast path robust to an incorrectly specified edit — a mismatch falls
+        // back to a (correct) full parse.
+        if old_source.as_bytes().get(..edit_old.start) != new_text.as_bytes().get(..edit_old.start)
+            || old_source.as_bytes().get(edit_old.end..) != new_text.as_bytes().get(new_edit_end..)
+        {
+            return None;
+        }
+
+        // (3) The edited bytes (old and new) must carry no document structure.
+        let old_slice = old_source.get(edit_old.clone())?;
+        let new_slice = new_text.get(edit_old.start..new_edit_end)?;
+        if carries_structure(old_slice) || carries_structure(new_slice) {
+            return None;
+        }
+
+        // (2) The edit must sit inside exactly one segment's interior.
+        let start = u32::try_from(edit_old.start).ok()?;
+        let end = u32::try_from(edit_old.end).ok()?;
+        let idx = self
+            .segments
+            .iter()
+            .position(|s| s.raw.start <= start && end <= s.raw.end)?;
+
+        // Re-lex the edited segment with its new content.
+        let delta = i64::try_from(new_len).ok()? - i64::try_from(old_len).ok()?;
+        let seg = &self.segments[idx];
+        let new_seg_end = shift_usize(seg.raw.end, delta)?;
+        let new_seg_raw = seg.raw.start as usize..new_seg_end;
+        let relexed = relex_segment(new_text, new_seg_raw);
+        // The edit may have *introduced* a whole-document-scoped diagnostic
+        // (e.g. broken a `※［＃…］` gaiji or a container directive whose
+        // sanitized span the raw edit landed inside). The cached whole-scoped
+        // set is then stale, so fall back to a full parse.
+        if relexed.has_whole_scoped {
+            return None;
+        }
+        let san_delta = i64::from(relexed.san_len) - i64::from(seg.san_len);
+
+        // Build the new segment list: prefix unchanged, the edited segment
+        // replaced, the suffix shifted by the byte and sanitized deltas.
+        let mut segments = Vec::with_capacity(self.segments.len());
+        segments.extend(self.segments[..idx].iter().cloned());
+        segments.push(Segment {
+            raw: seg.raw.start..u32::try_from(new_seg_end).ok()?,
+            san_start: seg.san_start,
+            san_len: relexed.san_len,
+            diagnostics: relexed.diagnostics,
+        });
+        for s in &self.segments[idx + 1..] {
+            segments.push(Segment {
+                raw: shift_u32(s.raw.start, delta)?..shift_u32(s.raw.end, delta)?,
+                san_start: shift_u32(s.san_start, san_delta)?,
+                san_len: s.san_len,
+                diagnostics: s.diagnostics.clone(),
+            });
+        }
+
+        let reused = u64::try_from(segments.len().saturating_sub(1)).unwrap_or(u64::MAX);
+        Some((
+            Self {
+                source: new_text.into(),
+                segments,
+                whole_scoped: Vec::new(),
+            },
+            IncrementalOutcome {
+                reused_segments: reused,
+                relexed_segments: 1,
+                reused: true,
+            },
+        ))
+    }
+}
+
+/// How an incremental re-parse reused the prior segmentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IncrementalOutcome {
+    /// Segments carried over unchanged (cache hits).
+    pub reused_segments: u64,
+    /// Segments re-lexed (cache misses). `1` on the fast path; the whole
+    /// document on a fallback.
+    pub relexed_segments: u64,
+    /// Whether the incremental fast path applied. `false` means a full parse.
+    pub reused: bool,
+}
+
+/// Whether `s` carries document structure that an incremental segment re-lex
+/// must not silently absorb: a line terminator (could move a blank-line
+/// boundary) or a directive opener `［` (could introduce a container or
+/// forward reference, both whole-document-scoped concerns).
+fn carries_structure(s: &str) -> bool {
+    s.bytes().any(|b| b == b'\n' || b == b'\r') || s.contains('［')
+}
+
+/// `value + delta` as `usize`, or `None` on under/overflow.
+fn shift_usize(value: u32, delta: i64) -> Option<usize> {
+    usize::try_from(i64::from(value) + delta).ok()
+}
+
+/// `value + delta` clamped into `u32`, or `None` on under/overflow.
+fn shift_u32(value: u32, delta: i64) -> Option<u32> {
+    u32::try_from(i64::from(value) + delta).ok()
 }
 
 /// Reassemble the per-segment local diagnostics into whole-document
@@ -279,6 +456,12 @@ struct Candidate {
     raw: Range<usize>,
     san_len: u32,
     diagnostics: Vec<Diagnostic>,
+    /// Whether the isolated re-lex itself produced a whole-document-scoped
+    /// diagnostic. Used by the incremental fast path: if an edit makes a
+    /// segment produce one (e.g. by breaking a `※［＃…］` gaiji or a container
+    /// directive), the cached empty whole-scoped set is stale and the fast
+    /// path must fall back to a full parse.
+    has_whole_scoped: bool,
 }
 
 /// Re-lex `source[raw]` in isolation, capturing its sanitized length and its
@@ -289,16 +472,25 @@ fn relex_segment(source: &str, raw: Range<usize>) -> Candidate {
     let document = Document::new(&source[raw.clone()]);
     let tree = document.parse();
     let san_len = u32::try_from(tree.sanitized().len()).unwrap_or(u32::MAX);
+    let mut has_whole_scoped = false;
     let diagnostics = tree
         .diagnostics()
         .iter()
-        .filter(|d| !is_whole_document_scoped(d))
+        .filter(|d| {
+            if is_whole_document_scoped(d) {
+                has_whole_scoped = true;
+                false
+            } else {
+                true
+            }
+        })
         .cloned()
         .collect();
     Candidate {
         raw,
         san_len,
         diagnostics,
+        has_whole_scoped,
     }
 }
 
@@ -314,6 +506,10 @@ fn build_segment(
     run: Range<usize>,
 ) -> Segment {
     let raw = candidates[run.start].raw.start..candidates[run.end - 1].raw.end;
+    let san_len = candidates[run.clone()]
+        .iter()
+        .map(|c| c.san_len)
+        .fold(0u32, u32::saturating_add);
     let diagnostics = if run.len() == 1 {
         candidates[run.start].diagnostics.clone()
     } else {
@@ -323,6 +519,7 @@ fn build_segment(
         raw: u32::try_from(raw.start).unwrap_or(u32::MAX)
             ..u32::try_from(raw.end).unwrap_or(u32::MAX),
         san_start,
+        san_len,
         diagnostics,
     }
 }
@@ -490,6 +687,83 @@ mod tests {
                 .any(|d| matches!(d, Diagnostic::BoutenTargetAmbiguous { .. })),
             "expected a carried BoutenTargetAmbiguous, got {:?}",
             seg.whole_document_scoped(),
+        );
+    }
+
+    /// Apply a byte-range replacement to produce the edited text, then assert
+    /// that `reparse_incremental` yields the same diagnostics as a from-scratch
+    /// parse of the edited text. Returns the outcome for further assertions.
+    fn check_incremental(old: &str, edit: Range<usize>, replacement: &str) -> IncrementalOutcome {
+        let mut new_text = String::new();
+        new_text.push_str(&old[..edit.start]);
+        new_text.push_str(replacement);
+        new_text.push_str(&old[edit.end..]);
+
+        let cached = SegmentedParse::of(old);
+        let (incremental, outcome) = cached.reparse_incremental(&new_text, edit);
+
+        assert_eq!(
+            incremental.source(),
+            new_text,
+            "source must be the edited text"
+        );
+        assert_eq!(
+            sorted_debug(incremental.merged_diagnostics()),
+            sorted_debug(SegmentedParse::of(&new_text).merged_diagnostics()),
+            "incremental diagnostics must equal a from-scratch parse",
+        );
+        outcome
+    }
+
+    /// A plain-prose edit inside one segment reuses the other segments.
+    #[test]
+    fn incremental_plain_edit_reuses_segments() {
+        let old = "first paragraph\n\nsecond paragraph\n\nthird paragraph";
+        // Replace "second" with "edited" — interior of the middle segment.
+        let at = old.find("second").unwrap();
+        let outcome = check_incremental(old, at..at + "second".len(), "edited");
+        assert!(
+            outcome.reused,
+            "plain interior edit must take the fast path"
+        );
+        assert_eq!(outcome.relexed_segments, 1);
+        assert!(
+            outcome.reused_segments >= 2,
+            "the two untouched segments reuse"
+        );
+    }
+
+    /// An edit that inserts a directive opener falls back to a full parse
+    /// (it could introduce a container / forward reference) but stays correct.
+    #[test]
+    fn incremental_directive_edit_falls_back_but_correct() {
+        let old = "alpha\n\nbeta\n\ngamma";
+        let at = old.find("beta").unwrap();
+        let outcome = check_incremental(old, at..at, "［＃ここから２字下げ］\n");
+        assert!(!outcome.reused, "introducing a directive must fall back");
+    }
+
+    /// An edit that adds a blank line (document structure) falls back.
+    #[test]
+    fn incremental_blank_line_edit_falls_back() {
+        let old = "alpha beta gamma";
+        let at = old.find("beta").unwrap();
+        let outcome = check_incremental(old, at..at, "beta\n\nmore ");
+        assert!(!outcome.reused, "introducing a blank line must fall back");
+    }
+
+    /// A document whose cached parse carries a whole-document-scoped diagnostic
+    /// always falls back (the global diagnostic could change).
+    #[test]
+    fn incremental_global_doc_falls_back() {
+        let old = "みかんを食べた\n\nみかんは赤い\n\n「みかん」［＃「みかん」に傍点］";
+        let cached = SegmentedParse::of(old);
+        assert!(!cached.whole_document_scoped().is_empty());
+        // A trivial plain edit in the first segment still falls back.
+        let outcome = check_incremental(old, 0..0, "前置き ");
+        assert!(
+            !outcome.reused,
+            "a doc with global diagnostics must fall back"
         );
     }
 }
