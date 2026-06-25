@@ -46,6 +46,12 @@ const SPEC_VECTORS_REL: &str = "crates/aozora-conformance/spec-vectors/vectors";
 const TS_GOLDEN: &str = "expected.tree-sitter.txt";
 /// Published per-case pass / fail artefact for the tree-sitter run.
 const TS_RESULTS_REL: &str = "crates/aozora-book/src/conformance-results-tree-sitter.json";
+/// S-expression snapshot of the tree-sitter parse of every spec vector's
+/// `source`. Lives at the top of `spec-vectors/` — outside the vendored
+/// `vectors/` subtree that `sync-spec-vectors` / `verify-spec-vectors`
+/// rewrite and diff — so it survives a re-sync untouched.
+const TS_VECTORS_SNAPSHOT_REL: &str =
+    "crates/aozora-conformance/spec-vectors/tree-sitter-snapshot.json";
 
 pub(crate) fn dispatch(args: &ConformanceArgs) -> Result<(), String> {
     match &args.op {
@@ -53,7 +59,10 @@ pub(crate) fn dispatch(args: &ConformanceArgs) -> Result<(), String> {
             Implementation::Rust => run(),
             Implementation::TreeSitter => run_tree_sitter(run_args.update),
         },
-        ConformanceOp::Vectors => run_vectors(),
+        ConformanceOp::Vectors(vec_args) => match vec_args.implementation {
+            Implementation::Rust => run_vectors(),
+            Implementation::TreeSitter => run_vectors_tree_sitter(vec_args.update),
+        },
     }
 }
 
@@ -399,7 +408,7 @@ fn run_tree_sitter(update: bool) -> Result<(), String> {
     }
 
     let summary = build_summary(cases, "tree-sitter");
-    print_ts_summary(&summary, &drifts);
+    print_ts_summary(&summary, &drifts, "fixtures");
 
     if update {
         write_results(&root, &summary, TS_RESULTS_REL)?;
@@ -431,9 +440,9 @@ fn run_tree_sitter(update: bool) -> Result<(), String> {
 
 /// Print the per-tier pass rate (coverage) and any snapshot drift (the
 /// gate). The pass rate is informational; only `drifts` fails the run.
-fn print_ts_summary(summary: &Summary, drifts: &[String]) {
+fn print_ts_summary(summary: &Summary, drifts: &[String], unit: &str) {
     eprintln!(
-        "xtask conformance (tree-sitter): {} / {} fixture(s) parse without ERROR nodes",
+        "xtask conformance (tree-sitter): {} / {} {unit} parse without ERROR nodes",
         summary.passed, summary.total,
     );
     for (level, ls) in &summary.by_level {
@@ -446,14 +455,154 @@ fn print_ts_summary(summary: &Summary, drifts: &[String]) {
         );
     }
     if !drifts.is_empty() {
-        eprintln!(
-            "  DRIFT: {} fixture(s) diverge from snapshot:",
-            drifts.len()
-        );
+        eprintln!("  DRIFT: {} {unit} diverge from snapshot:", drifts.len());
         for case in drifts {
             eprintln!("    - {case}");
         }
     }
+}
+
+/// One spec vector's tree-sitter parse, pinned in the snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct TsVectorEntry {
+    name: String,
+    /// The grammar produced an ERROR / MISSING node (a non-pass).
+    error: bool,
+    /// `root.to_sexp()` — the structural fingerprint that gates drift.
+    sexp: String,
+}
+
+/// The committed tree-sitter snapshot over the whole spec-vector corpus.
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct TsVectorSnapshot {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    implementation: String,
+    vectors: Vec<TsVectorEntry>,
+}
+
+/// Run the reference grammar over every spec vector's `source` (#242).
+///
+/// Mirrors `run_tree_sitter` but over the specification corpus: a
+/// per-tier pass rate report (no ERROR nodes) plus a single
+/// S-expression snapshot gate (`TS_VECTORS_SNAPSHOT_REL`). `--update`
+/// regenerates the snapshot after an intentional grammar change.
+fn run_vectors_tree_sitter(update: bool) -> Result<(), String> {
+    let root = workspace_root()?;
+    let vectors_dir = root.join(SPEC_VECTORS_REL);
+    let mut entries: Vec<_> = fs::read_dir(&vectors_dir)
+        .map_err(|err| format!("read_dir {}: {err}", vectors_dir.display()))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .collect();
+    entries.sort_by_key(fs::DirEntry::file_name);
+
+    let mut cases = Vec::with_capacity(entries.len());
+    let mut snapshot_vectors = Vec::with_capacity(entries.len());
+
+    for entry in &entries {
+        let vector_path = entry.path().join("vector.json");
+        let raw = fs::read_to_string(&vector_path)
+            .map_err(|err| format!("read {}: {err}", vector_path.display()))?;
+        let vector: Vector = serde_json::from_str(&raw)
+            .map_err(|err| format!("parse {}: {err}", vector_path.display()))?;
+        let level = Level::parse(&vector.meta.level)?;
+        let (sexp, has_error) =
+            tree_sitter_parse(&vector.source).map_err(|err| format!("{}: {err}", vector.name))?;
+
+        cases.push(CaseResult {
+            case: vector.name.clone(),
+            feature: vector.meta.feature.clone(),
+            level,
+            passed: !has_error,
+            message: has_error.then(|| "grammar produced ERROR / MISSING node(s)".to_owned()),
+        });
+        snapshot_vectors.push(TsVectorEntry {
+            name: vector.name,
+            error: has_error,
+            sexp,
+        });
+    }
+
+    // Stable order regardless of read_dir: sort the snapshot by name.
+    snapshot_vectors.sort_by(|a, b| a.name.cmp(&b.name));
+    let snapshot = TsVectorSnapshot {
+        schema_version: 1,
+        implementation: "tree-sitter".to_owned(),
+        vectors: snapshot_vectors,
+    };
+    let summary = build_summary(cases, "tree-sitter");
+    let snapshot_path = root.join(TS_VECTORS_SNAPSHOT_REL);
+
+    if update {
+        let json = serde_json::to_string_pretty(&snapshot)
+            .map_err(|err| format!("serialize snapshot: {err}"))?;
+        fs::write(&snapshot_path, format!("{json}\n"))
+            .map_err(|err| format!("write {}: {err}", snapshot_path.display()))?;
+        print_ts_summary(&summary, &[], "spec vectors");
+        eprintln!(
+            "xtask conformance vectors (tree-sitter): wrote {} vector snapshot to {}",
+            snapshot.vectors.len(),
+            snapshot_path.display()
+        );
+        return Ok(());
+    }
+
+    let committed = match fs::read_to_string(&snapshot_path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return Err(format!(
+                "conformance vectors (tree-sitter): missing {TS_VECTORS_SNAPSHOT_REL}; run \
+                 `xtask conformance vectors --implementation tree-sitter --update` to create it"
+            ));
+        }
+        Err(err) => return Err(format!("read {}: {err}", snapshot_path.display())),
+    };
+    let prev: TsVectorSnapshot = serde_json::from_str(&committed)
+        .map_err(|err| format!("parse {}: {err}", snapshot_path.display()))?;
+
+    let drifts = snapshot_drifts(&prev, &snapshot);
+    print_ts_summary(&summary, &drifts, "spec vectors");
+    if !drifts.is_empty() {
+        return Err(format!(
+            "conformance vectors (tree-sitter): {n} vector(s) drifted from {TS_VECTORS_SNAPSHOT_REL} \
+             ({cases}); if the grammar change is intentional, run \
+             `xtask conformance vectors --implementation tree-sitter --update`",
+            n = drifts.len(),
+            cases = drifts.join(", "),
+        ));
+    }
+    Ok(())
+}
+
+/// Names whose tree-sitter parse changed between the committed snapshot
+/// and a fresh run — including vectors added (`(new)`) or removed
+/// (`(removed)`) from the corpus.
+fn snapshot_drifts(prev: &TsVectorSnapshot, current: &TsVectorSnapshot) -> Vec<String> {
+    let index = |snap: &TsVectorSnapshot| -> BTreeMap<String, (bool, String)> {
+        snap.vectors
+            .iter()
+            .map(|v| (v.name.clone(), (v.error, v.sexp.clone())))
+            .collect()
+    };
+    let prev_index = index(prev);
+    let cur_index = index(current);
+
+    let mut drifts = Vec::new();
+    for (name, cur) in &cur_index {
+        match prev_index.get(name) {
+            Some(old) if old == cur => {}
+            Some(_) => drifts.push(name.clone()),
+            None => drifts.push(format!("{name} (new)")),
+        }
+    }
+    for name in prev_index.keys() {
+        if !cur_index.contains_key(name) {
+            drifts.push(format!("{name} (removed)"));
+        }
+    }
+    drifts.sort();
+    drifts
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -1073,5 +1222,62 @@ mod tests {
             "implementation label threads through"
         );
         assert_eq!(summary.passed, 1, "the clean case counts as a pass");
+    }
+
+    fn ts_entry(name: &str, error: bool, sexp: &str) -> TsVectorEntry {
+        TsVectorEntry {
+            name: name.to_owned(),
+            error,
+            sexp: sexp.to_owned(),
+        }
+    }
+
+    fn ts_snapshot(vectors: Vec<TsVectorEntry>) -> TsVectorSnapshot {
+        TsVectorSnapshot {
+            schema_version: 1,
+            implementation: "tree-sitter".to_owned(),
+            vectors,
+        }
+    }
+
+    #[test]
+    fn snapshot_drifts_empty_when_identical() {
+        let snap = ts_snapshot(vec![ts_entry("a", false, "(document)")]);
+        let same = ts_snapshot(vec![ts_entry("a", false, "(document)")]);
+        assert!(
+            snapshot_drifts(&snap, &same).is_empty(),
+            "identical snapshots do not drift"
+        );
+    }
+
+    #[test]
+    fn snapshot_drifts_flags_change_add_and_remove() {
+        let prev = ts_snapshot(vec![
+            ts_entry("a", false, "(document)"),
+            ts_entry("b", false, "(document (text))"),
+            ts_entry("gone", false, "(document)"),
+        ]);
+        let current = ts_snapshot(vec![
+            ts_entry("a", false, "(document)"),
+            ts_entry("b", true, "(document (ERROR))"),
+            ts_entry("fresh", false, "(document)"),
+        ]);
+        let drifts = snapshot_drifts(&prev, &current);
+        assert!(
+            drifts.contains(&"b".to_owned()),
+            "changed entry: {drifts:?}"
+        );
+        assert!(
+            drifts.contains(&"fresh (new)".to_owned()),
+            "added vector: {drifts:?}"
+        );
+        assert!(
+            drifts.contains(&"gone (removed)".to_owned()),
+            "removed vector: {drifts:?}"
+        );
+        assert!(
+            !drifts.iter().any(|d| d.starts_with('a')),
+            "unchanged entry is not flagged: {drifts:?}"
+        );
     }
 }

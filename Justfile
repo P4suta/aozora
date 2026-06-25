@@ -277,13 +277,16 @@ new-adr TITLE:
 #                              (spec-vectors/, synced from the sibling
 #                              aozora-notation-spec) and holds the parser
 #                              to the SPEC's expectations.
-#   3. `--implementation tree-sitter` — replays the fixtures through the
-#                              reference grammar and gates on the per-fixture
-#                              S-expression snapshot (expected.tree-sitter.txt);
-#                              any drift exits non-zero (--update to refresh).
+#   3. `--implementation tree-sitter` (run + vectors) — replays the
+#                              fixtures AND the spec vectors through the
+#                              reference grammar and gates on their
+#                              S-expression snapshots (expected.tree-sitter.txt
+#                              per fixture; spec-vectors/tree-sitter-snapshot.json
+#                              for the vectors); any drift exits non-zero
+#                              (--update to refresh).
 # Any pass exits non-zero on a `must`-tier regression or grammar drift.
 conformance:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- conformance run && cargo run -p aozora-xtask -q -- conformance vectors && cargo run -p aozora-xtask -q -- conformance run --implementation tree-sitter'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- conformance run && cargo run -p aozora-xtask -q -- conformance vectors && cargo run -p aozora-xtask -q -- conformance run --implementation tree-sitter && cargo run -p aozora-xtask -q -- conformance vectors --implementation tree-sitter'
 
 # Vendor the conformance vectors from the sibling aozora-notation-spec
 # repo into spec-vectors/ (the spec is the source of truth). Host-side —

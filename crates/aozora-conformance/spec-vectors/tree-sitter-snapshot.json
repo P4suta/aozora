@@ -1,0 +1,451 @@
+{
+  "schemaVersion": 1,
+  "implementation": "tree-sitter",
+  "vectors": [
+    {
+      "name": "accent_decomposition_applied",
+      "error": false,
+      "sexp": "(document (text))"
+    },
+    {
+      "name": "align_end_container",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "angle_quote",
+      "error": false,
+      "sexp": "(document (text) (newline))"
+    },
+    {
+      "name": "annotation",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "body_end",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline))"
+    },
+    {
+      "name": "boki",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "bold_block",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "bold_forward",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "bold_inline",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "bouten",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "bouten_black_triangle",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "bouten_chain_line",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "bouten_range",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text))"
+    },
+    {
+      "name": "bouten_range_chain_line",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "bouten_target_ambiguous",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)))"
+    },
+    {
+      "name": "bracketed_kaeriten_no_pair",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)))"
+    },
+    {
+      "name": "break_in_single_line_container",
+      "error": true,
+      "sexp": "(document (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)))"
+    },
+    {
+      "name": "center_page",
+      "error": true,
+      "sexp": "(document (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (newline))"
+    },
+    {
+      "name": "columns_container",
+      "error": false,
+      "sexp": "(document (text) (newline) (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline))"
+    },
+    {
+      "name": "correction_sic",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "correction_textual_note",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "emphasis_mixed",
+      "error": true,
+      "sexp": "(document (text) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "empty_ruby_reading",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_explicit)))"
+    },
+    {
+      "name": "font_size_bare_range",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (newline))"
+    },
+    {
+      "name": "font_size_block",
+      "error": true,
+      "sexp": "(document (slug body: (slug_body)) (newline) (ERROR (ruby_base_implicit)) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "font_size_larger_forward",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "font_size_smaller_forward",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "forced_break",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "gaiji",
+      "error": false,
+      "sexp": "(document (text) (gaiji (gaiji_marker) (slug body: (slug_body))) (text) (newline))"
+    },
+    {
+      "name": "gaiji_composed_glyph",
+      "error": false,
+      "sexp": "(document (gaiji (gaiji_marker) (slug body: (slug_body))) (newline))"
+    },
+    {
+      "name": "gaiji_composed_seiji",
+      "error": false,
+      "sexp": "(document (gaiji (gaiji_marker) (slug body: (slug_body))) (newline))"
+    },
+    {
+      "name": "head_flush_single",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "head_flush_wrap_indent",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "heading",
+      "error": true,
+      "sexp": "(document (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "heading_block",
+      "error": false,
+      "sexp": "(document (text) (newline) (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline))"
+    },
+    {
+      "name": "heading_hint",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (newline) (ERROR (ruby_base_implicit)) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "heading_paired_window",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "heading_promoted",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (newline) (slug body: (slug_body)) (newline) (text) (newline))"
+    },
+    {
+      "name": "heading_ruby_hint",
+      "error": true,
+      "sexp": "(document (text) (ERROR) (text) (text) (text) (ERROR) (text) (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "heading_same_line",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "heading_window",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "horizontal_container",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "horizontal_inline_forward",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "indent_center",
+      "error": true,
+      "sexp": "(document (slug body: (slug_body)) (newline) (ERROR (ruby_base_implicit)) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "indent_compound_styled",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (newline) (slug body: (slug_body)) (newline) (ERROR (ruby_base_implicit)) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "indent_container",
+      "error": false,
+      "sexp": "(document (text) (newline) (slug body: (slug_body)) (newline) (text) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline))"
+    },
+    {
+      "name": "indent_from_top",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "indent_line_kumi",
+      "error": false,
+      "sexp": "(document (text) (newline) (slug body: (slug_body)) (newline) (text) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline))"
+    },
+    {
+      "name": "indent_line_width_compound",
+      "error": false,
+      "sexp": "(document (text) (newline) (slug body: (slug_body)) (newline) (text) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline))"
+    },
+    {
+      "name": "italic_block",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "italic_forward",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "italic_inline",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "kaeriten",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (newline))"
+    },
+    {
+      "name": "kaeriten_outside_kanbun",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text))"
+    },
+    {
+      "name": "keigakomi_container",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (newline) (text) (newline) (text) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "keigakomi_inline_forward",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "left_ruby",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "line_width_container",
+      "error": false,
+      "sexp": "(document (text) (newline) (slug body: (slug_body)) (newline) (text) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline))"
+    },
+    {
+      "name": "mismatched_bouten_container",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (slug body: (slug_body)) (text))"
+    },
+    {
+      "name": "mismatched_container_close",
+      "error": true,
+      "sexp": "(document (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)))"
+    },
+    {
+      "name": "mixed_ruby_bouten",
+      "error": false,
+      "sexp": "(document (explicit_ruby base: (ruby_base_explicit) reading: (ruby_reading)) (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "nested_containers",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "nested_ruby",
+      "error": false,
+      "sexp": "(document (explicit_ruby base: (ruby_base_explicit) reading: (ruby_reading)) (text) (text))"
+    },
+    {
+      "name": "page_break",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (newline) (text) (newline) (slug body: (slug_body)) (newline) (ERROR (ruby_base_implicit)) (newline))"
+    },
+    {
+      "name": "pageful",
+      "error": false,
+      "sexp": "(document (text) (explicit_ruby base: (ruby_base_explicit) reading: (ruby_reading)) (text) (gaiji (gaiji_marker) (slug body: (slug_body))) (text) (slug body: (slug_body)) (text) (slug body: (slug_body)) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "plain_text",
+      "error": false,
+      "sexp": "(document (text) (newline))"
+    },
+    {
+      "name": "pua_collision",
+      "error": false,
+      "sexp": "(document (text) (newline))"
+    },
+    {
+      "name": "ruby_explicit",
+      "error": false,
+      "sexp": "(document (text) (explicit_ruby base: (ruby_base_explicit) reading: (ruby_reading)) (text) (newline))"
+    },
+    {
+      "name": "ruby_implicit",
+      "error": false,
+      "sexp": "(document (implicit_ruby base: (ruby_base_implicit) reading: (ruby_reading)) (text) (newline))"
+    },
+    {
+      "name": "sashie",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "sashie_caption",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "sashie_dimensions",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "section_break",
+      "error": false,
+      "sexp": "(document (text) (newline) (slug body: (slug_body)) (newline) (text) (newline))"
+    },
+    {
+      "name": "side_glyph_left",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "side_glyph_left_range",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "side_glyph_right",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "side_glyph_right_range",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "side_note_left",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "standalone_gaiji",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "subscript_forward",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "superscript_forward",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "table_container",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "tate_chu_yoko",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (newline))"
+    },
+    {
+      "name": "tate_chu_yoko_found",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "unclosed_bracket",
+      "error": true,
+      "sexp": "(document (explicit_ruby base: (ruby_base_explicit) reading: (ruby_reading) (MISSING \"》\")) (newline))"
+    },
+    {
+      "name": "unrecognised_container_directive",
+      "error": true,
+      "sexp": "(document (slug body: (slug_body)) (ERROR (ruby_base_implicit)))"
+    },
+    {
+      "name": "unresolved_gaiji",
+      "error": false,
+      "sexp": "(document (gaiji (gaiji_marker) (slug body: (slug_body))))"
+    },
+    {
+      "name": "warichu_inline",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "wrap_indent",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline))"
+    }
+  ]
+}

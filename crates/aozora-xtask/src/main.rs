@@ -155,6 +155,18 @@ struct RunArgs {
     update: bool,
 }
 
+#[derive(Args)]
+struct VectorsArgs {
+    /// Which implementation to run the specification vectors through.
+    #[arg(long, value_enum, default_value_t = Implementation::Rust)]
+    implementation: Implementation,
+    /// Regenerate the `tree-sitter` spec-vector S-expression snapshot
+    /// (`spec-vectors/tree-sitter-snapshot.json`). Use after an
+    /// intentional grammar change; no effect on the `rust` implementation.
+    #[arg(long)]
+    update: bool,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum Implementation {
     /// The canonical Rust parser (`crates/aozora-pipeline`).
@@ -183,12 +195,19 @@ enum ConformanceOp {
     /// after an intentional grammar change.
     Run(RunArgs),
     /// Run the vendored specification conformance vectors
-    /// (`crates/aozora-conformance/spec-vectors/`) against the parser
-    /// and compare every projection in each vector's `expected`
-    /// (`serialize` / `nodes` / `pairs` / `diagnostics`) per its
-    /// `meta.level`. `must` mismatches exit non-zero; `should` / `may`
+    /// (`crates/aozora-conformance/spec-vectors/`) against the chosen
+    /// `--implementation`.
+    ///
+    /// `rust` (default) holds the parser to each vector's `expected`
+    /// projections (`serialize` / `nodes` / `pairs` / `diagnostics`) per
+    /// its `meta.level`: `must` mismatches exit non-zero; `should` / `may`
     /// warn. The `html` channel is informative (spec §8) and only warns.
-    Vectors,
+    ///
+    /// `tree-sitter` runs the reference grammar over each vector's
+    /// `source`: it reports the per-tier pass rate (no ERROR nodes) and
+    /// gates on the `spec-vectors/tree-sitter-snapshot.json` S-expression
+    /// snapshot. Any drift exits non-zero; `--update` regenerates it.
+    Vectors(VectorsArgs),
 }
 
 #[derive(Args)]
