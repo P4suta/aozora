@@ -167,24 +167,30 @@ Live since v0.4.1. The whole workspace publishes through the manual
 `.github/workflows/publish-crates.yml` workflow:
 
 ```sh
-gh workflow run publish-crates.yml -f dry_run=false
+gh workflow run publish-crates.yml -f dry_run=false   # then approve the gated publish job
 ```
 
-It runs `cargo publish --workspace` (cargo 1.90+), which publishes
-every publishable member in topological order — `aozora-encoding` /
-`aozora-spec` first, `aozora` and `aozora-cli` last — and waits for
-crates.io index propagation between dependent crates itself. Members
+An ungated `package` job dry-runs the dependency-free leaf crates as a
+metadata smoke test on every dispatch. The live `publish` job runs in the
+`release` GitHub Environment (required-reviewer approval) and walks an
+**explicit topological ladder** — `aozora-encoding` / `aozora-spec`
+first, `aozora` and `aozora-cli` last — waiting for crates.io index
+propagation between dependent crates. (We use the explicit ladder, *not*
+`cargo publish --workspace`, because the pinned cargo does not order
+interdependent members on a *first* publish; see the workflow header.)
+The ladder is resumable and rate-limit aware — crates.io throttles new
+crates, so a 13-crate first publish runs in several passes. Members
 marked `publish = false` (`aozora-corpus`, `aozora-conformance`,
 `aozora-bench`, `aozora-trace`, `aozora-xtask`, plus the
 `aozora-wasm` / `aozora-ffi` / `aozora-py` drivers that ship through
 npm / GitHub Releases / PyPI) are skipped automatically.
 
-The default `dry_run: true` runs `cargo publish --workspace --dry-run`
-only — a safe metadata gate that succeeds even on a first publish
-because `--workspace` resolves intra-workspace deps locally. A live
-run needs the `CARGO_TOKEN` repo secret populated with a crates.io API
-token carrying **both** the publish-new and publish-update scopes (the
-first run creates brand-new crates).
+Authentication is **OIDC Trusted Publishing** — no token in the repo.
+`use_oidc` defaults to true and `rust-lang/crates-io-auth-action` mints a
+30-minute, auto-revoked token. The one-time exception is the very first
+publish of brand-new crates, which crates.io requires to go through an API
+token; the [release secrets runbook](releasing-secrets.md) covers the
+bootstrap-then-OIDC sequence and the per-crate trusted-publisher setup.
 
 **Single front door, still.** The parser is built from many internal
 crates (`aozora-spec`, `aozora-syntax`, `aozora-pipeline`,
@@ -205,26 +211,29 @@ itself worth doing. The pre-1.0 SemVer contract above still holds — a
 
 ## Publishing to npm and PyPI
 
-The browser (WASM) and Python drivers ship through their own
-manual workflows, same `dry_run: true` default as crates:
+The browser (WASM) and Python drivers ship through their own manual
+workflows, same `dry_run: true` default + gated `publish` job as crates:
 
 ```sh
-# npm — aozora-wasm (needs the NPM_TOKEN repo secret)
-gh workflow run publish-npm.yml -f dry_run=false
-
-# PyPI — aozora_py wheels (OIDC trusted publishing; no token secret)
-gh workflow run publish-pypi.yml -f dry_run=false
+gh workflow run publish-npm.yml  -f dry_run=false   # then approve
+gh workflow run publish-pypi.yml -f dry_run=false   # then approve
 ```
 
-`publish-npm.yml` builds the package with `wasm-pack build --target
-web --release` and `npm publish`es `crates/aozora-wasm/pkg/`.
-`publish-pypi.yml` builds **one `cp311-abi3` wheel per OS** (pyo3
-`abi3-py311`, so a single wheel covers CPython 3.11 → 3.14 and future
-3.x — no per-Python-version matrix) plus an sdist, and uploads via PyPI
-trusted publishing (configure the project's trusted publisher once,
-pointing at this repo + `publish-pypi.yml`). Run `just smoke-py` first.
-Linux aarch64, macOS universal2, and free-threaded (`3.13t`/`3.14t`,
-which abi3 cannot target) wheels are a future cibuildwheel addition.
+Both authenticate via **OIDC Trusted Publishing** — no token secret in
+steady state. `publish-npm.yml` builds with `wasm-pack build --target web
+--release`, publishes `crates/aozora-wasm/pkg/`, and npm attaches a
+provenance attestation automatically. `publish-pypi.yml` builds **one
+`cp311-abi3` wheel per OS** (pyo3 `abi3-py311`, so a single wheel covers
+CPython 3.11 → 3.14 and future 3.x — no per-Python-version matrix) plus
+an sdist. Run `just smoke-py` first. Linux aarch64, macOS universal2, and
+free-threaded (`3.13t`/`3.14t`, which abi3 cannot target) wheels are a
+future cibuildwheel addition.
+
+PyPI needs no bootstrap — a "pending publisher" covers the first upload —
+while npm's first publish of a brand-new package needs a one-time token,
+like crates.io. The full trusted-publisher + `release`-environment setup
+for all three registries is in the
+[release secrets runbook](releasing-secrets.md).
 
 Cut these from the same `vX.Y.Z` tag as the GitHub Release so every
 channel ships the same version. Run each workflow once with the

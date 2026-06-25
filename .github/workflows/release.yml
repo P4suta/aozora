@@ -175,6 +175,12 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
+    # Gated behind the `release` GitHub Environment: a pushed tag pauses
+    # for required-reviewer approval before the GitHub Release is created
+    # and build-provenance attestations are minted. The `build` matrix
+    # runs ungated (no credentials), and a `workflow_dispatch` run only
+    # builds artefacts (this job is skipped), so it is an implicit dry-run.
+    environment: release
     permissions:
       contents: write
       id-token: write
