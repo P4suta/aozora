@@ -1072,6 +1072,36 @@ mod tests {
     }
 
     #[test]
+    fn multi_target_forward_identity_is_a_noop() {
+        // A 、-joined multi-target forward (`「A」「B」`) is `Referenced`; its
+        // canonical target lowers to a single plain run ("A、B"), so its
+        // identity splice re-forms through the scoped single-region verify and
+        // is a no-op. `assert_tiling` runs the real splice machinery on every
+        // region, pinning the identity invariant for this trickiest shape.
+        assert_tiling("AとB［＃「A」「B」に傍点］");
+    }
+
+    #[test]
+    fn multi_target_forward_target_change_declines() {
+        // Changing the target of a multi-target forward is genuinely
+        // irreducible: the canonical "A、B" is not a contiguous source substring
+        // (the source reads "AとB"), so the upstream literal cannot be located
+        // and the edit is honestly declined rather than guessed.
+        let src = "AとB［＃「A」「B」に傍点］";
+        let doc = Document::new(src);
+        let tree = doc.parse();
+        let r = role_of(src, RegionRole::ForwardReferenced);
+        assert_eq!(
+            r.safety,
+            SpliceSafety::Coupled(CoupledKind::ForwardReference)
+        );
+        let err = tree
+            .splice(r, "［＃「海」に傍点］")
+            .expect_err("a multi-segment target change is irreducible");
+        assert!(matches!(err, SpliceError::Unverifiable { .. }));
+    }
+
+    #[test]
     fn owned_region_at_finds_node_and_gap() {
         let src = "あ｜青梅《おうめ》い";
         let doc = Document::new(src);
