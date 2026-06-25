@@ -62,8 +62,12 @@ partner span(s) from the tables that already exist:
   "re-derive the pairing in source space"; the normalized `container_pairs`
   table is never consulted.
 - **Forward / heading hint / margin note** — the directive's quoted target is
-  read off the node payload and relocated in the sanitized prefix (the coupled
-  literal). (This recovery is wired per kind across the #202 PR sequence.)
+  read off the node payload and relocated as its *unique* upstream plain
+  occurrence (the coupled literal). A target-text change rewrites both the
+  bracket and that occurrence; the irreducible cases — an ambiguous referent
+  (more than one occurrence), a ruby-base literal (the occurrence is inside a
+  classified construct, not a lone plain run), or a multi-segment target — are
+  declined rather than guessed.
 
 ### Propose, verify in a scoped context
 
