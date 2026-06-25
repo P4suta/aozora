@@ -115,6 +115,71 @@ fn segmented_merge_equals_whole_doc_parse() {
     assert!(problems.is_empty(), "\n{}", problems.join("\n\n"));
 }
 
+/// Stage A2: `SegmentedParse::reparse_incremental` must produce the same
+/// diagnostics as a from-scratch parse of the edited text, for every corpus
+/// document. A single deterministic plain-character insertion near the
+/// document's midpoint exercises the incremental fast path on global-free
+/// documents and the full-parse fallback elsewhere. Also reports how often the
+/// fast path applied, so the reuse rate is visible.
+#[test]
+fn reparse_incremental_equals_full_parse() {
+    let Some(source) = aozora_corpus::from_env() else {
+        eprintln!("AOZORA_CORPUS_ROOT not set; skipping incremental-reparse gate");
+        return;
+    };
+
+    let mut count: usize = 0;
+    let mut fast_path: usize = 0;
+    let mut diverged: Vec<String> = Vec::new();
+
+    for item in source.iter() {
+        let item = item.expect("corpus iteration must not error");
+        let Ok(text) = decode_auto(&item.bytes) else {
+            continue;
+        };
+        let text = text.as_ref();
+        if text.is_empty() {
+            continue;
+        }
+
+        // Insert a plain ASCII character at a char boundary near the midpoint.
+        let mut at = text.len() / 2;
+        while at < text.len() && !text.is_char_boundary(at) {
+            at += 1;
+        }
+        let mut edited = String::with_capacity(text.len() + 1);
+        edited.push_str(&text[..at]);
+        edited.push('x');
+        edited.push_str(&text[at..]);
+
+        let cached = SegmentedParse::of(text);
+        let (incremental, outcome) = cached.reparse_incremental(&edited, at..at);
+        if outcome.reused {
+            fast_path += 1;
+        }
+
+        let got = sorted_debug(incremental.merged_diagnostics());
+        let want = sorted_debug(SegmentedParse::of(&edited).merged_diagnostics());
+        if got != want {
+            diverged.push(format!(
+                "{} (fast_path={}): incremental != full",
+                item.label, outcome.reused
+            ));
+        }
+        count += 1;
+    }
+
+    eprintln!(
+        "incremental-reparse gate: {count} docs edited, {fast_path} took the incremental fast path"
+    );
+    assert!(
+        diverged.is_empty(),
+        "{} document(s) where reparse_incremental != full parse:\n  {}",
+        diverged.len(),
+        diverged.join("\n  "),
+    );
+}
+
 /// Diagnostics sorted by position then debug string — a canonical positional
 /// multiset ordering for comparison.
 fn sorted_debug(mut diags: Vec<Diagnostic>) -> Vec<String> {

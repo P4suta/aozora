@@ -16,10 +16,13 @@
 //! single-digit milliseconds — well below the keystroke-perceptibility
 //! threshold — so the per-call cost is acceptable.
 
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
-use aozora::{Diagnostic, Document, Tree};
+use aozora::{Diagnostic, Document, SegmentedParse, Tree};
 use tracing::field::Empty as TracingEmpty;
+
+use crate::text_edit::ByteEdit;
 
 /// Documents larger than this skip whole-document semantic analysis —
 /// diagnostics, the HTML preview, and the per-request tree access that
@@ -38,13 +41,15 @@ use tracing::field::Empty as TracingEmpty;
 /// the backend.
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
-/// Per-call statistics emitted by [`ParseCache::reparse`].
+/// Per-call statistics emitted by [`ParseCache::reparse`] /
+/// [`ParseCache::reparse_incremental`].
 ///
 /// The caller (typically the LSP backend's `OpenDocument`) feeds these
-/// into the per-document `Metrics` so parse latency
-/// and cache fields are observable from a third party reading the
-/// log. `cache_hits` / `cache_misses` are set to `0` / `1` for every
-/// call — every reparse is a "miss" under the whole-document model.
+/// into the per-document `Metrics` so parse latency and cache fields are
+/// observable from a third party reading the log. Under the segment cache
+/// (#237) `cache_hits` counts the segments reused from the prior parse and
+/// `cache_misses` the segments re-lexed; a full parse reports
+/// `cache_hits == 0` with `cache_misses` equal to the segment count.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReparseStats {
     pub parse_count: u64,
@@ -70,11 +75,43 @@ pub struct ParseCache {
     /// Diagnostics from the most recent [`Self::reparse`]. Empty
     /// until the first parse.
     diagnostics: Vec<Diagnostic>,
+    /// Cached segmentation of [`Self::text`] (#237). Lets
+    /// [`Self::reparse_incremental`] re-lex only the segment an edit
+    /// touched and reuse the rest. `None` until the first parse or when the
+    /// document is oversized.
+    segmentation: Option<SegmentedParse>,
 }
 
 impl ParseCache {
-    /// Re-parse `text`. Returns the diagnostics produced by the parse
-    /// plus per-call statistics.
+    /// Re-parse `text` from scratch. Returns the diagnostics plus per-call
+    /// statistics (`cache_hits == 0`, all segments freshly lexed).
+    pub fn reparse(&mut self, text: &str) -> (Vec<Diagnostic>, ReparseStats) {
+        self.reparse_with_edit(text, None)
+    }
+
+    /// Re-parse `text`, reusing the cached segmentation where `edits` permit
+    /// (#237). When `edits` is a single byte-range replacement that produced
+    /// `text` from the previously-cached text, only the touched segment is
+    /// re-lexed and the rest are reused — `cache_hits` then counts the reused
+    /// segments. Any other batch (zero or multiple edits) re-parses fully.
+    ///
+    /// The result is always identical to a from-scratch parse: the underlying
+    /// [`SegmentedParse::reparse_incremental`] falls back to a full parse
+    /// whenever reuse cannot be proven safe.
+    pub fn reparse_incremental(
+        &mut self,
+        text: &str,
+        edits: &[ByteEdit],
+    ) -> (Vec<Diagnostic>, ReparseStats) {
+        let single = match edits {
+            [edit] => Some(edit.range.clone()),
+            _ => None,
+        };
+        self.reparse_with_edit(text, single)
+    }
+
+    /// Core re-parse. `edit` is `Some(range)` to attempt incremental reuse
+    /// against the cached segmentation, or `None` for a full parse.
     #[tracing::instrument(
         level = "debug",
         skip_all,
@@ -83,7 +120,11 @@ impl ParseCache {
             latency_us = TracingEmpty,
         ),
     )]
-    pub fn reparse(&mut self, text: &str) -> (Vec<Diagnostic>, ReparseStats) {
+    fn reparse_with_edit(
+        &mut self,
+        text: &str,
+        edit: Option<Range<usize>>,
+    ) -> (Vec<Diagnostic>, ReparseStats) {
         let started_at = Instant::now();
 
         // Skip the O(n) parse for oversized documents (see
@@ -94,6 +135,7 @@ impl ParseCache {
         if text.len() > MAX_DOCUMENT_BYTES {
             text.clone_into(&mut self.text);
             self.diagnostics.clear();
+            self.segmentation = None;
             let stats = ReparseStats {
                 parse_count: 0,
                 cache_hits: 0,
@@ -105,20 +147,30 @@ impl ParseCache {
             return (Vec::new(), stats);
         }
 
-        let document = Document::new(text);
-        let diagnostics: Vec<Diagnostic> = document.parse().diagnostics().to_vec();
+        let (segmentation, cache_hits, cache_misses) =
+            if let (Some(range), Some(prior)) = (edit, self.segmentation.take()) {
+                let (next, outcome) = prior.reparse_incremental(text, range);
+                (next, outcome.reused_segments, outcome.relexed_segments)
+            } else {
+                let next = SegmentedParse::of(text);
+                let segments = u64::try_from(next.segment_count()).unwrap_or(u64::MAX);
+                (next, 0, segments)
+            };
+
+        let diagnostics = segmentation.merged_diagnostics();
+        let cache_entries_after = u64::try_from(segmentation.segment_count()).unwrap_or(u64::MAX);
         let latency_us = duration_as_us(started_at.elapsed());
 
         text.clone_into(&mut self.text);
         self.diagnostics.clone_from(&diagnostics);
+        self.segmentation = Some(segmentation);
 
-        let bytes_estimate = u64::try_from(text.len()).unwrap_or(u64::MAX);
         let stats = ReparseStats {
             parse_count: 1,
-            cache_hits: 0,
-            cache_misses: 1,
-            cache_entries_after: 1,
-            cache_bytes_estimate: bytes_estimate,
+            cache_hits,
+            cache_misses,
+            cache_entries_after,
+            cache_bytes_estimate: u64::try_from(text.len()).unwrap_or(u64::MAX),
             latency_us,
         };
         tracing::Span::current().record("latency_us", latency_us);
@@ -244,5 +296,48 @@ mod tests {
             cache.with_tree(|_| ()).is_none(),
             "with_tree must degrade to None for oversized documents",
         );
+    }
+
+    #[test]
+    fn full_reparse_reports_segment_misses() {
+        let mut cache = ParseCache::default();
+        let (_, stats) = cache.reparse("alpha\n\nbeta\n\ngamma");
+        assert_eq!(stats.cache_hits, 0, "a from-scratch parse reuses nothing");
+        assert_eq!(stats.cache_misses, 3, "three paragraphs => three segments");
+        assert_eq!(stats.cache_entries_after, 3);
+    }
+
+    #[test]
+    fn incremental_edit_reuses_segments() {
+        let mut cache = ParseCache::default();
+        let old = "alpha\n\nbeta\n\ngamma";
+        drop(cache.reparse(old));
+
+        // Replace "beta" with "delta" — a plain edit inside the middle
+        // segment, so the two untouched segments are reused.
+        let at = old.find("beta").unwrap();
+        let edit = ByteEdit::new(at..at + "beta".len(), "delta".to_owned());
+        let new_text = "alpha\n\ndelta\n\ngamma";
+        let (diags, stats) = cache.reparse_incremental(new_text, &[edit]);
+
+        assert!(stats.cache_hits >= 2, "untouched segments reuse: {stats:?}");
+        assert_eq!(stats.cache_misses, 1, "only the edited segment re-lexes");
+        // Diagnostics must match a from-scratch parse of the new text.
+        let mut fresh = ParseCache::default();
+        let (want, _) = fresh.reparse(new_text);
+        let as_debug = |ds: &[Diagnostic]| ds.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>();
+        assert_eq!(as_debug(&diags), as_debug(&want));
+    }
+
+    #[test]
+    fn multi_edit_batch_falls_back_to_full() {
+        let mut cache = ParseCache::default();
+        drop(cache.reparse("alpha\n\nbeta\n\ngamma"));
+        let edits = [
+            ByteEdit::new(0..0, "x".to_owned()),
+            ByteEdit::new(10..10, "y".to_owned()),
+        ];
+        let (_, stats) = cache.reparse_incremental("xalpha\n\nbexyta\n\ngamma", &edits);
+        assert_eq!(stats.cache_hits, 0, "a multi-edit batch re-parses fully");
     }
 }
