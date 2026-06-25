@@ -244,6 +244,41 @@ pub unsafe extern "C" fn aozora_document_diagnostics_json(
     AozoraStatus::Ok as c_int
 }
 
+/// Render the document's diagnostics as a plain-text byte buffer.
+///
+/// One block per diagnostic — `<severity> [<code>] @ <start>..<end>:
+/// <message>` plus the offending source slice. This is the `miette`-free
+/// portable rendering ([`aozora::diagnostics_text`]); a clean parse
+/// yields an empty buffer. For the machine-readable view use
+/// [`aozora_document_diagnostics_json`].
+///
+/// On success, writes the bytes to `*out_text` and returns
+/// [`AozoraStatus::Ok`]. The caller MUST call [`aozora_bytes_free`] on
+/// the returned [`AozoraBytes`].
+///
+/// # Safety
+///
+/// - `doc` must be a non-null handle produced by
+///   [`aozora_document_new`] and not yet freed.
+/// - `out_text` must point to a writable [`AozoraBytes`] slot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aozora_document_diagnostics_text(
+    doc: *const AozoraDocument,
+    out_text: *mut AozoraBytes,
+) -> c_int {
+    if doc.is_null() || out_text.is_null() {
+        return AozoraStatus::NullInput as c_int;
+    }
+    // SAFETY: caller guarantees doc is a valid handle.
+    let doc_ref: &AozoraDocument = unsafe { &*doc };
+    let tree = doc_ref.inner.parse();
+    let text = aozora::diagnostics_text(doc_ref.inner.source(), tree.diagnostics());
+    let owned = into_owned_bytes(text.into_bytes());
+    // SAFETY: caller guarantees out_text is writable.
+    unsafe { out_text.write(owned) };
+    AozoraStatus::Ok as c_int
+}
+
 /// Render the document's source-keyed Aozora nodes as a JSON byte
 /// buffer.
 ///

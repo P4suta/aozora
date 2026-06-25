@@ -98,12 +98,15 @@ pub use aozora_syntax::{
     },
 };
 
+mod diagnostics_text;
 mod document;
 mod splice;
 
 #[cfg(feature = "json")]
 pub mod json;
 
+/// Plain-text diagnostic rendering (`miette`-free, every target).
+pub use diagnostics_text::diagnostics_text;
 pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
 /// Source-region ownership and minimal-diff source splicing (#202).
 pub use splice::{CoupledKind, Coupling, OwnedRegion, RegionRole, SpliceError, SpliceSafety};

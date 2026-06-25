@@ -8,8 +8,9 @@
  *   1. aozora_document_new            — construct from bytes
  *   2. aozora_document_to_html        — render HTML
  *   3. aozora_document_diagnostics_json — diagnostic projection
- *   4. aozora_bytes_free              — release returned buffers
- *   5. aozora_document_free           — release the document handle
+ *   4. aozora_document_diagnostics_text — plain-text diagnostics
+ *   5. aozora_bytes_free              — release returned buffers
+ *   6. aozora_document_free           — release the document handle
  *
  * It also checks the input-size guard: a src_len greater than
  * UINT32_MAX must return SOURCE_TOO_LARGE (-5) instead of driving the
@@ -47,6 +48,8 @@ extern int32_t aozora_document_to_html(const AozoraDocument *doc,
                                         AozoraBytes *out_html);
 extern int32_t aozora_document_diagnostics_json(const AozoraDocument *doc,
                                                  AozoraBytes *out_json);
+extern int32_t aozora_document_diagnostics_text(const AozoraDocument *doc,
+                                                 AozoraBytes *out_text);
 extern void aozora_document_free(AozoraDocument *doc);
 extern void aozora_bytes_free(AozoraBytes bytes);
 
@@ -126,6 +129,21 @@ int main(void) {
                       strstr(pua_diag_str, "source_contains_pua") != NULL);
     free(pua_diag_str);
     aozora_bytes_free(pua_diag);
+
+    /* 6b. plain-text diagnostics — the miette-free portable render.
+     *     The same PUA diagnostic must surface in human text, carrying
+     *     its `aozora::` code. A clean parse would yield zero bytes. */
+    AozoraBytes pua_text = {NULL, 0, 0};
+    status = aozora_document_diagnostics_text(pua_doc, &pua_text);
+    failures += check("aozora_document_diagnostics_text returns Ok", status == 0);
+    failures += check("plain-text diagnostics are non-empty", pua_text.len > 0);
+    char *pua_text_str = (char *)malloc(pua_text.len + 1);
+    memcpy(pua_text_str, pua_text.ptr, pua_text.len);
+    pua_text_str[pua_text.len] = '\0';
+    failures += check("plain-text diagnostics carry the aozora:: code",
+                      strstr(pua_text_str, "aozora::") != NULL);
+    free(pua_text_str);
+    aozora_bytes_free(pua_text);
     aozora_document_free(pua_doc);
 
     /* 7. oversize input — src_len > UINT32_MAX must return

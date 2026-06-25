@@ -175,6 +175,16 @@ pub mod bindings {
             json::diagnostics(self.inner.parse().diagnostics())
         }
 
+        /// Diagnostics as a plain-text report (`miette`-free): one block
+        /// per diagnostic with its code, span, message, and the offending
+        /// source slice. A clean parse → empty string. For the
+        /// machine-readable view use `diagnosticsJson`.
+        #[wasm_bindgen(js_name = diagnosticsText)]
+        #[must_use]
+        pub fn diagnostics_text(&self) -> String {
+            aozora::diagnostics_text(self.inner.source(), self.inner.parse().diagnostics())
+        }
+
         /// Source-keyed Aozora-node spans as JSON. Each entry is
         /// `{ kind, span: { start, end } }` where `kind` is the
         /// camelCase [`aozora::Node`] discriminant

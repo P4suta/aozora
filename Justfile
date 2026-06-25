@@ -1412,12 +1412,49 @@ ci:
 # fast. `SKIP_TAGS=deep just ci-parallel` opts out of prop-deep (the
 # narrow escape hatch for an unrelated core regression). CI still runs
 # the full matrix on the PR, so it is the authoritative backstop.
+#
+# `AOZORA_CI_TIMINGS=1 just ci-parallel` prints a per-gate wall-time
+# table (slowest first) after a green run — the data-driven way to find
+# which gate to optimise (#87). Off by default so the normal push output
+# is unchanged; collection is always-on and negligible.
 ci-parallel:
     #!/usr/bin/env bash
     set -uo pipefail
     bglog() { echo "/tmp/aozora-cip-$1.log"; }
+    bgtime() { echo "/tmp/aozora-cip-$1.time"; }
     declare -A PID
-    launch() { local n="$1"; shift; "$@" > "$(bglog "$n")" 2>&1 & PID[$n]=$!; }
+    declare -A DUR
+    # `launch` backgrounds a gate; the subshell stamps its own wall time
+    # (ms) into a sidecar file so the reap step can fold a concurrent
+    # gate's duration into DUR. `run_fg` times a serial gate inline.
+    # `print_timings` (opt-in: AOZORA_CI_TIMINGS=1) renders the table.
+    launch() {
+        local n="$1"; shift
+        { __t0=$(date +%s%3N); "$@"; __r=$?; echo "$(( $(date +%s%3N) - __t0 ))" > "$(bgtime "$n")"; exit "$__r"; } > "$(bglog "$n")" 2>&1 &
+        PID[$n]=$!
+    }
+    run_fg() {
+        local g="$1"; shift
+        echo ":: [fg] $*"
+        local t0; t0=$(date +%s%3N)
+        "$@"; local rc=$?
+        DUR[$g]=$(( $(date +%s%3N) - t0 ))
+        return $rc
+    }
+    print_timings() {
+        [[ -n "${AOZORA_CI_TIMINGS:-}" ]] || return 0
+        for f in /tmp/aozora-cip-*.time; do
+            [[ -e "$f" ]] || continue
+            local b; b=$(basename "$f" .time); b=${b#aozora-cip-}
+            DUR[$b]=$(cat "$f" 2>/dev/null || echo 0)
+        done
+        echo ":: ci-parallel per-gate wall time (slowest first):"
+        for g in "${!DUR[@]}"; do printf '%s\t%s\n' "${DUR[$g]}" "$g"; done \
+            | sort -rn \
+            | while IFS=$'\t' read -r ms g; do
+                printf '   %4d.%02ds  %s\n' $((ms/1000)) $(((ms%1000)/10)) "$g"
+              done
+    }
 
     # Opt-in change-aware fast mode (#81, ADR-0007). DEFAULT is the full
     # gate — the pre-push guarantee ("ローカルで品質完全担保"). When a dev
@@ -1482,8 +1519,7 @@ ci-parallel:
     fg_failed=""
     for gate in clippy-strict clippy-wasm check drift-gate conformance coverage prop; do
         want code || { skip "$gate"; continue; }
-        echo ":: [fg] just $gate"
-        if ! just "$gate"; then fg_failed="$gate"; break; fi
+        if ! run_fg "$gate" just "$gate"; then fg_failed="$gate"; break; fi
     done
 
     # property_* binaries are now built → deep sweep reuses them (no
@@ -1499,8 +1535,7 @@ ci-parallel:
                 book-test) want book || { skip "$gate"; continue; } ;;
                 *) want code || { skip "$gate"; continue; } ;;
             esac
-            echo ":: [fg] just $gate"
-            if ! just "$gate"; then fg_failed="$gate"; break; fi
+            if ! run_fg "$gate" just "$gate"; then fg_failed="$gate"; break; fi
         done
     fi
 
@@ -1519,7 +1554,8 @@ ci-parallel:
             failed=1
         fi
     done
-    rm -f /tmp/aozora-cip-*.log
+    print_timings
+    rm -f /tmp/aozora-cip-*.log /tmp/aozora-cip-*.time
     [[ $failed -eq 0 ]] || { echo "ci-parallel: a background gate failed (see above)"; exit 1; }
     echo "ci-parallel: all gates passed ✔"
 
