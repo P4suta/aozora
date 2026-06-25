@@ -531,10 +531,10 @@ fn emit_container_open<W: Write>(open: RegionFormat, out: &mut W) -> fmt::Result
 /// Built incrementally in a fixed **canonical clause order** (wrap → center →
 /// line-layout → bold → horizontal → framed → font), independent of the source
 /// order, so the compound is a 1-pass serialize fixed point. The order and
-/// keywords mirror [`render_container_open`](crate::render) and
-/// [`BlockStyles::iter_formats`]. The `..`-free destructure means a new
-/// [`IndentBlock`] / [`BlockStyles`] field is compiler-flagged here rather than
-/// silently dropped from the marker (the §7.6 param-drop bug class).
+/// keywords mirror `render_container_open` and [`BlockStyles::iter_formats`].
+/// The `..`-free destructure means a new [`IndentBlock`] / [`BlockStyles`]
+/// field is compiler-flagged here rather than silently dropped from the marker
+/// (the §7.6 param-drop bug class).
 fn emit_indent_open<W: Write>(block: IndentBlock, out: &mut W) -> fmt::Result {
     let IndentBlock {
         amount,
