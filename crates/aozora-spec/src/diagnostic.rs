@@ -984,6 +984,47 @@ impl Diagnostic {
         }
     }
 
+    /// Rebase this diagnostic's byte range by `by` bytes.
+    ///
+    /// Translates the `span` (and the miette `at` caret, which the
+    /// constructors always derive from `span`) by `by`. Used by the
+    /// incremental re-parse engine (#237) to lift a diagnostic produced
+    /// by lexing a document *segment* — whose offsets are segment-local —
+    /// back into whole-document coordinates by adding the segment's start
+    /// offset.
+    ///
+    /// The single consolidated `|`-pattern arm relies on every variant
+    /// sharing the `{ at, span, .. }` shape; the absence of a `_` arm
+    /// means a future variant (the enum is `#[non_exhaustive]`) forces a
+    /// compile error here rather than silently skipping the rebase —
+    /// matching the [`span`](Self::span) / [`severity`](Self::severity)
+    /// accessors' exhaustive style.
+    #[must_use]
+    pub fn shifted(mut self, by: i64) -> Self {
+        let (at, span): (&mut miette::SourceSpan, &mut Span) = match &mut self {
+            Self::SourceContainsPua { at, span, .. }
+            | Self::UnclosedBracket { at, span, .. }
+            | Self::UnmatchedClose { at, span, .. }
+            | Self::AccentDecompositionApplied { at, span, .. }
+            | Self::UnresolvedGaiji { at, span, .. }
+            | Self::MismatchedContainerClose { at, span, .. }
+            | Self::EmptyRubyReading { at, span, .. }
+            | Self::NestedRuby { at, span, .. }
+            | Self::UnrecognisedContainerDirective { at, span, .. }
+            | Self::TcyTargetNotFound { at, span, .. }
+            | Self::BoutenTargetAmbiguous { at, span, .. }
+            | Self::BreakInSingleLineContainer { at, span, .. }
+            | Self::BracketedKaeritenNoPair { at, span, .. }
+            | Self::KaeritenOutsideKanbun { at, span, .. }
+            | Self::MismatchedBoutenContainer { at, span, .. }
+            | Self::Internal { at, span, .. } => (at, span),
+        };
+        *span = span.shifted(by);
+        let (offset, length) = span_to_miette_parts(*span);
+        *at = miette::SourceSpan::new(offset.into(), length);
+        self
+    }
+
     /// Stable string identifier for this diagnostic. Returns one of
     /// the constants from [`codes`] for production variants, or the
     /// `Internal` payload's [`InternalCheckCode::as_code`] for
@@ -1125,6 +1166,28 @@ mod tests {
         };
         assert_eq!(codepoint, '\u{E001}');
         assert_eq!(span, Span::new(5, 8));
+    }
+
+    #[test]
+    fn shifted_rebases_span_and_keeps_at_in_sync() {
+        let diag = Diagnostic::source_contains_pua(Span::new(5, 8), '\u{E001}');
+        let moved = diag.shifted(100);
+        assert_eq!(moved.span(), Span::new(105, 108));
+        // `at` is derived from `span`; confirm it tracks the shift so a
+        // miette render points at the rebased location.
+        let Diagnostic::SourceContainsPua { at, .. } = moved else {
+            panic!("variant must survive the shift");
+        };
+        assert_eq!(at.offset(), 105);
+        assert_eq!(at.len(), 3);
+    }
+
+    #[test]
+    fn shifted_is_additive_inverse() {
+        let diag = Diagnostic::unclosed_bracket(Span::new(40, 43), PairKind::Bracket);
+        let there_and_back = diag.clone().shifted(1000).shifted(-1000);
+        assert_eq!(there_and_back.span(), diag.span());
+        assert_eq!(there_and_back.code(), diag.code());
     }
 
     #[test]
