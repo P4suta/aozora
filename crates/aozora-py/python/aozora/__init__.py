@@ -107,6 +107,16 @@ class Document:
         """Re-emit Aozora source text from the parse tree."""
         return self._native.to_source()
 
+    def diagnostics_text(self) -> str:
+        """Diagnostics as a plain-text report (``miette``-free).
+
+        One block per diagnostic with its code, span, message, and the
+        offending source slice; a clean parse returns the empty string.
+        Use :meth:`diagnostics` for the structured list or
+        :meth:`diagnostics_json` for the raw wire envelope.
+        """
+        return self._native.diagnostics_text()
+
     # ── parsed accessors (native list[dict]) ──────────────────────────
     def diagnostics(self) -> list[dict[str, Any]]:
         """Diagnostics as a list of dicts (the parsed wire ``data`` array)."""

@@ -133,6 +133,14 @@ mod bindings {
             json::diagnostics(self.inner.parse().diagnostics())
         }
 
+        /// Diagnostics as a plain-text report (`miette`-free): one block
+        /// per diagnostic with its code, span, message, and the
+        /// offending source slice. A clean parse → empty string. For the
+        /// machine-readable view use `diagnostics_json`.
+        fn diagnostics_text(&self) -> String {
+            aozora::diagnostics_text(self.inner.source(), self.inner.parse().diagnostics())
+        }
+
         /// Source-keyed Aozora-node spans as a JSON envelope string.
         /// See [`aozora::json::nodes`] for the schema.
         fn nodes_json(&self) -> String {
