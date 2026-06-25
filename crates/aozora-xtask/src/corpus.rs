@@ -834,7 +834,7 @@ struct FileStat {
     decode_error: bool,
     panicked: bool,
     /// Indexed parallel to [`NodeKind::ALL`].
-    node_kinds: [u64; 22],
+    node_kinds: [u64; 24],
     /// Indexed parallel to [`ANN_KIND_LABELS`].
     annotation_kinds: [u64; 7],
     gaiji_total: u64,
@@ -1338,7 +1338,7 @@ fn merge(
     corpus_root: String,
     elapsed_secs: f64,
 ) -> AuditReport {
-    let mut node_kinds = [0u64; 22];
+    let mut node_kinds = [0u64; 24];
     let mut ann = [0u64; 7];
     let mut gforms = [0u64; 6];
     let mut gaiji_total = 0u64;

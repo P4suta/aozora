@@ -20,7 +20,7 @@
 use aozora_proptest::config::default_config;
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed::{Arena, Content, ForwardOrigin};
-use aozora_syntax::format::{IndentBlock, IndentLayout, LineFormat, RegionFormat};
+use aozora_syntax::format::{BlockStyles, IndentBlock, IndentLayout, LineFormat, RegionFormat};
 use aozora_syntax::{
     BoutenKind, BoutenPosition, Container, DirectiveKind, HeadingKind, HeadingStyle,
     MarginNoteKind, SectionKind,
@@ -62,6 +62,8 @@ fn xml_node_name_is_injective_over_all_variants() {
         alloc.warichu(upper, lower),
         alloc.line(LineFormat::Framed),
         alloc.page_break(),
+        alloc.body_end(),
+        alloc.forced_break(),
         alloc.section_break(SectionKind::Kaicho),
         alloc.aozora_heading(HeadingKind::Medium, HeadingStyle::Window, base),
         alloc.heading_hint(HeadingKind::Medium, HeadingStyle::SameLine, "対象"),
@@ -75,6 +77,7 @@ fn xml_node_name_is_injective_over_all_variants() {
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
             }),
         }),
     ];

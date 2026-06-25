@@ -113,6 +113,8 @@ expression: "format!(\"{nodes:#?}\")"
         Framed,
     ),
     PageBreak,
+    BodyEnd,
+    ForcedBreak,
     SectionBreak(
         Kaicho,
     ),
@@ -179,6 +181,12 @@ expression: "format!(\"{nodes:#?}\")"
                     wrap: None,
                     center: false,
                     layout: None,
+                    styles: BlockStyles {
+                        bold: false,
+                        horizontal: false,
+                        framed: false,
+                        font: None,
+                    },
                 },
             ),
         },

@@ -48,6 +48,12 @@ pub enum Node<'src> {
     PageBreak,
     /// Section break — `［＃改丁／改段／改見開き］`.
     SectionBreak(SectionKind),
+    /// Body-end marker (`［＃本文終わり］`) — the main body ends here; a
+    /// colophon / afterword follows. A block-level structural leaf.
+    BodyEnd,
+    /// Forced line break (`［＃改行］`) — an in-paragraph `<br />` where
+    /// auto-paragraphing would not otherwise break. An inline leaf.
+    ForcedBreak,
     /// Aozora heading (窓見出し / 副見出し). See [`Heading`].
     Heading(&'src Heading<'src>),
     /// Forward-reference heading hint (`［＃「X」は大見出し］`).
@@ -431,6 +437,7 @@ impl Node<'_> {
                 | Self::Warichu(_)
                 | Self::PageBreak
                 | Self::SectionBreak(_)
+                | Self::BodyEnd
                 | Self::Heading(_)
                 | Self::Illustration(_)
                 | Self::Container(_)
@@ -470,6 +477,8 @@ impl Node<'_> {
             Self::Warichu(_) => "aozora_warichu",
             Self::PageBreak => "aozora_page_break",
             Self::SectionBreak(_) => "aozora_section_break",
+            Self::BodyEnd => "aozora_body_end",
+            Self::ForcedBreak => "aozora_forced_break",
             Self::Heading(_) => "aozora_heading",
             Self::HeadingHint(_) => "aozora_heading_hint",
             Self::Illustration(_) => "aozora_sashie",
@@ -507,6 +516,8 @@ impl Node<'_> {
             Self::Warichu(_) => NodeKind::Warichu,
             Self::PageBreak => NodeKind::PageBreak,
             Self::SectionBreak(_) => NodeKind::SectionBreak,
+            Self::BodyEnd => NodeKind::BodyEnd,
+            Self::ForcedBreak => NodeKind::ForcedBreak,
             Self::Heading(_) => NodeKind::Heading,
             Self::HeadingHint(_) => NodeKind::HeadingHint,
             Self::Illustration(_) => NodeKind::Illustration,

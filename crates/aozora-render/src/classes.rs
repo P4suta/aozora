@@ -25,6 +25,7 @@ use aozora_syntax::{BoutenKind, BoutenPosition, HeadingKind, HeadingStyle};
 pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-align-end",
     "aozora-angle-quote",
+    "aozora-body-end",
     "aozora-bouten",
     "aozora-bouten-batsu",
     "aozora-bouten-bosen",
@@ -155,9 +156,10 @@ mod tests {
     use aozora_syntax::alloc::BorrowedAllocator;
     use aozora_syntax::borrowed::{Arena, ForwardOrigin, Node};
     use aozora_syntax::{
-        BOUTEN_KINDS, BoutenKind, BoutenPosition, ColumnCount, Container, DirectiveKind, FontShift,
-        ForwardAttr, HEADING_KINDS, HEADING_STYLES, HeadingKind, HeadingStyle, IndentBlock,
-        IndentLayout, Kumi, LineFormat, LineWidth, MarginNoteKind, RegionFormat, SECTION_KINDS,
+        BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition, ColumnCount, Container,
+        DirectiveKind, FontShift, ForwardAttr, HEADING_KINDS, HEADING_STYLES, HeadingKind,
+        HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, MarginNoteKind,
+        RegionFormat, SECTION_KINDS,
     };
     use core::num::{NonZeroI8, NonZeroU8};
     use std::collections::BTreeSet;
@@ -229,6 +231,8 @@ mod tests {
 
         // --- leaf nodes ---
         render_into(a.page_break(), &mut emitted);
+        render_into(a.body_end(), &mut emitted);
+        render_into(a.forced_break(), &mut emitted);
         render_into(a.kaeriten("一"), &mut emitted);
         render_into(a.line(LineFormat::Center { page: true }), &mut emitted);
         render_into(a.line(LineFormat::Center { page: false }), &mut emitted);
@@ -330,12 +334,14 @@ mod tests {
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
             }),
             RegionFormat::Indent(IndentBlock {
                 amount: 2,
                 wrap: Some(4),
                 center: true,
                 layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
             }),
             // #78 line-layout compounds — exercise the new line-kumi class
             // (字詰め reuses the standalone line-width class).
@@ -344,12 +350,29 @@ mod tests {
                 wrap: None,
                 center: false,
                 layout: IndentLayout::Kumi(kumi(1, 20)),
+                styles: BlockStyles::EMPTY,
             }),
             RegionFormat::Indent(IndentBlock {
                 amount: 8,
                 wrap: None,
                 center: false,
                 layout: IndentLayout::LineWidth(lw(18)),
+                styles: BlockStyles::EMPTY,
+            }),
+            // #78 co-applied style stack — exercises the flat decoration
+            // classes (futoji / yokogumi / keigakomi / font-smaller) on one
+            // indent `<div>`.
+            RegionFormat::Indent(IndentBlock {
+                amount: 4,
+                wrap: None,
+                center: false,
+                layout: IndentLayout::None,
+                styles: BlockStyles {
+                    bold: true,
+                    horizontal: true,
+                    framed: true,
+                    font: Some(FontShift(NonZeroI8::new(-1).unwrap())),
+                },
             }),
             RegionFormat::Warichu,
             RegionFormat::Framed,

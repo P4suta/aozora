@@ -471,6 +471,7 @@ fn is_standalone_block_for_render_borrowed(node: borrowed::Node<'_>) -> bool {
         node,
         borrowed::Node::PageBreak
             | borrowed::Node::SectionBreak(_)
+            | borrowed::Node::BodyEnd
             | borrowed::Node::Heading(_)
             | borrowed::Node::Illustration(_)
     )

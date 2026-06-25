@@ -93,10 +93,83 @@ pub enum IndentLayout {
     Kumi(Kumi),
 }
 
+/// Co-applied decorative styles stacked on a block-layout opener.
+///
+/// The `［＃ここから N字下げ、…］` compound lets several typographic attributes
+/// ride one indent opener and close with the single generic `字下げ終わり`
+/// (pairing is by family — the decorations never touch the close). This is the
+/// *closed* set of those decorations.
+///
+/// A struct of named fields (not a bitset, not a `Vec`) is deliberate:
+/// - `font` carries a magnitude no bit can hold (`小さい活字` = one step
+///   smaller), and a single `Option<FontShift>` makes "two conflicting sizes"
+///   and "the size flag set with no magnitude" both unrepresentable;
+/// - the three `bool`s make a duplicated attribute unrepresentable;
+/// - it stays `Copy` (a `Vec<Format>` would break the arena `Copy` chain).
+///
+/// Each field projects to the scope-independent [`Format`] identity via
+/// [`Self::iter_formats`], so render / serialize / wire reuse the existing
+/// per-[`Format`] machinery rather than re-deciding keyword/class/tag here.
+///
+/// The name is deliberately generic (not `IndentStyles`): a future block
+/// anchor can carry the same decoration set without a second rearchitecture.
+//
+// Deliberately NOT `#[non_exhaustive]` (like [`IndentLayout`]): every
+// serialize / render / pandoc / wire site destructures `{ bold, horizontal,
+// framed, font }` with no `..`, so a fifth decoration is compiler-flagged at
+// every site rather than silently defaulting to "absent" (the §7.6
+// param-drop bug class).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BlockStyles {
+    /// `ゴシック体` — co-applied bold weight (`Format::Bold`).
+    pub bold: bool,
+    /// `横書き` / `横組み` — horizontal writing (`Format::Horizontal`).
+    pub horizontal: bool,
+    /// `罫囲み` — ruled box around the block (`Format::Framed`).
+    pub framed: bool,
+    /// `小さい活字` (= `FontShift(-1)`) / `N段階…文字` — relative font shift
+    /// (`Format::FontSize`). `None` = no shift; a single `Option` forbids two
+    /// conflicting sizes.
+    pub font: Option<FontShift>,
+}
+
+impl BlockStyles {
+    /// No decorations — the overwhelmingly common plain-indent case.
+    pub const EMPTY: Self = Self {
+        bold: false,
+        horizontal: false,
+        framed: false,
+        font: None,
+    };
+
+    /// Whether no decoration is set (a plain indent that serializes byte-exact
+    /// to today's `［＃ここから N字下げ］`).
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        self == Self::EMPTY
+    }
+
+    /// Project the set to its [`Format`] identities in **canonical order**
+    /// (`bold`, `horizontal`, `framed`, `font`). Serialize, render, and the
+    /// wire `modifiers` array all consume this one order, so the canonical
+    /// emission never drifts.
+    pub fn iter_formats(self) -> impl Iterator<Item = Format> {
+        [
+            self.bold.then_some(Format::Bold),
+            self.horizontal.then_some(Format::Horizontal),
+            self.framed.then_some(Format::Framed),
+            self.font.map(Format::FontSize),
+        ]
+        .into_iter()
+        .flatten()
+    }
+}
+
 /// The block-only payload of an indent region.
 ///
-/// `wrap` / `layout` live here rather than on the single-line `Indent` so the
-/// block-only clauses cannot leak into the line scope.
+/// `wrap` / `layout` / `styles` live here rather than on the single-line
+/// `Indent` so the block-only clauses cannot leak into the line scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct IndentBlock {
@@ -104,10 +177,14 @@ pub struct IndentBlock {
     pub amount: u8,
     /// Hanging-indent continuation width: `Some(M)` for `折り返して M字下げ`.
     pub wrap: Option<u8>,
-    /// `true` for the combined `…、ページの左右中央` form (also page-centred).
+    /// `true` for the combined `…、ページの左右中央` / `…、中央揃え` form
+    /// (also page-centred).
     pub center: bool,
     /// Secondary line-layout clause; see [`IndentLayout`].
     pub layout: IndentLayout,
+    /// Co-applied decorative styles (`ゴシック体` / `横書き` / `罫囲み` /
+    /// `小さい活字`); see [`BlockStyles`].
+    pub styles: BlockStyles,
 }
 
 // ----------------------------------------------------------------------
@@ -510,6 +587,7 @@ impl RegionFormat {
             wrap: None,
             center: false,
             layout: IndentLayout::None,
+            styles: BlockStyles::EMPTY,
         }),
         Self::Warichu,
         Self::Framed,
@@ -795,6 +873,7 @@ mod tests {
                 lines: NonZeroU8::MIN,
                 width: NonZeroU8::new(20).unwrap(),
             }),
+            styles: BlockStyles::EMPTY,
         });
         assert_eq!(
             RegionClose::of(kumi),
@@ -807,6 +886,7 @@ mod tests {
             wrap: None,
             center: false,
             layout: IndentLayout::None,
+            styles: BlockStyles::EMPTY,
         });
         assert_eq!(
             RegionClose::of(plain),

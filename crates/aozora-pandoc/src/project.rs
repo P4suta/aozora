@@ -8,9 +8,10 @@
 //! block construct as documented in [`crate`].
 
 use aozora::{
-    AngleQuote, BoutenPosition, Directive, DirectiveKind, ForwardAttr, Gaiji, Heading, HeadingHint,
-    HeadingKind, HeadingStyle, Illustration, IndentBlock, IndentLayout, Kaeriten, LineFormat,
-    MarginNote, NodeRef, RegionFormat, Ruby, SectionKind, Segment, SourceNode, Span, Tree, Warichu,
+    AngleQuote, BoutenPosition, Directive, DirectiveKind, Format, ForwardAttr, Gaiji, Heading,
+    HeadingHint, HeadingKind, HeadingStyle, Illustration, IndentBlock, IndentLayout, Kaeriten,
+    LineFormat, MarginNote, NodeRef, RegionFormat, Ruby, SectionKind, Segment, SourceNode, Span,
+    Tree, Warichu,
     pipeline::lexer::sanitize,
     roman_slug,
     syntax::borrowed::{Content, ForwardFormat, ForwardOrigin, Node},
@@ -210,6 +211,8 @@ impl<'src> Converter<'src> {
             N::Kaeriten(k) => kaeriten_inline(*k),
             N::AngleQuote(d) => angle_quote_inline(*d),
             N::HeadingHint(h) => heading_hint_inline(*h),
+            // 改行 — an in-paragraph forced break (inline leaf).
+            N::ForcedBreak => Inline::LineBreak,
             // Block-leaf variants slip through here only if the
             // pipeline misclassified them; render as fallback span.
             other => Inline::Span(plain_attr(), vec![Inline::Str(format!("{other:?}"))]),
@@ -224,6 +227,15 @@ impl<'src> Converter<'src> {
         self.current_frame_mut().flush_paragraph();
         let block = match node {
             N::PageBreak => Block::HorizontalRule,
+            // 本文終わり — a distinct structural marker Div (a colophon follows).
+            N::BodyEnd => Block::Div(
+                (
+                    String::new(),
+                    vec![format!("{AOZORA_CLASS_PREFIX}body-end")],
+                    Vec::new(),
+                ),
+                Vec::new(),
+            ),
             N::SectionBreak(k) => section_break_block(k),
             N::Heading(h) => aozora_heading_block(*h),
             N::Illustration(s) => sashie_block(*s),
@@ -539,6 +551,7 @@ fn container_attr(kind: RegionFormat) -> Attr {
             wrap,
             center,
             layout,
+            styles,
         }) => {
             let mut kvs = vec![("amount".to_owned(), amount.to_string())];
             if let Some(w) = wrap {
@@ -556,6 +569,13 @@ fn container_attr(kind: RegionFormat) -> Attr {
                     kvs.push(("width".to_owned(), width.0.to_string()));
                 }
                 IndentLayout::None => {}
+            }
+            // #78 co-applied styles — a space-joined `modifiers` value (the
+            // Format identity tags, canonical order), mirroring the HTML
+            // class list. Open-ended: a new style adds a token, not a kv key.
+            let modifiers: Vec<&str> = styles.iter_formats().map(Format::as_json_tag).collect();
+            if !modifiers.is_empty() {
+                kvs.push(("modifiers".to_owned(), modifiers.join(" ")));
             }
             ("container-indent", kvs)
         }

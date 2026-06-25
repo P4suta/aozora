@@ -10,8 +10,8 @@ use aozora_syntax::borrowed::{
     Illustration, Kaeriten, MarginNote, Node, Ruby, Segment,
 };
 use aozora_syntax::{
-    Container, DirectiveKind, ForwardAttr, HeadingKind, HeadingStyle, IndentBlock, IndentLayout,
-    LineFormat, RegionFormat, RubySide,
+    BlockStyles, Container, DirectiveKind, ForwardAttr, HeadingKind, HeadingStyle, IndentBlock,
+    IndentLayout, LineFormat, RegionFormat, RubySide,
 };
 
 use crate::classes;
@@ -38,6 +38,10 @@ pub fn render<W: Write>(node: Node<'_>, entering: bool, writer: &mut W) -> fmt::
         Node::Gaiji(g) => render_gaiji(g, writer),
         Node::Line(lf) => render_line(lf, writer),
         Node::PageBreak => writer.write_str(r#"<div class="aozora-page-break"></div>"#),
+        // 本文終わり — block-level structural marker (a colophon/afterword
+        // follows). 改行 — an in-paragraph forced `<br />` (inline leaf).
+        Node::BodyEnd => writer.write_str(r#"<div class="aozora-body-end"></div>"#),
+        Node::ForcedBreak => writer.write_str("<br />"),
         Node::SectionBreak(k) => {
             // Single source of truth for the romaji slug: the spec slug
             // table, keyed by the canonical 青空文庫 keyword.
@@ -269,7 +273,16 @@ fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::R
             wrap,
             center,
             layout,
+            styles,
         }) => {
+            // Exhaustive destructure (no `..`) so a new decoration is
+            // compiler-flagged here rather than silently dropped from the markup.
+            let BlockStyles {
+                bold,
+                horizontal,
+                framed,
+                font,
+            } = styles;
             write!(
                 writer,
                 r#"<div class="aozora-container aozora-container-indent aozora-container-indent-{amount}"#,
@@ -291,6 +304,27 @@ fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::R
                 }
                 IndentLayout::None => {}
             }
+            // #78 co-applied decorative styles — flat classes on the same
+            // `<div>` (close stays a single `</div>`), reusing each
+            // attribute's standalone-container class so one stylesheet rule
+            // serves both forms. Canonical order = bold, horizontal, framed,
+            // font (matches `BlockStyles::iter_formats` / the serializer).
+            if bold {
+                writer.write_str(" aozora-container-futoji")?;
+            }
+            if horizontal {
+                writer.write_str(" aozora-container-yokogumi")?;
+            }
+            if framed {
+                writer.write_str(" aozora-container-keigakomi")?;
+            }
+            if let Some(shift) = font {
+                writer.write_str(if shift.larger() {
+                    " aozora-container-font-larger"
+                } else {
+                    " aozora-container-font-smaller"
+                })?;
+            }
             write!(writer, r#"" data-amount="{amount}""#)?;
             if let Some(w) = wrap {
                 write!(writer, r#" data-wrap="{w}""#)?;
@@ -307,6 +341,9 @@ fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::R
                     write!(writer, r#" data-width="{}""#, width.0)?;
                 }
                 IndentLayout::None => {}
+            }
+            if let Some(shift) = font {
+                write!(writer, r#" data-steps="{}""#, shift.magnitude())?;
             }
             writer.write_str(">")
         }
@@ -868,6 +905,7 @@ mod tests {
                 wrap: Some(4),
                 center: false,
                 layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
             }),
         });
         let mut open = String::new();
@@ -942,6 +980,7 @@ mod tests {
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
             }),
         });
         let mut open = String::new();
@@ -1383,6 +1422,7 @@ mod tests {
                 wrap: None,
                 center: true,
                 layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
             })),
             r#"<div class="aozora-container aozora-container-indent aozora-container-indent-2 aozora-container-center" data-amount="2">"#
         );
