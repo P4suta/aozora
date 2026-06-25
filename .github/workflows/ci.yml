@@ -299,6 +299,8 @@ jobs:
         run: cargo test -p aozora --release --test corpus_sweep -- --nocapture
       - name: Source-region tiling gate (#202)
         run: cargo test -p aozora --release --test corpus_splice_tiling -- --nocapture
+      - name: Incremental-merge gate (#237)
+        run: cargo test -p aozora --release --test corpus_incremental_merge -- --nocapture
 
   # Phase M1 — Pandoc end-to-end smoke. Builds the CLI, runs
   # `aozora pandoc input.txt --format html` against a tiny ruby
