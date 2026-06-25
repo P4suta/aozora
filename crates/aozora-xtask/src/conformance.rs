@@ -24,6 +24,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io;
 use std::mem;
 use std::path::{Path, PathBuf};
 
@@ -34,14 +35,24 @@ use serde_json::Value;
 
 use crate::ConformanceArgs;
 use crate::ConformanceOp;
+use crate::Implementation;
 
 const FIXTURE_REL: &str = "crates/aozora-conformance/fixtures/render";
 const RESULTS_REL: &str = "crates/aozora-book/src/conformance-results.json";
 const SPEC_VECTORS_REL: &str = "crates/aozora-conformance/spec-vectors/vectors";
 
+/// Per-fixture S-expression snapshot for the tree-sitter implementation,
+/// stored alongside the render goldens (`expected.html`, …).
+const TS_GOLDEN: &str = "expected.tree-sitter.txt";
+/// Published per-case pass / fail artefact for the tree-sitter run.
+const TS_RESULTS_REL: &str = "crates/aozora-book/src/conformance-results-tree-sitter.json";
+
 pub(crate) fn dispatch(args: &ConformanceArgs) -> Result<(), String> {
-    match args.op {
-        ConformanceOp::Run => run(),
+    match &args.op {
+        ConformanceOp::Run(run_args) => match run_args.implementation {
+            Implementation::Rust => run(),
+            Implementation::TreeSitter => run_tree_sitter(run_args.update),
+        },
         ConformanceOp::Vectors => run_vectors(),
     }
 }
@@ -113,9 +124,9 @@ fn workspace_root() -> Result<PathBuf, String> {
 fn run() -> Result<(), String> {
     let root = workspace_root()?;
     let cases = collect_cases(&root)?;
-    let summary = build_summary(cases);
+    let summary = build_summary(cases, "rust");
     print_summary(&summary);
-    write_results(&root, &summary)?;
+    write_results(&root, &summary, RESULTS_REL)?;
 
     let must_failed = summary.by_level.get("must").map_or(0, |s| s.failed);
     if must_failed > 0 {
@@ -175,7 +186,7 @@ fn collect_cases(root: &Path) -> Result<Vec<CaseResult>, String> {
         .collect()
 }
 
-fn build_summary(cases: Vec<CaseResult>) -> Summary {
+fn build_summary(cases: Vec<CaseResult>, implementation: &str) -> Summary {
     let mut by_level: BTreeMap<Level, LevelSummary> = BTreeMap::new();
     for case in &cases {
         let bucket = by_level.entry(case.level).or_default();
@@ -192,7 +203,7 @@ fn build_summary(cases: Vec<CaseResult>) -> Summary {
     let failed = total - passed;
 
     Summary {
-        implementation: "rust".to_owned(),
+        implementation: implementation.to_owned(),
         total,
         passed,
         failed,
@@ -212,8 +223,8 @@ fn level_slug(level: Level) -> &'static str {
     }
 }
 
-fn write_results(root: &Path, summary: &Summary) -> Result<(), String> {
-    let results_path = root.join(RESULTS_REL);
+fn write_results(root: &Path, summary: &Summary, rel: &str) -> Result<(), String> {
+    let results_path = root.join(rel);
     if let Some(parent) = results_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("create_dir_all {}: {err}", parent.display()))?;
@@ -276,6 +287,171 @@ fn print_summary(summary: &Summary) {
                 case = case.case,
                 msg = case.message.as_deref().unwrap_or("(no message)"),
             );
+        }
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// tree-sitter reference grammar
+// ────────────────────────────────────────────────────────────────────
+//
+// The buildable reference grammar is `crates/tree-sitter-aozora` (the
+// `grammars/aozora.tree-sitter/` copy is a stale duplicate). It is a
+// *syntactic skeleton* — it classifies bracket structure but cannot
+// render HTML, so the byte-equality comparison the Rust path uses does
+// not apply. Two orthogonal signals replace it:
+//
+//   1. A **per-tier pass rate** (issue #82's ask): a fixture "passes"
+//      when the grammar parses it without ERROR / MISSING nodes. This
+//      is a coverage measurement, printed per level — it never fails
+//      the gate. Constructs the grammar does not model (stateful
+//      container pairing, forward bouten, unclosed brackets) honestly
+//      count as non-passing.
+//   2. A **snapshot drift gate**: each fixture's `root.to_sexp()` is
+//      pinned to `expected.tree-sitter.txt`. `to_sexp()` carries node
+//      kinds / fields with no byte offsets, so it is deterministic and
+//      only changes when the grammar's structure changes — exactly the
+//      drift we want surfaced. ANY mismatch fails, tier-independent: a
+//      snapshot is a fingerprint, and the rust path's must/should/may
+//      leniency (which models *partial conformance*) does not apply to
+//      a fingerprint, where every change is a regression-or-intentional
+//      -update worth a human's eyes. `--update` regenerates the
+//      snapshots after an intentional grammar change.
+
+/// Parse `source` with the reference grammar, returning its
+/// S-expression and whether the parse contains any ERROR / MISSING
+/// node. `root.has_error()` already subsumes both.
+fn tree_sitter_parse(source: &str) -> Result<(String, bool), String> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_aozora::LANGUAGE.into())
+        .map_err(|err| format!("set tree-sitter language: {err}"))?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| "tree-sitter parse returned None".to_owned())?;
+    let root = tree.root_node();
+    Ok((root.to_sexp(), root.has_error()))
+}
+
+fn run_tree_sitter(update: bool) -> Result<(), String> {
+    let root = workspace_root()?;
+    let fixtures_dir = root.join(FIXTURE_REL);
+    let mut entries: Vec<_> = fs::read_dir(&fixtures_dir)
+        .map_err(|err| format!("read_dir {}: {err}", fixtures_dir.display()))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .collect();
+    entries.sort_by_key(fs::DirEntry::file_name);
+
+    // A plain sequential walk: `tree_sitter::Parser` is not shareable
+    // across rayon worker threads, and parsing 64 tiny fixtures is a
+    // sub-millisecond affair, so the rust path's `par_iter` buys nothing
+    // here.
+    let mut cases = Vec::with_capacity(entries.len());
+    let mut drifts = Vec::new();
+    let mut missing = Vec::new();
+    let mut written = 0usize;
+
+    for entry in &entries {
+        let case_dir = entry.path();
+        let case_name = case_dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| format!("non-utf8 fixture name {}", case_dir.display()))?
+            .to_owned();
+
+        let meta_path = case_dir.join("meta.toml");
+        let meta_str = fs::read_to_string(&meta_path)
+            .map_err(|err| format!("read {}: {err}", meta_path.display()))?;
+        let meta: Meta = toml::from_str(&meta_str)
+            .map_err(|err| format!("parse {}: {err}", meta_path.display()))?;
+        let level = Level::parse(&meta.level)?;
+
+        let source_path = case_dir.join("source.txt");
+        let source = fs::read_to_string(&source_path)
+            .map_err(|err| format!("read {}: {err}", source_path.display()))?;
+        let (sexp, has_error) =
+            tree_sitter_parse(&source).map_err(|err| format!("{case_name}: {err}"))?;
+
+        let golden_path = case_dir.join(TS_GOLDEN);
+        if update {
+            fs::write(&golden_path, &sexp)
+                .map_err(|err| format!("write {}: {err}", golden_path.display()))?;
+            written += 1;
+        } else {
+            match fs::read_to_string(&golden_path) {
+                Ok(golden) if golden == sexp => {}
+                Ok(_) => drifts.push(case_name.clone()),
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                    missing.push(case_name.clone());
+                }
+                Err(err) => return Err(format!("read {}: {err}", golden_path.display())),
+            }
+        }
+
+        cases.push(CaseResult {
+            case: case_name,
+            feature: meta.feature,
+            level,
+            passed: !has_error,
+            message: has_error.then(|| "grammar produced ERROR / MISSING node(s)".to_owned()),
+        });
+    }
+
+    let summary = build_summary(cases, "tree-sitter");
+    print_ts_summary(&summary, &drifts);
+
+    if update {
+        write_results(&root, &summary, TS_RESULTS_REL)?;
+        eprintln!(
+            "xtask conformance run (tree-sitter): wrote {written} snapshot(s) + results artefact"
+        );
+        return Ok(());
+    }
+
+    if !missing.is_empty() {
+        return Err(format!(
+            "conformance (tree-sitter): {n} fixture(s) missing {TS_GOLDEN} ({cases}); \
+             run `xtask conformance run --implementation tree-sitter --update` to create them",
+            n = missing.len(),
+            cases = missing.join(", "),
+        ));
+    }
+    if !drifts.is_empty() {
+        return Err(format!(
+            "conformance (tree-sitter): {n} fixture(s) drifted from {TS_GOLDEN} ({cases}); \
+             if the grammar change is intentional, run \
+             `xtask conformance run --implementation tree-sitter --update`",
+            n = drifts.len(),
+            cases = drifts.join(", "),
+        ));
+    }
+    Ok(())
+}
+
+/// Print the per-tier pass rate (coverage) and any snapshot drift (the
+/// gate). The pass rate is informational; only `drifts` fails the run.
+fn print_ts_summary(summary: &Summary, drifts: &[String]) {
+    eprintln!(
+        "xtask conformance (tree-sitter): {} / {} fixture(s) parse without ERROR nodes",
+        summary.passed, summary.total,
+    );
+    for (level, ls) in &summary.by_level {
+        eprintln!(
+            "  {level:6} {passed:3} / {total:3} clean ({uncovered} with ERROR)",
+            level = level,
+            passed = ls.passed,
+            total = ls.total,
+            uncovered = ls.failed,
+        );
+    }
+    if !drifts.is_empty() {
+        eprintln!(
+            "  DRIFT: {} fixture(s) diverge from snapshot:",
+            drifts.len()
+        );
+        for case in drifts {
+            eprintln!("    - {case}");
         }
     }
 }
@@ -590,7 +766,7 @@ mod tests {
             case(Level::Must, false),
             case(Level::Should, true),
         ];
-        let summary = build_summary(cases);
+        let summary = build_summary(cases, "rust");
         assert_eq!(summary.total, 3, "total cases");
         assert_eq!(summary.passed, 2, "passed cases");
         assert_eq!(summary.failed, 1, "failed cases");
@@ -604,7 +780,7 @@ mod tests {
             case(Level::Must, false),
             case(Level::May, true),
         ];
-        let summary = build_summary(cases);
+        let summary = build_summary(cases, "rust");
         let must = summary.by_level.get("must").expect("must bucket present");
         assert_eq!(must.total, 2, "two must cases");
         assert_eq!(must.passed, 1, "one must pass");
@@ -619,7 +795,7 @@ mod tests {
 
     #[test]
     fn build_summary_empty_is_all_zero() {
-        let summary = build_summary(Vec::new());
+        let summary = build_summary(Vec::new(), "rust");
         assert_eq!(summary.total, 0, "no cases");
         assert_eq!(summary.passed, 0, "no passes");
         assert_eq!(summary.failed, 0, "no fails");
@@ -852,5 +1028,50 @@ mod tests {
             Some("html".to_owned()),
             "html mismatch surfaces as an informative diff"
         );
+    }
+
+    #[test]
+    fn tree_sitter_parse_recognises_explicit_ruby() {
+        let (sexp, has_error) =
+            tree_sitter_parse("｜青空《あおぞら》").expect("grammar compiled in");
+        assert!(!has_error, "well-formed ruby parses without error: {sexp}");
+        assert!(
+            sexp.contains("explicit_ruby"),
+            "grammar classifies the ruby span: {sexp}"
+        );
+    }
+
+    #[test]
+    fn tree_sitter_parse_plain_text_is_clean() {
+        let (sexp, has_error) = tree_sitter_parse("こんにちは世界").expect("grammar compiled in");
+        assert!(!has_error, "plain text never errors: {sexp}");
+    }
+
+    #[test]
+    fn tree_sitter_parse_flags_unmatched_opener() {
+        // `※` opens a gaiji marker that must be followed by a `［＃…］`
+        // slug; bare text after it leaves the grammar in an error state.
+        let (sexp, has_error) = tree_sitter_parse("※ただの文字").expect("grammar compiled in");
+        assert!(
+            has_error,
+            "an unmatched gaiji opener is an honest non-pass: {sexp}"
+        );
+    }
+
+    #[test]
+    fn tree_sitter_parse_is_deterministic() {
+        let first = tree_sitter_parse("青空《あおぞら》").expect("grammar compiled in");
+        let second = tree_sitter_parse("青空《あおぞら》").expect("grammar compiled in");
+        assert_eq!(first.0, second.0, "to_sexp is stable for a fixed input");
+    }
+
+    #[test]
+    fn build_summary_labels_tree_sitter_impl() {
+        let summary = build_summary(vec![case(Level::Must, true)], "tree-sitter");
+        assert_eq!(
+            summary.implementation, "tree-sitter",
+            "implementation label threads through"
+        );
+        assert_eq!(summary.passed, 1, "the clean case counts as a pass");
     }
 }

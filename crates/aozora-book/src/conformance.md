@@ -24,7 +24,9 @@ alongside a `feature` tag (`ruby`, `bouten`, `composite`, `recovery`,
 ```sh
 just conformance               # full suite, exits non-zero on must-fail
 just render-gate               # the byte-identical render gate, K3-style
-xtask conformance run          # invoke the runner directly
+xtask conformance run          # the Rust parser, invoked directly
+xtask conformance run --implementation tree-sitter           # the reference grammar
+xtask conformance run --implementation tree-sitter --update  # refresh its snapshots
 ```
 
 A successful run also writes
@@ -58,10 +60,40 @@ after intentional output changes.
 
 ## Implementations
 
-The runner currently targets a single implementation — the Rust
-parser itself. The results.json format carries an `implementation`
-field so external runs can append their own results without
-disturbing the canonical Rust pass-rate.
+The `--implementation` flag selects what the runner measures. The
+results.json format carries an `implementation` field so each run
+publishes its own pass-rate without disturbing the others.
+
+### `rust` (default)
+
+The canonical Rust parser, held to all six axes above.
+
+### `tree-sitter`
+
+The [reference grammar](arch/grammar-tree-sitter.md)
+(`crates/tree-sitter-aozora`). The grammar is a syntactic skeleton —
+it classifies bracket structure but cannot render HTML — so the
+byte-equality axes do not apply. It is measured along two orthogonal
+signals instead:
+
+- **Per-tier pass rate.** A fixture passes when the grammar parses it
+  without ERROR / MISSING nodes. This is a coverage measurement,
+  printed per `must` / `should` / `may`. Constructs the grammar
+  deliberately does not model — stateful container pairing, forward
+  bouten resolution, unclosed brackets — honestly count as
+  non-passing.
+- **Snapshot drift gate.** Each fixture's `root.to_sexp()` is pinned to
+  `expected.tree-sitter.txt`. The S-expression carries node kinds and
+  fields with no byte offsets, so it is deterministic and changes only
+  when the grammar's structure changes. **Any** mismatch exits
+  non-zero, tier-independent: unlike the Rust path's must/should/may
+  leniency (which models *partial conformance*), a snapshot is a
+  fingerprint where every change is a regression-or-intentional-update
+  worth review. Refresh the snapshots with `--update` after an
+  intentional grammar change, and commit the diff.
+
+The drift gate runs inside `just conformance`, so it is enforced in
+both pre-push and CI.
 
 ## See also
 

@@ -20,17 +20,19 @@ name = "xtask"
 path = "src/main.rs"
 
 [dependencies]
-clap            = { workspace = true }
-aozora          = { workspace = true, features = ["schema", "json"] }
-aozora-corpus   = { workspace = true }
-aozora-encoding = { workspace = true }
-aozora-trace    = { workspace = true }
-blake3          = { workspace = true }
-rayon           = { workspace = true }
-regex           = { workspace = true }
-rustix          = { workspace = true }
-serde           = { workspace = true }
-serde_json      = { workspace = true }
-toml            = { workspace = true }
-walkdir         = { workspace = true }
-zstd            = { workspace = true }
+clap               = { workspace = true }
+aozora             = { workspace = true, features = ["schema", "json"] }
+aozora-corpus      = { workspace = true }
+aozora-encoding    = { workspace = true }
+aozora-trace       = { workspace = true }
+blake3             = { workspace = true }
+rayon              = { workspace = true }
+regex              = { workspace = true }
+rustix             = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+toml               = { workspace = true }
+tree-sitter        = "0.26"
+tree-sitter-aozora = { workspace = true }
+walkdir            = { workspace = true }
+zstd               = { workspace = true }

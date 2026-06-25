@@ -68,10 +68,14 @@ higher ceiling.
 
 - [Architecture → Concrete syntax tree](cst.md) — the rowan-backed
   in-process equivalent.
-- [Conformance suite](../conformance.md) — a future
-  `xtask conformance run --implementation tree-sitter` will run
-  the fixture set against this grammar to compute the per-tier
-  pass rate against `must` / `should` / `may`.
+- [Conformance suite](../conformance.md) —
+  `xtask conformance run --implementation tree-sitter` runs the
+  fixture set against the buildable grammar crate
+  (`crates/tree-sitter-aozora`; the `grammars/aozora.tree-sitter/`
+  copy below is a stale duplicate). It reports the per-tier
+  (`must` / `should` / `may`) pass rate — a fixture passes when the
+  grammar parses it without ERROR nodes — and gates on a per-fixture
+  S-expression snapshot so grammar drift is caught.
 - [`grammars/aozora.tree-sitter/README.md`](https://github.com/P4suta/aozora/blob/main/grammars/aozora.tree-sitter/README.md)
   — build instructions.
 
