@@ -1,0 +1,55 @@
+{
+  "name": "indent_compound_styled",
+  "meta": {
+    "feature": "layout",
+    "level": "must",
+    "spec_section": "6.6",
+    "note": "[provenance:hand-derived §6.6 + AOZORA-ANNOTATION 2026-06-25] ［＃ここからN字下げ、小さい活字］ is the compound indent with a decorative-style clause (#78): the 小さい活字 modifier serialises to the canonical font-smaller indent (data-steps=\"1\", aozora-container-font-smaller) and the redundant explicit compound closer ［＃ここで字下げ終わり、小さい活字も終わり］ folds to the generic ［＃ここで字下げ終わり］. Pairing is by the Indent family; the open payload is authoritative. Offsets from the §3 byte model."
+  },
+  "source": "本文\n［＃ここから２字下げ、小さい活字］\n字\n［＃ここで字下げ終わり、小さい活字も終わり］\n",
+  "expected": {
+    "html": "<p>本文</p>\n<div class=\"aozora-container aozora-container-indent aozora-container-indent-2 aozora-container-font-smaller\" data-amount=\"2\" data-steps=\"1\">\n<p>字</p>\n</div>",
+    "serialize": "本文\n\n［＃ここから2字下げ、小さい活字］\n\n字\n\n［＃ここで字下げ終わり］\n\n",
+    "nodes": [
+      {
+        "kind": "containerOpen",
+        "span": {
+          "start": 7,
+          "end": 58
+        }
+      },
+      {
+        "kind": "containerClose",
+        "span": {
+          "start": 63,
+          "end": 129
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 7,
+          "end": 10
+        },
+        "close": {
+          "start": 55,
+          "end": 58
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 63,
+          "end": 66
+        },
+        "close": {
+          "start": 126,
+          "end": 129
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

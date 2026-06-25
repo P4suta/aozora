@@ -52,6 +52,10 @@ pub enum NodeKind {
     PageBreak,
     /// Section break (大見出し系統合).
     SectionBreak,
+    /// 本文終わり (body-end marker) — main body ends, colophon follows.
+    BodyEnd,
+    /// 改行 (forced line break) — in-paragraph `<br />`.
+    ForcedBreak,
     /// Aozora heading (見出し).
     Heading,
     /// Heading hint that informs downstream rendering decisions.
@@ -84,7 +88,7 @@ impl NodeKind {
     /// Used by `aozora kinds` (CLI introspection) and the
     /// TypeScript / JSON-Schema codegen so the artefact list
     /// tracks the enum without a hand-maintained parallel.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 24] = [
         Self::Ruby,
         Self::Bouten,
         Self::CombineUpright,
@@ -96,6 +100,8 @@ impl NodeKind {
         Self::Framed,
         Self::PageBreak,
         Self::SectionBreak,
+        Self::BodyEnd,
+        Self::ForcedBreak,
         Self::Heading,
         Self::HeadingHint,
         Self::Illustration,
@@ -129,6 +135,8 @@ impl NodeKind {
             Self::Framed => "framed",
             Self::PageBreak => "pageBreak",
             Self::SectionBreak => "sectionBreak",
+            Self::BodyEnd => "bodyEnd",
+            Self::ForcedBreak => "forcedBreak",
             Self::Heading => "heading",
             Self::HeadingHint => "headingHint",
             Self::Illustration => "illustration",
@@ -164,6 +172,8 @@ mod tests {
         assert_eq!(NodeKind::Framed.as_json_tag(), "framed");
         assert_eq!(NodeKind::PageBreak.as_json_tag(), "pageBreak");
         assert_eq!(NodeKind::SectionBreak.as_json_tag(), "sectionBreak");
+        assert_eq!(NodeKind::BodyEnd.as_json_tag(), "bodyEnd");
+        assert_eq!(NodeKind::ForcedBreak.as_json_tag(), "forcedBreak");
         assert_eq!(NodeKind::Heading.as_json_tag(), "heading");
         assert_eq!(NodeKind::HeadingHint.as_json_tag(), "headingHint");
         assert_eq!(NodeKind::Illustration.as_json_tag(), "illustration");

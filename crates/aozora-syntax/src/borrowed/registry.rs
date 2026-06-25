@@ -228,7 +228,7 @@ impl ContainerPair {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::{IndentBlock, IndentLayout, LineFormat};
+    use crate::format::{BlockStyles, IndentBlock, IndentLayout, LineFormat};
 
     #[test]
     fn empty_registry_reports_empty() {
@@ -300,6 +300,7 @@ mod tests {
                     wrap: None,
                     center: false,
                     layout: IndentLayout::None,
+                    styles: BlockStyles::EMPTY,
                 })),
             ),
             (10u32, NodeRef::BlockOpen(RegionFormat::Framed)),

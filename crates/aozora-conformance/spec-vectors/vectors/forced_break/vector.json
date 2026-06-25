@@ -1,0 +1,37 @@
+{
+  "name": "forced_break",
+  "meta": {
+    "feature": "structural-marker",
+    "level": "must",
+    "spec_section": "6.19",
+    "note": "[provenance:hand-derived §6.19 + AOZORA-ANNOTATION 2026-06-25] ［＃改行］ is an inline structural leaf forcing an in-paragraph line break (rendered <br />); it is the bare form only, disambiguated from the 改行天付き hanging indent by longest-match. 165 occurrences. Offsets from the §3 byte model."
+  },
+  "source": "行頭［＃改行］行末。\n",
+  "expected": {
+    "html": "<p>行頭<br />行末。</p>\n",
+    "serialize": "行頭［＃改行］行末。\n",
+    "nodes": [
+      {
+        "kind": "forcedBreak",
+        "span": {
+          "start": 6,
+          "end": 21
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 18,
+          "end": 21
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

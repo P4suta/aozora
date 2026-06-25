@@ -16,8 +16,8 @@ use aozora_syntax::borrowed::{
     Illustration, Kaeriten, MarginNote, Node, NodeRef, Ruby, Segment,
 };
 use aozora_syntax::{
-    BoutenPosition, ForwardAttr, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, LineFormat,
-    RegionClose, RegionFormat, RubySide, SectionKind, is_ruby_base_char,
+    BlockStyles, BoutenPosition, ForwardAttr, HeadingKind, HeadingStyle, IndentBlock, IndentLayout,
+    LineFormat, RegionClose, RegionFormat, RubySide, SectionKind, is_ruby_base_char,
 };
 
 /// Serialize a `LexOutput` back to Aozora source text.
@@ -183,6 +183,8 @@ fn emit_aozora<W: Write>(node: Node<'_>, out: &mut TrackingWriter<W>) -> fmt::Re
         Node::AngleQuote(d) => emit_angle_quote(d, out),
         Node::MarginNote(s) => emit_side_note(s, out),
         Node::PageBreak => out.write_str("［＃改ページ］"),
+        Node::BodyEnd => out.write_str("［＃本文終わり］"),
+        Node::ForcedBreak => out.write_str("［＃改行］"),
         Node::SectionBreak(kind) => emit_section_break(kind, out),
         Node::Line(lf) => emit_line(lf, out),
         Node::Illustration(s) => emit_sashie(s, out),
@@ -524,52 +526,77 @@ fn emit_container_open<W: Write>(open: RegionFormat, out: &mut W) -> fmt::Result
     }
 }
 
-/// Serialize a `［＃ここから…字下げ…］` opener from its [`IndentBlock`]. The
-/// #78 line-layout compounds are checked first so the `..`-tolerant plain arms
-/// cannot swallow a layout-bearing indent and drop the secondary clause.
+/// Serialize a `［＃ここから…字下げ…］` opener from its [`IndentBlock`] (#78).
+///
+/// Built incrementally in a fixed **canonical clause order** (wrap → center →
+/// line-layout → bold → horizontal → framed → font), independent of the source
+/// order, so the compound is a 1-pass serialize fixed point. The order and
+/// keywords mirror `render_container_open` and [`BlockStyles::iter_formats`].
+/// The `..`-free destructure means a new [`IndentBlock`] / [`BlockStyles`]
+/// field is compiler-flagged here rather than silently dropped from the marker
+/// (the §7.6 param-drop bug class).
 fn emit_indent_open<W: Write>(block: IndentBlock, out: &mut W) -> fmt::Result {
-    match block {
-        IndentBlock {
-            amount,
-            layout: IndentLayout::Kumi(kumi),
-            ..
-        } => write!(
-            out,
-            "［＃ここから{amount}字下げ、{}行{}字組みで］",
-            kumi.lines, kumi.width
-        ),
-        IndentBlock {
-            amount,
-            layout: IndentLayout::LineWidth(width),
-            ..
-        } => write!(out, "［＃ここから{amount}字下げ、{}字詰め］", width.0),
-        IndentBlock {
-            amount,
-            wrap: Some(wrap),
-            layout: IndentLayout::None,
-            ..
-        } => write!(out, "［＃ここから{amount}字下げ、折り返して{wrap}字下げ］"),
-        // Combined 字下げ＋ページ左右中央 — an indented, page-centred block.
-        IndentBlock {
-            amount,
-            wrap: None,
-            center: true,
-            layout: IndentLayout::None,
-        } => write!(out, "［＃ここから{amount}字下げ、ページの左右中央に］"),
-        // `amount == 1` keeps the idiomatic no-number 字下げ form.
-        IndentBlock {
-            amount: 1,
-            wrap: None,
-            center: false,
-            layout: IndentLayout::None,
-        } => out.write_str("［＃ここから字下げ］"),
-        IndentBlock {
-            amount,
-            wrap: None,
-            center: false,
-            layout: IndentLayout::None,
-        } => write!(out, "［＃ここから{amount}字下げ］"),
+    let IndentBlock {
+        amount,
+        wrap,
+        center,
+        layout,
+        styles,
+    } = block;
+    let BlockStyles {
+        bold,
+        horizontal,
+        framed,
+        font,
+    } = styles;
+
+    // The idiomatic no-number `［＃ここから字下げ］` form is reserved for a bare
+    // single-char indent with no clauses; anything else takes the numbered form.
+    let bare = wrap.is_none()
+        && !center
+        && matches!(layout, IndentLayout::None)
+        && !bold
+        && !horizontal
+        && !framed
+        && font.is_none();
+    if amount == 1 && bare {
+        return out.write_str("［＃ここから字下げ］");
     }
+
+    write!(out, "［＃ここから{amount}字下げ")?;
+    if let Some(wrap) = wrap {
+        write!(out, "、折り返して{wrap}字下げ")?;
+    }
+    if center {
+        out.write_str("、ページの左右中央に")?;
+    }
+    match layout {
+        IndentLayout::Kumi(kumi) => write!(out, "、{}行{}字組みで", kumi.lines, kumi.width)?,
+        IndentLayout::LineWidth(width) => write!(out, "、{}字詰め", width.0)?,
+        IndentLayout::None => {}
+    }
+    if bold {
+        out.write_str("、ゴシック体")?;
+    }
+    if horizontal {
+        out.write_str("、横書き")?;
+    }
+    if framed {
+        out.write_str("、罫囲み")?;
+    }
+    if let Some(shift) = font {
+        // `小さい活字` is the canonical one-stage-smaller spelling (the only
+        // font compound the corpus attests); a general magnitude falls back to
+        // the `N段階…文字` form so the field stays round-trippable.
+        if shift.0.get() == -1 {
+            out.write_str("、小さい活字")?;
+        } else if shift.larger() {
+            write!(out, "、{}段階大きな文字", shift.magnitude())?;
+        } else {
+            write!(out, "、{}段階小さな文字", shift.magnitude())?;
+        }
+    }
+    out.write_str("］")
 }
 
 /// 小書き side keyword: `右` / `左`.
@@ -782,6 +809,17 @@ mod tests {
             "本文［＃太字］註［＃太字終わり］。",
             "重要［＃「重要」は太字］な点。",
             "［＃ここから斜体］\nA\n［＃ここで斜体終わり］",
+            // #78 compound indent: styles, 4-way, source-order normalisation,
+            // the explicit compound closer folding to the generic 字下げ終わり,
+            // and the unknown-clause decline (stays verbatim).
+            "［＃ここから2字下げ、小さい活字］\nA\n［＃ここで字下げ終わり、小さい活字も終わり］",
+            "［＃ここから4字下げ、横書き、中央揃え、罫囲み］\nA\n［＃ここで字下げ終わり］",
+            "［＃ここから3字下げ、ゴシック体］\nA\n［＃ここで字下げ終わり］",
+            "［＃ここから天付き、折り返して1字下げ］\nA\n［＃ここで字下げ終わり］",
+            "［＃ここから5字下げ、本文よりひとまわり大きい太ゴシック体］\nA\n［＃ここで字下げ終わり］",
+            // #78 structural leaf markers.
+            "行頭［＃改行］行末",
+            "本編［＃本文終わり］",
         ];
         for src in inputs {
             let first = ser(src);

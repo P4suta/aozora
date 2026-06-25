@@ -380,6 +380,18 @@ impl<'a> BorrowedAllocator<'a> {
         borrowed::Node::SectionBreak(k)
     }
 
+    /// `Node::BodyEnd` (`［＃本文終わり］`).
+    #[must_use]
+    pub fn body_end(&self) -> borrowed::Node<'a> {
+        borrowed::Node::BodyEnd
+    }
+
+    /// `Node::ForcedBreak` (`［＃改行］`).
+    #[must_use]
+    pub fn forced_break(&self) -> borrowed::Node<'a> {
+        borrowed::Node::ForcedBreak
+    }
+
     /// `Node::Heading(Heading { kind, style, text })`.
     ///
     /// `text` carries the [`borrowed::NonEmpty`] invariant.
@@ -546,7 +558,9 @@ mod tests {
 
     use super::*;
     use crate::borrowed;
-    use crate::format::{ForwardAttr, IndentBlock, IndentLayout, LineFormat, RegionFormat};
+    use crate::format::{
+        BlockStyles, ForwardAttr, IndentBlock, IndentLayout, LineFormat, RegionFormat,
+    };
     use crate::{
         BoutenKind, BoutenPosition, Container, DirectiveKind, HeadingKind, HeadingStyle,
         SectionKind,
@@ -849,6 +863,7 @@ mod tests {
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
             }),
         };
         let n = a.container(c);

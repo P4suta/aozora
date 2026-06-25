@@ -95,6 +95,10 @@ pub enum RegionRole {
     PageBreak,
     /// Section break (`［＃改丁／改段／改見開き］`).
     SectionBreak,
+    /// Body-end marker (`［＃本文終わり］`) — a self-contained structural leaf.
+    BodyEnd,
+    /// Forced line break (`［＃改行］`) — a self-contained inline marker.
+    ForcedBreak,
     /// Heading promoted from a bare line above its directive — the referent
     /// line is reclaimed into the region, so it is self-contained.
     Heading,
@@ -277,6 +281,10 @@ fn classify_node_ref(node: NodeRef<'_>) -> (RegionRole, SpliceSafety) {
             Node::Line(_) => (RegionRole::Line, Direct),
             Node::PageBreak => (RegionRole::PageBreak, Direct),
             Node::SectionBreak(_) => (RegionRole::SectionBreak, Direct),
+            // Self-contained structural-marker leaves (#78) — they fully own
+            // their rendered bytes, so editing the bracket is a Direct splice.
+            Node::BodyEnd => (RegionRole::BodyEnd, Direct),
+            Node::ForcedBreak => (RegionRole::ForcedBreak, Direct),
             Node::Directive(_) => (RegionRole::Directive, Direct),
             // `Node` is `#[non_exhaustive]`; an unknown future variant is
             // declined rather than assumed editable.

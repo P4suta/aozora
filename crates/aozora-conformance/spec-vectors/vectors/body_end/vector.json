@@ -1,0 +1,37 @@
+{
+  "name": "body_end",
+  "meta": {
+    "feature": "structural-marker",
+    "level": "must",
+    "spec_section": "6.19",
+    "note": "[provenance:hand-derived §6.19 + AOZORA-ANNOTATION 2026-06-25] ［＃本文終わり］ is a block-level structural leaf marking the end of the main body (a colophon/afterword follows); it renders as the empty aozora-body-end div between paragraphs and round-trips unchanged. The #1 unrecognised body before #78 (242 occurrences). Offsets from the §3 byte model."
+  },
+  "source": "第一章\n本文。\n［＃本文終わり］\n奥付。\n",
+  "expected": {
+    "html": "<p>第一章<br />\n本文。</p>\n<div class=\"aozora-body-end\"></div>\n<p>奥付。</p>\n",
+    "serialize": "第一章\n本文。\n\n［＃本文終わり］\n\n奥付。\n",
+    "nodes": [
+      {
+        "kind": "bodyEnd",
+        "span": {
+          "start": 20,
+          "end": 44
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 20,
+          "end": 23
+        },
+        "close": {
+          "start": 41,
+          "end": 44
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

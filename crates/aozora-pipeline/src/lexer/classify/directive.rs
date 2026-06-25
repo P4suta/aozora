@@ -18,8 +18,8 @@ use core::num::{NonZeroI8, NonZeroU8};
 use aozora_syntax::alloc::BorrowedAllocator;
 use aozora_syntax::borrowed;
 use aozora_syntax::{
-    BOUTEN_KINDS, BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, FontShift, HeadingKind,
-    HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, RegionClose,
+    BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, FontShift,
+    HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, RegionClose,
     RegionFormat, SectionKind,
 };
 
@@ -41,6 +41,8 @@ struct BodyPattern {
 enum BodyFamily {
     // === Exact-match (body must equal needle) ===
     PageBreak,
+    BodyEnd,     // 本文終わり
+    ForcedBreak, // 改行
     SectionKaicho,
     SectionKaidan,
     SectionKaimihiraki,
@@ -136,6 +138,8 @@ enum MatchMode {
 const fn body_family_mode(family: BodyFamily) -> MatchMode {
     match family {
         BodyFamily::PageBreak
+        | BodyFamily::BodyEnd
+        | BodyFamily::ForcedBreak
         | BodyFamily::SectionKaicho
         | BodyFamily::SectionKaidan
         | BodyFamily::SectionKaimihiraki
@@ -147,7 +151,6 @@ const fn body_family_mode(family: BodyFamily) -> MatchMode {
         | BodyFamily::WarichuBlockEnd
         | BodyFamily::IndentBlock1
         | BodyFamily::AlignEndBlock0
-        | BodyFamily::IndentBlockEnd
         | BodyFamily::AlignEndBlockEnd
         | BodyFamily::LineWidthBlockEnd
         | BodyFamily::TableBlockOpen
@@ -164,6 +167,7 @@ const fn body_family_mode(family: BodyFamily) -> MatchMode {
         | BodyFamily::SashiePrefix
         | BodyFamily::IndentBlockParamPrefix
         | BodyFamily::AlignEndBlockParamPrefix
+        | BodyFamily::IndentBlockEnd
         | BodyFamily::IndentKumiBlockEnd
         | BodyFamily::OkuriganaPrefix
         | BodyFamily::TopIndentPrefix
@@ -378,6 +382,18 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "改見開き",
         family: BodyFamily::SectionKaimihiraki,
+    },
+    // Structural markers (#78). `改行` is an exact match: a bare `［＃改行］`
+    // forced line break. The longer `改行天付き` needle wins under
+    // LeftmostLongest for the hanging-indent form, and the Exact mode rejects
+    // any `改行X` tail, so only the bare body reaches `ForcedBreak`.
+    BodyPattern {
+        needle: "本文終わり",
+        family: BodyFamily::BodyEnd,
+    },
+    BodyPattern {
+        needle: "改行",
+        family: BodyFamily::ForcedBreak,
     },
     // Geographic alignment.
     BodyPattern {
@@ -825,6 +841,8 @@ pub(super) fn classify_annotation_body<'a>(
     match pat.family {
         // ----- Exact-match families (must consume the entire body) -----
         BodyFamily::PageBreak => Some((EmitKind::Aozora(alloc.page_break()), None)),
+        BodyFamily::BodyEnd => Some((EmitKind::Aozora(alloc.body_end()), None)),
+        BodyFamily::ForcedBreak => Some((EmitKind::Aozora(alloc.forced_break()), None)),
         BodyFamily::SectionKaicho => Some((
             EmitKind::Aozora(alloc.section_break(SectionKind::Kaicho)),
             None,
@@ -860,6 +878,7 @@ pub(super) fn classify_annotation_body<'a>(
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
             })),
             None,
         )),
@@ -867,10 +886,19 @@ pub(super) fn classify_annotation_body<'a>(
             EmitKind::BlockOpen(RegionFormat::AlignEnd { offset: 0 }),
             None,
         )),
-        BodyFamily::IndentBlockEnd => Some((
-            EmitKind::BlockClose(RegionClose::Indent { kumi_width: None }),
-            None,
-        )),
+        BodyFamily::IndentBlockEnd => {
+            // ここで字下げ終わり, optionally with a redundant compound tail
+            // `、{style}も終わり` (e.g. `…終わり、小さい活字も終わり`, #78). The
+            // open payload is authoritative and the generic 字下げ終わり closes
+            // the whole stack, so any `、…も終わり` tail maps to the same generic
+            // close (it re-serializes to the canonical `ここで字下げ終わり`). A
+            // non-`、` tail is not this family → decline to Unknown.
+            let tail = &body[match_end..];
+            (tail.is_empty() || (tail.starts_with('、') && tail.ends_with("終わり"))).then_some((
+                EmitKind::BlockClose(RegionClose::Indent { kumi_width: None }),
+                None,
+            ))
+        }
         BodyFamily::AlignEndBlockEnd => Some((EmitKind::BlockClose(RegionClose::AlignEnd), None)),
         BodyFamily::LineWidthBlockEnd => {
             // The close marker carries no width; the open-side payload is
@@ -974,6 +1002,7 @@ pub(super) fn classify_annotation_body<'a>(
                     wrap: Some(m),
                     center: false,
                     layout: IndentLayout::None,
+                    styles: BlockStyles::EMPTY,
                 })),
                 None,
             ))
@@ -982,13 +1011,17 @@ pub(super) fn classify_annotation_body<'a>(
         BodyFamily::IndentBlockParamPrefix => {
             // body == ここから{N}字下げ; remainder = body[match_end..]
             let rest = &body[match_end..];
-            // ここから改行天付き、折り返して{M}字下げ — hanging indent whose
-            // first line is flush to the top margin (天付き = no indent) and
-            // whose wrapped continuation lines indent M. Models as the same
+            // ここから[改行]天付き、折り返して{M}字下げ — top-flush hanging
+            // indent: the first line sits at the top margin (天付き = no
+            // indent), wrapped continuation lines indent M. Models as the same
             // Indent container with amount 0 + wrap M, so it closes with the
-            // shared 字下げ終わり (pairing is by family). The corpus's single
-            // most common compound indent (top form ～折り返して１字下げ).
-            if let Some(after) = rest.strip_prefix("改行天付き、折り返して") {
+            // shared 字下げ終わり (pairing is by family). Both the `改行天付き`
+            // (corpus's most common top form) and the bare `天付き` spellings
+            // appear; accept either before the leading-digit parse below.
+            if let Some(after) = rest
+                .strip_prefix("改行天付き、折り返して")
+                .or_else(|| rest.strip_prefix("天付き、折り返して"))
+            {
                 let (m, tail2) = parse_decimal_u8_prefix(after)?;
                 return (tail2 == "字下げ").then_some((
                     EmitKind::BlockOpen(RegionFormat::Indent(IndentBlock {
@@ -996,6 +1029,7 @@ pub(super) fn classify_annotation_body<'a>(
                         wrap: Some(m),
                         center: false,
                         layout: IndentLayout::None,
+                        styles: BlockStyles::EMPTY,
                     })),
                     None,
                 ));
@@ -1008,57 +1042,22 @@ pub(super) fn classify_annotation_body<'a>(
                         wrap: None,
                         center: false,
                         layout: IndentLayout::None,
-                    })),
-                    None,
-                ))
-            } else if let Some(after) = tail.strip_prefix("字下げ、折り返して") {
-                // ここから{N}字下げ、折り返して{M}字下げ — hanging (wrap) indent:
-                // the first line indents `n`, wrapped continuation lines `m`.
-                let (m, tail2) = parse_decimal_u8_prefix(after)?;
-                (tail2 == "字下げ").then_some((
-                    EmitKind::BlockOpen(RegionFormat::Indent(IndentBlock {
-                        amount: n,
-                        wrap: Some(m),
-                        center: false,
-                        layout: IndentLayout::None,
-                    })),
-                    None,
-                ))
-            } else if matches!(
-                tail,
-                "字下げ、ページの左右中央" | "字下げ、ページの左右中央に" | "字下げ、左右中央"
-            ) {
-                // ここから{N}字下げ、ページの左右中央 — an indented block that is
-                // also page-centred. The combined opener still closes with the
-                // shared 字下げ終わり (pairing is by family).
-                Some((
-                    EmitKind::BlockOpen(RegionFormat::Indent(IndentBlock {
-                        amount: n,
-                        wrap: None,
-                        center: true,
-                        layout: IndentLayout::None,
+                        styles: BlockStyles::EMPTY,
                     })),
                     None,
                 ))
             } else if let Some(after) = tail.strip_prefix("字下げ、") {
-                // ここから{N}字下げ、… line-layout compound (#78): an indented
-                // block that also constrains the line layout. Two corpus forms:
-                //   ・{W}字詰め         → LineWidth (generic 字下げ終わり closer)
-                //   ・{L}行{W}字組み[で] → Kumi (compound 字下げ、W字組み終わり closer)
-                // Checked after the 折り返して / 中央 compounds (which also start
-                // `字下げ、`) so those keep precedence; declines (→ Unknown) for
-                // any other `字下げ、X` (e.g. PR2's 小さい活字 / ゴシック体).
-                parse_indent_line_layout(after).map(|layout| {
-                    (
-                        EmitKind::BlockOpen(RegionFormat::Indent(IndentBlock {
-                            amount: n,
-                            wrap: None,
-                            center: false,
-                            layout,
-                        })),
-                        None,
-                    )
-                })
+                // ここから{N}字下げ、… compound (#78): the indent opener carries
+                // a trailing `、`-separated stack of clauses — `折り返して{M}字下げ`
+                // (wrap), `ページの左右中央`/`中央揃え` (center), `{W}字詰め` /
+                // `{L}行{W}字組み[で]` (line layout), and the decorative styles
+                // `ゴシック体` / `小さい活字` / `横書き` / `罫囲み`. Resolved as a
+                // set in canonical-order-independent fashion; the whole compound
+                // is declined to a generic Unknown if ANY clause is unrecognised
+                // (lossless — e.g. `横組み右揃えで`, `数式`, embedded `「」は返り点`).
+                // All forms still close with the shared 字下げ終わり (by family).
+                parse_indent_compound(n, after)
+                    .map(|block| (EmitKind::BlockOpen(RegionFormat::Indent(block)), None))
             } else if tail == "字詰め" {
                 // ここから{N}字詰め — line-width container (字詰め): N
                 // full-width characters per line. Shares the `ここから`
@@ -1465,6 +1464,75 @@ fn font_size_block_open_steps(tail: &str, magnitude: u8) -> Option<i8> {
 /// Returns `None` for anything else, so the bracket falls through to
 /// `Directive{Unknown}` (round-trips byte-identical) instead of being
 /// claimed in error.
+/// Parse the `、`-separated clause stack following `ここから{N}字下げ、` into a
+/// fully-resolved [`IndentBlock`] (#78 compound indent).
+///
+/// Each clause is resolved by [`resolve_indent_segment`]; the whole compound is
+/// declined (`None` → generic `Unknown`, lossless) if any clause is unknown or
+/// a clause repeats / conflicts. Clause order in the source is irrelevant — the
+/// serializer re-emits a canonical order — so the same set always round-trips.
+fn parse_indent_compound(amount: u8, after: &str) -> Option<IndentBlock> {
+    let mut block = IndentBlock {
+        amount,
+        wrap: None,
+        center: false,
+        layout: IndentLayout::None,
+        styles: BlockStyles::EMPTY,
+    };
+    for segment in after.split('、') {
+        resolve_indent_segment(segment, &mut block)?;
+    }
+    Some(block)
+}
+
+/// Fold one `字下げ、`-tail clause into `block`. Returns `None` (declining the
+/// whole compound) for an unknown clause or one that conflicts with an already
+/// resolved clause (a repeated wrap / layout / style — an ambiguous re-emission
+/// must never arise).
+fn resolve_indent_segment(segment: &str, block: &mut IndentBlock) -> Option<()> {
+    // 折り返して{M}字下げ — hanging-indent continuation width.
+    if let Some(rest) = segment.strip_prefix("折り返して") {
+        let (m, tail) = parse_decimal_u8_prefix(rest)?;
+        if tail != "字下げ" || block.wrap.is_some() {
+            return None;
+        }
+        block.wrap = Some(m);
+        return Some(());
+    }
+    // ページの左右中央[に] / 左右中央 / 中央揃え — page centring.
+    if matches!(
+        segment,
+        "ページの左右中央" | "ページの左右中央に" | "左右中央" | "中央揃え"
+    ) {
+        if block.center {
+            return None;
+        }
+        block.center = true;
+        return Some(());
+    }
+    // {W}字詰め / {L}行{W}字組み[で] — secondary line layout.
+    if let Some(layout) = parse_indent_line_layout(segment) {
+        if !matches!(block.layout, IndentLayout::None) {
+            return None;
+        }
+        block.layout = layout;
+        return Some(());
+    }
+    // Decorative styles (co-applied, close with the generic 字下げ終わり).
+    let styles = &mut block.styles;
+    match segment {
+        "ゴシック体" | "ゴチック" if !styles.bold => styles.bold = true,
+        "横書き" | "横組み" if !styles.horizontal => styles.horizontal = true,
+        "罫囲み" if !styles.framed => styles.framed = true,
+        // 小さい活字 = one stage smaller (FontShift(-1)).
+        "小さい活字" if styles.font.is_none() => {
+            styles.font = Some(FontShift(NonZeroI8::new(-1)?));
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
 fn parse_indent_line_layout(after: &str) -> Option<IndentLayout> {
     let (lead, rest) = parse_decimal_u8_prefix(after)?;
     let lead = NonZeroU8::new(lead)?; // folds the `lead >= 1` guard

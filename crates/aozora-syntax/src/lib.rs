@@ -31,8 +31,8 @@ pub mod format;
 pub mod node_kind;
 
 pub use format::{
-    ColumnCount, FontShift, Format, ForwardAttr, IndentBlock, IndentLayout, Kumi, LineFormat,
-    LineWidth, RegionClose, RegionFormat,
+    BlockStyles, ColumnCount, FontShift, Format, ForwardAttr, IndentBlock, IndentLayout, Kumi,
+    LineFormat, LineWidth, RegionClose, RegionFormat,
 };
 pub use node_kind::NodeKind;
 

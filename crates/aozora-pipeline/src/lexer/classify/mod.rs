@@ -1818,8 +1818,8 @@ mod tests {
     use super::forward::forward_attr_from_suffix;
     use super::*;
     use aozora_syntax::{
-        BoutenKind, BoutenPosition, FontShift, ForwardAttr, GaijiCanonical, IndentBlock,
-        IndentLayout, LineFormat, MenKuTen, RegionClose, RegionFormat, SectionKind,
+        BlockStyles, BoutenKind, BoutenPosition, FontShift, ForwardAttr, GaijiCanonical,
+        IndentBlock, IndentLayout, LineFormat, MenKuTen, RegionClose, RegionFormat, SectionKind,
     };
     use core::num::NonZeroI8;
 
@@ -2885,6 +2885,7 @@ mod tests {
                     wrap: Some(2),
                     center: false,
                     layout: IndentLayout::None,
+                    styles: BlockStyles::EMPTY,
                 }
             ))
         );
@@ -3103,6 +3104,7 @@ mod tests {
                 wrap: Some(2),
                 center: false,
                 layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
             })),
             "spans = {:?}",
             out.spans
@@ -4400,6 +4402,7 @@ mod tests {
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
             }))
         ));
     }
@@ -4414,6 +4417,7 @@ mod tests {
                 wrap: None,
                 center: false,
                 layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
             }))
         ));
     }
@@ -4428,6 +4432,7 @@ mod tests {
                 wrap: Some(4),
                 center: false,
                 layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
             }))
         ));
     }
@@ -4443,6 +4448,7 @@ mod tests {
                 wrap: None,
                 center: false,
                 layout: IndentLayout::Kumi(_),
+                styles: BlockStyles::EMPTY,
             }))
         ));
     }
@@ -4458,6 +4464,7 @@ mod tests {
                 wrap: None,
                 center: false,
                 layout: IndentLayout::LineWidth(_),
+                styles: BlockStyles::EMPTY,
             }))
         ));
     }
@@ -4500,17 +4507,110 @@ mod tests {
     }
 
     #[test]
-    fn indent_compound_unknown_form_declines() {
-        // PR2-deferred 字下げ、X (e.g. ゴシック体) is NOT yet a layout: it must
-        // stay Directive{Unknown}, never claimed as an Indent container.
+    fn indent_compound_style_opens_with_styles() {
+        // #78: 字下げ、ゴシック体 → Indent container carrying a co-applied
+        // `BlockStyles { bold: true }` decorative style.
         run!(out, "［＃ここから3字下げ、ゴシック体］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(s.kind, SpanKind::BlockOpen(_))),
-            "unknown 字下げ compound must not open a container: {:?}",
-            out.spans
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
+                amount: 3,
+                wrap: None,
+                center: false,
+                layout: IndentLayout::None,
+                styles: BlockStyles {
+                    bold: true,
+                    horizontal: false,
+                    framed: false,
+                    font: None,
+                },
+            }))
+        ));
+    }
+
+    #[test]
+    fn indent_compound_four_way_resolves_every_clause() {
+        // #78: the 4-way corpus compound — center + horizontal + framed
+        // co-applied on a 4-char indent (clause order is source-driven; the
+        // serializer canonicalises it).
+        run!(out, "［＃ここから4字下げ、横書き、中央揃え、罫囲み］");
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
+                amount: 4,
+                wrap: None,
+                center: true,
+                layout: IndentLayout::None,
+                styles: BlockStyles {
+                    bold: false,
+                    horizontal: true,
+                    framed: true,
+                    font: None,
+                },
+            }))
+        ));
+    }
+
+    #[test]
+    fn indent_compound_declines_whole_on_unknown_clause() {
+        // #78 losslessness: one unknown clause declines the WHOLE compound to a
+        // generic Unknown annotation (it round-trips verbatim) rather than
+        // dropping the clause and misreading the rest.
+        run!(
+            out,
+            "［＃ここから5字下げ、本文よりひとまわり大きい太ゴシック体］"
         );
+        assert!(
+            !matches!(out.spans[0].kind, SpanKind::BlockOpen(_)),
+            "an unknown clause must NOT open an Indent container"
+        );
+        assert!(matches!(
+            aozora_node(&out.spans[0]),
+            Some(Node::Directive(d)) if d.kind == DirectiveKind::Unknown
+        ));
+    }
+
+    #[test]
+    fn body_end_and_forced_break_markers() {
+        // #78 structural leaves: 本文終わり → BodyEnd (block), 改行 → ForcedBreak
+        // (inline).
+        run!(end, "［＃本文終わり］");
+        assert!(matches!(aozora_node(&end.spans[0]), Some(Node::BodyEnd)));
+        run!(brk, "［＃改行］");
+        assert!(matches!(
+            aozora_node(&brk.spans[0]),
+            Some(Node::ForcedBreak)
+        ));
+    }
+
+    #[test]
+    fn forced_break_does_not_shadow_kaigyou_tentsuki() {
+        // `改行` is a prefix of `改行天付き`; LeftmostLongest + the Exact-mode
+        // guard keep the hanging-indent form (amount 0 + wrap) intact rather
+        // than wrongly matching a bare ForcedBreak.
+        run!(out, "［＃ここから改行天付き、折り返して1字下げ］");
+        assert!(matches!(
+            out.spans[0].kind,
+            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
+                amount: 0,
+                wrap: Some(1),
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn indent_compound_close_absorbs_redundant_tail() {
+        // #78: the explicit compound closer `字下げ終わり、Xも終わり` folds to the
+        // generic Indent close (the open payload is authoritative).
+        run!(
+            out,
+            "［＃ここから2字下げ、小さい活字］本文［＃ここで字下げ終わり、小さい活字も終わり］"
+        );
+        assert!(matches!(
+            out.spans[2].kind,
+            SpanKind::BlockClose(RegionClose::Indent { kumi_width: None })
+        ));
     }
 
     #[test]
