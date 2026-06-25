@@ -49,7 +49,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, ExitStatus};
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 mod ci;
 mod conformance;
@@ -142,12 +142,46 @@ struct ConformanceArgs {
     op: ConformanceOp,
 }
 
+#[derive(Args)]
+struct RunArgs {
+    /// Which implementation to measure conformance for.
+    #[arg(long, value_enum, default_value_t = Implementation::Rust)]
+    implementation: Implementation,
+    /// Regenerate the `tree-sitter` S-expression snapshots
+    /// (`expected.tree-sitter.txt`) and the results artefact. Use after
+    /// an intentional grammar change; no effect on the `rust`
+    /// implementation.
+    #[arg(long)]
+    update: bool,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Implementation {
+    /// The canonical Rust parser (`crates/aozora-pipeline`).
+    Rust,
+    /// The reference tree-sitter grammar (`crates/tree-sitter-aozora`).
+    #[value(name = "tree-sitter")]
+    TreeSitter,
+}
+
 #[derive(Subcommand)]
 enum ConformanceOp {
-    /// Run every fixture, write a per-case results.json under
-    /// `crates/aozora-book/src/conformance-results.json`, and
-    /// exit non-zero on any `must`-tier failure.
-    Run,
+    /// Run every fixture against the chosen `--implementation`.
+    ///
+    /// `rust` (default) is the canonical parser: it compares each
+    /// fixture's `to_html()` / `to_source()` to the committed goldens,
+    /// writes a per-case results.json under
+    /// `crates/aozora-book/src/conformance-results.json`, and exits
+    /// non-zero on any `must`-tier failure.
+    ///
+    /// `tree-sitter` runs the reference grammar
+    /// (`crates/tree-sitter-aozora`): it reports the per-tier pass rate
+    /// (a fixture "passes" when the grammar parses it without ERROR
+    /// nodes) and gates on a per-fixture S-expression snapshot
+    /// (`expected.tree-sitter.txt`). Any snapshot drift exits non-zero,
+    /// tier-independent; pass `--update` to regenerate the snapshots
+    /// after an intentional grammar change.
+    Run(RunArgs),
     /// Run the vendored specification conformance vectors
     /// (`crates/aozora-conformance/spec-vectors/`) against the parser
     /// and compare every projection in each vector's `expected`

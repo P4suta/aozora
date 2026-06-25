@@ -1,0 +1,473 @@
+{
+  "implementation": "tree-sitter",
+  "total": 64,
+  "passed": 35,
+  "failed": 29,
+  "by_level": {
+    "may": {
+      "total": 3,
+      "passed": 3,
+      "failed": 0
+    },
+    "must": {
+      "total": 23,
+      "passed": 18,
+      "failed": 5
+    },
+    "should": {
+      "total": 38,
+      "passed": 14,
+      "failed": 24
+    }
+  },
+  "cases": [
+    {
+      "case": "accent_decomposition_applied",
+      "feature": "accent",
+      "level": "may",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "align_end_container",
+      "feature": "container",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "angle_quote",
+      "feature": "angle_quote",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "annotation",
+      "feature": "annotation",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "boki",
+      "feature": "kunten",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "bold_block",
+      "feature": "emphasis",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "bold_forward",
+      "feature": "emphasis",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "bold_inline",
+      "feature": "emphasis",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "bouten",
+      "feature": "bouten",
+      "level": "must",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "bouten_black_triangle",
+      "feature": "bouten",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "bouten_chain_line",
+      "feature": "bouten",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "bouten_range",
+      "feature": "bouten",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "bouten_target_ambiguous",
+      "feature": "bouten",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "bracketed_kaeriten_no_pair",
+      "feature": "kunten",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "break_in_single_line_container",
+      "feature": "break",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "center_page",
+      "feature": "container",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "columns_container",
+      "feature": "tables_columns",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "emphasis_mixed",
+      "feature": "emphasis",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "empty_ruby_reading",
+      "feature": "ruby",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "gaiji",
+      "feature": "gaiji",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "gaiji_bare",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "gaiji_composed_seiji",
+      "feature": "gaiji",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "heading",
+      "feature": "heading",
+      "level": "must",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "heading_block",
+      "feature": "heading",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "heading_hint",
+      "feature": "heading",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "heading_paired_window",
+      "feature": "heading",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "heading_promoted",
+      "feature": "heading",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "heading_ruby_hint",
+      "feature": "heading",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "heading_same_line",
+      "feature": "heading",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "heading_window",
+      "feature": "heading",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "indent_center",
+      "feature": "container",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "indent_container",
+      "feature": "container",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "indent_line_kumi",
+      "feature": "container",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "indent_line_width_compound",
+      "feature": "container",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "italic_block",
+      "feature": "emphasis",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "italic_forward",
+      "feature": "emphasis",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "italic_inline",
+      "feature": "emphasis",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "kaeriten",
+      "feature": "kaeriten",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "kaeriten_outside_kanbun",
+      "feature": "kunten",
+      "level": "may",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "keigakomi_container",
+      "feature": "container",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "left_ruby",
+      "feature": "kunten",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "line_width_container",
+      "feature": "container",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "mismatched_bouten_container",
+      "feature": "bouten",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "mismatched_container_close",
+      "feature": "container",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "mixed_ruby_bouten",
+      "feature": "composite",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "nested_containers",
+      "feature": "composite",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "nested_ruby",
+      "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "page_break",
+      "feature": "break",
+      "level": "must",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "pageful",
+      "feature": "composite",
+      "level": "may",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "plain_text",
+      "feature": "plain",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "pua_collision",
+      "feature": "recovery",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_explicit",
+      "feature": "ruby",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_implicit",
+      "feature": "ruby",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "sashie",
+      "feature": "sashie",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "section_break",
+      "feature": "break",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "side_note_left",
+      "feature": "kunten",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "table_container",
+      "feature": "tables_columns",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "tate_chu_yoko",
+      "feature": "tcy",
+      "level": "must",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "tate_chu_yoko_found",
+      "feature": "tate_chu_yoko",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "unclosed_bracket",
+      "feature": "recovery",
+      "level": "must",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "unrecognised_container_directive",
+      "feature": "container",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "unresolved_gaiji",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "warichu_inline",
+      "feature": "warichu",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "wrap_indent",
+      "feature": "container",
+      "level": "should",
+      "passed": true,
+      "message": null
+    }
+  ]
+}

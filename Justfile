@@ -268,7 +268,7 @@ new-adr TITLE:
     sed -i -e "s/^# NNNN. TITLE_HERE/# ${n}. {{TITLE}}/" -e "s/YYYY-MM-DD/$(date +%F)/" "$f"
     echo "Created $f"
 
-# Phase O4 — WPT-style conformance runner. Two passes in one container:
+# Phase O4 — WPT-style conformance runner. Three passes in one container:
 #   1. `conformance run`     — walks aozora-conformance/fixtures/render/,
 #                              compares against the parser's own goldens,
 #                              writes a per-case results.json into the
@@ -277,9 +277,13 @@ new-adr TITLE:
 #                              (spec-vectors/, synced from the sibling
 #                              aozora-notation-spec) and holds the parser
 #                              to the SPEC's expectations.
-# Either pass exits non-zero on a `must`-tier regression.
+#   3. `--implementation tree-sitter` — replays the fixtures through the
+#                              reference grammar and gates on the per-fixture
+#                              S-expression snapshot (expected.tree-sitter.txt);
+#                              any drift exits non-zero (--update to refresh).
+# Any pass exits non-zero on a `must`-tier regression or grammar drift.
 conformance:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- conformance run && cargo run -p aozora-xtask -q -- conformance vectors'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- conformance run && cargo run -p aozora-xtask -q -- conformance vectors && cargo run -p aozora-xtask -q -- conformance run --implementation tree-sitter'
 
 # Vendor the conformance vectors from the sibling aozora-notation-spec
 # repo into spec-vectors/ (the spec is the source of truth). Host-side —
