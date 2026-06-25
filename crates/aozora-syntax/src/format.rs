@@ -114,11 +114,12 @@ pub enum IndentLayout {
 /// The name is deliberately generic (not `IndentStyles`): a future block
 /// anchor can carry the same decoration set without a second rearchitecture.
 //
-// Deliberately NOT `#[non_exhaustive]` (like [`IndentLayout`]): every
-// serialize / render / pandoc / wire site destructures `{ bold, horizontal,
-// framed, font }` with no `..`, so a fifth decoration is compiler-flagged at
-// every site rather than silently defaulting to "absent" (the §7.6
-// param-drop bug class).
+// Deliberately NOT `#[non_exhaustive]`: a fifth decoration must be
+// compiler-flagged everywhere it is consumed, never silently defaulting to
+// "absent" (the §7.6 param-drop bug class). The serialize and render sites
+// destructure `{ bold, horizontal, framed, font }` with no `..` directly; the
+// Pandoc kvs + JSON projection funnel through [`Self::iter_formats`], which
+// destructures exhaustively too — so every channel is guarded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BlockStyles {
@@ -152,14 +153,26 @@ impl BlockStyles {
 
     /// Project the set to its [`Format`] identities in **canonical order**
     /// (`bold`, `horizontal`, `framed`, `font`). Serialize, render, and the
-    /// wire `modifiers` array all consume this one order, so the canonical
-    /// emission never drifts.
+    /// Pandoc / wire `modifiers` path all consume this one order, so the
+    /// canonical emission never drifts.
+    ///
+    /// This is the **single chokepoint** the Pandoc kvs + JSON projection feed
+    /// through, so it destructures exhaustively (no `..`): a fifth decoration is
+    /// compiler-flagged here, not silently dropped from those channels —
+    /// completing the §7.6 param-drop guard the per-site destructures provide
+    /// for serialize / render.
     pub fn iter_formats(self) -> impl Iterator<Item = Format> {
+        let Self {
+            bold,
+            horizontal,
+            framed,
+            font,
+        } = self;
         [
-            self.bold.then_some(Format::Bold),
-            self.horizontal.then_some(Format::Horizontal),
-            self.framed.then_some(Format::Framed),
-            self.font.map(Format::FontSize),
+            bold.then_some(Format::Bold),
+            horizontal.then_some(Format::Horizontal),
+            framed.then_some(Format::Framed),
+            font.map(Format::FontSize),
         ]
         .into_iter()
         .flatten()
