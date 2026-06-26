@@ -1,25 +1,27 @@
-//! Per-document parse wrapper for the LSP backend.
+//! Per-document parse holder for the LSP backend.
 //!
-//! Stores the latest source text plus the diagnostics from the most
-//! recent parse, and re-derives a fresh [`Tree`] on demand
-//! when a request handler needs structural access.
+//! Stores the latest source text plus the owned output of the most recent
+//! parse, and lends borrowed [`Tree`] views on demand when a request handler
+//! needs structural access.
 //!
-//! # Why no stored `Document`
+//! # Design
 //!
-//! `aozora::Document` owns a `bumpalo::Bump` whose interior `Cell`s
-//! make it `!Sync`. The LSP backend wraps every per-document state
-//! in `Arc<DashMap<Url, OpenDocument>>`, which requires `OpenDocument: Sync`.
-//! Stashing a `Document` inside `OpenDocument` therefore cannot work
-//! across threads. Instead, [`ParseCache`] stores the latest text
-//! and re-parses with a fresh `Document` whenever a request handler
-//! needs the [`Tree`]. The corpus median document re-parses in
-//! single-digit milliseconds — well below the keystroke-perceptibility
-//! threshold — so the per-call cost is acceptable.
+//! Stage 0 of #237 made a parsed document an owned, lifetime-free
+//! [`OwnedLexOutput`] that is `Send + Sync`. [`ParseCache`] therefore retains
+//! that owned output across edits rather than only the text, and hands out
+//! cheap borrowed trees via [`Tree::view`] — no re-parse per request. The LSP
+//! backend wraps every per-document state in `Arc<DashMap<Url, OpenDocument>>`
+//! (which requires `Sync`); because the retained output is `Sync`, stashing it
+//! here is sound.
+//!
+//! Every [`ParseCache::reparse`] still performs a **full** parse: incremental
+//! re-lex/reuse lands in a later #237 PR. The win delivered here is that the
+//! per-request [`ParseCache::with_tree`] no longer re-parses from scratch.
 
-use std::ops::Range;
+use std::cmp::Ordering;
 use std::time::{Duration, Instant};
 
-use aozora::{Diagnostic, Document, SegmentedParse, Tree};
+use aozora::{Diagnostic, Document, OwnedLexOutput, Tree};
 use tracing::field::Empty as TracingEmpty;
 
 use crate::text_edit::ByteEdit;
@@ -36,9 +38,9 @@ use crate::text_edit::ByteEdit;
 /// could otherwise peg a core or exhaust memory. Real aozora-bunko
 /// prose is single-digit MiB, so 16 MiB never rejects a genuine
 /// document. Mirrors the per-paragraph `MAX_PARAGRAPH_BYTES` cap at the
-/// whole-document level; enforced in [`ParseCache::reparse`] and
-/// [`ParseCache::with_tree`], with the user-facing notice published by
-/// the backend.
+/// whole-document level; enforced in [`ParseCache::reparse`] (which stores
+/// no output for oversized text, so [`ParseCache::with_tree`] degrades to
+/// `None`), with the user-facing notice published by the backend.
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Per-call statistics emitted by [`ParseCache::reparse`] /
@@ -46,10 +48,11 @@ pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 ///
 /// The caller (typically the LSP backend's `OpenDocument`) feeds these
 /// into the per-document `Metrics` so parse latency and cache fields are
-/// observable from a third party reading the log. Under the segment cache
-/// (#237) `cache_hits` counts the segments reused from the prior parse and
-/// `cache_misses` the segments re-lexed; a full parse reports
-/// `cache_hits == 0` with `cache_misses` equal to the segment count.
+/// observable from a third party reading the log. Under the current full-parse
+/// foundation (#237 Stage B'1) every reparse re-lexes the whole document, so
+/// `cache_hits == 0` and `cache_misses == 1` for a parse that ran
+/// (`cache_misses == 0` when the parse was skipped). Incremental reuse — and
+/// non-zero `cache_hits` — returns in a later #237 PR.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReparseStats {
     pub parse_count: u64,
@@ -62,56 +65,49 @@ pub struct ReparseStats {
 
 /// Per-document state holder for the LSP backend.
 ///
-/// Keeps the latest diagnostics so the `publishDiagnostics` path can
-/// answer in O(1) without re-parsing. Reads needing the
-/// [`Tree`] (hover, inlay hints, completion) call
-/// [`Self::with_tree`], which builds a fresh [`Document`] on the
-/// stack and yields a borrowed tree to the closure.
-#[derive(Debug, Default, Clone)]
+/// Retains the owned output of the most recent parse so the
+/// `publishDiagnostics` path can answer in O(1) (the diagnostics are stored
+/// position-sorted) and so reads needing the [`Tree`] (hover, inlay hints,
+/// completion) get a cheap borrowed view via [`Self::with_tree`] without
+/// re-parsing.
+#[derive(Debug, Default)]
 pub struct ParseCache {
     /// Latest source text. Owned so reads don't have to borrow back
-    /// into the parent `OpenDocument`.
+    /// into the parent `OpenDocument`, and so the borrowed [`Tree`] view
+    /// handed out by [`Self::with_tree`] can borrow it alongside the output.
     text: String,
-    /// Diagnostics from the most recent [`Self::reparse`]. Empty
-    /// until the first parse.
-    diagnostics: Vec<Diagnostic>,
-    /// Cached segmentation of [`Self::text`] (#237). Lets
-    /// [`Self::reparse_incremental`] re-lex only the segment an edit
-    /// touched and reuse the rest. `None` until the first parse or when the
-    /// document is oversized.
-    segmentation: Option<SegmentedParse>,
+    /// Owned output of the most recent [`Self::reparse`]. `None` until the
+    /// first parse, or when the document is empty / oversized (those store no
+    /// output, so [`Self::with_tree`] degrades to `None`). Its `diagnostics`
+    /// are sorted into position order at store time so reads are byte-identical
+    /// to the previous merged-segmentation output.
+    output: Option<OwnedLexOutput>,
 }
 
 impl ParseCache {
     /// Re-parse `text` from scratch. Returns the diagnostics plus per-call
-    /// statistics (`cache_hits == 0`, all segments freshly lexed).
+    /// statistics (`cache_hits == 0` — every parse re-lexes the whole
+    /// document under the current foundation).
     pub fn reparse(&mut self, text: &str) -> (Vec<Diagnostic>, ReparseStats) {
-        self.reparse_with_edit(text, None)
+        self.reparse_full(text)
     }
 
-    /// Re-parse `text`, reusing the cached segmentation where `edits` permit
-    /// (#237). When `edits` is a single byte-range replacement that produced
-    /// `text` from the previously-cached text, only the touched segment is
-    /// re-lexed and the rest are reused — `cache_hits` then counts the reused
-    /// segments. Any other batch (zero or multiple edits) re-parses fully.
+    /// Re-parse `text` after `edits`. Under #237 Stage B'1 this performs the
+    /// same full parse as [`Self::reparse`] — incremental reuse keyed off
+    /// `edits` returns in a later PR. The `edits` argument is accepted now so
+    /// the call site and signature are stable across that change.
     ///
-    /// The result is always identical to a from-scratch parse: the underlying
-    /// [`SegmentedParse::reparse_incremental`] falls back to a full parse
-    /// whenever reuse cannot be proven safe.
+    /// The result is always identical to a from-scratch parse of `text`.
     pub fn reparse_incremental(
         &mut self,
         text: &str,
-        edits: &[ByteEdit],
+        _edits: &[ByteEdit],
     ) -> (Vec<Diagnostic>, ReparseStats) {
-        let single = match edits {
-            [edit] => Some(edit.range.clone()),
-            _ => None,
-        };
-        self.reparse_with_edit(text, single)
+        self.reparse_full(text)
     }
 
-    /// Core re-parse. `edit` is `Some(range)` to attempt incremental reuse
-    /// against the cached segmentation, or `None` for a full parse.
+    /// Core full re-parse. Stores the owned output (with diagnostics sorted
+    /// into position order) and the text, and reports per-call statistics.
     #[tracing::instrument(
         level = "debug",
         skip_all,
@@ -120,22 +116,18 @@ impl ParseCache {
             latency_us = TracingEmpty,
         ),
     )]
-    fn reparse_with_edit(
-        &mut self,
-        text: &str,
-        edit: Option<Range<usize>>,
-    ) -> (Vec<Diagnostic>, ReparseStats) {
+    fn reparse_full(&mut self, text: &str) -> (Vec<Diagnostic>, ReparseStats) {
         let started_at = Instant::now();
 
-        // Skip the O(n) parse for oversized documents (see
+        // Skip the O(n) parse for empty or oversized documents (see
         // `MAX_DOCUMENT_BYTES`). Store the text so size checks stay
-        // consistent, leave diagnostics empty — the backend publishes a
-        // single "too large" notice in their place — and report a
-        // zero-segment reparse so metrics don't count phantom work.
-        if text.len() > MAX_DOCUMENT_BYTES {
+        // consistent, store no output — the backend publishes a single
+        // "too large" notice for oversized text, and empty text has nothing
+        // to surface — and report a zero-parse reparse so metrics don't count
+        // phantom work. With no stored output, `with_tree` degrades to `None`.
+        if text.is_empty() || text.len() > MAX_DOCUMENT_BYTES {
             text.clone_into(&mut self.text);
-            self.diagnostics.clear();
-            self.segmentation = None;
+            self.output = None;
             let stats = ReparseStats {
                 parse_count: 0,
                 cache_hits: 0,
@@ -147,29 +139,25 @@ impl ParseCache {
             return (Vec::new(), stats);
         }
 
-        let (segmentation, cache_hits, cache_misses) =
-            if let (Some(range), Some(prior)) = (edit, self.segmentation.take()) {
-                let (next, outcome) = prior.reparse_incremental(text, range);
-                (next, outcome.reused_segments, outcome.relexed_segments)
-            } else {
-                let next = SegmentedParse::of(text);
-                let segments = u64::try_from(next.segment_count()).unwrap_or(u64::MAX);
-                (next, 0, segments)
-            };
+        let mut out = Document::new(text).parse_owned();
+        // `OwnedLexOutput.diagnostics` are in pipeline-stage order; the LSP
+        // surface expects them position-sorted (the prior segmentation path
+        // returned `merged_diagnostics()`, which is sorted by
+        // `(span.start, span.end)` then debug string). Sort once here at store
+        // time so every read is byte-identical and O(1).
+        out.diagnostics.sort_by(diagnostic_order);
 
-        let diagnostics = segmentation.merged_diagnostics();
-        let cache_entries_after = u64::try_from(segmentation.segment_count()).unwrap_or(u64::MAX);
+        let diagnostics = out.diagnostics.clone();
         let latency_us = duration_as_us(started_at.elapsed());
 
         text.clone_into(&mut self.text);
-        self.diagnostics.clone_from(&diagnostics);
-        self.segmentation = Some(segmentation);
+        self.output = Some(out);
 
         let stats = ReparseStats {
             parse_count: 1,
-            cache_hits,
-            cache_misses,
-            cache_entries_after,
+            cache_hits: 0,
+            cache_misses: 1,
+            cache_entries_after: 1,
             cache_bytes_estimate: u64::try_from(text.len()).unwrap_or(u64::MAX),
             latency_us,
         };
@@ -177,44 +165,43 @@ impl ParseCache {
         (diagnostics, stats)
     }
 
-    /// Borrow the most recent diagnostics. Empty until the first
-    /// successful [`Self::reparse`].
+    /// Borrow the most recent diagnostics, position-sorted. Empty until the
+    /// first successful [`Self::reparse`], and empty for empty / oversized
+    /// documents (which store no output).
     #[must_use]
     pub fn diagnostics(&self) -> &[Diagnostic] {
-        &self.diagnostics
+        self.output.as_ref().map_or(&[][..], |o| &o.diagnostics)
     }
 
-    /// Run `f` against a freshly parsed [`Tree`]. Returns the
-    /// closure's result, or `None` if no [`Self::reparse`] has been
-    /// called yet (text is empty).
+    /// Run `f` against a borrowed [`Tree`] over the most recent parse.
+    /// Returns the closure's result, or `None` when there is no stored output
+    /// — before the first [`Self::reparse`], for empty text, or for an
+    /// oversized document (see `MAX_DOCUMENT_BYTES`, which skips the parse).
     ///
-    /// The Document is built on the stack inside this call so its
-    /// `!Sync` arena does not leak into the surrounding `OpenDocument`.
-    /// Re-parse cost is paid per call; for keystroke-rate UIs the
-    /// new bumpalo pipeline absorbs this comfortably (sub-ms median
-    /// on the corpus).
+    /// Cheap: the owned output is retained, so this lends a borrowed
+    /// [`Tree::view`] without re-parsing. No `Document` is built and no parse
+    /// runs.
     pub fn with_tree<R>(&self, f: impl FnOnce(&Tree<'_>) -> R) -> Option<R> {
-        if self.text.is_empty() && self.diagnostics.is_empty() {
-            return None;
-        }
-        // Oversized documents skip semantic parsing (see `reparse`);
-        // re-parsing the whole text on every hover / completion would
-        // hang the editor. Degrade to `None` so those handlers return
-        // nothing rather than block.
-        if self.text.len() > MAX_DOCUMENT_BYTES {
-            return None;
-        }
-        let document = Document::new(self.text.as_str());
-        let tree = document.parse();
-        Some(f(&tree))
+        let output = self.output.as_ref()?;
+        Some(f(&Tree::view(&self.text, output)))
     }
 
     /// Whether any text has been parsed yet.
     #[cfg(test)]
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.text.is_empty() && self.diagnostics.is_empty()
+        self.text.is_empty() && self.output.is_none()
     }
+}
+
+/// Position order for diagnostics: by `(span.start, span.end)`, then by debug
+/// string as a stable tiebreaker. Matches the ordering the LSP surface
+/// previously received from the merged segmentation diagnostics.
+fn diagnostic_order(a: &Diagnostic, b: &Diagnostic) -> Ordering {
+    let (sa, sb) = (a.span(), b.span());
+    (sa.start, sa.end)
+        .cmp(&(sb.start, sb.end))
+        .then_with(|| format!("{a:?}").cmp(&format!("{b:?}")))
 }
 
 /// Convert a `Duration` to whole microseconds, saturating at
@@ -273,8 +260,13 @@ mod tests {
     #[test]
     fn empty_text_parses_with_no_diagnostics() {
         let mut cache = ParseCache::default();
-        let (diags, _) = cache.reparse("");
+        let (diags, stats) = cache.reparse("");
         assert!(diags.is_empty());
+        assert_eq!(stats.parse_count, 0, "empty text is not parsed");
+        assert!(
+            cache.with_tree(|_| ()).is_none(),
+            "empty text stores no output",
+        );
     }
 
     #[test]
@@ -283,7 +275,7 @@ mod tests {
         let big = "a".repeat(MAX_DOCUMENT_BYTES + 1);
         let (diags, stats) = cache.reparse(&big);
         assert!(diags.is_empty(), "oversized parse must be skipped");
-        assert_eq!(stats.parse_count, 0, "no segments parsed when oversized");
+        assert_eq!(stats.parse_count, 0, "no parse when oversized");
         assert!(
             cache.with_tree(|_| ()).is_none(),
             "with_tree must degrade to None for oversized documents",
@@ -291,30 +283,29 @@ mod tests {
     }
 
     #[test]
-    fn full_reparse_reports_segment_misses() {
+    fn full_reparse_reports_zero_hits() {
         let mut cache = ParseCache::default();
         let (_, stats) = cache.reparse("alpha\n\nbeta\n\ngamma");
-        assert_eq!(stats.cache_hits, 0, "a from-scratch parse reuses nothing");
-        assert_eq!(stats.cache_misses, 3, "three paragraphs => three segments");
-        assert_eq!(stats.cache_entries_after, 3);
+        assert_eq!(stats.cache_hits, 0, "a full parse reuses nothing");
+        assert_eq!(stats.cache_misses, 1, "one full parse");
+        assert_eq!(stats.cache_entries_after, 1);
     }
 
     #[test]
-    fn incremental_edit_reuses_segments() {
+    fn incremental_edit_still_full_parses() {
         let mut cache = ParseCache::default();
         let old = "alpha\n\nbeta\n\ngamma";
         drop(cache.reparse(old));
 
-        // Replace "beta" with "delta" — a plain edit inside the middle
-        // segment, so the two untouched segments are reused.
+        // Replace "beta" with "delta". Under B'1 this is a full parse, so
+        // `cache_hits == 0`; the diagnostics must still equal a from-scratch
+        // parse of the new text.
         let at = old.find("beta").unwrap();
         let edit = ByteEdit::new(at..at + "beta".len(), "delta".to_owned());
         let new_text = "alpha\n\ndelta\n\ngamma";
         let (diags, stats) = cache.reparse_incremental(new_text, &[edit]);
 
-        assert!(stats.cache_hits >= 2, "untouched segments reuse: {stats:?}");
-        assert_eq!(stats.cache_misses, 1, "only the edited segment re-lexes");
-        // Diagnostics must match a from-scratch parse of the new text.
+        assert_eq!(stats.cache_hits, 0, "B'1 always full-parses: {stats:?}");
         let mut fresh = ParseCache::default();
         let (want, _) = fresh.reparse(new_text);
         let as_debug = |ds: &[Diagnostic]| ds.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>();
@@ -322,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_edit_batch_falls_back_to_full() {
+    fn multi_edit_batch_full_parses() {
         let mut cache = ParseCache::default();
         drop(cache.reparse("alpha\n\nbeta\n\ngamma"));
         let edits = [
@@ -333,9 +324,7 @@ mod tests {
         assert_eq!(stats.cache_hits, 0, "a multi-edit batch re-parses fully");
     }
 
-    /// `n` blank-line-separated plain-prose paragraphs — the shape that
-    /// actually exercises segment reuse (each paragraph is its own
-    /// segment, no whole-document-scoped diagnostics).
+    /// `n` blank-line-separated plain-prose paragraphs.
     fn plain_paragraphs(n: usize) -> String {
         let mut s = String::new();
         for i in 0..n {
@@ -350,15 +339,11 @@ mod tests {
     }
 
     #[test]
-    fn large_single_edit_reuses_all_untouched_segments() {
+    fn large_single_edit_full_parses_and_matches() {
         let n = 50usize;
         let old = plain_paragraphs(n);
         let mut cache = ParseCache::default();
-        let (_, full) = cache.reparse(&old);
-        assert_eq!(
-            full.cache_entries_after, n as u64,
-            "one segment per paragraph"
-        );
+        drop(cache.reparse(&old));
 
         // Insert one plain char inside the middle paragraph's body.
         let marker = "第25段落の本文";
@@ -368,15 +353,7 @@ mod tests {
         let edit = ByteEdit::new(at..at, "ぞ".to_owned());
         let (diags, stats) = cache.reparse_incremental(&new_text, &[edit]);
 
-        assert_eq!(
-            stats.cache_misses, 1,
-            "only the edited segment re-lexes: {stats:?}"
-        );
-        assert_eq!(
-            stats.cache_hits,
-            (n - 1) as u64,
-            "every untouched segment is reused: {stats:?}",
-        );
+        assert_eq!(stats.cache_hits, 0, "B'1 always full-parses: {stats:?}");
         let mut fresh = ParseCache::default();
         let (want, _) = fresh.reparse(&new_text);
         let as_debug = |ds: &[Diagnostic]| ds.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>();
@@ -385,12 +362,8 @@ mod tests {
 
     #[test]
     fn deliberately_wrong_edit_range_still_equals_full() {
-        // The fast path is only ever *correct* because the underlying
-        // `SegmentedParse` re-verifies that the edit range actually
-        // transforms the cached text into the new text (byte-equality
-        // guard). Feed a single edit whose range does NOT describe how the
-        // new text was produced; reuse must be rejected and the result
-        // must still equal a from-scratch parse.
+        // Both paths are full parses, so the result must equal a from-scratch
+        // parse regardless of the (now-ignored) edit range.
         let mut cache = ParseCache::default();
         drop(cache.reparse("alpha\n\nbeta\n\ngamma"));
         let new_text = "alpha\n\nbeta edited\n\ngamma";
