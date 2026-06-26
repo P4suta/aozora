@@ -9,7 +9,7 @@
 //! owned `XOwned` mirror held inline (no `Box`/`Id`), so the whole cluster
 //! stays `Copy` exactly like the borrowed tree.
 
-use aozora_encoding::gaiji::{GaijiCanonical, MenKuTen};
+use aozora_encoding::gaiji::{GaijiCanonical, MenKuTen, Resolved};
 
 use crate::borrowed::{self, ForwardOrigin};
 use crate::format::{ForwardAttr, LineFormat};
@@ -108,6 +108,29 @@ impl GaijiOwned {
             canonical: GaijiCanonicalOwned::from_borrowed(g.canonical, store),
             standalone: g.standalone,
         }
+    }
+
+    /// Resolve to a concrete glyph via the canonical value. Owned mirror of
+    /// [`borrowed::Gaiji::resolve`](borrowed::Gaiji::resolve): rebuilds the
+    /// lifetime-free `GaijiCanonical` against `store` and delegates to the
+    /// single `GaijiCanonical::resolve` authority, passing [`Self::hint`] as
+    /// the resolver's description fallback. The `Resolved` result is owned
+    /// (no borrow of `store`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self.hint` / the `Unresolved` mencode `StrId` were not
+    /// produced by `store`'s interner.
+    #[must_use]
+    pub fn resolve(&self, store: &NodeStore) -> Option<Resolved> {
+        let canonical = match self.canonical {
+            GaijiCanonicalOwned::MenKuTen(m) => GaijiCanonical::MenKuTen(m),
+            GaijiCanonicalOwned::Unicode(c) => GaijiCanonical::Unicode(c),
+            GaijiCanonicalOwned::Unresolved { mencode } => GaijiCanonical::Unresolved {
+                mencode: mencode.map(|id| store.resolve_str(id)),
+            },
+        };
+        canonical.resolve(store.resolve_str(self.hint))
     }
 }
 
@@ -482,5 +505,34 @@ mod tests {
             NodeOwned::SectionBreak(SectionKind::Kaicho).kind(),
             crate::NodeKind::SectionBreak
         );
+    }
+
+    #[test]
+    fn gaiji_owned_resolve_mirrors_borrowed() {
+        // Convert a borrowed `Gaiji` to owned and confirm the on-demand glyph
+        // resolution is byte-identical across every canonical arm. Uses
+        // `GaijiCanonical::from_mencode` so the canonical values are realistic
+        // (structured Unicode / 面区点 / verbatim / absent) without hand-built
+        // `MenKuTen` internals.
+        let mut store = NodeStore::new();
+        for (hint, mencode) in [
+            ("竜", Some("U+9F8D")),         // → Unicode
+            ("熙", Some("第3水準1-14-29")), // → MenKuTen (面区点)
+            ("謎の字", Some("未知の注記")), // → Unresolved { Some }
+            ("謎", None),                   // → Unresolved { None }
+        ] {
+            let canonical = GaijiCanonical::from_mencode(mencode);
+            let g = borrowed::Gaiji {
+                hint,
+                canonical,
+                standalone: false,
+            };
+            let owned = GaijiOwned::from_borrowed(&g, &mut store);
+            assert_eq!(
+                owned.resolve(&store),
+                g.resolve(),
+                "owned gaiji resolve diverged for hint={hint:?} mencode={mencode:?}",
+            );
+        }
     }
 }

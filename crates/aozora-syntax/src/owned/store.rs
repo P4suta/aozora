@@ -118,6 +118,26 @@ impl NodeStore {
         let start = range.start as usize;
         &self.segments[start..start + range.len as usize]
     }
+
+    /// Owned mirror of [`borrowed::Content::as_plain`](crate::borrowed::Content::as_plain)
+    /// over a length-1 content run: `Some(text)` iff the run is exactly one
+    /// [`ContentOwned::Plain`]; `None` for a `Segments` run or any `len != 1`.
+    ///
+    /// Consumers that walked the borrowed `NonEmpty<Content>` payload fields
+    /// (ruby base/reading, forward-format target, …) with `.get().as_plain()`
+    /// read the owned [`ContentRange`] through this.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `range` falls outside the content pool (via
+    /// [`Self::resolve_content_range`]).
+    #[must_use]
+    pub fn content_range_as_plain(&self, range: ContentRange) -> Option<&str> {
+        match self.resolve_content_range(range) {
+            [ContentOwned::Plain(id)] => Some(self.resolve_str(*id)),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -154,5 +174,25 @@ mod tests {
             store.resolve_seg_range(seg),
             &[SegmentOwned::Text(a), SegmentOwned::Text(c)]
         );
+    }
+
+    #[test]
+    fn content_range_as_plain_mirrors_borrowed() {
+        let mut store = NodeStore::new();
+        let a = store.intern("foo");
+        let b = store.intern("bar");
+
+        // Length-1 `Plain` run → the interned text (the 99%+ majority case).
+        let plain = store.push_contents(&[ContentOwned::Plain(a)]);
+        assert_eq!(store.content_range_as_plain(plain), Some("foo"));
+
+        // A `Segments` run → `None` (mixed content, like borrowed `as_plain`).
+        let seg = store.push_segments(&[SegmentOwned::Text(a)]);
+        let mixed = store.push_contents(&[ContentOwned::Segments(seg)]);
+        assert_eq!(store.content_range_as_plain(mixed), None);
+
+        // A multi-entry run → `None` (only the length-1 fast path is plain).
+        let two = store.push_contents(&[ContentOwned::Plain(a), ContentOwned::Plain(b)]);
+        assert_eq!(store.content_range_as_plain(two), None);
     }
 }
