@@ -79,7 +79,6 @@ pub use aozora_syntax::{
 mod diagnostics_text;
 mod document;
 mod incremental_owned;
-mod segmented;
 mod splice;
 
 #[cfg(feature = "json")]
@@ -88,11 +87,6 @@ pub mod json;
 /// Plain-text diagnostic rendering (`miette`-free, every target).
 pub use diagnostics_text::diagnostics_text;
 pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
-/// Segment-cache foundation for incremental re-parse (#237): a
-/// document's safe segmentation into independently-lexable spans, plus
-/// the diagnostics-merge primitive that is byte-for-byte equivalent to a
-/// whole-document parse.
-pub use segmented::{IncrementalOutcome, SegmentedParse};
 /// Source-region ownership and minimal-diff source splicing (#202).
 pub use splice::{CoupledKind, Coupling, OwnedRegion, RegionRole, SpliceError, SpliceSafety};
 

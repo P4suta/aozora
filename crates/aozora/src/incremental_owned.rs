@@ -1,26 +1,27 @@
-//! Owned-AST incremental re-parse engine for #237 Stage B'.
+//! Owned-AST incremental re-parse engine for #237 — the sole incremental path.
 //!
-//! Stage A's [`segmented`](crate::segmented) foundation proved — over the
-//! reference corpus — *where* a document can be cut into independently-lexable
-//! spans. Stage B' carries that insight onto the owned AST: it caches the
-//! owned lex output and, on an edit, re-lexes only the minimal balanced region
-//! around the edit before splicing the owned node table.
+//! The retired Stage-A segment cache first proved — over the reference corpus —
+//! *where* a document can be cut into independently-lexable spans. This engine
+//! carries that insight onto the owned AST: it caches the owned lex output and,
+//! on an edit, re-lexes only the minimal balanced region around the edit before
+//! splicing the owned node table.
 //!
 //! This module hosts the **region finder** ([`minimal_balanced_region`]), the
 //! sanitized→normalized offset map ([`norm_offset`]), the **owned-table splice**
 //! ([`reparse_incremental_owned`]), and the shared "where is it safe to cut the
-//! document" helpers that both the Stage-A engine and this owned engine consume.
-//! The splice is the production incremental path: it is re-exported from the
-//! crate root as the **unstable** [`crate::reparse_incremental_owned`] and
-//! consumed by the LSP's debounced diagnostics (#237 Stage B'3). It is
-//! internal-unit-tested and proven byte-identical to a full re-parse by the
-//! `corpus_incremental_merge` differential gate.
+//! document" cut helpers. The splice is the production incremental path: it is
+//! re-exported from the crate root as the **unstable**
+//! [`crate::reparse_incremental_owned`] and consumed by the LSP's debounced
+//! diagnostics (#237 Stage B'3). It is internal-unit-tested and proven
+//! byte-identical to a full re-parse by the `corpus_incremental_merge`
+//! differential gate.
 //!
 //! All coordinates here are **sanitized-source** byte offsets (the space every
 //! [`OwnedLexOutput::source_span`](crate::SourceNodeOwned::source_span) and
 //! [`OwnedLexOutput::pairs`](crate::OwnedLexOutput::pairs) indexes); the
-//! raw↔sanitized bridge belongs to the later wiring PR. See the
-//! [`segmented`](crate::segmented) module doc for why the cut is subtle.
+//! raw↔sanitized bridge belongs to a later wiring PR. A cut is admitted only
+//! where the block-container depth is zero and no resolved delimiter pair
+//! straddles it — see [`structurally_safe`].
 
 use core::ops::Range;
 
@@ -62,11 +63,6 @@ pub(crate) fn carries_structure(s: &str) -> bool {
     s.bytes().any(|b| b == b'\n' || b == b'\r') || s.contains('［')
 }
 
-/// `value + delta` as `usize`, or `None` on under/overflow.
-pub(crate) fn shift_usize(value: u32, delta: i64) -> Option<usize> {
-    usize::try_from(i64::from(value) + delta).ok()
-}
-
 /// `value + delta` clamped into `u32`, or `None` on under/overflow.
 pub(crate) fn shift_u32(value: u32, delta: i64) -> Option<u32> {
     u32::try_from(i64::from(value) + delta).ok()
@@ -100,9 +96,12 @@ pub(crate) fn shift_u32(value: u32, delta: i64) -> Option<u32> {
 ///   segment re-lexed in isolation pairs its closes differently and invents a
 ///   phantom mismatch.
 ///
-/// Keep in sync with the `corpus_incremental_merge` gate's
-/// `WHOLE_DOCUMENT_SCOPED` list (the gate fails if a new divergent class
-/// appears, so completeness is enforced over the reference corpus).
+/// This is the single authority for which diagnostics the incremental splice
+/// cannot reproduce from an isolated re-lexed region; any such diagnostic in
+/// the cached or re-lexed output makes [`reparse_incremental_owned`] fall back
+/// to a full parse. The `corpus_incremental_merge` differential gate proves the
+/// splice is byte-identical to a full parse over the reference corpus, so a
+/// missing class here surfaces there as a divergence.
 pub(crate) fn is_whole_document_scoped(diagnostic: &Diagnostic) -> bool {
     matches!(
         diagnostic,
@@ -413,8 +412,9 @@ pub(crate) fn reparse_incremental_owned(
     }
 
     // 2. Edit validation — the edit must actually transform `cached.sanitized`
-    //    into `new_sanitized`, and touch no document structure. Mirrors the
-    //    robustness of `segmented::SegmentedParse::try_reuse`.
+    //    into `new_sanitized`, and touch no document structure. An incorrectly
+    //    specified edit (bytes outside `edit_old` changed) falls back to a full
+    //    parse.
     let old_source = cached.sanitized.as_str();
     if edit_old.start > edit_old.end || edit_old.end > old_source.len() {
         return None;
