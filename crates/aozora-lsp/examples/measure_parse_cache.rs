@@ -1,20 +1,21 @@
-//! One-shot wall-time measurement of the **segment-cache diagnostics**
-//! reparse (#237 A3) — distinct from `measure_incremental`, which times
-//! the tree-sitter snapshot rebuild (a different subsystem).
+//! One-shot wall-time measurement of the [`ParseCache`] reparse and the
+//! borrowed-tree access it lends (#237 Stage B'1) — distinct from
+//! `measure_incremental`, which times the tree-sitter snapshot rebuild (a
+//! different subsystem).
 //!
 //! Builds a synthetic document of `N` blank-line-separated plain-prose
-//! paragraphs. That is the shape that actually exercises segment reuse:
-//! each paragraph is its own segment and there are no
-//! whole-document-scoped diagnostics, so a plain interior edit takes the
-//! incremental fast path. (A single-`\n`-joined or gaiji-heavy document
-//! collapses to one segment / forces a full re-parse, masking the win.)
+//! paragraphs and times two things:
 //!
-//! It then compares two reparses of the same `ParseCache`:
+//! - a full [`ParseCache::reparse`] (the cost the editor pays per debounced
+//!   keystroke under the current foundation — every reparse is a full parse);
+//! - a [`ParseCache::with_tree`] call, which is now **cheap**: the owned parse
+//!   output is retained and lent as a borrowed `Tree::view`, so a request
+//!   handler reaches the tree without re-parsing.
 //!
-//! - cold — [`ParseCache::reparse`]: a full parse, every segment re-lexed.
-//! - warm — [`ParseCache::reparse_incremental`] after a single plain-char
-//!   edit inside one middle paragraph: only that segment re-lexes; the
-//!   other `N - 1` are reused.
+//! Note: under #237 Stage B'1 every reparse is a full parse, so a follow-up
+//! edit is *not* faster via segment reuse (`cache_hits == 0`). Incremental
+//! reuse — and a faster "warm" reparse — returns in a later #237 PR. The win
+//! delivered here is the cheap per-request `with_tree`.
 //!
 //! Run with:
 //! ```text
@@ -23,10 +24,10 @@
 
 use std::time::Instant;
 
-use aozora_lsp::internals::{ByteEdit, ParseCache};
+use aozora_lsp::internals::ParseCache;
 
 /// `n` blank-line-separated plain-prose paragraphs. Each is unique (the
-/// index is woven in) so an edit in the middle one is unambiguous.
+/// index is woven in).
 fn plain_paragraphs(n: usize) -> String {
     let mut s = String::new();
     for i in 0..n {
@@ -45,46 +46,29 @@ fn main() {
     let doc = plain_paragraphs(n);
     println!("synthetic doc: {n} paragraphs, {} bytes", doc.len());
 
-    // Cold: a full parse from scratch.
+    // A full parse from scratch — the per-keystroke cost.
     let mut cache = ParseCache::default();
     let t = Instant::now();
-    let (_d0, cold) = cache.reparse(&doc);
-    let cold_us = t.elapsed().as_micros();
+    let (_d0, stats) = cache.reparse(&doc);
+    let parse_us = t.elapsed().as_micros();
     println!(
-        "cold  full reparse : {cold_us:>9} µs  (segments={}, hits={}, misses={})",
-        cold.cache_entries_after, cold.cache_hits, cold.cache_misses,
+        "full reparse  : {parse_us:>9} µs  (entries={}, hits={}, misses={})",
+        stats.cache_entries_after, stats.cache_hits, stats.cache_misses,
     );
 
-    // Warm: a single plain-char edit inside the middle paragraph.
-    let marker = format!("第{}段落", n / 2);
-    let at = doc.find(&marker).expect("middle paragraph present") + marker.len();
-    let mut edited = doc.clone();
-    edited.insert(at, 'ぞ');
-    let edit = ByteEdit::new(at..at, "ぞ".to_owned());
-
+    // Per-request tree access — now cheap (borrows the retained output, no
+    // re-parse). Time a single `with_tree` call.
     let t = Instant::now();
-    let (diags, warm) = cache.reparse_incremental(&edited, &[edit]);
-    let warm_us = t.elapsed().as_micros();
+    let node_count = cache
+        .with_tree(|tree| tree.source_nodes().len())
+        .expect("populated cache lends a tree");
+    let with_tree_us = t.elapsed().as_micros();
     println!(
-        "warm  incremental  : {warm_us:>9} µs  (segments={}, hits={}, misses={})",
-        warm.cache_entries_after, warm.cache_hits, warm.cache_misses,
+        "with_tree     : {with_tree_us:>9} µs  (source_nodes={node_count}) — borrows retained output, no re-parse",
     );
 
-    // The incremental result must equal a from-scratch parse.
-    let mut fresh = ParseCache::default();
-    let (want, _) = fresh.reparse(&edited);
-    let as_debug =
-        |ds: &[aozora::Diagnostic]| ds.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>();
-    assert_eq!(
-        as_debug(&diags),
-        as_debug(&want),
-        "incremental diagnostics must equal a full parse",
+    println!(
+        "with_tree / full reparse: ~{}x cheaper",
+        parse_us / with_tree_us.max(1),
     );
-    assert_eq!(
-        warm.cache_hits,
-        u64::try_from(n - 1).expect("paragraph count fits u64"),
-        "every untouched segment reused",
-    );
-
-    println!("speedup (cold / warm): ~{}x", cold_us / warm_us.max(1));
 }

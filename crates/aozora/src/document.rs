@@ -211,7 +211,7 @@ impl Document {
     pub fn parse(&self) -> Tree<'_> {
         Tree {
             source: &self.source,
-            inner: self.parse_owned(),
+            inner: TreeInner::Owned(self.parse_owned()),
         }
     }
 
@@ -248,17 +248,51 @@ impl fmt::Debug for Document {
 /// View into a parsed Aozora document.
 ///
 /// Wraps an owned, lifetime-free [`OwnedLexOutput`] (the `'a` lifetime now
-/// tracks only the `source` borrow). Renderer methods dispatch to
-/// `aozora_render`'s owned-AST implementations; the side-table accessors
-/// return owned types (`SourceNodeOwned` / `NodeRefOwned`) whose payload text
-/// resolves through the output's `NodeStore`.
+/// tracks only the `source` borrow). The output may be **owned** by this tree
+/// (the usual [`Document::parse`] case) or **borrowed** from a longer-lived
+/// holder (via [`Tree::view`], used by caches such as the LSP `ParseCache`
+/// that retain the owned output and want tree access without re-parsing).
+/// Renderer methods dispatch to `aozora_render`'s owned-AST implementations;
+/// the side-table accessors return owned types (`SourceNodeOwned` /
+/// `NodeRefOwned`) whose payload text resolves through the output's
+/// `NodeStore`.
 #[derive(Debug)]
 pub struct Tree<'a> {
     source: &'a str,
-    inner: OwnedLexOutput,
+    inner: TreeInner<'a>,
+}
+
+/// Storage for a [`Tree`]'s parsed output: either owned outright or borrowed
+/// from a longer-lived holder. Both forms expose the same `&OwnedLexOutput`
+/// through [`Tree::inner`].
+#[derive(Debug)]
+enum TreeInner<'a> {
+    /// The tree owns its output (the [`Document::parse`] case).
+    Owned(OwnedLexOutput),
+    /// The tree borrows an output owned elsewhere (the [`Tree::view`] case).
+    Borrowed(&'a OwnedLexOutput),
 }
 
 impl<'a> Tree<'a> {
+    /// Build a [`Tree`] view that borrows an already-parsed [`OwnedLexOutput`].
+    /// Used by long-lived caches (e.g. the LSP `ParseCache`) that retain the
+    /// owned output and want tree access without re-parsing.
+    #[must_use]
+    pub fn view(source: &'a str, output: &'a OwnedLexOutput) -> Self {
+        Self {
+            source,
+            inner: TreeInner::Borrowed(output),
+        }
+    }
+
+    /// Borrow the underlying output regardless of owned/borrowed storage.
+    fn inner(&self) -> &OwnedLexOutput {
+        match &self.inner {
+            TreeInner::Owned(o) => o,
+            TreeInner::Borrowed(o) => o,
+        }
+    }
+
     /// The source text this tree was parsed from.
     #[must_use]
     pub fn source(&self) -> &'a str {
@@ -268,7 +302,7 @@ impl<'a> Tree<'a> {
     /// Diagnostics emitted during parsing.
     #[must_use]
     pub fn diagnostics(&self) -> &[Diagnostic] {
-        &self.inner.diagnostics
+        &self.inner().diagnostics
     }
 
     /// Resolved (open, close) delimiter pairs as observed by the pair stage.
@@ -284,13 +318,13 @@ impl<'a> Tree<'a> {
     /// `textDocument/documentHighlight` consume this directly.
     #[must_use]
     pub fn pairs(&self) -> &[PairLink] {
-        &self.inner.pairs
+        &self.inner().pairs
     }
 
     /// Borrow the underlying [`OwnedLexOutput`].
     #[must_use]
     pub fn lex_output(&self) -> &OwnedLexOutput {
-        &self.inner
+        self.inner()
     }
 
     /// Find the node whose source span covers `src_off` — a
@@ -307,7 +341,7 @@ impl<'a> Tree<'a> {
     /// `O(log n)` over the source-keyed side-table.
     #[must_use]
     pub fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNodeOwned> {
-        self.inner.node_at_source(src_off)
+        self.inner().node_at_source(src_off)
     }
 
     /// Find the registry entry at `normalized_off` — a byte offset into
@@ -322,7 +356,7 @@ impl<'a> Tree<'a> {
     #[deprecated(note = "use lex_output().registry.node_at() for normalized-offset lookups")]
     #[must_use]
     pub fn node_at_normalized(&self, normalized_off: NormalizedOffset) -> Option<NodeRefOwned> {
-        self.inner.registry.node_at(normalized_off)
+        self.inner().registry.node_at(normalized_off)
     }
 
     /// Borrow the source-keyed side table directly. Sorted by
@@ -343,7 +377,7 @@ impl<'a> Tree<'a> {
     /// contexts* recipe in the handbook.
     #[must_use]
     pub fn source_nodes(&self) -> &[SourceNodeOwned] {
-        &self.inner.source_nodes
+        &self.inner().source_nodes
     }
 
     /// The sanitized source buffer — the exact bytes the lexer
@@ -359,7 +393,7 @@ impl<'a> Tree<'a> {
     /// returned by [`Self::to_source_verbatim`].
     #[must_use]
     pub fn sanitized(&self) -> &str {
-        &self.inner.sanitized
+        &self.inner().sanitized
     }
 
     /// Resolved container open/close pairs in normalized coordinates.
@@ -375,19 +409,19 @@ impl<'a> Tree<'a> {
     /// PUA-rewritten text, not the original source.
     #[must_use]
     pub fn container_pairs(&self) -> &[ContainerPair] {
-        &self.inner.container_pairs
+        &self.inner().container_pairs
     }
 
     /// Render the tree to a semantic-HTML5 string.
     #[must_use]
     pub fn to_html(&self) -> String {
-        render_html_owned(&self.inner)
+        render_html_owned(self.inner())
     }
 
     /// Re-emit Aozora source text from the parsed tree.
     #[must_use]
     pub fn to_source(&self) -> String {
-        serialize_owned(&self.inner)
+        serialize_owned(self.inner())
     }
 
     /// Recover the source text **verbatim** — byte-for-byte equal to
@@ -414,7 +448,7 @@ impl<'a> Tree<'a> {
     /// that want a borrow can use [`Self::sanitized`] instead.
     #[must_use]
     pub fn to_source_verbatim(&self) -> String {
-        self.inner.sanitized.clone()
+        self.inner().sanitized.clone()
     }
 }
 

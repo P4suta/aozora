@@ -688,15 +688,14 @@ impl OpenDocument {
     /// parsed text, its diagnostics, and the `edit_version` that text
     /// reflects.
     ///
-    /// When exactly one edit accumulated in the debounce window the
-    /// untouched segments are reused (`ParseCache::reparse_incremental`);
-    /// any other batch re-parses fully. The result is always identical to
-    /// a from-scratch parse.
+    /// The accumulated edits are forwarded to
+    /// `ParseCache::reparse_incremental`, which under #237 Stage B'1 performs a
+    /// full parse regardless of the edit batch (incremental reuse returns in a
+    /// later PR). The result is always identical to a from-scratch parse.
     ///
     /// Locking is the load-bearing part: the `parse` lock is held across
     /// the whole call, so reparses are single-flight and serialise in
-    /// schedule order — the incremental fast path always sees a consistent
-    /// prior segmentation and the stored result is monotonic. The `buffer`
+    /// schedule order — the stored result is monotonic. The `buffer`
     /// lock is taken only to clone the paragraph ropes (`O(1)` each via
     /// ropey structural sharing) and drain `pending_edits`, so the edit
     /// path is never blocked by the parse itself.
@@ -817,8 +816,8 @@ mod tests {
     }
 
     #[test]
-    fn single_edit_debounce_reuses_segments_and_reports_hits() {
-        // Three blank-line-separated paragraphs => three segments.
+    fn single_edit_debounce_full_parses_and_reports_zero_hits() {
+        // Three blank-line-separated paragraphs.
         let src = "段落いち。\n\n段落に。\n\n段落さん。";
         let state = doc(src);
         // One interior edit in the middle paragraph.
@@ -829,14 +828,11 @@ mod tests {
 
         let (text, diags, _ver) = state.reparse_pending();
 
-        // Metrics: the initial parse reused nothing (3 misses); this single
-        // interior edit reused the two untouched segments.
+        // Under #237 Stage B'1 every reparse is a full parse, so no segment
+        // is ever reused and the cumulative hit total stays zero. (Incremental
+        // reuse — and a non-zero hit rate — returns in a later PR.)
         let snap = state.metrics.snapshot();
-        assert_eq!(
-            snap.cache_hit_total, 2,
-            "two untouched segments reused: {snap:?}"
-        );
-        assert!(snap.cache_hit_rate > 0.0, "hit rate is non-zero: {snap:?}");
+        assert_eq!(snap.cache_hit_total, 0, "B'1 always full-parses: {snap:?}");
         // Diagnostics identical to a from-scratch parse of the edited text.
         let mut fresh = ParseCache::default();
         let (want, _) = fresh.reparse(&text);
