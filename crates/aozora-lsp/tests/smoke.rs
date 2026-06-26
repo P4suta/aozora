@@ -31,16 +31,23 @@ fn pua_collision_produces_warning_diagnostic() {
 }
 
 #[test]
-fn implicit_ruby_reformats_via_format_edits() {
-    let src = "日本《にほん》";
+fn redundant_bar_ruby_reformats_to_bare() {
+    // Bare ruby is canonical (all-kanji base at line start, ADR 0002/0003);
+    // a redundant explicit ｜ canonicalises away to the bare form.
+    let src = "｜日本《にほん》";
     let edits = format_edits(src);
-    assert_eq!(edits.len(), 1, "non-canonical ruby should produce one edit");
-    assert!(edits[0].new_text.starts_with('｜'));
+    assert_eq!(edits.len(), 1, "a redundant ｜ should produce one edit");
+    assert!(
+        edits[0].new_text.starts_with("日本《にほん》") && !edits[0].new_text.contains('｜'),
+        "reformats to bare ruby, got {:?}",
+        edits[0].new_text,
+    );
 }
 
 #[test]
 fn canonical_ruby_reformats_to_itself() {
-    let src = "｜日本《にほん》";
+    // Bare ruby with an all-kanji base is already canonical → no edits.
+    let src = "日本《にほん》";
     assert!(format_edits(src).is_empty());
 }
 

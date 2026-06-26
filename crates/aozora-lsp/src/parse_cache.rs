@@ -184,14 +184,6 @@ impl ParseCache {
         &self.diagnostics
     }
 
-    /// Install diagnostics produced by an out-of-band parse (the
-    /// debounced background task). Replaces the prior diagnostic vector
-    /// wholesale; the caller has verified this parse matches the current
-    /// text version.
-    pub fn set_diagnostics(&mut self, diagnostics: Vec<Diagnostic>) {
-        self.diagnostics = diagnostics;
-    }
-
     /// Run `f` against a freshly parsed [`Tree`]. Returns the
     /// closure's result, or `None` if no [`Self::reparse`] has been
     /// called yet (text is empty).
@@ -339,5 +331,74 @@ mod tests {
         ];
         let (_, stats) = cache.reparse_incremental("xalpha\n\nbexyta\n\ngamma", &edits);
         assert_eq!(stats.cache_hits, 0, "a multi-edit batch re-parses fully");
+    }
+
+    /// `n` blank-line-separated plain-prose paragraphs — the shape that
+    /// actually exercises segment reuse (each paragraph is its own
+    /// segment, no whole-document-scoped diagnostics).
+    fn plain_paragraphs(n: usize) -> String {
+        let mut s = String::new();
+        for i in 0..n {
+            if i > 0 {
+                s.push_str("\n\n");
+            }
+            s.push('第');
+            s.push_str(&i.to_string());
+            s.push_str("段落の本文です。");
+        }
+        s
+    }
+
+    #[test]
+    fn large_single_edit_reuses_all_untouched_segments() {
+        let n = 50usize;
+        let old = plain_paragraphs(n);
+        let mut cache = ParseCache::default();
+        let (_, full) = cache.reparse(&old);
+        assert_eq!(
+            full.cache_entries_after, n as u64,
+            "one segment per paragraph"
+        );
+
+        // Insert one plain char inside the middle paragraph's body.
+        let marker = "第25段落の本文";
+        let at = old.find(marker).unwrap() + marker.len();
+        let mut new_text = old.clone();
+        new_text.insert(at, 'ぞ');
+        let edit = ByteEdit::new(at..at, "ぞ".to_owned());
+        let (diags, stats) = cache.reparse_incremental(&new_text, &[edit]);
+
+        assert_eq!(
+            stats.cache_misses, 1,
+            "only the edited segment re-lexes: {stats:?}"
+        );
+        assert_eq!(
+            stats.cache_hits,
+            (n - 1) as u64,
+            "every untouched segment is reused: {stats:?}",
+        );
+        let mut fresh = ParseCache::default();
+        let (want, _) = fresh.reparse(&new_text);
+        let as_debug = |ds: &[Diagnostic]| ds.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>();
+        assert_eq!(as_debug(&diags), as_debug(&want));
+    }
+
+    #[test]
+    fn deliberately_wrong_edit_range_still_equals_full() {
+        // The fast path is only ever *correct* because the underlying
+        // `SegmentedParse` re-verifies that the edit range actually
+        // transforms the cached text into the new text (byte-equality
+        // guard). Feed a single edit whose range does NOT describe how the
+        // new text was produced; reuse must be rejected and the result
+        // must still equal a from-scratch parse.
+        let mut cache = ParseCache::default();
+        drop(cache.reparse("alpha\n\nbeta\n\ngamma"));
+        let new_text = "alpha\n\nbeta edited\n\ngamma";
+        let bogus = ByteEdit::new(0..0, "zzz".to_owned());
+        let (diags, _) = cache.reparse_incremental(new_text, &[bogus]);
+        let mut fresh = ParseCache::default();
+        let (want, _) = fresh.reparse(new_text);
+        let as_debug = |ds: &[Diagnostic]| ds.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>();
+        assert_eq!(as_debug(&diags), as_debug(&want));
     }
 }

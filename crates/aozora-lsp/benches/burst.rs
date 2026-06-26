@@ -42,12 +42,30 @@ fn load_fixture(name: &str) -> String {
         .join("../..")
         .join("samples")
         .join(name);
-    fs::read_to_string(&path).unwrap_or_else(|err| {
-        panic!(
-            "fixture {name} not at {}: {err}; copy your bouten/sample into samples/",
+    fs::read_to_string(&path).unwrap_or_else(|_| {
+        // The real fixtures (6 MiB bouten/gaiji corpora) are not in git.
+        // Fall back to a shape-matched synthetic doc so the bench runs
+        // anywhere; drop a real sample into `samples/` for a
+        // representative measurement.
+        eprintln!(
+            "fixture {name} not at {}; using a ~6 MiB synthetic doc instead",
             path.display()
-        )
+        );
+        synthetic_fixture()
     })
+}
+
+/// ~6 MiB of blank-line-separated plain prose so the benches are runnable
+/// without an external fixture (many paragraphs ⇒ the snapshot-rebuild
+/// and segmentation paths are still exercised).
+fn synthetic_fixture() -> String {
+    const PARA: &str = "これは段落の本文です。それなりの長さの文章がここに続いていきます。\n\n";
+    const TARGET: usize = 6 * 1024 * 1024;
+    let mut s = String::with_capacity(TARGET + PARA.len());
+    while s.len() < TARGET {
+        s.push_str(PARA);
+    }
+    s
 }
 
 fn full_range_for(text: &str, idx: &LineIndex) -> Range {

@@ -28,7 +28,6 @@ use crate::formatting::format_edits;
 use crate::half_width_emmet::emmet_completions;
 use crate::hover::hover_at;
 use crate::linked_editing::linked_editing_at;
-use crate::metrics::ParseSample;
 use crate::on_type_formatting::{TRIGGERS as ON_TYPE_TRIGGERS, format_on_type};
 use crate::parse_cache::MAX_DOCUMENT_BYTES;
 use crate::state::OpenDocument;
@@ -172,66 +171,46 @@ impl AozoraLanguageServer {
         state.replace_debounce_task(task.abort_handle());
     }
 
-    /// The debounced task body — re-parse semantically then
-    /// publish, but only if no newer edit has come in.
+    /// The debounced task body — re-parse semantically through the
+    /// segment cache then publish, but only if no newer edit has come in.
     async fn reparse_and_publish_if_current(&self, uri: Url, target_version: u64) {
-        // Wait-free snapshot read — does not contend with concurrent
-        // request handlers that also load the snapshot.
-        let (text, state) = {
-            let Some(state) = self.lookup(&uri) else {
-                return;
-            };
-            if state.edit_version() != target_version {
-                // A newer edit came in during the debounce window;
-                // its own task will publish. Bail.
-                return;
-            }
-            (Arc::clone(state.snapshot().doc_text()), state)
-        };
-
-        // Oversized documents skip the O(n) semantic parse; publish a
-        // single notice (re-published on later edits, which is harmless)
-        // and bail before the expensive work.
-        if text.len() > MAX_DOCUMENT_BYTES {
-            self.client
-                .publish_diagnostics(uri, vec![oversize_notice(text.len())], None)
-                .await;
-            return;
-        }
-
-        // Parse off the async runtime so concurrent hover /
-        // codeAction / inlay requests do not stall waiting for an
-        // executor thread. `Document::new` takes `impl Into<Box<str>>`;
-        // we pass an owned String materialised from the Arc<str>.
-        let text_owned = text.to_string();
-        let bytes_estimate = u64::try_from(text_owned.len()).unwrap_or(u64::MAX);
-        let parse_result = spawn_blocking(move || {
-            let document = aozora::Document::new(text_owned);
-            document.parse().diagnostics().to_vec()
-        })
-        .await;
-        let Ok(diagnostics) = parse_result else {
+        let Some(state) = self.lookup(&uri) else {
             return;
         };
-
-        // Re-check version so a parse that just missed the cutoff
-        // doesn't overwrite a newer one. Diagnostics installation is
-        // a brief `DocBuffer` mutex acquisition.
+        // Cheap early-out: a newer edit's own debounce task will publish.
         if state.edit_version() != target_version {
             return;
         }
-        state.install_diagnostics(diagnostics);
-        state.metrics.record_parse(ParseSample {
-            latency_us: 0,
-            cache_hits: 0,
-            cache_misses: 1,
-            cache_entries: 1,
-            cache_bytes_estimate: bytes_estimate,
-        });
-        let snap = state.snapshot();
-        let publish_diags = state.with_parse_cache(|cache| {
-            diagnostics_from_aozora(snap.doc_text(), cache.diagnostics())
-        });
+
+        // Incremental reparse off the async runtime so concurrent hover /
+        // codeAction / inlay requests do not stall on an executor thread.
+        // `reparse_pending` drains the debounce-window edits under the
+        // buffer lock and returns the exact text it parsed (so the LSP
+        // position mapping is consistent) plus the edit-version that text
+        // reflects.
+        let parse_state = Arc::clone(&state);
+        let Ok((text, diagnostics, parsed_version)) =
+            spawn_blocking(move || parse_state.reparse_pending()).await
+        else {
+            return;
+        };
+
+        // Publish guard (no store race — the cache is already updated):
+        // if a newer edit landed during the parse, its task republishes,
+        // so skip this now-superseded result rather than flash it.
+        if state.edit_version() != parsed_version {
+            return;
+        }
+
+        // Oversized documents skip semantic analysis inside
+        // `reparse_pending` (empty diagnostics); surface the notice based
+        // on the text that was actually parsed, not a possibly-stale
+        // snapshot length.
+        let publish_diags = if text.len() > MAX_DOCUMENT_BYTES {
+            vec![oversize_notice(text.len())]
+        } else {
+            diagnostics_from_aozora(&text, &diagnostics)
+        };
         self.client
             .publish_diagnostics(uri, publish_diags, None)
             .await;
