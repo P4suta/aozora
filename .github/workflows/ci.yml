@@ -188,21 +188,22 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just coverage
 
-  # `coverage` runs nextest with DEFAULT features, so the integration
-  # suites gated on `required-features = ["internals"]` (smoke / guardian /
-  # concurrent_lsp / shuttle / …) are SKIPPED there — `clippy-strict`
-  # compiles them but nothing runs their assertions. This job runs the full
-  # suite with `--all-features` so those tests actually execute. Kept
-  # separate from `coverage` so the coverage % stays measured against the
-  # default surface.
-  test-all-features:
+  # `coverage` runs nextest with DEFAULT features, so aozora-lsp's
+  # integration suites gated on `required-features = ["internals"]` (smoke /
+  # guardian / concurrent_lsp / shuttle / …) are SKIPPED there —
+  # `clippy-strict` compiles them but nothing runs their assertions. This job
+  # runs `-p aozora-lsp --all-features` so those tests actually execute.
+  # Scoped to aozora-lsp (not a blanket `--workspace --all-features`) so it
+  # does not flip on feature flags whose tests need external setup, e.g.
+  # aozora-extism's `host-smoke` wasm artifact (covered by `extism-build`).
+  test-internals:
     needs: [changes, dev-image]
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - uses: ./.github/actions/setup-dev-image
-      - run: just test-all-features
+      - run: just test-internals
 
   # PR-time rustdoc gate. `docs.yml` builds the API docs with
   # `RUSTDOCFLAGS=-D warnings` at DEPLOY time, but the workspace denies
@@ -577,7 +578,7 @@ jobs:
       - dev-image
       - lint
       - coverage
-      - test-all-features
+      - test-internals
       - doc
       - doctest
       - audit
