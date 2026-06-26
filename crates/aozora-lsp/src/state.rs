@@ -34,7 +34,7 @@ use crate::paragraph::{
     MAX_PARAGRAPH_BYTES, ParagraphBuffer, ParagraphSnapshot, build_paragraph_snapshot,
     paragraph_byte_ranges,
 };
-use crate::parse_cache::ParseCache;
+use crate::parse_cache::{ParseCache, ReparseStats};
 use crate::text_edit::{ByteEdit, EditError};
 use crate::tree_sitter_doc::input_edit;
 
@@ -80,7 +80,11 @@ fn paragraph_from_rope_slice(
 pub struct DocBuffer {
     pub paragraphs: Vec<ParagraphBuffer>,
     pub parser: Parser,
-    pub parse_cache: ParseCache,
+    /// Edits applied since the parse cache last ran, in cache-text
+    /// (pre-edit) coordinates. Drained under this buffer's lock by
+    /// [`OpenDocument::reparse_pending`]. Exactly one entry makes the
+    /// segment-cache fast path eligible; anything else re-parses fully.
+    pub pending_edits: Vec<ByteEdit>,
 }
 
 impl fmt::Debug for DocBuffer {
@@ -111,7 +115,7 @@ impl DocBuffer {
         Self {
             paragraphs,
             parser,
-            parse_cache: ParseCache::default(),
+            pending_edits: Vec::new(),
         }
     }
 
@@ -142,6 +146,11 @@ impl DocBuffer {
         for edit in edits.iter().rev() {
             self.apply_one_edit(edit);
         }
+        // Record the batch (in pre-edit coordinates) so the debounced
+        // reparse can drain it and reuse untouched segments. Pushed only
+        // after `validate_edits` passed, so a rejected batch never
+        // accumulates.
+        self.pending_edits.extend_from_slice(edits);
         Some(())
     }
 
@@ -344,6 +353,10 @@ impl DocBuffer {
             paragraphs.push(ParagraphBuffer::new(Rope::new()));
         }
         self.paragraphs = paragraphs;
+        // A wholesale replace invalidates the accumulated edits relative
+        // to the parse cache's prior text; clearing them makes the next
+        // reparse an honest full parse (an empty drain takes that path).
+        self.pending_edits.clear();
     }
 }
 
@@ -524,6 +537,15 @@ fn empty_snapshot() -> Arc<DocSnapshot> {
 
 pub struct OpenDocument {
     buffer: Mutex<DocBuffer>,
+    /// Segment cache for the aozora semantic parse (diagnostics), held
+    /// under its **own** lock — separate from `buffer` — so the debounced
+    /// reparse never blocks the edit path. A reparse holds `parse` for the
+    /// whole parse but `buffer` only for the µs it takes to clone the
+    /// paragraph ropes and drain `pending_edits`. Holding `parse` across
+    /// the drain also serialises reparses (single-flight, in schedule
+    /// order), so the incremental fast path always sees a consistent prior
+    /// segmentation and no two reparses race on the stored result.
+    parse: Mutex<ParseCache>,
     snapshot: ArcSwap<DocSnapshot>,
     edit_version: AtomicU64,
     pub metrics: Arc<Metrics>,
@@ -551,11 +573,15 @@ impl OpenDocument {
         let initial = build_snapshot(&buffer, 0, &empty_snapshot());
         let state = Arc::new(Self {
             buffer: Mutex::new(buffer),
+            parse: Mutex::new(ParseCache::default()),
             snapshot: ArcSwap::from(initial),
             edit_version: AtomicU64::new(0),
             metrics: Arc::new(Metrics::default()),
             debounce_task: Mutex::new(None),
         });
+        // Synchronous initial parse: `pending_edits` is empty, so this is
+        // a full parse that populates the cache's segmentation and
+        // diagnostics. `did_open`'s immediate publish reads them.
         state.run_parse_cache_reparse();
         state
     }
@@ -584,13 +610,8 @@ impl OpenDocument {
     }
 
     pub fn with_parse_cache<R>(&self, f: impl FnOnce(&ParseCache) -> R) -> R {
-        let buffer = self.buffer.lock();
-        f(&buffer.parse_cache)
-    }
-
-    pub fn install_diagnostics(&self, diagnostics: Vec<aozora::Diagnostic>) {
-        let mut buffer = self.buffer.lock();
-        buffer.parse_cache.set_diagnostics(diagnostics);
+        let cache = self.parse.lock();
+        f(&cache)
     }
 
     /// Apply a batch of edits and ratchet the snapshot.
@@ -663,16 +684,60 @@ impl OpenDocument {
         }
     }
 
-    pub fn run_parse_cache_reparse(&self) {
-        let stats = {
+    /// Re-parse the live buffer through the segment cache and return the
+    /// parsed text, its diagnostics, and the `edit_version` that text
+    /// reflects.
+    ///
+    /// When exactly one edit accumulated in the debounce window the
+    /// untouched segments are reused (`ParseCache::reparse_incremental`);
+    /// any other batch re-parses fully. The result is always identical to
+    /// a from-scratch parse.
+    ///
+    /// Locking is the load-bearing part: the `parse` lock is held across
+    /// the whole call, so reparses are single-flight and serialise in
+    /// schedule order — the incremental fast path always sees a consistent
+    /// prior segmentation and the stored result is monotonic. The `buffer`
+    /// lock is taken only to clone the paragraph ropes (`O(1)` each via
+    /// ropey structural sharing) and drain `pending_edits`, so the edit
+    /// path is never blocked by the parse itself.
+    pub fn reparse_pending(&self) -> (String, Vec<aozora::Diagnostic>, u64) {
+        // Acquire `parse` first and hold it across the drain + parse: this
+        // serialises reparses (single-flight, in schedule order) so the
+        // incremental fast path always sees a consistent prior segmentation
+        // and the stored result is monotonic. Dropped right after the
+        // parse, before recording stats.
+        let mut cache = self.parse.lock();
+        // Brief buffer lock: snapshot the paragraph ropes (cheap
+        // structural-sharing clones) and drain the accumulated edits.
+        let (ropes, edits, parsed_version) = {
             let mut buffer = self.buffer.lock();
-            let mut text = String::new();
-            for paragraph in &buffer.paragraphs {
-                text.push_str(&paragraph.text.to_string());
-            }
-            let (_diags, stats) = buffer.parse_cache.reparse(&text);
-            stats
+            let ropes: Vec<Rope> = buffer.paragraphs.iter().map(|p| p.text.clone()).collect();
+            let edits = mem::take(&mut buffer.pending_edits);
+            drop(buffer);
+            // Capture the version this parse reflects right after the drain
+            // for the backend's publish guard. (`edit_version` is bumped
+            // outside the buffer lock, so a one-behind read here at worst
+            // defers a publish to the next debounce task — never wrong.)
+            let parsed_version = self.edit_version.load(Ordering::SeqCst);
+            (ropes, edits, parsed_version)
         };
+        // Materialise the text and parse off the buffer lock.
+        let total: usize = ropes.iter().map(Rope::len_bytes).sum();
+        let mut text = String::with_capacity(total);
+        for rope in &ropes {
+            for chunk in rope.chunks() {
+                text.push_str(chunk);
+            }
+        }
+        let (diagnostics, stats) = cache.reparse_incremental(&text, &edits);
+        drop(cache);
+        self.record_parse_stats(stats);
+        (text, diagnostics, parsed_version)
+    }
+
+    /// Feed a reparse's statistics into the per-document metrics and warn
+    /// when a parse blew past the slow-path threshold.
+    fn record_parse_stats(&self, stats: ReparseStats) {
         self.metrics.record_parse(ParseSample {
             latency_us: stats.latency_us,
             cache_hits: stats.cache_hits,
@@ -691,6 +756,14 @@ impl OpenDocument {
                 "parse exceeded slow-path threshold",
             );
         }
+    }
+
+    /// Full/initial reparse entry point used by `OpenDocument::new` and
+    /// tests. Drains any pending edits (empty at construction ⇒ full
+    /// parse) and records stats; callers that only need the cache
+    /// populated discard the returned text and diagnostics.
+    pub fn run_parse_cache_reparse(&self) {
+        drop(self.reparse_pending());
     }
 
     /// Subset of `DocSnapshot::paragraph_at` exposed via `&self` for
@@ -737,6 +810,85 @@ mod tests {
         let snap = state.snapshot();
         assert_eq!(&**snap.doc_text(), "hello world");
         assert_eq!(snap.version, 1);
+    }
+
+    fn diag_debug(ds: &[aozora::Diagnostic]) -> Vec<String> {
+        ds.iter().map(|d| format!("{d:?}")).collect()
+    }
+
+    #[test]
+    fn single_edit_debounce_reuses_segments_and_reports_hits() {
+        // Three blank-line-separated paragraphs => three segments.
+        let src = "段落いち。\n\n段落に。\n\n段落さん。";
+        let state = doc(src);
+        // One interior edit in the middle paragraph.
+        let at = src.find("段落に").expect("middle paragraph") + "段落に".len();
+        state
+            .apply_changes(&[ByteEdit::new(at..at, "ん".to_owned())])
+            .expect("valid edit");
+
+        let (text, diags, _ver) = state.reparse_pending();
+
+        // Metrics: the initial parse reused nothing (3 misses); this single
+        // interior edit reused the two untouched segments.
+        let snap = state.metrics.snapshot();
+        assert_eq!(
+            snap.cache_hit_total, 2,
+            "two untouched segments reused: {snap:?}"
+        );
+        assert!(snap.cache_hit_rate > 0.0, "hit rate is non-zero: {snap:?}");
+        // Diagnostics identical to a from-scratch parse of the edited text.
+        let mut fresh = ParseCache::default();
+        let (want, _) = fresh.reparse(&text);
+        assert_eq!(diag_debug(&diags), diag_debug(&want));
+    }
+
+    #[test]
+    fn multi_edit_window_falls_back_to_full_parse() {
+        let src = "段落いち。\n\n段落に。\n\n段落さん。";
+        let state = doc(src);
+        // Two edits accumulate in the debounce window before the reparse.
+        let a = src.find("いち").expect("first paragraph");
+        state
+            .apply_changes(&[ByteEdit::new(a..a, "Ｘ".to_owned())])
+            .expect("valid edit 1");
+        let snap = state.snapshot();
+        let b = snap.doc_text().find("さん").expect("third paragraph");
+        drop(snap);
+        state
+            .apply_changes(&[ByteEdit::new(b..b, "Ｙ".to_owned())])
+            .expect("valid edit 2");
+
+        let (text, diags, _ver) = state.reparse_pending();
+
+        // Neither the initial parse nor the multi-edit reparse reused a
+        // segment, so the cumulative hit total stays zero.
+        let metrics = state.metrics.snapshot();
+        assert_eq!(
+            metrics.cache_hit_total, 0,
+            "multi-edit batch re-parses fully: {metrics:?}"
+        );
+        let mut fresh = ParseCache::default();
+        let (want, _) = fresh.reparse(&text);
+        assert_eq!(diag_debug(&diags), diag_debug(&want));
+    }
+
+    #[test]
+    fn replace_text_clears_pending_and_full_parses() {
+        let state = doc("古い段落。\n\nもうひとつ。");
+        state
+            .apply_changes(&[ByteEdit::new(0..0, "Ｘ".to_owned())])
+            .expect("valid edit");
+        // A wholesale replace must discard the accumulated edit so the next
+        // reparse is an honest full parse of the replaced text (the
+        // byte-equality guard also backstops correctness).
+        state.replace_text("まったく新しい本文。".to_owned());
+
+        let (text, diags, _ver) = state.reparse_pending();
+        assert_eq!(text, "まったく新しい本文。");
+        let mut fresh = ParseCache::default();
+        let (want, _) = fresh.reparse(&text);
+        assert_eq!(diag_debug(&diags), diag_debug(&want));
     }
 
     #[test]

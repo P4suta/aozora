@@ -114,6 +114,10 @@ required-features = ["internals", "shuttle-tests"]
 name             = "measure_incremental"
 required-features = ["internals"]
 
+[[example]]
+name             = "measure_parse_cache"
+required-features = ["internals"]
+
 [features]
 default       = []
 # Exposes the `internals` module (internal API for the crate's own tests,

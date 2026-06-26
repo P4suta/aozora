@@ -63,7 +63,15 @@ fn measure_corpus_doc() {
         .join("../..")
         .join("samples")
         .join("bouten.afm");
-    let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let Ok(text) = fs::read_to_string(&path) else {
+        // The 6 MiB fixture is not in git; skip the corpus measurement
+        // gracefully so the synthetic section below still runs.
+        println!(
+            "corpus fixture absent at {} — skipping (synthetic doc below)",
+            path.display()
+        );
+        return;
+    };
     let (mb, tenths) = bytes_mb_tenths(text.len());
     println!(
         "loaded fixture: {} bytes from {} ({mb}.{tenths} MiB)",
