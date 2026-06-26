@@ -54,7 +54,7 @@ use clap::{Args, Subcommand};
 use rayon::prelude::*;
 
 use aozora::pipeline::lexer::sanitize::sanitize;
-use aozora::{DirectiveKind, Document, Node, NodeKind, NodeRef};
+use aozora::{DirectiveKind, Document, NodeKind, NodeOwned, NodeRefOwned};
 use aozora_corpus::{
     Archive, ArchiveBuilder, CorpusItem, EntryMeta, FilesystemCorpus, archive, par_load_decoded,
 };
@@ -1190,25 +1190,27 @@ fn audit_one(item: CorpusItem) -> FileStat {
     }
 }
 
-/// Walk the borrowed AST and tally everything we report. All borrowed
-/// data is converted to owned here; the returned `FileStat` outlives the
-/// arena.
+/// Walk the owned AST and tally everything we report. Payload text is
+/// resolved through the output's store; the returned `FileStat` owns its
+/// strings.
 fn analyze(text: &str) -> FileStat {
     let doc = Document::new(text);
-    let tree = doc.parse();
+    let out = doc.parse_owned();
     let mut s = FileStat::default();
 
-    for sn in tree.source_nodes() {
+    for sn in &out.source_nodes {
         if let Some(i) = NodeKind::ALL.iter().position(|k| *k == sn.node.kind()) {
             s.node_kinds[i] += 1;
         }
         match sn.node {
-            NodeRef::Inline(Node::Directive(a)) | NodeRef::BlockLeaf(Node::Directive(a)) => {
+            NodeRefOwned::Inline(NodeOwned::Directive(a))
+            | NodeRefOwned::BlockLeaf(NodeOwned::Directive(a)) => {
                 match a.kind {
                     DirectiveKind::Unknown => {
                         s.annotation_kinds[0] += 1;
                         let line = line_of(text, sn.source_span.start);
-                        s.unknown.push((a.raw.as_str().to_owned(), line));
+                        s.unknown
+                            .push((out.store.resolve_str(a.raw).to_owned(), line));
                     }
                     DirectiveKind::Sic => s.annotation_kinds[1] += 1,
                     DirectiveKind::BaseTextVariant => s.annotation_kinds[2] += 1,
@@ -1221,9 +1223,10 @@ fn analyze(text: &str) -> FileStat {
                     _ => {}
                 }
             }
-            NodeRef::Inline(Node::Gaiji(g)) | NodeRef::BlockLeaf(Node::Gaiji(g)) => {
+            NodeRefOwned::Inline(NodeOwned::Gaiji(g))
+            | NodeRefOwned::BlockLeaf(NodeOwned::Gaiji(g)) => {
                 s.gaiji_total += 1;
-                if g.resolve().is_none() {
+                if g.resolve(&out.store).is_none() {
                     s.gaiji_unresolved += 1;
                 }
                 // Reconstruct the mencode tail from the canonical value so the
@@ -1231,7 +1234,7 @@ fn analyze(text: &str) -> FileStat {
                 let mencode = g.canonical.has_mencode().then(|| {
                     let mut m = String::new();
                     g.canonical
-                        .write_mencode(&mut m)
+                        .write_mencode(&out.store, &mut m)
                         .expect("write_mencode into String is infallible");
                     m
                 });
@@ -1241,7 +1244,7 @@ fn analyze(text: &str) -> FileStat {
         }
     }
 
-    for d in tree.diagnostics() {
+    for d in &out.diagnostics {
         s.diags.push(d.code());
     }
     s
