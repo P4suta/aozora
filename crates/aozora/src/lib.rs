@@ -75,6 +75,7 @@ pub use aozora_syntax::{
 
 mod diagnostics_text;
 mod document;
+mod incremental_owned;
 mod segmented;
 mod splice;
 

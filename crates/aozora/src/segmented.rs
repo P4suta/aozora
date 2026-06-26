@@ -50,7 +50,11 @@
 use core::cmp::Ordering;
 use core::ops::Range;
 
-use crate::{Diagnostic, Document, NodeRefOwned, PairLink, SourceNodeOwned};
+use crate::incremental_owned::{
+    candidate_boundaries, carries_structure, is_whole_document_scoped, shift_u32, shift_usize,
+    structurally_safe,
+};
+use crate::{Diagnostic, Document};
 
 /// A document's safe segmentation into independently-lexable spans, with
 /// each segment's diagnostics cached.
@@ -367,24 +371,6 @@ pub struct IncrementalOutcome {
     pub reused: bool,
 }
 
-/// Whether `s` carries document structure that an incremental segment re-lex
-/// must not silently absorb: a line terminator (could move a blank-line
-/// boundary) or a directive opener `［` (could introduce a container or
-/// forward reference, both whole-document-scoped concerns).
-fn carries_structure(s: &str) -> bool {
-    s.bytes().any(|b| b == b'\n' || b == b'\r') || s.contains('［')
-}
-
-/// `value + delta` as `usize`, or `None` on under/overflow.
-fn shift_usize(value: u32, delta: i64) -> Option<usize> {
-    usize::try_from(i64::from(value) + delta).ok()
-}
-
-/// `value + delta` clamped into `u32`, or `None` on under/overflow.
-fn shift_u32(value: u32, delta: i64) -> Option<u32> {
-    u32::try_from(i64::from(value) + delta).ok()
-}
-
 /// Reassemble the per-segment local diagnostics into whole-document
 /// coordinates by shifting each segment's cached diagnostics by the
 /// segment's sanitized start offset.
@@ -395,51 +381,6 @@ fn reassemble_local(segments: &[Segment]) -> Vec<Diagnostic> {
         local.extend(seg.diagnostics.iter().map(|d| d.clone().shifted(shift)));
     }
     local
-}
-
-/// Whether a diagnostic's classification depends on the whole document and so
-/// cannot be reliably computed from an isolated segment.
-///
-/// These are the parser's document-global checks, which a segment can get
-/// wrong in *either* direction (a real diagnostic missed, or a phantom
-/// invented), so they are never trusted per-segment and are taken wholesale
-/// from the whole-document parse:
-///
-/// - **Forward-reference resolution** — bouten target ambiguity
-///   ([`Diagnostic::BoutenTargetAmbiguous`], look-back
-///   `source[..directive]`), 縦中横 target resolution
-///   ([`Diagnostic::TcyTargetNotFound`]), standalone-gaiji forward resolution
-///   ([`Diagnostic::UnresolvedGaiji`]), and directive recognition that
-///   depends on a matching partner
-///   ([`Diagnostic::UnrecognisedContainerDirective`]).
-/// - **Container / kanbun / end-of-document pairing** — bracketed kaeriten
-///   (返り点) whose partner may sit in a later segment
-///   ([`Diagnostic::BracketedKaeritenNoPair`]), kaeriten whose enclosing
-///   漢文 context spans segments ([`Diagnostic::KaeritenOutsideKanbun`]), and
-///   container-close family mismatches
-///   ([`Diagnostic::MismatchedContainerClose`],
-///   [`Diagnostic::MismatchedBoutenContainer`]). Block-directive
-///   classification is itself context-dependent — a deeply-nested
-///   heading/indent structure (e.g. 論語-style repeated `中見出し` blocks) can
-///   be classified as a container only with the whole-document context, so a
-///   segment re-lexed in isolation pairs its closes differently and invents a
-///   phantom mismatch.
-///
-/// Keep in sync with the `corpus_incremental_merge` gate's
-/// `WHOLE_DOCUMENT_SCOPED` list (the gate fails if a new divergent class
-/// appears, so completeness is enforced over the reference corpus).
-fn is_whole_document_scoped(diagnostic: &Diagnostic) -> bool {
-    matches!(
-        diagnostic,
-        Diagnostic::BoutenTargetAmbiguous { .. }
-            | Diagnostic::TcyTargetNotFound { .. }
-            | Diagnostic::UnresolvedGaiji { .. }
-            | Diagnostic::UnrecognisedContainerDirective { .. }
-            | Diagnostic::BracketedKaeritenNoPair { .. }
-            | Diagnostic::KaeritenOutsideKanbun { .. }
-            | Diagnostic::MismatchedContainerClose { .. }
-            | Diagnostic::MismatchedBoutenContainer { .. }
-    )
 }
 
 /// Total order over diagnostics by position, then by debug representation as
@@ -522,57 +463,6 @@ fn build_segment(
         san_len,
         diagnostics,
     }
-}
-
-/// Candidate blank-line boundaries on the raw source: the byte offset of an
-/// empty line that follows another line. Cutting there keeps a CRLF (`\r\n`)
-/// terminator intact and starts the next segment on a blank line, matching
-/// the whole-document decorative-rule isolation context.
-fn candidate_boundaries(source: &str) -> Vec<usize> {
-    let bytes = source.as_bytes();
-    let mut cuts = Vec::new();
-    let mut j = 1usize;
-    while j < bytes.len() {
-        if bytes[j - 1] == b'\n' {
-            let empty_line_here = bytes[j] == b'\n'
-                || (bytes[j] == b'\r' && j + 1 < bytes.len() && bytes[j + 1] == b'\n');
-            if empty_line_here {
-                cuts.push(j);
-            }
-        }
-        j += 1;
-    }
-    cuts
-}
-
-/// Whether a cut at sanitized offset `san_off` keeps every block container
-/// and resolved delimiter pair whole.
-fn structurally_safe(san_off: u32, nodes: &[SourceNodeOwned], pairs: &[PairLink]) -> bool {
-    // Block-container nesting depth, via the same lenient LIFO the
-    // normalizer uses (a stray close on an empty stack is ignored). Reject
-    // the cut if a classified span strictly contains it, or depth is
-    // non-zero at it.
-    let mut depth: i32 = 0;
-    for sn in nodes {
-        if sn.source_span.start >= san_off {
-            break; // nodes are sorted by source_span.start
-        }
-        if sn.source_span.end > san_off {
-            return false; // a classified span straddles the cut
-        }
-        match sn.node {
-            NodeRefOwned::BlockOpen(_) => depth += 1,
-            NodeRefOwned::BlockClose(_) => depth = (depth - 1).max(0),
-            _ => {}
-        }
-    }
-    if depth != 0 {
-        return false;
-    }
-    // No resolved delimiter pair straddles the cut.
-    !pairs
-        .iter()
-        .any(|pair| pair.open.start < san_off && pair.close.end > san_off)
 }
 
 #[cfg(test)]
