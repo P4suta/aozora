@@ -120,9 +120,10 @@ pub mod bindings {
 
     /// JS-facing handle to a parsed Aozora document.
     ///
-    /// Wraps an [`aozora::Document`] (which owns both the source and
-    /// the bumpalo arena that backs the borrowed AST). Drop is
-    /// automatic when the JS-side handle is GC'd.
+    /// Wraps an [`aozora::Document`], which owns the source buffer; each
+    /// accessor parses it on demand into an owned, lifetime-free tree (no
+    /// arena). Drop is automatic when the JS-side handle is GC'd and just
+    /// frees the owned source buffer.
     #[wasm_bindgen]
     #[derive(Debug)]
     pub struct Document {
@@ -132,8 +133,8 @@ pub mod bindings {
     #[wasm_bindgen]
     impl Document {
         /// Construct from a UTF-16 JS string. The string is copied
-        /// once into the Document's internal `Box<str>`; subsequent
-        /// renders reuse the bumpalo arena.
+        /// once into the Document's internal `Box<str>`; each render
+        /// re-parses that source into a fresh owned tree.
         ///
         /// # Errors
         ///
@@ -231,7 +232,7 @@ pub mod bindings {
         /// (`Instant::now()` panics on `wasm32-unknown-unknown`).
         ///
         /// `parse` is the cost of `Document::parse()` alone
-        /// (constructing the borrowed AST). The render entries
+        /// (constructing the owned AST). The render entries
         /// (`to_html`, `serialize`, `*_json`) are wall-clock for
         /// that single method call against the already-built tree —
         /// so summing them is the cost of "produce every output JS

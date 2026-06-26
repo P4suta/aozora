@@ -192,6 +192,6 @@ the *cohesion* benefit (one of the three above) is real.
 ## See also
 
 - [Pipeline overview](pipeline.md)
-- [Borrowed-arena AST](arena.md)
+- [Owned AST & NodeStore](arena.md)
 - [Reference → API](../ref/api.md) — generated rustdoc for the
   public surface.

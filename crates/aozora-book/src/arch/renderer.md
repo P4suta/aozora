@@ -131,6 +131,6 @@ memory on every render. 2.6× is the measured optimum.
 
 - [Notation overview](../notation/overview.md) — what each AST node
   represents.
-- [Borrowed-arena AST](arena.md) — the input shape.
+- [Owned AST & NodeStore](arena.md) — the input shape.
 - [Performance → Benchmarks](../perf/bench.md) — the
   `render_hot_path` probe that drives the size estimate.

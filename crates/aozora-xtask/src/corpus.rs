@@ -826,8 +826,8 @@ const GAIJI_FORM_LABELS: [&str; 6] = [
 ];
 
 /// Per-file audit accumulator. Owned data only — it must cross the
-/// rayon worker boundary out of the borrowed-AST arena, so it holds no
-/// references into the parse output.
+/// rayon worker boundary, so it holds no borrows into the per-file
+/// parse output.
 #[derive(Default)]
 struct FileStat {
     label: String,

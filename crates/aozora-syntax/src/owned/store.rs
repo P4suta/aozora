@@ -1,8 +1,8 @@
 //! Flat backing store for the owned AST.
 //!
-//! The borrowed tree leans on the bumpalo arena for two variable-length
+//! The former borrowed tree leaned on a bumpalo arena for two variable-length
 //! payloads: `NonEmpty<Content>` runs and `&[Segment]` slices. The owned
-//! mirror replaces both with half-open ranges ([`ContentRange`] / [`SegRange`])
+//! store replaces both with half-open ranges ([`ContentRange`] / [`SegRange`])
 //! into flat `Vec`s held by [`NodeStore`], alongside the [`StrInterner`] that
 //! owns every interned string. `StrId` / range payloads on the owned nodes
 //! resolve against this store.

@@ -72,5 +72,5 @@ the original via `source_span` + `Span::slice`.
 - [Walk the AST](walk-ast.md) — the same `source_nodes()` walk, by node kind.
 - [Byte-exact round-trip](round-trip.md) — `Tree::to_source` /
   `to_source_verbatim` for whole-document recovery.
-- [Borrowed-arena AST](../arch/arena.md) — why nodes borrow from the
-  `Document`'s arena.
+- [Owned AST & NodeStore](../arch/arena.md) — how the owned AST relates
+  to the `Document`'s source lifetime.

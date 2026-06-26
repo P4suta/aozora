@@ -138,12 +138,12 @@ No tree mutation between layers. No optimisation passes. No
 "resolver" stage that mutates the AST. The lexer produces the
 final tree; the renderer consumes it; that's it. This is the same
 shape as a functional reactive pipeline, and it's what lets the
-borrowed-arena AST (next chapter) work without `RefCell` or
+owned AST (next chapter) work without `RefCell` or
 `UnsafeCell`.
 
 ## See also
 
-- [Borrowed-arena AST](arena.md) — what `Tree<'arena>`
+- [Owned AST & NodeStore](arena.md) — what a `Tree`
   actually points at.
 - [Lexer (sanitize → tokenize → pair → classify)](lexer.md) — the inside of the Lex box.
 - [Crate map](crates.md) — every crate, its purpose, what depends

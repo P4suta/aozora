@@ -28,13 +28,14 @@
 //!
 //! # Architecture
 //!
-//! [`Document`] owns the source buffer plus a `bumpalo`-backed
-//! arena. [`Tree`] borrows from that arena via the `&self`
-//! lifetime returned by [`Document::parse`]. Every per-node
-//! allocation lives inside the arena, with the
-//! `Interner` deduplicating
-//! repeated string content; dropping the `Document` releases the
-//! entire tree in a single `Bump::reset` step.
+//! [`Document`] owns the source buffer plus a `Copy` diagnostic
+//! policy. [`Document::parse`] returns a [`Tree`] whose `&self`
+//! lifetime tracks only that source borrow — the AST data itself is
+//! owned, lifetime-free, and `Send + Sync` (an `OwnedLexOutput` backed
+//! by a flat `NodeStore`: a string interner plus content / segment
+//! pools addressed by `u32` handles). The interner deduplicates
+//! repeated string content; dropping the tree frees the store in one
+//! step, with no per-node `Drop`.
 //!
 //! Internal build-block crates (`aozora-spec`, `aozora-syntax`,
 //! `aozora-pipeline`, `aozora-render`, `aozora-encoding`) are
@@ -153,22 +154,23 @@ pub mod pipeline {
     pub use aozora_pipeline::*;
 }
 
-/// Re-export of [`aozora_syntax`] — AST node types, arena, interner.
+/// Re-export of [`aozora_syntax`] — owned AST node types, the
+/// `NodeStore`, and the string interner.
 ///
 /// External callers normally reach through [`Document`] /
-/// [`Tree`] for the borrowed-AST surface; this module exposes
+/// [`Tree`] for the parsed-AST surface; this module exposes
 /// the underlying types when they need to construct nodes directly
-/// (visitor implementations, custom renderers).
+/// (custom renderers, owned-tree transforms).
 pub mod syntax {
     pub use aozora_syntax::*;
 }
 
-/// Re-export of [`aozora_render`] — HTML / serialize emitters and
-/// the visitor trait.
+/// Re-export of [`aozora_render`] — owned-AST HTML / source emitters.
 ///
-/// Custom downstream renderers (EPUB, plain text, LaTeX, …)
-/// implement `syntax::borrowed::AozoraVisitor`
-/// and route through this module.
+/// `Tree::to_html` / `Tree::to_source` cover the common cases; custom
+/// downstream renderers (EPUB, plain text, LaTeX, …) walk the owned
+/// `OwnedLexOutput` (its `source_nodes` + `NodeStore`) and can reuse the
+/// shared byte-spelling helpers re-exported through this module.
 pub mod render {
     pub use aozora_render::*;
 }

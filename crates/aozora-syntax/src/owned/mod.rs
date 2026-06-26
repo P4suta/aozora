@@ -1,17 +1,18 @@
-//! Owned, no-lifetime mirror of the borrowed semantic AST.
+//! Owned, no-lifetime semantic AST — the parser's sole AST.
 //!
-//! The sole AST consumers walk is the arena-backed `borrowed`
-//! tree: every payload is `Copy` and borrows `&'src str` from the arena, so the
-//! whole tree is tied to one lifetime and is **not** `Send + Sync` across an
-//! arena drop. The #237 segment cache and an out-of-process LSP consumer need a
+//! Every payload is `Copy`, and the variable-length pieces are `u32`
+//! handles into a flat [`NodeStore`] rather than `&'src str` borrows, so
+//! the whole tree carries no lifetime and **is** `Send + Sync`. The #237
+//! segment cache and an out-of-process LSP consumer need exactly that: a
 //! representation they can own, cache, and move between threads.
 //!
-//! This module is that representation. It mirrors the borrowed tree
-//! variant-for-variant with three substitutions:
+//! The owned types descend from the former arena-backed borrowed tree,
+//! one variant per node, with three substitutions replacing the
+//! arena-borrowed payloads:
 //!
-//! - interned `&'src str` → [`StrId`] into a [`StrInterner`];
+//! - interned `&str` → [`StrId`] into a [`StrInterner`];
 //! - `NonEmpty<Content>` → [`ContentRange`] into [`NodeStore`]'s content pool;
-//! - `&'src [Segment]` → [`SegRange`] into [`NodeStore`]'s segment pool.
+//! - `[Segment]` → [`SegRange`] into [`NodeStore`]'s segment pool.
 //!
 //! Lifetime-free `Copy` payloads (`LineFormat`, `RegionFormat`, `Container`,
 //! the scalar enums, `Span`, `Diagnostic`, …) are reused as-is, not duplicated.

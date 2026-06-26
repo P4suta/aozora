@@ -91,7 +91,7 @@ dual-allocator overhead is the price for keeping the AST untouched.
 
 ## Cross-references
 
-- [Architecture → Borrowed-arena AST](arena.md) — the underlying
+- [Architecture → Owned AST & NodeStore](arena.md) — the underlying
   perf-critical tree.
 - [Architecture → Lexer (sanitize → tokenize → pair → classify)](lexer.md) —
   where the sanitize and classify stages do their work.

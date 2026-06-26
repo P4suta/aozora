@@ -34,7 +34,7 @@ A practical tour and a deep reference, in one document.
   examples, output, edge cases, and the diagnostics that fire when
   authors get them subtly wrong.
 - **Architecture** — what makes aozora *fast and small*: the
-  [borrowed-arena AST](arch/arena.md), the
+  [owned AST & NodeStore](arch/arena.md), the
   [four-phase lexer](arch/lexer.md), the
   [SIMD scanner backends](arch/scanner.md) (Teddy, structural
   bitmaps, Hoehrmann-style multi-pattern DFA),

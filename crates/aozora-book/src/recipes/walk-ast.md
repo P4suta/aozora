@@ -100,5 +100,5 @@ content against the store; that is the next recipe,
 - [Library Quickstart → Walking the AST](../getting-started/library.md#walking-the-ast).
 - [Node reference](../nodes/index.md) — every `NodeKind` and what it
   carries.
-- [Borrowed-arena AST](../arch/arena.md) — why nodes borrow from the
-  `Document`'s arena and what that means for lifetimes.
+- [Owned AST & NodeStore](../arch/arena.md) — how the owned AST relates
+  to the `Document`'s source lifetime.

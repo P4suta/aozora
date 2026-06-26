@@ -40,9 +40,10 @@ That is: **hand the `Document` around, not the `tree`**. If you need
 to keep a parse result alive across function boundaries, the function
 takes ownership of (or borrows) the `Document`, and re-derives the
 `tree` on the inside. This is unusual for Rust libraries — most parse
-APIs hand back an owned tree — but it's what makes aozora's
-zero-copy AST safe. See [Architecture → Borrowed-arena AST](../arch/arena.md)
-for why this trade is worth it.
+APIs hand back an owned tree — but it's what keeps aozora's
+source-borrowing `Tree` safe. See [Architecture → Owned AST & NodeStore](../arch/arena.md)
+for why this trade is worth it (and the owned escape hatch when you need
+to outlive the `Document`).
 
 ## Shift_JIS input
 

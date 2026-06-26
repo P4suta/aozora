@@ -118,7 +118,7 @@ is negligible (`bumpalo` returns aligned pointers in O(1) bumps).
 
 ## See also
 
-- [Architecture → Borrowed-arena AST](../arch/arena.md) — how
-  container child slices are laid out in the arena.
+- [Architecture → Owned AST & NodeStore](../arch/arena.md) — how
+  container child slices are laid out.
 - [Diagnostics → `aozora::lex::mismatched_container_close`](diagnostics.md#mismatched-container-close)
   — mismatched closer.
