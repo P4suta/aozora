@@ -520,10 +520,10 @@ fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);
     let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let doc = Document::new(source);
-    let tree = timer.measure("parse", || doc.parse());
+    let owned = timer.measure("parse", || doc.parse_owned());
     let json = timer
         .measure("pandoc", || {
-            serde_json::to_string(&aozora_pandoc::to_pandoc(&tree))
+            serde_json::to_string(&aozora_pandoc::to_pandoc(&owned))
         })
         .context("serialize Pandoc AST")?;
     timer.report()?;
