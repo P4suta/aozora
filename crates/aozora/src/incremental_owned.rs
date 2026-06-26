@@ -207,6 +207,92 @@ pub(crate) fn minimal_balanced_region(
     Some(region_start..region_end)
 }
 
+/// A node's standalone-block padding (the `\n\n` inserted *before* its sentinel,
+/// equal to the `\n\n` inserted *after*): `2` for a standalone block node, `0`
+/// for an inline one. The normalizer pads only block-level nodes; an inline
+/// region (傍点 / bare-range 太字 / 縦中横 / …) and an inline open/close get no
+/// padding. Mirrors the normalize-stage rule that drives the `\n\n` + `<div>`
+/// wrapping (see [`crate::RegionFormat::is_inline`] /
+/// [`crate::RegionClose::is_inline`]).
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "consumed by the owned-table splice in a later #237 Stage B' PR"
+    )
+)]
+fn standalone_pad(node: NodeRefOwned) -> u32 {
+    match node {
+        NodeRefOwned::BlockLeaf(_) => 2,
+        NodeRefOwned::BlockOpen(rf) => u32::from(!rf.is_inline()) * 2,
+        NodeRefOwned::BlockClose(rc) => u32::from(!rc.is_inline()) * 2,
+        // [`NodeRefOwned::Inline`] gets no padding. The wildcard (mandatory —
+        // `NodeRefOwned` is `#[non_exhaustive]`) also defaults any future
+        // sentinel kind to no padding, the inline byte-1:1 assumption and the
+        // conservative choice for the offset map.
+        NodeRefOwned::Inline(_) | _ => 0,
+    }
+}
+
+/// The normalized-text byte offset corresponding to sanitized-source offset
+/// `san_off`. `san_off` must be a structurally-safe interstitial boundary (0,
+/// sanitized_len, or a blank-line cut that no node's source_span straddles) —
+/// exactly the boundaries [`minimal_balanced_region`] returns. At such a
+/// position normalized == sanitized locally (plain text is 1:1); the only
+/// divergence is the accumulated PUA sentinels (3 bytes each) plus standalone-
+/// block "\n\n" padding (2 bytes lead + 2 trail) inserted before `san_off`.
+///
+/// The map is registry-free and closed-form. For every node fully before the
+/// boundary (`source_span.end <= san_off`), the normalized stream replaced its
+/// `footprint = end - start` sanitized bytes with `2·pad + 3` bytes (lead pad +
+/// 3-byte sentinel + trail pad), a drift of `Δ = (2·pad + 3) − footprint`.
+/// Summing `Δ` over those nodes and adding it to `san_off` lands the normalized
+/// cursor, because plain runs between nodes are byte-identical. A node whose
+/// `source_span.start == san_off` has `end > san_off`, so it sits *after* the
+/// boundary and is correctly excluded.
+///
+/// Returns `None` if `san_off` exceeds the sanitized length, if the arithmetic
+/// overflows, or (defensive tripwire) if the computed offset is not a char
+/// boundary of `cached.normalized` — the boundary-never-in-padding proof means
+/// this never fires for a valid interstitial boundary, but it converts any
+/// surprise into a clean fallback rather than a bad splice.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "consumed by the owned-table splice in a later #237 Stage B' PR"
+    )
+)]
+pub(crate) fn norm_offset(cached: &OwnedLexOutput, san_off: u32) -> Option<u32> {
+    let san_len = u32::try_from(cached.sanitized.len()).ok()?;
+    if san_off > san_len {
+        return None;
+    }
+
+    // Nodes fully before the boundary, in source order (`source_nodes` is sorted
+    // by `source_span.start`, and an interstitial boundary is never straddled,
+    // so `end <= san_off` partitions cleanly).
+    let k = cached
+        .source_nodes
+        .partition_point(|sn| sn.source_span.end <= san_off);
+
+    let mut drift: i64 = 0;
+    for sn in &cached.source_nodes[..k] {
+        let footprint = i64::from(sn.source_span.end - sn.source_span.start);
+        let pad = i64::from(standalone_pad(sn.node));
+        drift += 2 * pad + 3 - footprint;
+    }
+
+    let norm = shift_u32(san_off, drift)?;
+    // Defensive tripwire: a valid interstitial boundary never lands inside a
+    // sentinel or padding run, so the result is always a char boundary; if it
+    // somehow is not, decline rather than splice at a bad offset.
+    if !cached.normalized.is_char_boundary(norm as usize) {
+        return None;
+    }
+    Some(norm)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,5 +487,241 @@ mod tests {
                 end: interior,
             }),
         );
+    }
+
+    // ---- norm_offset (sanitized → normalized offset map) ----
+
+    use crate::{BoutenKind, BoutenPosition, RegionClose, RegionFormat};
+
+    /// The registry as a `(position, NodeRefOwned)` vec, parallel to
+    /// `source_nodes` (same source order — the established invariant).
+    fn reg_entries(cached: &OwnedLexOutput) -> Vec<(u32, NodeRefOwned)> {
+        cached.registry.iter_sorted().collect()
+    }
+
+    /// `norm_offset(0) == 0` and `norm_offset(sanitized_len) == normalized_len`
+    /// — the whole accumulated drift lands the document end exactly.
+    fn assert_endpoints(src: &str) {
+        let cached = owned(src);
+        let san_len = u32::try_from(cached.sanitized.len()).unwrap();
+        let norm_len = u32::try_from(cached.normalized.len()).unwrap();
+        assert_eq!(norm_offset(&cached, 0), Some(0), "start of {src:?}");
+        assert_eq!(
+            norm_offset(&cached, san_len),
+            Some(norm_len),
+            "end of {src:?}",
+        );
+    }
+
+    /// THE key cross-check: for every node, the sanitized boundary just after
+    /// its span maps to the normalized cursor just after its sentinel (`+3`)
+    /// plus trailing standalone padding — derived straight from the registry
+    /// positions the pipeline actually produced. Skips any boundary another
+    /// node straddles (it would not be a clean interstitial point).
+    fn assert_registry_ground_truth(src: &str) {
+        let cached = owned(src);
+        let reg = reg_entries(&cached);
+        let nodes = &cached.source_nodes;
+        assert_eq!(
+            reg.len(),
+            nodes.len(),
+            "registry parallel to source_nodes for {src:?}",
+        );
+        let mut checked = 0usize;
+        for k in 1..=nodes.len() {
+            let b = nodes[k - 1].source_span.end;
+            // A clean interstitial boundary is straddled by no node.
+            if nodes
+                .iter()
+                .any(|sn| sn.source_span.start < b && sn.source_span.end > b)
+            {
+                continue;
+            }
+            let expected = reg[k - 1].0 + 3 + standalone_pad(reg[k - 1].1);
+            assert_eq!(
+                norm_offset(&cached, b),
+                Some(expected),
+                "node {} boundary {b} in {src:?}",
+                k - 1,
+            );
+            checked += 1;
+        }
+        assert!(
+            nodes.is_empty() || checked > 0,
+            "no clean boundary checked for {src:?}",
+        );
+    }
+
+    /// Structurally diverse documents that exercise every padding case: plain
+    /// (no node), inline ruby (pad 0, long base collapses), inline forward
+    /// format, a standalone block leaf (改ページ, pad 2), an inline gaiji
+    /// reference, and a block container open/close (字下げ, pad 2 each).
+    const GROUND_TRUTH_DOCS: &[&str] = &[
+        "あいうえお\n\nかきくけこ\n",
+        "前｜漢字《かんじ》後\n",
+        "前\n\n｜山《やま》\n\n後\n",
+        "あ［＃「あ」は太字］い\n",
+        "前\n\n［＃改ページ］\n\n後\n",
+        "海※［＃感嘆符二つ、1-8-75］辺\n",
+        "前\n\n［＃ここから２字下げ］\n本文\n［＃ここで字下げ終わり］\n\n後\n",
+    ];
+
+    #[test]
+    fn norm_offset_endpoints_account_for_all_drift() {
+        for src in GROUND_TRUTH_DOCS {
+            assert_endpoints(src);
+        }
+        // Empty document: 0 maps to 0, both lengths zero.
+        let empty = owned("");
+        assert_eq!(norm_offset(&empty, 0), Some(0));
+    }
+
+    #[test]
+    fn norm_offset_matches_registry_ground_truth() {
+        for src in GROUND_TRUTH_DOCS {
+            assert_registry_ground_truth(src);
+        }
+    }
+
+    #[test]
+    fn norm_offset_standalone_block_includes_lead_and_trail_padding() {
+        // 改ページ is a standalone block leaf: pad 2 (lead) + 3 sentinel + 2
+        // (trail). The boundary after it must skip the trailing pad too.
+        let src = "前\n\n［＃改ページ］\n\n後\n";
+        let cached = owned(src);
+        let idx = cached
+            .source_nodes
+            .iter()
+            .position(|sn| matches!(sn.node, NodeRefOwned::BlockLeaf(_)))
+            .expect("改ページ is a block leaf");
+        assert_eq!(
+            standalone_pad(cached.source_nodes[idx].node),
+            2,
+            "standalone block leaf pads 2",
+        );
+        let reg = reg_entries(&cached);
+        let b = cached.source_nodes[idx].source_span.end;
+        assert_eq!(
+            norm_offset(&cached, b),
+            Some(reg[idx].0 + 3 + 2),
+            "cursor sits after sentinel + trailing pad",
+        );
+    }
+
+    #[test]
+    fn norm_offset_block_container_pads_open_and_close() {
+        // 字下げ container: BlockOpen + BlockClose, each block (pad 2).
+        let src = "前\n\n［＃ここから２字下げ］\n本文\n［＃ここで字下げ終わり］\n\n後\n";
+        let cached = owned(src);
+        let opens: Vec<_> = cached
+            .source_nodes
+            .iter()
+            .filter(|sn| matches!(sn.node, NodeRefOwned::BlockOpen(_)))
+            .collect();
+        let closes: Vec<_> = cached
+            .source_nodes
+            .iter()
+            .filter(|sn| matches!(sn.node, NodeRefOwned::BlockClose(_)))
+            .collect();
+        assert_eq!(opens.len(), 1, "one container open");
+        assert_eq!(closes.len(), 1, "one container close");
+        assert_eq!(standalone_pad(opens[0].node), 2, "block open pads 2");
+        assert_eq!(standalone_pad(closes[0].node), 2, "block close pads 2");
+        assert_registry_ground_truth(src);
+    }
+
+    #[test]
+    fn standalone_pad_table_inline_vs_block() {
+        // Inline open/close (傍点 range, is_inline) get no padding; block
+        // open/close (罫囲み) pad 2. Constructed directly to pin the table
+        // independent of which directives the parser happens to emit inline.
+        let inline_open = NodeRefOwned::BlockOpen(RegionFormat::Bouten {
+            kind: BoutenKind::Goma,
+            position: BoutenPosition::Right,
+        });
+        let inline_close = NodeRefOwned::BlockClose(RegionClose::Bouten {
+            kind: BoutenKind::Goma,
+            position: BoutenPosition::Right,
+        });
+        let block_open = NodeRefOwned::BlockOpen(RegionFormat::Framed);
+        let block_close = NodeRefOwned::BlockClose(RegionClose::Framed);
+        assert_eq!(standalone_pad(inline_open), 0, "inline open: no pad");
+        assert_eq!(standalone_pad(inline_close), 0, "inline close: no pad");
+        assert_eq!(standalone_pad(block_open), 2, "block open: pad 2");
+        assert_eq!(standalone_pad(block_close), 2, "block close: pad 2");
+    }
+
+    #[test]
+    fn norm_offset_crlf_source_is_in_sanitized_coordinates() {
+        // Sanitize strips \r first, so source_nodes / normalized already live
+        // in sanitized space; norm_offset operates entirely there.
+        let src = "前\r\n\r\n［＃改ページ］\r\n\r\n後\r\n";
+        let cached = owned(src);
+        assert!(!cached.sanitized.contains('\r'), "sanitized drops CR");
+        assert_endpoints(src);
+        assert_registry_ground_truth(src);
+    }
+
+    #[test]
+    fn norm_offset_interior_gap_matches_bracketing_form() {
+        // An interior boundary in the MIDDLE of a plain gap (not exactly at a
+        // node end): the cumulative form must equal the bracketing form
+        // `reg[k-1].0 + 3 + pad + (b - source_span.end)` — plain text is 1:1.
+        let src = "前\n\n［＃改ページ］\n\n後の段落です\n";
+        let cached = owned(src);
+        let reg = reg_entries(&cached);
+        // The single node is the page break; pick a boundary a few bytes into
+        // the trailing "後の段落です" plain run, well past its span end.
+        let node_end = cached.source_nodes[0].source_span.end;
+        let after = cached.sanitized.find("後の段落").unwrap();
+        let b = u32::try_from(after + "後".len()).unwrap();
+        assert!(b > node_end, "boundary sits in the gap after the node");
+        let pad = standalone_pad(cached.source_nodes[0].node);
+        let bracketing = reg[0].0 + 3 + pad + (b - node_end);
+        assert_eq!(
+            norm_offset(&cached, b),
+            Some(bracketing),
+            "cumulative form equals bracketing form in a plain gap",
+        );
+    }
+
+    #[test]
+    fn norm_offset_out_of_bounds_yields_none() {
+        let cached = owned("あいうえお\n");
+        let san_len = u32::try_from(cached.sanitized.len()).unwrap();
+        assert_eq!(norm_offset(&cached, san_len + 1), None, "past the end");
+    }
+
+    #[test]
+    fn norm_offset_mid_codepoint_yields_none() {
+        // The defensive char-boundary tripwire: a san_off that lands inside a
+        // multi-byte codepoint maps to a non-char-boundary normalized offset
+        // and must decline (→ caller falls back) rather than produce a
+        // mid-codepoint splice point. "あ" is 3 bytes, so byte 1 is interior.
+        let cached = owned("あ\n");
+        assert!(
+            !cached.sanitized.is_char_boundary(1),
+            "byte 1 is mid-codepoint in the sanitized buffer",
+        );
+        assert_eq!(
+            norm_offset(&cached, 1),
+            None,
+            "mid-codepoint offset declines"
+        );
+    }
+
+    #[test]
+    fn norm_offset_no_node_interior_is_identity() {
+        // A document with no classified nodes has zero drift, so norm_offset is
+        // the identity at every char boundary (normalized == sanitized).
+        let cached = owned("あいうえお\n");
+        assert!(cached.source_nodes.is_empty(), "plain text has no nodes");
+        assert_eq!(cached.normalized, cached.sanitized, "no sentinels inserted");
+        for b in 0..=cached.sanitized.len() {
+            if cached.sanitized.is_char_boundary(b) {
+                let off = u32::try_from(b).unwrap();
+                assert_eq!(norm_offset(&cached, off), Some(off), "identity at {b}");
+            }
+        }
     }
 }
