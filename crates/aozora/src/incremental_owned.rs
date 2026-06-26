@@ -10,10 +10,11 @@
 //! sanitized→normalized offset map ([`norm_offset`]), the **owned-table splice**
 //! ([`reparse_incremental_owned`]), and the shared "where is it safe to cut the
 //! document" helpers that both the Stage-A engine and this owned engine consume.
-//! The splice is gated/unwired — nothing here is wired to a production consumer
-//! yet (the LSP consumer lands in #237 Stage B'3); it is internal, unit-tested,
-//! and proven byte-identical to a full re-parse by the `corpus_incremental_merge`
-//! differential gate.
+//! The splice is the production incremental path: it is re-exported from the
+//! crate root as the **unstable** [`crate::reparse_incremental_owned`] and
+//! consumed by the LSP's debounced diagnostics (#237 Stage B'3). It is
+//! internal-unit-tested and proven byte-identical to a full re-parse by the
+//! `corpus_incremental_merge` differential gate.
 //!
 //! All coordinates here are **sanitized-source** byte offsets (the space every
 //! [`OwnedLexOutput::source_span`](crate::SourceNodeOwned::source_span) and
@@ -30,6 +31,28 @@ use crate::{
     CoupledKind, Diagnostic, Document, NodeRefOwned, NormalizedOffset, OwnedLexOutput, PairLink,
     SourceNodeOwned, SpliceSafety,
 };
+
+/// The result of a successful owned-table incremental splice.
+///
+/// Returned by [`crate::reparse_incremental_owned`]: the byte-identical
+/// [`OwnedLexOutput`] plus the reuse accounting the LSP surface reports as cache
+/// hits/misses.
+///
+/// `reused_nodes` counts the `cached` source nodes carried into the result
+/// unchanged (the prefix before the re-lexed region plus the shifted suffix
+/// after it); `relexed_nodes` counts the nodes the region re-lex produced.
+/// Together they expose how much of the prior parse the splice salvaged.
+#[derive(Debug)]
+pub struct OwnedSplice {
+    /// The spliced lex output, byte-for-byte equal to a full re-parse of the
+    /// edited text on every resolved/rendered surface.
+    pub output: OwnedLexOutput,
+    /// Number of `cached` source nodes carried into the result unchanged
+    /// (prefix `end <= region.start` plus suffix `start >= region.end`).
+    pub reused_nodes: u64,
+    /// Number of source nodes the isolated region re-lex produced.
+    pub relexed_nodes: u64,
+}
 
 /// Whether `s` carries document structure that an incremental segment re-lex
 /// must not silently absorb: a line terminator (could move a blank-line
@@ -162,15 +185,6 @@ pub(crate) fn structurally_safe(
 ///   container pairing), which any edit can perturb beyond the region;
 /// - `edit` is out of bounds (start > end, or end > sanitized length);
 /// - the minimal safe region is the whole document (no interior safe cut).
-// Consumed by the owned-table splice in a later #237 Stage B' PR; only the
-// unit tests exercise it for now, so it reads as dead code in non-test builds.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "consumed by the owned-table splice in a later #237 Stage B' PR"
-    )
-)]
 pub(crate) fn minimal_balanced_region(
     cached: &OwnedLexOutput,
     edit: Range<usize>,
@@ -223,13 +237,6 @@ pub(crate) fn minimal_balanced_region(
 /// padding. Mirrors the normalize-stage rule that drives the `\n\n` + `<div>`
 /// wrapping (see [`crate::RegionFormat::is_inline`] /
 /// [`crate::RegionClose::is_inline`]).
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "consumed by the owned-table splice in a later #237 Stage B' PR"
-    )
-)]
 fn standalone_pad(node: NodeRefOwned) -> u32 {
     match node {
         NodeRefOwned::BlockLeaf(_) => 2,
@@ -265,13 +272,6 @@ fn standalone_pad(node: NodeRefOwned) -> u32 {
 /// boundary of `cached.normalized` — the boundary-never-in-padding proof means
 /// this never fires for a valid interstitial boundary, but it converts any
 /// surprise into a clean fallback rather than a bad splice.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "consumed by the owned-table splice in a later #237 Stage B' PR"
-    )
-)]
 pub(crate) fn norm_offset(cached: &OwnedLexOutput, san_off: u32) -> Option<u32> {
     let san_len = u32::try_from(cached.sanitized.len()).ok()?;
     if san_off > san_len {
@@ -350,11 +350,12 @@ fn relexed_is_balanced(nodes: &[SourceNodeOwned]) -> bool {
     depth == 0
 }
 
-/// Build the [`OwnedLexOutput`] for the edited text `new_sanitized` (a sanitized
-/// fixed point) from `cached` (the owned lex output of the pre-edit sanitized
-/// text) and the single sanitized-coordinate edit `edit_old`, **without a full
-/// re-parse** — by re-lexing only the minimal balanced region around the edit
-/// and splicing the owned tables.
+/// Build the [`OwnedSplice`] (the spliced [`OwnedLexOutput`] plus reuse counts)
+/// for the edited text `new_sanitized` (a sanitized fixed point) from `cached`
+/// (the owned lex output of the pre-edit sanitized text) and the single
+/// sanitized-coordinate edit `edit_old`, **without a full re-parse** — by
+/// re-lexing only the minimal balanced region around the edit and splicing the
+/// owned tables.
 ///
 /// The result is byte-for-byte equal, on every resolved/rendered surface, to a
 /// full re-parse of `new_sanitized`; the `corpus_incremental_merge` differential
@@ -380,16 +381,6 @@ fn relexed_is_balanced(nodes: &[SourceNodeOwned]) -> bool {
 ///   search) or an opaque node the splice cannot reason about;
 /// - a cached diagnostic straddles a region boundary, or any offset arithmetic
 ///   overflows.
-// Consumed by the #237 Stage B' LSP wiring in a later PR; only the differential
-// gate and unit tests exercise it for now, so it reads as dead code in non-test
-// builds (it is reachable via the `#[doc(hidden)]` test shim in `lib.rs`).
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "wired to the LSP consumer in a later #237 Stage B' PR; exercised now only by the differential gate via the doc-hidden shim"
-    )
-)]
 #[allow(
     clippy::too_many_lines,
     reason = "a single linear table-by-table splice; splitting the prefix/region/suffix walk per stream would scatter the one invariant (each table partitions at the same region boundary) across helpers and obscure it"
@@ -398,7 +389,7 @@ pub(crate) fn reparse_incremental_owned(
     cached: &OwnedLexOutput,
     new_sanitized: &str,
     edit_old: Range<usize>,
-) -> Option<OwnedLexOutput> {
+) -> Option<OwnedSplice> {
     // 1. Minimal balanced region (sanitized coordinates).
     let region = minimal_balanced_region(cached, edit_old.clone())?;
     let r_start = region.start as usize;
@@ -675,9 +666,23 @@ pub(crate) fn reparse_incremental_owned(
         }
     }
 
-    // 14. Assemble. `intern_stats` is carried verbatim (the gate ignores it).
+    // 14. Reuse accounting (the LSP surface reports these as cache hits/misses):
+    //     cached prefix nodes (end <= region.start) plus cached suffix nodes
+    //     (start >= region.end) are carried unchanged; the region's nodes are
+    //     the re-lexed ones.
+    let reused_nodes = u64::try_from(
+        cached
+            .source_nodes
+            .iter()
+            .filter(|sn| sn.source_span.end <= region.start || sn.source_span.start >= region.end)
+            .count(),
+    )
+    .ok()?;
+    let relexed_nodes = u64::try_from(relexed.source_nodes.len()).ok()?;
+
+    // 15. Assemble. `intern_stats` is carried verbatim (the gate ignores it).
     let sanitized_len = u32::try_from(new_sanitized_out.len()).ok()?;
-    Some(OwnedLexOutput::new(
+    let output = OwnedLexOutput::new(
         new_normalized,
         new_sanitized_out,
         registry,
@@ -688,7 +693,12 @@ pub(crate) fn reparse_incremental_owned(
         container_pairs,
         cached.intern_stats,
         store,
-    ))
+    );
+    Some(OwnedSplice {
+        output,
+        reused_nodes,
+        relexed_nodes,
+    })
 }
 
 #[cfg(test)]
@@ -1187,7 +1197,11 @@ mod tests {
 
         let spliced = reparse_incremental_owned(&cached, &new_san, edit)
             .expect("plain interior edit must take the fast path");
-        assert_splice_matches_full(&spliced, &full);
+        assert!(
+            spliced.reused_nodes > 0 || cached.source_nodes.is_empty(),
+            "an interior splice of a multi-paragraph doc reuses flanking nodes",
+        );
+        assert_splice_matches_full(&spliced.output, &full);
     }
 
     #[test]
@@ -1205,7 +1219,15 @@ mod tests {
 
         let spliced = reparse_incremental_owned(&cached, &new_san, edit)
             .expect("block-adjacent interior edit must take the fast path");
-        assert_splice_matches_full(&spliced, &full);
+        assert!(
+            spliced.reused_nodes > 0,
+            "the 改ページ block leaf sits in the reused prefix",
+        );
+        assert_eq!(
+            spliced.relexed_nodes, 0,
+            "the edited trailing paragraph re-lexes to plain text (no nodes)",
+        );
+        assert_splice_matches_full(&spliced.output, &full);
     }
 
     #[test]

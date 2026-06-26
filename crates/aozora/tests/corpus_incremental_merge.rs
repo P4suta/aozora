@@ -19,7 +19,7 @@
 use aozora::render::{render_html_owned, serialize_owned};
 use aozora::syntax::owned::{ContentOwned, NodeOwned, NodeRefOwned, NodeStore, SegmentOwned};
 use aozora::syntax::owned::{ContentRange, GaijiCanonicalOwned, GaijiOwned, SegRange};
-use aozora::{__reparse_incremental_owned, Diagnostic, Document, SegmentedParse};
+use aozora::{Diagnostic, Document, SegmentedParse, reparse_incremental_owned};
 use aozora_encoding::decode_auto;
 
 /// Diagnostic variants whose computation depends on the whole document
@@ -183,7 +183,7 @@ fn reparse_incremental_equals_full_parse() {
     );
 }
 
-/// PR3b-2 Stage B'2: `__reparse_incremental_owned` (the owned-table splice)
+/// PR3b-2 Stage B'2: `reparse_incremental_owned` (the owned-table splice)
 /// must produce an `OwnedLexOutput` byte-for-byte equal — on every
 /// resolved/rendered surface — to a from-scratch parse of the edited text, for
 /// every corpus document whose midpoint insertion is a sanitize fixed point.
@@ -255,11 +255,12 @@ fn reparse_owned_incremental_equals_full_parse() {
             continue;
         }
 
-        let Some(spliced) = __reparse_incremental_owned(&cached, &new_san, mid..mid) else {
+        let Some(splice) = reparse_incremental_owned(&cached, &new_san, mid..mid) else {
             fallback += 1;
             count += 1;
             continue;
         };
+        let spliced = splice.output;
         fast_path += 1;
         count += 1;
 
