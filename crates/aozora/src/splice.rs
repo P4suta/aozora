@@ -253,7 +253,13 @@ impl Error for SpliceError {}
 
 /// Classify a node region's role and splice safety. Pure: a function of the
 /// [`NodeRefOwned`] variant and (for a forward leaf) its [`ForwardOrigin`] alone.
-fn classify_node_ref(node: NodeRefOwned) -> (RegionRole, SpliceSafety) {
+///
+/// `pub(crate)` so the owned-table incremental splice
+/// ([`crate::incremental_owned`]) shares this single source of truth for the
+/// text-coupling check (a forward reference / heading hint / margin note
+/// resolves by whole-document text search, so a region re-lex cannot localise
+/// it).
+pub(crate) fn classify_node_ref(node: NodeRefOwned) -> (RegionRole, SpliceSafety) {
     use SpliceSafety::{Coupled, Direct, Opaque};
 
     match node {
