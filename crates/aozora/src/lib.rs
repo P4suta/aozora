@@ -55,6 +55,8 @@
 #![doc = include_str!("../../../README.md")]
 #![forbid(unsafe_code)]
 
+use core::ops::Range;
+
 pub use aozora_pipeline::{NodeRefOwned, OwnedLexOutput, SourceNodeOwned, lex};
 pub use aozora_spec::{
     ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic,
@@ -92,6 +94,27 @@ pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
 pub use segmented::{IncrementalOutcome, SegmentedParse};
 /// Source-region ownership and minimal-diff source splicing (#202).
 pub use splice::{CoupledKind, Coupling, OwnedRegion, RegionRole, SpliceError, SpliceSafety};
+
+/// **Internal, unstable.** Owned-AST incremental re-parse entry point (#237
+/// Stage B'), exposed only so the `corpus_incremental_merge` differential gate
+/// (an integration test) can prove it byte-for-byte equivalent to a full
+/// re-parse. NOT part of the public API and subject to change without notice;
+/// the production consumer is the LSP wiring landing in a later #237 PR.
+///
+/// Builds the [`OwnedLexOutput`] for `new_sanitized` (a sanitized fixed point)
+/// from `cached` and the single sanitized-coordinate edit `edit_old`, by
+/// re-lexing only the minimal balanced region around the edit and splicing the
+/// owned tables. Returns `None` for any edit it cannot prove local (the caller
+/// then full-parses).
+#[doc(hidden)]
+#[must_use]
+pub fn __reparse_incremental_owned(
+    cached: &OwnedLexOutput,
+    new_sanitized: &str,
+    edit_old: Range<usize>,
+) -> Option<OwnedLexOutput> {
+    incremental_owned::reparse_incremental_owned(cached, new_sanitized, edit_old)
+}
 
 /// Eagerly initialise the parser's process-global lazy tables.
 ///
