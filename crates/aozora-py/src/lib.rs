@@ -59,11 +59,18 @@ mod bindings {
 
     /// `PyO3`-facing handle to a parsed Aozora document.
     ///
-    /// `unsendable` because [`AozoraDoc`] owns a `bumpalo` arena
-    /// with interior `Cell` state — `Send` but not `Sync`. Pinning the
-    /// `PyO3` handle to its constructing Python thread reflects the
-    /// underlying ownership contract; concurrent access from other
-    /// Python threads raises a `RuntimeError` instead of unsound sharing.
+    /// Wraps an [`AozoraDoc`], which owns only the source buffer
+    /// (`Box<str>`) plus a `Copy` diagnostic policy and derives an owned,
+    /// lifetime-free parse tree on demand. There is no arena and no
+    /// interior-mutable state, so the wrapped document is itself
+    /// `Send + Sync`.
+    ///
+    /// The `unsendable` marker below is therefore now *conservative*: it
+    /// pins the `PyO3` handle to its constructing Python thread (access
+    /// from another thread raises a `RuntimeError` rather than sharing
+    /// it). That is a safe, stricter-than-required contract that could be
+    /// relaxed now that the arena is gone — relaxing the attribute is a
+    /// code change tracked separately.
     #[pyclass(unsendable)]
     #[derive(Debug)]
     pub struct Document {

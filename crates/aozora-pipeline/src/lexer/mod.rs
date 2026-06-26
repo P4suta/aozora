@@ -7,9 +7,9 @@
 //!   normalized text with Private-Use-Area sentinel characters at
 //!   Aozora construct positions, plus a side registry mapping sentinel
 //!   positions back to pre-classified
-//!   `aozora_syntax::borrowed::Node` values.
+//!   `aozora_syntax::owned::NodeOwned` values.
 //! - **Post-process AST walk** substitutes sentinels with the registry's
-//!   borrowed-AST values. That walk lives in `aozora`.
+//!   owned-AST values. That walk lives in `aozora`.
 //! - **Pure-functional pipeline**: every stage is `fn(input) -> output`
 //!   with no shared mutable state. Unit-testable and deterministic.
 //!
@@ -20,7 +20,7 @@
 //! | sanitize | BOM strip, CR/LF → LF, PUA collision pre-scan |
 //! | tokenize | Linear tokenize — emit trigger events (`｜《》［］※〔〕「」`) |
 //! | pair     | Balanced-stack pairing across all delimiters |
-//! | classify | Full-spec Aozora classification into `aozora_syntax::borrowed::Node` |
+//! | classify | Full-spec Aozora classification into `aozora_syntax::owned::NodeOwned` |
 //!
 //! After classify, the legacy normalize / registry / validate stages
 //! live as a fused walk inside

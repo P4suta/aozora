@@ -1,7 +1,7 @@
 //! Driver-shared wire format for serialising `aozora` parser output.
 //!
 //! Three driver crates (`aozora-ffi`, `aozora-wasm`, `aozora-py`) all
-//! need to project the borrowed-AST output to a stable byte stream.
+//! need to project the owned-AST parser output to a stable byte stream.
 //! This module is the **single authority** for that projection — each
 //! driver calls into here and is guaranteed bit-identical output
 //! across language boundaries.

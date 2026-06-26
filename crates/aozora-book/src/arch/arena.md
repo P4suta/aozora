@@ -1,142 +1,165 @@
-# Borrowed-arena AST
+# Owned AST & NodeStore
 
-`Tree<'a>` is **not** an owned tree. It's a borrow into two
-things owned by `Document`:
+`Tree<'a>` is a **view** over an owned, lifetime-free parse result. Its
+`'a` lifetime tracks only one thing — the borrow of the source string
+owned by `Document`. The AST data itself is owned outright by an
+`OwnedLexOutput`, so it carries no arena lifetime and is `Send + Sync`.
 
-- the source `Box<str>`,
-- a [`bumpalo::Bump`](https://docs.rs/bumpalo) arena that holds every
-  intermediate node and child slice.
+- `Document` owns the source `Box<str>` (and a `Copy` diagnostic
+  policy). It holds no parse state.
+- `Document::parse` runs the owned lex pipeline and returns a
+  `Tree<'_>` that owns its `OwnedLexOutput` and borrows only `&self`'s
+  source.
+- Every variable-length payload — interned strings, `Content` runs,
+  `Segment` slices — lives in a flat `NodeStore` addressed by small
+  `u32` handles, not behind pointers into an arena.
 
 ```mermaid
 flowchart LR
     subgraph Document
         src["Box&lt;str&gt; source"]
-        bump["bumpalo::Bump arena"]
     end
-    tree["Tree&lt;'a&gt;"]
+    subgraph Tree["Tree&lt;'a&gt;"]
+        out["OwnedLexOutput"]
+        store["NodeStore: interner + content / segment Vecs"]
+        out --- store
+    end
     walk["render / serialize / iterate"]
 
-    src -.borrows.-> tree
-    bump -.borrows.-> tree
-    tree --> walk
+    src -.borrows 'a.-> Tree
+    Tree --> walk
 ```
 
-When the `Document` drops, the source `Box<str>` and the arena's
-single backing buffer drop in two `free()` calls — *every node, every
-container, every interned string* releases together. There is no
-per-node destructor and no walk-the-tree-to-free pass.
+When the `Tree` drops, the `NodeStore`'s `Vec`s and the interner drop in
+a handful of `free()` calls — *every node, every container, every
+interned string* releases together. There is no per-node destructor and
+no walk-the-tree-to-free pass. When the `Document` drops, its source
+`Box<str>` releases on its own.
 
-## Why an arena and not `Box<Node>` everywhere?
+## The NodeStore: a flat, handle-addressed store
 
-The naive Rust shape — `enum Node { Ruby { target: String, … }, … }`
-— would allocate per node, per `String`, per `Vec<Node>` for
-container children. For a typical Aozora Bunko work (~500 KiB
-source, ~50 000 nodes) that's:
+Owned nodes are `Copy` tagged unions of scalars and `u32` handles. The
+three handle types index flat pools held by the `NodeStore`:
+
+| Handle | Resolves to | Backing pool |
+|---|---|---|
+| `StrId` | an interned `&str` | the `StrInterner` |
+| `ContentRange` | a `&[ContentOwned]` run (`len >= 1`) | the content `Vec` |
+| `SegRange` | a `&[SegmentOwned]` slice | the segment `Vec` |
+
+```rust,ignore
+use aozora::Document;
+use aozora::syntax::owned::{NodeOwned, NodeRefOwned};
+
+let doc = Document::new("｜青梅《おうめ》");
+let tree = doc.parse();
+let out = tree.lex_output();
+
+// Walk the source-keyed side table; resolve a ruby base through the store.
+for sn in tree.source_nodes() {
+    if let NodeRefOwned::Inline(NodeOwned::Ruby(r)) = sn.node {
+        // `content_range_as_plain` resolves a length-1 `Plain` run to its text.
+        if let Some(base) = out.store.content_range_as_plain(r.base) {
+            assert_eq!(base, "青梅");
+        }
+    }
+}
+```
+
+Because the payloads are `Copy` `u32`s, iterating the tree never needs
+`&mut` and never re-interns: copy the node, follow the handle into the
+store, read on.
+
+## Why a flat store and not `Box<Node>` everywhere?
+
+The naive Rust shape — `enum Node { Ruby { base: String, … }, … }` —
+would allocate per node, per `String`, per `Vec<Node>` for container
+children. For a typical Aozora Bunko work (~500 KiB source, ~50 000
+nodes) that is:
 
 - ~50 000 individual heap allocations,
-- ~50 000 individual frees on drop (each is a syscall away from the
-  heap allocator's free list),
+- ~50 000 individual frees on drop (each a trip to the allocator's free
+  list),
 - 16+ bytes of allocator metadata per allocation,
 - random-access fragmentation that defeats prefetch.
 
-The arena variant produces:
+The flat-store variant produces instead:
 
-- ~16 *bump allocations* (4 KiB pages, refilled on overflow),
-- 1 free on drop (`Bump::reset` returns the pages to the OS, the
-  pages themselves are typically reused via the cargo / system
-  allocator's page cache).
-- Sequential layout: nodes that were lexed near each other live near
-  each other in memory, which is exactly the order the renderer
-  walks them.
+- a handful of growable `Vec`s (the content / segment pools and the
+  interner's byte buffer), amortised to a few reallocations,
+- one drop per pool — no per-node destructor,
+- sequential layout: nodes lexed near each other live near each other in
+  the pool, which is exactly the order the renderer walks them,
+- string deduplication for free — byte-equal content shares one `StrId`,
+  so repeated readings / bases / gaiji references are stored once.
 
-Measured on the [corpus sweep](../perf/corpus.md): the arena variant
-parses 6.4× faster than the equivalent `Box<Node>` shape, and the
-peak RSS is 30% lower. The win is *cumulative* — every binding
-(CLI / WASM / FFI / Python) inherits it.
+The win is *cumulative* — every binding (CLI / WASM / FFI / Python)
+inherits it. See the [corpus sweep](../perf/corpus.md) for the measured
+allocator footprint.
 
-## Why `bumpalo` over `typed-arena`, `slotmap`, or hand-rolled?
+## Why index-owned replaced the arena
 
-| Crate | Shape | Why aozora doesn't use it |
-|---|---|---|
-| `typed-arena` | One arena per type (`Arena<Ruby>`, `Arena<Bouten>`, …) | aozora has 30+ node types; managing 30 arenas is operationally awkward and forces lifetime-bound `&'a` per type. |
-| `slotmap` | Index-keyed nodes; arena owns; access via `SlotMap::get` | Adds an indirection (key → slot → node) on every walk, regressing render throughput by ~25% on the bench harness. Also forces `Copy` keys, which for variable-length text fields means re-interning. |
-| `id-arena` / `index_vec` | Index-typed, `&str` borrowing | Same indirection cost as `slotmap`. |
-| Hand-rolled bump | Custom; tightest control | Correct, but `bumpalo` is already a stable, mainstream, allocator-aware bump arena with `bumpalo::collections::Vec` for child slices. Reinventing wins nothing. |
-| `bumpalo` | Single arena, type-erased; allocate any `T` with `bump.alloc(T)` | One arena per `Document`; allocate-then-borrow gives `&'a T` for the lifetime of the arena. Matches aozora's "one arena per Document" need exactly. |
+Earlier revisions backed the AST with a `bumpalo` arena and a borrowed
+tree whose every node held a `&'src str` into that arena. That tree was
+`Copy` and fast, but it was tied to one lifetime and so was **not**
+`Send + Sync`: it could not outlive the `Document`, could not be cached,
+and could not move between threads.
 
-`bumpalo`'s `collections::Vec<'bump, T>` (used for container child
-slices) is `Vec`-shaped but allocated inside the arena — child
-slices get the same arena lifetime as the parent without a separate
-allocation strategy.
+The #237 incremental-reparse work needs the opposite: a representation a
+long-lived consumer (the LSP `ParseCache`, an out-of-process segment
+cache) can **own, cache, and move across threads**. Replacing the
+arena's pointers with `u32` handles into owned `Vec`s makes the whole
+`OwnedLexOutput` lifetime-free and `Send + Sync`, while keeping the
+same `Copy`, cache-friendly node shape the arena gave. The classify
+stage now builds owned nodes directly into the store — there is no
+intermediate borrowed tree to convert from.
 
 ## How the AST shape interacts with the lifetime
 
 ```rust,ignore
-pub enum Node<'src> {
-    Plain(&'src str),
-    Ruby(Ruby<'src>),
-    Bouten(Bouten<'src>),
-    Tcy(Tcy<'src>),
-    Gaiji(Gaiji<'src>),
-    Container(&'src Container<'src>),    // boxed in the arena
-    BreakNode(BreakNode),
-    // … 30+ variants
+pub enum NodeOwned {
+    Ruby(RubyOwned),         // ContentRange base / reading
+    Gaiji(GaijiOwned),       // gaiji reference payload
+    Kaeriten(KaeritenOwned),
+    Container(Container),    // a nested block region
+    PageBreak,               // a Copy unit variant
+    // … and more variants, every payload Copy or a u32 handle
 }
 ```
 
-The `'src` lifetime is the arena lifetime (re-using `'src` because
-all node text borrows from the source buffer, which lives at least
-as long as the arena). Each variant either:
+`NodeOwned` is a tagged union of scalars and `u32` handles — fully
+`Copy`, with no lifetime parameter. The only lifetime in the public
+surface is the `'a` on `Tree<'a>`, and it tracks the **source** borrow,
+nothing more:
 
-- holds a `&str` slice into the source (zero copy), or
-- is a small `Copy` struct (`BreakNode`, `Saidoku`, …), or
-- is `&'src Container<'src>` — boxed in the arena because
-  `Container` itself contains a `&'src [Node<'src>]` child
-  slice.
-
-The whole `Node` is `Copy` (it's a tagged union of references
-and small primitives), so iterating the tree never needs `&` — just
-deref the reference, copy the node, walk on.
+```rust,ignore
+fn render(tree: &aozora::Tree<'_>) -> String {
+    tree.to_html()   // owned AST data; 'a is just the source view
+}
+```
 
 ## What you trade
 
-The big trade-off: **you can't outlive the `Document`**. A
-`Vec<Node<'_>>` doesn't compile because the `'_` lifetime is
-bound to the arena, which is bound to the `Document`.
-
-In practice this rarely matters — consumers either:
-
-- Render the tree immediately and discard (`tree.to_html()` returns
-  `String`, which has no lifetime tie).
-- Walk the tree once and emit their own owned IR (most editor
-  backends do this).
-- Hold the `Document` itself across function boundaries and re-derive
-  the tree on the inside.
-
-For consumers that genuinely need an owned tree, the visitor trait
-on `Tree` makes the conversion trivial — walk the tree once
-and emit your own owned IR. We resist shipping a built-in
-`aozora::owned` because doing so would push consumers toward it
-even when an immediate `to_html()` or per-walk transcription would
-serve them better.
-
-## Lifetime safety
-
-The `'src` parameter prevents these shapes at compile time:
+Owning the AST removes the old arena trade-off ("you can't outlive the
+`Document`"). A consumer that wants a result with **no** lifetime calls
+`Document::parse_owned`, which returns an `OwnedLexOutput` directly:
 
 ```rust,ignore
-fn bad() -> Tree<'static> {
-    let doc = aozora::Document::new("…".into());
-    doc.parse()        // ERROR: cannot return value referencing local
-}
+use aozora::{Document, OwnedLexOutput};
+
+// Send + Sync, no lifetime — cache it, move it across threads.
+let owned: OwnedLexOutput = Document::new("｜青梅《おうめ》").parse_owned();
 ```
 
-Borrow-checker enforcement; no runtime `Drop` ordering bugs possible.
+A cache that retains the owned output can hand out cheap `Tree` views
+over it without re-parsing, via `Tree::view`. Most consumers still take
+the simple path — render immediately and discard
+(`tree.to_html()` returns a lifetime-free `String`) — but the owned
+representation is there when an editor backend genuinely needs to hold a
+parse result across edits.
 
 ## See also
 
-- [Pipeline overview](pipeline.md) — where the arena is created.
-- [Crate map](crates.md) — `aozora-syntax` defines the node types;
-  `aozora-pipeline` does the allocation via [`lex`].
-
-[`lex`]: https://docs.rs/aozora-pipeline/latest/aozora_pipeline/fn.lex.html
+- [Pipeline overview](pipeline.md) — where the owned output is built.
+- [Crate map](crates.md) — `aozora-syntax` defines the node types and
+  the `NodeStore`; `aozora-pipeline` builds the owned output via `lex`.

@@ -1,6 +1,6 @@
 //! Cross-cutting "kind" tag for AST nodes.
 //!
-//! [`NodeKind`] enumerates every wire-distinct tag the borrowed-AST
+//! [`NodeKind`] enumerates every wire-distinct tag the owned-AST
 //! surfaces produce. It is used both for **internal** projection
 //! (`Node::kind`,
 //! `NodeRef::kind`) and for the

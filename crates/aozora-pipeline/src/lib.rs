@@ -1,13 +1,17 @@
-//! Aozora notation lex pipeline — borrowed-AST front door.
+//! Aozora notation lex pipeline — owned-AST front door.
 //!
 //! Both the orchestrator and the per-stage pipeline impl live in
 //! this single crate:
 //!
-//! - The orchestrator (`pipeline` / `borrowed` modules at the crate
-//!   root) drives the borrowed-AST pipeline through its stages
+//! - The orchestrator (the [`Pipeline`] state machine plus the [`lex`]
+//!   entry in `owned_lex`) drives the pipeline through its stages
 //!   (sanitize → tokenize → pair → classify). The single public entry
-//!   [`lex`] runs the whole thing and lands the resulting borrowed AST
-//!   inside an `aozora_syntax::borrowed::Arena` provided by the caller.
+//!   [`lex`] runs the whole thing and returns the result as an owned,
+//!   lifetime-free [`OwnedLexOutput`] (`Send + Sync`): the classify
+//!   stage builds the owned nodes directly into an
+//!   `aozora_syntax::owned::NodeStore` (a string interner plus flat
+//!   content / segment pools addressed by `u32` handles) — there is no
+//!   arena.
 //! - The stage implementations live under [`lexer`] (`lexer::sanitize`
 //!   through `lexer::classify`). External consumers should reach for
 //!   [`lex`] or the [`Pipeline`] state machine; the
@@ -21,9 +25,9 @@
 //! # Observable equivalence
 //!
 //! [`lex`] is a pure function from source text to
-//! `LexOutput` *as observed externally*, even though the
-//! internal pipeline mutates the bumpalo arena and runs SIMD scratch
-//! buffers. The determinism + sentinel-alignment proptests in
+//! [`OwnedLexOutput`] *as observed externally*, even though the
+//! internal pipeline runs SIMD trigger scans over scratch buffers.
+//! The determinism + sentinel-alignment proptests in
 //! `tests/property_borrowed_arena.rs` pin the contract.
 
 #![forbid(unsafe_code)]

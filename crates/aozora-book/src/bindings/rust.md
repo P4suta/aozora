@@ -104,5 +104,5 @@ on a `next` branch and ship in a major bump.
 ## See also
 
 - [Library Quickstart](../getting-started/library.md)
-- [Borrowed-arena AST](../arch/arena.md) — the lifetime model.
+- [Owned AST & NodeStore](../arch/arena.md) — the lifetime model.
 - [Reference → API](../ref/api.md) — generated rustdoc.

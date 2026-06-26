@@ -45,7 +45,7 @@
 # Architecture
 
 - [Pipeline overview](arch/pipeline.md)
-- [Borrowed-arena AST](arch/arena.md)
+- [Owned AST & NodeStore](arch/arena.md)
 - [Lexer pipeline](arch/lexer.md)
 - [SIMD scanner backends](arch/scanner.md)
 - [Eytzinger sorted-set lookup](arch/veb.md)

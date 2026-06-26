@@ -329,15 +329,15 @@ pub(crate) struct BodyView<'b> {
 /// `clippy.toml::too-many-arguments-threshold = 4`) without losing
 /// the per-call positional clarity of the body-window indices.
 ///
-/// The three lifetimes deliberately stay distinct:
+/// The two lifetimes deliberately stay distinct:
 /// - `'al` — the borrow lifetime of the `&mut alloc` reference
-/// - `'a`  — the arena lifetime that strings interned now will live in
 /// - `'s`  — the sanitized source lifetime
 ///
-/// In practice `'a` and `'s` collapse at the top-level driver
-/// (the arena and the source both live as long as the `Document`),
-/// but keeping them separate here avoids over-constraining helpers
-/// that thread synthetic source slices through `Cow`.
+/// Strings the recognisers intern are owned by the allocator's
+/// `NodeStore` (not borrowed from the source), so there is no arena
+/// lifetime to thread; keeping `'al` and `'s` separate still avoids
+/// over-constraining helpers that thread synthetic source slices
+/// through `Cow`.
 pub(crate) struct RecogniseCtx<'al, 's> {
     pub alloc: &'al mut OwnedAllocator,
     pub source: &'s str,
@@ -1164,7 +1164,7 @@ where
         self.pending_plain_start = None;
         // The gaiji still renders best-effort (as its description text)
         // when resolution misses; flag the miss so authors know the glyph
-        // won't appear. `m.payload` is a `Copy` arena reference and the
+        // won't appear. `m.payload` is a `Copy` value and the
         // `ctx` reborrow of `self.alloc` ended at the `gaiji()` call above,
         // so reading `ucs` and pushing onto `self.diagnostics` is clear of
         // the borrow. Scope: this `unresolved-gaiji` warning fires for

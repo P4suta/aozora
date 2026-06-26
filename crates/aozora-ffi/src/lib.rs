@@ -92,10 +92,14 @@ pub enum AozoraStatus {
 /// Opaque handle to a parsed Aozora document. Allocate via
 /// [`aozora_document_new`]; free via [`aozora_document_free`].
 ///
-/// Wraps an [`aozora::Document`] (which owns both the source buffer
-/// and a bumpalo arena). On drop the arena releases every borrowed-AST
-/// allocation in a single step. `Send` (callers may move it across
-/// threads) but not `Sync` (concurrent access is undefined).
+/// Wraps an [`aozora::Document`], which owns the source buffer
+/// (`Box<str>`); each accessor parses on demand into an owned,
+/// lifetime-free tree backed by a flat `NodeStore` (string interner plus
+/// content / segment pools) and frees that storage when the call
+/// returns. On drop the handle frees the owned source buffer. The C ABI
+/// treats it as a single-owner handle — embedders may move it across
+/// threads but must not call into one handle concurrently from multiple
+/// threads without external synchronisation.
 #[derive(Debug)]
 pub struct AozoraDocument {
     inner: aozora::Document,

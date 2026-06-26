@@ -2,22 +2,24 @@
 //!
 //! # AST shape
 //!
-//! The **sole AST** is the borrowed-AST defined in `borrowed`:
-//! arena-allocated, `Copy`-able, deduplicated through
-//! `borrowed::Interner`. Public consumers (`aozora` meta crate,
-//! FFI / WASM / Python drivers, CLI) parse via
-//! `aozora::Document::parse()` and walk a `borrowed::Node<'_>`.
+//! The **sole AST** is the owned AST defined in [`mod@owned`]:
+//! lifetime-free, `Copy`-able nodes whose string and run payloads are
+//! `u32` handles into a flat `NodeStore` (a string interner plus
+//! content / segment pools), deduplicated through the store's interner.
+//! Public consumers (`aozora` meta crate, FFI / WASM / Python drivers,
+//! CLI) parse via `aozora::Document::parse()` and walk the owned
+//! `owned::NodeOwned` values.
 //!
 //! # Top-level surface
 //!
-//! Only the **shared `Copy`-able payloads** referenced by the borrowed
+//! Only the **shared `Copy`-able payloads** referenced by the owned
 //! AST (`BoutenKind`, `BoutenPosition`, `Container`, `SectionKind`,
 //! `HeadingKind`, `HeadingStyle`, `MarginNoteKind`, `RubySide`,
 //! `DirectiveKind`) live at the top level. The attribute × scope
 //! formatting model (`Format` / `ForwardAttr` / `LineFormat` /
 //! `RegionFormat` / `RegionClose` and their `NonZero` parameters) lives
-//! under [`mod@format`]. The borrowed-AST node types live under `borrowed::`;
-//! the arena-backed builder under `alloc::`.
+//! under [`mod@format`]. The owned AST node types live under
+//! [`mod@owned`]; the arena-free builder under [`mod@alloc_owned`].
 
 #![forbid(unsafe_code)]
 
@@ -40,7 +42,7 @@ pub use node_kind::NodeKind;
 /// blocks, re-exported from [`aozora_encoding::gaiji`].
 ///
 /// [`GaijiCanonical`] is the structured replacement for the former
-/// `(ucs, mencode)` pair on `borrowed::Gaiji`; [`MenKuTen`] is its
+/// `(ucs, mencode)` pair on the gaiji node; [`MenKuTen`] is its
 /// `第N水準P-K-T` payload and [`Resolved`] the resolved-glyph result.
 pub use aozora_encoding::gaiji::{GaijiCanonical, MenKuTen, Resolved};
 

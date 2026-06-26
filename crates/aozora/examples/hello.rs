@@ -14,8 +14,9 @@ use aozora::Document;
 
 fn main() {
     // `｜青梅《おうめ》` is explicit ruby: base text 青梅, reading おうめ.
-    // `Document` owns the source buffer and the parse arena; the
-    // borrowed `Tree` lives only as long as `doc`.
+    // `Document` owns the source buffer; the returned `Tree` borrows
+    // that source and so lives only as long as `doc` (its owned AST
+    // data carries no arena lifetime).
     let doc = Document::new("｜青梅《おうめ》");
     let tree = doc.parse();
 
