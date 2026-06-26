@@ -42,6 +42,10 @@ mod types;
 
 pub use arena::Arena;
 pub use intern::{InternStats, Interner};
+// Single-authority hash mix shared with the owned interner
+// (`crate::owned::intern`) so both probe tables diffuse byte streams
+// identically — the hash logic lives once, in `intern::fx_hash`.
+pub(crate) use intern::fx_hash;
 pub use non_empty::{NonEmpty, NonEmptyStr};
 pub use registry::{ContainerPair, NodeRef, Registry};
 pub use types::{

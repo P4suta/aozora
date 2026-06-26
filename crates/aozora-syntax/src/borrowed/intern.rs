@@ -281,7 +281,7 @@ impl<'a> Interner<'a> {
 /// The byte loop fits in a few cycles on short inputs and is hard to
 /// beat without a different hash family. Keeping the simple shape.
 #[inline]
-fn fx_hash(bytes: &[u8]) -> u64 {
+pub(crate) fn fx_hash(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0;
     for &b in bytes {
         h = h.rotate_left(5) ^ u64::from(b);
