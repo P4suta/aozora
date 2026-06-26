@@ -50,7 +50,7 @@
 use core::cmp::Ordering;
 use core::ops::Range;
 
-use crate::{Diagnostic, Document, NodeRef, PairLink, SourceNode};
+use crate::{Diagnostic, Document, NodeRefOwned, PairLink, SourceNodeOwned};
 
 /// A document's safe segmentation into independently-lexable spans, with
 /// each segment's diagnostics cached.
@@ -547,7 +547,7 @@ fn candidate_boundaries(source: &str) -> Vec<usize> {
 
 /// Whether a cut at sanitized offset `san_off` keeps every block container
 /// and resolved delimiter pair whole.
-fn structurally_safe(san_off: u32, nodes: &[SourceNode<'_>], pairs: &[PairLink]) -> bool {
+fn structurally_safe(san_off: u32, nodes: &[SourceNodeOwned], pairs: &[PairLink]) -> bool {
     // Block-container nesting depth, via the same lenient LIFO the
     // normalizer uses (a stray close on an empty stack is ignored). Reject
     // the cut if a classified span strictly contains it, or depth is
@@ -561,8 +561,8 @@ fn structurally_safe(san_off: u32, nodes: &[SourceNode<'_>], pairs: &[PairLink])
             return false; // a classified span straddles the cut
         }
         match sn.node {
-            NodeRef::BlockOpen(_) => depth += 1,
-            NodeRef::BlockClose(_) => depth = (depth - 1).max(0),
+            NodeRefOwned::BlockOpen(_) => depth += 1,
+            NodeRefOwned::BlockClose(_) => depth = (depth - 1).max(0),
             _ => {}
         }
     }

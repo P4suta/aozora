@@ -1,13 +1,17 @@
 //! Differential gate for the #237 owned-AST serializer (P0.2a).
 //!
 //! Proves the owned representation reproduces Aozora source **byte-for-byte**:
-//! for every input, the owned path
-//! `serialize_owned(tree.lex_output().to_owned())` must equal the borrowed
-//! authority `tree.to_source()`. The two share the same normalized text and
-//! position-isomorphic registry (the converter copies `normalized` verbatim),
-//! so byte-equality is exactly the proof that every `emit_*_owned` reproduces
-//! its borrowed twin and every `StrId`/range resolve recovers the original
-//! `&str`.
+//! for every input, the owned path `serialize_owned(parse_owned(src))` must
+//! equal the borrowed authority `serialize(lex(src))`. The two share the same
+//! normalized text and position-isomorphic registry, so byte-equality is
+//! exactly the proof that every `emit_*_owned` reproduces its borrowed twin
+//! and every `StrId`/range resolve recovers the original `&str`.
+//!
+//! Since P0.3 (the public `Tree` API flip), `Tree::to_source()` *is* the owned
+//! path, so the gate compares directly against the borrowed renderer
+//! (`aozora::serialize::serialize`), which remains the byte authority until the
+//! borrowed AST is deleted in step 4. The gate then re-anchors onto the
+//! conformance golden + corpus verbatim.
 //!
 //! Coverage: the curated set (`tests/common/mod.rs`, one of every node kind),
 //! every `crates/aozora-conformance/fixtures/render/**` source, and — when
@@ -18,20 +22,21 @@ mod common;
 
 use std::borrow::Cow;
 
-use aozora::Document;
 use aozora::render::serialize_owned;
+use aozora::serialize::serialize as serialize_borrowed;
+use aozora::{Arena, Document, lex};
 use aozora_conformance::{RenderFixture, fixtures_root};
 use aozora_encoding::decode_auto;
 use common::CURATED;
 
-/// Assert the owned serializer reproduces the borrowed `to_source` byte-exactly.
+/// Assert the owned serializer reproduces the borrowed serializer byte-exactly.
 fn assert_owned_matches(src: &str) {
-    let doc = Document::new(src);
-    let tree = doc.parse();
-    let owned = doc.parse_owned();
+    let owned = Document::new(src).parse_owned();
+    let arena = Arena::new();
+    let borrowed = lex(src, &arena);
     assert_eq!(
         serialize_owned(&owned),
-        tree.to_source(),
+        serialize_borrowed(&borrowed),
         "owned serializer diverged from borrowed for {src:?}"
     );
 }

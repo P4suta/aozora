@@ -20,7 +20,7 @@ bytes and see how each gaiji reference resolved.
 
 ```rust,no_run
 # extern crate aozora;
-use aozora::{Document, Node, NodeRef};
+use aozora::{Document, NodeOwned, NodeRefOwned};
 use aozora::encoding::decode_sjis;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,12 +31,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let doc = Document::new(utf8);
     let tree = doc.parse();
+    let store = &tree.lex_output().store;
 
     for sn in tree.source_nodes() {
-        if let NodeRef::Inline(Node::Gaiji(g)) = sn.node {
-            match g.resolve().and_then(|r| r.as_char()) {
-                Some(ch) => println!("{} → {ch}", g.hint),
-                None => println!("{} → (unresolved)", g.hint),
+        if let NodeRefOwned::Inline(NodeOwned::Gaiji(g)) = sn.node {
+            // The gaiji payload's strings are StrId handles into the store;
+            // `resolve(store)` derives the glyph against the JIS tables.
+            let hint = store.resolve_str(g.hint);
+            match g.resolve(store).and_then(|r| r.as_char()) {
+                Some(ch) => println!("{hint} → {ch}"),
+                None => println!("{hint} → (unresolved)"),
             }
         }
     }
@@ -50,12 +54,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 木＋吶のつくり → 吶
 ```
 
-`Gaiji` carries three fields: `description` (the free-form source
-text), `ucs` (the resolved `Resolved`, `None` when no table matched),
-and `mencode` (the raw reference such as `第3水準1-85-54`). `Resolved`
-is either a single `Char` — recovered via `as_char()` above — or a
-`Multi` combining sequence for the handful of plane-1 cells that need
-one; see the [Gaiji node chapter](../nodes/gaiji.md).
+`GaijiOwned` carries `hint` (the free-form source description, a
+`StrId`), `canonical` (the typed mencode value, e.g. `第3水準1-85-54`),
+and `standalone`. The resolved glyph is derived on demand via
+`resolve(store)`, which returns a `Resolved` (`None` when no table
+matched). `Resolved` is either a single `Char` — recovered via
+`as_char()` above — or a `Multi` combining sequence for the handful of
+plane-1 cells that need one; see the
+[Gaiji node chapter](../nodes/gaiji.md).
 
 ## Picking the decoder
 

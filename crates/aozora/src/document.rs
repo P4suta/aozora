@@ -16,8 +16,8 @@
 
 use core::fmt;
 
-use aozora_pipeline::{LexOutput, NodeRef, OwnedLexOutput, SourceNode, lex, lex_owned};
-use aozora_render::{html as borrowed_html, serialize as borrowed_serialize};
+use aozora_pipeline::{NodeRefOwned, OwnedLexOutput, SourceNodeOwned, lex_owned};
+use aozora_render::{render_html_owned, serialize_owned};
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset};
 use aozora_syntax::borrowed::{Arena, ContainerPair};
 
@@ -260,19 +260,17 @@ impl Document {
             .build(spliced))
     }
 
-    /// Parse the document, returning a borrowed-AST view bound to
-    /// `&self`'s lifetime.
+    /// Parse the document, returning a [`Tree<'_>`] view bound to `&self`'s
+    /// lifetime (only its `source` borrow; the AST data is owned).
+    ///
+    /// Delegates to [`Self::parse_owned`] — the default parse now produces the
+    /// owned, lifetime-free representation — and wraps it with the source
+    /// borrow so the editor-facing [`Tree`] surface keeps the same shape.
     #[must_use]
     pub fn parse(&self) -> Tree<'_> {
-        let mut inner = lex(&self.source, &self.arena);
-        if self.diagnostic_policy == DiagnosticPolicy::DropInternal {
-            inner
-                .diagnostics
-                .retain(|d| d.source() != aozora_spec::DiagnosticSource::Internal);
-        }
         Tree {
             source: &self.source,
-            inner,
+            inner: self.parse_owned(),
         }
     }
 
@@ -308,15 +306,17 @@ impl fmt::Debug for Document {
     }
 }
 
-/// Borrowed view into a parsed Aozora document.
+/// View into a parsed Aozora document.
 ///
-/// Wraps a [`LexOutput`] whose normalized text and registry
-/// borrow from the parent [`Document`]'s arena. Renderer methods
-/// dispatch to `aozora_render`'s borrowed-AST implementations.
+/// Wraps an owned, lifetime-free [`OwnedLexOutput`] (the `'a` lifetime now
+/// tracks only the `source` borrow). Renderer methods dispatch to
+/// `aozora_render`'s owned-AST implementations; the side-table accessors
+/// return owned types (`SourceNodeOwned` / `NodeRefOwned`) whose payload text
+/// resolves through the output's `NodeStore`.
 #[derive(Debug)]
 pub struct Tree<'a> {
     source: &'a str,
-    inner: LexOutput<'a>,
+    inner: OwnedLexOutput,
 }
 
 impl<'a> Tree<'a> {
@@ -344,13 +344,13 @@ impl<'a> Tree<'a> {
     /// LSP requests like `textDocument/linkedEditingRange` and
     /// `textDocument/documentHighlight` consume this directly.
     #[must_use]
-    pub fn pairs(&self) -> &'a [PairLink] {
-        self.inner.pairs
+    pub fn pairs(&self) -> &[PairLink] {
+        &self.inner.pairs
     }
 
-    /// Borrow the underlying [`LexOutput`].
+    /// Borrow the underlying [`OwnedLexOutput`].
     #[must_use]
-    pub fn lex_output(&self) -> &LexOutput<'a> {
+    pub fn lex_output(&self) -> &OwnedLexOutput {
         &self.inner
     }
 
@@ -367,7 +367,7 @@ impl<'a> Tree<'a> {
     ///
     /// `O(log n)` over the source-keyed side-table.
     #[must_use]
-    pub fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNode<'a>> {
+    pub fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNodeOwned> {
         self.inner.node_at_source(src_off)
     }
 
@@ -382,7 +382,7 @@ impl<'a> Tree<'a> {
     #[doc(hidden)]
     #[deprecated(note = "use lex_output().registry.node_at() for normalized-offset lookups")]
     #[must_use]
-    pub fn node_at_normalized(&self, normalized_off: NormalizedOffset) -> Option<NodeRef<'a>> {
+    pub fn node_at_normalized(&self, normalized_off: NormalizedOffset) -> Option<NodeRefOwned> {
         self.inner.registry.node_at(normalized_off)
     }
 
@@ -403,8 +403,8 @@ impl<'a> Tree<'a> {
     /// desyncs the registry cursor. See the *Notations in host literal
     /// contexts* recipe in the handbook.
     #[must_use]
-    pub fn source_nodes(&self) -> &'a [SourceNode<'a>] {
-        self.inner.source_nodes
+    pub fn source_nodes(&self) -> &[SourceNodeOwned] {
+        &self.inner.source_nodes
     }
 
     /// The sanitized source buffer — the exact bytes the lexer
@@ -419,8 +419,8 @@ impl<'a> Tree<'a> {
     /// synthesized block padding, so it is the verbatim round-trip basis
     /// returned by [`Self::to_source_verbatim`].
     #[must_use]
-    pub fn sanitized(&self) -> &'a str {
-        self.inner.sanitized
+    pub fn sanitized(&self) -> &str {
+        &self.inner.sanitized
     }
 
     /// Resolved container open/close pairs in normalized coordinates.
@@ -435,20 +435,20 @@ impl<'a> Tree<'a> {
     /// Coordinates are [`NormalizedOffset`] — they index the
     /// PUA-rewritten text, not the original source.
     #[must_use]
-    pub fn container_pairs(&self) -> &'a [ContainerPair] {
-        self.inner.container_pairs
+    pub fn container_pairs(&self) -> &[ContainerPair] {
+        &self.inner.container_pairs
     }
 
     /// Render the tree to a semantic-HTML5 string.
     #[must_use]
     pub fn to_html(&self) -> String {
-        borrowed_html::render_to_string(&self.inner)
+        render_html_owned(&self.inner)
     }
 
     /// Re-emit Aozora source text from the parsed tree.
     #[must_use]
     pub fn to_source(&self) -> String {
-        borrowed_serialize::serialize(&self.inner)
+        serialize_owned(&self.inner)
     }
 
     /// Recover the source text **verbatim** — byte-for-byte equal to
@@ -475,7 +475,7 @@ impl<'a> Tree<'a> {
     /// that want a borrow can use [`Self::sanitized`] instead.
     #[must_use]
     pub fn to_source_verbatim(&self) -> String {
-        self.inner.sanitized.to_owned()
+        self.inner.sanitized.clone()
     }
 }
 
@@ -642,7 +642,7 @@ mod tests {
         // The retrieved span must cover the whole `｜青梅《おうめ》` run.
         assert_eq!(entry.source_span.start, bar_off);
         assert!(entry.source_span.end > bar_off);
-        assert!(matches!(entry.node, NodeRef::Inline(_)));
+        assert!(matches!(entry.node, NodeRefOwned::Inline(_)));
     }
 
     #[test]

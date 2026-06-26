@@ -60,7 +60,7 @@ use aozora_spec::{SourceOffset, Span};
 use aozora_syntax::borrowed::ForwardOrigin;
 use aozora_syntax::{RegionClose, RegionFormat};
 
-use crate::{Document, Node, NodeRef, Tree};
+use crate::{Document, NodeOwned, NodeRefOwned, Tree};
 
 /// What a single source region represents.
 ///
@@ -126,7 +126,7 @@ pub enum RegionRole {
     /// A paired-container close marker (`［＃ここで…終わり］`). Coupled with its
     /// matching open.
     ContainerClose,
-    /// A future [`Node`] variant not yet classified by this projection.
+    /// A future [`NodeOwned`] variant not yet classified by this projection.
     Other,
 }
 
@@ -253,44 +253,48 @@ impl fmt::Display for SpliceError {
 impl Error for SpliceError {}
 
 /// Classify a node region's role and splice safety. Pure: a function of the
-/// [`NodeRef`] variant and (for a forward leaf) its [`ForwardOrigin`] alone.
-fn classify_node_ref(node: NodeRef<'_>) -> (RegionRole, SpliceSafety) {
+/// [`NodeRefOwned`] variant and (for a forward leaf) its [`ForwardOrigin`] alone.
+fn classify_node_ref(node: NodeRefOwned) -> (RegionRole, SpliceSafety) {
     use SpliceSafety::{Coupled, Direct, Opaque};
 
     match node {
-        NodeRef::BlockOpen(_) => (RegionRole::ContainerOpen, Coupled(CoupledKind::Container)),
-        NodeRef::BlockClose(_) => (RegionRole::ContainerClose, Coupled(CoupledKind::Container)),
-        NodeRef::Inline(n) | NodeRef::BlockLeaf(n) => match n {
-            Node::Format(f) => match f.origin {
+        NodeRefOwned::BlockOpen(_) => (RegionRole::ContainerOpen, Coupled(CoupledKind::Container)),
+        NodeRefOwned::BlockClose(_) => {
+            (RegionRole::ContainerClose, Coupled(CoupledKind::Container))
+        }
+        NodeRefOwned::Inline(n) | NodeRefOwned::BlockLeaf(n) => match n {
+            NodeOwned::Format(f) => match f.origin {
                 ForwardOrigin::Reclaimed => (RegionRole::ForwardReclaimed, Direct),
                 ForwardOrigin::Referenced => (
                     RegionRole::ForwardReferenced,
                     Coupled(CoupledKind::ForwardReference),
                 ),
             },
-            Node::HeadingHint(_) => (RegionRole::HeadingHint, Coupled(CoupledKind::HeadingHint)),
-            Node::MarginNote(_) => (RegionRole::MarginNote, Coupled(CoupledKind::MarginNote)),
-            Node::Container(_) => (RegionRole::Container, Coupled(CoupledKind::Container)),
-            Node::Ruby(_) => (RegionRole::Ruby, Direct),
-            Node::Heading(_) => (RegionRole::Heading, Direct),
-            Node::Gaiji(_) => (RegionRole::Gaiji, Direct),
-            Node::Warichu(_) => (RegionRole::Warichu, Direct),
-            Node::AngleQuote(_) => (RegionRole::AngleQuote, Direct),
-            Node::Kaeriten(_) => (RegionRole::Kaeriten, Direct),
-            Node::Illustration(_) => (RegionRole::Illustration, Direct),
-            Node::Line(_) => (RegionRole::Line, Direct),
-            Node::PageBreak => (RegionRole::PageBreak, Direct),
-            Node::SectionBreak(_) => (RegionRole::SectionBreak, Direct),
+            NodeOwned::HeadingHint(_) => {
+                (RegionRole::HeadingHint, Coupled(CoupledKind::HeadingHint))
+            }
+            NodeOwned::MarginNote(_) => (RegionRole::MarginNote, Coupled(CoupledKind::MarginNote)),
+            NodeOwned::Container(_) => (RegionRole::Container, Coupled(CoupledKind::Container)),
+            NodeOwned::Ruby(_) => (RegionRole::Ruby, Direct),
+            NodeOwned::Heading(_) => (RegionRole::Heading, Direct),
+            NodeOwned::Gaiji(_) => (RegionRole::Gaiji, Direct),
+            NodeOwned::Warichu(_) => (RegionRole::Warichu, Direct),
+            NodeOwned::AngleQuote(_) => (RegionRole::AngleQuote, Direct),
+            NodeOwned::Kaeriten(_) => (RegionRole::Kaeriten, Direct),
+            NodeOwned::Illustration(_) => (RegionRole::Illustration, Direct),
+            NodeOwned::Line(_) => (RegionRole::Line, Direct),
+            NodeOwned::PageBreak => (RegionRole::PageBreak, Direct),
+            NodeOwned::SectionBreak(_) => (RegionRole::SectionBreak, Direct),
             // Self-contained structural-marker leaves (#78) — they fully own
             // their rendered bytes, so editing the bracket is a Direct splice.
-            Node::BodyEnd => (RegionRole::BodyEnd, Direct),
-            Node::ForcedBreak => (RegionRole::ForcedBreak, Direct),
-            Node::Directive(_) => (RegionRole::Directive, Direct),
-            // `Node` is `#[non_exhaustive]`; an unknown future variant is
+            NodeOwned::BodyEnd => (RegionRole::BodyEnd, Direct),
+            NodeOwned::ForcedBreak => (RegionRole::ForcedBreak, Direct),
+            NodeOwned::Directive(_) => (RegionRole::Directive, Direct),
+            // `NodeOwned` is `#[non_exhaustive]`; an unknown future variant is
             // declined rather than assumed editable.
             _ => (RegionRole::Other, Opaque),
         },
-        // `NodeRef` is `#[non_exhaustive]`; decline an unknown future variant.
+        // `NodeRefOwned` is `#[non_exhaustive]`; decline an unknown future variant.
         _ => (RegionRole::Other, Opaque),
     }
 }
@@ -305,20 +309,25 @@ const INTERSTITIAL: (RegionRole, SpliceSafety) = (RegionRole::Interstitial, Spli
 /// A forward reference may re-form as either origin (`Reclaimed` or
 /// `Referenced` are both valid forwards); a heading hint may re-form as a hint
 /// *or* a promoted heading; a container marker as an open or close.
-fn reparsed_in_family(node: NodeRef<'_>, kind: CoupledKind) -> bool {
+fn reparsed_in_family(node: NodeRefOwned, kind: CoupledKind) -> bool {
     let leaf = match node {
-        NodeRef::Inline(n) | NodeRef::BlockLeaf(n) => Some(n),
+        NodeRefOwned::Inline(n) | NodeRefOwned::BlockLeaf(n) => Some(n),
         _ => None,
     };
     match kind {
-        CoupledKind::ForwardReference => matches!(leaf, Some(Node::Format(_))),
+        CoupledKind::ForwardReference => matches!(leaf, Some(NodeOwned::Format(_))),
         CoupledKind::HeadingHint => {
-            matches!(leaf, Some(Node::HeadingHint(_) | Node::Heading(_)))
+            matches!(
+                leaf,
+                Some(NodeOwned::HeadingHint(_) | NodeOwned::Heading(_))
+            )
         }
-        CoupledKind::MarginNote => matches!(leaf, Some(Node::MarginNote(_))),
+        CoupledKind::MarginNote => matches!(leaf, Some(NodeOwned::MarginNote(_))),
         CoupledKind::Container => {
-            matches!(node, NodeRef::BlockOpen(_) | NodeRef::BlockClose(_))
-                || matches!(leaf, Some(Node::Container(_)))
+            matches!(
+                node,
+                NodeRefOwned::BlockOpen(_) | NodeRefOwned::BlockClose(_)
+            ) || matches!(leaf, Some(NodeOwned::Container(_)))
         }
     }
 }
@@ -502,8 +511,8 @@ impl Tree<'_> {
         let mut stack: Vec<Span> = Vec::new();
         for sn in self.source_nodes() {
             match sn.node {
-                NodeRef::BlockOpen(_) => stack.push(sn.source_span),
-                NodeRef::BlockClose(_) => {
+                NodeRefOwned::BlockOpen(_) => stack.push(sn.source_span),
+                NodeRefOwned::BlockClose(_) => {
                     if let Some(open_span) = stack.pop() {
                         let close_span = sn.source_span;
                         if span == open_span || span == close_span {
@@ -665,15 +674,16 @@ impl Tree<'_> {
     /// `None` when the node is not a split-ownership leaf, or its target is not
     /// a single plain run (a 、-joined multi-target).
     fn coupled_target_text(&self, span: Span) -> Option<String> {
-        let (NodeRef::Inline(leaf) | NodeRef::BlockLeaf(leaf)) =
+        let store = &self.lex_output().store;
+        let (NodeRefOwned::Inline(leaf) | NodeRefOwned::BlockLeaf(leaf)) =
             self.node_at_source(SourceOffset::new(span.start))?.node
         else {
             return None;
         };
         match leaf {
-            Node::Format(f) => f.target.get().as_plain().map(str::to_owned),
-            Node::HeadingHint(h) => Some(h.target.as_str().to_owned()),
-            Node::MarginNote(m) => m.base.get().as_plain().map(str::to_owned),
+            NodeOwned::Format(f) => store.content_range_as_plain(f.target).map(str::to_owned),
+            NodeOwned::HeadingHint(h) => Some(store.resolve_str(h.target).to_owned()),
+            NodeOwned::MarginNote(m) => store.content_range_as_plain(m.base).map(str::to_owned),
             _ => None,
         }
     }
@@ -708,7 +718,7 @@ impl Tree<'_> {
 fn block_open_format_at(tree: &Tree<'_>, start: u32) -> Option<RegionFormat> {
     tree.node_at_source(SourceOffset::new(start))
         .and_then(|sn| match sn.node {
-            NodeRef::BlockOpen(f) if sn.source_span.start == start => Some(f),
+            NodeRefOwned::BlockOpen(f) if sn.source_span.start == start => Some(f),
             _ => None,
         })
 }
@@ -722,7 +732,7 @@ fn lone_open_format(marker: &str) -> Option<RegionFormat> {
     let doc = Document::new(marker);
     match doc.parse().source_nodes().first() {
         Some(sn) if sn.source_span.start == 0 => match sn.node {
-            NodeRef::BlockOpen(f) => Some(f),
+            NodeRefOwned::BlockOpen(f) => Some(f),
             _ => None,
         },
         _ => None,
@@ -762,16 +772,26 @@ fn first_quoted(directive: &str) -> Option<&str> {
 /// window bounded by the reference distance rather than the whole document.
 fn window_reforms_coupled(window: &str, kind: CoupledKind, new_target: &str) -> bool {
     let doc = Document::new(window);
-    doc.parse().source_nodes().iter().any(|sn| {
-        let (NodeRef::Inline(leaf) | NodeRef::BlockLeaf(leaf)) = sn.node else {
+    let tree = doc.parse();
+    let store = &tree.lex_output().store;
+    tree.source_nodes().iter().any(|sn| {
+        let (NodeRefOwned::Inline(leaf) | NodeRefOwned::BlockLeaf(leaf)) = sn.node else {
             return false;
         };
         let text = match (kind, leaf) {
-            (CoupledKind::ForwardReference, Node::Format(f)) => f.target.get().as_plain(),
-            (CoupledKind::HeadingHint, Node::HeadingHint(h)) => Some(h.target.as_str()),
+            (CoupledKind::ForwardReference, NodeOwned::Format(f)) => {
+                store.content_range_as_plain(f.target)
+            }
+            (CoupledKind::HeadingHint, NodeOwned::HeadingHint(h)) => {
+                Some(store.resolve_str(h.target))
+            }
             // A promoted heading is an equally valid re-formation of the hint.
-            (CoupledKind::HeadingHint, Node::Heading(h)) => h.text.get().as_plain(),
-            (CoupledKind::MarginNote, Node::MarginNote(m)) => m.base.get().as_plain(),
+            (CoupledKind::HeadingHint, NodeOwned::Heading(h)) => {
+                store.content_range_as_plain(h.text)
+            }
+            (CoupledKind::MarginNote, NodeOwned::MarginNote(m)) => {
+                store.content_range_as_plain(m.base)
+            }
             _ => None,
         };
         text == Some(new_target)
