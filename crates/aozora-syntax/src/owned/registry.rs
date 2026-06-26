@@ -8,9 +8,11 @@
 use aozora_spec::{NormalizedOffset, Sentinel};
 use aozora_veb::EytzingerMap;
 
+use crate::borrowed::NodeRef;
 use crate::format::{RegionClose, RegionFormat};
 
 use super::payload::NodeOwned;
+use super::store::NodeStore;
 
 /// Unified view over a registry hit, owned mirror of
 /// [`crate::borrowed::NodeRef`].
@@ -63,6 +65,19 @@ impl NodeRefOwned {
             Self::Inline(node) | Self::BlockLeaf(node) => node.kind(),
             Self::BlockOpen(_) => crate::NodeKind::ContainerOpen,
             Self::BlockClose(_) => crate::NodeKind::ContainerClose,
+        }
+    }
+
+    /// Materialise a borrowed [`NodeRef`] into the `store`. Inline / block-leaf
+    /// payloads convert through [`NodeOwned::from_borrowed`]; the container
+    /// discriminants reuse the `Copy` [`RegionFormat`] / [`RegionClose`].
+    #[must_use]
+    pub fn from_borrowed(nr: NodeRef<'_>, store: &mut NodeStore) -> Self {
+        match nr {
+            NodeRef::Inline(n) => Self::Inline(NodeOwned::from_borrowed(n, store)),
+            NodeRef::BlockLeaf(n) => Self::BlockLeaf(NodeOwned::from_borrowed(n, store)),
+            NodeRef::BlockOpen(rf) => Self::BlockOpen(rf),
+            NodeRef::BlockClose(rc) => Self::BlockClose(rc),
         }
     }
 }

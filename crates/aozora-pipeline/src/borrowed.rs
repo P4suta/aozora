@@ -37,6 +37,9 @@ use crate::lexer::{
 };
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset, Span};
 use aozora_syntax::borrowed::{self, Arena, ContainerPair, InternStats, NodeRef, Registry};
+use aozora_syntax::owned::{
+    NodeRefOwned, NodeStore, OwnedLexOutput, RegistryOwned, SourceNodeOwned,
+};
 use aozora_syntax::{DirectiveKind, LineFormat, RegionClose, RegionFormat};
 
 /// Borrowed-AST output of the lex pipeline.
@@ -157,6 +160,64 @@ impl<'a> LexOutput<'a> {
         }
         let candidate = &self.source_nodes[idx - 1];
         (raw < candidate.source_span.end).then_some(candidate)
+    }
+
+    /// Materialise this borrowed [`LexOutput`] as an owned, lifetime-free
+    /// [`OwnedLexOutput`] (`Send + Sync`, cacheable across the arena's drop).
+    ///
+    /// **Transitional scaffolding (#237 P0.2a).** It interns every borrowed
+    /// `&str` into a fresh [`NodeStore`] and pushes every `Content` / `Segment`
+    /// run into that store, mapping each [`NodeRef`] through
+    /// [`NodeRefOwned::from_borrowed`]. P0.2-real will make the classify fold
+    /// produce the owned representation natively; until then this converter is
+    /// the only way to drive owned output additively, and it round-trips
+    /// byte-for-byte through `aozora_render::serialize_owned` == `to_source`
+    /// (the differential gate in `aozora`'s `owned_serialize_gate` test).
+    ///
+    /// The registry and the source-keyed `source_nodes` table are converted
+    /// **independently**, so the same borrowed node materialises its content /
+    /// segment runs twice in the store — the registry's `NodeOwned` and the
+    /// matching `source_nodes` entry therefore carry different
+    /// `ContentRange` / `SegRange` starts (they compare `!=` under derived
+    /// `PartialEq`) yet resolve to identical text. This is harmless: the owned
+    /// serializer walks `normalized` + `registry` only, never `source_nodes`,
+    /// and P0.2-real's native fold will dedup.
+    #[must_use]
+    pub fn to_owned(&self) -> OwnedLexOutput {
+        let mut store = NodeStore::new();
+
+        // Registry — `iter_sorted` yields ascending keys, so the converted
+        // slice satisfies `from_sorted_slice`'s sorted-key precondition.
+        let registry_entries: Vec<(u32, NodeRefOwned)> = self
+            .registry
+            .iter_sorted()
+            .map(|(pos, nr)| (pos, NodeRefOwned::from_borrowed(nr, &mut store)))
+            .collect();
+        let registry = RegistryOwned::from_sorted_slice(&registry_entries);
+
+        // Source-keyed side table — preserve the existing source order (the
+        // borrowed slice is already sorted by `source_span.start`).
+        let source_nodes: Vec<SourceNodeOwned> = self
+            .source_nodes
+            .iter()
+            .map(|sn| SourceNodeOwned {
+                source_span: sn.source_span,
+                node: NodeRefOwned::from_borrowed(sn.node, &mut store),
+            })
+            .collect();
+
+        OwnedLexOutput::new(
+            self.normalized.to_owned(),
+            self.sanitized.to_owned(),
+            registry,
+            self.diagnostics.clone(),
+            self.sanitized_len,
+            self.pairs.to_vec(),
+            source_nodes,
+            self.container_pairs.to_vec(),
+            self.intern_stats,
+            store,
+        )
     }
 }
 
@@ -492,6 +553,56 @@ mod tests {
     use super::*;
     use aozora_spec::Sentinel;
     use aozora_syntax::IndentBlock;
+    use aozora_syntax::owned::{ContentOwned, NodeOwned};
+
+    #[test]
+    fn to_owned_materialises_ruby_resolving_back_to_source_text() {
+        let arena = Arena::new();
+        let out = lex("｜青梅《おうめ》", &arena);
+        let owned = out.to_owned();
+
+        // The normalized text is copied verbatim, and the registry stays
+        // position-isomorphic.
+        assert_eq!(owned.normalized, out.normalized);
+        assert_eq!(owned.registry.len(), out.registry.len());
+
+        // The single inline entry resolves back to the ruby base / reading.
+        let Some((pos, _)) = out.registry.iter_kind(Sentinel::Inline).next() else {
+            panic!("expected one inline entry");
+        };
+        let Some(hit) = owned.registry.node_at(NormalizedOffset::new(pos)) else {
+            panic!("expected an owned registry hit at the same position");
+        };
+        let NodeRefOwned::Inline(NodeOwned::Ruby(r)) = hit else {
+            panic!("expected an owned inline ruby, got {hit:?}");
+        };
+        let base = owned.store.resolve_content_range(r.base);
+        let reading = owned.store.resolve_content_range(r.reading);
+        let ContentOwned::Plain(base_id) = base[0] else {
+            panic!("expected a plain ruby base");
+        };
+        let ContentOwned::Plain(reading_id) = reading[0] else {
+            panic!("expected a plain ruby reading");
+        };
+        assert_eq!(owned.store.resolve_str(base_id), "青梅");
+        assert_eq!(owned.store.resolve_str(reading_id), "おうめ");
+    }
+
+    #[test]
+    fn to_owned_carries_side_tables_verbatim() {
+        let arena = Arena::new();
+        let out = lex(
+            "［＃ここから2字下げ］\nbody\n［＃ここで字下げ終わり］",
+            &arena,
+        );
+        let owned = out.to_owned();
+        assert_eq!(owned.sanitized, out.sanitized);
+        assert_eq!(owned.sanitized_len, out.sanitized_len);
+        assert_eq!(owned.pairs.len(), out.pairs.len());
+        assert_eq!(owned.container_pairs.len(), out.container_pairs.len());
+        assert_eq!(owned.source_nodes.len(), out.source_nodes.len());
+        assert_eq!(owned.diagnostics.len(), out.diagnostics.len());
+    }
 
     #[test]
     fn empty_source_round_trips() {

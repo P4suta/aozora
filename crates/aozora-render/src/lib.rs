@@ -19,10 +19,12 @@ pub mod classes;
 pub mod html;
 pub mod render_node;
 pub mod serialize;
+pub mod serialize_owned;
 pub mod visitor;
 mod walk;
 
 pub use classes::AOZORA_CLASSES;
+pub use serialize_owned::serialize_owned;
 pub use visitor::{AozoraVisitor, dispatch_node};
 
 #[cfg(test)]

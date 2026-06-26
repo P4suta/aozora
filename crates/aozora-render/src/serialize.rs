@@ -68,10 +68,7 @@ pub fn serialize(out: &LexOutput<'_>) -> String {
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited
 /// from the lexer's `Span` width contract; in practice unreachable.
 pub fn serialize_into<W: Write>(out: &LexOutput<'_>, writer: &mut W) -> fmt::Result {
-    let mut tracking = TrackingWriter {
-        inner: writer,
-        last: None,
-    };
+    let mut tracking = TrackingWriter::new(writer);
     let mut sink = SerializeSink { out: &mut tracking };
     walk(out, &mut sink)
 }
@@ -123,9 +120,23 @@ pub fn container_close_source(open: RegionFormat) -> String {
 /// — ADR 0002. The predecessor may be a preceding NODE (e.g. a kaeriten
 /// `二`, which is a ruby-base char) and not just text, so the last char
 /// must be tracked at the writer, not per `on_text`.
-struct TrackingWriter<W: Write> {
+pub(crate) struct TrackingWriter<W: Write> {
     inner: W,
     last: Option<char>,
+}
+
+impl<W: Write> TrackingWriter<W> {
+    /// Wrap `inner`, with no predecessor char recorded yet. Shared
+    /// construction site for the borrowed and owned serializers.
+    pub(crate) const fn new(inner: W) -> Self {
+        Self { inner, last: None }
+    }
+
+    /// The last `char` written so far, if any. `emit_ruby` reads it to
+    /// decide whether a bare `《reading》` drops the explicit `｜` (ADR 0002).
+    pub(crate) const fn last(&self) -> Option<char> {
+        self.last
+    }
 }
 
 impl<W: Write> Write for TrackingWriter<W> {
@@ -367,13 +378,13 @@ fn emit_angle_quote<W: Write>(d: &AngleQuote<'_>, out: &mut W) -> fmt::Result {
     out.write_char('≫')
 }
 
-fn emit_section_break<W: Write>(kind: SectionKind, out: &mut W) -> fmt::Result {
+pub(crate) fn emit_section_break<W: Write>(kind: SectionKind, out: &mut W) -> fmt::Result {
     out.write_str("［＃")?;
     out.write_str(kind.keyword())?;
     out.write_char('］')
 }
 
-fn emit_line<W: Write>(lf: LineFormat, out: &mut W) -> fmt::Result {
+pub(crate) fn emit_line<W: Write>(lf: LineFormat, out: &mut W) -> fmt::Result {
     match lf {
         LineFormat::Indent { amount: 1 } => out.write_str("［＃字下げ］"),
         LineFormat::Indent { amount } => write!(out, "［＃{amount}字下げ］"),
@@ -418,7 +429,7 @@ fn emit_sashie<W: Write>(s: &Illustration<'_>, out: &mut W) -> fmt::Result {
 
 /// The optional `同行` / `窓` style prefix that precedes the level keyword in
 /// a `…は<style><level>見出し` directive (empty for the standard style).
-const fn heading_style_keyword(style: HeadingStyle) -> &'static str {
+pub(crate) const fn heading_style_keyword(style: HeadingStyle) -> &'static str {
     match style {
         HeadingStyle::SameLine => "同行",
         HeadingStyle::Window => "窓",
@@ -429,7 +440,7 @@ const fn heading_style_keyword(style: HeadingStyle) -> &'static str {
 
 /// The `大 / 中 / 小見出し` level keyword (no delimiter), shared by the leaf
 /// heading, the hint, and the paired / block [`RegionFormat::Heading`].
-const fn heading_level_word(kind: HeadingKind) -> &'static str {
+pub(crate) const fn heading_level_word(kind: HeadingKind) -> &'static str {
     match kind {
         HeadingKind::Medium => "中見出し",
         HeadingKind::Small => "小見出し",
@@ -472,7 +483,7 @@ const fn bouten_left_prefix(position: BoutenPosition) -> &'static str {
 /// ranges reconstruct `［＃<左に?><variant>］`; every other family spells its
 /// own opener (preserving every payload — dropping N / width / offset / the
 /// 字組み clause would be a §7.6 fixed-point violation).
-fn emit_container_open<W: Write>(open: RegionFormat, out: &mut W) -> fmt::Result {
+pub(crate) fn emit_container_open<W: Write>(open: RegionFormat, out: &mut W) -> fmt::Result {
     match open {
         RegionFormat::Bouten { kind, position } => write!(
             out,
@@ -613,7 +624,7 @@ const fn small_script_side_word(side: BoutenPosition) -> &'static str {
 /// block-vs-inline form its own `padded`, the 傍点/傍線 close its own family
 /// (so a mismatched `［＃傍線終わり］` closing a `［＃傍点］` round-trips), and
 /// a stray close with no matching open still emits its marker.
-fn emit_container_close<W: Write>(close: RegionClose, out: &mut W) -> fmt::Result {
+pub(crate) fn emit_container_close<W: Write>(close: RegionClose, out: &mut W) -> fmt::Result {
     match close {
         RegionClose::Bouten { kind, position } => write!(
             out,
@@ -694,13 +705,13 @@ fn emit_content_as_plain<W: Write>(c: Content<'_>, out: &mut W) -> fmt::Result {
 /// output back through parse inflates the blank-line run by two
 /// per iteration. Capping at 2 here makes `serialize ∘ parse` a
 /// fixed point after the first pass.
-struct NewlineCappedWriter {
+pub(crate) struct NewlineCappedWriter {
     out: String,
     trailing_newlines: usize,
 }
 
 impl NewlineCappedWriter {
-    fn with_capacity(cap: usize) -> Self {
+    pub(crate) fn with_capacity(cap: usize) -> Self {
         Self {
             out: String::with_capacity(cap),
             trailing_newlines: 0,
@@ -734,7 +745,7 @@ impl NewlineCappedWriter {
         }
     }
 
-    fn into_string(self) -> String {
+    pub(crate) fn into_string(self) -> String {
         self.out
     }
 }
