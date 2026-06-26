@@ -24,9 +24,7 @@
 use aozora_pipeline::lexer::{PairEvent, PairKind, classify, pair, tokenize};
 use aozora_pipeline::{Pipeline, lex};
 use aozora_spec::{Diagnostic, Sentinel};
-use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::Arena;
-
+use aozora_syntax::alloc_owned::OwnedAllocator;
 // =====================================================================
 // 1. Drop / early-termination
 // =====================================================================
@@ -60,8 +58,7 @@ fn pair_stream_drop_partway_does_not_panic_and_diagnostics_remain_readable() {
 #[test]
 fn classify_stream_drop_partway_does_not_corrupt_global_state() {
     let src = "abc｜D《e》fgh";
-    let arena = Arena::new();
-    let mut alloc = BorrowedAllocator::new(&arena);
+    let mut alloc = OwnedAllocator::new();
 
     {
         let mut pair_stream = pair(tokenize(src));
@@ -73,8 +70,7 @@ fn classify_stream_drop_partway_does_not_corrupt_global_state() {
 
     // A fresh end-to-end run over the same source must still behave
     // identically to a never-interrupted run.
-    let arena2 = Arena::new();
-    let oneshot = lex(src, &arena2);
+    let oneshot = lex(src);
     assert_eq!(
         oneshot.registry.count_kind(Sentinel::Inline),
         1,
@@ -212,8 +208,8 @@ fn pair_stream_emits_one_unclosed_event_for_one_unclosed_bracket() {
 // =====================================================================
 
 /// For several non-trivial inputs the explicit chain
-/// `Pipeline::new(s, &arena).sanitize().tokenize().pair().build()`
-/// must produce results identical to `lex(s, &arena2)`.
+/// `Pipeline::new(s).sanitize().tokenize().pair().build()`
+/// must produce results identical to `lex(s)`.
 #[test]
 fn pipeline_chain_matches_lex_into_arena_for_corpus_shapes() {
     let inputs: &[&str] = &[
@@ -228,14 +224,8 @@ fn pipeline_chain_matches_lex_into_arena_for_corpus_shapes() {
          ［＃ここで字下げ終わり］",
     ];
     for src in inputs {
-        let arena_chain = Arena::new();
-        let chain = Pipeline::new(src, &arena_chain)
-            .sanitize()
-            .tokenize()
-            .pair()
-            .build();
-        let arena_one = Arena::new();
-        let oneshot = lex(src, &arena_one);
+        let chain = Pipeline::new(src).sanitize().tokenize().pair().build();
+        let oneshot = lex(src);
         assert_eq!(
             chain.normalized, oneshot.normalized,
             "normalized text drift for input {src:?}"
@@ -282,10 +272,9 @@ fn pipeline_chain_matches_lex_into_arena_for_corpus_shapes() {
 /// does NOT consume diagnostics.
 #[test]
 fn pipeline_phase0_diagnostic_observed_at_sanitized_also_present_after_build() {
-    let arena = Arena::new();
     let src = "abc\u{E001}def";
 
-    let sanitized = Pipeline::new(src, &arena).sanitize();
+    let sanitized = Pipeline::new(src).sanitize();
     let phase0_count_at_sanitized = sanitized
         .diagnostics()
         .iter()

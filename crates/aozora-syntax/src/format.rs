@@ -295,7 +295,7 @@ impl Format {
 /// The attributes legal at the forward-reference scope (`「X」は太字` etc.).
 ///
 /// The content-carrying leaf that pairs an attribute with its target run is
-/// [`crate::borrowed::ForwardFormat`]; this enum is the attribute alone.
+/// `crate::borrowed::ForwardFormat`; this enum is the attribute alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -327,6 +327,60 @@ pub enum ForwardAttr {
     },
     /// 縦中横.
     CombineUpright,
+}
+
+/// A forward emphasis node's target-text provenance — whether `serialize`
+/// must re-emit the leading literal to reconstruct the source.
+///
+/// A forward reference is recognized **only** when its target appears
+/// *contiguously* in the source before the bracket. A directive whose quoted
+/// target is absent (`（例）［＃「国境が消える」に傍点］`) or split by a ruby run
+/// (`牛《ベゴ》の舌［＃「牛の舌」に傍点］`) is left an unresolved directive, not a
+/// forward node, so it never reaches this type.
+///
+/// This is the one irreducible provenance the normalization waist could not
+/// fold away — it cannot collapse to a constant in either direction:
+/// - **Not always `Reclaimed`** (node owns the literal): when the recognized
+///   target occurrence is itself a **ruby base**
+///   (`我《が》…我［＃「我」に傍点］`; ≥34 in the 17,889-work `aozorabunko_text`
+///   mirror, see #202) it cannot be pulled into a text-only forward leaf
+///   (bouten-over-ruby is not representable), so it must stay `Referenced`.
+/// - **Not always `Referenced`** (literal left upstream): an adjacent forward
+///   had its literal pulled into the node and the surrounding plain run
+///   truncated, so without re-emit the literal would be lost.
+///
+/// Deriving it at serialize from a non-local preceding-content scan would
+/// re-introduce exactly the lookback the scope-free core removes, so it is
+/// materialized here as explicit provenance. (The #180 unbounded-growth
+/// pathology — a `Reclaimed` literal doubled in the plain tail — is separately
+/// cured by the lowering pass's overlap-truncate.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ForwardOrigin {
+    /// The classifier pulled the literal out of the immediately-preceding
+    /// source (`青空［＃「青空」に傍点］`): the surrounding plain run was truncated,
+    /// so the decorated run is the *sole* visible copy and the serializer
+    /// re-emits the literal before the bracket.
+    Reclaimed,
+    /// The target is recognized contiguously before the bracket but is *not*
+    /// byte-adjacent to it, so the literal stays in the preceding run; the
+    /// serializer emits the bracket form alone.
+    Referenced,
+}
+
+impl ForwardOrigin {
+    /// Derive the provenance from the classifier's consume window:
+    /// [`Reclaimed`](Self::Reclaimed) iff `consume_start` was pulled back
+    /// before the directive's `［` at `bracket_start`, otherwise
+    /// [`Referenced`](Self::Referenced).
+    #[must_use]
+    pub const fn from_consume(consume_start: u32, bracket_start: u32) -> Self {
+        if consume_start < bracket_start {
+            Self::Reclaimed
+        } else {
+            Self::Referenced
+        }
+    }
 }
 
 impl ForwardAttr {

@@ -51,8 +51,6 @@ use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_auto;
 use aozora_pipeline::lex;
 use aozora_pipeline::lexer::instrumentation::{Subsystem, TimingTable};
-use aozora_syntax::borrowed::Arena;
-
 const NS_PER_MS: f64 = 1_000_000.0;
 
 #[derive(Debug, Default, Clone)]
@@ -110,8 +108,7 @@ fn main() {
         // Reset before each doc so the snapshot reflects only this
         // doc's recogniser activity. Run lex with a fresh arena.
         TimingTable::reset();
-        let arena = Arena::new();
-        let _out = lex(&text, &arena);
+        let _out = lex(&text);
         let snap = TimingTable::snapshot();
         agg.merge(&snap);
         docs_processed += 1;

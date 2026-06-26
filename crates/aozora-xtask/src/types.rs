@@ -25,7 +25,7 @@ use std::process::Command;
 
 use serde_json::{Map, Value};
 
-use aozora::pipeline::{NodeRef, PairKind};
+use aozora::pipeline::{NodeRefOwned, PairKind};
 use aozora::syntax::{NodeKind, RegionFormat};
 use aozora::{DiagnosticSource, InternalCheckCode, Sentinel, Severity};
 
@@ -144,11 +144,11 @@ fn render_enums(out: &mut String) {
     );
 }
 
-/// Module-level static assertion that pins the `Sentinel`→`NodeRef`
-/// linkage at compile time. If `NodeRef::sentinel_kind` is ever removed
+/// Module-level static assertion that pins the `Sentinel`→`NodeRefOwned`
+/// linkage at compile time. If `NodeRefOwned::sentinel_kind` is ever removed
 /// or has its signature changed, this `const` fails to type-check —
 /// catching the drift before the TS artefact silently goes stale.
-const _ASSERT_SENTINEL_KIND_EXISTS: fn(NodeRef<'static>) -> Sentinel = NodeRef::sentinel_kind;
+const _ASSERT_SENTINEL_KIND_EXISTS: fn(NodeRefOwned) -> Sentinel = NodeRefOwned::sentinel_kind;
 
 fn render_wire_payloads(out: &mut String) {
     out.push_str("// ─────────────────────────────────────────────────────────\n");

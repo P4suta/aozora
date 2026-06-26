@@ -28,9 +28,8 @@
 use aozora_pipeline::lex;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
-use aozora_render::html::render_to_string;
-use aozora_render::serialize::serialize;
-use aozora_syntax::borrowed::Arena;
+use aozora_render::render_html_owned;
+use aozora_render::serialize_owned;
 use proptest::prelude::*;
 
 fn count(haystack: &str, needle: &str) -> i64 {
@@ -79,12 +78,11 @@ fn assert_html_tag_pairs_balanced(input: &str, html: &str) {
 }
 
 fn assert_emit_symmetry(source: &str) {
-    let arena = Arena::new();
-    let out = lex(source, &arena);
-    let serialised = serialize(&out);
+    let out = lex(source);
+    let serialised = serialize_owned(&out);
     assert_source_pair_deltas_preserved(source, &serialised);
 
-    let html = render_to_string(&out);
+    let html = render_html_owned(&out);
     assert_html_tag_pairs_balanced(source, &html);
 }
 

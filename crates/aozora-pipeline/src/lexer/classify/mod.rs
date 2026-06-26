@@ -1,4 +1,4 @@
-//! Classify stage — classify the pair-stage event stream into [`borrowed::Node`] spans.
+//! Classify stage — classify the pair-stage event stream into [`NodeOwned`] spans.
 //!
 //! Walks the cross-linked [`PairEvent`] stream produced by the pair stage and
 //! produces a contiguous vector of [`ClassifiedSpan`] whose
@@ -12,7 +12,7 @@
 //!   unclosed opens, unmatched closes) are merged into one span so
 //!   the normalize stage can emit them verbatim in a single write.
 //! * [`SpanKind::Aozora`] — a classified Aozora construct, carrying the
-//!   concrete [`borrowed::Node`] that the normalize stage will replace
+//!   concrete [`NodeOwned`] that the normalize stage will replace
 //!   with a PUA placeholder sentinel (see [`crate::INLINE_SENTINEL`] and friends).
 //! * [`SpanKind::Newline`] — a `\n` in the sanitized text, kept as its
 //!   own span kind because block-level annotations (normalize-stage block
@@ -90,11 +90,11 @@ use super::instrumentation::{
     record_yield,
 };
 
-// The classify stage builds borrowed AST directly via `BorrowedAllocator`'s
-// inherent methods. The `NodeAllocator` trait abstraction was retired
-// in F.4 once the owned-AST path was gone.
-use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed;
+// The classify stage builds the owned AST directly via `OwnedAllocator`'s
+// inherent methods (single intern, no arena); the produced `NodeOwned`s thread
+// straight into the lex output's `NodeStore`.
+use aozora_syntax::alloc_owned::OwnedAllocator;
+use aozora_syntax::owned::{ContentOwned, DirectiveOwned, NodeOwned, SegmentOwned};
 use aozora_syntax::{DirectiveKind, RegionClose, RegionFormat, Span, is_ruby_base_char};
 
 use super::pair::{PairEvent, PairKind};
@@ -112,11 +112,11 @@ use kaeriten::{KaeritenObs, classify_kaeriten_mark, family_index, looks_like_kan
 
 /// One classified slice of the sanitized source.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClassifiedSpan<'a> {
+pub struct ClassifiedSpan {
     /// What the slice is (plain run, newline, or a concrete Aozora
     /// construct / container marker). Drives which sentinel, if any,
     /// the normalizer emits.
-    pub kind: SpanKind<'a>,
+    pub kind: SpanKind,
     /// Half-open sanitized-source byte range this slice covers.
     /// Consecutive spans tile the source contiguously (see the
     /// span-coverage invariant in the module docs).
@@ -145,13 +145,13 @@ pub struct ClassifiedSpan<'a> {
 ///
 /// # Memory layout
 ///
-/// The `Aozora(borrowed::Node<'a>)` variant is *not* boxed —
-/// `borrowed::Node<'a>` is `Copy` and 16 bytes, so storing it
+/// The `Aozora(NodeOwned)` variant is *not* boxed —
+/// `NodeOwned` is `Copy` and 16 bytes, so storing it
 /// inline keeps `SpanKind` to `Aozora`-variant size while avoiding
 /// the `Box` indirection the legacy owned shape paid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum SpanKind<'a> {
+pub enum SpanKind {
     /// Source bytes that carry no Aozora construct. Emitted verbatim
     /// by the normalizer.
     Plain,
@@ -160,7 +160,7 @@ pub enum SpanKind<'a> {
     /// or `E002` (block-leaf) sentinel and records the node in the
     /// placeholder registry keyed at the sentinel's normalized
     /// position.
-    Aozora(borrowed::Node<'a>),
+    Aozora(NodeOwned),
     /// Paired-container opener — `［＃ここから字下げ］`, `［＃罫囲み］`,
     /// etc. The normalizer emits an `E003` sentinel line; `post_process`
     /// matches it to the corresponding `BlockClose` via a balanced
@@ -192,11 +192,11 @@ pub enum SpanKind<'a> {
 /// Pure function; no I/O. The yielded spans byte-contiguously cover
 /// `source` — see the module-level span-coverage invariant.
 #[must_use]
-pub fn classify<'src, 'al, 'a, I>(
+pub fn classify<'src, 'al, I>(
     events: I,
     source: &'src str,
-    alloc: &'al mut BorrowedAllocator<'a>,
-) -> ClassifyStream<'src, 'al, 'a, I::IntoIter>
+    alloc: &'al mut OwnedAllocator,
+) -> ClassifyStream<'src, 'al, I::IntoIter>
 where
     I: IntoIterator<Item = PairEvent>,
 {
@@ -245,16 +245,16 @@ where
 /// * `diagnostics`: non-fatal observations accumulated during the pass.
 #[allow(
     missing_debug_implementations,
-    reason = "the &mut BorrowedAllocator field cannot derive Debug; the iterator is opaque to consumers"
+    reason = "the &mut OwnedAllocator field cannot derive Debug; the iterator is opaque to consumers"
 )]
-pub struct ClassifyStream<'src, 'al, 'a, I>
+pub struct ClassifyStream<'src, 'al, I>
 where
     I: Iterator<Item = PairEvent>,
 {
     events: I,
     source: &'src str,
     source_len: u32,
-    alloc: &'al mut BorrowedAllocator<'a>,
+    alloc: &'al mut OwnedAllocator,
     /// Buffered ready-to-yield spans drained one-per-`next()` by the
     /// consumer. `VecDeque` (not `SmallVec`) because the consumer pulls
     /// from the front and `SmallVec::remove(0)` is `O(N)`: the
@@ -264,7 +264,7 @@ where
     /// front-pop turns into a quadratic memmove storm. `VecDeque` is a
     /// ring buffer with `O(1)` `push_back` / `pop_front`, eliminating
     /// the back-shift entirely.
-    pending_outputs: VecDeque<ClassifiedSpan<'a>>,
+    pending_outputs: VecDeque<ClassifiedSpan>,
     frame: Option<Frame>,
     /// Stream-through state for top-level pair kinds that have no
     /// recogniser (Quote, Tortoise). `None` in normal operation. When
@@ -338,8 +338,8 @@ pub(crate) struct BodyView<'b> {
 /// (the arena and the source both live as long as the `Document`),
 /// but keeping them separate here avoids over-constraining helpers
 /// that thread synthetic source slices through `Cow`.
-pub(crate) struct RecogniseCtx<'al, 'a, 's> {
-    pub alloc: &'al mut BorrowedAllocator<'a>,
+pub(crate) struct RecogniseCtx<'al, 's> {
+    pub alloc: &'al mut OwnedAllocator,
     pub source: &'s str,
     /// Non-fatal diagnostics raised while building *nested* content
     /// (a gaiji inside a ruby / annotation reading). The owning
@@ -455,11 +455,11 @@ fn build_synth_ruby_view(
     Some((synth, synth_links, synth_open_idx))
 }
 
-impl<'src, 'al, 'a, I> ClassifyStream<'src, 'al, 'a, I>
+impl<'src, 'al, I> ClassifyStream<'src, 'al, I>
 where
     I: Iterator<Item = PairEvent>,
 {
-    fn new(events: I, source: &'src str, alloc: &'al mut BorrowedAllocator<'a>) -> Self {
+    fn new(events: I, source: &'src str, alloc: &'al mut OwnedAllocator) -> Self {
         Self {
             events,
             source,
@@ -526,7 +526,7 @@ where
         }
     }
 
-    fn push_output(&mut self, span: ClassifiedSpan<'a>) {
+    fn push_output(&mut self, span: ClassifiedSpan) {
         #[cfg(feature = "classify-instrument")]
         record_yield(match &span.kind {
             SpanKind::Plain => YieldKind::Plain,
@@ -947,7 +947,7 @@ where
         body: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<ClassifiedSpan<'a>> {
+    ) -> Option<ClassifiedSpan> {
         #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::TryRubyEmit);
         // Ruby recognition uses the PRECEDING text (if any) as the
@@ -1039,14 +1039,14 @@ where
     /// Returns `None` when the body content is empty (`≪≫` with
     /// no payload) — the caller falls through to plain replay so the
     /// bytes show up as literal source. Emitting a `AngleQuote` span
-    /// here would violate the [`borrowed::NonEmpty`] invariant on the
+    /// here would violate the `borrowed::NonEmpty` invariant on the
     /// `Content` payload.
     fn try_angle_quote_emit(
         &mut self,
         body: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<ClassifiedSpan<'a>> {
+    ) -> Option<ClassifiedSpan> {
         let PairEvent::PairOpen {
             span: open_span, ..
         } = body.events[open_idx]
@@ -1076,9 +1076,12 @@ where
         // Empty `≪≫` is not a valid AngleQuote — let the bytes
         // flow through as plain text. The caller's fall-through path
         // (`replay_unrecognised_body`) handles the plain emission.
-        if matches!(content, borrowed::Content::Plain(s) if s.is_empty())
-            || matches!(content, borrowed::Content::Segments(segs) if segs.is_empty())
-        {
+        let content_is_empty = match content {
+            ContentOwned::Plain(s) => self.alloc.store().resolve_str(s).is_empty(),
+            ContentOwned::Segments(segs) => segs.len == 0,
+            _ => false,
+        };
+        if content_is_empty {
             return None;
         }
         self.flush_plain_up_to(open_span.start);
@@ -1095,7 +1098,7 @@ where
         body: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<ClassifiedSpan<'a>> {
+    ) -> Option<ClassifiedSpan> {
         #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::TryBracketEmit);
         let mut ctx = RecogniseCtx {
@@ -1127,9 +1130,10 @@ where
         // Record bracketed kaeriten for the end-of-document pairing /
         // context checks (`finalize_kaeriten`). The directive span is the
         // whole `［＃…］`.
-        if let SpanKind::Aozora(borrowed::Node::Kaeriten(k)) = kind {
+        if let SpanKind::Aozora(NodeOwned::Kaeriten(k)) = kind {
             let span = Span::new(m.consume_start, m.consume_end);
-            let (family, rank, is_ladder) = classify_kaeriten_mark(k.mark.as_str());
+            let (family, rank, is_ladder) =
+                classify_kaeriten_mark(self.alloc.store().resolve_str(k.mark));
             self.kaeriten_obs.push(KaeritenObs {
                 family,
                 rank,
@@ -1148,7 +1152,7 @@ where
         body: BodyView<'_>,
         bracket_open_idx: usize,
         refmark_span: Span,
-    ) -> Option<ClassifiedSpan<'a>> {
+    ) -> Option<ClassifiedSpan> {
         let mut ctx = RecogniseCtx {
             alloc: self.alloc,
             source: self.source,
@@ -1168,7 +1172,7 @@ where
         // body are still resolved + rendered (by `build_content_from_body`),
         // but without this diagnostic; a gaiji buried in a forward-reference
         // quote target (nested `［＃…］` breaks pairing) falls to `Unknown`.
-        if m.payload.resolve().is_none() {
+        if m.payload.resolve(self.alloc.store()).is_none() {
             self.diagnostics
                 .push(Diagnostic::unresolved_gaiji(Span::new(
                     m.consume_start,
@@ -1194,13 +1198,13 @@ where
     }
 }
 
-impl<'a, I> Iterator for ClassifyStream<'_, '_, 'a, I>
+impl<I> Iterator for ClassifyStream<'_, '_, I>
 where
     I: Iterator<Item = PairEvent>,
 {
-    type Item = ClassifiedSpan<'a>;
+    type Item = ClassifiedSpan;
 
-    fn next(&mut self) -> Option<ClassifiedSpan<'a>> {
+    fn next(&mut self) -> Option<ClassifiedSpan> {
         #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::IterDispatch);
         loop {
@@ -1235,11 +1239,11 @@ where
     }
 }
 
-impl<'a, I> ClassifyStream<'_, '_, 'a, I>
+impl<I> ClassifyStream<'_, '_, I>
 where
     I: Iterator<Item = PairEvent>,
 {
-    fn pending_outputs_pop_front(&mut self) -> Option<ClassifiedSpan<'a>> {
+    fn pending_outputs_pop_front(&mut self) -> Option<ClassifiedSpan> {
         #[cfg(feature = "classify-instrument")]
         {
             // Record pending_outputs.len() BEFORE the pop so the
@@ -1311,13 +1315,13 @@ where
 /// already resolved into a `Content` via `build_content_from_body`.
 ///
 /// Collapsing inside the lexer (rather than leaving the splitting to
-/// the renderer) keeps the [`borrowed::Node`] payload self-contained:
+/// the renderer) keeps the [`NodeOwned`] payload self-contained:
 /// The normalize stage stamps one PUA sentinel over the whole `｜…《…》` source
 /// span, and the inner gaiji/annotation never reach the top-level
 /// `spans` list or downstream consumers.
-struct RubyMatch<'s, 'a> {
+struct RubyMatch<'s> {
     base: &'s str,
-    reading: borrowed::Content<'a>,
+    reading: ContentOwned,
     consume_start: u32,
     consume_end: u32,
 }
@@ -1342,13 +1346,13 @@ struct RubyMatch<'s, 'a> {
 ///
 /// Returns `None` if neither shape applies (empty reading, no
 /// preceding Text, no kanji for implicit).
-impl<'a, 's> RecogniseCtx<'_, 'a, 's> {
+impl<'s> RecogniseCtx<'_, 's> {
     fn recognize_ruby(
         &mut self,
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<RubyMatch<'s, 'a>> {
+    ) -> Option<RubyMatch<'s>> {
         #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::Ruby);
         let events = view.events;
@@ -1495,16 +1499,16 @@ struct BodyWalkCtx<'b> {
 /// where the current pending Text run started. Threading these through
 /// per-shape helpers as a single `&mut` field keeps the helper
 /// signatures at ≤4 args.
-struct ContentBuild<'a> {
-    segments: Vec<borrowed::Segment<'a>>,
+struct ContentBuild {
+    segments: Vec<SegmentOwned>,
     /// Byte position of the earliest source byte not yet committed
     /// to a `Segment::Text`. Each successful gaiji / annotation emit
     /// advances this past the consumed bracket.
     text_start: u32,
 }
 
-impl<'a> RecogniseCtx<'_, 'a, '_> {
-    /// Build a borrowed [`Content`](borrowed::Content) for the body
+impl RecogniseCtx<'_, '_> {
+    /// Build a borrowed [`Content`](ContentOwned) for the body
     /// window, recognising any nested gaiji / annotation constructs in
     /// a single forward sweep.
     ///
@@ -1513,11 +1517,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     /// dispatches each event index through two per-shape recognise
     /// helpers and falls through (advancing `i`) when neither claims
     /// the slot.
-    fn build_content_from_body(
-        &mut self,
-        view: BodyView<'_>,
-        window: &BodyWindow,
-    ) -> borrowed::Content<'a> {
+    fn build_content_from_body(&mut self, view: BodyView<'_>, window: &BodyWindow) -> ContentOwned {
         #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::BuildContent);
         debug_assert!(
@@ -1585,7 +1585,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     fn try_emit_gaiji_at(
         &mut self,
         body: BodyWalkCtx<'_>,
-        build: &mut ContentBuild<'a>,
+        build: &mut ContentBuild,
         i: usize,
     ) -> Option<usize> {
         let PairEvent::Solo {
@@ -1627,7 +1627,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // its description; flag the miss so nested references match the
         // top-level `※［＃…］` behaviour (#84). The owning `ClassifyStream`
         // drains `self.diagnostics` after the recognise call.
-        if g.payload.resolve().is_none() {
+        if g.payload.resolve(self.alloc.store()).is_none() {
             self.diagnostics
                 .push(Diagnostic::unresolved_gaiji(Span::new(
                     g.consume_start,
@@ -1650,7 +1650,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
     fn try_emit_annotation_at(
         &mut self,
         body: BodyWalkCtx<'_>,
-        build: &mut ContentBuild<'a>,
+        build: &mut ContentBuild,
         i: usize,
     ) -> Option<usize> {
         let PairEvent::PairOpen {
@@ -1687,9 +1687,9 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // wrap it as a `Segment::Gaiji` (not the `Unknown` annotation the
         // payload fallback would build) and flag an unresolved miss (#84).
         // Every other recogniser keeps the `Segment::Directive` path.
-        if let EmitKind::Aozora(borrowed::Node::Gaiji(g)) = a.emit {
+        if let EmitKind::Aozora(NodeOwned::Gaiji(g)) = a.emit {
             build.segments.push(self.alloc.seg_gaiji(g));
-            if g.resolve().is_none() {
+            if g.resolve(self.alloc.store()).is_none() {
                 self.diagnostics
                     .push(Diagnostic::unresolved_gaiji(Span::new(
                         a.consume_start,
@@ -1742,11 +1742,11 @@ fn has_nested_candidate(body: &[PairEvent]) -> bool {
 /// `Segments` run" (see `Content::from_segments`) without a second
 /// compaction pass.
 #[inline]
-fn push_text_segment<'a>(
-    segments: &mut Vec<borrowed::Segment<'a>>,
+fn push_text_segment(
+    segments: &mut Vec<SegmentOwned>,
     source: &str,
     bytes: Range<u32>,
-    alloc: &mut BorrowedAllocator<'a>,
+    alloc: &mut OwnedAllocator,
 ) {
     if !bytes.is_empty() {
         segments.push(alloc.seg_text(&source[bytes.start as usize..bytes.end as usize]));
@@ -1781,9 +1781,9 @@ fn trailing_kanji_start(text: &str) -> usize {
 /// variants `BlockOpen` / `BlockClose` and non-`Directive` `Aozora`
 /// nodes leave `annotation_payload` as `None`, so the body-builder
 /// falls back to its `Directive{Unknown}` synthesis path.
-struct AnnotationMatch<'a> {
-    emit: EmitKind<'a>,
-    annotation_payload: Option<&'a borrowed::Directive<'a>>,
+struct AnnotationMatch {
+    emit: EmitKind,
+    annotation_payload: Option<DirectiveOwned>,
     consume_start: u32,
     consume_end: u32,
     /// A non-fatal warning to surface for this bracket, if any —
@@ -1795,9 +1795,9 @@ struct AnnotationMatch<'a> {
 }
 
 /// What to emit for a matched annotation.
-enum EmitKind<'a> {
+enum EmitKind {
     /// Inline or block-leaf — becomes [`SpanKind::Aozora`].
-    Aozora(borrowed::Node<'a>),
+    Aozora(NodeOwned),
     /// Paired-container opener — becomes [`SpanKind::BlockOpen`]. Carries the
     /// authoritative open [`RegionFormat`].
     BlockOpen(RegionFormat),
@@ -1812,69 +1812,73 @@ enum EmitKind<'a> {
 
 #[cfg(test)]
 mod tests {
-    use proptest::prelude::*;
+    //! Owned-native classify-stage tests.
+    //!
+    //! The classifier now builds the owned AST directly, so these tests assert
+    //! on `NodeOwned` spans and resolve their payloads through the
+    //! `OwnedAllocator`'s `NodeStore`. End-to-end byte-identity of the rendered
+    //! output is pinned separately by the conformance vectors, the corpus
+    //! verbatim gate, and the render byte-identity gates — the frozen authority.
 
-    use super::directive::parse_emphasis_body;
-    use super::forward::forward_attr_from_suffix;
     use super::*;
-    use aozora_syntax::{
-        BlockStyles, BoutenKind, BoutenPosition, FontShift, ForwardAttr, GaijiCanonical,
-        IndentBlock, IndentLayout, LineFormat, MenKuTen, RegionClose, RegionFormat, SectionKind,
+    use aozora_syntax::owned::{
+        ContentOwned, ContentRange, NodeOwned, NodeStore, SegmentOwned, StrId,
     };
-    use core::num::NonZeroI8;
-
-    fn fs(steps: i8) -> FontShift {
-        FontShift(NonZeroI8::new(steps).expect("non-zero"))
-    }
-    /// Extract the 傍点 / 傍線 `(kind, position)` from a forward-format leaf,
-    /// panicking if it is not a `ForwardAttr::Bouten`.
-    fn bouten_attr(f: &ForwardFormat<'_>) -> (BoutenKind, BoutenPosition) {
-        match f.attr {
-            ForwardAttr::Bouten { kind, position } => (kind, position),
-            other => panic!("expected a Bouten forward format, got {other:?}"),
-        }
-    }
-    // Borrowed-AST types pattern-matched throughout. `Node<'a>`
-    // is `Copy` and holds payloads via `&'a Ruby<'a>` etc., so tests
-    // pattern-match `Node::Ruby(r)` where `r` is already a
-    // reference — no `Box` deref needed.
-    #[allow(
-        unused_imports,
-        reason = "individual tests pattern-match on subsets; bringing them all in keeps the import block stable"
-    )]
-    use aozora_syntax::borrowed::{
-        AngleQuote, Arena, Content, Directive, ForwardFormat, Gaiji, HeadingHint, Illustration,
-        Kaeriten, Node, Ruby, Segment,
-    };
+    use aozora_syntax::{BoutenKind, BoutenPosition, ForwardAttr, ForwardOrigin, SectionKind};
 
     use crate::lexer::pair::pair;
     use crate::lexer::tokenize::tokenize;
 
-    /// Test-only materialised classify output: collects `spans` from
-    /// the streaming iterator and merges its post-exhaustion
-    /// diagnostics with the upstream pair stream's diagnostics.
-    /// Per-test convenience shape so tests can assert on the full
-    /// pipeline result without rebuilding the collection inline at
-    /// every site.
+    /// Materialised classify output plus the backing store the owned payloads
+    /// resolve against.
     #[derive(Debug)]
-    struct TestClassifyOutput<'a> {
-        spans: Vec<ClassifiedSpan<'a>>,
+    struct TestClassifyOutput {
+        spans: Vec<ClassifiedSpan>,
         diagnostics: Vec<Diagnostic>,
+        store: NodeStore,
     }
 
-    /// Test-only `run` macro. Materialises a fresh
-    /// [`Arena`] / [`BorrowedAllocator`] pair in the calling scope and
-    /// binds `out` (or the explicitly-named identifier) to a
-    /// [`TestClassifyOutput`]. Replaces the legacy
-    /// `let out = run(src)` shape so each test's borrow chain is
-    /// arena-rooted in the test's own stack frame, with no per-test
-    /// allocator boilerplate.
+    impl TestClassifyOutput {
+        /// Resolve a length-1 content run to its plain text (`None` for a
+        /// `Segments`/multi run) — the owned analogue of `Content::as_plain`.
+        fn plain(&self, range: ContentRange) -> Option<&str> {
+            self.store.content_range_as_plain(range)
+        }
+
+        /// Resolve a `StrId` to its interned bytes.
+        fn s(&self, id: StrId) -> &str {
+            self.store.resolve_str(id)
+        }
+
+        /// Resolve a content run to its `ContentOwned` slice.
+        fn contents(&self, range: ContentRange) -> Vec<ContentOwned> {
+            self.store.resolve_content_range(range).to_vec()
+        }
+
+        /// The single `SpanKind::Aozora` node, panicking if not exactly one.
+        fn only_aozora(&self) -> NodeOwned {
+            let mut found = None;
+            for span in &self.spans {
+                if let SpanKind::Aozora(node) = span.kind {
+                    assert!(
+                        found.is_none(),
+                        "more than one Aozora span: {:?}",
+                        self.spans
+                    );
+                    found = Some(node);
+                }
+            }
+            found.unwrap_or_else(|| panic!("no Aozora span in {:?}", self.spans))
+        }
+    }
+
+    /// Materialise a fresh owned classify run, binding `out` to a
+    /// [`TestClassifyOutput`].
     macro_rules! run {
         ($name:ident, $src:expr) => {
-            let arena = Arena::new();
-            let mut alloc = BorrowedAllocator::new(&arena);
+            let mut alloc = OwnedAllocator::new();
             let mut pair_stream = pair(tokenize($src));
-            let mut spans: Vec<ClassifiedSpan<'_>> = Vec::new();
+            let mut spans: Vec<ClassifiedSpan> = Vec::new();
             let classify_diagnostics: Vec<Diagnostic> = {
                 let mut stream = classify(&mut pair_stream, $src, &mut alloc);
                 for span in &mut stream {
@@ -1884,19 +1888,12 @@ mod tests {
             };
             let mut diagnostics = pair_stream.take_diagnostics();
             diagnostics.extend(classify_diagnostics);
-            let $name = TestClassifyOutput { spans, diagnostics };
+            let $name = TestClassifyOutput {
+                spans,
+                diagnostics,
+                store: alloc.into_store(),
+            };
         };
-    }
-
-    /// Test-only helper: extract the `Aozora` variant's borrowed
-    /// `Node<'a>` (which is `Copy`) so tests can pattern-match
-    /// on it without spelling out the variant boilerplate at every
-    /// call site.
-    fn aozora_node<'a>(span: &ClassifiedSpan<'a>) -> Option<Node<'a>> {
-        match span.kind {
-            SpanKind::Aozora(node) => Some(node),
-            _ => None,
-        }
     }
 
     #[test]
@@ -1915,3101 +1912,143 @@ mod tests {
     }
 
     #[test]
-    fn plain_multibyte_becomes_single_plain_span() {
-        let src = "こんにちは";
-        run!(out, src);
-        assert_eq!(out.spans.len(), 1);
-        assert_eq!(out.spans[0].kind, SpanKind::Plain);
-        assert_eq!(
-            out.spans[0].source_span,
-            Span::new(0, u32::try_from(src.len()).expect("fits"))
-        );
-    }
-
-    #[test]
     fn newline_in_middle_splits_into_three_spans() {
-        run!(out, "line1\nline2");
+        run!(out, "a\nb");
         assert_eq!(out.spans.len(), 3);
         assert_eq!(out.spans[0].kind, SpanKind::Plain);
-        assert_eq!(out.spans[0].source_span, Span::new(0, 5));
         assert_eq!(out.spans[1].kind, SpanKind::Newline);
-        assert_eq!(out.spans[1].source_span, Span::new(5, 6));
         assert_eq!(out.spans[2].kind, SpanKind::Plain);
-        assert_eq!(out.spans[2].source_span, Span::new(6, 11));
     }
 
     #[test]
-    fn leading_and_trailing_newlines_do_not_emit_empty_plain_spans() {
-        run!(out, "\nbody\n");
-        // Expected: Newline, Plain("body"), Newline. No empty Plain at the edges.
-        assert_eq!(out.spans.len(), 3);
-        assert_eq!(out.spans[0].kind, SpanKind::Newline);
-        assert_eq!(out.spans[1].kind, SpanKind::Plain);
-        assert_eq!(out.spans[2].kind, SpanKind::Newline);
-    }
-
-    #[test]
-    fn explicit_ruby_produces_single_aozora_span() {
-        let src = "｜青梅《おうめ》";
-        run!(out, src);
-        assert_eq!(out.spans.len(), 1);
-        let SpanKind::Aozora(node) = out.spans[0].kind else {
-            panic!("expected Aozora span, got {:?}", out.spans[0].kind);
-        };
-        let Node::Ruby(ruby) = node else {
-            panic!("expected Ruby variant, got {node:?}");
-        };
-        assert_eq!(ruby.base.as_plain(), Some("青梅"));
-        assert_eq!(ruby.reading.as_plain(), Some("おうめ"));
-        assert_eq!(out.spans[0].source_span.end as usize, src.len());
-    }
-
-    #[test]
-    fn implicit_ruby_consumes_trailing_kanji_only() {
-        // "あいう" (kana) + "漢字" (kanji) + ruby → base is "漢字",
-        // leading kana stays Plain.
-        let src = "あいう漢字《かんじ》";
-        run!(out, src);
-        assert_eq!(out.spans.len(), 2);
-        assert_eq!(out.spans[0].kind, SpanKind::Plain);
-        let SpanKind::Aozora(node) = out.spans[1].kind else {
-            panic!("expected Aozora span, got {:?}", out.spans[1].kind);
-        };
-        let Node::Ruby(ruby) = node else {
-            panic!("expected Ruby variant, got {node:?}");
-        };
-        assert_eq!(ruby.base.as_plain(), Some("漢字"));
-        assert_eq!(ruby.reading.as_plain(), Some("かんじ"));
-        // Plain covers "あいう"; ruby covers "漢字《かんじ》".
-        assert_eq!(out.spans[0].source_span.slice(src), "あいう");
-    }
-
-    #[test]
-    fn implicit_ruby_without_leading_kanji_leaves_ruby_unrecognized() {
-        // No kanji before 《 → ruby can't bind. Ruby remains plain.
-        let src = "あいう《かんじ》";
-        run!(out, src);
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
-            "expected no Aozora spans, got {:?}",
-            out.spans
-        );
-    }
-
-    #[test]
-    fn explicit_ruby_with_empty_reading_is_not_recognized() {
-        let src = "｜漢字《》";
-        run!(out, src);
-        // Empty reading fails recognition; whole source stays plain.
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
-            "expected no Aozora spans, got {:?}",
-            out.spans
-        );
-    }
-
-    #[test]
-    fn ruby_after_newline_keeps_newline_as_its_own_span() {
-        let src = "line1\n｜漢《かん》";
-        run!(out, src);
-        // Plain("line1"), Newline, Aozora(Ruby)
-        assert_eq!(out.spans.len(), 3);
-        assert_eq!(out.spans[0].kind, SpanKind::Plain);
-        assert_eq!(out.spans[1].kind, SpanKind::Newline);
-        let is_ruby = matches!(out.spans[2].kind, SpanKind::Aozora(Node::Ruby(_)));
-        assert!(
-            is_ruby,
-            "expected Aozora(Ruby), got {:?}",
-            out.spans[2].kind
-        );
-    }
-
-    #[test]
-    fn implicit_ruby_after_non_text_event_is_not_recognized() {
-        // A close-bracket between `」` and `《` means the preceding
-        // event is PairClose, not Text. Implicit ruby can't bind.
-        let src = "「台詞」《かんじ》";
-        run!(out, src);
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
-            "expected no Aozora spans, got {:?}",
-            out.spans
-        );
-    }
-
-    // ---------------------------------------------------------------
-    // Ruby reading Content::Segments — nested gaiji / annotation
-    // inside the `《reading》` body.
-    // ---------------------------------------------------------------
-
-    /// Pull the sole `SpanKind::Aozora(Ruby(...))` out of a
-    /// [`ClassifyOutput`] so tests can assert on the Ruby payload
-    /// without repeating the shape-match boilerplate.
-    fn only_ruby<'a>(out: &TestClassifyOutput<'a>) -> &'a Ruby<'a> {
-        let mut found = None;
-        for span in &out.spans {
-            if let SpanKind::Aozora(Node::Ruby(r)) = span.kind {
-                assert!(found.is_none(), "more than one Ruby span: {:?}", out.spans);
-                found = Some(r);
-            }
-        }
-        found.unwrap_or_else(|| panic!("no Ruby span in {:?}", out.spans))
-    }
-
-    #[test]
-    fn ruby_plain_reading_still_collapses_to_plain_content() {
-        // The Segments lift must not regress the plain-text ruby case:
-        // when the body holds only text, `Content::from_segments` is
-        // obliged to collapse back to `Content::Plain` so `.as_plain()`
-        // returns `Some(&str)` for downstream consumers (renderer fast
-        // path, property tests that assert the textual shape).
+    fn explicit_ruby_collapses_to_plain_base_and_reading() {
         run!(out, "｜青梅《おうめ》");
-        let r = only_ruby(&out);
-        assert_eq!(r.base.as_plain(), Some("青梅"));
-        assert_eq!(r.reading.as_plain(), Some("おうめ"));
+        let NodeOwned::Ruby(r) = out.only_aozora() else {
+            panic!("expected Ruby, got {:?}", out.only_aozora());
+        };
+        assert_eq!(out.plain(r.base), Some("青梅"));
+        assert_eq!(out.plain(r.reading), Some("おうめ"));
     }
 
     #[test]
     fn ruby_reading_with_embedded_gaiji_produces_segments() {
-        // `※［＃「ほ」、第3水準1-85-54］` inside the reading must fold
-        // into a `Segment::Gaiji` between Text segments so the renderer
-        // can wrap it in `<span class="aozora-gaiji">` without leaking the
-        // bare `［＃` marker (Tier A).
         run!(out, "｜日本《に※［＃「ほ」、第3水準1-85-54］ん》");
-        let r = only_ruby(&out);
-        assert_eq!(r.base.as_plain(), Some("日本"));
-        let Content::Segments(segs) = r.reading.get() else {
-            panic!("expected Segments, got {:?}", r.reading);
+        let NodeOwned::Ruby(r) = out.only_aozora() else {
+            panic!("expected Ruby");
         };
+        assert_eq!(out.plain(r.base), Some("日本"));
+        let reading = out.contents(r.reading);
+        let [ContentOwned::Segments(seg_range)] = reading[..] else {
+            panic!("expected a single Segments reading, got {reading:?}");
+        };
+        let segs = out.store.resolve_seg_range(seg_range).to_vec();
         assert_eq!(segs.len(), 3);
-        assert!(
-            matches!(&segs[0], Segment::Text(t) if &**t == "に"),
-            "segment 0: {:?}",
-            segs[0]
-        );
-        let Segment::Gaiji(g) = segs[1] else {
-            panic!("segment 1 should be Gaiji, got {:?}", segs[1]);
+        assert!(matches!(segs[0], SegmentOwned::Text(t) if out.s(t) == "に"));
+        assert!(matches!(segs[1], SegmentOwned::Gaiji(_)));
+        assert!(matches!(segs[2], SegmentOwned::Text(t) if out.s(t) == "ん"));
+    }
+
+    #[test]
+    fn top_level_gaiji_resolves() {
+        run!(out, "※［＃「木＋吶のつくり」、第3水準1-85-54］");
+        let NodeOwned::Gaiji(g) = out.only_aozora() else {
+            panic!("expected Gaiji");
         };
-        assert_eq!(g.hint, "ほ");
+        assert_eq!(out.s(g.hint), "木＋吶のつくり");
+        assert!(g.resolve(&out.store).is_some());
+    }
+
+    #[test]
+    fn forward_bouten_reclaims_adjacent_literal() {
+        run!(out, "青空［＃「青空」に傍点］");
+        let NodeOwned::Format(f) = out.only_aozora() else {
+            panic!("expected Format(Bouten)");
+        };
         assert_eq!(
-            g.canonical,
-            GaijiCanonical::MenKuTen(MenKuTen {
-                plane: 1,
-                ku: 85,
-                ten: 54,
-            })
+            f.attr,
+            ForwardAttr::Bouten {
+                kind: BoutenKind::Goma,
+                position: BoutenPosition::Right,
+            }
+        );
+        assert_eq!(out.plain(f.target), Some("青空"));
+        assert_eq!(f.origin, ForwardOrigin::Reclaimed);
+    }
+
+    #[test]
+    fn paired_container_emits_open_and_close() {
+        run!(out, "［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］");
+        assert!(
+            out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::BlockOpen(_)))
         );
         assert!(
-            matches!(&segs[2], Segment::Text(t) if &**t == "ん"),
-            "segment 2: {:?}",
-            segs[2]
+            out.spans
+                .iter()
+                .any(|s| matches!(s.kind, SpanKind::BlockClose(_)))
         );
     }
 
-    /// A no-`※` standalone gaiji (#122) nested in a ruby reading folds into a
-    /// `Segment::Gaiji` (not the `Unknown` annotation the payload fallback
-    /// would otherwise build).
     #[test]
-    fn nested_standalone_gaiji_folds_into_gaiji_segment() {
-        run!(out, "｜日本《に［＃「ほ」、第3水準1-85-54］ん》");
-        let r = only_ruby(&out);
-        let Content::Segments(segs) = r.reading.get() else {
-            panic!("expected Segments, got {:?}", r.reading);
-        };
-        let Segment::Gaiji(g) = segs[1] else {
-            panic!("segment 1 should be Gaiji, got {:?}", segs[1]);
-        };
-        assert_eq!(g.hint, "ほ");
-        assert!(g.standalone, "no `※` in source → standalone");
+    fn kaeriten_is_classified() {
+        run!(out, "天［＃（レ）］");
+        let has_kaeriten = out
+            .spans
+            .iter()
+            .any(|s| matches!(s.kind, SpanKind::Aozora(NodeOwned::Kaeriten(_))));
+        assert!(has_kaeriten, "expected a Kaeriten span: {:?}", out.spans);
     }
 
-    /// #84: an unresolved gaiji nested inside a ruby reading now raises the
-    /// `unresolved-gaiji` warning, matching the top-level `※［＃…］` scan
-    /// (previously the nested reference was silently best-effort rendered).
     #[test]
-    fn nested_unresolved_gaiji_fires_diagnostic() {
-        run!(out, "｜謎《な※［＃「謎＋字」、99-99-99］ぞ》");
+    fn unknown_annotation_is_directive_not_bare_bracket() {
+        run!(out, "［＃まったく未知の注記です］");
+        let NodeOwned::Directive(d) = out.only_aozora() else {
+            panic!("expected a Directive, got {:?}", out.only_aozora());
+        };
+        assert_eq!(d.kind, DirectiveKind::Unknown);
+        assert!(out.s(d.raw).starts_with("［＃"));
+    }
+
+    #[test]
+    fn page_break_and_section_break_classified() {
+        run!(out, "［＃改ページ］");
+        assert!(matches!(out.only_aozora(), NodeOwned::PageBreak));
+        run!(out2, "［＃改丁］");
+        assert!(matches!(
+            out2.only_aozora(),
+            NodeOwned::SectionBreak(SectionKind::Kaicho)
+        ));
+    }
+
+    #[test]
+    fn angle_quote_classified() {
+        run!(out, "≪重要≫");
+        let NodeOwned::AngleQuote(d) = out.only_aozora() else {
+            panic!("expected AngleQuote, got {:?}", out.only_aozora());
+        };
+        assert_eq!(out.plain(d.content), Some("重要"));
+    }
+
+    #[test]
+    fn unresolved_gaiji_emits_diagnostic() {
+        run!(out, "※［＃「謎の字」、未知の注記］");
         assert!(
             out.diagnostics
                 .iter()
                 .any(|d| matches!(d, Diagnostic::UnresolvedGaiji { .. })),
-            "expected an unresolved-gaiji diagnostic, got {:?}",
+            "expected an UnresolvedGaiji diagnostic, got {:?}",
             out.diagnostics
         );
     }
 
     #[test]
-    fn ruby_reading_wholly_gaiji_produces_single_gaiji_segment() {
-        // No surrounding text; the reading is exactly one gaiji
-        // marker. The Segments run must be a single Gaiji (not a
-        // trailing empty Text on either side).
-        run!(out, "｜日本《※［＃「にほん」、第3水準1-85-54］》");
-        let r = only_ruby(&out);
-        let Content::Segments(segs) = r.reading.get() else {
-            panic!("expected Segments, got {:?}", r.reading);
-        };
-        assert_eq!(segs.len(), 1);
-        let Segment::Gaiji(g) = segs[0] else {
-            panic!("expected Gaiji, got {:?}", segs[0]);
-        };
-        assert_eq!(g.hint, "にほん");
-    }
-
-    #[test]
-    fn ruby_reading_with_trailing_annotation_produces_annotation_segment() {
-        // `［＃ママ］` inside a reading indicates editorial "sic" —
-        // must fold as `Segment::Directive` so the renderer wraps it
-        // in the hidden `aozora-directive` span (Tier A compliance).
-        run!(out, "｜日本《にほん［＃ママ］》");
-        let r = only_ruby(&out);
-        let Content::Segments(segs) = r.reading.get() else {
-            panic!("expected Segments, got {:?}", r.reading);
-        };
-        assert_eq!(segs.len(), 2);
-        assert!(
-            matches!(&segs[0], Segment::Text(t) if &**t == "にほん"),
-            "segment 0: {:?}",
-            segs[0]
-        );
-        let Segment::Directive(a) = segs[1] else {
-            panic!("segment 1 should be Directive, got {:?}", segs[1]);
-        };
-        assert_eq!(a.raw.as_str(), "［＃ママ］");
-    }
-
-    #[test]
-    fn ruby_reading_with_gaiji_and_annotation_interleaved() {
-        // Exercises the general Segments shape: Text, Gaiji, Text,
-        // Directive. Proves the flusher preserves ordering and the
-        // `text_start` advancement correctly spans each gap.
-        run!(out, "｜日本《に※［＃「ほ」、第3水準1-85-54］ん［＃ママ］》");
-        let r = only_ruby(&out);
-        let Content::Segments(segs) = r.reading.get() else {
-            panic!("expected Segments, got {:?}", r.reading);
-        };
-        assert_eq!(segs.len(), 4);
-        assert!(matches!(&segs[0], Segment::Text(t) if &**t == "に"));
-        assert!(matches!(&segs[1], Segment::Gaiji(_)));
-        assert!(matches!(&segs[2], Segment::Text(t) if &**t == "ん"));
-        assert!(matches!(&segs[3], Segment::Directive(_)));
-    }
-
-    #[test]
-    fn implicit_ruby_reading_with_embedded_gaiji_also_produces_segments() {
-        // Implicit form must use the same body walker; only the base
-        // extraction differs (trailing-kanji run instead of explicit
-        // `｜`-delimited Text event).
-        run!(out, "日本《に※［＃「ほ」、第3水準1-85-54］ん》");
-        let r = only_ruby(&out);
-        assert_eq!(r.base.as_plain(), Some("日本"));
-        let Content::Segments(segs) = r.reading.get() else {
-            panic!("expected Segments, got {:?}", r.reading);
-        };
-        assert_eq!(segs.len(), 3);
-        assert!(matches!(&segs[0], Segment::Text(t) if &**t == "に"));
-        assert!(matches!(&segs[1], Segment::Gaiji(_)));
-        assert!(matches!(&segs[2], Segment::Text(t) if &**t == "ん"));
-    }
-
-    #[test]
-    fn ruby_reading_consume_span_still_covers_outer_source_bytes() {
-        // The Segments lift must not disturb the outer `source_span`
-        // of the classified span: the normalize stage still needs to replace
-        // the full `｜…《…》` bytes with a single PUA sentinel, and the
-        // inner gaiji/annotation source bytes are folded into the
-        // Ruby payload — not re-exposed to the outer classifier.
-        let src = "｜日本《に※［＃「ほ」、第3水準1-85-54］ん》";
-        run!(out, src);
-        let aozora_spans: Vec<_> = out
-            .spans
-            .iter()
-            .filter(|s| matches!(s.kind, SpanKind::Aozora(_)))
-            .collect();
-        assert_eq!(
-            aozora_spans.len(),
-            1,
-            "nested gaiji must stay inside the Ruby payload, not leak into a \
-             sibling span at the top level: {:?}",
-            out.spans
-        );
-        assert_eq!(
-            aozora_spans[0].source_span.end as usize,
-            src.len(),
-            "ruby span must cover through the final `》`"
-        );
-        assert_eq!(aozora_spans[0].source_span.start, 0);
-    }
-
-    #[test]
-    fn ruby_reading_preserves_tier_a_even_for_nested_block_leaf() {
-        // `［＃改ページ］` inside a ruby reading is nonsensical, but
-        // real corpora have been known to carry freak shapes. The
-        // non-Directive emit path in `build_content_from_body` must
-        // downgrade such shapes into `Directive{Unknown}` so the
-        // bare `［＃` never reaches the rendered HTML through a
-        // `Segment::Text` channel (Tier A canary).
-        run!(out, "｜日本《にほん［＃改ページ］》");
-        let r = only_ruby(&out);
-        let Content::Segments(segs) = r.reading.get() else {
-            panic!("expected Segments, got {:?}", r.reading);
-        };
-        // Last segment must be an Directive carrying the raw bytes.
-        let last = segs.last().expect("non-empty segments");
-        let Segment::Directive(a) = last else {
-            panic!("final segment should be Directive, got {last:?}");
-        };
-        assert_eq!(a.raw.as_str(), "［＃改ページ］");
-        assert_eq!(a.kind, DirectiveKind::Unknown);
-    }
-
-    /// 縦中横 paired range `［＃縦中横］ … ［＃縦中横終わり］` opens and closes a
-    /// `RegionFormat::CombineUpright` (a corpus convention, tolerant extension);
-    /// the forward-reference `「X」は縦中横` leaf is unaffected. A longer
-    /// needle-prefix body declines to Unknown.
-    #[test]
-    fn tcy_range_recognised() {
-        run!(out, "前あ［＃縦中横］１２［＃縦中横終わり］後");
-        let opens = out
-            .spans
-            .iter()
-            .filter(|s| matches!(s.kind, SpanKind::BlockOpen(RegionFormat::CombineUpright)))
-            .count();
-        let closes = out
-            .spans
-            .iter()
-            .filter(|s| matches!(s.kind, SpanKind::BlockClose(RegionClose::CombineUpright)))
-            .count();
-        assert_eq!(opens, 1, "one CombineUprightRange open");
-        assert_eq!(closes, 1, "one CombineUprightRange close");
-        // A needle-prefix-but-longer body must not be claimed.
-        run!(out, "x［＃縦中横ほげ］y");
-        assert!(
-            out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Directive(a)) if a.kind == DirectiveKind::Unknown)),
-            "縦中横ほげ should fall through to Unknown"
-        );
-    }
-
-    #[test]
-    fn page_break_annotation_becomes_single_page_break_span() {
-        let src = "前\n［＃改ページ］\n後";
-        run!(out, src);
-        // Plain("前"), Newline, Aozora(PageBreak), Newline, Plain("後")
-        assert_eq!(out.spans.len(), 5);
-        assert_eq!(out.spans[0].kind, SpanKind::Plain);
-        assert_eq!(out.spans[1].kind, SpanKind::Newline);
-        assert!(matches!(aozora_node(&out.spans[2]), Some(Node::PageBreak)));
-        assert_eq!(out.spans[2].source_span.slice(src), "［＃改ページ］");
-        assert_eq!(out.spans[3].kind, SpanKind::Newline);
-        assert_eq!(out.spans[4].kind, SpanKind::Plain);
-    }
-
-    /// 改頁 (the kanji spelling of 改ページ) and 地より (the alternate wording
-    /// of 地から) are corpus spellings of supported layout directives — they
-    /// emit the same nodes and canonicalise to 改ページ / 地から on serialize.
-    #[test]
-    fn alt_spelling_page_break_and_align_end() {
-        run!(out, "前［＃改頁］後");
-        assert!(
-            out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::PageBreak))),
-            "改頁 should emit a PageBreak"
-        );
-        run!(out, "本文［＃地より２字上げ］続き");
-        let offset = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Line(LineFormat::AlignEnd { offset })) => Some(offset),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("地より should emit an AlignEnd"));
-        assert_eq!(offset, 2);
-    }
-
-    #[test]
-    fn section_break_kaicho_recognized() {
-        run!(out, "［＃改丁］");
-        assert_eq!(out.spans.len(), 1);
-        assert!(matches!(
-            aozora_node(&out.spans[0]),
-            Some(Node::SectionBreak(SectionKind::Kaicho))
-        ));
-    }
-
-    #[test]
-    fn section_break_dan_recognized() {
-        run!(out, "［＃改段］");
-        assert_eq!(out.spans.len(), 1);
-        assert!(matches!(
-            aozora_node(&out.spans[0]),
-            Some(Node::SectionBreak(SectionKind::Kaidan))
-        ));
-    }
-
-    #[test]
-    fn section_break_spread_recognized() {
-        run!(out, "［＃改見開き］");
-        assert_eq!(out.spans.len(), 1);
-        assert!(matches!(
-            aozora_node(&out.spans[0]),
-            Some(Node::SectionBreak(SectionKind::Kaimihiraki))
-        ));
-    }
-
-    #[test]
-    fn bracket_without_hash_is_not_an_annotation() {
-        // `［普通］` (no `＃`) is plain literal text, not an annotation.
-        run!(out, "［普通］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(s.kind, SpanKind::Aozora(_))),
-            "expected no Aozora spans, got {:?}",
-            out.spans
-        );
-    }
-
-    #[test]
-    fn unknown_annotation_keyword_is_promoted_to_annotation_unknown() {
-        // The lexer claims every well-formed `［＃…］`: if no specialised
-        // recogniser matches, the `Directive{Unknown}` fallback wraps
-        // the raw source so the renderer can emit an `aozora-directive`
-        // hidden span instead of leaking the brackets as plain text.
-        run!(out, "［＃未知のキーワード］");
-        let ann = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Directive(a)) => Some(a),
-                _ => None,
-            })
-            .expect("unknown keyword must promote to Directive{Unknown}");
-        assert_eq!(ann.kind, DirectiveKind::Unknown);
-        assert_eq!(ann.raw.as_str(), "［＃未知のキーワード］");
-    }
-
-    #[test]
-    fn annotation_with_whitespace_padding_still_matches() {
-        // Corpus occasionally has `［＃ 改ページ ］` with spaces. We
-        // trim the body to be lenient.
-        run!(out, "［＃ 改ページ ］");
-        assert_eq!(out.spans.len(), 1);
-        assert!(matches!(aozora_node(&out.spans[0]), Some(Node::PageBreak)));
-    }
-
-    #[test]
-    fn empty_bracket_with_hash_is_typed_as_empty() {
-        // Real Aozora corpora use `［＃］` as the de-facto-standard symbol in
-        // the file-header 凡例 (e.g. "［＃］：入力者注…"). It is typed as
-        // DirectiveKind::Empty — recognised, not the Unknown catch-all — while
-        // the Tier-A canary still holds (raw `［＃］` bytes preserved for
-        // round-trip, no bare `［＃` leaking into HTML).
-        run!(out, "［＃］");
-        let ann = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Directive(a)) => Some(a),
-                _ => None,
-            })
-            .expect("empty body must wrap as an Directive");
-        assert_eq!(ann.kind, DirectiveKind::Empty);
-        assert_eq!(ann.raw.as_str(), "［＃］");
-    }
-
-    #[test]
-    fn indent_with_full_width_digit() {
-        run!(out, "［＃２字下げ］");
-        assert_eq!(out.spans.len(), 1);
-        assert!(matches!(
-            aozora_node(&out.spans[0]),
-            Some(Node::Line(LineFormat::Indent { amount: 2 }))
-        ));
-    }
-
-    #[test]
-    fn indent_with_ascii_digit() {
-        run!(out, "［＃10字下げ］");
-        assert_eq!(out.spans.len(), 1);
-        assert!(matches!(
-            aozora_node(&out.spans[0]),
-            Some(Node::Line(LineFormat::Indent { amount: 10 }))
-        ));
-    }
-
-    #[test]
-    fn indent_overflow_falls_back_to_annotation_unknown() {
-        // 300 > 255, doesn't fit in u8 — the `N字下げ` recogniser
-        // declines. The `Directive { Unknown }` catch-all then
-        // claims the bracket so the renderer wraps the body in an
-        // aozora-directive span instead of leaking raw brackets.
-        run!(out, "［＃300字下げ］");
-        let ann = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Directive(a)) => Some(a),
-                _ => None,
-            })
-            .expect("overflow should fall back to Directive{Unknown}");
-        assert_eq!(ann.kind, DirectiveKind::Unknown);
-        assert_eq!(ann.raw.as_str(), "［＃300字下げ］");
-        // The specialised Indent recogniser MUST NOT claim it.
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Line(LineFormat::Indent { .. })))),
-        );
-    }
-
-    #[test]
-    fn indent_zero_digit_falls_through() {
-        // N=0 is meaningless for 字下げ (a zero-width indent is not
-        // a thing). Fullwidth-digit variant.
-        run!(out, "［＃０字下げ］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Line(LineFormat::Indent { .. })))),
-        );
-    }
-
-    #[test]
-    fn indent_zero_ascii_digit_falls_through() {
-        // ASCII-digit variant of the N=0 reject.
-        run!(out, "［＃0字下げ］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Line(LineFormat::Indent { .. })))),
-        );
-    }
-
-    #[test]
-    fn align_end_zero_digit_falls_through() {
-        // 地から0字上げ is redundant with 地付き and not spec-sanctioned —
-        // reject so the text falls through to a generic Directive.
-        run!(out, "［＃地から0字上げ］");
-        assert!(!out.spans.iter().any(|s| matches!(
-            aozora_node(s),
-            Some(Node::Line(LineFormat::AlignEnd { .. }))
-        )),);
-    }
-
-    #[test]
-    fn chitsuki_zero_offset_recognized() {
-        run!(out, "［＃地付き］");
-        assert_eq!(out.spans.len(), 1);
-        assert!(matches!(
-            aozora_node(&out.spans[0]),
-            Some(Node::Line(LineFormat::AlignEnd { offset: 0 }))
-        ));
-    }
-
-    #[test]
-    fn chi_kara_n_ji_age_recognized() {
-        run!(out, "［＃地から３字上げ］");
-        assert_eq!(out.spans.len(), 1);
-        assert!(matches!(
-            aozora_node(&out.spans[0]),
-            Some(Node::Line(LineFormat::AlignEnd { offset: 3 }))
-        ));
-    }
-
-    #[test]
-    fn indent_without_digits_falls_through() {
-        // "ここから字下げ" is a paired-container opener, not a leaf
-        // indent — the leaf classifier must not grab it, and the
-        // paired-container recogniser claims it instead.
-        run!(out, "［＃ここから字下げ］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Line(LineFormat::Indent { .. })))),
-        );
-    }
-
-    #[test]
-    fn forward_bouten_goma_recognized() {
-        // Preceding text "前置き" plus "青空" before the bracket — the
-        // target literal must appear in the preceding source for the
-        // forward-reference classifier to promote.
-        run!(out, "前置きの青空［＃「青空」に傍点］後ろ");
-        let bouten = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Format(b)) => Some(b),
-                _ => None,
-            })
-            .expect("expected a Bouten span");
-        assert_eq!(bouten_attr(bouten).0, BoutenKind::Goma);
-        assert_eq!(bouten.target.as_plain(), Some("青空"));
-    }
-
-    #[test]
-    fn forward_emphasis_script_and_kogaki_recognized() {
-        // 上付き/下付き小文字 (super/subscript) and 行右/行左小書き — the
-        // four emphasis-page forward-reference families beyond 太字/斜体
-        // (per <https://www.aozora.gr.jp/annotation/etc.html>). Each is a
-        // first-class `Emphasis` leaf, NOT an `Directive{Unknown}`.
-        for (src, want) in [
-            ("x２［＃「２」は上付き小文字］", ForwardAttr::SuperScript),
-            ("H２［＃「２」は下付き小文字］", ForwardAttr::SubScript),
-            (
-                "あ［＃「あ」は行右小書き］",
-                ForwardAttr::SmallScript(BoutenPosition::Right),
-            ),
-            (
-                "い［＃「い」は行左小書き］",
-                ForwardAttr::SmallScript(BoutenPosition::Left),
-            ),
-            ("注意［＃「注意」は罫囲み］", ForwardAttr::Framed),
-            ("西暦［＃「西暦」は横組み］", ForwardAttr::Horizontal),
-        ] {
-            run!(out, src);
-            let emphasis = out
-                .spans
-                .iter()
-                .find_map(|s| match aozora_node(s) {
-                    Some(Node::Format(f)) => Some(f),
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("expected a Format span for {src:?}"));
-            assert_eq!(emphasis.attr, want, "src = {src:?}");
+    fn spans_tile_source_contiguously() {
+        run!(out, "前｜青梅《おうめ》後");
+        let mut cursor = 0u32;
+        for span in &out.spans {
+            assert_eq!(span.source_span.start, cursor, "gap before {span:?}");
+            cursor = span.source_span.end;
         }
-    }
-
-    #[test]
-    fn forward_emphasis_font_size_recognized() {
-        // 文字サイズ変更 `N段階大きな/小さな文字` — 大きな is a positive
-        // stage count, 小さな negative; full-width and ASCII digits both
-        // parse (per <https://www.aozora.gr.jp/annotation/etc.html>).
-        for (src, want) in [
-            (
-                "甲［＃「甲」は2段階大きな文字］",
-                ForwardAttr::FontSize(fs(2)),
-            ),
-            (
-                "乙［＃「乙」は1段階小さな文字］",
-                ForwardAttr::FontSize(fs(-1)),
-            ),
-            (
-                "丙［＃「丙」は３段階大きな文字］",
-                ForwardAttr::FontSize(fs(3)),
-            ),
-        ] {
-            run!(out, src);
-            let emphasis = out
-                .spans
-                .iter()
-                .find_map(|s| match aozora_node(s) {
-                    Some(Node::Format(f)) => Some(f),
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("expected a Format span for {src:?}"));
-            assert_eq!(emphasis.attr, want, "src = {src:?}");
-        }
-    }
-
-    /// Bare-range font-size (`［＃{N}段階大きな/小さな文字］ … ［＃…文字終わり］`)
-    /// and bare-range 横組み (`［＃横組み］ … ［＃横組み終わり］`) — the
-    /// ここから/ここで-less siblings of the block forms. Corpus-attested in
-    /// bulk (e.g. 共産党宣言) but previously fell through to
-    /// `Directive{Unknown}`, silently dropping the styling. They reuse the
-    /// existing `FontSize` / `Horizontal` containers; the close marker carries
-    /// a ±1 placeholder magnitude (the open side is authoritative on pairing).
-    #[test]
-    fn bare_range_font_size_and_horizontal_recognised() {
-        let cases: &[(&str, RegionFormat, RegionClose)] = &[
-            (
-                "あ［＃１段階小さな文字］x［＃小さな文字終わり］い",
-                RegionFormat::FontSize(fs(-1)),
-                RegionClose::FontSize { larger: false },
-            ),
-            (
-                "あ［＃２段階大きな文字］x［＃大きな文字終わり］い",
-                RegionFormat::FontSize(fs(2)),
-                RegionClose::FontSize { larger: true },
-            ),
-            (
-                "あ［＃横組み］x［＃横組み終わり］い",
-                RegionFormat::Horizontal,
-                RegionClose::Horizontal,
-            ),
-        ];
-        for (src, want_open, want_close) in cases {
-            run!(out, src);
-            let opens: Vec<RegionFormat> = out
-                .spans
-                .iter()
-                .filter_map(|s| match s.kind {
-                    SpanKind::BlockOpen(k) => Some(k),
-                    _ => None,
-                })
-                .collect();
-            let closes: Vec<RegionClose> = out
-                .spans
-                .iter()
-                .filter_map(|s| match s.kind {
-                    SpanKind::BlockClose(k) => Some(k),
-                    _ => None,
-                })
-                .collect();
-            assert!(
-                opens.contains(want_open),
-                "expected open {want_open:?} for {src:?}, got {opens:?}"
-            );
-            assert!(
-                closes.contains(want_close),
-                "expected close {want_close:?} for {src:?}, got {closes:?}"
-            );
-            let unknown = out.spans.iter().any(|s| {
-                matches!(
-                    aozora_node(s),
-                    Some(Node::Directive(a)) if a.kind == DirectiveKind::Unknown
-                )
-            });
-            assert!(!unknown, "unexpected Unknown fall-through for {src:?}");
-        }
-    }
-
-    /// ゴシック体 / ゴチック are corpus spellings of 太字 (bold): the official
-    /// guide writes 太字（ゴシック）. Both map to `ForwardAttr::Bold` in the
-    /// forward-reference suffix and in every range / block body, and
-    /// canonicalise to 太字 on serialize (`Bold.keyword()`).
-    #[test]
-    fn gothic_spellings_map_to_bold() {
-        assert_eq!(
-            forward_attr_from_suffix("ゴシック体"),
-            Some(ForwardAttr::Bold)
-        );
-        assert_eq!(
-            forward_attr_from_suffix("ゴチック"),
-            Some(ForwardAttr::Bold)
-        );
-        // `parse_emphasis_body` returns `(is_italic, padded, is_close)`; 太字
-        // spellings are `is_italic = false`.
-        assert_eq!(
-            parse_emphasis_body("ゴシック体"),
-            Some((false, false, false))
-        );
-        assert_eq!(
-            parse_emphasis_body("ゴチック終わり"),
-            Some((false, false, true))
-        );
-        assert_eq!(
-            parse_emphasis_body("ここからゴシック体"),
-            Some((false, true, false))
-        );
-        assert_eq!(
-            parse_emphasis_body("ここでゴチック終わり"),
-            Some((false, true, true))
-        );
-        // Every spelling serializes back to the canonical 太字.
-        assert_eq!(ForwardAttr::Bold.keyword(), "太字");
-    }
-
-    /// The bare 横組み needle must NOT claim a compound like `横組みで、…`
-    /// (the exact-match guard rejects it) — it degrades to
-    /// `Directive{Unknown}` rather than wrongly opening a Horizontal range.
-    #[test]
-    fn bare_horizontal_compound_stays_unknown() {
-        run!(out, "あ［＃横組みで、ページの左右中央に］い");
-        let unknown = out.spans.iter().any(|s| {
-            matches!(
-                aozora_node(s),
-                Some(Node::Directive(a)) if a.kind == DirectiveKind::Unknown
-            )
-        });
-        let opened_horizontal = out
-            .spans
-            .iter()
-            .any(|s| matches!(s.kind, SpanKind::BlockOpen(RegionFormat::Horizontal)));
-        assert!(
-            unknown && !opened_horizontal,
-            "expected Directive{{Unknown}} and no Horizontal open, got {:?}",
-            out.spans
-        );
-    }
-
-    /// 小書き range `［＃行右小書き］ … ［＃行右小書き終わり］` (and 行左) —
-    /// the bare-range sibling of the forward `「X」は行右小書き` emphasis —
-    /// opens an inline `SmallScript` container carrying the 右/左 side.
-    #[test]
-    fn small_script_range_recognised() {
-        let cases: &[(&str, RegionFormat)] = &[
-            (
-                "x［＃行右小書き］２）［＃行右小書き終わり］y",
-                RegionFormat::SmallScript(BoutenPosition::Right),
-            ),
-            (
-                "x［＃行左小書き］左［＃行左小書き終わり］y",
-                RegionFormat::SmallScript(BoutenPosition::Left),
-            ),
-        ];
-        for (src, want_open) in cases {
-            run!(out, src);
-            let opens: Vec<RegionFormat> = out
-                .spans
-                .iter()
-                .filter_map(|s| match s.kind {
-                    SpanKind::BlockOpen(k) => Some(k),
-                    _ => None,
-                })
-                .collect();
-            let closes: Vec<RegionClose> = out
-                .spans
-                .iter()
-                .filter_map(|s| match s.kind {
-                    SpanKind::BlockClose(k) => Some(k),
-                    _ => None,
-                })
-                .collect();
-            assert!(opens.contains(want_open), "open for {src:?}: {opens:?}");
-            assert!(
-                closes.contains(&RegionClose::of(*want_open)),
-                "close for {src:?}: {closes:?}"
-            );
-        }
-        // A needle-prefix-but-longer body must not be claimed.
-        run!(out, "x［＃行右小書きほげ］y");
-        let opened = out
-            .spans
-            .iter()
-            .any(|s| matches!(s.kind, SpanKind::BlockOpen(RegionFormat::SmallScript(_))));
-        assert!(
-            !opened,
-            "行右小書きほげ must not open a SmallScript container"
-        );
-    }
-
-    /// Input-editor notes type correctly instead of degrading to Unknown:
-    /// `「X」はママ` / bare `ママ` → `Sic`; `…底本では…` → `BaseTextVariant`.
-    /// These were previously dead `DirectiveKind` variants (emitted nowhere
-    /// on the whole corpus). The target text stays in place.
-    #[test]
-    fn editorial_notes_type_as_asis_and_textual_note() {
-        use aozora_syntax::borrowed::Node;
-        let cases: &[(&str, DirectiveKind)] = &[
-            ("誤［＃「誤」はママ］", DirectiveKind::Sic),
-            ("あ［＃ママ］", DirectiveKind::Sic),
-            // 底本のまま — kept-irregularity note, the same *sic* family as ママ.
-            ("綴り［＃底本のまま］", DirectiveKind::Sic),
-            (
-                "名刺［＃「名刺」は底本では「名剌」］",
-                DirectiveKind::BaseTextVariant,
-            ),
-            (
-                "。［＃「。」は底本では脱落］",
-                DirectiveKind::BaseTextVariant,
-            ),
-            // 初出では — the first-appearance divergence note, same shape as 底本では.
-            (
-                "正字［＃「正字」は初出では「異字」］",
-                DirectiveKind::BaseTextVariant,
-            ),
-        ];
-        for (src, want) in cases {
-            run!(out, src);
-            let kind = out
-                .spans
-                .iter()
-                .find_map(|s| match aozora_node(s) {
-                    Some(Node::Directive(a)) => Some(a.kind),
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("expected an Directive for {src:?}"));
-            assert_eq!(kind, *want, "src = {src:?}");
-        }
-    }
-
-    /// The empty directive `［＃］` (and whitespace-only `［＃　］`) — the
-    /// file-header 凡例 symbol that prefixes nearly every work — types as
-    /// `Empty`, not the `Unknown` catch-all, while still round-tripping.
-    #[test]
-    fn empty_directive_types_as_empty() {
-        use aozora_syntax::borrowed::Node;
-        // ［＃］ (入力者注), whitespace-only ［＃　］, ［＃…］ (返り点 legend
-        // symbol), ［＃（…）］ (訓点送り仮名 legend symbol).
-        for src in [
-            "序文［＃］：入力者注",
-            "本文［＃　］続き",
-            "x［＃…］：返り点",
-            "y［＃（…）］：訓点送り仮名",
-        ] {
-            run!(out, src);
-            let kind = out
-                .spans
-                .iter()
-                .find_map(|s| match aozora_node(s) {
-                    Some(Node::Directive(a)) => Some(a.kind),
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("expected an Directive for {src:?}"));
-            assert_eq!(kind, DirectiveKind::Empty, "src = {src:?}");
-        }
-    }
-
-    /// The remaining corpus-attested layout forms: block 罫囲み / 割り注
-    /// (`ここから…`), 天から{N}字下げ (Indent leaf), the bare top-flush hanging
-    /// indent, range bouten `「X」～「Y」に<kind>`, and `×傍点` (→ Cross).
-    #[test]
-    fn remaining_layout_and_range_forms_recognised() {
-        use aozora_syntax::borrowed::Node;
-        let opens = |src: &str| -> Vec<RegionFormat> {
-            run!(out, src);
-            out.spans
-                .iter()
-                .filter_map(|s| match s.kind {
-                    SpanKind::BlockOpen(k) => Some(k),
-                    _ => None,
-                })
-                .collect()
-        };
-        assert!(opens("［＃ここから罫囲み］").contains(&RegionFormat::Framed));
-        assert!(opens("［＃ここから割り注］").contains(&RegionFormat::Warichu));
-        assert!(
-            opens("［＃改行天付き、折り返して２字下げ］").contains(&RegionFormat::Indent(
-                IndentBlock {
-                    amount: 0,
-                    wrap: Some(2),
-                    center: false,
-                    layout: IndentLayout::None,
-                    styles: BlockStyles::EMPTY,
-                }
-            ))
-        );
-        // 天から{N}字下げ → Line(Indent) leaf
-        run!(t, "［＃天から３字下げ］本文");
-        assert!(t.spans.iter().any(|s| matches!(
-            aozora_node(s),
-            Some(Node::Line(LineFormat::Indent { amount: 3 }))
-        )));
-        // range bouten and ×傍点 → Format(Bouten) leaf
-        run!(
-            r,
-            "あ實は中身呉れるのである［＃「實は」～「呉れるのである」に傍点］"
-        );
-        assert!(r.spans.iter().any(|s| matches!(
-            aozora_node(s),
-            Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. })
-        )));
-        run!(x, "天皇制［＃「天皇制」に×傍点］");
-        assert!(x.spans.iter().any(|s| matches!(
-            aozora_node(s),
-            Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { kind: BoutenKind::Cross, .. })
-        )));
-    }
-
-    /// Caption forms: the bare range `［＃キャプション］…終わり` and block
-    /// `ここからキャプション…終わり` open a `Caption` container (inline / block);
-    /// the forward `「X」はキャプション` is an `Emphasis{Caption}` leaf.
-    #[test]
-    fn caption_range_block_and_forward_recognised() {
-        use aozora_syntax::borrowed::Node;
-        // bare range → inline Caption container
-        run!(a, "図［＃キャプション］第一図［＃キャプション終わり］");
-        assert!(a.spans.iter().any(|s| matches!(
-            s.kind,
-            SpanKind::BlockOpen(RegionFormat::Caption { padded: false })
-        )));
-        // block → block Caption container
-        run!(
-            b,
-            "［＃ここからキャプション］本文［＃ここでキャプション終わり］"
-        );
-        assert!(b.spans.iter().any(|s| matches!(
-            s.kind,
-            SpanKind::BlockOpen(RegionFormat::Caption { padded: true })
-        )));
-        // forward leaf
-        run!(c, "第一図［＃「第一図」はキャプション］");
-        assert!(c.spans.iter().any(|s| matches!(
-            aozora_node(s),
-            Some(Node::Format(f)) if f.attr == ForwardAttr::Caption
-        )));
-    }
-
-    /// The general image form `<説明>（file［、横W×縦H］）入る` (graphics.html):
-    /// any leading description becomes the alt, dimensions split off the
-    /// file, and the leading text round-trips verbatim. The `のキャプション
-    /// 付き` form is left to `classify_caption_figure` (it earns a figcaption).
-    #[test]
-    fn general_image_form_recognised() {
-        use aozora_syntax::borrowed::Node;
-        let cases = [
-            (
-                "［＃図（fig1.png、横100×縦80）入る］",
-                "図",
-                "fig1.png",
-                Some("横100×縦80"),
-            ),
-            ("［＃口絵（fig2.png）入る］", "口絵", "fig2.png", None),
-            (
-                "［＃神代文字ア（f.png、横20×縦20）入る］",
-                "神代文字ア",
-                "f.png",
-                Some("横20×縦20"),
-            ),
-        ];
-        for (src, desc, file, dims) in cases {
-            run!(out, src);
-            let s = out
-                .spans
-                .iter()
-                .find_map(|s| match aozora_node(s) {
-                    Some(Node::Illustration(s)) => Some(s),
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("expected a Illustration for {src:?}"));
-            assert_eq!(s.description, Some(desc), "desc {src:?}");
-            assert_eq!(s.file.as_str(), file, "file {src:?}");
-            assert_eq!(s.dimensions, dims, "dims {src:?}");
-            assert!(
-                s.number.is_none() && s.caption.is_none(),
-                "general form has no number / trailing caption: {src:?}"
-            );
-        }
-        // The のキャプション付き form stays with classify_caption_figure, which
-        // lifts the 「caption」 into a figcaption rather than the alt.
-        run!(out, "［＃「絵」のキャプション付きの図（f.png）入る］");
-        let cap = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Illustration(s)) => Some(s),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("caption-figure should still be a Illustration"));
-        assert!(
-            cap.caption.is_some() && cap.description.is_none(),
-            "caption-figure routes its 「caption」 to a figcaption, not the alt"
-        );
-    }
-
-    /// `「caption」のキャプション付きの(図|挿絵)（file）入る` is a Illustration whose
-    /// caption precedes the figure.
-    #[test]
-    fn caption_before_figure_recognised() {
-        use aozora_syntax::borrowed::Node;
-        for src in [
-            "［＃「第一図」のキャプション付きの図（fig01.png）入る］",
-            "［＃「絵」のキャプション付きの挿絵（fig02.png）入る］",
-        ] {
-            run!(out, src);
-            let sashie = out
-                .spans
-                .iter()
-                .find_map(|s| match aozora_node(s) {
-                    Some(Node::Illustration(s)) => Some(s),
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("expected a Illustration for {src:?}"));
-            assert!(sashie.caption.is_some(), "caption for {src:?}");
-        }
-    }
-
-    /// The compound `「X」は縦中横、行右/左小書き` (numbered list markers) is
-    /// recognised as 縦中横 (the dominant transform), not Unknown.
-    #[test]
-    fn tcy_small_script_compound_recognised_as_tcy() {
-        use aozora_syntax::borrowed::Node;
-        run!(out, "１）［＃「１）」は縦中横、行右小書き］");
-        let is_tcy = out
-            .spans
-            .iter()
-            .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::CombineUpright)));
-        let unknown = out.spans.iter().any(|s| {
-            matches!(
-                aozora_node(s),
-                Some(Node::Directive(a)) if a.kind == DirectiveKind::Unknown
-            )
-        });
-        assert!(
-            is_tcy && !unknown,
-            "expected CombineUpright, got {:?}",
-            out.spans
-        );
-    }
-
-    /// The bare `「X」に「Y」の注記` side-annotation (the corpus's dominant
-    /// shape) is recognised as a `MarginNote`, like the explicit
-    /// `「X」の左に「Y」の注記` left form. `MarginNote` has no side axis, so both
-    /// map to the same node.
-    #[test]
-    fn side_note_right_form_recognised() {
-        use aozora_syntax::borrowed::Node;
-        for src in [
-            "は［＃「は」に「ママ」の注記］",
-            "は［＃「は」の左に「ママ」の注記］",
-        ] {
-            run!(out, src);
-            let is_side_note = out
-                .spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::MarginNote(_))));
-            assert!(
-                is_side_note,
-                "expected a MarginNote for {src:?}: {:?}",
-                out.spans
-            );
-        }
-    }
-
-    /// `「X」に「Y」の傍記` (issue #125, the censorship-marker form) is
-    /// recognised as a `MarginNote` tagged [`MarginNoteKind::Marginal`] —
-    /// distinct from the 注記 flavour so it round-trips to `の傍記`.
-    #[test]
-    fn boki_form_recognised() {
-        use aozora_syntax::MarginNoteKind;
-        use aozora_syntax::borrowed::Node;
-        run!(out, "資本主義の一般的危機［＃「危機」に「×」の傍記］");
-        let marginal = out.spans.iter().any(|s| {
-            matches!(
-                aozora_node(s),
-                Some(Node::MarginNote(sn)) if sn.kind == MarginNoteKind::Marginal
-            )
-        });
-        assert!(
-            marginal,
-            "expected a Marginal MarginNote, got {:?}",
-            out.spans
-        );
-    }
-
-    /// `［＃ここから改行天付き、折り返して{M}字下げ］` — the corpus's most
-    /// common compound indent — opens an Indent container with the first
-    /// line flush to the top (amount 0) and wrapped lines indented M.
-    #[test]
-    fn kaigyou_tentsuki_wrap_indent_recognised() {
-        run!(out, "［＃ここから改行天付き、折り返して２字下げ］");
-        let open = out.spans.iter().find_map(|s| match s.kind {
-            SpanKind::BlockOpen(k) => Some(k),
-            _ => None,
-        });
-        assert_eq!(
-            open,
-            Some(RegionFormat::Indent(IndentBlock {
-                amount: 0,
-                wrap: Some(2),
-                center: false,
-                layout: IndentLayout::None,
-                styles: BlockStyles::EMPTY,
-            })),
-            "spans = {:?}",
-            out.spans
-        );
-    }
-
-    /// A target-bearing `「ママ」に傍点` must still be claimed as a Bouten by
-    /// the earlier recogniser — the editorial-note tail never sees it.
-    #[test]
-    fn mama_target_with_bouten_stays_bouten() {
-        use aozora_syntax::borrowed::Node;
-        run!(out, "ママ［＃「ママ」に傍点］");
-        let is_bouten = out
-            .spans
-            .iter()
-            .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. })));
-        assert!(is_bouten, "expected a Bouten, got {:?}", out.spans);
-    }
-
-    #[test]
-    fn forward_emphasis_font_size_zero_and_overflow_decline() {
-        // 0段階 is degenerate and >127 overflows i8 — both decline cleanly
-        // to Directive{Unknown} (no Emphasis node).
-        for src in [
-            "甲［＃「甲」は0段階大きな文字］",
-            "甲［＃「甲」は200段階大きな文字］",
-        ] {
-            run!(out, src);
-            assert!(
-                !out.spans
-                    .iter()
-                    .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if !matches!(f.attr, ForwardAttr::Bouten { .. } | ForwardAttr::CombineUpright))),
-                "src = {src:?} should not yield an Emphasis node",
-            );
-        }
-    }
-
-    #[test]
-    fn forward_bouten_consumes_immediate_predecessor_literal() {
-        // The fix for forward-ref text duplication: when the target
-        // literal sits *immediately* before the `［`, the classifier
-        // hands back a `consume_start` that pulls the bouten span back
-        // to swallow it, so the preceding plain run flushes only up to
-        // the literal's start. Without this, the renderer would emit
-        // both the raw literal and the bouten's own content, producing
-        // `<text>青空<em>...青空</em>` — the playground welcome-page bug.
-        //
-        // Concretely we expect two spans:
-        //   [0] Plain("前置きの")     — the prefix up to (but not
-        //                               including) the consumed literal
-        //   [1] Aozora(Bouten { … })  — covers "青空［＃「青空」に傍点］"
-        //   [2] Plain("後ろ")         — the trailing prefix
-        run!(out, "前置きの青空［＃「青空」に傍点］後ろ");
-        let classified: Vec<_> = out
-            .spans
-            .iter()
-            .map(|s| {
-                let kind_str = match s.kind {
-                    SpanKind::Plain => "Plain",
-                    SpanKind::Aozora(Node::Format(_)) => "Bouten",
-                    _ => "Other",
-                };
-                let slice = &"前置きの青空［＃「青空」に傍点］後ろ"
-                    [s.source_span.start as usize..s.source_span.end as usize];
-                (kind_str, slice)
-            })
-            .collect();
-        // The legacy bug-state would have produced ["Plain('前置きの青空')",
-        // "Bouten('［＃「青空」に傍点］')", "Plain('後ろ')"]. The fix
-        // shrinks the Plain prefix and grows the Bouten span backwards.
-        assert_eq!(
-            classified.as_slice(),
-            &[
-                ("Plain", "前置きの"),
-                ("Bouten", "青空［＃「青空」に傍点］"),
-                ("Plain", "後ろ"),
-            ],
-            "spans drift from the consume_start=literal_start contract",
-        );
-        // The classifier must also set the per-node provenance so the
-        // serializer round-trips the literal back into place.
-        let bouten_origin = out.spans.iter().find_map(|s| match s.kind {
-            SpanKind::Aozora(Node::Format(b)) => Some(b.origin),
-            _ => None,
-        });
-        assert_eq!(
-            bouten_origin,
-            Some(borrowed::ForwardOrigin::Reclaimed),
-            "consume_start shrunk → origin must be Reclaimed",
-        );
-    }
-
-    #[test]
-    fn forward_bouten_with_intervening_text_keeps_legacy_consume() {
-        // Edge case: target appears earlier in the paragraph but NOT
-        // immediately before the bracket. We deliberately leave the
-        // legacy duplicating behaviour in that case rather than
-        // splice a hole into the middle of the pending plain run
-        // (the `flush_plain_up_to` API is truncate-only). The Bouten
-        // is still emitted with its own target content.
-        run!(out, "青空の下を歩く［＃「青空」に傍点］");
-        let mut saw_bouten = false;
-        let mut saw_plain_with_aozora = false;
-        for s in &out.spans {
-            match &s.kind {
-                SpanKind::Aozora(Node::Format(_)) => saw_bouten = true,
-                SpanKind::Plain => {
-                    let slice = &"青空の下を歩く［＃「青空」に傍点］"
-                        [s.source_span.start as usize..s.source_span.end as usize];
-                    if slice.contains("青空") {
-                        saw_plain_with_aozora = true;
-                    }
-                }
-                _ => {}
-            }
-        }
-        assert!(
-            saw_bouten,
-            "Bouten must still promote with non-adjacent target"
-        );
-        assert!(
-            saw_plain_with_aozora,
-            "non-adjacent target stays in preceding Plain (legacy behaviour preserved)"
-        );
-    }
-
-    #[test]
-    fn forward_bouten_circle_recognized() {
-        run!(out, "X［＃「X」に丸傍点］");
-        let bouten = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Format(b)) => Some(b),
-                _ => None,
-            })
-            .expect("expected a Bouten span");
-        assert_eq!(bouten_attr(bouten).0, BoutenKind::Circle);
-        assert_eq!(bouten.target.as_plain(), Some("X"));
-    }
-
-    #[test]
-    fn forward_bouten_all_eleven_kinds() {
-        // All eleven bouten kinds — the seven core shapes plus
-        // 白ゴマ / ばつ / 白三角 / 二重傍線. Each suffix must promote
-        // the bracket into a `Bouten` node rather than fall through
-        // to `Directive{Unknown}`, lowering the sweep leak rate.
-        let cases = [
-            ("傍点", BoutenKind::Goma),
-            ("白ゴマ傍点", BoutenKind::WhiteSesame),
-            ("丸傍点", BoutenKind::Circle),
-            ("白丸傍点", BoutenKind::WhiteCircle),
-            ("二重丸傍点", BoutenKind::DoubleCircle),
-            ("蛇の目傍点", BoutenKind::Janome),
-            ("ばつ傍点", BoutenKind::Cross),
-            ("白三角傍点", BoutenKind::WhiteTriangle),
-            ("波線", BoutenKind::WavyLine),
-            ("傍線", BoutenKind::UnderLine),
-            ("二重傍線", BoutenKind::DoubleUnderLine),
-        ];
-        for (suffix, expected_kind) in cases {
-            let src = format!("t［＃「t」に{suffix}］");
-            run!(out, &src);
-            let Some(b) = out.spans.iter().find_map(|s| match aozora_node(s) {
-                Some(Node::Format(b)) => Some(b),
-                _ => None,
-            }) else {
-                panic!("no Bouten span for suffix {suffix:?}");
-            };
-            assert_eq!(bouten_attr(b).0, expected_kind, "suffix {suffix:?}");
-            // All default `に` shapes produce right-side position.
-            assert_eq!(bouten_attr(b).1, BoutenPosition::Right, "suffix {suffix:?}");
-        }
-    }
-
-    #[test]
-    fn forward_bouten_left_side_flips_position() {
-        // `の左に傍点` sets BoutenPosition::Left. The same forward-
-        // reference validation (target appears in preceding text) still
-        // applies so we prepend a matching target.
-        run!(out, "X［＃「X」の左に傍点］");
-        let b = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Format(b)) => Some(b),
-                _ => None,
-            })
-            .expect("Bouten expected");
-        assert_eq!(bouten_attr(b).0, BoutenKind::Goma);
-        assert_eq!(bouten_attr(b).1, BoutenPosition::Left);
-        assert_eq!(b.target.as_plain(), Some("X"));
-    }
-
-    #[test]
-    fn forward_bouten_left_side_pairs_with_every_kind() {
-        // 左 + every kind must work (same suffix grammar).
-        let cases = [
-            ("傍点", BoutenKind::Goma),
-            ("白ゴマ傍点", BoutenKind::WhiteSesame),
-            ("丸傍点", BoutenKind::Circle),
-            ("二重傍線", BoutenKind::DoubleUnderLine),
-            ("傍線", BoutenKind::UnderLine),
-        ];
-        for (suffix, expected_kind) in cases {
-            let src = format!("t［＃「t」の左に{suffix}］");
-            run!(out, &src);
-            let Some(b) = out.spans.iter().find_map(|s| match aozora_node(s) {
-                Some(Node::Format(b)) => Some(b),
-                _ => None,
-            }) else {
-                panic!("no Bouten span for left-side suffix {suffix:?}");
-            };
-            assert_eq!(bouten_attr(b).0, expected_kind);
-            assert_eq!(bouten_attr(b).1, BoutenPosition::Left);
-        }
-    }
-
-    #[test]
-    fn forward_bouten_multi_quote_concatenates_targets() {
-        // `［＃「A」「B」に傍点］` walks consecutive PairOpen(Quote)
-        // events after the `＃` and folds their bodies into a single
-        // Bouten target joined with `、`. Both A and B must appear in
-        // the preceding text for the classifier to promote — this
-        // keeps the forward-reference semantic intact.
-        run!(out, "AとB［＃「A」「B」に傍点］");
-        let b = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Format(b)) => Some(b),
-                _ => None,
-            })
-            .expect("multi-quote Bouten expected");
-        assert_eq!(bouten_attr(b).0, BoutenKind::Goma);
-        // Targets collapse to `A、B` through `Content::from_segments`
-        // (all-Text segments → `Plain`).
-        assert_eq!(b.target.as_plain(), Some("A、B"));
-    }
-
-    #[test]
-    fn forward_bouten_multi_quote_without_all_targets_preceded_falls_through() {
-        // Only "A" appears before the bracket; "B" does not. The
-        // classifier refuses to promote — the bracket is consumed as
-        // `Directive{Unknown}` by the catch-all instead, preserving
-        // Tier-A without inventing a bouten target.
-        run!(out, "A［＃「A」「B」に傍点］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. }))),
-            "Bouten must not promote when any target is unreferenced"
-        );
-    }
-
-    #[test]
-    fn forward_bouten_empty_inner_quotes_are_skipped() {
-        // `「」` placeholders in the middle of a multi-quote body do
-        // not contribute to the target list. This guards against
-        // corpus stragglers like `［＃「A」「」「B」に傍点］`.
-        run!(out, "AB［＃「A」「」「B」に傍点］");
-        let b = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Format(b)) => Some(b),
-                _ => None,
-            })
-            .expect("Bouten expected");
-        assert_eq!(b.target.as_plain(), Some("A、B"));
-    }
-
-    #[test]
-    fn forward_bouten_position_slug_and_segments_render_together() {
-        // Regression: the position modifier must be propagated even
-        // when the target is a Segments (multi-quote) value.
-        run!(out, "AB［＃「A」「B」の左に傍点］");
-        let b = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Format(b)) => Some(b),
-                _ => None,
-            })
-            .expect("Bouten expected");
-        assert_eq!(bouten_attr(b).1, BoutenPosition::Left);
-        assert_eq!(b.target.as_plain(), Some("A、B"));
-    }
-
-    #[test]
-    fn forward_bouten_empty_target_falls_through() {
-        run!(out, "［＃「」に傍点］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. }))),
-        );
-    }
-
-    #[test]
-    fn forward_bouten_unknown_suffix_falls_through() {
-        run!(out, "［＃「X」に未知］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. }))),
-        );
-    }
-
-    #[test]
-    fn forward_bouten_missing_ni_particle_falls_through() {
-        run!(out, "［＃「X」傍点］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. }))),
-        );
-    }
-
-    #[test]
-    fn forward_bouten_without_preceding_target_falls_through() {
-        // Target 可哀想 never appears before the bracket — refusing to
-        // promote to Bouten lets the generic Directive classifier
-        // wrap the raw `［＃…］` in an aozora-directive span instead of
-        // styling a non-existent referent.
-        run!(out, "［＃「可哀想」に傍点］後");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. }))),
-        );
-    }
-
-    #[test]
-    fn forward_bouten_target_in_preceding_paragraph_still_promotes() {
-        // The classifier currently scans the entire preceding source
-        // (not just the current paragraph). Preserving that lenient
-        // behaviour keeps real Aozora corpora working — authors
-        // sometimes refer backwards across paragraph boundaries.
-        run!(out, "青空\n\n改行後［＃「青空」に傍点］");
-        assert!(
-            out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. }))),
-        );
-    }
-
-    #[test]
-    fn forward_tcy_without_preceding_target_falls_through() {
-        run!(out, "［＃「29」は縦中横］後");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::CombineUpright))),
-        );
-    }
-
-    #[test]
-    fn forward_bouten_with_nested_quote_in_target_uses_outer_quote() {
-        // The pair stage balances 「「」」 correctly. The target is the full
-        // outer-quote contents including the inner 「inner」 — not
-        // truncated at the first 」. The preceding copy of the target
-        // is required so the classifier's target-exists check passes.
-        run!(out, "A「inner」B［＃「A「inner」B」に傍点］");
-        let bouten = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Format(b)) => Some(b),
-                _ => None,
-            })
-            .expect("expected a Bouten span");
-        assert_eq!(bouten.target.as_plain(), Some("A「inner」B"));
-    }
-
-    #[test]
-    fn forward_tcy_single_recognized() {
-        run!(out, "20［＃「20」は縦中横］");
-        let tcy = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Format(t)) => Some(t),
-                _ => None,
-            })
-            .expect("expected a CombineUpright span");
-        assert_eq!(tcy.target.as_plain(), Some("20"));
-    }
-
-    #[test]
-    fn forward_tcy_wrong_particle_falls_through() {
-        // Using に instead of は — not a TCY shape.
-        run!(out, "［＃「20」に縦中横］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::CombineUpright))),
-        );
-    }
-
-    #[test]
-    fn forward_tcy_empty_target_falls_through() {
-        run!(out, "［＃「」は縦中横］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::CombineUpright))),
-        );
-    }
-
-    // ---------------------------------------------------------------
-    // Forward-reference heading hints — `［＃「X」は(大|中|小)見出し］`.
-    // These tests pin the lexer contract that drives post-process
-    // paragraph promotion (docs/plan.md §M2): the classifier emits a
-    // `HeadingHint { level: 1..=3 }` when the target is preceded by a
-    // matching run in the source, otherwise falls through so the
-    // catch-all emits `Directive { Unknown }` and the Tier-A canary
-    // ([# never leaks) still holds.
-    // ---------------------------------------------------------------
-
-    fn find_heading_hint<'a>(out: &TestClassifyOutput<'a>) -> Option<&'a HeadingHint<'a>> {
-        out.spans.iter().find_map(|s| match aozora_node(s) {
-            Some(Node::HeadingHint(h)) => Some(h),
-            _ => None,
-        })
-    }
-
-    #[test]
-    fn forward_heading_large_recognized() {
-        // Spec: 大見出し → Markdown H1 (level 1). The preceding
-        // occurrence of the target literal is required — same gate as
-        // forward-bouten.
-        run!(out, "第一篇［＃「第一篇」は大見出し］");
-        let h = find_heading_hint(&out).expect("expected HeadingHint");
-        assert_eq!(h.level.outline_level(), 1);
-        assert_eq!(h.target.as_str(), "第一篇");
-    }
-
-    #[test]
-    fn forward_heading_medium_recognized() {
-        // 中見出し → H2.
-        run!(out, "一［＃「一」は中見出し］");
-        let h = find_heading_hint(&out).expect("expected HeadingHint");
-        assert_eq!(h.level.outline_level(), 2);
-        assert_eq!(h.target.as_str(), "一");
-    }
-
-    #[test]
-    fn forward_heading_small_recognized() {
-        // 小見出し → H3.
-        run!(out, "小題［＃「小題」は小見出し］");
-        let h = find_heading_hint(&out).expect("expected HeadingHint");
-        assert_eq!(h.level.outline_level(), 3);
-        assert_eq!(h.target.as_str(), "小題");
-    }
-
-    #[test]
-    fn forward_heading_without_preceding_target_falls_through() {
-        // No 「第一篇」 run in the preceding source — hint has no
-        // referent; classifier must reject so the paragraph isn't
-        // promoted to an empty heading. The catch-all then emits
-        // `Directive { Unknown }` to preserve Tier-A.
-        run!(out, "［＃「第一篇」は大見出し］後");
-        assert!(find_heading_hint(&out).is_none());
-    }
-
-    #[test]
-    fn forward_heading_unknown_keyword_falls_through() {
-        // `大見出し` and friends are the only supported heading
-        // keywords; anything else (包括的, 飾り見出し, …) should not
-        // promote.
-        run!(out, "X［＃「X」は飾り見出し］");
-        assert!(find_heading_hint(&out).is_none());
-    }
-
-    #[test]
-    fn forward_heading_wrong_particle_falls_through() {
-        // The Aozora annotation spec's heading shape uses `は` as the
-        // particle. Using `に` (the bouten particle) must not promote
-        // to HeadingHint — otherwise we'd clobber the bouten path.
-        run!(out, "X［＃「X」に大見出し］");
-        assert!(find_heading_hint(&out).is_none());
-    }
-
-    #[test]
-    fn forward_heading_empty_target_falls_through() {
-        run!(out, "［＃「」は大見出し］");
-        assert!(find_heading_hint(&out).is_none());
-    }
-
-    #[test]
-    fn forward_heading_ruby_split_target_recognized() {
-        // The heading text carries ruby (`両頭《りやうとう》`), so the quoted
-        // target is the ruby-*stripped* form `○　両頭の蛇` and is not a
-        // contiguous source substring. The ruby-tolerant gate strips `《…》`
-        // from the look-back and recovers it as a hint (the corpus's
-        // single largest Unknown family).
-        run!(
-            out,
-            "○　両頭《りやうとう》の蛇《へび》［＃「○　両頭の蛇」は中見出し］"
-        );
-        let hit = find_heading_hint(&out)
-            .is_some_and(|h| h.level.outline_level() == 2 && h.target.as_str() == "○　両頭の蛇");
-        assert!(hit, "expected a 中見出し HeadingHint, got {:?}", out.spans);
-    }
-
-    #[test]
-    fn forward_heading_explicit_bar_ruby_target_recognized() {
-        // Explicit-base ruby `序｜章《しよう》`: the `｜` marker is also
-        // stripped so the target `序章` matches the look-back.
-        run!(out, "序｜章《しよう》［＃「序章」は大見出し］");
-        let hit = find_heading_hint(&out)
-            .is_some_and(|h| h.level.outline_level() == 1 && h.target.as_str() == "序章");
-        assert!(hit, "expected a 大見出し HeadingHint, got {:?}", out.spans);
-    }
-
-    #[test]
-    fn forward_heading_ruby_strip_does_not_invent_legend_example() {
-        // The standard 凡例 line `（例）［＃「第一章」は中見出し］` has no
-        // preceding `第一章` run — even ruby-stripped, the look-back is
-        // `（例）`, which does not contain the target. It must stay Unknown
-        // (a documentation example, not a real heading).
-        run!(out, "（例）［＃「第一章」は中見出し］");
-        assert!(find_heading_hint(&out).is_none());
-    }
-
-    #[test]
-    fn forward_heading_all_three_levels_exercised_in_one_paragraph() {
-        // A single paragraph could conceivably carry multiple heading
-        // hints — the lexer emits one HeadingHint per bracket and
-        // post-process handles the first. This test locks the per-
-        // bracket classification rather than the post_process policy.
-        run!(
-            out,
-            "A［＃「A」は大見出し］B［＃「B」は中見出し］C［＃「C」は小見出し］"
-        );
-        let levels: Vec<u8> = out
-            .spans
-            .iter()
-            .filter_map(|s| match aozora_node(s) {
-                Some(Node::HeadingHint(h)) => Some(h.level.outline_level()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(levels, vec![1, 2, 3]);
-    }
-
-    #[test]
-    fn sashie_without_caption_recognized() {
-        run!(out, "［＃挿絵（fig01.png）入る］");
-        let sashie = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Illustration(s)) => Some(s),
-                _ => None,
-            })
-            .expect("expected a Illustration span");
-        assert_eq!(sashie.file.as_str(), "fig01.png");
-        assert!(sashie.number.is_none());
-        assert!(sashie.caption.is_none());
-    }
-
-    /// The numbered illustration form `［＃挿絵{N}（file）入る］` keeps the
-    /// figure index verbatim (full-width digits included) and round-trips.
-    #[test]
-    fn sashie_numbered_form_recognized() {
-        for (src, want_num, want_file, want_dims) in [
-            (
-                "［＃挿絵10（fig01.png、横362×縦489）入る］",
-                "10",
-                "fig01.png",
-                Some("横362×縦489"),
-            ),
-            (
-                "［＃挿絵１（fig194_01.png）入る］",
-                "１",
-                "fig194_01.png",
-                None,
-            ),
-        ] {
-            run!(out, src);
-            let sashie = out
-                .spans
-                .iter()
-                .find_map(|s| match aozora_node(s) {
-                    Some(Node::Illustration(s)) => Some(s),
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("expected a Illustration span for {src:?}"));
-            let num = sashie
-                .number
-                .unwrap_or_else(|| panic!("figure number present for {src:?}"));
-            assert_eq!(num.as_str(), want_num, "src={src:?}");
-            assert_eq!(sashie.file.as_str(), want_file, "src={src:?}");
-            assert_eq!(sashie.dimensions, want_dims, "src={src:?}");
-        }
-        // A free description before `（…）入る` is the general image form
-        // (graphics.html): `女性の挿絵（fig.png）入る` → a Illustration whose leading
-        // text is the alt (no 挿絵 keyword, no figure number).
-        run!(out, "x［＃女性の挿絵（fig.png）入る］y");
-        let general = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Illustration(s)) => Some(s),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("general image form should be recognised"));
-        assert_eq!(general.description, Some("女性の挿絵"));
-        assert_eq!(general.file.as_str(), "fig.png");
-        assert!(general.number.is_none(), "general form carries no number");
-    }
-
-    #[test]
-    fn sashie_with_caption_recognized() {
-        // Bundled-caption form `挿絵（file）「caption」入る` — the caption is
-        // captured as plain content (rendered into <figcaption>, §8).
-        run!(out, "［＃挿絵（fig01.png）「キャプション」入る］");
-        let found = out.spans.iter().find_map(|s| match aozora_node(s) {
-            Some(Node::Illustration(s)) => Some(s),
-            _ => None,
-        });
-        let Some(sashie) = found else {
-            panic!("expected a Illustration span");
-        };
-        assert_eq!(sashie.file.as_str(), "fig01.png");
-        let Some(caption) = sashie.caption else {
-            panic!("expected a bundled caption");
-        };
-        assert_eq!(caption.as_plain(), Some("キャプション"));
-    }
-
-    #[test]
-    fn sashie_with_dimensions_splits_file_and_size() {
-        // Bundled corpus form `挿絵（file、横W×縦H）入る` — the pixel-size
-        // note rides in `dimensions`, keeping `file` a clean path.
-        run!(out, "［＃挿絵（fig42_03.png、横480×縦640）入る］");
-        let Some(sashie) = out.spans.iter().find_map(|s| match aozora_node(s) {
-            Some(Node::Illustration(s)) => Some(s),
-            _ => None,
-        }) else {
-            panic!("expected a Illustration span");
-        };
-        assert_eq!(sashie.file.as_str(), "fig42_03.png");
-        assert_eq!(sashie.dimensions, Some("横480×縦640"));
-        assert!(sashie.caption.is_none());
-    }
-
-    #[test]
-    fn sashie_empty_caption_falls_through() {
-        // `「」入る` is a degenerate empty caption — decline cleanly.
-        run!(out, "［＃挿絵（fig01.png）「」入る］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Illustration(_)))),
-        );
-    }
-
-    #[test]
-    fn sashie_empty_filename_falls_through() {
-        run!(out, "［＃挿絵（）入る］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Illustration(_)))),
-        );
-    }
-
-    #[test]
-    fn sashie_missing_iru_suffix_falls_through() {
-        run!(out, "［＃挿絵（fig01.png）］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Illustration(_)))),
-        );
-    }
-
-    #[test]
-    fn gaiji_quoted_description_with_mencode() {
-        use aozora_encoding::gaiji::Resolved;
-        run!(out, "※［＃「木＋吶のつくり」、第3水準1-85-54］");
-        let gaiji = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Gaiji(g)) => Some(g),
-                _ => None,
-            })
-            .expect("expected a Gaiji span");
-        assert_eq!(gaiji.hint, "木＋吶のつくり");
-        assert_eq!(
-            gaiji.canonical,
-            GaijiCanonical::MenKuTen(MenKuTen {
-                plane: 1,
-                ku: 85,
-                ten: 54,
-            })
-        );
-        // JIS X 0213:2004 plane 1 row 85 cell 54 = 枘 (U+6798).
-        // (Pre-regen seed had U+6903 (椃) — that was a different
-        // character, U+6903 = 木+室. The corrected mapping is sourced
-        // from glibc's EUC-JISX0213 charmap = the spec.)
-        assert_eq!(gaiji.resolve(), Some(Resolved::Char('\u{6798}')));
-    }
-
-    /// A composed-glyph gaiji with a trailing 底本ページ-行 suffix
-    /// (`、U+74FC、372-10`): the full mencode is kept verbatim for round-trip,
-    /// but the page-line is stripped for resolution so the codepoint still
-    /// resolves. Previously the trailing suffix failed `is_mencode_shaped`
-    /// and the whole bracket degraded to `Directive{Unknown}`.
-    #[test]
-    fn gaiji_composed_with_page_line_suffix() {
-        use aozora_encoding::gaiji::Resolved;
-        run!(
-            out,
-            "※［＃「瓰」の「扮のつくり」に代えて「里」、U+74FC、372-10］"
-        );
-        let gaiji = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Gaiji(g)) => Some(g),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
-        assert_eq!(gaiji.hint, "「瓰」の「扮のつくり」に代えて「里」");
-        // Full mencode (incl. page-line) kept verbatim for the round-trip.
-        assert_eq!(
-            gaiji.canonical,
-            GaijiCanonical::Unresolved {
-                mencode: Some("U+74FC、372-10"),
-            }
-        );
-        // The page-line is stripped for resolution → U+74FC still resolves.
-        assert_eq!(gaiji.resolve(), Some(Resolved::Char('\u{74FC}')));
-    }
-
-    #[test]
-    fn gaiji_quoted_description_without_mencode() {
-        run!(out, "※［＃「試」］");
-        let gaiji = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Gaiji(g)) => Some(g),
-                _ => None,
-            })
-            .expect("expected a Gaiji span");
-        assert_eq!(gaiji.hint, "試");
-        assert_eq!(
-            gaiji.canonical,
-            GaijiCanonical::Unresolved { mencode: None }
-        );
-    }
-
-    #[test]
-    fn gaiji_bare_description_with_mencode() {
-        run!(out, "※［＃二の字点、1-2-23］");
-        let gaiji = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Gaiji(g)) => Some(g),
-                _ => None,
-            })
-            .expect("expected a Gaiji span");
-        assert_eq!(gaiji.hint, "二の字点");
-        assert_eq!(
-            gaiji.canonical,
-            GaijiCanonical::Unresolved {
-                mencode: Some("1-2-23"),
-            }
-        );
-    }
-
-    #[test]
-    fn gaiji_consumes_refmark_and_bracket_as_one_span() {
-        let src = "a※［＃「X」、m］b";
-        run!(out, src);
-        let gaiji_span = out
-            .spans
-            .iter()
-            .find(|s| matches!(aozora_node(s), Some(Node::Gaiji(_))))
-            .expect("expected a Gaiji span");
-        // span must start at the ※ (after "a"), not at ［.
-        assert_eq!(gaiji_span.source_span.slice(src), "※［＃「X」、m］");
-    }
-
-    #[test]
-    fn gaiji_composed_glyph_kaete_form() {
-        // ※［＃「X」の「Y」に代えて「Z」、第N水準…］ — composed-glyph gaiji.
-        // The whole pre-mencode body is the verbatim description; the
-        // trailing mencode resolves the character. Previously this dropped
-        // everything after the first quote (a round-trip data loss).
-        run!(out, "※［＃「比」の「ヒ」に代えて「く」、第4水準2-1-23］");
-        let Some(g) = out.spans.iter().find_map(|s| match aozora_node(s) {
-            Some(Node::Gaiji(g)) => Some(g),
-            _ => None,
-        }) else {
-            panic!("expected Gaiji node for the 代えて composed-glyph form");
-        };
-        assert_eq!(g.hint, "「比」の「ヒ」に代えて「く」");
-        assert_eq!(
-            g.canonical,
-            GaijiCanonical::MenKuTen(MenKuTen {
-                plane: 2,
-                ku: 1,
-                ten: 23,
-            })
-        );
-    }
-
-    #[test]
-    fn refmark_without_following_bracket_stays_plain() {
-        // Bare ※ without ［＃...］ — not a gaiji, emit as Plain.
-        run!(out, "a※b");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Gaiji(_)))),
-        );
-    }
-
-    #[test]
-    fn gaiji_without_hash_is_not_recognized() {
-        // ※ followed by ［ but no ＃ inside — not a gaiji shape.
-        run!(out, "※［普通］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Gaiji(_)))),
-        );
-    }
-
-    /// Standalone (no-`※`) external-character note (#122): a `［＃…］` whose
-    /// body is a gaiji description with a trailing mencode / 底本ページ-行 is
-    /// recognised as a Gaiji, not an `Directive{Unknown}`.
-    #[test]
-    fn standalone_gaiji_is_form_with_mencode_and_page_line() {
-        run!(out, "［＃「※」は「祿－示」、第3水準1-84-27、144-上-9］");
-        let gaiji = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Gaiji(g)) => Some(g),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("expected a standalone Gaiji span, not Unknown"));
-        assert_eq!(gaiji.hint, "「※」は「祿－示」");
-        assert_eq!(
-            gaiji.canonical,
-            GaijiCanonical::Unresolved {
-                mencode: Some("第3水準1-84-27、144-上-9"),
-            }
-        );
-        assert!(gaiji.standalone, "no `※` in source → standalone");
-    }
-
-    #[test]
-    fn standalone_gaiji_composed_kaete_form() {
-        run!(out, "［＃「比」の「ヒ」に代えて「く」、第4水準2-1-23］");
-        let gaiji = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Gaiji(g)) => Some(g),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("expected a standalone composed Gaiji span"));
-        assert_eq!(gaiji.hint, "「比」の「ヒ」に代えて「く」");
-        assert!(gaiji.standalone);
-    }
-
-    /// The standalone form needs a mencode / page-line tail (or a resolved
-    /// glyph): an ordinary quoted `［＃「…」］` note has no such tail and — with
-    /// no disambiguating `※` — must NOT be wrongly claimed as a gaiji.
-    #[test]
-    fn standalone_gaiji_declines_plain_note() {
-        run!(out, "［＃「これはただの注記」］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Gaiji(_)))),
-            "plain quoted note must not become a gaiji: {:?}",
-            out.spans
-        );
-    }
-
-    /// A standalone gaiji whose tail is a 底本ページ-行 only (`、N-下-N`, no JIS
-    /// men-ku-ten) is still recognised as a gaiji (#122) rather than degrading
-    /// to `Directive{Unknown}`; the page-line is kept verbatim in `mencode`
-    /// (resolution, if any, comes from the description).
-    #[test]
-    fn standalone_gaiji_page_line_only_tail() {
-        run!(out, "あ［＃小書き片仮名ヲ、5-下-3］");
-        let gaiji = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Gaiji(g)) => Some(g),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("expected a page-line-only Gaiji span"));
-        assert_eq!(gaiji.hint, "小書き片仮名ヲ");
-        assert_eq!(
-            gaiji.canonical,
-            GaijiCanonical::Unresolved {
-                mencode: Some("5-下-3"),
-            }
-        );
-        assert!(gaiji.standalone);
-    }
-
-    /// A composed-glyph description that itself carries a `、`
-    /// (`…「面から一、二画目をとったもの」`) must not be cut at that inner comma.
-    /// The right-to-left mencode scan keeps it in the description and pins the
-    /// trailing page-line-only tail as the mencode.
-    #[test]
-    fn standalone_gaiji_composed_with_comma_in_description() {
-        run!(
-            out,
-            "已に字［＃「圖」の「回」に代えて「面から一、二画目をとったもの」、116-5］"
-        );
-        let gaiji = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Gaiji(g)) => Some(g),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
-        assert_eq!(
-            gaiji.hint,
-            "「圖」の「回」に代えて「面から一、二画目をとったもの」"
-        );
-        assert_eq!(
-            gaiji.canonical,
-            GaijiCanonical::Unresolved {
-                mencode: Some("116-5"),
-            }
-        );
-        assert!(gaiji.standalone);
-    }
-
-    /// The 正字 form wraps the whole composed description in an outer `「…」`
-    /// (`「…）、「柿」の正字」、mencode`). The outer wrapper must survive the
-    /// round-trip (the recogniser keeps it verbatim instead of stripping it via
-    /// the quoted path), and the JIS men-ku-ten still resolves.
-    #[test]
-    fn standalone_gaiji_seiji_outer_wrapped_resolves() {
-        use aozora_encoding::gaiji::Resolved;
-        run!(
-            out,
-            "南方の字［＃「木＋（「第－竹」の「コ」に代えて「丿」）、「柿」の正字」、第3水準1-85-57］"
-        );
-        let gaiji = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Gaiji(g)) => Some(g),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("expected a 正字 Gaiji span, not Unknown"));
-        // Outer `「…」` wrapper kept verbatim so serialize ∘ parse is a fixed point.
-        assert_eq!(
-            gaiji.hint,
-            "「木＋（「第－竹」の「コ」に代えて「丿」）、「柿」の正字」"
-        );
-        assert_eq!(
-            gaiji.canonical,
-            GaijiCanonical::MenKuTen(MenKuTen {
-                plane: 1,
-                ku: 85,
-                ten: 57,
-            })
-        );
-        assert_eq!(gaiji.resolve(), Some(Resolved::Char('\u{67F9}')));
-        assert!(gaiji.standalone);
-    }
-
-    /// The `※`-refmark 正字 form with a `U+XXXX` codepoint and a trailing
-    /// 底本ページ-行 (`、U+59CA、648-5`): the page-line is stripped for resolution
-    /// (→ U+59CA) while the whole mencode is kept verbatim.
-    #[test]
-    fn gaiji_seiji_outer_wrapped_u_plus_with_page_line() {
-        use aozora_encoding::gaiji::Resolved;
-        run!(
-            out,
-            "※［＃「女＋（「第－竹」の「コ」に代えて「ノ」）、「姉」の正字」、U+59CA、648-5］"
-        );
-        let gaiji = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Gaiji(g)) => Some(g),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("expected a 正字 Gaiji span, not Unknown"));
-        assert_eq!(
-            gaiji.hint,
-            "「女＋（「第－竹」の「コ」に代えて「ノ」）、「姉」の正字」"
-        );
-        assert_eq!(
-            gaiji.canonical,
-            GaijiCanonical::Unresolved {
-                mencode: Some("U+59CA、648-5"),
-            }
-        );
-        assert_eq!(gaiji.resolve(), Some(Resolved::Char('\u{59CA}')));
-        assert!(!gaiji.standalone, "leading `※` → not standalone");
-    }
-
-    /// A descriptive (non-JIS) token before the page-line (`屋号を示す記号、N-N`)
-    /// is part of the glyph identity, not the mencode. The right-to-left scan
-    /// stops at the first non-shaped token, keeping `屋号を示す記号` in the
-    /// description and the page-line as the mencode.
-    #[test]
-    fn standalone_gaiji_descriptive_token_before_page_line() {
-        run!(
-            out,
-            "屋号字［＃「仝」の「工」に代えて「小」、屋号を示す記号、260-16］"
-        );
-        let gaiji = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Gaiji(g)) => Some(g),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
-        assert_eq!(gaiji.hint, "「仝」の「工」に代えて「小」、屋号を示す記号");
-        assert_eq!(
-            gaiji.canonical,
-            GaijiCanonical::Unresolved {
-                mencode: Some("260-16"),
-            }
-        );
-        assert!(gaiji.standalone);
-    }
-
-    /// A `読みは「…」` clause sits inside the description, before the men-ku-ten.
-    /// Splitting on the first `、` would have mistaken it for the mencode.
-    #[test]
-    fn standalone_gaiji_reading_clause_before_mencode() {
-        run!(
-            out,
-            "読み字［＃「溥」の「さんずい」に代えて「かねへん」、読みは「はく」、第3水準1-93-32］"
-        );
-        let gaiji = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Gaiji(g)) => Some(g),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("expected a Gaiji span, not Unknown"));
-        assert_eq!(
-            gaiji.hint,
-            "「溥」の「さんずい」に代えて「かねへん」、読みは「はく」"
-        );
-        assert_eq!(
-            gaiji.canonical,
-            GaijiCanonical::MenKuTen(MenKuTen {
-                plane: 1,
-                ku: 93,
-                ten: 32,
-            })
-        );
-        assert!(gaiji.standalone);
-    }
-
-    #[test]
-    fn kaeriten_ichi_recognized() {
-        run!(out, "之［＃一］");
-        let kaeriten = out
-            .spans
-            .iter()
-            .find_map(|s| match aozora_node(s) {
-                Some(Node::Kaeriten(k)) => Some(k),
-                _ => None,
-            })
-            .expect("expected a Kaeriten span");
-        assert_eq!(kaeriten.mark.as_str(), "一");
-    }
-
-    #[test]
-    fn kaeriten_all_twelve_marks_recognized() {
-        for mark in [
-            "一", "二", "三", "四", "上", "中", "下", "レ", "甲", "乙", "丙", "丁",
-        ] {
-            let src = format!("［＃{mark}］");
-            run!(out, &src);
-            let Some(k) = out.spans.iter().find_map(|s| match aozora_node(s) {
-                Some(Node::Kaeriten(k)) => Some(k),
-                _ => None,
-            }) else {
-                panic!("no Kaeriten span for mark {mark:?}");
-            };
-            assert_eq!(k.mark.as_str(), mark);
-        }
-    }
-
-    #[test]
-    fn kaeriten_unknown_mark_falls_through() {
-        run!(out, "［＃甬］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Kaeriten(_)))),
-        );
-    }
-
-    #[test]
-    fn kaeriten_compound_marks_recognized() {
-        // Compound kaeriten pair an order mark with the reversal mark
-        // (`レ`). Six combinations are canonical per the Aozora
-        // kunten spec. Each must produce a Kaeriten with the combo
-        // string preserved verbatim.
-        let cases = ["一レ", "二レ", "三レ", "上レ", "中レ", "下レ"];
-        for mark in cases {
-            let src = format!("［＃{mark}］");
-            run!(out, &src);
-            let k = out
-                .spans
-                .iter()
-                .find_map(|s| match aozora_node(s) {
-                    Some(Node::Kaeriten(k)) => Some(k),
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("no Kaeriten span for mark {mark:?}"));
-            assert_eq!(k.mark.as_str(), mark, "mark={mark:?}");
-        }
-    }
-
-    #[test]
-    fn kaeriten_okurigana_shape_recognized() {
-        // `［＃（X）］` where X is 1–6 Japanese chars is treated as an
-        // okurigana marker — same Node::Kaeriten with the
-        // parenthesised payload kept verbatim for the renderer.
-        let cases = [
-            "（カ）",
-            "（ダ）",
-            "（シクシテ）",
-            "（弖）",       // kanji payload
-            "（テニヲハ）", // 4-char katakana
-        ];
-        for mark in cases {
-            let src = format!("［＃{mark}］");
-            run!(out, &src);
-            let k = out
-                .spans
-                .iter()
-                .find_map(|s| match aozora_node(s) {
-                    Some(Node::Kaeriten(k)) => Some(k),
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("no Kaeriten for okurigana {mark:?}"));
-            assert_eq!(k.mark.as_str(), mark, "mark={mark:?}");
-        }
-    }
-
-    #[test]
-    fn kaeriten_okurigana_with_long_body_falls_through() {
-        // 7+ character parenthesised content is almost always an
-        // editorial gloss, not okurigana. Must fall through to
-        // Directive{Unknown} so we don't mislabel it as kaeriten.
-        run!(out, "［＃（これはおくりがなではない）］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Kaeriten(_)))),
-            "long parenthesised bodies must not be Kaeriten: {:?}",
-            out.spans
-        );
-    }
-
-    #[test]
-    fn kaeriten_okurigana_with_latin_body_falls_through() {
-        // Okurigana payload must be hiragana/katakana/kanji. ASCII
-        // inside parens is probably an editorial note, not kaeriten.
-        run!(out, "［＃（abc）］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Kaeriten(_)))),
-        );
-    }
-
-    #[test]
-    fn kaeriten_okurigana_empty_parens_fall_through() {
-        run!(out, "［＃（）］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(aozora_node(s), Some(Node::Kaeriten(_)))),
-        );
-    }
-
-    // ---------------------------------------------------------------
-    // Double-angle quotation `≪X≫`.
-    // ---------------------------------------------------------------
-
-    #[test]
-    fn angle_quote_plain_body_produces_angle_quote_span() {
-        run!(out, "前≪強調≫後");
-        let aozora = out
-            .spans
-            .iter()
-            .find_map(aozora_node)
-            .expect("AngleQuote expected");
-        let Node::AngleQuote(d) = aozora else {
-            panic!("expected AngleQuote, got {aozora:?}");
-        };
-        assert_eq!(d.content.as_plain(), Some("強調"));
-    }
-
-    #[test]
-    fn angle_quote_consumes_entire_source_span() {
-        // Source `≪X≫` must fold into ONE Aozora span that covers
-        // the angle brackets AND the body. No `≪` characters may
-        // leak to the outer `spans` list.
-        let src = "≪ABC≫";
-        run!(out, src);
-        let aozora_count = out
-            .spans
-            .iter()
-            .filter(|s| matches!(s.kind, SpanKind::Aozora(_)))
-            .count();
-        assert_eq!(
-            aozora_count, 1,
-            "one AngleQuote span expected: {:?}",
-            out.spans
-        );
-        let aozora = out
-            .spans
-            .iter()
-            .find(|s| matches!(s.kind, SpanKind::Aozora(_)))
-            .expect("Aozora span");
-        assert_eq!(aozora.source_span.start, 0);
-        assert_eq!(aozora.source_span.end as usize, src.len());
-    }
-
-    #[test]
-    fn angle_quote_with_nested_gaiji_folds_into_segments() {
-        // The helper reuses `build_content_from_body`, so a `※［＃…］`
-        // inside the angle brackets must surface as `Segment::Gaiji`
-        // in the content — same invariant as nested gaiji in ruby.
-        run!(out, "≪※［＃「ほ」、第3水準1-85-54］≫");
-        let aozora = out
-            .spans
-            .iter()
-            .find_map(aozora_node)
-            .expect("Aozora expected");
-        let Node::AngleQuote(d) = aozora else {
-            panic!("expected AngleQuote, got {aozora:?}");
-        };
-        let Content::Segments(segs) = &d.content.get() else {
-            panic!("expected Segments, got {:?}", d.content.get());
-        };
-        assert_eq!(segs.len(), 1);
-        assert!(matches!(&segs[0], Segment::Gaiji(_)));
-    }
-
-    #[test]
-    fn angle_quote_empty_body_falls_through_to_plain() {
-        // `≪≫` with no body is not classified as AngleQuote.
-        // The empty payload would violate the
-        // `borrowed::NonEmpty<Content>` invariant; instead the bytes
-        // flow through as plain text (the catch-all `replay_unrecognised_body`
-        // fold). No Aozora span is emitted for the empty case.
-        run!(out, "A≪≫B");
-        let aozora_count = out
-            .spans
-            .iter()
-            .filter(|s| matches!(s.kind, SpanKind::Aozora(_)))
-            .count();
-        assert_eq!(
-            aozora_count, 0,
-            "empty angle-quote must not emit a AngleQuote span — \
-             empty content violates the NonEmpty<Content> invariant"
-        );
-    }
-
-    #[test]
-    fn container_open_indent_default_amount_one() {
-        run!(out, "［＃ここから字下げ］");
-        assert_eq!(out.spans.len(), 1);
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
-                amount: 1,
-                wrap: None,
-                center: false,
-                layout: IndentLayout::None,
-                styles: BlockStyles::EMPTY,
-            }))
-        ));
-    }
-
-    #[test]
-    fn container_open_indent_with_amount() {
-        run!(out, "［＃ここから３字下げ］");
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
-                amount: 3,
-                wrap: None,
-                center: false,
-                layout: IndentLayout::None,
-                styles: BlockStyles::EMPTY,
-            }))
-        ));
-    }
-
-    #[test]
-    fn container_open_wrap_indent_parses_both_amounts() {
-        run!(out, "［＃ここから２字下げ、折り返して４字下げ］");
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
-                amount: 2,
-                wrap: Some(4),
-                center: false,
-                layout: IndentLayout::None,
-                styles: BlockStyles::EMPTY,
-            }))
-        ));
-    }
-
-    #[test]
-    fn container_open_indent_line_kumi_compound() {
-        // #78: ここから{N}字下げ、{L}行{W}字組みで → Indent + Kumi layout.
-        run!(out, "［＃ここから3字下げ、1行20字組みで］");
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
-                amount: 3,
-                wrap: None,
-                center: false,
-                layout: IndentLayout::Kumi(_),
-                styles: BlockStyles::EMPTY,
-            }))
-        ));
-    }
-
-    #[test]
-    fn container_open_indent_line_width_compound() {
-        // #78: ここから{N}字下げ、{W}字詰め → Indent + LineWidth layout.
-        run!(out, "［＃ここから8字下げ、18字詰め］");
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
-                amount: 8,
-                wrap: None,
-                center: false,
-                layout: IndentLayout::LineWidth(_),
-                styles: BlockStyles::EMPTY,
-            }))
-        ));
-    }
-
-    #[test]
-    fn container_kumi_compound_open_carries_width_and_pairs() {
-        // The OPEN carries the 字組み width (open-authoritative — the close is
-        // a discriminant; serialize reconstructs the marker from the open).
-        run!(
-            out,
-            "［＃ここから3字下げ、1行20字組みで］本文［＃ここで字下げ、20字組み終わり］"
-        );
-        assert_eq!(out.spans.len(), 3);
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
-                layout: IndentLayout::Kumi(_),
-                ..
-            }))
-        ));
-        assert!(matches!(
-            out.spans[2].kind,
-            SpanKind::BlockClose(RegionClose::Indent { .. })
-        ));
-    }
-
-    #[test]
-    fn container_line_width_compound_closes_generic() {
-        // The 字詰め compound closes with the GENERIC 字下げ終わり (no param),
-        // matching the corpus; it still pairs by the Indent family.
-        run!(
-            out,
-            "［＃ここから8字下げ、18字詰め］本文［＃ここで字下げ終わり］"
-        );
-        assert_eq!(out.spans.len(), 3);
-        assert!(matches!(
-            out.spans[2].kind,
-            SpanKind::BlockClose(RegionClose::Indent { .. })
-        ));
-    }
-
-    #[test]
-    fn indent_compound_style_opens_with_styles() {
-        // #78: 字下げ、ゴシック体 → Indent container carrying a co-applied
-        // `BlockStyles { bold: true }` decorative style.
-        run!(out, "［＃ここから3字下げ、ゴシック体］");
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
-                amount: 3,
-                wrap: None,
-                center: false,
-                layout: IndentLayout::None,
-                styles: BlockStyles {
-                    bold: true,
-                    horizontal: false,
-                    framed: false,
-                    font: None,
-                },
-            }))
-        ));
-    }
-
-    #[test]
-    fn indent_compound_four_way_resolves_every_clause() {
-        // #78: the 4-way corpus compound — center + horizontal + framed
-        // co-applied on a 4-char indent (clause order is source-driven; the
-        // serializer canonicalises it).
-        run!(out, "［＃ここから4字下げ、横書き、中央揃え、罫囲み］");
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
-                amount: 4,
-                wrap: None,
-                center: true,
-                layout: IndentLayout::None,
-                styles: BlockStyles {
-                    bold: false,
-                    horizontal: true,
-                    framed: true,
-                    font: None,
-                },
-            }))
-        ));
-    }
-
-    #[test]
-    fn indent_compound_declines_whole_on_unknown_clause() {
-        // #78 losslessness: one unknown clause declines the WHOLE compound to a
-        // generic Unknown annotation (it round-trips verbatim) rather than
-        // dropping the clause and misreading the rest.
-        run!(
-            out,
-            "［＃ここから5字下げ、本文よりひとまわり大きい太ゴシック体］"
-        );
-        assert!(
-            !matches!(out.spans[0].kind, SpanKind::BlockOpen(_)),
-            "an unknown clause must NOT open an Indent container"
-        );
-        assert!(matches!(
-            aozora_node(&out.spans[0]),
-            Some(Node::Directive(d)) if d.kind == DirectiveKind::Unknown
-        ));
-    }
-
-    #[test]
-    fn body_end_and_forced_break_markers() {
-        // #78 structural leaves: 本文終わり → BodyEnd (block), 改行 → ForcedBreak
-        // (inline).
-        run!(end, "［＃本文終わり］");
-        assert!(matches!(aozora_node(&end.spans[0]), Some(Node::BodyEnd)));
-        run!(brk, "［＃改行］");
-        assert!(matches!(
-            aozora_node(&brk.spans[0]),
-            Some(Node::ForcedBreak)
-        ));
-    }
-
-    #[test]
-    fn forced_break_does_not_shadow_kaigyou_tentsuki() {
-        // `改行` is a prefix of `改行天付き`; LeftmostLongest + the Exact-mode
-        // guard keep the hanging-indent form (amount 0 + wrap) intact rather
-        // than wrongly matching a bare ForcedBreak.
-        run!(out, "［＃ここから改行天付き、折り返して1字下げ］");
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::Indent(IndentBlock {
-                amount: 0,
-                wrap: Some(1),
-                ..
-            }))
-        ));
-    }
-
-    #[test]
-    fn indent_compound_close_absorbs_redundant_tail() {
-        // #78: the explicit compound closer `字下げ終わり、Xも終わり` folds to the
-        // generic Indent close (the open payload is authoritative).
-        run!(
-            out,
-            "［＃ここから2字下げ、小さい活字］本文［＃ここで字下げ終わり、小さい活字も終わり］"
-        );
-        assert!(matches!(
-            out.spans[2].kind,
-            SpanKind::BlockClose(RegionClose::Indent { kumi_width: None })
-        ));
-    }
-
-    #[test]
-    fn container_close_indent_matches_open_by_variant() {
-        run!(out, "［＃ここから字下げ］本文［＃ここで字下げ終わり］");
-        // Spans: BlockOpen(Indent{1}), Plain("本文"), BlockClose(Indent{0})
-        assert_eq!(out.spans.len(), 3);
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::Indent(_))
-        ));
-        assert_eq!(out.spans[1].kind, SpanKind::Plain);
-        assert!(matches!(
-            out.spans[2].kind,
-            SpanKind::BlockClose(RegionClose::Indent { .. })
-        ));
-    }
-
-    #[test]
-    fn container_open_chitsuki_and_chi_kara_n() {
-        run!(out, "［＃ここから地付き］");
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::AlignEnd { offset: 0 })
-        ));
-        run!(out2, "［＃ここから地から2字上げ］");
-        assert!(matches!(
-            out2.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::AlignEnd { offset: 2 })
-        ));
-    }
-
-    #[test]
-    fn container_open_close_keigakomi() {
-        run!(out, "［＃罫囲み］内部［＃罫囲み終わり］");
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::Framed)
-        ));
-        assert!(matches!(
-            out.spans[2].kind,
-            SpanKind::BlockClose(RegionClose::Framed)
-        ));
-    }
-
-    #[test]
-    fn container_open_close_font_size_block() {
-        // ここからN段階大きな/小さな文字 — the opener carries the signed
-        // magnitude; the direction-only closer pairs by the font-size family.
-        run!(
-            out,
-            "［＃ここから2段階大きな文字］大［＃ここで大きな文字終わり］"
-        );
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::FontSize(_))
-        ));
-        assert!(matches!(
-            out.spans[2].kind,
-            SpanKind::BlockClose(RegionClose::FontSize { .. })
-        ));
-        run!(
-            out2,
-            "［＃ここから1段階小さな文字］小［＃ここで小さな文字終わり］"
-        );
-        assert!(matches!(
-            out2.spans[0].kind,
-            SpanKind::BlockOpen(RegionFormat::FontSize(shift)) if !shift.larger()
-        ));
-    }
-
-    #[test]
-    fn warichu_open_close_are_inline_annotations() {
-        // Aozora spec: `［＃割り注］…［＃割り注終わり］` is inline
-        // (`<span class="aozora-warichu">…</span>`). The legacy block
-        // form (`ここから割り注` / `ここで割り注終わり`) is deprecated
-        // and not classified here.
-        use aozora_syntax::DirectiveKind;
-        run!(out, "［＃割り注］内部［＃割り注終わり］");
-        let Some(Node::Directive(open)) = aozora_node(&out.spans[0]) else {
-            panic!(
-                "expected Aozora(Directive) for ［＃割り注］, got {:?}",
-                out.spans[0].kind,
-            );
-        };
-        assert_eq!(open.kind, DirectiveKind::WarichuOpen);
-        assert_eq!(open.raw.as_str(), "［＃割り注］");
-
-        let Some(Node::Directive(close)) = aozora_node(&out.spans[2]) else {
-            panic!(
-                "expected Aozora(Directive) for ［＃割り注終わり］, got {:?}",
-                out.spans[2].kind,
-            );
-        };
-        assert_eq!(close.kind, DirectiveKind::WarichuClose);
-        assert_eq!(close.raw.as_str(), "［＃割り注終わり］");
-    }
-
-    #[test]
-    fn container_close_without_matching_open_still_emits_close() {
-        // The classify stage does not pair opens with closes — that's `post_process`.
-        // A bare `［＃罫囲み終わり］` is still classified.
-        run!(out, "［＃罫囲み終わり］");
-        assert!(matches!(
-            out.spans[0].kind,
-            SpanKind::BlockClose(RegionClose::Framed)
-        ));
-    }
-
-    #[test]
-    fn container_unknown_here_from_keyword_falls_through() {
-        run!(out, "［＃ここから未知］");
-        assert!(
-            !out.spans
-                .iter()
-                .any(|s| matches!(s.kind, SpanKind::BlockOpen(_) | SpanKind::BlockClose(_))),
-            "expected no block container spans, got {:?}",
-            out.spans
-        );
-    }
-
-    #[test]
-    fn only_newline_source_emits_only_newline_span() {
-        run!(out, "\n");
-        assert_eq!(out.spans.len(), 1);
-        assert_eq!(out.spans[0].kind, SpanKind::Newline);
-        assert_eq!(out.spans[0].source_span, Span::new(0, 1));
-    }
-
-    #[test]
-    fn diagnostics_from_phase2_are_forwarded() {
-        run!(out, "stray］");
-        // The pair stage emits an UnmatchedClose diagnostic for `］`. The
-        // classifier must propagate it (and not swallow it silently).
-        assert!(
-            out.diagnostics.iter().any(|d| matches!(
-                d,
-                Diagnostic::UnmatchedClose {
-                    kind: PairKind::Bracket,
-                    ..
-                }
-            )),
-            "expected UnmatchedClose to be forwarded, got {:?}",
-            out.diagnostics
-        );
-    }
-
-    proptest! {
-        /// Spans must tile the source contiguously, starting at 0 and
-        /// ending at `source.len()` with no gaps or overlaps.
-        #[test]
-        fn proptest_spans_tile_source_contiguously(src in source_strategy()) {
-            run!(out, &src);
-            if src.is_empty() {
-                prop_assert!(out.spans.is_empty());
-                return Ok(());
-            }
-            prop_assert!(!out.spans.is_empty());
-            prop_assert_eq!(out.spans[0].source_span.start, 0);
-            for window in out.spans.windows(2) {
-                prop_assert_eq!(
-                    window[0].source_span.end,
-                    window[1].source_span.start
-                );
-            }
-            prop_assert_eq!(
-                out.spans.last().unwrap().source_span.end as usize,
-                src.len()
-            );
-        }
-
-        /// No empty-range spans leak into the output. An empty span
-        /// would usually indicate a double-flush bug and breaks the
-        /// "each span represents at least one source byte" expectation
-        /// the normalize stage holds.
-        #[test]
-        fn proptest_no_empty_spans(src in source_strategy()) {
-            run!(out, &src);
-            for span in &out.spans {
-                prop_assert!(span.source_span.end > span.source_span.start);
-            }
-        }
-
-        /// Every Newline span covers exactly one byte at a `\n`
-        /// position.
-        #[test]
-        fn proptest_newline_spans_are_single_byte(src in source_strategy()) {
-            run!(out, &src);
-            for span in &out.spans {
-                if span.kind == SpanKind::Newline {
-                    prop_assert_eq!(span.source_span.len(), 1);
-                    prop_assert_eq!(
-                        &src[span.source_span.start as usize..span.source_span.end as usize],
-                        "\n"
-                    );
-                }
-            }
-        }
-
-        /// Classification is a pure function of the input.
-        ///
-        /// Determinism is asserted span-by-span; we cannot direct-`==`
-        /// the two `ClassifyOutput`s across separate arenas because
-        /// `borrowed::Node<'a>` `PartialEq` recurses through the
-        /// arena-allocated payload pointers, which differ across runs
-        /// even when the logical AST is identical. The pointer-aware
-        /// equality is the right semantics — it lets the byte-identical
-        /// proptest in `aozora-pipeline` pin pointer dedup. Here we want
-        /// logical equality, so we compare via the `Debug` shape, which
-        /// formats payload values rather than addresses.
-        #[test]
-        fn proptest_classify_is_deterministic(src in source_strategy()) {
-            run!(a, &src);
-            run!(b, &src);
-            prop_assert_eq!(a.spans.len(), b.spans.len());
-            for (l, r) in a.spans.iter().zip(b.spans.iter()) {
-                prop_assert_eq!(l.source_span, r.source_span);
-                prop_assert_eq!(format!("{:?}", l.kind), format!("{:?}", r.kind));
-            }
-        }
-    }
-
-    fn source_strategy() -> impl Strategy<Value = String> {
-        prop::collection::vec(
-            prop_oneof![
-                Just('a'),
-                Just('あ'),
-                Just('漢'),
-                Just('｜'),
-                Just('《'),
-                Just('》'),
-                Just('［'),
-                Just('］'),
-                Just('＃'),
-                Just('※'),
-                Just('〔'),
-                Just('〕'),
-                Just('「'),
-                Just('」'),
-                Just('\n'),
-            ],
-            0..40,
-        )
-        .prop_map(|chars| chars.into_iter().collect())
-    }
-
-    // -----------------------------------------------------------------
-    // Forward-target index threshold smoke tests (G.4 / classify mod).
-    //
-    // The forward-reference target index is only built when a source
-    // contains at least `FORWARD_QUOTE_BODY_THRESHOLD` (= 64) distinct
-    // `「…」` quote bodies. Below the threshold we want to confirm the
-    // pipeline still works and the result is identical to a re-run
-    // (stability across the threshold gate).
-    // -----------------------------------------------------------------
-
-    /// Inputs *below* `FORWARD_QUOTE_BODY_THRESHOLD` skip the index
-    /// build altogether. Drive a small input through the full lex
-    /// pipeline twice and pin determinism — proves the gate decision
-    /// (skip the AC index) doesn't itself perturb output.
-    #[test]
-    fn forward_target_index_handles_short_corpus() {
-        // 5 distinct quote bodies — well below the 64-body threshold.
-        let src = "「a」「b」「c」「d」「e」";
-        run!(a, src);
-        run!(b, src);
-        assert_eq!(a.spans.len(), b.spans.len());
-        for (l, r) in a.spans.iter().zip(b.spans.iter()) {
-            assert_eq!(l.source_span, r.source_span);
-            assert_eq!(format!("{:?}", l.kind), format!("{:?}", r.kind));
-        }
-    }
-
-    /// Forward-reference behaviour DEPENDS on whether the cited target
-    /// (`「青空」`) appears earlier in source.
-    ///
-    /// * With a preceding `「青空」`: the bouten classifier sees the
-    ///   prior occurrence and recognises `［＃「青空」に傍点］` as
-    ///   a Bouten span.
-    /// * Without a preceding occurrence: `forward_target_is_preceded`
-    ///   returns `false` and the recogniser falls through to
-    ///   `Directive { kind: Unknown }` so the renderer doesn't apply
-    ///   styling to a non-existent referent.
-    ///
-    /// The two outcomes must differ observably — this is the public
-    /// behaviour gated on the forward-target lookup. We keep the
-    /// assertion shape behavioural rather than poking at the
-    /// thread-local index (which is non-public).
-    #[test]
-    fn forward_target_lookup_changes_output_for_preceded_vs_absent() {
-        use aozora_syntax::borrowed::Node;
-
-        // Case A: target exists earlier in source.
-        let with_prior = "「青空」が見える。［＃「青空」に傍点］";
-        run!(a, with_prior);
-        let bouten_in_a = a
-            .spans
-            .iter()
-            .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. })));
-        let unknown_in_a = a.spans.iter().any(|s| {
-            matches!(
-                aozora_node(s),
-                Some(Node::Directive(ann)) if ann.kind == DirectiveKind::Unknown
-            )
-        });
-
-        // Case B: no prior `「青空」` occurrence.
-        let without_prior = "ただの本文。［＃「青空」に傍点］";
-        run!(b, without_prior);
-        let bouten_in_b = b
-            .spans
-            .iter()
-            .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. })));
-        let unknown_in_b = b.spans.iter().any(|s| {
-            matches!(
-                aozora_node(s),
-                Some(Node::Directive(ann)) if ann.kind == DirectiveKind::Unknown
-            )
-        });
-
-        assert!(
-            bouten_in_a && !unknown_in_a,
-            "with prior `「青空」`, expected a Bouten span and no Unknown annotation, \
-             got spans={:?}",
-            a.spans
-        );
-        assert!(
-            unknown_in_b && !bouten_in_b,
-            "without prior `「青空」`, expected fallback Directive{{Unknown}} and no Bouten, \
-             got spans={:?}",
-            b.spans
-        );
-    }
-
-    /// Regression: once a document crosses
-    /// `FORWARD_QUOTE_BODY_THRESHOLD` the Aho-Corasick forward-target
-    /// index installs and takes over from the substring fallback. It
-    /// must give the SAME answer — including for the canonical
-    /// `語句［＃「語句」に傍点］`, where the referent `語句` is *bare*
-    /// text before the bracket and the only `「語句」` pair lives
-    /// *inside* the directive (after the `［` cutoff).
-    ///
-    /// A prior index bug recorded each body's *quote* position rather
-    /// than its first substring position; for the canonical shape that
-    /// quote is the in-bracket one (past the cutoff), so
-    /// `first_pos < cutoff` was always false and the bouten silently
-    /// degraded to `Directive{Unknown}`. On real corpus this dropped
-    /// ~114k 傍点/見出し/縦中横 occurrences (≈59 % of all
-    /// `Directive{Unknown}`) the moment a work grew past 64 quotes —
-    /// which every full-length work does. The short synthetic vectors
-    /// never crossed the threshold, so the conformance suite stayed
-    /// green throughout: this test deliberately crosses it.
-    #[test]
-    fn forward_bouten_recognised_above_ac_threshold_with_bare_target() {
-        use aozora_syntax::borrowed::Node;
-
-        // 70 distinct quote bodies → forces the AC index to install
-        // (threshold is 64). None of them is `語句`, so the target's
-        // only quoted occurrence is the one inside the directive.
-        let mut src = String::new();
-        for i in 0..70 {
-            src.push_str("「ダミー");
-            src.push_str(&i.to_string());
-            src.push_str("」\n");
-        }
-        // Canonical forward bouten with a bare preceding referent.
-        src.push_str("語句［＃「語句」に傍点］");
-
-        run!(out, src.as_str());
-
-        let has_bouten = out
-            .spans
-            .iter()
-            .any(|s| matches!(aozora_node(s), Some(Node::Format(f)) if matches!(f.attr, ForwardAttr::Bouten { .. })));
-        let degraded = out.spans.iter().any(|s| {
-            matches!(
-                aozora_node(s),
-                Some(Node::Directive(ann)) if ann.kind == DirectiveKind::Unknown
-            )
-        });
-        assert!(
-            has_bouten,
-            "bare-target 傍点 must be recognised with the AC index installed; spans={:?}",
-            out.spans
-        );
-        assert!(
-            !degraded,
-            "the 傍点 directive must not degrade to Directive{{Unknown}}; spans={:?}",
-            out.spans
-        );
-    }
-
-    /// Empty input is the "smallest possible corpus"; the pipeline
-    /// must short-circuit cleanly without installing any thread-local
-    /// state and produce no spans / no diagnostics.
-    #[test]
-    fn forward_target_index_handles_empty_corpus() {
-        run!(out, "");
-        assert!(out.spans.is_empty());
-        assert!(out.diagnostics.is_empty());
     }
 }

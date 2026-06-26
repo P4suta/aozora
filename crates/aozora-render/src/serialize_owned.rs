@@ -15,7 +15,7 @@
 //! byte-spelling authority. Only the AST-reading emitters fork here.
 //!
 //! It runs the identical decorative-rule isolate post-pass so the byte output
-//! matches [`crate::serialize::serialize`] exactly, proven by the differential
+//! matches `crate::serialize::serialize` exactly, proven by the differential
 //! gate in `crates/aozora/tests/owned_serialize_gate.rs`.
 
 use core::fmt::{self, Write};
@@ -26,7 +26,7 @@ use crate::serialize::{
 };
 use crate::walk::{SentinelKind, WalkSinkOwned, walk_owned};
 use aozora_pipeline::{has_long_rule_line, isolate_decorative_rules};
-use aozora_syntax::borrowed::ForwardOrigin;
+use aozora_syntax::format::ForwardOrigin;
 use aozora_syntax::owned::{
     AngleQuoteOwned, ContentOwned, ContentRange, DirectiveOwned, ForwardFormatOwned,
     GaijiCanonicalOwned, GaijiOwned, HeadingHintOwned, HeadingOwned, IllustrationOwned,
@@ -37,7 +37,7 @@ use aozora_syntax::{BoutenPosition, ForwardAttr, RubySide, is_ruby_base_char};
 
 /// Serialize an [`OwnedLexOutput`] back to Aozora source text.
 ///
-/// Owned mirror of [`crate::serialize::serialize`]: a fixed point of
+/// Owned mirror of `crate::serialize::serialize`: a fixed point of
 /// `serialize ∘ parse` after one pass. The mandatory decorative-rule isolate
 /// post-pass (`has_long_rule_line` fast-path then `isolate_decorative_rules`)
 /// is run identically so the byte output matches the borrowed serializer — see
@@ -481,24 +481,22 @@ fn emit_aozora_heading_owned<W: Write>(
 
 #[cfg(test)]
 mod tests {
-    use crate::serialize::serialize;
     use crate::serialize_owned::serialize_owned;
-    use aozora_syntax::borrowed::Arena;
 
-    /// The owned serializer reproduces the borrowed authority byte-for-byte.
+    /// `serialize_owned ∘ parse` reaches a fixed point after one pass — the
+    /// canonical round-trip contract (end-to-end byte-identity vs the prior
+    /// borrowed serializer is pinned by the conformance golden).
     fn assert_parity(src: &str) {
-        let arena = Arena::new();
-        let out = aozora_pipeline::lex(src, &arena);
-        let owned = aozora_pipeline::lex_owned(src, &arena);
+        let first = serialize_owned(&aozora_pipeline::lex(src));
+        let second = serialize_owned(&aozora_pipeline::lex(&first));
         assert_eq!(
-            serialize_owned(&owned),
-            serialize(&out),
-            "owned vs borrowed serialize diverged for {src:?}"
+            first, second,
+            "serialize_owned fixed point diverged for {src:?}"
         );
     }
 
     #[test]
-    fn owned_matches_borrowed_across_node_kinds() {
+    fn owned_serialize_is_fixed_point_across_node_kinds() {
         for src in [
             "plain text",
             "｜青梅《おうめ》",

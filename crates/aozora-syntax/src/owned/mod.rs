@@ -1,6 +1,6 @@
 //! Owned, no-lifetime mirror of the borrowed semantic AST.
 //!
-//! The sole AST consumers walk is the arena-backed [`borrowed`](crate::borrowed)
+//! The sole AST consumers walk is the arena-backed `borrowed`
 //! tree: every payload is `Copy` and borrows `&'src str` from the arena, so the
 //! whole tree is tied to one lifetime and is **not** `Send + Sync` across an
 //! arena drop. The #237 segment cache and an out-of-process LSP consumer need a
@@ -20,10 +20,10 @@
 //!
 //! # Status
 //!
-//! Additive and **unwired**: the lex fold still produces only the borrowed
-//! tree. A later #237 phase will make the fold (or a converter) populate an
-//! [`OwnedLexOutput`]; consumers then read it. Nothing here touches the
-//! borrowed module or any consumer.
+//! This is the **sole** AST representation: the lex pipeline's classify stage
+//! builds it directly via [`OwnedAllocator`](crate::alloc_owned::OwnedAllocator)
+//! and the fold records it into an [`OwnedLexOutput`] that every consumer reads.
+//! The former arena-backed borrowed AST has been removed.
 
 mod intern;
 mod output;
@@ -38,7 +38,7 @@ pub use payload::{
     GaijiOwned, HeadingHintOwned, HeadingOwned, IllustrationOwned, KaeritenOwned, MarginNoteOwned,
     NodeOwned, RubyOwned, SegmentOwned, WarichuOwned,
 };
-pub use registry::{NodeRefOwned, RegistryOwned};
+pub use registry::{ContainerPair, NodeRefOwned, RegistryOwned};
 pub use store::{ContentRange, NodeStore, SegRange};
 
 #[cfg(test)]

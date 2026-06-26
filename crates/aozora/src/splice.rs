@@ -57,8 +57,7 @@ use core::fmt;
 
 use aozora_render::serialize::container_close_source;
 use aozora_spec::{SourceOffset, Span};
-use aozora_syntax::borrowed::ForwardOrigin;
-use aozora_syntax::{RegionClose, RegionFormat};
+use aozora_syntax::{ForwardOrigin, RegionClose, RegionFormat};
 
 use crate::{Document, NodeOwned, NodeRefOwned, Tree};
 

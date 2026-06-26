@@ -58,7 +58,7 @@
 //! but the workspace forbids `unsafe` here. Instead, the whole file
 //! is read into a single `Vec<u8>` (one `fs::read`
 //! syscall, kernel does one page-cache → vec memcpy).
-//! [`Archive::iter_borrowed`] yields zero-copy `&[u8]` slices into
+//! `Archive::iter_borrowed` yields zero-copy `&[u8]` slices into
 //! the archive's payload for raw entries; zstd-decompressed entries
 //! materialise into a fresh `Vec<u8>` per call (decompression
 //! intrinsically allocates).
@@ -242,7 +242,7 @@ pub struct Archive {
 impl Archive {
     /// Open and fully load an archive from disk. Reads the file in
     /// one [`fs::read`] call; subsequent [`Self::iter`] /
-    /// [`Self::iter_borrowed`] calls slice into the in-memory buffer.
+    /// `Self::iter_borrowed` calls slice into the in-memory buffer.
     ///
     /// # Errors
     ///
@@ -409,7 +409,7 @@ impl Archive {
         &self.entries
     }
 
-    /// Random-access counterpart to [`Self::iter_borrowed`] — yield
+    /// Random-access counterpart to `Self::iter_borrowed` — yield
     /// the payload at `index` directly, no iteration cost.
     ///
     /// Used by parallel callers that fan out via `(0..len).into_par_iter()`
@@ -457,7 +457,7 @@ impl Archive {
     /// archives the bytes are a `to_vec` of the in-memory slice;
     /// for zstd archives they are the freshly decompressed bytes.
     ///
-    /// Use [`Self::iter_borrowed`] when the caller does not
+    /// Use `Self::iter_borrowed` when the caller does not
     /// need to take ownership — zero-copy on raw archives.
     ///
     /// # Errors
@@ -504,7 +504,7 @@ impl Archive {
     }
 }
 
-/// Per-entry payload yielded by [`Archive::iter_borrowed`].
+/// Per-entry payload yielded by `Archive::iter_borrowed`.
 ///
 /// Unifies the two shapes the archive can produce — a borrowed slice
 /// into the in-memory archive (raw variants) or a freshly

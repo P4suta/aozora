@@ -16,7 +16,6 @@
 //! Run via `cargo bench -p aozora-pipeline --bench classify_kaeriten`.
 
 use aozora_pipeline::lex;
-use aozora_syntax::borrowed::Arena;
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
@@ -65,14 +64,12 @@ fn bench_kaeriten(c: &mut Criterion) {
 
     group.bench_function("kaeriten_dense_32k", |b| {
         b.iter(|| {
-            let arena = Arena::new();
-            black_box(lex(black_box(&dense), &arena));
+            black_box(lex(black_box(&dense)));
         });
     });
     group.bench_function("annotations_no_kaeriten_32k", |b| {
         b.iter(|| {
-            let arena = Arena::new();
-            black_box(lex(black_box(&absent), &arena));
+            black_box(lex(black_box(&absent)));
         });
     });
     group.finish();

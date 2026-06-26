@@ -10,8 +10,7 @@
 //! renderers MUST produce byte-identical HTML.
 
 use aozora_pipeline::lex;
-use aozora_render::html;
-use aozora_syntax::borrowed::Arena;
+use aozora_render::render_html_owned;
 use proptest::prelude::*;
 
 /// Render plain text via the streaming `html::render_to_string`
@@ -19,9 +18,8 @@ use proptest::prelude::*;
 /// canonicalised so we can compare against the per-node form
 /// after wrapping.
 fn render_streaming(text: &str) -> String {
-    let arena = Arena::new();
-    let out = lex(text, &arena);
-    html::render_to_string(&out)
+    let out = lex(text);
+    render_html_owned(&out)
 }
 
 /// All five HTML-unsafe ASCII characters in a single literal so

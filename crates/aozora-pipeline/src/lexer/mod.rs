@@ -7,7 +7,7 @@
 //!   normalized text with Private-Use-Area sentinel characters at
 //!   Aozora construct positions, plus a side registry mapping sentinel
 //!   positions back to pre-classified
-//!   [`aozora_syntax::borrowed::Node`] values.
+//!   `aozora_syntax::borrowed::Node` values.
 //! - **Post-process AST walk** substitutes sentinels with the registry's
 //!   borrowed-AST values. That walk lives in `aozora`.
 //! - **Pure-functional pipeline**: every stage is `fn(input) -> output`
@@ -20,7 +20,7 @@
 //! | sanitize | BOM strip, CR/LF → LF, PUA collision pre-scan |
 //! | tokenize | Linear tokenize — emit trigger events (`｜《》［］※〔〕「」`) |
 //! | pair     | Balanced-stack pairing across all delimiters |
-//! | classify | Full-spec Aozora classification into [`aozora_syntax::borrowed::Node`] |
+//! | classify | Full-spec Aozora classification into `aozora_syntax::borrowed::Node` |
 //!
 //! After classify, the legacy normalize / registry / validate stages
 //! live as a fused walk inside
@@ -75,7 +75,7 @@ mod tokenize;
 
 pub use classify::{ClassifiedSpan, ClassifyStream, SpanKind, classify};
 pub use offset::{OffsetMap, offset_map};
-pub use pair::{PairEvent, PairKind, PairOutputIn, PairStream, pair, pair_in};
+pub use pair::{PairEvent, PairKind, PairStream, pair};
 pub use sanitize::{SanitizeOutput, sanitize};
 #[doc(hidden)]
 pub use sanitize::{
@@ -83,7 +83,7 @@ pub use sanitize::{
     scan_for_sentinel_collisions,
 };
 pub use token::{Token, TriggerKind};
-pub use tokenize::{Tokenizer, tokenize, tokenize_in};
+pub use tokenize::{Tokenizer, tokenize};
 
 #[cfg(test)]
 mod tests {

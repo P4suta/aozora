@@ -20,7 +20,6 @@
 //! use aozora::{Document, DiagnosticPolicy};
 //!
 //! let doc = Document::options()
-//!     .arena_capacity(64 * 1024)
 //!     .diagnostic_policy(DiagnosticPolicy::DropInternal)
 //!     .build("｜青梅《おうめ》");
 //! let tree = doc.parse();
@@ -33,7 +32,7 @@
 //! arena. [`Tree`] borrows from that arena via the `&self`
 //! lifetime returned by [`Document::parse`]. Every per-node
 //! allocation lives inside the arena, with the
-//! [`Interner`](aozora_syntax::borrowed::Interner) deduplicating
+//! `Interner` deduplicating
 //! repeated string content; dropping the `Document` releases the
 //! entire tree in a single `Bump::reset` step.
 //!
@@ -56,48 +55,21 @@
 #![doc = include_str!("../../../README.md")]
 #![forbid(unsafe_code)]
 
-pub use aozora_pipeline::{
-    LexOutput, NodeRef, NodeRefOwned, OwnedLexOutput, SourceNode, SourceNodeOwned, lex,
-};
-/// Per-node HTML writer: `render_node::render(node, entering, &mut w)`.
-///
-/// The sanctioned surface for sibling composition layers — notably
-/// `afm` (Aozora Flavored Markdown, ADR-0010) — that splice individual
-/// Aozora spans into a host document at sentinel positions rather than
-/// rendering a whole [`Document`] through [`html`]. Whole-document
-/// callers should still use [`html`] / [`serialize`]; this promotes the
-/// per-node tier to the curated front door so siblings need not reach
-/// through the `render::*` wildcard module.
-pub use aozora_render::render_node;
-pub use aozora_render::{html, serialize};
+pub use aozora_pipeline::{NodeRefOwned, OwnedLexOutput, SourceNodeOwned, lex};
 pub use aozora_spec::{
     ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic,
     DiagnosticInfo, DiagnosticSource, INLINE_SENTINEL, InternalCheckCode, NormalizedOffset,
     PairKind, PairLink, RENDER_SLUGS, RenderSlug, SLUGS, Sentinel, Severity, SlugEntry, SlugFamily,
     SourceOffset, Span, TriggerKind, canonicalise_slug, codes, roman_slug,
 };
-/// Bump-allocator arena that owns all borrowed-AST node storage.
-///
-/// Sibling composition layers (notably `afm`, ADR-0010) that drive
-/// [`lex`] directly construct the arena themselves via this
-/// re-export, instead of going through [`Document`] (which owns its own
-/// arena internally). Promoted to the curated front door alongside the
-/// per-node [`render_node`] path so the two have matching entry points
-/// without reaching through the `syntax::*` wildcard module.
-pub use aozora_syntax::borrowed::Arena;
-/// Borrowed-AST node types editor surfaces match against (LSP inlay
-/// hints, hover, completion, code actions, semantic tokens).
-/// Re-exported so external consumers don't have to depend on
-/// `aozora-syntax` directly — `aozora` is the single editor-facing
-/// front door.
+/// Owned-AST node types editor surfaces match against (LSP inlay hints, hover,
+/// completion, code actions, semantic tokens). Re-exported so external
+/// consumers don't have to depend on `aozora-syntax` directly — `aozora` is the
+/// single editor-facing front door.
 pub use aozora_syntax::{
     BlockStyles, BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, FontShift, Format,
-    ForwardAttr, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth,
-    NodeKind, RegionClose, RegionFormat, RubySide, SectionKind,
-    borrowed::{
-        AngleQuote, Content, Directive, ForwardFormat, Gaiji, Heading, HeadingHint, Illustration,
-        Kaeriten, MarginNote, Node, Ruby, Segment, Warichu,
-    },
+    ForwardAttr, ForwardOrigin, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi,
+    LineFormat, LineWidth, NodeKind, RegionClose, RegionFormat, RubySide, SectionKind,
     owned::{ContentOwned, NodeOwned, NodeStore},
 };
 
@@ -171,7 +143,7 @@ pub mod syntax {
 /// the visitor trait.
 ///
 /// Custom downstream renderers (EPUB, plain text, LaTeX, …)
-/// implement [`syntax::borrowed::AozoraVisitor`](crate::syntax::borrowed)
+/// implement `syntax::borrowed::AozoraVisitor`
 /// and route through this module.
 pub mod render {
     pub use aozora_render::*;

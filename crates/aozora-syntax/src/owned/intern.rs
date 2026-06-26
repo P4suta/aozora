@@ -1,7 +1,7 @@
-//! Owned, lifetime-free mirror of [`crate::borrowed::Interner`].
+//! Owned, lifetime-free mirror of `crate::borrowed::Interner`.
 //!
 //! Where the borrowed interner hands back a stable `&'a str` pointing into a
-//! bump [`Arena`](crate::borrowed::Arena), the owned interner owns all bytes
+//! bump `Arena`, the owned interner owns all bytes
 //! in a single `String` and hands back a [`StrId`] index. It reproduces the
 //! borrowed interner's two observable contracts:
 //!
@@ -15,7 +15,7 @@
 //! ## Backing
 //!
 //! Open addressing with linear probing over a `Vec<Option<StrId>>` probe
-//! table, mirroring [`crate::borrowed::Interner`] slot-for-slot. The only
+//! table, mirroring `crate::borrowed::Interner` slot-for-slot. The only
 //! structural difference is the slot payload: the borrowed table stores the
 //! arena `&'a str` directly, while the owned table stores a [`StrId`] and
 //! resolves it against `buf` + `spans` to compare bytes on a probe. The
@@ -27,14 +27,49 @@
 //! Backing differences from the borrowed interner are deliberate and noted
 //! per item; the *handle contract* (dedup + resolve) is the invariant.
 
-// Single-authority hash mix — re-used from the borrowed interner so both
-// probe tables diffuse byte streams identically.
-// borrowed-source: crates/aozora-syntax/src/borrowed/intern.rs::fx_hash
-use crate::borrowed::fx_hash;
+/// FxHash-style mix constant. The same constant rustc internally uses for
+/// `FxHasher`; chosen for fast diffusion on short inputs.
+const FX_PRIME: u64 = 0x517c_c1b7_2722_0a95;
 
-// Reused as-is from the borrowed interner — NOT duplicated.
-// borrowed-source: crates/aozora-syntax/src/borrowed/intern.rs::InternStats
-pub use crate::borrowed::InternStats;
+/// `wrapping_mul`-and-xor mix loop. Fast on short inputs (the dominant case for
+/// Aozora ruby readings); avoids the per-call state setup cost of std
+/// `SipHash`. Single-authority hash mix shared by the owned interner and any
+/// other open-addressing table over the same byte streams.
+#[inline]
+pub(crate) fn fx_hash(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0;
+    for &b in bytes {
+        h = h.rotate_left(5) ^ u64::from(b);
+        h = h.wrapping_mul(FX_PRIME);
+    }
+    h
+}
+
+/// Diagnostic counters surfaced by an interner's `stats`.
+///
+/// Lifetime-free `Copy` counter set the corpus-sweep dedup-ratio report reads
+/// (`calls`, `cache_hits`, `table_hits`, `allocs`, `long_bypass`, `resizes`,
+/// `probe_steps`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InternStats {
+    /// Total `intern` calls (every entry into the API).
+    pub calls: u64,
+    /// Calls served from the inline cache.
+    pub cache_hits: u64,
+    /// Calls that landed on an existing table entry (no allocation).
+    pub table_hits: u64,
+    /// Calls that allocated a new entry.
+    pub allocs: u64,
+    /// Calls that bypassed the table because the string exceeded
+    /// `INTERN_LENGTH_LIMIT` — counted as an alloc as well.
+    pub long_bypass: u64,
+    /// Total resize events the table performed.
+    pub resizes: u64,
+    /// Total probe steps walked across all `intern` calls. Divided by
+    /// `calls - cache_hits` gives the average probe length, the canonical
+    /// hash-table health metric.
+    pub probe_steps: u64,
+}
 
 /// Byte length beyond which the interner bypasses its probe table: long
 /// strings allocate a fresh [`StrId`] without a table entry (no dedup),
@@ -51,7 +86,7 @@ const INITIAL_CAPACITY: usize = 256;
 /// Stable handle to an interned string inside a [`StrInterner`].
 ///
 /// Owned replacement for the `&'a str` that
-/// [`Interner::intern`](crate::borrowed::Interner::intern) returns: a `u32`
+/// `Interner::intern` returns: a `u32`
 /// index into the interner's `spans`, resolvable via
 /// [`StrInterner::resolve`]. Mapping rule `&'src str (interned) -> StrId(u32)`.
 ///
@@ -63,7 +98,7 @@ pub struct StrId(pub u32);
 
 /// Owned, lifetime-free string interner.
 ///
-/// Mirror of [`crate::borrowed::Interner`]. Deduplicates byte-equal strings
+/// Mirror of `crate::borrowed::Interner`. Deduplicates byte-equal strings
 /// and returns a stable [`StrId`], owning every unique string's bytes in a
 /// single `String` (`buf`) plus a `(start, len)` span per id (`spans`).
 /// Dedup is served by an open-addressing probe table (`table`), the owned

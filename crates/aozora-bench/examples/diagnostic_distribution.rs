@@ -31,8 +31,6 @@ use std::time::Instant;
 use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_auto;
 use aozora_pipeline::lex;
-use aozora_syntax::borrowed::Arena;
-
 const NS_PER_MS: f64 = 1_000_000.0;
 
 #[derive(Debug, Clone, Copy)]
@@ -89,9 +87,8 @@ fn main() {
             decode_errors += 1;
             continue;
         };
-        let arena = Arena::new();
         let t = Instant::now();
-        let out = lex(&text, &arena);
+        let out = lex(&text);
         let parse_ns = t.elapsed().as_nanos() as u64;
         samples.push(Sample {
             diag_count: out.diagnostics.len(),

@@ -11,7 +11,7 @@
 //! emitters fork here. The five pure-scalar leaf variants
 //! ([`NodeOwned::Line`] / [`NodeOwned::PageBreak`] / [`NodeOwned::BodyEnd`] /
 //! [`NodeOwned::ForcedBreak`] / [`NodeOwned::SectionBreak`]) synthesize a
-//! lifetime-free borrowed [`Node`] and delegate to [`render_node::render`],
+//! lifetime-free borrowed `Node` and delegate to `render_node::render`,
 //! keeping a single byte-spelling authority (e.g. the section-break slug
 //! table). The heading tag writers, illustration dimension parser, and text
 //! escaper are reused from [`crate::render_node`] verbatim.
@@ -22,7 +22,7 @@
 use core::fmt::{self, Write};
 
 use aozora_syntax::GaijiCanonical;
-use aozora_syntax::borrowed::{ForwardOrigin, Node};
+use aozora_syntax::format::ForwardOrigin;
 use aozora_syntax::owned::{
     AngleQuoteOwned, ContentOwned, ContentRange, DirectiveOwned, ForwardFormatOwned,
     GaijiCanonicalOwned, GaijiOwned, HeadingHintOwned, HeadingOwned, IllustrationOwned,
@@ -32,12 +32,12 @@ use aozora_syntax::{DirectiveKind, ForwardAttr, RubySide};
 
 use crate::classes;
 use crate::render_node::{
-    self, escape_text, parse_sashie_dimensions, write_heading_close, write_heading_open,
+    escape_text, parse_sashie_dimensions, render_line, write_heading_close, write_heading_open,
 };
 
 /// Render a single owned [`NodeOwned`] into `writer`.
 ///
-/// Owned mirror of [`render_node::render`]'s inline / block-leaf path: every
+/// Owned mirror of `render_node::render`'s inline / block-leaf path: every
 /// inline / leaf node emits its markup unconditionally (there is no
 /// `entering` flag — containers are driven through `RenderState` and never
 /// reach here, so this only ever runs the borrowed renderer's `entering ==
@@ -57,14 +57,20 @@ pub(crate) fn render_owned<W: Write>(
         NodeOwned::Format(f) => render_format_owned(&f, store, out),
         NodeOwned::MarginNote(s) => render_side_note_owned(&s, store, out),
         NodeOwned::Gaiji(g) => render_gaiji_owned(&g, store, out),
-        // Pure-scalar leaves: synthesize a lifetime-free borrowed node and
-        // delegate to the borrowed authority so the byte spelling (including
-        // the section-break slug table) stays single-source.
-        NodeOwned::Line(lf) => render_node::render(Node::Line(lf), true, out),
-        NodeOwned::PageBreak => render_node::render(Node::PageBreak, true, out),
-        NodeOwned::BodyEnd => render_node::render(Node::BodyEnd, true, out),
-        NodeOwned::ForcedBreak => render_node::render(Node::ForcedBreak, true, out),
-        NodeOwned::SectionBreak(k) => render_node::render(Node::SectionBreak(k), true, out),
+        // Pure-scalar leaves: render directly through the shared lifetime-free
+        // helpers / inline byte spellings (the section-break slug table stays
+        // keyed by the canonical keyword).
+        NodeOwned::Line(lf) => render_line(lf, out),
+        NodeOwned::PageBreak => out.write_str(r#"<div class="aozora-page-break"></div>"#),
+        NodeOwned::BodyEnd => out.write_str(r#"<div class="aozora-body-end"></div>"#),
+        NodeOwned::ForcedBreak => out.write_str("<br />"),
+        NodeOwned::SectionBreak(k) => {
+            let slug = aozora_spec::roman_slug(k.keyword()).unwrap_or("other");
+            write!(
+                out,
+                r#"<div class="aozora-section-break aozora-section-break-{slug}"></div>"#,
+            )
+        }
         NodeOwned::Directive(a) => render_annotation_owned(a, store, out),
         NodeOwned::Kaeriten(k) => render_kaeriten_owned(k, store, out),
         NodeOwned::AngleQuote(d) => render_angle_quote_owned(d, store, out),
@@ -162,7 +168,7 @@ fn render_side_note_owned<W: Write>(
 
 /// Owned mirror of `render_node::render_format` (forward-reference emphasis).
 ///
-/// A [`Referenced`](ForwardOrigin::Referenced) origin emits **nothing** — its
+/// A `Referenced` origin emits **nothing** — its
 /// target literal already lives in the upstream plain run (or a ruby base), so
 /// re-rendering it here would double the text (#228). This is load-bearing and
 /// pinned by the differential gate's `Referenced` corpus / curated inputs.

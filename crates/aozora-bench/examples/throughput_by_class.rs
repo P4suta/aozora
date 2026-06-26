@@ -71,7 +71,6 @@ use aozora_bench::{
 use aozora_corpus::{Archive, CorpusItem, FilesystemCorpus};
 use aozora_encoding::decode_auto;
 use aozora_pipeline::lex;
-use aozora_syntax::borrowed::Arena;
 use rayon::prelude::*;
 
 // One Arena per worker thread, reused across the docs that worker
@@ -94,10 +93,9 @@ use rayon::prelude::*;
 // never observed from a second thread). The borrow scope must close
 // before the closure returns — which it does, because the closure
 // drops `_out` immediately after timing.
-const WORKER_ARENA_INITIAL_CAPACITY: usize = 256 * 1024;
 
 thread_local! {
-    static WORKER_ARENA: RefCell<Arena> = RefCell::new(Arena::with_capacity(WORKER_ARENA_INITIAL_CAPACITY));
+    static WORKER_ARENA: RefCell<()> = const { RefCell::new(()) };
 }
 
 const NS_PER_S: f64 = 1_000_000_000.0;
@@ -409,11 +407,9 @@ fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
     // and pre-paying the `brk` cost that profiling identified as a
     // hot-path contributor.
     let measure = |text: &str| -> (u64, u64) {
-        WORKER_ARENA.with(|cell| {
-            let mut arena = cell.borrow_mut();
-            arena.reset_with_hint(text.len().saturating_mul(4));
+        WORKER_ARENA.with(|_cell| {
             let t = Instant::now();
-            let _out = lex(text, &arena);
+            let _out = lex(text);
             let ns = t.elapsed().as_nanos() as u64;
             (text.len() as u64, ns)
         })

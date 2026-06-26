@@ -44,12 +44,10 @@ use std::env;
 use std::process;
 use std::time::Instant;
 
-use aozora::html;
+use aozora::render::render_html_owned;
 use aozora_bench::{SizeBand, SizeBandedCorpus, corpus_size_bands};
 use aozora_corpus::CorpusItem;
 use aozora_pipeline::lex;
-use aozora_syntax::borrowed::Arena;
-
 const NS_PER_S: f64 = 1_000_000_000.0;
 
 fn main() {
@@ -150,9 +148,8 @@ fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
         for (_, text) in docs {
             // Parse once (timed for the parse-vs-render ratio summary
             // line below; not on the render hot path itself).
-            let arena = Arena::new();
             let t = Instant::now();
-            let out = lex(text, &arena);
+            let out = lex(text);
             parse_ns.push(t.elapsed().as_nanos() as u64);
 
             // Render `repeat` times, keep the median ns.
@@ -160,7 +157,7 @@ fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
             let mut last_html_len: u64 = 0;
             for _ in 0..repeat {
                 let t = Instant::now();
-                let html = html::render_to_string(&out);
+                let html = render_html_owned(&out);
                 samples.push(t.elapsed().as_nanos() as u64);
                 last_html_len = html.len() as u64;
                 drop(html);

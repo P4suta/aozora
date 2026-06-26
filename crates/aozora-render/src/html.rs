@@ -1,136 +1,32 @@
-//! Borrowed-AST HTML rendering.
+//! Block-level HTML render state + text escaper.
 //!
-//! Consumes a [`LexOutput`] directly and emits semantic HTML5.
-//!
-//! # Algorithm
-//!
-//! Single forward `match_indices` sweep over the lexer's normalized
-//! text, capturing every PUA sentinel + `\n` in O(n). Plain text
-//! between matches flows through the bulk-copy escape pass; sentinels
-//! dispatch into [`crate::render_node::render`] via the borrowed
-//! registry's `EytzingerMap::get` lookup.
-//!
-//! Block structure mirrors the legacy walker: a two-state machine
-//! `RenderState::ensure_in_paragraph` / `RenderState::close_paragraph`
-//! emits `<p>` / `</p>` symmetrically; standalone block nodes (and
-//! container open/close events) flush the current paragraph first.
+//! The shared, AST-free machinery the owned HTML renderer
+//! ([`crate::html_owned`]) drives: the two-state paragraph machine
+//! ([`RenderState`]) that emits `<p>` / `<br />` / container brackets from the
+//! walk's sentinel + newline events, and the bulk-copy [`escape_text_chunk`]
+//! pass over plain runs. Container open/close tags route through the
+//! lifetime-free [`render_node::render_container`], so the byte spelling stays
+//! single-source.
 
 use core::fmt;
 
-use aozora_pipeline::LexOutput;
-use aozora_syntax::borrowed::{Node, NodeRef};
 use aozora_syntax::{Container, RegionFormat};
 use memchr::{memchr_iter, memchr3_iter};
 
 use crate::render_node;
-use crate::walk::{SentinelKind, WalkSink, walk};
 
-/// Render a `LexOutput` into a fresh `String`.
-///
-/// Allocates roughly `2 × normalized.len()` upfront. For streaming
-/// consumers prefer [`render_into`] to avoid the intermediate `String`.
-///
-/// # Panics
-///
-/// Does not panic in normal use: `String` cannot fail as a
-/// [`fmt::Write`] sink. The internal `expect` covers the trivially
-/// unreachable case.
-#[must_use]
-pub fn render_to_string(out: &LexOutput<'_>) -> String {
-    let mut s = String::with_capacity(out.normalized.len().saturating_mul(2));
-    render_into(out, &mut s).expect("writing to String never fails");
-    s
-}
-
-/// Render a `LexOutput` into the given writer.
-///
-/// # Errors
-///
-/// Propagates write errors from `writer`.
-///
-/// # Panics
-///
-/// Panics if the normalized text exceeds `u32::MAX` bytes — inherited
-/// from the lexer's `Span` width contract; in practice unreachable
-/// (the sanitize stage already gates on this bound).
-pub fn render_into<W: fmt::Write>(out: &LexOutput<'_>, writer: &mut W) -> fmt::Result {
-    let mut sink = HtmlSink {
-        out: writer,
-        state: RenderState::default(),
-    };
-    walk(out, &mut sink)
-}
-
-/// [`WalkSink`] that emits semantic HTML5: HTML-escapes every plain run
-/// and drives the block-level [`RenderState`] (`<p>` / `<br />` /
-/// container brackets) from the walk's sentinel and newline events.
-struct HtmlSink<'w, W: fmt::Write> {
-    out: &'w mut W,
-    state: RenderState,
-}
-
-impl<W: fmt::Write> WalkSink for HtmlSink<'_, W> {
-    // HTML output treats `\n` as structural (paragraph / line break).
-    const WANTS_NEWLINES: bool = true;
-
-    fn on_text(&mut self, text: &str) -> fmt::Result {
-        self.state.ensure_in_paragraph(self.out)?;
-        escape_text_chunk(text, self.out)
-    }
-
-    fn on_newline(&mut self, next: Option<u8>) -> fmt::Result {
-        match next {
-            // A blank line closes the current paragraph.
-            Some(b'\n') => self.state.close_paragraph(self.out),
-            // A lone newline inside a paragraph is a line break.
-            Some(_) if self.state.in_paragraph => self.out.write_str("<br />\n"),
-            // A newline outside a paragraph (e.g. between blocks) is dropped.
-            Some(_) | None => Ok(()),
-        }
-    }
-
-    fn on_node(&mut self, kind: SentinelKind, node: NodeRef<'_>) -> fmt::Result {
-        match (kind, node) {
-            (SentinelKind::Inline, NodeRef::Inline(node)) => {
-                self.state.ensure_in_paragraph(self.out)?;
-                render_node::render(node, true, self.out)
-            }
-            (SentinelKind::BlockLeaf, NodeRef::BlockLeaf(node)) => {
-                self.state.before_block_emit(self.out)?;
-                render_node::render(node, true, self.out)?;
-                self.state.after_block_emit();
-                Ok(())
-            }
-            (SentinelKind::BlockOpen, NodeRef::BlockOpen(open)) => {
-                self.state.open_container(open, self.out)
-            }
-            (SentinelKind::BlockClose, NodeRef::BlockClose(_close)) => {
-                self.state.close_container(self.out)
-            }
-            // Sentinel without a matching registry entry: best-effort
-            // skip, mirroring the legacy walker.
-            _ => Ok(()),
-        }
-    }
-
-    fn finish(&mut self) -> fmt::Result {
-        self.state.close_paragraph(self.out)
-    }
-}
-
-/// Block-level walker state. Tracks paragraph and block-separator
-/// boundaries so consecutive inline runs collapse into one paragraph
-/// and adjacent block-leaf nodes get the right inter-block whitespace.
+/// Block-level walker state. Tracks paragraph and block-separator boundaries so
+/// consecutive inline runs collapse into one paragraph and adjacent block-leaf
+/// nodes get the right inter-block whitespace.
 #[derive(Debug, Default)]
 pub(crate) struct RenderState {
     pub(crate) in_paragraph: bool,
     pending_block_separator: bool,
-    /// Inside a phrasing-content container (a heading): its `<hN>` is the
-    /// inline context, so [`Self::ensure_in_paragraph`] suppresses `<p>`.
+    /// Inside a phrasing-content container (a heading): its `<hN>` is the inline
+    /// context, so [`Self::ensure_in_paragraph`] suppresses `<p>`.
     in_heading: bool,
     /// In-flight container opens. The close marker reads the matched open
-    /// [`RegionFormat`] (open-authoritative — `is_inline` / phrasing / the
-    /// close tag all derive from the open, not the discriminant-only close).
+    /// [`RegionFormat`] (open-authoritative).
     open_stack: Vec<RegionFormat>,
 }
 
@@ -144,8 +40,6 @@ impl RenderState {
     }
 
     pub(crate) fn ensure_in_paragraph<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
-        // Phrasing content inside a heading renders directly under the `<hN>`;
-        // the heading element is the inline context, so no `<p>` is opened.
         if self.in_heading {
             return Ok(());
         }
@@ -176,24 +70,23 @@ impl RenderState {
     }
 
     /// Emit a container's opening tag, honouring its content model. An inline
-    /// container (傍点 / 傍線 range, bare-range 太字 / 斜体) stays in the
-    /// current paragraph; a phrasing-content container (a heading) flushes the
-    /// paragraph and then holds its content inline under the `<hN>`
-    /// (`in_heading`); every other block container flushes and brackets its
-    /// content as block paragraphs.
+    /// container stays in the current paragraph; a phrasing-content container (a
+    /// heading) flushes the paragraph and holds its content inline under the
+    /// `<hN>` (`in_heading`); every other block container flushes and brackets
+    /// its content as block paragraphs.
     pub(crate) fn open_container<W: fmt::Write>(
         &mut self,
         kind: RegionFormat,
         out: &mut W,
     ) -> fmt::Result {
         self.open_stack.push(kind);
-        let node = Node::Container(Container { kind });
+        let container = Container { kind };
         if kind.is_inline() {
             self.ensure_in_paragraph(out)?;
-            return render_node::render(node, true, out);
+            return render_node::render_container(container, true, out);
         }
         self.before_block_emit(out)?;
-        render_node::render(node, true, out)?;
+        render_node::render_container(container, true, out)?;
         if kind.content_is_phrasing() {
             self.in_heading = true;
         } else {
@@ -203,45 +96,40 @@ impl RenderState {
     }
 
     /// Emit a container's closing tag — the mirror of [`Self::open_container`],
-    /// reconstructed from the matched open [`RegionFormat`] popped off the
-    /// stack (open-authoritative). A degraded empty stack best-effort skips.
+    /// reconstructed from the matched open [`RegionFormat`] popped off the stack
+    /// (open-authoritative). A degraded empty stack best-effort skips.
     pub(crate) fn close_container<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
         let Some(kind) = self.open_stack.pop() else {
             return Ok(());
         };
-        let node = Node::Container(Container { kind });
+        let container = Container { kind };
         if kind.is_inline() {
             self.ensure_in_paragraph(out)?;
-            return render_node::render(node, false, out);
+            return render_node::render_container(container, false, out);
         }
         if kind.content_is_phrasing() {
             self.in_heading = false;
         } else {
             self.before_block_emit(out)?;
         }
-        render_node::render(node, false, out)?;
+        render_node::render_container(container, false, out)?;
         self.after_block_emit();
         Ok(())
     }
 }
 
-/// HTML-escape a plain-text chunk (the bytes between two structural
-/// matches in [`render_into`]).
+/// HTML-escape a plain-text chunk (the bytes between two structural matches in
+/// the streaming walk).
 ///
 /// The five HTML-unsafe ASCII characters (`< > & " '`) are rare in
-/// Japanese-text-heavy corpora — most chunks contain none. Two
-/// `memchr` passes (`memchr3` for `< > &` then `memchr` for `"`)
-/// fast-skip those clean chunks at memory-bandwidth speed; only when
-/// at least one needle hits do we fall through to a byte loop that
-/// merges the candidate positions and emits the escapes in document
-/// order. Single-quote `'` (0x27) is folded into the same byte loop
-/// because it has no `memchr_iter` partner — three needle scans are
-/// enough to cover the rare cases without paying for a 5-needle
-/// general scan, which `memchr` doesn't expose.
+/// Japanese-text-heavy corpora — most chunks contain none. Two `memchr` passes
+/// (`memchr3` for `< > &` then `memchr` for `"`) fast-skip those clean chunks at
+/// memory-bandwidth speed; only when at least one needle hits do we fall through
+/// to a byte loop that merges the candidate positions and emits the escapes in
+/// document order.
 pub(crate) fn escape_text_chunk<W: fmt::Write>(chunk: &str, out: &mut W) -> fmt::Result {
     let bytes = chunk.as_bytes();
 
-    // Fast-reject: no HTML-unsafe byte → bulk write the whole chunk.
     let mut iter_lt_gt_amp = memchr3_iter(b'<', b'>', b'&', bytes);
     let first_lt_gt_amp = iter_lt_gt_amp.next();
     let mut iter_quote = memchr_iter(b'"', bytes);
@@ -253,18 +141,12 @@ pub(crate) fn escape_text_chunk<W: fmt::Write>(chunk: &str, out: &mut W) -> fmt:
         return out.write_str(chunk);
     }
 
-    // Slow path: merge the three iterators in document order.
-    // Re-derive the iterators so we can use the post-`first_*`
-    // peekable state cleanly. Cost is one duplicate memchr scan;
-    // negligible because this branch only runs when the chunk
-    // actually has unsafe bytes (rare on Japanese prose).
     let mut cursor = 0usize;
     let mut next_lt_gt_amp = first_lt_gt_amp;
     let mut next_quote = first_quote;
     let mut next_apos = first_apos;
 
     loop {
-        // Pick the smallest of the three pending positions.
         let pos = [next_lt_gt_amp, next_quote, next_apos]
             .into_iter()
             .flatten()
@@ -279,23 +161,14 @@ pub(crate) fn escape_text_chunk<W: fmt::Write>(chunk: &str, out: &mut W) -> fmt:
             b'>' => "&gt;",
             b'&' => "&amp;",
             b'"' => "&quot;",
-            // Hex form `&#x27;` matches the canonical entity used by
-            // `render_node::escape_text` so the streaming and the
-            // per-node renderers produce byte-identical output for
-            // every text chunk. Pinned by `tests/byte_identical_html.rs`.
+            // Hex form `&#x27;` matches `render_node::escape_text` so the
+            // streaming and per-node renderers produce byte-identical output.
             b'\'' => "&#x27;",
-            // The match is exhaustive over the bytes the three
-            // memchr scans yield — if we ever hit this branch,
-            // either memchr returned a position outside its needle
-            // set (impossible) or an iterator was advanced
-            // incorrectly. Either way an unreachable! is the only
-            // honest reaction.
             _ => unreachable!("escape iterator yielded non-needle byte"),
         };
         out.write_str(entity)?;
         cursor = pos + 1;
 
-        // Advance whichever iterator just produced this position.
         if next_lt_gt_amp == Some(pos) {
             next_lt_gt_amp = iter_lt_gt_amp.next();
         }
@@ -311,14 +184,11 @@ pub(crate) fn escape_text_chunk<W: fmt::Write>(chunk: &str, out: &mut W) -> fmt:
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use aozora_syntax::borrowed::Arena;
+    use crate::render_html_owned;
     use pretty_assertions::assert_eq;
 
     fn render(src: &str) -> String {
-        let arena = Arena::new();
-        let out = aozora_pipeline::lex(src, &arena);
-        render_to_string(&out)
+        render_html_owned(&aozora_pipeline::lex(src))
     }
 
     #[test]
@@ -376,8 +246,6 @@ mod tests {
 
     #[test]
     fn inline_container_stays_inside_paragraph() {
-        // A bare 太字 range is inline: it must open / close *inside* the
-        // surrounding `<p>`, not flush it.
         let html = render("前［＃太字］中［＃太字終わり］後");
         assert_eq!(
             html, "<p>前<b class=\"aozora-futoji\">中</b>後</p>\n",
@@ -404,8 +272,6 @@ mod tests {
 
     #[test]
     fn heading_container_holds_content_inline_without_inner_paragraph() {
-        // A heading container's content is phrasing: it renders directly
-        // inside the `<hN>` with no inner `<p>` (the `in_heading` flag).
         let html = render("［＃ここから大見出し］\n章題\n［＃ここで大見出し終わり］");
         assert!(
             html.contains("<h1 class=\"aozora-heading aozora-heading-large\">章題</h1>"),
@@ -436,16 +302,12 @@ mod tests {
 
     #[test]
     fn single_trailing_newline_emits_no_break_outside_paragraph() {
-        // A lone trailing `\n` with nothing after it (and no open
-        // paragraph) must not emit a stray `<br />`.
         let html = render("a\n");
         assert_eq!(html, "<p>a</p>\n", "trailing newline must not add <br />");
     }
 
     #[test]
     fn quote_and_apostrophe_chunk_take_the_slow_escape_path() {
-        // Mixing `"` and `'` with `<`/`>`/`&` exercises the three-iterator
-        // merge in `escape_text_chunk`.
         let html = render(r#"x"y'z<&>"#);
         assert_eq!(
             html, "<p>x&quot;y&#x27;z&lt;&amp;&gt;</p>\n",
@@ -455,24 +317,12 @@ mod tests {
 
     #[test]
     fn apostrophe_only_chunk_escapes_via_byte_loop() {
-        // `'` has no memchr partner; a chunk with only `'` still escapes.
         let html = render("it's");
         assert_eq!(html, "<p>it&#x27;s</p>\n", "lone apostrophe must escape");
     }
 
-    // ------------------------------------------------------------------
-    // #228 — a non-adjacent (`Referenced`) forward must not double-render
-    // its target. The literal stays in the upstream plain run / ruby base;
-    // `render_format` emits nothing for `Referenced`, so the styled copy is
-    // dropped rather than duplicated. These full-pipeline assertions are
-    // load-bearing — the serialize/corpus gates are blind to HTML output.
-    // ------------------------------------------------------------------
-
     #[test]
     fn referenced_contiguous_forward_does_not_double_render() {
-        // `青空` sits at the head of the run, far from the bracket → the
-        // classifier leaves the literal in place (`Referenced`). The target
-        // must appear exactly once, with no emphasis wrapper.
         let html = render("青空の下を歩く［＃「青空」に傍点］");
         assert_eq!(html, "<p>青空の下を歩く</p>\n");
         assert_eq!(html.matches("青空").count(), 1, "青空 must not duplicate");
@@ -481,10 +331,6 @@ mod tests {
 
     #[test]
     fn referenced_ruby_base_forward_does_not_double_render() {
-        // The bouten target `我` resolves to the ruby base (a ruby base cannot
-        // be pulled into a text-only forward leaf — `bouten`-over-ruby is not
-        // representable), so it stays `Referenced`. The ruby renders once and
-        // no trailing `<em>我</em>` is appended.
         let html = render("我《われ》の名は［＃「我」に傍点］");
         assert_eq!(
             html,
@@ -496,9 +342,6 @@ mod tests {
 
     #[test]
     fn reclaimed_adjacent_forward_still_renders_emphasis() {
-        // Regression guard: the adjacent (`Reclaimed`) form is unchanged — the
-        // plain run was truncated, so the node is the sole copy and must keep
-        // its `<em>` wrapper.
         let html = render("青空［＃「青空」に傍点］を見上げる。");
         assert_eq!(
             html,

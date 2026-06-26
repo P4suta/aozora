@@ -21,24 +21,23 @@
 //! # Observable equivalence
 //!
 //! [`lex`] is a pure function from source text to
-//! [`LexOutput`] *as observed externally*, even though the
+//! `LexOutput` *as observed externally*, even though the
 //! internal pipeline mutates the bumpalo arena and runs SIMD scratch
 //! buffers. The determinism + sentinel-alignment proptests in
 //! `tests/property_borrowed_arena.rs` pin the contract.
 
 #![forbid(unsafe_code)]
 
-mod borrowed;
 pub mod lexer;
+mod owned_lex;
 pub mod pipeline;
 
-pub use aozora_syntax::borrowed::NodeRef;
 // Re-export the owned lex output + its source-node / node-ref surface so
-// `lex_owned`'s return type is nameable at the crate root (keeps intra-doc
-// links resolvable under `-D warnings`) and downstream crates that depend only
-// on `aozora-pipeline` (e.g. `aozora-cst`) can name the owned node types.
+// `lex`'s return type is nameable at the crate root (keeps intra-doc links
+// resolvable under `-D warnings`) and downstream crates that depend only on
+// `aozora-pipeline` (e.g. `aozora-cst`) can name the owned node types.
 pub use aozora_syntax::owned::{NodeRefOwned, OwnedLexOutput, SourceNodeOwned};
-pub use borrowed::{LexOutput, SourceNode, lex, lex_owned};
+pub use owned_lex::lex;
 pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 
 /// Eagerly initialise every lazily-built parser table.
@@ -71,19 +70,14 @@ pub use aozora_spec::{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aozora_syntax::borrowed::Arena;
 
-    /// `aozora_scan::scan_offsets` MUST yield the exact same byte
-    /// offsets that the legacy tokenize-stage tokeniser uses for its
-    /// trigger positions. We don't have a public hook into the
-    /// tokenize stage's offsets, so we cross-check at the
-    /// [`LexOutput`] level: every PUA
-    /// sentinel in `normalized` must correspond to a consumed source
-    /// trigger.
+    /// `aozora_scan::scan_offsets` MUST yield the exact same byte offsets that
+    /// the tokenize-stage tokeniser uses for its trigger positions. We
+    /// cross-check at the [`OwnedLexOutput`] level: every PUA sentinel in
+    /// `normalized` must correspond to a consumed source trigger.
     #[test]
     fn lex_produces_normalized_with_pua_sentinels_for_trigger_inputs() {
-        let arena = Arena::new();
-        let out = lex("｜青梅《おうめ》", &arena);
+        let out = lex("｜青梅《おうめ》");
         // Exactly one inline sentinel for the ruby span.
         let inline_count = out
             .normalized
@@ -96,8 +90,7 @@ mod tests {
 
     #[test]
     fn lex_passes_through_plain_text_unchanged() {
-        let arena = Arena::new();
-        let out = lex("hello, world", &arena);
+        let out = lex("hello, world");
         assert_eq!(out.normalized, "hello, world");
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
@@ -105,10 +98,6 @@ mod tests {
 
     #[test]
     fn lex_re_exports_sentinel_constants() {
-        // Sanity: the constants re-exported from aozora-spec match
-        // the values the lexer actually emits, so downstream
-        // consumers can use them either via `aozora_pipeline::*` or
-        // `aozora_spec::*` interchangeably.
         assert_eq!(INLINE_SENTINEL, '\u{E001}');
         assert_eq!(BLOCK_LEAF_SENTINEL, '\u{E002}');
         assert_eq!(BLOCK_OPEN_SENTINEL, '\u{E003}');
@@ -117,8 +106,7 @@ mod tests {
 
     #[test]
     fn lex_handles_empty_input() {
-        let arena = Arena::new();
-        let out = lex("", &arena);
+        let out = lex("");
         assert!(out.normalized.is_empty());
         assert!(out.registry.is_empty());
         assert!(out.diagnostics.is_empty());
@@ -126,8 +114,7 @@ mod tests {
 
     #[test]
     fn lex_emits_diagnostics_for_pua_collision() {
-        let arena = Arena::new();
-        let out = lex("abc\u{E001}def", &arena);
+        let out = lex("abc\u{E001}def");
         assert!(
             out.diagnostics
                 .iter()
@@ -139,9 +126,7 @@ mod tests {
 
     #[test]
     fn lex_preserves_sanitized_len_for_segment_merge() {
-        // Sanitize is identity on plain text → sanitized_len == source.len().
-        let arena = Arena::new();
-        let out = lex("plain text", &arena);
+        let out = lex("plain text");
         assert_eq!(usize::try_from(out.sanitized_len), Ok("plain text".len()));
     }
 }

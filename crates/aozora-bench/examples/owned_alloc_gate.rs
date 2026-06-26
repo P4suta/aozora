@@ -1,5 +1,5 @@
 //! Deterministic allocation-pressure ratchet for the owned lex producer
-//! (`lex_owned` / `Document::parse_owned`), the #237 P0.2-real perf gate.
+//! (`lex` / `Document::parse_owned`), the #237 P0.2-real perf gate.
 //!
 //! The owned producer replaces the borrowed pipeline's single bumpalo arena
 //! with owned `Vec` / `String` storage (`NodeStore`, `StrInterner`). The worry
@@ -9,7 +9,7 @@
 //! on a laptop and a noisy CI runner — so they make a stable ratchet.
 //!
 //! For every corpus document this measures, via dhat's [`dhat::HeapStats`]
-//! around `lex_owned` only, the owned-path allocation delta (transient arena
+//! around `lex` only, the owned-path allocation delta (transient arena
 //! chunks + owned storage). Two normalized metrics are gated against a
 //! committed baseline at `corpus/owned-alloc-baseline.json`, mirroring
 //! `xtask corpus audit-gate`:
@@ -42,13 +42,13 @@
 
 use std::env;
 use std::fs;
+use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::process;
 
 use aozora_corpus::{CorpusSource, FilesystemCorpus};
 use aozora_encoding::decode_auto;
-use aozora_pipeline::{lex, lex_owned};
-use aozora_syntax::borrowed::Arena;
+use aozora_pipeline::lex;
 use dhat::{HeapStats, Profiler};
 use serde_json::{Value, from_str, json, to_string_pretty};
 
@@ -178,53 +178,23 @@ fn main() {
             continue;
         };
 
-        // Borrowed parity reference — built *before* the measured window so its
-        // arena allocations are not attributed to the owned producer.
-        let arena_b = Arena::new();
-        let borrowed = lex(&text, &arena_b);
-        let b_registry = borrowed.registry.len();
-        let b_source_nodes = borrowed.source_nodes.len();
-        let b_pairs = borrowed.pairs.len();
-        let b_container_pairs = borrowed.container_pairs.len();
-        drop(borrowed);
-        drop(arena_b);
-
         // Measured window: only the owned producer's allocations (transient
-        // arena chunks + owned storage) land in the delta.
+        // scratch + owned storage) land in the delta.
         let before = HeapStats::get();
-        let arena_o = Arena::new();
-        let owned = lex_owned(&text, &arena_o);
+        let owned = lex(&text);
         let after = HeapStats::get();
         totals.alloc_blocks += after.total_blocks - before.total_blocks;
         totals.alloc_bytes += after.total_bytes - before.total_bytes;
         totals.files += 1;
         totals.source_bytes += text.len() as u64;
 
-        // Structural parity floor (reads only, post-measurement).
-        assert_eq!(
+        // Read the side-table lengths so the optimiser cannot elide the parse.
+        black_box((
             owned.registry.len(),
-            b_registry,
-            "owned/borrowed registry length diverged for {}",
-            item.label
-        );
-        assert_eq!(
             owned.source_nodes.len(),
-            b_source_nodes,
-            "owned/borrowed source_nodes length diverged for {}",
-            item.label
-        );
-        assert_eq!(
             owned.pairs.len(),
-            b_pairs,
-            "owned/borrowed pairs length diverged for {}",
-            item.label
-        );
-        assert_eq!(
             owned.container_pairs.len(),
-            b_container_pairs,
-            "owned/borrowed container_pairs length diverged for {}",
-            item.label
-        );
+        ));
     }
 
     if totals.files == 0 {

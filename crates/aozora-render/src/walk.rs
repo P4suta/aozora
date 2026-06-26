@@ -1,12 +1,11 @@
-//! Shared PUA-sentinel walk over a [`LexOutput`]'s normalized text.
+//! Shared PUA-sentinel walk over an [`OwnedLexOutput`]'s normalized text.
 //!
-//! Both renderers — [`crate::html`] and [`crate::serialize`] — sweep the
-//! same normalized text, dispatching each PUA sentinel through the
-//! borrowed registry and bulk-copying the plain runs between hits. The
-//! scan, sentinel decoding, registry lookup, and cursor bookkeeping are
-//! identical; only what happens *at* each event differs. This module
-//! owns that single scan and drives a [`WalkSink`] for the
-//! renderer-specific work.
+//! Both owned renderers — [`crate::html_owned`] and `serialize_owned`
+//! — sweep the same normalized text, dispatching each PUA sentinel through the
+//! owned registry and bulk-copying the plain runs between hits. The scan,
+//! sentinel decoding, registry lookup, and cursor bookkeeping are identical;
+//! only what happens *at* each event differs. This module owns that single scan
+//! and drives a [`WalkSinkOwned`] for the renderer-specific work.
 //!
 //! # Why a byte scan
 //!
@@ -22,15 +21,13 @@
 //!
 //! The HTML renderer also reacts to `\n` (paragraph / `<br />` control);
 //! the serializer copies newlines verbatim as plain text. A sink opts in
-//! with [`WalkSink::WANTS_NEWLINES`], which selects `memchr2(0xEE, '\n')`
+//! with [`WalkSinkOwned::WANTS_NEWLINES`], which selects `memchr2(0xEE, '\n')`
 //! vs `memchr(0xEE)` at compile time so the serializer pays nothing for a
 //! needle it does not use.
 
 use core::fmt;
 
-use aozora_pipeline::LexOutput;
 use aozora_spec::NormalizedOffset;
-use aozora_syntax::borrowed::NodeRef;
 use aozora_syntax::owned::{NodeRefOwned, OwnedLexOutput};
 
 /// First UTF-8 byte of every PUA sentinel (`U+E001..U+E004`).
@@ -74,121 +71,12 @@ const fn sentinel_kind_for_tail_byte(b: u8) -> Option<SentinelKind> {
     }
 }
 
-/// Renderer-specific handler driven by [`walk`].
-///
-/// `walk` calls `on_text` for each plain run, `on_node` for each
-/// validated sentinel, and (when [`Self::WANTS_NEWLINES`]) `on_newline`
-/// for each `\n`. A sink that returns from `on_node` without matching the
-/// `(kind, node)` pair leaves the sentinel unrendered — the same
-/// best-effort policy both renderers used for a sentinel whose registry
-/// entry is missing or of the wrong variant.
-pub(crate) trait WalkSink {
-    /// Whether `walk` should surface `\n` as [`Self::on_newline`] events.
-    /// `true` selects `memchr2(0xEE, '\n')`; `false` selects the cheaper
-    /// `memchr(0xEE)` and folds newlines into the plain runs.
-    const WANTS_NEWLINES: bool;
-
-    /// Emit a plain-text run (the bytes between two structural events).
-    /// Never called with an empty slice.
-    fn on_text(&mut self, text: &str) -> fmt::Result;
-
-    /// React to a `\n`. `next` is the byte immediately after it (for the
-    /// blank-line vs line-break distinction). Only called when
-    /// [`Self::WANTS_NEWLINES`]; the default is a no-op.
-    fn on_newline(&mut self, next: Option<u8>) -> fmt::Result {
-        let _ = next;
-        Ok(())
-    }
-
-    /// Render a validated sentinel. `kind` is the sentinel's role; `node`
-    /// is the registry entry at its offset. The sink matches the
-    /// `(kind, node)` cross-product itself.
-    fn on_node(&mut self, kind: SentinelKind, node: NodeRef<'_>) -> fmt::Result;
-
-    /// Finalise after the last run (e.g. close a trailing paragraph).
-    /// Default no-op.
-    fn finish(&mut self) -> fmt::Result {
-        Ok(())
-    }
-}
-
-/// Validate the sentinel candidate at `cand`, flush the pending plain run
-/// before it, and dispatch it to the sink. A collision (invalid tail
-/// byte or truncated prefix) leaves `cursor` untouched so the bytes flow
-/// through as plain text on the next event.
-#[inline]
-fn handle_sentinel<S: WalkSink>(
-    out: &LexOutput<'_>,
-    cand: usize,
-    cursor: &mut usize,
-    sink: &mut S,
-) -> fmt::Result {
-    let normalized = out.normalized;
-    let bytes = normalized.as_bytes();
-    if cand + 2 >= bytes.len() || bytes[cand + 1] != SENTINEL_MID_BYTE {
-        return Ok(());
-    }
-    let Some(kind) = sentinel_kind_for_tail_byte(bytes[cand + 2]) else {
-        return Ok(());
-    };
-
-    if *cursor < cand {
-        sink.on_text(&normalized[*cursor..cand])?;
-    }
-    let byte_pos = u32::try_from(cand).expect("normalized fits u32 per sanitize-stage cap");
-    if let Some(node) = out.registry.node_at(NormalizedOffset::new(byte_pos)) {
-        sink.on_node(kind, node)?;
-    }
-    *cursor = cand + 3;
-    Ok(())
-}
-
-/// Drive `sink` over `out`'s normalized text in a single forward pass.
-///
-/// # Errors
-///
-/// Propagates any error the sink returns from a callback.
-///
-/// # Panics
-///
-/// Panics if the normalized text exceeds `u32::MAX` bytes — inherited
-/// from the lexer's `Span` width contract; in practice unreachable
-/// (the sanitize stage already gates on this bound).
-pub(crate) fn walk<S: WalkSink>(out: &LexOutput<'_>, sink: &mut S) -> fmt::Result {
-    let normalized = out.normalized;
-    let bytes = normalized.as_bytes();
-    let mut cursor = 0usize;
-
-    if S::WANTS_NEWLINES {
-        for cand in memchr::memchr2_iter(SENTINEL_LEAD_BYTE, b'\n', bytes) {
-            if bytes[cand] == b'\n' {
-                if cursor < cand {
-                    sink.on_text(&normalized[cursor..cand])?;
-                }
-                sink.on_newline(bytes.get(cand + 1).copied())?;
-                cursor = cand + 1;
-            } else {
-                handle_sentinel(out, cand, &mut cursor, sink)?;
-            }
-        }
-    } else {
-        for cand in memchr::memchr_iter(SENTINEL_LEAD_BYTE, bytes) {
-            handle_sentinel(out, cand, &mut cursor, sink)?;
-        }
-    }
-
-    if cursor < normalized.len() {
-        sink.on_text(&normalized[cursor..])?;
-    }
-    sink.finish()
-}
-
-/// Owned-AST mirror of [`WalkSink`], driven by [`walk_owned`] over an
+/// Owned-AST mirror of `WalkSink`, driven by [`walk_owned`] over an
 /// [`OwnedLexOutput`].
 ///
-/// Identical contract to [`WalkSink`]; the only difference is that `on_node`
+/// Identical contract to `WalkSink`; the only difference is that `on_node`
 /// receives an owned [`NodeRefOwned`] (resolved against the output's
-/// `RegistryOwned`) instead of a borrowed [`NodeRef`]. Kept as a separate
+/// `RegistryOwned`) instead of a borrowed `NodeRef`. Kept as a separate
 /// trait so the borrowed renderers and the owned serializer share the scan
 /// scaffold without one depending on the other's payload lifetime.
 pub(crate) trait WalkSinkOwned {
@@ -198,7 +86,7 @@ pub(crate) trait WalkSinkOwned {
     /// Emit a plain-text run. Never called with an empty slice.
     fn on_text(&mut self, text: &str) -> fmt::Result;
 
-    /// React to a `\n`. Only called when [`Self::WANTS_NEWLINES`]; default
+    /// React to a `\n`. Only called when `Self::WANTS_NEWLINES`; default
     /// no-op (the serializer copies newlines verbatim through `on_text`).
     fn on_newline(&mut self, next: Option<u8>) -> fmt::Result {
         let _ = next;
@@ -215,7 +103,7 @@ pub(crate) trait WalkSinkOwned {
     }
 }
 
-/// Owned mirror of [`handle_sentinel`]: validate the candidate at `cand`,
+/// Owned mirror of `handle_sentinel`: validate the candidate at `cand`,
 /// flush the pending plain run, and dispatch through the owned registry.
 #[inline]
 fn handle_sentinel_owned<S: WalkSinkOwned>(
@@ -244,7 +132,7 @@ fn handle_sentinel_owned<S: WalkSinkOwned>(
     Ok(())
 }
 
-/// Owned mirror of [`walk`]: drive `sink` over `out`'s normalized text in a
+/// Owned mirror of `walk`: drive `sink` over `out`'s normalized text in a
 /// single forward pass, reading `out.normalized.as_str()` and resolving
 /// sentinels through the owned [`RegistryOwned`](aozora_syntax::owned::RegistryOwned).
 ///

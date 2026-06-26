@@ -59,8 +59,7 @@ use aozora_pipeline::lex;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
 };
-use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::Arena;
+use aozora_syntax::alloc_owned::OwnedAllocator;
 use rayon::prelude::*;
 
 // One arena per worker thread per measurement role. Reused across
@@ -77,11 +76,10 @@ use rayon::prelude::*;
 //
 // `RefCell` matches `Arena`'s `!Sync` contract (each rayon worker
 // owns its own thread-local cell, never shared across threads).
-const WORKER_ARENA_INITIAL_CAPACITY: usize = 256 * 1024;
 
 thread_local! {
-    static WORKER_ARENA_PHASE3: RefCell<Arena> = RefCell::new(Arena::with_capacity(WORKER_ARENA_INITIAL_CAPACITY));
-    static WORKER_ARENA_FULL: RefCell<Arena> = RefCell::new(Arena::with_capacity(WORKER_ARENA_INITIAL_CAPACITY));
+    static WORKER_ARENA_PHASE3: RefCell<()> = const { RefCell::new(()) };
+    static WORKER_ARENA_FULL: RefCell<()> = const { RefCell::new(()) };
 }
 
 const NS_PER_MS: f64 = 1_000_000.0;
@@ -219,13 +217,11 @@ fn measure_one(text: &str) -> PhaseSample {
     // allocations don't bloat this measurement. The arena is
     // pre-sized to `text.len() * 4` so the chunk-grow `mmap` fires
     // before the per-stage timer rather than inside it.
-    let classify_ns = WORKER_ARENA_PHASE3.with(|cell| {
-        let mut arena = cell.borrow_mut();
-        arena.reset_with_hint(text.len().saturating_mul(4));
-        let mut alloc = BorrowedAllocator::new(&arena);
+    let classify_ns = WORKER_ARENA_PHASE3.with(|_cell| {
+        let mut alloc = OwnedAllocator::new();
         let t = Instant::now();
         let mut classify_stream = classify(pair_events, &sanitized.text, &mut alloc);
-        let _classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
+        let _classify_spans: Vec<ClassifiedSpan> = (&mut classify_stream).collect();
         drop(classify_stream.take_diagnostics());
         t.elapsed().as_nanos() as u64
     });
@@ -238,11 +234,9 @@ fn measure_one(text: &str) -> PhaseSample {
     // builder. Same per-worker arena reuse as the classify-stage block —
     // separate cell because the two measurements would otherwise
     // share one arena and reset mid-call.
-    let full_ns = WORKER_ARENA_FULL.with(|cell| {
-        let mut arena = cell.borrow_mut();
-        arena.reset_with_hint(text.len().saturating_mul(4));
+    let full_ns = WORKER_ARENA_FULL.with(|_cell| {
         let t = Instant::now();
-        let _full = lex(text, &arena);
+        let _full = lex(text);
         t.elapsed().as_nanos() as u64
     });
 
