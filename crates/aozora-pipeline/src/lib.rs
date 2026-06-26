@@ -33,7 +33,10 @@ pub mod lexer;
 pub mod pipeline;
 
 pub use aozora_syntax::borrowed::NodeRef;
-pub use borrowed::{LexOutput, SourceNode, lex};
+// Re-export the owned lex output so `lex_owned`'s return type is nameable at
+// the crate root (keeps intra-doc links resolvable under `-D warnings`).
+pub use aozora_syntax::owned::OwnedLexOutput;
+pub use borrowed::{LexOutput, SourceNode, lex, lex_owned};
 pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 
 /// Eagerly initialise every lazily-built parser table.

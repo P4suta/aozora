@@ -29,6 +29,7 @@
 //! so callers and benchmarks can measure dedup effectiveness without
 //! re-running the conversion.
 
+use core::marker::PhantomData;
 use core::mem::discriminant;
 
 use crate::lexer::{
@@ -37,9 +38,7 @@ use crate::lexer::{
 };
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset, Span};
 use aozora_syntax::borrowed::{self, Arena, ContainerPair, InternStats, NodeRef, Registry};
-use aozora_syntax::owned::{
-    NodeRefOwned, NodeStore, OwnedLexOutput, RegistryOwned, SourceNodeOwned,
-};
+use aozora_syntax::owned::{NodeOwned, NodeRefOwned, NodeStore, OwnedLexOutput, SourceNodeOwned};
 use aozora_syntax::{DirectiveKind, LineFormat, RegionClose, RegionFormat};
 
 /// Borrowed-AST output of the lex pipeline.
@@ -161,64 +160,6 @@ impl<'a> LexOutput<'a> {
         let candidate = &self.source_nodes[idx - 1];
         (raw < candidate.source_span.end).then_some(candidate)
     }
-
-    /// Materialise this borrowed [`LexOutput`] as an owned, lifetime-free
-    /// [`OwnedLexOutput`] (`Send + Sync`, cacheable across the arena's drop).
-    ///
-    /// **Transitional scaffolding (#237 P0.2a).** It interns every borrowed
-    /// `&str` into a fresh [`NodeStore`] and pushes every `Content` / `Segment`
-    /// run into that store, mapping each [`NodeRef`] through
-    /// [`NodeRefOwned::from_borrowed`]. P0.2-real will make the classify fold
-    /// produce the owned representation natively; until then this converter is
-    /// the only way to drive owned output additively, and it round-trips
-    /// byte-for-byte through `aozora_render::serialize_owned` == `to_source`
-    /// (the differential gate in `aozora`'s `owned_serialize_gate` test).
-    ///
-    /// The registry and the source-keyed `source_nodes` table are converted
-    /// **independently**, so the same borrowed node materialises its content /
-    /// segment runs twice in the store — the registry's `NodeOwned` and the
-    /// matching `source_nodes` entry therefore carry different
-    /// `ContentRange` / `SegRange` starts (they compare `!=` under derived
-    /// `PartialEq`) yet resolve to identical text. This is harmless: the owned
-    /// serializer walks `normalized` + `registry` only, never `source_nodes`,
-    /// and P0.2-real's native fold will dedup.
-    #[must_use]
-    pub fn to_owned(&self) -> OwnedLexOutput {
-        let mut store = NodeStore::new();
-
-        // Registry — `iter_sorted` yields ascending keys, so the converted
-        // slice satisfies `from_sorted_slice`'s sorted-key precondition.
-        let registry_entries: Vec<(u32, NodeRefOwned)> = self
-            .registry
-            .iter_sorted()
-            .map(|(pos, nr)| (pos, NodeRefOwned::from_borrowed(nr, &mut store)))
-            .collect();
-        let registry = RegistryOwned::from_sorted_slice(&registry_entries);
-
-        // Source-keyed side table — preserve the existing source order (the
-        // borrowed slice is already sorted by `source_span.start`).
-        let source_nodes: Vec<SourceNodeOwned> = self
-            .source_nodes
-            .iter()
-            .map(|sn| SourceNodeOwned {
-                source_span: sn.source_span,
-                node: NodeRefOwned::from_borrowed(sn.node, &mut store),
-            })
-            .collect();
-
-        OwnedLexOutput::new(
-            self.normalized.to_owned(),
-            self.sanitized.to_owned(),
-            registry,
-            self.diagnostics.clone(),
-            self.sanitized_len,
-            self.pairs.to_vec(),
-            source_nodes,
-            self.container_pairs.to_vec(),
-            self.intern_stats,
-            store,
-        )
-    }
 }
 
 /// Run the lex pipeline and collect the result into `arena`.
@@ -248,29 +189,155 @@ pub fn lex<'a>(source: &str, arena: &'a Arena) -> LexOutput<'a> {
     crate::pipeline::Pipeline::run_to_completion(source, arena)
 }
 
-/// Single-pass arena-emitting normalizer.
+/// Run the lex pipeline and materialise the result as an owned,
+/// lifetime-free [`OwnedLexOutput`] (`Send + Sync`).
 ///
-/// Pushes into a single position-keyed
-/// `Vec<(u32, borrowed::NodeRef<'a>)>` table. The classifier emits
-/// spans in source order, every sentinel position is therefore
-/// strictly greater than the previous, and the [`Registry`] consumes
-/// the slice via `from_sorted_slice` without re-sorting. The nodes
-/// themselves are allocated upstream by
-/// [`aozora_syntax::alloc::BorrowedAllocator`] during the classify
-/// stage; this walker is strictly the PUA-rewriter + position-recorder, doing
-/// zero AST allocation of its own.
-pub(crate) struct ArenaNormalizer<'src, 'a> {
+/// `arena` backs the *transient* borrowed classify pass only; the returned
+/// output owns all its payloads (interned strings, content / segment runs,
+/// side tables) and does not borrow `arena`, so the arena may be dropped
+/// immediately afterwards. This is the native owned producer — the fold builds
+/// the owned representation in one pass, the way [`lex`] builds the borrowed
+/// one — and is what `Document::parse_owned` calls. It supersedes the retired
+/// `LexOutput::to_owned` converter, whose independent registry / source-table
+/// passes materialised each node's runs twice; the native fold converts once.
+#[must_use]
+pub fn lex_owned(source: &str, arena: &Arena) -> OwnedLexOutput {
+    crate::pipeline::Pipeline::run_to_completion_owned(source, arena)
+}
+
+/// Output backend for the [`ArenaNormalizer`] fold.
+///
+/// The fold's emit logic — PUA rewriting, container-pair stacking,
+/// single-line-break diagnostics — is identical whether the lex output is
+/// borrowed (arena `&'a` payloads) or owned (`StrId` / range payloads). The
+/// only per-node difference is *how the recorded node is stored*: the borrowed
+/// sink keeps the arena [`NodeRef`]; the owned sink converts it once, in place,
+/// into a [`NodeRefOwned`] inside its own [`NodeStore`] — a single conversion
+/// shared by both the position-keyed registry and the source-keyed side table
+/// (so, unlike the retired `to_owned` converter, a node's content / segment
+/// runs materialise exactly once).
+pub(crate) trait NodeSink<'a> {
+    /// Build an empty sink whose registry / source tables are pre-sized to
+    /// `hint` entries (the sentinel-emission estimate).
+    fn with_capacity(hint: usize) -> Self;
+    /// Record an inline-sentinel node at normalized offset `pos`.
+    fn record_inline(&mut self, pos: u32, source_span: Span, node: borrowed::Node<'a>);
+    /// Record a block-leaf-sentinel node at `pos`.
+    fn record_block_leaf(&mut self, pos: u32, source_span: Span, node: borrowed::Node<'a>);
+    /// Record a container-open marker (authoritative [`RegionFormat`]) at `pos`.
+    fn record_block_open(&mut self, pos: u32, source_span: Span, region: RegionFormat);
+    /// Record a container-close marker ([`RegionClose`] hint) at `pos`.
+    fn record_block_close(&mut self, pos: u32, source_span: Span, close: RegionClose);
+}
+
+/// Borrowed-AST sink: records arena [`NodeRef`]s verbatim, producing the
+/// `&'a`-payload tables that back [`LexOutput`].
+pub(crate) struct BorrowedSink<'a> {
+    pub(crate) entries: Vec<(u32, NodeRef<'a>)>,
+    pub(crate) source_nodes: Vec<SourceNode<'a>>,
+}
+
+impl<'a> BorrowedSink<'a> {
+    fn push(&mut self, pos: u32, source_span: Span, nref: NodeRef<'a>) {
+        self.entries.push((pos, nref));
+        self.source_nodes.push(SourceNode {
+            source_span,
+            node: nref,
+        });
+    }
+}
+
+impl<'a> NodeSink<'a> for BorrowedSink<'a> {
+    fn with_capacity(hint: usize) -> Self {
+        Self {
+            entries: Vec::with_capacity(hint),
+            source_nodes: Vec::with_capacity(hint),
+        }
+    }
+
+    fn record_inline(&mut self, pos: u32, source_span: Span, node: borrowed::Node<'a>) {
+        self.push(pos, source_span, NodeRef::Inline(node));
+    }
+
+    fn record_block_leaf(&mut self, pos: u32, source_span: Span, node: borrowed::Node<'a>) {
+        self.push(pos, source_span, NodeRef::BlockLeaf(node));
+    }
+
+    fn record_block_open(&mut self, pos: u32, source_span: Span, region: RegionFormat) {
+        self.push(pos, source_span, NodeRef::BlockOpen(region));
+    }
+
+    fn record_block_close(&mut self, pos: u32, source_span: Span, close: RegionClose) {
+        self.push(pos, source_span, NodeRef::BlockClose(close));
+    }
+}
+
+/// Owned-AST sink: converts each recorded node into the [`NodeStore`] once,
+/// sharing the owned handle between the registry and source-keyed tables.
+/// Produces the lifetime-free tables that back [`OwnedLexOutput`].
+pub(crate) struct OwnedSink {
+    pub(crate) store: NodeStore,
+    pub(crate) entries: Vec<(u32, NodeRefOwned)>,
+    pub(crate) source_nodes: Vec<SourceNodeOwned>,
+}
+
+impl OwnedSink {
+    fn push(&mut self, pos: u32, source_span: Span, nref: NodeRefOwned) {
+        self.entries.push((pos, nref));
+        self.source_nodes.push(SourceNodeOwned {
+            source_span,
+            node: nref,
+        });
+    }
+}
+
+impl<'a> NodeSink<'a> for OwnedSink {
+    fn with_capacity(hint: usize) -> Self {
+        Self {
+            store: NodeStore::new(),
+            entries: Vec::with_capacity(hint),
+            source_nodes: Vec::with_capacity(hint),
+        }
+    }
+
+    fn record_inline(&mut self, pos: u32, source_span: Span, node: borrowed::Node<'a>) {
+        let owned = NodeOwned::from_borrowed(node, &mut self.store);
+        self.push(pos, source_span, NodeRefOwned::Inline(owned));
+    }
+
+    fn record_block_leaf(&mut self, pos: u32, source_span: Span, node: borrowed::Node<'a>) {
+        let owned = NodeOwned::from_borrowed(node, &mut self.store);
+        self.push(pos, source_span, NodeRefOwned::BlockLeaf(owned));
+    }
+
+    fn record_block_open(&mut self, pos: u32, source_span: Span, region: RegionFormat) {
+        self.push(pos, source_span, NodeRefOwned::BlockOpen(region));
+    }
+
+    fn record_block_close(&mut self, pos: u32, source_span: Span, close: RegionClose) {
+        self.push(pos, source_span, NodeRefOwned::BlockClose(close));
+    }
+}
+
+/// Single-pass normalizer, generic over its output [`NodeSink`].
+///
+/// Streams the PUA-rewritten text into `out` and records each emitted
+/// sentinel's node through `sink`. The classifier emits spans in source
+/// order, so every sentinel position is strictly greater than the previous
+/// and the registry consumes `sink`'s entries via `from_sorted_slice` without
+/// re-sorting. The borrowed nodes are allocated upstream by
+/// [`aozora_syntax::alloc::BorrowedAllocator`] during the classify stage; this
+/// walker is the PUA-rewriter + position-recorder, plus — for [`OwnedSink`] —
+/// the one-pass borrowed→owned node conversion. It does zero AST allocation of
+/// its own.
+pub(crate) struct ArenaNormalizer<'src, 'a, S> {
     pub(crate) out: String,
     source: &'src str,
-    /// Position-keyed registry entries (one per emitted sentinel),
-    /// pre-Phase-D split across four per-kind vecs. The single-vec
-    /// layout drops the 4-way dispatch in the renderer hot path.
-    pub(crate) entries: Vec<(u32, NodeRef<'a>)>,
-    /// Source-keyed (`source_span`, `NodeRef`) parallel to
-    /// `entries`. Drained into the arena `&'a [SourceNode]` at
-    /// pipeline-build time. Naturally sorted by `source_span.start`
-    /// because the classifier emits spans in source order.
-    pub(crate) source_nodes: Vec<SourceNode<'a>>,
+    /// Output backend ([`BorrowedSink`] or [`OwnedSink`]) holding the
+    /// position-keyed registry entries and the source-keyed side table. Every
+    /// emitted node is recorded through it; the borrowed sink keeps the arena
+    /// [`NodeRef`], the owned sink converts to [`NodeRefOwned`] in place.
+    pub(crate) sink: S,
     /// Stack of in-flight container opens awaiting their matching
     /// close. Each entry is the (open `NormalizedOffset`, open
     /// [`RegionFormat`]) pushed by [`SpanKind::BlockOpen`] emission;
@@ -300,9 +367,12 @@ pub(crate) struct ArenaNormalizer<'src, 'a> {
     /// `pending_single_line` this persists across newlines — a
     /// multi-line warichu still drops on a break.
     warichu_depth: u32,
+    /// Ties the `'a` payload lifetime (borne by `sink`'s [`NodeSink`] bound on
+    /// the impl) to the struct so the borrowed sink's `&'a` nodes are sound.
+    _marker: PhantomData<&'a ()>,
 }
 
-impl<'src, 'a> ArenaNormalizer<'src, 'a> {
+impl<'src, 'a, S: NodeSink<'a>> ArenaNormalizer<'src, 'a, S> {
     pub(crate) fn new(source: &'src str, span_capacity_hint: usize) -> Self {
         Self {
             // Normalized text always shrinks vs source (multi-byte
@@ -310,11 +380,9 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
             // `source.len()` is a safe upper bound.
             out: String::with_capacity(source.len()),
             source,
-            // Single registry table; capacity hint is the union of
-            // sentinel emissions. Source-keyed table mirrors the same
-            // count.
-            entries: Vec::with_capacity(span_capacity_hint),
-            source_nodes: Vec::with_capacity(span_capacity_hint),
+            // Registry + source-keyed tables live in the sink; the hint is the
+            // union of sentinel emissions, mirrored across both.
+            sink: S::with_capacity(span_capacity_hint),
             // Container open/close pairs: corpus profile says ~5%
             // of sentinel emissions are containers (open + close
             // each); resolved pair count is half of that.
@@ -324,6 +392,7 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
             diagnostics: Vec::new(),
             pending_single_line: None,
             warichu_depth: 0,
+            _marker: PhantomData,
         }
     }
 
@@ -348,9 +417,11 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 // block leaf handled below).
                 self.track_single_line_break(*node, span.source_span);
                 // The classify stage has already allocated the borrowed
-                // node into the arena via `BorrowedAllocator`. We only have to
-                // emit the appropriate sentinel and remember the
-                // position. No conversion, no per-node allocation.
+                // node into the arena via `BorrowedAllocator`. We emit the
+                // appropriate sentinel, remember the position, and hand the
+                // node to the sink — which keeps it borrowed or converts it to
+                // owned in place (the borrowed→owned conversion is the only
+                // per-node allocation, and only on the owned path).
                 if is_standalone_block_for_render_borrowed(*node) {
                     // Block-leaf padding: blank-line / sentinel /
                     // blank-line, byte-for-byte so the parser still sees
@@ -359,21 +430,11 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                     let pos = self.current_pos();
                     self.out.push(BLOCK_LEAF_SENTINEL);
                     self.out.push_str("\n\n");
-                    let nref = NodeRef::BlockLeaf(*node);
-                    self.entries.push((pos, nref));
-                    self.source_nodes.push(SourceNode {
-                        source_span: span.source_span,
-                        node: nref,
-                    });
+                    self.sink.record_block_leaf(pos, span.source_span, *node);
                 } else {
                     let pos = self.current_pos();
                     self.out.push(INLINE_SENTINEL);
-                    let nref = NodeRef::Inline(*node);
-                    self.entries.push((pos, nref));
-                    self.source_nodes.push(SourceNode {
-                        source_span: span.source_span,
-                        node: nref,
-                    });
+                    self.sink.record_inline(pos, span.source_span, *node);
                 }
             }
             SpanKind::BlockOpen(container) => {
@@ -391,12 +452,8 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 if !inline {
                     self.out.push_str("\n\n");
                 }
-                let nref = NodeRef::BlockOpen(*container);
-                self.entries.push((pos, nref));
-                self.source_nodes.push(SourceNode {
-                    source_span: span.source_span,
-                    node: nref,
-                });
+                self.sink
+                    .record_block_open(pos, span.source_span, *container);
                 // Track this open for later pairing with its close.
                 // The kind is captured from the open marker; the
                 // close marker re-emits the same kind, but we trust
@@ -418,17 +475,12 @@ impl<'src, 'a> ArenaNormalizer<'src, 'a> {
                 if !inline {
                     self.out.push_str("\n\n");
                 }
-                let nref = NodeRef::BlockClose(*close);
-                self.entries.push((pos, nref));
-                self.source_nodes.push(SourceNode {
-                    source_span: span.source_span,
-                    node: nref,
-                });
+                self.sink.record_block_close(pos, span.source_span, *close);
                 // Pop the matching open. The pair stage already balanced
                 // the bracket stream so an empty stack here would
                 // signal a pipeline-internal mismatch; we degrade
                 // gracefully by skipping the pair (the close marker
-                // still lands in `entries` via the push above so
+                // still lands in the sink via the record above so
                 // renderer correctness is unchanged).
                 if let Some((open_pos, open_kind)) = self.open_stack.pop() {
                     self.push_container_mismatch(open_kind, *close, span.source_span);
@@ -556,13 +608,14 @@ mod tests {
     use aozora_syntax::owned::{ContentOwned, NodeOwned};
 
     #[test]
-    fn to_owned_materialises_ruby_resolving_back_to_source_text() {
+    fn lex_owned_materialises_ruby_resolving_back_to_source_text() {
         let arena = Arena::new();
-        let out = lex("｜青梅《おうめ》", &arena);
-        let owned = out.to_owned();
+        let src = "｜青梅《おうめ》";
+        let out = lex(src, &arena);
+        let owned = lex_owned(src, &arena);
 
-        // The normalized text is copied verbatim, and the registry stays
-        // position-isomorphic.
+        // The natively-folded owned normalized text matches the borrowed one,
+        // and the registry stays position-isomorphic.
         assert_eq!(owned.normalized, out.normalized);
         assert_eq!(owned.registry.len(), out.registry.len());
 
@@ -589,13 +642,11 @@ mod tests {
     }
 
     #[test]
-    fn to_owned_carries_side_tables_verbatim() {
+    fn lex_owned_carries_side_tables_verbatim() {
         let arena = Arena::new();
-        let out = lex(
-            "［＃ここから2字下げ］\nbody\n［＃ここで字下げ終わり］",
-            &arena,
-        );
-        let owned = out.to_owned();
+        let src = "［＃ここから2字下げ］\nbody\n［＃ここで字下げ終わり］";
+        let out = lex(src, &arena);
+        let owned = lex_owned(src, &arena);
         assert_eq!(owned.sanitized, out.sanitized);
         assert_eq!(owned.sanitized_len, out.sanitized_len);
         assert_eq!(owned.pairs.len(), out.pairs.len());

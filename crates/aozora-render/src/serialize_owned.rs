@@ -489,7 +489,7 @@ mod tests {
     fn assert_parity(src: &str) {
         let arena = Arena::new();
         let out = aozora_pipeline::lex(src, &arena);
-        let owned = out.to_owned();
+        let owned = aozora_pipeline::lex_owned(src, &arena);
         assert_eq!(
             serialize_owned(&owned),
             serialize(&out),

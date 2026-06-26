@@ -77,12 +77,13 @@ impl OwnedLexOutput {
     /// Assemble an [`OwnedLexOutput`] from its already-owned field set.
     ///
     /// The only constructor for this `#[non_exhaustive]` struct reachable from
-    /// outside `aozora-syntax` — the pipeline-side converter
-    /// (`aozora_pipeline::LexOutput::to_owned`) builds the [`RegistryOwned`],
-    /// [`SourceNodeOwned`] table, and [`NodeStore`] (via the `from_borrowed`
-    /// mappers), then hands the whole field set here. Every argument maps to
-    /// the identically-named field; see the struct docs for their borrowed
-    /// `LexOutput` analogues.
+    /// outside `aozora-syntax` — the pipeline-side native owned producer
+    /// (`aozora_pipeline::lex_owned` / `Pipeline::build_owned`) builds the
+    /// [`RegistryOwned`], [`SourceNodeOwned`] table, and [`NodeStore`] (via its
+    /// `OwnedSink` fold, which converts each node through the `from_borrowed`
+    /// mappers exactly once), then hands the whole field set here. Every
+    /// argument maps to the identically-named field; see the struct docs for
+    /// their borrowed `LexOutput` analogues.
     #[must_use]
     #[allow(
         clippy::too_many_arguments,

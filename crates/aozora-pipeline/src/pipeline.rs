@@ -90,12 +90,13 @@ use aozora_spec::{Diagnostic, PairLink};
 use core::mem::take;
 
 use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::{Arena, ContainerPair, ForwardOrigin, Node, Registry};
+use aozora_syntax::borrowed::{Arena, ContainerPair, ForwardOrigin, InternStats, Node, Registry};
+use aozora_syntax::owned::{OwnedLexOutput, RegistryOwned};
 use aozora_syntax::{ForwardAttr, RegionClose, RegionFormat, Span};
 use bumpalo::collections::Vec as BumpVec;
 
 use crate::LexOutput;
-use crate::borrowed::{ArenaNormalizer, SourceNode};
+use crate::borrowed::{ArenaNormalizer, BorrowedSink, NodeSink, OwnedSink, SourceNode};
 
 // =====================================================================
 // State markers (field-bound — each state carries the stage output it
@@ -176,6 +177,19 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
             .tokenize()
             .pair()
             .build()
+    }
+
+    /// One-shot driver producing the owned, lifetime-free
+    /// [`OwnedLexOutput`]. Equivalent to [`crate::lex_owned`]. `arena` backs
+    /// only the transient borrowed classify pass; the returned output owns all
+    /// its payloads and does not borrow `arena`.
+    #[must_use]
+    pub fn run_to_completion_owned(source: &'src str, arena: &'a Arena) -> OwnedLexOutput {
+        Self::new(source, arena)
+            .sanitize()
+            .tokenize()
+            .pair()
+            .build_owned()
     }
 
     /// Borrow the original source text.
@@ -281,6 +295,22 @@ impl<'src, 'a> Pipeline<'src, 'a, Tokenized<'a>> {
 // Paired (terminal)
 // ---------------------------------------------------------------------
 
+/// Result of the sink-generic classify + normalize fold, before the
+/// representation-specific finalize. `build` freezes it into the arena-backed
+/// [`LexOutput`]; `build_owned` moves it into the lifetime-free
+/// [`OwnedLexOutput`]. The `builder`'s sink holds the recorded nodes (borrowed
+/// `NodeRef`s or owned `NodeRefOwned`s); `links` is the arena pair side-table;
+/// the rest is shared scalar/owned data.
+struct Folded<'a, S> {
+    builder: ArenaNormalizer<'a, 'a, S>,
+    links: BumpVec<'a, PairLink>,
+    intern_stats: InternStats,
+    sanitized_text: &'a str,
+    sanitized_len: u32,
+    diagnostics: Vec<Diagnostic>,
+    arena: &'a Arena,
+}
+
 impl<'a> Pipeline<'_, 'a, Paired<'a>> {
     /// Borrow the materialised pair-event list. Useful for inspection
     /// before `.build()`.
@@ -314,7 +344,98 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
     /// (the lexer's `Span` width contract). In practice unreachable;
     /// the sanitize stage caps source length at the same boundary.
     #[must_use]
-    pub fn build(mut self) -> LexOutput<'a> {
+    pub fn build(self) -> LexOutput<'a> {
+        let Folded {
+            builder,
+            links,
+            intern_stats,
+            sanitized_text,
+            sanitized_len,
+            diagnostics,
+            arena,
+        } = self.fold_with_sink::<BorrowedSink<'a>>();
+
+        let normalized: &'a str = arena.alloc_str(&builder.out);
+        // Single-table Registry: classifier emits in source order so the
+        // sink's `entries` are already sorted by position; from_sorted_slice
+        // skips the redundant sort pass.
+        let registry = Registry::from_sorted_slice(&builder.sink.entries);
+        // Freeze the arena `BumpVec<PairLink>` into a `&'a [PairLink]`.
+        // `BumpVec::into_bump_slice` consumes self and returns a slice
+        // alive for the bump allocator's lifetime, exactly the lifetime
+        // we need on `LexOutput::pairs`.
+        let pairs: &'a [PairLink] = links.into_bump_slice();
+        // Move the source-keyed side table out of the heap-backed
+        // `Vec<SourceNode>` and into the arena, in one allocation.
+        let source_nodes: &'a [SourceNode<'a>] = arena.alloc_slice_copy(&builder.sink.source_nodes);
+        // Same dance for the container-pair side table — close-order
+        // (matches the close events as the open-stack drains).
+        let container_pairs: &'a [ContainerPair] = arena.alloc_slice_copy(&builder.container_pairs);
+
+        LexOutput {
+            normalized,
+            sanitized: sanitized_text,
+            registry,
+            diagnostics,
+            sanitized_len,
+            pairs,
+            source_nodes,
+            container_pairs,
+            intern_stats,
+        }
+    }
+
+    /// Drive the classify stage + normalizer fold and return the owned,
+    /// lifetime-free [`OwnedLexOutput`]. The native owned producer: the fold's
+    /// `OwnedSink` converts each emitted node into its `NodeStore` in one pass
+    /// (the registry and source-keyed table share each node's owned handle), so
+    /// nothing borrows the arena and the result is `Send + Sync`.
+    ///
+    /// `intern_stats` carries the **borrowed** classify-stage interner's
+    /// counters (the authoritative dedup-ratio surface): the owned store's own
+    /// interner sees a different call sequence — classify interns nodes later
+    /// dropped by lowering, the fold only the survivors — so the two cannot
+    /// match numerically. Diagnostic ordering and panic contract match
+    /// [`Self::build`].
+    #[must_use]
+    pub fn build_owned(self) -> OwnedLexOutput {
+        let Folded {
+            mut builder,
+            links,
+            intern_stats,
+            sanitized_text,
+            sanitized_len,
+            diagnostics,
+            // `arena` backs only the transient classify pass; the owned output
+            // borrows none of it, so it is dropped here.
+            ..
+        } = self.fold_with_sink::<OwnedSink>();
+
+        let registry = RegistryOwned::from_sorted_slice(&builder.sink.entries);
+        // Owned pairs: copy the arena pair side-table out (the owned output
+        // must not borrow the arena). `PairLink` is `Copy`.
+        let pairs: Vec<PairLink> = links.iter().copied().collect();
+        // Move the owned normalized text, side tables, and node store out of
+        // the builder — no arena copy, the owned output owns them outright.
+        OwnedLexOutput::new(
+            take(&mut builder.out),
+            sanitized_text.to_owned(),
+            registry,
+            diagnostics,
+            sanitized_len,
+            pairs,
+            take(&mut builder.sink.source_nodes),
+            take(&mut builder.container_pairs),
+            intern_stats,
+            take(&mut builder.sink.store),
+        )
+    }
+
+    /// Shared classify + lowering + normalize fold, generic over the output
+    /// [`NodeSink`]. Both `build` (borrowed) and `build_owned` (owned) run the
+    /// identical emit logic through this; only the representation-specific
+    /// finalize differs. Returns the populated [`Folded`] bundle.
+    fn fold_with_sink<S: NodeSink<'a>>(mut self) -> Folded<'a, S> {
         let Paired {
             sanitized_text,
             events,
@@ -329,7 +450,8 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
         // next power of two; floor of 64 covers short documents.
         let interner_hint = (sanitized_text.len() / 32).max(64);
         let mut alloc = BorrowedAllocator::with_capacity(self.arena, interner_hint);
-        let mut builder = ArenaNormalizer::new(sanitized_text, sanitized_text.len() / 64);
+        let mut builder: ArenaNormalizer<'a, 'a, S> =
+            ArenaNormalizer::new(sanitized_text, sanitized_text.len() / 64);
 
         // Drain the arena-allocated `BumpVec<PairEvent>` through the
         // streaming `classify` Iterator path.
@@ -353,36 +475,16 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
         // final vector stays in pipeline-stage order (the normalizer is
         // the post-classify fold). See `tests/diagnostic_ordering.rs`.
         self.diagnostics.extend(take(&mut builder.diagnostics));
-
-        let normalized: &'a str = self.arena.alloc_str(&builder.out);
-        // Single-table Registry: classifier emits in source order so
-        // `entries` is already sorted by position; from_sorted_slice
-        // skips the redundant sort pass.
-        let registry = Registry::from_sorted_slice(&builder.entries);
-        // Freeze the arena `BumpVec<PairLink>` into a `&'a [PairLink]`.
-        // `BumpVec::into_bump_slice` consumes self and returns a slice
-        // alive for the bump allocator's lifetime, exactly the lifetime
-        // we need on `LexOutput::pairs`.
-        let pairs: &'a [PairLink] = links.into_bump_slice();
-        // Move the source-keyed side table out of the heap-backed
-        // `Vec<SourceNode>` and into the arena, in one allocation.
-        let source_nodes: &'a [SourceNode<'a>] = self.arena.alloc_slice_copy(&builder.source_nodes);
-        // Same dance for the container-pair side table — close-order
-        // (matches the close events as the open-stack drains).
-        let container_pairs: &'a [ContainerPair] =
-            self.arena.alloc_slice_copy(&builder.container_pairs);
         let intern_stats = alloc.into_interner().stats;
 
-        LexOutput {
-            normalized,
-            sanitized: sanitized_text,
-            registry,
-            diagnostics: self.diagnostics,
-            sanitized_len,
-            pairs,
-            source_nodes,
-            container_pairs,
+        Folded {
+            builder,
+            links,
             intern_stats,
+            sanitized_text,
+            sanitized_len,
+            diagnostics: self.diagnostics,
+            arena: self.arena,
         }
     }
 }
