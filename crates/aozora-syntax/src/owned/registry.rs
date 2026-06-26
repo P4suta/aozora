@@ -1,0 +1,182 @@
+//! Owned, no-lifetime mirror of the borrowed sentinel registry.
+//!
+//! [`NodeRefOwned`] mirrors [`crate::borrowed::NodeRef`] (inline payloads
+//! become owned [`NodeOwned`]; container discriminants reuse `RegionFormat` /
+//! `RegionClose`); [`RegistryOwned`] wraps an [`EytzingerMap`] keyed by
+//! normalized byte position, reproducing the borrowed registry's API surface.
+
+use aozora_spec::{NormalizedOffset, Sentinel};
+use aozora_veb::EytzingerMap;
+
+use crate::format::{RegionClose, RegionFormat};
+
+use super::payload::NodeOwned;
+
+/// Unified view over a registry hit, owned mirror of
+/// [`crate::borrowed::NodeRef`].
+///
+/// Each variant tags the sentinel kind that fired; consumers pattern-match the
+/// variant once, then handle the inline payload (an owned [`NodeOwned`]) or the
+/// container payload (a `Copy` [`RegionFormat`] / [`RegionClose`]
+/// discriminant) accordingly.
+///
+/// `Copy` is preserved from the borrowed type because every inlined payload is
+/// `Copy` ([`NodeOwned`] flattens its `&str`/list payloads to `StrId`/ranges).
+/// Mirrors `NodeRef`'s derive set exactly: no `Eq`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum NodeRefOwned {
+    /// Hit on an inline-sentinel position ([`Sentinel::Inline`]). Mirrors
+    /// `NodeRef::Inline`.
+    Inline(NodeOwned),
+    /// Hit on a block-leaf-sentinel position ([`Sentinel::BlockLeaf`]).
+    /// Mirrors `NodeRef::BlockLeaf`.
+    BlockLeaf(NodeOwned),
+    /// Hit on a block-container-open position ([`Sentinel::BlockOpen`]).
+    /// Carries the authoritative open [`RegionFormat`]. Mirrors
+    /// `NodeRef::BlockOpen`.
+    BlockOpen(RegionFormat),
+    /// Hit on a block-container-close position ([`Sentinel::BlockClose`]).
+    /// Carries the [`RegionClose`] discriminant. Mirrors
+    /// `NodeRef::BlockClose`.
+    BlockClose(RegionClose),
+}
+
+impl NodeRefOwned {
+    /// Sentinel kind that produced this entry. Mirror of
+    /// `NodeRef::sentinel_kind`.
+    #[must_use]
+    pub const fn sentinel_kind(self) -> Sentinel {
+        match self {
+            Self::Inline(_) => Sentinel::Inline,
+            Self::BlockLeaf(_) => Sentinel::BlockLeaf,
+            Self::BlockOpen(_) => Sentinel::BlockOpen,
+            Self::BlockClose(_) => Sentinel::BlockClose,
+        }
+    }
+
+    /// Cross-cutting [`crate::NodeKind`] tag for this entry. Mirror of
+    /// `NodeRef::kind`.
+    #[must_use]
+    pub const fn kind(self) -> crate::NodeKind {
+        match self {
+            Self::Inline(node) | Self::BlockLeaf(node) => node.kind(),
+            Self::BlockOpen(_) => crate::NodeKind::ContainerOpen,
+            Self::BlockClose(_) => crate::NodeKind::ContainerClose,
+        }
+    }
+}
+
+/// Whole-document owned registry — single Eytzinger-keyed table.
+///
+/// Owned mirror of [`crate::borrowed::Registry`]. `node_at` is one binary
+/// search; every entry's sentinel kind is encoded by the [`NodeRefOwned`]
+/// variant. Not `Copy` (the map owns a `Vec`).
+#[derive(Debug, Clone)]
+pub struct RegistryOwned {
+    /// Single `SoA` lookup table keyed by normalized byte position. Entries
+    /// arrive in strictly increasing position order.
+    table: EytzingerMap<u32, NodeRefOwned>,
+}
+
+impl RegistryOwned {
+    /// Construct from a position-sorted slice of `(position, NodeRefOwned)`.
+    /// Mirror of `Registry::from_sorted_slice`.
+    ///
+    /// # Panics
+    ///
+    /// Inherits [`EytzingerMap::from_sorted_slice`]'s debug-only sorted-key
+    /// precondition.
+    #[must_use]
+    pub fn from_sorted_slice(entries: &[(u32, NodeRefOwned)]) -> Self {
+        Self {
+            table: EytzingerMap::from_sorted_slice(entries),
+        }
+    }
+
+    /// Empty registry. Mirror of `Registry::empty`.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            table: EytzingerMap::new(),
+        }
+    }
+
+    /// True iff the registry holds no entries. Mirror of `Registry::is_empty`.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.table.is_empty()
+    }
+
+    /// Total number of entries across all sentinel kinds. O(1). Mirror of
+    /// `Registry::len`.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.table.len()
+    }
+
+    /// Look up the entry at the given normalized-text byte position. Mirror of
+    /// `Registry::node_at`.
+    #[must_use]
+    pub fn node_at(&self, pos: NormalizedOffset) -> Option<NodeRefOwned> {
+        self.table.get(&pos.get()).copied()
+    }
+
+    /// Iterate `(position, NodeRefOwned)` in ascending position order. Mirror
+    /// of `Registry::iter_sorted`.
+    pub fn iter_sorted(&self) -> impl Iterator<Item = (u32, NodeRefOwned)> + '_ {
+        self.table.iter_sorted().map(|(&p, &nr)| (p, nr))
+    }
+
+    /// Iterate entries whose [`NodeRefOwned::sentinel_kind`] matches `kind`.
+    /// Mirror of `Registry::iter_kind`.
+    pub fn iter_kind(&self, kind: Sentinel) -> impl Iterator<Item = (u32, NodeRefOwned)> + '_ {
+        self.iter_sorted()
+            .filter(move |(_, nr)| nr.sentinel_kind() == kind)
+    }
+
+    /// Count entries whose sentinel kind matches `kind`. O(n). Mirror of
+    /// `Registry::count_kind`.
+    #[must_use]
+    pub fn count_kind(&self, kind: Sentinel) -> usize {
+        self.iter_kind(kind).count()
+    }
+}
+
+impl Default for RegistryOwned {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_registry_reports_empty() {
+        let r = RegistryOwned::empty();
+        assert!(r.is_empty(), "empty registry is empty");
+        assert_eq!(r.len(), 0, "empty registry has zero entries");
+    }
+
+    #[test]
+    fn node_at_dispatches_to_variant() {
+        let r = RegistryOwned::from_sorted_slice(&[
+            (10u32, NodeRefOwned::Inline(NodeOwned::PageBreak)),
+            (20u32, NodeRefOwned::BlockLeaf(NodeOwned::PageBreak)),
+            (30u32, NodeRefOwned::BlockOpen(RegionFormat::Framed)),
+            (40u32, NodeRefOwned::BlockClose(RegionClose::Framed)),
+        ]);
+        assert!(matches!(
+            r.node_at(NormalizedOffset::new(30)),
+            Some(NodeRefOwned::BlockOpen(RegionFormat::Framed))
+        ));
+        assert_eq!(r.count_kind(Sentinel::Inline), 1, "one inline entry");
+        assert_eq!(r.count_kind(Sentinel::BlockOpen), 1, "one open entry");
+        assert!(
+            r.node_at(NormalizedOffset::new(99)).is_none(),
+            "miss returns None"
+        );
+    }
+}

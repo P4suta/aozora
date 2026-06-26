@@ -29,6 +29,7 @@ pub mod alloc;
 pub mod borrowed;
 pub mod format;
 pub mod node_kind;
+pub mod owned;
 
 pub use format::{
     BlockStyles, ColumnCount, FontShift, Format, ForwardAttr, IndentBlock, IndentLayout, Kumi,
