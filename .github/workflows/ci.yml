@@ -318,6 +318,8 @@ jobs:
         run: cargo test -p aozora --release --test corpus_splice_tiling -- --nocapture
       - name: Incremental-merge gate (#237)
         run: cargo test -p aozora --release --test corpus_incremental_merge -- --nocapture
+      - name: Owned-allocation-pressure ratchet (#237 P0.2-real)
+        run: cargo run --release -p aozora-bench --example owned_alloc_gate -- --root "$AOZORA_CORPUS_ROOT" --baseline corpus/owned-alloc-baseline.json
 
   # Phase M1 — Pandoc end-to-end smoke. Builds the CLI, runs
   # `aozora pandoc input.txt --format html` against a tiny ruby

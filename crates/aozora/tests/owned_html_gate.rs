@@ -31,7 +31,7 @@ use common::CURATED;
 fn assert_owned_matches(src: &str) {
     let doc = Document::new(src);
     let tree = doc.parse();
-    let owned = tree.lex_output().to_owned();
+    let owned = doc.parse_owned();
     assert_eq!(
         render_html_owned(&owned),
         tree.to_html(),

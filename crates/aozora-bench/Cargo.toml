@@ -30,6 +30,7 @@ aozora-pipeline = { workspace = true }
 aozora-scan = { workspace = true }
 aozora-syntax = { workspace = true }
 memchr = { workspace = true }
+serde_json = { workspace = true }
 
 [features]
 default = []

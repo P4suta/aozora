@@ -16,7 +16,7 @@
 
 use core::fmt;
 
-use aozora_pipeline::{LexOutput, NodeRef, SourceNode, lex};
+use aozora_pipeline::{LexOutput, NodeRef, OwnedLexOutput, SourceNode, lex, lex_owned};
 use aozora_render::{html as borrowed_html, serialize as borrowed_serialize};
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset};
 use aozora_syntax::borrowed::{Arena, ContainerPair};
@@ -274,6 +274,27 @@ impl Document {
             source: &self.source,
             inner,
         }
+    }
+
+    /// Parse the document into the owned, lifetime-free [`OwnedLexOutput`].
+    ///
+    /// The owned twin of [`Self::parse`]: it runs the same lex pipeline through
+    /// the native owned fold ([`lex_owned`]), so the result owns all its
+    /// payloads, is `Send + Sync`, and does not borrow this document's arena
+    /// (the arena backs only the transient classify pass). Applies the same
+    /// [`DiagnosticPolicy`] filtering as [`Self::parse`].
+    ///
+    /// This is the entry point the #237 incremental-reparse LSP consumer holds
+    /// across edits; renderers reach it through `aozora_render`'s owned paths
+    /// (`serialize_owned` / `render_html_owned`).
+    #[must_use]
+    pub fn parse_owned(&self) -> OwnedLexOutput {
+        let mut out = lex_owned(&self.source, &self.arena);
+        if self.diagnostic_policy == DiagnosticPolicy::DropInternal {
+            out.diagnostics
+                .retain(|d| d.source() != aozora_spec::DiagnosticSource::Internal);
+        }
+        out
     }
 }
 
