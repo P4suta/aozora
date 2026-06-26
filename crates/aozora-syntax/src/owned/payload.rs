@@ -9,6 +9,8 @@
 //! owned `XOwned` mirror held inline (no `Box`/`Id`), so the whole cluster
 //! stays `Copy` exactly like the borrowed tree.
 
+use core::fmt;
+
 use aozora_encoding::gaiji::{GaijiCanonical, MenKuTen, Resolved};
 
 use crate::borrowed::{self, ForwardOrigin};
@@ -97,6 +99,48 @@ impl GaijiCanonicalOwned {
             },
         }
     }
+
+    /// Reconstruct the lifetime-free [`GaijiCanonical`] this mirrors, resolving
+    /// the `Unresolved` mencode `StrId` against `store`. The single bridge to
+    /// the `aozora-encoding` canonical authority (`resolve` / `write_mencode`),
+    /// kept private so the owned API surface stays owned. `GaijiCanonical`
+    /// lives in `aozora-encoding`, not the borrowed AST module, so it outlives
+    /// the borrowed tree's deletion.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an `Unresolved` mencode `StrId` was not produced by `store`.
+    fn to_canonical(self, store: &NodeStore) -> GaijiCanonical<'_> {
+        match self {
+            Self::MenKuTen(m) => GaijiCanonical::MenKuTen(m),
+            Self::Unicode(c) => GaijiCanonical::Unicode(c),
+            Self::Unresolved { mencode } => GaijiCanonical::Unresolved {
+                mencode: mencode.map(|id| store.resolve_str(id)),
+            },
+        }
+    }
+
+    /// `true` when the source carried a mencode tail. Owned mirror of
+    /// [`GaijiCanonical::has_mencode`] — store-free (only the variant matters).
+    #[must_use]
+    pub fn has_mencode(self) -> bool {
+        !matches!(self, Self::Unresolved { mencode: None })
+    }
+
+    /// Write the canonical mencode token (without the leading `、`). Owned
+    /// mirror of [`GaijiCanonical::write_mencode`]; delegates to the single
+    /// encoding authority via the private `to_canonical` bridge.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the writer's own errors.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an `Unresolved` mencode `StrId` was not produced by `store`.
+    pub fn write_mencode<W: fmt::Write>(self, store: &NodeStore, w: &mut W) -> fmt::Result {
+        self.to_canonical(store).write_mencode(w)
+    }
 }
 
 impl GaijiOwned {
@@ -123,14 +167,9 @@ impl GaijiOwned {
     /// produced by `store`'s interner.
     #[must_use]
     pub fn resolve(&self, store: &NodeStore) -> Option<Resolved> {
-        let canonical = match self.canonical {
-            GaijiCanonicalOwned::MenKuTen(m) => GaijiCanonical::MenKuTen(m),
-            GaijiCanonicalOwned::Unicode(c) => GaijiCanonical::Unicode(c),
-            GaijiCanonicalOwned::Unresolved { mencode } => GaijiCanonical::Unresolved {
-                mencode: mencode.map(|id| store.resolve_str(id)),
-            },
-        };
-        canonical.resolve(store.resolve_str(self.hint))
+        self.canonical
+            .to_canonical(store)
+            .resolve(store.resolve_str(self.hint))
     }
 }
 

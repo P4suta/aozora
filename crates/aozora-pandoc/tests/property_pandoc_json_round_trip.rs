@@ -27,8 +27,8 @@ use proptest::prelude::*;
 
 fn project_to_json(source: &str) -> serde_json::Value {
     let doc = Document::new(source.to_owned());
-    let tree = doc.parse();
-    let pandoc = to_pandoc(&tree);
+    let owned = doc.parse_owned();
+    let pandoc = to_pandoc(&owned);
     serde_json::to_value(&pandoc).expect("pandoc_ast::Pandoc serialises into a serde_json::Value")
 }
 
