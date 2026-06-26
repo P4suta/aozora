@@ -467,7 +467,7 @@ fn render_angle_quote<W: Write>(d: &AngleQuote<'_>, writer: &mut W) -> fmt::Resu
 /// Parse the bundled `横W×縦H` pixel-size note into `(width, height)` —
 /// both runs of ASCII digits. Returns `None` for any other shape (the
 /// dimensions then carry no HTML width/height hint).
-fn parse_sashie_dimensions(dims: &str) -> Option<(&str, &str)> {
+pub(crate) fn parse_sashie_dimensions(dims: &str) -> Option<(&str, &str)> {
     let (w, h) = dims.split_once('×')?;
     let w = w.strip_prefix('横')?;
     let h = h.strip_prefix('縦')?;
@@ -524,7 +524,7 @@ fn heading_tag(kind: HeadingKind, style: HeadingStyle) -> &'static str {
 /// Shared by the forward-reference leaf [`render_aozora_heading`] and the
 /// paired / block [`RegionFormat::Heading`] container so both render
 /// identically.
-fn write_heading_open<W: Write>(
+pub(crate) fn write_heading_open<W: Write>(
     kind: HeadingKind,
     style: HeadingStyle,
     writer: &mut W,
@@ -542,7 +542,7 @@ fn write_heading_open<W: Write>(
 }
 
 /// Write a heading's closing tag (matching [`write_heading_open`]).
-fn write_heading_close<W: Write>(
+pub(crate) fn write_heading_close<W: Write>(
     kind: HeadingKind,
     style: HeadingStyle,
     writer: &mut W,

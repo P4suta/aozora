@@ -122,8 +122,8 @@ impl<W: fmt::Write> WalkSink for HtmlSink<'_, W> {
 /// boundaries so consecutive inline runs collapse into one paragraph
 /// and adjacent block-leaf nodes get the right inter-block whitespace.
 #[derive(Debug, Default)]
-struct RenderState {
-    in_paragraph: bool,
+pub(crate) struct RenderState {
+    pub(crate) in_paragraph: bool,
     pending_block_separator: bool,
     /// Inside a phrasing-content container (a heading): its `<hN>` is the
     /// inline context, so [`Self::ensure_in_paragraph`] suppresses `<p>`.
@@ -143,7 +143,7 @@ impl RenderState {
         Ok(())
     }
 
-    fn ensure_in_paragraph<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
+    pub(crate) fn ensure_in_paragraph<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
         // Phrasing content inside a heading renders directly under the `<hN>`;
         // the heading element is the inline context, so no `<p>` is opened.
         if self.in_heading {
@@ -157,7 +157,7 @@ impl RenderState {
         Ok(())
     }
 
-    fn close_paragraph<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
+    pub(crate) fn close_paragraph<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
         if self.in_paragraph {
             out.write_str("</p>\n")?;
             self.in_paragraph = false;
@@ -166,12 +166,12 @@ impl RenderState {
         Ok(())
     }
 
-    fn before_block_emit<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
+    pub(crate) fn before_block_emit<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
         self.close_paragraph(out)?;
         self.flush_pending_separator(out)
     }
 
-    fn after_block_emit(&mut self) {
+    pub(crate) fn after_block_emit(&mut self) {
         self.pending_block_separator = true;
     }
 
@@ -181,7 +181,11 @@ impl RenderState {
     /// paragraph and then holds its content inline under the `<hN>`
     /// (`in_heading`); every other block container flushes and brackets its
     /// content as block paragraphs.
-    fn open_container<W: fmt::Write>(&mut self, kind: RegionFormat, out: &mut W) -> fmt::Result {
+    pub(crate) fn open_container<W: fmt::Write>(
+        &mut self,
+        kind: RegionFormat,
+        out: &mut W,
+    ) -> fmt::Result {
         self.open_stack.push(kind);
         let node = Node::Container(Container { kind });
         if kind.is_inline() {
@@ -201,7 +205,7 @@ impl RenderState {
     /// Emit a container's closing tag — the mirror of [`Self::open_container`],
     /// reconstructed from the matched open [`RegionFormat`] popped off the
     /// stack (open-authoritative). A degraded empty stack best-effort skips.
-    fn close_container<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
+    pub(crate) fn close_container<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
         let Some(kind) = self.open_stack.pop() else {
             return Ok(());
         };
@@ -234,7 +238,7 @@ impl RenderState {
 /// because it has no `memchr_iter` partner — three needle scans are
 /// enough to cover the rare cases without paying for a 5-needle
 /// general scan, which `memchr` doesn't expose.
-fn escape_text_chunk<W: fmt::Write>(chunk: &str, out: &mut W) -> fmt::Result {
+pub(crate) fn escape_text_chunk<W: fmt::Write>(chunk: &str, out: &mut W) -> fmt::Result {
     let bytes = chunk.as_bytes();
 
     // Fast-reject: no HTML-unsafe byte → bulk write the whole chunk.
