@@ -1,6 +1,6 @@
 //! Owned, arena-free AST construction.
 //!
-//! [`OwnedAllocator`] is the owned mirror of [`BorrowedAllocator`](crate::alloc::BorrowedAllocator):
+//! [`OwnedAllocator`] is the owned mirror of `BorrowedAllocator`:
 //! it builds [`NodeOwned`] and its payload types into an owned [`NodeStore`]
 //! (the [`StrInterner`](super::owned::StrInterner) plus the flat content /
 //! segment pools) instead of a bumpalo arena. Byte-equal strings still share a
@@ -27,14 +27,12 @@
 //!
 //! ## Status
 //!
-//! Additive and **unwired**: the lex pipeline still drives `BorrowedAllocator`.
-//! A later #237 phase makes `classify` allocator-generic / owned-only and
-//! deletes the borrowed path; this is its construction half.
+//! This is the **sole** AST builder: the lex pipeline's `classify` stage drives
+//! it directly and the former arena-backed `BorrowedAllocator` has been removed.
 
 use aozora_encoding::gaiji::GaijiCanonical;
 
-use crate::borrowed::ForwardOrigin;
-use crate::format::{ForwardAttr, LineFormat};
+use crate::format::{ForwardAttr, ForwardOrigin, LineFormat};
 use crate::{
     BoutenKind, BoutenPosition, Container, DirectiveKind, HeadingKind, HeadingStyle,
     MarginNoteKind, RubySide, SectionKind,

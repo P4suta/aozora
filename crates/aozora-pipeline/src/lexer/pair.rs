@@ -9,8 +9,8 @@
 //! Two production-ready surfaces sit side by side, mirroring the tokenize stage:
 //!
 //! - [`pair`] — streaming `PairStream` for FFI / incremental consumers.
-//! - [`pair_in`] — arena-batch [`PairOutputIn<'a>`] whose `events` is
-//!   a `BumpVec<'a, PairEvent>` allocated inside the caller's [`Arena`].
+//! - `pair_in` — arena-batch `PairOutputIn<'a>` whose `events` is
+//!   a `BumpVec<'a, PairEvent>` allocated inside the caller's `Arena`.
 //!
 //! Diagnostics stay heap-allocated. The corpus-median doc emits ~0.1
 //! diagnostics; per-arena allocation would cost more than it saves and
@@ -50,8 +50,6 @@
 use core::mem;
 
 use aozora_syntax::Span;
-use aozora_syntax::borrowed::Arena;
-use bumpalo::collections::Vec as BumpVec;
 use smallvec::SmallVec;
 
 use super::token::{Token, TriggerKind};
@@ -170,118 +168,6 @@ where
     I: Iterator<Item = Token>,
 {
     PairStream::new(tokens)
-}
-
-/// Output of [`pair_in`]. `events` lives in the caller's arena;
-/// `diagnostics` stays heap-allocated (rare and outlives the arena).
-///
-/// `links` is a parallel side-table of resolved [`PairLink`] entries —
-/// one per matched open/close pair, in close order (the order matches
-/// closes are produced as the stack drains, which is the natural order
-/// downstream `EytzingerMap`s consume). Unmatched/unclosed events do not
-/// appear here. Materialised in the same arena as `events` so the
-/// editor surface can hand it back to the LSP layer without an extra
-/// copy.
-#[derive(Debug)]
-pub struct PairOutputIn<'a> {
-    /// One [`PairEvent`] per input [`Token`], in source order, plus a
-    /// trailing [`PairEvent::Unclosed`] per still-open frame at EOF.
-    /// Arena-allocated.
-    pub events: BumpVec<'a, PairEvent>,
-    /// Resolved (open, close) pairs, one per matched bracket, in close
-    /// order. Arena-allocated alongside `events`.
-    pub links: BumpVec<'a, PairLink>,
-    /// Non-fatal observations (unclosed opens, unmatched closes). Kept
-    /// on the heap because they outlive the arena.
-    pub diagnostics: Vec<Diagnostic>,
-}
-
-/// Materialise every pair-stage event from a `&[Token]` slice into a
-/// single arena-backed `PairOutputIn { events: BumpVec, diagnostics }`.
-///
-/// Production entry point for the pair stage.
-/// The borrowed pipeline owns the [`Arena`] and forwards it here;
-/// the resulting `BumpVec<'a, PairEvent>` lives next to the AST it
-/// will be folded into.
-#[must_use]
-pub fn pair_in<'a>(tokens: &[Token], arena: &'a Arena) -> PairOutputIn<'a> {
-    let mut events: BumpVec<'a, PairEvent> =
-        BumpVec::with_capacity_in(tokens.len() + 4, arena.bump());
-    // `links` is bounded above by the number of trigger tokens / 2.
-    // A small floor avoids zero-cap allocs on tiny inputs.
-    let links: BumpVec<'a, PairLink> =
-        BumpVec::with_capacity_in((tokens.len() / 4).max(4), arena.bump());
-    let mut ctx = PairCtx {
-        stack: SmallVec::new(),
-        diagnostics: Vec::new(),
-        links,
-    };
-
-    for token in tokens {
-        match *token {
-            Token::Text { range } => events.push(PairEvent::Text { range }),
-            Token::Newline { pos } => events.push(PairEvent::Newline { pos }),
-            Token::Trigger { kind, span } => {
-                events.push(classify_trigger_inline(kind, span, &mut ctx));
-            }
-        }
-    }
-
-    while let Some((kind, span)) = ctx.stack.pop() {
-        ctx.diagnostics
-            .push(Diagnostic::unclosed_bracket(span, kind));
-        events.push(PairEvent::Unclosed { kind, span });
-    }
-
-    PairOutputIn {
-        events,
-        links: ctx.links,
-        diagnostics: ctx.diagnostics,
-    }
-}
-
-/// Mutable context shared across the per-trigger `classify_trigger_inline`
-/// calls inside `pair_in`. Bundling the three mutable refs into one
-/// struct keeps the inline classifier's signature small (clippy
-/// `too_many_arguments`) without sacrificing inlining — `PairCtx` is
-/// itself a thin owning struct, not borrowed across function calls.
-struct PairCtx<'a> {
-    stack: SmallVec<[(PairKind, Span); 8]>,
-    diagnostics: Vec<Diagnostic>,
-    links: BumpVec<'a, PairLink>,
-}
-
-/// Free-function variant of [`PairStream::classify_trigger`] for
-/// [`pair_in`]. Mutates `ctx` in place; same invariants as the
-/// streaming version.
-#[inline]
-fn classify_trigger_inline(kind: TriggerKind, span: Span, ctx: &mut PairCtx<'_>) -> PairEvent {
-    if let Some(pair_kind) = open_kind_of(kind) {
-        ctx.stack.push((pair_kind, span));
-        return PairEvent::PairOpen {
-            kind: pair_kind,
-            span,
-        };
-    }
-    if let Some(pair_kind) = close_kind_of(kind) {
-        if let Some(&(top, open_span)) = ctx.stack.last()
-            && top == pair_kind
-        {
-            ctx.stack.pop();
-            ctx.links.push(PairLink::new(pair_kind, open_span, span));
-            return PairEvent::PairClose {
-                kind: pair_kind,
-                span,
-            };
-        }
-        ctx.diagnostics
-            .push(Diagnostic::unmatched_close(span, pair_kind));
-        return PairEvent::Unmatched {
-            kind: pair_kind,
-            span,
-        };
-    }
-    PairEvent::Solo { kind, span }
 }
 
 /// Stream of [`PairEvent`]s produced from an upstream [`Token`]

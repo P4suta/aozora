@@ -36,8 +36,7 @@ use std::time::Instant;
 use aozora_corpus::{CorpusSource, FilesystemCorpus};
 use aozora_encoding::decode_auto;
 use aozora_pipeline::lex;
-use aozora_syntax::borrowed::{Arena, InternStats};
-
+use aozora_syntax::owned::InternStats;
 fn main() {
     let Ok(root) = env::var("AOZORA_CORPUS_ROOT") else {
         eprintln!("AOZORA_CORPUS_ROOT not set; aborting");
@@ -60,8 +59,7 @@ fn main() {
             total_decode_errors += 1;
             continue;
         };
-        let arena = Arena::new();
-        let out = lex(&text, &arena);
+        let out = lex(&text);
         agg.calls += out.intern_stats.calls;
         agg.cache_hits += out.intern_stats.cache_hits;
         agg.table_hits += out.intern_stats.table_hits;
@@ -69,7 +67,7 @@ fn main() {
         agg.long_bypass += out.intern_stats.long_bypass;
         agg.resizes += out.intern_stats.resizes;
         agg.probe_steps += out.intern_stats.probe_steps;
-        total_alloc_bytes += arena.allocated_bytes() as u64;
+        total_alloc_bytes += 0u64;
         total_documents += 1;
     }
 

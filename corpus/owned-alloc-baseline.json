@@ -1,10 +1,10 @@
 {
-  "alloc_blocks_per_file": 459.7801,
-  "alloc_bytes_per_source_byte": 15.7257,
+  "alloc_blocks_per_file": 489.1472,
+  "alloc_bytes_per_source_byte": 14.4867,
   "files_analyzed": 17889,
   "note": "owned lex producer (#237 P0.2-real) allocation-pressure ratchet; regenerate with `just owned-alloc-gate-update`. Metrics normalized per-file / per-source-byte so corpus drift does not trip the gate.",
-  "owned_alloc_blocks_total": 8225006,
-  "owned_alloc_bytes_total": 13299655070,
+  "owned_alloc_blocks_total": 8750354,
+  "owned_alloc_bytes_total": 12251832292,
   "source_bytes_total": 845727350,
   "tolerance": 0.03
 }

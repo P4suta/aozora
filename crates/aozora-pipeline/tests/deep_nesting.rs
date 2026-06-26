@@ -26,8 +26,6 @@
 
 use aozora_pipeline::lex;
 use aozora_spec::Sentinel;
-use aozora_syntax::borrowed::Arena;
-
 /// Build `［＃` × depth followed by `］` × depth.
 fn nested_annotation(depth: usize) -> String {
     let mut s = String::with_capacity(depth * 9); // 6 bytes for `［＃`, 3 for `］`
@@ -44,8 +42,7 @@ fn nested_annotation(depth: usize) -> String {
 #[test]
 fn nested_annotations_16_levels_lex_without_panic() {
     let src = nested_annotation(16);
-    let arena = Arena::new();
-    let out = lex(&src, &arena);
+    let out = lex(&src);
     // Outermost bracket pair is the only top-level frame so it
     // produces exactly one inline `Directive` registry entry. No
     // diagnostics (every `［＃` has a matching `］`).
@@ -72,8 +69,7 @@ fn nested_annotations_16_levels_lex_without_panic() {
 #[test]
 fn nested_annotations_64_levels_spill_to_heap_unchanged() {
     let src = nested_annotation(64);
-    let arena = Arena::new();
-    let out = lex(&src, &arena);
+    let out = lex(&src);
     assert_eq!(out.registry.count_kind(Sentinel::Inline), 1);
     assert_eq!(out.registry.count_kind(Sentinel::BlockLeaf), 0);
     assert_eq!(out.registry.count_kind(Sentinel::BlockOpen), 0);
@@ -90,8 +86,7 @@ fn nested_annotations_64_levels_spill_to_heap_unchanged() {
 #[test]
 fn nested_annotations_256_levels_do_not_overflow_stack() {
     let src = nested_annotation(256);
-    let arena = Arena::new();
-    let out = lex(&src, &arena);
+    let out = lex(&src);
     assert_eq!(out.registry.count_kind(Sentinel::Inline), 1);
     assert_eq!(out.registry.count_kind(Sentinel::BlockLeaf), 0);
     assert_eq!(out.registry.count_kind(Sentinel::BlockOpen), 0);
@@ -109,10 +104,8 @@ fn nested_annotations_asymmetric_bodies_classify_consistently() {
     // at every depth; a regression in body-buffer indexing would shift
     // the inline registry's content.
     let src = "［＃A［＃B［＃C［＃D］］］］";
-    let arena_a = Arena::new();
-    let a = lex(src, &arena_a);
-    let arena_b = Arena::new();
-    let b = lex(src, &arena_b);
+    let a = lex(src);
+    let b = lex(src);
 
     // One outer inline entry, identical across runs.
     assert_eq!(a.registry.count_kind(Sentinel::Inline), 1);
@@ -132,8 +125,7 @@ fn nested_annotations_asymmetric_bodies_classify_consistently() {
 fn mixed_solo_and_nested_annotations_yield_expected_registry_entries() {
     // First `［＃X］` is a top-level solo; second is the nested chain.
     let src = "［＃X］［＃A［＃B［＃C］］］";
-    let arena = Arena::new();
-    let out = lex(src, &arena);
+    let out = lex(src);
     assert_eq!(
         out.registry.count_kind(Sentinel::Inline),
         2,

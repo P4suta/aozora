@@ -1,33 +1,23 @@
 //! `Document` — single owning handle to a parsed Aozora source
-//! buffer, and `Tree<'a>` — borrowed view a caller walks for
-//! output rendering.
+//! buffer, and `Tree<'a>` — a view a caller walks for output rendering.
 //!
-//! `Document` owns both the source buffer and a `bumpalo`-backed
-//! [`Arena`]; [`Document::parse`] returns an [`Tree<'_>`]
-//! that borrows from the arena via the `&self` lifetime. Owning
-//! source removes the self-referential-struct problem that would
-//! otherwise plague driver wrappers (FFI/WASM/Py): callers can hold
-//! a `Document` inside any wrapper without juggling source lifetimes.
+//! `Document` owns the source buffer; [`Document::parse`] returns a
+//! [`Tree<'_>`] whose `'a` lifetime tracks only that `&self` source borrow —
+//! the AST data itself is owned, lifetime-free, and `Send + Sync`
+//! (an `OwnedLexOutput`). Owning source removes the self-referential-struct
+//! problem that would otherwise plague driver wrappers (FFI/WASM/Py): callers
+//! can hold a `Document` inside any wrapper without juggling source lifetimes.
 //!
-//! Every borrowed-AST allocation lives inside the arena, with the
-//! [`Interner`](aozora_syntax::borrowed::Interner) deduplicating
-//! repeated string content. Dropping the `Document` frees the entire
-//! tree in a single `Bump::reset` step; no per-node `Drop` runs.
+//! The owned AST stores interned strings and node payloads in a flat
+//! `NodeStore` (the owned `StrInterner` deduplicates repeated string content);
+//! dropping the tree frees them in one step, with no per-node `Drop`.
 
 use core::fmt;
 
-use aozora_pipeline::{NodeRefOwned, OwnedLexOutput, SourceNodeOwned, lex_owned};
+use aozora_pipeline::{NodeRefOwned, OwnedLexOutput, SourceNodeOwned, lex};
 use aozora_render::{render_html_owned, serialize_owned};
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset};
-use aozora_syntax::borrowed::{Arena, ContainerPair};
-
-/// Pre-size the document arena as `source.len() * ARENA_CAPACITY_FACTOR`
-/// bytes. Picked from the full-corpus `allocator_pressure` probe over
-/// 17 435 docs: the median AST footprint is 3.4× the source size, p99
-/// is 8.25×, max 15.4×. Factor 4 covers the median + a margin while
-/// keeping small-doc overhead minimal (a 1 KB doc gets a 4 KB arena,
-/// the bumpalo default chunk size).
-const ARENA_CAPACITY_FACTOR: usize = 4;
+use aozora_syntax::owned::ContainerPair;
 
 /// Diagnostic policy applied at parse time.
 ///
@@ -57,9 +47,8 @@ pub enum DiagnosticPolicy {
 
 /// Builder for the [`Document::parse`] entry point.
 ///
-/// [`ParseOptions`] is the single tunable surface for arena capacity,
-/// encoding choice, and diagnostic policy. [`Document::new`] is
-/// equivalent to `ParseOptions::new().build(source)`.
+/// [`ParseOptions`] is the single tunable surface for the diagnostic policy.
+/// [`Document::new`] is equivalent to `ParseOptions::new().build(source)`.
 ///
 /// The builder methods consume `self` and return the next stage so
 /// the chain reads top-to-bottom and so unused options never leave a
@@ -67,23 +56,13 @@ pub enum DiagnosticPolicy {
 #[derive(Debug, Clone, Copy, Default)]
 #[must_use]
 pub struct ParseOptions {
-    arena_capacity: Option<usize>,
     diagnostic_policy: DiagnosticPolicy,
 }
 
 impl ParseOptions {
-    /// Default options: arena capacity is computed from
-    /// `ARENA_CAPACITY_FACTOR`, every diagnostic is collected.
+    /// Default options: every diagnostic is collected.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Override the arena capacity hint. Useful when the caller
-    /// already knows the AST footprint (e.g. from a previous parse of
-    /// a similar document).
-    pub fn arena_capacity(mut self, capacity: usize) -> Self {
-        self.arena_capacity = Some(capacity);
-        self
     }
 
     /// Override the [`DiagnosticPolicy`].
@@ -92,17 +71,12 @@ impl ParseOptions {
         self
     }
 
-    /// Build a [`Document`] from `source`, applying the configured
-    /// arena hint and diagnostic policy. The policy is recorded on
-    /// the document and applied during [`Document::parse`].
+    /// Build a [`Document`] from `source`, applying the configured diagnostic
+    /// policy. The policy is recorded on the document and applied during
+    /// [`Document::parse`].
     pub fn build(self, source: impl Into<Box<str>>) -> Document {
-        let source: Box<str> = source.into();
-        let capacity = self
-            .arena_capacity
-            .unwrap_or_else(|| source.len().saturating_mul(ARENA_CAPACITY_FACTOR));
         Document {
-            source,
-            arena: Arena::with_capacity(capacity),
+            source: source.into(),
             diagnostic_policy: self.diagnostic_policy,
         }
     }
@@ -110,66 +84,33 @@ impl ParseOptions {
 
 /// Single owning handle to a parsed Aozora source.
 ///
-/// Owns both the source buffer and a `bumpalo`-backed [`Arena`].
-/// The `&self` lifetime parameterises every borrowed-AST view
-/// returned from [`Document::parse`]; consumers hold the tree only
-/// as long as they hold a `&Document` reference.
+/// Owns the source buffer. [`Document::parse`] runs the owned, arena-free lex
+/// pipeline and returns a [`Tree`] that owns all its AST data and borrows only
+/// `&self`'s source.
 pub struct Document {
     source: Box<str>,
-    arena: Arena,
     diagnostic_policy: DiagnosticPolicy,
 }
 
 impl Document {
     /// Wrap a source string in a `Document` with default options.
     /// Equivalent to `ParseOptions::new().build(source)`.
-    ///
-    /// The arena is pre-sized to `source.len() * ARENA_CAPACITY_FACTOR`
-    /// bytes (a corpus-profile-driven estimate of the AST footprint:
-    /// p50 arena/source ratio is 3.4×, p99 is 8.25×). Pre-sizing
-    /// eliminates the early chunk-grow churn that hits large docs
-    /// hardest. Callers that want to override the arena hint or
-    /// diagnostic policy reach for [`Document::options`] /
-    /// [`ParseOptions::build`] instead.
     #[must_use]
     pub fn new(source: impl Into<Box<str>>) -> Self {
         ParseOptions::new().build(source)
     }
 
     /// Construct a fresh [`ParseOptions`] for the builder chain.
-    /// `Document::options().arena_capacity(N).diagnostic_policy(P).build(s)`
-    /// is the canonical configuration entry point.
+    /// `Document::options().diagnostic_policy(P).build(s)` is the canonical
+    /// configuration entry point.
     pub fn options() -> ParseOptions {
         ParseOptions::new()
-    }
-
-    /// Wrap a source string with a pre-sized arena.
-    ///
-    /// `Document::options().arena_capacity(n).build(source)` is the
-    /// preferred path since the builder composes naturally with the
-    /// diagnostic policy; this constructor remains for source-level
-    /// compatibility with pre-Phase-I callers.
-    #[deprecated(
-        since = "0.3.0",
-        note = "use Document::options().arena_capacity(n).build(source)"
-    )]
-    #[must_use]
-    pub fn with_arena_capacity(source: impl Into<Box<str>>, capacity_hint: usize) -> Self {
-        ParseOptions::new()
-            .arena_capacity(capacity_hint)
-            .build(source)
     }
 
     /// The source text owned by this document.
     #[must_use]
     pub fn source(&self) -> &str {
         &self.source
-    }
-
-    /// Arena bytes currently committed. Diagnostic / benchmarking only.
-    #[must_use]
-    pub fn arena_bytes(&self) -> usize {
-        self.arena.allocated_bytes()
     }
 
     /// Apply an in-place text edit and return a fresh [`Document`].
@@ -277,17 +218,16 @@ impl Document {
     /// Parse the document into the owned, lifetime-free [`OwnedLexOutput`].
     ///
     /// The owned twin of [`Self::parse`]: it runs the same lex pipeline through
-    /// the native owned fold ([`lex_owned`]), so the result owns all its
-    /// payloads, is `Send + Sync`, and does not borrow this document's arena
-    /// (the arena backs only the transient classify pass). Applies the same
-    /// [`DiagnosticPolicy`] filtering as [`Self::parse`].
+    /// the native owned fold ([`lex`]), so the result owns all its payloads and
+    /// is `Send + Sync`. Applies the same [`DiagnosticPolicy`] filtering as
+    /// [`Self::parse`].
     ///
     /// This is the entry point the #237 incremental-reparse LSP consumer holds
     /// across edits; renderers reach it through `aozora_render`'s owned paths
     /// (`serialize_owned` / `render_html_owned`).
     #[must_use]
     pub fn parse_owned(&self) -> OwnedLexOutput {
-        let mut out = lex_owned(&self.source, &self.arena);
+        let mut out = lex(&self.source);
         if self.diagnostic_policy == DiagnosticPolicy::DropInternal {
             out.diagnostics
                 .retain(|d| d.source() != aozora_spec::DiagnosticSource::Internal);
@@ -300,7 +240,6 @@ impl fmt::Debug for Document {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Document")
             .field("source_len", &self.source.len())
-            .field("arena_bytes", &self.arena.allocated_bytes())
             .field("diagnostic_policy", &self.diagnostic_policy)
             .finish()
     }
@@ -676,24 +615,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_options_arena_capacity_is_honoured() {
-        // The capacity hint propagates to bumpalo. Arena bytes after
-        // construction reflect the request rounded up to the chunk
-        // size; pin a lower bound rather than the exact value.
-        let doc = ParseOptions::new()
-            .arena_capacity(16 * 1024)
-            .build("plain text");
-        // Minimum: bumpalo's first chunk is at least the requested
-        // capacity. Conservative assertion rather than exact bytes.
-        drop(doc.parse()); // commit something to the arena
-        assert!(
-            doc.arena_bytes() <= 64 * 1024,
-            "arena bytes should not balloon for a tiny source: {}",
-            doc.arena_bytes()
-        );
-    }
-
-    #[test]
     fn parse_options_drop_internal_filters_internal_diagnostics() {
         // DropInternal hides Diagnostic::Internal entries. Production
         // parses on well-formed input emit none, so we cross-check
@@ -711,17 +632,6 @@ mod tests {
             "policy is a no-op when no Internal diagnostics exist"
         );
     }
-
-    #[test]
-    fn arena_grows_with_source_size() {
-        let small = Document::new("a");
-        drop(small.parse());
-        let big_src = "｜青梅《おうめ》".repeat(100);
-        let big = Document::new(big_src);
-        drop(big.parse());
-        assert!(big.arena_bytes() > small.arena_bytes());
-    }
-
     // ---- to_source_verbatim / sanitized contract ----
     //
     // Contract: `to_source_verbatim(parse(doc)) == sanitize(doc).text`,

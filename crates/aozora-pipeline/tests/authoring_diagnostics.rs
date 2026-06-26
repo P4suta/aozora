@@ -11,19 +11,15 @@
 
 use aozora_pipeline::lex;
 use aozora_spec::{Severity, codes};
-use aozora_syntax::borrowed::Arena;
-
 /// Count diagnostics with the given stable code in a fresh parse of `src`.
 fn count_code(src: &str, code: &str) -> usize {
-    let arena = Arena::new();
-    let out = lex(src, &arena);
+    let out = lex(src);
     out.diagnostics.iter().filter(|d| d.code() == code).count()
 }
 
 /// Assert exactly one diagnostic of `code` fires, and return its severity.
 fn one_diag_severity(src: &str, code: &str) -> Severity {
-    let arena = Arena::new();
-    let out = lex(src, &arena);
+    let out = lex(src);
     let hits: Vec<_> = out
         .diagnostics
         .iter()

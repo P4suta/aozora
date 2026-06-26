@@ -2,7 +2,7 @@
 //! must equal `serialize ∘ parse`.
 //!
 //! The serialise path round-trips a parsed tree back to Aozora source
-//! text. The natural "parse(serialize(parse(s))) == parse(s)" statement
+//! text. The natural `parse(serialize_owned(parse(s))) == parse(s)` statement
 //! requires AST equality; here we use the weaker but easier-to-verify
 //! property that re-parsing and re-serialising must converge to a
 //! fixed point. If the serialiser ever introduces non-canonical
@@ -12,14 +12,12 @@
 use aozora_pipeline::lex;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
-use aozora_render::serialize::serialize;
-use aozora_syntax::borrowed::Arena;
+use aozora_render::serialize_owned;
 use proptest::prelude::*;
 
 fn round_trip_once(source: &str) -> String {
-    let arena = Arena::new();
-    let out = lex(source, &arena);
-    serialize(&out)
+    let out = lex(source);
+    serialize_owned(&out)
 }
 
 fn assert_serialise_is_idempotent(source: &str) {

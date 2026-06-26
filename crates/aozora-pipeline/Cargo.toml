@@ -33,7 +33,6 @@ aozora-scan     = { workspace = true }
 # Tokenize-stage build-time tooling — unchanged from the lexer's
 # historical deps (before it was folded into aozora-pipeline).
 aho-corasick = { workspace = true, features = ["std"] }
-bumpalo      = { workspace = true }
 memchr       = { workspace = true }
 smallvec     = { workspace = true }
 

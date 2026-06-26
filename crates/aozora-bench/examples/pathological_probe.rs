@@ -35,9 +35,8 @@ use aozora_pipeline::lex;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, SpanKind, Token, classify, pair, sanitize, tokenize,
 };
-use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::Arena;
-use aozora_syntax::borrowed::Node;
+use aozora_syntax::alloc_owned::OwnedAllocator;
+use aozora_syntax::owned::NodeOwned;
 
 /// Default pathological doc — kaeriten / annotation density extreme.
 /// Override via the `AOZORA_PROBE_DOC` env var (relative to
@@ -90,9 +89,6 @@ fn main() {
     // cost. Two separate arenas because the standalone classify and
     // the full pipeline are timed back-to-back inside the same loop
     // iteration; sharing one would force a reset between them.
-    let mut arena = Arena::new();
-    let mut arena_full = Arena::new();
-    let arena_hint = text.len().saturating_mul(4);
     for _ in 0..ITERS {
         let t = Instant::now();
         let sanitized = sanitize(&text);
@@ -108,19 +104,17 @@ fn main() {
         drop(pair_stream.take_diagnostics());
         pair_total += t.elapsed().as_nanos() as u64;
 
-        arena.reset_with_hint(arena_hint);
-        let mut alloc = BorrowedAllocator::new(&arena);
+        let mut alloc = OwnedAllocator::new();
         let t = Instant::now();
         let mut classify_stream = classify(pair_events, &sanitized.text, &mut alloc);
-        let _classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
+        let _classify_spans: Vec<ClassifiedSpan> = (&mut classify_stream).collect();
         drop(classify_stream.take_diagnostics());
         classify_total += t.elapsed().as_nanos() as u64;
 
         // Full pipeline run, separate arena so the per-doc cost
         // includes the post-classify ArenaNormalizer walk.
-        arena_full.reset_with_hint(arena_hint);
         let t = Instant::now();
-        let _full = lex(&text, &arena_full);
+        let _full = lex(&text);
         full_total += t.elapsed().as_nanos() as u64;
     }
 
@@ -174,8 +168,7 @@ fn main() {
         YieldCounters::reset();
         PendingSizeHistogram::reset();
         {
-            let arena_inst = Arena::new();
-            drop(lex(&text, &arena_inst));
+            drop(lex(&text));
         }
         let snap = TimingTable::snapshot();
         let yields = YieldCounters::snapshot();
@@ -297,10 +290,9 @@ fn main() {
     let mut pair_stream = pair(tokens.into_iter());
     let pair_events: Vec<PairEvent> = (&mut pair_stream).collect();
     drop(pair_stream.take_diagnostics());
-    let arena = Arena::new();
-    let mut alloc = BorrowedAllocator::new(&arena);
+    let mut alloc = OwnedAllocator::new();
     let mut classify_stream = classify(pair_events.iter().cloned(), &sanitized.text, &mut alloc);
-    let classify_spans: Vec<ClassifiedSpan<'_>> = (&mut classify_stream).collect();
+    let classify_spans: Vec<ClassifiedSpan> = (&mut classify_stream).collect();
     drop(classify_stream.take_diagnostics());
     let mut aozora_count = 0;
     let mut counts: HashMap<&'static str, usize> = HashMap::new();
@@ -308,20 +300,20 @@ fn main() {
         if let SpanKind::Aozora(node) = &span.kind {
             aozora_count += 1;
             let name = match node {
-                Node::Ruby(_) => "Ruby",
-                Node::Format(_) => "Format",
-                Node::Gaiji(_) => "Gaiji",
-                Node::Line(_) => "Line",
-                Node::Warichu(_) => "Warichu",
-                Node::PageBreak => "PageBreak",
-                Node::SectionBreak(_) => "SectionBreak",
-                Node::Heading(_) => "Heading",
-                Node::HeadingHint(_) => "HeadingHint",
-                Node::Illustration(_) => "Illustration",
-                Node::Kaeriten(_) => "Kaeriten",
-                Node::Directive(_) => "Directive",
-                Node::AngleQuote(_) => "AngleQuote",
-                Node::Container(_) => "Container",
+                NodeOwned::Ruby(_) => "Ruby",
+                NodeOwned::Format(_) => "Format",
+                NodeOwned::Gaiji(_) => "Gaiji",
+                NodeOwned::Line(_) => "Line",
+                NodeOwned::Warichu(_) => "Warichu",
+                NodeOwned::PageBreak => "PageBreak",
+                NodeOwned::SectionBreak(_) => "SectionBreak",
+                NodeOwned::Heading(_) => "Heading",
+                NodeOwned::HeadingHint(_) => "HeadingHint",
+                NodeOwned::Illustration(_) => "Illustration",
+                NodeOwned::Kaeriten(_) => "Kaeriten",
+                NodeOwned::Directive(_) => "Directive",
+                NodeOwned::AngleQuote(_) => "AngleQuote",
+                NodeOwned::Container(_) => "Container",
                 _ => "_unknown",
             };
             *counts.entry(name).or_insert(0) += 1;

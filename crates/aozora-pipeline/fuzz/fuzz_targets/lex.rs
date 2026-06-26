@@ -2,11 +2,11 @@
 //!
 //! Arbitrary bytes are decoded as UTF-8 (invalid sequences skip this
 //! iteration). The resulting source text is pushed through
-//! `lex` and the produced [`LexOutput`] is sanity-
+//! `lex` and the produced `OwnedLexOutput` is sanity-
 //! checked: the lexer must terminate without panicking, the
 //! normalized text must remain valid UTF-8, and every reported
 //! diagnostic span must be in-bounds. Targets parser-side panics in
-//! the trigger / pair / classify stages plus arena-bounds bugs.
+//! the trigger / pair / classify stages.
 //!
 //! Run with the standard `just fuzz-{quick,deep,marathon,triage,
 //! promote}` family from the workspace root, e.g.
@@ -15,15 +15,13 @@
 #![no_main]
 
 use aozora_pipeline::lex;
-use aozora_syntax::borrowed::Arena;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(src) = core::str::from_utf8(data) else {
         return;
     };
-    let arena = Arena::new();
-    let out = lex(src, &arena);
+    let out = lex(src);
     // Invariants:
     //
     // 1. The normalized text must remain valid UTF-8 (the lexer never

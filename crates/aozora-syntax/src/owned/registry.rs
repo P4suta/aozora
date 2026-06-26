@@ -1,6 +1,6 @@
 //! Owned, no-lifetime mirror of the borrowed sentinel registry.
 //!
-//! [`NodeRefOwned`] mirrors [`crate::borrowed::NodeRef`] (inline payloads
+//! [`NodeRefOwned`] mirrors `crate::borrowed::NodeRef` (inline payloads
 //! become owned [`NodeOwned`]; container discriminants reuse `RegionFormat` /
 //! `RegionClose`); [`RegistryOwned`] wraps an [`EytzingerMap`] keyed by
 //! normalized byte position, reproducing the borrowed registry's API surface.
@@ -8,14 +8,12 @@
 use aozora_spec::{NormalizedOffset, Sentinel};
 use aozora_veb::EytzingerMap;
 
-use crate::borrowed::NodeRef;
 use crate::format::{RegionClose, RegionFormat};
 
 use super::payload::NodeOwned;
-use super::store::NodeStore;
 
 /// Unified view over a registry hit, owned mirror of
-/// [`crate::borrowed::NodeRef`].
+/// `crate::borrowed::NodeRef`.
 ///
 /// Each variant tags the sentinel kind that fired; consumers pattern-match the
 /// variant once, then handle the inline payload (an owned [`NodeOwned`]) or the
@@ -67,24 +65,11 @@ impl NodeRefOwned {
             Self::BlockClose(_) => crate::NodeKind::ContainerClose,
         }
     }
-
-    /// Materialise a borrowed [`NodeRef`] into the `store`. Inline / block-leaf
-    /// payloads convert through [`NodeOwned::from_borrowed`]; the container
-    /// discriminants reuse the `Copy` [`RegionFormat`] / [`RegionClose`].
-    #[must_use]
-    pub fn from_borrowed(nr: NodeRef<'_>, store: &mut NodeStore) -> Self {
-        match nr {
-            NodeRef::Inline(n) => Self::Inline(NodeOwned::from_borrowed(n, store)),
-            NodeRef::BlockLeaf(n) => Self::BlockLeaf(NodeOwned::from_borrowed(n, store)),
-            NodeRef::BlockOpen(rf) => Self::BlockOpen(rf),
-            NodeRef::BlockClose(rc) => Self::BlockClose(rc),
-        }
-    }
 }
 
 /// Whole-document owned registry — single Eytzinger-keyed table.
 ///
-/// Owned mirror of [`crate::borrowed::Registry`]. `node_at` is one binary
+/// Owned mirror of `crate::borrowed::Registry`. `node_at` is one binary
 /// search; every entry's sentinel kind is encoded by the [`NodeRefOwned`]
 /// variant. Not `Copy` (the map owns a `Vec`).
 #[derive(Debug, Clone)]
@@ -161,6 +146,34 @@ impl RegistryOwned {
 impl Default for RegistryOwned {
     fn default() -> Self {
         Self::empty()
+    }
+}
+
+/// Resolved container open/close pair in normalized coordinates.
+///
+/// Lifetime-free `Copy` side-table entry: the pipeline emits one per balanced
+/// `［＃ここから…］` / `［＃ここで…終わり］` pair. Editor surfaces (LSP
+/// `linkedEditingRange` / `documentHighlight` against container markers) consume
+/// this directly instead of re-deriving the pairing from independent open /
+/// close registry entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContainerPair {
+    /// The open container format. The builder constructs the pair from the
+    /// open-stack pop, so `kind` reflects the open marker authoritatively
+    /// (the close side is a discriminant; see [`RegionClose`]).
+    pub kind: RegionFormat,
+    /// Normalized byte offset of the open sentinel (`U+E003`).
+    pub open: NormalizedOffset,
+    /// Normalized byte offset of the close sentinel (`U+E004`).
+    pub close: NormalizedOffset,
+}
+
+impl ContainerPair {
+    /// Construct a pair. Helper for builder tests; in production the pipeline
+    /// emits these directly.
+    #[must_use]
+    pub const fn new(kind: RegionFormat, open: NormalizedOffset, close: NormalizedOffset) -> Self {
+        Self { kind, open, close }
     }
 }
 

@@ -1,7 +1,7 @@
 //! The CSS class names the HTML renderer can emit.
 //!
 //! [`AOZORA_CLASSES`] is the authoritative, public list of every
-//! `aozora-*` class [`crate::render_node`] / [`crate::html`] writes.
+//! `aozora-*` class [`crate::render_node`] / `crate::html` writes.
 //! Downstream consumers (e.g. the sibling `afm` crate) import it instead
 //! of hand-mirroring the contract. The `class_list_matches_emitted`
 //! test renders every `Node` + `ContainerKind` variant and asserts
@@ -152,14 +152,15 @@ pub(crate) const fn heading_style_slug(style: HeadingStyle) -> Option<&'static s
 #[cfg(test)]
 mod tests {
     use super::{AOZORA_CLASSES, bouten_kind_slug, bouten_position_slug};
-    use crate::render_node::render;
-    use aozora_syntax::alloc::BorrowedAllocator;
-    use aozora_syntax::borrowed::{Arena, ForwardOrigin, Node};
+    use crate::render_node::render_container;
+    use crate::render_node_owned::render_owned;
+    use aozora_syntax::alloc_owned::OwnedAllocator;
+    use aozora_syntax::owned::{NodeOwned, NodeStore};
     use aozora_syntax::{
         BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition, ColumnCount, Container,
-        DirectiveKind, FontShift, ForwardAttr, HEADING_KINDS, HEADING_STYLES, HeadingKind,
-        HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, MarginNoteKind,
-        RegionFormat, SECTION_KINDS,
+        DirectiveKind, FontShift, ForwardAttr, ForwardOrigin, HEADING_KINDS, HEADING_STYLES,
+        HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth,
+        MarginNoteKind, RegionFormat, SECTION_KINDS,
     };
     use core::num::{NonZeroI8, NonZeroU8};
     use std::collections::BTreeSet;
@@ -207,10 +208,23 @@ mod tests {
         }
     }
 
-    fn render_into(node: Node<'_>, set: &mut BTreeSet<String>) {
+    /// Collect a built owned node for later rendering (the allocator's store is
+    /// still borrowed mutably during the build, so the render pass runs after
+    /// `into_store`).
+    fn render_into(node: NodeOwned, nodes: &mut Vec<NodeOwned>) {
+        nodes.push(node);
+    }
+
+    /// Render one collected node, routing containers through the lifetime-free
+    /// container tag writer and every other node through the owned renderer.
+    fn render_collected(node: NodeOwned, store: &NodeStore, set: &mut BTreeSet<String>) {
         let mut s = String::new();
-        render(node, true, &mut s).expect("render into String is infallible");
-        render(node, false, &mut s).expect("render into String is infallible");
+        if let NodeOwned::Container(c) = node {
+            render_container(c, true, &mut s).expect("render into String is infallible");
+            render_container(c, false, &mut s).expect("render into String is infallible");
+        } else {
+            render_owned(node, store, &mut s).expect("render into String is infallible");
+        }
         collect_classes(&s, set);
     }
 
@@ -225,40 +239,39 @@ mod tests {
                   splitting would scatter the exhaustive enumeration"
     )]
     fn all_emitted_classes() -> BTreeSet<String> {
-        let arena = Arena::new();
-        let mut a = BorrowedAllocator::new(&arena);
-        let mut emitted: BTreeSet<String> = BTreeSet::new();
+        let mut a = OwnedAllocator::new();
+        let mut nodes: Vec<NodeOwned> = Vec::new();
 
         // --- leaf nodes ---
-        render_into(a.page_break(), &mut emitted);
-        render_into(a.body_end(), &mut emitted);
-        render_into(a.forced_break(), &mut emitted);
-        render_into(a.kaeriten("一"), &mut emitted);
-        render_into(a.line(LineFormat::Center { page: true }), &mut emitted);
-        render_into(a.line(LineFormat::Center { page: false }), &mut emitted);
-        render_into(a.line(LineFormat::Indent { amount: 2 }), &mut emitted);
-        render_into(a.line(LineFormat::AlignEnd { offset: 0 }), &mut emitted);
-        render_into(a.line(LineFormat::AlignEnd { offset: 2 }), &mut emitted);
-        render_into(a.sashie("f.png", None, None, None), &mut emitted);
-        render_into(a.sashie_general("f.png", "図", None), &mut emitted);
+        render_into(a.page_break(), &mut nodes);
+        render_into(a.body_end(), &mut nodes);
+        render_into(a.forced_break(), &mut nodes);
+        render_into(a.kaeriten("一"), &mut nodes);
+        render_into(a.line(LineFormat::Center { page: true }), &mut nodes);
+        render_into(a.line(LineFormat::Center { page: false }), &mut nodes);
+        render_into(a.line(LineFormat::Indent { amount: 2 }), &mut nodes);
+        render_into(a.line(LineFormat::AlignEnd { offset: 0 }), &mut nodes);
+        render_into(a.line(LineFormat::AlignEnd { offset: 2 }), &mut nodes);
+        render_into(a.sashie("f.png", None, None, None), &mut nodes);
+        render_into(a.sashie_general("f.png", "図", None), &mut nodes);
         render_into(
             a.heading_hint(HeadingKind::Large, HeadingStyle::Standard, "x"),
-            &mut emitted,
+            &mut nodes,
         );
 
         for &k in SECTION_KINDS {
-            render_into(a.section_break(k), &mut emitted);
+            render_into(a.section_break(k), &mut nodes);
         }
 
         let g = a.make_gaiji("X", None, false);
-        render_into(a.gaiji(g), &mut emitted);
+        render_into(a.gaiji(g), &mut nodes);
         for kind in [
             DirectiveKind::WarichuOpen,
             DirectiveKind::WarichuClose,
             DirectiveKind::Unknown,
         ] {
             let p = a.make_directive("［＃注］", kind);
-            render_into(a.annotation(p), &mut emitted);
+            render_into(a.annotation(p), &mut nodes);
         }
 
         // Nodes needing Content. `content_plain` takes `&mut self` but
@@ -267,27 +280,24 @@ mod tests {
         // plain sequential lets compile.
         let ruby_base = a.content_plain("親");
         let ruby_reading = a.content_plain("おや");
-        render_into(a.ruby(ruby_base, ruby_reading), &mut emitted);
+        render_into(a.ruby(ruby_base, ruby_reading), &mut nodes);
         let lruby_base = a.content_plain("子");
         let lruby_reading = a.content_plain("こ");
-        render_into(a.left_ruby(lruby_base, lruby_reading), &mut emitted);
+        render_into(a.left_ruby(lruby_base, lruby_reading), &mut nodes);
         let note_base = a.content_plain("孫");
         let note_text = a.content_plain("注");
         render_into(
             a.side_note(MarginNoteKind::Gloss, note_base, note_text),
-            &mut emitted,
+            &mut nodes,
         );
         let tcy = a.content_plain("囲");
-        render_into(a.tate_chu_yoko(tcy, ForwardOrigin::Reclaimed), &mut emitted);
+        render_into(a.tate_chu_yoko(tcy, ForwardOrigin::Reclaimed), &mut nodes);
         let angle = a.content_plain("内");
-        render_into(a.angle_quote(angle), &mut emitted);
+        render_into(a.angle_quote(angle), &mut nodes);
         for &kind in BOUTEN_KINDS {
             for pos in [BoutenPosition::Right, BoutenPosition::Left] {
                 let t = a.content_plain("文");
-                render_into(
-                    a.bouten(kind, t, pos, ForwardOrigin::Reclaimed),
-                    &mut emitted,
-                );
+                render_into(a.bouten(kind, t, pos, ForwardOrigin::Reclaimed), &mut nodes);
             }
         }
         // Every forward-emphasis attribute that produces a distinct class.
@@ -306,7 +316,7 @@ mod tests {
             let t = a.content_plain("強");
             render_into(
                 a.forward_format(attr, t, ForwardOrigin::Reclaimed),
-                &mut emitted,
+                &mut nodes,
             );
         }
         // FontSize positive → font-larger above; its negative magnitude
@@ -318,12 +328,12 @@ mod tests {
                 smaller,
                 ForwardOrigin::Reclaimed,
             ),
-            &mut emitted,
+            &mut nodes,
         );
         for &kind in HEADING_KINDS {
             for &style in HEADING_STYLES {
                 let t = a.content_plain("見");
-                render_into(a.aozora_heading(kind, style, t), &mut emitted);
+                render_into(a.aozora_heading(kind, style, t), &mut nodes);
             }
         }
 
@@ -409,9 +419,15 @@ mod tests {
             }
         }
         for kind in containers {
-            render_into(a.container(Container { kind }), &mut emitted);
+            render_into(a.container(Container { kind }), &mut nodes);
         }
 
+        // The build is done; take the store and render every collected node.
+        let store = a.into_store();
+        let mut emitted: BTreeSet<String> = BTreeSet::new();
+        for node in nodes {
+            render_collected(node, &store, &mut emitted);
+        }
         emitted
     }
 

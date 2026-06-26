@@ -1,5 +1,5 @@
 //! Owned, no-lifetime mirrors of the borrowed AST payload structs and the
-//! [`Content`](crate::borrowed::Content) / [`Segment`](crate::borrowed::Segment)
+//! `Content` / `Segment`
 //! two-tier content model.
 //!
 //! Every borrowed `&'src str` becomes a [`StrId`]; every borrowed
@@ -13,8 +13,7 @@ use core::fmt;
 
 use aozora_encoding::gaiji::{GaijiCanonical, MenKuTen, Resolved};
 
-use crate::borrowed::{self, ForwardOrigin};
-use crate::format::{ForwardAttr, LineFormat};
+use crate::format::{ForwardAttr, ForwardOrigin, LineFormat};
 use crate::{
     Container, DirectiveKind, HeadingKind, HeadingStyle, MarginNoteKind, RubySide, SectionKind,
 };
@@ -22,7 +21,7 @@ use crate::{
 use super::intern::StrId;
 use super::store::{ContentRange, NodeStore, SegRange};
 
-/// Owned mirror of [`crate::borrowed::Content`]: body content that may
+/// Owned mirror of `crate::borrowed::Content`: body content that may
 /// carry nested Aozora constructs. Two-tier like the borrowed form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -33,7 +32,7 @@ pub enum ContentOwned {
     Segments(SegRange),
 }
 
-/// Owned mirror of [`crate::borrowed::Segment`]: one element of a
+/// Owned mirror of `crate::borrowed::Segment`: one element of a
 /// [`ContentOwned::Segments`] run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -47,59 +46,7 @@ pub enum SegmentOwned {
     Directive(DirectiveOwned),
 }
 
-impl ContentOwned {
-    /// Materialise a borrowed [`Content`](borrowed::Content) into the `store`,
-    /// interning its text and pushing any segment run into the segment pool.
-    ///
-    /// A `Plain` run interns to a single [`StrId`]; a `Segments` run converts
-    /// each [`Segment`](borrowed::Segment) (assembled into a temporary `Vec`
-    /// first so the `&mut store` borrows do not interleave) and pushes the run
-    /// as a [`SegRange`]. The non-exhaustive forward-compat arm maps to the
-    /// empty-segments analogue, matching the borrowed `Content::EMPTY`
-    /// convention.
-    #[must_use]
-    pub fn from_borrowed(c: borrowed::Content<'_>, store: &mut NodeStore) -> Self {
-        match c {
-            borrowed::Content::Plain(s) => Self::Plain(store.intern(s)),
-            borrowed::Content::Segments(segs) => {
-                let owned: Vec<SegmentOwned> = segs
-                    .iter()
-                    .map(|&s| SegmentOwned::from_borrowed(s, store))
-                    .collect();
-                Self::Segments(store.push_segments(&owned))
-            }
-        }
-    }
-}
-
-impl SegmentOwned {
-    /// Materialise a borrowed [`Segment`](borrowed::Segment) into the `store`.
-    #[must_use]
-    pub fn from_borrowed(s: borrowed::Segment<'_>, store: &mut NodeStore) -> Self {
-        match s {
-            borrowed::Segment::Text(t) => Self::Text(store.intern(t)),
-            borrowed::Segment::Gaiji(g) => Self::Gaiji(GaijiOwned::from_borrowed(g, store)),
-            borrowed::Segment::Directive(d) => {
-                Self::Directive(DirectiveOwned::from_borrowed(d, store))
-            }
-        }
-    }
-}
-
 impl GaijiCanonicalOwned {
-    /// Materialise a borrowed [`GaijiCanonical`] into the `store`, interning the
-    /// verbatim mencode tail of the `Unresolved` form.
-    #[must_use]
-    pub fn from_borrowed(c: GaijiCanonical<'_>, store: &mut NodeStore) -> Self {
-        match c {
-            GaijiCanonical::MenKuTen(m) => Self::MenKuTen(m),
-            GaijiCanonical::Unicode(ch) => Self::Unicode(ch),
-            GaijiCanonical::Unresolved { mencode } => Self::Unresolved {
-                mencode: mencode.map(|m| store.intern(m)),
-            },
-        }
-    }
-
     /// Reconstruct the lifetime-free [`GaijiCanonical`] this mirrors, resolving
     /// the `Unresolved` mencode `StrId` against `store`. The single bridge to
     /// the `aozora-encoding` canonical authority (`resolve` / `write_mencode`),
@@ -144,18 +91,8 @@ impl GaijiCanonicalOwned {
 }
 
 impl GaijiOwned {
-    /// Materialise a borrowed [`Gaiji`](borrowed::Gaiji) into the `store`.
-    #[must_use]
-    pub fn from_borrowed(g: &borrowed::Gaiji<'_>, store: &mut NodeStore) -> Self {
-        Self {
-            hint: store.intern(g.hint),
-            canonical: GaijiCanonicalOwned::from_borrowed(g.canonical, store),
-            standalone: g.standalone,
-        }
-    }
-
     /// Resolve to a concrete glyph via the canonical value. Owned mirror of
-    /// [`borrowed::Gaiji::resolve`](borrowed::Gaiji::resolve): rebuilds the
+    /// `borrowed::Gaiji::resolve`: rebuilds the
     /// lifetime-free `GaijiCanonical` against `store` and delegates to the
     /// single `GaijiCanonical::resolve` authority, passing [`Self::hint`] as
     /// the resolver's description fallback. The `Resolved` result is owned
@@ -173,28 +110,7 @@ impl GaijiOwned {
     }
 }
 
-impl DirectiveOwned {
-    /// Materialise a borrowed [`Directive`](borrowed::Directive) into the
-    /// `store`.
-    #[must_use]
-    pub fn from_borrowed(d: &borrowed::Directive<'_>, store: &mut NodeStore) -> Self {
-        Self {
-            raw: store.intern(d.raw.as_str()),
-            kind: d.kind,
-        }
-    }
-}
-
-/// Push a borrowed `NonEmpty<Content>` field as a length-1 [`ContentRange`].
-///
-/// Builds the single owned content (which may itself append a segment run)
-/// before the `push_contents` call, so the `&mut store` borrows never overlap.
-fn push_one_content(store: &mut NodeStore, c: borrowed::Content<'_>) -> ContentRange {
-    let owned = ContentOwned::from_borrowed(c, store);
-    store.push_contents(&[owned])
-}
-
-/// Owned mirror of [`crate::borrowed::Ruby`] (furigana).
+/// Owned mirror of `crate::borrowed::Ruby` (furigana).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RubyOwned {
     /// Base text the reading annotates. Borrowed `NonEmpty<Content>`.
@@ -205,7 +121,7 @@ pub struct RubyOwned {
     pub side: RubySide,
 }
 
-/// Owned mirror of [`crate::borrowed::MarginNote`] (注記 / 傍記).
+/// Owned mirror of `crate::borrowed::MarginNote` (注記 / 傍記).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MarginNoteOwned {
     /// 注記 vs 傍記. Reused `MarginNoteKind`.
@@ -216,7 +132,7 @@ pub struct MarginNoteOwned {
     pub note: ContentRange,
 }
 
-/// Owned mirror of [`crate::borrowed::ForwardFormat`] (forward-reference
+/// Owned mirror of `crate::borrowed::ForwardFormat` (forward-reference
 /// emphasis).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ForwardFormatOwned {
@@ -243,7 +159,7 @@ pub enum GaijiCanonicalOwned {
     },
 }
 
-/// Owned mirror of [`crate::borrowed::Gaiji`] (out-of-range glyph).
+/// Owned mirror of `crate::borrowed::Gaiji` (out-of-range glyph).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GaijiOwned {
     /// Free-form source description / resolver fallback key. Borrowed
@@ -255,7 +171,7 @@ pub struct GaijiOwned {
     pub standalone: bool,
 }
 
-/// Owned mirror of [`crate::borrowed::Warichu`] (split annotation).
+/// Owned mirror of `crate::borrowed::Warichu` (split annotation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WarichuOwned {
     /// First (upper / right) half-size line. Borrowed bare `Content<'src>`.
@@ -264,7 +180,7 @@ pub struct WarichuOwned {
     pub lower: ContentOwned,
 }
 
-/// Owned mirror of [`crate::borrowed::Heading`].
+/// Owned mirror of `crate::borrowed::Heading`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadingOwned {
     /// 大 / 中 / 小 outline level. Reused `HeadingKind`.
@@ -275,7 +191,7 @@ pub struct HeadingOwned {
     pub text: ContentRange,
 }
 
-/// Owned mirror of [`crate::borrowed::HeadingHint`].
+/// Owned mirror of `crate::borrowed::HeadingHint`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadingHintOwned {
     /// Intended outline level. Reused `HeadingKind`.
@@ -286,7 +202,7 @@ pub struct HeadingHintOwned {
     pub target: StrId,
 }
 
-/// Owned mirror of [`crate::borrowed::Illustration`].
+/// Owned mirror of `crate::borrowed::Illustration`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IllustrationOwned {
     /// Image path / filename. Borrowed `NonEmptyStr<'src>`.
@@ -302,7 +218,7 @@ pub struct IllustrationOwned {
     pub description: Option<StrId>,
 }
 
-/// Owned mirror of [`crate::borrowed::Directive`] (generic annotation).
+/// Owned mirror of `crate::borrowed::Directive` (generic annotation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirectiveOwned {
     /// Raw bytes between `［＃` and `］`. Borrowed `NonEmptyStr<'src>`.
@@ -311,21 +227,21 @@ pub struct DirectiveOwned {
     pub kind: DirectiveKind,
 }
 
-/// Owned mirror of [`crate::borrowed::Kaeriten`] (返り点).
+/// Owned mirror of `crate::borrowed::Kaeriten` (返り点).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KaeritenOwned {
     /// Kanbun reading-order mark. Borrowed `NonEmptyStr<'src>`.
     pub mark: StrId,
 }
 
-/// Owned mirror of [`crate::borrowed::AngleQuote`] (`≪…≫` -> `《…》`).
+/// Owned mirror of `crate::borrowed::AngleQuote` (`≪…≫` -> `《…》`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AngleQuoteOwned {
     /// Quoted run. Borrowed `NonEmpty<Content>`.
     pub content: ContentRange,
 }
 
-/// Owned, no-lifetime mirror of [`crate::borrowed::Node`]. Every borrowed
+/// Owned, no-lifetime mirror of `crate::borrowed::Node`. Every borrowed
 /// `&'src X<'src>` payload is held INLINE as its owned `XOwned` (no `Box`/`Id`);
 /// `Copy` scalar-enum variants are unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -369,7 +285,7 @@ pub enum NodeOwned {
 
 impl NodeOwned {
     /// Cross-cutting [`crate::NodeKind`] tag for this node. Owned mirror of
-    /// [`crate::borrowed::Node::kind`].
+    /// `crate::borrowed::Node::kind`.
     #[must_use]
     pub const fn kind(self) -> crate::NodeKind {
         use crate::NodeKind;
@@ -404,7 +320,7 @@ impl NodeOwned {
     }
 
     /// Stable XML/element-style node name. Owned mirror of
-    /// [`crate::borrowed::Node::xml_node_name`], value-for-value identical so
+    /// `crate::borrowed::Node::xml_node_name`, value-for-value identical so
     /// the serializer's fallback placeholder (`<!-- unsupported-aozora: … -->`)
     /// reproduces the borrowed bytes exactly.
     #[must_use]
@@ -438,87 +354,6 @@ impl NodeOwned {
             Self::Container(_) => "aozora_container",
         }
     }
-
-    /// Materialise a borrowed [`Node`](borrowed::Node) into the `store`,
-    /// mapping every `&'src` payload to its owned mirror.
-    ///
-    /// Each `NonEmpty<Content>` field becomes a length-1 [`ContentRange`]
-    /// (via `push_one_content`); each bare `Content` field becomes an inline
-    /// [`ContentOwned`]; each `&str` / `NonEmptyStr` field interns to a
-    /// [`StrId`]. `Copy` scalar payloads (`LineFormat`, `SectionKind`,
-    /// `Container`, the scalar enums) are reused verbatim.
-    #[must_use]
-    pub fn from_borrowed(src_node: borrowed::Node<'_>, store: &mut NodeStore) -> Self {
-        match src_node {
-            borrowed::Node::Ruby(r) => {
-                let base = push_one_content(store, r.base.get());
-                let reading = push_one_content(store, r.reading.get());
-                Self::Ruby(RubyOwned {
-                    base,
-                    reading,
-                    side: r.side,
-                })
-            }
-            borrowed::Node::Format(f) => {
-                let target = push_one_content(store, f.target.get());
-                Self::Format(ForwardFormatOwned {
-                    attr: f.attr,
-                    target,
-                    origin: f.origin,
-                })
-            }
-            borrowed::Node::Gaiji(g) => Self::Gaiji(GaijiOwned::from_borrowed(g, store)),
-            borrowed::Node::Line(lf) => Self::Line(lf),
-            borrowed::Node::Warichu(w) => Self::Warichu(WarichuOwned {
-                upper: ContentOwned::from_borrowed(w.upper, store),
-                lower: ContentOwned::from_borrowed(w.lower, store),
-            }),
-            borrowed::Node::PageBreak => Self::PageBreak,
-            borrowed::Node::SectionBreak(k) => Self::SectionBreak(k),
-            borrowed::Node::BodyEnd => Self::BodyEnd,
-            borrowed::Node::ForcedBreak => Self::ForcedBreak,
-            borrowed::Node::Heading(h) => {
-                let text = push_one_content(store, h.text.get());
-                Self::Heading(HeadingOwned {
-                    kind: h.kind,
-                    style: h.style,
-                    text,
-                })
-            }
-            borrowed::Node::HeadingHint(h) => Self::HeadingHint(HeadingHintOwned {
-                level: h.level,
-                style: h.style,
-                target: store.intern(h.target.as_str()),
-            }),
-            borrowed::Node::Illustration(s) => Self::Illustration(IllustrationOwned {
-                file: store.intern(s.file.as_str()),
-                number: s.number.map(|n| store.intern(n.as_str())),
-                dimensions: s.dimensions.map(|d| store.intern(d)),
-                caption: s.caption.map(|c| ContentOwned::from_borrowed(c, store)),
-                description: s.description.map(|d| store.intern(d)),
-            }),
-            borrowed::Node::Kaeriten(k) => Self::Kaeriten(KaeritenOwned {
-                mark: store.intern(k.mark.as_str()),
-            }),
-            borrowed::Node::Directive(a) => {
-                Self::Directive(DirectiveOwned::from_borrowed(a, store))
-            }
-            borrowed::Node::AngleQuote(d) => {
-                let content = push_one_content(store, d.content.get());
-                Self::AngleQuote(AngleQuoteOwned { content })
-            }
-            borrowed::Node::MarginNote(s) => {
-                let base = push_one_content(store, s.base.get());
-                let note = push_one_content(store, s.note.get());
-                Self::MarginNote(MarginNoteOwned {
-                    kind: s.kind,
-                    base,
-                    note,
-                })
-            }
-            borrowed::Node::Container(c) => Self::Container(c),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -547,12 +382,12 @@ mod tests {
     }
 
     #[test]
-    fn gaiji_owned_resolve_mirrors_borrowed() {
-        // Convert a borrowed `Gaiji` to owned and confirm the on-demand glyph
-        // resolution is byte-identical across every canonical arm. Uses
-        // `GaijiCanonical::from_mencode` so the canonical values are realistic
-        // (structured Unicode / 面区点 / verbatim / absent) without hand-built
-        // `MenKuTen` internals.
+    fn gaiji_owned_resolve_mirrors_canonical_authority() {
+        // Build an owned `Gaiji` per canonical arm and confirm the on-demand
+        // glyph resolution is byte-identical to the `aozora-encoding`
+        // `GaijiCanonical::resolve` authority. Uses `GaijiCanonical::from_mencode`
+        // so the canonical values are realistic (structured Unicode / 面区点 /
+        // verbatim / absent) without hand-built `MenKuTen` internals.
         let mut store = NodeStore::new();
         for (hint, mencode) in [
             ("竜", Some("U+9F8D")),         // → Unicode
@@ -561,15 +396,22 @@ mod tests {
             ("謎", None),                   // → Unresolved { None }
         ] {
             let canonical = GaijiCanonical::from_mencode(mencode);
-            let g = borrowed::Gaiji {
-                hint,
-                canonical,
+            let hint_id = store.intern(hint);
+            let owned_canonical = match canonical {
+                GaijiCanonical::MenKuTen(m) => GaijiCanonicalOwned::MenKuTen(m),
+                GaijiCanonical::Unicode(c) => GaijiCanonicalOwned::Unicode(c),
+                GaijiCanonical::Unresolved { mencode } => GaijiCanonicalOwned::Unresolved {
+                    mencode: mencode.map(|m| store.intern(m)),
+                },
+            };
+            let owned = GaijiOwned {
+                hint: hint_id,
+                canonical: owned_canonical,
                 standalone: false,
             };
-            let owned = GaijiOwned::from_borrowed(&g, &mut store);
             assert_eq!(
                 owned.resolve(&store),
-                g.resolve(),
+                canonical.resolve(hint),
                 "owned gaiji resolve diverged for hint={hint:?} mencode={mencode:?}",
             );
         }

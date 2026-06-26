@@ -38,7 +38,6 @@ use aozora_pipeline::lex;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use aozora_scan::NaiveScanner;
-use aozora_syntax::borrowed::Arena;
 use proptest::prelude::*;
 
 fn scan_count(source: &str) -> usize {
@@ -71,10 +70,9 @@ fn assert_scan_invariants(source: &str) {
 
     // Run the lex pipeline. (1b) Scanner totality on the normalized
     // buffer.
-    let arena = Arena::new();
-    let out = lex(source, &arena);
-    let norm_offsets = NaiveScanner.scan_offsets(out.normalized);
-    assert_offsets_are_char_boundaries("normalized", out.normalized, &norm_offsets);
+    let out = lex(source);
+    let norm_offsets = NaiveScanner.scan_offsets(&out.normalized);
+    assert_offsets_are_char_boundaries("normalized", &out.normalized, &norm_offsets);
 
     // (2) tokenize-stage monotonicity: the pipeline consumes (or passes
     // through) triggers but never invents new ones. The sanitize-stage

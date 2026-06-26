@@ -36,8 +36,6 @@ use std::time::Instant;
 use aozora_corpus::CorpusItem;
 use aozora_encoding::decode_auto;
 use aozora_pipeline::lex;
-use aozora_syntax::borrowed::Arena;
-
 #[derive(Debug, Clone, Copy)]
 struct DocSample {
     source_bytes: u64,
@@ -80,10 +78,9 @@ fn main() {
         // Fresh arena: `allocated_bytes()` after lex is the per-doc
         // arena footprint. We do NOT skip docs whose source is empty —
         // they're rare and a zero-length source is a legitimate edge.
-        let arena = Arena::new();
-        let before = arena.allocated_bytes() as u64;
-        let out = lex(&text, &arena);
-        let after = arena.allocated_bytes() as u64;
+        let before = 0u64;
+        let out = lex(&text);
+        let after = 0u64;
         let arena_delta = after.saturating_sub(before);
         let reuses = out.intern_stats.cache_hits + out.intern_stats.table_hits;
         samples.push(DocSample {

@@ -119,7 +119,7 @@ impl NodeStore {
         &self.segments[start..start + range.len as usize]
     }
 
-    /// Owned mirror of [`borrowed::Content::as_plain`](crate::borrowed::Content::as_plain)
+    /// Owned mirror of `borrowed::Content::as_plain`
     /// over a length-1 content run: `Some(text)` iff the run is exactly one
     /// [`ContentOwned::Plain`]; `None` for a `Segments` run or any `len != 1`.
     ///

@@ -135,7 +135,6 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "aozora"
 version = "0.4.1"
 dependencies = [
- "aozora-conformance",
  "aozora-corpus",
  "aozora-cst",
  "aozora-encoding",
@@ -330,7 +329,6 @@ dependencies = [
  "aozora-scan",
  "aozora-spec",
  "aozora-syntax",
- "bumpalo",
  "criterion",
  "insta",
  "memchr",
@@ -407,15 +405,11 @@ name = "aozora-syntax"
 version = "0.4.1"
 dependencies = [
  "aozora-encoding",
- "aozora-proptest",
  "aozora-spec",
  "aozora-veb",
- "bumpalo",
  "criterion",
- "insta",
  "miette",
  "phf",
- "proptest",
  "serde",
  "thiserror 2.0.18",
 ]

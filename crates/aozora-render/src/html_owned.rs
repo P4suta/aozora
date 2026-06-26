@@ -1,6 +1,6 @@
 //! Owned-AST HTML rendering.
 //!
-//! Owned mirror of [`crate::html`]: the same single forward walk over the
+//! Owned mirror of `crate::html`: the same single forward walk over the
 //! normalized text driving the same block-level `RenderState`, but each PUA
 //! sentinel dispatches through an [`OwnedLexOutput`]'s
 //! [`RegistryOwned`](aozora_syntax::owned::RegistryOwned) and resolves its
@@ -9,12 +9,12 @@
 //!
 //! The block-structure machinery (`RenderState`'s paragraph / container logic)
 //! and the plain-run escaper (`escape_text_chunk`) are **reused** from
-//! [`crate::html`] — they read only `Copy` `RegionFormat` / `RegionClose` /
+//! `crate::html` — they read only `Copy` `RegionFormat` / `RegionClose` /
 //! `bool` scalars identical in both worlds, so there is a single
 //! container-HTML authority. Only the AST-reading per-node emitters fork, in
 //! the private `render_node_owned` module.
 //!
-//! Proven byte-identical to [`crate::html::render_to_string`] by the
+//! Proven byte-identical to `crate::html::render_to_string` by the
 //! differential gate in `crates/aozora/tests/owned_html_gate.rs`.
 
 use core::fmt;
@@ -27,7 +27,7 @@ use crate::walk::{SentinelKind, WalkSinkOwned, walk_owned};
 
 /// Render an [`OwnedLexOutput`] into a fresh `String`.
 ///
-/// Owned mirror of [`crate::html::render_to_string`]: allocates roughly
+/// Owned mirror of `crate::html::render_to_string`: allocates roughly
 /// `2 × normalized.len()` upfront. For streaming consumers prefer
 /// [`render_html_owned_into`] to avoid the intermediate `String`.
 ///

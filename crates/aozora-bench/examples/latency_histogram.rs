@@ -34,9 +34,7 @@ use aozora_pipeline::lex;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
 };
-use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::Arena;
-
+use aozora_syntax::alloc_owned::OwnedAllocator;
 const BUCKETS: usize = 10;
 const MIN_NS: u64 = 1_000;
 const MAX_NS: u64 = 1_000_000_000;
@@ -86,17 +84,15 @@ fn main() {
         drop(ps.take_diagnostics());
         pair_ns.push(t.elapsed().as_nanos() as u64);
 
-        let arena_p3 = Arena::new();
-        let mut alloc = BorrowedAllocator::new(&arena_p3);
+        let mut alloc = OwnedAllocator::new();
         let t = Instant::now();
         let mut cs = classify(pe, &sanitized.text, &mut alloc);
-        let _spans: Vec<ClassifiedSpan<'_>> = (&mut cs).collect();
+        let _spans: Vec<ClassifiedSpan> = (&mut cs).collect();
         drop(cs.take_diagnostics());
         classify_ns.push(t.elapsed().as_nanos() as u64);
 
-        let arena_full = Arena::new();
         let t = Instant::now();
-        let _full = lex(&text, &arena_full);
+        let _full = lex(&text);
         full_ns.push(t.elapsed().as_nanos() as u64);
     }
 

@@ -15,8 +15,8 @@ use std::sync::OnceLock;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, Anchored, Input, MatchKind, StartKind};
 use core::num::{NonZeroI8, NonZeroU8};
 
-use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed;
+use aozora_syntax::alloc_owned::OwnedAllocator;
+use aozora_syntax::owned::DirectiveOwned;
 use aozora_syntax::{
     BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, FontShift,
     HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, RegionClose,
@@ -805,10 +805,10 @@ pub(super) fn editorial_note_kind(body: &str) -> Option<DirectiveKind> {
     reason = "single match arm per BodyFamily — splitting would scatter \
               the dispatch logic and obscure the intentional 1:1 mapping"
 )]
-pub(super) fn classify_annotation_body<'a>(
+pub(super) fn classify_annotation_body(
     body: &str,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Option<(EmitKind<'a>, Option<&'a borrowed::Directive<'a>>)> {
+    alloc: &mut OwnedAllocator,
+) -> Option<(EmitKind, Option<DirectiveOwned>)> {
     #[cfg(feature = "classify-instrument")]
     let _phase3_guard = SubsystemGuard::new(Subsystem::BodyDispatcher);
     if body.is_empty() {
@@ -1186,7 +1186,7 @@ pub(super) fn classify_annotation_body<'a>(
 /// Wrap an open [`RegionFormat`] as the matching [`EmitKind`]: the open marker
 /// carries the full payload; the close projects to its [`RegionClose`]
 /// discriminant via [`RegionClose::of`] (the open side stays authoritative).
-fn open_or_close(region: RegionFormat, is_close: bool) -> EmitKind<'static> {
+fn open_or_close(region: RegionFormat, is_close: bool) -> EmitKind {
     if is_close {
         EmitKind::BlockClose(RegionClose::of(region))
     } else {
@@ -1254,7 +1254,7 @@ const fn is_okurigana_char(ch: char) -> bool {
 /// `「caption」` (per <https://www.aozora.gr.jp/annotation/graphics.html>),
 /// and confirms the trailing `入る` keyword. The caption is plain content,
 /// rendered into `<figcaption>` (§8).
-fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Option<EmitKind<'a>> {
+fn classify_sashie_body(body: &str, alloc: &mut OwnedAllocator) -> Option<EmitKind> {
     // `挿絵（file）入る` and the numbered `挿絵{N}（file）入る` (N a run of
     // half/full-width digits before the `（`). A description *before* 挿絵
     // (`女性と犬の挿絵（…）`, `「…」のキャプション付きの挿絵（…）`) is a separate,
@@ -1323,10 +1323,10 @@ fn classify_sashie_body<'a>(body: &str, alloc: &mut BorrowedAllocator<'a>) -> Op
 /// description, tried just before the `Directive{Unknown}` catch-all (it
 /// has no prefix needle because the description is arbitrary). Returns
 /// `None` for any body that is not a complete `<非空>（<file>）入る`.
-pub(super) fn classify_general_image_body<'a>(
+pub(super) fn classify_general_image_body(
     body: &str,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Option<EmitKind<'a>> {
+    alloc: &mut OwnedAllocator,
+) -> Option<EmitKind> {
     let middle = body.strip_suffix("入る")?;
     let paren = middle.find('（')?;
     let description = &middle[..paren];

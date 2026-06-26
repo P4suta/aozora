@@ -24,7 +24,7 @@
 //!    boundary of `source`, so the byte ranges are always sliceable.
 //! 3. **In-bounds diagnostics.** Every diagnostic span is non-inverted.
 //!
-//! The classifier borrows from a `BorrowedAllocator`; we materialise a
+//! The classifier builds owned nodes via an `OwnedAllocator`; we materialise a
 //! fresh arena per iteration so allocations are reclaimed in one
 //! `Bump::reset` on drop.
 //!
@@ -34,8 +34,7 @@
 #![no_main]
 
 use aozora_pipeline::lexer::{ClassifiedSpan, classify, pair, tokenize};
-use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::Arena;
+use aozora_syntax::alloc_owned::OwnedAllocator;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -49,11 +48,10 @@ fuzz_target!(|data: &[u8]| {
     // strictly wider adversarial surface than the sanitized path: it
     // exercises the same slice / cast / char-boundary code with
     // positions that need not respect any sanitize-stage post-condition.
-    let arena = Arena::new();
-    let mut alloc = BorrowedAllocator::new(&arena);
+    let mut alloc = OwnedAllocator::new();
     let mut pair_stream = pair(tokenize(src));
 
-    let mut spans: Vec<ClassifiedSpan<'_>> = Vec::new();
+    let mut spans: Vec<ClassifiedSpan> = Vec::new();
     let classify_diags = {
         let mut stream = classify(&mut pair_stream, src, &mut alloc);
         for span in &mut stream {

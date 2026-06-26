@@ -9,9 +9,9 @@
 
 use aozora_spec::{Diagnostic, PairLink, SourceOffset, Span};
 
-use super::registry::{NodeRefOwned, RegistryOwned};
+use super::intern::InternStats;
+use super::registry::{ContainerPair, NodeRefOwned, RegistryOwned};
 use super::store::NodeStore;
-use crate::borrowed::{ContainerPair, InternStats};
 
 /// Source-keyed registry entry — owned mirror of
 /// `aozora_pipeline::borrowed::SourceNode`.
@@ -77,13 +77,12 @@ impl OwnedLexOutput {
     /// Assemble an [`OwnedLexOutput`] from its already-owned field set.
     ///
     /// The only constructor for this `#[non_exhaustive]` struct reachable from
-    /// outside `aozora-syntax` — the pipeline-side native owned producer
-    /// (`aozora_pipeline::lex_owned` / `Pipeline::build_owned`) builds the
-    /// [`RegistryOwned`], [`SourceNodeOwned`] table, and [`NodeStore`] (via its
-    /// `OwnedSink` fold, which converts each node through the `from_borrowed`
-    /// mappers exactly once), then hands the whole field set here. Every
-    /// argument maps to the identically-named field; see the struct docs for
-    /// their borrowed `LexOutput` analogues.
+    /// outside `aozora-syntax` — the pipeline's native owned producer
+    /// (`aozora_pipeline::lex` / `Pipeline::build`) builds the
+    /// [`RegistryOwned`], [`SourceNodeOwned`] table, and [`NodeStore`] (the
+    /// classify stage allocates owned nodes directly into the store via
+    /// `OwnedAllocator`, with no intermediate borrowed tree), then hands the
+    /// whole field set here. Every argument maps to the identically-named field.
     #[must_use]
     #[allow(
         clippy::too_many_arguments,

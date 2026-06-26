@@ -14,13 +14,10 @@
 //! mass conformance failure.
 
 use aozora_pipeline::lex;
-use aozora_render::html::render_to_string;
-use aozora_syntax::borrowed::Arena;
-
+use aozora_render::render_html_owned;
 fn render(source: &str) -> String {
-    let arena = Arena::new();
-    let out = lex(source, &arena);
-    render_to_string(&out)
+    let out = lex(source);
+    render_html_owned(&out)
 }
 
 #[test]

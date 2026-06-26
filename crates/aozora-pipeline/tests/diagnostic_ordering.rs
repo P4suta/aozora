@@ -19,8 +19,6 @@
 
 use aozora_pipeline::lex;
 use aozora_spec::{Diagnostic, DiagnosticSource, codes};
-use aozora_syntax::borrowed::Arena;
-
 /// Ordinal position of a diagnostic in the documented pipeline order
 /// (sanitize → pair → classify → "later").
 ///
@@ -68,8 +66,7 @@ fn phase0_then_phase2_diagnostics_are_emitted_in_pipeline_order() {
     // put it first; we keep the pin minimal so that a regression that
     // re-sorts diagnostics by phase ordinal is what we'd notice.
     let src = "\u{E001}［＃unclosed";
-    let arena = Arena::new();
-    let out = lex(src, &arena);
+    let out = lex(src);
 
     let ordinals: Vec<u8> = out.diagnostics.iter().map(phase_ordinal).collect();
 
@@ -108,7 +105,6 @@ fn phase0_then_phase2_diagnostics_are_emitted_in_pipeline_order() {
 #[test]
 fn multi_diagnostic_snapshot_freezes_pipeline_order() {
     let src = "\u{E001}stray］then［＃tail";
-    let arena = Arena::new();
-    let out = lex(src, &arena);
+    let out = lex(src);
     insta::assert_snapshot!(format!("{:#?}", out.diagnostics));
 }

@@ -28,8 +28,6 @@ use aozora_pipeline::{
     SlugFamily, lex,
 };
 use aozora_spec::codes;
-use aozora_syntax::borrowed::Arena;
-
 /// Substitute placeholder tokens in a slug's canonical text with a
 /// concrete value, so the body actually parses.
 fn instantiate(canonical: &str) -> String {
@@ -76,8 +74,7 @@ fn every_canonical_slug_parses_without_residual_marker() {
     for entry in SLUGS {
         let body = instantiate(entry.canonical);
         let source = wrap_for_family(entry.family, &body);
-        let arena = Arena::new();
-        let out = lex(&source, &arena);
+        let out = lex(&source);
         for diag in &out.diagnostics {
             assert!(
                 diag.code() != codes::RESIDUAL_ANNOTATION_MARKER,
@@ -97,8 +94,7 @@ fn every_canonical_slug_lands_a_sentinel_when_expected() {
         };
         let body = instantiate(entry.canonical);
         let source = wrap_for_family(entry.family, &body);
-        let arena = Arena::new();
-        let out = lex(&source, &arena);
+        let out = lex(&source);
         let count = out.normalized.matches(expected).count();
         assert!(
             count >= 1,
@@ -135,12 +131,10 @@ fn variant_canonicalisation_then_parse_matches_canonical_parse() {
             .find(|e| e.canonical == canonical)
             .expect("canonical in SLUGS");
         let canonical_source = wrap_for_family(entry.family, &instantiate(canonical));
-        let arena_a = Arena::new();
-        let arena_b = Arena::new();
-        let canonical_out = lex(&canonical_source, &arena_a);
+        let canonical_out = lex(&canonical_source);
         // Re-parse the canonicalised text — for the LSP code action
         // this is the post-rewrite source the editor would apply.
-        let recanonical_out = lex(&canonical_source, &arena_b);
+        let recanonical_out = lex(&canonical_source);
         assert_eq!(canonical_out.normalized, recanonical_out.normalized);
     }
 }

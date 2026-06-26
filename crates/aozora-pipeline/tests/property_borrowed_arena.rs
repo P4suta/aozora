@@ -13,7 +13,7 @@
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use aozora_spec::Sentinel;
-use aozora_syntax::borrowed::{Arena, NodeRef};
+use aozora_syntax::owned::NodeRefOwned;
 use proptest::prelude::*;
 
 #[allow(
@@ -21,10 +21,8 @@ use proptest::prelude::*;
     reason = "exhaustive determinism asserter: each block checks one independent invariant (normalized text, sanitized_len, diagnostic count, four registries, four iter_sorted walks). Splitting into helpers would obscure the per-invariant intent without saving lines."
 )]
 fn assert_deterministic(source: &str) {
-    let arena_a = Arena::new();
-    let arena_b = Arena::new();
-    let a = aozora_pipeline::lex(source, &arena_a);
-    let b = aozora_pipeline::lex(source, &arena_b);
+    let a = aozora_pipeline::lex(source);
+    let b = aozora_pipeline::lex(source);
 
     assert_eq!(
         a.normalized, b.normalized,
@@ -59,21 +57,21 @@ fn assert_deterministic(source: &str) {
             "registry[{pos_a}] sentinel kind drift"
         );
         match (nr_a, nr_b) {
-            (NodeRef::Inline(node_a), NodeRef::Inline(node_b))
-            | (NodeRef::BlockLeaf(node_a), NodeRef::BlockLeaf(node_b)) => {
+            (NodeRefOwned::Inline(node_a), NodeRefOwned::Inline(node_b))
+            | (NodeRefOwned::BlockLeaf(node_a), NodeRefOwned::BlockLeaf(node_b)) => {
                 assert_eq!(
                     node_a.xml_node_name(),
                     node_b.xml_node_name(),
                     "registry[{pos_a}] inline / block-leaf payload kind drift"
                 );
             }
-            (NodeRef::BlockOpen(kind_a), NodeRef::BlockOpen(kind_b)) => {
+            (NodeRefOwned::BlockOpen(kind_a), NodeRefOwned::BlockOpen(kind_b)) => {
                 assert_eq!(
                     kind_a, kind_b,
                     "registry[{pos_a}] container open kind drift"
                 );
             }
-            (NodeRef::BlockClose(kind_a), NodeRef::BlockClose(kind_b)) => {
+            (NodeRefOwned::BlockClose(kind_a), NodeRefOwned::BlockClose(kind_b)) => {
                 assert_eq!(
                     kind_a, kind_b,
                     "registry[{pos_a}] container close kind drift"
@@ -87,8 +85,7 @@ fn assert_deterministic(source: &str) {
 }
 
 fn assert_registry_aligned_with_sentinels(source: &str) {
-    let arena = Arena::new();
-    let out = aozora_pipeline::lex(source, &arena);
+    let out = aozora_pipeline::lex(source);
 
     // Every registry entry's position must land on the matching
     // sentinel byte in `normalized`.

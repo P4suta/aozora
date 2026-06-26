@@ -2,8 +2,8 @@
 //!
 //! [`NodeKind`] enumerates every wire-distinct tag the borrowed-AST
 //! surfaces produce. It is used both for **internal** projection
-//! ([`Node::kind`](crate::borrowed::Node::kind),
-//! [`NodeRef::kind`](crate::borrowed::NodeRef::kind)) and for the
+//! (`Node::kind`,
+//! `NodeRef::kind`) and for the
 //! **driver wire format** ([`crate`]'s host crate `aozora` projects
 //! the tag to a stable camelCase string via [`NodeKind::as_json_tag`]).
 //!
@@ -15,9 +15,9 @@
 /// Cross-cutting tag for an AST node or `NodeRef` projection.
 ///
 /// The first 18 variants ([`Self::Ruby`] through [`Self::Container`])
-/// project from [`crate::borrowed::Node`]'s discriminant. The
+/// project from `crate::borrowed::Node`'s discriminant. The
 /// final two ([`Self::ContainerOpen`] / [`Self::ContainerClose`])
-/// only arise from [`crate::borrowed::NodeRef`]'s container open /
+/// only arise from `crate::borrowed::NodeRef`'s container open /
 /// close variants — the inline `Container` payload uses
 /// [`Self::Container`].
 ///

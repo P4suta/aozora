@@ -9,16 +9,13 @@
 //! through the output's [`NodeStore`].
 
 use aozora::{
-    BoutenPosition, DirectiveKind, Format, ForwardAttr, HeadingKind, HeadingStyle, IndentBlock,
-    IndentLayout, LineFormat, RegionFormat, SectionKind, Span, roman_slug,
-    syntax::{
-        borrowed::ForwardOrigin,
-        owned::{
-            AngleQuoteOwned, ContentOwned, ContentRange, DirectiveOwned, ForwardFormatOwned,
-            GaijiOwned, HeadingHintOwned, HeadingOwned, IllustrationOwned, KaeritenOwned,
-            MarginNoteOwned, NodeOwned, NodeRefOwned, NodeStore, OwnedLexOutput, RubyOwned,
-            SegmentOwned, SourceNodeOwned, WarichuOwned,
-        },
+    BoutenPosition, DirectiveKind, Format, ForwardAttr, ForwardOrigin, HeadingKind, HeadingStyle,
+    IndentBlock, IndentLayout, LineFormat, RegionFormat, SectionKind, Span, roman_slug,
+    syntax::owned::{
+        AngleQuoteOwned, ContentOwned, ContentRange, DirectiveOwned, ForwardFormatOwned,
+        GaijiOwned, HeadingHintOwned, HeadingOwned, IllustrationOwned, KaeritenOwned,
+        MarginNoteOwned, NodeOwned, NodeRefOwned, NodeStore, OwnedLexOutput, RubyOwned,
+        SegmentOwned, SourceNodeOwned, WarichuOwned,
     },
 };
 use pandoc_ast::{Attr, Block, Inline, Pandoc};

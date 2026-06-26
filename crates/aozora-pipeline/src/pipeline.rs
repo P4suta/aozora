@@ -1,195 +1,122 @@
 //! Type-state lex pipeline.
 //!
-//! `Pipeline<'src, 'a, S>` makes the lex stage order enforceable at
-//! compile time. The state markers [`Source`], [`Sanitized`],
-//! [`Tokenized`], [`Paired`] track which stages have run; methods
-//! consume `self` and return the next state. Calling `.pair()` on a
-//! `Source` is a type error; calling `.tokenize()` twice is a type
-//! error; etc.
+//! `Pipeline<'src, S>` makes the lex stage order enforceable at compile time.
+//! The state markers [`Source`], [`Sanitized`], [`Tokenized`], [`Paired`] track
+//! which stages have run; methods consume `self` and return the next state.
+//! Calling `.pair()` on a `Source` is a type error; calling `.tokenize()` twice
+//! is a type error; etc.
 //!
 //! # Two entry shapes
 //!
-//! - [`Pipeline::run_to_completion`] — one-shot, equivalent to
-//!   [`crate::lex`]. Used by `Document::parse` and the
-//!   FFI / WASM / Python drivers.
+//! - [`Pipeline::run_to_completion`] — one-shot, equivalent to [`crate::lex`].
+//!   Used by `Document::parse` and the FFI / WASM / Python drivers.
 //! - [`Pipeline::new`] → `.sanitize()` → `.tokenize()` → `.pair()` →
-//!   `.build()` — explicit chain. Use for inspection / instrumentation:
-//!   each intermediate state exposes accessors (`.sanitized_text()`,
-//!   `.tokens()`, `.events()`, `.diagnostics()`) so callers can probe
-//!   the partial output without re-running the pipeline.
-//!
-//! # Arena-batch passing
-//!
-//! Every inter-stage boundary materialises a [`bumpalo::collections::Vec`]
-//! inside the pipeline's [`Arena`]. The tokenize stage emits
-//! `BumpVec<'a, Token>`; the pair stage emits `BumpVec<'a, PairEvent>`;
-//! the classify stage streams its `ClassifiedSpan`s through the
-//! `ArenaNormalizer` callback (no third Vec materialisation — the
-//! streaming `classify` Iterator path is the cheapest shape on the
-//! corpus).
-//!
-//! Net effect on the corpus profile: per-parse `malloc`/`free`
-//! traffic collapses into a single bump-pointer advance per element.
+//!   `.build()` — explicit chain. Use for inspection / instrumentation: each
+//!   intermediate state exposes accessors (`.sanitized_text()`, `.tokens()`,
+//!   `.events()`, `.diagnostics()`) so callers can probe the partial output
+//!   without re-running the pipeline.
 //!
 //! # State carries its own payload
 //!
-//! Each state marker is a field-bound struct holding exactly the
-//! stage outputs it has produced (`Sanitized` carries the arena
-//! `&'a str`; `Tokenized` adds the token `BumpVec`; …). Reading
-//! `.sanitized_text()` from `Pipeline<'_, '_, Sanitized>` is a
-//! field projection on the state struct — no `Option::expect`
-//! lives in production code. The compiler enforces "you cannot
-//! ask for tokens unless you are in `Tokenized`" via method
-//! resolution alone.
+//! Each state marker is a field-bound struct holding exactly the stage outputs
+//! it has produced (`Sanitized` carries the sanitized `String`; `Tokenized`
+//! adds the token `Vec`; …). Reading `.sanitized_text()` from
+//! `Pipeline<'_, Sanitized>` is a field projection on the state struct — no
+//! `Option::expect` lives in production code.
 //!
-//! # Lifetime model
+//! # Owned, arena-free
 //!
-//! `'src` is the original source text lifetime; `'a` is the arena
-//! lifetime. The sanitized text is materialised into the arena at the
-//! `Sanitized` transition (cost: one `arena.alloc_str` of
-//! `sanitize(source).text`), so all downstream stages borrow from the
-//! arena rather than from in-Pipeline storage. This eliminates the
-//! self-referential-struct problem `Tokenizer<'sanitized>` would
-//! otherwise impose.
-//!
-//! # Compile-time stage-order enforcement
-//!
-//! Calling `.pair()` on a fresh [`Source`] (without going through
-//! `.sanitize().tokenize()`) is a *type error*: there is no
-//! `impl Pipeline<'_, '_, Source>::pair` method. The compile-fail
-//! doctest below pins this contract — adding such an impl in the
-//! future would silently break the type-state guarantee:
-//!
-//! ```compile_fail
-//! use aozora_pipeline::Pipeline;
-//! use aozora_syntax::borrowed::Arena;
-//!
-//! let arena = Arena::new();
-//! // .pair() on Source skips the sanitize + tokenize stages — must not compile.
-//! let _ = Pipeline::new("plain", &arena).pair();
-//! ```
+//! Every stage operates on owned data: the sanitized text is an owned `String`,
+//! the token / event lists are `Vec`s, and the classify stage builds the owned
+//! AST directly into an
+//! [`OwnedAllocator`]'s
+//! [`NodeStore`](aozora_syntax::owned::NodeStore), which threads straight into
+//! the returned [`OwnedLexOutput`]. There is no bumpalo arena.
 //!
 //! # Why `build` is the terminal transition
 //!
-//! The classify stage requires `&mut BorrowedAllocator<'a>`. The
-//! allocator owns the `Interner<'a>` whose internal `RefCell` makes
-//! it `!Sync`; threading `&mut alloc` through Pipeline states would
-//! force the allocator to live as long as the pipeline, blocking any
-//! external pause-and-inspect between the pair and classify stages. We
-//! collapse the classify stage + the `ArenaNormalizer` fold
-//! into a single terminal `.build()` call instead — inspection up
-//! through `Paired` works freely; the final allocation pass is
-//! atomic.
-
-use core::marker::PhantomData;
+//! The classify stage requires `&mut OwnedAllocator`. We collapse the classify
+//! stage + the normalize fold into a single terminal `.build()` call —
+//! inspection up through `Paired` works freely; the final pass is atomic.
 
 use crate::lexer::{
-    ClassifiedSpan, PairEvent, SpanKind, Token, classify, pair_in, sanitize, tokenize_in,
+    ClassifiedSpan, PairEvent, SpanKind, Token, classify, pair, sanitize, tokenize,
 };
 use aozora_spec::{Diagnostic, PairLink};
-use core::mem::take;
 
-use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed::{Arena, ContainerPair, ForwardOrigin, InternStats, Node, Registry};
-use aozora_syntax::owned::{OwnedLexOutput, RegistryOwned};
+use aozora_syntax::alloc_owned::OwnedAllocator;
+use aozora_syntax::format::ForwardOrigin;
+use aozora_syntax::owned::{NodeOwned, OwnedLexOutput, RegistryOwned};
 use aozora_syntax::{ForwardAttr, RegionClose, RegionFormat, Span};
-use bumpalo::collections::Vec as BumpVec;
 
-use crate::LexOutput;
-use crate::borrowed::{ArenaNormalizer, BorrowedSink, NodeSink, OwnedSink, SourceNode};
+use crate::owned_lex::OwnedNormalizer;
 
 // =====================================================================
-// State markers (field-bound — each state carries the stage output it
-// is responsible for. No `Option` / `expect` chain in production code:
-// the type system guarantees the field is present whenever the state
-// type can be named).
+// State markers (field-bound — each state carries the stage output it is
+// responsible for).
 // =====================================================================
 
 /// Initial state — no stage has run yet.
 #[derive(Debug, Clone, Copy)]
 pub struct Source;
 
-/// The sanitize stage has run; sanitized text is materialised in the arena.
-#[derive(Debug, Clone, Copy)]
-pub struct Sanitized<'a> {
-    sanitized_text: &'a str,
+/// The sanitize stage has run; the sanitized text is owned.
+#[derive(Debug, Clone)]
+pub struct Sanitized {
+    sanitized_text: String,
 }
 
-/// The tokenize stage has run; the token list is materialised inside the arena.
+/// The tokenize stage has run; the token list is materialised.
 #[derive(Debug)]
-pub struct Tokenized<'a> {
-    sanitized_text: &'a str,
-    tokens: BumpVec<'a, Token>,
+pub struct Tokenized {
+    sanitized_text: String,
+    tokens: Vec<Token>,
 }
 
-/// The pair stage has run; the event list and the resolved (open, close)
-/// link side-table are materialised inside the arena.
+/// The pair stage has run; the event list and the resolved (open, close) link
+/// side-table are materialised.
 #[derive(Debug)]
-pub struct Paired<'a> {
-    sanitized_text: &'a str,
-    events: BumpVec<'a, PairEvent>,
-    links: BumpVec<'a, PairLink>,
+pub struct Paired {
+    sanitized_text: String,
+    events: Vec<PairEvent>,
+    links: Vec<PairLink>,
 }
 
 // =====================================================================
 // Pipeline
 // =====================================================================
 
-/// Type-state lex pipeline. Each state's transition method consumes
-/// `self`, materialises its stage output into the next state struct,
-/// and returns a new pipeline in the next state.
+/// Type-state lex pipeline. Each state's transition method consumes `self`,
+/// materialises its stage output into the next state struct, and returns a new
+/// pipeline in the next state.
 #[derive(Debug)]
-pub struct Pipeline<'src, 'a, S> {
+pub struct Pipeline<'src, S> {
     source: &'src str,
-    arena: &'a Arena,
     diagnostics: Vec<Diagnostic>,
     state: S,
-    // Tie the unused `'a` lifetime to the struct so the compiler
-    // accepts state structs that reference the arena even when the
-    // current state marker (`Source`) doesn't. Zero size at runtime.
-    _arena: PhantomData<&'a Arena>,
 }
 
 // ---------------------------------------------------------------------
 // Source
 // ---------------------------------------------------------------------
 
-impl<'src, 'a> Pipeline<'src, 'a, Source> {
-    /// Wrap a source string for type-state-driven lex. The sanitize
-    /// stage has not yet run; only `source` and `arena` are set.
+impl<'src> Pipeline<'src, Source> {
+    /// Wrap a source string for type-state-driven lex. The sanitize stage has
+    /// not yet run; only `source` is set.
     #[must_use]
-    pub fn new(source: &'src str, arena: &'a Arena) -> Self {
+    pub fn new(source: &'src str) -> Self {
         Self {
             source,
-            arena,
             diagnostics: Vec::new(),
             state: Source,
-            _arena: PhantomData,
         }
     }
 
-    /// One-shot driver: run every stage and return the final
-    /// [`LexOutput`]. Equivalent to [`crate::lex`].
+    /// One-shot driver: run every stage and return the final [`OwnedLexOutput`].
+    /// Equivalent to [`crate::lex`].
     #[must_use]
-    pub fn run_to_completion(source: &'src str, arena: &'a Arena) -> LexOutput<'a> {
-        Self::new(source, arena)
-            .sanitize()
-            .tokenize()
-            .pair()
-            .build()
-    }
-
-    /// One-shot driver producing the owned, lifetime-free
-    /// [`OwnedLexOutput`]. Equivalent to [`crate::lex_owned`]. `arena` backs
-    /// only the transient borrowed classify pass; the returned output owns all
-    /// its payloads and does not borrow `arena`.
-    #[must_use]
-    pub fn run_to_completion_owned(source: &'src str, arena: &'a Arena) -> OwnedLexOutput {
-        Self::new(source, arena)
-            .sanitize()
-            .tokenize()
-            .pair()
-            .build_owned()
+    pub fn run_to_completion(source: &'src str) -> OwnedLexOutput {
+        Self::new(source).sanitize().tokenize().pair().build()
     }
 
     /// Borrow the original source text.
@@ -198,22 +125,18 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
         self.source
     }
 
-    /// Run the sanitize stage. Materialises the sanitized text in the
-    /// arena so downstream stages borrow from the arena, not from the
-    /// Pipeline struct (which would be self-referential).
+    /// Run the sanitize stage, materialising the sanitized text as an owned
+    /// `String`.
     #[must_use]
-    pub fn sanitize(mut self) -> Pipeline<'src, 'a, Sanitized<'a>> {
+    pub fn sanitize(mut self) -> Pipeline<'src, Sanitized> {
         let out = sanitize(self.source);
         self.diagnostics.extend(out.diagnostics);
-        let arena_text: &'a str = self.arena.alloc_str(&out.text);
         Pipeline {
             source: self.source,
-            arena: self.arena,
             diagnostics: self.diagnostics,
             state: Sanitized {
-                sanitized_text: arena_text,
+                sanitized_text: out.text.into_owned(),
             },
-            _arena: PhantomData,
         }
     }
 }
@@ -222,11 +145,11 @@ impl<'src, 'a> Pipeline<'src, 'a, Source> {
 // Sanitized
 // ---------------------------------------------------------------------
 
-impl<'src, 'a> Pipeline<'src, 'a, Sanitized<'a>> {
-    /// Sanitized text (arena-allocated).
+impl<'src> Pipeline<'src, Sanitized> {
+    /// Sanitized text.
     #[must_use]
-    pub fn sanitized_text(&self) -> &'a str {
-        self.state.sanitized_text
+    pub fn sanitized_text(&self) -> &str {
+        &self.state.sanitized_text
     }
 
     /// Diagnostics accumulated through the sanitize stage.
@@ -235,21 +158,17 @@ impl<'src, 'a> Pipeline<'src, 'a, Sanitized<'a>> {
         &self.diagnostics
     }
 
-    /// Run the tokenize stage. Materialises the full
-    /// `BumpVec<'a, Token>` inside `arena` via [`tokenize_in`].
+    /// Run the tokenize stage, materialising the token list.
     #[must_use]
-    pub fn tokenize(self) -> Pipeline<'src, 'a, Tokenized<'a>> {
-        let sanitized_text = self.state.sanitized_text;
-        let tokens = tokenize_in(sanitized_text, self.arena);
+    pub fn tokenize(self) -> Pipeline<'src, Tokenized> {
+        let tokens: Vec<Token> = tokenize(&self.state.sanitized_text).collect();
         Pipeline {
             source: self.source,
-            arena: self.arena,
             diagnostics: self.diagnostics,
             state: Tokenized {
-                sanitized_text,
+                sanitized_text: self.state.sanitized_text,
                 tokens,
             },
-            _arena: PhantomData,
         }
     }
 }
@@ -258,35 +177,34 @@ impl<'src, 'a> Pipeline<'src, 'a, Sanitized<'a>> {
 // Tokenized
 // ---------------------------------------------------------------------
 
-impl<'src, 'a> Pipeline<'src, 'a, Tokenized<'a>> {
+impl<'src> Pipeline<'src, Tokenized> {
     /// Borrow the materialised token list. Useful for instrumentation.
     #[must_use]
     pub fn tokens(&self) -> &[Token] {
         &self.state.tokens
     }
 
-    /// Run the pair stage. Materialises a paired-event stream
-    /// inside `arena` via [`pair_in`]. The pair stage's
-    /// diagnostics are drained into the pipeline's diagnostic
-    /// accumulator immediately.
+    /// Run the pair stage, materialising a paired-event stream and the resolved
+    /// link side-table. The pair stage's diagnostics are drained into the
+    /// pipeline's diagnostic accumulator immediately.
     #[must_use]
-    pub fn pair(mut self) -> Pipeline<'src, 'a, Paired<'a>> {
+    pub fn pair(mut self) -> Pipeline<'src, Paired> {
         let Tokenized {
             sanitized_text,
             tokens,
         } = self.state;
-        let out = pair_in(&tokens, self.arena);
-        self.diagnostics.extend(out.diagnostics);
+        let mut pair_stream = pair(tokens.into_iter());
+        let events: Vec<PairEvent> = (&mut pair_stream).collect();
+        self.diagnostics.extend(pair_stream.take_diagnostics());
+        let links = pair_stream.take_links();
         Pipeline {
             source: self.source,
-            arena: self.arena,
             diagnostics: self.diagnostics,
             state: Paired {
                 sanitized_text,
-                events: out.events,
-                links: out.links,
+                events,
+                links,
             },
-            _arena: PhantomData,
         }
     }
 }
@@ -295,147 +213,34 @@ impl<'src, 'a> Pipeline<'src, 'a, Tokenized<'a>> {
 // Paired (terminal)
 // ---------------------------------------------------------------------
 
-/// Result of the sink-generic classify + normalize fold, before the
-/// representation-specific finalize. `build` freezes it into the arena-backed
-/// [`LexOutput`]; `build_owned` moves it into the lifetime-free
-/// [`OwnedLexOutput`]. The `builder`'s sink holds the recorded nodes (borrowed
-/// `NodeRef`s or owned `NodeRefOwned`s); `links` is the arena pair side-table;
-/// the rest is shared scalar/owned data.
-struct Folded<'a, S> {
-    builder: ArenaNormalizer<'a, 'a, S>,
-    links: BumpVec<'a, PairLink>,
-    intern_stats: InternStats,
-    sanitized_text: &'a str,
-    sanitized_len: u32,
-    diagnostics: Vec<Diagnostic>,
-    arena: &'a Arena,
-}
-
-impl<'a> Pipeline<'_, 'a, Paired<'a>> {
-    /// Borrow the materialised pair-event list. Useful for inspection
-    /// before `.build()`.
+impl Pipeline<'_, Paired> {
+    /// Borrow the materialised pair-event list. Useful for inspection before
+    /// `.build()`.
     #[must_use]
     pub fn events(&self) -> &[PairEvent] {
         &self.state.events
     }
 
-    /// Borrow the resolved (open, close) pair side-table. Useful for
-    /// inspection before `.build()`.
+    /// Borrow the resolved (open, close) pair side-table.
     #[must_use]
     pub fn links(&self) -> &[PairLink] {
         &self.state.links
     }
 
-    /// Drive the classify stage + the arena normalizer fold and return
-    /// the final [`LexOutput`]. Terminal transition because
-    /// `&mut BorrowedAllocator` cannot be safely held across an external
-    /// pause without locking the pipeline into a single thread for the
-    /// allocator's lifetime.
+    /// Drive the classify stage + the owned normalizer fold and return the final
+    /// [`OwnedLexOutput`]. Terminal transition.
     ///
     /// # Diagnostic order
     ///
-    /// Sanitize stage → pair stage (unclosed/unmatched) →
-    /// classify stage (unknown annotations etc.). Matches the
-    /// pre-Pipeline `lex` ordering.
+    /// Sanitize stage → pair stage (unclosed/unmatched) → classify stage
+    /// (unknown annotations etc.) → normalizer (mismatched container close).
     ///
     /// # Panics
     ///
-    /// Panics if the sanitized source exceeds `u32::MAX` bytes
-    /// (the lexer's `Span` width contract). In practice unreachable;
-    /// the sanitize stage caps source length at the same boundary.
+    /// Panics if the sanitized source exceeds `u32::MAX` bytes (the lexer's
+    /// `Span` width contract). In practice unreachable.
     #[must_use]
-    pub fn build(self) -> LexOutput<'a> {
-        let Folded {
-            builder,
-            links,
-            intern_stats,
-            sanitized_text,
-            sanitized_len,
-            diagnostics,
-            arena,
-        } = self.fold_with_sink::<BorrowedSink<'a>>();
-
-        let normalized: &'a str = arena.alloc_str(&builder.out);
-        // Single-table Registry: classifier emits in source order so the
-        // sink's `entries` are already sorted by position; from_sorted_slice
-        // skips the redundant sort pass.
-        let registry = Registry::from_sorted_slice(&builder.sink.entries);
-        // Freeze the arena `BumpVec<PairLink>` into a `&'a [PairLink]`.
-        // `BumpVec::into_bump_slice` consumes self and returns a slice
-        // alive for the bump allocator's lifetime, exactly the lifetime
-        // we need on `LexOutput::pairs`.
-        let pairs: &'a [PairLink] = links.into_bump_slice();
-        // Move the source-keyed side table out of the heap-backed
-        // `Vec<SourceNode>` and into the arena, in one allocation.
-        let source_nodes: &'a [SourceNode<'a>] = arena.alloc_slice_copy(&builder.sink.source_nodes);
-        // Same dance for the container-pair side table — close-order
-        // (matches the close events as the open-stack drains).
-        let container_pairs: &'a [ContainerPair] = arena.alloc_slice_copy(&builder.container_pairs);
-
-        LexOutput {
-            normalized,
-            sanitized: sanitized_text,
-            registry,
-            diagnostics,
-            sanitized_len,
-            pairs,
-            source_nodes,
-            container_pairs,
-            intern_stats,
-        }
-    }
-
-    /// Drive the classify stage + normalizer fold and return the owned,
-    /// lifetime-free [`OwnedLexOutput`]. The native owned producer: the fold's
-    /// `OwnedSink` converts each emitted node into its `NodeStore` in one pass
-    /// (the registry and source-keyed table share each node's owned handle), so
-    /// nothing borrows the arena and the result is `Send + Sync`.
-    ///
-    /// `intern_stats` carries the **borrowed** classify-stage interner's
-    /// counters (the authoritative dedup-ratio surface): the owned store's own
-    /// interner sees a different call sequence — classify interns nodes later
-    /// dropped by lowering, the fold only the survivors — so the two cannot
-    /// match numerically. Diagnostic ordering and panic contract match
-    /// [`Self::build`].
-    #[must_use]
-    pub fn build_owned(self) -> OwnedLexOutput {
-        let Folded {
-            mut builder,
-            links,
-            intern_stats,
-            sanitized_text,
-            sanitized_len,
-            diagnostics,
-            // `arena` backs only the transient classify pass; the owned output
-            // borrows none of it, so it is dropped here.
-            ..
-        } = self.fold_with_sink::<OwnedSink>();
-
-        let registry = RegistryOwned::from_sorted_slice(&builder.sink.entries);
-        // Owned pairs: copy the arena pair side-table out (the owned output
-        // must not borrow the arena). `PairLink` is `Copy`.
-        let pairs: Vec<PairLink> = links.iter().copied().collect();
-        // Move the owned normalized text, side tables, and node store out of
-        // the builder — no arena copy, the owned output owns them outright.
-        OwnedLexOutput::new(
-            take(&mut builder.out),
-            sanitized_text.to_owned(),
-            registry,
-            diagnostics,
-            sanitized_len,
-            pairs,
-            take(&mut builder.sink.source_nodes),
-            take(&mut builder.container_pairs),
-            intern_stats,
-            take(&mut builder.sink.store),
-        )
-    }
-
-    /// Shared classify + lowering + normalize fold, generic over the output
-    /// [`NodeSink`]. Both `build` (borrowed) and `build_owned` (owned) run the
-    /// identical emit logic through this; only the representation-specific
-    /// finalize differs. Returns the populated [`Folded`] bundle.
-    fn fold_with_sink<S: NodeSink<'a>>(mut self) -> Folded<'a, S> {
+    pub fn build(mut self) -> OwnedLexOutput {
         let Paired {
             sanitized_text,
             events,
@@ -444,81 +249,88 @@ impl<'a> Pipeline<'_, 'a, Paired<'a>> {
         let sanitized_len =
             u32::try_from(sanitized_text.len()).expect("sanitize asserts source.len() <= u32::MAX");
 
-        // Allocator capacity hint: source.len()/32 is a rough upper bound
-        // on the number of distinct strings the borrowed pipeline will
-        // intern. `BorrowedAllocator::with_capacity` rounds up to the
-        // next power of two; floor of 64 covers short documents.
-        let interner_hint = (sanitized_text.len() / 32).max(64);
-        let mut alloc = BorrowedAllocator::with_capacity(self.arena, interner_hint);
-        let mut builder: ArenaNormalizer<'a, 'a, S> =
-            ArenaNormalizer::new(sanitized_text, sanitized_text.len() / 64);
+        let mut alloc = OwnedAllocator::new();
 
-        // Drain the arena-allocated `BumpVec<PairEvent>` through the
-        // streaming `classify` Iterator path.
-        let mut events_iter = events.into_iter();
-        let mut classify_stream = classify(&mut events_iter, sanitized_text, &mut alloc);
-        // Materialise the classified spans and drain the stream's
-        // diagnostics, then drop the stream so its `&mut alloc` borrow is
-        // released before the NORMALIZE (lowering) pass — the pass folds
-        // surface dialects into canonical core nodes (e.g. inline-range
-        // emphasis → forward leaf) and needs the allocator to mint them.
-        let spans: Vec<ClassifiedSpan<'a>> = (&mut classify_stream).collect();
-        let classify_diagnostics: Vec<Diagnostic> = classify_stream.take_diagnostics();
-        drop(classify_stream);
-        for span in &lower_spans(spans, sanitized_text, &mut alloc) {
-            builder.emit(span);
-        }
+        let (normalized, recorder, container_pairs, classify_diagnostics, norm_diagnostics, store) = {
+            let mut normalizer = OwnedNormalizer::new(&sanitized_text, sanitized_text.len() / 64);
+
+            // Drain the pair events through the streaming `classify` Iterator
+            // path; collect the classified spans and the classify diagnostics,
+            // then drop the stream so its `&mut alloc` borrow is released before
+            // the NORMALIZE (lowering) pass mints its canonical core nodes.
+            let mut events_iter = events.into_iter();
+            let mut classify_stream = classify(&mut events_iter, &sanitized_text, &mut alloc);
+            let spans: Vec<ClassifiedSpan> = (&mut classify_stream).collect();
+            let classify_diagnostics: Vec<Diagnostic> = classify_stream.take_diagnostics();
+            drop(classify_stream);
+            for span in &lower_spans(spans, &sanitized_text, &mut alloc) {
+                normalizer.emit(span);
+            }
+            // Move the owned products out, ending the normalizer's borrow of
+            // `sanitized_text` so it can be moved into the output below.
+            let OwnedNormalizer {
+                out,
+                recorder,
+                container_pairs,
+                diagnostics: norm_diagnostics,
+                ..
+            } = normalizer;
+            let store = alloc.into_store();
+            (
+                out,
+                recorder,
+                container_pairs,
+                classify_diagnostics,
+                norm_diagnostics,
+                store,
+            )
+        };
+
+        // Classify-stage diagnostics first, then the normalizer's (post-classify)
+        // set, so the final vector stays in pipeline-stage order.
         self.diagnostics.extend(classify_diagnostics);
-        // Normalizer diagnostics (e.g. mismatched container close) are
-        // produced during the `emit` fold above but buffered on the
-        // builder; append them *after* the classify-stage set so the
-        // final vector stays in pipeline-stage order (the normalizer is
-        // the post-classify fold). See `tests/diagnostic_ordering.rs`.
-        self.diagnostics.extend(take(&mut builder.diagnostics));
-        let intern_stats = alloc.into_interner().stats;
+        self.diagnostics.extend(norm_diagnostics);
+        let intern_stats = store.interner.stats;
 
-        Folded {
-            builder,
-            links,
-            intern_stats,
+        // Classifier emits in source order, so the recorder's entries are already
+        // sorted by position; `from_sorted_slice` skips the redundant sort.
+        let registry = RegistryOwned::from_sorted_slice(&recorder.entries);
+
+        OwnedLexOutput::new(
+            normalized,
             sanitized_text,
+            registry,
+            self.diagnostics,
             sanitized_len,
-            diagnostics: self.diagnostics,
-            arena: self.arena,
-        }
+            links,
+            recorder.source_nodes,
+            container_pairs,
+            intern_stats,
+            store,
+        )
     }
 }
 
 /// NORMALIZE (lowering) pass over the materialized classified-span list.
 ///
-/// This is the seam the normalization waist is built on. Today it performs
-/// only the source-byte **drop-superset** the streaming 4-span window did:
-/// when a later span's source span is a proper superset of an earlier one
-/// — a backward pull-back, e.g. a promoted 大/中/小 heading reclaiming its
-/// referent line `序章\n`, or a forward node reclaiming its predecessor
-/// literal — the subsumed earlier span is dropped, so the normalizer (which
-/// appends in source order) does not emit the reclaimed text twice.
-///
-/// Running over the whole list rather than a depth-4 tail is behaviour-
-/// preserving (a pull-back reaches only the immediately-preceding line, so
-/// nothing more than 4 spans back was ever subsumed). This overlap-truncate is
-/// what cured the #180 round-trip pathology (a reclaimed literal sitting in
-/// both the plain tail and the node, doubling every serialize round); the
-/// surviving [`ForwardOrigin`] on each forward leaf is necessary provenance,
-/// not a pathology — non-adjacent targets that are a ruby base keep
-/// `Referenced` reachable, so it cannot collapse to a constant (#202).
-fn lower_spans<'a>(
-    spans: Vec<ClassifiedSpan<'a>>,
-    source: &'a str,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Vec<ClassifiedSpan<'a>> {
+/// This is the seam the normalization waist is built on. It performs the
+/// source-byte **drop-superset** the streaming window did: when a later span's
+/// source span is a proper superset of an earlier one — a backward pull-back,
+/// e.g. a promoted 大/中/小 heading reclaiming its referent line `序章\n`, or a
+/// forward node reclaiming its predecessor literal — the subsumed earlier span
+/// is dropped, so the normalizer (which appends in source order) does not emit
+/// the reclaimed text twice. This overlap-truncate cured the #180 round-trip
+/// pathology; the surviving [`ForwardOrigin`] on each forward leaf is necessary
+/// provenance (#202).
+fn lower_spans(
+    spans: Vec<ClassifiedSpan>,
+    source: &str,
+    alloc: &mut OwnedAllocator,
+) -> Vec<ClassifiedSpan> {
     // Phase 0: resolve forward heading hints whose referent is the bare line
-    // directly above the directive into promoted `Heading` nodes — the
-    // position judgment the classifier used to make inline. The back-reaching
-    // source span lets the superset-drop below reclaim the referent line,
-    // exactly as when the classifier emitted the promoted heading.
+    // directly above the directive into promoted `Heading` nodes.
     let spans = promote_headings(spans, source, alloc);
-    let mut out: Vec<ClassifiedSpan<'a>> = Vec::with_capacity(spans.len());
+    let mut out: Vec<ClassifiedSpan> = Vec::with_capacity(spans.len());
     for span in spans {
         while let Some(back) = out.last() {
             let (bs, be) = (back.source_span.start, back.source_span.end);
@@ -529,13 +341,10 @@ fn lower_spans<'a>(
                 // heading swallowing its referent line). Drop `back`.
                 out.pop();
             } else if back_is_plain && bs < ss && ss < be {
-                // Partial overlap: `span` (a `Reclaimed` forward
-                // node) pulled its source region back into the *tail* of a
-                // committed plain run — the streaming flush could not splice
-                // the hole, so the reclaimed literal sits in BOTH the plain
-                // tail and the node, doubling on serialize (issue #180,
-                // unbounded growth). Truncate the plain to end where the node
-                // begins so the literal is emitted once, by the node.
+                // Partial overlap: `span` (a `Reclaimed` forward node) pulled its
+                // source region back into the *tail* of a committed plain run —
+                // truncate the plain so the literal is emitted once, by the node
+                // (issue #180, unbounded growth).
                 if let Some(last) = out.last_mut() {
                     last.source_span.end = ss;
                 }
@@ -546,18 +355,13 @@ fn lower_spans<'a>(
         }
         out.push(span);
     }
-    // Second phase: fold S4-foldable inline-range emphasis (`［＃太字］ … ［＃太字終わり］`
-    // bare ranges over 太字 / 斜体 / キャプション) into canonical forward leaves.
+    // Second phase: fold S4-foldable inline-range emphasis into forward leaves.
     fold_inline_emphasis(out, source, alloc)
 }
 
 /// Byte position where `target` begins, **only if** it is the bare line
-/// immediately preceding the `［` at `bracket_start` — `target` followed by a
-/// single `\n`, itself starting at a line boundary (BOF or after a `\n`). This
-/// is the heading-promotion test the classifier used to apply inline; it now
-/// runs in the lowering pass against the hint span's own start offset (which is
-/// the directive's `［`), so the decision is byte-identical. `None` → the hint
-/// stays inline.
+/// immediately preceding the `［` at `bracket_start`. `None` → the hint stays
+/// inline.
 fn find_heading_predecessor_position_at(
     source: &str,
     bracket_start: u32,
@@ -585,26 +389,25 @@ fn find_heading_predecessor_position_at(
 
 /// Promote each forward heading hint whose target is the bare line directly
 /// above it into a `Heading`, reaching the span back over `target\n` so the
-/// superset-drop pass reclaims the referent line. Mirrors the classifier's old
-/// promotion exactly (same byte test, same back-reaching span); a hint that
-/// fails the test stays a `HeadingHint`.
-fn promote_headings<'a>(
-    mut spans: Vec<ClassifiedSpan<'a>>,
-    source: &'a str,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Vec<ClassifiedSpan<'a>> {
+/// superset-drop pass reclaims the referent line.
+fn promote_headings(
+    mut spans: Vec<ClassifiedSpan>,
+    source: &str,
+    alloc: &mut OwnedAllocator,
+) -> Vec<ClassifiedSpan> {
     for span in &mut spans {
-        let SpanKind::Aozora(Node::HeadingHint(hint)) = span.kind else {
+        let SpanKind::Aozora(NodeOwned::HeadingHint(hint)) = span.kind else {
             continue;
         };
-        let Some(referent_start) = find_heading_predecessor_position_at(
-            source,
-            span.source_span.start,
-            hint.target.as_str(),
-        ) else {
+        // Resolve the interned target to an owned string so the `&store` borrow
+        // does not overlap the `&mut alloc` builder calls below.
+        let target = alloc.store().resolve_str(hint.target).to_owned();
+        let Some(referent_start) =
+            find_heading_predecessor_position_at(source, span.source_span.start, &target)
+        else {
             continue;
         };
-        let text = alloc.content_plain(hint.target.as_str());
+        let text = alloc.content_plain(&target);
         span.kind = SpanKind::Aozora(alloc.aozora_heading(hint.level, hint.style, text));
         span.source_span.start = referent_start;
     }
@@ -612,16 +415,6 @@ fn promote_headings<'a>(
 }
 
 /// The forward-scope attribute an inline-range region folds to.
-///
-/// The bare-range (`padded: false`) 太字 / 斜体 / キャプション forms and the
-/// always-inline 傍点 / 傍線, 行右 / 行左小書き, and 縦中横 ranges fold to their
-/// forward leaf; the block (`padded: true`) forms and every other region stay
-/// [`SpanKind::BlockOpen`] / [`SpanKind::BlockClose`] containers. Each projects
-/// to its [`ForwardAttr`] counterpart with the same payload, so a `左に` /
-/// point-vs-line mismatch is caught by the caller's close-match check exactly as
-/// for the other families. 文字サイズ / 横組み / 罫囲み have no bare inline range
-/// (block-only) and 上付き / 下付き小文字 are forward-only, so neither reaches
-/// here. Multi-target 傍点 (`「A」「B」に傍点`) is a forward-only shape, untouched.
 const fn foldable_inline_attr(region: RegionFormat) -> Option<ForwardAttr> {
     match region {
         RegionFormat::Bold { padded: false } => Some(ForwardAttr::Bold),
@@ -635,21 +428,17 @@ const fn foldable_inline_attr(region: RegionFormat) -> Option<ForwardAttr> {
 }
 
 /// An open inline-range marker awaiting its close, with the spans seen since.
-struct OpenFrame<'a> {
+struct OpenFrame {
     /// The `BlockOpen` span itself (re-emitted verbatim if the pair does not fold).
-    open: ClassifiedSpan<'a>,
+    open: ClassifiedSpan,
     /// The open marker's region (drives foldability and the close-match check).
     region: RegionFormat,
     /// Spans between this open and its eventual close, in source order.
-    collected: Vec<ClassifiedSpan<'a>>,
+    collected: Vec<ClassifiedSpan>,
 }
 
 /// Push a finished span onto the innermost open frame, or to `output` at top level.
-fn emit_to<'a>(
-    stack: &mut [OpenFrame<'a>],
-    output: &mut Vec<ClassifiedSpan<'a>>,
-    span: ClassifiedSpan<'a>,
-) {
+fn emit_to(stack: &mut [OpenFrame], output: &mut Vec<ClassifiedSpan>, span: ClassifiedSpan) {
     if let Some(top) = stack.last_mut() {
         top.collected.push(span);
     } else {
@@ -657,23 +446,14 @@ fn emit_to<'a>(
     }
 }
 
-/// Fold a matched inline-range pair into a forward leaf, or `None` to keep it
-/// as a container.
-///
-/// Folds only when (a) the open is an S4-foldable bare range, (b) the close's
-/// family matches the open (an `［＃太字］…［＃斜体終わり］` mismatch keeps both
-/// markers so the normalizer still diagnoses it), and (c) the enclosed run is a
-/// non-empty, *text-only* (`Plain`) sequence. The text-only bound is load-
-/// bearing: the serializer's `emit_content_as_plain` reproduces gaiji / 注記
-/// bodies bare (no `※［＃…］` / `［＃…］`), so absorbing a non-text segment into a
-/// forward target would silently drop its notation on serialize. Ruby / nested
-/// formats cannot be a `Segment` at all. Such ranges stay containers.
-fn try_fold_inline<'a>(
-    frame: &OpenFrame<'a>,
-    close: &ClassifiedSpan<'a>,
-    source: &'a str,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Option<ClassifiedSpan<'a>> {
+/// Fold a matched inline-range pair into a forward leaf, or `None` to keep it as
+/// a container.
+fn try_fold_inline(
+    frame: &OpenFrame,
+    close: &ClassifiedSpan,
+    source: &str,
+    alloc: &mut OwnedAllocator,
+) -> Option<ClassifiedSpan> {
     let attr = foldable_inline_attr(frame.region)?;
     let SpanKind::BlockClose(close_region) = close.kind else {
         return None;
@@ -707,21 +487,13 @@ fn try_fold_inline<'a>(
 }
 
 /// Fold S4-foldable inline-range emphasis pairs into forward leaves.
-///
-/// A balanced-stack walk mirroring the normalizer's container pairing: each
-/// `BlockClose` pops the nearest open (regardless of kind). A matched pair
-/// folds when [`try_fold_inline`] allows it; otherwise the open marker, its
-/// collected spans, and the close marker flow through verbatim, so mismatched /
-/// non-foldable / unclosed ranges behave exactly as before. Innermost pairs
-/// fold first, so a nested range leaves its parent's enclosed run non-text-only
-/// (it now holds an `Aozora` node) — which correctly blocks the outer fold.
-fn fold_inline_emphasis<'a>(
-    spans: Vec<ClassifiedSpan<'a>>,
-    source: &'a str,
-    alloc: &mut BorrowedAllocator<'a>,
-) -> Vec<ClassifiedSpan<'a>> {
-    let mut output: Vec<ClassifiedSpan<'a>> = Vec::with_capacity(spans.len());
-    let mut stack: Vec<OpenFrame<'a>> = Vec::new();
+fn fold_inline_emphasis(
+    spans: Vec<ClassifiedSpan>,
+    source: &str,
+    alloc: &mut OwnedAllocator,
+) -> Vec<ClassifiedSpan> {
+    let mut output: Vec<ClassifiedSpan> = Vec::with_capacity(spans.len());
+    let mut stack: Vec<OpenFrame> = Vec::new();
     for span in spans {
         match span.kind {
             SpanKind::BlockOpen(region) => {
@@ -743,15 +515,13 @@ fn fold_inline_emphasis<'a>(
                         emit_to(&mut stack, &mut output, span);
                     }
                 } else {
-                    // Stray close with no open on the stack — pass through.
                     output.push(span);
                 }
             }
             _ => emit_to(&mut stack, &mut output, span),
         }
     }
-    // Flush any unclosed opens (bottom-to-top reconstructs source order: an
-    // inner open's frame holds only the spans after it opened).
+    // Flush any unclosed opens (bottom-to-top reconstructs source order).
     for frame in stack {
         output.push(frame.open);
         output.extend(frame.collected);
@@ -763,14 +533,11 @@ fn fold_inline_emphasis<'a>(
 mod tests {
     use core::ptr;
 
-    use aozora_syntax::borrowed::Arena;
-
     use super::*;
 
     #[test]
     fn type_state_chain_compiles() {
-        let arena = Arena::new();
-        let _final = Pipeline::new("｜青梅《おうめ》", &arena)
+        let _final = Pipeline::new("｜青梅《おうめ》")
             .sanitize()
             .tokenize()
             .pair()
@@ -779,14 +546,12 @@ mod tests {
 
     #[test]
     fn run_to_completion_matches_chain() {
-        let arena1 = Arena::new();
-        let arena2 = Arena::new();
-        let chain = Pipeline::new("｜青梅《おうめ》", &arena1)
+        let chain = Pipeline::new("｜青梅《おうめ》")
             .sanitize()
             .tokenize()
             .pair()
             .build();
-        let oneshot = Pipeline::run_to_completion("｜青梅《おうめ》", &arena2);
+        let oneshot = Pipeline::run_to_completion("｜青梅《おうめ》");
         assert_eq!(chain.normalized, oneshot.normalized);
         assert_eq!(chain.sanitized_len, oneshot.sanitized_len);
         assert_eq!(
@@ -797,8 +562,7 @@ mod tests {
 
     #[test]
     fn intermediate_inspection_at_sanitized() {
-        let arena = Arena::new();
-        let p = Pipeline::new("plain text", &arena).sanitize();
+        let p = Pipeline::new("plain text").sanitize();
         assert_eq!(p.sanitized_text(), "plain text");
         assert!(p.diagnostics().is_empty());
         drop(p.tokenize().pair().build());
@@ -806,28 +570,21 @@ mod tests {
 
     #[test]
     fn intermediate_inspection_at_tokenized() {
-        let arena = Arena::new();
-        let p = Pipeline::new("a｜b《c》", &arena).sanitize().tokenize();
-        // Token sanity: at least Text+Trigger+Text+Trigger+Text+Trigger.
+        let p = Pipeline::new("a｜b《c》").sanitize().tokenize();
         assert!(p.tokens().len() >= 5);
         drop(p.pair().build());
     }
 
     #[test]
     fn intermediate_inspection_at_paired() {
-        let arena = Arena::new();
-        let p = Pipeline::new("a｜b《c》", &arena)
-            .sanitize()
-            .tokenize()
-            .pair();
+        let p = Pipeline::new("a｜b《c》").sanitize().tokenize().pair();
         assert!(!p.events().is_empty());
         drop(p.build());
     }
 
     #[test]
     fn sanitize_pua_collision_diagnostic_propagates() {
-        let arena = Arena::new();
-        let out = Pipeline::run_to_completion("abc\u{E001}def", &arena);
+        let out = Pipeline::run_to_completion("abc\u{E001}def");
         assert!(
             out.diagnostics
                 .iter()
@@ -839,8 +596,7 @@ mod tests {
 
     #[test]
     fn empty_source_round_trips() {
-        let arena = Arena::new();
-        let out = Pipeline::run_to_completion("", &arena);
+        let out = Pipeline::run_to_completion("");
         assert!(out.normalized.is_empty());
         assert!(out.registry.is_empty());
         assert_eq!(out.sanitized_len, 0);
@@ -848,9 +604,8 @@ mod tests {
 
     #[test]
     fn source_accessor_returns_original() {
-        let arena = Arena::new();
         let s = "the original";
-        let p = Pipeline::new(s, &arena);
+        let p = Pipeline::new(s);
         assert!(ptr::eq(p.source(), s));
     }
 }

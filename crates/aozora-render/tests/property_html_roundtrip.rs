@@ -19,8 +19,7 @@
 use aozora_pipeline::lex;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
-use aozora_render::html::render_to_string;
-use aozora_syntax::borrowed::Arena;
+use aozora_render::render_html_owned;
 use proptest::prelude::*;
 
 /// Count occurrences of a literal substring without allocating.
@@ -29,9 +28,8 @@ fn count_substr(haystack: &str, needle: &str) -> usize {
 }
 
 fn assert_render_is_balanced(source: &str) {
-    let arena = Arena::new();
-    let out = lex(source, &arena);
-    let html = render_to_string(&out);
+    let out = lex(source);
+    let html = render_html_owned(&out);
 
     // Paragraph balance — `<p` rather than `<p>` to also catch
     // attribute-bearing variants that the renderer might one day
@@ -104,9 +102,8 @@ proptest! {
     /// must not pass them through verbatim.
     #[test]
     fn xss_payload_does_not_leak_script_tag(s in xss_payload()) {
-        let arena = Arena::new();
-        let out = lex(&s, &arena);
-        let html = render_to_string(&out);
+        let out = lex(&s);
+        let html = render_html_owned(&out);
         prop_assert!(
             !html.contains("<script>") && !html.contains("<SCRIPT>"),
             "renderer leaked an unescaped <script> tag for source {s:?}\n---\n{html}"

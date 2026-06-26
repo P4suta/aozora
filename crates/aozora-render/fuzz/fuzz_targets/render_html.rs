@@ -1,10 +1,9 @@
-//! Fuzz target — `aozora_render::html::render_to_string` on arbitrary
+//! Fuzz target — `aozora_render::render_html_owned` on arbitrary
 //! UTF-8.
 //!
 //! Arbitrary bytes are decoded as UTF-8 (invalid sequences skip this
 //! iteration). The source is lexed via `aozora_pipeline` and rendered
-//! to HTML via `aozora_render::html`. Targets renderer panics, dangling
-//! arena references, and the round-trip "no PUA sentinel survives in
+//! to HTML via `aozora_render`. Targets renderer panics and the round-trip "no PUA sentinel survives in
 //! the rendered HTML" invariant.
 //!
 //! Run via `just fuzz-quick aozora-render render_html` (or
@@ -13,8 +12,7 @@
 #![no_main]
 
 use aozora_pipeline::lex;
-use aozora_render::html::render_to_string;
-use aozora_syntax::borrowed::Arena;
+use aozora_render::render_html_owned;
 use libfuzzer_sys::fuzz_target;
 
 /// PUA sentinel codepoints embedded by the lexer that the renderer
@@ -35,9 +33,8 @@ fuzz_target!(|data: &[u8]| {
     if src.chars().any(|c| PUA_SENTINELS.contains(&c)) {
         return;
     }
-    let arena = Arena::new();
-    let lex_out = lex(src, &arena);
-    let html = render_to_string(&lex_out);
+    let lex_out = lex(src);
+    let html = render_html_owned(&lex_out);
     for sentinel in PUA_SENTINELS {
         assert!(
             !html.contains(sentinel),

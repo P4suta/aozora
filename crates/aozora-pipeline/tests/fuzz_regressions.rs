@@ -25,13 +25,10 @@ use std::path::{Path, PathBuf};
 use std::str;
 
 use aozora_pipeline::lex;
-use aozora_syntax::borrowed::Arena;
-
 #[test]
 fn lex_into_arena_regressions_replay_cleanly() {
     replay_each("lex", |src| {
-        let arena = Arena::new();
-        let out = lex(src, &arena);
+        let out = lex(src);
         for diag in &out.diagnostics {
             let span = diag.span();
             assert!(

@@ -11,10 +11,8 @@ use std::path::{Path, PathBuf};
 use std::str;
 
 use aozora_pipeline::{ALL_SENTINELS, lex};
-use aozora_render::html::render_to_string;
-use aozora_render::serialize::serialize;
-use aozora_syntax::borrowed::Arena;
-
+use aozora_render::render_html_owned;
+use aozora_render::serialize_owned;
 #[test]
 fn render_html_regressions_replay_cleanly() {
     replay_each("render_html", |src| {
@@ -23,9 +21,8 @@ fn render_html_regressions_replay_cleanly() {
         if src.chars().any(|c| ALL_SENTINELS.contains(&c)) {
             return;
         }
-        let arena = Arena::new();
-        let lex_out = lex(src, &arena);
-        let html = render_to_string(&lex_out);
+        let lex_out = lex(src);
+        let html = render_html_owned(&lex_out);
         for sentinel in ALL_SENTINELS {
             assert!(
                 !html.contains(sentinel),
@@ -44,12 +41,10 @@ fn serialize_round_trip_regressions_replay_cleanly() {
         if src.chars().any(|c| ALL_SENTINELS.contains(&c)) {
             return;
         }
-        let arena1 = Arena::new();
-        let lex1 = lex(src, &arena1);
-        let first = serialize(&lex1);
-        let arena2 = Arena::new();
-        let lex2 = lex(&first, &arena2);
-        let second = serialize(&lex2);
+        let lex1 = lex(src);
+        let first = serialize_owned(&lex1);
+        let lex2 = lex(&first);
+        let second = serialize_owned(&lex2);
         assert!(
             first == second,
             "I3 fixed-point broken\n  first  = {first:?}\n  second = {second:?}",

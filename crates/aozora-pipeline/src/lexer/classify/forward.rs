@@ -18,8 +18,9 @@ use std::collections::HashMap;
 use core::num::NonZeroI8;
 
 use aozora_spec::Diagnostic;
-use aozora_syntax::alloc::BorrowedAllocator;
-use aozora_syntax::borrowed;
+use aozora_syntax::alloc_owned::OwnedAllocator;
+use aozora_syntax::format::ForwardOrigin;
+use aozora_syntax::owned::{ContentOwned, NodeOwned, SegmentOwned};
 use aozora_syntax::{BoutenPosition, DirectiveKind, FontShift, ForwardAttr, MarginNoteKind, Span};
 
 use super::super::pair::{PairEvent, PairKind};
@@ -187,7 +188,7 @@ pub(super) fn install_forward_target_index_from_source(source: &str) {
 /// hash whose keyword no specialised recogniser matches fall through
 /// to the `Directive { Unknown }` catch-all so the bracket is
 /// always consumed into some `Node`.
-impl<'a> RecogniseCtx<'_, 'a, '_> {
+impl RecogniseCtx<'_, '_> {
     /// Forward-reference dispatch for a well-formed `［＃…］` bracket.
     ///
     /// Tries the body-keyword classifier first, then a fixed cascade of
@@ -255,7 +256,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<AnnotationMatch<'a>> {
+    ) -> Option<AnnotationMatch> {
         #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::Directive);
         let events = view.events;
@@ -484,7 +485,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         &mut self,
         view: BodyView<'_>,
         open_idx: usize,
-    ) -> Option<(borrowed::Node<'a>, bool)> {
+    ) -> Option<(NodeOwned, bool)> {
         let &PairEvent::PairOpen {
             span: open_span, ..
         } = view.events.get(open_idx)?
@@ -495,10 +496,10 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         // Standalone has no `※` disambiguator, so an unqualified `［＃「…」］`
         // is an ordinary note. Require a resolved glyph or a mencode /
         // page-line tail before claiming it as a gaiji.
-        if !m.payload.canonical.has_mencode() && m.payload.resolve().is_none() {
+        if !m.payload.canonical.has_mencode() && m.payload.resolve(self.alloc.store()).is_none() {
             return None;
         }
-        let unresolved = m.payload.resolve().is_none();
+        let unresolved = m.payload.resolve(self.alloc.store()).is_none();
         Some((self.alloc.gaiji(m.payload), unresolved))
     }
 
@@ -519,7 +520,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         directive_span: Span,
         body: &str,
         tcy_pending: Option<Diagnostic>,
-    ) -> AnnotationMatch<'a> {
+    ) -> AnnotationMatch {
         let raw = &self.source[directive_span.start as usize..directive_span.end as usize];
         // One payload for `emit`, one for `annotation_payload`, so the
         // body-builder can re-wrap without re-interning the raw string.
@@ -550,7 +551,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         &mut self,
         directive_span: Span,
         kind: DirectiveKind,
-    ) -> AnnotationMatch<'a> {
+    ) -> AnnotationMatch {
         let raw = &self.source[directive_span.start as usize..directive_span.end as usize];
         let payload = self.alloc.make_directive(raw, kind);
         let node = self.alloc.annotation(payload);
@@ -584,7 +585,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 /// Q+1..close_idx   suffix events             [usually Text("に…")]
 /// close_idx        PairClose(Bracket)
 /// ```
-impl<'a> RecogniseCtx<'_, 'a, '_> {
+impl RecogniseCtx<'_, '_> {
     /// Classify a range bouten `「X」～「Y」に<kind>` (also `〜`): apply the
     /// marks to the whole preceding run from the start of X to the end of Y,
     /// which butts against the bracket. Returns `(node, consume_start)` with
@@ -594,7 +595,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::Node<'a>, u32)> {
+    ) -> Option<(NodeOwned, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // Extraction stops at the `～`, so the first quote is X; the suffix is
         // `～「Y」に<kind>` (or `〜「Y」…`).
@@ -635,7 +636,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let content = self.alloc.content_plain(phrase);
         Some((
             self.alloc
-                .bouten(kind, content, position, borrowed::ForwardOrigin::Reclaimed),
+                .bouten(kind, content, position, ForwardOrigin::Reclaimed),
             u32::try_from(x_start).ok()?,
         ))
     }
@@ -645,7 +646,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::Node<'a>, u32, bool)> {
+    ) -> Option<(NodeOwned, u32, bool)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // Shape 1: `に<kind>` — default right-side placement.
         // Shape 2: `の左に<kind>` — left-side placement (position flipped).
@@ -700,7 +701,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         } else {
             open_span.start
         };
-        let origin = borrowed::ForwardOrigin::from_consume(consume_start, open_span.start);
+        let origin = ForwardOrigin::from_consume(consume_start, open_span.start);
         // Ambiguity: a *single* target that occurs more than once in the
         // look-back window has no unique referent. Multi-target brackets
         // (`「A」「B」`) name distinct runs and are not "ambiguous" in this
@@ -737,15 +738,12 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 /// would ripple through every renderer / serializer). Callers that
 /// need the per-target list can walk `Content::iter` and filter on
 /// `SegmentRef::Text`.
-fn build_bouten_target<'a>(
-    targets: &[&str],
-    alloc: &mut BorrowedAllocator<'a>,
-) -> borrowed::Content<'a> {
+fn build_bouten_target(targets: &[&str], alloc: &mut OwnedAllocator) -> ContentOwned {
     match targets {
         [] => alloc.content_plain(""),
         [only] => alloc.content_plain(only),
         many => {
-            let mut segs: Vec<borrowed::Segment<'a>> = Vec::with_capacity(many.len() * 2 - 1);
+            let mut segs: Vec<SegmentOwned> = Vec::with_capacity(many.len() * 2 - 1);
             for (i, t) in many.iter().enumerate() {
                 if i > 0 {
                     segs.push(alloc.seg_text("、"));
@@ -764,9 +762,9 @@ fn build_bouten_target<'a>(
 /// still warrants a `tcy_target_not_found` warning even though the
 /// bracket degrades to `Directive{Unknown}`), and from a bracket that is
 /// not a 縦中横 directive at all (silent fall-through).
-enum ForwardTcy<'a> {
+enum ForwardTcy {
     /// A 縦中横 with a located target — the node plus its consume start.
-    Recognised(borrowed::Node<'a>, u32),
+    Recognised(NodeOwned, u32),
     /// `は縦中横` shape matched but the target has no preceding referent.
     ShapedNoTarget,
     /// Not a 縦中横 directive.
@@ -785,13 +783,13 @@ enum ForwardTcy<'a> {
 /// spec; we accept the first target's text and ignore the rest for
 /// robustness rather than failing, so the bracket still consumes via
 /// `classify_forward_tcy` instead of leaking to `Directive{Unknown}`.
-impl<'a> RecogniseCtx<'_, 'a, '_> {
+impl RecogniseCtx<'_, '_> {
     fn classify_forward_tcy(
         &mut self,
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> ForwardTcy<'a> {
+    ) -> ForwardTcy {
         let Some(extracted) = extract_forward_quote_targets(view, self.source, open_idx, close_idx)
         else {
             return ForwardTcy::NotTcy;
@@ -829,7 +827,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let consume_start =
             find_immediate_predecessor_target_position(view.events, self.source, open_idx, first)
                 .unwrap_or(open_span.start);
-        let origin = borrowed::ForwardOrigin::from_consume(consume_start, open_span.start);
+        let origin = ForwardOrigin::from_consume(consume_start, open_span.start);
         let text = self.alloc.content_plain(first);
         ForwardTcy::Recognised(self.alloc.tate_chu_yoko(text, origin), consume_start)
     }
@@ -1059,10 +1057,10 @@ fn extract_forward_quote_targets<'s>(
 ///
 /// When the (single) referent is the bare line immediately above the
 /// directive, the line is promoted in place to a block
-/// `borrowed::Heading` (大→`<h1>` / 中→`<h2>` / 小→`<h3>`): the
+/// `HeadingOwned` (大→`<h1>` / 中→`<h2>` / 小→`<h3>`): the
 /// consume span is pulled back over that line so the heading element is
 /// its sole rendered copy. When the referent is not a clean preceding
-/// line, the classifier keeps the inline `borrowed::HeadingHint` marker
+/// line, the classifier keeps the inline `HeadingOwnedHint` marker
 /// at the directive position (information-preserving, never promoted to
 /// an empty or misplaced heading).
 ///
@@ -1072,13 +1070,13 @@ fn extract_forward_quote_targets<'s>(
 /// paragraph would promote to an empty heading. Falling through lets
 /// the catch-all emit `Directive { Unknown }` so the reader at least
 /// sees the raw bracket text in diagnostics.
-impl<'a> RecogniseCtx<'_, 'a, '_> {
+impl RecogniseCtx<'_, '_> {
     fn classify_forward_heading(
         &mut self,
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::Node<'a>, u32)> {
+    ) -> Option<(NodeOwned, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let rest = extracted.suffix.strip_prefix("は")?;
         let (style, kind) = parse_heading_keyword(rest)?;
@@ -1134,13 +1132,13 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 /// (mirroring `classify_forward_bouten`); the reading `Y` attaches on the left.
 /// Single-target only; the `の左に「…」のルビ` suffix shape is unique, so a
 /// non-ruby `の左に…` (left-side bouten) never reaches here.
-impl<'a> RecogniseCtx<'_, 'a, '_> {
+impl RecogniseCtx<'_, '_> {
     fn classify_forward_left_ruby(
         &mut self,
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::Node<'a>, u32)> {
+    ) -> Option<(NodeOwned, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let [target] = extracted.targets.as_slice() else {
             return None;
@@ -1174,7 +1172,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 /// Classify a forward-reference **side annotation** — 注記 or 傍記. The
 /// structural twin of [`Self::classify_forward_left_ruby`] (same
 /// single-target pull-back), but the trailing keyword selects a distinct
-/// [`borrowed::Node::MarginNote`] node and flavour:
+/// [`NodeOwned::MarginNote`] node and flavour:
 /// - `「X」の左に「Y」の注記` / bare `「X」に「Y」の注記` →
 ///   [`MarginNoteKind::Gloss`] (editorial gloss; round-trips `の注記`).
 /// - `「X」に「Y」の傍記` → [`MarginNoteKind::Marginal`] (the censorship-marker
@@ -1183,13 +1181,13 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 /// The `の注記` / `の傍記` suffixes are disjoint from `のルビ` and every
 /// bouten kind, so the bouten and left-ruby classifiers above have already
 /// declined.
-impl<'a> RecogniseCtx<'_, 'a, '_> {
+impl RecogniseCtx<'_, '_> {
     fn classify_forward_side_note(
         &mut self,
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::Node<'a>, u32)> {
+    ) -> Option<(NodeOwned, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let [target] = extracted.targets.as_slice() else {
             return None;
@@ -1239,7 +1237,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<borrowed::Node<'a>> {
+    ) -> Option<NodeOwned> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let [caption] = extracted.targets.as_slice() else {
             return None;
@@ -1280,13 +1278,13 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
 /// immediately-preceding literal (the dominant
 /// `作者附記［＃「作者附記」は太字］` shape) so the `<b>` / `<i>` is its sole
 /// rendered copy.
-impl<'a> RecogniseCtx<'_, 'a, '_> {
+impl RecogniseCtx<'_, '_> {
     fn classify_forward_emphasis(
         &mut self,
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(borrowed::Node<'a>, u32)> {
+    ) -> Option<(NodeOwned, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let rest = extracted.suffix.strip_prefix("は")?;
         let attr = forward_attr_from_suffix(rest)?;
@@ -1305,7 +1303,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         let consume_start =
             find_immediate_predecessor_target_position(view.events, self.source, open_idx, only)
                 .unwrap_or(open_span.start);
-        let origin = borrowed::ForwardOrigin::from_consume(consume_start, open_span.start);
+        let origin = ForwardOrigin::from_consume(consume_start, open_span.start);
         let text = self.alloc.content_plain(only);
         Some((self.alloc.forward_format(attr, text, origin), consume_start))
     }

@@ -11,16 +11,17 @@ use super::super::pair::{PairEvent, PairKind};
 use super::super::token::TriggerKind;
 use super::{BodyView, RecogniseCtx};
 use aozora_encoding::gaiji as gaiji_resolve;
-use aozora_syntax::{Span, borrowed};
+use aozora_syntax::Span;
+use aozora_syntax::owned::GaijiOwned;
 
 /// Intermediate result of `recognize_gaiji`.
 ///
-/// Holds the payload (`&'a borrowed::Gaiji<'a>`) rather than a wrapped
+/// Holds the payload (`GaijiOwned`) rather than a wrapped
 /// node so the caller can route it to either `alloc.gaiji(p)`
 /// (top-level span) or `alloc.seg_gaiji(p)` (nested inside a body
 /// content) without re-paying the description / mencode intern cost.
-pub(super) struct GaijiMatch<'a> {
-    pub(super) payload: &'a borrowed::Gaiji<'a>,
+pub(super) struct GaijiMatch {
+    pub(super) payload: GaijiOwned,
     pub(super) consume_start: u32,
     pub(super) consume_end: u32,
 }
@@ -45,13 +46,13 @@ pub(super) struct GaijiMatch<'a> {
 /// Consume range is from `refmark_span.start` to the bracket close's
 /// end — i.e. the `※` and the entire following `［＃…］` fold into
 /// one Aozora span.
-impl<'a> RecogniseCtx<'_, 'a, '_> {
+impl RecogniseCtx<'_, '_> {
     pub(super) fn recognize_gaiji(
         &mut self,
         view: BodyView<'_>,
         refmark_span: Span,
         bracket_open_idx: usize,
-    ) -> Option<GaijiMatch<'a>> {
+    ) -> Option<GaijiMatch> {
         self.recognize_gaiji_core(view, refmark_span.start, false, bracket_open_idx)
     }
 
@@ -73,7 +74,7 @@ impl<'a> RecogniseCtx<'_, 'a, '_> {
         consume_start: u32,
         standalone: bool,
         bracket_open_idx: usize,
-    ) -> Option<GaijiMatch<'a>> {
+    ) -> Option<GaijiMatch> {
         #[cfg(feature = "classify-instrument")]
         let _phase3_guard = SubsystemGuard::new(Subsystem::Gaiji);
         let events = view.events;
