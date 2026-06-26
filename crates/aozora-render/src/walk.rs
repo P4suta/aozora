@@ -31,6 +31,7 @@ use core::fmt;
 use aozora_pipeline::LexOutput;
 use aozora_spec::NormalizedOffset;
 use aozora_syntax::borrowed::NodeRef;
+use aozora_syntax::owned::{NodeRefOwned, OwnedLexOutput};
 
 /// First UTF-8 byte of every PUA sentinel (`U+E001..U+E004`).
 const SENTINEL_LEAD_BYTE: u8 = 0xEE;
@@ -173,6 +174,108 @@ pub(crate) fn walk<S: WalkSink>(out: &LexOutput<'_>, sink: &mut S) -> fmt::Resul
     } else {
         for cand in memchr::memchr_iter(SENTINEL_LEAD_BYTE, bytes) {
             handle_sentinel(out, cand, &mut cursor, sink)?;
+        }
+    }
+
+    if cursor < normalized.len() {
+        sink.on_text(&normalized[cursor..])?;
+    }
+    sink.finish()
+}
+
+/// Owned-AST mirror of [`WalkSink`], driven by [`walk_owned`] over an
+/// [`OwnedLexOutput`].
+///
+/// Identical contract to [`WalkSink`]; the only difference is that `on_node`
+/// receives an owned [`NodeRefOwned`] (resolved against the output's
+/// `RegistryOwned`) instead of a borrowed [`NodeRef`]. Kept as a separate
+/// trait so the borrowed renderers and the owned serializer share the scan
+/// scaffold without one depending on the other's payload lifetime.
+pub(crate) trait WalkSinkOwned {
+    /// Whether [`walk_owned`] should surface `\n` as [`Self::on_newline`].
+    const WANTS_NEWLINES: bool;
+
+    /// Emit a plain-text run. Never called with an empty slice.
+    fn on_text(&mut self, text: &str) -> fmt::Result;
+
+    /// React to a `\n`. Only called when [`Self::WANTS_NEWLINES`]; default
+    /// no-op (the serializer copies newlines verbatim through `on_text`).
+    fn on_newline(&mut self, next: Option<u8>) -> fmt::Result {
+        let _ = next;
+        Ok(())
+    }
+
+    /// Render a validated sentinel. `kind` is the sentinel's role; `node` is
+    /// the owned registry entry at its offset.
+    fn on_node(&mut self, kind: SentinelKind, node: NodeRefOwned) -> fmt::Result;
+
+    /// Finalise after the last run. Default no-op.
+    fn finish(&mut self) -> fmt::Result {
+        Ok(())
+    }
+}
+
+/// Owned mirror of [`handle_sentinel`]: validate the candidate at `cand`,
+/// flush the pending plain run, and dispatch through the owned registry.
+#[inline]
+fn handle_sentinel_owned<S: WalkSinkOwned>(
+    out: &OwnedLexOutput,
+    cand: usize,
+    cursor: &mut usize,
+    sink: &mut S,
+) -> fmt::Result {
+    let normalized = out.normalized.as_str();
+    let bytes = normalized.as_bytes();
+    if cand + 2 >= bytes.len() || bytes[cand + 1] != SENTINEL_MID_BYTE {
+        return Ok(());
+    }
+    let Some(kind) = sentinel_kind_for_tail_byte(bytes[cand + 2]) else {
+        return Ok(());
+    };
+
+    if *cursor < cand {
+        sink.on_text(&normalized[*cursor..cand])?;
+    }
+    let byte_pos = u32::try_from(cand).expect("normalized fits u32 per sanitize-stage cap");
+    if let Some(node) = out.registry.node_at(NormalizedOffset::new(byte_pos)) {
+        sink.on_node(kind, node)?;
+    }
+    *cursor = cand + 3;
+    Ok(())
+}
+
+/// Owned mirror of [`walk`]: drive `sink` over `out`'s normalized text in a
+/// single forward pass, reading `out.normalized.as_str()` and resolving
+/// sentinels through the owned [`RegistryOwned`](aozora_syntax::owned::RegistryOwned).
+///
+/// # Errors
+///
+/// Propagates any error the sink returns from a callback.
+///
+/// # Panics
+///
+/// Panics if the normalized text exceeds `u32::MAX` bytes — inherited from the
+/// lexer's `Span` width contract; in practice unreachable.
+pub(crate) fn walk_owned<S: WalkSinkOwned>(out: &OwnedLexOutput, sink: &mut S) -> fmt::Result {
+    let normalized = out.normalized.as_str();
+    let bytes = normalized.as_bytes();
+    let mut cursor = 0usize;
+
+    if S::WANTS_NEWLINES {
+        for cand in memchr::memchr2_iter(SENTINEL_LEAD_BYTE, b'\n', bytes) {
+            if bytes[cand] == b'\n' {
+                if cursor < cand {
+                    sink.on_text(&normalized[cursor..cand])?;
+                }
+                sink.on_newline(bytes.get(cand + 1).copied())?;
+                cursor = cand + 1;
+            } else {
+                handle_sentinel_owned(out, cand, &mut cursor, sink)?;
+            }
+        }
+    } else {
+        for cand in memchr::memchr_iter(SENTINEL_LEAD_BYTE, bytes) {
+            handle_sentinel_owned(out, cand, &mut cursor, sink)?;
         }
     }
 

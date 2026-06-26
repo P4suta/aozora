@@ -9,16 +9,16 @@
 //! owned `XOwned` mirror held inline (no `Box`/`Id`), so the whole cluster
 //! stays `Copy` exactly like the borrowed tree.
 
-use aozora_encoding::gaiji::MenKuTen;
+use aozora_encoding::gaiji::{GaijiCanonical, MenKuTen};
 
-use crate::borrowed::ForwardOrigin;
+use crate::borrowed::{self, ForwardOrigin};
 use crate::format::{ForwardAttr, LineFormat};
 use crate::{
     Container, DirectiveKind, HeadingKind, HeadingStyle, MarginNoteKind, RubySide, SectionKind,
 };
 
 use super::intern::StrId;
-use super::store::{ContentRange, SegRange};
+use super::store::{ContentRange, NodeStore, SegRange};
 
 /// Owned mirror of [`crate::borrowed::Content`]: body content that may
 /// carry nested Aozora constructs. Two-tier like the borrowed form.
@@ -43,6 +43,93 @@ pub enum SegmentOwned {
     /// Nested generic annotation. Borrowed `Directive(&'src Directive)` ->
     /// inline owned.
     Directive(DirectiveOwned),
+}
+
+impl ContentOwned {
+    /// Materialise a borrowed [`Content`](borrowed::Content) into the `store`,
+    /// interning its text and pushing any segment run into the segment pool.
+    ///
+    /// A `Plain` run interns to a single [`StrId`]; a `Segments` run converts
+    /// each [`Segment`](borrowed::Segment) (assembled into a temporary `Vec`
+    /// first so the `&mut store` borrows do not interleave) and pushes the run
+    /// as a [`SegRange`]. The non-exhaustive forward-compat arm maps to the
+    /// empty-segments analogue, matching the borrowed `Content::EMPTY`
+    /// convention.
+    #[must_use]
+    pub fn from_borrowed(c: borrowed::Content<'_>, store: &mut NodeStore) -> Self {
+        match c {
+            borrowed::Content::Plain(s) => Self::Plain(store.intern(s)),
+            borrowed::Content::Segments(segs) => {
+                let owned: Vec<SegmentOwned> = segs
+                    .iter()
+                    .map(|&s| SegmentOwned::from_borrowed(s, store))
+                    .collect();
+                Self::Segments(store.push_segments(&owned))
+            }
+        }
+    }
+}
+
+impl SegmentOwned {
+    /// Materialise a borrowed [`Segment`](borrowed::Segment) into the `store`.
+    #[must_use]
+    pub fn from_borrowed(s: borrowed::Segment<'_>, store: &mut NodeStore) -> Self {
+        match s {
+            borrowed::Segment::Text(t) => Self::Text(store.intern(t)),
+            borrowed::Segment::Gaiji(g) => Self::Gaiji(GaijiOwned::from_borrowed(g, store)),
+            borrowed::Segment::Directive(d) => {
+                Self::Directive(DirectiveOwned::from_borrowed(d, store))
+            }
+        }
+    }
+}
+
+impl GaijiCanonicalOwned {
+    /// Materialise a borrowed [`GaijiCanonical`] into the `store`, interning the
+    /// verbatim mencode tail of the `Unresolved` form.
+    #[must_use]
+    pub fn from_borrowed(c: GaijiCanonical<'_>, store: &mut NodeStore) -> Self {
+        match c {
+            GaijiCanonical::MenKuTen(m) => Self::MenKuTen(m),
+            GaijiCanonical::Unicode(ch) => Self::Unicode(ch),
+            GaijiCanonical::Unresolved { mencode } => Self::Unresolved {
+                mencode: mencode.map(|m| store.intern(m)),
+            },
+        }
+    }
+}
+
+impl GaijiOwned {
+    /// Materialise a borrowed [`Gaiji`](borrowed::Gaiji) into the `store`.
+    #[must_use]
+    pub fn from_borrowed(g: &borrowed::Gaiji<'_>, store: &mut NodeStore) -> Self {
+        Self {
+            hint: store.intern(g.hint),
+            canonical: GaijiCanonicalOwned::from_borrowed(g.canonical, store),
+            standalone: g.standalone,
+        }
+    }
+}
+
+impl DirectiveOwned {
+    /// Materialise a borrowed [`Directive`](borrowed::Directive) into the
+    /// `store`.
+    #[must_use]
+    pub fn from_borrowed(d: &borrowed::Directive<'_>, store: &mut NodeStore) -> Self {
+        Self {
+            raw: store.intern(d.raw.as_str()),
+            kind: d.kind,
+        }
+    }
+}
+
+/// Push a borrowed `NonEmpty<Content>` field as a length-1 [`ContentRange`].
+///
+/// Builds the single owned content (which may itself append a segment run)
+/// before the `push_contents` call, so the `&mut store` borrows never overlap.
+fn push_one_content(store: &mut NodeStore, c: borrowed::Content<'_>) -> ContentRange {
+    let owned = ContentOwned::from_borrowed(c, store);
+    store.push_contents(&[owned])
 }
 
 /// Owned mirror of [`crate::borrowed::Ruby`] (furigana).
@@ -251,6 +338,123 @@ impl NodeOwned {
             Self::AngleQuote(_) => NodeKind::AngleQuote,
             Self::MarginNote(_) => NodeKind::MarginNote,
             Self::Container(_) => NodeKind::Container,
+        }
+    }
+
+    /// Stable XML/element-style node name. Owned mirror of
+    /// [`crate::borrowed::Node::xml_node_name`], value-for-value identical so
+    /// the serializer's fallback placeholder (`<!-- unsupported-aozora: … -->`)
+    /// reproduces the borrowed bytes exactly.
+    #[must_use]
+    pub const fn xml_node_name(self) -> &'static str {
+        match self {
+            Self::Ruby(_) => "aozora_ruby",
+            Self::Format(f) => match f.attr {
+                ForwardAttr::Bouten { .. } => "aozora_bouten",
+                ForwardAttr::CombineUpright => "aozora_tcy",
+                _ => "aozora_emphasis",
+            },
+            Self::Gaiji(_) => "aozora_gaiji",
+            Self::Line(l) => match l {
+                LineFormat::Indent { .. } => "aozora_indent",
+                LineFormat::AlignEnd { .. } => "aozora_align_end",
+                LineFormat::Center { .. } => "aozora_center",
+                LineFormat::Framed => "aozora_keigakomi",
+            },
+            Self::Warichu(_) => "aozora_warichu",
+            Self::PageBreak => "aozora_page_break",
+            Self::SectionBreak(_) => "aozora_section_break",
+            Self::BodyEnd => "aozora_body_end",
+            Self::ForcedBreak => "aozora_forced_break",
+            Self::Heading(_) => "aozora_heading",
+            Self::HeadingHint(_) => "aozora_heading_hint",
+            Self::Illustration(_) => "aozora_sashie",
+            Self::Kaeriten(_) => "aozora_kaeriten",
+            Self::Directive(_) => "aozora_annotation",
+            Self::AngleQuote(_) => "aozora_angle_quote",
+            Self::MarginNote(_) => "aozora_side_note",
+            Self::Container(_) => "aozora_container",
+        }
+    }
+
+    /// Materialise a borrowed [`Node`](borrowed::Node) into the `store`,
+    /// mapping every `&'src` payload to its owned mirror.
+    ///
+    /// Each `NonEmpty<Content>` field becomes a length-1 [`ContentRange`]
+    /// (via `push_one_content`); each bare `Content` field becomes an inline
+    /// [`ContentOwned`]; each `&str` / `NonEmptyStr` field interns to a
+    /// [`StrId`]. `Copy` scalar payloads (`LineFormat`, `SectionKind`,
+    /// `Container`, the scalar enums) are reused verbatim.
+    #[must_use]
+    pub fn from_borrowed(src_node: borrowed::Node<'_>, store: &mut NodeStore) -> Self {
+        match src_node {
+            borrowed::Node::Ruby(r) => {
+                let base = push_one_content(store, r.base.get());
+                let reading = push_one_content(store, r.reading.get());
+                Self::Ruby(RubyOwned {
+                    base,
+                    reading,
+                    side: r.side,
+                })
+            }
+            borrowed::Node::Format(f) => {
+                let target = push_one_content(store, f.target.get());
+                Self::Format(ForwardFormatOwned {
+                    attr: f.attr,
+                    target,
+                    origin: f.origin,
+                })
+            }
+            borrowed::Node::Gaiji(g) => Self::Gaiji(GaijiOwned::from_borrowed(g, store)),
+            borrowed::Node::Line(lf) => Self::Line(lf),
+            borrowed::Node::Warichu(w) => Self::Warichu(WarichuOwned {
+                upper: ContentOwned::from_borrowed(w.upper, store),
+                lower: ContentOwned::from_borrowed(w.lower, store),
+            }),
+            borrowed::Node::PageBreak => Self::PageBreak,
+            borrowed::Node::SectionBreak(k) => Self::SectionBreak(k),
+            borrowed::Node::BodyEnd => Self::BodyEnd,
+            borrowed::Node::ForcedBreak => Self::ForcedBreak,
+            borrowed::Node::Heading(h) => {
+                let text = push_one_content(store, h.text.get());
+                Self::Heading(HeadingOwned {
+                    kind: h.kind,
+                    style: h.style,
+                    text,
+                })
+            }
+            borrowed::Node::HeadingHint(h) => Self::HeadingHint(HeadingHintOwned {
+                level: h.level,
+                style: h.style,
+                target: store.intern(h.target.as_str()),
+            }),
+            borrowed::Node::Illustration(s) => Self::Illustration(IllustrationOwned {
+                file: store.intern(s.file.as_str()),
+                number: s.number.map(|n| store.intern(n.as_str())),
+                dimensions: s.dimensions.map(|d| store.intern(d)),
+                caption: s.caption.map(|c| ContentOwned::from_borrowed(c, store)),
+                description: s.description.map(|d| store.intern(d)),
+            }),
+            borrowed::Node::Kaeriten(k) => Self::Kaeriten(KaeritenOwned {
+                mark: store.intern(k.mark.as_str()),
+            }),
+            borrowed::Node::Directive(a) => {
+                Self::Directive(DirectiveOwned::from_borrowed(a, store))
+            }
+            borrowed::Node::AngleQuote(d) => {
+                let content = push_one_content(store, d.content.get());
+                Self::AngleQuote(AngleQuoteOwned { content })
+            }
+            borrowed::Node::MarginNote(s) => {
+                let base = push_one_content(store, s.base.get());
+                let note = push_one_content(store, s.note.get());
+                Self::MarginNote(MarginNoteOwned {
+                    kind: s.kind,
+                    base,
+                    note,
+                })
+            }
+            borrowed::Node::Container(c) => Self::Container(c),
         }
     }
 }

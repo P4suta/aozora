@@ -74,6 +74,46 @@ pub struct OwnedLexOutput {
 }
 
 impl OwnedLexOutput {
+    /// Assemble an [`OwnedLexOutput`] from its already-owned field set.
+    ///
+    /// The only constructor for this `#[non_exhaustive]` struct reachable from
+    /// outside `aozora-syntax` — the pipeline-side converter
+    /// (`aozora_pipeline::LexOutput::to_owned`) builds the [`RegistryOwned`],
+    /// [`SourceNodeOwned`] table, and [`NodeStore`] (via the `from_borrowed`
+    /// mappers), then hands the whole field set here. Every argument maps to
+    /// the identically-named field; see the struct docs for their borrowed
+    /// `LexOutput` analogues.
+    #[must_use]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "constructs the non_exhaustive OwnedLexOutput from its complete already-owned field set; a parameter object would only re-mirror the struct"
+    )]
+    pub fn new(
+        normalized: String,
+        sanitized: String,
+        registry: RegistryOwned,
+        diagnostics: Vec<Diagnostic>,
+        sanitized_len: u32,
+        pairs: Vec<PairLink>,
+        source_nodes: Vec<SourceNodeOwned>,
+        container_pairs: Vec<ContainerPair>,
+        intern_stats: InternStats,
+        store: NodeStore,
+    ) -> Self {
+        Self {
+            normalized,
+            sanitized,
+            registry,
+            diagnostics,
+            sanitized_len,
+            pairs,
+            source_nodes,
+            container_pairs,
+            intern_stats,
+            store,
+        }
+    }
+
     /// Find the [`SourceNodeOwned`] whose `source_span` covers `src_off`
     /// (a sanitized-source byte offset). O(log n) binary search. Mirror of
     /// `LexOutput::node_at_source`.
