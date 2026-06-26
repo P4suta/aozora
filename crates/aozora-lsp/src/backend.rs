@@ -30,6 +30,7 @@ use crate::hover::hover_at;
 use crate::linked_editing::linked_editing_at;
 use crate::on_type_formatting::{TRIGGERS as ON_TYPE_TRIGGERS, format_on_type};
 use crate::parse_cache::MAX_DOCUMENT_BYTES;
+use crate::rename::{prepare_rename_at, rename_edit};
 use crate::state::OpenDocument;
 use crate::structured_snippets::snippet_completions;
 use crate::text_edit::ByteEdit;
@@ -43,11 +44,12 @@ use tower_lsp::lsp_types::{
     ExecuteCommandOptions, ExecuteCommandParams, FoldingRange, FoldingRangeParams,
     FoldingRangeProviderCapability, Hover, HoverParams, HoverProviderCapability, InitializeParams,
     InitializeResult, InitializedParams, LinkedEditingRangeParams,
-    LinkedEditingRangeServerCapabilities, LinkedEditingRanges, MessageType, OneOf, Position, Range,
-    SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
-    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
-    ServerCapabilities, ServerInfo, TextDocumentContentChangeEvent, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, Url, WorkDoneProgressOptions,
+    LinkedEditingRangeServerCapabilities, LinkedEditingRanges, MessageType, OneOf, Position,
+    PrepareRenameResponse, Range, RenameOptions, RenameParams, SemanticTokens,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
+    TextDocumentContentChangeEvent, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, Url, WorkDoneProgressOptions, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -410,6 +412,16 @@ impl LanguageServer for AozoraLanguageServer {
                 linked_editing_range_provider: Some(LinkedEditingRangeServerCapabilities::Simple(
                     true,
                 )),
+                // Coupled rename (the LSP face of the #202 splice engine):
+                // renaming one site of a coupling (a container open marker, a
+                // forward-reference / heading-hint / margin-note directive)
+                // edits its partner coherently. `prepare_provider` advertises
+                // `textDocument/prepareRename`, which gates the rename to
+                // coupled regions only.
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                })),
                 completion_provider: Some(CompletionOptions {
                     // Two completion paths share the trigger list:
                     //
@@ -705,6 +717,78 @@ impl LanguageServer for AozoraLanguageServer {
             snap.doc_line_index(),
             position,
         ))
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(
+            uri = %p.text_document.uri,
+            line = p.position.line,
+            character = p.position.character,
+        ),
+    )]
+    async fn prepare_rename(
+        &self,
+        p: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        let uri = p.text_document.uri;
+        let position = p.position;
+        let Some(state) = self.lookup(&uri) else {
+            return Ok(None);
+        };
+        // Tree-aware: lend the cached parse and ask the splice engine whether
+        // this position sits on a coupled region. `with_tree` returns `None`
+        // when there is no stored output, so flatten that into the response.
+        let snap = state.snapshot();
+        Ok(state
+            .with_parse_cache(|c| {
+                c.with_tree(|t| {
+                    prepare_rename_at(t, snap.doc_text(), snap.doc_line_index(), position)
+                })
+            })
+            .flatten())
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(
+            uri = %p.text_document_position.text_document.uri,
+            line = p.text_document_position.position.line,
+            character = p.text_document_position.position.character,
+        ),
+    )]
+    async fn rename(&self, p: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let uri = p.text_document_position.text_document.uri;
+        let position = p.text_document_position.position;
+        let new_name = p.new_name;
+        let Some(state) = self.lookup(&uri) else {
+            return Ok(None);
+        };
+        let snap = state.snapshot();
+        // The splice engine is the authority: `rename_edit` returns
+        // `Ok(None)` for a non-coupled / no-op / gate-failed position and
+        // `Err(SpliceError)` when the splice is honestly declined (an
+        // ambiguous referent, a ruby-base literal, a 、-joined multi-target).
+        let outcome = state.with_parse_cache(|c| {
+            c.with_tree(|t| {
+                rename_edit(
+                    t,
+                    snap.doc_text(),
+                    snap.doc_line_index(),
+                    &uri,
+                    position,
+                    &new_name,
+                )
+            })
+        });
+        match outcome {
+            // No stored tree, or position not on a coupled region / no-op.
+            None | Some(Ok(None)) => Ok(None),
+            Some(Ok(Some(edit))) => Ok(Some(edit)),
+            // The splice declined: surface it as an invalid-params error so the
+            // editor shows the reason rather than silently doing nothing.
+            Some(Err(e)) => Err(JsonRpcError::invalid_params(e.to_string())),
+        }
     }
 
     #[tracing::instrument(
@@ -1702,6 +1786,81 @@ mod e2e {
         assert!(
             tokens["data"].is_array(),
             "semanticTokens/full returns a data array, got: {tokens}",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rename_provider_prepare_and_apply_drive() {
+        let mut server = TestServer::new();
+        let caps = server.handshake().await;
+        // initialize advertises a rename provider with prepareProvider true.
+        assert_eq!(
+            caps["capabilities"]["renameProvider"]["prepareProvider"],
+            json!(true),
+            "renameProvider must advertise prepareProvider: {caps}",
+        );
+
+        server
+            .did_open("前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後")
+            .await;
+
+        // prepareRename on the open marker → non-null RangeWithPlaceholder.
+        let prep = server
+            .request(
+                "textDocument/prepareRename",
+                json!({
+                    "textDocument": { "uri": URI },
+                    "position": { "line": 1, "character": 0 },
+                }),
+            )
+            .await;
+        assert!(
+            prep["placeholder"]
+                .as_str()
+                .is_some_and(|s| s.contains("ここから")),
+            "prepareRename on the open marker must return a placeholder, got: {prep}",
+        );
+
+        // prepareRename on plain text → null.
+        let prep_plain = server
+            .request(
+                "textDocument/prepareRename",
+                json!({
+                    "textDocument": { "uri": URI },
+                    "position": { "line": 0, "character": 0 },
+                }),
+            )
+            .await;
+        assert!(
+            prep_plain.is_null(),
+            "plain text is not renameable: {prep_plain}"
+        );
+
+        // rename newName "［＃ここから罫囲み］" → WorkspaceEdit mentioning 罫囲み終わり.
+        let rename = server
+            .request(
+                "textDocument/rename",
+                json!({
+                    "textDocument": { "uri": URI },
+                    "position": { "line": 1, "character": 0 },
+                    "newName": "［＃ここから罫囲み］",
+                }),
+            )
+            .await;
+        let texts: Vec<String> = rename["changes"]
+            .as_object()
+            .and_then(|m| m.values().next())
+            .and_then(|edits| edits.as_array())
+            .map(|edits| {
+                edits
+                    .iter()
+                    .filter_map(|e| e["newText"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            texts.iter().any(|t| t.contains("罫囲み終わり")),
+            "rename must rewrite the close marker to 罫囲み終わり, got: {rename}",
         );
     }
 

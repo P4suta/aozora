@@ -52,6 +52,7 @@ mod on_type_formatting;
 mod paragraph;
 mod parse_cache;
 mod position;
+mod rename;
 mod semantic_tokens;
 mod state;
 mod structured_snippets;
@@ -156,6 +157,7 @@ pub mod internals {
     pub use crate::paragraph::{MAX_PARAGRAPH_BYTES, ParagraphBuffer, ParagraphSnapshot};
     pub use crate::parse_cache::{ParseCache, ReparseStats};
     pub use crate::position::{byte_offset_to_position, position_to_byte_offset};
+    pub use crate::rename::{prepare_rename_at, rename_edit};
     pub use crate::semantic_tokens::{legend as semantic_token_legend, semantic_tokens_full};
     pub use crate::state::{DocBuffer, DocSnapshot, OpenDocument};
     pub use crate::structured_snippets::snippet_completions;
