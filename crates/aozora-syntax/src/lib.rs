@@ -26,6 +26,7 @@ use thiserror::Error;
 
 pub mod accent;
 pub mod alloc;
+pub mod alloc_owned;
 pub mod borrowed;
 pub mod format;
 pub mod node_kind;
