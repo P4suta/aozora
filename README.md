@@ -6,6 +6,7 @@
   <a href="https://github.com/P4suta/aozora/releases/latest"><img alt="latest release" src="https://img.shields.io/github/v/release/P4suta/aozora?display_name=tag&sort=semver"></a>
   <a href="./LICENSE-APACHE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue"></a>
   <a href="./rust-toolchain.toml"><img alt="msrv" src="https://img.shields.io/badge/rust-1.96-orange"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/P4suta/aozora"><img alt="OpenSSF Scorecard" src="https://api.securityscorecards.dev/projects/github.com/P4suta/aozora/badge"></a>
 </p>
 
 <p align="center">

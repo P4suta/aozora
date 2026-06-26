@@ -106,3 +106,4 @@
 - [Testing strategy](contrib/testing.md)
 - [Troubleshooting & gate recovery](contrib/troubleshooting.md)
 - [Release process](contrib/release.md)
+- [Release secrets & Trusted Publishing](contrib/releasing-secrets.md)

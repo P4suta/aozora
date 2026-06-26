@@ -1,15 +1,31 @@
 # npm publish workflow for `aozora-wasm`.
 #
-# Phase P2 — capability ships in 0.4.0; live publish requires both
-# `dry_run: false` and the `NPM_TOKEN` repo secret. Manual trigger
-# only.
-#
-# How to run a real publish:
-#   gh workflow run publish-npm.yml -f dry_run=false
-#
 # wasm-pack publishes to the npm registry the JS shim + .wasm bundle
 # emitted by `wasm-pack build --target web`. The crate's
 # `[package.metadata.wasm-pack.profile]` controls the bundle name.
+#
+# SECURITY MODEL (industry-standard, see releasing-secrets.md):
+#   * The `build` job runs ungated and only produces the package + a
+#     `npm publish --dry-run` smoke test (no credentials).
+#   * The live `publish` job runs in the `release` GitHub Environment
+#     (required-reviewer approval + deployment branch/tag restriction);
+#     credentials are unreachable until a protection rule passes.
+#   * Default `use_oidc: true` publishes via npm Trusted Publishing
+#     (OIDC) — no long-lived token, and npm attaches a provenance
+#     attestation automatically. Requires npm CLI >= 11.5.1.
+#     Ref: https://docs.npmjs.com/trusted-publishers
+#   * Default `dry_run: true` so a stray click cannot publish.
+#
+# How to run a real publish (steady state, no secret):
+#   gh workflow run publish-npm.yml -f dry_run=false
+#   # then approve the `publish` job in the release environment.
+#
+# BOOTSTRAP (one-time, first publish of a brand-new package): npm does
+# NOT allow Trusted Publishing until the package already exists, so the
+# first publish needs a token. Populate the `NPM_TOKEN` environment
+# secret (account 2FA must be enabled) and run:
+#   gh workflow run publish-npm.yml -f dry_run=false -f use_oidc=false
+# Then register the trusted publisher on npmjs.com and drop the token.
 
 name: publish-npm
 
@@ -18,6 +34,10 @@ on:
     inputs:
       dry_run:
         description: "Run wasm-pack publish in --dry-run mode (no upload)"
+        type: boolean
+        default: true
+      use_oidc:
+        description: "Publish via npm Trusted Publishing (OIDC). Uncheck ONLY for the one-time bootstrap publish (uses the NPM_TOKEN env secret)."
         type: boolean
         default: true
 
@@ -29,7 +49,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -53,13 +73,54 @@ jobs:
       - name: Build wasm-pack package
         run: wasm-pack build --target web --release crates/aozora-wasm
 
-      - name: Dry-run npm publish
+      - name: Dry-run npm publish (smoke test)
         working-directory: crates/aozora-wasm/pkg
         run: npm publish --dry-run
 
-      - name: Publish to npm (live)
-        if: inputs.dry_run == false
-        working-directory: crates/aozora-wasm/pkg
+      - name: Upload package artefact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: npm-pkg
+          path: crates/aozora-wasm/pkg
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: ${{ inputs.dry_run == false }}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write  # OIDC token for npm Trusted Publishing + provenance
+    steps:
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version: "lts/*"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download package artefact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: npm-pkg
+          path: pkg
+
+      # Trusted Publishing needs npm CLI >= 11.5.1 (and Node >= 22.14.0);
+      # provenance on the bootstrap path also wants a recent npm. The
+      # setup-node LTS image ships an older npm, so upgrade it first.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Publish to npm (OIDC Trusted Publishing)
+        if: ${{ inputs.use_oidc }}
+        working-directory: pkg
+        run: npm publish --access public
+
+      # One-time bootstrap only: a brand-new package cannot use Trusted
+      # Publishing yet, so authenticate with the NPM_TOKEN env secret.
+      - name: Publish to npm (bootstrap token)
+        if: ${{ !inputs.use_oidc }}
+        working-directory: pkg
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: npm publish --access public --provenance

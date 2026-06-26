@@ -76,6 +76,31 @@ subprocess if a single parse must not be able to take the host down.
 Report any panic reachable from a well-formed host call as a
 vulnerability per the policy above.
 
+## Release & supply-chain integrity
+
+Release credentials follow published standards, not a homegrown scheme:
+
+- **No long-lived publish tokens in the repository.** Where the registry
+  supports OIDC Trusted Publishing (crates.io, PyPI, npm) we mint a
+  short-lived token at publish time; the OIDC-less marketplace tokens
+  (`VSCE_PAT`, `OVSX_PAT`) live as GitHub *Environment* secrets, not
+  repository secrets.
+- **Approval-gated publishing.** Every credential-bearing job runs in the
+  `release` GitHub Environment with required-reviewer approval and a
+  deployment branch/tag restriction, so nothing ships — and no secret or
+  OIDC token is reachable — without a human in the loop.
+- **Build provenance.** Release artefacts carry Sigstore-backed SLSA
+  Build L2 provenance, verifiable with `gh attestation verify <artefact>
+  --repo P4suta/aozora`.
+- **Continuous self-assessment.** An [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/P4suta/aozora)
+  workflow tracks the supply-chain posture (least-privilege tokens,
+  SHA-pinned actions, dangerous-workflow detection) and reports to code
+  scanning.
+
+The operational details are in the
+[release secrets runbook](https://p4suta.github.io/aozora/contrib/releasing-secrets.html)
+and [ADR-0020](https://github.com/P4suta/aozora/blob/main/docs/adr/0020-release-secret-hardening-trusted-publishing.md).
+
 ## Supported versions
 
 aozora is pre-1.0. Only the `main` branch is supported; security fixes
