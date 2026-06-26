@@ -656,6 +656,19 @@ coverage:
         --ignore-filename-regex '{{_COV_IGNORE}}' \
         --fail-under-regions {{_COV_FLOOR}}
 
+# Run the FULL suite with `--all-features` so the `internals`-gated
+# integration tests (smoke / guardian / concurrent_lsp /
+# concurrency_regressions / shuttle / property_invariants / differential /
+# snapshots / fuzz_regressions) actually EXECUTE. `coverage` runs nextest
+# with DEFAULT features only, so those suites — gated on
+# `required-features = ["internals"]` — are skipped there and would
+# otherwise only ever be COMPILED (by `clippy-strict --all-targets
+# --all-features`), never run. That gap let a stale assertion rot
+# undetected; this gate closes it. Kept separate from `coverage` so the
+# coverage % stays measured against the default public surface.
+test-all-features:
+    {{_dev}} cargo nextest run --workspace --exclude aozora-bench --all-features
+
 # HTML coverage report for local inspection. No threshold — intended
 # for opening `coverage/html/index.html` in a browser.
 coverage-html:
@@ -1517,7 +1530,10 @@ ci-parallel:
     # wasm32 cfg module is caught BEFORE the push, not by CI. CI is the
     # insurance, the pre-push gate is the guarantee.
     fg_failed=""
-    for gate in clippy-strict clippy-wasm check drift-gate conformance coverage prop; do
+    # `test-all-features` runs RIGHT AFTER `coverage`: coverage executes the
+    # default-feature suite (and measures regions); test-all-features then
+    # runs the `internals`-gated integration suites that coverage skips.
+    for gate in clippy-strict clippy-wasm check drift-gate conformance coverage test-all-features prop; do
         want code || { skip "$gate"; continue; }
         if ! run_fg "$gate" just "$gate"; then fg_failed="$gate"; break; fi
     done
