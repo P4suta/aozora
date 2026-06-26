@@ -689,9 +689,9 @@ impl OpenDocument {
     /// reflects.
     ///
     /// The accumulated edits are forwarded to
-    /// `ParseCache::reparse_incremental`, which under #237 Stage B'1 performs a
-    /// full parse regardless of the edit batch (incremental reuse returns in a
-    /// later PR). The result is always identical to a from-scratch parse.
+    /// `ParseCache::reparse_incremental`, which takes the owned incremental
+    /// splice on a single LF-clean edit and full-parses otherwise (#237 Stage
+    /// B'3). The result is always identical to a from-scratch parse.
     ///
     /// Locking is the load-bearing part: the `parse` lock is held across
     /// the whole call, so reparses are single-flight and serialise in
@@ -816,9 +816,13 @@ mod tests {
     }
 
     #[test]
-    fn single_edit_debounce_full_parses_and_reports_zero_hits() {
-        // Three blank-line-separated paragraphs.
-        let src = "段落いち。\n\n段落に。\n\n段落さん。";
+    fn single_edit_debounce_reuses_flanking_nodes() {
+        // LF-clean (source == sanitized) three-paragraph doc whose first
+        // paragraph carries a ruby node; one interior edit in the plain middle
+        // paragraph takes the owned incremental fast path, reusing the prefix
+        // ruby — so the cumulative hit total and hit rate go non-zero (#237
+        // Stage B'3).
+        let src = "｜青空《あおぞら》のした。\n\n段落に。\n\n段落さん。";
         let state = doc(src);
         // One interior edit in the middle paragraph.
         let at = src.find("段落に").expect("middle paragraph") + "段落に".len();
@@ -828,11 +832,15 @@ mod tests {
 
         let (text, diags, _ver) = state.reparse_pending();
 
-        // Under #237 Stage B'1 every reparse is a full parse, so no segment
-        // is ever reused and the cumulative hit total stays zero. (Incremental
-        // reuse — and a non-zero hit rate — returns in a later PR.)
         let snap = state.metrics.snapshot();
-        assert_eq!(snap.cache_hit_total, 0, "B'1 always full-parses: {snap:?}");
+        assert!(
+            snap.cache_hit_total > 0,
+            "a single LF-clean interior edit reuses flanking nodes: {snap:?}",
+        );
+        assert!(
+            snap.cache_hit_rate > 0.0,
+            "a non-zero hit total drives a non-zero hit rate: {snap:?}",
+        );
         // Diagnostics identical to a from-scratch parse of the edited text.
         let mut fresh = ParseCache::default();
         let (want, _) = fresh.reparse(&text);

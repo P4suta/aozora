@@ -14,9 +14,12 @@
 //! (which requires `Sync`); because the retained output is `Sync`, stashing it
 //! here is sound.
 //!
-//! Every [`ParseCache::reparse`] still performs a **full** parse: incremental
-//! re-lex/reuse lands in a later #237 PR. The win delivered here is that the
-//! per-request [`ParseCache::with_tree`] no longer re-parses from scratch.
+//! [`ParseCache::reparse`] performs a **full** parse;
+//! [`ParseCache::reparse_incremental`] takes the owned incremental splice
+//! ([`aozora::reparse_incremental_owned`]) on a single LF-clean edit and
+//! full-parses otherwise (#237 Stage B'3). The per-request
+//! [`ParseCache::with_tree`] never re-parses — it lends a borrowed view over
+//! the retained owned output.
 
 use std::cmp::Ordering;
 use std::time::{Duration, Instant};
@@ -43,16 +46,29 @@ use crate::text_edit::ByteEdit;
 /// `None`), with the user-facing notice published by the backend.
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
+/// Force a fresh full parse after this many consecutive incremental splices.
+///
+/// Each splice ([`aozora::reparse_incremental_owned`]) clones the cached
+/// [`OwnedLexOutput`]'s node store and appends the re-lexed region's nodes,
+/// leaving the edited region's old entries dead in the pool (they are
+/// unreferenced by the new tables but still occupy the cloned arena). Over an
+/// unbounded run of edits the dead entries accumulate, so every
+/// `MAX_SPLICES_BEFORE_FULL` splices we drop the fast path and full-parse —
+/// which compacts the store to exactly the live nodes — bounding growth to a
+/// small constant factor (#249, the dead-entry capacity bound).
+pub(crate) const MAX_SPLICES_BEFORE_FULL: u32 = 64;
+
 /// Per-call statistics emitted by [`ParseCache::reparse`] /
 /// [`ParseCache::reparse_incremental`].
 ///
 /// The caller (typically the LSP backend's `OpenDocument`) feeds these
 /// into the per-document `Metrics` so parse latency and cache fields are
-/// observable from a third party reading the log. Under the current full-parse
-/// foundation (#237 Stage B'1) every reparse re-lexes the whole document, so
+/// observable from a third party reading the log. A **full** parse reports
 /// `cache_hits == 0` and `cache_misses == 1` for a parse that ran
-/// (`cache_misses == 0` when the parse was skipped). Incremental reuse — and
-/// non-zero `cache_hits` — returns in a later #237 PR.
+/// (`cache_misses == 0` when the parse was skipped). An **incremental splice**
+/// (#237 Stage B'3, [`ParseCache::reparse_incremental`]) reports `cache_hits` =
+/// the number of source nodes reused from the prior parse and `cache_misses` =
+/// the number of nodes the re-lexed region produced.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReparseStats {
     pub parse_count: u64,
@@ -82,6 +98,12 @@ pub struct ParseCache {
     /// are sorted into position order at store time so reads are byte-identical
     /// to the previous merged-segmentation output.
     output: Option<OwnedLexOutput>,
+    /// Consecutive incremental splices applied to `output` since the last full
+    /// parse. Each splice clones-and-appends the node store, leaving dead
+    /// entries; once this reaches [`MAX_SPLICES_BEFORE_FULL`] the next reparse
+    /// forces a full parse (which compacts the store) and resets it to `0`
+    /// (#249).
+    splices_since_full: u32,
 }
 
 impl ParseCache {
@@ -92,18 +114,82 @@ impl ParseCache {
         self.reparse_full(text)
     }
 
-    /// Re-parse `text` after `edits`. Under #237 Stage B'1 this performs the
-    /// same full parse as [`Self::reparse`] — incremental reuse keyed off
-    /// `edits` returns in a later PR. The `edits` argument is accepted now so
-    /// the call site and signature are stable across that change.
+    /// Re-parse `text` after `edits`, taking the owned incremental splice
+    /// ([`aozora::reparse_incremental_owned`]) when it can be proven
+    /// byte-identical to a full parse, and falling back to a full parse
+    /// otherwise. Reports `cache_hits` = reused nodes, `cache_misses` = re-lexed
+    /// nodes on the fast path (#237 Stage B'3).
     ///
-    /// The result is always identical to a from-scratch parse of `text`.
+    /// The result is **always** identical to a from-scratch parse of `text`: the
+    /// splice itself returns `None` for anything it cannot prove local, so the
+    /// LSP can never desync — at worst it full-parses.
+    ///
+    /// The fast path applies only when **all** of these hold (else full parse):
+    ///
+    /// 1. `edits` is exactly one [`ByteEdit`].
+    /// 2. A prior parse exists (a stored owned output).
+    /// 3. The prior source is a sanitize fixed point (`output.sanitized ==
+    ///    self.text`): source == sanitized, so the source-coordinate edit equals
+    ///    the sanitized-coordinate edit and `text` equals the new sanitized
+    ///    text. CRLF / BOM / PUA / accent documents have source != sanitized and
+    ///    fall back — a documented limitation; mapping the source→sanitized edit
+    ///    is a later enhancement (#237).
+    /// 4. Fewer than `MAX_SPLICES_BEFORE_FULL` splices since the last full
+    ///    parse (the dead-entry capacity bound, #249).
+    /// 5. The text is non-empty and within `MAX_DOCUMENT_BYTES` (mirrors the
+    ///    full-parse guard).
     pub fn reparse_incremental(
         &mut self,
         text: &str,
-        _edits: &[ByteEdit],
+        edits: &[ByteEdit],
     ) -> (Vec<Diagnostic>, ReparseStats) {
-        self.reparse_full(text)
+        let started_at = Instant::now();
+
+        // Fast-path precondition gate. Each clause is necessary for the
+        // sanitized-coordinate splice contract; any miss falls back to a full
+        // parse (trivially correct).
+        let splice = if let [edit] = edits {
+            match self.output.as_ref() {
+                Some(prior)
+                    if prior.sanitized == self.text
+                        && self.splices_since_full < MAX_SPLICES_BEFORE_FULL
+                        && !text.is_empty()
+                        && text.len() <= MAX_DOCUMENT_BYTES =>
+                {
+                    aozora::reparse_incremental_owned(prior, text, edit.range.clone())
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let Some(mut splice) = splice else {
+            // Any precondition miss or a splice decline (`None`) → full parse,
+            // which compacts the store and resets `splices_since_full`.
+            return self.reparse_full(text);
+        };
+
+        // The splice does not guarantee globally position-sorted diagnostics
+        // (it concatenates prefix/region/suffix slices); the LSP surface needs
+        // them sorted, exactly as `reparse_full` does at store time.
+        splice.output.diagnostics.sort_by(diagnostic_order);
+        let diagnostics = splice.output.diagnostics.clone();
+        let latency_us = duration_as_us(started_at.elapsed());
+
+        text.clone_into(&mut self.text);
+        self.output = Some(splice.output);
+        self.splices_since_full += 1;
+
+        let stats = ReparseStats {
+            parse_count: 1,
+            cache_hits: splice.reused_nodes,
+            cache_misses: splice.relexed_nodes,
+            cache_entries_after: 1,
+            cache_bytes_estimate: u64::try_from(text.len()).unwrap_or(u64::MAX),
+            latency_us,
+        };
+        (diagnostics, stats)
     }
 
     /// Core full re-parse. Stores the owned output (with diagnostics sorted
@@ -118,6 +204,11 @@ impl ParseCache {
     )]
     fn reparse_full(&mut self, text: &str) -> (Vec<Diagnostic>, ReparseStats) {
         let started_at = Instant::now();
+
+        // A full parse rebuilds the store from scratch (no dead entries), so
+        // the dead-entry splice counter resets here regardless of which return
+        // path runs below (#249).
+        self.splices_since_full = 0;
 
         // Skip the O(n) parse for empty or oversized documents (see
         // `MAX_DOCUMENT_BYTES`). Store the text so size checks stay
@@ -292,24 +383,87 @@ mod tests {
     }
 
     #[test]
-    fn incremental_edit_still_full_parses() {
+    fn single_interior_edit_reuses_flanking_nodes() {
+        // LF-clean (source == sanitized) three-paragraph doc; the first
+        // paragraph carries a ruby node, the edit lands in the plain middle
+        // paragraph. The re-lexed region is the middle paragraph alone, so the
+        // ruby in the reused prefix is carried unchanged → a non-zero hit.
         let mut cache = ParseCache::default();
-        let old = "alpha\n\nbeta\n\ngamma";
+        let old = "｜青空《あおぞら》のした\n\nかきくけこ\n\nさしすせそ\n";
         drop(cache.reparse(old));
 
-        // Replace "beta" with "delta". Under B'1 this is a full parse, so
-        // `cache_hits == 0`; the diagnostics must still equal a from-scratch
-        // parse of the new text.
-        let at = old.find("beta").unwrap();
-        let edit = ByteEdit::new(at..at + "beta".len(), "delta".to_owned());
-        let new_text = "alpha\n\ndelta\n\ngamma";
-        let (diags, stats) = cache.reparse_incremental(new_text, &[edit]);
+        // Insert one plain kana inside the middle paragraph "かきくけこ".
+        let at = old.find("くけこ").unwrap();
+        let edit = ByteEdit::new(at..at, "も".to_owned());
+        let mut new_text = String::with_capacity(old.len() + "も".len());
+        new_text.push_str(&old[..at]);
+        new_text.push('も');
+        new_text.push_str(&old[at..]);
+        let (diags, stats) = cache.reparse_incremental(&new_text, &[edit]);
 
-        assert_eq!(stats.cache_hits, 0, "B'1 always full-parses: {stats:?}");
+        assert!(
+            stats.cache_hits > 0,
+            "the prefix ruby must be reused on the fast path: {stats:?}",
+        );
+        // Diagnostics identical to a from-scratch parse of the edited text.
         let mut fresh = ParseCache::default();
-        let (want, _) = fresh.reparse(new_text);
+        let (want, _) = fresh.reparse(&new_text);
         let as_debug = |ds: &[Diagnostic]| ds.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>();
         assert_eq!(as_debug(&diags), as_debug(&want));
+    }
+
+    #[test]
+    fn oversized_single_edit_skips_incremental() {
+        let mut cache = ParseCache::default();
+        drop(cache.reparse("｜青空《あおぞら》\n\nほん\n"));
+        let big = "a".repeat(MAX_DOCUMENT_BYTES + 1);
+        let edit = ByteEdit::new(0..0, big.clone());
+        let (diags, stats) = cache.reparse_incremental(&big, &[edit]);
+        assert!(diags.is_empty(), "oversized incremental parse is skipped");
+        assert_eq!(stats.parse_count, 0, "no parse when oversized");
+        assert_eq!(stats.cache_hits, 0, "no reuse for a skipped parse");
+    }
+
+    #[test]
+    fn splice_run_forces_full_parse_at_capacity_bound() {
+        // After MAX_SPLICES_BEFORE_FULL consecutive single LF-clean edits, the
+        // next reparse must full-parse (dead-entry bound) and reset the counter.
+        let mut cache = ParseCache::default();
+        let mut text = "｜青空《あおぞら》のした\n\nかきくけこ\n\nさしすせそ\n".to_owned();
+        drop(cache.reparse(&text));
+
+        // Drive exactly MAX_SPLICES_BEFORE_FULL splices, each a one-char insert
+        // inside the middle paragraph.
+        for _ in 0..MAX_SPLICES_BEFORE_FULL {
+            let at = text.find("けこ").unwrap();
+            let edit = ByteEdit::new(at..at, "も".to_owned());
+            let mut new_text = String::with_capacity(text.len() + "も".len());
+            new_text.push_str(&text[..at]);
+            new_text.push('も');
+            new_text.push_str(&text[at..]);
+            let (_, stats) = cache.reparse_incremental(&new_text, &[edit]);
+            assert!(stats.cache_hits > 0, "each splice reuses the prefix ruby");
+            text = new_text;
+        }
+        assert_eq!(cache.splices_since_full, MAX_SPLICES_BEFORE_FULL);
+
+        // The next single edit is over the bound → forced full parse, counter
+        // resets to zero.
+        let at = text.find("けこ").unwrap();
+        let edit = ByteEdit::new(at..at, "も".to_owned());
+        let mut new_text = String::with_capacity(text.len() + "も".len());
+        new_text.push_str(&text[..at]);
+        new_text.push('も');
+        new_text.push_str(&text[at..]);
+        let (_, stats) = cache.reparse_incremental(&new_text, &[edit]);
+        assert_eq!(
+            stats.cache_hits, 0,
+            "the capacity-bound reparse must be a full parse: {stats:?}",
+        );
+        assert_eq!(
+            cache.splices_since_full, 0,
+            "a full parse resets the dead-entry counter",
+        );
     }
 
     #[test]
@@ -353,7 +507,13 @@ mod tests {
         let edit = ByteEdit::new(at..at, "ぞ".to_owned());
         let (diags, stats) = cache.reparse_incremental(&new_text, &[edit]);
 
-        assert_eq!(stats.cache_hits, 0, "B'1 always full-parses: {stats:?}");
+        // The paragraphs are plain prose (no classified nodes), so even when the
+        // splice fast path fires it reuses zero nodes; the diagnostics must
+        // still equal a from-scratch parse of the edited text.
+        assert_eq!(
+            stats.cache_hits, 0,
+            "plain prose reuses no nodes: {stats:?}"
+        );
         let mut fresh = ParseCache::default();
         let (want, _) = fresh.reparse(&new_text);
         let as_debug = |ds: &[Diagnostic]| ds.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>();
@@ -362,8 +522,9 @@ mod tests {
 
     #[test]
     fn deliberately_wrong_edit_range_still_equals_full() {
-        // Both paths are full parses, so the result must equal a from-scratch
-        // parse regardless of the (now-ignored) edit range.
+        // The bogus edit range does not transform the cached text into the new
+        // text (bytes outside it differ), so the splice declines and the cache
+        // full-parses — the result must equal a from-scratch parse regardless.
         let mut cache = ParseCache::default();
         drop(cache.reparse("alpha\n\nbeta\n\ngamma"));
         let new_text = "alpha\n\nbeta edited\n\ngamma";

@@ -96,24 +96,32 @@ pub use segmented::{IncrementalOutcome, SegmentedParse};
 /// Source-region ownership and minimal-diff source splicing (#202).
 pub use splice::{CoupledKind, Coupling, OwnedRegion, RegionRole, SpliceError, SpliceSafety};
 
-/// **Internal, unstable.** Owned-AST incremental re-parse entry point (#237
-/// Stage B'), exposed only so the `corpus_incremental_merge` differential gate
-/// (an integration test) can prove it byte-for-byte equivalent to a full
-/// re-parse. NOT part of the public API and subject to change without notice;
-/// the production consumer is the LSP wiring landing in a later #237 PR.
+pub use incremental_owned::OwnedSplice;
+
+/// **UNSTABLE — not subject to semver until v0.5.0.**
 ///
-/// Builds the [`OwnedLexOutput`] for `new_sanitized` (a sanitized fixed point)
-/// from `cached` and the single sanitized-coordinate edit `edit_old`, by
-/// re-lexing only the minimal balanced region around the edit and splicing the
-/// owned tables. Returns `None` for any edit it cannot prove local (the caller
-/// then full-parses).
-#[doc(hidden)]
+/// Owned-AST incremental re-parse entry point (#237 Stage B'): the production
+/// incremental path the LSP routes its debounced diagnostics through, and the
+/// surface the `corpus_incremental_merge` differential gate proves byte-for-byte
+/// equivalent to a full re-parse.
+///
+/// This is the #237 incremental API. It is exposed deliberately for the
+/// in-workspace LSP consumer but its shape (the [`OwnedSplice`] result, the
+/// sanitized-coordinate contract) may change without a major version bump until
+/// the v0.5.0 normalization-waist release stabilises it; external callers must
+/// not depend on it.
+///
+/// Builds the [`OwnedSplice`] (the spliced [`OwnedLexOutput`] plus reuse counts)
+/// for `new_sanitized` (a sanitized fixed point) from `cached` and the single
+/// sanitized-coordinate edit `edit_old`, by re-lexing only the minimal balanced
+/// region around the edit and splicing the owned tables. Returns `None` for any
+/// edit it cannot prove local (the caller then full-parses, trivially correct).
 #[must_use]
-pub fn __reparse_incremental_owned(
+pub fn reparse_incremental_owned(
     cached: &OwnedLexOutput,
     new_sanitized: &str,
     edit_old: Range<usize>,
-) -> Option<OwnedLexOutput> {
+) -> Option<OwnedSplice> {
     incremental_owned::reparse_incremental_owned(cached, new_sanitized, edit_old)
 }
 
