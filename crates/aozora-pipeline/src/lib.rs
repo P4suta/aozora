@@ -33,9 +33,11 @@ pub mod lexer;
 pub mod pipeline;
 
 pub use aozora_syntax::borrowed::NodeRef;
-// Re-export the owned lex output so `lex_owned`'s return type is nameable at
-// the crate root (keeps intra-doc links resolvable under `-D warnings`).
-pub use aozora_syntax::owned::OwnedLexOutput;
+// Re-export the owned lex output + its source-node / node-ref surface so
+// `lex_owned`'s return type is nameable at the crate root (keeps intra-doc
+// links resolvable under `-D warnings`) and downstream crates that depend only
+// on `aozora-pipeline` (e.g. `aozora-cst`) can name the owned node types.
+pub use aozora_syntax::owned::{NodeRefOwned, OwnedLexOutput, SourceNodeOwned};
 pub use borrowed::{LexOutput, SourceNode, lex, lex_owned};
 pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 

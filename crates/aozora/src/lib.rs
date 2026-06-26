@@ -56,7 +56,9 @@
 #![doc = include_str!("../../../README.md")]
 #![forbid(unsafe_code)]
 
-pub use aozora_pipeline::{LexOutput, NodeRef, SourceNode, lex};
+pub use aozora_pipeline::{
+    LexOutput, NodeRef, NodeRefOwned, OwnedLexOutput, SourceNode, SourceNodeOwned, lex,
+};
 /// Per-node HTML writer: `render_node::render(node, entering, &mut w)`.
 ///
 /// The sanctioned surface for sibling composition layers — notably
@@ -96,6 +98,7 @@ pub use aozora_syntax::{
         AngleQuote, Content, Directive, ForwardFormat, Gaiji, Heading, HeadingHint, Illustration,
         Kaeriten, MarginNote, Node, Ruby, Segment, Warichu,
     },
+    owned::{ContentOwned, NodeOwned, NodeStore},
 };
 
 mod diagnostics_text;
