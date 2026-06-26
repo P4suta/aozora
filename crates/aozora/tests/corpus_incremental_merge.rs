@@ -1,17 +1,16 @@
-//! Load-bearing gate for incremental re-parse (#237, Stage A).
+//! Load-bearing gate for incremental re-parse (#237).
 //!
-//! Proves two things over every document in `AOZORA_CORPUS_ROOT`:
-//!
-//! 1. **Reassembly equivalence.** [`aozora::SegmentedParse`]'s per-segment
-//!    locals (rebased) plus its whole-document-scoped diagnostics equal a
-//!    whole-document parse as a positional multiset. Because the merge is
-//!    `max(local, whole-scoped)` per diagnostic, an exact match means the
-//!    segments never invent or misplace a diagnostic (no phantoms).
-//! 2. **Bounded non-locality.** The only diagnostics a segment cannot
-//!    reproduce locally — and so must be carried from the whole-document
-//!    parse — are the documented whole-document-scoped class
-//!    (forward-reference bouten ambiguity). A new non-local diagnostic
-//!    surfacing here fails the gate so it gets a deliberate review.
+//! Proves, over every document in `AOZORA_CORPUS_ROOT`, that the owned-table
+//! splice [`aozora::reparse_incremental_owned`] is a true incremental engine:
+//! its spliced `OwnedLexOutput` is **byte-for-byte equal** — on every
+//! resolved/rendered surface (HTML, source, normalized/sanitized text, the
+//! diagnostics multiset, container pairs, delimiter pairs, the registry, and
+//! the source-node table) — to a from-scratch parse of the edited text. A
+//! single deterministic plain-character insertion near each document's midpoint
+//! exercises the splice fast path on global-free documents and the full-parse
+//! fallback elsewhere; the fast-path count is asserted non-zero so the gate
+//! actually drives the splice. Any edit the splice cannot prove byte-identical
+//! returns `None` and falls back to a full parse (trivially correct).
 //!
 //! Skipped silently when `AOZORA_CORPUS_ROOT` is unset; never hard-fails on
 //! a missing corpus (mirrors `corpus_sweep`).
@@ -19,169 +18,8 @@
 use aozora::render::{render_html_owned, serialize_owned};
 use aozora::syntax::owned::{ContentOwned, NodeOwned, NodeRefOwned, NodeStore, SegmentOwned};
 use aozora::syntax::owned::{ContentRange, GaijiCanonicalOwned, GaijiOwned, SegRange};
-use aozora::{Diagnostic, Document, SegmentedParse, reparse_incremental_owned};
+use aozora::{Diagnostic, Document, reparse_incremental_owned};
 use aozora_encoding::decode_auto;
-
-/// Diagnostic variants whose computation depends on the whole document
-/// (forward-reference resolution + end-of-document kaeriten pairing) and so
-/// cannot be reproduced by an isolated segment. Keep in sync with
-/// `aozora::segmented::is_whole_document_scoped`.
-const WHOLE_DOCUMENT_SCOPED: &[&str] = &[
-    "BoutenTargetAmbiguous",
-    "TcyTargetNotFound",
-    "UnresolvedGaiji",
-    "UnrecognisedContainerDirective",
-    "BracketedKaeritenNoPair",
-    "KaeritenOutsideKanbun",
-    "MismatchedContainerClose",
-    "MismatchedBoutenContainer",
-];
-
-#[test]
-fn segmented_merge_equals_whole_doc_parse() {
-    let Some(source) = aozora_corpus::from_env() else {
-        eprintln!("AOZORA_CORPUS_ROOT not set; skipping incremental-merge gate");
-        return;
-    };
-
-    let mut count: usize = 0;
-    let mut segmented: usize = 0;
-    let mut with_scoped: usize = 0;
-    // Collect every problem rather than failing on the first.
-    let mut diverged: Vec<String> = Vec::new();
-    let mut unexpected_scoped: Vec<String> = Vec::new();
-
-    for item in source.iter() {
-        let item = item.expect("corpus iteration must not error");
-
-        let Ok(text) = decode_auto(&item.bytes) else {
-            eprintln!("skip (neither UTF-8 nor Shift_JIS): {}", item.label);
-            continue;
-        };
-
-        let whole = Document::new(text.as_ref());
-        let whole_diags = sorted_debug(whole.parse().diagnostics().to_vec());
-
-        let seg = SegmentedParse::of(text.as_ref());
-        if seg.is_segmented() {
-            segmented += 1;
-        }
-        if !seg.whole_document_scoped().is_empty() {
-            with_scoped += 1;
-        }
-
-        // (1) reassembly equivalence
-        let merged_diags = sorted_debug(seg.merged_diagnostics());
-        if whole_diags != merged_diags {
-            diverged.push(format!(
-                "{} (segments={}): whole={:?} merged={:?}",
-                item.label,
-                seg.segment_count(),
-                whole_diags,
-                merged_diags,
-            ));
-        }
-
-        // (2) every carried diagnostic is of a documented whole-doc-scoped
-        // variant
-        for d in seg.whole_document_scoped() {
-            let variant = variant_name(d);
-            if !WHOLE_DOCUMENT_SCOPED.contains(&variant) {
-                unexpected_scoped.push(format!("{}: {variant}", item.label));
-            }
-        }
-
-        count += 1;
-    }
-
-    eprintln!(
-        "incremental-merge gate: {count} docs walked, {segmented} multi-segment, \
-         {with_scoped} with whole-document-scoped diagnostics"
-    );
-
-    let mut problems = Vec::new();
-    if !diverged.is_empty() {
-        problems.push(format!(
-            "{} document(s) where reassembled merge != whole-doc parse:\n  {}",
-            diverged.len(),
-            diverged.join("\n  "),
-        ));
-    }
-    if !unexpected_scoped.is_empty() {
-        problems.push(format!(
-            "{} undocumented whole-document-scoped diagnostic(s) — add to WHOLE_DOCUMENT_SCOPED \
-             and the `aozora::segmented` module docs after review:\n  {}",
-            unexpected_scoped.len(),
-            unexpected_scoped.join("\n  "),
-        ));
-    }
-    assert!(problems.is_empty(), "\n{}", problems.join("\n\n"));
-}
-
-/// Stage A2: `SegmentedParse::reparse_incremental` must produce the same
-/// diagnostics as a from-scratch parse of the edited text, for every corpus
-/// document. A single deterministic plain-character insertion near the
-/// document's midpoint exercises the incremental fast path on global-free
-/// documents and the full-parse fallback elsewhere. Also reports how often the
-/// fast path applied, so the reuse rate is visible.
-#[test]
-fn reparse_incremental_equals_full_parse() {
-    let Some(source) = aozora_corpus::from_env() else {
-        eprintln!("AOZORA_CORPUS_ROOT not set; skipping incremental-reparse gate");
-        return;
-    };
-
-    let mut count: usize = 0;
-    let mut fast_path: usize = 0;
-    let mut diverged: Vec<String> = Vec::new();
-
-    for item in source.iter() {
-        let item = item.expect("corpus iteration must not error");
-        let Ok(text) = decode_auto(&item.bytes) else {
-            continue;
-        };
-        let text = text.as_ref();
-        if text.is_empty() {
-            continue;
-        }
-
-        // Insert a plain ASCII character at a char boundary near the midpoint.
-        let mut at = text.len() / 2;
-        while at < text.len() && !text.is_char_boundary(at) {
-            at += 1;
-        }
-        let mut edited = String::with_capacity(text.len() + 1);
-        edited.push_str(&text[..at]);
-        edited.push('x');
-        edited.push_str(&text[at..]);
-
-        let cached = SegmentedParse::of(text);
-        let (incremental, outcome) = cached.reparse_incremental(&edited, at..at);
-        if outcome.reused {
-            fast_path += 1;
-        }
-
-        let got = sorted_debug(incremental.merged_diagnostics());
-        let want = sorted_debug(SegmentedParse::of(&edited).merged_diagnostics());
-        if got != want {
-            diverged.push(format!(
-                "{} (fast_path={}): incremental != full",
-                item.label, outcome.reused
-            ));
-        }
-        count += 1;
-    }
-
-    eprintln!(
-        "incremental-reparse gate: {count} docs edited, {fast_path} took the incremental fast path"
-    );
-    assert!(
-        diverged.is_empty(),
-        "{} document(s) where reparse_incremental != full parse:\n  {}",
-        diverged.len(),
-        diverged.join("\n  "),
-    );
-}
 
 /// PR3b-2 Stage B'2: `reparse_incremental_owned` (the owned-table splice)
 /// must produce an `OwnedLexOutput` byte-for-byte equal — on every
@@ -540,29 +378,4 @@ fn sorted_debug(mut diags: Vec<Diagnostic>) -> Vec<String> {
             .then_with(|| format!("{a:?}").cmp(&format!("{b:?}")))
     });
     diags.iter().map(|d| format!("{d:?}")).collect()
-}
-
-/// The variant name of a diagnostic (the leading identifier of its debug
-/// representation), e.g. `"BoutenTargetAmbiguous"`.
-fn variant_name(d: &Diagnostic) -> &'static str {
-    // Match the variants directly so the name is a compile-time constant.
-    match d {
-        Diagnostic::SourceContainsPua { .. } => "SourceContainsPua",
-        Diagnostic::UnclosedBracket { .. } => "UnclosedBracket",
-        Diagnostic::UnmatchedClose { .. } => "UnmatchedClose",
-        Diagnostic::AccentDecompositionApplied { .. } => "AccentDecompositionApplied",
-        Diagnostic::UnresolvedGaiji { .. } => "UnresolvedGaiji",
-        Diagnostic::MismatchedContainerClose { .. } => "MismatchedContainerClose",
-        Diagnostic::EmptyRubyReading { .. } => "EmptyRubyReading",
-        Diagnostic::NestedRuby { .. } => "NestedRuby",
-        Diagnostic::UnrecognisedContainerDirective { .. } => "UnrecognisedContainerDirective",
-        Diagnostic::TcyTargetNotFound { .. } => "TcyTargetNotFound",
-        Diagnostic::BoutenTargetAmbiguous { .. } => "BoutenTargetAmbiguous",
-        Diagnostic::BreakInSingleLineContainer { .. } => "BreakInSingleLineContainer",
-        Diagnostic::BracketedKaeritenNoPair { .. } => "BracketedKaeritenNoPair",
-        Diagnostic::KaeritenOutsideKanbun { .. } => "KaeritenOutsideKanbun",
-        Diagnostic::MismatchedBoutenContainer { .. } => "MismatchedBoutenContainer",
-        Diagnostic::Internal { .. } => "Internal",
-        _ => "Unknown",
-    }
 }
