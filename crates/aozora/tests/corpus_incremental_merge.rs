@@ -18,7 +18,10 @@
 use aozora::render::{render_html_owned, serialize_owned};
 use aozora::syntax::owned::{ContentOwned, NodeOwned, NodeRefOwned, NodeStore, SegmentOwned};
 use aozora::syntax::owned::{ContentRange, GaijiCanonicalOwned, GaijiOwned, SegRange};
-use aozora::{Diagnostic, Document, reparse_incremental_owned};
+use aozora::{
+    DiagBaseRef, Diagnostic, Document, reparse_incremental_diagnostics_only,
+    reparse_incremental_owned,
+};
 use aozora_encoding::decode_auto;
 
 /// PR3b-2 Stage B'2: `reparse_incremental_owned` (the owned-table splice)
@@ -213,6 +216,117 @@ fn reparse_owned_incremental_equals_full_parse() {
     assert!(
         fast_path > 0,
         "the owned-splice gate must exercise the fast path at least once \
+         (got {fast_path}); a perpetual fallback proves nothing",
+    );
+}
+
+/// #237 Tier 1: the **diagnostics-only** incremental engine
+/// ([`aozora::reparse_incremental_diagnostics_only`]) — the LSP's per-keystroke
+/// hot path — must produce diagnostics byte-identical to a from-scratch parse of
+/// the edited text, for every corpus document whose midpoint insertion is a
+/// sanitize fixed point. It must additionally be **pinned** to the owned splice
+/// ([`aozora::reparse_incremental_owned`]): wherever the diagnostics-only engine
+/// takes the fast path, the owned engine must too, and their diagnostics must be
+/// identical (the two share the prologue, so any drift is a bug).
+///
+/// Same harness as [`reparse_owned_incremental_equals_full_parse`] (sanitized
+/// fixed-point baseline, midpoint plain insertion). Fast-path count asserted
+/// non-zero so the gate actually drives the engine.
+#[test]
+fn reparse_diagnostics_only_equals_full_parse() {
+    let Some(source) = aozora_corpus::from_env() else {
+        eprintln!("AOZORA_CORPUS_ROOT not set; skipping diagnostics-only incremental gate");
+        return;
+    };
+
+    let mut count: usize = 0;
+    let mut fast_path: usize = 0;
+    let mut fallback: usize = 0;
+    let mut diverged: Vec<String> = Vec::new();
+
+    for item in source.iter() {
+        let item = item.expect("corpus iteration must not error");
+        let Ok(text) = decode_auto(&item.bytes) else {
+            continue;
+        };
+        let text = text.as_ref();
+        if text.is_empty() {
+            continue;
+        }
+
+        // Sanitized fixed-point baseline (see the owned gate for the rationale).
+        let san = Document::new(text).parse_owned().sanitized;
+        if san.is_empty() {
+            continue;
+        }
+        let cached = Document::new(san.as_str()).parse_owned();
+        if cached.sanitized != san {
+            continue;
+        }
+
+        let mut mid = san.len() / 2;
+        while mid < san.len() && !san.is_char_boundary(mid) {
+            mid += 1;
+        }
+        let new_san = format!("{}x{}", &san[..mid], &san[mid..]);
+
+        let full = Document::new(new_san.as_str()).parse_owned();
+        if full.sanitized != new_san {
+            continue;
+        }
+
+        let Some(diag) =
+            reparse_incremental_diagnostics_only(DiagBaseRef::of(&cached), &new_san, mid..mid)
+        else {
+            fallback += 1;
+            count += 1;
+            continue;
+        };
+        fast_path += 1;
+        count += 1;
+
+        let mut problems: Vec<String> = Vec::new();
+
+        // 1. Diagnostics byte-identical to a full parse (the production contract).
+        if sorted_debug(diag.diagnostics.clone()) != sorted_debug(full.diagnostics.clone()) {
+            problems.push("diagnostics-only multiset != full parse".to_owned());
+        }
+
+        // 2. Pinned to the owned splice: the owned engine must also fast-path
+        //    here (shared prologue), with identical diagnostics.
+        match reparse_incremental_owned(&cached, &new_san, mid..mid) {
+            Some(owned) => {
+                if sorted_debug(diag.diagnostics.clone())
+                    != sorted_debug(owned.output.diagnostics.clone())
+                {
+                    problems.push("diagnostics-only != owned splice diagnostics".to_owned());
+                }
+            }
+            None => problems.push(
+                "diagnostics-only fast-pathed but owned splice declined (prologue drift)"
+                    .to_owned(),
+            ),
+        }
+
+        if !problems.is_empty() {
+            diverged.push(format!("{}: {}", item.label, problems.join("; ")));
+        }
+    }
+
+    eprintln!(
+        "diagnostics-only incremental gate: {count} docs edited, {fast_path} fast-path, \
+         {fallback} fallback, {} diverged",
+        diverged.len(),
+    );
+    assert!(
+        diverged.is_empty(),
+        "{} document(s) where the diagnostics-only splice diverged:\n  {}",
+        diverged.len(),
+        diverged.join("\n  "),
+    );
+    assert!(
+        fast_path > 0,
+        "the diagnostics-only gate must exercise the fast path at least once \
          (got {fast_path}); a perpetual fallback proves nothing",
     );
 }
