@@ -8,9 +8,19 @@
 //! - **full** — `Document::parse_owned(new_text)` (a from-scratch parse, what
 //!   the LSP does today on any non-fast-path edit).
 //! - **incremental** — `reparse_incremental_owned(&cached, new_text, edit)`
-//!   (re-lex only the minimal region + splice the owned tables).
-//! - **clone** — `cached.store.clone()` alone, to see how much of the
-//!   incremental cost is the `O(doc)` store clone the splice does every edit.
+//!   (re-lex only the minimal region + splice the owned tables; still rebuilds
+//!   the whole `OwnedLexOutput`, so `O(doc)`).
+//! - **diagnostics-only** —
+//!   `reparse_incremental_diagnostics_only(DiagBaseRef::of(&cached), …)`, the
+//!   #237 Tier 1 production hot path: splices only the diagnostics + the
+//!   store-free region-find tables, skipping the store clone + the normalized
+//!   string / registry / container-pairs rebuild. It beats the owned splice in
+//!   every band, but the win is modest: the rebuild it drops is a minority of
+//!   the cost — the residual is the prologue (region-find scan + the
+//!   `source_nodes`/`pairs` base maintenance + the region re-lex), still `O(doc)`.
+//!   Making THAT `O(log n)` is the Tier 2 work needed for a truly dramatic win.
+//! - **clone** — `cached.store.clone()` alone, to confirm it is NOT the
+//!   bottleneck (measured <1% of incremental cost).
 //!
 //! A single deterministic plain-`x` insertion near each document's sanitized
 //! midpoint exercises the splice fast path (global-free docs) or the full-parse
@@ -37,7 +47,9 @@ use std::hint::black_box;
 use std::process;
 use std::time::Instant;
 
-use aozora::{Document, reparse_incremental_owned};
+use aozora::{
+    DiagBaseRef, Document, reparse_incremental_diagnostics_only, reparse_incremental_owned,
+};
 use aozora_encoding::decode_auto;
 
 /// Size bands in bytes (sanitized length): `[lo, hi)`.
@@ -62,6 +74,7 @@ struct Band {
     fast_path: u64,
     full_ns: u128,
     incr_ns: u128,
+    diag_ns: u128,
     clone_ns: u128,
 }
 
@@ -127,6 +140,15 @@ fn main() {
         let is_fast = spliced.is_some();
         black_box(spliced);
 
+        // The production hot path: diagnostics-only splice (no full
+        // OwnedLexOutput). Fast-paths exactly when the owned splice does (shared
+        // prologue), so it is timed under the same `is_fast` gate.
+        let t_diag = Instant::now();
+        let diag =
+            reparse_incremental_diagnostics_only(DiagBaseRef::of(&cached), &new_san, mid..mid);
+        let diag_ns = t_diag.elapsed().as_nanos();
+        black_box(diag);
+
         let t_clone = Instant::now();
         black_box(cached.store.clone());
         let clone_ns = t_clone.elapsed().as_nanos();
@@ -137,14 +159,15 @@ fn main() {
             bands[b].fast_path += 1;
             bands[b].full_ns += full_ns;
             bands[b].incr_ns += incr_ns;
+            bands[b].diag_ns += diag_ns;
             bands[b].clone_ns += clone_ns;
         }
     }
 
-    println!("=== incremental_speedup (full vs owned incremental splice) ===\n");
+    println!("=== incremental_speedup (full vs owned splice vs diagnostics-only) ===\n");
     println!(
-        "{:<18} {:>7} {:>9} {:>11} {:>11} {:>8} {:>10}",
-        "band", "docs", "fast %", "full µs", "incr µs", "speedup", "clone %"
+        "{:<18} {:>7} {:>8} {:>10} {:>10} {:>8} {:>10} {:>9} {:>8}",
+        "band", "docs", "fast %", "full µs", "incr µs", "incr×", "diag µs", "diag×", "clone %"
     );
     let mut tot = Band::default();
     for (i, &(name, _, _)) in BANDS.iter().enumerate() {
@@ -156,31 +179,43 @@ fn main() {
         tot.fast_path += bd.fast_path;
         tot.full_ns += bd.full_ns;
         tot.incr_ns += bd.incr_ns;
+        tot.diag_ns += bd.diag_ns;
         tot.clone_ns += bd.clone_ns;
         print_row(name, bd);
     }
-    println!("{:-<78}", "");
+    println!("{:-<92}", "");
     print_row("all", tot);
     println!(
-        "\nfull µs / incr µs = mean per fast-path doc; speedup = full / incr; \
-         clone % = store-clone share of incremental.\n\
-         Larger speedup is better; a high clone % means the O(doc) store clone \
-         dominates (move-store optimisation candidate)."
+        "\nfull/incr/diag µs = mean per fast-path doc; incr× = full/incr (owned splice), \
+         diag× = full/diag (diagnostics-only hot path); clone % = store-clone share of incr.\n\
+         diag× > incr× confirms Tier 1 helps, but the gap (incr−diag) is small: the \
+         dropped rebuild is a minority of the cost. The residual is the prologue \
+         (region-find + base maintenance + region re-lex), still O(doc) — Tier 2 \
+         (O(log n) region-find + lazy base) is needed for a truly dramatic win."
     );
 }
 
 fn print_row(name: &str, bd: Band) {
     let fast_pct = 100.0 * bd.fast_path as f64 / bd.docs as f64;
-    let (full_us, incr_us, speedup, clone_pct) = if bd.fast_path > 0 {
+    let (full_us, incr_us, incr_x, diag_us, diag_x, clone_pct) = if bd.fast_path > 0 {
         let f = bd.full_ns as f64 / bd.fast_path as f64 / 1000.0;
         let i = bd.incr_ns as f64 / bd.fast_path as f64 / 1000.0;
+        let d = bd.diag_ns as f64 / bd.fast_path as f64 / 1000.0;
         let c = 100.0 * bd.clone_ns as f64 / bd.incr_ns.max(1) as f64;
-        (f, i, if i > 0.0 { f / i } else { 0.0 }, c)
+        (
+            f,
+            i,
+            if i > 0.0 { f / i } else { 0.0 },
+            d,
+            if d > 0.0 { f / d } else { 0.0 },
+            c,
+        )
     } else {
-        (0.0, 0.0, 0.0, 0.0)
+        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     };
     println!(
-        "{name:<18} {:>7} {fast_pct:>8.1}% {full_us:>11.1} {incr_us:>11.1} {speedup:>7.2}x {clone_pct:>9.1}%",
+        "{name:<18} {:>7} {fast_pct:>7.1}% {full_us:>10.1} {incr_us:>10.1} {incr_x:>7.2}x \
+         {diag_us:>9.1} {diag_x:>8.2}x {clone_pct:>7.1}%",
         bd.docs
     );
 }

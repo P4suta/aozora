@@ -15,18 +15,32 @@
 //! here is sound.
 //!
 //! [`ParseCache::reparse`] performs a **full** parse;
-//! [`ParseCache::reparse_incremental`] takes the owned incremental splice
-//! ([`aozora::reparse_incremental_owned`]) on a single LF-clean edit and
-//! full-parses otherwise (#237 Stage B'3). The per-request
-//! [`ParseCache::with_tree`] never re-parses — it lends a borrowed view over
-//! the retained owned output.
+//! [`ParseCache::reparse_incremental`] takes the **diagnostics-only** incremental
+//! splice ([`aozora::reparse_incremental_diagnostics_only`]) on a single edit
+//! and full-parses otherwise (#237 Tier 1).
+//!
+//! # Lazy tree (#237 Tier 1)
+//!
+//! A consumer trace established that the per-keystroke hot path (debounced
+//! `publishDiagnostics`) reads only [`ParseCache::diagnostics`]; the full
+//! [`Tree`] (via [`ParseCache::with_tree`]) is needed only by the rare F2
+//! rename gesture. So the cache keeps a **store-free** `DiagBase` (sanitized
+//! text + diagnostics + the `source_nodes`/`pairs` the next edit's region-find
+//! needs) that the hot path splices in `O(region + #diagnostics)`, and
+//! materialises the full `O(doc)` [`OwnedLexOutput`] **lazily** — only when
+//! [`ParseCache::with_tree`] is actually called — memoised in a [`OnceLock`]
+//! (seeded eagerly by a full parse so a structural request right after one is
+//! instant, and invalidated on every incremental splice).
 
 use std::cmp::Ordering;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use aozora::pipeline::has_long_rule_line;
 use aozora::pipeline::lexer::sanitize::sanitize;
-use aozora::{Diagnostic, Document, OwnedLexOutput, OwnedSplice, Tree};
+use aozora::{
+    DiagBaseRef, DiagSplice, Diagnostic, Document, OwnedLexOutput, PairLink, SourceNodeOwned, Tree,
+};
 use tracing::field::Empty as TracingEmpty;
 
 use crate::text_edit::ByteEdit;
@@ -50,14 +64,14 @@ pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Force a fresh full parse after this many consecutive incremental splices.
 ///
-/// Each splice ([`aozora::reparse_incremental_owned`]) clones the cached
-/// [`OwnedLexOutput`]'s node store and appends the re-lexed region's nodes,
-/// leaving the edited region's old entries dead in the pool (they are
-/// unreferenced by the new tables but still occupy the cloned arena). Over an
-/// unbounded run of edits the dead entries accumulate, so every
-/// `MAX_SPLICES_BEFORE_FULL` splices we drop the fast path and full-parse —
-/// which compacts the store to exactly the live nodes — bounding growth to a
-/// small constant factor (#249, the dead-entry capacity bound).
+/// The diagnostics-only hot path never clones a node store, so the dead-entry
+/// growth the owned splice had is gone; but a long run of incremental splices
+/// leaves [`ParseCache`] with no materialised tree, so the first structural
+/// request (rename) after many keystrokes would pay one full `O(doc)` parse.
+/// Forcing a full parse every `MAX_SPLICES_BEFORE_FULL` splices re-seeds the
+/// lazy tree and bounds the size of any one re-lexed region's drift, keeping
+/// both the splice base and a fresh tree in hand (#249, the periodic-compaction
+/// bound).
 pub(crate) const MAX_SPLICES_BEFORE_FULL: u32 = 64;
 
 /// Per-call statistics emitted by [`ParseCache::reparse`] /
@@ -81,30 +95,67 @@ pub struct ReparseStats {
     pub latency_us: u64,
 }
 
+/// The store-free spliceable base of the most recent parse: exactly the fields
+/// the diagnostics-only hot path
+/// ([`aozora::reparse_incremental_diagnostics_only`]) reads from the prior
+/// parse and produces for the next one. Kept across edits so the per-keystroke
+/// path never has to materialise the full [`OwnedLexOutput`].
+#[derive(Debug, Default)]
+struct DiagBase {
+    /// Sanitized buffer of the most recent parse (a sanitize fixed point) — the
+    /// coordinate space the splice and the next region-find operate in.
+    sanitized: String,
+    /// Diagnostics, position-sorted at store time so [`ParseCache::diagnostics`]
+    /// reads are O(1) and byte-identical to a full parse.
+    diagnostics: Vec<Diagnostic>,
+    /// Source-node side-table the next edit's region-find consumes (it reads
+    /// only `source_span` + the node discriminant, never the store).
+    source_nodes: Vec<SourceNodeOwned>,
+    /// Resolved delimiter pairs the next edit's region-find consumes
+    /// (store-free offsets).
+    pairs: Vec<PairLink>,
+}
+
+impl DiagBase {
+    /// Borrow this base as the lightweight [`DiagBaseRef`] the diagnostics-only
+    /// engine takes.
+    fn as_diag_ref(&self) -> DiagBaseRef<'_> {
+        DiagBaseRef {
+            sanitized: &self.sanitized,
+            source_nodes: &self.source_nodes,
+            pairs: &self.pairs,
+            diagnostics: &self.diagnostics,
+        }
+    }
+}
+
 /// Per-document state holder for the LSP backend.
 ///
-/// Retains the owned output of the most recent parse so the
-/// `publishDiagnostics` path can answer in O(1) (the diagnostics are stored
-/// position-sorted) and so reads needing the [`Tree`] (hover, inlay hints,
-/// completion) get a cheap borrowed view via [`Self::with_tree`] without
-/// re-parsing.
+/// Keeps the store-free `DiagBase` of the most recent parse so the
+/// `publishDiagnostics` hot path answers in O(1) and splices incrementally in
+/// `O(region)`, plus a lazily-materialised full [`OwnedLexOutput`] so the rare
+/// structural request (rename) can still get a borrowed [`Tree`] via
+/// [`Self::with_tree`] (#237 Tier 1).
 #[derive(Debug, Default)]
 pub struct ParseCache {
     /// Latest source text. Owned so reads don't have to borrow back
     /// into the parent `OpenDocument`, and so the borrowed [`Tree`] view
-    /// handed out by [`Self::with_tree`] can borrow it alongside the output.
+    /// handed out by [`Self::with_tree`] can borrow it alongside the lazily
+    /// materialised output.
     text: String,
-    /// Owned output of the most recent [`Self::reparse`]. `None` until the
+    /// Store-free diagnostics base of the most recent parse. `None` until the
     /// first parse, or when the document is empty / oversized (those store no
-    /// output, so [`Self::with_tree`] degrades to `None`). Its `diagnostics`
-    /// are sorted into position order at store time so reads are byte-identical
-    /// to the previous merged-segmentation output.
-    output: Option<OwnedLexOutput>,
-    /// Consecutive incremental splices applied to `output` since the last full
-    /// parse. Each splice clones-and-appends the node store, leaving dead
-    /// entries; once this reaches [`MAX_SPLICES_BEFORE_FULL`] the next reparse
-    /// forces a full parse (which compacts the store) and resets it to `0`
-    /// (#249).
+    /// base, so [`Self::with_tree`] degrades to `None`).
+    base: Option<DiagBase>,
+    /// Lazily-materialised full owned output for structural requests
+    /// ([`Self::with_tree`]). Seeded eagerly by [`Self::reparse_full`] (so a
+    /// rename right after a full parse is instant) and reset to an empty
+    /// [`OnceLock`] on every incremental splice (so the next structural request
+    /// full-parses the current text once and memoises it).
+    tree: OnceLock<OwnedLexOutput>,
+    /// Consecutive incremental splices since the last full parse. Once this
+    /// reaches [`MAX_SPLICES_BEFORE_FULL`] the next reparse forces a full parse
+    /// (re-seeding the lazy tree) and resets it to `0` (#249).
     splices_since_full: u32,
 }
 
@@ -116,11 +167,16 @@ impl ParseCache {
         self.reparse_full(text)
     }
 
-    /// Re-parse `text` after `edits`, taking the owned incremental splice
-    /// ([`aozora::reparse_incremental_owned`]) when it can be proven
-    /// byte-identical to a full parse, and falling back to a full parse
+    /// Re-parse `text` after `edits`, taking the **diagnostics-only** incremental
+    /// splice ([`aozora::reparse_incremental_diagnostics_only`]) when it can be
+    /// proven byte-identical to a full parse, and falling back to a full parse
     /// otherwise. Reports `cache_hits` = reused nodes, `cache_misses` = re-lexed
-    /// nodes on the fast path (#237 Stage B'3).
+    /// nodes on the fast path (#237 Tier 1).
+    ///
+    /// On the fast path this never builds an [`OwnedLexOutput`]: it stores the
+    /// spliced `DiagBase` and invalidates the lazy [`Self::with_tree`] cache,
+    /// so the per-keystroke cost is `O(region + #diagnostics)` rather than
+    /// `O(doc)`.
     ///
     /// The result is **always** identical to a from-scratch parse of `text`: the
     /// splice itself returns `None` for anything it cannot prove local, so the
@@ -166,8 +222,11 @@ impl ParseCache {
         // (single edit, prior present, splice-count bound, non-empty /
         // non-oversize) are necessary for the sanitized-coordinate splice
         // contract; any miss falls back to a full parse (trivially correct).
+        // Each branch yields `(new_sanitized, splice)`: the new sanitized buffer
+        // becomes the next base, and the splice carries the spliced diagnostics
+        // + the store-free tables.
         let splice = if let [edit] = edits {
-            match self.output.as_ref() {
+            match self.base.as_ref() {
                 Some(prior)
                     if self.splices_since_full < MAX_SPLICES_BEFORE_FULL
                         && !text.is_empty()
@@ -177,8 +236,13 @@ impl ParseCache {
                         // LF-clean fixed point: source == sanitized, so the
                         // source-coordinate edit is already in sanitized
                         // coordinates and `text` is already the new sanitized
-                        // text. Splice directly (byte-unchanged from before).
-                        aozora::reparse_incremental_owned(prior, text, edit.range.clone())
+                        // text. Splice directly.
+                        aozora::reparse_incremental_diagnostics_only(
+                            prior.as_diag_ref(),
+                            text,
+                            edit.range.clone(),
+                        )
+                        .map(|d| (text.to_owned(), d))
                     } else {
                         // BOM + CRLF source: map the source edit to sanitized
                         // coordinates and splice against the true sanitize(text).
@@ -191,21 +255,29 @@ impl ParseCache {
             None
         };
 
-        let Some(mut splice) = splice else {
+        let Some((new_sanitized, mut splice)) = splice else {
             // Any precondition miss or a splice decline (`None`) → full parse,
-            // which compacts the store and resets `splices_since_full`.
+            // which re-seeds the lazy tree and resets `splices_since_full`.
             return self.reparse_full(text);
         };
 
         // The splice does not guarantee globally position-sorted diagnostics
         // (it concatenates prefix/region/suffix slices); the LSP surface needs
         // them sorted, exactly as `reparse_full` does at store time.
-        splice.output.diagnostics.sort_by(diagnostic_order);
-        let diagnostics = splice.output.diagnostics.clone();
+        splice.diagnostics.sort_by(diagnostic_order);
+        let diagnostics = splice.diagnostics.clone();
         let latency_us = duration_as_us(started_at.elapsed());
 
         text.clone_into(&mut self.text);
-        self.output = Some(splice.output);
+        self.base = Some(DiagBase {
+            sanitized: new_sanitized,
+            diagnostics: splice.diagnostics,
+            source_nodes: splice.source_nodes,
+            pairs: splice.pairs,
+        });
+        // Invalidate the lazily-materialised tree: the next structural request
+        // full-parses the new text once and memoises it.
+        self.tree = OnceLock::new();
         self.splices_since_full += 1;
 
         let stats = ReparseStats {
@@ -242,15 +314,19 @@ impl ParseCache {
     ///   CRLF pair.
     ///
     /// The splice runs against `sanitize(new_raw).text` — the **true** sanitize
-    /// of the new source — so [`aozora::reparse_incremental_owned`]'s own
-    /// validation backstops any mapping error with a decline, never a wrong
+    /// of the new source — so
+    /// [`aozora::reparse_incremental_diagnostics_only`]'s own validation
+    /// backstops any mapping error with a decline, never a wrong splice.
+    ///
+    /// Returns `(new_sanitized, splice)` on success: the new sanitized buffer
+    /// (which becomes the next `DiagBase::sanitized`) and the diagnostics-only
     /// splice.
     fn try_incremental_crlf(
         &self,
-        prior: &OwnedLexOutput,
+        prior: &DiagBase,
         new_raw: &str,
         edit: &ByteEdit,
-    ) -> Option<OwnedSplice> {
+    ) -> Option<(String, DiagSplice)> {
         // Simple-doc gate: only a pure BOM-strip + CRLF→LF transformation is
         // offset-modelled by `san_offset`. Any sanitize diagnostic (accent /
         // PUA) would be unreproducible by a region re-lex; a decorative rule
@@ -270,11 +346,18 @@ impl ParseCache {
 
         // Splice against the true sanitize(new_raw) (reusing the buffer already
         // computed for the gate — never sanitize twice).
-        aozora::reparse_incremental_owned(prior, &san_out.text, start..end)
+        let splice = aozora::reparse_incremental_diagnostics_only(
+            prior.as_diag_ref(),
+            &san_out.text,
+            start..end,
+        )?;
+        Some((san_out.text.into_owned(), splice))
     }
 
-    /// Core full re-parse. Stores the owned output (with diagnostics sorted
-    /// into position order) and the text, and reports per-call statistics.
+    /// Core full re-parse. Derives the store-free `DiagBase` (with diagnostics
+    /// sorted into position order) and eagerly seeds the lazy [`Self::with_tree`]
+    /// cache with the full output, stores the text, and reports per-call
+    /// statistics. This is the periodic-compaction point (#249).
     #[tracing::instrument(
         level = "debug",
         skip_all,
@@ -286,20 +369,20 @@ impl ParseCache {
     fn reparse_full(&mut self, text: &str) -> (Vec<Diagnostic>, ReparseStats) {
         let started_at = Instant::now();
 
-        // A full parse rebuilds the store from scratch (no dead entries), so
-        // the dead-entry splice counter resets here regardless of which return
-        // path runs below (#249).
+        // A full parse re-seeds the lazy tree and resets the splice counter,
+        // regardless of which return path runs below (#249).
         self.splices_since_full = 0;
 
         // Skip the O(n) parse for empty or oversized documents (see
         // `MAX_DOCUMENT_BYTES`). Store the text so size checks stay
-        // consistent, store no output — the backend publishes a single
+        // consistent, store no base / no tree — the backend publishes a single
         // "too large" notice for oversized text, and empty text has nothing
         // to surface — and report a zero-parse reparse so metrics don't count
-        // phantom work. With no stored output, `with_tree` degrades to `None`.
+        // phantom work. With no stored base, `with_tree` degrades to `None`.
         if text.is_empty() || text.len() > MAX_DOCUMENT_BYTES {
             text.clone_into(&mut self.text);
-            self.output = None;
+            self.base = None;
+            self.tree = OnceLock::new();
             let stats = ReparseStats {
                 parse_count: 0,
                 cache_hits: 0,
@@ -323,7 +406,20 @@ impl ParseCache {
         let latency_us = duration_as_us(started_at.elapsed());
 
         text.clone_into(&mut self.text);
-        self.output = Some(out);
+        // Derive the store-free splice base from the full output, then seed the
+        // lazy tree with the full output itself (so a structural request right
+        // after a full parse is instant).
+        self.base = Some(DiagBase {
+            sanitized: out.sanitized.clone(),
+            diagnostics: out.diagnostics.clone(),
+            source_nodes: out.source_nodes.clone(),
+            pairs: out.pairs.clone(),
+        });
+        self.tree = OnceLock::new();
+        // The lock is freshly empty, so `set` always succeeds; the only error
+        // is "already initialised" (impossible here), which would hand `out`
+        // back — drop it explicitly rather than bind-and-drop the `Result`.
+        drop(self.tree.set(out));
 
         let stats = ReparseStats {
             parse_count: 1,
@@ -342,27 +438,36 @@ impl ParseCache {
     /// documents (which store no output).
     #[must_use]
     pub fn diagnostics(&self) -> &[Diagnostic] {
-        self.output.as_ref().map_or(&[][..], |o| &o.diagnostics)
+        self.base.as_ref().map_or(&[][..], |b| &b.diagnostics)
     }
 
     /// Run `f` against a borrowed [`Tree`] over the most recent parse.
-    /// Returns the closure's result, or `None` when there is no stored output
+    /// Returns the closure's result, or `None` when there is no stored base
     /// — before the first [`Self::reparse`], for empty text, or for an
     /// oversized document (see `MAX_DOCUMENT_BYTES`, which skips the parse).
     ///
-    /// Cheap: the owned output is retained, so this lends a borrowed
-    /// [`Tree::view`] without re-parsing. No `Document` is built and no parse
-    /// runs.
+    /// **Lazy** (#237 Tier 1): the per-keystroke hot path stores only the
+    /// store-free `DiagBase`, so the full [`OwnedLexOutput`] is materialised
+    /// here on first access — `O(doc)`, but only for the rare structural request
+    /// (rename) that needs the tree — and memoised in a [`OnceLock`]. A full
+    /// parse seeds the lock eagerly, so a structural request immediately after
+    /// one is instant; the memo is shared across the `prepare_rename` → `rename`
+    /// pair and reset on every incremental splice.
     pub fn with_tree<R>(&self, f: impl FnOnce(&Tree<'_>) -> R) -> Option<R> {
-        let output = self.output.as_ref()?;
-        Some(f(&Tree::view(&self.text, output)))
+        // No base ⇒ never-parsed / empty / oversized ⇒ degrade to `None`
+        // (and never trigger the lazy full parse below).
+        self.base.as_ref()?;
+        let tree = self
+            .tree
+            .get_or_init(|| Document::new(self.text.as_str()).parse_owned());
+        Some(f(&Tree::view(&self.text, tree)))
     }
 
     /// Whether any text has been parsed yet.
     #[cfg(test)]
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.text.is_empty() && self.output.is_none()
+        self.text.is_empty() && self.base.is_none()
     }
 }
 
@@ -716,8 +821,10 @@ mod tests {
 
     #[test]
     fn crlf_incremental_byte_identical_to_full() {
-        // After a CRLF splice the stored output must be byte-identical to a fresh
-        // full parse of the new raw text across every surface the LSP exposes.
+        // After a CRLF splice the stored base + the lazily-materialised tree must
+        // match a fresh full parse of the new raw text across every surface the
+        // LSP exposes (sanitized + diagnostics from the base; HTML via the lazy
+        // tree, which full-parses the stored text on first `with_tree`).
         let mut cache = ParseCache::default();
         let old = "｜青空《あおぞら》のした\r\n\r\nかきくけこ\r\n\r\nさしすせそ\r\n";
         drop(cache.reparse(old));
@@ -725,22 +832,19 @@ mod tests {
         let (_, stats) = cache.reparse_incremental(&new_raw, &[edit]);
         assert!(stats.cache_hits > 0, "CRLF fast path must fire: {stats:?}");
 
-        let spliced = cache.output.as_ref().expect("stored splice output");
+        let spliced_san = cache.base.as_ref().expect("stored base").sanitized.clone();
+        let spliced_diags = diag_debug(cache.diagnostics());
         let spliced_html = html_of(&cache).expect("spliced html");
 
         let mut fresh = ParseCache::default();
         drop(fresh.reparse(&new_raw));
-        let full = fresh.output.as_ref().expect("stored full output");
+        let full_san = fresh.base.as_ref().expect("stored base").sanitized.clone();
+        let full_diags = diag_debug(fresh.diagnostics());
         let full_html = html_of(&fresh).expect("full html");
 
-        assert_eq!(spliced.normalized, full.normalized, "normalized differs");
-        assert_eq!(spliced.sanitized, full.sanitized, "sanitized differs");
+        assert_eq!(spliced_san, full_san, "sanitized differs");
         assert_eq!(spliced_html, full_html, "rendered HTML differs");
-        assert_eq!(
-            diag_debug(&spliced.diagnostics),
-            diag_debug(&full.diagnostics),
-            "diagnostics differ",
-        );
+        assert_eq!(spliced_diags, full_diags, "diagnostics differ");
     }
 
     #[test]
@@ -760,10 +864,12 @@ mod tests {
         let mut fresh = ParseCache::default();
         let (want, _) = fresh.reparse(&new_raw);
         assert_eq!(diag_debug(&diags), diag_debug(&want));
-        let full = fresh.output.as_ref().expect("stored full output");
-        let spliced = cache.output.as_ref().expect("stored splice output");
-        assert_eq!(spliced.sanitized, full.sanitized);
-        assert_eq!(spliced.normalized, full.normalized);
+        let full_san = &fresh.base.as_ref().expect("stored base").sanitized;
+        let spliced_san = &cache.base.as_ref().expect("stored base").sanitized;
+        assert_eq!(spliced_san, full_san);
+        // The lazily-materialised spliced tree renders identically to a fresh
+        // full parse (both full-parse the same stored text).
+        assert_eq!(html_of(&cache), html_of(&fresh));
     }
 
     #[test]

@@ -55,6 +55,94 @@ pub struct OwnedSplice {
     pub relexed_nodes: u64,
 }
 
+/// The store-free fields the **diagnostics-only** incremental path
+/// ([`crate::reparse_incremental_diagnostics_only`]) and the shared
+/// `splice_prologue` read from the cached parse.
+///
+/// The LSP's per-keystroke hot path keeps only these four lightweight fields of
+/// the prior parse (its `DiagBase`) and never materialises the full
+/// [`OwnedLexOutput`]. Every field is store-independent: the prologue's
+/// region-find (`minimal_balanced_region` / `structurally_safe` / the
+/// coupling guard) and the diagnostics splice read only `sanitized`,
+/// `source_nodes` (`source_span` + the `NodeRefOwned` discriminant),
+/// `pairs`, and `diagnostics` — none of which resolves a `StrId`/`ContentRange`
+/// against a [`crate::NodeStore`]. A full [`OwnedLexOutput`] projects into one
+/// via [`DiagBaseRef::of`].
+#[derive(Debug, Clone, Copy)]
+pub struct DiagBaseRef<'a> {
+    /// The cached sanitized buffer (a sanitize fixed point) — the coordinate
+    /// space every `source_span`/`pairs` offset indexes.
+    pub sanitized: &'a str,
+    /// Source-keyed node side-table, sorted by `source_span.start`.
+    pub source_nodes: &'a [SourceNodeOwned],
+    /// Resolved (open, close) delimiter pairs in sanitized coordinates.
+    pub pairs: &'a [PairLink],
+    /// Non-fatal observations from the cached parse.
+    pub diagnostics: &'a [Diagnostic],
+}
+
+impl<'a> DiagBaseRef<'a> {
+    /// Project a full [`OwnedLexOutput`] to its store-free diagnostics base.
+    #[must_use]
+    pub fn of(cached: &'a OwnedLexOutput) -> Self {
+        Self {
+            sanitized: &cached.sanitized,
+            source_nodes: &cached.source_nodes,
+            pairs: &cached.pairs,
+            diagnostics: &cached.diagnostics,
+        }
+    }
+}
+
+/// The result of a successful **diagnostics-only** incremental splice.
+///
+/// **UNSTABLE — not subject to semver until v0.5.0** (the #237 incremental API).
+///
+/// Returned by [`crate::reparse_incremental_diagnostics_only`]: the spliced
+/// diagnostics plus the store-free `source_nodes`/`pairs` the *next* edit's
+/// region-find consumes, and the reuse accounting the LSP reports as cache
+/// hits/misses. No [`OwnedLexOutput`] (no `normalized`, `registry`,
+/// `container_pairs`, or [`crate::NodeStore`]) is built — that is the whole
+/// point of the hot path.
+///
+/// `source_nodes` carries the region's nodes with the **re-lexed** sub-output's
+/// `NodeRefOwned` handles verbatim (no store graft). This is sound only because
+/// the next edit's region-find reads those handles store-independently — see
+/// [`crate::reparse_incremental_diagnostics_only`] for the pinned invariant.
+#[derive(Debug)]
+pub struct DiagSplice {
+    /// Spliced diagnostics (prefix unchanged ++ region re-lexed ++ shifted
+    /// suffix), byte-identical to a full parse's diagnostics multiset.
+    pub diagnostics: Vec<Diagnostic>,
+    /// Spliced source-node side-table for the next edit's region-find. The
+    /// region's nodes keep the re-lexed sub-output's `NodeRefOwned` handles
+    /// verbatim (no store graft); only `source_span` + discriminant are read
+    /// downstream.
+    pub source_nodes: Vec<SourceNodeOwned>,
+    /// Spliced resolved delimiter pairs (store-free offsets) for the next
+    /// edit's region-find.
+    pub pairs: Vec<PairLink>,
+    /// Number of `cached` source nodes carried unchanged (prefix + suffix).
+    pub reused_nodes: u64,
+    /// Number of source nodes the isolated region re-lex produced.
+    pub relexed_nodes: u64,
+}
+
+/// The store-independent prologue shared by [`reparse_incremental_owned`] and
+/// [`crate::reparse_incremental_diagnostics_only`]: the validated region plus the
+/// isolated region re-lex. Produced by [`splice_prologue`] (steps 1–5); both
+/// engines build on it so they cannot drift.
+struct Prologue {
+    /// Minimal balanced region (sanitized coordinates) the edit re-lexes.
+    region: Range<u32>,
+    /// The isolated re-lex of the edited region (a full [`OwnedLexOutput`] of
+    /// the region slice — `O(region)`, not `O(doc)`).
+    relexed: OwnedLexOutput,
+    /// Sanitized suffix shift (`new_len - old_len` over the edit), equal to the
+    /// region re-lex's length delta.
+    d_san: i64,
+}
+
 /// Whether `s` carries document structure that an incremental segment re-lex
 /// must not silently absorb: a line terminator (could move a blank-line
 /// boundary) or a directive opener `［` (could introduce a container or
@@ -185,13 +273,13 @@ pub(crate) fn structurally_safe(
 /// - `edit` is out of bounds (start > end, or end > sanitized length);
 /// - the minimal safe region is the whole document (no interior safe cut).
 pub(crate) fn minimal_balanced_region(
-    cached: &OwnedLexOutput,
+    base: DiagBaseRef<'_>,
     edit: Range<usize>,
 ) -> Option<Range<u32>> {
-    if cached.diagnostics.iter().any(is_whole_document_scoped) {
+    if base.diagnostics.iter().any(is_whole_document_scoped) {
         return None;
     }
-    let san = &cached.sanitized;
+    let san = base.sanitized;
     let len = u32::try_from(san.len()).ok()?;
     if edit.start > edit.end || edit.end > san.len() {
         return None;
@@ -208,10 +296,7 @@ pub(crate) fn minimal_balanced_region(
         let Ok(b_u32) = u32::try_from(b) else {
             continue;
         };
-        if b_u32 != 0
-            && b_u32 != len
-            && structurally_safe(b_u32, &cached.source_nodes, &cached.pairs)
-        {
+        if b_u32 != 0 && b_u32 != len && structurally_safe(b_u32, base.source_nodes, base.pairs) {
             cuts.push(b_u32);
         }
     }
@@ -349,50 +434,29 @@ fn relexed_is_balanced(nodes: &[SourceNodeOwned]) -> bool {
     depth == 0
 }
 
-/// Build the [`OwnedSplice`] (the spliced [`OwnedLexOutput`] plus reuse counts)
-/// for the edited text `new_sanitized` (a sanitized fixed point) from `cached`
-/// (the owned lex output of the pre-edit sanitized text) and the single
-/// sanitized-coordinate edit `edit_old`, **without a full re-parse** — by
-/// re-lexing only the minimal balanced region around the edit and splicing the
-/// owned tables.
+/// The store-independent prologue shared by both incremental engines (steps
+/// 1–5 of the owned splice): find the minimal balanced region around the edit,
+/// validate the edit, re-lex the region in isolation, and run the
+/// self-containment + cross-region text-coupling guards. Returns the validated
+/// [`Prologue`] (region, the region re-lex, and the sanitized suffix shift), or
+/// `None` for any edit that cannot be proven local.
 ///
-/// The result is byte-for-byte equal, on every resolved/rendered surface, to a
-/// full re-parse of `new_sanitized`; the `corpus_incremental_merge` differential
-/// gate enforces this over the reference corpus. Any edit that cannot be proven
-/// local returns `None`, and the caller falls back to a full parse (trivially
-/// correct). The fallbacks are:
+/// Reads only the store-free [`DiagBaseRef`] of the cached parse, so the
+/// diagnostics-only hot path can run it without ever materialising the full
+/// [`OwnedLexOutput`]. [`reparse_incremental_owned`] and
+/// [`crate::reparse_incremental_diagnostics_only`] both build on this single helper, so
+/// their region/relex/decline decisions cannot drift.
 ///
-/// - [`minimal_balanced_region`] declines (whole-document-scoped diagnostic in
-///   `cached`, out-of-bounds edit, or no interior safe cut);
-/// - `cached` carries a globally-unbalanced delimiter
-///   ([`Diagnostic::UnclosedBracket`] / [`Diagnostic::UnmatchedClose`]) whose
-///   open/close half swallows or strays across region boundaries;
-/// - the edit does not transform `cached.sanitized` into `new_sanitized`
-///   (bytes outside `edit_old` differ), or the edited bytes carry document
-///   structure ([`carries_structure`]);
-/// - the region slice is not a sanitize fixed point in isolation;
-/// - the re-lexed region is not self-contained: it carries a
-///   whole-document-scoped diagnostic, an unclosed/unmatched delimiter half, or
-///   unbalanced container nesting;
-/// - any node in `cached` or the re-lexed region forbids region reuse
-///   ([`node_forbids_region_reuse`]) — a text-coupled construct (forward
-///   reference / heading hint / margin note resolving by whole-document text
-///   search) or an opaque node the splice cannot reason about;
-/// - a cached diagnostic straddles a region boundary, or any offset arithmetic
-///   overflows.
-#[allow(
-    clippy::too_many_lines,
-    reason = "a single linear table-by-table splice; splitting the prefix/region/suffix walk per stream would scatter the one invariant (each table partitions at the same region boundary) across helpers and obscure it"
-)]
-pub(crate) fn reparse_incremental_owned(
-    cached: &OwnedLexOutput,
+/// The decline conditions are exactly those documented on
+/// [`reparse_incremental_owned`]'s region/validation/self-containment bullets.
+fn splice_prologue(
+    base: DiagBaseRef<'_>,
     new_sanitized: &str,
     edit_old: Range<usize>,
-) -> Option<OwnedSplice> {
+) -> Option<Prologue> {
     // 1. Minimal balanced region (sanitized coordinates).
-    let region = minimal_balanced_region(cached, edit_old.clone())?;
+    let region = minimal_balanced_region(base, edit_old.clone())?;
     let r_start = region.start as usize;
-    let r_end = region.end as usize;
 
     // A globally-unbalanced delimiter in `cached` — an unclosed open
     // (`UnclosedBracket`) or a stray close (`UnmatchedClose`) — makes the whole
@@ -402,7 +466,7 @@ pub(crate) fn reparse_incremental_owned(
     // isolation (balanced on its own) would invent them. These are not in the
     // whole-document-scoped diagnostic set (they have no partner span to pair),
     // so guard them explicitly here.
-    if cached.diagnostics.iter().any(|d| {
+    if base.diagnostics.iter().any(|d| {
         matches!(
             d,
             Diagnostic::UnclosedBracket { .. } | Diagnostic::UnmatchedClose { .. }
@@ -415,7 +479,7 @@ pub(crate) fn reparse_incremental_owned(
     //    into `new_sanitized`, and touch no document structure. An incorrectly
     //    specified edit (bytes outside `edit_old` changed) falls back to a full
     //    parse.
-    let old_source = cached.sanitized.as_str();
+    let old_source = base.sanitized;
     if edit_old.start > edit_old.end || edit_old.end > old_source.len() {
         return None;
     }
@@ -440,7 +504,7 @@ pub(crate) fn reparse_incremental_owned(
 
     // Decline if any cached diagnostic straddles a region boundary: it is
     // neither reproduced by the isolated region re-lex nor safely shiftable.
-    for d in &cached.diagnostics {
+    for d in base.diagnostics {
         let span = d.span();
         let prefix = span.end <= region.start;
         let suffix = span.start >= region.end;
@@ -482,7 +546,7 @@ pub(crate) fn reparse_incremental_owned(
     //    whole-document text search, so a plain region edit could perturb a
     //    partner in the reused prefix/suffix. Conservative — a later PR can
     //    narrow this to the affected partners.
-    if cached
+    if base
         .source_nodes
         .iter()
         .chain(relexed.source_nodes.iter())
@@ -491,15 +555,73 @@ pub(crate) fn reparse_incremental_owned(
         return None;
     }
 
+    // The sanitized suffix shift equals `relexed.sanitized_len - region_len`,
+    // which is exactly `edit_delta` because `new_r_end = r_end + edit_delta`.
+    Some(Prologue {
+        region,
+        relexed,
+        d_san: edit_delta,
+    })
+}
+
+/// Build the [`OwnedSplice`] (the spliced [`OwnedLexOutput`] plus reuse counts)
+/// for the edited text `new_sanitized` (a sanitized fixed point) from `cached`
+/// (the owned lex output of the pre-edit sanitized text) and the single
+/// sanitized-coordinate edit `edit_old`, **without a full re-parse** — by
+/// re-lexing only the minimal balanced region around the edit and splicing the
+/// owned tables.
+///
+/// The result is byte-for-byte equal, on every resolved/rendered surface, to a
+/// full re-parse of `new_sanitized`; the `corpus_incremental_merge` differential
+/// gate enforces this over the reference corpus. Any edit that cannot be proven
+/// local returns `None`, and the caller falls back to a full parse (trivially
+/// correct). The fallbacks are:
+///
+/// - [`minimal_balanced_region`] declines (whole-document-scoped diagnostic in
+///   `cached`, out-of-bounds edit, or no interior safe cut);
+/// - `cached` carries a globally-unbalanced delimiter
+///   ([`Diagnostic::UnclosedBracket`] / [`Diagnostic::UnmatchedClose`]) whose
+///   open/close half swallows or strays across region boundaries;
+/// - the edit does not transform `cached.sanitized` into `new_sanitized`
+///   (bytes outside `edit_old` differ), or the edited bytes carry document
+///   structure ([`carries_structure`]);
+/// - the region slice is not a sanitize fixed point in isolation;
+/// - the re-lexed region is not self-contained: it carries a
+///   whole-document-scoped diagnostic, an unclosed/unmatched delimiter half, or
+///   unbalanced container nesting;
+/// - any node in `cached` or the re-lexed region forbids region reuse
+///   ([`node_forbids_region_reuse`]) — a text-coupled construct (forward
+///   reference / heading hint / margin note resolving by whole-document text
+///   search) or an opaque node the splice cannot reason about;
+/// - a cached diagnostic straddles a region boundary, or any offset arithmetic
+///   overflows.
+#[allow(
+    clippy::too_many_lines,
+    reason = "a single linear table-by-table splice; splitting the prefix/region/suffix walk per stream would scatter the one invariant (each table partitions at the same region boundary) across helpers and obscure it"
+)]
+pub(crate) fn reparse_incremental_owned(
+    cached: &OwnedLexOutput,
+    new_sanitized: &str,
+    edit_old: Range<usize>,
+) -> Option<OwnedSplice> {
+    // Steps 1–5 (store-independent): region find, edit validation, region
+    // re-lex, self-containment, cross-region coupling guard — shared verbatim
+    // with the diagnostics-only engine so the two cannot drift.
+    let Prologue {
+        region,
+        relexed,
+        d_san,
+    } = splice_prologue(DiagBaseRef::of(cached), new_sanitized, edit_old)?;
+    let r_start = region.start as usize;
+    let r_end = region.end as usize;
+    let old_source = cached.sanitized.as_str();
+
     // 6. Normalized boundaries & per-stream deltas.
     let norm_start = norm_offset(cached, region.start)?;
     let norm_end = norm_offset(cached, region.end)?;
     if norm_start > norm_end {
         return None;
     }
-    // Sanitized suffix shift: equals `relexed.sanitized_len - region_len`, which
-    // is exactly `edit_delta` because `new_r_end = r_end + edit_delta`.
-    let d_san = edit_delta;
     let region_norm_len = i64::from(norm_end) - i64::from(norm_start);
     let d_norm = i64::try_from(relexed.normalized.len()).ok()? - region_norm_len;
 
@@ -701,6 +823,162 @@ pub(crate) fn reparse_incremental_owned(
     })
 }
 
+/// **UNSTABLE — not subject to semver until v0.5.0.**
+///
+/// The LSP's per-keystroke hot path: compute the spliced diagnostics for the
+/// edited text `new_sanitized` (a sanitized fixed point) from the store-free
+/// [`DiagBaseRef`] of the prior parse and the single sanitized-coordinate edit
+/// `edit_old`, **without building an [`OwnedLexOutput`]**.
+///
+/// A consumer trace established that the debounced `publishDiagnostics` path
+/// reads only `cache.diagnostics()`; the full tree (`with_tree`) is needed only
+/// by the rare F2 rename gesture. So this engine runs the shared
+/// [`splice_prologue`] (`O(region)` re-lex) and then **only** the diagnostics
+/// splice plus the store-free `source_nodes`/`pairs` splice the *next* edit's
+/// region-find consumes — skipping the `O(doc)` normalized/sanitized string
+/// rebuild, the store clone + graft, the registry Eytzinger rebuild, and the
+/// container-pairs splice. The result is `O(region + #diagnostics)`.
+///
+/// Its `diagnostics` are byte-identical to [`reparse_incremental_owned`]'s (the
+/// same step-13 concatenation over the same prologue), which the
+/// `corpus_incremental_merge` differential gate pins to a full parse over the
+/// reference corpus.
+///
+/// # Store-free-base soundness
+///
+/// The region's nodes carry the **re-lexed** sub-output's [`NodeRefOwned`]
+/// handles verbatim — **no store graft, no store clone**. A `NodeRefOwned` that
+/// embeds a `StrId`/`ContentRange` resolves only against the store it was built
+/// in (here, the re-lex's transient store, which is dropped). This is sound
+/// **only** because the resulting [`DiagSplice::source_nodes`]/`pairs` are
+/// consumed exclusively by the next edit's region-find
+/// ([`minimal_balanced_region`] → [`structurally_safe`], [`relexed_is_balanced`]
+/// via the prologue, and the [`node_forbids_region_reuse`] coupling guard),
+/// every one of which reads only a node's `source_span` (`Copy`,
+/// store-independent) and the `NodeRefOwned` **discriminant** (`BlockOpen` /
+/// `BlockClose` / `Inline` / …) — and never resolves a `StrId`/`ContentRange`
+/// against a store. The `debug_assert` below pins this invariant: a future
+/// change that resolves a region node's payload here must instead graft it into
+/// a real store (i.e. take the [`reparse_incremental_owned`] path).
+#[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "a single linear table-by-table splice (source_nodes/pairs/diagnostics), each partitioning at the same region boundary; splitting per stream would scatter that one invariant across helpers and obscure it"
+)]
+pub(crate) fn reparse_incremental_diagnostics_only(
+    base: DiagBaseRef<'_>,
+    new_sanitized: &str,
+    edit_old: Range<usize>,
+) -> Option<DiagSplice> {
+    // Steps 1–5 (store-independent), shared with the owned splice.
+    let Prologue {
+        region,
+        relexed,
+        d_san,
+    } = splice_prologue(base, new_sanitized, edit_old)?;
+
+    // Invariant pin (store-free base, see the doc above): the region nodes are
+    // carried with the re-lex's own `NodeRefOwned` handles and never resolved
+    // against a store on this path. If a future change needs a region node's
+    // resolved payload here, it must graft into a real store (the owned path),
+    // not read it off the transient re-lex store this `relexed` is about to
+    // drop. This assert trips loudly if such a resolution is wired in by
+    // accident: the region nodes must stay parallel to the re-lex registry.
+    debug_assert_eq!(
+        relexed.registry.len(),
+        relexed.source_nodes.len(),
+        "diagnostics-only path carries re-lex node handles verbatim (no store graft); \
+         resolving a region node's payload here is unsound — graft into a store instead",
+    );
+
+    // 9. source_nodes (sanitized, sorted by source_span.start): prefix
+    //    (unchanged) ++ region (relexed, shifted by region.start, handles AS-IS
+    //    — NO graft) ++ suffix (shifted by d_san).
+    let mut source_nodes: Vec<SourceNodeOwned> =
+        Vec::with_capacity(base.source_nodes.len() + relexed.source_nodes.len());
+    for sn in base.source_nodes {
+        if sn.source_span.end <= region.start {
+            source_nodes.push(*sn);
+        }
+    }
+    for sn in &relexed.source_nodes {
+        source_nodes.push(SourceNodeOwned {
+            source_span: sn.source_span.shifted(i64::from(region.start)),
+            node: sn.node,
+        });
+    }
+    for sn in base.source_nodes {
+        if sn.source_span.start >= region.end {
+            source_nodes.push(SourceNodeOwned {
+                source_span: sn.source_span.shifted(d_san),
+                node: sn.node,
+            });
+        }
+    }
+
+    // 10. pairs (PairLink, sanitized, close order) — store-free offsets.
+    let mut pairs: Vec<PairLink> = Vec::with_capacity(base.pairs.len() + relexed.pairs.len());
+    for p in base.pairs {
+        if p.close.end <= region.start {
+            pairs.push(*p);
+        }
+    }
+    for p in &relexed.pairs {
+        pairs.push(PairLink {
+            kind: p.kind,
+            open: p.open.shifted(i64::from(region.start)),
+            close: p.close.shifted(i64::from(region.start)),
+        });
+    }
+    for p in base.pairs {
+        if p.open.start >= region.end {
+            pairs.push(PairLink {
+                kind: p.kind,
+                open: p.open.shifted(d_san),
+                close: p.close.shifted(d_san),
+            });
+        }
+    }
+
+    // 13. diagnostics (sanitized): prefix (unchanged) ++ region (relexed,
+    //     shifted by region.start) ++ suffix (shifted by d_san). Identical
+    //     concatenation to the owned splice's step 13, over the same prologue,
+    //     so the two engines' diagnostics are byte-identical.
+    let mut diagnostics: Vec<Diagnostic> =
+        Vec::with_capacity(base.diagnostics.len() + relexed.diagnostics.len());
+    for d in base.diagnostics {
+        if d.span().end <= region.start {
+            diagnostics.push(d.clone());
+        }
+    }
+    for d in &relexed.diagnostics {
+        diagnostics.push(d.clone().shifted(i64::from(region.start)));
+    }
+    for d in base.diagnostics {
+        if d.span().start >= region.end {
+            diagnostics.push(d.clone().shifted(d_san));
+        }
+    }
+
+    // 14. Reuse accounting (the LSP surface reports these as cache hits/misses).
+    let reused_nodes = u64::try_from(
+        base.source_nodes
+            .iter()
+            .filter(|sn| sn.source_span.end <= region.start || sn.source_span.start >= region.end)
+            .count(),
+    )
+    .ok()?;
+    let relexed_nodes = u64::try_from(relexed.source_nodes.len()).ok()?;
+
+    Some(DiagSplice {
+        diagnostics,
+        source_nodes,
+        pairs,
+        reused_nodes,
+        relexed_nodes,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,7 +1021,8 @@ mod tests {
         // Edit inside the middle paragraph "かきくけこ".
         let mid = src.find("かきくけこ").unwrap();
         let edit = mid..mid + "かき".len();
-        let region = minimal_balanced_region(&cached, edit.clone()).expect("interior region");
+        let region = minimal_balanced_region(DiagBaseRef::of(&cached), edit.clone())
+            .expect("interior region");
         // Strictly smaller than the whole document.
         assert!(
             region.start > 0 || region.end < len,
@@ -765,7 +1044,10 @@ mod tests {
         let src = "あいうえおかきくけこ\n";
         let cached = owned(src);
         let edit = 3..6;
-        assert_eq!(minimal_balanced_region(&cached, edit), None);
+        assert_eq!(
+            minimal_balanced_region(DiagBaseRef::of(&cached), edit),
+            None
+        );
     }
 
     #[test]
@@ -779,9 +1061,15 @@ mod tests {
             cached.diagnostics
         );
         // Region declines regardless of where the edit sits.
-        assert_eq!(minimal_balanced_region(&cached, 0..1), None);
+        assert_eq!(
+            minimal_balanced_region(DiagBaseRef::of(&cached), 0..1),
+            None
+        );
         let mid = src.find("後の段落").unwrap();
-        assert_eq!(minimal_balanced_region(&cached, mid..mid + 3), None);
+        assert_eq!(
+            minimal_balanced_region(DiagBaseRef::of(&cached), mid..mid + 3),
+            None
+        );
     }
 
     #[test]
@@ -790,14 +1078,20 @@ mod tests {
         let cached = owned(src);
         let len = cached.sanitized.len();
         // end past sanitized length.
-        assert_eq!(minimal_balanced_region(&cached, 0..len + 10), None);
+        assert_eq!(
+            minimal_balanced_region(DiagBaseRef::of(&cached), 0..len + 10),
+            None
+        );
         // start > end (built without a literal reversed range to satisfy the
         // reversed_empty_ranges lint).
         let reversed = Range {
             start: 5usize,
             end: 2,
         };
-        assert_eq!(minimal_balanced_region(&cached, reversed), None);
+        assert_eq!(
+            minimal_balanced_region(DiagBaseRef::of(&cached), reversed),
+            None
+        );
     }
 
     #[test]
@@ -808,7 +1102,8 @@ mod tests {
         let p1 = src.find("うえお").unwrap();
         let p2_end = src.find("かきく").unwrap() + "かきく".len();
         let edit = p1..p2_end;
-        let region = minimal_balanced_region(&cached, edit.clone()).expect("region");
+        let region =
+            minimal_balanced_region(DiagBaseRef::of(&cached), edit.clone()).expect("region");
         // Must contain the whole straddled range, hence both flanking paragraphs.
         assert!(region.start as usize <= edit.start);
         assert!(region.end as usize >= edit.end);
@@ -831,7 +1126,8 @@ mod tests {
         // Edit the middle paragraph in SANITIZED coordinates.
         let mid = san.find("かきくけこ").unwrap();
         let edit = mid..mid + "かき".len();
-        let region = minimal_balanced_region(&cached, edit.clone()).expect("region");
+        let region =
+            minimal_balanced_region(DiagBaseRef::of(&cached), edit.clone()).expect("region");
         assert_ne!(region, 0..len);
         assert!(region.start as usize <= edit.start && region.end as usize >= edit.end);
         assert_endpoint_safe(&cached, region.start);
@@ -848,7 +1144,10 @@ mod tests {
     fn crlf_single_paragraph_yields_none() {
         let src = "あいうえおかきくけこ\r\n";
         let cached = owned(src);
-        assert_eq!(minimal_balanced_region(&cached, 0..3), None);
+        assert_eq!(
+            minimal_balanced_region(DiagBaseRef::of(&cached), 0..3),
+            None
+        );
     }
 
     #[test]
@@ -858,7 +1157,10 @@ mod tests {
         // Zero-width edit on the empty document: the region is 0..0 == 0..len,
         // i.e. the whole (empty) document, so there is no sub-document benefit.
         let zero = 0usize;
-        assert_eq!(minimal_balanced_region(&cached, zero..zero), None);
+        assert_eq!(
+            minimal_balanced_region(DiagBaseRef::of(&cached), zero..zero),
+            None
+        );
     }
 
     #[test]
@@ -871,7 +1173,7 @@ mod tests {
         let src = "あいうえお\n\nかきくけこ\n\nさしすせそ\n";
         let cached = owned(src);
         let len = u32::try_from(cached.sanitized.len()).unwrap();
-        let at_offset = |at: usize| minimal_balanced_region(&cached, at..at);
+        let at_offset = |at: usize| minimal_balanced_region(DiagBaseRef::of(&cached), at..at);
 
         // Document start and end.
         assert_eq!(at_offset(0), Some(Range { start: 0, end: 0 }));

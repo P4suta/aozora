@@ -90,7 +90,7 @@ pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
 /// Source-region ownership and minimal-diff source splicing (#202).
 pub use splice::{CoupledKind, Coupling, OwnedRegion, RegionRole, SpliceError, SpliceSafety};
 
-pub use incremental_owned::OwnedSplice;
+pub use incremental_owned::{DiagBaseRef, DiagSplice, OwnedSplice};
 
 /// **UNSTABLE — not subject to semver until v0.5.0.**
 ///
@@ -117,6 +117,35 @@ pub fn reparse_incremental_owned(
     edit_old: Range<usize>,
 ) -> Option<OwnedSplice> {
     incremental_owned::reparse_incremental_owned(cached, new_sanitized, edit_old)
+}
+
+/// **UNSTABLE — not subject to semver until v0.5.0.**
+///
+/// Diagnostics-only incremental re-parse — the LSP's per-keystroke hot path
+/// (#237 Tier 1). Computes the spliced diagnostics (and the store-free
+/// `source_nodes`/`pairs` the next edit's region-find needs) from the
+/// store-free [`DiagBaseRef`] of the prior parse, **without building an
+/// [`OwnedLexOutput`]** — no normalized/sanitized string rebuild, no store
+/// clone/graft, no registry or container-pairs rebuild. Cost is
+/// `O(region + #diagnostics)` versus the owned splice's `O(doc)`.
+///
+/// Returns [`DiagSplice`], or `None` for any edit it cannot prove local (the
+/// caller then full-parses, trivially correct). Its diagnostics are
+/// byte-identical to [`reparse_incremental_owned`]'s — the
+/// `corpus_incremental_merge` differential gate pins both engines together and
+/// to a full parse. The full tree is materialised lazily, only when a
+/// structural request (rename) needs it.
+///
+/// Like [`reparse_incremental_owned`], this is exposed for the in-workspace LSP
+/// consumer only; its shape may change without a major version bump until
+/// v0.5.0.
+#[must_use]
+pub fn reparse_incremental_diagnostics_only(
+    base: DiagBaseRef<'_>,
+    new_sanitized: &str,
+    edit_old: Range<usize>,
+) -> Option<DiagSplice> {
+    incremental_owned::reparse_incremental_diagnostics_only(base, new_sanitized, edit_old)
 }
 
 /// Eagerly initialise the parser's process-global lazy tables.
