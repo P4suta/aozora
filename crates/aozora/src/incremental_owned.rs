@@ -67,7 +67,8 @@ pub struct OwnedSplice {
 /// `source_nodes` (`source_span` + the `NodeRefOwned` discriminant),
 /// `pairs`, and `diagnostics` — none of which resolves a `StrId`/`ContentRange`
 /// against a [`crate::NodeStore`]. A full [`OwnedLexOutput`] projects into one
-/// via [`DiagBaseRef::of`].
+/// via [`DiagBaseRef::with_index`] (paired with a [`RegionIndex`] built over the
+/// same tables).
 #[derive(Debug, Clone, Copy)]
 pub struct DiagBaseRef<'a> {
     /// The cached sanitized buffer (a sanitize fixed point) — the coordinate
@@ -79,18 +80,214 @@ pub struct DiagBaseRef<'a> {
     pub pairs: &'a [PairLink],
     /// Non-fatal observations from the cached parse.
     pub diagnostics: &'a [Diagnostic],
+    /// Precomputed `O(log n)`/`O(1)` acceleration over the three tables above
+    /// (#237 Tier 2). Built once per parse — free during the base copy that
+    /// already runs each edit — so the region-find prologue reads this instead
+    /// of re-scanning the whole buffer/tables per edit.
+    pub index: &'a RegionIndex,
 }
 
 impl<'a> DiagBaseRef<'a> {
-    /// Project a full [`OwnedLexOutput`] to its store-free diagnostics base.
+    /// Project a full [`OwnedLexOutput`] plus a [`RegionIndex`] built over its
+    /// `source_nodes`/`pairs`/`diagnostics` into a store-free diagnostics base.
+    ///
+    /// The caller owns the [`RegionIndex`] (so it can outlive this borrow); the
+    /// `O(doc)` owned-path / test / bench sites are already `O(doc)`, so the
+    /// extra `O(N)` build is free.
     #[must_use]
-    pub fn of(cached: &'a OwnedLexOutput) -> Self {
+    pub fn with_index(cached: &'a OwnedLexOutput, index: &'a RegionIndex) -> Self {
         Self {
             sanitized: &cached.sanitized,
             source_nodes: &cached.source_nodes,
             pairs: &cached.pairs,
             diagnostics: &cached.diagnostics,
+            index,
         }
+    }
+}
+
+/// Precomputed acceleration structure for the per-edit region-find prologue
+/// (#237 Tier 2 — engine-internal, but `pub` so the LSP's `DiagBase` can own one
+/// and the bench can build one).
+///
+/// Built in a single `O(N + P + D)` pass (plus small `O(P log P + D log D)`
+/// sorts of the few pairs/diagnostics) over the three store-free tables the
+/// prologue reads — the same `O(N)` cost the base copy already pays each edit.
+/// Replaces three `O(doc)` per-edit scans with `O(log n)`/`O(1)` lookups:
+///
+/// - the whole-buffer `candidate_boundaries` byte scan plus its `O(#cuts · N)`
+///   `structurally_safe` calls become an outward scan with `O(log n)` safety
+///   probes (see `RegionIndex::structurally_safe`);
+/// - the `norm_offset` drift summation becomes one `O(log n)` lookup
+///   (`RegionIndex::norm_offset`);
+/// - the whole-document-scoped / unbalanced-delimiter / coupling guards become
+///   `O(1)` flag reads, and the diagnostic-straddle scan two `O(log n)` probes
+///   (`RegionIndex::diag_straddles`).
+///
+/// Every recurrence mirrors its linear oracle exactly; the
+/// `corpus_incremental_merge` differential gate plus the oracle proptests pin
+/// byte-identity.
+///
+/// `Default` is the empty index (no nodes/pairs/diagnostics); it exists only so
+/// containers that hold one can derive `Default`, and is never queried.
+#[derive(Debug, Default)]
+pub struct RegionIndex {
+    /// Clamped LIFO block-container depth **after** each `source_node`
+    /// (parallel to `source_nodes`, which is sorted by `source_span.start`).
+    depth_prefix: Vec<i32>,
+    /// Running max of `source_span.end` over `source_nodes[0..=i]` — the
+    /// straddle test for [`RegionIndex::structurally_safe`].
+    max_end_prefix: Vec<u32>,
+    /// Inclusive prefix sums of each node's normalized drift
+    /// `(2·pad + 3 − footprint)`; length `N + 1`, indexed by a
+    /// `partition_point(end <= off)` for [`RegionIndex::norm_offset`].
+    drift_prefix: Vec<i64>,
+    /// `pair.close.end`, sorted ascending — the search key for the pair-straddle
+    /// `partition_point`. Built internally so the query never depends on the
+    /// input slice's order.
+    pair_close_end: Vec<u32>,
+    /// Suffix min of `pair.open.start` over the close-end-sorted pair order;
+    /// length `P + 1` (`[P] = u32::MAX` sentinel). `pair_suffix_min_open[j] < off`
+    /// means some pair with `close.end > off` opens before `off` (straddles).
+    pair_suffix_min_open: Vec<u32>,
+    /// Diagnostic `span.start`, sorted ascending — search key for the straddle
+    /// probes. Built internally so the query is independent of the diagnostics'
+    /// (pipeline-stage vs position-sorted) order.
+    diag_start_sorted: Vec<u32>,
+    /// Running max of `span.end` over the start-sorted diagnostics — the
+    /// straddle test for [`RegionIndex::diag_straddles`].
+    diag_max_end_prefix: Vec<u32>,
+    /// Any cached diagnostic [`is_whole_document_scoped`] (region-find declines).
+    has_whole_doc_scoped_diag: bool,
+    /// Any cached [`Diagnostic::UnclosedBracket`]/[`Diagnostic::UnmatchedClose`]
+    /// (globally-unbalanced delimiter — the prologue declines).
+    has_unbalanced_delimiter: bool,
+    /// Any cached node [`node_forbids_region_reuse`] (text-coupled / opaque — the
+    /// prologue declines on the base side; the re-lexed side is still scanned).
+    has_coupled_node: bool,
+}
+
+impl RegionIndex {
+    /// Build the index in one pass over the store-free tables. Mirrors the
+    /// linear recurrences of `structurally_safe`, `norm_offset`, and the
+    /// prologue guards exactly.
+    #[must_use]
+    pub fn build(
+        nodes: &[SourceNodeOwned],
+        pairs: &[PairLink],
+        diagnostics: &[Diagnostic],
+    ) -> Self {
+        // Node prefixes (nodes are sorted by `source_span.start`).
+        let mut depth_prefix = Vec::with_capacity(nodes.len());
+        let mut max_end_prefix = Vec::with_capacity(nodes.len());
+        let mut drift_prefix = Vec::with_capacity(nodes.len() + 1);
+        drift_prefix.push(0_i64);
+        let mut depth: i32 = 0;
+        let mut max_end: u32 = 0;
+        let mut drift: i64 = 0;
+        let mut has_coupled_node = false;
+        for sn in nodes {
+            match sn.node {
+                NodeRefOwned::BlockOpen(_) => depth += 1,
+                NodeRefOwned::BlockClose(_) => depth = (depth - 1).max(0),
+                _ => {}
+            }
+            depth_prefix.push(depth);
+            max_end = max_end.max(sn.source_span.end);
+            max_end_prefix.push(max_end);
+            let footprint = i64::from(sn.source_span.end - sn.source_span.start);
+            let pad = i64::from(standalone_pad(sn.node));
+            drift += 2 * pad + 3 - footprint;
+            drift_prefix.push(drift);
+            if node_forbids_region_reuse(sn.node) {
+                has_coupled_node = true;
+            }
+        }
+
+        // Pair index, sorted by `close.end` ascending (a self-contained copy, so
+        // the query never depends on the input slice's order). `pairs` are few.
+        let mut pair_order: Vec<&PairLink> = pairs.iter().collect();
+        pair_order.sort_by_key(|p| p.close.end);
+        let pair_close_end: Vec<u32> = pair_order.iter().map(|p| p.close.end).collect();
+        let mut pair_suffix_min_open = vec![u32::MAX; pair_order.len() + 1];
+        for i in (0..pair_order.len()).rev() {
+            pair_suffix_min_open[i] = pair_suffix_min_open[i + 1].min(pair_order[i].open.start);
+        }
+
+        // Diagnostic index, sorted by `span.start` ascending (self-contained).
+        let mut diag_order: Vec<&Diagnostic> = diagnostics.iter().collect();
+        diag_order.sort_by_key(|d| d.span().start);
+        let diag_start_sorted: Vec<u32> = diag_order.iter().map(|d| d.span().start).collect();
+        let mut diag_max_end_prefix = Vec::with_capacity(diag_order.len());
+        let mut diag_max_end: u32 = 0;
+        for d in &diag_order {
+            diag_max_end = diag_max_end.max(d.span().end);
+            diag_max_end_prefix.push(diag_max_end);
+        }
+
+        let has_whole_doc_scoped_diag = diagnostics.iter().any(is_whole_document_scoped);
+        let has_unbalanced_delimiter = diagnostics.iter().any(|d| {
+            matches!(
+                d,
+                Diagnostic::UnclosedBracket { .. } | Diagnostic::UnmatchedClose { .. }
+            )
+        });
+
+        Self {
+            depth_prefix,
+            max_end_prefix,
+            drift_prefix,
+            pair_close_end,
+            pair_suffix_min_open,
+            diag_start_sorted,
+            diag_max_end_prefix,
+            has_whole_doc_scoped_diag,
+            has_unbalanced_delimiter,
+            has_coupled_node,
+        }
+    }
+
+    /// `O(log n)` equivalent of [`structurally_safe`]: whether a cut at `off`
+    /// keeps every block container and resolved pair whole. `nodes` must be the
+    /// same slice the index was built over (sorted by `source_span.start`).
+    #[must_use]
+    fn structurally_safe(&self, nodes: &[SourceNodeOwned], off: u32) -> bool {
+        let k = nodes.partition_point(|sn| sn.source_span.start < off);
+        // A classified span with `start < off` whose `end > off` straddles `off`.
+        let straddle = k > 0 && self.max_end_prefix[k - 1] > off;
+        // Block-container depth at `off` (after all nodes with `start < off`).
+        let depth = if k == 0 { 0 } else { self.depth_prefix[k - 1] };
+        // Some resolved pair with `close.end > off` opens before `off`.
+        let j = self.pair_close_end.partition_point(|&ce| ce <= off);
+        let pair_straddle = self.pair_suffix_min_open[j] < off;
+        !straddle && depth == 0 && !pair_straddle
+    }
+
+    /// `O(log n)` equivalent of [`norm_offset`]: the normalized offset for the
+    /// structurally-safe interstitial boundary `san_off`. `cached` must be the
+    /// output the index was built over.
+    #[must_use]
+    fn norm_offset(&self, cached: &OwnedLexOutput, san_off: u32) -> Option<u32> {
+        let san_len = u32::try_from(cached.sanitized.len()).ok()?;
+        if san_off > san_len {
+            return None;
+        }
+        let k = cached
+            .source_nodes
+            .partition_point(|sn| sn.source_span.end <= san_off);
+        let norm = shift_u32(san_off, self.drift_prefix[k])?;
+        if !cached.normalized.is_char_boundary(norm as usize) {
+            return None;
+        }
+        Some(norm)
+    }
+
+    /// Whether any diagnostic straddles boundary `b` (`span.start < b < span.end`)
+    /// — one `O(log n)` probe of the start-sorted diagnostics.
+    #[must_use]
+    fn diag_straddles(&self, b: u32) -> bool {
+        let k = self.diag_start_sorted.partition_point(|&s| s < b);
+        k > 0 && self.diag_max_end_prefix[k - 1] > b
     }
 }
 
@@ -204,29 +401,53 @@ pub(crate) fn is_whole_document_scoped(diagnostic: &Diagnostic) -> bool {
     )
 }
 
-/// Candidate blank-line boundaries on the source: the byte offset of an
-/// empty line that follows another line. Cutting there keeps a CRLF (`\r\n`)
-/// terminator intact and starts the next segment on a blank line, matching
-/// the whole-document decorative-rule isolation context.
+/// Whether byte offset `j` is a candidate blank-line boundary in `bytes`: the
+/// offset of an empty line that follows another line. Cutting there keeps a
+/// CRLF (`\r\n`) terminator intact and starts the next segment on a blank line,
+/// matching the whole-document decorative-rule isolation context. The single
+/// predicate the whole-buffer oracle [`candidate_boundaries`] and the
+/// production outward scan ([`minimal_balanced_region`]) both read, so they
+/// cannot drift.
+fn is_blank_line_boundary(bytes: &[u8], j: usize) -> bool {
+    j >= 1
+        && j < bytes.len()
+        && bytes[j - 1] == b'\n'
+        && (bytes[j] == b'\n'
+            || (bytes[j] == b'\r' && j + 1 < bytes.len() && bytes[j + 1] == b'\n'))
+}
+
+/// Candidate blank-line boundaries on the source, ascending: every byte offset
+/// where [`is_blank_line_boundary`] holds. Retained as the whole-buffer oracle
+/// the outward-scan region finder is proptest-pinned against; the production
+/// path scans outward from the edit instead of materialising this whole vector.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "whole-buffer oracle for the outward-scan region-find proptest"
+    )
+)]
 pub(crate) fn candidate_boundaries(source: &str) -> Vec<usize> {
     let bytes = source.as_bytes();
-    let mut cuts = Vec::new();
-    let mut j = 1usize;
-    while j < bytes.len() {
-        if bytes[j - 1] == b'\n' {
-            let empty_line_here = bytes[j] == b'\n'
-                || (bytes[j] == b'\r' && j + 1 < bytes.len() && bytes[j + 1] == b'\n');
-            if empty_line_here {
-                cuts.push(j);
-            }
-        }
-        j += 1;
-    }
-    cuts
+    (1..bytes.len())
+        .filter(|&j| is_blank_line_boundary(bytes, j))
+        .collect()
 }
 
 /// Whether a cut at sanitized offset `san_off` keeps every block container
 /// and resolved delimiter pair whole.
+///
+/// Linear oracle retained for the property tests that pin
+/// [`RegionIndex::structurally_safe`] byte-identical to it at every offset; the
+/// production region finder uses the `O(log n)` indexed form. (`dead_code`
+/// allowed outside `cfg(test)` because only the proptests call it now.)
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "linear oracle for the RegionIndex::structurally_safe proptest"
+    )
+)]
 pub(crate) fn structurally_safe(
     san_off: u32,
     nodes: &[SourceNodeOwned],
@@ -276,10 +497,13 @@ pub(crate) fn minimal_balanced_region(
     base: DiagBaseRef<'_>,
     edit: Range<usize>,
 ) -> Option<Range<u32>> {
-    if base.diagnostics.iter().any(is_whole_document_scoped) {
+    // O(1) flag read (was an O(#diags) scan): any whole-document-scoped
+    // diagnostic perturbs beyond the region, so decline.
+    if base.index.has_whole_doc_scoped_diag {
         return None;
     }
     let san = base.sanitized;
+    let bytes = san.as_bytes();
     let len = u32::try_from(san.len()).ok()?;
     if edit.start > edit.end || edit.end > san.len() {
         return None;
@@ -287,26 +511,26 @@ pub(crate) fn minimal_balanced_region(
     let es = u32::try_from(edit.start).ok()?;
     let ee = u32::try_from(edit.end).ok()?;
 
-    // Safe cut points in sanitized coordinates, ascending. Document ends are
-    // always safe (depth 0, no straddle); interior blank-line boundaries are
-    // admitted only where they keep every container and pair whole.
-    let mut cuts: Vec<u32> = Vec::new();
-    cuts.push(0);
-    for b in candidate_boundaries(san) {
-        let Ok(b_u32) = u32::try_from(b) else {
-            continue;
-        };
-        if b_u32 != 0 && b_u32 != len && structurally_safe(b_u32, base.source_nodes, base.pairs) {
-            cuts.push(b_u32);
-        }
-    }
-    cuts.push(len);
-
-    // `candidate_boundaries` returns ascending offsets, and 0/len bracket
-    // them, so `cuts` is already sorted. The greatest cut <= es and the least
-    // cut >= ee both exist because 0 <= es <= ee <= len.
-    let region_start = cuts.iter().copied().filter(|&c| c <= es).max()?;
-    let region_end = cuts.iter().copied().filter(|&c| c >= ee).min()?;
+    // Outward scan (was a whole-buffer candidate scan + O(#cuts·N) safety
+    // checks). The safe-cut set is the document ends `{0, len}` plus every
+    // structurally-safe blank-line boundary; `region_start` is the greatest cut
+    // `<= es`, `region_end` the least cut `>= ee`. Scan outward from each edit
+    // endpoint and stop at the first cut — `0` always terminates the left scan,
+    // `len` the right one. Each crossed blank-line boundary costs one `O(log n)`
+    // safety probe; plain bytes are skipped in `O(1)`.
+    let is_cut = |j: u32| -> bool {
+        j == 0
+            || j == len
+            || (is_blank_line_boundary(bytes, j as usize)
+                && base.index.structurally_safe(base.source_nodes, j))
+    };
+    let region_start = (0..=es)
+        .rev()
+        .find(|&j| is_cut(j))
+        .expect("0 is always a cut");
+    let region_end = (ee..=len)
+        .find(|&j| is_cut(j))
+        .expect("len is always a cut");
 
     if region_start == 0 && region_end == len {
         return None; // whole document — no benefit
@@ -356,6 +580,18 @@ fn standalone_pad(node: NodeRefOwned) -> u32 {
 /// boundary of `cached.normalized` — the boundary-never-in-padding proof means
 /// this never fires for a valid interstitial boundary, but it converts any
 /// surprise into a clean fallback rather than a bad splice.
+///
+/// Linear oracle retained for the property test that pins
+/// [`RegionIndex::norm_offset`] byte-identical to it at every interstitial
+/// boundary; the production owned splice uses the `O(log n)` indexed form.
+/// (`dead_code` allowed outside `cfg(test)` because only the proptests call it.)
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "linear oracle for the RegionIndex::norm_offset proptest"
+    )
+)]
 pub(crate) fn norm_offset(cached: &OwnedLexOutput, san_off: u32) -> Option<u32> {
     let san_len = u32::try_from(cached.sanitized.len()).ok()?;
     if san_off > san_len {
@@ -465,13 +701,8 @@ fn splice_prologue(
     // whole-document parse classifies no ruby there, yet a region re-lexed in
     // isolation (balanced on its own) would invent them. These are not in the
     // whole-document-scoped diagnostic set (they have no partner span to pair),
-    // so guard them explicitly here.
-    if base.diagnostics.iter().any(|d| {
-        matches!(
-            d,
-            Diagnostic::UnclosedBracket { .. } | Diagnostic::UnmatchedClose { .. }
-        )
-    }) {
+    // so guard them explicitly here — O(1) flag read (was an O(#diags) scan).
+    if base.index.has_unbalanced_delimiter {
         return None;
     }
 
@@ -503,15 +734,12 @@ fn splice_prologue(
     }
 
     // Decline if any cached diagnostic straddles a region boundary: it is
-    // neither reproduced by the isolated region re-lex nor safely shiftable.
-    for d in base.diagnostics {
-        let span = d.span();
-        let prefix = span.end <= region.start;
-        let suffix = span.start >= region.end;
-        let inside = span.start >= region.start && span.end <= region.end;
-        if !(prefix || suffix || inside) {
-            return None;
-        }
+    // neither reproduced by the isolated region re-lex nor safely shiftable. A
+    // span is bad iff it straddles `region.start` or `region.end` (proven:
+    // `!(prefix || suffix || inside)` ⇔ `start < rs < end` ∨ `start < re < end`),
+    // so two O(log n) probes replace the O(#diags) scan.
+    if base.index.diag_straddles(region.start) || base.index.diag_straddles(region.end) {
+        return None;
     }
 
     // 3. Re-lex the region in isolation. The region slice is already sanitized
@@ -545,12 +773,13 @@ fn splice_prologue(
     //    hint / margin note anywhere (cached or relexed) resolves by
     //    whole-document text search, so a plain region edit could perturb a
     //    partner in the reused prefix/suffix. Conservative — a later PR can
-    //    narrow this to the affected partners.
-    if base
-        .source_nodes
-        .iter()
-        .chain(relexed.source_nodes.iter())
-        .any(|sn| node_forbids_region_reuse(sn.node))
+    //    narrow this to the affected partners. The base side is an O(1) flag
+    //    read; only the re-lexed side (O(region)) is still scanned.
+    if base.index.has_coupled_node
+        || relexed
+            .source_nodes
+            .iter()
+            .any(|sn| node_forbids_region_reuse(sn.node))
     {
         return None;
     }
@@ -604,21 +833,28 @@ pub(crate) fn reparse_incremental_owned(
     new_sanitized: &str,
     edit_old: Range<usize>,
 ) -> Option<OwnedSplice> {
-    // Steps 1–5 (store-independent): region find, edit validation, region
-    // re-lex, self-containment, cross-region coupling guard — shared verbatim
-    // with the diagnostics-only engine so the two cannot drift.
+    // Build the region-find acceleration index over the cached tables (this path
+    // is already O(doc), so the O(N) build is free) and run steps 1–5
+    // (store-independent): region find, edit validation, region re-lex,
+    // self-containment, cross-region coupling guard — shared verbatim with the
+    // diagnostics-only engine so the two cannot drift.
+    let index = RegionIndex::build(&cached.source_nodes, &cached.pairs, &cached.diagnostics);
     let Prologue {
         region,
         relexed,
         d_san,
-    } = splice_prologue(DiagBaseRef::of(cached), new_sanitized, edit_old)?;
+    } = splice_prologue(
+        DiagBaseRef::with_index(cached, &index),
+        new_sanitized,
+        edit_old,
+    )?;
     let r_start = region.start as usize;
     let r_end = region.end as usize;
     let old_source = cached.sanitized.as_str();
 
-    // 6. Normalized boundaries & per-stream deltas.
-    let norm_start = norm_offset(cached, region.start)?;
-    let norm_end = norm_offset(cached, region.end)?;
+    // 6. Normalized boundaries & per-stream deltas (O(log n) indexed offset map).
+    let norm_start = index.norm_offset(cached, region.start)?;
+    let norm_end = index.norm_offset(cached, region.end)?;
     if norm_start > norm_end {
         return None;
     }
@@ -989,6 +1225,11 @@ mod tests {
         Document::new(src).parse_owned()
     }
 
+    /// A [`RegionIndex`] over a cached output's store-free tables.
+    fn idx_of(cached: &OwnedLexOutput) -> RegionIndex {
+        RegionIndex::build(&cached.source_nodes, &cached.pairs, &cached.diagnostics)
+    }
+
     /// The full ascending safe-cut set the region finder works over, for
     /// asserting endpoint membership.
     fn safe_cuts(cached: &OwnedLexOutput) -> Vec<u32> {
@@ -1017,11 +1258,12 @@ mod tests {
         // Three blank-line-separated paragraphs, all plain text.
         let src = "あいうえお\n\nかきくけこ\n\nさしすせそ\n";
         let cached = owned(src);
+        let idx = idx_of(&cached);
         let len = u32::try_from(cached.sanitized.len()).unwrap();
         // Edit inside the middle paragraph "かきくけこ".
         let mid = src.find("かきくけこ").unwrap();
         let edit = mid..mid + "かき".len();
-        let region = minimal_balanced_region(DiagBaseRef::of(&cached), edit.clone())
+        let region = minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), edit.clone())
             .expect("interior region");
         // Strictly smaller than the whole document.
         assert!(
@@ -1043,9 +1285,10 @@ mod tests {
     fn single_paragraph_has_no_interior_cut() {
         let src = "あいうえおかきくけこ\n";
         let cached = owned(src);
+        let idx = idx_of(&cached);
         let edit = 3..6;
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::of(&cached), edit),
+            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), edit),
             None
         );
     }
@@ -1055,6 +1298,7 @@ mod tests {
         // An unresolved standalone gaiji reference is whole-document-scoped.
         let src = "前の段落\n\n※［＃存在しない外字、第1水準1-2-3］\n\n後の段落\n";
         let cached = owned(src);
+        let idx = idx_of(&cached);
         assert!(
             cached.diagnostics.iter().any(is_whole_document_scoped),
             "fixture must carry a whole-document-scoped diagnostic, got {:?}",
@@ -1062,12 +1306,12 @@ mod tests {
         );
         // Region declines regardless of where the edit sits.
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::of(&cached), 0..1),
+            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), 0..1),
             None
         );
         let mid = src.find("後の段落").unwrap();
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::of(&cached), mid..mid + 3),
+            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), mid..mid + 3),
             None
         );
     }
@@ -1076,10 +1320,11 @@ mod tests {
     fn out_of_bounds_edit_yields_none() {
         let src = "あいうえお\n\nかきくけこ\n";
         let cached = owned(src);
+        let idx = idx_of(&cached);
         let len = cached.sanitized.len();
         // end past sanitized length.
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::of(&cached), 0..len + 10),
+            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), 0..len + 10),
             None
         );
         // start > end (built without a literal reversed range to satisfy the
@@ -1089,7 +1334,7 @@ mod tests {
             end: 2,
         };
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::of(&cached), reversed),
+            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), reversed),
             None
         );
     }
@@ -1098,12 +1343,13 @@ mod tests {
     fn edit_spanning_blank_line_widens_to_both_paragraphs() {
         let src = "あいうえお\n\nかきくけこ\n\nさしすせそ\n";
         let cached = owned(src);
+        let idx = idx_of(&cached);
         // Edit straddles the blank line between paragraph 1 and 2.
         let p1 = src.find("うえお").unwrap();
         let p2_end = src.find("かきく").unwrap() + "かきく".len();
         let edit = p1..p2_end;
-        let region =
-            minimal_balanced_region(DiagBaseRef::of(&cached), edit.clone()).expect("region");
+        let region = minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), edit.clone())
+            .expect("region");
         // Must contain the whole straddled range, hence both flanking paragraphs.
         assert!(region.start as usize <= edit.start);
         assert!(region.end as usize >= edit.end);
@@ -1120,14 +1366,15 @@ mod tests {
         // \r, so sanitized offsets are smaller than raw offsets.
         let src = "あいうえお\r\n\r\nかきくけこ\r\n\r\nさしすせそ\r\n";
         let cached = owned(src);
+        let idx = idx_of(&cached);
         let san = &cached.sanitized;
         assert!(!san.contains('\r'), "sanitized buffer drops CR");
         let len = u32::try_from(san.len()).unwrap();
         // Edit the middle paragraph in SANITIZED coordinates.
         let mid = san.find("かきくけこ").unwrap();
         let edit = mid..mid + "かき".len();
-        let region =
-            minimal_balanced_region(DiagBaseRef::of(&cached), edit.clone()).expect("region");
+        let region = minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), edit.clone())
+            .expect("region");
         assert_ne!(region, 0..len);
         assert!(region.start as usize <= edit.start && region.end as usize >= edit.end);
         assert_endpoint_safe(&cached, region.start);
@@ -1144,8 +1391,9 @@ mod tests {
     fn crlf_single_paragraph_yields_none() {
         let src = "あいうえおかきくけこ\r\n";
         let cached = owned(src);
+        let idx = idx_of(&cached);
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::of(&cached), 0..3),
+            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), 0..3),
             None
         );
     }
@@ -1153,12 +1401,13 @@ mod tests {
     #[test]
     fn empty_document_yields_none() {
         let cached = owned("");
+        let idx = idx_of(&cached);
         assert_eq!(cached.sanitized.len(), 0, "empty source sanitizes to empty");
         // Zero-width edit on the empty document: the region is 0..0 == 0..len,
         // i.e. the whole (empty) document, so there is no sub-document benefit.
         let zero = 0usize;
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::of(&cached), zero..zero),
+            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), zero..zero),
             None
         );
     }
@@ -1172,8 +1421,10 @@ mod tests {
         // `reversed_empty_ranges` lint on literal equal-bound ranges.)
         let src = "あいうえお\n\nかきくけこ\n\nさしすせそ\n";
         let cached = owned(src);
+        let idx = idx_of(&cached);
         let len = u32::try_from(cached.sanitized.len()).unwrap();
-        let at_offset = |at: usize| minimal_balanced_region(DiagBaseRef::of(&cached), at..at);
+        let at_offset =
+            |at: usize| minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), at..at);
 
         // Document start and end.
         assert_eq!(at_offset(0), Some(Range { start: 0, end: 0 }));
@@ -1615,5 +1866,212 @@ mod tests {
             reparse_incremental_owned(&cached, &new_san, edit).is_none(),
             "a document with a forward reference must decline (text coupling)",
         );
+    }
+}
+
+/// Property tests pinning every `RegionIndex` query byte-identical to the linear
+/// oracle it replaces, over randomly-assembled aozora-shaped documents (#237
+/// Tier 2). The oracles (`structurally_safe`, `norm_offset`,
+/// `candidate_boundaries`) and a whole-buffer reference region finder are the
+/// ground truth; the indexed/outward-scan production forms must match them
+/// exactly, which (with the corpus differential gate) is the byte-identity
+/// guarantee.
+#[cfg(test)]
+mod oracle_proptests {
+    use core::mem::swap;
+    use core::ops::Range;
+
+    use proptest::collection::vec as prop_vec;
+    use proptest::prelude::*;
+
+    use super::{
+        DiagBaseRef, OwnedLexOutput, RegionIndex, candidate_boundaries, is_whole_document_scoped,
+        minimal_balanced_region, node_forbids_region_reuse, norm_offset, structurally_safe,
+    };
+    use crate::{Diagnostic, Document};
+
+    /// Parse a generated document to its owned lex output.
+    fn owned(src: &str) -> OwnedLexOutput {
+        Document::new(src).parse_owned()
+    }
+
+    /// A [`RegionIndex`] over a cached output's store-free tables.
+    fn idx_of(cached: &OwnedLexOutput) -> RegionIndex {
+        RegionIndex::build(&cached.source_nodes, &cached.pairs, &cached.diagnostics)
+    }
+
+    /// The pre-Tier-2 whole-buffer region finder, retained verbatim as the
+    /// reference the outward-scan [`minimal_balanced_region`] must match: all
+    /// structurally-safe blank-line cuts (plus document ends), then the greatest
+    /// cut `<= es` and least cut `>= ee`.
+    fn reference_region(cached: &OwnedLexOutput, edit: Range<usize>) -> Option<Range<u32>> {
+        if cached.diagnostics.iter().any(is_whole_document_scoped) {
+            return None;
+        }
+        let san = &cached.sanitized;
+        let len = u32::try_from(san.len()).ok()?;
+        if edit.start > edit.end || edit.end > san.len() {
+            return None;
+        }
+        let es = u32::try_from(edit.start).ok()?;
+        let ee = u32::try_from(edit.end).ok()?;
+        let mut cuts = vec![0_u32];
+        for b in candidate_boundaries(san) {
+            let b = u32::try_from(b).expect("boundary fits u32");
+            if b != 0 && b != len && structurally_safe(b, &cached.source_nodes, &cached.pairs) {
+                cuts.push(b);
+            }
+        }
+        cuts.push(len);
+        let region_start = cuts.iter().copied().filter(|&c| c <= es).max()?;
+        let region_end = cuts.iter().copied().filter(|&c| c >= ee).min()?;
+        if region_start == 0 && region_end == len {
+            return None;
+        }
+        Some(region_start..region_end)
+    }
+
+    /// The linear diagnostic-straddle predicate the prologue used before the
+    /// indexed probes: a cached diagnostic is bad iff it is neither fully before,
+    /// fully after, nor fully inside the region.
+    fn any_diag_straddles(diags: &[Diagnostic], region: Range<u32>) -> bool {
+        diags.iter().any(|d| {
+            let span = d.span();
+            let prefix = span.end <= region.start;
+            let suffix = span.start >= region.end;
+            let inside = span.start >= region.start && span.end <= region.end;
+            !(prefix || suffix || inside)
+        })
+    }
+
+    /// Randomly-assembled aozora-shaped text: plain kana, blank-line breaks
+    /// (LF and CRLF), ruby, lone delimiter halves, block containers, standalone
+    /// blocks, gaiji, and a forward reference — exercising nodes, pairs,
+    /// container depth, and every diagnostic-class flag.
+    fn doc_strategy() -> impl Strategy<Value = String> {
+        let fragment = prop_oneof![
+            Just("あ"),
+            Just("い"),
+            Just("ん。"),
+            Just("\n"),
+            Just("\n\n"),
+            Just("\r\n\r\n"),
+            Just("｜漢字《かんじ》"),
+            Just("《"),
+            Just("》"),
+            Just("［＃ここから２字下げ］\n"),
+            Just("［＃ここで字下げ終わり］\n"),
+            Just("［＃改ページ］"),
+            Just("※［＃ばける、第3水準1-15-94］"),
+            Just("※［＃存在しない外字、第1水準1-2-3］"),
+            Just("［＃「漢字」に傍点］"),
+        ];
+        prop_vec(fragment, 0..10).prop_map(|parts| parts.concat())
+    }
+
+    proptest! {
+        /// `RegionIndex::structurally_safe` equals the linear `structurally_safe`
+        /// at *every* offset of the document.
+        #[test]
+        fn structurally_safe_indexed_matches_oracle(doc in doc_strategy()) {
+            let cached = owned(&doc);
+            let index = idx_of(&cached);
+            let len = u32::try_from(cached.sanitized.len()).expect("len fits u32");
+            for off in 0..=len {
+                prop_assert_eq!(
+                    index.structurally_safe(&cached.source_nodes, off),
+                    structurally_safe(off, &cached.source_nodes, &cached.pairs),
+                    "structurally_safe mismatch at {} in {:?}", off, doc,
+                );
+            }
+        }
+
+        /// `RegionIndex::norm_offset` equals the linear `norm_offset` at every
+        /// offset (interstitial or not — the closed form is offset-independent).
+        #[test]
+        fn norm_offset_indexed_matches_oracle(doc in doc_strategy()) {
+            let cached = owned(&doc);
+            let index = idx_of(&cached);
+            let len = u32::try_from(cached.sanitized.len()).expect("len fits u32");
+            for off in 0..=len + 2 {
+                prop_assert_eq!(
+                    index.norm_offset(&cached, off),
+                    norm_offset(&cached, off),
+                    "norm_offset mismatch at {} in {:?}", off, doc,
+                );
+            }
+        }
+
+        /// The outward-scan `minimal_balanced_region` equals the whole-buffer
+        /// reference for arbitrary edits.
+        #[test]
+        fn outward_scan_region_matches_reference(
+            doc in doc_strategy(),
+            a in 0_usize..256,
+            b in 0_usize..256,
+        ) {
+            let cached = owned(&doc);
+            let index = idx_of(&cached);
+            let span = cached.sanitized.len() + 1;
+            let es = a % span;
+            let ee = b % span;
+            let edit = Range { start: es, end: ee };
+            prop_assert_eq!(
+                minimal_balanced_region(
+                    DiagBaseRef::with_index(&cached, &index),
+                    edit.clone(),
+                ),
+                reference_region(&cached, edit.clone()),
+                "region mismatch for edit {:?} in {:?}", edit, doc,
+            );
+        }
+
+        /// The two `O(log n)` diagnostic-straddle probes equal the linear
+        /// not-prefix/suffix/inside scan for an arbitrary region.
+        #[test]
+        fn diag_straddle_probes_match_oracle(
+            doc in doc_strategy(),
+            a in 0_usize..256,
+            b in 0_usize..256,
+        ) {
+            let cached = owned(&doc);
+            let index = idx_of(&cached);
+            let span = cached.sanitized.len() + 1;
+            let mut rs = u32::try_from(a % span).expect("fits u32");
+            let mut re = u32::try_from(b % span).expect("fits u32");
+            if rs > re {
+                swap(&mut rs, &mut re);
+            }
+            prop_assert_eq!(
+                index.diag_straddles(rs) || index.diag_straddles(re),
+                any_diag_straddles(&cached.diagnostics, rs..re),
+                "diag straddle mismatch for {}..{} in {:?}", rs, re, doc,
+            );
+        }
+
+        /// The `O(1)` flags equal the `any()` scans they replace.
+        #[test]
+        fn flags_match_any_scans(doc in doc_strategy()) {
+            let cached = owned(&doc);
+            let index = idx_of(&cached);
+            prop_assert_eq!(
+                index.has_whole_doc_scoped_diag,
+                cached.diagnostics.iter().any(is_whole_document_scoped),
+                "has_whole_doc_scoped_diag mismatch in {:?}", doc,
+            );
+            prop_assert_eq!(
+                index.has_unbalanced_delimiter,
+                cached.diagnostics.iter().any(|d| matches!(
+                    d,
+                    Diagnostic::UnclosedBracket { .. } | Diagnostic::UnmatchedClose { .. }
+                )),
+                "has_unbalanced_delimiter mismatch in {:?}", doc,
+            );
+            prop_assert_eq!(
+                index.has_coupled_node,
+                cached.source_nodes.iter().any(|sn| node_forbids_region_reuse(sn.node)),
+                "has_coupled_node mismatch in {:?}", doc,
+            );
+        }
     }
 }

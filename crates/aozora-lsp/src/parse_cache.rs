@@ -39,7 +39,8 @@ use std::time::{Duration, Instant};
 use aozora::pipeline::has_long_rule_line;
 use aozora::pipeline::lexer::sanitize::sanitize;
 use aozora::{
-    DiagBaseRef, DiagSplice, Diagnostic, Document, OwnedLexOutput, PairLink, SourceNodeOwned, Tree,
+    DiagBaseRef, DiagSplice, Diagnostic, Document, OwnedLexOutput, PairLink, RegionIndex,
+    SourceNodeOwned, Tree,
 };
 use tracing::field::Empty as TracingEmpty;
 
@@ -114,6 +115,10 @@ struct DiagBase {
     /// Resolved delimiter pairs the next edit's region-find consumes
     /// (store-free offsets).
     pairs: Vec<PairLink>,
+    /// Region-find acceleration over the three tables above (#237 Tier 2), built
+    /// in the same `O(N)` pass that assembles them so the next edit's prologue
+    /// runs `O(region + log n)` instead of re-scanning the whole buffer/tables.
+    index: RegionIndex,
 }
 
 impl DiagBase {
@@ -125,6 +130,7 @@ impl DiagBase {
             source_nodes: &self.source_nodes,
             pairs: &self.pairs,
             diagnostics: &self.diagnostics,
+            index: &self.index,
         }
     }
 }
@@ -266,6 +272,11 @@ impl ParseCache {
         // them sorted, exactly as `reparse_full` does at store time.
         splice.diagnostics.sort_by(diagnostic_order);
         let diagnostics = splice.diagnostics.clone();
+        // Build the next edit's region-find index over the spliced tables — the
+        // same O(N) pass that already assembled them (free relative to the base
+        // maintenance), measured before `latency_us` so it counts toward the
+        // per-edit cost.
+        let index = RegionIndex::build(&splice.source_nodes, &splice.pairs, &splice.diagnostics);
         let latency_us = duration_as_us(started_at.elapsed());
 
         text.clone_into(&mut self.text);
@@ -274,6 +285,7 @@ impl ParseCache {
             diagnostics: splice.diagnostics,
             source_nodes: splice.source_nodes,
             pairs: splice.pairs,
+            index,
         });
         // Invalidate the lazily-materialised tree: the next structural request
         // full-parses the new text once and memoises it.
@@ -409,11 +421,13 @@ impl ParseCache {
         // Derive the store-free splice base from the full output, then seed the
         // lazy tree with the full output itself (so a structural request right
         // after a full parse is instant).
+        let index = RegionIndex::build(&out.source_nodes, &out.pairs, &out.diagnostics);
         self.base = Some(DiagBase {
             sanitized: out.sanitized.clone(),
             diagnostics: out.diagnostics.clone(),
             source_nodes: out.source_nodes.clone(),
             pairs: out.pairs.clone(),
+            index,
         });
         self.tree = OnceLock::new();
         // The lock is freshly empty, so `set` always succeeds; the only error
