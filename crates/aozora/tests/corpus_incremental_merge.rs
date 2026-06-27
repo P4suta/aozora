@@ -19,7 +19,7 @@ use aozora::render::{render_html_owned, serialize_owned};
 use aozora::syntax::owned::{ContentOwned, NodeOwned, NodeRefOwned, NodeStore, SegmentOwned};
 use aozora::syntax::owned::{ContentRange, GaijiCanonicalOwned, GaijiOwned, SegRange};
 use aozora::{
-    DiagBaseRef, Diagnostic, Document, reparse_incremental_diagnostics_only,
+    DiagBaseRef, Diagnostic, Document, RegionIndex, reparse_incremental_diagnostics_only,
     reparse_incremental_owned,
 };
 use aozora_encoding::decode_auto;
@@ -233,6 +233,10 @@ fn reparse_owned_incremental_equals_full_parse() {
 /// fixed-point baseline, midpoint plain insertion). Fast-path count asserted
 /// non-zero so the gate actually drives the engine.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one corpus differential harness: per-doc baseline + diagnostics-only splice + owned-splice pinning, all over the same loop"
+)]
 fn reparse_diagnostics_only_equals_full_parse() {
     let Some(source) = aozora_corpus::from_env() else {
         eprintln!("AOZORA_CORPUS_ROOT not set; skipping diagnostics-only incremental gate");
@@ -275,9 +279,12 @@ fn reparse_diagnostics_only_equals_full_parse() {
             continue;
         }
 
-        let Some(diag) =
-            reparse_incremental_diagnostics_only(DiagBaseRef::of(&cached), &new_san, mid..mid)
-        else {
+        let index = RegionIndex::build(&cached.source_nodes, &cached.pairs, &cached.diagnostics);
+        let Some(diag) = reparse_incremental_diagnostics_only(
+            DiagBaseRef::with_index(&cached, &index),
+            &new_san,
+            mid..mid,
+        ) else {
             fallback += 1;
             count += 1;
             continue;

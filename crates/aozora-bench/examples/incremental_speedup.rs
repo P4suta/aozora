@@ -11,14 +11,14 @@
 //!   (re-lex only the minimal region + splice the owned tables; still rebuilds
 //!   the whole `OwnedLexOutput`, so `O(doc)`).
 //! - **diagnostics-only** —
-//!   `reparse_incremental_diagnostics_only(DiagBaseRef::of(&cached), …)`, the
-//!   #237 Tier 1 production hot path: splices only the diagnostics + the
-//!   store-free region-find tables, skipping the store clone + the normalized
-//!   string / registry / container-pairs rebuild. It beats the owned splice in
-//!   every band, but the win is modest: the rebuild it drops is a minority of
-//!   the cost — the residual is the prologue (region-find scan + the
-//!   `source_nodes`/`pairs` base maintenance + the region re-lex), still `O(doc)`.
-//!   Making THAT `O(log n)` is the Tier 2 work needed for a truly dramatic win.
+//!   `reparse_incremental_diagnostics_only(DiagBaseRef::with_index(&cached, &idx), …)`,
+//!   the #237 production hot path: splices only the diagnostics + the store-free
+//!   region-find tables, skipping the store clone + the normalized string /
+//!   registry / container-pairs rebuild. Tier 2 (#284) additionally replaces the
+//!   prologue's whole-buffer region-find scan with an `O(region + log n)` outward
+//!   scan against a `RegionIndex` (built here per the LSP's own pattern, so the
+//!   timing includes the index build). The residual is the `source_nodes`/`pairs`
+//!   base maintenance + the region re-lex.
 //! - **clone** — `cached.store.clone()` alone, to confirm it is NOT the
 //!   bottleneck (measured <1% of incremental cost).
 //!
@@ -48,7 +48,8 @@ use std::process;
 use std::time::Instant;
 
 use aozora::{
-    DiagBaseRef, Document, reparse_incremental_diagnostics_only, reparse_incremental_owned,
+    DiagBaseRef, Document, RegionIndex, reparse_incremental_diagnostics_only,
+    reparse_incremental_owned,
 };
 use aozora_encoding::decode_auto;
 
@@ -141,11 +142,19 @@ fn main() {
         black_box(spliced);
 
         // The production hot path: diagnostics-only splice (no full
-        // OwnedLexOutput). Fast-paths exactly when the owned splice does (shared
-        // prologue), so it is timed under the same `is_fast` gate.
+        // OwnedLexOutput), accelerated by the Tier-2 RegionIndex. The LSP rebuilds
+        // this index over the spliced tables each edit (free, same O(N) pass as
+        // the base maintenance it already pays), so the timing INCLUDES the index
+        // build to measure the true per-edit cost. Fast-paths exactly when the
+        // owned splice does (shared prologue), so it is timed under the same
+        // `is_fast` gate.
         let t_diag = Instant::now();
-        let diag =
-            reparse_incremental_diagnostics_only(DiagBaseRef::of(&cached), &new_san, mid..mid);
+        let index = RegionIndex::build(&cached.source_nodes, &cached.pairs, &cached.diagnostics);
+        let diag = reparse_incremental_diagnostics_only(
+            DiagBaseRef::with_index(&cached, &index),
+            &new_san,
+            mid..mid,
+        );
         let diag_ns = t_diag.elapsed().as_nanos();
         black_box(diag);
 
