@@ -36,7 +36,6 @@ use std::cmp::Ordering;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use aozora::pipeline::has_long_rule_line;
 use aozora::pipeline::lexer::sanitize::sanitize;
 use aozora::{
     DiagBaseRef, DiagSplice, Diagnostic, Document, OwnedLexOutput, PairLink, RegionIndex,
@@ -196,27 +195,29 @@ impl ParseCache {
     ///    edit:
     ///    - **LF-clean** (`output.sanitized == self.text`): source == sanitized,
     ///      so the source-coordinate edit equals the sanitized-coordinate edit
-    ///      and `text` equals the new sanitized text — spliced directly.
-    ///    - **BOM + CRLF** (`output.sanitized != self.text`): the source edit is
-    ///      mapped through `san_offset` to sanitized coordinates and spliced
-    ///      against the true `sanitize(text)` (see `try_incremental_crlf`).
-    ///      The "LF-clean only" limitation is therefore lifted for real
-    ///      aozora-bunko files (BOM-prefixed, CRLF line endings). The CRLF path
-    ///      still declines (→ full parse) when sanitize would do more than
-    ///      BOM-strip + CRLF→LF: an accent decomposition or PUA-collision (both
-    ///      emit a sanitize diagnostic a region re-lex cannot reproduce, so the
-    ///      diagnostic could be lost), a decorative-rule line (silent
-    ///      offset-changing blank-line insertion), or an edit that splits a CRLF
-    ///      pair / lands inside the stripped BOM (unmappable offset).
+    ///      and `text` equals the new sanitized text — spliced directly with
+    ///      `edit.range`.
+    ///    - **Re-sanitize** (`output.sanitized != self.text`): the new source is
+    ///      sanitized in full and the sanitized-coordinate edit is recovered by
+    ///      diffing the cached and new sanitized buffers (a char-boundary-snapped
+    ///      common prefix / suffix). This models BOM strip, CRLF→LF, **and**
+    ///      decorative-rule isolation uniformly, so real aozora-bunko files
+    ///      (BOM-prefixed, CRLF line endings, header `----` rule lines) fast-path
+    ///      rather than declining. The re-sanitize path still declines (→ full
+    ///      parse) only when `sanitize` emits a diagnostic — an accent
+    ///      decomposition inside `〔…〕` or a PUA-sentinel collision — which a
+    ///      region re-lex (working on already-sanitized text) cannot reproduce,
+    ///      so the diagnostic could be lost (see `try_incremental_resanitize`).
     /// 4. Fewer than `MAX_SPLICES_BEFORE_FULL` splices since the last full
     ///    parse (the dead-entry capacity bound, #249).
     /// 5. The text is non-empty and within `MAX_DOCUMENT_BYTES` (mirrors the
     ///    full-parse guard).
     ///
-    /// Correctness in every case rests on [`aozora::reparse_incremental_owned`]
-    /// independently validating that the mapped sanitized edit transforms the
-    /// cached sanitized text into the true `sanitize(text)`: a bad mapping can
-    /// only make it return `None` (→ full parse), never a wrong splice.
+    /// Correctness in every case rests on
+    /// [`aozora::reparse_incremental_diagnostics_only`] independently validating
+    /// that the derived sanitized edit transforms the cached sanitized text into
+    /// the true `sanitize(text)`: a bad derivation can only make it return `None`
+    /// (→ full parse), never a wrong splice.
     pub fn reparse_incremental(
         &mut self,
         text: &str,
@@ -250,9 +251,9 @@ impl ParseCache {
                         )
                         .map(|d| (text.to_owned(), d))
                     } else {
-                        // BOM + CRLF source: map the source edit to sanitized
-                        // coordinates and splice against the true sanitize(text).
-                        self.try_incremental_crlf(prior, text, edit)
+                        // Non-fixed-point source (BOM / CRLF / decorative rule):
+                        // re-sanitize and recover the sanitized edit from the diff.
+                        Self::try_incremental_resanitize(prior, text)
                     }
                 }
                 _ => None,
@@ -303,65 +304,60 @@ impl ParseCache {
         (diagnostics, stats)
     }
 
-    /// Attempt the incremental splice for a non-fixed-point (BOM + CRLF) source.
+    /// Attempt the incremental splice for a non-fixed-point source (BOM, CRLF,
+    /// or a decorative-rule line — anything where `sanitize(self.text)` differs
+    /// from the raw `self.text`).
     ///
     /// `new_raw` is the new document text (source coordinates); `prior` is the
-    /// cached owned output whose `sanitized` is `sanitize(self.text)`; `edit`
-    /// describes the change applied to `self.text` (the **old** raw source) to
-    /// obtain `new_raw`, so its `range` is in old-raw coordinates.
+    /// cached owned output whose `sanitized` is `sanitize(self.text)`.
     ///
-    /// Returns the splice, or `None` (→ the caller full-parses) when the source
-    /// is not a pure BOM-strip + CRLF→LF case or the edit cannot be mapped:
+    /// Returns the splice, or `None` (→ the caller full-parses) when:
     ///
-    /// - **Simple-doc gate.** If `sanitize(new_raw)` emits any diagnostic
-    ///   (accent decomposition inside `〔…〕`, or a PUA-sentinel collision), we
-    ///   decline: a region re-lex works on already-sanitized text and cannot
+    /// - **Sanitize diagnostic.** If `sanitize(new_raw)` emits any diagnostic
+    ///   (an accent decomposition inside `〔…〕`, or a PUA-sentinel collision),
+    ///   we decline: a region re-lex works on already-sanitized text and cannot
     ///   reproduce that sanitize-stage diagnostic, so a splice could silently
-    ///   drop it. If `new_raw` carries a decorative-rule line, we decline too —
-    ///   rule isolation inserts a blank line (offset-changing) **without** a
-    ///   diagnostic, which [`san_offset`] does not model.
-    /// - **Offset map.** Both edit endpoints are mapped from old-raw to
-    ///   old-sanitized coordinates against `self.text` via [`san_offset`], which
-    ///   returns `None` for an endpoint inside the stripped BOM or splitting a
-    ///   CRLF pair.
+    ///   drop it. (Decorative-rule isolation emits **no** diagnostic and is
+    ///   handled below, so rule documents are *not* declined here.)
+    /// - The engine's own validation declines the derived sanitized edit.
     ///
-    /// The splice runs against `sanitize(new_raw).text` — the **true** sanitize
-    /// of the new source — so
-    /// [`aozora::reparse_incremental_diagnostics_only`]'s own validation
-    /// backstops any mapping error with a decline, never a wrong splice.
+    /// The sanitized-coordinate edit is recovered by diffing the cached
+    /// (`prior.sanitized`) and new (`sanitize(new_raw)`) sanitized buffers via a
+    /// char-boundary-snapped common prefix / suffix. This models BOM strip,
+    /// CRLF→LF, and decorative-rule isolation uniformly — whatever `sanitize`
+    /// did, the diff localises the change to one sanitized range. If the edit
+    /// perturbed sanitization non-locally (e.g. it turned a line into a
+    /// decorative rule, inserting a distant blank line, or it deleted a rule's
+    /// isolation blank), the diff range spans the perturbation, which carries a
+    /// `\n` → the engine declines via its structure guard. So
+    /// [`aozora::reparse_incremental_diagnostics_only`] either splices a truly
+    /// local edit byte-identically or declines — never a wrong splice.
+    ///
+    /// The endpoints are snapped to char boundaries because a byte-wise diff of
+    /// Japanese text routinely falls mid-codepoint (adjacent kana share their
+    /// UTF-8 lead bytes); slicing `str` there would panic.
     ///
     /// Returns `(new_sanitized, splice)` on success: the new sanitized buffer
     /// (which becomes the next `DiagBase::sanitized`) and the diagnostics-only
     /// splice.
-    fn try_incremental_crlf(
-        &self,
-        prior: &DiagBase,
-        new_raw: &str,
-        edit: &ByteEdit,
-    ) -> Option<(String, DiagSplice)> {
-        // Simple-doc gate: only a pure BOM-strip + CRLF→LF transformation is
-        // offset-modelled by `san_offset`. Any sanitize diagnostic (accent /
-        // PUA) would be unreproducible by a region re-lex; a decorative rule
-        // line is a silent offset-changing edit.
+    fn try_incremental_resanitize(prior: &DiagBase, new_raw: &str) -> Option<(String, DiagSplice)> {
         let san_out = sanitize(new_raw);
         if !san_out.diagnostics.is_empty() {
             return None;
         }
-        if has_long_rule_line(new_raw) {
-            return None;
-        }
 
-        // Map the edit endpoints from old-raw to old-sanitized coordinates
-        // (against `self.text`, the old raw source the edit describes).
-        let start = san_offset(&self.text, edit.range.start)?;
-        let end = san_offset(&self.text, edit.range.end)?;
+        // Recover the sanitized-coordinate edit from the diff of the cached and
+        // new sanitized buffers (snapped to char boundaries so `str` slicing
+        // below never splits a codepoint).
+        let old_san = prior.sanitized.as_str();
+        let new_san = san_out.text.as_ref();
+        let start = common_prefix_len(old_san, new_san);
+        let old_end = old_san.len() - common_suffix_len(&old_san[start..], &new_san[start..]);
 
-        // Splice against the true sanitize(new_raw) (reusing the buffer already
-        // computed for the gate — never sanitize twice).
         let splice = aozora::reparse_incremental_diagnostics_only(
             prior.as_diag_ref(),
-            &san_out.text,
-            start..end,
+            new_san,
+            start..old_end,
         )?;
         Some((san_out.text.into_owned(), splice))
     }
@@ -501,51 +497,33 @@ fn duration_as_us(d: Duration) -> u64 {
     u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
 }
 
-/// Map a raw byte offset `b` to its offset in `sanitize(raw)` for the
-/// BOM-strip + CRLF→LF case (the only transformation the CRLF fast path
-/// admits; richer sanitations are gated out before this is called).
-///
-/// The sanitize stage strips every leading `U+FEFF` (3 bytes each) and
-/// rewrites `\r\n` → `\n` (−1 byte per pair) and lone `\r` → `\n`
-/// (offset-neutral, 1 byte → 1 byte). So the sanitized offset is `b` minus the
-/// leading-BOM bytes minus the number of CRLF pairs that lie fully before `b`.
-///
-/// Returns `None` for an offset that cannot be mapped:
-/// - `b` lands inside the stripped leading BOM (`b < bom`); or
-/// - `b` splits a `\r\n` pair (sits exactly on the `\n`), which has no
-///   counterpart in the collapsed sanitized text.
-fn san_offset(raw: &str, b: usize) -> Option<usize> {
-    let bytes = raw.as_bytes();
+/// Byte length of the longest common prefix of `a` and `b`, snapped **down** to
+/// a char boundary of `a`. Because the snapped-off bytes are byte-equal in `a`
+/// and `b`, the result is a char boundary of `b` as well — so both
+/// `a[..result]` and `b[..result]` are valid `str` slices.
+fn common_prefix_len(a: &str, b: &str) -> usize {
+    let mut i = a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count();
+    while i > 0 && !a.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
 
-    // Leading-BOM run: sanitize strips every leading `U+FEFF` (`EF BB BF`).
-    let mut bom = 0usize;
-    while raw[bom..].starts_with('\u{FEFF}') {
-        bom += '\u{FEFF}'.len_utf8();
+/// Byte length of the longest common suffix of `a` and `b`, snapped so that
+/// `a.len() - result` lands on a char boundary of `a` (and, by the same
+/// byte-equality argument, of `b`). The `zip` is bounded by the shorter string,
+/// so the result never exceeds either length.
+fn common_suffix_len(a: &str, b: &str) -> usize {
+    let mut i = a
+        .bytes()
+        .rev()
+        .zip(b.bytes().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    while i > 0 && !a.is_char_boundary(a.len() - i) {
+        i -= 1;
     }
-    if b < bom {
-        // The edit endpoint is inside bytes sanitize removes entirely.
-        return None;
-    }
-
-    // Count CRLF pairs that lie fully before `b`; each collapses 2 → 1 byte.
-    let mut crlf_pairs = 0usize;
-    let mut i = bom;
-    while i < b {
-        if bytes[i] == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
-            if i + 1 == b {
-                // `b` sits on the `\n` of a CRLF pair — unmappable.
-                return None;
-            }
-            // `i < b` and `i + 1 != b` ⇒ `i + 1 < b`: the pair is fully before
-            // `b`, so it contributes one collapsed byte. A lone `\r` (no
-            // following `\n`) is offset-neutral and falls through to `i += 1`.
-            crlf_pairs += 1;
-            i += 2;
-            continue;
-        }
-        i += 1;
-    }
-    Some(b - bom - crlf_pairs)
+    i
 }
 
 #[cfg(test)]
@@ -910,20 +888,73 @@ mod tests {
     }
 
     #[test]
-    fn decorative_rule_doc_declines() {
-        // A CRLF doc with a >=10-char decorative rule line. Rule isolation
-        // inserts a blank line silently (offset-changing, no diagnostic), which
-        // the offset map does not model, so the fast path declines via
-        // `has_long_rule_line` and full-parses identically.
+    fn decorative_rule_doc_incremental_hits() {
+        // A CRLF doc with a >=10-char decorative rule line (the real aozora-bunko
+        // header shape). Rule isolation inserts a blank line silently, but the
+        // common-prefix/suffix derivation models it: a body edit far from the
+        // rule fast-paths, reusing the leading ruby node, and stays byte-identical
+        // to a full parse. (Before #284's coverage recovery this declined.)
         let mut cache = ParseCache::default();
-        let old = "まえがき。\r\n----------\r\n\r\nほんぶんです。\r\n";
+        let old = "｜青空《あおぞら》\r\n----------\r\n\r\nほんぶんです。\r\n";
         drop(cache.reparse(old));
         let (new_raw, edit) = interior_insert(old, "ほんぶん", "も");
         let (diags, stats) = cache.reparse_incremental(&new_raw, &[edit]);
 
+        assert!(
+            stats.cache_hits > 0,
+            "rule doc must now fast-path and reuse the prefix ruby: {stats:?}",
+        );
+        let mut fresh = ParseCache::default();
+        let (want, _) = fresh.reparse(&new_raw);
+        assert_eq!(diag_debug(&diags), diag_debug(&want));
+    }
+
+    #[test]
+    fn rule_creation_declines_and_matches_full() {
+        // Growing a 9-dash line (not a rule) to 10 dashes turns it into a
+        // decorative rule: sanitize inserts an isolation blank line, so the
+        // sanitized diff range spans the dash line and gains a `\n`. The engine
+        // declines via `carries_structure`, and the full parse matches.
+        let mut cache = ParseCache::default();
+        let old = "まえがき。\r\n---------\r\n\r\nほんぶんです。\r\n";
+        drop(cache.reparse(old));
+        // Insert one more '-' into the 9-dash run, making it a 10-dash rule.
+        let (new_raw, edit) = interior_insert(old, "---------", "-");
+        let (diags, stats) = cache.reparse_incremental(&new_raw, &[edit]);
+
         assert_eq!(
             stats.cache_hits, 0,
-            "decorative-rule doc must decline: {stats:?}",
+            "turning a line into a decorative rule must decline: {stats:?}",
+        );
+        let mut fresh = ParseCache::default();
+        let (want, _) = fresh.reparse(&new_raw);
+        assert_eq!(diag_debug(&diags), diag_debug(&want));
+    }
+
+    #[test]
+    fn midchar_prefix_and_suffix_snap_hits() {
+        // Replacing a kana with one that shares UTF-8 lead bytes makes a byte-wise
+        // common prefix AND suffix fall mid-codepoint; the char-boundary snap must
+        // keep the derived edit range on boundaries (else `str` slicing panics)
+        // and still splice byte-identically. CRLF routes this through the
+        // re-sanitize path; the leading ruby is reused.
+        let mut cache = ParseCache::default();
+        let old = "｜青空《あおぞら》\r\n\r\nぁあぃ\r\n\r\nさしすせそ\r\n";
+        drop(cache.reparse(old));
+        // Replace the middle paragraph "ぁあぃ" with "あぁい": every char shifts
+        // by one code point but the bytes overlap, so the diff straddles
+        // codepoints on both ends.
+        let at = old.find("ぁあぃ").expect("needle");
+        let edit = ByteEdit::new(at..at + "ぁあぃ".len(), "あぁい".to_owned());
+        let mut new_raw = String::with_capacity(old.len());
+        new_raw.push_str(&old[..at]);
+        new_raw.push_str("あぁい");
+        new_raw.push_str(&old[at + "ぁあぃ".len()..]);
+        let (diags, stats) = cache.reparse_incremental(&new_raw, &[edit]);
+
+        assert!(
+            stats.cache_hits > 0,
+            "must fast-path, reusing the ruby: {stats:?}"
         );
         let mut fresh = ParseCache::default();
         let (want, _) = fresh.reparse(&new_raw);
@@ -953,52 +984,40 @@ mod tests {
         assert_eq!(diag_debug(&diags), diag_debug(&want));
     }
 
-    // ---- san_offset unit tests --------------------------------------------
+    // ---- common prefix / suffix derivation --------------------------------
 
     #[test]
-    fn san_offset_pure_ascii_is_identity() {
-        // No BOM, no CR: sanitize is the identity, so offsets are unchanged.
-        let raw = "abcdef";
-        for b in 0..=raw.len() {
-            assert_eq!(san_offset(raw, b), Some(b), "offset {b}");
-        }
+    fn common_prefix_suffix_snap_to_char_boundaries() {
+        // Adjacent kana share UTF-8 lead bytes, so a byte-wise diff falls
+        // mid-codepoint; the snap must back up to a char boundary of both sides.
+        let a = "かきくけこ";
+        let b = "かきもくけこ"; // inserted も before く
+        let start = common_prefix_len(a, b);
+        assert!(a.is_char_boundary(start) && b.is_char_boundary(start));
+        assert_eq!(
+            start,
+            "かき".len(),
+            "prefix snaps to the boundary before く"
+        );
+
+        let suffix = common_suffix_len(&a[start..], &b[start..]);
+        let old_end = a.len() - suffix;
+        assert!(a.is_char_boundary(old_end) && b.is_char_boundary(a.len() - suffix));
+        // The recovered range reconstructs `b` from `a`.
+        let new_end = b.len() - suffix;
+        assert_eq!(
+            format!("{}{}{}", &a[..start], &b[start..new_end], &a[old_end..]),
+            b
+        );
     }
 
     #[test]
-    fn san_offset_leading_bom_drops_three() {
-        // One leading BOM (3 bytes) is stripped; a byte after it shifts by −3.
-        let raw = "\u{FEFF}abc";
-        assert_eq!(san_offset(raw, 3), Some(0), "first real byte");
-        assert_eq!(san_offset(raw, 4), Some(1));
-    }
-
-    #[test]
-    fn san_offset_inside_bom_is_unmappable() {
-        let raw = "\u{FEFF}abc";
-        assert_eq!(san_offset(raw, 1), None, "inside the stripped BOM");
-        assert_eq!(san_offset(raw, 2), None);
-    }
-
-    #[test]
-    fn san_offset_counts_crlf_pairs() {
-        // "a\r\nb\r\nc": each fully-elapsed CRLF pair collapses 2 → 1 byte.
-        let raw = "a\r\nb\r\nc";
-        assert_eq!(san_offset(raw, 0), Some(0), "before any CRLF");
-        assert_eq!(san_offset(raw, 3), Some(2), "after one CRLF (b)");
-        assert_eq!(san_offset(raw, 6), Some(4), "after two CRLFs (c)");
-    }
-
-    #[test]
-    fn san_offset_lone_cr_is_neutral() {
-        // A lone `\r` (no following `\n`) becomes `\n`: 1 byte → 1 byte, neutral.
-        let raw = "a\rb";
-        assert_eq!(san_offset(raw, 2), Some(2), "lone CR does not shift");
-    }
-
-    #[test]
-    fn san_offset_split_crlf_is_unmappable() {
-        // An offset sitting on the `\n` of a CRLF pair has no sanitized image.
-        let raw = "a\r\nb";
-        assert_eq!(san_offset(raw, 2), None);
+    fn common_prefix_suffix_identical_strings() {
+        // No diff: prefix consumes everything, suffix is bounded to avoid overlap.
+        let s = "おなじ";
+        let start = common_prefix_len(s, s);
+        assert_eq!(start, s.len());
+        let suffix = common_suffix_len(&s[start..], &s[start..]);
+        assert_eq!(suffix, 0, "the tails are empty");
     }
 }
