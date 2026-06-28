@@ -62,6 +62,10 @@ futures   = "0.3"
 # semantic-token deltas, the document-symbol outline, and the diagnostic
 # catalogue so a regression in any of them is a reviewable diff.
 insta     = "1"
+# Corpus iteration + Shift-JIS decode for the `measure_reparse_pending`
+# profiling example (AOZORA_CORPUS_ROOT-gated, like aozora-bench's benches).
+aozora-corpus   = { workspace = true }
+aozora-encoding = { workspace = true }
 
 [[bench]]
 name             = "burst"
@@ -116,6 +120,10 @@ required-features = ["internals"]
 
 [[example]]
 name             = "measure_parse_cache"
+required-features = ["internals"]
+
+[[example]]
+name             = "measure_reparse_pending"
 required-features = ["internals"]
 
 [features]
