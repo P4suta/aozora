@@ -282,7 +282,9 @@ name = "aozora-lsp"
 version = "0.4.1"
 dependencies = [
  "aozora",
+ "aozora-corpus",
  "aozora-diagnostics",
+ "aozora-encoding",
  "aozora-fmt",
  "arc-swap",
  "clap",
