@@ -6,7 +6,8 @@
 //! share one source of truth. This module is a thin adapter: it calls
 //! [`aozora_diagnostics::describe`] and maps the neutral [`Described`] record
 //! onto a `tower_lsp` [`Diagnostic`], converting byte spans into line/UTF-16
-//! coordinates via [`LineIndex`].
+//! coordinates via a [`DocLineView`] (a rope-backed or `&str`-backed line
+//! mapper).
 //!
 //! `DiagnosticPayload` / `SerializablePairKind` are re-exported from
 //! [`aozora_diagnostics`] so the `code_action` handler can keep importing them
@@ -18,27 +19,29 @@ use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, DiagnosticTag, Number
 
 pub(crate) use aozora_diagnostics::{DiagnosticPayload, SerializablePairKind};
 
-use crate::line_index::LineIndex;
+use crate::doc_line_view::DocLineView;
 
 /// Parse `source` and return its diagnostics in LSP shape.
 #[must_use]
 pub fn diagnostics_for_source(source: &str) -> Vec<Diagnostic> {
     let document = Document::new(source);
     let tree = document.parse();
-    diagnostics_from_aozora(source, tree.diagnostics())
+    let view = DocLineView::from_source(source);
+    diagnostics_from_aozora(&view, tree.diagnostics())
 }
 
 /// Map a slice of pre-computed `aozora` [`AozoraDiagnostic`]s to LSP diagnostics.
 ///
 /// The LSP backend's `publishDiagnostics` path uses this with the diagnostics
-/// already held in the parse cache, skipping a re-parse.
+/// already held in the parse cache, skipping a re-parse. `view` maps each
+/// diagnostic's byte span onto an LSP position — rope-backed on the publish
+/// hot path (no per-keystroke line-table rebuild) or `&str`-backed elsewhere.
 #[must_use]
-pub fn diagnostics_from_aozora(source: &str, diagnostics: &[AozoraDiagnostic]) -> Vec<Diagnostic> {
-    let line_index = LineIndex::new(source);
-    diagnostics
-        .iter()
-        .map(|d| to_lsp(source, &line_index, d))
-        .collect()
+pub fn diagnostics_from_aozora(
+    view: &DocLineView<'_>,
+    diagnostics: &[AozoraDiagnostic],
+) -> Vec<Diagnostic> {
+    diagnostics.iter().map(|d| to_lsp(view, d)).collect()
 }
 
 /// Map `aozora_diagnostics::Severity` onto the LSP severity enum.
@@ -49,10 +52,10 @@ fn to_lsp_severity(severity: Severity) -> DiagnosticSeverity {
     }
 }
 
-fn to_lsp(source: &str, line_index: &LineIndex, d: &AozoraDiagnostic) -> Diagnostic {
+fn to_lsp(view: &DocLineView<'_>, d: &AozoraDiagnostic) -> Diagnostic {
     let described: Described = describe(d);
-    let start = line_index.position(source, described.span.start as usize);
-    let end = line_index.position(source, described.span.end as usize);
+    let start = view.position(described.span.start as usize);
+    let end = view.position(described.span.end as usize);
     Diagnostic {
         range: Range::new(start, end),
         severity: Some(to_lsp_severity(described.severity)),
