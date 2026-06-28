@@ -90,7 +90,9 @@ pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
 /// Source-region ownership and minimal-diff source splicing (#202).
 pub use splice::{CoupledKind, Coupling, OwnedRegion, RegionRole, SpliceError, SpliceSafety};
 
-pub use incremental_owned::{DiagBaseRef, DiagSplice, OwnedSplice, RegionIndex, SanitizedSrc};
+pub use incremental_owned::{
+    DiagBaseRef, DiagSplice, OwnedSplice, PieceSeq, RegionIndex, SanitizedSrc,
+};
 
 /// **UNSTABLE — not subject to semver until v0.5.0.**
 ///
