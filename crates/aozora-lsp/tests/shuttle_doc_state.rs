@@ -23,7 +23,10 @@
 //!   threads.
 //! - **Final-state consistency**: after both threads finish, every
 //!   document still in the map has `parsed.normalized` equal to
-//!   `parse(text).normalized`.
+//!   `parse(text).normalized`, **and** its real `ParseCache`'s spliced
+//!   sanitized rope (#237 Tier 2, Mechanism B) equal to a fresh
+//!   `sanitize(text)` — so a splice that desynced under any interleaving
+//!   is caught.
 //!
 //! # Tunables
 //!
@@ -43,7 +46,9 @@
 use std::collections::HashMap;
 use std::env;
 
-use aozora_lsp::internals::{ByteEdit, apply_edits};
+use aozora::pipeline::lexer::sanitize::sanitize;
+use aozora_lsp::internals::{ByteEdit, ParseCache, apply_edits};
+use ropey::Rope;
 use shuttle::sync::{Arc, Mutex as ShuttleMutex};
 use shuttle::thread;
 use tower_lsp::lsp_types::Url;
@@ -77,25 +82,60 @@ fn parsed_state_proxy(text: &str) -> usize {
 struct ShuttleDoc {
     text: String,
     parsed_normalized_len: usize,
+    /// The **real** LSP `ParseCache` (#237 Tier 2, Mechanism B), seeded and
+    /// spliced exactly as `OpenDocument` drives it (`reparse` on a wholesale
+    /// replace, `reparse_incremental` on an edit). It holds no internal blocking
+    /// lock — its `OnceLock` is only ever touched while this `ShuttleDoc` is
+    /// locked, so it is never contended — which is what keeps it shuttle-safe:
+    /// shuttle preempts only `shuttle::sync` primitives, and the cache adds none.
+    ///
+    /// The concurrency value here is **limited**: production single-flights every
+    /// reparse behind `OpenDocument`'s `parse` mutex, so two reparses never
+    /// overlap. This models the *state* invariant — a spliced cache stays
+    /// byte-equal to a fresh derivation — holding under the open/change/close
+    /// interleavings the scheduler explores, not a data race inside the cache.
+    cache: ParseCache,
 }
 
 impl ShuttleDoc {
     fn new(text: String) -> Self {
         let parsed_normalized_len = parsed_state_proxy(&text);
+        let mut cache = ParseCache::default();
+        drop(cache.reparse(&text));
         Self {
             text,
             parsed_normalized_len,
+            cache,
         }
     }
     fn apply(&mut self, edits: &[ByteEdit]) {
         if let Ok(t) = apply_edits(&self.text, edits) {
             self.text = t;
             self.parsed_normalized_len = parsed_state_proxy(&self.text);
+            // Incremental splice in old (pre-edit) coordinates: `self.text` is the
+            // post-edit raw, while the cache still holds the pre-edit raw the edit
+            // offsets index — exactly `OpenDocument::reparse_pending`'s contract.
+            drop(
+                self.cache
+                    .reparse_incremental(&Rope::from(self.text.as_str()), edits),
+            );
         }
     }
     fn replace(&mut self, t: String) {
         self.text = t;
         self.parsed_normalized_len = parsed_state_proxy(&self.text);
+        // A wholesale replace clears any pending edits and re-seeds the cache.
+        drop(self.cache.reparse(&self.text));
+    }
+    /// Mechanism B's invariant: the cache's spliced sanitized rope equals a
+    /// from-scratch `sanitize` of the current text (or both are empty). The
+    /// `RopeSlice == &str` compare walks the rope chunk-wise with no allocation.
+    fn sanitized_consistent(&self) -> bool {
+        let want = sanitize(&self.text).text;
+        self.cache.sanitized().map_or_else(
+            || want.is_empty(),
+            |rope| rope.byte_slice(..) == want.as_ref(),
+        )
     }
 }
 
@@ -208,10 +248,15 @@ fn lifecycle_iteration() {
     t1.join().expect("t1 panicked");
     t2.join().expect("t2 panicked");
 
-    // Final invariant: every remaining doc's parsed_normalized_len
-    // equals what `parse(text).artifacts.normalized.len()` would
-    // give now. Catches any state where a write was committed but
-    // the cached length wasn't updated.
+    assert_final_state_consistent(&docs);
+}
+
+/// Final invariant: every remaining doc's `parsed_normalized_len` equals a fresh
+/// `parsed_state_proxy`, **and** its real `ParseCache`'s spliced sanitized rope
+/// equals a fresh `sanitize` (#237 Tier 2, Mechanism B). Catches any state where
+/// a write was committed but a cached derivation was left stale under some
+/// interleaving.
+fn assert_final_state_consistent(docs: &DocMap) {
     let snapshot: Vec<(Url, Arc<ShuttleMutex<ShuttleDoc>>)> = {
         let guard = docs.lock().unwrap();
         guard
@@ -220,13 +265,21 @@ fn lifecycle_iteration() {
             .collect()
     };
     for (uri, doc) in snapshot {
-        let (cached_len, expected_len) = {
+        let (cached_len, expected_len, san_ok) = {
             let doc = doc.lock().unwrap();
-            (doc.parsed_normalized_len, parsed_state_proxy(&doc.text))
+            (
+                doc.parsed_normalized_len,
+                parsed_state_proxy(&doc.text),
+                doc.sanitized_consistent(),
+            )
         };
         assert_eq!(
             cached_len, expected_len,
             "doc {uri}: cached parsed-state proxy disagrees with fresh derivation",
+        );
+        assert!(
+            san_ok,
+            "doc {uri}: the cache's spliced sanitized rope disagrees with a fresh sanitize",
         );
     }
 }

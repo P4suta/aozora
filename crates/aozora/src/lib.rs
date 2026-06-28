@@ -109,7 +109,10 @@ pub use incremental_owned::{DiagBaseRef, DiagSplice, OwnedSplice, RegionIndex, S
 /// for `new_sanitized` (a sanitized fixed point) from `cached` and the single
 /// sanitized-coordinate edit `edit_old`, by re-lexing only the minimal balanced
 /// region around the edit and splicing the owned tables. Returns `None` for any
-/// edit it cannot prove local (the caller then full-parses, trivially correct).
+/// edit whose locality it cannot prove from the cached tables (the caller then
+/// full-parses, trivially correct); that the edit truly changes only bytes
+/// inside `edit_old` is a caller precondition, checked in debug rather than
+/// gated at runtime.
 #[must_use]
 pub fn reparse_incremental_owned(
     cached: &OwnedLexOutput,
@@ -129,8 +132,10 @@ pub fn reparse_incremental_owned(
 /// clone/graft, no registry or container-pairs rebuild. Cost is
 /// `O(region + #diagnostics)` versus the owned splice's `O(doc)`.
 ///
-/// Returns [`DiagSplice`], or `None` for any edit it cannot prove local (the
-/// caller then full-parses, trivially correct). Its diagnostics are
+/// Returns [`DiagSplice`], or `None` for any edit whose locality it cannot prove
+/// from the cached tables (the caller then full-parses, trivially correct); that
+/// the edit truly changes only bytes inside `edit_old` is a caller precondition,
+/// checked in debug rather than gated at runtime. Its diagnostics are
 /// byte-identical to [`reparse_incremental_owned`]'s — the
 /// `corpus_incremental_merge` differential gate pins both engines together and
 /// to a full parse. The full tree is materialised lazily, only when a
@@ -150,6 +155,35 @@ pub fn reparse_incremental_diagnostics_only(
     edit_old: Range<usize>,
 ) -> Option<DiagSplice> {
     incremental_owned::reparse_incremental_diagnostics_only(&base, &new_sanitized, edit_old)
+}
+
+/// **UNSTABLE — not subject to semver until v0.5.0.**
+///
+/// Generic-source variant of [`reparse_incremental_diagnostics_only`]: the same
+/// diagnostics-only hot path, but over any [`SanitizedSrc`] byte source `S`
+/// rather than the `&str`-backed [`DiagBaseRef`]. This is the entry the
+/// in-workspace LSP routes a `ropey`-backed sanitized buffer through, so it can
+/// splice the rope incrementally instead of flattening it to a `String` per
+/// edit; the `&str` [`reparse_incremental_diagnostics_only`] is retained for the
+/// `corpus_incremental_merge` differential gate and the existing callers.
+///
+/// Same contract and fallbacks as [`reparse_incremental_diagnostics_only`]:
+/// returns [`DiagSplice`], or `None` for any edit whose locality it cannot prove
+/// from the cached tables (the caller then full-parses, trivially correct); that
+/// the edit truly changes only bytes inside `edit_old` is a caller precondition,
+/// checked in debug rather than gated at runtime. Like that function it is
+/// exposed for the in-workspace LSP consumer only; its shape may change without a
+/// major version bump until v0.5.0.
+///
+/// The base is taken by reference (not by value like the `&str` entry) because a
+/// rope source holds a cursor and is not `Copy`; callers pass `&DiagBaseRef { .. }`.
+#[must_use]
+pub fn reparse_incremental_diagnostics_only_in<S: SanitizedSrc>(
+    base: &DiagBaseRef<'_, S>,
+    new_sanitized: &S,
+    edit_old: Range<usize>,
+) -> Option<DiagSplice> {
+    incremental_owned::reparse_incremental_diagnostics_only(base, new_sanitized, edit_old)
 }
 
 /// Eagerly initialise the parser's process-global lazy tables.

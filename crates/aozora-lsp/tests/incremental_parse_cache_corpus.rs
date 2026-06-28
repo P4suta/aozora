@@ -22,6 +22,7 @@ use aozora::Diagnostic;
 use aozora::pipeline::lexer::sanitize::sanitize;
 use aozora_encoding::decode_auto;
 use aozora_lsp::internals::{ByteEdit, ParseCache};
+use ropey::Rope;
 
 /// Render diagnostics to a comparable `Vec<String>`.
 fn diag_debug(ds: &[Diagnostic]) -> Vec<String> {
@@ -114,7 +115,7 @@ fn assert_incremental_matches_full(crlf: &str, at: usize, ins: &str, label: &str
 
     let mut cache = ParseCache::default();
     drop(cache.reparse(crlf));
-    let (diags, stats) = cache.reparse_incremental(&new_raw, &[edit]);
+    let (diags, stats) = cache.reparse_incremental(&Rope::from(new_raw.as_str()), &[edit]);
 
     let mut fresh = ParseCache::default();
     let (want, _) = fresh.reparse(&new_raw);

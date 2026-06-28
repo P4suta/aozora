@@ -65,6 +65,32 @@ pub trait SanitizedSrc {
     /// Sub-slice over byte `range`, with `str::get` semantics: `None` when the
     /// range is off-bounds or splits a UTF-8 code point.
     fn slice(&self, range: Range<usize>) -> Option<Cow<'_, str>>;
+
+    /// Debug-only check that an incremental edit changed **only** bytes inside
+    /// `edit_old`: the prefix `[0, edit_old.start)` and the suffix after the
+    /// edit must be byte-identical between `self` (the cached sanitized buffer)
+    /// and `new` (the edited one, whose suffix starts at `new_edit_end`).
+    ///
+    /// This is the incremental splice's caller precondition, not a runtime gate.
+    /// `splice_prologue` used to enforce it here with an unconditional
+    /// prefix/suffix `memcmp`; that was deleted primarily for **time**, not
+    /// defence — on a rope source comparing `[0, edit_old.start)` is
+    /// `O(prefix) = O(doc)` per edit (a `RopeSlice` equality still walks
+    /// `O(min len)`), which is incompatible with the per-keystroke hot path. The
+    /// default is a deliberate no-op (a backing store with no cheap external
+    /// witness pays nothing); the `&str` impl restores the exact comparison
+    /// under `debug_assert!` so the `&str`-backed proptests and corpus
+    /// differential keep pinning it in debug builds, and a rope impl can add a
+    /// no-alloc `byte_slice == byte_slice` probe. Gated `#[cfg(debug_assertions)]`
+    /// so the method and its sole call vanish from release builds together.
+    #[cfg(debug_assertions)]
+    fn debug_assert_unchanged_outside(
+        &self,
+        _new: &Self,
+        _edit_old: Range<usize>,
+        _new_edit_end: usize,
+    ) {
+    }
 }
 
 impl SanitizedSrc for &str {
@@ -82,6 +108,29 @@ impl SanitizedSrc for &str {
 
     fn slice(&self, range: Range<usize>) -> Option<Cow<'_, str>> {
         self.get(range).map(Cow::Borrowed)
+    }
+
+    #[cfg(debug_assertions)]
+    fn debug_assert_unchanged_outside(
+        &self,
+        new: &Self,
+        edit_old: Range<usize>,
+        new_edit_end: usize,
+    ) {
+        // The exact prefix/suffix comparison `splice_prologue` used to run
+        // unconditionally as a `memcmp`, now a debug-only restatement of the
+        // caller precondition: every byte outside `edit_old` is identical
+        // between the cached buffer (`self`) and the edited one (`new`).
+        // Byte-for-byte the deleted `slice(..)`-based check, kept
+        // `O(prefix + suffix)` for the `&str` corpus gate and proptests, which
+        // exercise this branch in debug.
+        debug_assert!(
+            self.slice(0..edit_old.start) == new.slice(0..edit_old.start)
+                && self.slice(edit_old.end..self.len()) == new.slice(new_edit_end..new.len()),
+            "incremental edit changed bytes outside edit_old: the splice \
+             precondition (only edit_old's bytes differ between the cached and \
+             new sanitized buffers) was violated",
+        );
     }
 }
 
@@ -797,10 +846,13 @@ fn splice_prologue<S: SanitizedSrc>(
         return None;
     }
 
-    // 2. Edit validation — the edit must actually transform `cached.sanitized`
-    //    into `new_sanitized`, and touch no document structure. An incorrectly
-    //    specified edit (bytes outside `edit_old` changed) falls back to a full
-    //    parse.
+    // 2. Edit validation — `edit_old` must be in bounds and the edited bytes
+    //    must touch no document structure. That the edit changes *only* bytes
+    //    inside `edit_old` (so it truly transforms `cached.sanitized` into
+    //    `new_sanitized`) is the caller's precondition: it is restated in debug
+    //    by `debug_assert_unchanged_outside` below, not gated at runtime, so a
+    //    genuinely malformed edit is a caller bug rather than a silent
+    //    full-parse fallback (see that call's comment for why).
     let old_source = &base.sanitized;
     if edit_old.start > edit_old.end || edit_old.end > old_source.len() {
         return None;
@@ -811,15 +863,21 @@ fn splice_prologue<S: SanitizedSrc>(
     if new_edit_end > new_sanitized.len() {
         return None;
     }
-    // Bytes outside `edit_old` are byte-identical (the suffix after applying the
-    // edit delta). `.slice(..)` keeps an out-of-range index from panicking and,
-    // for `&str`, is byte-identical to the prior `as_bytes().get(..)` compare.
-    if old_source.slice(0..edit_old.start) != new_sanitized.slice(0..edit_old.start)
-        || old_source.slice(edit_old.end..old_source.len())
-            != new_sanitized.slice(new_edit_end..new_sanitized.len())
-    {
-        return None;
-    }
+    // The bytes outside `edit_old` must be byte-identical between the cached and
+    // new sanitized buffers (the prefix `[0, edit_old.start)` plus the suffix
+    // after the edit). This used to be an unconditional prefix/suffix `memcmp`
+    // here; it is gone primarily for **time**, not defence — on the rope source
+    // a later PR introduces, slicing `[0, edit_old.start)` is `O(prefix) =
+    // O(doc)` per edit (a `RopeSlice` equality still walks `O(min len)`), which
+    // is incompatible with the per-keystroke hot path. The check now lives as
+    // the caller's precondition: in debug it is restated by
+    // `debug_assert_unchanged_outside` (a full `memcmp` for `&str`, byte-
+    // identical to the deleted code; a no-alloc probe for a rope), the owned
+    // path additionally pins it with step 8's reassembly `debug_assert_eq!`, and
+    // the production LSP caller guarantees it by deriving `edit_old` from the
+    // real sanitized diff.
+    #[cfg(debug_assertions)]
+    old_source.debug_assert_unchanged_outside(new_sanitized, edit_old.clone(), new_edit_end);
     let old_slice = old_source.slice(edit_old.clone())?;
     let new_slice = new_sanitized.slice(edit_old.start..new_edit_end)?;
     if carries_structure(&old_slice) || carries_structure(&new_slice) {
@@ -915,9 +973,11 @@ fn splice_prologue<S: SanitizedSrc>(
 /// - `cached` carries a globally-unbalanced delimiter
 ///   ([`Diagnostic::UnclosedBracket`] / [`Diagnostic::UnmatchedClose`]) whose
 ///   open/close half swallows or strays across region boundaries;
-/// - the edit does not transform `cached.sanitized` into `new_sanitized`
-///   (bytes outside `edit_old` differ), or the edited bytes carry document
-///   structure ([`carries_structure`]);
+/// - the edited bytes carry document structure ([`carries_structure`]) or sit
+///   inside an open `［…］` directive; that the edit changes only bytes inside
+///   `edit_old` (truly transforming `cached.sanitized` into `new_sanitized`) is
+///   instead a caller precondition, checked in debug by the sanitized source's
+///   `debug_assert_unchanged_outside` rather than gated at runtime;
 /// - the region slice is not a sanitize fixed point in isolation;
 /// - the re-lexed region is not self-contained: it carries a
 ///   whole-document-scoped diagnostic, an unclosed/unmatched delimiter half, or
@@ -993,7 +1053,12 @@ pub(crate) fn reparse_incremental_owned(
         "relexed registry must be parallel to source_nodes (same node sequence)",
     );
 
-    // 8. Strings.
+    // 8. Strings. Reassemble prefix ++ relexed region ++ suffix. The result
+    //    equals `new_sanitized` iff the edit touched only bytes inside
+    //    `edit_old`, so this `debug_assert_eq!` is the owned path's equivalent of
+    //    the prologue's debug-only `debug_assert_unchanged_outside` precondition
+    //    check — the former unconditional release `memcmp` lived in the prologue,
+    //    not here.
     let mut new_sanitized_out =
         String::with_capacity(old_source.len().saturating_add(relexed.sanitized.len()));
     new_sanitized_out.push_str(old_source.get(..r_start)?);
@@ -1001,7 +1066,8 @@ pub(crate) fn reparse_incremental_owned(
     new_sanitized_out.push_str(old_source.get(r_end..)?);
     debug_assert_eq!(
         new_sanitized_out, new_sanitized,
-        "reassembled sanitized buffer must equal the edited input",
+        "reassembled sanitized buffer must equal the edited input \
+         (caller precondition: the edit changes only bytes inside edit_old)",
     );
 
     let mut new_normalized = String::with_capacity(

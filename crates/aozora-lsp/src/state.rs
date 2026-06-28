@@ -752,15 +752,15 @@ impl OpenDocument {
         };
         // Assemble a doc-level rope by structural-share `append` (O(#paragraphs
         // · log n), no byte copy). Returned to the publish path so it can build
-        // a `DocLineView::Rope` with no LineIndex rebuild.
+        // a `DocLineView::Rope` with no LineIndex rebuild, and fed straight to
+        // the cache — which splices its sanitized rope incrementally, with no
+        // per-keystroke `O(doc)` `to_string` + `sanitize` (#237 Tier 2,
+        // Mechanism B).
         let mut raw = Rope::new();
         for rope in ropes {
             raw.append(rope);
         }
-        // Materialise the text ONLY to feed the engine `&str`. This temporary
-        // O(doc) copy is removed in a later PR (the engine will read the rope).
-        let text = raw.to_string();
-        let (diagnostics, stats) = cache.reparse_incremental(&text, &edits);
+        let (diagnostics, stats) = cache.reparse_incremental(&raw, &edits);
         drop(cache);
         self.record_parse_stats(stats);
         (raw, diagnostics, parsed_version)
