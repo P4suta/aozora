@@ -90,7 +90,7 @@ pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
 /// Source-region ownership and minimal-diff source splicing (#202).
 pub use splice::{CoupledKind, Coupling, OwnedRegion, RegionRole, SpliceError, SpliceSafety};
 
-pub use incremental_owned::{DiagBaseRef, DiagSplice, OwnedSplice, RegionIndex};
+pub use incremental_owned::{DiagBaseRef, DiagSplice, OwnedSplice, RegionIndex, SanitizedSrc};
 
 /// **UNSTABLE — not subject to semver until v0.5.0.**
 ///
@@ -140,12 +140,16 @@ pub fn reparse_incremental_owned(
 /// consumer only; its shape may change without a major version bump until
 /// v0.5.0.
 #[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the lightweight DiagBaseRef (a bag of borrows) is taken by value so the in-workspace LSP caller passes its temporary `as_diag_ref()` unchanged; it is forwarded by reference to the generic engine"
+)]
 pub fn reparse_incremental_diagnostics_only(
     base: DiagBaseRef<'_>,
     new_sanitized: &str,
     edit_old: Range<usize>,
 ) -> Option<DiagSplice> {
-    incremental_owned::reparse_incremental_diagnostics_only(base, new_sanitized, edit_old)
+    incremental_owned::reparse_incremental_diagnostics_only(&base, &new_sanitized, edit_old)
 }
 
 /// Eagerly initialise the parser's process-global lazy tables.

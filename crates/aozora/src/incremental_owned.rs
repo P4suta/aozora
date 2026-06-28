@@ -24,6 +24,7 @@
 //! straddles it — see [`structurally_safe`].
 
 use core::ops::Range;
+use std::borrow::Cow;
 
 use aozora_syntax::owned::{ContainerPair, RegistryOwned};
 
@@ -32,6 +33,57 @@ use crate::{
     CoupledKind, Diagnostic, Document, NodeRefOwned, NormalizedOffset, OwnedLexOutput, PairLink,
     SourceNodeOwned, SpliceSafety,
 };
+
+/// Read-only byte view of a **sanitized** buffer the incremental engine cuts,
+/// scans, and re-lexes against.
+///
+/// Abstracted so the engine is generic over the backing store. Today the only
+/// impl is `&str` (the cached `String`'s slice), which is byte-for-byte the
+/// prior direct-`&str` engine; a later PR adds a `ropey::RopeSlice` impl so the
+/// cache can hold a rope without copying it to a flat `String` per edit.
+///
+/// Every method mirrors the corresponding `str` operation exactly: [`byte`] is
+/// `as_bytes()[i]`, [`slice`] is `str::get` (returns `None` off-bounds or on a
+/// non-char-boundary range). [`byte`] is the monotone scan's hot probe and must
+/// be amortized `O(1)` (a direct index for `&str`; a moving cursor for a rope).
+///
+/// [`byte`]: SanitizedSrc::byte
+/// [`slice`]: SanitizedSrc::slice
+pub trait SanitizedSrc {
+    /// Byte length of the buffer (`str::len`).
+    fn len(&self) -> usize;
+
+    /// Whether the buffer is empty (`self.len() == 0`).
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Byte at offset `i` (`as_bytes()[i]`). Amortized `O(1)` on the monotone
+    /// outward scan; panics on out-of-bounds, exactly like `str` indexing.
+    fn byte(&self, i: usize) -> u8;
+
+    /// Sub-slice over byte `range`, with `str::get` semantics: `None` when the
+    /// range is off-bounds or splits a UTF-8 code point.
+    fn slice(&self, range: Range<usize>) -> Option<Cow<'_, str>>;
+}
+
+impl SanitizedSrc for &str {
+    fn len(&self) -> usize {
+        str::len(self)
+    }
+
+    fn is_empty(&self) -> bool {
+        str::is_empty(self)
+    }
+
+    fn byte(&self, i: usize) -> u8 {
+        self.as_bytes()[i]
+    }
+
+    fn slice(&self, range: Range<usize>) -> Option<Cow<'_, str>> {
+        self.get(range).map(Cow::Borrowed)
+    }
+}
 
 /// The result of a successful owned-table incremental splice.
 ///
@@ -69,11 +121,17 @@ pub struct OwnedSplice {
 /// against a [`crate::NodeStore`]. A full [`OwnedLexOutput`] projects into one
 /// via [`DiagBaseRef::with_index`] (paired with a [`RegionIndex`] built over the
 /// same tables).
-#[derive(Debug, Clone, Copy)]
-pub struct DiagBaseRef<'a> {
+///
+/// Generic over the sanitized byte source `S` (a [`SanitizedSrc`]); `S` defaults
+/// to `&'a str` so every existing `DiagBaseRef { sanitized: &x, .. }` literal and
+/// [`DiagBaseRef::with_index`] construction keeps compiling unchanged. `Copy` is
+/// dropped (a future rope source holds a cursor and cannot be `Copy`), so the
+/// engine takes the base by reference.
+#[derive(Debug, Clone)]
+pub struct DiagBaseRef<'a, S: SanitizedSrc = &'a str> {
     /// The cached sanitized buffer (a sanitize fixed point) — the coordinate
     /// space every `source_span`/`pairs` offset indexes.
-    pub sanitized: &'a str,
+    pub sanitized: S,
     /// Source-keyed node side-table, sorted by `source_span.start`.
     pub source_nodes: &'a [SourceNodeOwned],
     /// Resolved (open, close) delimiter pairs in sanitized coordinates.
@@ -427,12 +485,13 @@ pub(crate) fn is_whole_document_scoped(diagnostic: &Diagnostic) -> bool {
 /// predicate the whole-buffer oracle [`candidate_boundaries`] and the
 /// production outward scan ([`minimal_balanced_region`]) both read, so they
 /// cannot drift.
-fn is_blank_line_boundary(bytes: &[u8], j: usize) -> bool {
+fn is_blank_line_boundary<S: SanitizedSrc + ?Sized>(src: &S, j: usize) -> bool {
+    let len = src.len();
     j >= 1
-        && j < bytes.len()
-        && bytes[j - 1] == b'\n'
-        && (bytes[j] == b'\n'
-            || (bytes[j] == b'\r' && j + 1 < bytes.len() && bytes[j + 1] == b'\n'))
+        && j < len
+        && src.byte(j - 1) == b'\n'
+        && (src.byte(j) == b'\n'
+            || (src.byte(j) == b'\r' && j + 1 < len && src.byte(j + 1) == b'\n'))
 }
 
 /// Candidate blank-line boundaries on the source, ascending: every byte offset
@@ -447,9 +506,8 @@ fn is_blank_line_boundary(bytes: &[u8], j: usize) -> bool {
     )
 )]
 pub(crate) fn candidate_boundaries(source: &str) -> Vec<usize> {
-    let bytes = source.as_bytes();
-    (1..bytes.len())
-        .filter(|&j| is_blank_line_boundary(bytes, j))
+    (1..source.len())
+        .filter(|&j| is_blank_line_boundary(&source, j))
         .collect()
 }
 
@@ -512,8 +570,8 @@ pub(crate) fn structurally_safe(
 ///   container pairing), which any edit can perturb beyond the region;
 /// - `edit` is out of bounds (start > end, or end > sanitized length);
 /// - the minimal safe region is the whole document (no interior safe cut).
-pub(crate) fn minimal_balanced_region(
-    base: DiagBaseRef<'_>,
+pub(crate) fn minimal_balanced_region<S: SanitizedSrc>(
+    base: &DiagBaseRef<'_, S>,
     edit: Range<usize>,
 ) -> Option<Range<u32>> {
     // O(1) flag read (was an O(#diags) scan): any whole-document-scoped
@@ -521,8 +579,7 @@ pub(crate) fn minimal_balanced_region(
     if base.index.has_whole_doc_scoped_diag {
         return None;
     }
-    let san = base.sanitized;
-    let bytes = san.as_bytes();
+    let san = &base.sanitized;
     let len = u32::try_from(san.len()).ok()?;
     if edit.start > edit.end || edit.end > san.len() {
         return None;
@@ -540,7 +597,7 @@ pub(crate) fn minimal_balanced_region(
     let is_cut = |j: u32| -> bool {
         j == 0
             || j == len
-            || (is_blank_line_boundary(bytes, j as usize)
+            || (is_blank_line_boundary(san, j as usize)
                 && base.index.structurally_safe(base.source_nodes, j))
     };
     let region_start = (0..=es)
@@ -719,9 +776,9 @@ fn relexed_is_balanced(nodes: &[SourceNodeOwned]) -> bool {
 ///
 /// The decline conditions are exactly those documented on
 /// [`reparse_incremental_owned`]'s region/validation/self-containment bullets.
-fn splice_prologue(
-    base: DiagBaseRef<'_>,
-    new_sanitized: &str,
+fn splice_prologue<S: SanitizedSrc>(
+    base: &DiagBaseRef<'_, S>,
+    new_sanitized: &S,
     edit_old: Range<usize>,
 ) -> Option<Prologue> {
     // 1. Minimal balanced region (sanitized coordinates).
@@ -744,7 +801,7 @@ fn splice_prologue(
     //    into `new_sanitized`, and touch no document structure. An incorrectly
     //    specified edit (bytes outside `edit_old` changed) falls back to a full
     //    parse.
-    let old_source = base.sanitized;
+    let old_source = &base.sanitized;
     if edit_old.start > edit_old.end || edit_old.end > old_source.len() {
         return None;
     }
@@ -755,23 +812,28 @@ fn splice_prologue(
         return None;
     }
     // Bytes outside `edit_old` are byte-identical (the suffix after applying the
-    // edit delta). `.get(..)` keeps an out-of-range index from panicking.
-    if old_source.as_bytes().get(..edit_old.start) != new_sanitized.as_bytes().get(..edit_old.start)
-        || old_source.as_bytes().get(edit_old.end..) != new_sanitized.as_bytes().get(new_edit_end..)
+    // edit delta). `.slice(..)` keeps an out-of-range index from panicking and,
+    // for `&str`, is byte-identical to the prior `as_bytes().get(..)` compare.
+    if old_source.slice(0..edit_old.start) != new_sanitized.slice(0..edit_old.start)
+        || old_source.slice(edit_old.end..old_source.len())
+            != new_sanitized.slice(new_edit_end..new_sanitized.len())
     {
         return None;
     }
-    let old_slice = old_source.get(edit_old.clone())?;
-    let new_slice = new_sanitized.get(edit_old.start..new_edit_end)?;
-    if carries_structure(old_slice) || carries_structure(new_slice) {
+    let old_slice = old_source.slice(edit_old.clone())?;
+    let new_slice = new_sanitized.slice(edit_old.start..new_edit_end)?;
+    if carries_structure(&old_slice) || carries_structure(&new_slice) {
         return None;
     }
     // An edit *inside* a `［…］` directive carries no structural byte itself yet
     // can re-pair an inline container across the whole document (the region
     // re-lex sees only the corrupted close, never the matching open in the
     // reused prefix). The prefix up to `edit_old.start` is byte-identical
-    // between old and new, so checking `old_source` covers both.
-    if inside_directive(old_source, edit_old.start) {
+    // between old and new, so checking `old_source` covers both. `inside_directive`
+    // reads only `src[..pos]`, so the head slice with `pos == head.len()` is
+    // byte-identical to passing the whole buffer with `pos == edit_old.start`.
+    let head = old_source.slice(0..edit_old.start)?;
+    if inside_directive(&head, head.len()) {
         return None;
     }
 
@@ -788,8 +850,8 @@ fn splice_prologue(
     //    (a slice of the sanitized fixed point `new_sanitized`); if re-sanitize
     //    changes it, bail conservatively.
     let new_r_end = usize::try_from(i64::from(region.end) + edit_delta).ok()?;
-    let new_region_src = new_sanitized.get(r_start..new_r_end)?;
-    let relexed = Document::new(new_region_src).parse_owned();
+    let new_region_src = new_sanitized.slice(r_start..new_r_end)?;
+    let relexed = Document::new(&*new_region_src).parse_owned();
     if relexed.sanitized != *new_region_src {
         return None;
     }
@@ -886,8 +948,8 @@ pub(crate) fn reparse_incremental_owned(
         relexed,
         d_san,
     } = splice_prologue(
-        DiagBaseRef::with_index(cached, &index),
-        new_sanitized,
+        &DiagBaseRef::with_index(cached, &index),
+        &new_sanitized,
         edit_old,
     )?;
     let r_start = region.start as usize;
@@ -1143,9 +1205,9 @@ pub(crate) fn reparse_incremental_owned(
     clippy::too_many_lines,
     reason = "a single linear table-by-table splice (source_nodes/pairs/diagnostics), each partitioning at the same region boundary; splitting per stream would scatter that one invariant across helpers and obscure it"
 )]
-pub(crate) fn reparse_incremental_diagnostics_only(
-    base: DiagBaseRef<'_>,
-    new_sanitized: &str,
+pub(crate) fn reparse_incremental_diagnostics_only<S: SanitizedSrc>(
+    base: &DiagBaseRef<'_, S>,
+    new_sanitized: &S,
     edit_old: Range<usize>,
 ) -> Option<DiagSplice> {
     // Steps 1–5 (store-independent), shared with the owned splice.
@@ -1305,7 +1367,7 @@ mod tests {
         // Edit inside the middle paragraph "かきくけこ".
         let mid = src.find("かきくけこ").unwrap();
         let edit = mid..mid + "かき".len();
-        let region = minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), edit.clone())
+        let region = minimal_balanced_region(&DiagBaseRef::with_index(&cached, &idx), edit.clone())
             .expect("interior region");
         // Strictly smaller than the whole document.
         assert!(
@@ -1330,7 +1392,7 @@ mod tests {
         let idx = idx_of(&cached);
         let edit = 3..6;
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), edit),
+            minimal_balanced_region(&DiagBaseRef::with_index(&cached, &idx), edit),
             None
         );
     }
@@ -1348,12 +1410,12 @@ mod tests {
         );
         // Region declines regardless of where the edit sits.
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), 0..1),
+            minimal_balanced_region(&DiagBaseRef::with_index(&cached, &idx), 0..1),
             None
         );
         let mid = src.find("後の段落").unwrap();
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), mid..mid + 3),
+            minimal_balanced_region(&DiagBaseRef::with_index(&cached, &idx), mid..mid + 3),
             None
         );
     }
@@ -1366,7 +1428,7 @@ mod tests {
         let len = cached.sanitized.len();
         // end past sanitized length.
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), 0..len + 10),
+            minimal_balanced_region(&DiagBaseRef::with_index(&cached, &idx), 0..len + 10),
             None
         );
         // start > end (built without a literal reversed range to satisfy the
@@ -1376,7 +1438,7 @@ mod tests {
             end: 2,
         };
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), reversed),
+            minimal_balanced_region(&DiagBaseRef::with_index(&cached, &idx), reversed),
             None
         );
     }
@@ -1390,7 +1452,7 @@ mod tests {
         let p1 = src.find("うえお").unwrap();
         let p2_end = src.find("かきく").unwrap() + "かきく".len();
         let edit = p1..p2_end;
-        let region = minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), edit.clone())
+        let region = minimal_balanced_region(&DiagBaseRef::with_index(&cached, &idx), edit.clone())
             .expect("region");
         // Must contain the whole straddled range, hence both flanking paragraphs.
         assert!(region.start as usize <= edit.start);
@@ -1415,7 +1477,7 @@ mod tests {
         // Edit the middle paragraph in SANITIZED coordinates.
         let mid = san.find("かきくけこ").unwrap();
         let edit = mid..mid + "かき".len();
-        let region = minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), edit.clone())
+        let region = minimal_balanced_region(&DiagBaseRef::with_index(&cached, &idx), edit.clone())
             .expect("region");
         assert_ne!(region, 0..len);
         assert!(region.start as usize <= edit.start && region.end as usize >= edit.end);
@@ -1435,7 +1497,7 @@ mod tests {
         let cached = owned(src);
         let idx = idx_of(&cached);
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), 0..3),
+            minimal_balanced_region(&DiagBaseRef::with_index(&cached, &idx), 0..3),
             None
         );
     }
@@ -1449,7 +1511,7 @@ mod tests {
         // i.e. the whole (empty) document, so there is no sub-document benefit.
         let zero = 0usize;
         assert_eq!(
-            minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), zero..zero),
+            minimal_balanced_region(&DiagBaseRef::with_index(&cached, &idx), zero..zero),
             None
         );
     }
@@ -1466,7 +1528,7 @@ mod tests {
         let idx = idx_of(&cached);
         let len = u32::try_from(cached.sanitized.len()).unwrap();
         let at_offset =
-            |at: usize| minimal_balanced_region(DiagBaseRef::with_index(&cached, &idx), at..at);
+            |at: usize| minimal_balanced_region(&DiagBaseRef::with_index(&cached, &idx), at..at);
 
         // Document start and end.
         assert_eq!(at_offset(0), Some(Range { start: 0, end: 0 }));
@@ -2170,7 +2232,7 @@ mod oracle_proptests {
             let edit = Range { start: es, end: ee };
             prop_assert_eq!(
                 minimal_balanced_region(
-                    DiagBaseRef::with_index(&cached, &index),
+                    &DiagBaseRef::with_index(&cached, &index),
                     edit.clone(),
                 ),
                 reference_region(&cached, edit.clone()),
