@@ -111,6 +111,10 @@ name             = "concurrency_regressions"
 required-features = ["internals"]
 
 [[test]]
+name             = "incremental_parse_cache_corpus"
+required-features = ["internals"]
+
+[[test]]
 name             = "shuttle_doc_state"
 required-features = ["internals", "shuttle-tests"]
 

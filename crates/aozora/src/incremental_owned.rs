@@ -27,7 +27,7 @@ use core::ops::Range;
 
 use aozora_syntax::owned::{ContainerPair, RegistryOwned};
 
-use crate::splice::classify_node_ref;
+use crate::splice::{RegionRole, classify_node_ref};
 use crate::{
     CoupledKind, Diagnostic, Document, NodeRefOwned, NormalizedOffset, OwnedLexOutput, PairLink,
     SourceNodeOwned, SpliceSafety,
@@ -342,10 +342,29 @@ struct Prologue {
 
 /// Whether `s` carries document structure that an incremental segment re-lex
 /// must not silently absorb: a line terminator (could move a blank-line
-/// boundary) or a directive opener `［` (could introduce a container or
-/// forward reference, both whole-document-scoped concerns).
+/// boundary) or a directive bracket `［` / `］` (could open or close a container
+/// or forward reference, both whole-document-scoped concerns — corrupting a
+/// `［…］` close re-pairs inline containers document-wide).
 pub(crate) fn carries_structure(s: &str) -> bool {
-    s.bytes().any(|b| b == b'\n' || b == b'\r') || s.contains('［')
+    s.bytes().any(|b| b == b'\n' || b == b'\r') || s.contains('［') || s.contains('］')
+}
+
+/// Whether byte offset `pos` lies inside an unterminated `［…］` directive in
+/// `src` — a `［` precedes `pos` on its line with no closing `］` between.
+///
+/// Editing inside a directive can re-pair an inline container (e.g. a warichu
+/// `［＃割り注］…［＃割り注終わり］`) document-wide without emitting any local
+/// diagnostic: corrupting the `［＃割り注終わり］` close leaves the warichu open,
+/// so text far downstream is reinterpreted. The isolated region re-lex cannot
+/// see the matching open in the reused prefix, so the splice must decline.
+pub(crate) fn inside_directive(src: &str, pos: usize) -> bool {
+    let head = &src[..pos.min(src.len())];
+    let Some(open) = head.rfind('［') else {
+        return false;
+    };
+    let closed = head.rfind('］').is_some_and(|close| close > open);
+    let line_broken = head.rfind('\n').is_some_and(|nl| nl > open);
+    !closed && !line_broken
 }
 
 /// `value + delta` clamped into `u32`, or `None` on under/overflow.
@@ -636,16 +655,31 @@ pub(crate) fn norm_offset(cached: &OwnedLexOutput, san_off: u32) -> Option<u32> 
 ///   reason about its coupling, so it declines rather than risk a silent
 ///   divergence — keeping this guard correct by construction as the node set
 ///   grows.
+/// - **Context-sensitive diagnostic**: a `Direct`-classified node
+///   whose *whole-document-scoped* diagnostic depends on text **outside** the
+///   node's own region, so a cross-region edit can flip the diagnostic without
+///   touching the node — and the region re-lex (which does not contain the
+///   node) cannot reproduce it. A **reclaimed forward reference**
+///   (`X［＃「X」に傍点］`) emits `BoutenTargetAmbiguous` from a look-back over
+///   the *whole* prefix, so duplicating the target word in any earlier region
+///   makes a full parse ambiguous while the splice keeps the cached
+///   unambiguous node. A **kaeriten** (`［＃レ］`) emits `KaeritenOutsideKanbun`
+///   from a kana-prose window that spans ±12 chars across blank-line
+///   boundaries, so an edit in an adjacent region can flip it. (The
+///   `Coupled(ForwardReference)` *referenced* forward is already declined
+///   above; `Reclaimed` is `Direct` because its rendered bytes are
+///   self-contained, but its *diagnostic* is not.)
 ///
 /// Single-sources the classification through [`classify_node_ref`] (the #202
 /// splice authority) so the two engines cannot drift.
 fn node_forbids_region_reuse(node: NodeRefOwned) -> bool {
+    let (role, safety) = classify_node_ref(node);
     matches!(
-        classify_node_ref(node).1,
+        safety,
         SpliceSafety::Coupled(
             CoupledKind::ForwardReference | CoupledKind::HeadingHint | CoupledKind::MarginNote
         ) | SpliceSafety::Opaque
-    )
+    ) || matches!(role, RegionRole::ForwardReclaimed | RegionRole::Kaeriten)
 }
 
 /// Whether a re-lexed region's own container nesting is balanced: a lenient
@@ -730,6 +764,14 @@ fn splice_prologue(
     let old_slice = old_source.get(edit_old.clone())?;
     let new_slice = new_sanitized.get(edit_old.start..new_edit_end)?;
     if carries_structure(old_slice) || carries_structure(new_slice) {
+        return None;
+    }
+    // An edit *inside* a `［…］` directive carries no structural byte itself yet
+    // can re-pair an inline container across the whole document (the region
+    // re-lex sees only the corrupted close, never the matching open in the
+    // reused prefix). The prefix up to `edit_old.start` is byte-identical
+    // between old and new, so checking `old_source` covers both.
+    if inside_directive(old_source, edit_old.start) {
         return None;
     }
 
@@ -1834,6 +1876,52 @@ mod tests {
     }
 
     #[test]
+    fn inside_directive_detects_open_bracket_context() {
+        // Inside an open ［…］ on the same line (a corruptible directive close).
+        assert!(inside_directive(
+            "本文［＃割り注終わり］",
+            "本文［＃割り注".len()
+        ));
+        // After the closing ］ — not inside.
+        assert!(!inside_directive("本文［＃注］後", "本文［＃注］".len()));
+        // No directive bracket at all.
+        assert!(!inside_directive("ただの本文", "ただの".len()));
+        // A line break after the ［ ends the directive's line.
+        assert!(!inside_directive(
+            "本文［＃壊れ\n次行",
+            "本文［＃壊れ\n".len()
+        ));
+        // At/just before the ［ — not yet inside.
+        assert!(!inside_directive("本文［＃注］", "本文".len()));
+    }
+
+    #[test]
+    fn edit_inside_directive_close_declines() {
+        // Editing inside a `［＃割り注終わり］` close keyword corrupts the
+        // directive; the matching open lives in the reused prefix so the region
+        // re-lex cannot see the breakage. `inside_directive` must decline even
+        // though the inserted byte carries no structure of its own. (Regression
+        // for the corpus divergence #284 surfaced: 折口春洋/島の便り.txt.)
+        let cached = owned(
+            "序文の段落です。\n\n本文［＃割り注］注記の文字［＃割り注終わり］続き\n\n末尾の段落。\n",
+        );
+        let san = cached.sanitized.clone();
+        let close = san.find("割り注終わり").expect("warichu close");
+        let at = close + "割り".len(); // inside the close keyword
+        assert!(
+            inside_directive(&san, at),
+            "edit must be inside the directive"
+        );
+        let edit = at..at;
+        let new_san = apply_edit(&san, edit.clone(), "x");
+        assert!(!carries_structure("x"), "x is not a structural byte");
+        assert!(
+            reparse_incremental_owned(&cached, &new_san, edit).is_none(),
+            "an edit inside a ［…］ directive must decline",
+        );
+    }
+
+    #[test]
     fn forward_reference_doc_declines_via_coupling() {
         // A clean forward bouten reference (［＃「青空」に傍点］ pointing back at
         // the earlier 青空) is text-coupled: editing an unrelated paragraph could
@@ -1865,6 +1953,70 @@ mod tests {
         assert!(
             reparse_incremental_owned(&cached, &new_san, edit).is_none(),
             "a document with a forward reference must decline (text coupling)",
+        );
+    }
+
+    #[test]
+    fn reclaimed_forward_bouten_doc_declines() {
+        // A *reclaimed* forward bouten (青空［＃「青空」に傍点］, target adjacent)
+        // is rendered self-contained (Direct), but its BoutenTargetAmbiguous
+        // diagnostic looks back over the whole prefix. Duplicating the target in
+        // an earlier region makes a full parse ambiguous while a naive splice
+        // keeps the cached unambiguous node — so the node must forbid region
+        // reuse. (Regression for the verify finding on #284.)
+        let cached = owned("むかし。\n\n青空［＃「青空」に傍点］\n");
+        let san = cached.sanitized.clone();
+        assert!(
+            !cached.diagnostics.iter().any(is_whole_document_scoped),
+            "the reclaimed forward resolves unambiguously: {:?}",
+            cached.diagnostics,
+        );
+        let at = san.find("むかし").expect("first paragraph") + "むかし".len();
+        let edit = at..at;
+        let new_san = apply_edit(&san, edit.clone(), "青空");
+        // The duplicated target genuinely makes the full parse ambiguous.
+        let full = Document::new(new_san.as_str()).parse_owned();
+        assert!(
+            full.diagnostics
+                .iter()
+                .any(|d| matches!(d, Diagnostic::BoutenTargetAmbiguous { .. })),
+            "the duplicated target must make the full parse ambiguous: {:?}",
+            full.diagnostics,
+        );
+        assert!(
+            reparse_incremental_owned(&cached, &new_san, edit).is_none(),
+            "a reclaimed forward bouten must forbid region reuse",
+        );
+    }
+
+    #[test]
+    fn kaeriten_doc_declines() {
+        // A kaeriten (［＃（レ）］) emits KaeritenOutsideKanbun from a kana-prose
+        // window that spans ±12 chars across a blank-line boundary, so flipping
+        // an adjacent region kanji→kana makes a full parse emit it while a splice
+        // (whose re-lexed region holds no kaeriten) drops it. The node must
+        // forbid region reuse.
+        let cached = owned("あいうえお［＃（レ）］\n\n漢字漢字漢字漢字漢\n");
+        let san = cached.sanitized.clone();
+        assert!(
+            !cached.diagnostics.iter().any(is_whole_document_scoped),
+            "the kaeriten in kanji context is clean: {:?}",
+            cached.diagnostics,
+        );
+        let p2 = san.find("漢字漢字漢字漢字漢").expect("kanji paragraph");
+        let edit = p2..p2 + "漢字漢字漢字漢字漢".len();
+        let new_san = apply_edit(&san, edit.clone(), "かきくけこかきくけこ");
+        let full = Document::new(new_san.as_str()).parse_owned();
+        assert!(
+            full.diagnostics
+                .iter()
+                .any(|d| matches!(d, Diagnostic::KaeritenOutsideKanbun { .. })),
+            "the kana flip must make the full parse emit KaeritenOutsideKanbun: {:?}",
+            full.diagnostics,
+        );
+        assert!(
+            reparse_incremental_owned(&cached, &new_san, edit).is_none(),
+            "a document with a kaeriten must forbid region reuse",
         );
     }
 }
