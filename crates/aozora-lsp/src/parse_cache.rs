@@ -16,8 +16,22 @@
 //!
 //! [`ParseCache::reparse`] performs a **full** parse;
 //! [`ParseCache::reparse_incremental`] takes the **diagnostics-only** incremental
-//! splice ([`aozora::reparse_incremental_diagnostics_only`]) on a single edit
+//! splice ([`aozora::reparse_incremental_diagnostics_only_in`]) on a single edit
 //! and full-parses otherwise (#237 Tier 1).
+//!
+//! # Incremental sanitized rope (#237 Tier 2, Mechanism B)
+//!
+//! The cache holds both the raw source and the sanitized buffer as
+//! [`ropey::Rope`]s. The per-keystroke hot path **splices the sanitized rope
+//! incrementally** instead of re-running the `O(doc)` `sanitize` pass: a single
+//! raw-coordinate edit is mapped to a sanitized-coordinate edit by a
+//! raw↔sanitized **line correspondence** (the rope's `O(log n)` line metrics
+//! absorb CRLF folding and decorative-rule isolation-blank insertion), the
+//! sanitized rope is spliced, and the engine is fed zero-copy `RopeSrc` views of
+//! the cached and edited buffers. A wide trigger gate declines any edit whose
+//! raw→sanitized mapping is not byte-local, and a windowed re-sanitize verifies
+//! every accepted splice against the raw text as an independent ground truth
+//! before committing, so the result is always byte-identical to a full parse.
 //!
 //! # Lazy tree (#237 Tier 1)
 //!
@@ -36,13 +50,15 @@ use std::cmp::Ordering;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use aozora::pipeline::lexer::sanitize::sanitize;
+use aozora::pipeline::lexer::sanitize::{is_rule_line_trimmed, sanitize};
 use aozora::{
     DiagBaseRef, DiagSplice, Diagnostic, Document, OwnedLexOutput, PairLink, RegionIndex,
     SourceNodeOwned, Tree,
 };
+use ropey::{Rope, RopeSlice};
 use tracing::field::Empty as TracingEmpty;
 
+use crate::rope_src::RopeSrc;
 use crate::text_edit::ByteEdit;
 
 /// Documents larger than this skip whole-document semantic analysis —
@@ -69,9 +85,9 @@ pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 /// leaves [`ParseCache`] with no materialised tree, so the first structural
 /// request (rename) after many keystrokes would pay one full `O(doc)` parse.
 /// Forcing a full parse every `MAX_SPLICES_BEFORE_FULL` splices re-seeds the
-/// lazy tree and bounds the size of any one re-lexed region's drift, keeping
-/// both the splice base and a fresh tree in hand (#249, the periodic-compaction
-/// bound).
+/// lazy tree and re-grounds the sanitized rope, the `bom`/`isolation_lines`
+/// side-tables, and the splice base on a fresh `sanitize` (#249, the
+/// periodic-compaction bound).
 pub(crate) const MAX_SPLICES_BEFORE_FULL: u32 = 64;
 
 /// Per-call statistics emitted by [`ParseCache::reparse`] /
@@ -95,16 +111,37 @@ pub struct ReparseStats {
     pub latency_us: u64,
 }
 
+/// Document-level `sanitize` properties recomputed by each full parse from the
+/// raw text. Each is a hard incremental decline: a `true` flag means the raw
+/// text is **not** a sanitize fixed point in a way the line-correspondence map
+/// cannot model, so every edit full-parses until the next full re-ground.
+#[derive(Debug, Default, Clone, Copy)]
+struct DocFlags {
+    /// A lone `\r` (not part of `\r\n`) — sanitize folds it to `\n`, which would
+    /// change the line count and break the raw↔sanitized line map globally.
+    has_lone_cr: bool,
+    /// A `〔` anywhere — an accent-decomposition span makes raw ≠ sanitized
+    /// inside it (and a silent `` ` `` / `'` marker can decompose), so the
+    /// within-line byte-identity the map relies on can fail.
+    has_tortoise: bool,
+    /// A raw `U+E001..U+E004` sentinel — sanitize rewrites it to `U+FFFD`, so
+    /// raw ≠ sanitized at that byte (and the collision diagnostic must survive).
+    has_pua: bool,
+}
+
 /// The store-free spliceable base of the most recent parse: exactly the fields
 /// the diagnostics-only hot path
-/// ([`aozora::reparse_incremental_diagnostics_only`]) reads from the prior
-/// parse and produces for the next one. Kept across edits so the per-keystroke
-/// path never has to materialise the full [`OwnedLexOutput`].
+/// ([`aozora::reparse_incremental_diagnostics_only_in`]) reads from the prior
+/// parse and produces for the next one, plus the raw↔sanitized line-map
+/// side-tables. Kept across edits so the per-keystroke path never has to
+/// materialise the full [`OwnedLexOutput`] or re-run `O(doc)` `sanitize`.
 #[derive(Debug, Default)]
 struct DiagBase {
     /// Sanitized buffer of the most recent parse (a sanitize fixed point) — the
-    /// coordinate space the splice and the next region-find operate in.
-    sanitized: String,
+    /// coordinate space the splice and the next region-find operate in. A
+    /// [`Rope`] so the hot path can splice it in `O(log n)` (COW clone +
+    /// `remove`/`insert`) rather than rebuilding a flat `String`.
+    sanitized: Rope,
     /// Diagnostics, position-sorted at store time so [`ParseCache::diagnostics`]
     /// reads are O(1) and byte-identical to a full parse.
     diagnostics: Vec<Diagnostic>,
@@ -118,36 +155,44 @@ struct DiagBase {
     /// in the same `O(N)` pass that assembles them so the next edit's prologue
     /// runs `O(region + log n)` instead of re-scanning the whole buffer/tables.
     index: RegionIndex,
+    /// Byte length of the leading `U+FEFF` BOM run that `sanitize` stripped.
+    /// The raw→sanitized map subtracts it for an edit on raw line 0.
+    bom: u32,
+    /// Sorted raw line indices before which decorative-rule isolation inserted a
+    /// blank line. The map adds, for an edit on raw line `L`, the count of
+    /// entries `<= L` (the sanitized line is shifted down by that many blanks).
+    /// Invariant across a single in-line accept (a rule line is itself a trigger
+    /// the gate declines), recomputed on every full parse.
+    isolation_lines: Vec<u32>,
+    /// Document-level sanitize flags; any set flag declines incremental.
+    flags: DocFlags,
 }
 
 impl DiagBase {
-    /// Borrow this base as the lightweight [`DiagBaseRef`] the diagnostics-only
-    /// engine takes.
-    fn as_diag_ref(&self) -> DiagBaseRef<'_> {
-        DiagBaseRef {
-            sanitized: &self.sanitized,
-            source_nodes: &self.source_nodes,
-            pairs: &self.pairs,
-            diagnostics: &self.diagnostics,
-            index: &self.index,
-        }
+    /// The sanitized line index of raw line `raw_line`'s content start: the raw
+    /// line index plus the number of decorative-rule isolation blanks inserted
+    /// at or before it.
+    fn san_line(&self, raw_line: usize) -> usize {
+        raw_line
+            + self
+                .isolation_lines
+                .partition_point(|&r| (r as usize) <= raw_line)
     }
 }
 
 /// Per-document state holder for the LSP backend.
 ///
 /// Keeps the store-free `DiagBase` of the most recent parse so the
-/// `publishDiagnostics` hot path answers in O(1) and splices incrementally in
-/// `O(region)`, plus a lazily-materialised full [`OwnedLexOutput`] so the rare
-/// structural request (rename) can still get a borrowed [`Tree`] via
-/// [`Self::with_tree`] (#237 Tier 1).
+/// `publishDiagnostics` hot path answers in O(1) and splices the sanitized rope
+/// incrementally in `O(region)`, plus a lazily-materialised full
+/// [`OwnedLexOutput`] so the rare structural request (rename) can still get a
+/// borrowed [`Tree`] via [`Self::with_tree`] (#237 Tier 1).
 #[derive(Debug, Default)]
 pub struct ParseCache {
-    /// Latest source text. Owned so reads don't have to borrow back
-    /// into the parent `OpenDocument`, and so the borrowed [`Tree`] view
-    /// handed out by [`Self::with_tree`] can borrow it alongside the lazily
-    /// materialised output.
-    text: String,
+    /// Latest raw source text as a [`Rope`]. Owned so reads don't borrow back
+    /// into the parent `OpenDocument`; the splice maps edits against it, and the
+    /// rare structural path flattens it to `&str` for the borrowed [`Tree`].
+    raw: Rope,
     /// Store-free diagnostics base of the most recent parse. `None` until the
     /// first parse, or when the document is empty / oversized (those store no
     /// base, so [`Self::with_tree`] degrades to `None`).
@@ -169,124 +214,88 @@ impl ParseCache {
     /// statistics (`cache_hits == 0` — every parse re-lexes the whole
     /// document under the current foundation).
     pub fn reparse(&mut self, text: &str) -> (Vec<Diagnostic>, ReparseStats) {
-        self.reparse_full(text)
+        self.reparse_full(&Rope::from(text))
     }
 
-    /// Re-parse `text` after `edits`, taking the **diagnostics-only** incremental
-    /// splice ([`aozora::reparse_incremental_diagnostics_only`]) when it can be
-    /// proven byte-identical to a full parse, and falling back to a full parse
-    /// otherwise. Reports `cache_hits` = reused nodes, `cache_misses` = re-lexed
-    /// nodes on the fast path (#237 Tier 1).
+    /// Re-parse the post-edit `raw` rope after `edits`, taking the
+    /// **diagnostics-only** incremental splice
+    /// ([`aozora::reparse_incremental_diagnostics_only_in`]) when the single
+    /// edit can be proven byte-identical to a full parse, and falling back to a
+    /// full parse of `raw` otherwise. Reports `cache_hits` = reused nodes,
+    /// `cache_misses` = re-lexed nodes on the fast path (#237 Tier 1/2).
     ///
-    /// On the fast path this never builds an [`OwnedLexOutput`]: it stores the
-    /// spliced `DiagBase` and invalidates the lazy [`Self::with_tree`] cache,
-    /// so the per-keystroke cost is `O(region + #diagnostics)` rather than
-    /// `O(doc)`.
+    /// On the fast path this never builds an [`OwnedLexOutput`] and never runs
+    /// `O(doc)` `sanitize`: it splices the sanitized [`Rope`], stores the new
+    /// `DiagBase`, and invalidates the lazy [`Self::with_tree`] cache, so the
+    /// per-keystroke cost is `O(region + #diagnostics)` rather than `O(doc)`.
     ///
-    /// The result is **always** identical to a from-scratch parse of `text`: the
-    /// splice itself returns `None` for anything it cannot prove local, so the
-    /// LSP can never desync — at worst it full-parses.
+    /// The result is **always** identical to a from-scratch parse of `raw`: the
+    /// trigger gate declines any edit whose raw→sanitized mapping is not
+    /// byte-local, a windowed re-sanitize verifies every accepted splice against
+    /// the raw text, and the engine independently declines anything it cannot
+    /// prove local — so the LSP can never desync (at worst it full-parses).
     ///
     /// The fast path applies only when **all** of these hold (else full parse):
     ///
     /// 1. `edits` is exactly one [`ByteEdit`].
-    /// 2. A prior parse exists (a stored owned output).
-    /// 3. The source-coordinate edit can be expressed as a sanitized-coordinate
-    ///    edit:
-    ///    - **LF-clean** (`output.sanitized == self.text`): source == sanitized,
-    ///      so the source-coordinate edit equals the sanitized-coordinate edit
-    ///      and `text` equals the new sanitized text — spliced directly with
-    ///      `edit.range`.
-    ///    - **Re-sanitize** (`output.sanitized != self.text`): the new source is
-    ///      sanitized in full and the sanitized-coordinate edit is recovered by
-    ///      diffing the cached and new sanitized buffers (a char-boundary-snapped
-    ///      common prefix / suffix). This models BOM strip, CRLF→LF, **and**
-    ///      decorative-rule isolation uniformly, so real aozora-bunko files
-    ///      (BOM-prefixed, CRLF line endings, header `----` rule lines) fast-path
-    ///      rather than declining. The re-sanitize path still declines (→ full
-    ///      parse) only when `sanitize` emits a diagnostic — an accent
-    ///      decomposition inside `〔…〕` or a PUA-sentinel collision — which a
-    ///      region re-lex (working on already-sanitized text) cannot reproduce,
-    ///      so the diagnostic could be lost (see `try_incremental_resanitize`).
-    /// 4. Fewer than `MAX_SPLICES_BEFORE_FULL` splices since the last full
-    ///    parse (the dead-entry capacity bound, #249).
-    /// 5. The text is non-empty and within `MAX_DOCUMENT_BYTES` (mirrors the
-    ///    full-parse guard).
-    ///
-    /// Correctness in every case rests on
-    /// [`aozora::reparse_incremental_diagnostics_only`] independently validating
-    /// that the derived sanitized edit transforms the cached sanitized text into
-    /// the true `sanitize(text)`: a bad derivation can only make it return `None`
-    /// (→ full parse), never a wrong splice.
+    /// 2. A prior parse exists, fewer than `MAX_SPLICES_BEFORE_FULL` splices
+    ///    have run since the last full parse, and `raw` is non-empty and within
+    ///    `MAX_DOCUMENT_BYTES`.
+    /// 3. The cached document is a clean sanitize fixed point modulo BOM strip /
+    ///    CRLF fold / decorative-rule isolation (no lone `\r`, no `〔`, no raw
+    ///    PUA sentinel).
+    /// 4. The edit carries no structural byte (no line terminator, `〔` / `〕`,
+    ///    or raw PUA) and neither creates nor destroys a decorative-rule line.
+    /// 5. The raw→sanitized line-correspondence map, the rope splice, the engine
+    ///    splice, and the windowed re-sanitize all succeed.
     pub fn reparse_incremental(
         &mut self,
-        text: &str,
+        raw: &Rope,
         edits: &[ByteEdit],
     ) -> (Vec<Diagnostic>, ReparseStats) {
         let started_at = Instant::now();
 
-        // Fast-path precondition gate. The clauses shared by both branches
-        // (single edit, prior present, splice-count bound, non-empty /
-        // non-oversize) are necessary for the sanitized-coordinate splice
-        // contract; any miss falls back to a full parse (trivially correct).
-        // Each branch yields `(new_sanitized, splice)`: the new sanitized buffer
-        // becomes the next base, and the splice carries the spliced diagnostics
-        // + the store-free tables.
         let splice = if let [edit] = edits {
-            match self.base.as_ref() {
-                Some(prior)
-                    if self.splices_since_full < MAX_SPLICES_BEFORE_FULL
-                        && !text.is_empty()
-                        && text.len() <= MAX_DOCUMENT_BYTES =>
-                {
-                    if prior.sanitized == self.text {
-                        // LF-clean fixed point: source == sanitized, so the
-                        // source-coordinate edit is already in sanitized
-                        // coordinates and `text` is already the new sanitized
-                        // text. Splice directly.
-                        aozora::reparse_incremental_diagnostics_only(
-                            prior.as_diag_ref(),
-                            text,
-                            edit.range.clone(),
-                        )
-                        .map(|d| (text.to_owned(), d))
-                    } else {
-                        // Non-fixed-point source (BOM / CRLF / decorative rule):
-                        // re-sanitize and recover the sanitized edit from the diff.
-                        Self::try_incremental_resanitize(prior, text)
-                    }
-                }
-                _ => None,
-            }
+            self.try_incremental(raw, edit)
         } else {
             None
         };
 
         let Some((new_sanitized, mut splice)) = splice else {
-            // Any precondition miss or a splice decline (`None`) → full parse,
-            // which re-seeds the lazy tree and resets `splices_since_full`.
-            return self.reparse_full(text);
+            // Any precondition miss or a splice decline (`None`) → full parse of
+            // the post-edit raw, which re-seeds the lazy tree, recomputes the
+            // line-map side-tables, and resets `splices_since_full`.
+            return self.reparse_full(raw);
         };
 
-        // The splice does not guarantee globally position-sorted diagnostics
-        // (it concatenates prefix/region/suffix slices); the LSP surface needs
-        // them sorted, exactly as `reparse_full` does at store time.
+        // The splice concatenates prefix/region/suffix slices, so its diagnostics
+        // are not globally position-sorted; the LSP surface needs them sorted,
+        // exactly as `reparse_full` does at store time.
         splice.diagnostics.sort_by(diagnostic_order);
         let diagnostics = splice.diagnostics.clone();
-        // Build the next edit's region-find index over the spliced tables — the
-        // same O(N) pass that already assembled them (free relative to the base
-        // maintenance), measured before `latency_us` so it counts toward the
-        // per-edit cost.
         let index = RegionIndex::build(&splice.source_nodes, &splice.pairs, &splice.diagnostics);
         let latency_us = duration_as_us(started_at.elapsed());
 
-        text.clone_into(&mut self.text);
+        // Commit. `bom` / `isolation_lines` / `flags` are invariant across a
+        // single in-line accept (the trigger gate proves the edit neither
+        // touches the BOM run nor changes any line's rule/blank status), so they
+        // carry from the prior base unchanged. A splice implies a prior base
+        // (`try_incremental` declines without one), so the `else` is unreachable;
+        // it full-parses rather than panicking if that invariant ever breaks.
+        let Some(prior) = self.base.take() else {
+            return self.reparse_full(raw);
+        };
+        let new_len = raw.len_bytes();
+        self.raw = raw.clone();
         self.base = Some(DiagBase {
             sanitized: new_sanitized,
             diagnostics: splice.diagnostics,
             source_nodes: splice.source_nodes,
             pairs: splice.pairs,
             index,
+            bom: prior.bom,
+            isolation_lines: prior.isolation_lines,
+            flags: prior.flags,
         });
         // Invalidate the lazily-materialised tree: the next structural request
         // full-parses the new text once and memoises it.
@@ -298,83 +307,37 @@ impl ParseCache {
             cache_hits: splice.reused_nodes,
             cache_misses: splice.relexed_nodes,
             cache_entries_after: 1,
-            cache_bytes_estimate: u64::try_from(text.len()).unwrap_or(u64::MAX),
+            cache_bytes_estimate: u64::try_from(new_len).unwrap_or(u64::MAX),
             latency_us,
         };
         (diagnostics, stats)
     }
 
-    /// Attempt the incremental splice for a non-fixed-point source (BOM, CRLF,
-    /// or a decorative-rule line — anything where `sanitize(self.text)` differs
-    /// from the raw `self.text`).
-    ///
-    /// `new_raw` is the new document text (source coordinates); `prior` is the
-    /// cached owned output whose `sanitized` is `sanitize(self.text)`.
-    ///
-    /// Returns the splice, or `None` (→ the caller full-parses) when:
-    ///
-    /// - **Sanitize diagnostic.** If `sanitize(new_raw)` emits any diagnostic
-    ///   (an accent decomposition inside `〔…〕`, or a PUA-sentinel collision),
-    ///   we decline: a region re-lex works on already-sanitized text and cannot
-    ///   reproduce that sanitize-stage diagnostic, so a splice could silently
-    ///   drop it. (Decorative-rule isolation emits **no** diagnostic and is
-    ///   handled below, so rule documents are *not* declined here.)
-    /// - The engine's own validation declines the derived sanitized edit.
-    ///
-    /// The sanitized-coordinate edit is recovered by diffing the cached
-    /// (`prior.sanitized`) and new (`sanitize(new_raw)`) sanitized buffers via a
-    /// char-boundary-snapped common prefix / suffix. This models BOM strip,
-    /// CRLF→LF, and decorative-rule isolation uniformly — whatever `sanitize`
-    /// did, the diff localises the change to one sanitized range. If the edit
-    /// perturbed sanitization non-locally (e.g. it turned a line into a
-    /// decorative rule, inserting a distant blank line, or it deleted a rule's
-    /// isolation blank), the diff range spans the perturbation, which carries a
-    /// `\n` → the engine declines via its structure guard. So
-    /// [`aozora::reparse_incremental_diagnostics_only`] either splices a truly
-    /// local edit byte-identically or declines — never a wrong splice.
-    ///
-    /// The endpoints are snapped to char boundaries because a byte-wise diff of
-    /// Japanese text routinely falls mid-codepoint (adjacent kana share their
-    /// UTF-8 lead bytes); slicing `str` there would panic.
-    ///
-    /// Returns `(new_sanitized, splice)` on success: the new sanitized buffer
-    /// (which becomes the next `DiagBase::sanitized`) and the diagnostics-only
-    /// splice.
-    fn try_incremental_resanitize(prior: &DiagBase, new_raw: &str) -> Option<(String, DiagSplice)> {
-        let san_out = sanitize(new_raw);
-        if !san_out.diagnostics.is_empty() {
+    /// Attempt the incremental splice for the single edit `edit` producing the
+    /// post-edit `new_raw`. Returns `(new_sanitized, splice)` on success, or
+    /// `None` (→ the caller full-parses) for any precondition miss.
+    fn try_incremental(&self, new_raw: &Rope, edit: &ByteEdit) -> Option<(Rope, DiagSplice)> {
+        let prior = self.base.as_ref()?;
+        if self.splices_since_full >= MAX_SPLICES_BEFORE_FULL {
             return None;
         }
-
-        // Recover the sanitized-coordinate edit from the diff of the cached and
-        // new sanitized buffers (snapped to char boundaries so `str` slicing
-        // below never splits a codepoint).
-        let old_san = prior.sanitized.as_str();
-        let new_san = san_out.text.as_ref();
-        let start = common_prefix_len(old_san, new_san);
-        let old_end = old_san.len() - common_suffix_len(&old_san[start..], &new_san[start..]);
-
-        let splice = aozora::reparse_incremental_diagnostics_only(
-            prior.as_diag_ref(),
-            new_san,
-            start..old_end,
-        )?;
-        Some((san_out.text.into_owned(), splice))
+        incremental_splice(prior, &self.raw, new_raw, edit)
     }
 
-    /// Core full re-parse. Derives the store-free `DiagBase` (with diagnostics
-    /// sorted into position order) and eagerly seeds the lazy [`Self::with_tree`]
-    /// cache with the full output, stores the text, and reports per-call
-    /// statistics. This is the periodic-compaction point (#249).
+    /// Core full re-parse of the post-edit `raw` rope. Derives the store-free
+    /// `DiagBase` (diagnostics position-sorted) plus the raw↔sanitized line-map
+    /// side-tables (`bom` / `isolation_lines` / `flags`), eagerly seeds the lazy
+    /// [`Self::with_tree`] cache with the full output, stores the raw rope, and
+    /// reports per-call statistics. This is the periodic-compaction point (#249).
     #[tracing::instrument(
         level = "debug",
         skip_all,
         fields(
-            text_bytes = text.len(),
+            text_bytes = raw.len_bytes(),
             latency_us = TracingEmpty,
         ),
     )]
-    fn reparse_full(&mut self, text: &str) -> (Vec<Diagnostic>, ReparseStats) {
+    fn reparse_full(&mut self, raw: &Rope) -> (Vec<Diagnostic>, ReparseStats) {
         let started_at = Instant::now();
 
         // A full parse re-seeds the lazy tree and resets the splice counter,
@@ -382,48 +345,48 @@ impl ParseCache {
         self.splices_since_full = 0;
 
         // Skip the O(n) parse for empty or oversized documents (see
-        // `MAX_DOCUMENT_BYTES`). Store the text so size checks stay
-        // consistent, store no base / no tree — the backend publishes a single
-        // "too large" notice for oversized text, and empty text has nothing
-        // to surface — and report a zero-parse reparse so metrics don't count
-        // phantom work. With no stored base, `with_tree` degrades to `None`.
-        if text.is_empty() || text.len() > MAX_DOCUMENT_BYTES {
-            text.clone_into(&mut self.text);
+        // `MAX_DOCUMENT_BYTES`). Store the raw rope so size checks stay
+        // consistent, store no base / no tree, and report a zero-parse reparse.
+        let len = raw.len_bytes();
+        if len == 0 || len > MAX_DOCUMENT_BYTES {
+            self.raw = raw.clone();
             self.base = None;
             self.tree = OnceLock::new();
             let stats = ReparseStats {
-                parse_count: 0,
-                cache_hits: 0,
-                cache_misses: 0,
-                cache_entries_after: 0,
-                cache_bytes_estimate: u64::try_from(text.len()).unwrap_or(u64::MAX),
+                cache_bytes_estimate: u64::try_from(len).unwrap_or(u64::MAX),
                 latency_us: duration_as_us(started_at.elapsed()),
+                ..ReparseStats::default()
             };
             return (Vec::new(), stats);
         }
 
-        let mut out = Document::new(text).parse_owned();
+        let text = raw.to_string();
+        let mut out = Document::new(text.as_str()).parse_owned();
         // `OwnedLexOutput.diagnostics` are in pipeline-stage order; the LSP
-        // surface expects them position-sorted (the prior segmentation path
-        // returned `merged_diagnostics()`, which is sorted by
-        // `(span.start, span.end)` then debug string). Sort once here at store
-        // time so every read is byte-identical and O(1).
+        // surface expects them position-sorted. Sort once here at store time so
+        // every read is byte-identical and O(1).
         out.diagnostics.sort_by(diagnostic_order);
 
         let diagnostics = out.diagnostics.clone();
         let latency_us = duration_as_us(started_at.elapsed());
 
-        text.clone_into(&mut self.text);
-        // Derive the store-free splice base from the full output, then seed the
-        // lazy tree with the full output itself (so a structural request right
-        // after a full parse is instant).
+        self.raw = raw.clone();
+        // Derive the line-map side-tables from the raw text, then the store-free
+        // splice base, then seed the lazy tree with the full output itself (so a
+        // structural request right after a full parse is instant).
+        let bom = leading_bom_bytes(&text);
+        let isolation_lines = isolation_line_indices(text.get(bom as usize..).unwrap_or(&text));
+        let flags = scan_doc_flags(&text);
         let index = RegionIndex::build(&out.source_nodes, &out.pairs, &out.diagnostics);
         self.base = Some(DiagBase {
-            sanitized: out.sanitized.clone(),
+            sanitized: Rope::from(out.sanitized.as_str()),
             diagnostics: out.diagnostics.clone(),
             source_nodes: out.source_nodes.clone(),
             pairs: out.pairs.clone(),
             index,
+            bom,
+            isolation_lines,
+            flags,
         });
         self.tree = OnceLock::new();
         // The lock is freshly empty, so `set` always succeeds; the only error
@@ -436,7 +399,7 @@ impl ParseCache {
             cache_hits: 0,
             cache_misses: 1,
             cache_entries_after: 1,
-            cache_bytes_estimate: u64::try_from(text.len()).unwrap_or(u64::MAX),
+            cache_bytes_estimate: u64::try_from(len).unwrap_or(u64::MAX),
             latency_us,
         };
         tracing::Span::current().record("latency_us", latency_us);
@@ -449,6 +412,16 @@ impl ParseCache {
     #[must_use]
     pub fn diagnostics(&self) -> &[Diagnostic] {
         self.base.as_ref().map_or(&[][..], |b| &b.diagnostics)
+    }
+
+    /// Borrow the spliced sanitized buffer of the most recent parse, or `None`
+    /// when no base is stored (never parsed / empty / oversized). Exposed for
+    /// the crate's own end-to-end tests, which assert it stays byte-identical to
+    /// a full `sanitize` after every incremental splice.
+    #[cfg(feature = "internals")]
+    #[must_use]
+    pub fn sanitized(&self) -> Option<&Rope> {
+        self.base.as_ref().map(|b| &b.sanitized)
     }
 
     /// Run `f` against a borrowed [`Tree`] over the most recent parse.
@@ -467,17 +440,298 @@ impl ParseCache {
         // No base ⇒ never-parsed / empty / oversized ⇒ degrade to `None`
         // (and never trigger the lazy full parse below).
         self.base.as_ref()?;
+        // The rare structural path flattens the raw rope to a `&str` for the
+        // parse + the borrowed tree's source. `O(doc)`, off the hot path.
+        let text = self.raw.to_string();
         let tree = self
             .tree
-            .get_or_init(|| Document::new(self.text.as_str()).parse_owned());
-        Some(f(&Tree::view(&self.text, tree)))
+            .get_or_init(|| Document::new(text.as_str()).parse_owned());
+        Some(f(&Tree::view(&text, tree)))
     }
 
     /// Whether any text has been parsed yet.
     #[cfg(test)]
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.text.is_empty() && self.base.is_none()
+    pub fn is_empty(&self) -> bool {
+        self.raw.len_bytes() == 0 && self.base.is_none()
+    }
+}
+
+/// Build the diagnostics-only splice for the single edit `edit` (in **old /
+/// cached** coordinates) producing the post-edit `new_raw`, by mapping the raw
+/// edit to a sanitized-coordinate edit, splicing the cached sanitized rope, and
+/// running the engine over zero-copy rope views — **without a full re-parse**.
+///
+/// Returns `(new_sanitized, splice)` on success, or `None` for any edit that
+/// cannot be proven byte-local (the caller then full-parses, trivially correct).
+fn incremental_splice(
+    prior: &DiagBase,
+    old_raw: &Rope,
+    new_raw: &Rope,
+    edit: &ByteEdit,
+) -> Option<(Rope, DiagSplice)> {
+    let (a, b) = (edit.range.start, edit.range.end);
+    let n = &edit.new_text;
+
+    // G0 size / fixed-point clauses. Empty / oversized post-edit doc, or a
+    // cached doc that is not a sanitize fixed point in a way the line map cannot
+    // model (lone CR / 〔…〕 accent / raw PUA), → decline.
+    let new_len = new_raw.len_bytes();
+    if new_len == 0 || new_len > MAX_DOCUMENT_BYTES {
+        return None;
+    }
+    if prior.flags.has_lone_cr || prior.flags.has_tortoise || prior.flags.has_pua {
+        return None;
+    }
+    // The edit is in old (cached) coordinates; it must be in bounds of `old_raw`.
+    if a > b || b > old_raw.len_bytes() {
+        return None;
+    }
+    // G1 — strict `a > bom`. An insert at `a <= bom` could extend the leading
+    // BOM run that sanitize strips, desyncing the line map.
+    if a <= prior.bom as usize {
+        return None;
+    }
+    // Trigger gate: structural bytes in the edit, or a rule/blank-status toggle.
+    if edit_triggers_decline(prior, old_raw, new_raw, edit) {
+        return None;
+    }
+
+    // Raw→sanitized line-correspondence map. `a` and `b` share a raw line (the
+    // gate rejects line terminators in the edit), so within the line raw == san
+    // and the sanitized edit width equals the raw edit width.
+    let raw_line = old_raw.byte_to_line(a);
+    let SanEdit { a_san, b_san_old } = map_edit(prior, old_raw, a, b)?;
+
+    // Rope splice: COW-clone the cached sanitized rope and replace the mapped
+    // range with `n` (which carries no trigger byte ⇒ its raw image equals its
+    // sanitized image).
+    let mut new_san = prior.sanitized.clone();
+    let (ca, cb) = (new_san.byte_to_char(a_san), new_san.byte_to_char(b_san_old));
+    new_san.remove(ca..cb);
+    new_san.insert(ca, n);
+
+    // O(1) structural invariant (not a divergence detector): the sanitized delta
+    // equals the raw delta by construction — `b_san_old == a_san + (b - a)` and
+    // the splice removes exactly that span, so for char-aligned endpoints this
+    // never fires. It guards only the degenerate mid-codepoint `a_san`/`b_san_old`
+    // case (which cannot arise here); the windowed re-sanitize below is the real
+    // position check.
+    if new_san.len_bytes() != prior.sanitized.len_bytes() + n.len() - (b - a) {
+        return None;
+    }
+
+    // Engine: diagnostics-only splice over zero-copy rope views, in OLD
+    // sanitized coordinates (the engine derives the new end from the delta).
+    let splice = {
+        let base_ref = DiagBaseRef {
+            sanitized: RopeSrc::new(prior.sanitized.byte_slice(..)),
+            source_nodes: &prior.source_nodes,
+            pairs: &prior.pairs,
+            diagnostics: &prior.diagnostics,
+            index: &prior.index,
+        };
+        let new_src = RopeSrc::new(new_san.byte_slice(..));
+        aozora::reparse_incremental_diagnostics_only_in(&base_ref, &new_src, a_san..b_san_old)?
+    };
+
+    // Windowed release re-sanitize — the sole release-time check against the raw
+    // text as an independent ground truth (catches a rule break, a
+    // predecessor-blank toggle, or a gross offset error the engine's region
+    // idempotence cannot, because plain text is a sanitize fixed point anywhere).
+    if !windowed_resanitize_ok(prior, new_raw, &new_san, raw_line) {
+        return None;
+    }
+    // Strongest pin, debug only: the whole spliced buffer equals a full
+    // sanitize of the new raw text.
+    #[cfg(debug_assertions)]
+    debug_assert_eq!(
+        new_san.to_string(),
+        sanitize(&new_raw.to_string()).text.as_ref(),
+        "spliced sanitized rope diverged from a full sanitize of the new raw text",
+    );
+
+    Some((new_san, splice))
+}
+
+/// A sanitized-coordinate edit derived from a raw-coordinate one: replace
+/// `a_san..b_san_old` in the cached sanitized buffer.
+struct SanEdit {
+    a_san: usize,
+    b_san_old: usize,
+}
+
+/// Map the raw-coordinate edit range `a..b` (both on the same raw line) to the
+/// cached sanitized buffer's coordinates via the raw↔sanitized line map.
+/// Returns `None` if the mapping lands out of bounds.
+fn map_edit(prior: &DiagBase, old_raw: &Rope, a: usize, b: usize) -> Option<SanEdit> {
+    let raw_line = old_raw.byte_to_line(a);
+    let within = a - old_raw.line_to_byte(raw_line);
+    let san_line = prior.san_line(raw_line);
+    if san_line > prior.sanitized.len_lines() {
+        return None;
+    }
+    let line_start = prior.sanitized.line_to_byte(san_line);
+    // Raw line 0 carries the BOM that sanitize stripped; `within` counts those
+    // bytes, so subtract them. Later lines have no BOM.
+    let bom_adj = if raw_line == 0 { prior.bom as usize } else { 0 };
+    let a_san = (line_start + within).checked_sub(bom_adj)?;
+    let b_san_old = a_san + (b - a);
+    (b_san_old <= prior.sanitized.len_bytes()).then_some(SanEdit { a_san, b_san_old })
+}
+
+/// Whether the edit must decline because it carries a structural byte or toggles
+/// a decorative-rule / blank-line status the line map cannot absorb. Scans both
+/// the removed (old) and inserted (new) bytes.
+fn edit_triggers_decline(
+    prior: &DiagBase,
+    old_raw: &Rope,
+    new_raw: &Rope,
+    edit: &ByteEdit,
+) -> bool {
+    let (a, b) = (edit.range.start, edit.range.end);
+    let n = &edit.new_text;
+    // T1 (line terminator — moves a line boundary), T2 (`〔` / `〕` — an accent
+    // span open/close), T3 (raw PUA in the insert — rewrites to U+FFFD).
+    let removed = old_raw.byte_slice(a..b);
+    if rope_slice_has(removed, |c| matches!(c, '\n' | '\r' | '〔' | '〕')) {
+        return true;
+    }
+    if n.contains(['\n', '\r', '〔', '〕']) || contains_raw_pua(n) {
+        return true;
+    }
+    // R1 / R2 compare *line content* (a byte-scan of the edit is unsound: e.g.
+    // deleting `a` from `a----------` creates a rule with no `-` in the removed
+    // bytes). The edit lies within one raw line (T1 above), so old and new
+    // differ only on raw line `raw_line`.
+    let raw_line = old_raw.byte_to_line(a);
+    let old_line = trimmed_line(old_raw, raw_line, prior.bom);
+    let new_line = trimmed_line(new_raw, raw_line, prior.bom);
+    if is_rule_line_trimmed(&old_line) != is_rule_line_trimmed(&new_line) {
+        return true; // R1: the edit creates or destroys a decorative-rule line
+    }
+    // R2: toggling line `raw_line`'s blankness flips whether the *next* line, if
+    // it is a rule, gets an isolation blank — mutating `isolation_lines`.
+    old_line.is_empty() != new_line.is_empty() && next_line_is_rule(new_raw, raw_line + 1)
+}
+
+/// Whether a windowed re-sanitize of the post-edit raw text around the edit
+/// reproduces the spliced sanitized buffer's matching region. The window is the
+/// edited raw line `raw_line` plus the next line (so the next line's
+/// isolation — which depends on this line's blank status — is verified, seeded
+/// by this line); the edited line's own preceding isolation blank is invariant
+/// (R1) and excluded by starting the comparison at the line's content.
+fn windowed_resanitize_ok(
+    prior: &DiagBase,
+    new_raw: &Rope,
+    new_san: &Rope,
+    raw_line: usize,
+) -> bool {
+    let line_count = new_raw.len_lines();
+    let w_hi = (raw_line + 1).min(line_count.saturating_sub(1));
+
+    // Raw window [content of `raw_line` .. end of line `w_hi`].
+    let raw_start = new_raw.line_to_byte(raw_line);
+    let raw_end = if w_hi + 1 < line_count {
+        new_raw.line_to_byte(w_hi + 1)
+    } else {
+        new_raw.len_bytes()
+    };
+    let raw_window = String::from(new_raw.byte_slice(raw_start..raw_end));
+    let san_window = sanitize(&raw_window);
+    if !san_window.diagnostics.is_empty() {
+        return false; // a fresh sanitize diagnostic the splice cannot account for
+    }
+
+    // Spliced-buffer region for the same raw lines: from raw line `raw_line`'s
+    // content start to the end of line `w_hi`'s content (one sanitized line past
+    // `w_hi`'s content, which excludes any isolation blank belonging to the line
+    // after `w_hi`).
+    let san_lines = new_san.len_lines();
+    let lo_line = prior.san_line(raw_line);
+    let hi_line = prior.san_line(w_hi) + 1;
+    if lo_line > san_lines || hi_line > san_lines {
+        return false;
+    }
+    let sb_lo = new_san.line_to_byte(lo_line);
+    let sb_end = new_san.line_to_byte(hi_line);
+    sb_lo <= sb_end && new_san.byte_slice(sb_lo..sb_end) == san_window.text.as_ref()
+}
+
+/// Whether any char of `slice` satisfies `pred`. Used on the small removed-edit
+/// span, so the per-char walk is cheap.
+fn rope_slice_has(slice: RopeSlice<'_>, pred: impl Fn(char) -> bool) -> bool {
+    slice.chars().any(pred)
+}
+
+/// The trimmed content of raw line `line_idx`, with the leading BOM stripped on
+/// line 0 (so the rule/blank checks match what `sanitize` sees). `str::trim`
+/// removes the trailing `\r`, matching the CRLF fold.
+fn trimmed_line(raw: &Rope, line_idx: usize, bom: u32) -> String {
+    let line = String::from(raw.line(line_idx));
+    let body = if line_idx == 0 {
+        line.get(bom as usize..).unwrap_or_default()
+    } else {
+        line.as_str()
+    };
+    body.trim().to_owned()
+}
+
+/// Whether raw line `line_idx` (if it exists) is a decorative-rule line.
+fn next_line_is_rule(raw: &Rope, line_idx: usize) -> bool {
+    line_idx < raw.len_lines() && is_rule_line_trimmed(String::from(raw.line(line_idx)).trim())
+}
+
+/// Whether `s` contains a raw PUA sentinel `U+E001..U+E004` (`EE 80 81..84`),
+/// which `sanitize` rewrites to `U+FFFD`.
+fn contains_raw_pua(s: &str) -> bool {
+    s.as_bytes()
+        .windows(3)
+        .any(|w| w[0] == 0xEE && w[1] == 0x80 && (0x81..=0x84).contains(&w[2]))
+}
+
+/// Byte length of the leading `U+FEFF` BOM run that `sanitize` strips (each BOM
+/// is 3 UTF-8 bytes).
+fn leading_bom_bytes(s: &str) -> u32 {
+    let mut rest = s;
+    let mut n = 0u32;
+    while let Some(r) = rest.strip_prefix('\u{FEFF}') {
+        rest = r;
+        n += 3;
+    }
+    n
+}
+
+/// Sorted raw line indices before which decorative-rule isolation inserts a
+/// blank line. Mirrors `isolate_decorative_rules`'s `prev_nonblank` bookkeeping
+/// (a rule line that follows a visible line); `stripped` is the raw text with
+/// the leading BOM removed. `split('\n')` line indices match the rope's line
+/// metrics (ropey counts only `\n`; lone-CR docs are declined upstream), and
+/// `str::trim` folds the trailing `\r`.
+fn isolation_line_indices(stripped: &str) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut prev_nonblank = false;
+    for (idx, line) in stripped.split('\n').enumerate() {
+        let trimmed = line.trim();
+        if is_rule_line_trimmed(trimmed) && prev_nonblank {
+            out.push(u32::try_from(idx).unwrap_or(u32::MAX));
+        }
+        prev_nonblank = !trimmed.is_empty();
+    }
+    out
+}
+
+/// Scan the raw text for the document-level sanitize-fixed-point flags.
+fn scan_doc_flags(raw: &str) -> DocFlags {
+    let bytes = raw.as_bytes();
+    let has_lone_cr = bytes
+        .iter()
+        .enumerate()
+        .any(|(i, &c)| c == b'\r' && bytes.get(i + 1) != Some(&b'\n'));
+    DocFlags {
+        has_lone_cr,
+        has_tortoise: raw.contains('〔'),
+        has_pua: contains_raw_pua(raw),
     }
 }
 
@@ -497,38 +751,30 @@ fn duration_as_us(d: Duration) -> u64 {
     u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
 }
 
-/// Byte length of the longest common prefix of `a` and `b`, snapped **down** to
-/// a char boundary of `a`. Because the snapped-off bytes are byte-equal in `a`
-/// and `b`, the result is a char boundary of `b` as well — so both
-/// `a[..result]` and `b[..result]` are valid `str` slices.
-fn common_prefix_len(a: &str, b: &str) -> usize {
-    let mut i = a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count();
-    while i > 0 && !a.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
-}
-
-/// Byte length of the longest common suffix of `a` and `b`, snapped so that
-/// `a.len() - result` lands on a char boundary of `a` (and, by the same
-/// byte-equality argument, of `b`). The `zip` is bounded by the shorter string,
-/// so the result never exceeds either length.
-fn common_suffix_len(a: &str, b: &str) -> usize {
-    let mut i = a
-        .bytes()
-        .rev()
-        .zip(b.bytes().rev())
-        .take_while(|(x, y)| x == y)
-        .count();
-    while i > 0 && !a.is_char_boundary(a.len() - i) {
-        i -= 1;
-    }
-    i
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Re-parse the post-edit `text` (built by the caller) after one `edit`,
+    /// routing the raw text through the rope `ParseCache` takes.
+    fn reparse_incremental_str(
+        cache: &mut ParseCache,
+        text: &str,
+        edit: ByteEdit,
+    ) -> (Vec<Diagnostic>, ReparseStats) {
+        cache.reparse_incremental(&Rope::from(text), &[edit])
+    }
+
+    /// The stored sanitized buffer as a `String` (in-crate tests read the
+    /// private base directly).
+    fn stored_sanitized(cache: &ParseCache) -> String {
+        cache
+            .base
+            .as_ref()
+            .expect("stored base")
+            .sanitized
+            .to_string()
+    }
 
     #[test]
     fn first_reparse_populates_state() {
@@ -624,7 +870,7 @@ mod tests {
         new_text.push_str(&old[..at]);
         new_text.push('も');
         new_text.push_str(&old[at..]);
-        let (diags, stats) = cache.reparse_incremental(&new_text, &[edit]);
+        let (diags, stats) = reparse_incremental_str(&mut cache, &new_text, edit);
 
         assert!(
             stats.cache_hits > 0,
@@ -643,7 +889,7 @@ mod tests {
         drop(cache.reparse("｜青空《あおぞら》\n\nほん\n"));
         let big = "a".repeat(MAX_DOCUMENT_BYTES + 1);
         let edit = ByteEdit::new(0..0, big.clone());
-        let (diags, stats) = cache.reparse_incremental(&big, &[edit]);
+        let (diags, stats) = reparse_incremental_str(&mut cache, &big, edit);
         assert!(diags.is_empty(), "oversized incremental parse is skipped");
         assert_eq!(stats.parse_count, 0, "no parse when oversized");
         assert_eq!(stats.cache_hits, 0, "no reuse for a skipped parse");
@@ -666,7 +912,7 @@ mod tests {
             new_text.push_str(&text[..at]);
             new_text.push('も');
             new_text.push_str(&text[at..]);
-            let (_, stats) = cache.reparse_incremental(&new_text, &[edit]);
+            let (_, stats) = reparse_incremental_str(&mut cache, &new_text, edit);
             assert!(stats.cache_hits > 0, "each splice reuses the prefix ruby");
             text = new_text;
         }
@@ -680,7 +926,7 @@ mod tests {
         new_text.push_str(&text[..at]);
         new_text.push('も');
         new_text.push_str(&text[at..]);
-        let (_, stats) = cache.reparse_incremental(&new_text, &[edit]);
+        let (_, stats) = reparse_incremental_str(&mut cache, &new_text, edit);
         assert_eq!(
             stats.cache_hits, 0,
             "the capacity-bound reparse must be a full parse: {stats:?}",
@@ -699,7 +945,8 @@ mod tests {
             ByteEdit::new(0..0, "x".to_owned()),
             ByteEdit::new(10..10, "y".to_owned()),
         ];
-        let (_, stats) = cache.reparse_incremental("xalpha\n\nbexyta\n\ngamma", &edits);
+        let (_, stats) =
+            cache.reparse_incremental(&Rope::from("xalpha\n\nbexyta\n\ngamma"), &edits);
         assert_eq!(stats.cache_hits, 0, "a multi-edit batch re-parses fully");
     }
 
@@ -718,7 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn large_single_edit_full_parses_and_matches() {
+    fn large_single_edit_splices_and_matches() {
         let n = 50usize;
         let old = plain_paragraphs(n);
         let mut cache = ParseCache::default();
@@ -730,7 +977,7 @@ mod tests {
         let mut new_text = old.clone();
         new_text.insert(at, 'ぞ');
         let edit = ByteEdit::new(at..at, "ぞ".to_owned());
-        let (diags, stats) = cache.reparse_incremental(&new_text, &[edit]);
+        let (diags, stats) = reparse_incremental_str(&mut cache, &new_text, edit);
 
         // The paragraphs are plain prose (no classified nodes), so even when the
         // splice fast path fires it reuses zero nodes; the diagnostics must
@@ -749,12 +996,13 @@ mod tests {
     fn deliberately_wrong_edit_range_still_equals_full() {
         // The bogus edit range does not transform the cached text into the new
         // text (bytes outside it differ), so the splice declines and the cache
-        // full-parses — the result must equal a from-scratch parse regardless.
+        // full-parses the passed text — the result must equal a from-scratch
+        // parse regardless.
         let mut cache = ParseCache::default();
         drop(cache.reparse("alpha\n\nbeta\n\ngamma"));
         let new_text = "alpha\n\nbeta edited\n\ngamma";
         let bogus = ByteEdit::new(0..0, "zzz".to_owned());
-        let (diags, _) = cache.reparse_incremental(new_text, &[bogus]);
+        let (diags, _) = reparse_incremental_str(&mut cache, new_text, bogus);
         let mut fresh = ParseCache::default();
         let (want, _) = fresh.reparse(new_text);
         let as_debug = |ds: &[Diagnostic]| ds.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>();
@@ -794,13 +1042,13 @@ mod tests {
     fn crlf_interior_edit_reuses_flanking_nodes() {
         // Three CRLF paragraphs (\r\n\r\n separators); the first carries a ruby
         // node, the edit lands in the plain middle paragraph. Source != sanitized
-        // (CRLF), so the BOM+CRLF branch maps the edit; the prefix ruby is reused.
+        // (CRLF), so the rope line map maps the edit; the prefix ruby is reused.
         let mut cache = ParseCache::default();
         let old = "｜青空《あおぞら》のした\r\n\r\nかきくけこ\r\n\r\nさしすせそ\r\n";
         drop(cache.reparse(old));
 
         let (new_raw, edit) = interior_insert(old, "くけこ", "も");
-        let (diags, stats) = cache.reparse_incremental(&new_raw, &[edit]);
+        let (diags, stats) = reparse_incremental_str(&mut cache, &new_raw, edit);
 
         assert!(
             stats.cache_hits > 0,
@@ -821,16 +1069,16 @@ mod tests {
         let old = "｜青空《あおぞら》のした\r\n\r\nかきくけこ\r\n\r\nさしすせそ\r\n";
         drop(cache.reparse(old));
         let (new_raw, edit) = interior_insert(old, "くけこ", "も");
-        let (_, stats) = cache.reparse_incremental(&new_raw, &[edit]);
+        let (_, stats) = reparse_incremental_str(&mut cache, &new_raw, edit);
         assert!(stats.cache_hits > 0, "CRLF fast path must fire: {stats:?}");
 
-        let spliced_san = cache.base.as_ref().expect("stored base").sanitized.clone();
+        let spliced_san = stored_sanitized(&cache);
         let spliced_diags = diag_debug(cache.diagnostics());
         let spliced_html = html_of(&cache).expect("spliced html");
 
         let mut fresh = ParseCache::default();
         drop(fresh.reparse(&new_raw));
-        let full_san = fresh.base.as_ref().expect("stored base").sanitized.clone();
+        let full_san = stored_sanitized(&fresh);
         let full_diags = diag_debug(fresh.diagnostics());
         let full_html = html_of(&fresh).expect("full html");
 
@@ -847,7 +1095,7 @@ mod tests {
         let old = "\u{FEFF}｜青空《あおぞら》のした\r\n\r\nかきくけこ\r\n\r\nさしすせそ\r\n";
         drop(cache.reparse(old));
         let (new_raw, edit) = interior_insert(old, "くけこ", "も");
-        let (diags, stats) = cache.reparse_incremental(&new_raw, &[edit]);
+        let (diags, stats) = reparse_incremental_str(&mut cache, &new_raw, edit);
 
         assert!(
             stats.cache_hits > 0,
@@ -856,9 +1104,7 @@ mod tests {
         let mut fresh = ParseCache::default();
         let (want, _) = fresh.reparse(&new_raw);
         assert_eq!(diag_debug(&diags), diag_debug(&want));
-        let full_san = &fresh.base.as_ref().expect("stored base").sanitized;
-        let spliced_san = &cache.base.as_ref().expect("stored base").sanitized;
-        assert_eq!(spliced_san, full_san);
+        assert_eq!(stored_sanitized(&cache), stored_sanitized(&fresh));
         // The lazily-materialised spliced tree renders identically to a fresh
         // full parse (both full-parse the same stored text).
         assert_eq!(html_of(&cache), html_of(&fresh));
@@ -866,15 +1112,15 @@ mod tests {
 
     #[test]
     fn accent_doc_declines_and_matches_full() {
-        // A CRLF doc whose `〔…〕` span carries an accent digraph: sanitize emits
-        // an accent-decomposition Note a region re-lex cannot reproduce, so the
-        // CRLF fast path declines and full-parses — with the decomposition and
-        // the Note intact.
+        // A CRLF doc whose `〔…〕` span carries an accent digraph: the document
+        // carries a tortoiseshell bracket, so `has_tortoise` declines every
+        // incremental edit and the cache full-parses — with the decomposition
+        // and its Note intact.
         let mut cache = ParseCache::default();
         let old = "じょぶんです。\r\n\r\n〔oraison fune`bre〕\r\n\r\nまつびです。\r\n";
         drop(cache.reparse(old));
         let (new_raw, edit) = interior_insert(old, "まつび", "も");
-        let (diags, stats) = cache.reparse_incremental(&new_raw, &[edit]);
+        let (diags, stats) = reparse_incremental_str(&mut cache, &new_raw, edit);
 
         assert_eq!(stats.cache_hits, 0, "accent doc must decline: {stats:?}");
         let mut fresh = ParseCache::default();
@@ -891,36 +1137,36 @@ mod tests {
     fn decorative_rule_doc_incremental_hits() {
         // A CRLF doc with a >=10-char decorative rule line (the real aozora-bunko
         // header shape). Rule isolation inserts a blank line silently, but the
-        // common-prefix/suffix derivation models it: a body edit far from the
-        // rule fast-paths, reusing the leading ruby node, and stays byte-identical
-        // to a full parse. (Before #284's coverage recovery this declined.)
+        // line-correspondence map accounts for it via `isolation_lines`: a body
+        // edit far from the rule fast-paths, reusing the leading ruby node, and
+        // stays byte-identical to a full parse.
         let mut cache = ParseCache::default();
         let old = "｜青空《あおぞら》\r\n----------\r\n\r\nほんぶんです。\r\n";
         drop(cache.reparse(old));
         let (new_raw, edit) = interior_insert(old, "ほんぶん", "も");
-        let (diags, stats) = cache.reparse_incremental(&new_raw, &[edit]);
+        let (diags, stats) = reparse_incremental_str(&mut cache, &new_raw, edit);
 
         assert!(
             stats.cache_hits > 0,
-            "rule doc must now fast-path and reuse the prefix ruby: {stats:?}",
+            "rule doc must fast-path and reuse the prefix ruby: {stats:?}",
         );
         let mut fresh = ParseCache::default();
         let (want, _) = fresh.reparse(&new_raw);
         assert_eq!(diag_debug(&diags), diag_debug(&want));
+        assert_eq!(stored_sanitized(&cache), stored_sanitized(&fresh));
     }
 
     #[test]
     fn rule_creation_declines_and_matches_full() {
         // Growing a 9-dash line (not a rule) to 10 dashes turns it into a
-        // decorative rule: sanitize inserts an isolation blank line, so the
-        // sanitized diff range spans the dash line and gains a `\n`. The engine
-        // declines via `carries_structure`, and the full parse matches.
+        // decorative rule: the R1 trigger (is-rule status flips) declines, and
+        // the full parse — which inserts the isolation blank — matches.
         let mut cache = ParseCache::default();
         let old = "まえがき。\r\n---------\r\n\r\nほんぶんです。\r\n";
         drop(cache.reparse(old));
         // Insert one more '-' into the 9-dash run, making it a 10-dash rule.
         let (new_raw, edit) = interior_insert(old, "---------", "-");
-        let (diags, stats) = cache.reparse_incremental(&new_raw, &[edit]);
+        let (diags, stats) = reparse_incremental_str(&mut cache, &new_raw, edit);
 
         assert_eq!(
             stats.cache_hits, 0,
@@ -932,25 +1178,21 @@ mod tests {
     }
 
     #[test]
-    fn midchar_prefix_and_suffix_snap_hits() {
-        // Replacing a kana with one that shares UTF-8 lead bytes makes a byte-wise
-        // common prefix AND suffix fall mid-codepoint; the char-boundary snap must
-        // keep the derived edit range on boundaries (else `str` slicing panics)
-        // and still splice byte-identically. CRLF routes this through the
-        // re-sanitize path; the leading ruby is reused.
+    fn replace_midword_kana_hits() {
+        // Replacing a kana run with one that shares UTF-8 lead bytes used to need
+        // a char-boundary snap in the old byte-diff path; the line map derives
+        // the edit range exactly from the raw coordinates, so it splices
+        // byte-identically with no snapping. CRLF, leading ruby reused.
         let mut cache = ParseCache::default();
         let old = "｜青空《あおぞら》\r\n\r\nぁあぃ\r\n\r\nさしすせそ\r\n";
         drop(cache.reparse(old));
-        // Replace the middle paragraph "ぁあぃ" with "あぁい": every char shifts
-        // by one code point but the bytes overlap, so the diff straddles
-        // codepoints on both ends.
         let at = old.find("ぁあぃ").expect("needle");
         let edit = ByteEdit::new(at..at + "ぁあぃ".len(), "あぁい".to_owned());
         let mut new_raw = String::with_capacity(old.len());
         new_raw.push_str(&old[..at]);
         new_raw.push_str("あぁい");
         new_raw.push_str(&old[at + "ぁあぃ".len()..]);
-        let (diags, stats) = cache.reparse_incremental(&new_raw, &[edit]);
+        let (diags, stats) = reparse_incremental_str(&mut cache, &new_raw, edit);
 
         assert!(
             stats.cache_hits > 0,
@@ -959,18 +1201,19 @@ mod tests {
         let mut fresh = ParseCache::default();
         let (want, _) = fresh.reparse(&new_raw);
         assert_eq!(diag_debug(&diags), diag_debug(&want));
+        assert_eq!(stored_sanitized(&cache), stored_sanitized(&fresh));
     }
 
     #[test]
     fn pua_doc_declines_preserves_diagnostic() {
-        // A CRLF doc carrying a raw U+E001 sentinel: sanitize emits
-        // SourceContainsPua, so the fast path declines and the full parse keeps
-        // the diagnostic that a region re-lex would have dropped.
+        // A CRLF doc carrying a raw U+E001 sentinel: `has_pua` declines every
+        // incremental edit, so the full parse keeps the SourceContainsPua
+        // diagnostic that a region re-lex would have dropped.
         let mut cache = ParseCache::default();
         let old = "まえがき。\r\n\r\nあ\u{E001}い\r\n\r\nまつびです。\r\n";
         drop(cache.reparse(old));
         let (new_raw, edit) = interior_insert(old, "まつび", "も");
-        let (diags, stats) = cache.reparse_incremental(&new_raw, &[edit]);
+        let (diags, stats) = reparse_incremental_str(&mut cache, &new_raw, edit);
 
         assert_eq!(stats.cache_hits, 0, "PUA doc must decline: {stats:?}");
         assert!(
@@ -984,40 +1227,149 @@ mod tests {
         assert_eq!(diag_debug(&diags), diag_debug(&want));
     }
 
-    // ---- common prefix / suffix derivation --------------------------------
+    // ---- line-correspondence map unit checks ------------------------------
 
     #[test]
-    fn common_prefix_suffix_snap_to_char_boundaries() {
-        // Adjacent kana share UTF-8 lead bytes, so a byte-wise diff falls
-        // mid-codepoint; the snap must back up to a char boundary of both sides.
-        let a = "かきくけこ";
-        let b = "かきもくけこ"; // inserted も before く
-        let start = common_prefix_len(a, b);
-        assert!(a.is_char_boundary(start) && b.is_char_boundary(start));
+    fn isolation_line_indices_records_rule_lines() {
+        // A rule line that follows a visible line is isolated; one that follows a
+        // blank line (or opens the document) is not.
+        assert_eq!(isolation_line_indices("本文\n----------\n後"), vec![1]);
         assert_eq!(
-            start,
-            "かき".len(),
-            "prefix snaps to the boundary before く"
+            isolation_line_indices("----------\n後"),
+            Vec::<u32>::new(),
+            "a rule at document start is not isolated",
         );
-
-        let suffix = common_suffix_len(&a[start..], &b[start..]);
-        let old_end = a.len() - suffix;
-        assert!(a.is_char_boundary(old_end) && b.is_char_boundary(a.len() - suffix));
-        // The recovered range reconstructs `b` from `a`.
-        let new_end = b.len() - suffix;
         assert_eq!(
-            format!("{}{}{}", &a[..start], &b[start..new_end], &a[old_end..]),
-            b
+            isolation_line_indices("本文\n\n----------\n後"),
+            Vec::<u32>::new(),
+            "a rule already preceded by a blank line is not isolated",
         );
     }
 
     #[test]
-    fn common_prefix_suffix_identical_strings() {
-        // No diff: prefix consumes everything, suffix is bounded to avoid overlap.
-        let s = "おなじ";
-        let start = common_prefix_len(s, s);
-        assert_eq!(start, s.len());
-        let suffix = common_suffix_len(&s[start..], &s[start..]);
-        assert_eq!(suffix, 0, "the tails are empty");
+    fn leading_bom_bytes_counts_stacked_boms() {
+        assert_eq!(leading_bom_bytes("hello"), 0);
+        assert_eq!(leading_bom_bytes("\u{FEFF}hi"), 3);
+        assert_eq!(leading_bom_bytes("\u{FEFF}\u{FEFF}hi"), 6);
+        assert_eq!(
+            leading_bom_bytes("a\u{FEFF}b"),
+            0,
+            "interior BOM is not leading"
+        );
+    }
+
+    #[test]
+    fn contains_raw_pua_detects_only_sentinels() {
+        assert!(contains_raw_pua("x\u{E001}y"));
+        assert!(contains_raw_pua("\u{E004}"));
+        assert!(
+            !contains_raw_pua("\u{E000}\u{E005}"),
+            "neighbours are not sentinels"
+        );
+        assert!(!contains_raw_pua("ふつうの日本語"));
+    }
+
+    #[test]
+    fn windowed_resanitize_rejects_a_corrupted_splice() {
+        // The windowed re-sanitize is the sole *release-time* authority that the
+        // spliced sanitized rope matches `sanitize(raw)`. Pin that it can
+        // actually reject: feed it a deliberately-corrupted `new_san` (one byte
+        // wrong inside the window, same length so the O(1) tripwire is blind) and
+        // assert it returns `false`, plus a correct splice returns `true`.
+        // Without this, a regression to always-`true` would silently disarm the
+        // release backstop and still pass every other test.
+        let mut cache = ParseCache::default();
+        let old = "本文\r\n----------\r\nほんぶん\r\n";
+        drop(cache.reparse(old));
+        let prior = cache.base.as_ref().expect("base");
+
+        // An accepted plain edit: insert ASCII 'a' inside the body line (raw line 2).
+        let new_raw_s = "本文\r\n----------\r\nほaんぶん\r\n";
+        let new_raw = Rope::from(new_raw_s);
+        let correct = sanitize(new_raw_s).text.into_owned();
+        let correct_rope = Rope::from(correct.as_str());
+        assert!(
+            windowed_resanitize_ok(prior, &new_raw, &correct_rope, 2),
+            "a correct splice must pass the windowed check",
+        );
+
+        // Corrupt one byte inside the windowed region (the unique inserted 'a'),
+        // keeping the length identical so only the windowed compare can catch it.
+        let wrong = correct.replacen('a', "b", 1);
+        assert_ne!(wrong, correct, "the corruption must change a byte");
+        let wrong_rope = Rope::from(wrong.as_str());
+        assert!(
+            !windowed_resanitize_ok(prior, &new_raw, &wrong_rope, 2),
+            "a corrupted splice must be rejected by the windowed check",
+        );
+    }
+
+    #[test]
+    fn edit_triggers_decline_fires_on_isolation_toggle() {
+        // R2: an edit that toggles a line's blank/non-blank status immediately
+        // before a decorative-rule line creates (or destroys) that rule's
+        // isolation blank, mutating `isolation_lines` — which an in-line splice
+        // cannot absorb, so the trigger gate must decline. A byte-scan of the
+        // insert (`X`, no `-`) would miss it; the line-content comparison catches
+        // it. Pinned directly so a regression to always-`false` is caught (the
+        // windowed check would also decline, hiding it from the e2e tests).
+        let mut cache = ParseCache::default();
+        // A blank line sits directly before the rule, so the rule is NOT isolated.
+        let old = "本文\r\n\r\n----------\r\nあと\r\n";
+        drop(cache.reparse(old));
+        let prior = cache.base.as_ref().expect("base");
+        let old_raw = Rope::from(old);
+
+        // Insert a non-blank char into the blank line (raw line 1): it gains
+        // content, so the following rule would now gain an isolation blank.
+        let line1 = old_raw.line_to_byte(1);
+        let edit = ByteEdit::new(line1..line1, "X".to_owned());
+        let new_raw = Rope::from("本文\r\nX\r\n----------\r\nあと\r\n");
+        assert!(
+            edit_triggers_decline(prior, &old_raw, &new_raw, &edit),
+            "toggling a blank line before a rule must decline (R2)",
+        );
+
+        // Control: the same blank→non-blank toggle when the next line is NOT a
+        // rule carries no isolation change, so the gate must not trigger.
+        let mut c2 = ParseCache::default();
+        let old2 = "本文\r\n\r\nあと\r\n";
+        drop(c2.reparse(old2));
+        let p2 = c2.base.as_ref().expect("base");
+        let old_raw2 = Rope::from(old2);
+        let line1b = old_raw2.line_to_byte(1);
+        let edit2 = ByteEdit::new(line1b..line1b, "X".to_owned());
+        let new_raw2 = Rope::from("本文\r\nX\r\nあと\r\n");
+        assert!(
+            !edit_triggers_decline(p2, &old_raw2, &new_raw2, &edit2),
+            "a blank toggle with no following rule must not trigger R2",
+        );
+    }
+
+    #[test]
+    fn two_rule_doc_interior_edit_hits_and_matches_full() {
+        // A document with TWO isolated decorative rules, both before the edit, so
+        // the edited body line's `san_line` shifts by a multi-entry
+        // `partition_point` (count 2). A blank-line-delimited body paragraph after
+        // both rules keeps the re-lex region off the rules, so it still fast-paths
+        // — and the windowed check runs over an interior isolation blank. Pins the
+        // >=2-isolation accept path the randomized e2e generator does not reach.
+        let mut cache = ParseCache::default();
+        // A leading ruby node sits in the reused prefix, so a successful splice
+        // reports a non-zero reuse count (plain text alone yields no source node).
+        let old = "｜序文《じょぶん》\r\n----------\r\n\r\nちゅうかん\r\n----------\r\n\r\nなかほん\r\n\r\nまつび\r\n";
+        drop(cache.reparse(old));
+        // Insert mid-word inside the body paragraph that follows both rules.
+        let (new_raw, edit) = interior_insert(old, "かほん", "X");
+        let (diags, stats) = reparse_incremental_str(&mut cache, &new_raw, edit);
+
+        assert!(
+            stats.cache_hits > 0,
+            "a plain edit past two isolated rules must fast-path: {stats:?}",
+        );
+        let mut fresh = ParseCache::default();
+        let (want, _) = fresh.reparse(&new_raw);
+        assert_eq!(diag_debug(&diags), diag_debug(&want));
+        assert_eq!(stored_sanitized(&cache), stored_sanitized(&fresh));
     }
 }

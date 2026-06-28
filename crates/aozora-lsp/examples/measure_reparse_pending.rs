@@ -252,8 +252,10 @@ fn measure_variant(a: &mut Acc, v: &str, mid: usize, is_crlf: bool, engine_ns: u
     black_box(&concat);
 
     // Passes 2/2c/3/4a — the LSP-side incremental splice; stats tell fast-path.
+    // Feeds the post-edit rope straight in (Mechanism B: the cache splices its
+    // sanitized rope, no per-keystroke `to_string` + `sanitize`).
     let t = Instant::now();
-    let (_diags, stats) = cache.reparse_incremental(&edited, slice::from_ref(&edit));
+    let (_diags, stats) = cache.reparse_incremental(&rope, slice::from_ref(&edit));
     let cache_ns = t.elapsed().as_nanos();
     let fast = stats.cache_hits > 0;
 

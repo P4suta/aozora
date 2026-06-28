@@ -115,6 +115,14 @@ name             = "incremental_parse_cache_corpus"
 required-features = ["internals"]
 
 [[test]]
+name             = "rope_src_parity"
+required-features = ["internals"]
+
+[[test]]
+name             = "incremental_rope_e2e"
+required-features = ["internals"]
+
+[[test]]
 name             = "shuttle_doc_state"
 required-features = ["internals", "shuttle-tests"]
 

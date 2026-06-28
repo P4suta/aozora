@@ -320,7 +320,16 @@ fn is_decorative_rule_line(line: &str) -> bool {
 /// whose first byte is multi-byte UTF-8 (every Japanese line in the
 /// corpus, the dominant case) the leading `matches!` check rejects
 /// in 2–3 ops and the rest of the function is skipped entirely.
-pub(crate) fn is_rule_line_trimmed(trimmed: &str) -> bool {
+///
+/// `pub` (and `#[doc(hidden)]`, like the other sanitize helpers) so the
+/// in-workspace LSP `ParseCache` can reuse the *exact* decorative-rule
+/// predicate when it (a) precomputes which raw lines gained an isolation
+/// blank and (b) gates an incremental edit that would create or destroy a
+/// rule line — sharing the predicate keeps the rope splice byte-identical
+/// to a full sanitize.
+#[doc(hidden)]
+#[must_use]
+pub fn is_rule_line_trimmed(trimmed: &str) -> bool {
     let bytes = trimmed.as_bytes();
     if bytes.len() < DECORATIVE_RULE_MIN_LEN {
         return false;
