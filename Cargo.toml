@@ -239,7 +239,7 @@ tokio              = { version = "1", features = ["rt-multi-thread", "io-std", "
 dashmap            = "6"
 parking_lot        = "0.12"   # non-poisoning Mutex for the writer-only buffer state
 arc-swap           = "1.7"    # wait-free read snapshot swap
-ropey              = "1.6"    # chunked Rope feeding tree-sitter without a contiguous String
+ropey              = { version = "1.6", default-features = false, features = ["simd"] }   # default features OFF: with neither cr_lines nor unicode_lines, ropey's line metrics count only 0x0A — byte-identical to LineIndex (see doc_line_view guard test)
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 hdrhistogram       = { version = "7.5", default-features = false }   # constant-memory percentile metrics

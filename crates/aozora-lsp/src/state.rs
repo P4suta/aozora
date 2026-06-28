@@ -380,6 +380,7 @@ pub struct DocSnapshot {
     // by the first call to its accessor; subsequent calls within the
     // lifetime of this `DocSnapshot` return the cached `Arc` for free.
     doc_text: OnceLock<Arc<str>>,
+    doc_rope: OnceLock<Arc<Rope>>,
     doc_line_index: OnceLock<Arc<LineIndex>>,
     doc_gaiji_spans: OnceLock<Arc<BTreeMap<u32, Arc<GaijiSpan>>>>,
 }
@@ -408,6 +409,25 @@ impl DocSnapshot {
                 buf.push_str(&paragraph.text);
             }
             Arc::from(buf)
+        })
+    }
+
+    /// Doc-wide [`Rope`] assembled by structural-share `append` of each
+    /// paragraph's text, materialised on first request and cached for this
+    /// snapshot's lifetime. Used by the `did_open` publish path to map
+    /// diagnostic spans with `O(log n)` rope line lookups (via
+    /// [`crate::doc_line_view::DocLineView::Rope`]) instead of an `O(doc)`
+    /// [`LineIndex`] rebuild. Line metrics count only `\n` because the
+    /// workspace pins ropey with its `unicode_lines` feature off, so this
+    /// is byte-identical to indexing `doc_text()` with [`LineIndex`].
+    #[must_use]
+    pub fn doc_rope(&self) -> &Arc<Rope> {
+        self.doc_rope.get_or_init(|| {
+            let mut rope = Rope::new();
+            for paragraph in self.paragraphs.iter() {
+                rope.append(Rope::from(&*paragraph.text));
+            }
+            Arc::new(rope)
         })
     }
 
@@ -510,6 +530,7 @@ fn build_snapshot(buffer: &DocBuffer, version: u64, prior: &DocSnapshot) -> Arc<
         total_bytes: acc,
         version,
         doc_text: OnceLock::new(),
+        doc_rope: OnceLock::new(),
         doc_line_index: OnceLock::new(),
         doc_gaiji_spans: OnceLock::new(),
     })
@@ -526,6 +547,7 @@ fn empty_snapshot() -> Arc<DocSnapshot> {
         total_bytes: 0,
         version: 0,
         doc_text: OnceLock::new(),
+        doc_rope: OnceLock::new(),
         doc_line_index: OnceLock::new(),
         doc_gaiji_spans: OnceLock::new(),
     })
@@ -685,13 +707,21 @@ impl OpenDocument {
     }
 
     /// Re-parse the live buffer through the segment cache and return the
-    /// parsed text, its diagnostics, and the `edit_version` that text
-    /// reflects.
+    /// parsed text as a doc-level [`Rope`], its diagnostics, and the
+    /// `edit_version` that text reflects.
     ///
     /// The accumulated edits are forwarded to
     /// `ParseCache::reparse_incremental`, which takes the owned incremental
     /// splice on a single LF-clean edit and full-parses otherwise (#237 Stage
     /// B'3). The result is always identical to a from-scratch parse.
+    ///
+    /// The returned [`Rope`] is assembled by structural-share `append` of the
+    /// cloned paragraph ropes (no byte copy), so the publish path can map
+    /// diagnostic spans with `O(log n)` rope line lookups
+    /// ([`crate::doc_line_view::DocLineView::Rope`]) instead of rebuilding an
+    /// `O(doc)` [`LineIndex`] per keystroke (#237 Tier-2, Mechanism A). The
+    /// engine is still fed a `&str` here — that temporary `to_string()` is
+    /// removed in a later PR.
     ///
     /// Locking is the load-bearing part: the `parse` lock is held across
     /// the whole call, so reparses are single-flight and serialise in
@@ -699,7 +729,7 @@ impl OpenDocument {
     /// lock is taken only to clone the paragraph ropes (`O(1)` each via
     /// ropey structural sharing) and drain `pending_edits`, so the edit
     /// path is never blocked by the parse itself.
-    pub fn reparse_pending(&self) -> (String, Vec<aozora::Diagnostic>, u64) {
+    pub fn reparse_pending(&self) -> (Rope, Vec<aozora::Diagnostic>, u64) {
         // Acquire `parse` first and hold it across the drain + parse: this
         // serialises reparses (single-flight, in schedule order) so the
         // incremental fast path always sees a consistent prior segmentation
@@ -720,18 +750,20 @@ impl OpenDocument {
             let parsed_version = self.edit_version.load(Ordering::SeqCst);
             (ropes, edits, parsed_version)
         };
-        // Materialise the text and parse off the buffer lock.
-        let total: usize = ropes.iter().map(Rope::len_bytes).sum();
-        let mut text = String::with_capacity(total);
-        for rope in &ropes {
-            for chunk in rope.chunks() {
-                text.push_str(chunk);
-            }
+        // Assemble a doc-level rope by structural-share `append` (O(#paragraphs
+        // · log n), no byte copy). Returned to the publish path so it can build
+        // a `DocLineView::Rope` with no LineIndex rebuild.
+        let mut raw = Rope::new();
+        for rope in ropes {
+            raw.append(rope);
         }
+        // Materialise the text ONLY to feed the engine `&str`. This temporary
+        // O(doc) copy is removed in a later PR (the engine will read the rope).
+        let text = raw.to_string();
         let (diagnostics, stats) = cache.reparse_incremental(&text, &edits);
         drop(cache);
         self.record_parse_stats(stats);
-        (text, diagnostics, parsed_version)
+        (raw, diagnostics, parsed_version)
     }
 
     /// Feed a reparse's statistics into the per-document metrics and warn
@@ -830,7 +862,8 @@ mod tests {
             .apply_changes(&[ByteEdit::new(at..at, "ん".to_owned())])
             .expect("valid edit");
 
-        let (text, diags, _ver) = state.reparse_pending();
+        let (raw, diags, _ver) = state.reparse_pending();
+        let text = raw.to_string();
 
         let snap = state.metrics.snapshot();
         assert!(
@@ -863,7 +896,8 @@ mod tests {
             .apply_changes(&[ByteEdit::new(b..b, "Ｙ".to_owned())])
             .expect("valid edit 2");
 
-        let (text, diags, _ver) = state.reparse_pending();
+        let (raw, diags, _ver) = state.reparse_pending();
+        let text = raw.to_string();
 
         // Neither the initial parse nor the multi-edit reparse reused a
         // segment, so the cumulative hit total stays zero.
@@ -888,7 +922,8 @@ mod tests {
         // byte-equality guard also backstops correctness).
         state.replace_text("まったく新しい本文。".to_owned());
 
-        let (text, diags, _ver) = state.reparse_pending();
+        let (raw, diags, _ver) = state.reparse_pending();
+        let text = raw.to_string();
         assert_eq!(text, "まったく新しい本文。");
         let mut fresh = ParseCache::default();
         let (want, _) = fresh.reparse(&text);

@@ -25,12 +25,13 @@
 //!    reconstructs the source byte-for-byte.
 
 use aozora_lsp::internals::{
-    ByteEdit, LineIndex, OpenDocument, apply_edits, byte_offset_to_position,
+    ByteEdit, DocLineView, LineIndex, OpenDocument, apply_edits, byte_offset_to_position,
     position_to_byte_offset,
 };
 use proptest::collection::vec as proptest_vec;
 use proptest::prelude::*;
 use proptest::sample::select;
+use ropey::Rope;
 
 /// Generate a string biased toward content the LSP actually sees:
 /// kanji/hiragana, latin, newlines, and aozora notation triggers.
@@ -61,6 +62,16 @@ fn realistic_text_strategy() -> impl Strategy<Value = String> {
         "X\nY",
         "\u{E001}", // PUA sentinel collision
         "\u{feff}", // BOM
+        // Non-LF separators that ropey's DEFAULT features would treat as
+        // line breaks. With the workspace ropey pinned to LF-only, the
+        // rope line metrics must ignore these — the
+        // `doc_line_view_rope_matches_line_index` property is the
+        // load-bearing pin for that.
+        "\u{0B}",   // VT
+        "\u{0C}",   // FF
+        "\u{85}",   // NEL
+        "\u{2028}", // LS
+        "\u{2029}", // PS
     ];
     let frag_count = 0usize..16usize;
     proptest_vec(select(fragments), frag_count).prop_map(|frags| frags.concat())
@@ -138,6 +149,27 @@ proptest! {
         let out = apply_edits(&text, &[edit]).expect("valid edit");
         let expected = format!("{}{}{}", &text[..start], replacement, &text[end..]);
         prop_assert_eq!(out, expected);
+    }
+
+    /// **Mechanism A byte-identity pin (#237 Tier-2).** The rope-backed
+    /// [`DocLineView::Rope`] used on the publish hot path must produce the
+    /// **exact** same `Position` as a `LineIndex` over the same source, for
+    /// every char-boundary byte offset. This is what guarantees the
+    /// published diagnostics are byte-identical after swapping the O(doc)
+    /// per-keystroke line-table rebuild for O(log n) rope lookups — and it
+    /// fails loudly if ropey's non-LF line-break features are ever restored
+    /// (the strategy injects CRLF, BOM, VT/FF/NEL/LS/PS, and multibyte text).
+    #[test]
+    fn doc_line_view_rope_matches_line_index(text in realistic_text_strategy()) {
+        let rope = Rope::from(text.as_str());
+        let view = DocLineView::Rope(&rope);
+        let idx = LineIndex::new(&text);
+        for byte in 0..=text.len() {
+            if !text.is_char_boundary(byte) {
+                continue;
+            }
+            prop_assert_eq!(view.position(byte), idx.position(&text, byte), "byte {}", byte);
+        }
     }
 
     /// `paragraph_byte_ranges` (exercised end-to-end through

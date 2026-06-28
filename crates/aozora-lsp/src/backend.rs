@@ -24,6 +24,7 @@ use crate::code_actions::{quick_fix_actions, wrap_selection_actions};
 use crate::commands::{COMMAND_CANONICALIZE_SLUG, canonicalize_slug_edit};
 use crate::completion::completion_at;
 use crate::diagnostics::diagnostics_from_aozora;
+use crate::doc_line_view::DocLineView;
 use crate::formatting::format_edits;
 use crate::half_width_emmet::emmet_completions;
 use crate::hover::hover_at;
@@ -135,14 +136,20 @@ impl AozoraLanguageServer {
     async fn publish(&self, uri: Url) {
         let diags = self.lookup(&uri).map_or_else(Vec::new, |state| {
             let snap = state.snapshot();
-            let text = snap.doc_text();
+            let rope = snap.doc_rope();
             // Oversized documents skip semantic analysis; surface a
             // single informational notice in place of (empty)
             // diagnostics so the absence of squiggles is explained.
-            if text.len() > MAX_DOCUMENT_BYTES {
-                return vec![oversize_notice(text.len())];
+            // (`len_bytes()` off the rope avoids materialising `doc_text()`
+            // solely for the size check.)
+            if rope.len_bytes() > MAX_DOCUMENT_BYTES {
+                return vec![oversize_notice(rope.len_bytes())];
             }
-            state.with_parse_cache(|cache| diagnostics_from_aozora(text, cache.diagnostics()))
+            // Map diagnostic spans against the doc-level rope (O(log n) line
+            // lookups, byte-identical to a LineIndex over the raw text since
+            // ropey counts only `\n`) — no per-publish line-table rebuild.
+            let view = DocLineView::Rope(rope);
+            state.with_parse_cache(|cache| diagnostics_from_aozora(&view, cache.diagnostics()))
         });
         self.client.publish_diagnostics(uri, diags, None).await;
     }
@@ -191,7 +198,7 @@ impl AozoraLanguageServer {
         // position mapping is consistent) plus the edit-version that text
         // reflects.
         let parse_state = Arc::clone(&state);
-        let Ok((text, diagnostics, parsed_version)) =
+        let Ok((raw, diagnostics, parsed_version)) =
             spawn_blocking(move || parse_state.reparse_pending()).await
         else {
             return;
@@ -208,10 +215,12 @@ impl AozoraLanguageServer {
         // `reparse_pending` (empty diagnostics); surface the notice based
         // on the text that was actually parsed, not a possibly-stale
         // snapshot length.
-        let publish_diags = if text.len() > MAX_DOCUMENT_BYTES {
-            vec![oversize_notice(text.len())]
+        let publish_diags = if raw.len_bytes() > MAX_DOCUMENT_BYTES {
+            vec![oversize_notice(raw.len_bytes())]
         } else {
-            diagnostics_from_aozora(&text, &diagnostics)
+            // Map spans against the parsed rope directly — the per-keystroke
+            // hot path no longer rebuilds an O(doc) line table (Mechanism A).
+            diagnostics_from_aozora(&DocLineView::Rope(&raw), &diagnostics)
         };
         self.client
             .publish_diagnostics(uri, publish_diags, None)
