@@ -39,8 +39,8 @@
 //! `publishDiagnostics`) reads only [`ParseCache::diagnostics`]; the full
 //! [`Tree`] (via [`ParseCache::with_tree`]) is needed only by the rare F2
 //! rename gesture. So the cache keeps a **store-free** `DiagBase` (sanitized
-//! text + diagnostics + the `source_nodes`/`pairs` the next edit's region-find
-//! needs) that the hot path splices in `O(region + #diagnostics)`, and
+//! text + diagnostics + the maintained [`PieceSeq`] the next edit's region-find
+//! needs) that the hot path splices in `O(region + #pieces)`, and
 //! materialises the full `O(doc)` [`OwnedLexOutput`] **lazily** — only when
 //! [`ParseCache::with_tree`] is actually called — memoised in a [`OnceLock`]
 //! (seeded eagerly by a full parse so a structural request right after one is
@@ -51,10 +51,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use aozora::pipeline::lexer::sanitize::{is_rule_line_trimmed, sanitize};
-use aozora::{
-    DiagBaseRef, DiagSplice, Diagnostic, Document, OwnedLexOutput, PairLink, RegionIndex,
-    SourceNodeOwned, Tree,
-};
+use aozora::{DiagBaseRef, DiagSplice, Diagnostic, Document, OwnedLexOutput, PieceSeq, Tree};
 use ropey::{Rope, RopeSlice};
 use tracing::field::Empty as TracingEmpty;
 
@@ -135,7 +132,7 @@ struct DocFlags {
 /// parse and produces for the next one, plus the raw↔sanitized line-map
 /// side-tables. Kept across edits so the per-keystroke path never has to
 /// materialise the full [`OwnedLexOutput`] or re-run `O(doc)` `sanitize`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct DiagBase {
     /// Sanitized buffer of the most recent parse (a sanitize fixed point) — the
     /// coordinate space the splice and the next region-find operate in. A
@@ -143,18 +140,16 @@ struct DiagBase {
     /// `remove`/`insert`) rather than rebuilding a flat `String`.
     sanitized: Rope,
     /// Diagnostics, position-sorted at store time so [`ParseCache::diagnostics`]
-    /// reads are O(1) and byte-identical to a full parse.
+    /// reads are O(1) and byte-identical to a full parse. Flattened from
+    /// `pieces` after each splice (the maintained sequence is the source of
+    /// truth) and re-sorted into positional order for the editor surface.
     diagnostics: Vec<Diagnostic>,
-    /// Source-node side-table the next edit's region-find consumes (it reads
-    /// only `source_span` + the node discriminant, never the store).
-    source_nodes: Vec<SourceNodeOwned>,
-    /// Resolved delimiter pairs the next edit's region-find consumes
-    /// (store-free offsets).
-    pairs: Vec<PairLink>,
-    /// Region-find acceleration over the three tables above (#237 Tier 2), built
-    /// in the same `O(N)` pass that assembles them so the next edit's prologue
-    /// runs `O(region + log n)` instead of re-scanning the whole buffer/tables.
-    index: RegionIndex,
+    /// The maintained region-find representation (#237 Tier 2): the parse's
+    /// `source_nodes` / `pairs` / `diagnostics` as a structure-sharing
+    /// [`PieceSeq`]. The next edit's region-find reads it directly and the hot
+    /// path splices it `O(region + #pieces)`, replacing the per-edit whole-table
+    /// re-materialization + `RegionIndex` rebuild.
+    pieces: PieceSeq,
     /// Byte length of the leading `U+FEFF` BOM run that `sanitize` stripped.
     /// The raw→sanitized map subtracts it for an edit on raw line 0.
     bom: u32,
@@ -261,19 +256,21 @@ impl ParseCache {
             None
         };
 
-        let Some((new_sanitized, mut splice)) = splice else {
+        let Some((new_sanitized, splice)) = splice else {
             // Any precondition miss or a splice decline (`None`) → full parse of
             // the post-edit raw, which re-seeds the lazy tree, recomputes the
             // line-map side-tables, and resets `splices_since_full`.
             return self.reparse_full(raw);
         };
 
-        // The splice concatenates prefix/region/suffix slices, so its diagnostics
-        // are not globally position-sorted; the LSP surface needs them sorted,
-        // exactly as `reparse_full` does at store time.
-        splice.diagnostics.sort_by(diagnostic_order);
-        let diagnostics = splice.diagnostics.clone();
-        let index = RegionIndex::build(&splice.source_nodes, &splice.pairs, &splice.diagnostics);
+        // Flatten this edit's diagnostics from the maintained `PieceSeq` (`O(D)`,
+        // not the `O(N)` node table) and re-sort into the LSP's full positional
+        // order — exactly as `reparse_full` does at store time, so the stored
+        // slice is byte-identical to a full parse's.
+        let mut diagnostics = splice.pieces.collect_diagnostics();
+        diagnostics.sort_by(diagnostic_order);
+        let cache_hits = splice.reused_nodes;
+        let cache_misses = splice.relexed_nodes;
         let latency_us = duration_as_us(started_at.elapsed());
 
         // Commit. `bom` / `isolation_lines` / `flags` are invariant across a
@@ -287,12 +284,11 @@ impl ParseCache {
         };
         let new_len = raw.len_bytes();
         self.raw = raw.clone();
+        let returned = diagnostics.clone();
         self.base = Some(DiagBase {
             sanitized: new_sanitized,
-            diagnostics: splice.diagnostics,
-            source_nodes: splice.source_nodes,
-            pairs: splice.pairs,
-            index,
+            diagnostics,
+            pieces: splice.pieces,
             bom: prior.bom,
             isolation_lines: prior.isolation_lines,
             flags: prior.flags,
@@ -304,13 +300,13 @@ impl ParseCache {
 
         let stats = ReparseStats {
             parse_count: 1,
-            cache_hits: splice.reused_nodes,
-            cache_misses: splice.relexed_nodes,
+            cache_hits,
+            cache_misses,
             cache_entries_after: 1,
             cache_bytes_estimate: u64::try_from(new_len).unwrap_or(u64::MAX),
             latency_us,
         };
-        (diagnostics, stats)
+        (returned, stats)
     }
 
     /// Attempt the incremental splice for the single edit `edit` producing the
@@ -377,13 +373,16 @@ impl ParseCache {
         let bom = leading_bom_bytes(&text);
         let isolation_lines = isolation_line_indices(text.get(bom as usize..).unwrap_or(&text));
         let flags = scan_doc_flags(&text);
-        let index = RegionIndex::build(&out.source_nodes, &out.pairs, &out.diagnostics);
+        let pieces = PieceSeq::from_contiguous(
+            &out.source_nodes,
+            &out.pairs,
+            &out.diagnostics,
+            out.sanitized_len,
+        );
         self.base = Some(DiagBase {
             sanitized: Rope::from(out.sanitized.as_str()),
             diagnostics: out.diagnostics.clone(),
-            source_nodes: out.source_nodes.clone(),
-            pairs: out.pairs.clone(),
-            index,
+            pieces,
             bom,
             isolation_lines,
             flags,
@@ -526,10 +525,7 @@ fn incremental_splice(
     let splice = {
         let base_ref = DiagBaseRef {
             sanitized: RopeSrc::new(prior.sanitized.byte_slice(..)),
-            source_nodes: &prior.source_nodes,
-            pairs: &prior.pairs,
-            diagnostics: &prior.diagnostics,
-            index: &prior.index,
+            pieces: &prior.pieces,
         };
         let new_src = RopeSrc::new(new_san.byte_slice(..));
         aozora::reparse_incremental_diagnostics_only_in(&base_ref, &new_src, a_san..b_san_old)?

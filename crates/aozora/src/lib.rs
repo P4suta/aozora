@@ -127,12 +127,14 @@ pub fn reparse_incremental_owned(
 /// **UNSTABLE — not subject to semver until v0.5.0.**
 ///
 /// Diagnostics-only incremental re-parse — the LSP's per-keystroke hot path
-/// (#237 Tier 1). Computes the spliced diagnostics (and the store-free
-/// `source_nodes`/`pairs` the next edit's region-find needs) from the
-/// store-free [`DiagBaseRef`] of the prior parse, **without building an
+/// (#237 Tier 1/2). Splices the maintained [`PieceSeq`] (the next edit's
+/// region-find base, from which the LSP flattens this edit's diagnostics) from
+/// the store-free [`DiagBaseRef`] of the prior parse, **without building an
 /// [`OwnedLexOutput`]** — no normalized/sanitized string rebuild, no store
-/// clone/graft, no registry or container-pairs rebuild. Cost is
-/// `O(region + #diagnostics)` versus the owned splice's `O(doc)`.
+/// clone/graft, no registry or container-pairs rebuild, and no whole-table
+/// re-materialization or `RegionIndex` rebuild. Cost is `O(region + #pieces)`:
+/// the maintained sequence is spliced (prefix/suffix pieces shared by `Arc`),
+/// not rebuilt, versus the owned splice's `O(doc)`.
 ///
 /// Returns [`DiagSplice`], or `None` for any edit whose locality it cannot prove
 /// from the cached tables (the caller then full-parses, trivially correct); that
@@ -149,7 +151,7 @@ pub fn reparse_incremental_owned(
 #[must_use]
 #[allow(
     clippy::needless_pass_by_value,
-    reason = "the lightweight DiagBaseRef (a bag of borrows) is taken by value so the in-workspace LSP caller passes its temporary `as_diag_ref()` unchanged; it is forwarded by reference to the generic engine"
+    reason = "the lightweight DiagBaseRef (a sanitized source plus one PieceSeq borrow) is taken by value so the in-workspace LSP caller passes its temporary `DiagBaseRef { .. }` literal unchanged; it is forwarded by reference to the generic engine"
 )]
 pub fn reparse_incremental_diagnostics_only(
     base: DiagBaseRef<'_>,

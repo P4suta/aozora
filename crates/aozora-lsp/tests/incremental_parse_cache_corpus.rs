@@ -46,11 +46,10 @@ fn crlf_variant(lf: &str) -> Option<String> {
     (san.diagnostics.is_empty() && &*san.text == lf).then_some(s)
 }
 
-/// A char-boundary byte offset near the document midpoint that is not adjacent
-/// to a line break — a realistic interior keystroke position.
-fn mid_line_boundary(s: &str) -> Option<usize> {
-    let start = s.len() / 2;
-    for i in start..s.len() {
+/// A char-boundary byte offset at or after `from` (snapped up) that is not
+/// adjacent to a line break — a realistic interior keystroke position.
+fn interior_boundary_from(s: &str, from: usize) -> Option<usize> {
+    for i in from.min(s.len())..s.len() {
         if !s.is_char_boundary(i) {
             continue;
         }
@@ -62,6 +61,12 @@ fn mid_line_boundary(s: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// A char-boundary byte offset near the document midpoint that is not adjacent
+/// to a line break — a realistic interior keystroke position.
+fn mid_line_boundary(s: &str) -> Option<usize> {
+    interior_boundary_from(s, s.len() / 2)
 }
 
 /// A byte offset *inside* the first `［＃…］` directive that closes on its own
@@ -199,5 +204,103 @@ fn parse_cache_incremental_equals_full_on_crlf_corpus() {
     assert!(
         bouten_edits > 0,
         "no forward-bouten duplicate-target edit was exercised ({count} docs checked)",
+    );
+}
+
+/// #237 Tier 2 (PR-2'): a **run of consecutive** incremental edits on one
+/// `ParseCache` must keep `diagnostics()` byte-identical to a fresh full parse
+/// after *every* edit — the load-bearing pin that the cache maintains the
+/// multi-piece `PieceSeq` across edits, not just for a single splice. Each edit
+/// lands in a distinct region (ascending fractions of the growing document), so
+/// successful splices accumulate live pieces rather than collapsing to one.
+///
+/// `>=2 consecutive splices with node reuse` (`cache_hits > 0`, which a
+/// leading-ruby document guarantees on every edit past it) proves at least one
+/// document fed an already-multi-piece sequence back into a splice and stayed
+/// byte-identical — the property a single-edit gate cannot reach.
+#[test]
+fn parse_cache_multi_edit_run_equals_full() {
+    let Some(corpus) = aozora_corpus::from_env() else {
+        return; // AOZORA_CORPUS_ROOT unset → vacuous pass.
+    };
+
+    let mut count: u64 = 0;
+    let mut multi_piece_docs: u64 = 0;
+
+    for item in corpus.iter().filter_map(Result::ok) {
+        let Ok(text) = decode_auto(&item.bytes) else {
+            continue;
+        };
+        if text.is_empty() {
+            continue;
+        }
+        let san = aozora::Document::new(text.as_ref()).parse_owned().sanitized;
+        if san.is_empty() {
+            continue;
+        }
+        if aozora::Document::new(san.as_str()).parse_owned().sanitized != san {
+            continue;
+        }
+        let Some(crlf) = crlf_variant(&san) else {
+            continue;
+        };
+
+        let mut cache = ParseCache::default();
+        drop(cache.reparse(&crlf));
+
+        // Apply several plain interior keystrokes in distinct regions, recomputed
+        // against the growing text each step. After each, both the returned and
+        // the stored `diagnostics()` must equal a fresh full parse of the new
+        // text; `max_run` tracks the longest streak of reuse-bearing splices.
+        let mut current = crlf.clone();
+        let mut run = 0u32;
+        let mut max_run = 0u32;
+        for &(num, den) in &[(1usize, 5usize), (2, 5), (3, 5), (4, 5)] {
+            let from = current.len() * num / den;
+            let Some(at) = interior_boundary_from(&current, from) else {
+                continue;
+            };
+            let mut new_raw = String::with_capacity(current.len() + 1);
+            new_raw.push_str(&current[..at]);
+            new_raw.push('x');
+            new_raw.push_str(&current[at..]);
+            let edit = ByteEdit::new(at..at, "x".to_owned());
+
+            let (diags, stats) = cache.reparse_incremental(&Rope::from(new_raw.as_str()), &[edit]);
+
+            let mut fresh = ParseCache::default();
+            let (want, _) = fresh.reparse(&new_raw);
+            assert_eq!(
+                diag_debug(&diags),
+                diag_debug(&want),
+                "returned diagnostics diverged mid-run for {} (edit at {at})",
+                item.label,
+            );
+            assert_eq!(
+                diag_debug(cache.diagnostics()),
+                diag_debug(&want),
+                "stored diagnostics() diverged mid-run for {} (edit at {at})",
+                item.label,
+            );
+
+            if stats.cache_hits > 0 {
+                run += 1;
+                max_run = max_run.max(run);
+            } else {
+                run = 0;
+            }
+            current = new_raw;
+        }
+        if max_run >= 2 {
+            multi_piece_docs += 1;
+        }
+        count += 1;
+    }
+
+    assert!(count > 0, "corpus yielded no usable documents");
+    assert!(
+        multi_piece_docs > 0,
+        "no document sustained >=2 consecutive incremental splices — the cache's \
+         maintained multi-piece PieceSeq was never exercised ({count} docs checked)",
     );
 }
