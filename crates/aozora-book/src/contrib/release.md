@@ -254,11 +254,12 @@ exercise — all of it manual, in this order. The two ruleset commands live in
 
 1. **Create the GitHub App** (org or personal): repository permissions
    **Contents: R/W** + **Pull requests: R/W**, no webhook. Install it on
-   `P4suta/aozora`, generate a private key, and record the **App ID**.
-2. **Set repository secrets** `RELEASE_PLZ_APP_ID` and
-   `RELEASE_PLZ_APP_PRIVATE_KEY`. `release-plz.yml` reads them via its `HAS_APP`
-   gate; once both exist, trigger the first run with
-   `gh workflow run release-plz.yml` (or wait for the next push to `main`).
+   `P4suta/aozora`, generate a private key, and record both the **Client ID**
+   (for the token) and the numeric **App ID** (for the ruleset bypass actor).
+2. **Set the `release-plz` environment secrets** `RELEASE_PLZ_APP_CLIENT_ID` and
+   `RELEASE_PLZ_APP_PRIVATE_KEY` (create the environment first — step 3).
+   `release-plz.yml` reads them via its `HAS_APP` gate; once both exist, trigger
+   the first run with `gh workflow run release-plz.yml` (or the next push to `main`).
 3. **Create the `release-plz` environment** — deployment-branch policy `main`
    only, **no required reviewers**, no wait timer (the publish must run
    unattended; the Release-PR merge is the human gate).
