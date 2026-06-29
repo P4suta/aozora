@@ -75,16 +75,16 @@ use crate::text_edit::ByteEdit;
 /// `None`), with the user-facing notice published by the backend.
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
-/// Force a fresh full parse after this many consecutive incremental splices.
+/// Compact the maintained [`PieceSeq`] after this many consecutive incremental
+/// splices.
 ///
-/// The diagnostics-only hot path never clones a node store, so the dead-entry
-/// growth the owned splice had is gone; but a long run of incremental splices
-/// leaves [`ParseCache`] with no materialised tree, so the first structural
-/// request (rename) after many keystrokes would pay one full `O(doc)` parse.
-/// Forcing a full parse every `MAX_SPLICES_BEFORE_FULL` splices re-seeds the
-/// lazy tree and re-grounds the sanitized rope, the `bom`/`isolation_lines`
-/// side-tables, and the splice base on a fresh `sanitize` (#249, the
-/// periodic-compaction bound).
+/// Each accepted splice adds at most two pieces, whose spliced-away middles stay
+/// alive inside their shared `Arc` backing until the sequence is compacted. So
+/// every `MAX_SPLICES_BEFORE_FULL` splices the base is collapsed back into one
+/// piece by [`PieceSeq::compact`] — `O(N)`, **not** a full re-parse (the
+/// maintained base is already byte-identical to a fresh parse, so there is
+/// nothing to re-derive from source) — freeing the dead backing ranges and
+/// bounding piece count + per-query cost (#249, the periodic-compaction bound).
 pub(crate) const MAX_SPLICES_BEFORE_FULL: u32 = 64;
 
 /// Per-call statistics emitted by [`ParseCache::reparse`] /
@@ -198,9 +198,10 @@ pub struct ParseCache {
     /// [`OnceLock`] on every incremental splice (so the next structural request
     /// full-parses the current text once and memoises it).
     tree: OnceLock<OwnedLexOutput>,
-    /// Consecutive incremental splices since the last full parse. Once this
-    /// reaches [`MAX_SPLICES_BEFORE_FULL`] the next reparse forces a full parse
-    /// (re-seeding the lazy tree) and resets it to `0` (#249).
+    /// Consecutive incremental splices since the last full parse or compaction.
+    /// Once this reaches [`MAX_SPLICES_BEFORE_FULL`] the splice's resulting base
+    /// is compacted in place ([`PieceSeq::compact`], no re-parse) and it resets
+    /// to `0`; a full parse (on any decline) also resets it (#249).
     splices_since_full: u32,
 }
 
@@ -298,6 +299,22 @@ impl ParseCache {
         self.tree = OnceLock::new();
         self.splices_since_full += 1;
 
+        // Periodic compaction (#249): every `MAX_SPLICES_BEFORE_FULL` splices,
+        // collapse the accumulated pieces back into one backing so the dead
+        // middle ranges of spliced-away pieces are freed and piece count / query
+        // cost stay bounded. Unlike the prior design this is **not** a forced
+        // full re-parse — `PieceSeq::compact` is `O(N)` (flatten + one index
+        // build, no lex/sanitize) and query-equivalent by construction, so the
+        // incremental base never re-derives itself from source. `bom` /
+        // `isolation_lines` / `flags` describe the raw text and are unaffected;
+        // the lazy tree is already invalidated above.
+        if self.splices_since_full >= MAX_SPLICES_BEFORE_FULL {
+            if let Some(base) = self.base.as_mut() {
+                base.pieces = base.pieces.compact();
+            }
+            self.splices_since_full = 0;
+        }
+
         let stats = ReparseStats {
             parse_count: 1,
             cache_hits,
@@ -314,9 +331,6 @@ impl ParseCache {
     /// `None` (→ the caller full-parses) for any precondition miss.
     fn try_incremental(&self, new_raw: &Rope, edit: &ByteEdit) -> Option<(Rope, DiagSplice)> {
         let prior = self.base.as_ref()?;
-        if self.splices_since_full >= MAX_SPLICES_BEFORE_FULL {
-            return None;
-        }
         incremental_splice(prior, &self.raw, new_raw, edit)
     }
 
@@ -892,44 +906,52 @@ mod tests {
     }
 
     #[test]
-    fn splice_run_forces_full_parse_at_capacity_bound() {
-        // After MAX_SPLICES_BEFORE_FULL consecutive single LF-clean edits, the
-        // next reparse must full-parse (dead-entry bound) and reset the counter.
+    fn splice_run_compacts_at_capacity_bound_without_full_parse() {
+        // A long run of splices past MAX_SPLICES_BEFORE_FULL must keep
+        // fast-pathing (no forced full parse) — the PieceSeq is compacted in
+        // place at the bound (#249). Every step stays byte-identical to a fresh
+        // full parse, the counter resets at the bound, and piece count stays
+        // bounded (compaction frees the accumulated pieces).
         let mut cache = ParseCache::default();
         let mut text = "｜青空《あおぞら》のした\n\nかきくけこ\n\nさしすせそ\n".to_owned();
         drop(cache.reparse(&text));
 
-        // Drive exactly MAX_SPLICES_BEFORE_FULL splices, each a one-char insert
-        // inside the middle paragraph.
-        for _ in 0..MAX_SPLICES_BEFORE_FULL {
+        // Drive well past the bound (2.5×), each a one-char insert in the middle
+        // paragraph, so at least two compactions occur mid-run.
+        let steps = MAX_SPLICES_BEFORE_FULL * 5 / 2;
+        let mut max_pieces = 0usize;
+        for _ in 0..steps {
             let at = text.find("けこ").unwrap();
             let edit = ByteEdit::new(at..at, "も".to_owned());
             let mut new_text = String::with_capacity(text.len() + "も".len());
             new_text.push_str(&text[..at]);
             new_text.push('も');
             new_text.push_str(&text[at..]);
-            let (_, stats) = reparse_incremental_str(&mut cache, &new_text, edit);
-            assert!(stats.cache_hits > 0, "each splice reuses the prefix ruby");
+            let (diags, stats) = reparse_incremental_str(&mut cache, &new_text, edit);
+            assert!(
+                stats.cache_hits > 0,
+                "every splice past the bound still fast-paths (compaction, not a full parse): {stats:?}",
+            );
+            // Byte-identical to a fresh full parse at every step.
+            let mut fresh = ParseCache::default();
+            let (want, _) = fresh.reparse(&new_text);
+            assert_eq!(diag_debug(&diags), diag_debug(&want));
+            max_pieces = max_pieces.max(cache.base.as_ref().expect("base").pieces.piece_count());
             text = new_text;
         }
-        assert_eq!(cache.splices_since_full, MAX_SPLICES_BEFORE_FULL);
-
-        // The next single edit is over the bound → forced full parse, counter
-        // resets to zero.
-        let at = text.find("けこ").unwrap();
-        let edit = ByteEdit::new(at..at, "も".to_owned());
-        let mut new_text = String::with_capacity(text.len() + "も".len());
-        new_text.push_str(&text[..at]);
-        new_text.push('も');
-        new_text.push_str(&text[at..]);
-        let (_, stats) = reparse_incremental_str(&mut cache, &new_text, edit);
-        assert_eq!(
-            stats.cache_hits, 0,
-            "the capacity-bound reparse must be a full parse: {stats:?}",
+        // The counter never exceeds the bound: a compaction resets it to zero
+        // each time it reaches MAX_SPLICES_BEFORE_FULL, so over a long run it
+        // stays strictly below the bound (proving compactions fired).
+        assert!(
+            cache.splices_since_full < MAX_SPLICES_BEFORE_FULL,
+            "compaction at the bound keeps the counter below it, got {}",
+            cache.splices_since_full,
         );
-        assert_eq!(
-            cache.splices_since_full, 0,
-            "a full parse resets the dead-entry counter",
+        // Compaction keeps the piece count bounded by ~2× the bound (each splice
+        // adds at most two pieces between compactions), never growing unbounded.
+        assert!(
+            max_pieces <= (MAX_SPLICES_BEFORE_FULL as usize) * 2 + 1,
+            "piece count must stay bounded by compaction, peaked at {max_pieces}",
         );
     }
 

@@ -918,6 +918,31 @@ impl PieceSeq {
         u64::from(self.cum.last().map_or(0, |agg| agg.cum_count))
     }
 
+    /// Collapse the accumulated pieces back into a single backing triple,
+    /// freeing the dead middle ranges that spliced-away pieces still retain in
+    /// their shared `Arc` backing, and bounding piece count + per-query cost.
+    ///
+    /// `O(N)`: flatten the live tables and build one fresh `PieceIndex` — **no
+    /// re-lex, no sanitize**. The result is query-equivalent to `self` by
+    /// construction: [`flatten`](Self::flatten) reproduces the live tables and
+    /// [`from_contiguous`](Self::from_contiguous) over them answers every query
+    /// identically (the same `PieceSeq ≡ contiguous` proptest that pins the
+    /// single-piece base case). This is the structure-only replacement for the
+    /// LSP cache's periodic forced full re-parse (#249): the incremental base
+    /// never re-derives itself from source, it compacts.
+    #[must_use]
+    pub fn compact(&self) -> Self {
+        let (nodes, pairs, diags) = self.flatten();
+        Self::from_contiguous(&nodes, &pairs, &diags, self.total_san_len())
+    }
+
+    /// Number of live pieces. A fresh parse or a [`compact`](Self::compact) is
+    /// one piece; each accepted splice adds at most two before the next compact.
+    #[must_use]
+    pub fn piece_count(&self) -> usize {
+        self.pieces.len()
+    }
+
     /// Index of the piece to answer a query at current-coordinate offset `off`
     /// (`O(log #pieces)`): the piece **ending** at `off` when `off` is a piece
     /// boundary (so its backing holds every node with `start < off`), else the
@@ -3302,5 +3327,56 @@ mod oracle_proptests {
             "edits flanking a block container build a multi-piece sequence, got {} piece(s)",
             state.seq.pieces.len(),
         );
+    }
+
+    #[test]
+    fn pieceseq_compact_collapses_to_one_piece_query_equivalent() {
+        // Build a multi-piece sequence (edits flanking a block container, so a
+        // piece carries nonzero interior depth), then `compact` it: the result
+        // is a single piece whose every query is byte-identical to the
+        // pre-compact sequence and to a full re-parse of the same text.
+        let cached = owned(
+            "まえがきの段落\n\n\
+             ［＃ここから２字下げ］\n本文のなかみ\n［＃ここで字下げ終わり］\n\n\
+             あとがきの段落\n\nむすびのことば\n",
+        );
+        let san_len = u32::try_from(cached.sanitized.len()).expect("len fits u32");
+        let seq = PieceSeq::from_contiguous(
+            &cached.source_nodes,
+            &cached.pairs,
+            &cached.diagnostics,
+            san_len,
+        );
+        let current = cached.sanitized.clone();
+        let mut state = EditState {
+            seq,
+            current,
+            cached,
+        };
+        let at1 = state.current.find("えがき").expect("first paragraph") + "え".len();
+        assert!(
+            try_safe_edit(&mut state, at1, at1, "も"),
+            "edit must splice"
+        );
+        let at2 = state
+            .current
+            .find("とがき")
+            .expect("after-container paragraph")
+            + "と".len();
+        assert!(
+            try_safe_edit(&mut state, at2, at2, "や"),
+            "edit must splice"
+        );
+        assert!(state.seq.pieces.len() > 1, "multi-piece precondition");
+
+        let compacted = state.seq.compact();
+        assert_eq!(
+            compacted.piece_count(),
+            1,
+            "compact collapses to a single piece",
+        );
+        // Query-equivalent to a full re-parse — and hence to the pre-compact
+        // sequence, which `try_safe_edit` already pinned against the same parse.
+        verify_seq_matches(&compacted, &state.cached);
     }
 }

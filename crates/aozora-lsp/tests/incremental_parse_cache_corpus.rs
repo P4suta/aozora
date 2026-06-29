@@ -304,3 +304,95 @@ fn parse_cache_multi_edit_run_equals_full() {
          maintained multi-piece PieceSeq was never exercised ({count} docs checked)",
     );
 }
+
+/// #237 Tier 2 (PR-5): a long run of splices past `MAX_SPLICES_BEFORE_FULL`
+/// (= 64) triggers the cache's periodic `PieceSeq::compact` (no forced full
+/// parse). On a sample of real corpus documents, drive 80 consecutive interior
+/// keystrokes and assert `diagnostics()` stays byte-identical to a fresh full
+/// parse at every step — so compaction is exercised over genuine markup, not
+/// just the synthetic unit test, and the maintained base survives crossing the
+/// compaction boundary twice.
+#[test]
+fn parse_cache_long_run_crosses_compaction_on_corpus_sample() {
+    // 80 > 64 = `MAX_SPLICES_BEFORE_FULL`, so each sampled document crosses the
+    // compaction boundary at least once. Bound the sample so the O(edits·docs)
+    // full re-parses stay cheap.
+    const RUN_LEN: usize = 80;
+    const SAMPLE_DOCS: u64 = 20;
+
+    let Some(corpus) = aozora_corpus::from_env() else {
+        return; // AOZORA_CORPUS_ROOT unset → vacuous pass.
+    };
+    let mut sampled: u64 = 0;
+    let mut fast_path_docs: u64 = 0;
+
+    for item in corpus.iter().filter_map(Result::ok) {
+        if sampled >= SAMPLE_DOCS {
+            break;
+        }
+        let Ok(text) = decode_auto(&item.bytes) else {
+            continue;
+        };
+        let san = aozora::Document::new(text.as_ref()).parse_owned().sanitized;
+        if san.is_empty() {
+            continue;
+        }
+        if aozora::Document::new(san.as_str()).parse_owned().sanitized != san {
+            continue;
+        }
+        let Some(crlf) = crlf_variant(&san) else {
+            continue;
+        };
+        // Need an interior boundary the run can repeatedly insert before.
+        let Some(_) = interior_boundary_from(&crlf, crlf.len() / 2) else {
+            continue;
+        };
+
+        let mut cache = ParseCache::default();
+        drop(cache.reparse(&crlf));
+        let mut current = crlf.clone();
+        let mut any_fast = false;
+        for _ in 0..RUN_LEN {
+            let Some(at) = interior_boundary_from(&current, current.len() / 2) else {
+                break;
+            };
+            let mut new_raw = String::with_capacity(current.len() + 1);
+            new_raw.push_str(&current[..at]);
+            new_raw.push('x');
+            new_raw.push_str(&current[at..]);
+            let edit = ByteEdit::new(at..at, "x".to_owned());
+            let (diags, stats) = cache.reparse_incremental(&Rope::from(new_raw.as_str()), &[edit]);
+
+            let mut fresh = ParseCache::default();
+            let (want, _) = fresh.reparse(&new_raw);
+            assert_eq!(
+                diag_debug(&diags),
+                diag_debug(&want),
+                "returned diagnostics diverged in long run for {} (edit at {at})",
+                item.label,
+            );
+            assert_eq!(
+                diag_debug(cache.diagnostics()),
+                diag_debug(&want),
+                "stored diagnostics() diverged in long run for {} (edit at {at})",
+                item.label,
+            );
+            any_fast |= stats.cache_hits > 0;
+            current = new_raw;
+        }
+        if any_fast {
+            fast_path_docs += 1;
+        }
+        sampled += 1;
+    }
+
+    assert!(
+        sampled > 0,
+        "corpus yielded no usable documents for the long run"
+    );
+    assert!(
+        fast_path_docs > 0,
+        "no sampled document fast-pathed across the compaction boundary \
+         ({sampled} sampled) — compaction was never exercised on real markup",
+    );
+}
