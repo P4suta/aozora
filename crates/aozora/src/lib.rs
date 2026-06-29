@@ -90,39 +90,7 @@ pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
 /// Source-region ownership and minimal-diff source splicing (#202).
 pub use splice::{CoupledKind, Coupling, OwnedRegion, RegionRole, SpliceError, SpliceSafety};
 
-pub use incremental_owned::{
-    DiagBaseRef, DiagSplice, OwnedSplice, PieceSeq, RegionIndex, SanitizedSrc,
-};
-
-/// **UNSTABLE — not subject to semver until v0.5.0.**
-///
-/// Owned-AST incremental re-parse entry point (#237 Stage B'): the production
-/// incremental path the LSP routes its debounced diagnostics through, and the
-/// surface the `corpus_incremental_merge` differential gate proves byte-for-byte
-/// equivalent to a full re-parse.
-///
-/// This is the #237 incremental API. It is exposed deliberately for the
-/// in-workspace LSP consumer but its shape (the [`OwnedSplice`] result, the
-/// sanitized-coordinate contract) may change without a major version bump until
-/// the v0.5.0 normalization-waist release stabilises it; external callers must
-/// not depend on it.
-///
-/// Builds the [`OwnedSplice`] (the spliced [`OwnedLexOutput`] plus reuse counts)
-/// for `new_sanitized` (a sanitized fixed point) from `cached` and the single
-/// sanitized-coordinate edit `edit_old`, by re-lexing only the minimal balanced
-/// region around the edit and splicing the owned tables. Returns `None` for any
-/// edit whose locality it cannot prove from the cached tables (the caller then
-/// full-parses, trivially correct); that the edit truly changes only bytes
-/// inside `edit_old` is a caller precondition, checked in debug rather than
-/// gated at runtime.
-#[must_use]
-pub fn reparse_incremental_owned(
-    cached: &OwnedLexOutput,
-    new_sanitized: &str,
-    edit_old: Range<usize>,
-) -> Option<OwnedSplice> {
-    incremental_owned::reparse_incremental_owned(cached, new_sanitized, edit_old)
-}
+pub use incremental_owned::{DiagBaseRef, DiagSplice, PieceSeq, SanitizedSrc};
 
 /// **UNSTABLE — not subject to semver until v0.5.0.**
 ///
@@ -132,22 +100,20 @@ pub fn reparse_incremental_owned(
 /// the store-free [`DiagBaseRef`] of the prior parse, **without building an
 /// [`OwnedLexOutput`]** — no normalized/sanitized string rebuild, no store
 /// clone/graft, no registry or container-pairs rebuild, and no whole-table
-/// re-materialization or `RegionIndex` rebuild. Cost is `O(region + #pieces)`:
-/// the maintained sequence is spliced (prefix/suffix pieces shared by `Arc`),
-/// not rebuilt, versus the owned splice's `O(doc)`.
+/// re-materialization. Cost is `O(region + #pieces)`: the maintained sequence is
+/// spliced (prefix/suffix pieces shared by `Arc`), not rebuilt, versus a full
+/// parse's `O(doc)`.
 ///
 /// Returns [`DiagSplice`], or `None` for any edit whose locality it cannot prove
 /// from the cached tables (the caller then full-parses, trivially correct); that
 /// the edit truly changes only bytes inside `edit_old` is a caller precondition,
-/// checked in debug rather than gated at runtime. Its diagnostics are
-/// byte-identical to [`reparse_incremental_owned`]'s — the
-/// `corpus_incremental_merge` differential gate pins both engines together and
-/// to a full parse. The full tree is materialised lazily, only when a
-/// structural request (rename) needs it.
+/// checked in debug rather than gated at runtime. Its diagnostics are pinned
+/// byte-identical to a full parse by the `corpus_incremental_merge` differential
+/// gate. The full tree is materialised lazily, only when a structural request
+/// (rename) needs it.
 ///
-/// Like [`reparse_incremental_owned`], this is exposed for the in-workspace LSP
-/// consumer only; its shape may change without a major version bump until
-/// v0.5.0.
+/// This is exposed for the in-workspace LSP consumer only; its shape may change
+/// without a major version bump until v0.5.0.
 #[must_use]
 #[allow(
     clippy::needless_pass_by_value,

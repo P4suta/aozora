@@ -33,9 +33,9 @@
 //!   the diagnostic position mapping builds over the whole raw text each
 //!   publish.
 //! - `engine`    — the floor the rope work targets: the pure diagnostics-only
-//!   engine (`reparse_incremental_diagnostics_only` + `RegionIndex`) on the
-//!   LF buffer, exactly the `incremental_speedup` `diag` column. Everything
-//!   above `engine` is O(doc) overhead the LSP adds on top.
+//!   engine (`reparse_incremental_diagnostics_only` over the maintained
+//!   `PieceSeq`) on the LF buffer, exactly the `incremental_speedup` `diag`
+//!   column. Everything above `engine` is O(doc) overhead the LSP adds on top.
 //!
 //! `e2e ≈ concat + cache + lineidx` is the per-edit LSP floor; `e2e − engine`
 //! is the O(doc) overhead Tier-2 rope-native removes. Only fast-path docs feed

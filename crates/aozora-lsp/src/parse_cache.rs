@@ -148,7 +148,7 @@ struct DiagBase {
     /// `source_nodes` / `pairs` / `diagnostics` as a structure-sharing
     /// [`PieceSeq`]. The next edit's region-find reads it directly and the hot
     /// path splices it `O(region + #pieces)`, replacing the per-edit whole-table
-    /// re-materialization + `RegionIndex` rebuild.
+    /// re-materialization the pre-Tier-2 path rebuilt each edit.
     pieces: PieceSeq,
     /// Byte length of the leading `U+FEFF` BOM run that `sanitize` stripped.
     /// The raw→sanitized map subtracts it for an edit on raw line 0.
