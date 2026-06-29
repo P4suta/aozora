@@ -227,17 +227,23 @@ jobs:
             artefacts/aozora-*.tar.gz
             artefacts/aozora-*.zip
 
-      - name: Generate release notes with git-cliff
-        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5  # v4.8.0
-        with:
-          config: cliff.toml
-          args: --latest --strip all
-        env:
-          # git-cliff-action writes its output to this path.
-          OUTPUT: CHANGES.md
-
-      - name: Show release notes
-        run: cat CHANGES.md
+      # release-plz owns the single root CHANGELOG.md; the tag points at the
+      # merge commit that added this version's section, so the notes are just
+      # that section's body. (One changelog source — no cliff.toml to drift.)
+      - name: Extract release notes from CHANGELOG.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Print the body between `## [X.Y.Z]` and the next `## [` header; the
+          # version header line is omitted (the Release title already shows it).
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v ver="$ver" '
+            $0 ~ "^## \\[" ver "\\]" { flag = 1; next }
+            flag && /^## \[/ { exit }
+            flag { print }
+          ' CHANGELOG.md > CHANGES.md
+          echo "----- release notes (v${ver}) -----"
+          cat CHANGES.md
 
       - uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b  # v3.0.1
         with:

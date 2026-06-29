@@ -1,0 +1,144 @@
+# release-plz — Rust-native version automation + crates.io publishing.
+#
+# Conventional Commits land on main → the `release-plz-pr` job keeps ONE
+# "Release PR" open (bumps [workspace.package].version + the root CHANGELOG.md).
+# A maintainer adds the `release: approved` label (ci.yml's `release-gate`
+# enforces it) and squash-merges the PR by hand (no-automerge-on-release-pr.yml
+# blocks auto-merge). That merge to main then makes the `release-plz-release`
+# job publish every public crate to crates.io — in release-plz's own dependency
+# order, via crates.io OIDC trusted publishing (no registry token) — and cut a
+# single `vX.Y.Z` tag. The tag fires release.yml (binaries + GitHub Release) and
+# the tag-driven PyPI / npm / extism publishers.
+#
+# DORMANT until activated. The `vX.Y.Z` tag only triggers the downstream
+# workflows when pushed by a non-GITHUB_TOKEN identity (GitHub suppresses
+# workflow triggers from GITHUB_TOKEN-pushed refs), so release-plz runs as a
+# GitHub App: a short-lived installation token is minted at runtime from two
+# secrets — RELEASE_PLZ_APP_ID and RELEASE_PLZ_APP_PRIVATE_KEY. With those unset
+# every step is skipped and the jobs run green and no-op. The scaffolding ships
+# now; the App lights it up later. See crates/aozora-book/src/contrib/release.md.
+#
+# Action pinning: third-party actions are pinned to a full commit SHA (the
+# `# vX.Y.Z` trailer is the human-readable tag); Dependabot bumps them weekly.
+
+name: release-plz
+
+on:
+  push:
+    branches: [main]
+
+# One release pipeline per ref; never cancel a publish already in flight.
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  # Open / update the single Release PR (version bump + CHANGELOG.md).
+  release-plz-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # push the release-plz-<branch> branch
+      pull-requests: write # open / maintain the Release PR
+    env:
+      # Server-side boolean — never exposes the secret values.
+      HAS_APP: ${{ secrets.RELEASE_PLZ_APP_ID != '' && secrets.RELEASE_PLZ_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        if: env.HAS_APP == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.RELEASE_PLZ_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        if: env.HAS_APP == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          # release-plz pushes with the App token (GITHUB_TOKEN env below), not
+          # the checkout-persisted credential — keep the default token out of
+          # the remote so the bump push carries the App identity.
+          persist-credentials: false
+
+      - name: Install Rust
+        if: env.HAS_APP == 'true'
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+
+      # release-plz shells out to the cargo-semver-checks binary for the
+      # `semver_check = true` gate (the same check `just semver` runs); without
+      # it release-plz only warns and skips.
+      - name: Install cargo-semver-checks
+        if: env.HAS_APP == 'true'
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
+        with:
+          tool: cargo-semver-checks
+
+      - name: release-plz release-pr
+        if: env.HAS_APP == 'true'
+        uses: release-plz/action@e8792575c7f2366cf6ff3ccc33ead9ace5b691c7 # v0.5.130
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Dormant — App not configured
+        if: env.HAS_APP != 'true'
+        run: |
+          echo "::notice::release-plz is dormant — set RELEASE_PLZ_APP_ID and"
+          echo "RELEASE_PLZ_APP_PRIVATE_KEY (a GitHub App) to activate."
+          echo "See crates/aozora-book/src/contrib/release.md."
+
+  # After the Release PR merges: publish to crates.io + cut the single v* tag.
+  release-plz-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The App key lives in this environment's secrets. Configure it with a
+    # deployment-branch policy of `main` only (a workflow on any other branch
+    # cannot read the credential) and NO required reviewers: the human gate is
+    # merging the Release PR, so a second approval here would only stall the
+    # unattended publish.
+    environment: release-plz
+    permissions:
+      contents: write # create the v* tag
+      id-token: write # crates.io OIDC trusted publishing (no CARGO_REGISTRY_TOKEN)
+    env:
+      HAS_APP: ${{ secrets.RELEASE_PLZ_APP_ID != '' && secrets.RELEASE_PLZ_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        if: env.HAS_APP == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.RELEASE_PLZ_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        if: env.HAS_APP == 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust
+        if: env.HAS_APP == 'true'
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+
+      - name: release-plz release
+        if: env.HAS_APP == 'true'
+        uses: release-plz/action@e8792575c7f2366cf6ff3ccc33ead9ace5b691c7 # v0.5.130
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Dormant — App not configured
+        if: env.HAS_APP != 'true'
+        run: echo "::notice::release-plz is dormant — set the App secrets to activate."

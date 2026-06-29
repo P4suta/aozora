@@ -1228,17 +1228,12 @@ smoke-py:
 
 # --- changelog ---------------------------------------------------------------
 
-# Regenerate CHANGELOG.md from Conventional-Commits history (see cliff.toml).
-# `--unreleased` keeps the file pinned to a Keep-a-Changelog "Unreleased"
-# section between tags; the `release.yml` pipeline replaces it with the
-# tagged release notes at version-cut time.
-changelog:
-    {{_dev}} git-cliff --unreleased --prepend CHANGELOG.md
-
-# Regenerate CHANGELOG.md from scratch (full history). Rarely needed —
-# the in-place `changelog` recipe is the canonical update path.
-changelog-full:
-    {{_dev}} git-cliff -o CHANGELOG.md
+# CHANGELOG.md is owned by release-plz (`[changelog]` in release-plz.toml): it
+# maintains the single root changelog inside the Release PR from the
+# Conventional-Commits history. There is no `just changelog` recipe — running
+# git-cliff by hand would fight release-plz over the file. To preview the next
+# changelog locally, run `release-plz update` (writes Cargo.toml / CHANGELOG.md
+# in place; discard the spike with `git restore`).
 
 # --- mdbook handbook ---------------------------------------------------------
 # `crates/aozora-book` is rendered by mdbook with the `mdbook-mermaid`

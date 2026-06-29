@@ -161,8 +161,8 @@ Where `<type>` ∈ `feat | fix | docs | style | refactor | perf | test | build |
 and `<scope>` is typically a crate name without the `aozora-` prefix
 (e.g. `feat(render): add aozora-combine-upright class hook`).
 
-git-cliff turns these into the [CHANGELOG](release.md#changelog-generation)
-on release.
+release-plz turns these into the [CHANGELOG](release.md#changelog-generation)
+inside the Release PR.
 
 ## Adding a new 青空文庫 notation
 
