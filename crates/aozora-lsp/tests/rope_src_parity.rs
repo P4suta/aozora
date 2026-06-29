@@ -16,7 +16,7 @@
 use std::ops::Range;
 
 use aozora::{
-    DiagBaseRef, Diagnostic, Document, RegionIndex, SanitizedSrc,
+    DiagBaseRef, Diagnostic, Document, PieceSeq, SanitizedSrc,
     reparse_incremental_diagnostics_only, reparse_incremental_diagnostics_only_in,
 };
 use aozora_lsp::internals::RopeSrc;
@@ -77,7 +77,12 @@ fn diag_debug(ds: &[Diagnostic]) -> Vec<String> {
 /// the reuse counts / node spans asserted below.
 fn compare_backends(doc: &str, edit: Range<usize>, ins: &str) {
     let out = Document::new(doc).parse_owned();
-    let index = RegionIndex::build(&out.source_nodes, &out.pairs, &out.diagnostics);
+    let pieces = PieceSeq::from_contiguous(
+        &out.source_nodes,
+        &out.pairs,
+        &out.diagnostics,
+        out.sanitized_len,
+    );
 
     let mut edited = String::with_capacity(doc.len() + ins.len());
     edited.push_str(&doc[..edit.start]);
@@ -86,33 +91,28 @@ fn compare_backends(doc: &str, edit: Range<usize>, ins: &str) {
 
     // `&str` reference path.
     let str_splice = reparse_incremental_diagnostics_only(
-        DiagBaseRef::with_index(&out, &index),
+        DiagBaseRef::from_cached(&out, &pieces),
         &edited,
         edit.clone(),
     );
 
-    // Rope path: same tables, rope-backed sanitized views.
+    // Rope path: same maintained piece sequence, rope-backed sanitized views.
     let old_rope = Rope::from(doc);
     let new_rope = Rope::from(edited.as_str());
     let rope_base = DiagBaseRef {
         sanitized: RopeSrc::new(old_rope.byte_slice(..)),
-        source_nodes: &out.source_nodes,
-        pairs: &out.pairs,
-        diagnostics: &out.diagnostics,
-        index: &index,
+        pieces: &pieces,
     };
     let new_src = RopeSrc::new(new_rope.byte_slice(..));
     let rope_splice = reparse_incremental_diagnostics_only_in(&rope_base, &new_src, edit.clone());
 
     match (str_splice, rope_splice) {
         (Some(s), Some(r)) => {
-            assert_eq!(
-                diag_debug(&s.diagnostics),
-                diag_debug(&r.diagnostics),
-                "diagnostics"
-            );
-            assert_eq!(s.source_nodes.len(), r.source_nodes.len(), "node count");
-            assert_eq!(s.pairs.len(), r.pairs.len(), "pair count");
+            let (s_nodes, s_pairs, s_diags) = s.pieces.flatten();
+            let (r_nodes, r_pairs, r_diags) = r.pieces.flatten();
+            assert_eq!(diag_debug(&s_diags), diag_debug(&r_diags), "diagnostics");
+            assert_eq!(s_nodes.len(), r_nodes.len(), "node count");
+            assert_eq!(s_pairs.len(), r_pairs.len(), "pair count");
             assert_eq!(s.reused_nodes, r.reused_nodes, "reused_nodes");
             assert_eq!(s.relexed_nodes, r.relexed_nodes, "relexed_nodes");
         }
@@ -276,9 +276,14 @@ fn lying_setup() -> (&'static str, String, Range<usize>) {
 fn lying_edit_trips_debug_assert_str() {
     let (old, new, edit_old) = lying_setup();
     let out = Document::new(old).parse_owned();
-    let index = RegionIndex::build(&out.source_nodes, &out.pairs, &out.diagnostics);
+    let pieces = PieceSeq::from_contiguous(
+        &out.source_nodes,
+        &out.pairs,
+        &out.diagnostics,
+        out.sanitized_len,
+    );
     drop(reparse_incremental_diagnostics_only(
-        DiagBaseRef::with_index(&out, &index),
+        DiagBaseRef::from_cached(&out, &pieces),
         new.as_str(),
         edit_old,
     ));
@@ -290,15 +295,17 @@ fn lying_edit_trips_debug_assert_str() {
 fn lying_edit_trips_debug_assert_rope() {
     let (old, new, edit_old) = lying_setup();
     let out = Document::new(old).parse_owned();
-    let index = RegionIndex::build(&out.source_nodes, &out.pairs, &out.diagnostics);
+    let pieces = PieceSeq::from_contiguous(
+        &out.source_nodes,
+        &out.pairs,
+        &out.diagnostics,
+        out.sanitized_len,
+    );
     let old_rope = Rope::from(old);
     let new_rope = Rope::from(new.as_str());
     let base = DiagBaseRef {
         sanitized: RopeSrc::new(old_rope.byte_slice(..)),
-        source_nodes: &out.source_nodes,
-        pairs: &out.pairs,
-        diagnostics: &out.diagnostics,
-        index: &index,
+        pieces: &pieces,
     };
     let new_src = RopeSrc::new(new_rope.byte_slice(..));
     drop(reparse_incremental_diagnostics_only_in(

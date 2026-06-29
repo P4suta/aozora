@@ -33,9 +33,9 @@
 //!   the diagnostic position mapping builds over the whole raw text each
 //!   publish.
 //! - `engine`    — the floor the rope work targets: the pure diagnostics-only
-//!   engine (`reparse_incremental_diagnostics_only` + `RegionIndex`) on the
-//!   LF buffer, exactly the `incremental_speedup` `diag` column. Everything
-//!   above `engine` is O(doc) overhead the LSP adds on top.
+//!   engine (`reparse_incremental_diagnostics_only` over the maintained
+//!   `PieceSeq`) on the LF buffer, exactly the `incremental_speedup` `diag`
+//!   column. Everything above `engine` is O(doc) overhead the LSP adds on top.
 //!
 //! `e2e ≈ concat + cache + lineidx` is the per-edit LSP floor; `e2e − engine`
 //! is the O(doc) overhead Tier-2 rope-native removes. Only fast-path docs feed
@@ -65,7 +65,7 @@ use std::time::Instant;
 
 use aozora::pipeline::has_long_rule_line;
 use aozora::pipeline::lexer::sanitize::sanitize;
-use aozora::{DiagBaseRef, Document, RegionIndex, reparse_incremental_diagnostics_only};
+use aozora::{DiagBaseRef, Document, PieceSeq, reparse_incremental_diagnostics_only};
 use aozora_encoding::decode_auto;
 use aozora_lsp::internals::{ByteEdit, LineIndex, ParseCache, apply_edits};
 use ropey::Rope;
@@ -202,7 +202,9 @@ fn main() {
 
 /// The pure diagnostics-only engine on the LF buffer — the floor everything
 /// above which is LSP-side O(doc) overhead. Mirrors `incremental_speedup`'s
-/// `diag` column (`RegionIndex` build included, as the LSP rebuilds it per edit).
+/// `diag` column: the maintained `PieceSeq` is built once outside the timer
+/// (production maintains it across edits, never rebuilding it per edit), so the
+/// timer measures only the splice.
 fn measure_engine_floor(lf: &str) -> u128 {
     let Some(mid) = mid_line_boundary(lf) else {
         return 0;
@@ -210,11 +212,16 @@ fn measure_engine_floor(lf: &str) -> u128 {
     let cached = Document::new(lf).parse_owned();
     let new_lf = format!("{}x{}", &lf[..mid], &lf[mid..]);
     black_box(Document::new(new_lf.as_str()).parse_owned());
+    let pieces = PieceSeq::from_contiguous(
+        &cached.source_nodes,
+        &cached.pairs,
+        &cached.diagnostics,
+        cached.sanitized_len,
+    );
 
     let t = Instant::now();
-    let index = RegionIndex::build(&cached.source_nodes, &cached.pairs, &cached.diagnostics);
     let diag = reparse_incremental_diagnostics_only(
-        DiagBaseRef::with_index(&cached, &index),
+        DiagBaseRef::from_cached(&cached, &pieces),
         &new_lf,
         mid..mid,
     );

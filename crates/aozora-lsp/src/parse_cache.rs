@@ -39,8 +39,8 @@
 //! `publishDiagnostics`) reads only [`ParseCache::diagnostics`]; the full
 //! [`Tree`] (via [`ParseCache::with_tree`]) is needed only by the rare F2
 //! rename gesture. So the cache keeps a **store-free** `DiagBase` (sanitized
-//! text + diagnostics + the `source_nodes`/`pairs` the next edit's region-find
-//! needs) that the hot path splices in `O(region + #diagnostics)`, and
+//! text + diagnostics + the maintained [`PieceSeq`] the next edit's region-find
+//! needs) that the hot path splices in `O(region + #pieces)`, and
 //! materialises the full `O(doc)` [`OwnedLexOutput`] **lazily** — only when
 //! [`ParseCache::with_tree`] is actually called — memoised in a [`OnceLock`]
 //! (seeded eagerly by a full parse so a structural request right after one is
@@ -51,10 +51,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use aozora::pipeline::lexer::sanitize::{is_rule_line_trimmed, sanitize};
-use aozora::{
-    DiagBaseRef, DiagSplice, Diagnostic, Document, OwnedLexOutput, PairLink, RegionIndex,
-    SourceNodeOwned, Tree,
-};
+use aozora::{DiagBaseRef, DiagSplice, Diagnostic, Document, OwnedLexOutput, PieceSeq, Tree};
 use ropey::{Rope, RopeSlice};
 use tracing::field::Empty as TracingEmpty;
 
@@ -78,16 +75,16 @@ use crate::text_edit::ByteEdit;
 /// `None`), with the user-facing notice published by the backend.
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
-/// Force a fresh full parse after this many consecutive incremental splices.
+/// Compact the maintained [`PieceSeq`] after this many consecutive incremental
+/// splices.
 ///
-/// The diagnostics-only hot path never clones a node store, so the dead-entry
-/// growth the owned splice had is gone; but a long run of incremental splices
-/// leaves [`ParseCache`] with no materialised tree, so the first structural
-/// request (rename) after many keystrokes would pay one full `O(doc)` parse.
-/// Forcing a full parse every `MAX_SPLICES_BEFORE_FULL` splices re-seeds the
-/// lazy tree and re-grounds the sanitized rope, the `bom`/`isolation_lines`
-/// side-tables, and the splice base on a fresh `sanitize` (#249, the
-/// periodic-compaction bound).
+/// Each accepted splice adds at most two pieces, whose spliced-away middles stay
+/// alive inside their shared `Arc` backing until the sequence is compacted. So
+/// every `MAX_SPLICES_BEFORE_FULL` splices the base is collapsed back into one
+/// piece by [`PieceSeq::compact`] — `O(N)`, **not** a full re-parse (the
+/// maintained base is already byte-identical to a fresh parse, so there is
+/// nothing to re-derive from source) — freeing the dead backing ranges and
+/// bounding piece count + per-query cost (#249, the periodic-compaction bound).
 pub(crate) const MAX_SPLICES_BEFORE_FULL: u32 = 64;
 
 /// Per-call statistics emitted by [`ParseCache::reparse`] /
@@ -135,7 +132,7 @@ struct DocFlags {
 /// parse and produces for the next one, plus the raw↔sanitized line-map
 /// side-tables. Kept across edits so the per-keystroke path never has to
 /// materialise the full [`OwnedLexOutput`] or re-run `O(doc)` `sanitize`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct DiagBase {
     /// Sanitized buffer of the most recent parse (a sanitize fixed point) — the
     /// coordinate space the splice and the next region-find operate in. A
@@ -143,18 +140,16 @@ struct DiagBase {
     /// `remove`/`insert`) rather than rebuilding a flat `String`.
     sanitized: Rope,
     /// Diagnostics, position-sorted at store time so [`ParseCache::diagnostics`]
-    /// reads are O(1) and byte-identical to a full parse.
+    /// reads are O(1) and byte-identical to a full parse. Flattened from
+    /// `pieces` after each splice (the maintained sequence is the source of
+    /// truth) and re-sorted into positional order for the editor surface.
     diagnostics: Vec<Diagnostic>,
-    /// Source-node side-table the next edit's region-find consumes (it reads
-    /// only `source_span` + the node discriminant, never the store).
-    source_nodes: Vec<SourceNodeOwned>,
-    /// Resolved delimiter pairs the next edit's region-find consumes
-    /// (store-free offsets).
-    pairs: Vec<PairLink>,
-    /// Region-find acceleration over the three tables above (#237 Tier 2), built
-    /// in the same `O(N)` pass that assembles them so the next edit's prologue
-    /// runs `O(region + log n)` instead of re-scanning the whole buffer/tables.
-    index: RegionIndex,
+    /// The maintained region-find representation (#237 Tier 2): the parse's
+    /// `source_nodes` / `pairs` / `diagnostics` as a structure-sharing
+    /// [`PieceSeq`]. The next edit's region-find reads it directly and the hot
+    /// path splices it `O(region + #pieces)`, replacing the per-edit whole-table
+    /// re-materialization the pre-Tier-2 path rebuilt each edit.
+    pieces: PieceSeq,
     /// Byte length of the leading `U+FEFF` BOM run that `sanitize` stripped.
     /// The raw→sanitized map subtracts it for an edit on raw line 0.
     bom: u32,
@@ -203,9 +198,10 @@ pub struct ParseCache {
     /// [`OnceLock`] on every incremental splice (so the next structural request
     /// full-parses the current text once and memoises it).
     tree: OnceLock<OwnedLexOutput>,
-    /// Consecutive incremental splices since the last full parse. Once this
-    /// reaches [`MAX_SPLICES_BEFORE_FULL`] the next reparse forces a full parse
-    /// (re-seeding the lazy tree) and resets it to `0` (#249).
+    /// Consecutive incremental splices since the last full parse or compaction.
+    /// Once this reaches [`MAX_SPLICES_BEFORE_FULL`] the splice's resulting base
+    /// is compacted in place ([`PieceSeq::compact`], no re-parse) and it resets
+    /// to `0`; a full parse (on any decline) also resets it (#249).
     splices_since_full: u32,
 }
 
@@ -261,19 +257,21 @@ impl ParseCache {
             None
         };
 
-        let Some((new_sanitized, mut splice)) = splice else {
+        let Some((new_sanitized, splice)) = splice else {
             // Any precondition miss or a splice decline (`None`) → full parse of
             // the post-edit raw, which re-seeds the lazy tree, recomputes the
             // line-map side-tables, and resets `splices_since_full`.
             return self.reparse_full(raw);
         };
 
-        // The splice concatenates prefix/region/suffix slices, so its diagnostics
-        // are not globally position-sorted; the LSP surface needs them sorted,
-        // exactly as `reparse_full` does at store time.
-        splice.diagnostics.sort_by(diagnostic_order);
-        let diagnostics = splice.diagnostics.clone();
-        let index = RegionIndex::build(&splice.source_nodes, &splice.pairs, &splice.diagnostics);
+        // Flatten this edit's diagnostics from the maintained `PieceSeq` (`O(D)`,
+        // not the `O(N)` node table) and re-sort into the LSP's full positional
+        // order — exactly as `reparse_full` does at store time, so the stored
+        // slice is byte-identical to a full parse's.
+        let mut diagnostics = splice.pieces.collect_diagnostics();
+        diagnostics.sort_by(diagnostic_order);
+        let cache_hits = splice.reused_nodes;
+        let cache_misses = splice.relexed_nodes;
         let latency_us = duration_as_us(started_at.elapsed());
 
         // Commit. `bom` / `isolation_lines` / `flags` are invariant across a
@@ -287,12 +285,11 @@ impl ParseCache {
         };
         let new_len = raw.len_bytes();
         self.raw = raw.clone();
+        let returned = diagnostics.clone();
         self.base = Some(DiagBase {
             sanitized: new_sanitized,
-            diagnostics: splice.diagnostics,
-            source_nodes: splice.source_nodes,
-            pairs: splice.pairs,
-            index,
+            diagnostics,
+            pieces: splice.pieces,
             bom: prior.bom,
             isolation_lines: prior.isolation_lines,
             flags: prior.flags,
@@ -302,15 +299,31 @@ impl ParseCache {
         self.tree = OnceLock::new();
         self.splices_since_full += 1;
 
+        // Periodic compaction (#249): every `MAX_SPLICES_BEFORE_FULL` splices,
+        // collapse the accumulated pieces back into one backing so the dead
+        // middle ranges of spliced-away pieces are freed and piece count / query
+        // cost stay bounded. Unlike the prior design this is **not** a forced
+        // full re-parse — `PieceSeq::compact` is `O(N)` (flatten + one index
+        // build, no lex/sanitize) and query-equivalent by construction, so the
+        // incremental base never re-derives itself from source. `bom` /
+        // `isolation_lines` / `flags` describe the raw text and are unaffected;
+        // the lazy tree is already invalidated above.
+        if self.splices_since_full >= MAX_SPLICES_BEFORE_FULL {
+            if let Some(base) = self.base.as_mut() {
+                base.pieces = base.pieces.compact();
+            }
+            self.splices_since_full = 0;
+        }
+
         let stats = ReparseStats {
             parse_count: 1,
-            cache_hits: splice.reused_nodes,
-            cache_misses: splice.relexed_nodes,
+            cache_hits,
+            cache_misses,
             cache_entries_after: 1,
             cache_bytes_estimate: u64::try_from(new_len).unwrap_or(u64::MAX),
             latency_us,
         };
-        (diagnostics, stats)
+        (returned, stats)
     }
 
     /// Attempt the incremental splice for the single edit `edit` producing the
@@ -318,9 +331,6 @@ impl ParseCache {
     /// `None` (→ the caller full-parses) for any precondition miss.
     fn try_incremental(&self, new_raw: &Rope, edit: &ByteEdit) -> Option<(Rope, DiagSplice)> {
         let prior = self.base.as_ref()?;
-        if self.splices_since_full >= MAX_SPLICES_BEFORE_FULL {
-            return None;
-        }
         incremental_splice(prior, &self.raw, new_raw, edit)
     }
 
@@ -377,13 +387,16 @@ impl ParseCache {
         let bom = leading_bom_bytes(&text);
         let isolation_lines = isolation_line_indices(text.get(bom as usize..).unwrap_or(&text));
         let flags = scan_doc_flags(&text);
-        let index = RegionIndex::build(&out.source_nodes, &out.pairs, &out.diagnostics);
+        let pieces = PieceSeq::from_contiguous(
+            &out.source_nodes,
+            &out.pairs,
+            &out.diagnostics,
+            out.sanitized_len,
+        );
         self.base = Some(DiagBase {
             sanitized: Rope::from(out.sanitized.as_str()),
             diagnostics: out.diagnostics.clone(),
-            source_nodes: out.source_nodes.clone(),
-            pairs: out.pairs.clone(),
-            index,
+            pieces,
             bom,
             isolation_lines,
             flags,
@@ -526,10 +539,7 @@ fn incremental_splice(
     let splice = {
         let base_ref = DiagBaseRef {
             sanitized: RopeSrc::new(prior.sanitized.byte_slice(..)),
-            source_nodes: &prior.source_nodes,
-            pairs: &prior.pairs,
-            diagnostics: &prior.diagnostics,
-            index: &prior.index,
+            pieces: &prior.pieces,
         };
         let new_src = RopeSrc::new(new_san.byte_slice(..));
         aozora::reparse_incremental_diagnostics_only_in(&base_ref, &new_src, a_san..b_san_old)?
@@ -896,44 +906,52 @@ mod tests {
     }
 
     #[test]
-    fn splice_run_forces_full_parse_at_capacity_bound() {
-        // After MAX_SPLICES_BEFORE_FULL consecutive single LF-clean edits, the
-        // next reparse must full-parse (dead-entry bound) and reset the counter.
+    fn splice_run_compacts_at_capacity_bound_without_full_parse() {
+        // A long run of splices past MAX_SPLICES_BEFORE_FULL must keep
+        // fast-pathing (no forced full parse) — the PieceSeq is compacted in
+        // place at the bound (#249). Every step stays byte-identical to a fresh
+        // full parse, the counter resets at the bound, and piece count stays
+        // bounded (compaction frees the accumulated pieces).
         let mut cache = ParseCache::default();
         let mut text = "｜青空《あおぞら》のした\n\nかきくけこ\n\nさしすせそ\n".to_owned();
         drop(cache.reparse(&text));
 
-        // Drive exactly MAX_SPLICES_BEFORE_FULL splices, each a one-char insert
-        // inside the middle paragraph.
-        for _ in 0..MAX_SPLICES_BEFORE_FULL {
+        // Drive well past the bound (2.5×), each a one-char insert in the middle
+        // paragraph, so at least two compactions occur mid-run.
+        let steps = MAX_SPLICES_BEFORE_FULL * 5 / 2;
+        let mut max_pieces = 0usize;
+        for _ in 0..steps {
             let at = text.find("けこ").unwrap();
             let edit = ByteEdit::new(at..at, "も".to_owned());
             let mut new_text = String::with_capacity(text.len() + "も".len());
             new_text.push_str(&text[..at]);
             new_text.push('も');
             new_text.push_str(&text[at..]);
-            let (_, stats) = reparse_incremental_str(&mut cache, &new_text, edit);
-            assert!(stats.cache_hits > 0, "each splice reuses the prefix ruby");
+            let (diags, stats) = reparse_incremental_str(&mut cache, &new_text, edit);
+            assert!(
+                stats.cache_hits > 0,
+                "every splice past the bound still fast-paths (compaction, not a full parse): {stats:?}",
+            );
+            // Byte-identical to a fresh full parse at every step.
+            let mut fresh = ParseCache::default();
+            let (want, _) = fresh.reparse(&new_text);
+            assert_eq!(diag_debug(&diags), diag_debug(&want));
+            max_pieces = max_pieces.max(cache.base.as_ref().expect("base").pieces.piece_count());
             text = new_text;
         }
-        assert_eq!(cache.splices_since_full, MAX_SPLICES_BEFORE_FULL);
-
-        // The next single edit is over the bound → forced full parse, counter
-        // resets to zero.
-        let at = text.find("けこ").unwrap();
-        let edit = ByteEdit::new(at..at, "も".to_owned());
-        let mut new_text = String::with_capacity(text.len() + "も".len());
-        new_text.push_str(&text[..at]);
-        new_text.push('も');
-        new_text.push_str(&text[at..]);
-        let (_, stats) = reparse_incremental_str(&mut cache, &new_text, edit);
-        assert_eq!(
-            stats.cache_hits, 0,
-            "the capacity-bound reparse must be a full parse: {stats:?}",
+        // The counter never exceeds the bound: a compaction resets it to zero
+        // each time it reaches MAX_SPLICES_BEFORE_FULL, so over a long run it
+        // stays strictly below the bound (proving compactions fired).
+        assert!(
+            cache.splices_since_full < MAX_SPLICES_BEFORE_FULL,
+            "compaction at the bound keeps the counter below it, got {}",
+            cache.splices_since_full,
         );
-        assert_eq!(
-            cache.splices_since_full, 0,
-            "a full parse resets the dead-entry counter",
+        // Compaction keeps the piece count bounded by ~2× the bound (each splice
+        // adds at most two pieces between compactions), never growing unbounded.
+        assert!(
+            max_pieces <= (MAX_SPLICES_BEFORE_FULL as usize) * 2 + 1,
+            "piece count must stay bounded by compaction, peaked at {max_pieces}",
         );
     }
 

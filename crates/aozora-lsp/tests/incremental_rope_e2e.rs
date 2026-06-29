@@ -272,8 +272,10 @@ fn assert_byte_identical(cache: &ParseCache, diags: &[Diagnostic], new_text: &st
 /// the metrics-only `OpenDocument` surface) over:
 ///
 /// 1. **> `MAX_SPLICES_BEFORE_FULL` (64) consecutive plain accepts** — every step
-///    splices with node reuse (`cache_hits > 0`), and crossing 64 forces exactly
-///    one capacity re-seed (a full parse, `cache_hits == 0`) mid-run;
+///    splices with node reuse (`cache_hits > 0`), *including* the steps where the
+///    cache crosses the bound: the #249 bound now compacts the maintained
+///    `PieceSeq` in place (`PieceSeq::compact`, no re-parse) rather than forcing a
+///    full re-seed, so the run never falls off the incremental fast path;
 /// 2. **an explicit trigger decline** — a line-terminator insert (T1) full-parses
 ///    regardless of the splice counter.
 ///
@@ -287,25 +289,25 @@ fn branch_coverage_accept_and_decline_both_fire() {
     let mut cache = ParseCache::default();
     drop(cache.reparse(&text));
 
+    // 70 > 64 consecutive plain accepts: crossing the compaction bound must keep
+    // fast-pathing (compaction, not a forced full re-parse), so *every* step
+    // reuses nodes and stays byte-identical.
     let mut accepts = 0u32;
-    let mut capacity_reseeds = 0u32;
-
-    // 70 > 64 consecutive plain accepts: the capacity bound forces at least one
-    // full re-parse (cache_hits == 0) somewhere in the run.
     for _ in 0..70u32 {
         let (new_text, edit) = insert_before_text(&text, "さいごのほん", "も");
         let (diags, stats) = cache.reparse_incremental(&Rope::from(new_text.as_str()), &[edit]);
         assert_byte_identical(&cache, &diags, &new_text);
-        if stats.cache_hits > 0 {
-            accepts += 1;
-        } else {
-            // The only non-accept in a pure plain-insert run is the capacity
-            // re-seed — a forced full parse, never a content decline.
-            assert_eq!(stats.parse_count, 1, "the capacity re-seed is a full parse");
-            capacity_reseeds += 1;
-        }
+        assert!(
+            stats.cache_hits > 0,
+            "every plain accept past the compaction bound still fast-paths: {stats:?}",
+        );
+        accepts += 1;
         text = new_text;
     }
+    assert_eq!(
+        accepts, 70,
+        "every plain insert is an accept (compaction, no re-seed)"
+    );
 
     // An explicit trigger decline: a line-terminator (T1) insert declines to a
     // full parse no matter the splice counter. The `cache_hits == 0` assert
@@ -315,13 +317,4 @@ fn branch_coverage_accept_and_decline_both_fire() {
     let (diags, stats) = cache.reparse_incremental(&Rope::from(new_text.as_str()), &[edit]);
     assert_byte_identical(&cache, &diags, &new_text);
     assert_eq!(stats.cache_hits, 0, "a line-terminator insert must decline");
-
-    assert!(
-        accepts > 0,
-        "the accept branch must fire (accepts = {accepts})"
-    );
-    assert!(
-        capacity_reseeds > 0,
-        "the MAX_SPLICES_BEFORE_FULL capacity re-seed must fire over a >64 run",
-    );
 }
