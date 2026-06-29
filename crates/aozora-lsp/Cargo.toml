@@ -21,6 +21,7 @@ path = "src/lib.rs"
 
 [dependencies]
 aozora             = { workspace = true }
+aozora-buildstamp  = { workspace = true }   # channel-aware --version stamp
 aozora-diagnostics = { workspace = true }   # shared diagnostic catalogue (describe/payload)
 tree-sitter-aozora = { workspace = true }
 tree-sitter        = "0.26"

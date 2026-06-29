@@ -80,7 +80,7 @@ use crate::timing::{Timer, TimingFormat};
 #[command(
     name = "aozora",
     about = "Aozora Bunko notation parser CLI",
-    version,
+    version = aozora_buildstamp::VERSION,
     propagate_version = true,
     after_long_help = "Examples:
   aozora check FILE.txt              # lex + report diagnostics

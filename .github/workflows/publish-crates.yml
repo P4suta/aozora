@@ -171,6 +171,7 @@ jobs:
             done
           }
           for crate in \
+            aozora-buildstamp \
             aozora-encoding \
             aozora-spec \
             aozora-veb \

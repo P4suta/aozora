@@ -58,11 +58,13 @@ mod deps;
 mod schema;
 mod trace;
 mod types;
+mod version;
 
 pub(crate) use ci::CiArgs;
 pub(crate) use corpus::CorpusArgs;
 pub(crate) use deps::DepsArgs;
 pub(crate) use trace::TraceArgs;
+pub(crate) use version::VersionArgs;
 
 const PERF_PARANOID_PATH: &str = "/proc/sys/kernel/perf_event_paranoid";
 const PERF_PARANOID_MAX: i32 = 1;
@@ -116,6 +118,11 @@ enum Cmd {
     /// `(feature, level)` pair declared in each fixture's
     /// `meta.toml`. Exits non-zero on any `must`-tier failure.
     Conformance(ConformanceArgs),
+    /// Print the channel-aware build-version string (the `AOZORA_BUILD_VERSION`
+    /// format) — the single source of the `dev` / `nightly` / `stable` version
+    /// identity. `nightly.yml` / `release.yml` call this so the binaries are
+    /// stamped from one place. `nightly` needs `--date YYYYMMDD`.
+    Version(VersionArgs),
 }
 
 #[derive(Args)]
@@ -308,6 +315,7 @@ fn main() {
         Cmd::Schema(args) => schema::dispatch(&args),
         Cmd::Types(args) => types::dispatch(&args),
         Cmd::Conformance(args) => conformance::dispatch(&args),
+        Cmd::Version(args) => version::dispatch(&args),
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");

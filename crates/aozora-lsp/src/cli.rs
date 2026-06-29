@@ -20,7 +20,7 @@ const LONG_ABOUT: &str = concat!(
     name = "aozora-lsp",
     about = "Language Server for aozora-flavored-markdown (speaks LSP over stdio)",
     long_about = LONG_ABOUT,
-    version
+    version = aozora_buildstamp::VERSION
 )]
 #[allow(
     missing_copy_implementations,
@@ -74,15 +74,21 @@ mod tests {
     }
 
     #[test]
-    fn version_is_the_crate_version() {
-        // In the monorepo the crate version *is* the parser version (shared
-        // workspace version), so `--version` reports it plainly — no separate
-        // upstream-rev annotation to embed.
+    fn version_carries_the_channel_stamp() {
+        // `--version` reports the channel-aware build identity from
+        // `aozora-buildstamp` — `0.4.1-dev+g<sha>` in a checkout, a clean
+        // `0.4.1` for a stable / crates.io build — never a bare unstamped
+        // triple, so a local build is never mistaken for a release. The string
+        // always begins with the workspace crate version.
         let version = Cli::command()
             .get_version()
             .expect("a version string is set")
             .to_owned();
-        assert_eq!(version, env!("CARGO_PKG_VERSION"), "{version}");
+        let base = env!("CARGO_PKG_VERSION");
+        assert!(
+            version == base || version.starts_with(&format!("{base}-")),
+            "version `{version}` should be `{base}` optionally with a channel suffix",
+        );
     }
 
     #[test]

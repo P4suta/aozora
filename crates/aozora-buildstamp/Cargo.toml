@@ -1,0 +1,15 @@
+[package]
+name        = "aozora-buildstamp"
+description = "Compile-time channel-aware build-version stamp (dev / nightly / stable) for the aozora binaries. Build-identity leaf — for the parser, depend on the aozora umbrella crate instead."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+readme.workspace       = true
+keywords.workspace     = true
+categories.workspace   = true
+
+[lints]
+workspace = true
