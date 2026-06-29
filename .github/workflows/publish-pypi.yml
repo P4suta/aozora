@@ -5,7 +5,8 @@
 # future 3.x — no per-Python-version build matrix. Plus an sdist for
 # source installs where no wheel matches.
 #
-# How to run a real publish:
+# Publishing: a release-plz `v*` tag triggers a real upload automatically.
+# Manual fallback (dry run by default):
 #   gh workflow run publish-pypi.yml -f dry_run=false
 #
 # Future matrix growth (0.5.0+, via cibuildwheel): Linux aarch64,
@@ -17,6 +18,10 @@
 name: publish-pypi
 
 on:
+  # A release-plz `v*` tag fans out here automatically; workflow_dispatch
+  # stays as a manual fallback (defaults to a dry run).
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -118,7 +123,8 @@ jobs:
 
   publish:
     name: upload to PyPI
-    if: inputs.dry_run == false
+    # Real upload on a `v*` tag push; manual dispatch only when dry_run=false.
+    if: github.event_name == 'push' || inputs.dry_run == false
     needs: [build-wheels, build-sdist]
     runs-on: ubuntu-latest
     # Gated behind the `release` GitHub Environment: required-reviewer

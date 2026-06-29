@@ -16,7 +16,8 @@
 #     Ref: https://docs.npmjs.com/trusted-publishers
 #   * Default `dry_run: true` so a stray click cannot publish.
 #
-# How to run a real publish (steady state, no secret):
+# Publishing: a release-plz `v*` tag fans out here and publishes via OIDC
+# Trusted Publishing automatically. Manual fallback (steady state, no secret):
 #   gh workflow run publish-npm.yml -f dry_run=false
 #   # then approve the `publish` job in the release environment.
 #
@@ -30,6 +31,10 @@
 name: publish-npm
 
 on:
+  # A release-plz `v*` tag fans out here automatically; workflow_dispatch
+  # stays as a manual fallback (defaults to a dry run).
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -88,7 +93,8 @@ jobs:
 
   publish:
     needs: build
-    if: ${{ inputs.dry_run == false }}
+    # Real publish on a `v*` tag push; manual dispatch only when dry_run=false.
+    if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -112,15 +118,19 @@ jobs:
       - name: Upgrade npm
         run: npm install -g npm@latest
 
+      # A tag push always takes the OIDC path (steady state); on dispatch the
+      # use_oidc input chooses. `inputs.use_oidc` is empty on a push event, so
+      # without the event guard a tag release would wrongly fall to bootstrap.
       - name: Publish to npm (OIDC Trusted Publishing)
-        if: ${{ inputs.use_oidc }}
+        if: ${{ github.event_name == 'push' || inputs.use_oidc }}
         working-directory: pkg
         run: npm publish --access public
 
       # One-time bootstrap only: a brand-new package cannot use Trusted
-      # Publishing yet, so authenticate with the NPM_TOKEN env secret.
+      # Publishing yet, so authenticate with the NPM_TOKEN env secret. Manual
+      # dispatch only — never on a tag push.
       - name: Publish to npm (bootstrap token)
-        if: ${{ !inputs.use_oidc }}
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.use_oidc }}
         working-directory: pkg
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
