@@ -158,23 +158,24 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
         sccache \
         wasm-pack
 
-# bacon (the background compiler behind `just watch`) ships NO prebuilt
-# binaries on its OWN GitHub releases — but the cargo-quickinstall
-# community mirror DOES publish one (verified: the bacon-<ver>
-# x86_64-unknown-linux-{gnu,musl} tarballs resolve 200). So binstall's
-# `quick-install` strategy fetches a prebuilt and no source compile
-# happens — this used to be a `cargo install --locked bacon` that
-# recompiled bacon + ~200 deps from scratch on every cargo-tools
-# rebuild. `compile` is kept ONLY as a last-resort backstop for this one
-# crate (in case the mirror lacks a future version). The main batch above
-# stays no-compile fail-fast — only bacon, the lone crate without
-# first-party prebuilts, carries the compile backstop. Shares the same
+# bacon and taplo-cli have no binstall-resolvable prebuilt for the pinned
+# version, so the fail-fast main batch above rejects them — they need the
+# `compile` backstop:
+#   - bacon (the `just watch` compiler) ships NO prebuilt on its OWN GitHub
+#     releases, but the cargo-quickinstall community mirror DOES publish one, so
+#     `quick-install` fetches a prebuilt and no source build happens.
+#   - taplo-cli (the `just fmt`/`fmt-check` TOML formatter) 0.10.0 is absent from
+#     the quick-install mirror and carries no `[package.metadata.binstall]`, so
+#     it falls through to a source `compile`.
+# Kept out of the main batch so a future prebuilt-less crate can't silently turn
+# the whole no-compile fail-fast batch into a slow source build. Shares the same
 # binstall download cache mount as the batch above.
 RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
     cargo binstall --no-confirm --no-symlinks --locked \
         --strategies quick-install,compile \
         --root /usr/local \
-        bacon
+        bacon \
+        taplo-cli
 
 # just (task runner) installed separately; upstream provides an install script
 RUN curl -fsSL https://just.systems/install.sh \

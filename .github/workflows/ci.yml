@@ -71,9 +71,11 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
-              - 'deny.toml'
-              - 'rustfmt.toml'
-              - 'clippy.toml'
+              # Any root config TOML (deny / rustfmt / clippy / taplo / committed
+              # / cliff / …). Catch-all so a format/policy drift in any of them
+              # trips the `lint (fmt-check)` taplo gate (crate TOML is already
+              # covered by 'crates/**').
+              - '*.toml'
               - 'Dockerfile'
               - 'docker-compose*.yml'
               - 'Justfile'

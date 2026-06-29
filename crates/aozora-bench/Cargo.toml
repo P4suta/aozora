@@ -1,31 +1,31 @@
 [package]
-name        = "aozora-bench"
+name = "aozora-bench"
 description = "criterion + corpus-driven bench harness for the aozora parser (PGO profile source)"
-version.workspace      = true
-edition.workspace      = true
+version.workspace = true
+edition.workspace = true
 rust-version.workspace = true
-license.workspace      = true
-repository.workspace   = true
-authors.workspace      = true
-readme.workspace       = true
-keywords.workspace     = true
-categories.workspace   = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 # Internal — bench-only crate, never published.
-publish     = false
+publish = false
 
 [lints]
 workspace = true
 
 [dependencies]
-aozora          = { workspace = true }
-aozora-corpus   = { workspace = true }
+aozora = { workspace = true }
+aozora-corpus = { workspace = true }
 aozora-encoding = { workspace = true }
-rayon           = { workspace = true }
+rayon = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-dhat      = { workspace = true }
+dhat = { workspace = true }
 aozora-pipeline = { workspace = true }
 aozora-scan = { workspace = true }
 aozora-syntax = { workspace = true }
@@ -41,11 +41,11 @@ default = []
 instrument = ["aozora-pipeline/classify-instrument"]
 
 [[bench]]
-name    = "crime_and_punishment"
+name = "crime_and_punishment"
 harness = false
 
 [[bench]]
-name    = "synthetic_corpus"
+name = "synthetic_corpus"
 harness = false
 
 # `classify_subsystems` requires the opt-in instrumentation feature on
@@ -53,5 +53,5 @@ harness = false
 # `cargo run --release --example classify_subsystems -p aozora-bench \
 #    --features 'aozora-pipeline/classify-instrument'`
 [[example]]
-name             = "classify_subsystems"
+name = "classify_subsystems"
 required-features = ["aozora-pipeline/classify-instrument"]

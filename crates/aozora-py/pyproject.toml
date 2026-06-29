@@ -14,17 +14,17 @@
 # pyo3's `abi3-py311` feature.
 
 [build-system]
-requires      = ["maturin>=1.9,<2.0"]
+requires = ["maturin>=1.9,<2.0"]
 build-backend = "maturin"
 
 [project]
-name            = "aozora"
-description     = "Aozora Bunko notation (青空文庫記法) parser — Python bindings (PyO3)."
-readme          = "README.md"
+name = "aozora"
+description = "Aozora Bunko notation (青空文庫記法) parser — Python bindings (PyO3)."
+readme = "README.md"
 requires-python = ">=3.11"
-license         = { text = "Apache-2.0 OR MIT" }
-authors         = [{ name = "aozora contributors" }]
-keywords        = ["aozora", "aozora-bunko", "parser", "japanese", "ruby", "furigana", "shift-jis"]
+license = { text = "Apache-2.0 OR MIT" }
+authors = [{ name = "aozora contributors" }]
+keywords = ["aozora", "aozora-bunko", "parser", "japanese", "ruby", "furigana", "shift-jis"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -48,25 +48,25 @@ dynamic = ["version"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
-dev  = ["pytest>=8", "mypy>=1.11", "maturin>=1.9,<2.0"]
+dev = ["pytest>=8", "mypy>=1.11", "maturin>=1.9,<2.0"]
 
 [project.urls]
-Homepage   = "https://p4suta.github.io/aozora/"
+Homepage = "https://p4suta.github.io/aozora/"
 Repository = "https://github.com/P4suta/aozora"
-Issues     = "https://github.com/P4suta/aozora/issues"
-Changelog  = "https://github.com/P4suta/aozora/blob/main/CHANGELOG.md"
+Issues = "https://github.com/P4suta/aozora/issues"
+Changelog = "https://github.com/P4suta/aozora/blob/main/CHANGELOG.md"
 
 [tool.maturin]
 manifest-path = "Cargo.toml"
 # Enables the aozora-py `extension-module` feature, which pulls pyo3
 # (built with `abi3-py311` — see Cargo.toml). maturin auto-detects
 # abi3 from the cargo feature and tags the wheel `cp311-abi3`.
-features      = ["extension-module"]
+features = ["extension-module"]
 # Mixed layout: the public pure-Python package + stubs live here; the
 # compiled extension is placed at `aozora/_aozora`.
 python-source = "python"
-module-name   = "aozora._aozora"
-strip         = true
+module-name = "aozora._aozora"
+strip = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

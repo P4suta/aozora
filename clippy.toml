@@ -4,17 +4,17 @@
 # https://rust-lang.github.io/rust-clippy/master/index.html#doc_markdown
 # ---------------------------------------------------------------------------
 doc-valid-idents = [
-    "..",
-    "CommonMark",
-    "GFM",
-    "GitHub",
-    "Shift_JIS",
-    "NFC",
-    "BOM",
-    "UTF-8",
-    "UTF-16",
-    "Aozora",
-    "JIS",
+  "..",
+  "CommonMark",
+  "GFM",
+  "GitHub",
+  "Shift_JIS",
+  "NFC",
+  "BOM",
+  "UTF-8",
+  "UTF-16",
+  "Aozora",
+  "JIS",
 ]
 
 # ---------------------------------------------------------------------------
@@ -77,15 +77,15 @@ pass-by-value-size-limit = 128
 # or wrong layer. Add new entries (with a reason) when patterns emerge.
 # ---------------------------------------------------------------------------
 disallowed-methods = [
-    { path = "std::mem::forget", reason = "leaks destructors; use `ManuallyDrop` or explicit drop" },
-    { path = "std::env::set_var", reason = "races with other threads; wire via Options instead" },
-    { path = "std::env::remove_var", reason = "see std::env::set_var" },
-    { path = "std::process::exit", reason = "bypasses destructors; use `ExitCode` / return from main" },
+  { path = "std::mem::forget", reason = "leaks destructors; use `ManuallyDrop` or explicit drop" },
+  { path = "std::env::set_var", reason = "races with other threads; wire via Options instead" },
+  { path = "std::env::remove_var", reason = "see std::env::set_var" },
+  { path = "std::process::exit", reason = "bypasses destructors; use `ExitCode` / return from main" },
 ]
 
 # ---------------------------------------------------------------------------
 # disallowed-types — banned type usages with rationale.
 # ---------------------------------------------------------------------------
 disallowed-types = [
-    { path = "std::sync::RwLock", reason = "tokio / parking_lot preferred where available; raise an ADR to opt in" },
+  { path = "std::sync::RwLock", reason = "tokio / parking_lot preferred where available; raise an ADR to opt in" },
 ]

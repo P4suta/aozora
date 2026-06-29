@@ -1,35 +1,35 @@
 [package]
-name        = "aozora-syntax"
+name = "aozora-syntax"
 description = "Aozora Bunko notation: AST types (ruby, bouten, 縦中横, 外字, kaeriten, indent containers). Internal crate; depend on the aozora umbrella crate instead."
-version.workspace     = true
-edition.workspace     = true
+version.workspace = true
+edition.workspace = true
 rust-version.workspace = true
-license.workspace     = true
-repository.workspace  = true
-authors.workspace     = true
-readme.workspace      = true
-keywords.workspace    = true
-categories.workspace  = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
-aozora-spec     = { workspace = true }
-aozora-veb      = { workspace = true }
+aozora-spec = { workspace = true }
+aozora-veb = { workspace = true }
 aozora-encoding = { workspace = true }
-thiserror       = { workspace = true }
-miette          = { workspace = true }
-phf             = { workspace = true }
-serde           = { workspace = true, optional = true }
+thiserror = { workspace = true }
+miette = { workspace = true }
+phf = { workspace = true }
+serde = { workspace = true, optional = true }
 
 [features]
 default = []
-serde   = ["dep:serde", "aozora-spec/serde"]
+serde = ["dep:serde", "aozora-spec/serde"]
 
 [dev-dependencies]
-criterion       = { workspace = true }
+criterion = { workspace = true }
 
 [[bench]]
-name    = "accent_decompose"
+name = "accent_decompose"
 harness = false

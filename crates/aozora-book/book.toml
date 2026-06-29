@@ -1,27 +1,27 @@
 [book]
-title    = "aozora — 青空文庫記法 Parser Handbook"
-authors  = ["aozora contributors"]
+title = "aozora — 青空文庫記法 Parser Handbook"
+authors = ["aozora contributors"]
 language = "en"
-src      = "src"
+src = "src"
 
 [rust]
 edition = "2024"
 
 [output.html]
-default-theme        = "light"
+default-theme = "light"
 preferred-dark-theme = "ayu"
-git-repository-url   = "https://github.com/P4suta/aozora"
-edit-url-template    = "https://github.com/P4suta/aozora/edit/main/crates/aozora-book/{path}"
-site-url             = "/aozora/"
-additional-css       = []
+git-repository-url = "https://github.com/P4suta/aozora"
+edit-url-template = "https://github.com/P4suta/aozora/edit/main/crates/aozora-book/{path}"
+site-url = "/aozora/"
+additional-css = []
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
 [output.html.fold]
 enable = true
-level  = 1
+level = 1
 
 [output.html.search]
-enable          = true
+enable = true
 use-boolean-and = true
 
 # mdbook-mermaid renders ```mermaid blocks as SVG. Used in arch/* chapters

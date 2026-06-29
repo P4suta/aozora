@@ -1,15 +1,15 @@
 [package]
-name        = "aozora-conformance"
+name = "aozora-conformance"
 description = "Golden-fixture regression suite + WPT-style conformance testing for the aozora parser"
-version.workspace      = true
-edition.workspace      = true
+version.workspace = true
+edition.workspace = true
 rust-version.workspace = true
-license.workspace      = true
-repository.workspace   = true
-authors.workspace      = true
-readme.workspace       = true
-keywords.workspace     = true
-categories.workspace   = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 # Internal dev-only crate — never published. Hosts byte-identical
 # render gates (Phase K3), reference test corpus (Phase O2), and the
@@ -22,6 +22,6 @@ workspace = true
 [dev-dependencies]
 # Used by render_gate tests for clean diff display on golden mismatch.
 pretty_assertions = { workspace = true }
-proptest          = { workspace = true }
-aozora-proptest   = { workspace = true }
+proptest = { workspace = true }
+aozora-proptest = { workspace = true }
 aozora = { workspace = true, features = ["json"] }

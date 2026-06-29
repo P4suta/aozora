@@ -45,25 +45,25 @@ conventional_commits = true
 filter_unconventional = true
 split_commits = false
 commit_parsers = [
-    { message = "^feat",                 group = "Added" },
-    { message = "^fix",                  group = "Fixed" },
-    { message = "^perf",                 group = "Performance" },
-    { message = "^refactor",             group = "Changed" },
-    { message = "^docs",                 group = "Documentation" },
-    { message = "^test",                 group = "Tests" },
-    { message = "^ci",                   group = "CI" },
-    { message = "^build",                group = "Build" },
-    { message = "^chore\\(release\\)",   skip  = true },
-    { message = "^chore",                group = "Chore" },
-    { message = "^revert",               group = "Reverted" },
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^docs", group = "Documentation" },
+  { message = "^test", group = "Tests" },
+  { message = "^ci", group = "CI" },
+  { message = "^build", group = "Build" },
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^chore", group = "Chore" },
+  { message = "^revert", group = "Reverted" },
 ]
 filter_commits = false
-tag_pattern    = "v[0-9]+\\.[0-9]+\\.[0-9]+.*"
-skip_tags      = ""
-ignore_tags    = ""
-topo_order     = false
-sort_commits   = "newest"
+tag_pattern = "v[0-9]+\\.[0-9]+\\.[0-9]+.*"
+skip_tags = ""
+ignore_tags = ""
+topo_order = false
+sort_commits = "newest"
 
 [remote.github]
 owner = "P4suta"
-repo  = "aozora"
+repo = "aozora"

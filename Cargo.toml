@@ -1,33 +1,33 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/aozora-spec",
-    "crates/aozora-syntax",
-    "crates/aozora-encoding",
-    "crates/aozora-corpus",
-    "crates/aozora-cli",
-    "crates/aozora-proptest",
-    "crates/aozora-veb",
-    "crates/aozora-scan",
-    "crates/aozora-conformance",
-    "crates/aozora-pipeline",
-    "crates/aozora-render",
-    "crates/aozora",
-    "crates/aozora-ffi",
-    "crates/aozora-wasm",
-    "crates/aozora-extism",
-    "crates/aozora-py",
-    "crates/aozora-bench",
-    "crates/aozora-xtask",
-    "crates/aozora-buildstamp",
-    "crates/aozora-trace",
-    "crates/aozora-pandoc",
-    "crates/aozora-cst",
-    "crates/aozora-query",
-    "crates/aozora-fmt",
-    "crates/tree-sitter-aozora",
-    "crates/aozora-diagnostics",
-    "crates/aozora-lsp",
+  "crates/aozora-spec",
+  "crates/aozora-syntax",
+  "crates/aozora-encoding",
+  "crates/aozora-corpus",
+  "crates/aozora-cli",
+  "crates/aozora-proptest",
+  "crates/aozora-veb",
+  "crates/aozora-scan",
+  "crates/aozora-conformance",
+  "crates/aozora-pipeline",
+  "crates/aozora-render",
+  "crates/aozora",
+  "crates/aozora-ffi",
+  "crates/aozora-wasm",
+  "crates/aozora-extism",
+  "crates/aozora-py",
+  "crates/aozora-bench",
+  "crates/aozora-xtask",
+  "crates/aozora-buildstamp",
+  "crates/aozora-trace",
+  "crates/aozora-pandoc",
+  "crates/aozora-cst",
+  "crates/aozora-query",
+  "crates/aozora-fmt",
+  "crates/tree-sitter-aozora",
+  "crates/aozora-diagnostics",
+  "crates/aozora-lsp",
 ]
 # `aozora-book` is the mdbook source tree and `aozora-go` is a standalone
 # Go module (host SDK) — neither has a Cargo manifest. Listed in `exclude`
@@ -36,39 +36,39 @@ members = [
 exclude = ["crates/aozora-book", "crates/aozora-go"]
 
 [workspace.package]
-version       = "0.4.1"
-edition       = "2024"
-rust-version  = "1.96.0"
-license       = "Apache-2.0 OR MIT"
-description   = "Aozora Bunko notation (青空文庫記法) parser: ruby, bouten, 縦中横, 外字, kaeriten, indent containers, page breaks"
-repository    = "https://github.com/P4suta/aozora"
-homepage      = "https://p4suta.github.io/aozora/"
+version = "0.4.1"
+edition = "2024"
+rust-version = "1.96.0"
+license = "Apache-2.0 OR MIT"
+description = "Aozora Bunko notation (青空文庫記法) parser: ruby, bouten, 縦中横, 外字, kaeriten, indent containers, page breaks"
+repository = "https://github.com/P4suta/aozora"
+homepage = "https://p4suta.github.io/aozora/"
 documentation = "https://docs.rs/aozora"
-authors       = ["aozora contributors"]
-readme        = "README.md"
-keywords      = ["aozora", "japanese", "typography", "parser", "ruby"]
-categories    = ["parser-implementations", "text-processing", "localization"]
+authors = ["aozora contributors"]
+readme = "README.md"
+keywords = ["aozora", "japanese", "typography", "parser", "ruby"]
+categories = ["parser-implementations", "text-processing", "localization"]
 
 [workspace.lints.rust]
-unsafe_code      = "forbid"
+unsafe_code = "forbid"
 non_ascii_idents = "deny"
 
 missing_debug_implementations = "warn"
-missing_copy_implementations  = "warn"
-trivial_casts                 = "warn"
-trivial_numeric_casts         = "warn"
-unused_import_braces          = "warn"
-unused_lifetimes              = "warn"
-unused_qualifications         = "warn"
+missing_copy_implementations = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
 
-unreachable_pub                = "warn"
-single_use_lifetimes           = "warn"
-elided_lifetimes_in_paths      = "warn"
-redundant_lifetimes            = "warn"
+unreachable_pub = "warn"
+single_use_lifetimes = "warn"
+elided_lifetimes_in_paths = "warn"
+redundant_lifetimes = "warn"
 explicit_outlives_requirements = "warn"
 
-let_underscore_drop        = "warn"
-keyword_idents_2024        = "warn"
+let_underscore_drop = "warn"
+keyword_idents_2024 = "warn"
 # `variant_size_differences` (rustc): used to nudge fat variants
 # behind `Box`. The lexer's `SpanKind::Aozora` already wraps its
 # inner `AozoraNode` in `Box` so the variant is 8 bytes, but the
@@ -76,7 +76,7 @@ keyword_idents_2024        = "warn"
 # still trips the heuristic. Allowed at the workspace level — the
 # related `clippy::large_enum_variant` carve-out below documents the
 # same call.
-variant_size_differences   = "allow"
+variant_size_differences = "allow"
 ambiguous_negative_literals = "warn"
 
 dead_code = "deny"
@@ -85,54 +85,54 @@ missing_docs = "warn"
 rust_2024_compatibility = { level = "warn", priority = -1 }
 
 [workspace.lints.rustdoc]
-broken_intra_doc_links       = "deny"
-private_intra_doc_links      = "deny"
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
 invalid_codeblock_attributes = "deny"
-invalid_html_tags            = "deny"
-invalid_rust_codeblocks      = "deny"
-bare_urls                    = "deny"
-redundant_explicit_links     = "deny"
-unescaped_backticks          = "deny"
+invalid_html_tags = "deny"
+invalid_rust_codeblocks = "deny"
+bare_urls = "deny"
+redundant_explicit_links = "deny"
+unescaped_backticks = "deny"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-nursery  = { level = "warn", priority = -1 }
-cargo    = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
 
-dbg_macro                  = "warn"
-todo                       = "warn"
-unimplemented              = "warn"
-clone_on_ref_ptr           = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+clone_on_ref_ptr = "warn"
 unnecessary_safety_comment = "warn"
-unnecessary_safety_doc     = "warn"
-missing_assert_message     = "warn"
+unnecessary_safety_doc = "warn"
+missing_assert_message = "warn"
 
-str_to_string                    = "warn"
-absolute_paths                   = "warn"
-allow_attributes_without_reason  = "warn"
-empty_structs_with_brackets      = "warn"
-if_then_some_else_none           = "warn"
-let_underscore_must_use          = "warn"
-mixed_read_write_in_expression   = "warn"
-rest_pat_in_fully_bound_structs  = "warn"
-same_name_method                 = "warn"
-semicolon_outside_block          = "warn"
-try_err                          = "warn"
-unneeded_field_pattern           = "warn"
-verbose_file_reads               = "warn"
-format_push_string               = "warn"
-unnecessary_self_imports         = "warn"
-assertions_on_result_states      = "warn"
-filetype_is_file                 = "warn"
-rc_buffer                        = "warn"
-rc_mutex                         = "warn"
-lossy_float_literal              = "warn"
-suspicious_xor_used_as_pow       = "warn"
+str_to_string = "warn"
+absolute_paths = "warn"
+allow_attributes_without_reason = "warn"
+empty_structs_with_brackets = "warn"
+if_then_some_else_none = "warn"
+let_underscore_must_use = "warn"
+mixed_read_write_in_expression = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+same_name_method = "warn"
+semicolon_outside_block = "warn"
+try_err = "warn"
+unneeded_field_pattern = "warn"
+verbose_file_reads = "warn"
+format_push_string = "warn"
+unnecessary_self_imports = "warn"
+assertions_on_result_states = "warn"
+filetype_is_file = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+lossy_float_literal = "warn"
+suspicious_xor_used_as_pow = "warn"
 
 module_name_repetitions = "allow"
 multiple_crate_versions = "allow"
-missing_const_for_fn    = "allow"
-redundant_pub_crate     = "allow"
+missing_const_for_fn = "allow"
+redundant_pub_crate = "allow"
 # `large_enum_variant`: SpanKind::Aozora already wraps its inner
 # `AozoraNode` in `Box` (~8 bytes ptr) to keep the variant data 7×
 # smaller than the inline form (~56 bytes). The clippy heuristic
@@ -140,7 +140,7 @@ redundant_pub_crate     = "allow"
 # 3× larger"; further uniformisation (boxing every variant) would
 # regress code clarity and force Box::new at every construction
 # site for negligible additional layout savings.
-large_enum_variant      = "allow"
+large_enum_variant = "allow"
 
 [workspace.dependencies]
 # Internal crates — paths within this workspace. These carry a `version`
@@ -151,14 +151,14 @@ large_enum_variant      = "allow"
 # published manifest. A versioned internal dev-dep must already exist on
 # crates.io at publish time, which would block the first publish and
 # create unpublishable dev-dep cycles (e.g. aozora-pipeline ↔ aozora-render).
-aozora-spec       = { version = "0.4.1", path = "crates/aozora-spec" }
-aozora-syntax     = { version = "0.4.1", path = "crates/aozora-syntax" }
-aozora-veb        = { version = "0.4.1", path = "crates/aozora-veb" }
-aozora-scan       = { version = "0.4.1", path = "crates/aozora-scan" }
-aozora-pipeline   = { version = "0.4.1", path = "crates/aozora-pipeline" }
-aozora-render     = { version = "0.4.1", path = "crates/aozora-render" }
-aozora            = { version = "0.4.1", path = "crates/aozora" }
-aozora-trace      = { version = "0.4.1", path = "crates/aozora-trace" }
+aozora-spec = { version = "0.4.1", path = "crates/aozora-spec" }
+aozora-syntax = { version = "0.4.1", path = "crates/aozora-syntax" }
+aozora-veb = { version = "0.4.1", path = "crates/aozora-veb" }
+aozora-scan = { version = "0.4.1", path = "crates/aozora-scan" }
+aozora-pipeline = { version = "0.4.1", path = "crates/aozora-pipeline" }
+aozora-render = { version = "0.4.1", path = "crates/aozora-render" }
+aozora = { version = "0.4.1", path = "crates/aozora" }
+aozora-trace = { version = "0.4.1", path = "crates/aozora-trace" }
 
 # Memory management
 bumpalo = { version = "3.20", features = ["collections"] }
@@ -177,50 +177,50 @@ memchr = "2.8"
 # at the workspace level so each consumer (aozora-lexer / aozora-scan)
 # opts into exactly the features it needs.
 aho-corasick = { version = "1.1", default-features = false }
-aozora-encoding   = { version = "0.4.1", path = "crates/aozora-encoding" }
-aozora-corpus       = { version = "0.4.1", path = "crates/aozora-corpus" }
-aozora-pandoc       = { version = "0.4.1", path = "crates/aozora-pandoc" }
-aozora-cst          = { version = "0.4.1", path = "crates/aozora-cst" }
-aozora-query        = { version = "0.4.1", path = "crates/aozora-query" }
+aozora-encoding = { version = "0.4.1", path = "crates/aozora-encoding" }
+aozora-corpus = { version = "0.4.1", path = "crates/aozora-corpus" }
+aozora-pandoc = { version = "0.4.1", path = "crates/aozora-pandoc" }
+aozora-cst = { version = "0.4.1", path = "crates/aozora-cst" }
+aozora-query = { version = "0.4.1", path = "crates/aozora-query" }
 aozora-proptest = { version = "0.4.1", path = "crates/aozora-proptest" }
-aozora-fmt          = { version = "0.4.1", path = "crates/aozora-fmt" }
-aozora-diagnostics  = { version = "0.4.1", path = "crates/aozora-diagnostics" }
+aozora-fmt = { version = "0.4.1", path = "crates/aozora-fmt" }
+aozora-diagnostics = { version = "0.4.1", path = "crates/aozora-diagnostics" }
 # Build-identity leaf: depended on ONLY by the binaries (aozora-cli / aozora-lsp)
 # so its git-probing build.rs never invalidates the hot library crates' caches.
-aozora-buildstamp   = { version = "0.4.1", path = "crates/aozora-buildstamp" }
-tree-sitter-aozora  = { version = "0.4.1", path = "crates/tree-sitter-aozora" }
+aozora-buildstamp = { version = "0.4.1", path = "crates/aozora-buildstamp" }
+tree-sitter-aozora = { version = "0.4.1", path = "crates/tree-sitter-aozora" }
 
 # Error handling
 thiserror = "2.0.18"
-anyhow    = "1.0"
+anyhow = "1.0"
 # Bare miette (the `Diagnostic` derive + `SourceSpan` only) at the
 # workspace level so the parser-core / library crates (spec / syntax /
 # pipeline / encoding) don't drag miette's `fancy` graphical-renderer
 # dependency tree (backtrace, supports-color, terminal_size, textwrap)
 # into every downstream library consumer (afm, the WASM / Python builds).
 # Only `aozora-cli` opts into `fancy` — it renders diagnostics to a TTY.
-miette    = { version = "7.6.0" }
-regex                 = "1.12"
+miette = { version = "7.6.0" }
+regex = "1.12"
 
 # Serialization / data
-serde      = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # JSON Schema generation for the wire format. Used by aozora's
 # `schema` feature to dump schemas of Diagnostic / Node /
 # Pair / ContainerPair — the artefacts ship in
 # `crates/aozora-book/src/json/` and are CI drift-gated.
-schemars   = { version = "1.0", features = ["preserve_order"] }
-toml       = "1.1"
-flate2     = "1.1"
+schemars = { version = "1.0", features = ["preserve_order"] }
+toml = "1.1"
+flate2 = "1.1"
 
 # DWARF symbolication for samply trace analysis (aozora-trace).
 # `loader` feature pulls in `object` + `memmap2` for in-process ELF
 # parsing — no shell-out to `addr2line(1)`.
-addr2line  = { version = "0.27", default-features = false }
+addr2line = { version = "0.27", default-features = false }
 # ELF / Mach-O / PE parsing — for build-id verification in the
 # symbolicator. addr2line uses object internally; we add it
 # explicitly so we can read .note.gnu.build-id.
-object     = { version = "0.39", default-features = false, features = ["read"] }
+object = { version = "0.39", default-features = false, features = ["read"] }
 
 # Encoding
 encoding_rs = "0.8.35"
@@ -233,21 +233,23 @@ phf = { version = "0.14", features = ["macros"] }
 walkdir = "2.5"
 
 # aozora-fmt: coloured unified diff for `--diff`, TTY-aware stdout
-similar  = { version = "3.1", default-features = false, features = ["text"] }
+similar = { version = "3.1", default-features = false, features = ["text"] }
 anstream = "1.0"
-anstyle  = "1.0"
+anstyle = "1.0"
 
 # aozora-lsp runtime (language server: tower-lsp over tokio stdio)
-tower-lsp          = "0.20"
-tokio              = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "sync", "time"] }
-dashmap            = "6"
-parking_lot        = "0.12"   # non-poisoning Mutex for the writer-only buffer state
-arc-swap           = "1.7"    # wait-free read snapshot swap
-ropey              = { version = "1.6", default-features = false, features = ["simd"] }   # default features OFF: with neither cr_lines nor unicode_lines, ropey's line metrics count only 0x0A — byte-identical to LineIndex (see doc_line_view guard test)
-tracing            = "0.1"
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "sync", "time"] }
+dashmap = "6"
+parking_lot = "0.12" # non-poisoning Mutex for the writer-only buffer state
+arc-swap = "1.7" # wait-free read snapshot swap
+ropey = { version = "1.6", default-features = false, features = [
+  "simd",
+] } # default features OFF: with neither cr_lines nor unicode_lines, ropey's line metrics count only 0x0A — byte-identical to LineIndex (see doc_line_view guard test)
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-hdrhistogram       = { version = "7.5", default-features = false }   # constant-memory percentile metrics
-shuttle            = "0.9"    # randomized concurrency model checker (aozora-lsp shuttle-tests feature)
+hdrhistogram = { version = "7.5", default-features = false } # constant-memory percentile metrics
+shuttle = "0.9" # randomized concurrency model checker (aozora-lsp shuttle-tests feature)
 
 # Lossless syntax tree backbone for `aozora-cst` (Phase N1).
 # rowan over cstree: 86 reverse deps vs ~3, maintained by the
@@ -310,7 +312,7 @@ tempfile = "3.27"
 
 # Parallelism — workspace-default work-stealing thread pool. Retained
 # for batch tooling (corpus sweeps, doc-parallel benchmark drivers).
-rayon              = "1.12"
+rayon = "1.12"
 
 # CLI
 clap = { version = "4.6.1", features = ["derive", "wrap_help", "env", "color", "cargo"] }
@@ -330,10 +332,10 @@ clap_mangen = "0.3"
 notify = "8.2"
 
 # Testing
-insta             = { version = "1.47", features = ["yaml", "json", "filters"] }
-proptest          = "1.11"
-criterion         = { version = "0.8", features = ["html_reports"] }
-dhat              = "0.3"
+insta = { version = "1.47", features = ["yaml", "json", "filters"] }
+proptest = "1.11"
+criterion = { version = "0.8", features = ["html_reports"] }
+dhat = "0.3"
 pretty_assertions = "1.4.1"
 
 [profile.release]
@@ -344,11 +346,11 @@ pretty_assertions = "1.4.1"
 # the lex orchestrator was split out of aozora-lexer's monolithic
 # `lex()`; fat LTO recovers it. The compile-time cost is acceptable
 # because the workspace already pins `codegen-units = 1` for release.
-lto           = "fat"
+lto = "fat"
 codegen-units = 1
-strip         = "symbols"
-panic         = "abort"
-opt-level     = 3
+strip = "symbols"
+panic = "abort"
+opt-level = 3
 
 # Distribution profile for the binary bundled in the VS Code extension's .vsix
 # (`aozora-lsp`, built by `release-vscode.yml`). Optimises for size over speed.
@@ -356,15 +358,15 @@ opt-level     = 3
 # panic in one request handler should unwind (tower-lsp keeps serving) rather
 # than abort the whole process and drop the editor's language features.
 [profile.dist]
-inherits      = "release"
-opt-level     = "z"
-panic         = "unwind"
-strip         = "symbols"
+inherits = "release"
+opt-level = "z"
+panic = "unwind"
+strip = "symbols"
 
 [profile.bench]
 inherits = "release"
-strip    = "none"
-debug    = 1
+strip = "none"
+debug = 1
 
 [profile.dev]
 split-debuginfo = "unpacked"

@@ -43,17 +43,18 @@ pre-commit:
     - rebase
     - merge
   commands:
-    # `cargo fmt --all` (writes). Any reformat is re-staged automatically
-    # so the commit carries the fixed formatting. `fmt-check` is kept out
-    # of pre-commit because fixing-and-restaging is strictly more helpful
-    # than failing the commit.
+    # `just fmt` = `cargo fmt --all` + `taplo fmt` (writes). Any reformat is
+    # re-staged automatically so the commit carries the fixed formatting.
+    # `fmt-check` is kept out of pre-commit because fixing-and-restaging is
+    # strictly more helpful than failing the commit. The glob covers `.toml`
+    # too so a TOML-only commit still runs taplo (matches the clippy glob).
     fmt:
-      glob: "*.rs"
+      glob: "*.{rs,toml}"
       run: just fmt
       stage_fixed: true
       fail_text: |
-        `cargo fmt` failed. Run `just fmt` manually to see the error.
-        Common cause: rustfmt edition mismatch with rust-toolchain.toml.
+        `just fmt` failed (cargo fmt / taplo). Run `just fmt` manually to see
+        the error. Common cause: rustfmt edition mismatch with rust-toolchain.toml.
     # Light `clippy` (--lib --bins --tests, no bench) keeps commits fast.
     # The heavier `--all-targets --all-features` surface (bench / example
     # targets, aozora-bench) now runs in CI's `lint (clippy-strict)`

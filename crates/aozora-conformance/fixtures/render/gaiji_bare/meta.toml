@@ -2,4 +2,4 @@
 # Bare-description gaiji (no 「」 around the description) canonicalises to
 # the quoted form on serialize (ADR 0003 §6.4); pins the bare→quoted fold.
 feature = "gaiji"
-level   = "should"
+level = "should"

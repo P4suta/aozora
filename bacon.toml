@@ -16,7 +16,16 @@ default_job = "check"
 # cycle stays under a second for most touches. Mirrors `just check`
 # (aozora-bench excluded — its criterion dep tree is bench-only).
 [jobs.check]
-command = ["cargo", "check", "--workspace", "--exclude", "aozora-bench", "--all-targets", "--color", "always"]
+command = [
+  "cargo",
+  "check",
+  "--workspace",
+  "--exclude",
+  "aozora-bench",
+  "--all-targets",
+  "--color",
+  "always",
+]
 need_stdout = false
 watch = ["crates", "spec", "grammars"]
 on_change_strategy = "kill_then_restart"
@@ -28,11 +37,20 @@ on_change_strategy = "kill_then_restart"
 # stays at `-D warnings` and never re-enables a group.
 [jobs.clippy]
 command = [
-    "cargo", "clippy",
-    "--workspace", "--exclude", "aozora-bench",
-    "--lib", "--bins", "--tests", "--all-features",
-    "--color", "always",
-    "--", "-D", "warnings",
+  "cargo",
+  "clippy",
+  "--workspace",
+  "--exclude",
+  "aozora-bench",
+  "--lib",
+  "--bins",
+  "--tests",
+  "--all-features",
+  "--color",
+  "always",
+  "--",
+  "-D",
+  "warnings",
 ]
 need_stdout = false
 
@@ -40,9 +58,15 @@ need_stdout = false
 # parses the output for inline failure navigation. Matches `just test`.
 [jobs.test]
 command = [
-    "cargo", "nextest", "run",
-    "--workspace", "--exclude", "aozora-bench", "--all-targets",
-    "--color", "always",
+  "cargo",
+  "nextest",
+  "run",
+  "--workspace",
+  "--exclude",
+  "aozora-bench",
+  "--all-targets",
+  "--color",
+  "always",
 ]
 need_stdout = true
 analyzer = "nextest"
