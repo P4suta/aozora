@@ -1,0 +1,96 @@
+//! Resolve the channel-aware build version once, at compile time, and inject it
+//! via `rustc-env` so `src/lib.rs` can expose it as a `const`.
+//!
+//! Precedence (the aozora three-way fallback):
+//!   1. `AOZORA_BUILD_VERSION` (CI-authoritative — `nightly.yml` / `release.yml`
+//!      set it verbatim from `xtask version --channel …`).
+//!   2. In a workspace checkout (the repo `.git` exists) →
+//!      `{CARGO_PKG_VERSION}-dev+g{sha}[.dirty]`, so a hand-built binary can never
+//!      be mistaken for a release. The sha is best-effort: if the `git` binary is
+//!      absent (e.g. a slim container) the stamp degrades to a bare `-dev`.
+//!   3. Otherwise — a packaged build with no `.git` (`cargo install` from
+//!      crates.io, or a source tarball) → the clean `{CARGO_PKG_VERSION}`. A
+//!      crates.io install *is* the stable channel, so it must report the bare
+//!      triple, never `-dev` (this is where aozora differs from find-my-files,
+//!      whose crates are all `publish = false`).
+//!
+//! `rerun-if-changed` is scoped to the git refs that actually move the answer, so
+//! the daily edit→build loop on one commit never re-runs this script — keeping the
+//! binaries' incremental builds fast. The crate is a leaf depended on ONLY by the
+//! binaries (`aozora-cli` / `aozora-lsp`), never by the hot library crates, so the
+//! git probe never invalidates their caches.
+
+use std::env;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn main() {
+    let git_dir = workspace_git_dir();
+
+    // Only HEAD/index movement changes the stamp; pure source edits on one commit
+    // leave these untouched, so the script stays cached during the inner loop.
+    if let Some(git) = git_dir.as_deref() {
+        println!("cargo:rerun-if-changed={}", git.join("HEAD").display());
+        println!("cargo:rerun-if-changed={}", git.join("index").display());
+    }
+    println!("cargo:rerun-if-env-changed=AOZORA_BUILD_VERSION");
+
+    let version = resolve_version(git_dir.is_some());
+    println!("cargo:rustc-env=AOZORA_VERSION_STRING={version}");
+}
+
+/// The workspace `.git` directory, if this is a repo checkout. `CARGO_MANIFEST_DIR`
+/// is this crate (`crates/aozora-buildstamp`); the workspace root is two levels up.
+/// A packaged crate (crates.io / sdist tarball) has no such directory.
+fn workspace_git_dir() -> Option<PathBuf> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let git = manifest.parent()?.parent()?.join(".git");
+    git.exists().then_some(git)
+}
+
+fn resolve_version(is_checkout: bool) -> String {
+    if let Ok(forced) = env::var("AOZORA_BUILD_VERSION") {
+        let forced = forced.trim();
+        if !forced.is_empty() {
+            return forced.to_owned();
+        }
+    }
+
+    // The base triple is the workspace version (release-plz-managed once adopted).
+    let base = env!("CARGO_PKG_VERSION");
+    if !is_checkout {
+        // Packaged build (no `.git`): a crates.io install / source tarball = stable.
+        return base.to_owned();
+    }
+
+    // Workspace checkout = a dev build. Best-effort sha + dirty marker.
+    git_short_sha().map_or_else(
+        || format!("{base}-dev"),
+        |sha| {
+            let dirty = if git_is_dirty() { ".dirty" } else { "" };
+            format!("{base}-dev+g{sha}{dirty}")
+        },
+    )
+}
+
+fn git_short_sha() -> Option<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--short=7", "HEAD"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8(out.stdout).ok()?.trim().to_owned();
+    (!sha.is_empty()).then_some(sha)
+}
+
+fn git_is_dirty() -> bool {
+    // Best-effort: evaluated only when HEAD/index moved (rerun gating above), so a
+    // build, then unstaged edit, then rebuild may not flip the flag — the sha still
+    // pins the base commit. `git status --porcelain` prints one line per change.
+    Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .is_ok_and(|o| o.status.success() && !o.stdout.is_empty())
+}

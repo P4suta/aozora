@@ -44,7 +44,12 @@ fn snapshot_top_level_help() {
 fn snapshot_version_flag() {
     insta::with_settings!({
         filters => vec![
-            (r"\d+\.\d+\.\d+(?:-[\w.]+)?", "[VERSION]"),
+            // Redact the full channel-aware stamp: core triple + optional
+            // pre-release (`-dev` / `-nightly.<date>`) + optional build
+            // metadata (`+g<sha>` / `+g<sha>.dirty`). Without the `\+…` arm a
+            // working-copy `dev` build leaks its commit sha and the snapshot is
+            // sha-dependent. See aozora-buildstamp.
+            (r"\d+\.\d+\.\d+(?:-[\w.]+)?(?:\+[\w.]+)?", "[VERSION]"),
         ],
     }, {
         insta::assert_snapshot!(run(&["--version"]));

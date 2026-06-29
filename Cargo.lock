@@ -177,11 +177,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "aozora-buildstamp"
+version = "0.4.1"
+
+[[package]]
 name = "aozora-cli"
 version = "0.4.1"
 dependencies = [
  "anyhow",
  "aozora",
+ "aozora-buildstamp",
  "aozora-encoding",
  "aozora-pandoc",
  "clap",
@@ -291,6 +296,7 @@ name = "aozora-lsp"
 version = "0.4.1"
 dependencies = [
  "aozora",
+ "aozora-buildstamp",
  "aozora-corpus",
  "aozora-diagnostics",
  "aozora-encoding",
