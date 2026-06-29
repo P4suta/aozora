@@ -3,9 +3,10 @@
 # The whole point of the Extism strategy (ADR-0006): ONE portable wasm
 # artifact serves every language's host SDK — there is no per-(OS × arch)
 # native build matrix. This workflow builds that single artifact, shrinks
-# it with wasm-opt, and attaches it (plus a SHA-256 checksum) to a GitHub
-# Release. Every host SDK (Go / Ruby / …) embeds or downloads these exact
-# bytes.
+# it with wasm-opt, and attaches it (plus a SHA-256 checksum and a SLSA
+# build-provenance attestation) to a GitHub Release. Every host SDK
+# (Go / Ruby / …) embeds or downloads these exact bytes; the attestation
+# lets them verify the provenance with `gh attestation verify`.
 #
 # Manual trigger only; defaults to a dry run (build + checksum, no upload).
 # The `build` job runs ungated; the live `publish` job runs in the
@@ -48,8 +49,9 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
         with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -91,12 +93,20 @@ jobs:
     environment: release
     permissions:
       contents: write # upload release assets
+      id-token: write # mint the OIDC token for build provenance
+      attestations: write # record the SLSA provenance attestation
     steps:
       - name: Download build artefact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: aozora-wasm-extism
           path: dist
+
+      - name: Attest build provenance
+        # Same pinned action as release.yml / release-vscode.yml — keep the SHA in lock-step.
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: dist/aozora.wasm
 
       - name: Upload to GitHub Release (live)
         env:

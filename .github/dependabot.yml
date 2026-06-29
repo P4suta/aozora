@@ -20,15 +20,12 @@ updates:
       day: monday
     open-pull-requests-limit: 10
     # Keep SHA pins fresh; human-readable tag comments are updated automatically.
+    # `dtolnay/rust-toolchain` is now SHA-pinned (to a `master` commit) with an
+    # explicit `toolchain:` input, so its action *code* no longer rides a moving
+    # branch and the SHA can be bumped like any other action — no ignore needed.
     groups:
       actions-sha-bumps:
         patterns: ["*"]
-    ignore:
-      # `dtolnay/rust-toolchain`'s action ref tag IS the Rust toolchain
-      # version (e.g. @1.96.0 installs Rust 1.96.0). Letting Dependabot
-      # bump it advances the MSRV unintentionally. We pin @stable + pass
-      # the toolchain via `with:` instead — see ci.yml `msrv` job.
-      - dependency-name: "dtolnay/rust-toolchain"
 
   - package-ecosystem: docker
     # Bumps Dockerfile FROM pins. Currently: rust (toolchain stage) and
@@ -56,3 +53,36 @@ updates:
     schedule:
       interval: weekly
       day: monday
+
+  - package-ecosystem: npm
+    # JS/TS surfaces: the playground, the VS Code extension, and the
+    # tree-sitter node bindings. NOTE: the playground uses Bun (bun.lockb);
+    # Dependabot's Bun-lockfile support is limited, so there it mainly bumps
+    # the package.json ranges. The extension + tree-sitter bindings update fully.
+    directories:
+      - "/playground"
+      - "/editors/vscode"
+      - "/crates/tree-sitter-aozora"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      npm-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: pip
+    # aozora-py is a maturin/PyO3 native extension; pip watches its pyproject
+    # build/runtime deps. The CI-only tools (maturin/twine/pytest/mypy) are
+    # `pip install`-ed inline in the workflows, not declared in a manifest, so
+    # Dependabot cannot track them — bump those by hand in the workflow files.
+    directory: "/crates/aozora-py"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      pip-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

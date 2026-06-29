@@ -15,9 +15,10 @@
 # commit SHA (the `# vX.Y.Z` trailer is the human-readable tag it
 # resolved to) so a re-pointed tag can't silently change what runs in a
 # release. Dependabot's github-actions ecosystem bumps these SHAs weekly.
-# The sole exception is `dtolnay/rust-toolchain@stable`: its ref is the
-# moving `stable` branch by design (we want the latest stable rustc for
-# release artefacts), and dependabot.yml ignores it for that reason.
+# `dtolnay/rust-toolchain` is pinned the same way (to a `master` commit
+# SHA) and given an explicit `toolchain: stable` input: pinning the SHA
+# freezes the action *code* against a re-pointed branch, while the input
+# still resolves the latest stable rustc at run time for release artefacts.
 
 name: release
 
@@ -54,7 +55,9 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
 
       # Explicit `rustup target add` is more reliable than the action's
       # `targets:` input across stable channel updates — `rustup target
