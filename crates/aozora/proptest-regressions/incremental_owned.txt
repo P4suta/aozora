@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc ac6396d92f9b201a71efac7cfd46a1c42232119405675f85e23a0ecffc9ed0f5 # shrinks to doc = "あん。あ", a = 13, b = 0
+cc c6c40345693bcaf3c1d771c2543401940f182f00c723b7d73926948ad89494a6 # shrinks to doc = "ん。［＃ここから２字下げ］\n《［＃改ページ］》", edits = [(71, 0, 0)]

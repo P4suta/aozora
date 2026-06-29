@@ -26,7 +26,6 @@
 //! and the fold records it into an [`OwnedLexOutput`] that every consumer reads.
 //! The former arena-backed borrowed AST has been removed.
 
-mod graft;
 mod intern;
 mod output;
 mod payload;

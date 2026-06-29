@@ -1,4 +1,4 @@
-//! Tier-2 wall-clock validation for the owned incremental splice (#237 B').
+//! Tier-2 wall-clock validation for the incremental diagnostics splice (#237 B').
 //!
 //! #237 proved the splice CORRECT (byte-identical to a full parse over the
 //! whole corpus); this measures the thing the correctness gate cannot: the
@@ -7,20 +7,17 @@
 //!
 //! - **full** — `Document::parse_owned(new_text)` (a from-scratch parse, what
 //!   the LSP does today on any non-fast-path edit).
-//! - **incremental** — `reparse_incremental_owned(&cached, new_text, edit)`
-//!   (re-lex only the minimal region + splice the owned tables; still rebuilds
-//!   the whole `OwnedLexOutput`, so `O(doc)`).
 //! - **diagnostics-only** —
-//!   `reparse_incremental_diagnostics_only(DiagBaseRef::with_index(&cached, &idx), …)`,
-//!   the #237 production hot path: splices only the diagnostics + the store-free
-//!   region-find tables, skipping the store clone + the normalized string /
-//!   registry / container-pairs rebuild. Tier 2 (#284) additionally replaces the
-//!   prologue's whole-buffer region-find scan with an `O(region + log n)` outward
-//!   scan against a `RegionIndex` (built here per the LSP's own pattern, so the
-//!   timing includes the index build). The residual is the `source_nodes`/`pairs`
-//!   base maintenance + the region re-lex.
+//!   `reparse_incremental_diagnostics_only(DiagBaseRef::from_cached(&cached, &pieces), …)`,
+//!   the #237 production hot path: splices the maintained `PieceSeq` (the next
+//!   edit's region-find base, from which the LSP flattens diagnostics), skipping
+//!   the store clone + the normalized string / registry / container-pairs
+//!   rebuild. Tier 2 additionally maintains the region-find representation
+//!   incrementally: the `PieceSeq` is spliced in `O(region + #pieces)` (built
+//!   once outside the timer, as production maintains it across edits rather than
+//!   rebuilding it). The residual is the region re-lex + the piece splice.
 //! - **clone** — `cached.store.clone()` alone, to confirm it is NOT the
-//!   bottleneck (measured <1% of incremental cost).
+//!   bottleneck (measured <1% of the diagnostics splice cost).
 //!
 //! A single deterministic plain-`x` insertion near each document's sanitized
 //! midpoint exercises the splice fast path (global-free docs) or the full-parse
@@ -47,10 +44,7 @@ use std::hint::black_box;
 use std::process;
 use std::time::Instant;
 
-use aozora::{
-    DiagBaseRef, Document, RegionIndex, reparse_incremental_diagnostics_only,
-    reparse_incremental_owned,
-};
+use aozora::{DiagBaseRef, Document, PieceSeq, reparse_incremental_diagnostics_only};
 use aozora_encoding::decode_auto;
 
 /// Size bands in bytes (sanitized length): `[lo, hi)`.
@@ -74,7 +68,6 @@ struct Band {
     docs: u64,
     fast_path: u64,
     full_ns: u128,
-    incr_ns: u128,
     diag_ns: u128,
     clone_ns: u128,
 }
@@ -135,27 +128,26 @@ fn main() {
         black_box(Document::new(new_san.as_str()).parse_owned());
         let full_ns = t_full.elapsed().as_nanos();
 
-        let t_incr = Instant::now();
-        let spliced = reparse_incremental_owned(&cached, &new_san, mid..mid);
-        let incr_ns = t_incr.elapsed().as_nanos();
-        let is_fast = spliced.is_some();
-        black_box(spliced);
-
         // The production hot path: diagnostics-only splice (no full
-        // OwnedLexOutput), accelerated by the Tier-2 RegionIndex. The LSP rebuilds
-        // this index over the spliced tables each edit (free, same O(N) pass as
-        // the base maintenance it already pays), so the timing INCLUDES the index
-        // build to measure the true per-edit cost. Fast-paths exactly when the
-        // owned splice does (shared prologue), so it is timed under the same
-        // `is_fast` gate.
+        // OwnedLexOutput), splicing the maintained Tier-2 `PieceSeq`. Production
+        // maintains the sequence across edits (it is not rebuilt per edit), so it
+        // is built once outside the timer and the timer measures only the splice —
+        // the true per-edit cost. `Some` exactly when the edit's locality is
+        // provable from the cached tables, which is what gates a fast-path doc.
+        let pieces = PieceSeq::from_contiguous(
+            &cached.source_nodes,
+            &cached.pairs,
+            &cached.diagnostics,
+            cached.sanitized_len,
+        );
         let t_diag = Instant::now();
-        let index = RegionIndex::build(&cached.source_nodes, &cached.pairs, &cached.diagnostics);
         let diag = reparse_incremental_diagnostics_only(
-            DiagBaseRef::with_index(&cached, &index),
+            DiagBaseRef::from_cached(&cached, &pieces),
             &new_san,
             mid..mid,
         );
         let diag_ns = t_diag.elapsed().as_nanos();
+        let is_fast = diag.is_some();
         black_box(diag);
 
         let t_clone = Instant::now();
@@ -163,20 +155,19 @@ fn main() {
         let clone_ns = t_clone.elapsed().as_nanos();
 
         // Only fast-path docs contribute to the speedup numbers; a fallback's
-        // "incremental" cost is just a full parse (1× by construction).
+        // incremental cost is just a full parse (1× by construction).
         if is_fast {
             bands[b].fast_path += 1;
             bands[b].full_ns += full_ns;
-            bands[b].incr_ns += incr_ns;
             bands[b].diag_ns += diag_ns;
             bands[b].clone_ns += clone_ns;
         }
     }
 
-    println!("=== incremental_speedup (full vs owned splice vs diagnostics-only) ===\n");
+    println!("=== incremental_speedup (full vs diagnostics-only) ===\n");
     println!(
-        "{:<18} {:>7} {:>8} {:>10} {:>10} {:>8} {:>10} {:>9} {:>8}",
-        "band", "docs", "fast %", "full µs", "incr µs", "incr×", "diag µs", "diag×", "clone %"
+        "{:<18} {:>7} {:>8} {:>10} {:>10} {:>9} {:>8}",
+        "band", "docs", "fast %", "full µs", "diag µs", "diag×", "clone %"
     );
     let mut tot = Band::default();
     for (i, &(name, _, _)) in BANDS.iter().enumerate() {
@@ -187,44 +178,34 @@ fn main() {
         tot.docs += bd.docs;
         tot.fast_path += bd.fast_path;
         tot.full_ns += bd.full_ns;
-        tot.incr_ns += bd.incr_ns;
         tot.diag_ns += bd.diag_ns;
         tot.clone_ns += bd.clone_ns;
         print_row(name, bd);
     }
-    println!("{:-<92}", "");
+    println!("{:-<76}", "");
     print_row("all", tot);
     println!(
-        "\nfull/incr/diag µs = mean per fast-path doc; incr× = full/incr (owned splice), \
-         diag× = full/diag (diagnostics-only hot path); clone % = store-clone share of incr.\n\
-         diag× > incr× confirms Tier 1 helps, but the gap (incr−diag) is small: the \
-         dropped rebuild is a minority of the cost. The residual is the prologue \
-         (region-find + base maintenance + region re-lex), still O(doc) — Tier 2 \
-         (O(log n) region-find + lazy base) is needed for a truly dramatic win."
+        "\nfull/diag µs = mean per fast-path doc; diag× = full/diag \
+         (diagnostics-only hot path); clone % = store-clone share of diag.\n\
+         The residual is the prologue (region-find + base maintenance + region \
+         re-lex), still O(doc) on a `&str` base — Tier 2 (O(log n) region-find + \
+         rope-native base) is needed for a truly dramatic win."
     );
 }
 
 fn print_row(name: &str, bd: Band) {
     let fast_pct = 100.0 * bd.fast_path as f64 / bd.docs as f64;
-    let (full_us, incr_us, incr_x, diag_us, diag_x, clone_pct) = if bd.fast_path > 0 {
+    let (full_us, diag_us, diag_x, clone_pct) = if bd.fast_path > 0 {
         let f = bd.full_ns as f64 / bd.fast_path as f64 / 1000.0;
-        let i = bd.incr_ns as f64 / bd.fast_path as f64 / 1000.0;
         let d = bd.diag_ns as f64 / bd.fast_path as f64 / 1000.0;
-        let c = 100.0 * bd.clone_ns as f64 / bd.incr_ns.max(1) as f64;
-        (
-            f,
-            i,
-            if i > 0.0 { f / i } else { 0.0 },
-            d,
-            if d > 0.0 { f / d } else { 0.0 },
-            c,
-        )
+        let c = 100.0 * bd.clone_ns as f64 / bd.diag_ns.max(1) as f64;
+        (f, d, if d > 0.0 { f / d } else { 0.0 }, c)
     } else {
-        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        (0.0, 0.0, 0.0, 0.0)
     };
     println!(
-        "{name:<18} {:>7} {fast_pct:>7.1}% {full_us:>10.1} {incr_us:>10.1} {incr_x:>7.2}x \
-         {diag_us:>9.1} {diag_x:>8.2}x {clone_pct:>7.1}%",
+        "{name:<18} {:>7} {fast_pct:>7.1}% {full_us:>10.1} \
+         {diag_us:>10.1} {diag_x:>8.2}x {clone_pct:>7.1}%",
         bd.docs
     );
 }
