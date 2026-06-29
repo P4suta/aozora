@@ -1,0 +1,110 @@
+# Nightly builds: an unsigned `aozora` CLI from the tip of main, stamped
+# `X.Y.Z-nightly.<date>+g<sha>` (via `xtask version --channel nightly`) so it can
+# never be mistaken for a stable release. Published as a 14-day GitHub Actions
+# ARTIFACT — NOT a Release — so it stays off the Releases list, needs no rolling
+# tag (sidesteps Immutable Releases), and never lands on crates.io. Grab the latest:
+#
+#   gh run download --repo P4suta/aozora -n aozora-nightly
+#
+# Nightlies are deliberately unsigned and carry no stability guarantee. Linux
+# x86_64 only for now (the common dev/test target) — expand to the release.yml
+# platform matrix here if there is demand. The stable, signed, multi-platform
+# pipeline is release.yml (v* tags); this lane is for testing main between releases.
+name: nightly
+
+on:
+  schedule:
+    - cron: "30 16 * * *" # 01:30 JST — after the day's commits typically land
+  workflow_dispatch:
+
+# A new nightly supersedes an in-flight one; there is only ever one "latest".
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # Don't rebuild an identical nightly: skip the scheduled run when main has
+      # not moved in the last 24h (HEAD's own commit date is the signal, so the
+      # default shallow checkout is enough). Manual dispatch always builds.
+      - name: Decide whether to build
+        id: freshness
+        shell: bash
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$(git log --since='24 hours ago' --format=%H -n 1)" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No commits to main in the last 24h — skipping nightly."
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.freshness.outputs.build == 'true'
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        if: steps.freshness.outputs.build == 'true'
+        with:
+          key: nightly
+
+      # Stamp the binary as a nightly. The canonical format lives in ONE place —
+      # `xtask version` — and is exported as AOZORA_BUILD_VERSION (read by the
+      # aozora-buildstamp build.rs) into $GITHUB_ENV so the build step picks it up.
+      - name: Resolve nightly build version
+        id: ver
+        if: steps.freshness.outputs.build == 'true'
+        shell: bash
+        run: |
+          date=$(date -u +%Y%m%d)
+          ver=$(cargo run -q -p aozora-xtask -- version --channel nightly --date "$date")
+          echo "AOZORA_BUILD_VERSION=$ver" >> "$GITHUB_ENV"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "::notice::Building nightly $ver"
+
+      - name: Build aozora CLI (unsigned)
+        if: steps.freshness.outputs.build == 'true'
+        run: cargo build --release --package aozora-cli
+
+      - name: Package tarball + checksum
+        id: pkg
+        if: steps.freshness.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="${{ steps.ver.outputs.version }}"
+          name="aozora-${ver}-x86_64-unknown-linux-gnu"
+          staging="${RUNNER_TEMP}/${name}"
+          mkdir -p "${staging}"
+          cp target/release/aozora "${staging}/"
+          cp LICENSE-APACHE LICENSE-MIT NOTICE README.md "${staging}/"
+          tar -C "${RUNNER_TEMP}" -czf "${RUNNER_TEMP}/${name}.tar.gz" "${name}"
+          ( cd "${RUNNER_TEMP}" && sha256sum "${name}.tar.gz" > SHA256SUMS.txt )
+          echo "dir=${RUNNER_TEMP}" >> "$GITHUB_OUTPUT"
+          echo "tarball=${name}.tar.gz" >> "$GITHUB_OUTPUT"
+          # Smoke-assert that the channel stamp actually reached the binary —
+          # this is the nightly lane's daily check that the buildstamp wiring works.
+          got="$("${staging}/aozora" --version)"
+          echo "built: ${got}"
+          case "${got}" in
+            *"-nightly."*) ;;
+            *) echo "::error::binary --version '${got}' is not nightly-stamped"; exit 1 ;;
+          esac
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        if: steps.freshness.outputs.build == 'true'
+        with:
+          name: aozora-nightly
+          path: |
+            ${{ steps.pkg.outputs.dir }}/${{ steps.pkg.outputs.tarball }}
+            ${{ steps.pkg.outputs.dir }}/SHA256SUMS.txt
+          retention-days: 14
+          if-no-files-found: error
