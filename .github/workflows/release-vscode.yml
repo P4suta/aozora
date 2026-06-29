@@ -123,9 +123,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p editors/vscode/server
-          src="target/${{ matrix.cargo_target }}/dist/aozora-lsp"
+          # Bind the matrix value to a shell var before use: keeps the GHA
+          # expression out of the `[[ … ]]` test (shellcheck SC2193 false
+          # positive on a templated literal) and out of direct interpolation.
+          target="${{ matrix.cargo_target }}"
+          src="target/${target}/dist/aozora-lsp"
           dst="editors/vscode/server/aozora-lsp"
-          if [[ "${{ matrix.cargo_target }}" == *-windows-* ]]; then
+          if [[ "${target}" == *-windows-* ]]; then
             cp "${src}.exe" "${dst}.exe"
           else
             cp "${src}" "${dst}"

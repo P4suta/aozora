@@ -52,24 +52,64 @@ a duplicate — GitHub allows same-named rulesets):
 gh api "repos/$REPO/rulesets/$id" -X PUT --input .github/rulesets/main-branch.json
 ```
 
-## Future: release-plz tag gate
+## Activating release-plz: two App-scoped ruleset changes
 
-When release-plz is activated (it cuts the `v*` tag that fires `release.yml`), add
-a **tag-creation restriction** so only the release-plz GitHub App may create
-`v*` tags — a human can no longer hand-push a release tag. That is a `creation`
-rule on `refs/tags/v*` with the App in `bypass_actors`:
+`release-plz.yml` runs as a GitHub App (see
+`crates/aozora-book/src/contrib/release.md`). Two ruleset changes depend on that
+App's numeric **App ID**, which does not exist until the App is created — so they
+are **documented here, not committed as `.json`**: shipping a file with a
+placeholder integer would be an unappliable landmine, and a real ID can only be
+filled at activation time. Apply both as the last steps of bringing release-plz
+live (after `RELEASE_PLZ_APP_ID` / `RELEASE_PLZ_APP_PRIVATE_KEY` are set).
 
-```jsonc
-// add as .github/rulesets/release-tags-creation.json (NOT applied yet — it would
-// block the current manual `git tag v…` release flow until release-plz is live)
-{
-  "name": "release-tags-app-only",
-  "target": "tag",
-  "enforcement": "active",
-  "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
-  "rules": [{ "type": "creation" }],
-  "bypass_actors": [
-    { "actor_id": <RELEASE_PLZ_APP_ID>, "actor_type": "Integration", "bypass_mode": "always" }
-  ]
-}
+Set `APP_ID` to the App's numeric id first:
+
+```sh
+REPO=P4suta/aozora
+APP_ID=<RELEASE_PLZ_APP_ID>   # the numeric GitHub App ID
 ```
+
+### 1. Signature bypass on `require-signed-commits`
+
+release-plz pushes the version-bump + CHANGELOG commit **unsigned** (a runner
+`git push`, not an API commit) to its `release-plz-*` branch, which
+`require-signed-commits` (`~ALL` branches) would reject. Unlike classic "require
+signed commits", a ruleset can exempt a specific **Integration (App)** actor via
+`bypass_actors`, so we scope the exemption to the one cryptographically-identified
+release identity — narrower than a branch-name glob, and the App still cannot
+reach `main` (its `pull_request` rule has an empty bypass). The Release PR is
+**squash-merged**, so `main` only ever receives GitHub's web-flow-signed merge
+commit; the bot's unsigned commits never land there.
+
+```sh
+# Re-sync require-signed-commits.json with the App added to bypass_actors:
+#   "bypass_actors": [
+#     { "actor_id": APP_ID, "actor_type": "Integration", "bypass_mode": "always" }
+#   ]
+id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name=="require-signed-commits") | .id')
+gh api "repos/$REPO/rulesets/$id" -X PUT \
+  --input <(jq --argjson app "$APP_ID" \
+    '.bypass_actors = [{actor_id: $app, actor_type: "Integration", bypass_mode: "always"}]' \
+    .github/rulesets/require-signed-commits.json)
+```
+
+### 2. Tag-creation lock (`v*` tags, App-only)
+
+Once release-plz cuts the `v*` tag that fires `release.yml`, restrict `v*` tag
+**creation** to the App so a human can no longer hand-push a release tag. Apply
+this **last** — applying it before release-plz is live would block the current
+manual `git tag v…` flow.
+
+```sh
+gh api "repos/$REPO/rulesets" -X POST --input <(jq -n --argjson app "$APP_ID" '{
+  name: "release-tags-app-only",
+  target: "tag",
+  enforcement: "active",
+  conditions: { ref_name: { include: ["refs/tags/v*"], exclude: [] } },
+  rules: [{ type: "creation" }],
+  bypass_actors: [{ actor_id: $app, actor_type: "Integration", bypass_mode: "always" }]
+}')
+```
+
+Both use the same App id → one coherent "the release-plz App is our trusted
+release identity" model across signing and tagging.
