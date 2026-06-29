@@ -19,7 +19,6 @@
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "types": ["vite/client"],
-    "baseUrl": ".",
     "paths": {
       "aozora-wasm": ["../crates/aozora-wasm/pkg/aozora_wasm"]
     }
