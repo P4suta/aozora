@@ -104,7 +104,7 @@ jobs:
       # don't need to apt-install per-target gcc cross packages.
       - name: Install `cross`
         if: matrix.cross
-        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912  # v2.81.10
+        uses: taiki-e/install-action@9bcaee1dcae34154180f412e2fa69355a7cda9f6  # v2.82.6
         with:
           tool: cross
 
@@ -190,7 +190,7 @@ jobs:
       # Marketplace / Open VSX. Verify with
       # `gh attestation verify <file> --repo P4suta/aozora`.
       - name: Attest VSIX provenance
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
         with:
           subject-path: "vsix/*.vsix"
 

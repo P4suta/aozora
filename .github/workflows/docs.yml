@@ -77,7 +77,7 @@ jobs:
         # a ~1-2 min `cargo install` source build on every Pages deploy.
         # mdbook-mermaid ships prebuilts — the same source the dev image's
         # `cargo binstall` uses (Dockerfile cargo-tools stage).
-        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912  # v2
+        uses: taiki-e/install-action@9bcaee1dcae34154180f412e2fa69355a7cda9f6  # v2
         with:
           tool: mdbook-mermaid
 
