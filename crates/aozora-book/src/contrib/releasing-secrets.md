@@ -57,40 +57,82 @@ gh api -X POST repos/P4suta/aozora/environments/release/deployment-branch-polici
 > auto-creates it **without** protection rules on first run. Always
 > create the environment (above) **before** the first gated run.
 
+### 1b. Create the `release-plz` environment + GitHub App
+
+release-plz (`release-plz.yml`) runs in its **own** environment, distinct from
+`release`: it publishes crates.io and cuts the `v*` tag **unattended** right
+after the Release PR merges, so it has **no required reviewer** (the deliberate
+gate is the labelled squash-merge, not a second approval). It is still scoped to
+`main` so a feature-branch workflow cannot read the App key.
+
+```sh
+# no reviewers, main-only — the merge is the gate
+gh api -X PUT repos/P4suta/aozora/environments/release-plz --input - <<EOF
+{"wait_timer":0,
+ "deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
+EOF
+gh api -X POST repos/P4suta/aozora/environments/release-plz/deployment-branch-policies -f name='main' -f type=branch
+```
+
+release-plz must push the `v*` tag as a **GitHub App** (a tag pushed by the
+default `GITHUB_TOKEN` does not trigger the downstream `release.yml` /
+`publish-*` workflows). Create an App (org or personal) with repository
+permissions **Contents: R/W** + **Pull requests: R/W**, no webhook; install it
+on `P4suta/aozora`; generate a private key and note the **App ID**. The key is a
+*repository* secret (the `HAS_APP` gate in `release-plz.yml` reads it; until both
+exist the workflow no-ops green):
+
+```sh
+gh secret set RELEASE_PLZ_APP_ID            # the numeric App ID
+gh secret set RELEASE_PLZ_APP_PRIVATE_KEY   # the .pem contents
+```
+
+Two ruleset changes also key on this App's ID (signature bypass on the
+`release-plz-*` branch + `v*` tag-creation lock); apply them per the runbook in
+`.github/rulesets/README.md`.
+
 ### 2. crates.io — Trusted Publishing
 
-crates.io does **not** allow Trusted Publishing for a crate that does not
-exist yet: *"initial publish requires an API token."* So the very first
-publish of the 13 brand-new `aozora*` crates is a one-time token
-bootstrap; every release afterwards is tokenless.
+release-plz owns crates.io publishing (`publish-crates.yml` is retired). In
+steady state it publishes tokenlessly via OIDC from the `release-plz`
+environment. Two one-time wrinkles: crates.io **cannot** Trusted-Publish a crate
+that does not exist yet (*"initial publish requires an API token."*), and a
+trusted publisher is bound per-crate to an exact **workflow filename**, so the
+14 crates already live under the old workflow must be re-pointed.
 
-**Bootstrap (once):**
+**Bootstrap the 5 new crates (once).** Fourteen `aozora*` crates are already on
+crates.io from v0.4.1; five are new — `aozora-buildstamp`, `aozora-diagnostics`,
+`aozora-fmt`, `tree-sitter-aozora`, `aozora-lsp`. Publish each once, by hand, in
+dependency order, so they exist before OIDC can take over:
 
-1. Create a crates.io API token with **both** `publish-new` and
-   `publish-update` scopes.
-2. Add it as the `CARGO_TOKEN` **Environment** secret on `release`
-   (`gh secret set CARGO_TOKEN --env release`).
-3. Run the ladder with OIDC disabled and approve the `publish` job:
-   ```sh
-   gh workflow run publish-crates.yml -f dry_run=false -f use_oidc=false
-   ```
-   crates.io throttles new crates (burst 5, then ~1 / 10 min); the
-   workflow is resumable and rate-limit aware, so re-run until all 13 are
-   live (already-published versions are skipped).
+```sh
+# a crates.io API token with publish-new + publish-update scopes
+export CARGO_REGISTRY_TOKEN=cio_xxx
+for c in aozora-buildstamp aozora-diagnostics aozora-fmt tree-sitter-aozora aozora-lsp; do
+  cargo publish -p "$c"            # their library deps are already on crates.io
+done
+unset CARGO_REGISTRY_TOKEN
+```
 
-**Switch to OIDC (after the crates exist):**
+(crates.io throttles new crates — burst 5, then ~1 / 10 min — so a retry may be
+needed.) The first release-plz release then bumps all 18 to the new version and
+publishes them together via OIDC.
 
-4. For **each** of the 13 published crates: crates.io → the crate →
-   Settings → Trusted Publishing → Add → GitHub, with
-   - Repository owner: `P4suta`
-   - Repository name: `aozora`
-   - Workflow filename: `publish-crates.yml`
-   - Environment: `release`
-5. Delete the `CARGO_TOKEN` environment secret
-   (`gh secret delete CARGO_TOKEN --env release`). Steady-state releases
-   now run `gh workflow run publish-crates.yml -f dry_run=false`
-   (`use_oidc` defaults to true); `rust-lang/crates-io-auth-action` mints
-   a 30-minute token that is auto-revoked when the job ends.
+**Register the trusted publishers (all 18).** For **each** publishable crate:
+crates.io → the crate → Settings → Trusted Publishing → Add → GitHub, with
+
+- Repository owner: `P4suta`
+- Repository name: `aozora`
+- Workflow filename: **`release-plz.yml`**
+- Environment: **`release-plz`**
+
+The 14 crates carried over from v0.4.1 already have a publisher pointing at the
+retired `publish-crates.yml` / `release` environment — **update** those to
+`release-plz.yml` / `release-plz` (the OIDC `sub` claim is matched against the
+exact workflow + environment). The 5 bootstrapped crates get a fresh
+registration. No `CARGO_REGISTRY_TOKEN` secret is stored in steady state —
+release-plz performs the OIDC exchange itself, so `rust-lang/crates-io-auth-action`
+is not used.
 
 ### 3. PyPI — Trusted Publishing (tokenless from day one)
 
@@ -166,10 +208,12 @@ gh secret delete NPM_TOKEN     # ditto
 
 ## Routine release (steady state)
 
-1. Tag / dispatch as described in [Release process](release.md).
-2. For dispatch publishes, run with `dry_run=false`; for tag-driven
-   releases (`v*`, `vscode-v*`) the push triggers the workflow.
-3. **Approve** the `publish` job in the run's environment-deployment
+1. Squash-merge the release-plz **Release PR** as described in
+   [Release process](release.md). release-plz publishes crates.io and pushes
+   `vX.Y.Z` unattended from the `release-plz` environment — no token handling.
+2. The `v*` tag fans out to `release.yml` + `publish-pypi` / `publish-npm` /
+   `publish-extism-wasm` (and a `vscode-v*` tag drives `release-vscode.yml`).
+3. **Approve** their `publish` jobs once in the `release` environment-deployment
    prompt (Actions → the run → Review deployments).
 4. Done — no token handling.
 
