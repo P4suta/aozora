@@ -1,24 +1,24 @@
 [package]
-name        = "aozora-py"
+name = "aozora-py"
 description = "Python (PyO3) driver for the aozora parser — maturin / pip distribution"
-version.workspace      = true
-edition.workspace      = true
+version.workspace = true
+edition.workspace = true
 rust-version.workspace = true
-license.workspace      = true
-repository.workspace   = true
-authors.workspace      = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 # Crate-local, PyPI-facing README (absolute links so it renders on the
 # PyPI project page); the other crates inherit the workspace README.
-readme                 = "README.md"
-keywords.workspace     = true
-categories.workspace   = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
 
 # Driver crate — built into a wheel via `maturin build -F
 # extension-module`. Host (cargo workspace) builds skip the pyo3 dep
 # unless the `extension-module` feature is enabled, so a plain
 # `cargo build --workspace` (without Python dev headers) still
 # succeeds.
-publish     = false
+publish = false
 
 [lints]
 workspace = true
@@ -63,5 +63,5 @@ extension-module = ["dep:pyo3"]
 # name must therefore be `_aozora`, matching the `#[pymodule] fn
 # _aozora(...)` entry in src/lib.rs and the pyproject
 # `module-name = "aozora._aozora"`.
-name       = "_aozora"
+name = "_aozora"
 crate-type = ["lib", "cdylib"]

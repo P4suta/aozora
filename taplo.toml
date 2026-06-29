@@ -1,0 +1,19 @@
+# TOML formatting policy (taplo), enforced repo-wide via `taplo fmt --check`
+# (see Justfile `fmt-check` / lefthook / the CI `lint (fmt-check)` cell).
+# Validity alone (`taplo check`) is not enough — formatting is part of the
+# convention, matching the find-my-files reference repo's taplo policy.
+
+# taplo does not honor .gitignore, so exclude the host build dir explicitly.
+# (In the dev container the target dir lives at /cargo/target — OUTSIDE the
+# /workspace bind mount — so it is never globbed there; this guards host runs,
+# where ./target sits inside the checkout.)
+exclude = ["target/**"]
+
+[formatting]
+align_entries = false # no `=` alignment — taplo default, matches find-my-files
+align_comments = false # keep a trailing comment one space after the value
+column_width = 100
+indent_string = "  " # two spaces
+reorder_keys = false # key order is semantically meaningful (Cargo.toml)
+reorder_arrays = false
+array_auto_collapse = false # keep intentionally-multiline arrays expanded

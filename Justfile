@@ -1000,13 +1000,15 @@ strict-code:
     fi
     echo "strict-code: clean (expect-count $expect_count / baseline $expect_baseline)"
 
-# Format check (no-write)
+# Format check (no-write): Rust (rustfmt) + TOML (taplo, taplo.toml policy)
 fmt-check:
     {{_dev}} cargo fmt --all -- --check
+    {{_dev}} taplo fmt --check
 
-# Auto-format (writes)
+# Auto-format (writes): Rust (rustfmt) + TOML (taplo, taplo.toml policy)
 fmt:
     {{_dev}} cargo fmt --all
+    {{_dev}} taplo fmt
 
 # Clippy — lint groups (pedantic/nursery/cargo) and carve-outs are owned
 # entirely by `[workspace.lints]` in Cargo.toml. Passing `-W clippy::<group>`

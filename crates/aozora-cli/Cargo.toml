@@ -1,15 +1,15 @@
 [package]
-name        = "aozora-cli"
+name = "aozora-cli"
 description = "Command-line frontend for the aozora parser: check / fmt against Aozora Bunko notation files"
-version.workspace      = true
-edition.workspace      = true
+version.workspace = true
+edition.workspace = true
 rust-version.workspace = true
-license.workspace      = true
-repository.workspace   = true
-authors.workspace      = true
-readme.workspace       = true
-keywords.workspace     = true
-categories.workspace   = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
@@ -23,22 +23,22 @@ path = "src/main.rs"
 # the `aozora schema` introspection subcommand. CLI is the only
 # binary that needs schema runtime, so feature-gating here keeps the
 # library `aozora` crate light for plain library consumers.
-aozora          = { workspace = true, features = ["schema"] }
-aozora-buildstamp = { workspace = true }   # channel-aware `--version` stamp
+aozora = { workspace = true, features = ["schema"] }
+aozora-buildstamp = { workspace = true } # channel-aware `--version` stamp
 aozora-encoding = { workspace = true }
-aozora-pandoc   = { workspace = true }
-clap            = { workspace = true }
-clap_complete   = { workspace = true }
+aozora-pandoc = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
 clap_complete_nushell = { workspace = true }
-clap_mangen     = { workspace = true }
-comfy-table     = { workspace = true }
-miette          = { workspace = true, features = ["fancy"] }
-anyhow          = { workspace = true }
-serde           = { workspace = true }
-serde_json      = { workspace = true }
-toml            = { workspace = true }
-notify          = { workspace = true }
+clap_mangen = { workspace = true }
+comfy-table = { workspace = true }
+miette = { workspace = true, features = ["fancy"] }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+notify = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-insta    = { workspace = true }
+insta = { workspace = true }

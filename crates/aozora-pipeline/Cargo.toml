@@ -1,15 +1,15 @@
 [package]
-name        = "aozora-pipeline"
+name = "aozora-pipeline"
 description = "Aozora notation lex pipeline — orchestrator + lexer (sanitize → tokenize → pair → classify) producing a borrowed-arena AST. Internal crate; depend on the aozora umbrella crate instead."
-version.workspace      = true
-edition.workspace      = true
+version.workspace = true
+edition.workspace = true
 rust-version.workspace = true
-license.workspace      = true
-repository.workspace   = true
-authors.workspace      = true
-readme.workspace       = true
-keywords.workspace     = true
-categories.workspace   = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
@@ -25,32 +25,32 @@ default = []
 classify-instrument = []
 
 [dependencies]
-aozora-spec     = { workspace = true }
-aozora-syntax   = { workspace = true }
+aozora-spec = { workspace = true }
+aozora-syntax = { workspace = true }
 aozora-encoding = { workspace = true }
-aozora-scan     = { workspace = true }
+aozora-scan = { workspace = true }
 
 # Tokenize-stage build-time tooling — unchanged from the lexer's
 # historical deps (before it was folded into aozora-pipeline).
 aho-corasick = { workspace = true, features = ["std"] }
-memchr       = { workspace = true }
-smallvec     = { workspace = true }
+memchr = { workspace = true }
+smallvec = { workspace = true }
 
 [dev-dependencies]
-proptest          = { workspace = true }
-aozora-proptest   = { path = "../aozora-proptest" }
-aozora-render     = { path = "../aozora-render" }
-criterion         = { workspace = true }
-insta             = { workspace = true }
+proptest = { workspace = true }
+aozora-proptest = { path = "../aozora-proptest" }
+aozora-render = { path = "../aozora-render" }
+criterion = { workspace = true }
+insta = { workspace = true }
 
 [[bench]]
-name    = "tokenize_compare"
+name = "tokenize_compare"
 harness = false
 
 [[bench]]
-name    = "classify_kaeriten"
+name = "classify_kaeriten"
 harness = false
 
 [[bench]]
-name    = "boot"
+name = "boot"
 harness = false

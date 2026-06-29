@@ -1,16 +1,16 @@
 [package]
-name        = "aozora-proptest"
+name = "aozora-proptest"
 description = "Proptest strategies (Aozora-shaped input generators) for the aozora parser. Internal crate; reach it via the aozora crate's `proptest` feature."
 
-version.workspace      = true
-edition.workspace      = true
+version.workspace = true
+edition.workspace = true
 rust-version.workspace = true
-license.workspace      = true
-repository.workspace   = true
-authors.workspace      = true
-readme.workspace       = true
-keywords.workspace     = true
-categories.workspace   = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
