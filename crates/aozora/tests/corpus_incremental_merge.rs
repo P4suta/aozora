@@ -19,7 +19,7 @@ use aozora::render::{render_html_owned, serialize_owned};
 use aozora::syntax::owned::{ContentOwned, NodeOwned, NodeRefOwned, NodeStore, SegmentOwned};
 use aozora::syntax::owned::{ContentRange, GaijiCanonicalOwned, GaijiOwned, SegRange};
 use aozora::{
-    DiagBaseRef, Diagnostic, Document, RegionIndex, reparse_incremental_diagnostics_only,
+    DiagBaseRef, Diagnostic, Document, PieceSeq, reparse_incremental_diagnostics_only,
     reparse_incremental_owned,
 };
 use aozora_encoding::decode_auto;
@@ -279,9 +279,14 @@ fn reparse_diagnostics_only_equals_full_parse() {
             continue;
         }
 
-        let index = RegionIndex::build(&cached.source_nodes, &cached.pairs, &cached.diagnostics);
+        let pieces = PieceSeq::from_contiguous(
+            &cached.source_nodes,
+            &cached.pairs,
+            &cached.diagnostics,
+            cached.sanitized_len,
+        );
         let Some(diag) = reparse_incremental_diagnostics_only(
-            DiagBaseRef::with_index(&cached, &index),
+            DiagBaseRef::from_cached(&cached, &pieces),
             &new_san,
             mid..mid,
         ) else {
@@ -291,11 +296,14 @@ fn reparse_diagnostics_only_equals_full_parse() {
         };
         fast_path += 1;
         count += 1;
+        // The diagnostics-only splice returns the maintained `PieceSeq`; flatten
+        // it (the bridge by which this gate keeps comparing resolved surfaces).
+        let diag_diags = diag.pieces.collect_diagnostics();
 
         let mut problems: Vec<String> = Vec::new();
 
         // 1. Diagnostics byte-identical to a full parse (the production contract).
-        if sorted_debug(diag.diagnostics.clone()) != sorted_debug(full.diagnostics.clone()) {
+        if sorted_debug(diag_diags.clone()) != sorted_debug(full.diagnostics.clone()) {
             problems.push("diagnostics-only multiset != full parse".to_owned());
         }
 
@@ -303,7 +311,7 @@ fn reparse_diagnostics_only_equals_full_parse() {
         //    here (shared prologue), with identical diagnostics.
         match reparse_incremental_owned(&cached, &new_san, mid..mid) {
             Some(owned) => {
-                if sorted_debug(diag.diagnostics.clone())
+                if sorted_debug(diag_diags.clone())
                     != sorted_debug(owned.output.diagnostics.clone())
                 {
                     problems.push("diagnostics-only != owned splice diagnostics".to_owned());

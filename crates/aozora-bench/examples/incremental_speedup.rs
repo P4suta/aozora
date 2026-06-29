@@ -11,14 +11,14 @@
 //!   (re-lex only the minimal region + splice the owned tables; still rebuilds
 //!   the whole `OwnedLexOutput`, so `O(doc)`).
 //! - **diagnostics-only** —
-//!   `reparse_incremental_diagnostics_only(DiagBaseRef::with_index(&cached, &idx), …)`,
-//!   the #237 production hot path: splices only the diagnostics + the store-free
-//!   region-find tables, skipping the store clone + the normalized string /
-//!   registry / container-pairs rebuild. Tier 2 (#284) additionally replaces the
-//!   prologue's whole-buffer region-find scan with an `O(region + log n)` outward
-//!   scan against a `RegionIndex` (built here per the LSP's own pattern, so the
-//!   timing includes the index build). The residual is the `source_nodes`/`pairs`
-//!   base maintenance + the region re-lex.
+//!   `reparse_incremental_diagnostics_only(DiagBaseRef::from_cached(&cached, &pieces), …)`,
+//!   the #237 production hot path: splices the maintained `PieceSeq` (the next
+//!   edit's region-find base, from which the LSP flattens diagnostics), skipping
+//!   the store clone + the normalized string / registry / container-pairs
+//!   rebuild. Tier 2 additionally maintains the region-find representation
+//!   incrementally: the `PieceSeq` is spliced in `O(region + #pieces)` (built
+//!   once outside the timer, as production maintains it across edits rather than
+//!   rebuilding it). The residual is the region re-lex + the piece splice.
 //! - **clone** — `cached.store.clone()` alone, to confirm it is NOT the
 //!   bottleneck (measured <1% of incremental cost).
 //!
@@ -48,7 +48,7 @@ use std::process;
 use std::time::Instant;
 
 use aozora::{
-    DiagBaseRef, Document, RegionIndex, reparse_incremental_diagnostics_only,
+    DiagBaseRef, Document, PieceSeq, reparse_incremental_diagnostics_only,
     reparse_incremental_owned,
 };
 use aozora_encoding::decode_auto;
@@ -142,16 +142,20 @@ fn main() {
         black_box(spliced);
 
         // The production hot path: diagnostics-only splice (no full
-        // OwnedLexOutput), accelerated by the Tier-2 RegionIndex. The LSP rebuilds
-        // this index over the spliced tables each edit (free, same O(N) pass as
-        // the base maintenance it already pays), so the timing INCLUDES the index
-        // build to measure the true per-edit cost. Fast-paths exactly when the
-        // owned splice does (shared prologue), so it is timed under the same
-        // `is_fast` gate.
+        // OwnedLexOutput), splicing the maintained Tier-2 `PieceSeq`. Production
+        // maintains the sequence across edits (it is not rebuilt per edit), so it
+        // is built once outside the timer and the timer measures only the splice —
+        // the true per-edit cost. Fast-paths exactly when the owned splice does
+        // (shared prologue), so it is timed under the same `is_fast` gate.
+        let pieces = PieceSeq::from_contiguous(
+            &cached.source_nodes,
+            &cached.pairs,
+            &cached.diagnostics,
+            cached.sanitized_len,
+        );
         let t_diag = Instant::now();
-        let index = RegionIndex::build(&cached.source_nodes, &cached.pairs, &cached.diagnostics);
         let diag = reparse_incremental_diagnostics_only(
-            DiagBaseRef::with_index(&cached, &index),
+            DiagBaseRef::from_cached(&cached, &pieces),
             &new_san,
             mid..mid,
         );
