@@ -257,7 +257,8 @@ exercise — all of it manual, in this order. The two ruleset commands live in
    `P4suta/aozora`, generate a private key, and record the **App ID**.
 2. **Set repository secrets** `RELEASE_PLZ_APP_ID` and
    `RELEASE_PLZ_APP_PRIVATE_KEY`. `release-plz.yml` reads them via its `HAS_APP`
-   gate; once both exist it activates on the next push to `main`.
+   gate; once both exist, trigger the first run with
+   `gh workflow run release-plz.yml` (or wait for the next push to `main`).
 3. **Create the `release-plz` environment** — deployment-branch policy `main`
    only, **no required reviewers**, no wait timer (the publish must run
    unattended; the Release-PR merge is the human gate).
@@ -267,9 +268,10 @@ exercise — all of it manual, in this order. The two ruleset commands live in
    first publish) and **register the trusted publishers** for all 18 crates
    against `release-plz.yml` / the `release-plz` environment — see the
    [release secrets runbook](releasing-secrets.md).
-6. **Let release-plz open the first Release PR**, add `release: approved`, and
-   squash-merge it. Verify the chain: crates.io publishes, `v0.5.0` is pushed,
-   `release.yml` + the downstream publishers fan out.
+6. **Trigger release-plz** (`gh workflow run release-plz.yml`) to open the first
+   Release PR, add `release: approved`, and squash-merge it. Verify the chain:
+   crates.io publishes, `v0.5.0` is pushed, `release.yml` + the downstream
+   publishers fan out.
 7. **Apply the `v*` tag-creation lock last** (App-only tag creation; see the
    rulesets README) — doing it earlier would block the current manual tag flow.
 

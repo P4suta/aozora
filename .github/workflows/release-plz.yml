@@ -26,6 +26,10 @@ name: release-plz
 on:
   push:
     branches: [main]
+  # Manual trigger for activation / re-runs: once the App secrets exist,
+  # `gh workflow run release-plz.yml` opens the first Release PR without
+  # waiting for the next push to main. Dormant (HAS_APP) gate still applies.
+  workflow_dispatch:
 
 # One release pipeline per ref; never cancel a publish already in flight.
 concurrency:

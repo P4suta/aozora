@@ -54,62 +54,45 @@ gh api "repos/$REPO/rulesets/$id" -X PUT --input .github/rulesets/main-branch.js
 
 ## Activating release-plz: two App-scoped ruleset changes
 
-`release-plz.yml` runs as a GitHub App (see
-`crates/aozora-book/src/contrib/release.md`). Two ruleset changes depend on that
-App's numeric **App ID**, which does not exist until the App is created — so they
-are **documented here, not committed as `.json`**: shipping a file with a
-placeholder integer would be an unappliable landmine, and a real ID can only be
-filled at activation time. Apply both as the last steps of bringing release-plz
-live (after `RELEASE_PLZ_APP_ID` / `RELEASE_PLZ_APP_PRIVATE_KEY` are set).
+`release-plz.yml` runs as the **release-plz GitHub App** (App ID `4177429`; see
+`crates/aozora-book/src/contrib/release.md`). Two rulesets grant that App the
+access release-plz needs; both are committed here **with the App baked in**, so
+applying each is a single `gh api … --input <file>` — no jq, no placeholders.
 
-Set `APP_ID` to the App's numeric id first:
+> A maintainer runs these two commands: the auto-mode agent is intentionally
+> blocked from mutating rulesets via `gh api`.
 
-```sh
-REPO=P4suta/aozora
-APP_ID=<RELEASE_PLZ_APP_ID>   # the numeric GitHub App ID
-```
-
-### 1. Signature bypass on `require-signed-commits`
+### 1. Signature bypass on `require-signed-commits` — apply during activation
 
 release-plz pushes the version-bump + CHANGELOG commit **unsigned** (a runner
 `git push`, not an API commit) to its `release-plz-*` branch, which
-`require-signed-commits` (`~ALL` branches) would reject. Unlike classic "require
-signed commits", a ruleset can exempt a specific **Integration (App)** actor via
-`bypass_actors`, so we scope the exemption to the one cryptographically-identified
-release identity — narrower than a branch-name glob, and the App still cannot
-reach `main` (its `pull_request` rule has an empty bypass). The Release PR is
-**squash-merged**, so `main` only ever receives GitHub's web-flow-signed merge
-commit; the bot's unsigned commits never land there.
+`require-signed-commits` (`~ALL` branches) would reject. A ruleset can exempt a
+specific **Integration (App)** actor via `bypass_actors`, scoping the exemption
+to the one cryptographically-identified release identity — narrower than a
+branch-name glob, and the App still cannot reach `main` (its `pull_request` rule
+has an empty bypass). Release PRs are **squash-merged**, so `main` only ever
+receives GitHub's web-flow-signed merge commit.
+
+`require-signed-commits.json` already lists the App in `bypass_actors`, so
+re-sync the live ruleset (id `17766549`) straight from the file:
 
 ```sh
-# Re-sync require-signed-commits.json with the App added to bypass_actors:
-#   "bypass_actors": [
-#     { "actor_id": APP_ID, "actor_type": "Integration", "bypass_mode": "always" }
-#   ]
-id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name=="require-signed-commits") | .id')
-gh api "repos/$REPO/rulesets/$id" -X PUT \
-  --input <(jq --argjson app "$APP_ID" \
-    '.bypass_actors = [{actor_id: $app, actor_type: "Integration", bypass_mode: "always"}]' \
-    .github/rulesets/require-signed-commits.json)
+gh api repos/P4suta/aozora/rulesets/17766549 -X PUT \
+  --input .github/rulesets/require-signed-commits.json
+gh api repos/P4suta/aozora/rulesets/17766549 --jq '.bypass_actors'   # verify
 ```
 
-### 2. Tag-creation lock (`v*` tags, App-only)
+### 2. Tag-creation lock (`v*` tags, App-only) — apply LAST
 
 Once release-plz cuts the `v*` tag that fires `release.yml`, restrict `v*` tag
 **creation** to the App so a human can no longer hand-push a release tag. Apply
-this **last** — applying it before release-plz is live would block the current
-manual `git tag v…` flow.
+this **after the first successful release** — applying it earlier would block the
+current manual `git tag v…` flow.
 
 ```sh
-gh api "repos/$REPO/rulesets" -X POST --input <(jq -n --argjson app "$APP_ID" '{
-  name: "release-tags-app-only",
-  target: "tag",
-  enforcement: "active",
-  conditions: { ref_name: { include: ["refs/tags/v*"], exclude: [] } },
-  rules: [{ type: "creation" }],
-  bypass_actors: [{ actor_id: $app, actor_type: "Integration", bypass_mode: "always" }]
-}')
+gh api repos/P4suta/aozora/rulesets -X POST \
+  --input .github/rulesets/release-tags-creation.json
 ```
 
-Both use the same App id → one coherent "the release-plz App is our trusted
-release identity" model across signing and tagging.
+Both use the same App id (`4177429`) → one coherent "the release-plz App is our
+trusted release identity" model across signing and tagging.

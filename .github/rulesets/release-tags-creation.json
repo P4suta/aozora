@@ -1,15 +1,15 @@
 {
-  "name": "require-signed-commits",
-  "target": "branch",
+  "name": "release-tags-app-only",
+  "target": "tag",
   "enforcement": "active",
   "conditions": {
     "ref_name": {
-      "include": ["~ALL"],
+      "include": ["refs/tags/v*"],
       "exclude": []
     }
   },
   "rules": [
-    { "type": "required_signatures" }
+    { "type": "creation" }
   ],
   "bypass_actors": [
     { "actor_id": 4177429, "actor_type": "Integration", "bypass_mode": "always" }
