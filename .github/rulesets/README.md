@@ -54,13 +54,18 @@ gh api "repos/$REPO/rulesets/$id" -X PUT --input .github/rulesets/main-branch.js
 
 ## Activating release-plz: two App-scoped ruleset changes
 
-`release-plz.yml` runs as the **release-plz GitHub App** (App ID `4177429`; see
-`crates/aozora-book/src/contrib/release.md`). Two rulesets grant that App the
-access release-plz needs; both are committed here **with the App baked in**, so
-applying each is a single `gh api … --input <file>` — no jq, no placeholders.
+`release-plz.yml` runs as the **release-plz GitHub App**. Two ruleset changes
+grant it the access release-plz needs; both reference the App by its numeric
+**App ID** in `bypass_actors` (`actor_type: "Integration"`). The App ID is a
+public identifier, but to keep it out of the committed files it is **injected at
+apply time** (the committed JSON carries no ID). Set it once:
 
-> A maintainer runs these two commands: the auto-mode agent is intentionally
-> blocked from mutating rulesets via `gh api`.
+```sh
+APP_ID=<the release-plz App's numeric App ID>   # not the Client ID
+```
+
+> A maintainer runs these (the auto-mode agent is blocked from `gh api` ruleset
+> mutations). The actor type is `Integration` because the actor is a GitHub App.
 
 ### 1. Signature bypass on `require-signed-commits` — apply during activation
 
@@ -73,26 +78,40 @@ branch-name glob, and the App still cannot reach `main` (its `pull_request` rule
 has an empty bypass). Release PRs are **squash-merged**, so `main` only ever
 receives GitHub's web-flow-signed merge commit.
 
-`require-signed-commits.json` already lists the App in `bypass_actors`, so
-re-sync the live ruleset (id `17766549`) straight from the file:
+The committed `require-signed-commits.json` keeps `bypass_actors` **empty** (its
+base state); inject the App when applying the live ruleset (id `17766549`):
 
 ```sh
 gh api repos/P4suta/aozora/rulesets/17766549 -X PUT \
-  --input .github/rulesets/require-signed-commits.json
+  --input <(jq --argjson app "$APP_ID" \
+    '.bypass_actors = [{actor_id: $app, actor_type: "Integration", bypass_mode: "always"}]' \
+    .github/rulesets/require-signed-commits.json)
 gh api repos/P4suta/aozora/rulesets/17766549 --jq '.bypass_actors'   # verify
 ```
+
+> ⚠️ The **live** ruleset carries the App bypass, but the committed file does
+> not. To re-sync after editing, **always use the `jq` command above** — applying
+> the bare file (`--input .github/rulesets/require-signed-commits.json`) would
+> drop the bypass and block release-plz's bump push.
 
 ### 2. Tag-creation lock (`v*` tags, App-only) — apply LAST
 
 Once release-plz cuts the `v*` tag that fires `release.yml`, restrict `v*` tag
 **creation** to the App so a human can no longer hand-push a release tag. Apply
 this **after the first successful release** — applying it earlier would block the
-current manual `git tag v…` flow.
+current manual `git tag v…` flow. Built inline (no committed file — an empty
+`bypass_actors` here would lock out everyone, including the App):
 
 ```sh
-gh api repos/P4suta/aozora/rulesets -X POST \
-  --input .github/rulesets/release-tags-creation.json
+gh api repos/P4suta/aozora/rulesets -X POST --input <(jq -n --argjson app "$APP_ID" '{
+  name: "release-tags-app-only",
+  target: "tag",
+  enforcement: "active",
+  conditions: { ref_name: { include: ["refs/tags/v*"], exclude: [] } },
+  rules: [{ type: "creation" }],
+  bypass_actors: [{ actor_id: $app, actor_type: "Integration", bypass_mode: "always" }]
+}')
 ```
 
-Both use the same App id (`4177429`) → one coherent "the release-plz App is our
-trusted release identity" model across signing and tagging.
+Both use the same App ID → one coherent "the release-plz App is our trusted
+release identity" model across signing and tagging.
