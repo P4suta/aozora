@@ -1,9 +1,9 @@
 {
-  "name": "afm dev",
+  "name": "aozora dev",
   "dockerComposeFile": ["../docker-compose.yml"],
   "service": "dev",
   "workspaceFolder": "/workspace",
-  "remoteUser": "root",
+  "remoteUser": "dev",
 
   "shutdownAction": "none",
 
