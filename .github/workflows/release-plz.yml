@@ -43,6 +43,12 @@ jobs:
   release-plz-pr:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The App secrets live on the release-plz environment (more scoped than
+    # repository secrets — unreadable from a push on any other branch). This
+    # job must declare the environment to read them; its main-only branch
+    # policy admits the push/dispatch-on-main that triggers this workflow, and
+    # it has no required reviewers so opening the Release PR stays unattended.
+    environment: release-plz
     permissions:
       contents: write # push the release-plz-<branch> branch
       pull-requests: write # open / maintain the Release PR
