@@ -1,15 +1,15 @@
 [package]
-name        = "aozora-encoding"
+name = "aozora-encoding"
 description = "Aozora Bunko notation: Shift_JIS decoding and gaiji (外字) resolution. Internal crate; depend on the aozora umbrella crate instead."
-version.workspace     = true
-edition.workspace     = true
+version.workspace = true
+edition.workspace = true
 rust-version.workspace = true
-license.workspace     = true
-repository.workspace  = true
-authors.workspace     = true
-readme.workspace      = true
-keywords.workspace    = true
-categories.workspace  = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
@@ -17,7 +17,7 @@ workspace = true
 [dependencies]
 encoding_rs = { workspace = true }
 thiserror = { workspace = true }
-miette    = { workspace = true }
+miette = { workspace = true }
 # Runtime PHF — `default-features = false` strips the proc-macro backend;
 # the gaiji table is emitted via `phf_codegen` in `build.rs` and the
 # runtime uses only `phf::Map`, consumed by the `include!`d codegen output.

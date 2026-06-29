@@ -9,9 +9,9 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-aozora-render   = { path = ".." }
+aozora-render = { path = ".." }
 aozora-pipeline = { path = "../../aozora-pipeline" }
-aozora-syntax   = { path = "../../aozora-syntax" }
+aozora-syntax = { path = "../../aozora-syntax" }
 
 [workspace]
 members = ["."]

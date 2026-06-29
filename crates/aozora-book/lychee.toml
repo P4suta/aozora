@@ -23,7 +23,7 @@
 
 # --- output ------------------------------------------------------------
 no_progress = true
-verbose     = "info"
+verbose = "info"
 
 # --- concurrency / timing ---------------------------------------------
 # 16 simultaneous requests: lychee defaults to a per-host throttle, so
@@ -42,7 +42,7 @@ timeout = 20
 # on three other pages in the same run — i.e. the host is reachable
 # but the runner happened to lose the race once. 5 retries × 3 s
 # closes that window.
-max_retries     = 5
+max_retries = 5
 retry_wait_time = 3
 
 # Follow up to 5 redirects per URL. lychee defaults to 5, but pin it
@@ -88,29 +88,29 @@ exclude_path = ["book/404.html"]
 # on certain User-Agent shapes and intermittently drops handshakes;
 # excluding here while keeping max_retries high for every other host.
 exclude = [
-    "^https?://pyo3\\.rs(/|$)",
+  "^https?://pyo3\\.rs(/|$)",
 
-    # docs.rs renders the *latest published* version of a crate. The
-    # handbook references APIs added in a release that's still
-    # in-flight — every such page returns 404 until the tag is cut
-    # and crates.io has indexed the new build (typically several
-    # minutes after `cargo publish`). Excluding the `aozora*`
-    # namespace skips the false negatives without losing coverage of
-    # external references (`docs.rs/serde`, `docs.rs/rowan`, etc.).
-    # Verification of our own rustdoc URLs happens in the
-    # `release.yml` workflow once the publish step lands.
-    "^https?://docs\\.rs/aozora",
+  # docs.rs renders the *latest published* version of a crate. The
+  # handbook references APIs added in a release that's still
+  # in-flight — every such page returns 404 until the tag is cut
+  # and crates.io has indexed the new build (typically several
+  # minutes after `cargo publish`). Excluding the `aozora*`
+  # namespace skips the false negatives without losing coverage of
+  # external references (`docs.rs/serde`, `docs.rs/rowan`, etc.).
+  # Verification of our own rustdoc URLs happens in the
+  # `release.yml` workflow once the publish step lands.
+  "^https?://docs\\.rs/aozora",
 
-    # README / source links into our own repo at `main` resolve only
-    # *after* the PR that introduces them is merged. Pre-merge
-    # lychee runs see them as 404 because the file genuinely doesn't
-    # exist on `main` yet. We trust the link — it's a relative path
-    # within the same repo — and skip the network probe.
-    "^https?://github\\.com/[^/]+/aozora/(blob|edit|tree)/main/",
+  # README / source links into our own repo at `main` resolve only
+  # *after* the PR that introduces them is merged. Pre-merge
+  # lychee runs see them as 404 because the file genuinely doesn't
+  # exist on `main` yet. We trust the link — it's a relative path
+  # within the same repo — and skip the network probe.
+  "^https?://github\\.com/[^/]+/aozora/(blob|edit|tree)/main/",
 
-    # npmjs.com returns 403 to lychee's non-browser User-Agent on
-    # package pages that resolve fine in a browser (same UA-gating
-    # rationale as pyo3.rs above). The only npmjs.com link in the
-    # handbook is the published `aozora-wasm` package.
-    "^https?://(www\\.)?npmjs\\.com/",
+  # npmjs.com returns 403 to lychee's non-browser User-Agent on
+  # package pages that resolve fine in a browser (same UA-gating
+  # rationale as pyo3.rs above). The only npmjs.com link in the
+  # handbook is the published `aozora-wasm` package.
+  "^https?://(www\\.)?npmjs\\.com/",
 ]

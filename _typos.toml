@@ -4,7 +4,7 @@
 [default]
 # Honorary words unique to this project / domain.
 extend-ignore-identifiers-re = [
-    "[A-Fa-f0-9]{7,}",   # git SHAs in comments
+  "[A-Fa-f0-9]{7,}", # git SHAs in comments
 ]
 
 [default.extend-words]
@@ -16,28 +16,28 @@ bre = "bre"
 # Proper names surfaced in NOTICE / docs. Listed here rather than
 # suppressed so typos still catches typos *around* them.
 Dostoyevsky = "Dostoyevsky"
-Fyodor      = "Fyodor"
-Yonekawa    = "Yonekawa"
-Masao       = "Masao"
-Yasunobu    = "Yasunobu"
+Fyodor = "Fyodor"
+Yonekawa = "Yonekawa"
+Masao = "Masao"
+Yasunobu = "Yasunobu"
 # Hepburn romaji morae in the render-slug consistency test
 # (`aozora-spec/src/slugs.rs` `tests::hepburn`) — valid kana
 # romanisations that collide with the dictionary.
 gya = "gya"
 myu = "myu"
-ba  = "ba"
+ba = "ba"
 
 [files]
 extend-exclude = [
-    "spec/aozora/fixtures/", # Aozora Bunko source files
-    # Vendored JIS X 0213 / Unicode standard tables — kanji codepoint
-    # rows like `4-7B6E    U+96BA    # <cjk>` trip the dictionary on
-    # uppercase 2-letter hex spans like `BA` → `BY/BE`.
-    "crates/aozora-encoding/data/",
-    "crates/aozora-encoding/build/",
-    "crates/aozora-encoding/src/jisx0213_table.rs",  # generated from data/
-    "target/",
-    "coverage/",
-    "*.html",
-    "*.lock",
+  "spec/aozora/fixtures/", # Aozora Bunko source files
+  # Vendored JIS X 0213 / Unicode standard tables — kanji codepoint
+  # rows like `4-7B6E    U+96BA    # <cjk>` trip the dictionary on
+  # uppercase 2-letter hex spans like `BA` → `BY/BE`.
+  "crates/aozora-encoding/data/",
+  "crates/aozora-encoding/build/",
+  "crates/aozora-encoding/src/jisx0213_table.rs", # generated from data/
+  "target/",
+  "coverage/",
+  "*.html",
+  "*.lock",
 ]
