@@ -11,7 +11,5 @@
   "rules": [
     { "type": "required_signatures" }
   ],
-  "bypass_actors": [
-    { "actor_id": 4177429, "actor_type": "Integration", "bypass_mode": "always" }
-  ]
+  "bypass_actors": []
 }

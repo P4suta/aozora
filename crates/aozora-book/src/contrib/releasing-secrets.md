@@ -78,18 +78,20 @@ release-plz must push the `v*` tag as a **GitHub App** (a tag pushed by the
 default `GITHUB_TOKEN` does not trigger the downstream `release.yml` /
 `publish-*` workflows). Create an App (org or personal) with repository
 permissions **Contents: R/W** + **Pull requests: R/W**, no webhook; install it
-on `P4suta/aozora`; generate a private key and note the **App ID**. The key is a
-*repository* secret (the `HAS_APP` gate in `release-plz.yml` reads it; until both
-exist the workflow no-ops green):
+on `P4suta/aozora`; generate a private key and note both the **Client ID** and
+the numeric **App ID**. Both release-plz jobs declare `environment: release-plz`,
+so the credentials live as **environment secrets** on it (scoped to its
+main-only branch policy — unreadable from a push on any other branch). The
+`HAS_APP` gate in `release-plz.yml` reads them; until both exist it no-ops green:
 
 ```sh
-gh secret set RELEASE_PLZ_APP_ID            # the numeric App ID
-gh secret set RELEASE_PLZ_APP_PRIVATE_KEY   # the .pem contents
+gh secret set RELEASE_PLZ_APP_CLIENT_ID --env release-plz   # the App's Client ID (Iv23…)
+gh secret set RELEASE_PLZ_APP_PRIVATE_KEY --env release-plz # the .pem contents
 ```
 
-Two ruleset changes also key on this App's ID (signature bypass on the
-`release-plz-*` branch + `v*` tag-creation lock); apply them per the runbook in
-`.github/rulesets/README.md`.
+The two ruleset changes key on the App's numeric **App ID** (distinct from the
+Client ID above): signature bypass on the `release-plz-*` branch + the `v*`
+tag-creation lock; apply them per the runbook in `.github/rulesets/README.md`.
 
 ### 2. crates.io — Trusted Publishing
 
