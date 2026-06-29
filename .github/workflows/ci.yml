@@ -72,7 +72,7 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               # Any root config TOML (deny / rustfmt / clippy / taplo / committed
-              # / cliff / …). Catch-all so a format/policy drift in any of them
+              # / release-plz / …). Catch-all so a format/policy drift in any of them
               # trips the `lint (fmt-check)` taplo gate (crate TOML is already
               # covered by 'crates/**').
               - '*.toml'
@@ -134,6 +134,37 @@ jobs:
           base='${{ github.event.pull_request.base.sha }}'
           head='${{ github.event.pull_request.head.sha }}'
           git rev-list --no-merges "$base..$head" | xargs -rn1 committed
+
+  # Block merging a release-plz Release PR until a maintainer flips the
+  # label. release-plz labels its PR `autorelease: pending`
+  # (release-plz.toml `pr_labels`); a release happens only once a
+  # maintainer adds `release: approved`. Labels are read live, so after
+  # labelling, re-running just this job flips the gate green — no full CI
+  # re-run. Every non-release PR passes unconditionally.
+  release-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Require an explicit approval label on a Release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          labels=$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')
+          if echo "$labels" | grep -qx "autorelease: pending"; then
+            if echo "$labels" | grep -qx "release: approved"; then
+              echo "Release PR carries 'release: approved' — gate open."
+            else
+              echo "::error::This is a release PR. Add the 'release: approved' label to allow merge."
+              exit 1
+            fi
+          else
+            echo "Not a release PR — gate passes."
+          fi
 
   # Build the dev image ONCE per run so the heavy `cargo binstall`
   # (cargo-tools) layer is never re-fetched live across the container
@@ -592,6 +623,7 @@ jobs:
       - changes
       - msrv
       - commitlint
+      - release-gate
       - dev-image
       - lint
       - coverage

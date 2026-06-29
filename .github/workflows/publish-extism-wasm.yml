@@ -13,19 +13,25 @@
 # `release` GitHub Environment (required-reviewer approval) before any
 # release asset is uploaded.
 #
-# How to run a real publish (attach to an existing release tag):
+# Publishing: a release-plz `v*` tag fans out here and attaches aozora.wasm to
+# the GitHub Release that release.yml cuts from the same tag (this job waits for
+# that Release to exist). Manual fallback (attach to an existing release tag):
 #   gh workflow run publish-extism-wasm.yml -f tag=v0.4.1 -f dry_run=false
 #   # then approve the `publish` job in the release environment.
 
 name: publish-extism-wasm
 
 on:
+  # A release-plz `v*` tag fans out here automatically; workflow_dispatch
+  # stays as a manual fallback (defaults to a dry run).
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to attach aozora.wasm to (e.g. v0.4.1)"
+        description: "Release tag to attach aozora.wasm to (e.g. v0.4.1); ignored on a tag push"
         type: string
-        required: true
+        required: false
       dry_run:
         description: "Build + checksum only; skip the release upload"
         type: boolean
@@ -88,7 +94,8 @@ jobs:
 
   publish:
     needs: build
-    if: ${{ inputs.dry_run == false }}
+    # Real upload on a `v*` tag push; manual dispatch only when dry_run=false.
+    if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -108,7 +115,23 @@ jobs:
         with:
           subject-path: dist/aozora.wasm
 
-      - name: Upload to GitHub Release (live)
+      - name: Upload to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ inputs.tag }}" dist/aozora.wasm dist/aozora.wasm.sha256 --clobber
+          # On a tag push the tag is the ref; on dispatch it's the input.
+          # Bound to env (not interpolated into the script) to keep the tag
+          # name out of the shell text.
+          TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          # release.yml creates the GitHub Release from this same `v*` tag; both
+          # workflows fire on the tag with no ordering guarantee, so wait for the
+          # Release to exist before attaching the portable wasm to it.
+          for i in $(seq 1 30); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Release $TAG not present yet; waiting ($i/30)…"
+            sleep 20
+          done
+          gh release upload "$TAG" dist/aozora.wasm dist/aozora.wasm.sha256 --clobber
