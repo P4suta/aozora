@@ -46,6 +46,44 @@ tar -xzf aozora-v0.2.7-*.tar.gz
 ./aozora --version              # prints "aozora 0.2.7"
 ```
 
+## Build channels (dev / nightly / stable)
+
+Every `aozora` / `aozora-lsp` binary reports a channel-aware version, so a
+build's origin is unambiguous — a local build can never be mistaken for a
+release. The string is resolved at build time by the `aozora-buildstamp` crate;
+its format has a single source, the `xtask version` subcommand:
+
+| Channel   | Example                            | Where it comes from                              |
+| --------- | ---------------------------------- | ------------------------------------------------ |
+| `dev`     | `0.4.1-dev+g3672e3f` (`.dirty`)    | any local `cargo build` (a workspace `.git`)     |
+| `nightly` | `0.4.1-nightly.20260630+g3672e3f`  | `.github/workflows/nightly.yml` (tip of main)    |
+| `stable`  | `0.4.1`                            | `.github/workflows/release.yml` / a crates.io install |
+
+SemVer pre-release ordering gives `…-dev < …-nightly.<date> < X.Y.Z`, so a
+non-release build always sorts below the release it heads toward. A crates.io
+install reports the clean triple (no `.git`, no override → stable); only a
+working-copy build carries `-dev`. The format comes from one place:
+
+```sh
+cargo run -p aozora-xtask -- version --channel nightly --date 20260630
+cargo run -p aozora-xtask -- version --channel stable      # → 0.4.1
+```
+
+### Nightly builds
+
+`.github/workflows/nightly.yml` builds an **unsigned** `aozora` CLI from the tip
+of main daily (and on demand), stamped `X.Y.Z-nightly.<date>+g<sha>`. It is
+published as a **14-day GitHub Actions artifact** — not a Release — so it stays
+off the Releases list and needs no tag. Grab the latest:
+
+```sh
+gh run download --repo P4suta/aozora -n aozora-nightly
+```
+
+Nightlies are unsigned, Linux x86_64 only, and carry no stability guarantee; the
+scheduled run skips when main has not moved in 24h. They are for testing main
+between releases — the signed, multi-platform pipeline stays `release.yml`.
+
 ## Why annotated tags?
 
 `git tag -a` creates a tagged-tag object with a message; `git tag`
