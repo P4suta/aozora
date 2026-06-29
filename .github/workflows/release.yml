@@ -173,9 +173,11 @@ jobs:
               sha256sum "${artefact}" > "${artefact}.sha256"
           fi
 
-          echo "archive=${RUNNER_TEMP}/${artefact}" >> "$GITHUB_OUTPUT"
-          echo "checksum=${RUNNER_TEMP}/${artefact}.sha256" >> "$GITHUB_OUTPUT"
-          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          {
+            echo "archive=${RUNNER_TEMP}/${artefact}"
+            echo "checksum=${RUNNER_TEMP}/${artefact}.sha256"
+            echo "name=${name}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload build artefacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
