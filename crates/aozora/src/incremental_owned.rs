@@ -2,17 +2,18 @@
 //!
 //! The retired Stage-A segment cache first proved — over the reference corpus —
 //! *where* a document can be cut into independently-lexable spans. This engine
-//! carries that insight onto the owned AST: it caches the owned lex output and,
-//! on an edit, re-lexes only the minimal balanced region around the edit before
-//! splicing the owned node table.
+//! carries that insight onto the owned AST: it caches the owned lex output's
+//! store-free region-find tables as a structure-sharing [`PieceSeq`] and, on an
+//! edit, re-lexes only the minimal balanced region around the edit before
+//! splicing that sequence.
 //!
 //! This module hosts the **region finder** ([`minimal_balanced_region`]), the
-//! sanitized→normalized offset map ([`norm_offset`]), the **owned-table splice**
-//! ([`reparse_incremental_owned`]), and the shared "where is it safe to cut the
-//! document" cut helpers. The splice is the production incremental path: it is
-//! re-exported from the crate root as the **unstable**
-//! [`crate::reparse_incremental_owned`] and consumed by the LSP's debounced
-//! diagnostics (#237 Stage B'3). It is internal-unit-tested and proven
+//! structure-sharing [`PieceSeq`], the **diagnostics-only splice**
+//! ([`reparse_incremental_diagnostics_only`]), and the shared "where is it safe
+//! to cut the document" cut helpers. The splice is the production incremental
+//! path: it is re-exported from the crate root as the **unstable**
+//! [`crate::reparse_incremental_diagnostics_only`] and consumed by the LSP's
+//! debounced diagnostics (#237 Stage B'3). It is internal-unit-tested and proven
 //! byte-identical to a full re-parse by the `corpus_incremental_merge`
 //! differential gate.
 //!
@@ -27,12 +28,10 @@ use core::ops::Range;
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use aozora_syntax::owned::{ContainerPair, RegistryOwned};
-
 use crate::splice::{RegionRole, classify_node_ref};
 use crate::{
-    CoupledKind, Diagnostic, Document, NodeRefOwned, NormalizedOffset, OwnedLexOutput, PairLink,
-    SourceNodeOwned, SpliceSafety,
+    CoupledKind, Diagnostic, Document, NodeRefOwned, OwnedLexOutput, PairLink, SourceNodeOwned,
+    SpliceSafety,
 };
 
 /// Read-only byte view of a **sanitized** buffer the incremental engine cuts,
@@ -135,28 +134,6 @@ impl SanitizedSrc for &str {
     }
 }
 
-/// The result of a successful owned-table incremental splice.
-///
-/// Returned by [`crate::reparse_incremental_owned`]: the byte-identical
-/// [`OwnedLexOutput`] plus the reuse accounting the LSP surface reports as cache
-/// hits/misses.
-///
-/// `reused_nodes` counts the `cached` source nodes carried into the result
-/// unchanged (the prefix before the re-lexed region plus the shifted suffix
-/// after it); `relexed_nodes` counts the nodes the region re-lex produced.
-/// Together they expose how much of the prior parse the splice salvaged.
-#[derive(Debug)]
-pub struct OwnedSplice {
-    /// The spliced lex output, byte-for-byte equal to a full re-parse of the
-    /// edited text on every resolved/rendered surface.
-    pub output: OwnedLexOutput,
-    /// Number of `cached` source nodes carried into the result unchanged
-    /// (prefix `end <= region.start` plus suffix `start >= region.end`).
-    pub reused_nodes: u64,
-    /// Number of source nodes the isolated region re-lex produced.
-    pub relexed_nodes: u64,
-}
-
 /// The store-free spliceable base of the cached parse the **diagnostics-only**
 /// incremental path reads.
 ///
@@ -215,23 +192,21 @@ impl<'a> DiagBaseRef<'a> {
 /// Precomputed acceleration structure for the region-find prologue (#237 Tier 2)
 /// — the prefix-sum recurrence each `PieceIndex` wraps once per backing table.
 ///
-/// `pub` so the byte-identity oracle proptests can build one directly; in
-/// production it is no longer owned per parse. [`PieceSeq`] holds one
-/// `PieceIndex` (an `Arc`-shared `RegionIndex` over a backing table) per piece
-/// and answers every query through it, so the LSP `DiagBase` keeps a
-/// [`PieceSeq`] and splices it incrementally instead of rebuilding this each
-/// edit.
+/// Crate-internal (`pub(crate)`) so the in-crate byte-identity oracle proptests
+/// can build one directly; in production it is no longer owned per parse.
+/// [`PieceSeq`] holds one `PieceIndex` (an `Arc`-shared `RegionIndex` over a
+/// backing table) per piece and answers every query through it, so the LSP
+/// `DiagBase` keeps a [`PieceSeq`] and splices it incrementally instead of
+/// rebuilding this each edit.
 ///
 /// Built in a single `O(N + P + D)` pass (plus small `O(P log P + D log D)`
 /// sorts of the few pairs/diagnostics) over the three store-free tables the
 /// prologue reads — the same `O(N)` cost the base copy already pays each edit.
-/// Replaces three `O(doc)` per-edit scans with `O(log n)`/`O(1)` lookups:
+/// Replaces two `O(doc)` per-edit scans with `O(log n)`/`O(1)` lookups:
 ///
 /// - the whole-buffer `candidate_boundaries` byte scan plus its `O(#cuts · N)`
 ///   `structurally_safe` calls become an outward scan with `O(log n)` safety
 ///   probes (see `RegionIndex::structurally_safe`);
-/// - the `norm_offset` drift summation becomes one `O(log n)` lookup
-///   (`RegionIndex::norm_offset`);
 /// - the diagnostic-straddle scan becomes two `O(log n)` probes
 ///   (`RegionIndex::diag_straddles`).
 ///
@@ -243,17 +218,13 @@ impl<'a> DiagBaseRef<'a> {
 /// `corpus_incremental_merge` differential gate plus the oracle proptests pin
 /// byte-identity.
 #[derive(Debug)]
-pub struct RegionIndex {
+pub(crate) struct RegionIndex {
     /// Clamped LIFO block-container depth **after** each `source_node`
     /// (parallel to `source_nodes`, which is sorted by `source_span.start`).
     depth_prefix: Vec<i32>,
     /// Running max of `source_span.end` over `source_nodes[0..=i]` — the
     /// straddle test for [`RegionIndex::structurally_safe`].
     max_end_prefix: Vec<u32>,
-    /// Inclusive prefix sums of each node's normalized drift
-    /// `(2·pad + 3 − footprint)`; length `N + 1`, indexed by a
-    /// `partition_point(end <= off)` for [`RegionIndex::norm_offset`].
-    drift_prefix: Vec<i64>,
     /// `pair.close.end`, sorted ascending — the search key for the pair-straddle
     /// `partition_point`. Built internally so the query never depends on the
     /// input slice's order.
@@ -273,9 +244,9 @@ pub struct RegionIndex {
 
 impl RegionIndex {
     /// Build the index in one pass over the store-free tables. Mirrors the
-    /// linear recurrences of `structurally_safe` and `norm_offset` exactly.
+    /// linear recurrence of `structurally_safe` exactly.
     #[must_use]
-    pub fn build(
+    pub(crate) fn build(
         nodes: &[SourceNodeOwned],
         pairs: &[PairLink],
         diagnostics: &[Diagnostic],
@@ -283,11 +254,8 @@ impl RegionIndex {
         // Node prefixes (nodes are sorted by `source_span.start`).
         let mut depth_prefix = Vec::with_capacity(nodes.len());
         let mut max_end_prefix = Vec::with_capacity(nodes.len());
-        let mut drift_prefix = Vec::with_capacity(nodes.len() + 1);
-        drift_prefix.push(0_i64);
         let mut depth: i32 = 0;
         let mut max_end: u32 = 0;
-        let mut drift: i64 = 0;
         for sn in nodes {
             match sn.node {
                 NodeRefOwned::BlockOpen(_) => depth += 1,
@@ -297,10 +265,6 @@ impl RegionIndex {
             depth_prefix.push(depth);
             max_end = max_end.max(sn.source_span.end);
             max_end_prefix.push(max_end);
-            let footprint = i64::from(sn.source_span.end - sn.source_span.start);
-            let pad = i64::from(standalone_pad(sn.node));
-            drift += 2 * pad + 3 - footprint;
-            drift_prefix.push(drift);
         }
 
         // Pair index, sorted by `close.end` ascending (a self-contained copy, so
@@ -327,7 +291,6 @@ impl RegionIndex {
         Self {
             depth_prefix,
             max_end_prefix,
-            drift_prefix,
             pair_close_end,
             pair_suffix_min_open,
             diag_start_sorted,
@@ -349,38 +312,6 @@ impl RegionIndex {
         let j = self.pair_close_end.partition_point(|&ce| ce <= off);
         let pair_straddle = self.pair_suffix_min_open[j] < off;
         !straddle && depth == 0 && !pair_straddle
-    }
-
-    /// `O(log n)` equivalent of [`norm_offset`]: the normalized offset for the
-    /// structurally-safe interstitial boundary `san_off`. `cached` must be the
-    /// output the index was built over.
-    ///
-    /// Retained as the indexed oracle the `norm_offset_indexed_matches_oracle`
-    /// proptest pins against the linear form; the production norm map is
-    /// [`PieceSeq::norm_offset`], which reuses the same `drift_prefix` recurrence
-    /// directly (and omits this method's normalized-string char-boundary
-    /// tripwire, which a flattened sequence carries no string to check).
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "indexed oracle for the norm_offset proptest; production uses PieceSeq::norm_offset"
-        )
-    )]
-    #[must_use]
-    fn norm_offset(&self, cached: &OwnedLexOutput, san_off: u32) -> Option<u32> {
-        let san_len = u32::try_from(cached.sanitized.len()).ok()?;
-        if san_off > san_len {
-            return None;
-        }
-        let k = cached
-            .source_nodes
-            .partition_point(|sn| sn.source_span.end <= san_off);
-        let norm = shift_u32(san_off, self.drift_prefix[k])?;
-        if !cached.normalized.is_char_boundary(norm as usize) {
-            return None;
-        }
-        Some(norm)
     }
 
     /// Whether any diagnostic straddles boundary `b` (`span.start < b < span.end`)
@@ -416,11 +347,11 @@ impl RegionIndex {
 /// depth zero; no node span, resolved pair, or diagnostic straddling it), the
 /// whole-backing recurrence answers each *within-piece* query directly: the
 /// boundary invariant makes the absolute and piece-local values coincide for the
-/// depth / span-straddle / pair-straddle / diagnostic-straddle predicates, with
-/// only the additive normalized-`drift` map needing the per-piece scalar shift
-/// the owning [`Piece`] carries. Wrapping [`RegionIndex`] keeps the build
-/// recurrence and the query primitives a single proven implementation; the
-/// wrapper exists only to name the per-piece role.
+/// depth / span-straddle / pair-straddle / diagnostic-straddle predicates (read
+/// at the backing-local offset the owning [`Piece`]'s `san_shift` derives).
+/// Wrapping [`RegionIndex`] keeps the build recurrence and the query primitives a
+/// single proven implementation; the wrapper exists only to name the per-piece
+/// role.
 #[derive(Debug)]
 struct PieceIndex {
     /// The reused whole-backing acceleration. Every query reads its prefix-sum
@@ -475,11 +406,11 @@ impl PieceFlags {
 /// triple shared (via [`Arc`]) with every sibling piece cut from the same
 /// parse, plus the [`Arc`]-shared [`PieceIndex`] over that whole backing.
 /// `san_data` is the piece's byte span in **backing** (original-parse)
-/// sanitized coordinates; `san_shift` / `norm_shift` lift backing coordinates
-/// to the piece's **current** position in the live document — per-piece scalars
-/// so a suffix shift is `O(1)`, never a per-node rewrite. Both are added on
-/// read; comparisons against the index run in backing-local coordinates. A
-/// `split` is `O(log len)` (range endpoints by binary search; data shared).
+/// sanitized coordinates; `san_shift` lifts backing coordinates to the piece's
+/// **current** position in the live document — a per-piece scalar so a suffix
+/// shift is `O(1)`, never a per-node rewrite. It is added on read; comparisons
+/// against the index run in backing-local coordinates. A `split` is `O(log len)`
+/// (range endpoints by binary search; data shared).
 #[derive(Debug, Clone)]
 struct Piece {
     /// Whole backing source-node table (sorted by `source_span.start`), shared.
@@ -498,9 +429,6 @@ struct Piece {
     san_data: Range<u32>,
     /// `current_san = backing_san + san_shift`.
     san_shift: i64,
-    /// `current_norm = backing_norm + norm_shift` (set when the owning
-    /// [`PieceSeq`] finalises its cumulative aggregates).
-    norm_shift: i64,
     /// Block-container nesting depth entering this piece (the global depth at its
     /// start boundary). Zero for every piece cut at a depth-zero blank-line cut
     /// or the document start; nonzero only for a re-lexed piece appended at the
@@ -556,39 +484,22 @@ impl Piece {
             d_range: d_start..d_end,
             san_data: data_a..data_b,
             san_shift: self.san_shift,
-            norm_shift: self.norm_shift,
             base_depth: self.base_depth,
             flags,
             idx: Arc::clone(&self.idx),
         }
     }
-
-    /// The normalized offset for a **backing**-coordinate sanitized offset
-    /// `data_off` inside this piece: the closed-form drift map applied in
-    /// backing coordinates (`data_off + drift_prefix[k]`), then lifted to
-    /// current coordinates by `norm_shift`. Registry-free — the per-piece
-    /// `norm_shift` absorbs the cumulative drift of every earlier piece, so no
-    /// prefix subtraction is needed. `None` only on `u32` over/underflow.
-    fn norm_at(&self, data_off: u32) -> Option<u32> {
-        let k = self
-            .nodes
-            .partition_point(|sn| sn.source_span.end <= data_off);
-        let norm_in_backing = shift_u32(data_off, self.idx.region.drift_prefix[k])?;
-        shift_u32(norm_in_backing, self.norm_shift)
-    }
 }
 
 /// Cumulative aggregate at a piece boundary: the current-coordinate sanitized
-/// and normalized offsets at the piece's start, plus the running node count.
-/// A [`PieceSeq`]'s `cum` holds one per piece *plus a trailing sentinel* whose
-/// `base_san` / `base_norm` are the document's total sanitized / normalized
-/// lengths and whose `cum_count` is the total node count.
+/// offset at the piece's start, plus the running node count. A [`PieceSeq`]'s
+/// `cum` holds one per piece *plus a trailing sentinel* whose `base_san` is the
+/// document's total sanitized length and whose `cum_count` is the total node
+/// count.
 #[derive(Debug, Clone, Copy)]
 struct PieceAgg {
     /// Current-coordinate sanitized offset at the piece's start.
     base_san: u32,
-    /// Current-coordinate normalized offset at the piece's start.
-    base_norm: u32,
     /// Node count across all earlier pieces.
     cum_count: u32,
 }
@@ -599,10 +510,10 @@ struct PieceAgg {
 /// store-free region-find tables (`source_nodes`, `pairs`, `diagnostics`).
 ///
 /// **UNSTABLE — not subject to semver until v0.5.0** (the #237 incremental
-/// API), and **additive / unwired** in this PR: the production engines are
-/// unchanged, so this type alters no observable behaviour. It exists so a later
-/// PR can replace the per-edit whole-table re-materialization +
-/// [`RegionIndex::build`] with `O(region + log #pieces)` piece splicing.
+/// API). This is the maintained representation the production diagnostics-only
+/// engine splices on every edit: the per-keystroke hot path replaces the
+/// per-edit whole-table re-materialization + `RegionIndex::build` with
+/// `O(region + log #pieces)` piece splicing.
 ///
 /// Each piece views a slice of an immutable backing table (the cached parse or a
 /// region re-lex) through a shared [`Arc`]; a [`splice`](Self::splice) divides
@@ -611,7 +522,7 @@ struct PieceAgg {
 /// re-lex, and shifts the suffix by a per-piece scalar. Backing tables store
 /// each entry's *original* absolute offset; reads add the piece's scalar shift,
 /// which keeps every piece's index byte-identical to a freshly built
-/// [`RegionIndex`]. Queries binary-search the piece containing the offset
+/// `RegionIndex`. Queries binary-search the piece containing the offset
 /// (`O(log #pieces)`) and answer from its shared index.
 #[derive(Debug, Clone)]
 pub struct PieceSeq {
@@ -625,7 +536,7 @@ pub struct PieceSeq {
 
 impl PieceSeq {
     /// Build a single-piece sequence over a contiguous parse's store-free
-    /// tables — the bridge the later wiring PRs wrap a cached parse in. `san_len`
+    /// tables — the region-find base a cached parse is wrapped in. `san_len`
     /// is the parse's sanitized byte length (the tables alone do not carry the
     /// trailing plain-text length). Diagnostics are stored position-sorted so a
     /// later `splice` can divide them at a safe cut by a clean partition.
@@ -650,7 +561,6 @@ impl PieceSeq {
             d_range: 0..d,
             san_data: 0..san_len,
             san_shift: 0,
-            norm_shift: 0,
             base_depth: 0,
             flags,
             idx,
@@ -718,8 +628,8 @@ impl PieceSeq {
     ///
     /// Backing tables are immutable, so the prefix and untouched suffix pieces
     /// are carried by `Arc` share; only the pieces straddling a region endpoint
-    /// are re-viewed (`narrow`), and per-piece normalized shifts are re-derived
-    /// from the cumulative drift in `finalize` — no per-node coordinate rewrite.
+    /// are re-viewed (`narrow`), and the suffix moves by a per-piece scalar
+    /// `san_shift` — no per-node coordinate rewrite.
     ///
     /// # Panics
     ///
@@ -760,8 +670,6 @@ impl PieceSeq {
             d_range: 0..rd,
             san_data: 0..new_region_san_len,
             san_shift: i64::from(region.start),
-            // Re-derived in `finalize` from the cumulative drift.
-            norm_shift: 0,
             base_depth,
             flags,
             idx: ridx,
@@ -785,8 +693,7 @@ impl PieceSeq {
                 }
             }
         }
-        // The suffix moves by the sanitized delta; the normalized shift is
-        // re-derived in `finalize`, so only `san_shift` is touched here.
+        // The suffix moves by the sanitized delta — only `san_shift` is touched.
         for piece in &mut right {
             piece.san_shift += d_san;
         }
@@ -799,7 +706,7 @@ impl PieceSeq {
 
     /// Whether a cut at current-coordinate sanitized offset `off` keeps every
     /// block container and resolved pair whole — the piece-local form of the
-    /// [`RegionIndex`] structural-safety query.
+    /// `RegionIndex` structural-safety query.
     #[must_use]
     pub fn structurally_safe(&self, off: u32) -> bool {
         let piece = &self.pieces[self.find_piece(off)];
@@ -832,27 +739,11 @@ impl PieceSeq {
         piece.base_depth + local
     }
 
-    /// The normalized offset for current-coordinate sanitized offset `off`, or
-    /// `None` if `off` exceeds the sanitized length or the arithmetic overflows.
-    /// The registry-free closed form; unlike the engine's [`RegionIndex`]-based
-    /// offset map it carries no normalized string, so it omits that map's
-    /// defensive char-boundary tripwire — for a structurally-safe interstitial
-    /// boundary (every offset the engine maps) the two agree, which the proptest
-    /// pins.
-    #[must_use]
-    pub fn norm_offset(&self, off: u32) -> Option<u32> {
-        if off > self.total_san_len() {
-            return None;
-        }
-        let piece = &self.pieces[self.find_piece(off)];
-        piece.norm_at(to_backing(off, piece.san_shift))
-    }
-
     /// Whether any diagnostic straddles current-coordinate boundary `b`
     /// (`span.start < b < span.end`) — the piece-local form of the
-    /// [`RegionIndex`] diagnostic-straddle query.
+    /// `RegionIndex` diagnostic-straddle query.
     ///
-    /// Delegates to the containing piece's shared [`RegionIndex`], which scans
+    /// Delegates to the containing piece's shared `RegionIndex`, which scans
     /// its *whole* backing diagnostic table — including diagnostics now dropped
     /// into sibling pieces. That is exact only under the invariant **no
     /// diagnostic straddles a structurally-safe cut** (the same invariant that
@@ -900,13 +791,6 @@ impl PieceSeq {
     #[must_use]
     pub fn total_san_len(&self) -> u32 {
         self.cum.last().map_or(0, |agg| agg.base_san)
-    }
-
-    /// Total current normalized byte length (the trailing aggregate's
-    /// `base_norm`).
-    #[must_use]
-    pub fn total_norm_len(&self) -> u32 {
-        self.cum.last().map_or(0, |agg| agg.base_norm)
     }
 
     /// Total node count across every live piece (the trailing aggregate's
@@ -960,16 +844,14 @@ impl PieceSeq {
         i.saturating_sub(1).min(self.pieces.len() - 1)
     }
 
-    /// Rebuild `cum` over a finished piece list and re-derive each piece's
-    /// `norm_shift` from the running cumulative drift, so `norm_at(piece_start)`
-    /// equals the piece's `base_norm`. The single owner of the normalized-shift
-    /// invariant.
-    fn finalize(mut pieces: Vec<Piece>) -> Self {
+    /// Rebuild `cum` over a finished piece list: the running current-coordinate
+    /// sanitized offset and node count at each piece boundary, plus a trailing
+    /// totals sentinel.
+    fn finalize(pieces: Vec<Piece>) -> Self {
         let mut cum = Vec::with_capacity(pieces.len() + 1);
         let mut base_san: u32 = 0;
-        let mut base_norm: u32 = 0;
         let mut cum_count: u32 = 0;
-        for piece in &mut pieces {
+        for piece in &pieces {
             // The safe-cut invariant `diag_straddles` relies on: every live
             // diagnostic lies wholly inside its piece's backing span (none
             // straddles a piece boundary). Checked once per construction so a
@@ -986,22 +868,14 @@ impl PieceSeq {
             }
             cum.push(PieceAgg {
                 base_san,
-                base_norm,
                 cum_count,
             });
-            // base_norm == norm_shift + san_data.start + drift_prefix[n_range.start]
-            let lead_drift = piece.idx.region.drift_prefix[piece.n_range.start];
-            piece.norm_shift = i64::from(base_norm) - i64::from(piece.san_data.start) - lead_drift;
             let san_len = piece.san_data.end - piece.san_data.start;
-            let piece_drift = piece.idx.region.drift_prefix[piece.n_range.end] - lead_drift;
             base_san += san_len;
-            base_norm = shift_u32(base_norm, i64::from(san_len) + piece_drift)
-                .expect("a piece's normalized length is non-negative");
             cum_count += u32::try_from(piece.n_range.len()).expect("a piece's node count fits u32");
         }
         cum.push(PieceAgg {
             base_san,
-            base_norm,
             cum_count,
         });
         Self { pieces, cum }
@@ -1061,10 +935,10 @@ pub struct DiagSplice {
     pub relexed_nodes: u64,
 }
 
-/// The store-independent prologue shared by [`reparse_incremental_owned`] and
-/// [`crate::reparse_incremental_diagnostics_only`]: the validated region plus the
-/// isolated region re-lex. Produced by [`splice_prologue`] (steps 1–5); both
-/// engines build on it so they cannot drift.
+/// The store-independent prologue the diagnostics-only splice
+/// ([`crate::reparse_incremental_diagnostics_only`]) builds on: the validated
+/// region plus the isolated region re-lex. Produced by [`splice_prologue`]
+/// (steps 1–5).
 struct Prologue {
     /// Minimal balanced region (sanitized coordinates) the edit re-lexes.
     region: Range<u32>,
@@ -1138,10 +1012,11 @@ pub(crate) fn shift_u32(value: u32, delta: i64) -> Option<u32> {
 ///
 /// This is the single authority for which diagnostics the incremental splice
 /// cannot reproduce from an isolated re-lexed region; any such diagnostic in
-/// the cached or re-lexed output makes [`reparse_incremental_owned`] fall back
-/// to a full parse. The `corpus_incremental_merge` differential gate proves the
-/// splice is byte-identical to a full parse over the reference corpus, so a
-/// missing class here surfaces there as a divergence.
+/// the cached or re-lexed output makes
+/// [`crate::reparse_incremental_diagnostics_only`] fall back to a full parse.
+/// The `corpus_incremental_merge` differential gate proves the splice is
+/// byte-identical to a full parse over the reference corpus, so a missing class
+/// here surfaces there as a divergence.
 pub(crate) fn is_whole_document_scoped(diagnostic: &Diagnostic) -> bool {
     matches!(
         diagnostic,
@@ -1291,90 +1166,6 @@ pub(crate) fn minimal_balanced_region<S: SanitizedSrc>(
     Some(region_start..region_end)
 }
 
-/// A node's standalone-block padding (the `\n\n` inserted *before* its sentinel,
-/// equal to the `\n\n` inserted *after*): `2` for a standalone block node, `0`
-/// for an inline one. The normalizer pads only block-level nodes; an inline
-/// region (傍点 / bare-range 太字 / 縦中横 / …) and an inline open/close get no
-/// padding. Mirrors the normalize-stage rule that drives the `\n\n` + `<div>`
-/// wrapping (see [`crate::RegionFormat::is_inline`] /
-/// [`crate::RegionClose::is_inline`]).
-fn standalone_pad(node: NodeRefOwned) -> u32 {
-    match node {
-        NodeRefOwned::BlockLeaf(_) => 2,
-        NodeRefOwned::BlockOpen(rf) => u32::from(!rf.is_inline()) * 2,
-        NodeRefOwned::BlockClose(rc) => u32::from(!rc.is_inline()) * 2,
-        // [`NodeRefOwned::Inline`] gets no padding. The wildcard (mandatory —
-        // `NodeRefOwned` is `#[non_exhaustive]`) also defaults any future
-        // sentinel kind to no padding, the inline byte-1:1 assumption and the
-        // conservative choice for the offset map.
-        NodeRefOwned::Inline(_) | _ => 0,
-    }
-}
-
-/// The normalized-text byte offset corresponding to sanitized-source offset
-/// `san_off`. `san_off` must be a structurally-safe interstitial boundary (0,
-/// sanitized_len, or a blank-line cut that no node's source_span straddles) —
-/// exactly the boundaries [`minimal_balanced_region`] returns. At such a
-/// position normalized == sanitized locally (plain text is 1:1); the only
-/// divergence is the accumulated PUA sentinels (3 bytes each) plus standalone-
-/// block "\n\n" padding (2 bytes lead + 2 trail) inserted before `san_off`.
-///
-/// The map is registry-free and closed-form. For every node fully before the
-/// boundary (`source_span.end <= san_off`), the normalized stream replaced its
-/// `footprint = end - start` sanitized bytes with `2·pad + 3` bytes (lead pad +
-/// 3-byte sentinel + trail pad), a drift of `Δ = (2·pad + 3) − footprint`.
-/// Summing `Δ` over those nodes and adding it to `san_off` lands the normalized
-/// cursor, because plain runs between nodes are byte-identical. A node whose
-/// `source_span.start == san_off` has `end > san_off`, so it sits *after* the
-/// boundary and is correctly excluded.
-///
-/// Returns `None` if `san_off` exceeds the sanitized length, if the arithmetic
-/// overflows, or (defensive tripwire) if the computed offset is not a char
-/// boundary of `cached.normalized` — the boundary-never-in-padding proof means
-/// this never fires for a valid interstitial boundary, but it converts any
-/// surprise into a clean fallback rather than a bad splice.
-///
-/// Linear oracle retained for the property test that pins
-/// [`RegionIndex::norm_offset`] byte-identical to it at every interstitial
-/// boundary; the production owned splice uses the `O(log n)` indexed form.
-/// (`dead_code` allowed outside `cfg(test)` because only the proptests call it.)
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "linear oracle for the RegionIndex::norm_offset proptest"
-    )
-)]
-pub(crate) fn norm_offset(cached: &OwnedLexOutput, san_off: u32) -> Option<u32> {
-    let san_len = u32::try_from(cached.sanitized.len()).ok()?;
-    if san_off > san_len {
-        return None;
-    }
-
-    // Nodes fully before the boundary, in source order (`source_nodes` is sorted
-    // by `source_span.start`, and an interstitial boundary is never straddled,
-    // so `end <= san_off` partitions cleanly).
-    let k = cached
-        .source_nodes
-        .partition_point(|sn| sn.source_span.end <= san_off);
-
-    let mut drift: i64 = 0;
-    for sn in &cached.source_nodes[..k] {
-        let footprint = i64::from(sn.source_span.end - sn.source_span.start);
-        let pad = i64::from(standalone_pad(sn.node));
-        drift += 2 * pad + 3 - footprint;
-    }
-
-    let norm = shift_u32(san_off, drift)?;
-    // Defensive tripwire: a valid interstitial boundary never lands inside a
-    // sentinel or padding run, so the result is always a char boundary; if it
-    // somehow is not, decline rather than splice at a bad offset.
-    if !cached.normalized.is_char_boundary(norm as usize) {
-        return None;
-    }
-    Some(norm)
-}
-
 /// Whether `node` makes the region unsafe to reuse incrementally, so the
 /// splice must fall back to a full parse. Two cases:
 ///
@@ -1405,7 +1196,8 @@ pub(crate) fn norm_offset(cached: &OwnedLexOutput, san_off: u32) -> Option<u32> 
 ///   self-contained, but its *diagnostic* is not.)
 ///
 /// Single-sources the classification through [`classify_node_ref`] (the #202
-/// splice authority) so the two engines cannot drift.
+/// splice authority) so this region-reuse guard and the #202 splice cannot
+/// drift.
 fn node_forbids_region_reuse(node: NodeRefOwned) -> bool {
     let (role, safety) = classify_node_ref(node);
     matches!(
@@ -1438,21 +1230,40 @@ fn relexed_is_balanced(nodes: &[SourceNodeOwned]) -> bool {
     depth == 0
 }
 
-/// The store-independent prologue shared by both incremental engines (steps
-/// 1–5 of the owned splice): find the minimal balanced region around the edit,
-/// validate the edit, re-lex the region in isolation, and run the
-/// self-containment + cross-region text-coupling guards. Returns the validated
-/// [`Prologue`] (region, the region re-lex, and the sanitized suffix shift), or
-/// `None` for any edit that cannot be proven local.
+/// The store-independent prologue the diagnostics-only splice builds on (steps
+/// 1–5): find the minimal balanced region around the edit, validate the edit,
+/// re-lex the region in isolation, and run the self-containment + cross-region
+/// text-coupling guards. Returns the validated [`Prologue`] (region, the region
+/// re-lex, and the sanitized suffix shift), or `None` for any edit that cannot
+/// be proven local.
 ///
 /// Reads only the store-free [`DiagBaseRef`] of the cached parse, so the
 /// diagnostics-only hot path can run it without ever materialising the full
-/// [`OwnedLexOutput`]. [`reparse_incremental_owned`] and
-/// [`crate::reparse_incremental_diagnostics_only`] both build on this single helper, so
-/// their region/relex/decline decisions cannot drift.
+/// [`OwnedLexOutput`]. [`crate::reparse_incremental_diagnostics_only`] builds on
+/// this single helper.
 ///
-/// The decline conditions are exactly those documented on
-/// [`reparse_incremental_owned`]'s region/validation/self-containment bullets.
+/// Returns `None` (the caller then full-parses, trivially correct) when:
+///
+/// - [`minimal_balanced_region`] declines (whole-document-scoped diagnostic in
+///   `cached`, out-of-bounds edit, or no interior safe cut);
+/// - `cached` carries a globally-unbalanced delimiter
+///   ([`Diagnostic::UnclosedBracket`] / [`Diagnostic::UnmatchedClose`]) whose
+///   open/close half swallows or strays across region boundaries;
+/// - the edited bytes carry document structure ([`carries_structure`]) or sit
+///   inside an open `［…］` directive; that the edit changes only bytes inside
+///   `edit_old` (truly transforming `cached.sanitized` into `new_sanitized`) is
+///   instead a caller precondition, checked in debug by the sanitized source's
+///   `debug_assert_unchanged_outside` rather than gated at runtime;
+/// - the region slice is not a sanitize fixed point in isolation;
+/// - the re-lexed region is not self-contained: it carries a
+///   whole-document-scoped diagnostic, an unclosed/unmatched delimiter half, or
+///   unbalanced container nesting;
+/// - any node in `cached` or the re-lexed region forbids region reuse
+///   ([`node_forbids_region_reuse`]) — a text-coupled construct (forward
+///   reference / heading hint / margin note resolving by whole-document text
+///   search) or an opaque node the splice cannot reason about;
+/// - a cached diagnostic straddles a region boundary, or any offset arithmetic
+///   overflows.
 fn splice_prologue<S: SanitizedSrc>(
     base: &DiagBaseRef<'_, S>,
     new_sanitized: &S,
@@ -1500,9 +1311,8 @@ fn splice_prologue<S: SanitizedSrc>(
     // is incompatible with the per-keystroke hot path. The check now lives as
     // the caller's precondition: in debug it is restated by
     // `debug_assert_unchanged_outside` (a full `memcmp` for `&str`, byte-
-    // identical to the deleted code; a no-alloc probe for a rope), the owned
-    // path additionally pins it with step 8's reassembly `debug_assert_eq!`, and
-    // the production LSP caller guarantees it by deriving `edit_old` from the
+    // identical to the deleted code; a no-alloc probe for a rope), and the
+    // production LSP caller guarantees it by deriving `edit_old` from the
     // real sanitized diff.
     #[cfg(debug_assertions)]
     old_source.debug_assert_unchanged_outside(new_sanitized, edit_old.clone(), new_edit_end);
@@ -1583,296 +1393,6 @@ fn splice_prologue<S: SanitizedSrc>(
     })
 }
 
-/// Build the [`OwnedSplice`] (the spliced [`OwnedLexOutput`] plus reuse counts)
-/// for the edited text `new_sanitized` (a sanitized fixed point) from `cached`
-/// (the owned lex output of the pre-edit sanitized text) and the single
-/// sanitized-coordinate edit `edit_old`, **without a full re-parse** — by
-/// re-lexing only the minimal balanced region around the edit and splicing the
-/// owned tables.
-///
-/// The result is byte-for-byte equal, on every resolved/rendered surface, to a
-/// full re-parse of `new_sanitized`; the `corpus_incremental_merge` differential
-/// gate enforces this over the reference corpus. Any edit that cannot be proven
-/// local returns `None`, and the caller falls back to a full parse (trivially
-/// correct). The fallbacks are:
-///
-/// - [`minimal_balanced_region`] declines (whole-document-scoped diagnostic in
-///   `cached`, out-of-bounds edit, or no interior safe cut);
-/// - `cached` carries a globally-unbalanced delimiter
-///   ([`Diagnostic::UnclosedBracket`] / [`Diagnostic::UnmatchedClose`]) whose
-///   open/close half swallows or strays across region boundaries;
-/// - the edited bytes carry document structure ([`carries_structure`]) or sit
-///   inside an open `［…］` directive; that the edit changes only bytes inside
-///   `edit_old` (truly transforming `cached.sanitized` into `new_sanitized`) is
-///   instead a caller precondition, checked in debug by the sanitized source's
-///   `debug_assert_unchanged_outside` rather than gated at runtime;
-/// - the region slice is not a sanitize fixed point in isolation;
-/// - the re-lexed region is not self-contained: it carries a
-///   whole-document-scoped diagnostic, an unclosed/unmatched delimiter half, or
-///   unbalanced container nesting;
-/// - any node in `cached` or the re-lexed region forbids region reuse
-///   ([`node_forbids_region_reuse`]) — a text-coupled construct (forward
-///   reference / heading hint / margin note resolving by whole-document text
-///   search) or an opaque node the splice cannot reason about;
-/// - a cached diagnostic straddles a region boundary, or any offset arithmetic
-///   overflows.
-#[allow(
-    clippy::too_many_lines,
-    reason = "a single linear table-by-table splice; splitting the prefix/region/suffix walk per stream would scatter the one invariant (each table partitions at the same region boundary) across helpers and obscure it"
-)]
-pub(crate) fn reparse_incremental_owned(
-    cached: &OwnedLexOutput,
-    new_sanitized: &str,
-    edit_old: Range<usize>,
-) -> Option<OwnedSplice> {
-    // Build the region-find representation over the cached tables (this path is
-    // already O(doc), so the O(N) `from_contiguous` is free) and run steps 1–5
-    // (store-independent): region find, edit validation, region re-lex,
-    // self-containment, cross-region coupling guard — shared verbatim with the
-    // diagnostics-only engine so the two cannot drift. The owned path still
-    // re-materialises its heavy tables below (registry / store graft /
-    // container-pairs); unifying that onto the piece core is a later PR.
-    let pieces = PieceSeq::from_contiguous(
-        &cached.source_nodes,
-        &cached.pairs,
-        &cached.diagnostics,
-        cached.sanitized_len,
-    );
-    let Prologue {
-        region,
-        relexed,
-        d_san,
-    } = splice_prologue(
-        &DiagBaseRef::from_cached(cached, &pieces),
-        &new_sanitized,
-        edit_old,
-    )?;
-    let r_start = region.start as usize;
-    let r_end = region.end as usize;
-    let old_source = cached.sanitized.as_str();
-
-    // 6. Normalized boundaries & per-stream deltas (the registry-free closed-form
-    //    offset map over the piece sequence; region endpoints are always
-    //    structurally-safe interstitial boundaries, where it agrees with the
-    //    `OwnedLexOutput`-backed `norm_offset` the proptest pins). Unlike the
-    //    `RegionIndex` map this replaced, the piece map carries no normalized
-    //    string, so it has no explicit char-boundary tripwire; the
-    //    decline-on-mid-codepoint guarantee is preserved by the
-    //    `cached.normalized.get(..)?` slices in step 8 below (`str::get` returns
-    //    `None` off a code-point boundary, propagated by `?`) — the load-bearing
-    //    safety net now lives there.
-    let norm_start = pieces.norm_offset(region.start)?;
-    let norm_end = pieces.norm_offset(region.end)?;
-    if norm_start > norm_end {
-        return None;
-    }
-    let region_norm_len = i64::from(norm_end) - i64::from(norm_start);
-    let d_norm = i64::try_from(relexed.normalized.len()).ok()? - region_norm_len;
-
-    // 7. Graft the re-lexed nodes' handles into a clone of the cached store.
-    //    The clone copies the whole pool, so every reused suffix node handle
-    //    stays valid; graft only appends. `grafted[i]` is shared by both the
-    //    source-node table and the registry (parallel arrays).
-    let mut store = cached.store.clone();
-    let grafted: Vec<NodeRefOwned> = relexed
-        .source_nodes
-        .iter()
-        .map(|sn| store.graft_node_ref(&relexed.store, sn.node))
-        .collect();
-    // The registry is parallel to `source_nodes` (i-th entry ↔ i-th node); if a
-    // build ever breaks that invariant the splice cannot pair them, so decline.
-    if relexed.registry.len() != grafted.len() {
-        return None;
-    }
-    // The differential gate only covers the inputs it samples; this `debug_assert`
-    // pins the load-bearing parallel-array invariant for every build (incl. the
-    // production LSP path, which has no gate), catching a registry refactor that
-    // diverges `iter_sorted()` order from `source_nodes` order at equal length.
-    debug_assert!(
-        relexed
-            .registry
-            .iter_sorted()
-            .map(|(_, node)| node)
-            .eq(relexed.source_nodes.iter().map(|sn| sn.node)),
-        "relexed registry must be parallel to source_nodes (same node sequence)",
-    );
-
-    // 8. Strings. Reassemble prefix ++ relexed region ++ suffix. The result
-    //    equals `new_sanitized` iff the edit touched only bytes inside
-    //    `edit_old`, so this `debug_assert_eq!` is the owned path's equivalent of
-    //    the prologue's debug-only `debug_assert_unchanged_outside` precondition
-    //    check — the former unconditional release `memcmp` lived in the prologue,
-    //    not here.
-    let mut new_sanitized_out =
-        String::with_capacity(old_source.len().saturating_add(relexed.sanitized.len()));
-    new_sanitized_out.push_str(old_source.get(..r_start)?);
-    new_sanitized_out.push_str(&relexed.sanitized);
-    new_sanitized_out.push_str(old_source.get(r_end..)?);
-    debug_assert_eq!(
-        new_sanitized_out, new_sanitized,
-        "reassembled sanitized buffer must equal the edited input \
-         (caller precondition: the edit changes only bytes inside edit_old)",
-    );
-
-    let mut new_normalized = String::with_capacity(
-        cached
-            .normalized
-            .len()
-            .saturating_add(relexed.normalized.len()),
-    );
-    new_normalized.push_str(cached.normalized.get(..norm_start as usize)?);
-    new_normalized.push_str(&relexed.normalized);
-    new_normalized.push_str(cached.normalized.get(norm_end as usize..)?);
-
-    // 9. source_nodes (sanitized, sorted by source_span.start): prefix
-    //    (unchanged) ++ region (relexed, shifted by r_start) ++ suffix (shifted
-    //    by d_san).
-    let mut source_nodes: Vec<SourceNodeOwned> =
-        Vec::with_capacity(cached.source_nodes.len() + relexed.source_nodes.len());
-    for sn in &cached.source_nodes {
-        if sn.source_span.end <= region.start {
-            source_nodes.push(*sn);
-        }
-    }
-    for (i, sn) in relexed.source_nodes.iter().enumerate() {
-        source_nodes.push(SourceNodeOwned {
-            source_span: sn.source_span.shifted(i64::from(region.start)),
-            node: grafted[i],
-        });
-    }
-    for sn in &cached.source_nodes {
-        if sn.source_span.start >= region.end {
-            source_nodes.push(SourceNodeOwned {
-                source_span: sn.source_span.shifted(d_san),
-                node: sn.node,
-            });
-        }
-    }
-
-    // 10. pairs (PairLink, sanitized, close order).
-    let mut pairs: Vec<PairLink> = Vec::with_capacity(cached.pairs.len() + relexed.pairs.len());
-    for p in &cached.pairs {
-        if p.close.end <= region.start {
-            pairs.push(*p);
-        }
-    }
-    for p in &relexed.pairs {
-        pairs.push(PairLink {
-            kind: p.kind,
-            open: p.open.shifted(i64::from(region.start)),
-            close: p.close.shifted(i64::from(region.start)),
-        });
-    }
-    for p in &cached.pairs {
-        if p.open.start >= region.end {
-            pairs.push(PairLink {
-                kind: p.kind,
-                open: p.open.shifted(d_san),
-                close: p.close.shifted(d_san),
-            });
-        }
-    }
-
-    // 11. registry (normalized): prefix (pos < norm_start, unchanged) ++ region
-    //     (relexed pos + norm_start, grafted[i]) ++ suffix (pos >= norm_end,
-    //     shifted by d_norm). Ascending order is preserved by construction.
-    let mut reg_entries: Vec<(u32, NodeRefOwned)> =
-        Vec::with_capacity(cached.registry.len() + grafted.len());
-    for (pos, node) in cached.registry.iter_sorted() {
-        if pos < norm_start {
-            reg_entries.push((pos, node));
-        }
-    }
-    for (i, (pos, _node)) in relexed.registry.iter_sorted().enumerate() {
-        reg_entries.push((shift_u32(pos, i64::from(norm_start))?, grafted[i]));
-    }
-    for (pos, node) in cached.registry.iter_sorted() {
-        if pos >= norm_end {
-            reg_entries.push((shift_u32(pos, d_norm)?, node));
-        }
-    }
-    let registry = RegistryOwned::from_sorted_slice(&reg_entries);
-
-    // 12. container_pairs (normalized, close order).
-    let mut container_pairs: Vec<ContainerPair> =
-        Vec::with_capacity(cached.container_pairs.len() + relexed.container_pairs.len());
-    for cp in &cached.container_pairs {
-        if cp.close.get() < norm_start {
-            container_pairs.push(*cp);
-        }
-    }
-    for cp in &relexed.container_pairs {
-        container_pairs.push(ContainerPair {
-            kind: cp.kind,
-            open: NormalizedOffset::new(shift_u32(cp.open.get(), i64::from(norm_start))?),
-            close: NormalizedOffset::new(shift_u32(cp.close.get(), i64::from(norm_start))?),
-        });
-    }
-    for cp in &cached.container_pairs {
-        if cp.open.get() >= norm_end {
-            container_pairs.push(ContainerPair {
-                kind: cp.kind,
-                open: NormalizedOffset::new(shift_u32(cp.open.get(), d_norm)?),
-                close: NormalizedOffset::new(shift_u32(cp.close.get(), d_norm)?),
-            });
-        }
-    }
-
-    // 13. diagnostics (sanitized): prefix (unchanged) ++ region (relexed,
-    //     shifted by r_start) ++ suffix (shifted by d_san). Inside-region cached
-    //     diagnostics are superseded by the relexed ones; straddlers were
-    //     already declined above.
-    let mut diagnostics: Vec<Diagnostic> =
-        Vec::with_capacity(cached.diagnostics.len() + relexed.diagnostics.len());
-    for d in &cached.diagnostics {
-        if d.span().end <= region.start {
-            diagnostics.push(d.clone());
-        }
-    }
-    for d in &relexed.diagnostics {
-        diagnostics.push(d.clone().shifted(i64::from(region.start)));
-    }
-    for d in &cached.diagnostics {
-        if d.span().start >= region.end {
-            diagnostics.push(d.clone().shifted(d_san));
-        }
-    }
-
-    // 14. Reuse accounting (the LSP surface reports these as cache hits/misses):
-    //     cached prefix nodes (end <= region.start) plus cached suffix nodes
-    //     (start >= region.end) are carried unchanged; the region's nodes are
-    //     the re-lexed ones.
-    let reused_nodes = u64::try_from(
-        cached
-            .source_nodes
-            .iter()
-            .filter(|sn| sn.source_span.end <= region.start || sn.source_span.start >= region.end)
-            .count(),
-    )
-    .ok()?;
-    let relexed_nodes = u64::try_from(relexed.source_nodes.len()).ok()?;
-
-    // 15. Assemble. `intern_stats` is carried verbatim (the gate ignores it).
-    let sanitized_len = u32::try_from(new_sanitized_out.len()).ok()?;
-    let output = OwnedLexOutput::new(
-        new_normalized,
-        new_sanitized_out,
-        registry,
-        diagnostics,
-        sanitized_len,
-        pairs,
-        source_nodes,
-        container_pairs,
-        cached.intern_stats,
-        store,
-    );
-    Some(OwnedSplice {
-        output,
-        reused_nodes,
-        relexed_nodes,
-    })
-}
-
 /// **UNSTABLE — not subject to semver until v0.5.0.**
 ///
 /// The LSP's per-keystroke hot path: compute the spliced diagnostics for the
@@ -1885,14 +1405,13 @@ pub(crate) fn reparse_incremental_owned(
 /// by the rare F2 rename gesture. So this engine runs the shared
 /// [`splice_prologue`] (`O(region)` re-lex) and then **only** the diagnostics
 /// splice plus the store-free `source_nodes`/`pairs` splice the *next* edit's
-/// region-find consumes — skipping the `O(doc)` normalized/sanitized string
-/// rebuild, the store clone + graft, the registry Eytzinger rebuild, and the
-/// container-pairs splice. The result is `O(region + #diagnostics)`.
+/// region-find consumes — never the `O(doc)` work a full parse does (the
+/// normalized/sanitized string build, the store + registry Eytzinger table, the
+/// container-pairs table). The result is `O(region + #diagnostics)`.
 ///
-/// Its `diagnostics` are byte-identical to [`reparse_incremental_owned`]'s (the
-/// same step-13 concatenation over the same prologue), which the
-/// `corpus_incremental_merge` differential gate pins to a full parse over the
-/// reference corpus.
+/// Its `diagnostics` flatten from the spliced [`PieceSeq`] over the shared
+/// [`splice_prologue`], which the `corpus_incremental_merge` differential gate
+/// pins byte-identical to a full parse over the reference corpus.
 ///
 /// # Store-free-base soundness
 ///
@@ -1910,14 +1429,15 @@ pub(crate) fn reparse_incremental_owned(
 /// `BlockClose` / `Inline` / …) — and never resolves a `StrId`/`ContentRange`
 /// against a store. The `debug_assert` below pins this invariant: a future
 /// change that resolves a region node's payload here must instead graft it into
-/// a real store (i.e. take the [`reparse_incremental_owned`] path).
+/// a real store rather than read it off the transient re-lex store this
+/// `relexed` is about to drop.
 #[must_use]
 pub(crate) fn reparse_incremental_diagnostics_only<S: SanitizedSrc>(
     base: &DiagBaseRef<'_, S>,
     new_sanitized: &S,
     edit_old: Range<usize>,
 ) -> Option<DiagSplice> {
-    // Steps 1–5 (store-independent), shared with the owned splice.
+    // Steps 1–5 (store-independent), via the shared prologue.
     let Prologue {
         region,
         relexed,
@@ -1927,10 +1447,10 @@ pub(crate) fn reparse_incremental_diagnostics_only<S: SanitizedSrc>(
     // Invariant pin (store-free base, see the doc above): the region nodes are
     // carried with the re-lex's own `NodeRefOwned` handles and never resolved
     // against a store on this path. If a future change needs a region node's
-    // resolved payload here, it must graft into a real store (the owned path),
-    // not read it off the transient re-lex store this `relexed` is about to
-    // drop. This assert trips loudly if such a resolution is wired in by
-    // accident: the region nodes must stay parallel to the re-lex registry.
+    // resolved payload here, it must graft into a real store, not read it off
+    // the transient re-lex store this `relexed` is about to drop. This assert
+    // trips loudly if such a resolution is wired in by accident: the region
+    // nodes must stay parallel to the re-lex registry.
     debug_assert_eq!(
         relexed.registry.len(),
         relexed.source_nodes.len(),
@@ -2212,245 +1732,7 @@ mod tests {
         );
     }
 
-    // ---- norm_offset (sanitized → normalized offset map) ----
-
-    use crate::{BoutenKind, BoutenPosition, RegionClose, RegionFormat};
-
-    /// The registry as a `(position, NodeRefOwned)` vec, parallel to
-    /// `source_nodes` (same source order — the established invariant).
-    fn reg_entries(cached: &OwnedLexOutput) -> Vec<(u32, NodeRefOwned)> {
-        cached.registry.iter_sorted().collect()
-    }
-
-    /// `norm_offset(0) == 0` and `norm_offset(sanitized_len) == normalized_len`
-    /// — the whole accumulated drift lands the document end exactly.
-    fn assert_endpoints(src: &str) {
-        let cached = owned(src);
-        let san_len = u32::try_from(cached.sanitized.len()).unwrap();
-        let norm_len = u32::try_from(cached.normalized.len()).unwrap();
-        assert_eq!(norm_offset(&cached, 0), Some(0), "start of {src:?}");
-        assert_eq!(
-            norm_offset(&cached, san_len),
-            Some(norm_len),
-            "end of {src:?}",
-        );
-    }
-
-    /// THE key cross-check: for every node, the sanitized boundary just after
-    /// its span maps to the normalized cursor just after its sentinel (`+3`)
-    /// plus trailing standalone padding — derived straight from the registry
-    /// positions the pipeline actually produced. Skips any boundary another
-    /// node straddles (it would not be a clean interstitial point).
-    fn assert_registry_ground_truth(src: &str) {
-        let cached = owned(src);
-        let reg = reg_entries(&cached);
-        let nodes = &cached.source_nodes;
-        assert_eq!(
-            reg.len(),
-            nodes.len(),
-            "registry parallel to source_nodes for {src:?}",
-        );
-        let mut checked = 0usize;
-        for k in 1..=nodes.len() {
-            let b = nodes[k - 1].source_span.end;
-            // A clean interstitial boundary is straddled by no node.
-            if nodes
-                .iter()
-                .any(|sn| sn.source_span.start < b && sn.source_span.end > b)
-            {
-                continue;
-            }
-            let expected = reg[k - 1].0 + 3 + standalone_pad(reg[k - 1].1);
-            assert_eq!(
-                norm_offset(&cached, b),
-                Some(expected),
-                "node {} boundary {b} in {src:?}",
-                k - 1,
-            );
-            checked += 1;
-        }
-        assert!(
-            nodes.is_empty() || checked > 0,
-            "no clean boundary checked for {src:?}",
-        );
-    }
-
-    /// Structurally diverse documents that exercise every padding case: plain
-    /// (no node), inline ruby (pad 0, long base collapses), inline forward
-    /// format, a standalone block leaf (改ページ, pad 2), an inline gaiji
-    /// reference, and a block container open/close (字下げ, pad 2 each).
-    const GROUND_TRUTH_DOCS: &[&str] = &[
-        "あいうえお\n\nかきくけこ\n",
-        "前｜漢字《かんじ》後\n",
-        "前\n\n｜山《やま》\n\n後\n",
-        "あ［＃「あ」は太字］い\n",
-        "前\n\n［＃改ページ］\n\n後\n",
-        "海※［＃感嘆符二つ、1-8-75］辺\n",
-        "前\n\n［＃ここから２字下げ］\n本文\n［＃ここで字下げ終わり］\n\n後\n",
-    ];
-
-    #[test]
-    fn norm_offset_endpoints_account_for_all_drift() {
-        for src in GROUND_TRUTH_DOCS {
-            assert_endpoints(src);
-        }
-        // Empty document: 0 maps to 0, both lengths zero.
-        let empty = owned("");
-        assert_eq!(norm_offset(&empty, 0), Some(0));
-    }
-
-    #[test]
-    fn norm_offset_matches_registry_ground_truth() {
-        for src in GROUND_TRUTH_DOCS {
-            assert_registry_ground_truth(src);
-        }
-    }
-
-    #[test]
-    fn norm_offset_standalone_block_includes_lead_and_trail_padding() {
-        // 改ページ is a standalone block leaf: pad 2 (lead) + 3 sentinel + 2
-        // (trail). The boundary after it must skip the trailing pad too.
-        let src = "前\n\n［＃改ページ］\n\n後\n";
-        let cached = owned(src);
-        let idx = cached
-            .source_nodes
-            .iter()
-            .position(|sn| matches!(sn.node, NodeRefOwned::BlockLeaf(_)))
-            .expect("改ページ is a block leaf");
-        assert_eq!(
-            standalone_pad(cached.source_nodes[idx].node),
-            2,
-            "standalone block leaf pads 2",
-        );
-        let reg = reg_entries(&cached);
-        let b = cached.source_nodes[idx].source_span.end;
-        assert_eq!(
-            norm_offset(&cached, b),
-            Some(reg[idx].0 + 3 + 2),
-            "cursor sits after sentinel + trailing pad",
-        );
-    }
-
-    #[test]
-    fn norm_offset_block_container_pads_open_and_close() {
-        // 字下げ container: BlockOpen + BlockClose, each block (pad 2).
-        let src = "前\n\n［＃ここから２字下げ］\n本文\n［＃ここで字下げ終わり］\n\n後\n";
-        let cached = owned(src);
-        let opens: Vec<_> = cached
-            .source_nodes
-            .iter()
-            .filter(|sn| matches!(sn.node, NodeRefOwned::BlockOpen(_)))
-            .collect();
-        let closes: Vec<_> = cached
-            .source_nodes
-            .iter()
-            .filter(|sn| matches!(sn.node, NodeRefOwned::BlockClose(_)))
-            .collect();
-        assert_eq!(opens.len(), 1, "one container open");
-        assert_eq!(closes.len(), 1, "one container close");
-        assert_eq!(standalone_pad(opens[0].node), 2, "block open pads 2");
-        assert_eq!(standalone_pad(closes[0].node), 2, "block close pads 2");
-        assert_registry_ground_truth(src);
-    }
-
-    #[test]
-    fn standalone_pad_table_inline_vs_block() {
-        // Inline open/close (傍点 range, is_inline) get no padding; block
-        // open/close (罫囲み) pad 2. Constructed directly to pin the table
-        // independent of which directives the parser happens to emit inline.
-        let inline_open = NodeRefOwned::BlockOpen(RegionFormat::Bouten {
-            kind: BoutenKind::Goma,
-            position: BoutenPosition::Right,
-        });
-        let inline_close = NodeRefOwned::BlockClose(RegionClose::Bouten {
-            kind: BoutenKind::Goma,
-            position: BoutenPosition::Right,
-        });
-        let block_open = NodeRefOwned::BlockOpen(RegionFormat::Framed);
-        let block_close = NodeRefOwned::BlockClose(RegionClose::Framed);
-        assert_eq!(standalone_pad(inline_open), 0, "inline open: no pad");
-        assert_eq!(standalone_pad(inline_close), 0, "inline close: no pad");
-        assert_eq!(standalone_pad(block_open), 2, "block open: pad 2");
-        assert_eq!(standalone_pad(block_close), 2, "block close: pad 2");
-    }
-
-    #[test]
-    fn norm_offset_crlf_source_is_in_sanitized_coordinates() {
-        // Sanitize strips \r first, so source_nodes / normalized already live
-        // in sanitized space; norm_offset operates entirely there.
-        let src = "前\r\n\r\n［＃改ページ］\r\n\r\n後\r\n";
-        let cached = owned(src);
-        assert!(!cached.sanitized.contains('\r'), "sanitized drops CR");
-        assert_endpoints(src);
-        assert_registry_ground_truth(src);
-    }
-
-    #[test]
-    fn norm_offset_interior_gap_matches_bracketing_form() {
-        // An interior boundary in the MIDDLE of a plain gap (not exactly at a
-        // node end): the cumulative form must equal the bracketing form
-        // `reg[k-1].0 + 3 + pad + (b - source_span.end)` — plain text is 1:1.
-        let src = "前\n\n［＃改ページ］\n\n後の段落です\n";
-        let cached = owned(src);
-        let reg = reg_entries(&cached);
-        // The single node is the page break; pick a boundary a few bytes into
-        // the trailing "後の段落です" plain run, well past its span end.
-        let node_end = cached.source_nodes[0].source_span.end;
-        let after = cached.sanitized.find("後の段落").unwrap();
-        let b = u32::try_from(after + "後".len()).unwrap();
-        assert!(b > node_end, "boundary sits in the gap after the node");
-        let pad = standalone_pad(cached.source_nodes[0].node);
-        let bracketing = reg[0].0 + 3 + pad + (b - node_end);
-        assert_eq!(
-            norm_offset(&cached, b),
-            Some(bracketing),
-            "cumulative form equals bracketing form in a plain gap",
-        );
-    }
-
-    #[test]
-    fn norm_offset_out_of_bounds_yields_none() {
-        let cached = owned("あいうえお\n");
-        let san_len = u32::try_from(cached.sanitized.len()).unwrap();
-        assert_eq!(norm_offset(&cached, san_len + 1), None, "past the end");
-    }
-
-    #[test]
-    fn norm_offset_mid_codepoint_yields_none() {
-        // The defensive char-boundary tripwire: a san_off that lands inside a
-        // multi-byte codepoint maps to a non-char-boundary normalized offset
-        // and must decline (→ caller falls back) rather than produce a
-        // mid-codepoint splice point. "あ" is 3 bytes, so byte 1 is interior.
-        let cached = owned("あ\n");
-        assert!(
-            !cached.sanitized.is_char_boundary(1),
-            "byte 1 is mid-codepoint in the sanitized buffer",
-        );
-        assert_eq!(
-            norm_offset(&cached, 1),
-            None,
-            "mid-codepoint offset declines"
-        );
-    }
-
-    #[test]
-    fn norm_offset_no_node_interior_is_identity() {
-        // A document with no classified nodes has zero drift, so norm_offset is
-        // the identity at every char boundary (normalized == sanitized).
-        let cached = owned("あいうえお\n");
-        assert!(cached.source_nodes.is_empty(), "plain text has no nodes");
-        assert_eq!(cached.normalized, cached.sanitized, "no sentinels inserted");
-        for b in 0..=cached.sanitized.len() {
-            if cached.sanitized.is_char_boundary(b) {
-                let off = u32::try_from(b).unwrap();
-                assert_eq!(norm_offset(&cached, off), Some(off), "identity at {b}");
-            }
-        }
-    }
-
-    // ---- reparse_incremental_owned (owned-table splice) ----
-
-    use aozora_render::{render_html_owned, serialize_owned};
+    // ---- shared decline tests (diagnostics-only engine) ----
 
     /// Apply a single-region edit (`replacement` swapped for `edit`) to `san`.
     fn apply_edit(san: &str, edit: Range<usize>, replacement: &str) -> String {
@@ -2459,90 +1741,6 @@ mod tests {
         out.push_str(replacement);
         out.push_str(&san[edit.end..]);
         out
-    }
-
-    /// Assert the spliced output is byte-identical to a full re-parse on every
-    /// resolved/rendered surface the differential gate also checks.
-    fn assert_splice_matches_full(spliced: &OwnedLexOutput, full: &OwnedLexOutput) {
-        assert_eq!(spliced.normalized, full.normalized, "normalized");
-        assert_eq!(spliced.sanitized, full.sanitized, "sanitized");
-        assert_eq!(spliced.sanitized_len, full.sanitized_len, "sanitized_len");
-        assert_eq!(
-            render_html_owned(spliced),
-            render_html_owned(full),
-            "rendered HTML",
-        );
-        assert_eq!(
-            serialize_owned(spliced),
-            serialize_owned(full),
-            "serialized source",
-        );
-        assert_eq!(
-            spliced.registry.len(),
-            full.registry.len(),
-            "registry length",
-        );
-        let spliced_positions: Vec<u32> = spliced.registry.iter_sorted().map(|(p, _)| p).collect();
-        let full_positions: Vec<u32> = full.registry.iter_sorted().map(|(p, _)| p).collect();
-        assert_eq!(spliced_positions, full_positions, "registry positions");
-        assert_eq!(
-            spliced.source_nodes.len(),
-            full.source_nodes.len(),
-            "source_nodes length",
-        );
-        assert_eq!(spliced.pairs.len(), full.pairs.len(), "pairs length");
-        assert_eq!(
-            spliced.container_pairs.len(),
-            full.container_pairs.len(),
-            "container_pairs length",
-        );
-    }
-
-    #[test]
-    fn plain_interior_edit_splices_byte_identical() {
-        // Three blank-line-separated plain paragraphs; insert a plain kana
-        // inside the middle one. The region is the middle paragraph alone.
-        let cached = owned("あいうえお\n\nかきくけこ\n\nさしすせそ\n");
-        let san = cached.sanitized.clone();
-        let at = san.find("くけこ").expect("middle paragraph");
-        let edit = at..at;
-        let new_san = apply_edit(&san, edit.clone(), "も");
-        let full = owned(&new_san);
-        assert_eq!(full.sanitized, new_san, "edit is a sanitize fixed point");
-
-        let spliced = reparse_incremental_owned(&cached, &new_san, edit)
-            .expect("plain interior edit must take the fast path");
-        assert!(
-            spliced.reused_nodes > 0 || cached.source_nodes.is_empty(),
-            "an interior splice of a multi-paragraph doc reuses flanking nodes",
-        );
-        assert_splice_matches_full(&spliced.output, &full);
-    }
-
-    #[test]
-    fn standalone_block_adjacent_edit_splices_byte_identical() {
-        // A standalone block leaf (改ページ) sits before the edited paragraph;
-        // its normalized drift (lead + sentinel + trail padding) must be carried
-        // through the prefix offset map. Edit the paragraph after the block.
-        let cached = owned("前の段落\n\n［＃改ページ］\n\n後の段落です\n");
-        let san = cached.sanitized.clone();
-        let at = san.find("段落です").expect("trailing paragraph") + "段落".len();
-        let edit = at..at;
-        let new_san = apply_edit(&san, edit.clone(), "や");
-        let full = owned(&new_san);
-        assert_eq!(full.sanitized, new_san, "edit is a sanitize fixed point");
-
-        let spliced = reparse_incremental_owned(&cached, &new_san, edit)
-            .expect("block-adjacent interior edit must take the fast path");
-        assert!(
-            spliced.reused_nodes > 0,
-            "the 改ページ block leaf sits in the reused prefix",
-        );
-        assert_eq!(
-            spliced.relexed_nodes, 0,
-            "the edited trailing paragraph re-lexes to plain text (no nodes)",
-        );
-        assert_splice_matches_full(&spliced.output, &full);
     }
 
     #[test]
@@ -2570,8 +1768,10 @@ mod tests {
             full.diagnostics,
         );
 
+        let pieces = pieces_of(&cached);
+        let base = DiagBaseRef::from_cached(&cached, &pieces);
         assert!(
-            reparse_incremental_owned(&cached, &new_san, edit).is_none(),
+            reparse_incremental_diagnostics_only(&base, &new_san.as_str(), edit).is_none(),
             "a broken gaiji must decline to the full-parse fallback",
         );
     }
@@ -2589,8 +1789,10 @@ mod tests {
         // declined by the unclosed-bracket self-containment check instead.
         assert!(!carries_structure("《"), "《 is not a structural byte");
 
+        let pieces = pieces_of(&cached);
+        let base = DiagBaseRef::from_cached(&cached, &pieces);
         assert!(
-            reparse_incremental_owned(&cached, &new_san, edit).is_none(),
+            reparse_incremental_diagnostics_only(&base, &new_san.as_str(), edit).is_none(),
             "an unclosed delimiter half must decline",
         );
     }
@@ -2635,8 +1837,10 @@ mod tests {
         let edit = at..at;
         let new_san = apply_edit(&san, edit.clone(), "x");
         assert!(!carries_structure("x"), "x is not a structural byte");
+        let pieces = pieces_of(&cached);
+        let base = DiagBaseRef::from_cached(&cached, &pieces);
         assert!(
-            reparse_incremental_owned(&cached, &new_san, edit).is_none(),
+            reparse_incremental_diagnostics_only(&base, &new_san.as_str(), edit).is_none(),
             "an edit inside a ［…］ directive must decline",
         );
     }
@@ -2670,8 +1874,10 @@ mod tests {
         let edit = at..at;
         let new_san = apply_edit(&san, edit.clone(), "ね");
 
+        let pieces = pieces_of(&cached);
+        let base = DiagBaseRef::from_cached(&cached, &pieces);
         assert!(
-            reparse_incremental_owned(&cached, &new_san, edit).is_none(),
+            reparse_incremental_diagnostics_only(&base, &new_san.as_str(), edit).is_none(),
             "a document with a forward reference must decline (text coupling)",
         );
     }
@@ -2703,8 +1909,10 @@ mod tests {
             "the duplicated target must make the full parse ambiguous: {:?}",
             full.diagnostics,
         );
+        let pieces = pieces_of(&cached);
+        let base = DiagBaseRef::from_cached(&cached, &pieces);
         assert!(
-            reparse_incremental_owned(&cached, &new_san, edit).is_none(),
+            reparse_incremental_diagnostics_only(&base, &new_san.as_str(), edit).is_none(),
             "a reclaimed forward bouten must forbid region reuse",
         );
     }
@@ -2734,8 +1942,10 @@ mod tests {
             "the kana flip must make the full parse emit KaeritenOutsideKanbun: {:?}",
             full.diagnostics,
         );
+        let pieces = pieces_of(&cached);
+        let base = DiagBaseRef::from_cached(&cached, &pieces);
         assert!(
-            reparse_incremental_owned(&cached, &new_san, edit).is_none(),
+            reparse_incremental_diagnostics_only(&base, &new_san.as_str(), edit).is_none(),
             "a document with a kaeriten must forbid region reuse",
         );
     }
@@ -2743,11 +1953,10 @@ mod tests {
 
 /// Property tests pinning every `RegionIndex` query byte-identical to the linear
 /// oracle it replaces, over randomly-assembled aozora-shaped documents (#237
-/// Tier 2). The oracles (`structurally_safe`, `norm_offset`,
-/// `candidate_boundaries`) and a whole-buffer reference region finder are the
-/// ground truth; the indexed/outward-scan production forms must match them
-/// exactly, which (with the corpus differential gate) is the byte-identity
-/// guarantee.
+/// Tier 2). The oracles (`structurally_safe`, `candidate_boundaries`) and a
+/// whole-buffer reference region finder are the ground truth; the
+/// indexed/outward-scan production forms must match them exactly, which (with the
+/// corpus differential gate) is the byte-identity guarantee.
 #[cfg(test)]
 mod oracle_proptests {
     use core::iter::once;
@@ -2759,8 +1968,8 @@ mod oracle_proptests {
 
     use super::{
         DiagBaseRef, OwnedLexOutput, PieceSeq, Prologue, RegionIndex, candidate_boundaries,
-        is_whole_document_scoped, minimal_balanced_region, node_forbids_region_reuse, norm_offset,
-        shift_u32, splice_prologue, standalone_pad, structurally_safe,
+        is_whole_document_scoped, minimal_balanced_region, node_forbids_region_reuse,
+        splice_prologue, structurally_safe,
     };
     use crate::{Diagnostic, Document, PairLink, SourceNodeOwned};
 
@@ -2871,22 +2080,6 @@ mod oracle_proptests {
             }
         }
 
-        /// `RegionIndex::norm_offset` equals the linear `norm_offset` at every
-        /// offset (interstitial or not — the closed form is offset-independent).
-        #[test]
-        fn norm_offset_indexed_matches_oracle(doc in doc_strategy()) {
-            let cached = owned(&doc);
-            let index = idx_of(&cached);
-            let len = u32::try_from(cached.sanitized.len()).expect("len fits u32");
-            for off in 0..=len + 2 {
-                prop_assert_eq!(
-                    index.norm_offset(&cached, off),
-                    norm_offset(&cached, off),
-                    "norm_offset mismatch at {} in {:?}", off, doc,
-                );
-            }
-        }
-
         /// The outward-scan `minimal_balanced_region` equals the whole-buffer
         /// reference for arbitrary edits.
         #[test]
@@ -2964,28 +2157,9 @@ mod oracle_proptests {
 
     // ---- PieceSeq ≡ contiguous (PR-1 merge gate) ----
 
-    /// Pure-arithmetic normalized-offset oracle over a flattened node table: the
-    /// engine's `norm_offset` closed form minus its normalized-string
-    /// char-boundary tripwire (a flattened `PieceSeq` carries no normalized
-    /// string). `PieceSeq::norm_offset` must equal this at *every* offset.
-    fn norm_arith(nodes: &[SourceNodeOwned], off: u32, san_len: u32) -> Option<u32> {
-        if off > san_len {
-            return None;
-        }
-        let k = nodes.partition_point(|sn| sn.source_span.end <= off);
-        let mut drift: i64 = 0;
-        for sn in &nodes[..k] {
-            let footprint = i64::from(sn.source_span.end - sn.source_span.start);
-            let pad = i64::from(standalone_pad(sn.node));
-            drift += 2 * pad + 3 - footprint;
-        }
-        shift_u32(off, drift)
-    }
-
     /// Assert two source-node tables agree on the store-free projection the
-    /// region-find consumes: byte spans, the `BlockOpen`/`BlockClose`/`Inline`
-    /// discriminant (container depth), and the standalone padding (`is_inline`,
-    /// hence normalized drift).
+    /// region-find consumes: byte spans and the `BlockOpen`/`BlockClose`/`Inline`
+    /// discriminant (container depth).
     fn assert_nodes_eq(got: &[SourceNodeOwned], want: &[SourceNodeOwned]) {
         assert_eq!(got.len(), want.len(), "source_nodes length");
         for (g, w) in got.iter().zip(want) {
@@ -2994,11 +2168,6 @@ mod oracle_proptests {
                 discriminant(&g.node),
                 discriminant(&w.node),
                 "node discriminant",
-            );
-            assert_eq!(
-                standalone_pad(g.node),
-                standalone_pad(w.node),
-                "standalone padding",
             );
         }
     }
@@ -3045,9 +2214,9 @@ mod oracle_proptests {
     }
 
     /// Pin a `PieceSeq` byte-identical to a full re-parse `full`: flattened
-    /// tables (node projection / pairs / diagnostics multiset), totals, and
-    /// every query at every offset against the linear oracle over the flattened
-    /// tables (plus the real `norm_offset` wherever it yields a char boundary).
+    /// tables (node projection / pairs / diagnostics multiset), the sanitized
+    /// total, and every region-find query at every offset against the linear
+    /// oracle over the flattened tables.
     fn verify_seq_matches(seq: &PieceSeq, full: &OwnedLexOutput) {
         let san_len = u32::try_from(full.sanitized.len()).expect("len fits u32");
         let (nodes, pairs, diags) = seq.flatten();
@@ -3055,11 +2224,6 @@ mod oracle_proptests {
         assert_pairs_eq(&pairs, &full.pairs);
         assert_diags_eq(&diags, &full.diagnostics);
         assert_eq!(seq.total_san_len(), san_len, "total sanitized length");
-        assert_eq!(
-            seq.total_norm_len(),
-            u32::try_from(full.normalized.len()).expect("len fits u32"),
-            "total normalized length",
-        );
         for off in 0..=san_len {
             assert_eq!(
                 seq.structurally_safe(off),
@@ -3071,20 +2235,6 @@ mod oracle_proptests {
                 straddles_at(&full.diagnostics, off),
                 "diag_straddles at {off}",
             );
-        }
-        for off in 0..=san_len + 2 {
-            assert_eq!(
-                seq.norm_offset(off),
-                norm_arith(&nodes, off, san_len),
-                "norm_offset arithmetic at {off}",
-            );
-            if let Some(real) = norm_offset(full, off) {
-                assert_eq!(
-                    seq.norm_offset(off),
-                    Some(real),
-                    "norm_offset vs full parse at {off}",
-                );
-            }
         }
         assert_eq!(
             seq.has_whole_doc_scoped_diag(),
