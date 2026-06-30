@@ -1180,20 +1180,27 @@ pub(crate) fn minimal_balanced_region<S: SanitizedSrc>(
 ///   reason about its coupling, so it declines rather than risk a silent
 ///   divergence — keeping this guard correct by construction as the node set
 ///   grows.
-/// - **Context-sensitive diagnostic**: a `Direct`-classified node
-///   whose *whole-document-scoped* diagnostic depends on text **outside** the
-///   node's own region, so a cross-region edit can flip the diagnostic without
-///   touching the node — and the region re-lex (which does not contain the
-///   node) cannot reproduce it. A **reclaimed forward reference**
-///   (`X［＃「X」に傍点］`) emits `BoutenTargetAmbiguous` from a look-back over
-///   the *whole* prefix, so duplicating the target word in any earlier region
-///   makes a full parse ambiguous while the splice keeps the cached
-///   unambiguous node. A **kaeriten** (`［＃レ］`) emits `KaeritenOutsideKanbun`
-///   from a kana-prose window that spans ±12 chars across blank-line
-///   boundaries, so an edit in an adjacent region can flip it. (The
-///   `Coupled(ForwardReference)` *referenced* forward is already declined
-///   above; `Reclaimed` is `Direct` because its rendered bytes are
-///   self-contained, but its *diagnostic* is not.)
+/// - **Context-sensitive diagnostic or classification**: a `Direct`-classified
+///   node whose *whole-document-scoped* diagnostic — or whose very
+///   classification — depends on text **outside** the node's own region, so a
+///   cross-region edit can flip it without touching the node, and the region
+///   re-lex (which does not contain the node) cannot reproduce it. A
+///   **reclaimed forward reference** (`X［＃「X」に傍点］`) emits
+///   `BoutenTargetAmbiguous` from a look-back over the *whole* prefix, so
+///   duplicating the target word in any earlier region makes a full parse
+///   ambiguous while the splice keeps the cached unambiguous node. A
+///   **kaeriten** (`［＃レ］`) emits `KaeritenOutsideKanbun` from a kana-prose
+///   window that spans ±12 chars across blank-line boundaries, so an edit in an
+///   adjacent region can flip it. (The `Coupled(ForwardReference)` *referenced*
+///   forward is already declined above; `Reclaimed` is `Direct` because its
+///   rendered bytes are self-contained, but its *diagnostic* is not.) A
+///   **self-contained forward reference** (`［＃「X」は太字］` with no earlier
+///   `X`) is `Direct` for the same self-contained-bytes reason, but its very
+///   *classification* is a whole-prefix predicate (target absence):
+///   introducing an earlier `X` in another region flips a full parse to
+///   `Reclaimed`/`Referenced` and would resurrect the #228 double-render across
+///   the splice boundary, which the node-free region re-lex cannot see — so it
+///   is declined here too.
 ///
 /// Single-sources the classification through [`classify_node_ref`] (the #202
 /// splice authority) so this region-reuse guard and the #202 splice cannot
@@ -1205,7 +1212,10 @@ fn node_forbids_region_reuse(node: NodeRefOwned) -> bool {
         SpliceSafety::Coupled(
             CoupledKind::ForwardReference | CoupledKind::HeadingHint | CoupledKind::MarginNote
         ) | SpliceSafety::Opaque
-    ) || matches!(role, RegionRole::ForwardReclaimed | RegionRole::Kaeriten)
+    ) || matches!(
+        role,
+        RegionRole::ForwardReclaimed | RegionRole::ForwardSelfContained | RegionRole::Kaeriten
+    )
 }
 
 /// Whether a re-lexed region's own container nesting is balanced: a lenient
@@ -1914,6 +1924,30 @@ mod tests {
         assert!(
             reparse_incremental_diagnostics_only(&base, &new_san.as_str(), edit).is_none(),
             "a reclaimed forward bouten must forbid region reuse",
+        );
+    }
+
+    /// E1-1: a no-referent forward ([`ForwardOrigin::SelfContained`]) is
+    /// `Direct` (its rendered bytes are self-contained), but its very
+    /// *classification* is a whole-prefix predicate (target absence): a distant
+    /// edit that introduces an earlier copy of the target flips a full parse to
+    /// `Reclaimed`/`Referenced` and would resurrect the #228 double-render
+    /// across the splice boundary. So its region must not be reused — like the
+    /// reclaimed case above, but for classification rather than diagnostic.
+    /// Constructed directly; the source-driven decline test arrives with the
+    /// producer in E1-2/E1-3.
+    #[test]
+    fn self_contained_forward_forbids_region_reuse() {
+        use aozora_syntax::alloc_owned::OwnedAllocator;
+        use aozora_syntax::{ForwardAttr, ForwardOrigin};
+
+        let mut a = OwnedAllocator::new();
+        let t = a.content_plain("X");
+        let node = a.forward_format(ForwardAttr::Bold, t, ForwardOrigin::SelfContained);
+        assert!(
+            node_forbids_region_reuse(NodeRefOwned::Inline(node)),
+            "SelfContained must forbid region reuse: its classification depends \
+             on the whole preceding prefix",
         );
     }
 

@@ -521,4 +521,27 @@ mod tests {
             assert_parity(src);
         }
     }
+
+    /// E1-1: a no-referent forward ([`ForwardOrigin::SelfContained`]) is not
+    /// [`ForwardOrigin::Reclaimed`], so the serializer emits **no** leading
+    /// literal — just the `［＃「X」は太字］` bracket. (`Reclaimed` would prefix
+    /// the literal `X`.) Pinned directly since the producer arrives in E1-2.
+    #[test]
+    fn self_contained_forward_serializes_bracket_only() {
+        use aozora_syntax::alloc_owned::OwnedAllocator;
+        use aozora_syntax::owned::NodeOwned;
+        use aozora_syntax::{ForwardAttr, ForwardOrigin};
+
+        let mut a = OwnedAllocator::new();
+        let t = a.content_plain("X");
+        let node = a.forward_format(ForwardAttr::Bold, t, ForwardOrigin::SelfContained);
+        let NodeOwned::Format(f) = node else {
+            panic!("forward_format must build a Format node");
+        };
+        let store = a.into_store();
+
+        let mut s = String::new();
+        super::emit_format_owned(&f, &store, &mut s).expect("serialize into String is infallible");
+        assert_eq!(s, "［＃「X」は太字］");
+    }
 }

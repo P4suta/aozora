@@ -333,11 +333,14 @@ pub enum ForwardAttr {
 /// A forward emphasis node's target-text provenance — whether `serialize`
 /// must re-emit the leading literal to reconstruct the source.
 ///
-/// A forward reference is recognized **only** when its target appears
-/// *contiguously* in the source before the bracket. A directive whose quoted
-/// target is absent (`（例）［＃「国境が消える」に傍点］`) or split by a ruby run
-/// (`牛《ベゴ》の舌［＃「牛の舌」に傍点］`) is left an unresolved directive, not a
-/// forward node, so it never reaches this type.
+/// A forward reference whose target appears *contiguously* in the source
+/// before the bracket carries the literal's provenance
+/// ([`Reclaimed`](Self::Reclaimed) / [`Referenced`](Self::Referenced)). A
+/// directive whose quoted target is **absent** from the preceding source
+/// (`（例）［＃「国境が消える」に傍点］`) has no upstream copy, so the quote itself
+/// is the styled run — [`SelfContained`](Self::SelfContained). Only a target
+/// split by a ruby run (`牛《ベゴ》の舌［＃「牛の舌」に傍点］`) stays an unresolved
+/// directive, never reaching this type.
 ///
 /// This is the one irreducible provenance the normalization waist could not
 /// fold away — it cannot collapse to a constant in either direction:
@@ -367,6 +370,18 @@ pub enum ForwardOrigin {
     /// byte-adjacent to it, so the literal stays in the preceding run; the
     /// serializer emits the bracket form alone.
     Referenced,
+    /// The quoted target is **absent** from the source preceding the bracket
+    /// (the no-referent case: `forward_target_is_preceded` is false), so the
+    /// directive's own quote is the *only* copy of the run. There is no upstream
+    /// literal to truncate and no pull-back, so the consume window equals the
+    /// bracket span exactly: the renderer styles the quoted target (it is **not**
+    /// a no-op like [`Referenced`](Self::Referenced)) and the serializer emits
+    /// the bracket form alone (no leading literal like
+    /// [`Reclaimed`](Self::Reclaimed)). #228-safe by construction — with no
+    /// earlier copy there is nothing to double-render. Produced by the
+    /// no-referent classifier paths; everywhere else it is the natural
+    /// fall-through of the guards that special-case `Reclaimed`/`Referenced`.
+    SelfContained,
 }
 
 impl ForwardOrigin {

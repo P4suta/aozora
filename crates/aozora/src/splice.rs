@@ -84,6 +84,13 @@ pub enum RegionRole {
     /// — the bracket here and the upstream literal — so a coherent target
     /// edit is a [`Coupled`](SpliceSafety::Coupled) splice.
     ForwardReferenced,
+    /// Forward emphasis whose quoted target is absent from the preceding source
+    /// ([`ForwardOrigin::SelfContained`]). The target literal lives wholly
+    /// inside the region — there is no upstream copy — so it is self-contained
+    /// and a coherent target edit is a [`Direct`](SpliceSafety::Direct) splice,
+    /// like [`ForwardReclaimed`](Self::ForwardReclaimed) but with no reclaimed
+    /// prefix.
+    ForwardSelfContained,
     /// Out-of-character-range glyph (外字).
     Gaiji,
     /// Single-line layout directive (字下げ / 地付き / 中央 / 罫囲み).
@@ -274,6 +281,7 @@ pub(crate) fn classify_node_ref(node: NodeRefOwned) -> (RegionRole, SpliceSafety
                     RegionRole::ForwardReferenced,
                     Coupled(CoupledKind::ForwardReference),
                 ),
+                ForwardOrigin::SelfContained => (RegionRole::ForwardSelfContained, Direct),
             },
             NodeOwned::HeadingHint(_) => {
                 (RegionRole::HeadingHint, Coupled(CoupledKind::HeadingHint))
@@ -946,6 +954,24 @@ mod tests {
         assert_eq!(
             r.safety,
             SpliceSafety::Coupled(CoupledKind::ForwardReference)
+        );
+    }
+
+    /// E1-1: a no-referent forward ([`ForwardOrigin::SelfContained`]) lives
+    /// wholly inside its region (no upstream copy), so it classifies `Direct` —
+    /// like `ForwardReclaimed` but with no reclaimed prefix. Constructed
+    /// directly because no source produces this origin until E1-2/E1-3.
+    #[test]
+    fn self_contained_forward_is_direct() {
+        use aozora_syntax::ForwardAttr;
+        use aozora_syntax::alloc_owned::OwnedAllocator;
+
+        let mut a = OwnedAllocator::new();
+        let t = a.content_plain("X");
+        let node = a.forward_format(ForwardAttr::Bold, t, ForwardOrigin::SelfContained);
+        assert_eq!(
+            classify_node_ref(NodeRefOwned::Inline(node)),
+            (RegionRole::ForwardSelfContained, SpliceSafety::Direct),
         );
     }
 
