@@ -19,7 +19,7 @@
 //! formatting model (`Format` / `ForwardAttr` / `LineFormat` /
 //! `RegionFormat` / `RegionClose` and their `NonZero` parameters) lives
 //! under [`mod@format`]. The owned AST node types live under
-//! [`mod@owned`]; the arena-free builder under [`mod@alloc_owned`].
+//! [`mod@owned`]; the builder under [`mod@alloc_owned`].
 
 #![forbid(unsafe_code)]
 
@@ -66,7 +66,7 @@ pub struct Container {
 
 /// Which 傍点 (emphasis dot) or 傍線 (sideline) mark decorates a run.
 ///
-/// Carried by both the forward-reference `borrowed::ForwardFormat` leaf and the
+/// Carried by both the forward-reference `owned::ForwardFormatOwned` leaf and the
 /// paired [`crate::RegionFormat::Bouten`]. The 点 (dot) vs 線 (line) split —
 /// see [`Self::is_line`] — is the family boundary the
 /// `mismatched_bouten_container` diagnostic enforces. Each variant maps to a
@@ -210,7 +210,7 @@ pub const fn is_ruby_base_char(ch: char) -> bool {
     )
 }
 
-/// Which annotation flavour a `crate::borrowed::MarginNote` carries.
+/// Which annotation flavour an `owned::MarginNoteOwned` carries.
 ///
 /// 注記 and 傍記 share the `MarginNote` structure (a note attached to a
 /// preceding run) but round-trip to distinct keywords, so the flavour is
@@ -229,7 +229,7 @@ pub enum MarginNoteKind {
 
 impl MarginNoteKind {
     /// The `(connector, suffix)` source literals that wrap the note text
-    /// when a `crate::borrowed::MarginNote` of this flavour round-trips
+    /// when an `owned::MarginNoteOwned` of this flavour round-trips
     /// back to source as `base［＃「base{connector}note{suffix}`.
     ///
     /// Renderers call this instead of matching the (`non_exhaustive`)
@@ -246,7 +246,7 @@ impl MarginNoteKind {
     }
 }
 
-/// Which section-break directive a `borrowed::Node::SectionBreak` carries —
+/// Which section-break directive an `owned::NodeOwned::SectionBreak` carries —
 /// the stronger page-structure breaks beyond the plain `［＃改ページ］`.
 ///
 /// Each variant maps to its canonical keyword via [`Self::keyword`];
@@ -282,7 +282,7 @@ pub enum HeadingKind {
 
 impl HeadingKind {
     /// The numeric outline level — `1` = 大, `2` = 中, `3` = 小 — carried by
-    /// the inline `crate::borrowed::HeadingHint`'s `data-level` attribute.
+    /// the inline `owned::HeadingHintOwned`'s `data-level` attribute.
     ///
     /// The single source of the 大/中/小 → 1/2/3 mapping (the renderer and the
     /// classifier both key on this instead of an ad-hoc local table).
@@ -386,7 +386,7 @@ impl SectionKind {
     }
 }
 
-/// Classifies a generic `borrowed::Directive` annotation that no more
+/// Classifies a generic `owned::DirectiveOwned` annotation that no more
 /// specific node recogniser claimed.
 ///
 /// [`Unknown`](Self::Unknown) is the catch-all for Aozora-shaped `［＃…］`

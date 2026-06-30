@@ -1,34 +1,29 @@
-//! Owned, arena-free AST construction.
+//! Owned AST construction.
 //!
-//! [`OwnedAllocator`] is the owned mirror of `BorrowedAllocator`:
-//! it builds [`NodeOwned`] and its payload types into an owned [`NodeStore`]
-//! (the [`StrInterner`](super::owned::StrInterner) plus the flat content /
-//! segment pools) instead of a bumpalo arena. Byte-equal strings still share a
-//! single interned [`StrId`](super::owned::StrId).
+//! [`OwnedAllocator`] builds [`NodeOwned`] and its payload types into an owned
+//! [`NodeStore`] (the [`StrInterner`](super::owned::StrInterner) plus the flat
+//! content / segment pools). Byte-equal strings share a single interned
+//! [`StrId`](super::owned::StrId).
 //!
-//! ## Parity with the borrowed allocator
+//! ## Canonicalisation
 //!
-//! Every method mirrors a `BorrowedAllocator` method one-for-one with the same
-//! name and the same canonicalisation, so the produced tree resolves to
-//! byte-identical content:
+//! The builders apply these canonicalisations so the produced tree resolves to
+//! a single byte-identical form:
 //!
 //! - `content_plain("")` and `content_segments(&[])` both canonicalise to the
-//!   empty-segments form (an empty [`SegRange`](super::owned::SegRange)),
-//!   matching `borrowed::Content::EMPTY`.
+//!   empty-segments form (an empty [`SegRange`](super::owned::SegRange)).
 //! - `content_segments` collapses an all-`Text` input into a single
 //!   concatenated `Plain` (the concatenation is re-interned).
-//! - Each borrowed `NonEmpty<Content>` field becomes a length-1
-//!   [`ContentRange`]; the non-empty contract is upheld with the same `expect`
-//!   message the borrowed allocator uses (a classifier bug, never reachable for
-//!   well-formed emit sites).
-//! - `make_gaiji` interns the mencode tail exactly as the borrowed allocator
-//!   does (always when present), so the classification and the retained
-//!   `Unresolved` id match.
+//! - Each `NonEmpty<Content>` field becomes a length-1 [`ContentRange`]; the
+//!   non-empty contract is upheld with an `expect` message (a classifier bug,
+//!   never reachable for well-formed emit sites).
+//! - `make_gaiji` interns the mencode tail whenever it is present, so the
+//!   classification and the retained `Unresolved` id stay in sync.
 //!
 //! ## Status
 //!
 //! This is the **sole** AST builder: the lex pipeline's `classify` stage drives
-//! it directly and the former arena-backed `BorrowedAllocator` has been removed.
+//! it directly.
 
 use aozora_encoding::gaiji::GaijiCanonical;
 
@@ -44,13 +39,12 @@ use super::owned::{
     KaeritenOwned, MarginNoteOwned, NodeOwned, NodeStore, RubyOwned, SegmentOwned, WarichuOwned,
 };
 
-/// `true` for the canonical empty-content form (an empty segment run), the
-/// owned analogue of `borrowed::Content::EMPTY`.
+/// `true` for the canonical empty-content form (an empty segment run).
 fn is_empty_content(c: ContentOwned) -> bool {
     matches!(c, ContentOwned::Segments(r) if r.len == 0)
 }
 
-/// Owned, arena-free builder for [`NodeOwned`] and its payload types.
+/// Builder for [`NodeOwned`] and its payload types.
 ///
 /// Owns the [`NodeStore`] every produced handle resolves against; call
 /// [`Self::into_store`] at the end of a parse to hand it to the lex output.
@@ -61,7 +55,7 @@ pub struct OwnedAllocator {
 
 #[allow(
     clippy::unused_self,
-    reason = "API parity with BorrowedAllocator: every builder takes &(mut) self even when it is a pure wrapper, so call sites have a uniform shape across both allocators."
+    reason = "every builder takes &(mut) self even when it is a pure wrapper, so call sites have a uniform shape."
 )]
 impl OwnedAllocator {
     /// New allocator backed by an empty [`NodeStore`].
@@ -88,7 +82,7 @@ impl OwnedAllocator {
     // ---------------------------------------------------------------------
 
     /// Build a plain-text body content. Empty input canonicalises to the
-    /// empty-segments form (matching `borrowed::Content::EMPTY`).
+    /// empty-segments form.
     pub fn content_plain(&mut self, s: &str) -> ContentOwned {
         if s.is_empty() {
             ContentOwned::Segments(self.store.push_segments(&[]))
@@ -105,9 +99,9 @@ impl OwnedAllocator {
             return ContentOwned::Segments(self.store.push_segments(&[]));
         }
         if segs.iter().all(|s| matches!(s, SegmentOwned::Text(_))) {
-            // Resolve each text run, concatenate, and re-intern — the owned
-            // mirror of the borrowed all-`Text` collapse. Pre-size the buffer
-            // from the resolved lengths to avoid reallocation.
+            // Resolve each text run, concatenate, and re-intern the all-`Text`
+            // collapse. Pre-size the buffer from the resolved lengths to avoid
+            // reallocation.
             let total: usize = segs
                 .iter()
                 .map(|s| match s {
@@ -159,10 +153,10 @@ impl OwnedAllocator {
         let hint = self.store.intern(description);
         let canonical = match mencode {
             Some(m) => {
-                // Intern the tail (as the borrowed allocator always does), then
-                // classify the byte-identical interned string. Only the
-                // `Unresolved` arm keeps the id; the structured arms discard it
-                // just like `GaijiCanonical::from_mencode`.
+                // Intern the tail, then classify the byte-identical interned
+                // string. Only the `Unresolved` arm keeps the id; the
+                // structured arms discard it just like
+                // `GaijiCanonical::from_mencode`.
                 let id = self.store.intern(m);
                 match GaijiCanonical::from_mencode(Some(self.store.resolve_str(id))) {
                     GaijiCanonical::MenKuTen(mkt) => GaijiCanonicalOwned::MenKuTen(mkt),
@@ -206,7 +200,7 @@ impl OwnedAllocator {
     }
 
     // ---------------------------------------------------------------------
-    // Node variant constructors (mirrors the NodeOwned variants)
+    // Node variant constructors (one per NodeOwned variant)
     // ---------------------------------------------------------------------
 
     /// `NodeOwned::Ruby(Ruby { base, reading, side: Right })`.
@@ -274,7 +268,7 @@ impl OwnedAllocator {
     /// Panics if `target` is empty.
     #[allow(
         clippy::too_many_arguments,
-        reason = "every parameter is part of the bouten contract — kind / target / position / origin each carry independent semantics (parity with BorrowedAllocator::bouten)."
+        reason = "every parameter is part of the bouten contract — kind / target / position / origin each carry independent semantics."
     )]
     pub fn bouten(
         &mut self,
@@ -403,7 +397,7 @@ impl OwnedAllocator {
     /// Panics if `file` is empty.
     #[allow(
         clippy::too_many_arguments,
-        reason = "every parameter is an independent part of the 挿絵 contract — file / number / dimensions / caption (parity with BorrowedAllocator::sashie)."
+        reason = "every parameter is an independent part of the 挿絵 contract — file / number / dimensions / caption."
     )]
     pub fn sashie(
         &mut self,
@@ -417,8 +411,8 @@ impl OwnedAllocator {
             "classify stage must emit Illustration with non-empty file path"
         );
         let file = self.store.intern(file);
-        // An empty `number` string is treated as absent, matching the borrowed
-        // `NonEmptyStr::new` filter.
+        // An empty `number` string is treated as absent (the `NonEmptyStr`
+        // contract).
         let number = number
             .filter(|n| !n.is_empty())
             .map(|n| self.store.intern(n));
@@ -507,16 +501,16 @@ impl OwnedAllocator {
 
 #[cfg(test)]
 mod tests {
-    //! Per-variant round-trip tests for `OwnedAllocator`, mirroring the
-    //! `BorrowedAllocator` suite. Each builds one `NodeOwned` and resolves its
-    //! payloads against the store to confirm the fields match.
+    //! Per-variant round-trip tests for `OwnedAllocator`. Each builds one
+    //! `NodeOwned` and resolves its payloads against the store to confirm the
+    //! fields match.
 
     use aozora_encoding::gaiji::MenKuTen;
 
     use super::*;
 
     /// Resolve a length-1 `ContentRange` to its `Plain` text, or `None` for a
-    /// mixed / multi-entry run — the owned analogue of `Content::as_plain`.
+    /// mixed / multi-entry run.
     fn plain(alloc: &OwnedAllocator, range: ContentRange) -> Option<&str> {
         alloc.store().content_range_as_plain(range)
     }

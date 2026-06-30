@@ -52,7 +52,7 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
             r"aozora_pipeline::lexer::recognise",
         ],
     ),
-    ("intern", &[r"aozora_syntax::borrowed::intern", r"Interner"]),
+    ("intern", &[r"aozora_syntax::owned::intern", r"Interner"]),
     (
         "memchr_scan",
         &[
@@ -75,11 +75,7 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
     ("corpus_walk", &[r"aozora_corpus", r"walkdir"]),
     (
         "pipeline_orchestration",
-        &[
-            r"aozora_pipeline::pipeline",
-            r"aozora_pipeline::borrowed",
-            r"run_to_completion",
-        ],
+        &[r"aozora_pipeline::pipeline", r"run_to_completion"],
     ),
     (
         "hashing",
