@@ -289,7 +289,11 @@ mod tests {
         render_into(a.sashie("f.png", None, None, None), &mut nodes);
         render_into(a.sashie_general("f.png", "図", None), &mut nodes);
         render_into(
-            a.heading_hint(HeadingKind::Large, HeadingStyle::Standard, "x"),
+            a.heading_hint(HeadingKind::Large, HeadingStyle::Standard, "x", false),
+            &mut nodes,
+        );
+        render_into(
+            a.heading_hint(HeadingKind::Medium, HeadingStyle::Standard, "x", true),
             &mut nodes,
         );
 

@@ -371,7 +371,15 @@ fn render_aozora_heading_owned<W: Write>(
     write_heading_close(h.kind, h.style, out)
 }
 
-/// Owned mirror of `render_node::render_heading_hint`.
+/// Render a heading hint (`［＃「X」は中見出し］`).
+///
+/// A referent-present hint that the lowering pass did not promote stays a
+/// hidden marker carrying its level / style / target as data attributes. A
+/// `self_contained` hint (a no-referent forward heading) instead renders its
+/// quoted target visibly, classed as a heading by level — the inline analogue
+/// of a promoted `<hN>`, valid where a block heading is not (the directive sits
+/// mid-line). Both serialize bracket-only, so the round-trip stays a fixed
+/// point.
 fn render_heading_hint_owned<W: Write>(
     h: HeadingHintOwned,
     store: &NodeStore,
@@ -387,6 +395,13 @@ fn render_heading_hint_owned<W: Write>(
     if let Some(style) = classes::heading_style_slug(h.style) {
         write!(out, r#" data-style="{style}""#)?;
     }
+    if h.self_contained {
+        // Visible: the quoted run is itself the heading text.
+        out.write_str(">")?;
+        escape_text(store.resolve_str(h.target), out)?;
+        return out.write_str("</span>");
+    }
+    // Hidden marker: the heading text lives in the (promotable) referent run.
     out.write_str(r#" data-target=""#)?;
     escape_text(store.resolve_str(h.target), out)?;
     out.write_str(r#"" hidden></span>"#)

@@ -1,0 +1,48 @@
+{
+  "name": "heading_forward_no_referent",
+  "meta": {
+    "feature": "heading",
+    "level": "should",
+    "spec_section": "6.10",
+    "note": "[provenance:reference-impl-aligned §6.10 + AOZORA-ANNOTATION] A single-target ［＃「X」は中見出し］ whose X is absent from the preceding text is self-contained: the quoted run is itself the heading text, rendered as a visible inline aozora-heading-hint span (no block <hN>, valid mid-line) and never promoted to a block heading. Serialize byte-exact (§7.6). Bytes from the reference parser."
+  },
+  "source": "本文［＃「序章」は中見出し］\n",
+  "expected": {
+    "html": "<p>本文<span class=\"aozora-heading-hint\" data-level=\"2\">序章</span></p>\n",
+    "serialize": "本文［＃「序章」は中見出し］\n",
+    "nodes": [
+      {
+        "kind": "headingHint",
+        "span": {
+          "start": 6,
+          "end": 42
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 21,
+          "end": 24
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 39,
+          "end": 42
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

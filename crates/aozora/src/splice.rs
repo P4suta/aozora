@@ -111,6 +111,13 @@ pub enum RegionRole {
     /// Forward heading hint whose referent is *not* the bare line above it, so
     /// the referent lives elsewhere. A coherent target edit is coupled.
     HeadingHint,
+    /// Forward heading hint whose quoted target is absent from the preceding
+    /// source — a no-referent heading whose target run is itself the heading
+    /// text. There is no upstream copy, so it is self-contained and a coherent
+    /// target edit is a [`Direct`](SpliceSafety::Direct) splice — the
+    /// [`HeadingHint`](Self::HeadingHint) analogue of
+    /// [`ForwardSelfContained`](Self::ForwardSelfContained).
+    HeadingSelfContained,
     /// Illustration (`［＃挿絵］`).
     Illustration,
     /// Chinese-reading-order mark (返り点).
@@ -283,8 +290,14 @@ pub(crate) fn classify_node_ref(node: NodeRefOwned) -> (RegionRole, SpliceSafety
                 ),
                 ForwardOrigin::SelfContained => (RegionRole::ForwardSelfContained, Direct),
             },
-            NodeOwned::HeadingHint(_) => {
-                (RegionRole::HeadingHint, Coupled(CoupledKind::HeadingHint))
+            NodeOwned::HeadingHint(h) => {
+                if h.self_contained {
+                    // No upstream referent — the bracket owns its target bytes,
+                    // so editing it is a Direct splice (cf. ForwardSelfContained).
+                    (RegionRole::HeadingSelfContained, Direct)
+                } else {
+                    (RegionRole::HeadingHint, Coupled(CoupledKind::HeadingHint))
+                }
             }
             NodeOwned::MarginNote(_) => (RegionRole::MarginNote, Coupled(CoupledKind::MarginNote)),
             NodeOwned::Container(_) => (RegionRole::Container, Coupled(CoupledKind::Container)),
@@ -325,8 +338,10 @@ const INTERSTITIAL: (RegionRole, SpliceSafety) = (RegionRole::Interstitial, Spli
 /// so accepting it would let a target *change* masquerade as a coherent
 /// single-region edit and silently skip the upstream rewrite. Excluding it makes
 /// the single-region attempt fail so the coupled two-region path rewrites (or
-/// honestly declines) the edit. A heading hint may re-form as a hint *or* a
-/// promoted heading; a container marker as an open or close.
+/// honestly declines) the edit. A heading hint re-forms as a referent-bearing
+/// hint *or* a promoted heading, but a `self_contained` re-parse is excluded for
+/// the same reason as `SelfContained` above; a container marker re-forms as an
+/// open or close.
 fn reparsed_in_family(node: NodeRefOwned, kind: CoupledKind) -> bool {
     let leaf = match node {
         NodeRefOwned::Inline(n) | NodeRefOwned::BlockLeaf(n) => Some(n),
@@ -337,10 +352,8 @@ fn reparsed_in_family(node: NodeRefOwned, kind: CoupledKind) -> bool {
             matches!(leaf, Some(NodeOwned::Format(f)) if f.origin != ForwardOrigin::SelfContained)
         }
         CoupledKind::HeadingHint => {
-            matches!(
-                leaf,
-                Some(NodeOwned::HeadingHint(_) | NodeOwned::Heading(_))
-            )
+            matches!(leaf, Some(NodeOwned::HeadingHint(h)) if !h.self_contained)
+                || matches!(leaf, Some(NodeOwned::Heading(_)))
         }
         CoupledKind::MarginNote => matches!(leaf, Some(NodeOwned::MarginNote(_))),
         CoupledKind::Container => {
@@ -806,7 +819,9 @@ fn window_reforms_coupled(window: &str, kind: CoupledKind, new_target: &str) -> 
             {
                 store.content_range_as_plain(f.target)
             }
-            (CoupledKind::HeadingHint, NodeOwned::HeadingHint(h)) => {
+            // A `self_contained` re-parse owns its target (no upstream copy), so
+            // like the forward case above it is not a coupled re-formation.
+            (CoupledKind::HeadingHint, NodeOwned::HeadingHint(h)) if !h.self_contained => {
                 Some(store.resolve_str(h.target))
             }
             // A promoted heading is an equally valid re-formation of the hint.
@@ -986,6 +1001,18 @@ mod tests {
         );
     }
 
+    /// E1-4: a no-referent forward heading (`［＃「序章」は中見出し］` with no
+    /// earlier 序章) owns its target bytes, so it classifies `Direct` — the
+    /// heading analogue of `self_contained_forward_is_direct`. `assert_tiling`
+    /// confirms its identity splice round-trips through the Direct path.
+    #[test]
+    fn self_contained_heading_is_direct() {
+        let src = "本文［＃「序章」は中見出し］";
+        assert_tiling(src);
+        let r = role_of(src, RegionRole::HeadingSelfContained);
+        assert_eq!(r.safety, SpliceSafety::Direct);
+    }
+
     #[test]
     fn container_markers_are_coupled() {
         let src = "前\n［＃ここから2字下げ］\n本文\n［＃ここで字下げ終わり］\n後";
@@ -1143,6 +1170,25 @@ mod tests {
             .splice(r, "［＃「海」は太字］")
             .expect("emphasis target change is a coupled edit");
         assert_eq!(spliced, "海がひろがる、その［＃「海」は太字］");
+    }
+
+    #[test]
+    fn heading_hint_target_change_is_coupled() {
+        // E1-4 regression (the heading analogue of the emphasis case above): a
+        // referent-present heading hint's target change must rewrite BOTH the
+        // bracket and the unique upstream referent. The minimal single-region
+        // verify context re-parses the new target with no referent — a
+        // self-contained `HeadingHint` — which must NOT be accepted as a
+        // re-formation, or the upstream rewrite is silently skipped.
+        let src = "序章、その［＃「序章」は中見出し］";
+        let doc = Document::new(src);
+        let tree = doc.parse();
+        let r = role_of(src, RegionRole::HeadingHint);
+        assert_eq!(r.safety, SpliceSafety::Coupled(CoupledKind::HeadingHint));
+        let spliced = tree
+            .splice(r, "［＃「海」は中見出し］")
+            .expect("heading target change is a coupled edit");
+        assert_eq!(spliced, "海、その［＃「海」は中見出し］");
     }
 
     #[test]

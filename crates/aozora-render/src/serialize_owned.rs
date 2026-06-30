@@ -450,7 +450,12 @@ fn emit_sashie_owned<W: Write>(
     out.write_str("入る］")
 }
 
-/// Owned mirror of `crate::serialize::emit_heading_hint`.
+/// Serialize a heading hint back to its `［＃「X」は…見出し］` bracket form.
+///
+/// `self_contained` is deliberately ignored: a no-referent forward heading
+/// serializes to the bracket alone, never fabricating a referent line. That
+/// keeps the round-trip a fixed point (a fabricated line would re-parse as a
+/// promotable referent — see `promote_headings` — diverging on the next pass).
 fn emit_heading_hint_owned<W: Write>(
     h: HeadingHintOwned,
     store: &NodeStore,
@@ -543,5 +548,27 @@ mod tests {
         let mut s = String::new();
         super::emit_format_owned(&f, &store, &mut s).expect("serialize into String is infallible");
         assert_eq!(s, "［＃「X」は太字］");
+    }
+
+    /// E1-4: a self-contained heading hint serializes to the bracket alone — it
+    /// must NOT fabricate a referent line, which would re-parse as a promotable
+    /// heading (`promote_headings`) and break the round-trip fixed point.
+    #[test]
+    fn self_contained_heading_serializes_bracket_only() {
+        use aozora_syntax::alloc_owned::OwnedAllocator;
+        use aozora_syntax::owned::NodeOwned;
+        use aozora_syntax::{HeadingKind, HeadingStyle};
+
+        let mut a = OwnedAllocator::new();
+        let node = a.heading_hint(HeadingKind::Medium, HeadingStyle::Standard, "序章", true);
+        let NodeOwned::HeadingHint(h) = node else {
+            panic!("heading_hint must build a HeadingHint node");
+        };
+        let store = a.into_store();
+
+        let mut s = String::new();
+        super::emit_heading_hint_owned(h, &store, &mut s)
+            .expect("serialize into String is infallible");
+        assert_eq!(s, "［＃「序章」は中見出し］");
     }
 }

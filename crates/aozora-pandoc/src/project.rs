@@ -507,15 +507,23 @@ fn angle_quote_inline(d: AngleQuoteOwned, store: &NodeStore) -> Inline {
 }
 
 fn heading_hint_inline(h: HeadingHintOwned, store: &NodeStore) -> Inline {
+    let target = store.resolve_str(h.target).to_owned();
+    // A self-contained (no-referent) hint shows its quoted target as the heading
+    // text; a referent-present hint stays an empty marker.
+    let content = if h.self_contained {
+        vec![Inline::Str(target.clone())]
+    } else {
+        Vec::new()
+    };
     Inline::Span(
         class_attr_kv(
             "heading-hint",
             vec![
                 ("level".to_owned(), h.level.outline_level().to_string()),
-                ("target".to_owned(), store.resolve_str(h.target).to_owned()),
+                ("target".to_owned(), target),
             ],
         ),
-        Vec::new(),
+        content,
     )
 }
 

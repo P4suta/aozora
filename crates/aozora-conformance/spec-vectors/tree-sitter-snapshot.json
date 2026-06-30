@@ -208,6 +208,11 @@
       "sexp": "(document (text) (newline) (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline))"
     },
     {
+      "name": "heading_forward_no_referent",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "heading_hint",
       "error": true,
       "sexp": "(document (ERROR (ruby_base_implicit)) (newline) (ERROR (ruby_base_implicit)) (newline) (slug body: (slug_body)) (newline))"

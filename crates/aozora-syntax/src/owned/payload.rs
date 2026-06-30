@@ -191,6 +191,14 @@ pub struct HeadingHintOwned {
     pub style: HeadingStyle,
     /// Quoted target run.
     pub target: StrId,
+    /// Whether the quoted target is absent from the preceding source — a
+    /// no-referent forward heading whose target run is itself the heading text
+    /// (the [`ForwardOrigin::SelfContained`](crate::ForwardOrigin) analogue for
+    /// headings). When set, the hint renders the target visibly instead of as a
+    /// hidden marker; it still serializes bracket-only (no fabricated referent
+    /// line), keeping the round-trip a fixed point. A hint whose target *is*
+    /// preceded leaves this `false`.
+    pub self_contained: bool,
 }
 
 /// Illustration (挿絵).
