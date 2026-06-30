@@ -71,14 +71,11 @@ const fn sentinel_kind_for_tail_byte(b: u8) -> Option<SentinelKind> {
     }
 }
 
-/// Owned-AST mirror of `WalkSink`, driven by [`walk_owned`] over an
-/// [`OwnedLexOutput`].
-///
-/// Identical contract to `WalkSink`; the only difference is that `on_node`
-/// receives an owned [`NodeRefOwned`] (resolved against the output's
-/// `RegistryOwned`) instead of a borrowed `NodeRef`. Kept as a separate
-/// trait so the borrowed renderers and the owned serializer share the scan
-/// scaffold without one depending on the other's payload lifetime.
+/// The sink [`walk_owned`] drives over an [`OwnedLexOutput`]: `on_text` for
+/// each plain run and `on_node` for each PUA sentinel (with the owned
+/// [`NodeRefOwned`] resolved against the output's `RegistryOwned`), plus the
+/// `on_newline` / `finish` hooks. Both owned renderers ([`crate::html_owned`]
+/// and `serialize_owned`) implement it, so they share this single scan scaffold.
 pub(crate) trait WalkSinkOwned {
     /// Whether [`walk_owned`] should surface `\n` as [`Self::on_newline`].
     const WANTS_NEWLINES: bool;
@@ -103,8 +100,8 @@ pub(crate) trait WalkSinkOwned {
     }
 }
 
-/// Owned mirror of `handle_sentinel`: validate the candidate at `cand`,
-/// flush the pending plain run, and dispatch through the owned registry.
+/// Validate the candidate sentinel at `cand`, flush the pending plain run, and
+/// dispatch the resolved node through the owned registry.
 #[inline]
 fn handle_sentinel_owned<S: WalkSinkOwned>(
     out: &OwnedLexOutput,
@@ -132,9 +129,9 @@ fn handle_sentinel_owned<S: WalkSinkOwned>(
     Ok(())
 }
 
-/// Owned mirror of `walk`: drive `sink` over `out`'s normalized text in a
-/// single forward pass, reading `out.normalized.as_str()` and resolving
-/// sentinels through the owned [`RegistryOwned`](aozora_syntax::owned::RegistryOwned).
+/// Drive `sink` over `out`'s normalized text in a single forward pass, reading
+/// `out.normalized.as_str()` and resolving sentinels through the owned
+/// [`RegistryOwned`](aozora_syntax::owned::RegistryOwned).
 ///
 /// # Errors
 ///

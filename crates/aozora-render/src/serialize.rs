@@ -69,8 +69,8 @@ pub(crate) struct TrackingWriter<W: Write> {
 }
 
 impl<W: Write> TrackingWriter<W> {
-    /// Wrap `inner`, with no predecessor char recorded yet. Shared
-    /// construction site for the borrowed and owned serializers.
+    /// Wrap `inner`, with no predecessor char recorded yet. The construction
+    /// site for the owned serializer's tracking writer.
     pub(crate) const fn new(inner: W) -> Self {
         Self { inner, last: None }
     }

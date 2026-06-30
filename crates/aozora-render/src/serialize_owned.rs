@@ -1,22 +1,20 @@
 //! Owned-AST Aozora-source serializer.
 //!
-//! Owned mirror of [`crate::serialize`]: the same single forward walk over the
-//! normalized text, but it dispatches each PUA sentinel through an
-//! [`OwnedLexOutput`]'s [`RegistryOwned`](aozora_syntax::owned::RegistryOwned)
-//! and resolves every [`StrId`](aozora_syntax::owned::StrId) /
+//! Serializes the normalized text back to Aozora source in a single forward
+//! walk, dispatching each PUA sentinel through an [`OwnedLexOutput`]'s
+//! [`RegistryOwned`](aozora_syntax::owned::RegistryOwned) and resolving every
+//! [`StrId`](aozora_syntax::owned::StrId) /
 //! [`ContentRange`] /
-//! [`SegRange`](aozora_syntax::owned::SegRange) against the
-//! [`NodeStore`], instead of borrowing `&'a str` / `NodeRef<'a>`.
+//! [`SegRange`](aozora_syntax::owned::SegRange) against the [`NodeStore`].
 //!
 //! The container-marker spelling (`emit_container_open` / `emit_container_close`)
 //! and the writer machinery (`NewlineCappedWriter` / `TrackingWriter`) are
 //! **reused** from [`crate::serialize`] — they read only `Copy` `RegionFormat`
-//! / `RegionClose` discriminants identical in both worlds, so there is a single
-//! byte-spelling authority. Only the AST-reading emitters fork here.
+//! / `RegionClose` discriminants, so there is a single byte-spelling authority.
+//! Only the AST-reading emitters live here.
 //!
-//! It runs the identical decorative-rule isolate post-pass so the byte output
-//! matches `crate::serialize::serialize` exactly, proven by the differential
-//! gate in `crates/aozora/tests/owned_serialize_gate.rs`.
+//! It runs a decorative-rule isolate post-pass so `serialize_owned ∘ parse` is
+//! a round-trip fixed point.
 
 use core::fmt::{self, Write};
 
@@ -37,11 +35,10 @@ use aozora_syntax::{BoutenPosition, ForwardAttr, RubySide, is_ruby_base_char};
 
 /// Serialize an [`OwnedLexOutput`] back to Aozora source text.
 ///
-/// Owned mirror of `crate::serialize::serialize`: a fixed point of
-/// `serialize ∘ parse` after one pass. The mandatory decorative-rule isolate
-/// post-pass (`has_long_rule_line` fast-path then `isolate_decorative_rules`)
-/// is run identically so the byte output matches the borrowed serializer — see
-/// the borrowed function's docs for why it holds the round-trip fixed point.
+/// `serialize_owned ∘ parse` reaches a fixed point after one pass. The
+/// mandatory decorative-rule isolate post-pass (`has_long_rule_line` fast-path
+/// then `isolate_decorative_rules`) normalizes decorative rule lines so a
+/// second pass re-parses and re-serializes to identical bytes.
 ///
 /// # Panics
 ///
@@ -77,9 +74,8 @@ pub fn serialize_owned_into<W: Write>(out: &OwnedLexOutput, writer: &mut W) -> f
     walk_owned(out, &mut sink)
 }
 
-/// [`WalkSinkOwned`] that re-emits Aozora source text from the owned AST. Owned
-/// mirror of `crate::serialize::SerializeSink`; threads the [`NodeStore`]
-/// (the resolve authority) into every AST emitter.
+/// [`WalkSinkOwned`] that re-emits Aozora source text from the owned AST,
+/// threading the [`NodeStore`] (the resolve authority) into every AST emitter.
 struct SerializeSinkOwned<'a, W: Write> {
     store: &'a NodeStore,
     out: &'a mut TrackingWriter<W>,
@@ -106,13 +102,13 @@ impl<W: Write> WalkSinkOwned for SerializeSinkOwned<'_, W> {
                 emit_container_close(close, self.out)
             }
             // Sentinel hit without a corresponding registry entry, or a
-            // kind/variant mismatch — best-effort skip (mirrors serialize).
+            // kind/variant mismatch — best-effort skip.
             _ => Ok(()),
         }
     }
 }
 
-/// Owned mirror of `crate::serialize::emit_aozora` (the 16-arm `Node` match).
+/// Dispatch an owned [`NodeOwned`] to its per-variant source emitter.
 fn emit_aozora_owned<W: Write>(
     node: NodeOwned,
     store: &NodeStore,
@@ -134,9 +130,9 @@ fn emit_aozora_owned<W: Write>(
         NodeOwned::Illustration(s) => emit_sashie_owned(&s, store, out),
         NodeOwned::HeadingHint(h) => emit_heading_hint_owned(h, store, out),
         NodeOwned::Heading(h) => emit_aozora_heading_owned(&h, store, out),
-        // Variants the serializer doesn't cover inline: Container is routed
-        // through the open/close sentinel path; Warichu lands here as a
-        // diagnostic placeholder, matching the borrowed serializer.
+        // Variants not covered inline: Container is routed through the
+        // open/close sentinel path; Warichu lands here as a diagnostic
+        // placeholder.
         _ => {
             out.write_str("<!-- unsupported-aozora: ")?;
             out.write_str(node.xml_node_name())?;
@@ -146,13 +142,12 @@ fn emit_aozora_owned<W: Write>(
 }
 
 // ----------------------------------------------------------------------
-// Content resolve layer — owned mirror of `emit_content` /
-// `emit_content_as_plain` (single `Content` forms + the run forms a
-// `NonEmpty<Content>` field maps to).
+// Content resolve layer — resolve and emit a `ContentOwned` / `ContentRange`,
+// either verbatim or as plain text (gaiji written as its hint).
 // ----------------------------------------------------------------------
 
-/// Owned mirror of `crate::serialize::emit_content` for a single
-/// [`ContentOwned`].
+/// Emit a single [`ContentOwned`] verbatim (plain text, or each segment's
+/// text / gaiji / directive).
 fn emit_content_one<W: Write>(c: ContentOwned, store: &NodeStore, out: &mut W) -> fmt::Result {
     match c {
         ContentOwned::Plain(id) => out.write_str(store.resolve_str(id)),
@@ -173,8 +168,8 @@ fn emit_content_one<W: Write>(c: ContentOwned, store: &NodeStore, out: &mut W) -
     }
 }
 
-/// Owned mirror of `emit_content` for a [`ContentRange`]
-/// run (a `NonEmpty<Content>` field — length 1 by construction).
+/// Emit a [`ContentRange`] run (length 1 by construction) by serializing each
+/// resolved [`ContentOwned`].
 fn emit_content_range<W: Write>(
     range: ContentRange,
     store: &NodeStore,
@@ -186,8 +181,8 @@ fn emit_content_range<W: Write>(
     Ok(())
 }
 
-/// Owned mirror of `crate::serialize::emit_content_as_plain` for a single
-/// [`ContentOwned`] (gaiji writes its `hint`, not its glyph form).
+/// Emit a single [`ContentOwned`] as plain text: a gaiji segment writes its
+/// `hint`, not its glyph form.
 fn emit_content_as_plain_one<W: Write>(
     c: ContentOwned,
     store: &NodeStore,
@@ -212,8 +207,7 @@ fn emit_content_as_plain_one<W: Write>(
     }
 }
 
-/// Owned mirror of `emit_content_as_plain` over a
-/// [`ContentRange`] run.
+/// Emit a [`ContentRange`] run as plain text.
 fn emit_content_as_plain_range<W: Write>(
     range: ContentRange,
     store: &NodeStore,
@@ -226,10 +220,12 @@ fn emit_content_as_plain_range<W: Write>(
 }
 
 // ----------------------------------------------------------------------
-// Per-variant AST emitters — owned mirrors of the `emit_*` family.
+// Per-variant AST emitters.
 // ----------------------------------------------------------------------
 
-/// Owned mirror of `crate::serialize::emit_ruby`.
+/// Serialize a ruby node: a left-side ruby to its
+/// `base［＃「base」の左に「reading」のルビ］` form; a right-side ruby to
+/// `base《reading》`, prefixed with `｜` when the base needs an explicit bar.
 fn emit_ruby_owned<W: Write>(
     r: &RubyOwned,
     store: &NodeStore,
@@ -252,8 +248,10 @@ fn emit_ruby_owned<W: Write>(
     out.write_char('》')
 }
 
-/// Owned mirror of `crate::serialize::ruby_needs_bar`. A right-side base is
-/// always a single `Plain`; the resolved run is matched accordingly.
+/// Decide whether a right-side ruby base needs an explicit `｜` start bar: true
+/// when the base contains a non-ruby-base character, or the preceding char is
+/// itself a ruby-base character or `｜`. A right-side base is always a single
+/// `Plain`; the resolved run is matched accordingly.
 fn ruby_needs_bar_owned(base_run: &[ContentOwned], prev: Option<char>, store: &NodeStore) -> bool {
     let plain = match base_run {
         [ContentOwned::Plain(id)] => Some(store.resolve_str(*id)),
@@ -265,7 +263,11 @@ fn ruby_needs_bar_owned(base_run: &[ContentOwned], prev: Option<char>, store: &N
     })
 }
 
-/// Owned mirror of `crate::serialize::emit_format`.
+/// Serialize a forward-format node to its `［＃…］` bracket form. A `Reclaimed`
+/// origin first re-emits the target literal; a bouten attribute uses the
+/// `…に<keyword>` (or `の左に`) shape; a font-size attribute spells its
+/// `N段階大きな/小さな文字` magnitude; every other attribute uses
+/// `［＃「target」は<keyword>］`.
 fn emit_format_owned<W: Write>(
     f: &ForwardFormatOwned,
     store: &NodeStore,
@@ -300,7 +302,9 @@ fn emit_format_owned<W: Write>(
     out.write_char('］')
 }
 
-/// Owned mirror of `crate::serialize::emit_bouten_targets`. Operates on the
+/// Serialize the bouten target(s) as quoted `「…」` runs. A single `Plain`
+/// target becomes one `「text」`; a segmented target is split on `、` into one
+/// `「part」` per piece (falling back to an empty `「」`). Operates on the
 /// resolved target run (always length 1).
 fn emit_bouten_targets_owned<W: Write>(
     run: &[ContentOwned],
@@ -335,7 +339,9 @@ fn emit_bouten_targets_owned<W: Write>(
     Ok(())
 }
 
-/// Owned mirror of `crate::serialize::emit_gaiji`.
+/// Serialize a gaiji node to its `［＃「hint」…］` bracket form (prefixed with
+/// `※` unless `standalone`), appending the mencode tail when the canonical
+/// form carries one.
 fn emit_gaiji_owned<W: Write>(g: &GaijiOwned, store: &NodeStore, out: &mut W) -> fmt::Result {
     if !g.standalone {
         out.write_char('※')?;
@@ -377,15 +383,15 @@ fn write_gaiji_mencode<W: Write>(
     }
 }
 
-/// Owned mirror of `crate::serialize::emit_kaeriten`.
+/// Serialize a kaeriten mark to its `［＃<mark>］` bracket form.
 fn emit_kaeriten_owned<W: Write>(k: KaeritenOwned, store: &NodeStore, out: &mut W) -> fmt::Result {
     out.write_str("［＃")?;
     out.write_str(store.resolve_str(k.mark))?;
     out.write_char('］')
 }
 
-/// Owned mirror of `crate::serialize::emit_annotation` (raw passthrough; the
-/// `raw` bytes already include the `［＃…］` brackets).
+/// Serialize a directive by writing its `raw` bytes verbatim (they already
+/// include the `［＃…］` brackets).
 fn emit_annotation_owned<W: Write>(
     a: DirectiveOwned,
     store: &NodeStore,
@@ -394,7 +400,7 @@ fn emit_annotation_owned<W: Write>(
     out.write_str(store.resolve_str(a.raw))
 }
 
-/// Owned mirror of `crate::serialize::emit_angle_quote`.
+/// Serialize an angle-quote to its `≪…≫` form.
 fn emit_angle_quote_owned<W: Write>(
     d: AngleQuoteOwned,
     store: &NodeStore,
@@ -405,7 +411,8 @@ fn emit_angle_quote_owned<W: Write>(
     out.write_char('≫')
 }
 
-/// Owned mirror of `crate::serialize::emit_side_note`.
+/// Serialize a margin note to its `base［＃「base」…］` form, using the kind's
+/// connector / suffix affixes around the note text.
 fn emit_side_note_owned<W: Write>(
     s: &MarginNoteOwned,
     store: &NodeStore,
@@ -420,7 +427,8 @@ fn emit_side_note_owned<W: Write>(
     out.write_str(suffix)
 }
 
-/// Owned mirror of `crate::serialize::emit_sashie`.
+/// Serialize an illustration to its `［＃…（file）…入る］` bracket form (a
+/// description, or `挿絵` + optional number; optional dimensions and caption).
 fn emit_sashie_owned<W: Write>(
     s: &IllustrationOwned,
     store: &NodeStore,
@@ -469,7 +477,8 @@ fn emit_heading_hint_owned<W: Write>(
     out.write_str("］")
 }
 
-/// Owned mirror of `crate::serialize::emit_aozora_heading`.
+/// Serialize an Aozora heading to its referent line followed by the
+/// `［＃「text」は<style><level>見出し］` bracket.
 fn emit_aozora_heading_owned<W: Write>(
     h: &HeadingOwned,
     store: &NodeStore,
@@ -489,8 +498,8 @@ mod tests {
     use crate::serialize_owned::serialize_owned;
 
     /// `serialize_owned ∘ parse` reaches a fixed point after one pass — the
-    /// canonical round-trip contract (end-to-end byte-identity vs the prior
-    /// borrowed serializer is pinned by the conformance golden).
+    /// canonical round-trip contract (end-to-end byte-identity is pinned by the
+    /// conformance golden).
     fn assert_parity(src: &str) {
         let first = serialize_owned(&aozora_pipeline::lex(src));
         let second = serialize_owned(&aozora_pipeline::lex(&first));
