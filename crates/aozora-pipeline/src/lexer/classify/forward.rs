@@ -1305,8 +1305,22 @@ impl RecogniseCtx<'_, '_> {
         close_idx: usize,
     ) -> Option<(NodeOwned, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
-        let rest = extracted.suffix.strip_prefix("は")?;
-        let attr = forward_attr_from_suffix(rest)?;
+        // The particle is tied to the decoration. `は` is the dominant emphasis
+        // form (`「X」は太字`). The frame decoration also takes the "applied to"
+        // particle `に` (`「X」に枠囲み`) — but 太字/斜体/… stay `は`-only, so a `に`
+        // suffix is accepted only when it resolves to `Framed`. Bouten runs
+        // earlier in the cascade and already claims `に〈bouten-kind〉`. The
+        // serializer canonicalises both particles to `」は`.
+        let attr = if let Some(rest) = extracted.suffix.strip_prefix("は") {
+            forward_attr_from_suffix(rest)?
+        } else if let Some(rest) = extracted.suffix.strip_prefix("に") {
+            match forward_attr_from_suffix(rest)? {
+                framed @ ForwardAttr::Framed => framed,
+                _ => return None,
+            }
+        } else {
+            return None;
+        };
         let [only] = extracted.targets.as_slice() else {
             return None;
         };
@@ -1356,7 +1370,9 @@ pub(super) fn forward_attr_from_suffix(s: &str) -> Option<ForwardAttr> {
         "下付き小文字" => ForwardAttr::SubScript,
         "行右小書き" => ForwardAttr::SmallScript(BoutenPosition::Right),
         "行左小書き" => ForwardAttr::SmallScript(BoutenPosition::Left),
-        "罫囲み" => ForwardAttr::Framed,
+        // 枠囲み / 枠囲い (okurigana variant) are corpus spellings of the frame
+        // decoration; all canonicalise to 罫囲み on serialize.
+        "罫囲み" | "枠囲み" | "枠囲い" => ForwardAttr::Framed,
         "横組み" => ForwardAttr::Horizontal,
         "キャプション" => ForwardAttr::Caption,
         _ => return parse_font_size_suffix(s),

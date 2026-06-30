@@ -1,0 +1,48 @@
+{
+  "name": "keigakomi_inline_framed",
+  "meta": {
+    "feature": "keigakomi",
+    "level": "should",
+    "spec_section": "6.7",
+    "note": "[provenance:reference-impl-aligned §6.7 + AOZORA-ANNOTATION 2026-07-01] The inline frame decoration accepts either particle — `は` (is framed) or `に` (frame applied to) — and the corpus spells the keyword 罫囲み / 枠囲み / 枠囲い (okurigana variant). This vector pins the に-particle + 枠囲み form; canonical serialize folds both the particle (に→は) and the keyword (枠囲み→罫囲み) so the construct re-forms identically, idempotent after pass 1 (§7.6). Distinct from 太字/斜体, which are は-only (§6.12)."
+  },
+  "source": "新興河上［＃「新興河上」に枠囲み］。\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-keigakomi-inline\">新興河上</span>。</p>\n",
+    "serialize": "新興河上［＃「新興河上」は罫囲み］。\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 51
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 18,
+          "end": 21
+        },
+        "close": {
+          "start": 33,
+          "end": 36
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 48,
+          "end": 51
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
