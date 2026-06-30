@@ -1200,7 +1200,10 @@ pub(crate) fn minimal_balanced_region<S: SanitizedSrc>(
 ///   introducing an earlier `X` in another region flips a full parse to
 ///   `Reclaimed`/`Referenced` and would resurrect the #228 double-render across
 ///   the splice boundary, which the node-free region re-lex cannot see — so it
-///   is declined here too.
+///   is declined here too. A **self-contained forward heading**
+///   (`［＃「X」は中見出し］` with no earlier `X`) shares this whole-prefix
+///   classification — an earlier `X` flips it to a referent-bearing hint — and
+///   is declined for the same reason.
 ///
 /// Single-sources the classification through [`classify_node_ref`] (the #202
 /// splice authority) so this region-reuse guard and the #202 splice cannot
@@ -1214,7 +1217,10 @@ fn node_forbids_region_reuse(node: NodeRefOwned) -> bool {
         ) | SpliceSafety::Opaque
     ) || matches!(
         role,
-        RegionRole::ForwardReclaimed | RegionRole::ForwardSelfContained | RegionRole::Kaeriten
+        RegionRole::ForwardReclaimed
+            | RegionRole::ForwardSelfContained
+            | RegionRole::HeadingSelfContained
+            | RegionRole::Kaeriten
     )
 }
 
@@ -1948,6 +1954,23 @@ mod tests {
             node_forbids_region_reuse(NodeRefOwned::Inline(node)),
             "SelfContained must forbid region reuse: its classification depends \
              on the whole preceding prefix",
+        );
+    }
+
+    /// E1-4: a self-contained heading hint's classification is a whole-prefix
+    /// predicate (target absence), like the forward case above, so its region
+    /// must not be reused — an earlier 序章 in a far region would flip a full
+    /// parse to a referent-bearing hint.
+    #[test]
+    fn self_contained_heading_forbids_region_reuse() {
+        use aozora_syntax::alloc_owned::OwnedAllocator;
+        use aozora_syntax::{HeadingKind, HeadingStyle};
+
+        let mut a = OwnedAllocator::new();
+        let node = a.heading_hint(HeadingKind::Medium, HeadingStyle::Standard, "序章", true);
+        assert!(
+            node_forbids_region_reuse(NodeRefOwned::Inline(node)),
+            "self-contained heading hint must forbid region reuse",
         );
     }
 

@@ -368,16 +368,25 @@ impl OwnedAllocator {
         NodeOwned::Heading(HeadingOwned { kind, style, text })
     }
 
-    /// `NodeOwned::HeadingHint(HeadingHint { level, style, target })`.
+    /// `NodeOwned::HeadingHint(HeadingHint { level, style, target, self_contained })`.
+    ///
+    /// `self_contained` is set when the quoted target has no referent in the
+    /// preceding source (a no-referent forward heading), so render shows the
+    /// target as the heading text while serialize stays bracket-only.
     ///
     /// # Panics
     ///
     /// Panics if `target` is empty.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "every parameter is an independent part of the 見出し指定 contract — level / style / target / self_contained."
+    )]
     pub fn heading_hint(
         &mut self,
         level: HeadingKind,
         style: HeadingStyle,
         target: &str,
+        self_contained: bool,
     ) -> NodeOwned {
         assert!(
             !target.is_empty(),
@@ -387,6 +396,7 @@ impl OwnedAllocator {
             level,
             style,
             target: self.store.intern(target),
+            self_contained,
         })
     }
 
@@ -695,13 +705,14 @@ mod tests {
     fn heading_hint_round_trip() {
         let mut a = OwnedAllocator::new();
         let NodeOwned::HeadingHint(h) =
-            a.heading_hint(HeadingKind::Medium, HeadingStyle::Window, "序章")
+            a.heading_hint(HeadingKind::Medium, HeadingStyle::Window, "序章", false)
         else {
             panic!("expected HeadingHint");
         };
         assert_eq!(h.level, HeadingKind::Medium);
         assert_eq!(h.style, HeadingStyle::Window);
         assert_eq!(a.store().resolve_str(h.target), "序章");
+        assert!(!h.self_contained);
     }
 
     #[test]

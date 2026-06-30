@@ -1079,16 +1079,19 @@ fn extract_forward_quote_targets<'s>(
 /// `HeadingOwned` (大→`<h1>` / 中→`<h2>` / 小→`<h3>`): the
 /// consume span is pulled back over that line so the heading element is
 /// its sole rendered copy. When the referent is not a clean preceding
-/// line, the classifier keeps the inline `HeadingOwnedHint` marker
+/// line, the classifier keeps the inline `HeadingHintOwned` marker
 /// at the directive position (information-preserving, never promoted to
 /// an empty or misplaced heading).
 ///
-/// Same `forward_target_is_preceded` gate as forward bouten: a heading
-/// hint that names a target which does not appear in the preceding
-/// source text is rejected — the annotation has no referent and the
-/// paragraph would promote to an empty heading. Falling through lets
-/// the catch-all emit `Directive { Unknown }` so the reader at least
-/// sees the raw bracket text in diagnostics.
+/// Same `forward_target_is_preceded` gate as forward bouten, but a target
+/// absent from the preceding source is no longer rejected: a single quoted
+/// target with no referent is a *self-contained* forward heading — the
+/// quoted run is itself the heading text, marked `self_contained` on the
+/// hint so render shows it (serialize stays bracket-only, a fixed point,
+/// the `ForwardOrigin::SelfContained` emphasis/bouten analogue). A
+/// multi-quote hint with any missing referent still falls through to
+/// `Directive { Unknown }`, since a non-contiguous referent cannot be
+/// spliced into a single heading leaf.
 impl RecogniseCtx<'_, '_> {
     fn classify_forward_heading(
         &mut self,
@@ -1100,27 +1103,6 @@ impl RecogniseCtx<'_, '_> {
         let rest = extracted.suffix.strip_prefix("は")?;
         let (style, kind) = parse_heading_keyword(rest)?;
 
-        // Reject hints whose targets are not preceded by matching text.
-        // See `classify_forward_bouten` for the same rationale. Exact
-        // look-back first (cheap; uses the AC index when installed); on a
-        // miss, retry against a ruby-stripped copy of the look-back, since a
-        // heading title carrying ruby (`両頭《りやうとう》`) has its
-        // ruby-stripped target (`両頭`) quoted in the directive and so is not
-        // a contiguous source substring.
-        for target in &extracted.targets {
-            if target.is_empty() {
-                continue;
-            }
-            if forward_target_is_preceded(view.events, self.source, open_idx, target) {
-                continue;
-            }
-            if forward_heading_target_is_preceded_ruby_stripped(view, self.source, open_idx, target)
-            {
-                continue;
-            }
-            return None;
-        }
-
         let &PairEvent::PairOpen {
             span: open_span, ..
         } = view.events.get(open_idx)?
@@ -1128,19 +1110,49 @@ impl RecogniseCtx<'_, '_> {
             return None;
         };
 
-        // The promotion decision — whether the single referent is the bare
-        // line directly above the directive — now lives in the lowering pass
-        // (`promote_headings` in `pipeline.rs`), so the classifier always emits
-        // the unresolved hint at the directive position. Concatenate targets in
-        // the (rare) multi-quote case so the full named run drives the hint
-        // content. The 同行 / 窓 styles run into the body on their own line, so
-        // they too land here as hints.
+        // Whether `target` appears in the look-back. See `classify_forward_bouten`
+        // for the same rationale. Exact look-back first (cheap; uses the AC index
+        // when installed); on a miss, retry against a ruby-stripped copy of the
+        // look-back, since a heading title carrying ruby (`両頭《りやうとう》`) has
+        // its ruby-stripped target (`両頭`) quoted in the directive and so is not a
+        // contiguous source substring.
+        let preceded = |target: &str| {
+            forward_target_is_preceded(view.events, self.source, open_idx, target)
+                || forward_heading_target_is_preceded_ruby_stripped(
+                    view,
+                    self.source,
+                    open_idx,
+                    target,
+                )
+        };
+
+        // A single quoted target absent from the look-back is a *self-contained*
+        // forward heading: the quoted run is itself the heading text (the
+        // `ForwardOrigin::SelfContained` emphasis/bouten analogue). A multi-quote
+        // hint with any missing referent stays Unknown — a non-contiguous referent
+        // cannot be spliced into a single heading leaf. An all-preceded hint renders
+        // hidden and may promote to a block heading in the `promote_headings`
+        // lowering pass when its referent is the bare line directly above it.
+        //
+        // `preceded` is evaluated at most once per target (the ruby-stripped
+        // fallback copies the whole look-back, so a second call per heading would
+        // double the parser's allocation pressure).
+        let self_contained = match extracted.targets.as_slice() {
+            [only] if !only.is_empty() => !preceded(only),
+            targets if targets.iter().any(|t| !t.is_empty() && !preceded(t)) => return None,
+            _ => false,
+        };
+
+        // Concatenate targets in the (rare) multi-quote case so the full named run
+        // drives the hint content. The 同行 / 窓 styles run into the body on their
+        // own line, so they too land here as hints.
         let combined: String = extracted.targets.iter().copied().collect();
         if combined.is_empty() {
             return None;
         }
         Some((
-            self.alloc.heading_hint(kind, style, &combined),
+            self.alloc
+                .heading_hint(kind, style, &combined, self_contained),
             open_span.start,
         ))
     }
