@@ -1,0 +1,55 @@
+{
+  "name": "gaiji_double_paren",
+  "meta": {
+    "feature": "gaiji",
+    "level": "should",
+    "spec_section": "6.4",
+    "note": "[provenance:reference-impl-aligned §6.4 + AOZORA-ANNOTATION external_character.html + JIS X 0213 2026-06-30] The corpus form ※［＃二重かっこ開く］ / ※［＃二重かっこ閉じ］ (32 occurrences each): a bare, unquoted, addressless gaiji reference whose description names a known dictionary glyph — 始め/終わり二重括弧 → U+FF5F ｟ / U+FF60 ｠ (FULLWIDTH LEFT/RIGHT WHITE PARENTHESIS). Recognised precisely because the description is a dictionary entry, so an ordinary ［＃…］ directive is not mistaken for a gaiji. The canonical serialization quotes the description; the resolved glyph round-trips to its quoted reference form, never the bare glyph."
+  },
+  "source": "彼は※［＃二重かっこ開く］愛※［＃二重かっこ閉じ］と書いた\n",
+  "expected": {
+    "html": "<p>彼は<span class=\"aozora-gaiji\" data-codepoint=\"U+FF5F\">｟</span>愛<span class=\"aozora-gaiji\" data-codepoint=\"U+FF60\">｠</span>と書いた</p>\n",
+    "serialize": "彼は※［＃「二重かっこ開く」］愛※［＃「二重かっこ閉じ」］と書いた\n",
+    "nodes": [
+      {
+        "kind": "gaiji",
+        "span": {
+          "start": 6,
+          "end": 39
+        }
+      },
+      {
+        "kind": "gaiji",
+        "span": {
+          "start": 42,
+          "end": 75
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 36,
+          "end": 39
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 45,
+          "end": 48
+        },
+        "close": {
+          "start": 72,
+          "end": 75
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
