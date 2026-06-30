@@ -1,0 +1,37 @@
+{
+  "name": "roman_numeral",
+  "meta": {
+    "feature": "gaiji",
+    "level": "should",
+    "spec_section": "6.4",
+    "note": "[provenance:hand-derived §6.4 + AOZORA-ANNOTATION 2026-07-01] A bare ※［＃ローマ数字N］ (no men-ku-ten) is a gaiji reference whose glyph is composed, not table-looked-up: N≥13 has no single JIS X 0213 cell, so the numeral is spelled from the U+2160 single-letter Roman block — 17 → ⅩⅤⅠⅠ (Ⅹ U+2169 + Ⅴ U+2164 + Ⅰ U+2160 + Ⅰ U+2160). The ※ folds into the gaiji span (start 3); §8 rendering emits the composed glyph as <span class=\"aozora-gaiji\"> like any resolved gaiji; the canonical serialization quotes the description (※［＃「ローマ数字17」］). Offsets from the §4 byte model (each fullwidth char = 3 bytes); cross-checked against the reference processor. Corpus: 28 bare occurrences, all uppercase, N∈13–23, all ※-prefixed."
+  },
+  "source": "第※［＃ローマ数字17］例\n",
+  "expected": {
+    "html": "<p>第<span class=\"aozora-gaiji\" data-codepoint=\"U+2169 U+2164 U+2160 U+2160\">ⅩⅤⅠⅠ</span>例</p>\n",
+    "serialize": "第※［＃「ローマ数字17」］例\n",
+    "nodes": [
+      {
+        "kind": "gaiji",
+        "span": {
+          "start": 3,
+          "end": 32
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 29,
+          "end": 32
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

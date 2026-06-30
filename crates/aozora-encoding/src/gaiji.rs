@@ -53,7 +53,8 @@
 use core::fmt;
 
 use crate::jisx0213_table::{
-    DESCRIPTION_TO_CHAR, JISX0213_MENCODE_TO_CHAR, JISX0213_MENCODE_TO_STR,
+    DESCRIPTION_TO_CHAR, JISX0213_MENCODE_TO_CHAR, JISX0213_MENCODE_TO_STR, ROMAN_NUMERAL_LOWER,
+    ROMAN_NUMERAL_UPPER,
 };
 
 /// Resolution outcome — either a single Unicode scalar or a static
@@ -138,6 +139,11 @@ pub fn lookup(
     if let Some(&ch) = DESCRIPTION_TO_CHAR.get(description) {
         return Some(Resolved::Char(ch));
     }
+    // Bare `ローマ数字N` (#326) composes from the U+2160 block — the
+    // N≥13 forms have no single JIS cell, so the dictionary above misses.
+    if let Some(s) = roman_numeral_glyph(description) {
+        return Some(Resolved::Multi(s));
+    }
     // Smart fallback: a description that is *itself* a single
     // character resolves to that character. Common in real corpora
     // when the author CAN type the kanji (e.g. on a modern IME) but
@@ -158,6 +164,39 @@ pub fn lookup(
         return Some(Resolved::Char(only));
     }
     None
+}
+
+/// Compose the Unicode roman numeral for a bare `ローマ数字N` /
+/// `ローマ数字N小文字` gaiji description (#326), or `None` if the
+/// description is not that shape or `N` is outside the composed range.
+///
+/// `N` accepts ASCII or full-width digits. The numeral is read from the
+/// build-time [`ROMAN_NUMERAL_UPPER`] / [`ROMAN_NUMERAL_LOWER`] tables,
+/// which spell `N` with the U+2160 / U+2170 single-letter blocks (so
+/// `17` → `ⅩⅤⅠⅠ`). `N = 0` and out-of-range `N` resolve to `None` —
+/// the gaiji then stays unresolved rather than rendering an empty glyph.
+#[must_use]
+fn roman_numeral_glyph(description: &str) -> Option<&'static str> {
+    let rest = description.strip_prefix("ローマ数字")?;
+    let (digits, lower) = rest
+        .strip_suffix("小文字")
+        .map_or((rest, false), |d| (d, true));
+    if digits.is_empty() {
+        return None;
+    }
+    let mut n: usize = 0;
+    for ch in digits.chars() {
+        let d = ch
+            .to_digit(10)
+            .or_else(|| ('０'..='９').contains(&ch).then(|| ch as u32 - '０' as u32))?;
+        n = n.checked_mul(10)?.checked_add(d as usize)?;
+    }
+    let table = if lower {
+        &ROMAN_NUMERAL_LOWER
+    } else {
+        &ROMAN_NUMERAL_UPPER
+    };
+    table.get(n).copied().filter(|s| !s.is_empty())
 }
 
 /// Parse a `U+XXXX` style mencode — 1 to 6 hex digits after the
@@ -379,8 +418,10 @@ pub fn recognize_gaiji_body(body: &str) -> Option<GaijiBody<'_>> {
     // unanchored but unambiguous glyph reference that resolves directly. Gating
     // on dictionary membership keeps real directives out while admitting these.
     let bare_unanchored = !parsed.quoted && parsed.mencode.is_none();
+    let bare_resolvable = DESCRIPTION_TO_CHAR.contains_key(parsed.description)
+        || roman_numeral_glyph(parsed.description).is_some();
     if parsed.description.is_empty()
-        || (bare_unanchored && !DESCRIPTION_TO_CHAR.contains_key(parsed.description))
+        || (bare_unanchored && !bare_resolvable)
         || !gaiji_description_serializable(parsed.description, parsed.mencode.is_some())
     {
         return None;
@@ -856,6 +897,44 @@ mod tests {
         assert!(recognize_gaiji_body("ここから2字下げ").is_none());
         assert!(recognize_gaiji_body("「々」").is_some()); // quoted form, no mencode
         assert!(recognize_gaiji_body("「desc」、第3水準1-85-54").is_some());
+        // #326: a bare `ローマ数字N` resolves, so its `※［＃…］` is gaiji,
+        // not a plain directive.
+        assert!(recognize_gaiji_body("ローマ数字17").is_some());
+        assert!(recognize_gaiji_body("ローマ数字23").is_some());
+        // A non-numeral `ローマ数字` body and out-of-range N stay directives.
+        assert!(recognize_gaiji_body("ローマ数字").is_none());
+        assert!(recognize_gaiji_body("ローマ数字0").is_none());
+    }
+
+    #[test]
+    fn roman_numeral_glyph_composes_from_the_u2160_block() {
+        // Standard roman spelling with single-letter atoms: 17 = X V I I.
+        assert_eq!(
+            roman_numeral_glyph("ローマ数字17"),
+            Some("\u{2169}\u{2164}\u{2160}\u{2160}")
+        );
+        assert_eq!(
+            roman_numeral_glyph("ローマ数字13"),
+            Some("\u{2169}\u{2160}\u{2160}\u{2160}")
+        );
+        assert_eq!(
+            roman_numeral_glyph("ローマ数字20"),
+            Some("\u{2169}\u{2169}")
+        );
+        // Lowercase form (spec-complete; 0 corpus occurrences) uses U+2170.
+        assert_eq!(
+            roman_numeral_glyph("ローマ数字4小文字"),
+            Some("\u{2170}\u{2174}")
+        );
+        // Full-width digits parse too.
+        assert_eq!(
+            roman_numeral_glyph("ローマ数字１７"),
+            Some("\u{2169}\u{2164}\u{2160}\u{2160}")
+        );
+        // Not a roman numeral description.
+        assert_eq!(roman_numeral_glyph("二重かっこ開く"), None);
+        assert_eq!(roman_numeral_glyph("ローマ数字"), None);
+        assert_eq!(roman_numeral_glyph("ローマ数字0"), None);
     }
 
     #[test]

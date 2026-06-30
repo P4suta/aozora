@@ -9,6 +9,7 @@
     clippy::format_collect,
     clippy::missing_assert_message,
     clippy::absolute_paths,
+    clippy::items_after_statements,
     reason = "build.rs is dev-tooling code that emits source to OUT_DIR; \
               the workspace's pedantic lint profile aimed at library APIs \
               fires noisy here without improving anything downstream"
@@ -202,6 +203,34 @@ fn main() {
     .expect(INFALLIBLE);
     writeln!(out).expect(INFALLIBLE);
 
+    // ---- roman numeral tables (#326) ----
+    // Bare `※［＃ローマ数字N］` glyph references have no men-ku-ten cell for
+    // N≥13 (the corpus pairs them with a page-line ref, not a JIS code), so
+    // they are composed from the U+2160 / U+2170 single-letter blocks.
+    const ROMAN_MAX: u32 = 99;
+    for (name, base) in [
+        ("ROMAN_NUMERAL_UPPER", 0x2160u32),
+        ("ROMAN_NUMERAL_LOWER", 0x2170u32),
+    ] {
+        let body: String = (0..=ROMAN_MAX)
+            .map(|n| {
+                let escaped: String = roman_numeral(n, base)
+                    .chars()
+                    .map(|c| format!("\\u{{{:04X}}}", c as u32))
+                    .collect();
+                format!("    \"{escaped}\",\n")
+            })
+            .collect();
+        writeln!(
+            out,
+            "#[allow(dead_code, reason = \"indexed by gaiji::roman_numeral_glyph\")]\n\
+             pub(crate) static {name}: [&str; {len}] = [\n{body}];",
+            len = ROMAN_MAX + 1,
+        )
+        .expect(INFALLIBLE);
+        writeln!(out).expect(INFALLIBLE);
+    }
+
     // ---- count constants (used by tests) ----
     writeln!(
         out,
@@ -324,6 +353,40 @@ fn parse_description_tsv(path: &std::path::Path) -> Vec<DescriptionEntry> {
         });
     }
     out
+}
+
+/// Compose the standard roman numeral for `n` using the U+2160
+/// (uppercase, `base` = `0x2160`) / U+2170 (lowercase, `0x2170`)
+/// single-letter block atoms (I=+0, V=+4, X=+9, L=+12, C=+13, D=+14,
+/// M=+15). Returns the empty string for `n == 0`. Emits the
+/// `ROMAN_NUMERAL_*` tables consumed by `gaiji::roman_numeral_glyph`
+/// for #326's bare `※［＃ローマ数字N］`.
+fn roman_numeral(mut n: u32, base: u32) -> String {
+    const TABLE: &[(u32, &[u32])] = &[
+        (1000, &[15]),
+        (900, &[13, 15]),
+        (500, &[14]),
+        (400, &[13, 14]),
+        (100, &[13]),
+        (90, &[9, 13]),
+        (50, &[12]),
+        (40, &[9, 12]),
+        (10, &[9]),
+        (9, &[0, 9]),
+        (5, &[4]),
+        (4, &[0, 4]),
+        (1, &[0]),
+    ];
+    let mut s = String::new();
+    for &(value, offsets) in TABLE {
+        while n >= value {
+            for &offset in offsets {
+                s.push(char::from_u32(base + offset).expect("U+216x/217x is a valid scalar"));
+            }
+            n -= value;
+        }
+    }
+    s
 }
 
 fn mencode(plane: u8, row: u8, cell: u8) -> String {
