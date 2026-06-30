@@ -270,6 +270,7 @@ fn describe_node(k: NodeKind) -> &'static str {
         NodeKind::Center => "Centring (中央) marker — ページの左右中央 / 中央揃え.",
         NodeKind::Warichu => "割注 — split-line annotation.",
         NodeKind::Framed => "罫囲み — ruled box.",
+        NodeKind::LineBold => "太字 line marker — この行はゴシック体.",
         NodeKind::PageBreak => "改ページ.",
         NodeKind::SectionBreak => "Section break.",
         NodeKind::Heading => "Aozora heading (見出し).",

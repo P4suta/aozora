@@ -48,6 +48,8 @@ pub enum NodeKind {
     Warichu,
     /// 罫囲み (keigakomi) — ruled box.
     Framed,
+    /// 太字 line marker (`この行はゴシック体`) — bolds the line it sits on.
+    LineBold,
     /// 改ページ (page break).
     PageBreak,
     /// Section break (大見出し系統合).
@@ -88,7 +90,7 @@ impl NodeKind {
     /// Used by `aozora kinds` (CLI introspection) and the
     /// TypeScript / JSON-Schema codegen so the artefact list
     /// tracks the enum without a hand-maintained parallel.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::Ruby,
         Self::Bouten,
         Self::CombineUpright,
@@ -98,6 +100,7 @@ impl NodeKind {
         Self::Center,
         Self::Warichu,
         Self::Framed,
+        Self::LineBold,
         Self::PageBreak,
         Self::SectionBreak,
         Self::BodyEnd,
@@ -133,6 +136,7 @@ impl NodeKind {
             Self::Center => "center",
             Self::Warichu => "warichu",
             Self::Framed => "framed",
+            Self::LineBold => "lineBold",
             Self::PageBreak => "pageBreak",
             Self::SectionBreak => "sectionBreak",
             Self::BodyEnd => "bodyEnd",

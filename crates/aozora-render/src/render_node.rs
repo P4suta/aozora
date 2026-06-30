@@ -306,6 +306,7 @@ pub(crate) fn render_line<W: Write>(lf: LineFormat, writer: &mut W) -> fmt::Resu
         // 罫囲み (line) routes through the paired 罫囲み container in practice,
         // so this hook is classifier-unreachable; render a matching span.
         LineFormat::Framed => writer.write_str(r#"<span class="aozora-keigakomi"></span>"#),
+        LineFormat::Bold => writer.write_str(r#"<span class="aozora-line-futoji"></span>"#),
         // `LineFormat` is `#[non_exhaustive]`; forward-compat skip.
         _ => Ok(()),
     }

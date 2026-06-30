@@ -825,6 +825,15 @@ const GAIJI_FORM_LABELS: [&str; 6] = [
     "absent",    // no mencode at all
 ];
 
+/// The `node_kinds` arrays below are indexed parallel to [`NodeKind::ALL`], so
+/// their length must track it. A new `NodeKind` variant that forgets to bump
+/// these would otherwise index out of bounds and panic per-file (see the audit
+/// path at `s.node_kinds[i] += 1`).
+const _: () = assert!(
+    NodeKind::ALL.len() == 25,
+    "bump node_kinds arrays to NodeKind::ALL.len()"
+);
+
 /// Per-file audit accumulator. Owned data only — it must cross the
 /// rayon worker boundary, so it holds no borrows into the per-file
 /// parse output.
@@ -834,7 +843,7 @@ struct FileStat {
     decode_error: bool,
     panicked: bool,
     /// Indexed parallel to [`NodeKind::ALL`].
-    node_kinds: [u64; 24],
+    node_kinds: [u64; 25],
     /// Indexed parallel to [`ANN_KIND_LABELS`].
     annotation_kinds: [u64; 7],
     gaiji_total: u64,
@@ -1341,7 +1350,7 @@ fn merge(
     corpus_root: String,
     elapsed_secs: f64,
 ) -> AuditReport {
-    let mut node_kinds = [0u64; 24];
+    let mut node_kinds = [0u64; 25];
     let mut ann = [0u64; 7];
     let mut gforms = [0u64; 6];
     let mut gaiji_total = 0u64;

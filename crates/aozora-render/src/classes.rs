@@ -80,6 +80,7 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-keigakomi-inline",
     "aozora-kogaki-left",
     "aozora-kogaki-right",
+    "aozora-line-futoji",
     "aozora-margin-note",
     "aozora-page-break",
     "aozora-ruby-left",
@@ -283,6 +284,7 @@ mod tests {
         render_into(a.line(LineFormat::Indent { amount: 2 }), &mut nodes);
         render_into(a.line(LineFormat::AlignEnd { offset: 0 }), &mut nodes);
         render_into(a.line(LineFormat::AlignEnd { offset: 2 }), &mut nodes);
+        render_into(a.line(LineFormat::Bold), &mut nodes);
         render_into(a.sashie("f.png", None, None, None), &mut nodes);
         render_into(a.sashie_general("f.png", "図", None), &mut nodes);
         render_into(

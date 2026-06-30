@@ -469,6 +469,8 @@ pub enum LineFormat {
     },
     /// `［＃罫囲み］` — box the single line it sits on.
     Framed,
+    /// `［＃この行はゴシック体］` — bold the single line it sits on.
+    Bold,
 }
 
 impl LineFormat {
@@ -480,6 +482,7 @@ impl LineFormat {
             Self::AlignEnd { .. } => Format::AlignEnd,
             Self::Center { .. } => Format::Center,
             Self::Framed => Format::Framed,
+            Self::Bold => Format::Bold,
         }
     }
 }

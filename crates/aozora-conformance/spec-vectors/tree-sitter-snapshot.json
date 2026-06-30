@@ -328,6 +328,11 @@
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
     },
     {
+      "name": "line_bold_single",
+      "error": true,
+      "sexp": "(document (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (newline))"
+    },
+    {
       "name": "line_width_container",
       "error": false,
       "sexp": "(document (text) (newline) (slug body: (slug_body)) (newline) (text) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline))"
