@@ -1,21 +1,16 @@
 //! Owned-AST HTML rendering.
 //!
-//! Owned mirror of `crate::html`: the same single forward walk over the
-//! normalized text driving the same block-level `RenderState`, but each PUA
-//! sentinel dispatches through an [`OwnedLexOutput`]'s
-//! [`RegistryOwned`](aozora_syntax::owned::RegistryOwned) and resolves its
-//! interned payloads against the [`NodeStore`], instead of borrowing
-//! `&'src str` / `NodeRef<'src>`.
+//! Renders the normalized text in a single forward walk driving a block-level
+//! `RenderState`, dispatching each PUA sentinel through an [`OwnedLexOutput`]'s
+//! [`RegistryOwned`](aozora_syntax::owned::RegistryOwned) and resolving its
+//! interned payloads against the [`NodeStore`].
 //!
 //! The block-structure machinery (`RenderState`'s paragraph / container logic)
 //! and the plain-run escaper (`escape_text_chunk`) are **reused** from
 //! `crate::html` — they read only `Copy` `RegionFormat` / `RegionClose` /
-//! `bool` scalars identical in both worlds, so there is a single
-//! container-HTML authority. Only the AST-reading per-node emitters fork, in
-//! the private `render_node_owned` module.
-//!
-//! Proven byte-identical to `crate::html::render_to_string` by the
-//! differential gate in `crates/aozora/tests/owned_html_gate.rs`.
+//! `bool` scalars, so container HTML has a single authority. Only the
+//! AST-reading per-node emitters live in the private `render_node_owned`
+//! module.
 
 use core::fmt;
 
@@ -27,9 +22,8 @@ use crate::walk::{SentinelKind, WalkSinkOwned, walk_owned};
 
 /// Render an [`OwnedLexOutput`] into a fresh `String`.
 ///
-/// Owned mirror of `crate::html::render_to_string`: allocates roughly
-/// `2 × normalized.len()` upfront. For streaming consumers prefer
-/// [`render_html_owned_into`] to avoid the intermediate `String`.
+/// Allocates roughly `2 × normalized.len()` upfront. For streaming consumers
+/// prefer [`render_html_owned_into`] to avoid the intermediate `String`.
 ///
 /// # Panics
 ///
@@ -61,10 +55,10 @@ pub fn render_html_owned_into<W: fmt::Write>(out: &OwnedLexOutput, writer: &mut 
     walk_owned(out, &mut sink)
 }
 
-/// [`WalkSinkOwned`] that emits semantic HTML5 from the owned AST. Owned mirror
-/// of `crate::html::HtmlSink`; threads the [`NodeStore`] (the resolve
-/// authority) into every AST emitter and reuses the borrowed [`RenderState`]
-/// for all block / paragraph / container structure.
+/// [`WalkSinkOwned`] that emits semantic HTML5 from the owned AST, threading the
+/// [`NodeStore`] (the resolve authority) into every AST emitter and reusing
+/// `crate::html`'s [`RenderState`] for all block / paragraph / container
+/// structure.
 struct HtmlSinkOwned<'a, W: fmt::Write> {
     store: &'a NodeStore,
     out: &'a mut W,
@@ -109,8 +103,7 @@ impl<W: fmt::Write> WalkSinkOwned for HtmlSinkOwned<'_, W> {
             (SentinelKind::BlockClose, NodeRefOwned::BlockClose(_close)) => {
                 self.state.close_container(self.out)
             }
-            // Sentinel without a matching registry entry: best-effort skip,
-            // mirroring the borrowed sink.
+            // Sentinel without a matching registry entry: best-effort skip.
             _ => Ok(()),
         }
     }

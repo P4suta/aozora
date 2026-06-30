@@ -1,23 +1,17 @@
 //! HTML rendering for individual owned-AST nodes.
 //!
-//! Owned mirror of [`crate::render_node`]'s inline / block-leaf path: the
-//! same per-node HTML, but reading an owned [`NodeOwned`] and resolving every
+//! Emits per-node HTML by reading an owned [`NodeOwned`] and resolving every
 //! [`StrId`](aozora_syntax::owned::StrId) /
 //! [`ContentRange`] /
-//! [`SegRange`](aozora_syntax::owned::SegRange) against a [`NodeStore`]
-//! instead of borrowing `&'src str` / `NodeRef<'src>`.
+//! [`SegRange`](aozora_syntax::owned::SegRange) against a [`NodeStore`].
 //!
-//! Following the P0.2a serializer split, only the AST-payload-reading
-//! emitters fork here. The five pure-scalar leaf variants
-//! ([`NodeOwned::Line`] / [`NodeOwned::PageBreak`] / [`NodeOwned::BodyEnd`] /
-//! [`NodeOwned::ForcedBreak`] / [`NodeOwned::SectionBreak`]) synthesize a
-//! lifetime-free borrowed `Node` and delegate to `render_node::render`,
-//! keeping a single byte-spelling authority (e.g. the section-break slug
-//! table). The heading tag writers, illustration dimension parser, and text
-//! escaper are reused from [`crate::render_node`] verbatim.
-//!
-//! Proven byte-identical to the borrowed renderer by the differential gate in
-//! `crates/aozora/tests/owned_html_gate.rs`.
+//! Only the AST-payload-reading emitters live here. The five pure-scalar leaf
+//! variants ([`NodeOwned::Line`] / [`NodeOwned::PageBreak`] /
+//! [`NodeOwned::BodyEnd`] / [`NodeOwned::ForcedBreak`] /
+//! [`NodeOwned::SectionBreak`]) emit their fixed markup directly (e.g. the
+//! section-break slug table). The heading tag writers, the illustration
+//! dimension parser, the line renderer, and the text escaper are reused from
+//! [`crate::render_node`].
 
 use core::fmt::{self, Write};
 
@@ -37,11 +31,9 @@ use crate::render_node::{
 
 /// Render a single owned [`NodeOwned`] into `writer`.
 ///
-/// Owned mirror of `render_node::render`'s inline / block-leaf path: every
-/// inline / leaf node emits its markup unconditionally (there is no
-/// `entering` flag — containers are driven through `RenderState` and never
-/// reach here, so this only ever runs the borrowed renderer's `entering ==
-/// true` arms). `store` is the resolve authority for the node's interned
+/// Every inline / leaf node emits its markup unconditionally: there is no
+/// `entering` flag, since containers are driven through `RenderState` and
+/// never reach here. `store` is the resolve authority for the node's interned
 /// payloads.
 ///
 /// # Errors
@@ -78,22 +70,19 @@ pub(crate) fn render_owned<W: Write>(
         NodeOwned::Heading(h) => render_aozora_heading_owned(&h, store, out),
         NodeOwned::HeadingHint(h) => render_heading_hint_owned(h, store, out),
         // Other variants (`Warichu`, `Container`, future non-exhaustive
-        // additions) — emit a fallback comment so the rendered HTML stays
-        // diagnosable, mirroring the borrowed renderer's `fallback`.
-        // `Warichu` / `Container` carry lifetime payloads that cannot be
-        // re-synthesized into a borrowed `Node`, so the comment is written
-        // directly; `NodeOwned::xml_node_name` is value-for-value identical to
-        // the borrowed name, so the bytes match.
+        // additions) — emit a fallback `<!-- name -->` comment so the rendered
+        // HTML stays diagnosable; the node's `xml_node_name` supplies the name.
         _ => write!(out, "<!-- {} -->", node.xml_node_name()),
     }
 }
 
 // ----------------------------------------------------------------------
-// Content resolve layer — owned mirror of `render_node::render_content`.
+// Content resolve layer — resolve a `ContentRange` / `ContentOwned` and emit
+// its HTML.
 // ----------------------------------------------------------------------
 
-/// Owned mirror of `render_node::render_content` over a [`ContentRange`] run
-/// (a borrowed `NonEmpty<Content>` field — length 1 by construction).
+/// Render a [`ContentRange`] run (length 1 by construction) by emitting the
+/// HTML of each resolved [`ContentOwned`].
 fn render_content_range_owned<W: Write>(
     range: ContentRange,
     store: &NodeStore,
@@ -105,10 +94,9 @@ fn render_content_range_owned<W: Write>(
     Ok(())
 }
 
-/// Owned mirror of `render_node::render_content` for a single
-/// [`ContentOwned`]. A `Plain` run escapes to text; a `Segments` run walks its
-/// segments (text escaped, gaiji + directive nested) exactly like the
-/// borrowed three-arm match.
+/// Render a single [`ContentOwned`]. A `Plain` run escapes to text; a
+/// `Segments` run walks its segments, escaping text and nesting gaiji +
+/// directive markup.
 fn render_content_one_owned<W: Write>(
     c: ContentOwned,
     store: &NodeStore,
@@ -134,10 +122,11 @@ fn render_content_one_owned<W: Write>(
 }
 
 // ----------------------------------------------------------------------
-// Per-variant AST emitters — owned mirrors of the `render_*` family.
+// Per-variant AST emitters.
 // ----------------------------------------------------------------------
 
-/// Owned mirror of `render_node::render_ruby`.
+/// Render a ruby node to a `<ruby>` element (a left-side ruby classes its
+/// `<rt>` for below-the-line placement).
 fn render_ruby_owned<W: Write>(r: &RubyOwned, store: &NodeStore, out: &mut W) -> fmt::Result {
     out.write_str("<ruby>")?;
     render_content_range_owned(r.base, store, out)?;
@@ -152,8 +141,8 @@ fn render_ruby_owned<W: Write>(r: &RubyOwned, store: &NodeStore, out: &mut W) ->
     out.write_str("</rt><rp>)</rp></ruby>")
 }
 
-/// Owned mirror of `render_node::render_side_note`. The note's `kind` is
-/// ignored in HTML (it is serialize-only), matching the borrowed renderer.
+/// Render a margin note as a `<ruby>` whose `<rt class="aozora-margin-note">`
+/// carries the note text. The note's `kind` is ignored in HTML (serialize-only).
 fn render_side_note_owned<W: Write>(
     s: &MarginNoteOwned,
     store: &NodeStore,
@@ -166,12 +155,13 @@ fn render_side_note_owned<W: Write>(
     out.write_str("</rt><rp>)</rp></ruby>")
 }
 
-/// Owned mirror of `render_node::render_format` (forward-reference emphasis).
+/// Render a forward-reference emphasis (bouten / combine-upright / font-size /
+/// italic / span / bold) to its HTML element.
 ///
 /// A `Referenced` origin emits **nothing** — its
 /// target literal already lives in the upstream plain run (or a ruby base), so
 /// re-rendering it here would double the text (#228). This is load-bearing and
-/// pinned by the differential gate's `Referenced` corpus / curated inputs.
+/// pinned by the curated `Referenced` inputs.
 fn render_format_owned<W: Write>(
     f: &ForwardFormatOwned,
     store: &NodeStore,
@@ -233,14 +223,13 @@ fn render_format_owned<W: Write>(
     }
 }
 
-/// Owned mirror of `render_node::render_gaiji`.
+/// Render a gaiji node to a `<span class="aozora-gaiji">`.
 ///
-/// Reuses the borrowed resolution authority by reconstructing a borrowed
-/// [`GaijiCanonical`] (the `Unresolved` tail's
-/// [`StrId`](aozora_syntax::owned::StrId) resolves against `store`) and calling
-/// its `resolve`, so the JIS-table lookup is not forked. `standalone` is
-/// ignored in HTML (serialize-only). The resolved / fallback bodies are
-/// byte-for-byte the borrowed code.
+/// Reconstructs an [`aozora_syntax::GaijiCanonical`] (the `Unresolved` tail's
+/// [`StrId`](aozora_syntax::owned::StrId) resolves against `store`) and calls
+/// its `resolve`, reusing the shared JIS-table lookup. A resolved gaiji emits
+/// its `data-codepoint` + glyph; an unresolved one emits its escaped `hint` as
+/// `data-description` + body. `standalone` is ignored in HTML (serialize-only).
 fn render_gaiji_owned<W: Write>(g: &GaijiOwned, store: &NodeStore, out: &mut W) -> fmt::Result {
     let hint = store.resolve_str(g.hint);
     let canonical = match g.canonical {
@@ -277,7 +266,9 @@ fn render_gaiji_owned<W: Write>(g: &GaijiOwned, store: &NodeStore, out: &mut W) 
     out.write_str("</span>")
 }
 
-/// Owned mirror of `render_node::render_annotation`.
+/// Render a directive: warichu open/close to `<span class="aozora-warichu">` /
+/// `</span>`, an editor note to a visible `注N` superscript, and any other
+/// directive to a hidden `<span class="aozora-directive">` of its raw text.
 fn render_annotation_owned<W: Write>(
     a: DirectiveOwned,
     store: &NodeStore,
@@ -305,7 +296,7 @@ fn render_annotation_owned<W: Write>(
     out.write_str("</span>")
 }
 
-/// Owned mirror of `render_node::render_kaeriten`.
+/// Render a kaeriten mark as `<sup class="aozora-kaeriten">…</sup>`.
 fn render_kaeriten_owned<W: Write>(
     k: KaeritenOwned,
     store: &NodeStore,
@@ -316,7 +307,7 @@ fn render_kaeriten_owned<W: Write>(
     out.write_str("</sup>")
 }
 
-/// Owned mirror of `render_node::render_angle_quote`.
+/// Render an angle-quote as `<span class="aozora-angle-quote">《…》</span>`.
 fn render_angle_quote_owned<W: Write>(
     d: AngleQuoteOwned,
     store: &NodeStore,
@@ -327,8 +318,10 @@ fn render_angle_quote_owned<W: Write>(
     out.write_str("》</span>")
 }
 
-/// Owned mirror of `render_node::render_sashie`. The figure `number` is
-/// ignored in HTML (serialize-only), matching the borrowed renderer.
+/// Render an illustration as a `<figure class="aozora-illustration">` with an
+/// `<img>` (optional width/height from the dimensions, alt from the
+/// description) and an optional `<figcaption>`. The figure `number` is ignored
+/// in HTML (serialize-only).
 fn render_sashie_owned<W: Write>(
     s: &IllustrationOwned,
     store: &NodeStore,
@@ -359,8 +352,9 @@ fn render_sashie_owned<W: Write>(
     out.write_str("</figure>")
 }
 
-/// Owned mirror of `render_node::render_aozora_heading`. Reuses the borrowed
-/// heading-tag writers so the `<hN>` / `<div>` spelling stays single-source.
+/// Render an Aozora heading by wrapping its text with the shared
+/// `write_heading_open` / `write_heading_close` writers from
+/// [`crate::render_node`], keeping the `<hN>` / `<div>` spelling single-source.
 fn render_aozora_heading_owned<W: Write>(
     h: &HeadingOwned,
     store: &NodeStore,

@@ -21,7 +21,7 @@
 //! counts per document) is the correctness floor under the proxy: if the owned
 //! mirror started producing a *different amount* of data, the alloc baseline
 //! would be measuring the wrong thing. (Byte-identity itself is proven by the
-//! `owned_serialize_gate` / `owned_html_gate` corpus gates.)
+//! conformance golden and the corpus round-trip fixed-point gate.)
 //!
 //! ```text
 //! AOZORA_CORPUS_ROOT=… cargo run --release --example owned_alloc_gate -p aozora-bench \
