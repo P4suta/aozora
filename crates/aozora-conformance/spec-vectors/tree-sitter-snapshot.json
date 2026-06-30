@@ -43,6 +43,16 @@
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
     },
     {
+      "name": "bold_forward_gothic_no_referent",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "bold_forward_no_referent",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
       "name": "bold_inline",
       "error": true,
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
@@ -133,6 +143,11 @@
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
     },
     {
+      "name": "font_size_larger_no_referent",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "font_size_smaller_forward",
       "error": true,
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
@@ -218,6 +233,11 @@
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
     },
     {
+      "name": "horizontal_inline_forward_no_referent",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "indent_center",
       "error": true,
       "sexp": "(document (slug body: (slug_body)) (newline) (ERROR (ruby_base_implicit)) (newline) (slug body: (slug_body)) (newline))"
@@ -254,6 +274,11 @@
     },
     {
       "name": "italic_forward",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "italic_forward_no_referent",
       "error": true,
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
     },
@@ -373,6 +398,11 @@
       "sexp": "(document (text) (slug body: (slug_body)) (newline))"
     },
     {
+      "name": "side_glyph_left_no_referent",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "side_glyph_left_range",
       "error": false,
       "sexp": "(document (text) (slug body: (slug_body)) (text) (slug body: (slug_body)) (text) (newline))"
@@ -381,6 +411,11 @@
       "name": "side_glyph_right",
       "error": false,
       "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "side_glyph_right_no_referent",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
     },
     {
       "name": "side_glyph_right_range",
@@ -403,9 +438,19 @@
       "sexp": "(document (text) (slug body: (slug_body)) (newline))"
     },
     {
+      "name": "subscript_forward_no_referent",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "superscript_forward",
       "error": false,
       "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "superscript_forward_no_referent",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
     },
     {
       "name": "table_container",

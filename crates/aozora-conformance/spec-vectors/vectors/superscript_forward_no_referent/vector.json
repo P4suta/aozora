@@ -1,0 +1,48 @@
+{
+  "name": "superscript_forward_no_referent",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.16",
+    "note": "[provenance:reference-impl-aligned §6.16 + AOZORA-ANNOTATION] 上付き小文字 with no earlier target is self-contained, rendered <sup>. The target is absent from the preceding text (no-referent), so §6.14 degradation no longer applies; serialize reconstructs the bracket byte-exact (§7.6). Bytes from the reference parser."
+  },
+  "source": "本文［＃「注」は上付き小文字］\n",
+  "expected": {
+    "html": "<p>本文<sup class=\"aozora-uwatsuki\">注</sup></p>\n",
+    "serialize": "本文［＃「注」は上付き小文字］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 6,
+          "end": 45
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 18,
+          "end": 21
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 42,
+          "end": 45
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

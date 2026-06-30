@@ -1,0 +1,48 @@
+{
+  "name": "italic_forward_no_referent",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.12",
+    "note": "[provenance:reference-impl-aligned §6.12 + AOZORA-ANNOTATION] 斜体 with no earlier target is self-contained, rendered <i>. The target is absent from the preceding text (no-referent), so §6.14 degradation no longer applies; serialize reconstructs the bracket byte-exact (§7.6). Bytes from the reference parser."
+  },
+  "source": "本文［＃「強調語」は斜体］。\n",
+  "expected": {
+    "html": "<p>本文<i class=\"aozora-shatai\">強調語</i>。</p>\n",
+    "serialize": "本文［＃「強調語」は斜体］。\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 6,
+          "end": 39
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 24,
+          "end": 27
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 36,
+          "end": 39
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
