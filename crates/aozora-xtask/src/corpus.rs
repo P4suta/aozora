@@ -804,7 +804,7 @@ impl PrevArchive {
 /// `DirectiveKind` variants, in the fixed order used by
 /// [`FileStat::annotation_kinds`] / the report's `annotation_kinds`
 /// table. `Unknown` is index 0 — it is the one that matters.
-const ANN_KIND_LABELS: [&str; 7] = [
+const ANN_KIND_LABELS: [&str; 8] = [
     "unknown",
     "asIs",
     "textualNote",
@@ -812,7 +812,16 @@ const ANN_KIND_LABELS: [&str; 7] = [
     "warichuOpen",
     "warichuClose",
     "empty",
+    "editorNote",
 ];
+
+/// `annotation_kinds` arrays are indexed parallel to `ANN_KIND_LABELS`; a new
+/// `DirectiveKind` bucket must bump both in lock-step or the per-kind tally
+/// indexes out of bounds.
+const _: () = assert!(
+    ANN_KIND_LABELS.len() == 8,
+    "bump annotation_kinds arrays to match"
+);
 
 /// 外字 mencode address-form buckets, in the fixed order used by
 /// [`gaiji_bucket`] / [`FileStat::gaiji_forms`].
@@ -845,7 +854,7 @@ struct FileStat {
     /// Indexed parallel to [`NodeKind::ALL`].
     node_kinds: [u64; 25],
     /// Indexed parallel to [`ANN_KIND_LABELS`].
-    annotation_kinds: [u64; 7],
+    annotation_kinds: [u64; 8],
     gaiji_total: u64,
     gaiji_unresolved: u64,
     /// Indexed parallel to [`GAIJI_FORM_LABELS`].
@@ -1227,6 +1236,7 @@ fn analyze(text: &str) -> FileStat {
                     DirectiveKind::WarichuOpen => s.annotation_kinds[4] += 1,
                     DirectiveKind::WarichuClose => s.annotation_kinds[5] += 1,
                     DirectiveKind::Empty => s.annotation_kinds[6] += 1,
+                    DirectiveKind::EditorNote => s.annotation_kinds[7] += 1,
                     // `DirectiveKind` is #[non_exhaustive]; a future variant
                     // is simply not bucketed until this match is extended.
                     _ => {}
@@ -1351,7 +1361,7 @@ fn merge(
     elapsed_secs: f64,
 ) -> AuditReport {
     let mut node_kinds = [0u64; 25];
-    let mut ann = [0u64; 7];
+    let mut ann = [0u64; 8];
     let mut gforms = [0u64; 6];
     let mut gaiji_total = 0u64;
     let mut gaiji_unresolved = 0u64;
@@ -1999,7 +2009,7 @@ mod tests {
         let mk = |label: &str, body: &str, line: u32| FileStat {
             label: label.to_owned(),
             annotation_kinds: {
-                let mut a = [0u64; 7];
+                let mut a = [0u64; 8];
                 a[0] = 1;
                 a
             },

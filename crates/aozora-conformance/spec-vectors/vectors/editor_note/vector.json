@@ -1,0 +1,37 @@
+{
+  "name": "editor_note",
+  "meta": {
+    "feature": "annotation",
+    "level": "should",
+    "spec_section": "6.14",
+    "note": "[provenance:reference-impl-aligned §6.14 + AOZORA-ANNOTATION 2026-07-01] The numbered input-typist note ［＃入力者注(N)］ (ASCII parens + digits; 32 corpus occurrences) yields an annotation of editorial kind editor-note, rendered as a visible 注N superscript (<sup class=\"aozora-editor-note\">注N</sup>) rather than a hidden span. Serialization is byte-exact. The whole body must match exactly: a compound note that merely cites the phrase (底本では…。入力者注(6)) stays a textual divergence note (asIs/textualNote)."
+  },
+  "source": "本文［＃入力者注(5)］続き\n",
+  "expected": {
+    "html": "<p>本文<sup class=\"aozora-editor-note\">注5</sup>続き</p>\n",
+    "serialize": "本文［＃入力者注(5)］続き\n",
+    "nodes": [
+      {
+        "kind": "directive",
+        "span": {
+          "start": 6,
+          "end": 30
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 27,
+          "end": 30
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

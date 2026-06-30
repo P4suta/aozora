@@ -795,10 +795,27 @@ pub(super) fn editorial_note_kind(body: &str) -> Option<DirectiveKind> {
     if body == "ママ" || body.ends_with("はママ") || body == "底本のまま" {
         Some(DirectiveKind::Sic)
     } else if body.contains("底本では") || body.contains("初出では") {
+        // Checked before EditorNote so a 底本 correction that happens to cite a
+        // numbered note (`底本では…誤記。入力者注(6)`) stays a BaseTextVariant.
         Some(DirectiveKind::BaseTextVariant)
+    } else if is_editor_note_body(body) {
+        Some(DirectiveKind::EditorNote)
     } else {
         None
     }
+}
+
+/// Whether `body` is exactly a numbered input-typist note `入力者注(N)` with an
+/// ASCII-paren, ASCII-digit index — the corpus form. A compound note that
+/// merely *contains* the phrase is excluded (the whole body must match).
+fn is_editor_note_body(body: &str) -> bool {
+    let Some(rest) = body.strip_prefix("入力者注(") else {
+        return false;
+    };
+    let Some(digits) = rest.strip_suffix(')') else {
+        return false;
+    };
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Single-pass classification of `body` (the trimmed bytes between

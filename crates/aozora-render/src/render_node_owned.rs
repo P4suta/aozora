@@ -286,6 +286,18 @@ fn render_annotation_owned<W: Write>(
     match a.kind {
         DirectiveKind::WarichuOpen => return out.write_str(r#"<span class="aozora-warichu">"#),
         DirectiveKind::WarichuClose => return out.write_str("</span>"),
+        DirectiveKind::EditorNote => {
+            // ［＃入力者注(N)］ → a visible 注N superscript. `a.raw` is the whole
+            // bracketed directive; recover N (the classifier guaranteed the shape).
+            let raw = store.resolve_str(a.raw);
+            let n = raw
+                .strip_prefix("［＃入力者注(")
+                .and_then(|r| r.strip_suffix(")］"))
+                .unwrap_or(raw);
+            out.write_str(r#"<sup class="aozora-editor-note">注"#)?;
+            escape_text(n, out)?;
+            return out.write_str("</sup>");
+        }
         _ => {}
     }
     out.write_str(r#"<span class="aozora-directive" hidden>"#)?;

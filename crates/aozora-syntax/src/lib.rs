@@ -416,6 +416,10 @@ pub enum DirectiveKind {
     /// 青空文庫 work. Typed distinctly so it leaves the `Unknown` bucket while
     /// still round-tripping its raw bytes.
     Empty,
+    /// Numbered input-typist note (`［＃入力者注(N)］`) — a reference to the
+    /// numbered note listed in the file's 凡例. Rendered as a visible `注N`
+    /// superscript; typed distinctly so it leaves the `Unknown` bucket.
+    EditorNote,
 }
 
 /// Parse- and render-time error surface for `aozora-syntax` consumers.
