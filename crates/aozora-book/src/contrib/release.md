@@ -155,10 +155,13 @@ things changed the calculus:
   local `git push --tags`. `cargo-semver-checks` runs on that PR (`semver_check`
   in `release-plz.toml`).
 
-`cargo-dist` was not adopted: it is opinionated about archive layout (`bin/` +
-`share/`), while aozora's archive is flat (`aozora` + `LICENSE-*` + `NOTICE` +
-`README.md`), so the hand-written `release.yml` stays for binaries. release-plz
-owns versioning + crates.io; `release.yml` owns the binaries and GitHub Release.
+`cargo-dist` was not adopted (ADR-0021): it is opinionated about archive layout
+(`bin/` + `share/`), while aozora's archive is flat (`aozora` + `LICENSE-*` +
+`NOTICE` + `README.md`), and it has no first-class clap-completion / mangen /
+FFI-cdylib generation — so the hand-written `release.yml` stays for binaries.
+release-plz owns versioning + crates.io; `release.yml` owns the binaries and
+GitHub Release. This deliberately diverges from the rest of the ecosystem, which
+uses cargo-dist for its simpler single-binary releases.
 
 ## Why three release targets and not five?
 
