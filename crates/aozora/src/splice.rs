@@ -319,16 +319,23 @@ const INTERSTITIAL: (RegionRole, SpliceSafety) = (RegionRole::Interstitial, Spli
 /// Whether `node` belongs to the same construct family as a coupled `kind` —
 /// the verify predicate for a re-parsed single-region edit.
 ///
-/// A forward reference may re-form as either origin (`Reclaimed` or
-/// `Referenced` are both valid forwards); a heading hint may re-form as a hint
-/// *or* a promoted heading; a container marker as an open or close.
+/// A coupled forward reference re-forms only as a *referent-bearing* forward
+/// (`Reclaimed` or `Referenced`). A [`SelfContained`](ForwardOrigin::SelfContained)
+/// re-parse is **not** a re-formation: it owns its target with no upstream copy,
+/// so accepting it would let a target *change* masquerade as a coherent
+/// single-region edit and silently skip the upstream rewrite. Excluding it makes
+/// the single-region attempt fail so the coupled two-region path rewrites (or
+/// honestly declines) the edit. A heading hint may re-form as a hint *or* a
+/// promoted heading; a container marker as an open or close.
 fn reparsed_in_family(node: NodeRefOwned, kind: CoupledKind) -> bool {
     let leaf = match node {
         NodeRefOwned::Inline(n) | NodeRefOwned::BlockLeaf(n) => Some(n),
         _ => None,
     };
     match kind {
-        CoupledKind::ForwardReference => matches!(leaf, Some(NodeOwned::Format(_))),
+        CoupledKind::ForwardReference => {
+            matches!(leaf, Some(NodeOwned::Format(f)) if f.origin != ForwardOrigin::SelfContained)
+        }
         CoupledKind::HeadingHint => {
             matches!(
                 leaf,
@@ -792,7 +799,11 @@ fn window_reforms_coupled(window: &str, kind: CoupledKind, new_target: &str) -> 
             return false;
         };
         let text = match (kind, leaf) {
-            (CoupledKind::ForwardReference, NodeOwned::Format(f)) => {
+            // A `SelfContained` re-parse is not a coupled re-formation (it owns
+            // its target), so it must not satisfy the windowed verify either.
+            (CoupledKind::ForwardReference, NodeOwned::Format(f))
+                if f.origin != ForwardOrigin::SelfContained =>
+            {
                 store.content_range_as_plain(f.target)
             }
             (CoupledKind::HeadingHint, NodeOwned::HeadingHint(h)) => {
@@ -1114,6 +1125,24 @@ mod tests {
                 .iter()
                 .any(|r| r.role == RegionRole::ForwardReferenced)
         );
+    }
+
+    #[test]
+    fn referenced_forward_emphasis_target_change_is_coupled() {
+        // Emphasis forward references take the same coupled path as bouten.
+        // Regression: changing the target must rewrite BOTH the bracket and the
+        // unique upstream literal. The minimal single-region verify context
+        // (`<old_target><new bracket>`) re-parses the new target with no
+        // referent — a `SelfContained` forward — which must NOT be accepted as a
+        // re-formation, or the upstream rewrite is silently skipped.
+        let src = "青空がひろがる、その［＃「青空」は太字］";
+        let doc = Document::new(src);
+        let tree = doc.parse();
+        let r = role_of(src, RegionRole::ForwardReferenced);
+        let spliced = tree
+            .splice(r, "［＃「海」は太字］")
+            .expect("emphasis target change is a coupled edit");
+        assert_eq!(spliced, "海がひろがる、その［＃「海」は太字］");
     }
 
     #[test]
