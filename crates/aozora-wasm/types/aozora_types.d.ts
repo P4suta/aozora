@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────
 
 /** Cross-cutting tag for an AST node or `NodeRef` projection. */
-export type NodeKind = "ruby" | "bouten" | "combineUpright" | "gaiji" | "indent" | "alignEnd" | "center" | "warichu" | "framed" | "pageBreak" | "sectionBreak" | "bodyEnd" | "forcedBreak" | "heading" | "headingHint" | "illustration" | "kaeriten" | "directive" | "angleQuote" | "emphasis" | "marginNote" | "container" | "containerOpen" | "containerClose";
+export type NodeKind = "ruby" | "bouten" | "combineUpright" | "gaiji" | "indent" | "alignEnd" | "center" | "warichu" | "framed" | "lineBold" | "pageBreak" | "sectionBreak" | "bodyEnd" | "forcedBreak" | "heading" | "headingHint" | "illustration" | "kaeriten" | "directive" | "angleQuote" | "emphasis" | "marginNote" | "container" | "containerOpen" | "containerClose";
 
 /** Pair kind for `pairs_json` output. */
 export type PairKind = "bracket" | "ruby" | "angleQuote" | "tortoise" | "quote";

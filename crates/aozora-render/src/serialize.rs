@@ -106,6 +106,7 @@ pub(crate) fn emit_line<W: Write>(lf: LineFormat, out: &mut W) -> fmt::Result {
         LineFormat::Center { page: true } => out.write_str("［＃ページの左右中央］"),
         LineFormat::Center { page: false } => out.write_str("［＃中央揃え］"),
         LineFormat::Framed => out.write_str("［＃罫囲み］"),
+        LineFormat::Bold => out.write_str("［＃この行はゴシック体］"),
         // `LineFormat` is `#[non_exhaustive]`; forward-compat skip.
         _ => Ok(()),
     }

@@ -246,6 +246,9 @@ impl<'src> OwnedNormalizer<'src> {
             NodeOwned::Line(LineFormat::Center { .. }) => {
                 self.pending_single_line = Some("center");
             }
+            NodeOwned::Line(LineFormat::Bold) => {
+                self.pending_single_line = Some("line-bold");
+            }
             NodeOwned::Directive(ann) => match ann.kind {
                 DirectiveKind::WarichuOpen => self.warichu_depth += 1,
                 DirectiveKind::WarichuClose => {

@@ -48,6 +48,7 @@ enum BodyFamily {
     SectionKaimihiraki,
     AlignEnd0,           // 地付き
     CenterMarker,        // ページの左右中央 / 中央揃え
+    LineBold,            // この行はゴシック体
     KeigakomiOpen,       // 罫囲み
     KeigakomiClose,      // 罫囲み終わり
     IndentBlock1,        // ここから字下げ → Indent { amount: 1 }
@@ -145,6 +146,7 @@ const fn body_family_mode(family: BodyFamily) -> MatchMode {
         | BodyFamily::SectionKaimihiraki
         | BodyFamily::AlignEnd0
         | BodyFamily::CenterMarker
+        | BodyFamily::LineBold
         | BodyFamily::KeigakomiOpen
         | BodyFamily::KeigakomiClose
         | BodyFamily::WarichuBlockOpen
@@ -422,6 +424,10 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "中央揃え",
         family: BodyFamily::CenterMarker,
+    },
+    BodyPattern {
+        needle: "この行はゴシック体",
+        family: BodyFamily::LineBold,
     },
     // Other inline / block. Needle is bare 挿絵 (not 挿絵（) so the numbered
     // form 挿絵{N}（…） also reaches classify_sashie_body, which re-validates.
@@ -868,6 +874,7 @@ pub(super) fn classify_annotation_body(
                 None,
             ))
         }
+        BodyFamily::LineBold => Some((EmitKind::Aozora(alloc.line(LineFormat::Bold)), None)),
         BodyFamily::KeigakomiOpen => Some((EmitKind::BlockOpen(RegionFormat::Framed), None)),
         BodyFamily::KeigakomiClose => Some((EmitKind::BlockClose(RegionClose::Framed), None)),
         BodyFamily::WarichuBlockOpen => Some((EmitKind::BlockOpen(RegionFormat::Warichu), None)),
