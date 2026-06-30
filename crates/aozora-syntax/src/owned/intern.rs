@@ -1,31 +1,24 @@
-//! Owned, lifetime-free mirror of `crate::borrowed::Interner`.
+//! Owned, lifetime-free string interner.
 //!
-//! Where the borrowed interner hands back a stable `&'a str` pointing into a
-//! bump `Arena`, the owned interner owns all bytes
-//! in a single `String` and hands back a [`StrId`] index. It reproduces the
-//! borrowed interner's two observable contracts:
+//! Owns all interned bytes in a single `String` and hands back a [`StrId`]
+//! index. It offers two observable contracts:
 //!
 //! - **Dedup**: byte-equal `intern` calls return the same handle.
 //! - **[`InternStats`]**: the full counter set the corpus-sweep dedup-ratio
 //!   report reads (`calls`, `cache_hits`, `table_hits`, `allocs`,
-//!   `long_bypass`, `resizes`, `probe_steps`) is reproduced — the owned
-//!   table is the same open-addressing algorithm as the borrowed one, so the
-//!   hash-health counters carry real signal here, not zero placeholders.
+//!   `long_bypass`, `resizes`, `probe_steps`). The probe table is a real
+//!   open-addressing algorithm, so the hash-health counters carry real
+//!   signal here, not zero placeholders.
 //!
 //! ## Backing
 //!
 //! Open addressing with linear probing over a `Vec<Option<StrId>>` probe
-//! table, mirroring `crate::borrowed::Interner` slot-for-slot. The only
-//! structural difference is the slot payload: the borrowed table stores the
-//! arena `&'a str` directly, while the owned table stores a [`StrId`] and
-//! resolves it against `buf` + `spans` to compare bytes on a probe. The
-//! `fx_hash` mix, power-of-two capacity, 7/8
-//! load-factor resize, 1-slot inline cache, and 64-byte table bypass are
-//! shared with the borrowed interner (the hash function literally so — it is
-//! re-used, not re-implemented).
+//! table. Each slot stores a [`StrId`], resolved against `buf` + `spans` to
+//! compare bytes on a probe. A `fx_hash` mix, power-of-two capacity, 7/8
+//! load-factor resize, 1-slot inline cache, and 64-byte table bypass round
+//! out the design.
 //!
-//! Backing differences from the borrowed interner are deliberate and noted
-//! per item; the *handle contract* (dedup + resolve) is the invariant.
+//! The *handle contract* (dedup + resolve) is the invariant.
 
 /// FxHash-style mix constant. The same constant rustc internally uses for
 /// `FxHasher`; chosen for fast diffusion on short inputs.
@@ -72,57 +65,48 @@ pub struct InternStats {
 }
 
 /// Byte length beyond which the interner bypasses its probe table: long
-/// strings allocate a fresh [`StrId`] without a table entry (no dedup),
-/// mirroring the borrowed interner. They almost never repeat in practice and
-/// hashing them costs more than the alloc a dedup would save.
-// borrowed-source: crates/aozora-syntax/src/borrowed/intern.rs::INTERN_LENGTH_LIMIT
+/// strings allocate a fresh [`StrId`] without a table entry (no dedup).
+/// They almost never repeat in practice and hashing them costs more than the
+/// alloc a dedup would save.
 const INTERN_LENGTH_LIMIT: usize = 64;
 
 /// Initial probe-table capacity, allocated lazily on the first short intern.
 /// Power of two so probe-index is `hash & mask`.
-// borrowed-source: crates/aozora-syntax/src/borrowed/intern.rs::INITIAL_CAPACITY
 const INITIAL_CAPACITY: usize = 256;
 
 /// Stable handle to an interned string inside a [`StrInterner`].
 ///
-/// Owned replacement for the `&'a str` that
-/// `Interner::intern` returns: a `u32`
-/// index into the interner's `spans`, resolvable via
+/// A `u32` index into the interner's `spans`, resolvable via
 /// [`StrInterner::resolve`]. Mapping rule `&'src str (interned) -> StrId(u32)`.
 ///
 /// `Hash`/`Ord` are derived so a `StrId` can key the owned node store's
 /// auxiliary maps and sort deterministically; both are zero-cost on a `u32`.
-// borrowed-source: the `&'a str` value returned by borrowed Interner::intern
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StrId(pub u32);
 
 /// Owned, lifetime-free string interner.
 ///
-/// Mirror of `crate::borrowed::Interner`. Deduplicates byte-equal strings
-/// and returns a stable [`StrId`], owning every unique string's bytes in a
-/// single `String` (`buf`) plus a `(start, len)` span per id (`spans`).
-/// Dedup is served by an open-addressing probe table (`table`), the owned
-/// analogue of the borrowed interner's arena-backed `BumpVec<Option<&str>>`.
+/// Deduplicates byte-equal strings and returns a stable [`StrId`], owning
+/// every unique string's bytes in a single `String` (`buf`) plus a
+/// `(start, len)` span per id (`spans`). Dedup is served by an
+/// open-addressing probe table (`table`).
 ///
-/// Derives `Clone` (the owned output may be cached/cloned by the #237 segment
-/// cache; the borrowed `Interner` cannot, as it borrows an `Arena`). It does
-/// **not** derive `Copy` (owns heap storage) nor `PartialEq`/`Eq`: the reused
-/// `stats: InternStats` field does not implement `PartialEq`, so deriving it
-/// here would not compile, and structural equality of an interner is not a
-/// meaningful operation. `Default` is the trivially-empty interner (empty
-/// probe table; the first short intern sizes it to `INITIAL_CAPACITY`).
-// borrowed-source: crates/aozora-syntax/src/borrowed/intern.rs::Interner<'a>
+/// Derives `Clone` (the owned output may be cached/cloned by the #237
+/// incremental cache). It does **not** derive `Copy` (owns heap storage) nor
+/// `PartialEq`/`Eq`: the reused `stats: InternStats` field does not implement
+/// `PartialEq`, so deriving it here would not compile, and structural
+/// equality of an interner is not a meaningful operation. `Default` is the
+/// trivially-empty interner (empty probe table; the first short intern sizes
+/// it to `INITIAL_CAPACITY`).
 #[derive(Debug, Clone, Default)]
 pub struct StrInterner {
     /// Every unique string's bytes, concatenated in intern order.
-    /// Owns what the borrowed interner's `Arena` held by reference.
     buf: String,
     /// `(start, len)` byte span into `buf` for each id; `spans[id.0 as usize]`
     /// locates `StrId(id)`. Indexed by stable id, not by probe position.
     spans: Vec<(u32, u32)>,
     /// Open-addressing probe table: `None` = empty slot, `Some(id)` = the
-    /// [`StrId`] whose bytes hash to this slot. The owned analogue of the
-    /// borrowed interner's `BumpVec<Option<&'a str>>`; a probe resolves the
+    /// [`StrId`] whose bytes hash to this slot. A probe resolves the
     /// candidate id against `buf` + `spans` to compare bytes. Empty until the
     /// first short intern lazily sizes it to `INITIAL_CAPACITY`.
     table: Vec<Option<StrId>>,
@@ -133,25 +117,22 @@ pub struct StrInterner {
     /// strings only; long strings bypass the table, so this can be below
     /// `spans.len()`. Drives the load-factor resize.
     occupied: usize,
-    /// Inline cache of the last interned id, mirroring the borrowed
-    /// `last: Option<&'a str>` short-circuit so long identical runs count as
-    /// `cache_hits`.
+    /// Inline cache of the last interned id, short-circuiting so long
+    /// identical runs count as `cache_hits`.
     last: Option<StrId>,
-    /// Diagnostic counters; reused type, counted to match the borrowed
-    /// interner's dedup-ratio reporting.
+    /// Diagnostic counters feeding the dedup-ratio reporting.
     pub stats: InternStats,
 }
 
 impl StrInterner {
-    /// Empty interner. Owned analogue of `Interner::new_in`, minus the arena.
+    /// Empty interner.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Intern `s`, returning a stable [`StrId`]. Byte-equal calls return the
-    /// same id (dedup), reproducing `Interner::intern`'s pointer contract and
-    /// its `InternStats` accounting.
+    /// same id (dedup) and update the `InternStats` accounting.
     ///
     /// # Panics
     ///
@@ -173,8 +154,8 @@ impl StrInterner {
         let bytes = s.as_bytes();
 
         // Length-threshold bypass — long strings skip the probe table (no
-        // dedup), mirroring the borrowed interner. They still allocate a
-        // `StrId` so payloads can reference them.
+        // dedup). They still allocate a `StrId` so payloads can reference
+        // them.
         if bytes.len() > INTERN_LENGTH_LIMIT {
             self.stats.long_bypass += 1;
             self.stats.allocs += 1;
@@ -262,8 +243,7 @@ impl StrInterner {
         self.stats.resizes += 1;
     }
 
-    /// Resolve a [`StrId`] back to its interned bytes. Owned analogue of
-    /// dereferencing the borrowed interner's returned `&'a str`.
+    /// Resolve a [`StrId`] back to its interned bytes.
     ///
     /// # Panics
     ///
@@ -275,10 +255,9 @@ impl StrInterner {
     }
 
     /// Number of distinct strings held — the size of the dense [`StrId`] space
-    /// (`StrId(0)..StrId(len)`). Counts every interned string, short and long;
-    /// unlike the borrowed interner's `unique_strings` (table-resident only)
-    /// this includes table-bypassed long strings, which the owned tree must
-    /// still address by id.
+    /// (`StrId(0)..StrId(len)`). Counts every interned string, short and long,
+    /// including table-bypassed long strings, which the owned tree must still
+    /// address by id.
     #[must_use]
     pub fn len(&self) -> usize {
         self.spans.len()
@@ -297,10 +276,8 @@ impl StrInterner {
     }
 
     /// Average probe length per non-cache-hit lookup. Returns `0.0` when no
-    /// probed lookups have occurred. Owned analogue of
-    /// `Interner::avg_probe_length`; meaningful now that the owned table is the
-    /// same open-addressing algorithm (the borrowed-mirror's `probe_steps` is
-    /// real, not a placeholder).
+    /// probed lookups have occurred. Meaningful because the probe table is a
+    /// real open-addressing algorithm, so `probe_steps` carries real signal.
     #[must_use]
     pub fn avg_probe_length(&self) -> f64 {
         let probed = self.stats.calls.saturating_sub(self.stats.cache_hits);

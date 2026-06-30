@@ -1,11 +1,10 @@
-//! Owned, no-lifetime mirror of the pipeline's `LexOutput`.
+//! The lexer's owned, no-lifetime output.
 //!
-//! [`SourceNodeOwned`] mirrors `aozora_pipeline::borrowed::SourceNode`;
-//! [`OwnedLexOutput`] mirrors `aozora_pipeline::borrowed::LexOutput`
-//! field-for-field, with every arena-borrowed field owned and an added
+//! [`SourceNodeOwned`] pairs a sanitized-source span with the node it
+//! classified there; [`OwnedLexOutput`] holds the lexer's output, with a
 //! `store: NodeStore` that backs the `StrId`/range payloads. The whole struct
-//! is `Send + Sync` (static assertion below) — the point of the owned mirror
-//! for the #237 segment-cache / LSP consumer.
+//! is `Send + Sync` (static assertion below) — the point of the owned
+//! representation for the #237 incremental cache / LSP consumer.
 
 use aozora_spec::{Diagnostic, PairLink, SourceOffset, Span};
 
@@ -13,63 +12,52 @@ use super::intern::InternStats;
 use super::registry::{ContainerPair, NodeRefOwned, RegistryOwned};
 use super::store::NodeStore;
 
-/// Source-keyed registry entry — owned mirror of
-/// `aozora_pipeline::borrowed::SourceNode`.
+/// Source-keyed registry entry.
 ///
 /// Pairs a sanitized-source byte span with the classified node landed there.
-/// Mirrors the borrowed derive set exactly (`Debug, Clone, Copy`; no
-/// `PartialEq`/`Eq`). `Copy` requires [`NodeRefOwned`] be `Copy`.
+/// Derives `Debug, Clone, Copy`; deliberately no `PartialEq`/`Eq`. `Copy`
+/// requires [`NodeRefOwned`] be `Copy`.
 #[derive(Debug, Clone, Copy)]
 pub struct SourceNodeOwned {
     /// Half-open byte range, in sanitized-source coordinates, this node was
     /// classified from. Entries are sorted by `start`. (`Span` reused.)
     pub source_span: Span,
     /// The classified node landed at `source_span`, tagged with where it sits
-    /// in the normalized stream. Mirrors `SourceNode::node`.
+    /// in the normalized stream.
     pub node: NodeRefOwned,
 }
 
-/// Owned, no-lifetime mirror of `aozora_pipeline::borrowed::LexOutput`.
+/// The lexer's complete owned, no-lifetime output.
 ///
-/// Every arena-borrowed field is owned: `&str` => `String`, `Registry<'a>` =>
-/// [`RegistryOwned`], `&'a [T]` => `Vec<T_owned>`. Adds a `store: NodeStore`
-/// that backs the `StrId`/range payloads referenced by the owned nodes.
-/// `Send + Sync` (see static assertion below). Not `Copy`. Mirrors
-/// `LexOutput`'s derive set: `Debug` only.
+/// Every field is owned (`String`, [`RegistryOwned`], `Vec<_>`), with a
+/// `store: NodeStore` that backs the `StrId`/range payloads referenced by the
+/// owned nodes. `Send + Sync` (see static assertion below). Not `Copy`.
+/// Derives `Debug` only.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct OwnedLexOutput {
-    /// Normalized text with PUA sentinels. `LexOutput::normalized` (`&'a str`).
+    /// Normalized text with PUA sentinels.
     pub normalized: String,
     /// Verbatim post-sanitize source text (no sentinels, no padding) — the
-    /// coordinate space every `source_span` indexes. `LexOutput::sanitized`
-    /// (`&'a str`).
+    /// coordinate space every `source_span` indexes.
     pub sanitized: String,
-    /// Sentinel-position → node lookup table. `LexOutput::registry`
-    /// (`Registry<'a>`).
+    /// Sentinel-position → node lookup table.
     pub registry: RegistryOwned,
-    /// Non-fatal observations from every stage. `LexOutput::diagnostics`
-    /// (already an owned `Vec<Diagnostic>`; reused verbatim).
+    /// Non-fatal observations from every stage.
     pub diagnostics: Vec<Diagnostic>,
-    /// Byte length of the sanitize-stage buffer. `LexOutput::sanitized_len`
-    /// (`u32`).
+    /// Byte length of the sanitize-stage buffer.
     pub sanitized_len: u32,
     /// Resolved (open, close) delimiter pairs in sanitized-source coordinates,
-    /// close order. `LexOutput::pairs` (`&'a [PairLink]`).
+    /// close order.
     pub pairs: Vec<PairLink>,
     /// Source-keyed node side-table, sorted by `source_span.start`.
-    /// `LexOutput::source_nodes` (`&'a [SourceNode<'a>]`).
     pub source_nodes: Vec<SourceNodeOwned>,
     /// Resolved container open/close pairs in normalized coordinates.
-    /// `LexOutput::container_pairs` (`&'a [ContainerPair]`).
     pub container_pairs: Vec<ContainerPair>,
-    /// Interner dedup/probe counters. `LexOutput::intern_stats`
-    /// (`InternStats`; reused verbatim).
+    /// Interner dedup/probe counters.
     pub intern_stats: InternStats,
     /// Owned backing store (string interner + flat content/segment `Vec`s) the
-    /// owned nodes' `StrId`/range payloads resolve against. NEW field with no
-    /// `LexOutput` analogue — it owns what the arena owned in the borrowed
-    /// pipeline.
+    /// owned nodes' `StrId`/range payloads resolve against.
     pub store: NodeStore,
 }
 
@@ -81,12 +69,12 @@ impl OwnedLexOutput {
     /// (`aozora_pipeline::lex` / `Pipeline::build`) builds the
     /// [`RegistryOwned`], [`SourceNodeOwned`] table, and [`NodeStore`] (the
     /// classify stage allocates owned nodes directly into the store via
-    /// `OwnedAllocator`, with no intermediate borrowed tree), then hands the
-    /// whole field set here. Every argument maps to the identically-named field.
+    /// `OwnedAllocator`), then hands the whole field set here. Every argument
+    /// maps to the identically-named field.
     #[must_use]
     #[allow(
         clippy::too_many_arguments,
-        reason = "constructs the non_exhaustive OwnedLexOutput from its complete already-owned field set; a parameter object would only re-mirror the struct"
+        reason = "constructs the non_exhaustive OwnedLexOutput from its complete already-owned field set; a parameter object would only restate the field set"
     )]
     pub fn new(
         normalized: String,
@@ -115,8 +103,7 @@ impl OwnedLexOutput {
     }
 
     /// Find the [`SourceNodeOwned`] whose `source_span` covers `src_off`
-    /// (a sanitized-source byte offset). O(log n) binary search. Mirror of
-    /// `LexOutput::node_at_source`.
+    /// (a sanitized-source byte offset). O(log n) binary search.
     #[must_use]
     pub fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNodeOwned> {
         let raw = src_off.get();
@@ -132,7 +119,7 @@ impl OwnedLexOutput {
 }
 
 /// Required static assertion: the owned lex output crosses thread boundaries
-/// (the whole point of the owned mirror for the #237 LSP consumer).
+/// (the whole point of the owned representation for the #237 LSP consumer).
 const _: fn() = || {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<OwnedLexOutput>();

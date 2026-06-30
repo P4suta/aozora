@@ -108,7 +108,7 @@ impl Resolved {
 }
 
 /// Pure-function lookup used by `aozora-pipeline`'s classify stage
-/// to populate `borrowed::Gaiji::ucs` at construction time.
+/// to populate the gaiji node's `ucs` field at construction time.
 ///
 /// `existing` is the short-circuit for callers that already extracted
 /// a codepoint from the source. Pass `None` to fall through to the

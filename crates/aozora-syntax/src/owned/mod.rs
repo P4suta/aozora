@@ -3,28 +3,27 @@
 //! Every payload is `Copy`, and the variable-length pieces are `u32`
 //! handles into a flat [`NodeStore`] rather than `&'src str` borrows, so
 //! the whole tree carries no lifetime and **is** `Send + Sync`. The #237
-//! segment cache and an out-of-process LSP consumer need exactly that: a
-//! representation they can own, cache, and move between threads.
+//! incremental (`PieceSeq`) cache and an out-of-process LSP consumer need
+//! exactly that: a representation they can own, cache, and move between
+//! threads.
 //!
-//! The owned types descend from the former arena-backed borrowed tree,
-//! one variant per node, with three substitutions replacing the
-//! arena-borrowed payloads:
+//! One variant per node. Three payload kinds use `u32` handles instead of
+//! inline variable-length data:
 //!
 //! - interned `&str` → [`StrId`] into a [`StrInterner`];
 //! - `NonEmpty<Content>` → [`ContentRange`] into [`NodeStore`]'s content pool;
 //! - `[Segment]` → [`SegRange`] into [`NodeStore`]'s segment pool.
 //!
 //! Lifetime-free `Copy` payloads (`LineFormat`, `RegionFormat`, `Container`,
-//! the scalar enums, `Span`, `Diagnostic`, …) are reused as-is, not duplicated.
-//! [`OwnedLexOutput`] is the owned analogue of the pipeline's `LexOutput`, with
-//! an added [`NodeStore`] that owns what the arena formerly held.
+//! the scalar enums, `Span`, `Diagnostic`, …) are used directly, without an
+//! owned wrapper. [`OwnedLexOutput`] is the lexer's output, carrying a
+//! [`NodeStore`] that owns the variable-length payloads.
 //!
 //! # Status
 //!
 //! This is the **sole** AST representation: the lex pipeline's classify stage
 //! builds it directly via [`OwnedAllocator`](crate::alloc_owned::OwnedAllocator)
 //! and the fold records it into an [`OwnedLexOutput`] that every consumer reads.
-//! The former arena-backed borrowed AST has been removed.
 
 mod intern;
 mod output;
