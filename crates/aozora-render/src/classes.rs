@@ -181,6 +181,37 @@ mod tests {
         }
     }
 
+    /// E1-1: a no-referent forward ([`ForwardOrigin::SelfContained`]) owns the
+    /// only copy of its target, so it renders the styled run — it is **not**
+    /// short-circuited like [`ForwardOrigin::Referenced`] (the #228 guard). The
+    /// producer is wired in E1-2/E1-3; the render fall-through is pinned here so
+    /// the plumbing PR carries its own proof.
+    #[test]
+    fn self_contained_forward_renders_styled_run() {
+        let mut a = OwnedAllocator::new();
+        let bold_t = a.content_plain("強");
+        let bold = a.forward_format(ForwardAttr::Bold, bold_t, ForwardOrigin::SelfContained);
+        let bouten_t = a.content_plain("点");
+        let bouten = a.bouten(
+            BoutenKind::Goma,
+            bouten_t,
+            BoutenPosition::Right,
+            ForwardOrigin::SelfContained,
+        );
+        let store = a.into_store();
+
+        let mut bold_html = String::new();
+        render_owned(bold, &store, &mut bold_html).expect("render into String is infallible");
+        assert_eq!(bold_html, r#"<b class="aozora-futoji">強</b>"#);
+
+        let mut bouten_html = String::new();
+        render_owned(bouten, &store, &mut bouten_html).expect("render into String is infallible");
+        assert_eq!(
+            bouten_html,
+            r#"<em class="aozora-bouten aozora-bouten-goma aozora-bouten-right">点</em>"#
+        );
+    }
+
     /// Pull the `aozora-*` tokens out of every `class="…"` attribute in
     /// `html`, collapsing a trailing `-<digits>` run to its stem so
     /// open-ended numeric variants (indent / align-end amounts) don't
