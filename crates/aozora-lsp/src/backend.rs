@@ -181,7 +181,7 @@ impl AozoraLanguageServer {
     }
 
     /// The debounced task body — re-parse semantically through the
-    /// segment cache then publish, but only if no newer edit has come in.
+    /// parse cache then publish, but only if no newer edit has come in.
     async fn reparse_and_publish_if_current(&self, uri: Url, target_version: u64) {
         let Some(state) = self.lookup(&uri) else {
             return;

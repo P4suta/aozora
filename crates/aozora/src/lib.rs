@@ -78,7 +78,7 @@ pub use aozora_syntax::{
 
 mod diagnostics_text;
 mod document;
-mod incremental_owned;
+mod incremental;
 mod splice;
 
 #[cfg(feature = "json")]
@@ -90,7 +90,7 @@ pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
 /// Source-region ownership and minimal-diff source splicing (#202).
 pub use splice::{CoupledKind, Coupling, OwnedRegion, RegionRole, SpliceError, SpliceSafety};
 
-pub use incremental_owned::{DiagBaseRef, DiagSplice, PieceSeq, SanitizedSrc};
+pub use incremental::{DiagBaseRef, DiagSplice, PieceSeq, SanitizedSrc};
 
 /// **UNSTABLE — not subject to semver until v0.5.0.**
 ///
@@ -124,7 +124,7 @@ pub fn reparse_incremental_diagnostics_only(
     new_sanitized: &str,
     edit_old: Range<usize>,
 ) -> Option<DiagSplice> {
-    incremental_owned::reparse_incremental_diagnostics_only(&base, &new_sanitized, edit_old)
+    incremental::reparse_incremental_diagnostics_only(&base, &new_sanitized, edit_old)
 }
 
 /// **UNSTABLE — not subject to semver until v0.5.0.**
@@ -153,7 +153,7 @@ pub fn reparse_incremental_diagnostics_only_in<S: SanitizedSrc>(
     new_sanitized: &S,
     edit_old: Range<usize>,
 ) -> Option<DiagSplice> {
-    incremental_owned::reparse_incremental_diagnostics_only(base, new_sanitized, edit_old)
+    incremental::reparse_incremental_diagnostics_only(base, new_sanitized, edit_old)
 }
 
 /// Eagerly initialise the parser's process-global lazy tables.

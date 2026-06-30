@@ -83,7 +83,7 @@ pub struct DocBuffer {
     /// Edits applied since the parse cache last ran, in cache-text
     /// (pre-edit) coordinates. Drained under this buffer's lock by
     /// [`OpenDocument::reparse_pending`]. Exactly one entry makes the
-    /// segment-cache fast path eligible; anything else re-parses fully.
+    /// incremental fast path eligible; anything else re-parses fully.
     pub pending_edits: Vec<ByteEdit>,
 }
 
@@ -706,22 +706,23 @@ impl OpenDocument {
         }
     }
 
-    /// Re-parse the live buffer through the segment cache and return the
-    /// parsed text as a doc-level [`Rope`], its diagnostics, and the
+    /// Re-parse the live buffer through the incremental parse cache and return
+    /// the parsed text as a doc-level [`Rope`], its diagnostics, and the
     /// `edit_version` that text reflects.
     ///
     /// The accumulated edits are forwarded to
-    /// `ParseCache::reparse_incremental`, which takes the owned incremental
-    /// splice on a single LF-clean edit and full-parses otherwise (#237 Stage
-    /// B'3). The result is always identical to a from-scratch parse.
+    /// `ParseCache::reparse_incremental`, which splices its maintained
+    /// `PieceSeq` incrementally on a single edit — LF or CRLF alike, via the
+    /// sanitized-rope Mechanism B (#237 Tier 2) — and full-parses otherwise. The
+    /// result is always identical to a from-scratch parse.
     ///
     /// The returned [`Rope`] is assembled by structural-share `append` of the
     /// cloned paragraph ropes (no byte copy), so the publish path can map
     /// diagnostic spans with `O(log n)` rope line lookups
     /// ([`crate::doc_line_view::DocLineView::Rope`]) instead of rebuilding an
-    /// `O(doc)` [`LineIndex`] per keystroke (#237 Tier-2, Mechanism A). The
-    /// engine is still fed a `&str` here — that temporary `to_string()` is
-    /// removed in a later PR.
+    /// `O(doc)` [`LineIndex`] per keystroke (#237 Tier 2, Mechanism A). The same
+    /// rope is fed straight to the cache, which splices its sanitized rope
+    /// incrementally — no per-keystroke `O(doc)` `to_string` + `sanitize`.
     ///
     /// Locking is the load-bearing part: the `parse` lock is held across
     /// the whole call, so reparses are single-flight and serialise in
@@ -851,7 +852,7 @@ mod tests {
     fn single_edit_debounce_reuses_flanking_nodes() {
         // LF-clean (source == sanitized) three-paragraph doc whose first
         // paragraph carries a ruby node; one interior edit in the plain middle
-        // paragraph takes the owned incremental fast path, reusing the prefix
+        // paragraph takes the incremental fast path, reusing the prefix
         // ruby — so the cumulative hit total and hit rate go non-zero (#237
         // Stage B'3).
         let src = "｜青空《あおぞら》のした。\n\n段落に。\n\n段落さん。";

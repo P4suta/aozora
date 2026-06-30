@@ -187,9 +187,11 @@ fn main() {
     println!(
         "\nfull/diag µs = mean per fast-path doc; diag× = full/diag \
          (diagnostics-only hot path); clone % = store-clone share of diag.\n\
-         The residual is the prologue (region-find + base maintenance + region \
-         re-lex), still O(doc) on a `&str` base — Tier 2 (O(log n) region-find + \
-         rope-native base) is needed for a truly dramatic win."
+         With Tier 2 landed (O(log n) region-find + the maintained `PieceSeq` \
+         spliced in O(region + #pieces)), the win is dramatic on large docs (the \
+         500 KiB–2 MiB band) and ~1x on small docs — there a full parse is already \
+         sub-100 µs, so the region-find + region re-lex prologue costs a similar \
+         order and there is little to save."
     );
 }
 
