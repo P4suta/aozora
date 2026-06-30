@@ -1133,8 +1133,12 @@ impl RecogniseCtx<'_, '_> {
         // cannot be spliced into a single heading leaf. An all-preceded hint renders
         // hidden and may promote to a block heading in the `promote_headings`
         // lowering pass when its referent is the bare line directly above it.
+        //
+        // `preceded` is evaluated at most once per target (the ruby-stripped
+        // fallback copies the whole look-back, so a second call per heading would
+        // double the parser's allocation pressure).
         let self_contained = match extracted.targets.as_slice() {
-            [only] if !only.is_empty() && !preceded(only) => true,
+            [only] if !only.is_empty() => !preceded(only),
             targets if targets.iter().any(|t| !t.is_empty() && !preceded(t)) => return None,
             _ => false,
         };
