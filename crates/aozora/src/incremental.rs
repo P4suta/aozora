@@ -1952,6 +1952,40 @@ mod tests {
     }
 
     #[test]
+    fn self_contained_forward_doc_declines() {
+        // E1-2 producer end-to-end: a no-referent ［＃「強調」は太字］ (no earlier
+        // 強調) parses as a self-contained forward — Direct, but its very
+        // classification is a whole-prefix predicate. Introducing an earlier 強調
+        // in a far region flips a full parse to a referent-present forward; a
+        // naive splice would keep the cached self-contained node *and* the new
+        // upstream copy (the #228 double-render). So the node forbids region
+        // reuse and the incremental reparse must decline.
+        let cached = owned("むかし。\n\n本文［＃「強調」は太字］\n");
+        let san = cached.sanitized.clone();
+        assert!(
+            cached
+                .source_nodes
+                .iter()
+                .any(|sn| node_forbids_region_reuse(sn.node)),
+            "fixture must carry the self-contained forward node, got {:?}",
+            cached
+                .source_nodes
+                .iter()
+                .map(|sn| sn.node)
+                .collect::<Vec<_>>(),
+        );
+        let at = san.find("むかし").expect("first paragraph") + "むかし".len();
+        let edit = at..at;
+        let new_san = apply_edit(&san, edit.clone(), "強調");
+        let pieces = pieces_of(&cached);
+        let base = DiagBaseRef::from_cached(&cached, &pieces);
+        assert!(
+            reparse_incremental_diagnostics_only(&base, &new_san.as_str(), edit).is_none(),
+            "a self-contained forward must forbid region reuse",
+        );
+    }
+
+    #[test]
     fn kaeriten_doc_declines() {
         // A kaeriten (［＃（レ）］) emits KaeritenOutsideKanbun from a kana-prose
         // window that spans ±12 chars across a blank-line boundary, so flipping

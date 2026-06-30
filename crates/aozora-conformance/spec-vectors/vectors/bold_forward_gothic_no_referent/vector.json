@@ -1,0 +1,48 @@
+{
+  "name": "bold_forward_gothic_no_referent",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.12",
+    "note": "[provenance:reference-impl-aligned §6.12 + AOZORA-ANNOTATION] No-referent ゴシック体 is self-contained Bold; serialize canonicalises ゴシック体→太字 (idempotent after pass 1, §6.12). The target is absent from the preceding text (no-referent), so §6.14 degradation no longer applies; serialize reconstructs the bracket byte-exact (§7.6). Bytes from the reference parser."
+  },
+  "source": "本文［＃「強調」はゴシック体］。\n",
+  "expected": {
+    "html": "<p>本文<b class=\"aozora-futoji\">強調</b>。</p>\n",
+    "serialize": "本文［＃「強調」は太字］。\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 6,
+          "end": 45
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 21,
+          "end": 24
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 42,
+          "end": 45
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

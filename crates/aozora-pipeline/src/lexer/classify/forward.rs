@@ -1291,15 +1291,25 @@ impl RecogniseCtx<'_, '_> {
         let [only] = extracted.targets.as_slice() else {
             return None;
         };
-        if !forward_target_is_preceded(view.events, self.source, open_idx, only) {
-            return None;
-        }
         let &PairEvent::PairOpen {
             span: open_span, ..
         } = view.events.get(open_idx)?
         else {
             return None;
         };
+        if !forward_target_is_preceded(view.events, self.source, open_idx, only) {
+            // No referent: the quoted target has no earlier copy, so it *is* the
+            // styled run (`ForwardOrigin::SelfContained`) rather than falling
+            // through to a hidden `Unknown` directive. Consume the whole bracket
+            // — no pull-back — so the region tiling is byte-identical to the old
+            // `Unknown` and the #228 double-render is structurally impossible.
+            let text = self.alloc.content_plain(only);
+            return Some((
+                self.alloc
+                    .forward_format(attr, text, ForwardOrigin::SelfContained),
+                open_span.start,
+            ));
+        }
         let consume_start =
             find_immediate_predecessor_target_position(view.events, self.source, open_idx, only)
                 .unwrap_or(open_span.start);
