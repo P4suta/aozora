@@ -4,7 +4,7 @@
     "feature": "bouten",
     "level": "should",
     "spec_section": "6.2",
-    "note": "[provenance:hand-derived §6.2 + AOZORA-ANNOTATION 2026-06-17] The bare range form ［＃鎖線］…［＃鎖線終わり］ pairs by kind (§7.1) like every other 傍線/傍点 range; 鎖線 (chain line), 破線 (dashed) and 黒三角傍点 (black triangle) share the mechanism and were the last range kinds missing from the opener table. containerOpen/containerClose spans cover the opener/closer brackets; the run is inline so serialize is byte-exact with no block padding. Offsets computed from the §3 byte model; cross-checked against the reference processor. Promoted from the ADR-0010 deferred range variants. Canonical serialize folds the bare inline range to the forward form `…［＃「…」に〈kind〉／の左に〈kind〉］` (ADR 0003); a 点/線 family mismatch or non-text content stays a container."
+    "note": "[provenance:hand-derived §6.2 + AOZORA-ANNOTATION 2026-06-17] The bare range form ［＃鎖線］…［＃鎖線終わり］ pairs by kind (§7.1) like every other 傍線/傍点 range; 鎖線 (chain line), 破線 (dashed) and 黒三角傍点 (black triangle) share the mechanism and were the last range kinds missing from the opener table. containerOpen/containerClose spans cover the opener/closer brackets; the run is inline so serialize is byte-exact with no block padding. Offsets computed from the §3 byte model; cross-checked against the reference processor. Promoted from the ADR-0004 deferred range variants. Canonical serialize folds the bare inline range to the forward form `…［＃「…」に〈kind〉／の左に〈kind〉］` (ADR 0003); a 点/線 family mismatch or non-text content stays a container."
   },
   "source": "本文［＃鎖線］重要［＃鎖線終わり］。\n",
   "expected": {
