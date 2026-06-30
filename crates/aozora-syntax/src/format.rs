@@ -295,7 +295,8 @@ impl Format {
 /// The attributes legal at the forward-reference scope (`「X」は太字` etc.).
 ///
 /// The content-carrying leaf that pairs an attribute with its target run is
-/// `crate::borrowed::ForwardFormat`; this enum is the attribute alone.
+/// the forward-reference leaf (`ForwardFormatOwned`); this enum is the
+/// attribute alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]

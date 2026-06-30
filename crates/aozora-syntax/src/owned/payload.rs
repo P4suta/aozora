@@ -1,13 +1,10 @@
-//! Owned, no-lifetime mirrors of the borrowed AST payload structs and the
-//! `Content` / `Segment`
-//! two-tier content model.
+//! No-lifetime AST payload structs and the `Content` / `Segment` two-tier
+//! content model.
 //!
-//! Every borrowed `&'src str` becomes a [`StrId`]; every borrowed
-//! `NonEmpty<Content>` becomes a [`ContentRange`]; every borrowed
-//! `&'src [Segment]` becomes a [`SegRange`]; bare `Content` fields become an
-//! inline [`ContentOwned`]. Each `&'src X<'src>` scalar payload becomes its
-//! owned `XOwned` mirror held inline (no `Box`/`Id`), so the whole cluster
-//! stays `Copy` exactly like the borrowed tree.
+//! Every text slice is a [`StrId`]; a non-empty content run is a
+//! [`ContentRange`]; a segment run is a [`SegRange`]; a bare `Content` field
+//! is an inline [`ContentOwned`]. Each scalar payload is held inline as its
+//! owned `XOwned` form (no `Box`/`Id`), so the whole cluster stays `Copy`.
 
 use core::fmt;
 
@@ -21,38 +18,34 @@ use crate::{
 use super::intern::StrId;
 use super::store::{ContentRange, NodeStore, SegRange};
 
-/// Owned mirror of `crate::borrowed::Content`: body content that may
-/// carry nested Aozora constructs. Two-tier like the borrowed form.
+/// Body content that may carry nested Aozora constructs. Two-tier: a single
+/// plain run or a mixed sequence of segments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ContentOwned {
-    /// Plain text. Borrowed `Plain(&'src str)`.
+    /// Plain text.
     Plain(StrId),
-    /// Mixed text + nested constructs. Borrowed `Segments(&'src [Segment])`.
+    /// Mixed text + nested constructs.
     Segments(SegRange),
 }
 
-/// Owned mirror of `crate::borrowed::Segment`: one element of a
-/// [`ContentOwned::Segments`] run.
+/// One element of a [`ContentOwned::Segments`] run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SegmentOwned {
-    /// Plain-text run between nested constructs. Borrowed `Text(&'src str)`.
+    /// Plain-text run between nested constructs.
     Text(StrId),
-    /// Nested 外字 reference. Borrowed `Gaiji(&'src Gaiji)` -> inline owned.
+    /// Nested 外字 reference.
     Gaiji(GaijiOwned),
-    /// Nested generic annotation. Borrowed `Directive(&'src Directive)` ->
-    /// inline owned.
+    /// Nested generic annotation.
     Directive(DirectiveOwned),
 }
 
 impl GaijiCanonicalOwned {
-    /// Reconstruct the lifetime-free [`GaijiCanonical`] this mirrors, resolving
-    /// the `Unresolved` mencode `StrId` against `store`. The single bridge to
-    /// the `aozora-encoding` canonical authority (`resolve` / `write_mencode`),
-    /// kept private so the owned API surface stays owned. `GaijiCanonical`
-    /// lives in `aozora-encoding`, not the borrowed AST module, so it outlives
-    /// the borrowed tree's deletion.
+    /// Reconstruct the [`GaijiCanonical`], resolving the `Unresolved` mencode
+    /// `StrId` against `store`. The single bridge to the `aozora-encoding`
+    /// canonical authority (`resolve` / `write_mencode`), kept private so the
+    /// owned API surface stays owned.
     ///
     /// # Panics
     ///
@@ -67,7 +60,7 @@ impl GaijiCanonicalOwned {
         }
     }
 
-    /// `true` when the source carried a mencode tail. Owned mirror of
+    /// `true` when the source carried a mencode tail. Owned counterpart of
     /// [`GaijiCanonical::has_mencode`] — store-free (only the variant matters).
     #[must_use]
     pub fn has_mencode(self) -> bool {
@@ -75,7 +68,7 @@ impl GaijiCanonicalOwned {
     }
 
     /// Write the canonical mencode token (without the leading `、`). Owned
-    /// mirror of [`GaijiCanonical::write_mencode`]; delegates to the single
+    /// counterpart of [`GaijiCanonical::write_mencode`]; delegates to the single
     /// encoding authority via the private `to_canonical` bridge.
     ///
     /// # Errors
@@ -91,8 +84,7 @@ impl GaijiCanonicalOwned {
 }
 
 impl GaijiOwned {
-    /// Resolve to a concrete glyph via the canonical value. Owned mirror of
-    /// `borrowed::Gaiji::resolve`: rebuilds the
+    /// Resolve to a concrete glyph via the canonical value: rebuilds the
     /// lifetime-free `GaijiCanonical` against `store` and delegates to the
     /// single `GaijiCanonical::resolve` authority, passing [`Self::hint`] as
     /// the resolver's description fallback. The `Resolved` result is owned
@@ -110,182 +102,179 @@ impl GaijiOwned {
     }
 }
 
-/// Owned mirror of `crate::borrowed::Ruby` (furigana).
+/// Ruby (furigana) annotation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RubyOwned {
-    /// Base text the reading annotates. Borrowed `NonEmpty<Content>`.
+    /// Base text the reading annotates.
     pub base: ContentRange,
-    /// Furigana reading. Borrowed `NonEmpty<Content>`.
+    /// Furigana reading.
     pub reading: ContentRange,
-    /// Which side the reading sits on. Reused `RubySide`.
+    /// Which side the reading sits on.
     pub side: RubySide,
 }
 
-/// Owned mirror of `crate::borrowed::MarginNote` (注記 / 傍記).
+/// Margin note (注記 / 傍記).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MarginNoteOwned {
-    /// 注記 vs 傍記. Reused `MarginNoteKind`.
+    /// 注記 vs 傍記.
     pub kind: MarginNoteKind,
-    /// Preceding run the note attaches to. Borrowed `NonEmpty<Content>`.
+    /// Preceding run the note attaches to.
     pub base: ContentRange,
-    /// Gloss / redaction text. Borrowed `NonEmpty<Content>`.
+    /// Gloss / redaction text.
     pub note: ContentRange,
 }
 
-/// Owned mirror of `crate::borrowed::ForwardFormat` (forward-reference
-/// emphasis).
+/// Forward-reference emphasis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ForwardFormatOwned {
-    /// Which forward-scope attribute decorates the run. Reused `ForwardAttr`.
+    /// Which forward-scope attribute decorates the run.
     pub attr: ForwardAttr,
-    /// The decorated run. Borrowed `NonEmpty<Content>`.
+    /// The decorated run.
     pub target: ContentRange,
-    /// Target-text provenance. Reused `ForwardOrigin`.
+    /// Target-text provenance.
     pub origin: ForwardOrigin,
 }
 
-/// Owned mirror of [`aozora_encoding::gaiji::GaijiCanonical`]. Needed because
-/// the borrowed enum's `Unresolved` variant carries `&'src str`.
+/// Owned, lifetime-free counterpart of
+/// [`aozora_encoding::gaiji::GaijiCanonical`], whose `Unresolved` variant
+/// carries a `&'src str`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GaijiCanonicalOwned {
     /// Structured `第N水準P-K-T`. Reused lifetime-free `MenKuTen`.
     MenKuTen(MenKuTen),
     /// Explicit `U+XXXX` codepoint.
     Unicode(char),
-    /// Verbatim tail. Borrowed `mencode: Option<&'src str>`.
+    /// Verbatim tail.
     Unresolved {
         /// The raw mencode tail, interned. `None` when absent.
         mencode: Option<StrId>,
     },
 }
 
-/// Owned mirror of `crate::borrowed::Gaiji` (out-of-range glyph).
+/// Out-of-range glyph (外字).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GaijiOwned {
-    /// Free-form source description / resolver fallback key. Borrowed
-    /// `&'src str`.
+    /// Free-form source description / resolver fallback key.
     pub hint: StrId,
-    /// Typed canonical value. Borrowed `GaijiCanonical<'src>`.
+    /// Typed canonical value.
     pub canonical: GaijiCanonicalOwned,
-    /// `true` for the no-`※` standalone form. Plain `bool`, unchanged.
+    /// `true` for the no-`※` standalone form.
     pub standalone: bool,
 }
 
-/// Owned mirror of `crate::borrowed::Warichu` (split annotation).
+/// Split annotation (割注).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WarichuOwned {
-    /// First (upper / right) half-size line. Borrowed bare `Content<'src>`.
+    /// First (upper / right) half-size line.
     pub upper: ContentOwned,
-    /// Second (lower / left) half-size line. Borrowed bare `Content<'src>`.
+    /// Second (lower / left) half-size line.
     pub lower: ContentOwned,
 }
 
-/// Owned mirror of `crate::borrowed::Heading`.
+/// Heading (見出し).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadingOwned {
-    /// 大 / 中 / 小 outline level. Reused `HeadingKind`.
+    /// 大 / 中 / 小 outline level.
     pub kind: HeadingKind,
-    /// Standard / 同行 / 窓 style. Reused `HeadingStyle`.
+    /// Standard / 同行 / 窓 style.
     pub style: HeadingStyle,
-    /// Heading label. Borrowed `NonEmpty<Content>`.
+    /// Heading label.
     pub text: ContentRange,
 }
 
-/// Owned mirror of `crate::borrowed::HeadingHint`.
+/// Heading hint (見出し指定).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeadingHintOwned {
-    /// Intended outline level. Reused `HeadingKind`.
+    /// Intended outline level.
     pub level: HeadingKind,
-    /// Standard / 同行 / 窓 style. Reused `HeadingStyle`.
+    /// Standard / 同行 / 窓 style.
     pub style: HeadingStyle,
-    /// Quoted target run. Borrowed `NonEmptyStr<'src>`.
+    /// Quoted target run.
     pub target: StrId,
 }
 
-/// Owned mirror of `crate::borrowed::Illustration`.
+/// Illustration (挿絵).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IllustrationOwned {
-    /// Image path / filename. Borrowed `NonEmptyStr<'src>`.
+    /// Image path / filename.
     pub file: StrId,
-    /// Optional figure number (raw digits). Borrowed
-    /// `Option<NonEmptyStr<'src>>`.
+    /// Optional figure number (raw digits).
     pub number: Option<StrId>,
-    /// Optional verbatim `横W×縦H` size note. Borrowed `Option<&'src str>`.
+    /// Optional verbatim `横W×縦H` size note.
     pub dimensions: Option<StrId>,
-    /// Optional caption. Borrowed bare `Option<Content<'src>>`.
+    /// Optional caption.
     pub caption: Option<ContentOwned>,
-    /// Optional alt description. Borrowed `Option<&'src str>`.
+    /// Optional alt description.
     pub description: Option<StrId>,
 }
 
-/// Owned mirror of `crate::borrowed::Directive` (generic annotation).
+/// Generic annotation (注記).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirectiveOwned {
-    /// Raw bytes between `［＃` and `］`. Borrowed `NonEmptyStr<'src>`.
+    /// Raw bytes between `［＃` and `］`.
     pub raw: StrId,
-    /// Classification. Reused `DirectiveKind`.
+    /// Classification.
     pub kind: DirectiveKind,
 }
 
-/// Owned mirror of `crate::borrowed::Kaeriten` (返り点).
+/// Kanbun reading-order mark (返り点).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KaeritenOwned {
-    /// Kanbun reading-order mark. Borrowed `NonEmptyStr<'src>`.
+    /// Kanbun reading-order mark.
     pub mark: StrId,
 }
 
-/// Owned mirror of `crate::borrowed::AngleQuote` (`≪…≫` -> `《…》`).
+/// Angle quote (`≪…≫` -> `《…》`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AngleQuoteOwned {
-    /// Quoted run. Borrowed `NonEmpty<Content>`.
+    /// Quoted run.
     pub content: ContentRange,
 }
 
-/// Owned, no-lifetime mirror of `crate::borrowed::Node`. Every borrowed
-/// `&'src X<'src>` payload is held INLINE as its owned `XOwned` (no `Box`/`Id`);
-/// `Copy` scalar-enum variants are unchanged.
+/// A single, no-lifetime AST node. Every scalar payload is held INLINE as its
+/// owned `XOwned` form (no `Box`/`Id`); `Copy` scalar-enum variants carry their
+/// value directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NodeOwned {
-    /// Borrowed `Ruby(&'src Ruby)`.
+    /// Ruby (furigana) annotation.
     Ruby(RubyOwned),
-    /// Borrowed `Format(&'src ForwardFormat)`.
+    /// Forward-reference emphasis.
     Format(ForwardFormatOwned),
-    /// Borrowed `Gaiji(&'src Gaiji)`.
+    /// Out-of-range glyph (外字).
     Gaiji(GaijiOwned),
-    /// Borrowed `Line(LineFormat)` — reused `Copy` enum unchanged.
+    /// Line-level format — `Copy` enum.
     Line(LineFormat),
-    /// Borrowed `Warichu(&'src Warichu)`.
+    /// Split annotation (割注).
     Warichu(WarichuOwned),
-    /// Borrowed `PageBreak` — unit.
+    /// Page break — unit.
     PageBreak,
-    /// Borrowed `SectionBreak(SectionKind)` — reused `Copy` enum unchanged.
+    /// Section break — `Copy` enum.
     SectionBreak(SectionKind),
-    /// Borrowed `BodyEnd` — unit.
+    /// End of body — unit.
     BodyEnd,
-    /// Borrowed `ForcedBreak` — unit.
+    /// Forced line break — unit.
     ForcedBreak,
-    /// Borrowed `Heading(&'src Heading)`.
+    /// Heading (見出し).
     Heading(HeadingOwned),
-    /// Borrowed `HeadingHint(&'src HeadingHint)`.
+    /// Heading hint (見出し指定).
     HeadingHint(HeadingHintOwned),
-    /// Borrowed `Illustration(&'src Illustration)`.
+    /// Illustration (挿絵).
     Illustration(IllustrationOwned),
-    /// Borrowed `Kaeriten(&'src Kaeriten)`.
+    /// Kanbun reading-order mark (返り点).
     Kaeriten(KaeritenOwned),
-    /// Borrowed `Directive(&'src Directive)`.
+    /// Generic annotation (注記).
     Directive(DirectiveOwned),
-    /// Borrowed `AngleQuote(&'src AngleQuote)`.
+    /// Angle quote (`≪…≫` -> `《…》`).
     AngleQuote(AngleQuoteOwned),
-    /// Borrowed `MarginNote(&'src MarginNote)`.
+    /// Margin note (注記 / 傍記).
     MarginNote(MarginNoteOwned),
-    /// Borrowed `Container(Container)` — reused `Copy` enum unchanged.
+    /// Container — `Copy` enum.
     Container(Container),
 }
 
 impl NodeOwned {
-    /// Cross-cutting [`crate::NodeKind`] tag for this node. Owned mirror of
-    /// `crate::borrowed::Node::kind`.
+    /// Cross-cutting [`crate::NodeKind`] tag for this node.
     #[must_use]
     pub const fn kind(self) -> crate::NodeKind {
         use crate::NodeKind;
@@ -319,10 +308,8 @@ impl NodeOwned {
         }
     }
 
-    /// Stable XML/element-style node name. Owned mirror of
-    /// `crate::borrowed::Node::xml_node_name`, value-for-value identical so
-    /// the serializer's fallback placeholder (`<!-- unsupported-aozora: … -->`)
-    /// reproduces the borrowed bytes exactly.
+    /// Stable XML/element-style node name, feeding the serializer's fallback
+    /// placeholder (`<!-- unsupported-aozora: … -->`).
     #[must_use]
     pub const fn xml_node_name(self) -> &'static str {
         match self {
@@ -362,8 +349,8 @@ mod tests {
 
     #[test]
     fn owned_payloads_are_copy() {
-        // Pin the Copy chain — every owned payload mirrors a Copy borrowed
-        // analogue. If a future field breaks Copy, this fails to compile.
+        // Pin the Copy chain — every owned payload must stay Copy. If a future
+        // field breaks Copy, this fails to compile.
         const fn assert_copy<T: Copy>() {}
         assert_copy::<ContentOwned>();
         assert_copy::<SegmentOwned>();
@@ -373,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn node_kind_tag_mirrors_borrowed() {
+    fn node_kind_tag_matches_variant() {
         assert_eq!(NodeOwned::PageBreak.kind(), crate::NodeKind::PageBreak);
         assert_eq!(
             NodeOwned::SectionBreak(SectionKind::Kaicho).kind(),
@@ -382,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn gaiji_owned_resolve_mirrors_canonical_authority() {
+    fn gaiji_owned_resolve_matches_canonical_authority() {
         // Build an owned `Gaiji` per canonical arm and confirm the on-demand
         // glyph resolution is byte-identical to the `aozora-encoding`
         // `GaijiCanonical::resolve` authority. Uses `GaijiCanonical::from_mencode`

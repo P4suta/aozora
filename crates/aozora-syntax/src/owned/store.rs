@@ -1,8 +1,7 @@
 //! Flat backing store for the owned AST.
 //!
-//! The former borrowed tree leaned on a bumpalo arena for two variable-length
-//! payloads: `NonEmpty<Content>` runs and `&[Segment]` slices. The owned
-//! store replaces both with half-open ranges ([`ContentRange`] / [`SegRange`])
+//! Two variable-length payloads — `NonEmpty<Content>` runs and `[Segment]`
+//! slices — are stored as half-open ranges ([`ContentRange`] / [`SegRange`])
 //! into flat `Vec`s held by [`NodeStore`], alongside the [`StrInterner`] that
 //! owns every interned string. `StrId` / range payloads on the owned nodes
 //! resolve against this store.
@@ -11,8 +10,7 @@ use super::intern::{StrId, StrInterner};
 use super::payload::{ContentOwned, SegmentOwned};
 
 /// Half-open run of [`ContentOwned`] in [`NodeStore::resolve_content_range`];
-/// `len >= 1` for runs mapped from a borrowed `NonEmpty<Content>`. Borrowed
-/// `NonEmpty<Content<'src>>` -> this.
+/// `len >= 1` (a content run is never empty).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContentRange {
     /// Index of the first [`ContentOwned`] in the store's content `Vec`.
@@ -22,7 +20,6 @@ pub struct ContentRange {
 }
 
 /// Half-open run of [`SegmentOwned`] in [`NodeStore::resolve_seg_range`].
-/// Borrowed `&'src [Segment<'src>]` -> this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SegRange {
     /// Index of the first [`SegmentOwned`] in the store's segment `Vec`.
@@ -34,9 +31,8 @@ pub struct SegRange {
 /// Owned backing store: the string interner plus the flat content / segment
 /// `Vec`s the owned nodes' [`StrId`] / range payloads resolve against.
 ///
-/// Owns what the bumpalo arena owned in the borrowed pipeline. Not `Copy`
-/// (owns heap storage); not `PartialEq` (the interner's `InternStats` field
-/// is not `PartialEq`).
+/// Not `Copy` (owns heap storage); not `PartialEq` (the interner's
+/// `InternStats` field is not `PartialEq`).
 #[derive(Debug, Clone, Default)]
 pub struct NodeStore {
     /// String interner backing every [`StrId`] in the tree.
@@ -119,13 +115,12 @@ impl NodeStore {
         &self.segments[start..start + range.len as usize]
     }
 
-    /// Owned mirror of `borrowed::Content::as_plain`
-    /// over a length-1 content run: `Some(text)` iff the run is exactly one
-    /// [`ContentOwned::Plain`]; `None` for a `Segments` run or any `len != 1`.
+    /// Plain-text fast path over a length-1 content run: `Some(text)` iff the
+    /// run is exactly one [`ContentOwned::Plain`]; `None` for a `Segments` run
+    /// or any `len != 1`.
     ///
-    /// Consumers that walked the borrowed `NonEmpty<Content>` payload fields
-    /// (ruby base/reading, forward-format target, …) with `.get().as_plain()`
-    /// read the owned [`ContentRange`] through this.
+    /// Consumers reading a single-`Content` field (ruby base/reading,
+    /// forward-format target, …) take its plain text through this.
     ///
     /// # Panics
     ///
@@ -177,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn content_range_as_plain_mirrors_borrowed() {
+    fn content_range_as_plain_length_one() {
         let mut store = NodeStore::new();
         let a = store.intern("foo");
         let b = store.intern("bar");
@@ -186,7 +181,7 @@ mod tests {
         let plain = store.push_contents(&[ContentOwned::Plain(a)]);
         assert_eq!(store.content_range_as_plain(plain), Some("foo"));
 
-        // A `Segments` run → `None` (mixed content, like borrowed `as_plain`).
+        // A `Segments` run → `None` (mixed content; not the length-1 plain fast path).
         let seg = store.push_segments(&[SegmentOwned::Text(a)]);
         let mixed = store.push_contents(&[ContentOwned::Segments(seg)]);
         assert_eq!(store.content_range_as_plain(mixed), None);
