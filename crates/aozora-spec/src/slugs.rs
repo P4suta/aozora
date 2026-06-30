@@ -801,6 +801,32 @@ pub const RENDER_SLUGS: &[RenderSlug] = &[
         roman: "bunsu",
         jis: None,
     },
+    // 絶対サイズ (特大 / 大 / 中 / 小文字). Semantic English slugs (not Hepburn,
+    // so `reading: None`), distinct from the relative `font-larger`/`smaller`.
+    RenderSlug {
+        canonical: "特大文字",
+        reading: None,
+        roman: "font-extra-large",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "大文字",
+        reading: None,
+        roman: "font-large",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "中文字",
+        reading: None,
+        roman: "font-medium",
+        jis: None,
+    },
+    RenderSlug {
+        canonical: "小文字",
+        reading: None,
+        roman: "font-small",
+        jis: None,
+    },
     RenderSlug {
         canonical: "行右小書き",
         reading: Some("こがき"),

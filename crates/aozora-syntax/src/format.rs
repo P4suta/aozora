@@ -53,6 +53,43 @@ impl FontShift {
     }
 }
 
+/// An **absolute** font size keyword (`特大文字` / `大文字` / `中文字` /
+/// `小文字`), as distinct from the relative `N段階…文字` shift carried by
+/// [`FontShift`].
+///
+/// The 青空文庫 corpus attests this scale in works that name a fixed size
+/// rather than a step count (e.g. 暗黒公使's 特大 > 大 > 中 > 本文 > 小
+/// headline scheme, and the forward `「X」は小文字`). The variants are ordered
+/// largest-to-smallest; `Medium` is one step *below* the surrounding body, so
+/// it has no representable [`FontShift`] (`NonZero`) — which is why this is its
+/// own type rather than a magnitude.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum AbsoluteSize {
+    /// 特大文字 — the largest size.
+    ExtraLarge,
+    /// 大文字 — large.
+    Large,
+    /// 中文字 — medium (below body).
+    Medium,
+    /// 小文字 — small.
+    Small,
+}
+
+impl AbsoluteSize {
+    /// The canonical 青空文庫 keyword for this size.
+    #[must_use]
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::ExtraLarge => "特大文字",
+            Self::Large => "大文字",
+            Self::Medium => "中文字",
+            Self::Small => "小文字",
+        }
+    }
+}
+
 /// Number of columns in a 段組 region. `1` is not a multi-column layout, so
 /// `NonZero` rules out the degenerate case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -226,6 +263,8 @@ pub enum Format {
     Horizontal,
     /// N段階大きな / 小さな文字 (relative font size).
     FontSize(FontShift),
+    /// 特大 / 大 / 中 / 小文字 (absolute font size).
+    FontSizeAbsolute(AbsoluteSize),
     /// キャプション (caption).
     Caption,
     /// 上付き小文字 (superscript).
@@ -273,6 +312,7 @@ impl Format {
             Self::Framed => "framed",
             Self::Horizontal => "horizontal",
             Self::FontSize(_) => "fontSize",
+            Self::FontSizeAbsolute(_) => "fontSizeAbsolute",
             Self::Caption => "caption",
             Self::SuperScript => "superScript",
             Self::SubScript => "subScript",
@@ -322,6 +362,8 @@ pub enum ForwardAttr {
     Caption,
     /// N段階大きな / 小さな文字.
     FontSize(FontShift),
+    /// 特大 / 大 / 中 / 小文字 — absolute font size (`「X」は小文字`).
+    FontSizeAbsolute(AbsoluteSize),
     /// 傍点 / 傍線. `position` records a `左に` left-side modifier.
     Bouten {
         /// The 傍点 / 傍線 mark.
@@ -419,6 +461,7 @@ impl ForwardAttr {
             Self::Horizontal => Format::Horizontal,
             Self::Caption => Format::Caption,
             Self::FontSize(f) => Format::FontSize(f),
+            Self::FontSizeAbsolute(s) => Format::FontSizeAbsolute(s),
             Self::Bouten { kind, .. } => Format::Bouten(kind),
             Self::CombineUpright => Format::CombineUpright,
             Self::Fraction => Format::Fraction,
@@ -444,6 +487,7 @@ impl ForwardAttr {
             Self::Caption => "キャプション",
             Self::CombineUpright => "縦中横",
             Self::Fraction => "分数",
+            Self::FontSizeAbsolute(s) => s.keyword(),
             Self::Bouten { kind, .. } => kind.keyword(),
             // Bold, FontSize, and any future weight default to 太字.
             _ => "太字",

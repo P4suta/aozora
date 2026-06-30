@@ -138,6 +138,11 @@
       "sexp": "(document (ERROR (ruby_base_explicit)))"
     },
     {
+      "name": "font_size_absolute_small_forward",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "font_size_bare_range",
       "error": true,
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (newline))"

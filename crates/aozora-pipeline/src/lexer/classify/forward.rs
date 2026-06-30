@@ -21,7 +21,9 @@ use aozora_spec::Diagnostic;
 use aozora_syntax::alloc_owned::OwnedAllocator;
 use aozora_syntax::format::ForwardOrigin;
 use aozora_syntax::owned::{ContentOwned, NodeOwned, SegmentOwned};
-use aozora_syntax::{BoutenPosition, DirectiveKind, FontShift, ForwardAttr, MarginNoteKind, Span};
+use aozora_syntax::{
+    AbsoluteSize, BoutenPosition, DirectiveKind, FontShift, ForwardAttr, MarginNoteKind, Span,
+};
 
 use super::super::pair::{PairEvent, PairKind};
 use super::super::token::TriggerKind;
@@ -1388,6 +1390,13 @@ pub(super) fn forward_attr_from_suffix(s: &str) -> Option<ForwardAttr> {
         "罫囲み" | "枠囲み" | "枠囲い" => ForwardAttr::Framed,
         "横組み" => ForwardAttr::Horizontal,
         "キャプション" => ForwardAttr::Caption,
+        // 絶対サイズ: `「X」は小文字` (corpus-attested) and its 特大/大/中 siblings.
+        // Distinct from the relative `N段階…文字` (parse_font_size_suffix) and
+        // from the script-glyph `上付き小文字`/`下付き小文字` (exact-match above).
+        "特大文字" => ForwardAttr::FontSizeAbsolute(AbsoluteSize::ExtraLarge),
+        "大文字" => ForwardAttr::FontSizeAbsolute(AbsoluteSize::Large),
+        "中文字" => ForwardAttr::FontSizeAbsolute(AbsoluteSize::Medium),
+        "小文字" => ForwardAttr::FontSizeAbsolute(AbsoluteSize::Small),
         // 分数: `「a/b」は分数`. Only the single-target form is matched here; a
         // comma-joined compound (`「3」は上付き小文字、「1/143」は分数`) yields a
         // suffix that is not exactly `分数`, so it stays `Directive{Unknown}`.

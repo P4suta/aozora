@@ -237,7 +237,8 @@ fn render_format_owned<W: Write>(
                 ForwardAttr::SmallScript(_)
                 | ForwardAttr::Framed
                 | ForwardAttr::Horizontal
-                | ForwardAttr::Caption => ("span", "</span>"),
+                | ForwardAttr::Caption
+                | ForwardAttr::FontSizeAbsolute(_) => ("span", "</span>"),
                 // Bold and any future weight default to the bold element.
                 _ => ("b", "</b>"),
             };

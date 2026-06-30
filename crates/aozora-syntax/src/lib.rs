@@ -33,8 +33,8 @@ pub mod node_kind;
 pub mod owned;
 
 pub use format::{
-    BlockStyles, ColumnCount, FontShift, Format, ForwardAttr, ForwardOrigin, IndentBlock,
-    IndentLayout, Kumi, LineFormat, LineWidth, RegionClose, RegionFormat,
+    AbsoluteSize, BlockStyles, ColumnCount, FontShift, Format, ForwardAttr, ForwardOrigin,
+    IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, RegionClose, RegionFormat,
 };
 pub use node_kind::NodeKind;
 
@@ -540,6 +540,16 @@ mod tests {
             (ForwardAttr::Caption, "キャプション"),
             (ForwardAttr::CombineUpright, "縦中横"),
             (ForwardAttr::Fraction, "分数"),
+            (
+                ForwardAttr::FontSizeAbsolute(AbsoluteSize::ExtraLarge),
+                "特大文字",
+            ),
+            (ForwardAttr::FontSizeAbsolute(AbsoluteSize::Large), "大文字"),
+            (
+                ForwardAttr::FontSizeAbsolute(AbsoluteSize::Medium),
+                "中文字",
+            ),
+            (ForwardAttr::FontSizeAbsolute(AbsoluteSize::Small), "小文字"),
             (
                 ForwardAttr::Bouten {
                     kind: BoutenKind::Goma,

@@ -65,7 +65,11 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-container-yokogumi",
     "aozora-directive",
     "aozora-editor-note",
+    "aozora-font-extra-large",
+    "aozora-font-large",
     "aozora-font-larger",
+    "aozora-font-medium",
+    "aozora-font-small",
     "aozora-font-smaller",
     "aozora-futoji",
     "aozora-gaiji",
@@ -160,10 +164,10 @@ mod tests {
     use aozora_syntax::alloc_owned::OwnedAllocator;
     use aozora_syntax::owned::{NodeOwned, NodeStore};
     use aozora_syntax::{
-        BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition, ColumnCount, Container,
-        DirectiveKind, FontShift, ForwardAttr, ForwardOrigin, HEADING_KINDS, HEADING_STYLES,
-        HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth,
-        MarginNoteKind, RegionFormat, SECTION_KINDS,
+        AbsoluteSize, BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition, ColumnCount,
+        Container, DirectiveKind, FontShift, ForwardAttr, ForwardOrigin, HEADING_KINDS,
+        HEADING_STYLES, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat,
+        LineWidth, MarginNoteKind, RegionFormat, SECTION_KINDS,
     };
     use core::num::{NonZeroI8, NonZeroU8};
     use std::collections::BTreeSet;
@@ -354,6 +358,10 @@ mod tests {
             ForwardAttr::Horizontal,
             ForwardAttr::Caption,
             ForwardAttr::Fraction,
+            ForwardAttr::FontSizeAbsolute(AbsoluteSize::ExtraLarge),
+            ForwardAttr::FontSizeAbsolute(AbsoluteSize::Large),
+            ForwardAttr::FontSizeAbsolute(AbsoluteSize::Medium),
+            ForwardAttr::FontSizeAbsolute(AbsoluteSize::Small),
             ForwardAttr::FontSize(fs(1)),
         ] {
             let t = a.content_plain("強");

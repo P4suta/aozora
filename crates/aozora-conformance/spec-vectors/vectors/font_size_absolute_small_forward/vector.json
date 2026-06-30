@@ -1,0 +1,48 @@
+{
+  "name": "font_size_absolute_small_forward",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.17",
+    "note": "[provenance:hand-derived §6.17 + AOZORA-ANNOTATION 2026-07-01] 小文字 here is an ABSOLUTE font size (特大>大>中>本文>小), a forward-reference emphasis-page treatment, particle は, single target, inline — distinct from the relative N段階…文字 and from the script-glyph 上付き/下付き小文字 (§6.16) whose keyword it is a substring of (the recogniser matches the whole は… body). Per §7.5 it consumes the immediately preceding target literal ヱ and yields an emphasis node; §8 rendering is <span class=\"aozora-font-small\">. Offsets from the §4 byte model (each fullwidth char = 3 bytes); cross-checked against the reference processor. Corpus: 8 「X」は小文字 occurrences across 3 works."
+  },
+  "source": "ヱ［＃「ヱ」は小文字］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-font-small\">ヱ</span></p>\n",
+    "serialize": "ヱ［＃「ヱ」は小文字］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 33
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 15,
+          "end": 18
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 30,
+          "end": 33
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
