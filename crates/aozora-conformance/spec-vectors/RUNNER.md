@@ -86,8 +86,9 @@ set the validator confirms the `source` actually occurs in that file
 
 ## Notes for a consuming implementation
 
-An implementation SHOULD pin this specification by revision and run the
-vectors in its own CI, failing on any `must` mismatch. This is how the
+An implementation SHOULD pin a tagged release (`vX.Y.Z`) of this specification
+— a git revision also works — and run the vectors in its own CI, failing on any
+`must` mismatch. This is how the
 specification acts as the master: the prose, the examples, and the
 implementation cannot drift apart without a red build. The vector corpus is
 maintained in this repository. Vectors are hand-authored and -audited from the

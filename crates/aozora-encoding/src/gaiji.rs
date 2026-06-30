@@ -364,14 +364,23 @@ pub fn gaiji_description_serializable(description: &str, has_mencode: bool) -> b
 /// wire resolution view.
 ///
 /// Returns the parsed [`GaijiBody`] iff the body is a gaiji; `None` for a
-/// plain directive (e.g. `改ページ`). A gaiji needs a non-empty description
-/// and either the simple `「…」`-quoted form *or* a trailing mencode anchor,
-/// and the description must round-trip ([`gaiji_description_serializable`]).
+/// plain directive (e.g. `改ページ`). A gaiji needs a non-empty description and
+/// either the simple `「…」`-quoted form, a trailing mencode anchor, *or* a bare
+/// description that is itself a known dictionary entry (the corpus form
+/// `※［＃二重かっこ開く］`); the description must round-trip
+/// ([`gaiji_description_serializable`]).
 #[must_use]
 pub fn recognize_gaiji_body(body: &str) -> Option<GaijiBody<'_>> {
     let parsed = parse_gaiji_body(body);
+    // A bare body (no `「」` quotes, no mencode anchor) is normally an ordinary
+    // directive — `改ページ`, `ここから2字下げ` — not a glyph reference, so it is
+    // gated out. The exception is a description that is *itself* a known
+    // dictionary entry (e.g. the corpus form `※［＃二重かっこ開く］`): an
+    // unanchored but unambiguous glyph reference that resolves directly. Gating
+    // on dictionary membership keeps real directives out while admitting these.
+    let bare_unanchored = !parsed.quoted && parsed.mencode.is_none();
     if parsed.description.is_empty()
-        || (!parsed.quoted && parsed.mencode.is_none())
+        || (bare_unanchored && !DESCRIPTION_TO_CHAR.contains_key(parsed.description))
         || !gaiji_description_serializable(parsed.description, parsed.mencode.is_some())
     {
         return None;

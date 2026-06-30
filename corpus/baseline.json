@@ -1,5 +1,5 @@
 {
-  "unknown_total": 2617,
+  "unknown_total": 2549,
   "files_analyzed": 17889,
   "note": "ratchet-down Unknown-degradation budget; lower on improvement, never raise. Re-capture with `xtask corpus audit-gate --update`."
 }
