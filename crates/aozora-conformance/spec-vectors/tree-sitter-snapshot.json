@@ -168,6 +168,16 @@
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
     },
     {
+      "name": "fraction_forward",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "fraction_forward_no_referent",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "gaiji",
       "error": false,
       "sexp": "(document (text) (gaiji (gaiji_marker) (slug body: (slug_body))) (text) (newline))"

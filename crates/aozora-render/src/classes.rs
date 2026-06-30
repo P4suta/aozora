@@ -43,6 +43,7 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-bouten-shirogoma",
     "aozora-bouten-shiromaru",
     "aozora-bouten-shirosankaku",
+    "aozora-bunsu",
     "aozora-caption",
     "aozora-center",
     "aozora-combine-upright",
@@ -352,6 +353,7 @@ mod tests {
             ForwardAttr::Framed,
             ForwardAttr::Horizontal,
             ForwardAttr::Caption,
+            ForwardAttr::Fraction,
             ForwardAttr::FontSize(fs(1)),
         ] {
             let t = a.content_plain("強");

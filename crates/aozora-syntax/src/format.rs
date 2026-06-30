@@ -236,6 +236,8 @@ pub enum Format {
     SmallScript(BoutenPosition),
     /// 縦中横 (tate-chu-yoko).
     CombineUpright,
+    /// 分数 (fraction, `「a/b」は分数`).
+    Fraction,
     /// 字下げ (indent).
     Indent,
     /// 地付き / 地から N 字上げ (end alignment).
@@ -276,6 +278,7 @@ impl Format {
             Self::SubScript => "subScript",
             Self::SmallScript(_) => "smallScript",
             Self::CombineUpright => "combineUpright",
+            Self::Fraction => "fraction",
             Self::Indent => "indent",
             Self::AlignEnd => "alignEnd",
             Self::Center => "center",
@@ -328,6 +331,9 @@ pub enum ForwardAttr {
     },
     /// 縦中横.
     CombineUpright,
+    /// 分数 (`「a/b」は分数`). The render arm splits the target on `/` (ASCII)
+    /// or `／` (fullwidth) into a `<sup>`/`<sub>` fraction.
+    Fraction,
 }
 
 /// A forward emphasis node's target-text provenance — whether `serialize`
@@ -415,6 +421,7 @@ impl ForwardAttr {
             Self::FontSize(f) => Format::FontSize(f),
             Self::Bouten { kind, .. } => Format::Bouten(kind),
             Self::CombineUpright => Format::CombineUpright,
+            Self::Fraction => Format::Fraction,
         }
     }
 
@@ -436,6 +443,7 @@ impl ForwardAttr {
             Self::Horizontal => "横組み",
             Self::Caption => "キャプション",
             Self::CombineUpright => "縦中横",
+            Self::Fraction => "分数",
             Self::Bouten { kind, .. } => kind.keyword(),
             // Bold, FontSize, and any future weight default to 太字.
             _ => "太字",

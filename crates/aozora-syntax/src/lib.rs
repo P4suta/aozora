@@ -539,6 +539,7 @@ mod tests {
             (ForwardAttr::Horizontal, "横組み"),
             (ForwardAttr::Caption, "キャプション"),
             (ForwardAttr::CombineUpright, "縦中横"),
+            (ForwardAttr::Fraction, "分数"),
             (
                 ForwardAttr::Bouten {
                     kind: BoutenKind::Goma,

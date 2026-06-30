@@ -201,6 +201,32 @@ fn render_format_owned<W: Write>(
             render_content_range_owned(f.target, store, out)?;
             out.write_str("</span>")
         }
+        // 分数: split the target on a slash — ASCII `/` or fullwidth `／` (the
+        // corpus uses both) — into a `<sup>`/`<sub>` fraction joined by the
+        // fraction slash U+2044. The target is plain math text, so it
+        // materializes via `content_range_as_plain`.
+        ForwardAttr::Fraction => {
+            let slug = aozora_spec::roman_slug("分数").unwrap_or("bunsu");
+            write!(out, r#"<span class="aozora-{slug}">"#)?;
+            match store.content_range_as_plain(f.target) {
+                Some(t) => match t.split_once(['/', '／']) {
+                    Some((num, den)) => {
+                        out.write_str("<sup>")?;
+                        escape_text(num, out)?;
+                        out.write_str("</sup>⁄<sub>")?;
+                        escape_text(den, out)?;
+                        out.write_str("</sub>")?;
+                    }
+                    // No slash (not attested) — emit the target verbatim rather
+                    // than fabricate a numerator / denominator.
+                    None => escape_text(t, out)?,
+                },
+                // A structured (non-plain) target can't be split; render it
+                // as-is so no content is dropped.
+                None => render_content_range_owned(f.target, store, out)?,
+            }
+            out.write_str("</span>")
+        }
         // The HTML element is semantic; the `aozora-*` slug comes from the
         // spec slug table, keyed by the canonical keyword.
         attr => {

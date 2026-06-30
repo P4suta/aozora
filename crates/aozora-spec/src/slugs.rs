@@ -792,6 +792,15 @@ pub const RENDER_SLUGS: &[RenderSlug] = &[
         roman: "shitatsuki",
         jis: Some("07.12.02"),
     },
+    // 分数 (`「a/b」は分数`). `reading: None` opts out of the Hepburn
+    // re-derivation check — ぶんすう romanises with a long vowel (bunsū),
+    // which would not match the stable `bunsu` slug.
+    RenderSlug {
+        canonical: "分数",
+        reading: None,
+        roman: "bunsu",
+        jis: None,
+    },
     RenderSlug {
         canonical: "行右小書き",
         reading: Some("こがき"),

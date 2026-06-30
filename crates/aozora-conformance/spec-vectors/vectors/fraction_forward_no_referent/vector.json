@@ -1,0 +1,48 @@
+{
+  "name": "fraction_forward_no_referent",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.20",
+    "note": "[provenance:hand-derived §6.20 + AOZORA-ANNOTATION 2026-07-01] 分数 (fraction) with no referent: the quoted ASCII target 1/4 does not occur in the preceding text 本文, so it is a self-contained forward reference (§6.20 Error conditions, parallel to §6.16) — the quoted run is itself typeset. §8 reference rendering splits on the ASCII slash into <span class=\"aozora-bunsu\"><sup>1</sup>⁄<sub>4</sub></span>; serialization reconstructs the directive byte-exact (§7.6). Offsets from the §4 byte model; cross-checked against the reference processor. Exercises the ASCII slash in a self-contained shape."
+  },
+  "source": "本文［＃「1/4」は分数］\n",
+  "expected": {
+    "html": "<p>本文<span class=\"aozora-bunsu\"><sup>1</sup>⁄<sub>4</sub></span></p>\n",
+    "serialize": "本文［＃「1/4」は分数］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 6,
+          "end": 33
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 18,
+          "end": 21
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 30,
+          "end": 33
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

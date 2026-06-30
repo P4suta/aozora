@@ -1372,8 +1372,9 @@ impl RecogniseCtx<'_, '_> {
 /// map to Bold and canonicalise to `太字` on serialize. 上付き小文字 →
 /// `SuperScript`, 下付き小文字 → `SubScript`, 行右小書き → `SmallScript(Right)`,
 /// 行左小書き → `SmallScript(Left)`, and `N段階大きな/小さな文字` → `FontSize`
-/// (per <https://www.aozora.gr.jp/annotation/etc.html>). Unknown suffixes
-/// return `None` (→ `Directive{Unknown}`).
+/// (per <https://www.aozora.gr.jp/annotation/etc.html>). 分数 → `Fraction`
+/// (`「a/b」は分数`, the render arm typesets the `/`-split target). Unknown
+/// suffixes return `None` (→ `Directive{Unknown}`).
 pub(super) fn forward_attr_from_suffix(s: &str) -> Option<ForwardAttr> {
     Some(match s {
         "太字" | "ゴシック体" | "ゴチック" => ForwardAttr::Bold,
@@ -1387,6 +1388,10 @@ pub(super) fn forward_attr_from_suffix(s: &str) -> Option<ForwardAttr> {
         "罫囲み" | "枠囲み" | "枠囲い" => ForwardAttr::Framed,
         "横組み" => ForwardAttr::Horizontal,
         "キャプション" => ForwardAttr::Caption,
+        // 分数: `「a/b」は分数`. Only the single-target form is matched here; a
+        // comma-joined compound (`「3」は上付き小文字、「1/143」は分数`) yields a
+        // suffix that is not exactly `分数`, so it stays `Directive{Unknown}`.
+        "分数" => ForwardAttr::Fraction,
         _ => return parse_font_size_suffix(s),
     })
 }
@@ -1403,5 +1408,28 @@ fn parse_font_size_suffix(s: &str) -> Option<ForwardAttr> {
         "段階大きな文字" => Some(ForwardAttr::FontSize(shift)),
         "段階小さな文字" => Some(ForwardAttr::FontSize(FontShift(NonZeroI8::new(-steps)?))),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ForwardAttr, forward_attr_from_suffix};
+
+    #[test]
+    fn fraction_suffix_matches_only_the_exact_single_form() {
+        // `「a/b」は分数` → Fraction.
+        assert_eq!(
+            forward_attr_from_suffix("分数"),
+            Some(ForwardAttr::Fraction)
+        );
+        // A comma-joined compound (`「3」は上付き小文字、「1/143」は分数`) reaches this
+        // fn with a suffix that is not exactly `分数`, so it must NOT match — it
+        // stays `Directive{Unknown}` until the multi-directive-per-bracket
+        // grammar owns it (#321 out-of-scope).
+        assert_eq!(
+            forward_attr_from_suffix("上付き小文字、「1/143」は分数"),
+            None
+        );
+        assert_eq!(forward_attr_from_suffix("分数、縦中横"), None);
     }
 }
