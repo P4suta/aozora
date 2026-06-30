@@ -18,9 +18,9 @@ use core::num::{NonZeroI8, NonZeroU8};
 use aozora_syntax::alloc_owned::OwnedAllocator;
 use aozora_syntax::owned::DirectiveOwned;
 use aozora_syntax::{
-    BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, FontShift,
-    HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, RegionClose,
-    RegionFormat, SectionKind,
+    AbsoluteSize, BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition, ColumnCount,
+    DirectiveKind, FontShift, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi,
+    LineFormat, LineWidth, RegionClose, RegionFormat, SectionKind,
 };
 
 use super::EmitKind;
@@ -120,6 +120,11 @@ enum BodyFamily {
     /// `改行天付き` → `改行天付き、折り返して{N}字下げ` — the ここから-less
     /// bare sibling of the top-flush hanging indent (amount 0 + wrap N).
     KaigyouTentsukiPrefix,
+
+    /// Absolute font-size line directive (`大文字` … `特大文字、太字`). The
+    /// needle anchors on the size keyword; `parse_line_font_size` re-reads the
+    /// full body for the size and an optional `、太字` / `、ゴシック体` compound.
+    LineFontSize,
 }
 
 /// How a [`BodyFamily`] consumes its DFA match: an `Exact` family must
@@ -179,6 +184,7 @@ const fn body_family_mode(family: BodyFamily) -> MatchMode {
         | BodyFamily::Emphasis
         | BodyFamily::SmallScriptRange
         | BodyFamily::CaptionRange
+        | BodyFamily::LineFontSize
         | BodyFamily::CombineUprightRange => MatchMode::Reparse,
     }
 }
@@ -428,6 +434,26 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "この行はゴシック体",
         family: BodyFamily::LineBold,
+    },
+    // Absolute font-size line directives (`大文字` … `特大文字、太字`). All four
+    // size keywords anchor `LineFontSize`; `parse_line_font_size` re-reads the
+    // body for the size and the optional `、太字` compound. `特大文字` is the
+    // longest, so LeftmostLongest prefers it over `大文字`.
+    BodyPattern {
+        needle: "特大文字",
+        family: BodyFamily::LineFontSize,
+    },
+    BodyPattern {
+        needle: "大文字",
+        family: BodyFamily::LineFontSize,
+    },
+    BodyPattern {
+        needle: "中文字",
+        family: BodyFamily::LineFontSize,
+    },
+    BodyPattern {
+        needle: "小文字",
+        family: BodyFamily::LineFontSize,
     },
     // Other inline / block. Needle is bare 挿絵 (not 挿絵（) so the numbered
     // form 挿絵{N}（…） also reaches classify_sashie_body, which re-validates.
@@ -892,6 +918,12 @@ pub(super) fn classify_annotation_body(
             ))
         }
         BodyFamily::LineBold => Some((EmitKind::Aozora(alloc.line(LineFormat::Bold)), None)),
+        BodyFamily::LineFontSize => parse_line_font_size(body).map(|(size, bold)| {
+            (
+                EmitKind::Aozora(alloc.line(LineFormat::FontSizeAbsolute { size, bold })),
+                None,
+            )
+        }),
         BodyFamily::KeigakomiOpen => Some((EmitKind::BlockOpen(RegionFormat::Framed), None)),
         BodyFamily::KeigakomiClose => Some((EmitKind::BlockClose(RegionClose::Framed), None)),
         BodyFamily::WarichuBlockOpen => Some((EmitKind::BlockOpen(RegionFormat::Warichu), None)),
@@ -1638,6 +1670,37 @@ fn parse_caption_body(body: &str) -> Option<(bool, bool)> {
         "ここでキャプション終わり" => (true, true),
         _ => return None,
     })
+}
+
+/// Parse an absolute font-size line body into `(size, bold)`. The body is a
+/// size keyword (`特大文字` / `大文字` / `中文字` / `小文字`) optionally followed
+/// by the `、太字` compound. Any other shape (a trailing run, an unknown
+/// compound) declines to `Directive{Unknown}` — keeping `大文字下げ` and the like
+/// out.
+///
+/// Only the `、太字` spelling is recognised: `bold` is a flag, not a spelling, so
+/// serialization is canonical `、太字`; recognising the rarer `、ゴシック体`
+/// (1 corpus occurrence) would lose its spelling and break the verbatim
+/// round-trip — it stays `Directive{Unknown}` instead (mirrors §6.12 `この行は
+/// ゴシック体` recognising a single spelling).
+fn parse_line_font_size(body: &str) -> Option<(AbsoluteSize, bool)> {
+    let (size, rest) = if let Some(r) = body.strip_prefix("特大文字") {
+        (AbsoluteSize::ExtraLarge, r)
+    } else if let Some(r) = body.strip_prefix("大文字") {
+        (AbsoluteSize::Large, r)
+    } else if let Some(r) = body.strip_prefix("中文字") {
+        (AbsoluteSize::Medium, r)
+    } else if let Some(r) = body.strip_prefix("小文字") {
+        (AbsoluteSize::Small, r)
+    } else {
+        return None;
+    };
+    let bold = match rest {
+        "" => false,
+        "、太字" => true,
+        _ => return None,
+    };
+    Some((size, bold))
 }
 
 /// Parse a 縦中横 paired-range body into `is_close`. `縦中横` opens, `縦中横

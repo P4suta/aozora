@@ -523,6 +523,15 @@ pub enum LineFormat {
     Framed,
     /// `［＃この行はゴシック体］` — bold the single line it sits on.
     Bold,
+    /// `［＃大文字］` … `［＃特大文字、太字］` — an absolute font size applied to
+    /// the whole line (the postfix headline form). `bold` records a co-applied
+    /// `、太字` / `、ゴシック体`.
+    FontSizeAbsolute {
+        /// The absolute size.
+        size: AbsoluteSize,
+        /// `true` for the `、太字` / `、ゴシック体` compound.
+        bold: bool,
+    },
 }
 
 impl LineFormat {
@@ -535,6 +544,7 @@ impl LineFormat {
             Self::Center { .. } => Format::Center,
             Self::Framed => Format::Framed,
             Self::Bold => Format::Bold,
+            Self::FontSizeAbsolute { size, .. } => Format::FontSizeAbsolute(size),
         }
     }
 }

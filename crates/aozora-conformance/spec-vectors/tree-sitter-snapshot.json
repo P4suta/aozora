@@ -358,6 +358,16 @@
       "sexp": "(document (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (newline))"
     },
     {
+      "name": "line_font_size_bold_single",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "line_font_size_single",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "line_width_container",
       "error": false,
       "sexp": "(document (text) (newline) (slug body: (slug_body)) (newline) (text) (newline) (text) (newline) (slug body: (slug_body)) (newline) (text) (newline))"
