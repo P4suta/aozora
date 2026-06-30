@@ -73,6 +73,11 @@
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
     },
     {
+      "name": "bouten_forward_no_referent",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
       "name": "bouten_range",
       "error": true,
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text))"

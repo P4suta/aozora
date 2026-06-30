@@ -658,6 +658,31 @@ impl RecogniseCtx<'_, '_> {
             return None;
         };
         let kind = bouten_kind_from_suffix(kind_suffix)?;
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        // A *single* target with no referent is a self-contained bouten: the
+        // quoted run is itself the marked text, so style it directly (consume the
+        // whole bracket, no pull-back) instead of falling through to the hidden
+        // Directive{Unknown}. #228-safe by construction — with no earlier copy
+        // there is nothing to duplicate, and a no-referent target has zero
+        // look-back occurrences so it is never ambiguous. (Multi-target keeps
+        // falling through below: non-contiguous targets cannot be spliced into
+        // one leaf.)
+        if let [only] = extracted.targets.as_slice()
+            && !forward_target_is_preceded(view.events, self.source, open_idx, only)
+        {
+            let target = build_bouten_target(&extracted.targets, self.alloc);
+            return Some((
+                self.alloc
+                    .bouten(kind, target, position, ForwardOrigin::SelfContained),
+                open_span.start,
+                false,
+            ));
+        }
         // A forward-reference bouten only makes sense when every named
         // target actually appears in the preceding text. Otherwise it
         // has no referent and we fall through to the Directive{Unknown}
@@ -689,12 +714,6 @@ impl RecogniseCtx<'_, '_> {
         // of a pending plain run. That shape is the rarer corpus
         // pattern; we accept the duplication there until a future
         // change teaches the lexer to splice rather than truncate.
-        let &PairEvent::PairOpen {
-            span: open_span, ..
-        } = view.events.get(open_idx)?
-        else {
-            return None;
-        };
         let consume_start = if let [only] = extracted.targets.as_slice() {
             find_immediate_predecessor_target_position(view.events, self.source, open_idx, only)
                 .unwrap_or(open_span.start)

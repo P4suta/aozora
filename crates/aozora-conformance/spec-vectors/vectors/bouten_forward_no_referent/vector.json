@@ -1,0 +1,48 @@
+{
+  "name": "bouten_forward_no_referent",
+  "meta": {
+    "feature": "bouten",
+    "level": "should",
+    "spec_section": "6.2",
+    "note": "[provenance:reference-impl-aligned §6.2 + AOZORA-ANNOTATION] A single-target ［＃「X」に傍点］ whose X is absent from the preceding text is self-contained: the quoted run is itself the marked text, rendered <em class=\"aozora-bouten …\">. A no-referent target has zero look-back occurrences, so it never raises bouten-target-ambiguous. Serialize byte-exact (§7.6). Bytes from the reference parser."
+  },
+  "source": "本文［＃「強調」に傍点］。\n",
+  "expected": {
+    "html": "<p>本文<em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">強調</em>。</p>\n",
+    "serialize": "本文［＃「強調」に傍点］。\n",
+    "nodes": [
+      {
+        "kind": "bouten",
+        "span": {
+          "start": 6,
+          "end": 36
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 21,
+          "end": 24
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 6,
+          "end": 9
+        },
+        "close": {
+          "start": 33,
+          "end": 36
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
