@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import './__setup__/localStoragePolyfill';
-import { buildShareUrl, paramToText, SHARE_URL_LIMIT, textToParam } from '../share';
+import {
+  buildShareUrl,
+  compressedParamToText,
+  paramToText,
+  SHARE_URL_LIMIT,
+  textToCompressedParam,
+  textToParam,
+} from '../share';
 
 describe('share.ts', () => {
   describe('textToParam / paramToText 往復', () => {
@@ -52,9 +59,12 @@ describe('share.ts', () => {
       expect(res.url).toMatch(/\?text=/);
     });
 
-    it('長文では tooLong: true（上限 3500 文字超）', () => {
-      // 単純な ASCII を十分に長く積む。base64url 化は ~4/3 倍に膨らむ
-      const long = 'a'.repeat(SHARE_URL_LIMIT * 2);
+    it('高エントロピーな長文では tooLong: true（上限超）', () => {
+      // 反復は ?c= 圧縮で潰れるので、圧縮の効かない高エントロピー文字列
+      // （連続する別々の CJK 符号位置）で上限超過を確かめる。
+      const long = Array.from({ length: SHARE_URL_LIMIT }, (_, i) =>
+        String.fromCharCode(0x4e00 + (i % 0x3000)),
+      ).join('');
       const res = buildShareUrl(long);
       expect(res.tooLong).toBe(true);
     });
@@ -65,6 +75,57 @@ describe('share.ts', () => {
       // 'ZZ' は base64 として valid だが atob/btoa で問題なく動く。
       // 不正文字 '!' を含むものを試す。
       expect(() => paramToText('!!!')).toThrow();
+    });
+  });
+
+  describe('圧縮共有 (textToCompressedParam / compressedParamToText)', () => {
+    it('日本語を正しく往復する', () => {
+      const input = '青空文庫記法のテスト。｜青梅《おうめ》';
+      expect(compressedParamToText(textToCompressedParam(input))).toBe(input);
+    });
+
+    it('改行・絵文字・全角記号を往復する', () => {
+      const input = '本📚を読む\n［＃「青梅」に傍点］\nline3';
+      expect(compressedParamToText(textToCompressedParam(input))).toBe(input);
+    });
+
+    it('base64url 形式（+ / = を含まない）で出力される', () => {
+      const input = '反復反復反復反復反復反復反復反復反復反復反復反復';
+      expect(textToCompressedParam(input)).not.toMatch(/[+/=]/);
+    });
+
+    it('壊れた圧縮入力では例外を投げる', () => {
+      expect(() => compressedParamToText('!!!')).toThrow();
+    });
+
+    it('反復の多い長文では圧縮が生 base64url より短い', () => {
+      const long = 'あいうえお'.repeat(400);
+      expect(textToCompressedParam(long).length).toBeLessThan(textToParam(long).length);
+    });
+  });
+
+  describe('buildShareUrl のパラメータ選択 + 保全', () => {
+    it('反復の多い長文では圧縮 ?c= を使う（上限内）', () => {
+      const long = 'あいうえお'.repeat(200);
+      const { url, tooLong } = buildShareUrl(long);
+      expect(tooLong).toBe(false);
+      expect(url).toMatch(/[?&]c=/);
+      expect(url).not.toMatch(/[?&]text=/);
+    });
+
+    it('既存の ?lang= 等のクエリを保全する（query clobber しない）', () => {
+      const orig = globalThis.location;
+      Object.defineProperty(globalThis, 'location', {
+        configurable: true,
+        value: new URL('https://test.local/aozora/playground/?lang=en'),
+      });
+      try {
+        const { url } = buildShareUrl('hello');
+        expect(url).toContain('lang=en');
+        expect(url).toMatch(/[?&]text=/);
+      } finally {
+        Object.defineProperty(globalThis, 'location', { configurable: true, value: orig });
+      }
     });
   });
 });
