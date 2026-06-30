@@ -63,6 +63,7 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-container-wrap-indent",
     "aozora-container-yokogumi",
     "aozora-directive",
+    "aozora-editor-note",
     "aozora-font-larger",
     "aozora-font-smaller",
     "aozora-futoji",
@@ -306,6 +307,9 @@ mod tests {
             let p = a.make_directive("［＃注］", kind);
             render_into(a.annotation(p), &mut nodes);
         }
+        // EditorNote renders a visible 注N superscript from its raw shape.
+        let editor_note = a.make_directive("［＃入力者注(1)］", DirectiveKind::EditorNote);
+        render_into(a.annotation(editor_note), &mut nodes);
 
         // Nodes needing Content. `content_plain` takes `&mut self` but
         // returns a Content borrowing the arena (not the allocator), so
