@@ -839,7 +839,7 @@ const GAIJI_FORM_LABELS: [&str; 6] = [
 /// these would otherwise index out of bounds and panic per-file (see the audit
 /// path at `s.node_kinds[i] += 1`).
 const _: () = assert!(
-    NodeKind::ALL.len() == 25,
+    NodeKind::ALL.len() == 26,
     "bump node_kinds arrays to NodeKind::ALL.len()"
 );
 
@@ -852,7 +852,7 @@ struct FileStat {
     decode_error: bool,
     panicked: bool,
     /// Indexed parallel to [`NodeKind::ALL`].
-    node_kinds: [u64; 25],
+    node_kinds: [u64; 26],
     /// Indexed parallel to [`ANN_KIND_LABELS`].
     annotation_kinds: [u64; 8],
     gaiji_total: u64,
@@ -1360,7 +1360,7 @@ fn merge(
     corpus_root: String,
     elapsed_secs: f64,
 ) -> AuditReport {
-    let mut node_kinds = [0u64; 25];
+    let mut node_kinds = [0u64; 26];
     let mut ann = [0u64; 8];
     let mut gforms = [0u64; 6];
     let mut gaiji_total = 0u64;

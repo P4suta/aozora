@@ -271,6 +271,7 @@ fn describe_node(k: NodeKind) -> &'static str {
         NodeKind::Warichu => "割注 — split-line annotation.",
         NodeKind::Framed => "罫囲み — ruled box.",
         NodeKind::LineBold => "太字 line marker — この行はゴシック体.",
+        NodeKind::LineFontSize => "絶対サイズ line marker — ［＃大文字］ ほか.",
         NodeKind::PageBreak => "改ページ.",
         NodeKind::SectionBreak => "Section break.",
         NodeKind::Heading => "Aozora heading (見出し).",

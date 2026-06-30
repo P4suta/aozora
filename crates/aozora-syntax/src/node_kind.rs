@@ -50,6 +50,9 @@ pub enum NodeKind {
     Framed,
     /// 太字 line marker (`この行はゴシック体`) — bolds the line it sits on.
     LineBold,
+    /// Absolute font-size line marker (`大文字` … `特大文字、太字`) — sizes the
+    /// line it sits on.
+    LineFontSize,
     /// 改ページ (page break).
     PageBreak,
     /// Section break (大見出し系統合).
@@ -90,7 +93,7 @@ impl NodeKind {
     /// Used by `aozora kinds` (CLI introspection) and the
     /// TypeScript / JSON-Schema codegen so the artefact list
     /// tracks the enum without a hand-maintained parallel.
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::Ruby,
         Self::Bouten,
         Self::CombineUpright,
@@ -101,6 +104,7 @@ impl NodeKind {
         Self::Warichu,
         Self::Framed,
         Self::LineBold,
+        Self::LineFontSize,
         Self::PageBreak,
         Self::SectionBreak,
         Self::BodyEnd,
@@ -137,6 +141,7 @@ impl NodeKind {
             Self::Warichu => "warichu",
             Self::Framed => "framed",
             Self::LineBold => "lineBold",
+            Self::LineFontSize => "lineFontSize",
             Self::PageBreak => "pageBreak",
             Self::SectionBreak => "sectionBreak",
             Self::BodyEnd => "bodyEnd",

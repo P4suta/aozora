@@ -86,6 +86,10 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-keigakomi-inline",
     "aozora-kogaki-left",
     "aozora-kogaki-right",
+    "aozora-line-font-extra-large",
+    "aozora-line-font-large",
+    "aozora-line-font-medium",
+    "aozora-line-font-small",
     "aozora-line-futoji",
     "aozora-margin-note",
     "aozora-page-break",
@@ -291,6 +295,25 @@ mod tests {
         render_into(a.line(LineFormat::AlignEnd { offset: 0 }), &mut nodes);
         render_into(a.line(LineFormat::AlignEnd { offset: 2 }), &mut nodes);
         render_into(a.line(LineFormat::Bold), &mut nodes);
+        for size in [
+            AbsoluteSize::ExtraLarge,
+            AbsoluteSize::Large,
+            AbsoluteSize::Medium,
+            AbsoluteSize::Small,
+        ] {
+            render_into(
+                a.line(LineFormat::FontSizeAbsolute { size, bold: false }),
+                &mut nodes,
+            );
+        }
+        // The `、太字` compound adds the line-bold class (already covered above).
+        render_into(
+            a.line(LineFormat::FontSizeAbsolute {
+                size: AbsoluteSize::Large,
+                bold: true,
+            }),
+            &mut nodes,
+        );
         render_into(a.sashie("f.png", None, None, None), &mut nodes);
         render_into(a.sashie_general("f.png", "図", None), &mut nodes);
         render_into(

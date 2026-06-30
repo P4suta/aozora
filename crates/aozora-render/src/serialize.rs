@@ -107,6 +107,16 @@ pub(crate) fn emit_line<W: Write>(lf: LineFormat, out: &mut W) -> fmt::Result {
         LineFormat::Center { page: false } => out.write_str("［＃中央揃え］"),
         LineFormat::Framed => out.write_str("［＃罫囲み］"),
         LineFormat::Bold => out.write_str("［＃この行はゴシック体］"),
+        // Absolute font-size line directive. `bold` canonicalises to `、太字`
+        // (the classifier only admits that spelling, so the round-trip is exact).
+        LineFormat::FontSizeAbsolute { size, bold } => {
+            write!(
+                out,
+                "［＃{}{}］",
+                size.keyword(),
+                if bold { "、太字" } else { "" }
+            )
+        }
         // `LineFormat` is `#[non_exhaustive]`; forward-compat skip.
         _ => Ok(()),
     }

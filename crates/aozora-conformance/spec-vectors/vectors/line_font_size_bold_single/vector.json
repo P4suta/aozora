@@ -1,0 +1,37 @@
+{
+  "name": "line_font_size_bold_single",
+  "meta": {
+    "feature": "layout",
+    "level": "should",
+    "spec_section": "6.6",
+    "note": "[provenance:hand-derived §6.6 + AOZORA-ANNOTATION 2026-07-01] ［＃大文字、太字］ — single-line absolute size with the 、太字 compound: large + bold on the line. Zero-width marker; §8 renders <span class=\"aozora-line-font-large aozora-line-futoji\"></span>. bold canonicalises to 、太字 (only spelling admitted, so the round-trip is exact). Offsets from the §4 byte model."
+  },
+  "source": "見出し行［＃大文字、太字］\n",
+  "expected": {
+    "html": "<p>見出し行<span class=\"aozora-line-font-large aozora-line-futoji\"></span></p>\n",
+    "serialize": "見出し行［＃大文字、太字］\n",
+    "nodes": [
+      {
+        "kind": "lineFontSize",
+        "span": {
+          "start": 12,
+          "end": 39
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 12,
+          "end": 15
+        },
+        "close": {
+          "start": 36,
+          "end": 39
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

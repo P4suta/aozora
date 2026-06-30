@@ -307,6 +307,18 @@ pub(crate) fn render_line<W: Write>(lf: LineFormat, writer: &mut W) -> fmt::Resu
         // so this hook is classifier-unreachable; render a matching span.
         LineFormat::Framed => writer.write_str(r#"<span class="aozora-keigakomi"></span>"#),
         LineFormat::Bold => writer.write_str(r#"<span class="aozora-line-futoji"></span>"#),
+        // Absolute font-size line marker; `、太字` adds the line-bold class too.
+        LineFormat::FontSizeAbsolute { size, bold } => {
+            let slug = aozora_spec::roman_slug(size.keyword()).unwrap_or("font-small");
+            if bold {
+                write!(
+                    writer,
+                    r#"<span class="aozora-line-{slug} aozora-line-futoji"></span>"#,
+                )
+            } else {
+                write!(writer, r#"<span class="aozora-line-{slug}"></span>"#)
+            }
+        }
         // `LineFormat` is `#[non_exhaustive]`; forward-compat skip.
         _ => Ok(()),
     }
