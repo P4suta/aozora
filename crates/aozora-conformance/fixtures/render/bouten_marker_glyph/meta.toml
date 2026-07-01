@@ -1,0 +1,5 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# Marker-suffix bouten: a bare glyph `傍点◎` names the mark after 傍点 and
+# canonicalizes to the marker-prefix keyword `二重丸傍点` (DoubleCircle).
+feature = "bouten"
+level = "should"

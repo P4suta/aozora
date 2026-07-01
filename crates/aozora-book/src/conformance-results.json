@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 66,
-  "passed": 66,
+  "total": 68,
+  "passed": 68,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 40,
-      "passed": 40,
+      "total": 42,
+      "passed": 42,
       "failed": 0
     }
   },
@@ -107,6 +107,20 @@
     },
     {
       "case": "bouten_forward_interior",
+      "feature": "bouten",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "bouten_marker_glyph",
+      "feature": "bouten",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "bouten_marker_paren",
       "feature": "bouten",
       "level": "should",
       "passed": true,
