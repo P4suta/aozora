@@ -165,6 +165,7 @@ impl ContainerPair {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::format::EnclosureKind;
 
     #[test]
     fn empty_registry_reports_empty() {
@@ -178,12 +179,20 @@ mod tests {
         let r = RegistryOwned::from_sorted_slice(&[
             (10u32, NodeRefOwned::Inline(NodeOwned::PageBreak)),
             (20u32, NodeRefOwned::BlockLeaf(NodeOwned::PageBreak)),
-            (30u32, NodeRefOwned::BlockOpen(RegionFormat::Framed)),
-            (40u32, NodeRefOwned::BlockClose(RegionClose::Framed)),
+            (
+                30u32,
+                NodeRefOwned::BlockOpen(RegionFormat::Framed(EnclosureKind::Rule)),
+            ),
+            (
+                40u32,
+                NodeRefOwned::BlockClose(RegionClose::Framed(EnclosureKind::Rule)),
+            ),
         ]);
         assert!(matches!(
             r.node_at(NormalizedOffset::new(30)),
-            Some(NodeRefOwned::BlockOpen(RegionFormat::Framed))
+            Some(NodeRefOwned::BlockOpen(RegionFormat::Framed(
+                EnclosureKind::Rule
+            )))
         ));
         assert_eq!(r.count_kind(Sentinel::Inline), 1, "one inline entry");
         assert_eq!(r.count_kind(Sentinel::BlockOpen), 1, "one open entry");

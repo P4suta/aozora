@@ -447,7 +447,7 @@ fn line_inline(lf: LineFormat) -> Inline {
             class_attr_kv("align-end", vec![("offset".to_owned(), offset.to_string())])
         }
         LineFormat::Center { .. } => class_attr_kv("center", Vec::new()),
-        LineFormat::Framed => class_attr("keigakomi"),
+        LineFormat::Framed(_) => class_attr("keigakomi"),
         _ => plain_attr(),
     };
     Inline::Span(attr, Vec::new())
@@ -633,7 +633,7 @@ fn container_attr(kind: RegionFormat) -> Attr {
             ("container-indent", kvs)
         }
         RegionFormat::Warichu => ("container-warichu", Vec::new()),
-        RegionFormat::Framed => ("container-keigakomi", Vec::new()),
+        RegionFormat::Framed(_) => ("container-keigakomi", Vec::new()),
         RegionFormat::AlignEnd { offset } => (
             "container-align-end",
             vec![("offset".to_owned(), offset.to_string())],
@@ -664,7 +664,7 @@ fn container_attr(kind: RegionFormat) -> Attr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aozora::Document;
+    use aozora::{Document, EnclosureKind};
 
     /// Plain text round-trips into a single Pandoc Para of `Inline::Str`.
     #[test]
@@ -1412,7 +1412,7 @@ mod tests {
 
     #[test]
     fn line_inline_keigakomi_is_empty_marker() {
-        match line_inline(LineFormat::Framed) {
+        match line_inline(LineFormat::Framed(EnclosureKind::Rule)) {
             Inline::Span(attr, inner) => {
                 assert!(has_class(&attr, "keigakomi"), "keigakomi class");
                 assert!(inner.is_empty(), "keigakomi marker span is empty");

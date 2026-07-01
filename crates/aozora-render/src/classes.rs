@@ -169,9 +169,9 @@ mod tests {
     use aozora_syntax::owned::{NodeOwned, NodeStore};
     use aozora_syntax::{
         AbsoluteSize, BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition, ColumnCount,
-        Container, DirectiveKind, FontShift, ForwardAttr, ForwardOrigin, HEADING_KINDS,
-        HEADING_STYLES, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi, LineFormat,
-        LineWidth, MarginNoteKind, RegionFormat, SECTION_KINDS,
+        Container, DirectiveKind, EnclosureKind, FontShift, ForwardAttr, ForwardOrigin,
+        HEADING_KINDS, HEADING_STYLES, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi,
+        LineFormat, LineWidth, MarginNoteKind, RegionFormat, SECTION_KINDS,
     };
     use core::num::{NonZeroI8, NonZeroU8};
     use std::collections::BTreeSet;
@@ -377,7 +377,7 @@ mod tests {
             ForwardAttr::SubScript,
             ForwardAttr::SmallScript(BoutenPosition::Right),
             ForwardAttr::SmallScript(BoutenPosition::Left),
-            ForwardAttr::Framed,
+            ForwardAttr::Framed(EnclosureKind::Rule),
             ForwardAttr::Horizontal,
             ForwardAttr::Caption,
             ForwardAttr::Fraction,
@@ -459,7 +459,7 @@ mod tests {
                 },
             }),
             RegionFormat::Warichu,
-            RegionFormat::Framed,
+            RegionFormat::Framed(EnclosureKind::Rule),
             RegionFormat::AlignEnd { offset: 0 },
             RegionFormat::AlignEnd { offset: 2 },
             RegionFormat::LineWidth(lw(30)),

@@ -90,6 +90,25 @@ impl AbsoluteSize {
     }
 }
 
+/// The style of an enclosure (囲み) — a ruled frame, a box glyph, and so on.
+///
+/// 青空文庫 attests a family of enclosures that share the [`Format::Framed`]
+/// identity and differ only on this style axis: 罫囲み / 枠囲み / 枠囲い (a
+/// ruled frame) and 「□」囲み (a box glyph), plus the long tail 二重罫囲み /
+/// 点線丸囲み / ミシン罫囲み / 表罫囲み. This mirrors how the 傍点 kinds share
+/// [`Format::Bouten`] via [`BoutenKind`].
+//
+// Deliberately NOT `#[non_exhaustive]`: every classifier / render / serialize
+// site must handle each kind explicitly, so a new member is compiler-flagged
+// at every site rather than silently folded into a `_` fallback (the §7.6
+// param-drop bug class). `Bouten(BoutenKind)` is the template.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum EnclosureKind {
+    /// 罫囲み / 枠囲み / 枠囲い — a ruled rectangular frame.
+    Rule,
+}
+
 /// Number of columns in a 段組 region. `1` is not a multi-column layout, so
 /// `NonZero` rules out the degenerate case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,7 +227,7 @@ impl BlockStyles {
         [
             bold.then_some(Format::Bold),
             horizontal.then_some(Format::Horizontal),
-            framed.then_some(Format::Framed),
+            framed.then_some(Format::Framed(EnclosureKind::Rule)),
             font.map(Format::FontSize),
         ]
         .into_iter()
@@ -257,8 +276,9 @@ pub enum Format {
     Italic,
     /// 傍点 / 傍線 (emphasis dots / sidelines).
     Bouten(BoutenKind),
-    /// 罫囲み (ruled box).
-    Framed,
+    /// 罫囲み (ruled box) / 「□」囲み (box glyph) — an enclosure of some
+    /// [`EnclosureKind`].
+    Framed(EnclosureKind),
     /// 横組み (horizontal writing).
     Horizontal,
     /// N段階大きな / 小さな文字 (relative font size).
@@ -309,7 +329,7 @@ impl Format {
             Self::Bold => "bold",
             Self::Italic => "italic",
             Self::Bouten(_) => "bouten",
-            Self::Framed => "framed",
+            Self::Framed(_) => "framed",
             Self::Horizontal => "horizontal",
             Self::FontSize(_) => "fontSize",
             Self::FontSizeAbsolute(_) => "fontSizeAbsolute",
@@ -354,8 +374,8 @@ pub enum ForwardAttr {
     SubScript,
     /// 行右 / 行左小書き.
     SmallScript(BoutenPosition),
-    /// 罫囲み.
-    Framed,
+    /// 罫囲み / 「□」囲み — an enclosure of some [`EnclosureKind`].
+    Framed(EnclosureKind),
     /// 横組み.
     Horizontal,
     /// キャプション.
@@ -457,7 +477,7 @@ impl ForwardAttr {
             Self::SuperScript => Format::SuperScript,
             Self::SubScript => Format::SubScript,
             Self::SmallScript(p) => Format::SmallScript(p),
-            Self::Framed => Format::Framed,
+            Self::Framed(k) => Format::Framed(k),
             Self::Horizontal => Format::Horizontal,
             Self::Caption => Format::Caption,
             Self::FontSize(f) => Format::FontSize(f),
@@ -482,7 +502,7 @@ impl ForwardAttr {
             Self::SubScript => "下付き小文字",
             Self::SmallScript(BoutenPosition::Right) => "行右小書き",
             Self::SmallScript(BoutenPosition::Left) => "行左小書き",
-            Self::Framed => "罫囲み",
+            Self::Framed(EnclosureKind::Rule) => "罫囲み",
             Self::Horizontal => "横組み",
             Self::Caption => "キャプション",
             Self::CombineUpright => "縦中横",
@@ -519,8 +539,8 @@ pub enum LineFormat {
         /// `true` for `ページの左右中央` (page centre), `false` for `中央揃え`.
         page: bool,
     },
-    /// `［＃罫囲み］` — box the single line it sits on.
-    Framed,
+    /// `［＃罫囲み］` — enclose the single line it sits on ([`EnclosureKind`]).
+    Framed(EnclosureKind),
     /// `［＃この行はゴシック体］` — bold the single line it sits on.
     Bold,
     /// `［＃大文字］` … `［＃特大文字、太字］` — an absolute font size applied to
@@ -542,7 +562,7 @@ impl LineFormat {
             Self::Indent { .. } => Format::Indent,
             Self::AlignEnd { .. } => Format::AlignEnd,
             Self::Center { .. } => Format::Center,
-            Self::Framed => Format::Framed,
+            Self::Framed(k) => Format::Framed(k),
             Self::Bold => Format::Bold,
             Self::FontSizeAbsolute { size, .. } => Format::FontSizeAbsolute(size),
         }
@@ -615,8 +635,8 @@ pub enum RegionFormat {
     Horizontal,
     /// N段階大きな / 小さな文字 block.
     FontSize(FontShift),
-    /// 罫囲み block / range.
-    Framed,
+    /// 罫囲み block / range ([`EnclosureKind`]).
+    Framed(EnclosureKind),
     /// 割り注 block (multi-line `［＃割り注］ … ［＃割り注終わり］`).
     Warichu,
 }
@@ -640,7 +660,7 @@ impl RegionFormat {
             Self::Columns(c) => Format::Columns(c),
             Self::Horizontal => Format::Horizontal,
             Self::FontSize(f) => Format::FontSize(f),
-            Self::Framed => Format::Framed,
+            Self::Framed(k) => Format::Framed(k),
             Self::Warichu => Format::Warichu,
         }
     }
@@ -655,7 +675,7 @@ impl RegionFormat {
         match self {
             Self::Indent(_) => "indent",
             Self::Warichu => "warichu",
-            Self::Framed => "framed",
+            Self::Framed(_) => "framed",
             Self::AlignEnd { .. } => "alignEnd",
             Self::LineWidth(_) => "lineWidth",
             Self::Bouten { .. } => "boutenRange",
@@ -679,7 +699,7 @@ impl RegionFormat {
         match self {
             Self::Indent(_) => "indent",
             Self::Warichu => "warichu",
-            Self::Framed => "framed",
+            Self::Framed(_) => "framed",
             Self::AlignEnd { .. } => "align-end",
             Self::LineWidth(_) => "line-width",
             Self::Bouten { .. } => "bouten-range",
@@ -738,7 +758,7 @@ impl RegionFormat {
             styles: BlockStyles::EMPTY,
         }),
         Self::Warichu,
-        Self::Framed,
+        Self::Framed(EnclosureKind::Rule),
         Self::AlignEnd { offset: 0 },
         Self::LineWidth(LineWidth(NonZeroU8::MIN)),
         Self::Bouten {
@@ -792,8 +812,8 @@ pub enum RegionClose {
     },
     /// `割り注終わり`.
     Warichu,
-    /// `罫囲み終わり`.
-    Framed,
+    /// `罫囲み終わり` ([`EnclosureKind`]).
+    Framed(EnclosureKind),
     /// `字上げ終わり` / 地付き close (no offset — the close marker carries none).
     AlignEnd,
     /// `字詰め終わり`.
@@ -865,7 +885,7 @@ impl RegionClose {
                 },
             },
             RegionFormat::Warichu => Self::Warichu,
-            RegionFormat::Framed => Self::Framed,
+            RegionFormat::Framed(k) => Self::Framed(k),
             RegionFormat::AlignEnd { .. } => Self::AlignEnd,
             RegionFormat::LineWidth(_) => Self::LineWidth,
             RegionFormat::Bouten { kind, position } => Self::Bouten { kind, position },
@@ -900,7 +920,7 @@ impl RegionClose {
         match self {
             Self::Indent { .. } => "indent",
             Self::Warichu => "warichu",
-            Self::Framed => "framed",
+            Self::Framed(_) => "framed",
             Self::AlignEnd => "align-end",
             Self::LineWidth => "line-width",
             Self::Bouten { .. } => "bouten-range",
@@ -1056,7 +1076,10 @@ mod tests {
     #[test]
     fn scope_projections_are_total() {
         assert_eq!(ForwardAttr::Bold.format(), Format::Bold);
-        assert_eq!(LineFormat::Framed.format(), Format::Framed);
+        assert_eq!(
+            LineFormat::Framed(EnclosureKind::Rule).format(),
+            Format::Framed(EnclosureKind::Rule)
+        );
         assert_eq!(RegionFormat::Warichu.format(), Format::Warichu);
         assert_eq!(
             RegionFormat::Bold { padded: true }.format(),
