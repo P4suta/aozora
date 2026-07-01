@@ -18,7 +18,8 @@ export interface HeadingEntry {
   to: number;
   /** Visible text of the heading (sliced from source). */
   text: string;
-  /** Approximate level (1 = top). For now flat = 1; refined later. */
+  /** Heading rank from the 大/中/小見出し hint (1/2/3); 1 when no hint.
+   * Annotation-driven, not container-nesting depth. */
   level: number;
 }
 

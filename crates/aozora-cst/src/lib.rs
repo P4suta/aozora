@@ -40,8 +40,10 @@
 //! can collapse / expand a paired indent / keigakomi region.
 //!
 //! Finer per-token granularity (individual punctuation, kana
-//! runs, …) can land later once a concrete consumer asks for it.
-//! The lossless property holds at any granularity.
+//! runs, …) is a deliberate non-goal: the projection stays
+//! construct-level because the lossless property already holds at
+//! this granularity. A future consumer that needs sub-construct
+//! tokens can refine it without disturbing this contract.
 //!
 //! [rowan]: https://docs.rs/rowan
 

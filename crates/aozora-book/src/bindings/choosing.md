@@ -20,7 +20,7 @@ trade-offs behind it.
 
 | You are…                                   | Use                                        | Why                                                                       | Distribution            |
 | ------------------------------------------ | ------------------------------------------ | ------------------------------------------------------------------------- | ----------------------- |
-| Writing Rust                               | umbrella [`aozora`](rust.md) library       | Zero-copy borrowed AST, full type safety, the fastest path. No serialise. | crates.io¹              |
+| Writing Rust                               | umbrella [`aozora`](rust.md) library       | Owned, lifetime-free AST, full type safety, the fastest path. No serialise. | crates.io¹              |
 | At a shell / in CI / scripting             | the [`aozora`](../ref/cli.md) binary       | `check` / `render` / `fmt` / `pandoc`, reads stdin, exits with a code.     | GitHub release          |
 | In the browser, Node, or TypeScript        | [`aozora-wasm`](wasm.md)                    | wasm-bindgen `Document` class; runs client-side and at the edge.          | npm                     |
 | Writing Python                             | [`aozora-py`](python.md) (PyO3)             | In-process native module via maturin; idiomatic Python API.               | build-from-source²      |
@@ -92,9 +92,8 @@ aozora's renderer emits **semantic HTML5**. The decision here is binary:
 
 If raw throughput is the deciding factor, the ordering is:
 
-1. **Rust, borrowed-arena.** The library hands you `Node`s that borrow
-   directly from the `bumpalo` arena — no copies, no serialise, no JSON.
-   Nothing is faster.
+1. **Rust, owned AST.** The library hands you owned `NodeOwned`s — no
+   serialise, no JSON. Nothing is faster.
 2. **In-process native bindings** (`aozora-py`, `aozora-wasm`, C ABI). One
    string copy in, one JSON projection out, but all in-process. Low,
    constant overhead.
@@ -103,7 +102,7 @@ If raw throughput is the deciding factor, the ordering is:
    when the alternative is no binding for your language at all.
 
 For the overwhelming majority of documents this difference is invisible
-against I/O. Reach for the Rust library's borrowed AST only when you are
+against I/O. Reach for the Rust library's owned AST only when you are
 parsing at scale (the corpus sweep over ~17 000 works is the motivating
 case); otherwise pick the binding that fits your language and let the
 constant overhead disappear into the noise.

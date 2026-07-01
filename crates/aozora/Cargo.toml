@@ -15,8 +15,8 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-# Document wraps `aozora_pipeline::lex` and Tree
-# borrows from a `bumpalo`-backed arena owned by Document. The five
+# Document wraps the lex pipeline and returns a `Tree<'_>` whose
+# lifetime borrows only the source; the parsed AST is owned. The five
 # building-block crates below are published in their own right (the
 # umbrella is on crates.io, so its transitive deps must be too); this
 # meta crate is the recommended single front door, re-exposing them via
@@ -29,7 +29,7 @@ aozora-spec = { workspace = true }
 aozora-encoding = { workspace = true }
 
 # Driver-shared wire format (see `aozora::json`). Optional so library
-# consumers that only use the borrowed-AST surface do not have to
+# consumers that only use the owned-AST surface do not have to
 # compile serde / serde_json. Drivers (aozora-ffi / aozora-wasm /
 # aozora-py) enable `aozora/json` to project the AST into JSON.
 serde = { workspace = true, optional = true }

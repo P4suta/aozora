@@ -5,7 +5,7 @@
 //!
 //! 1. **Totality**: [`to_pandoc`] is total over every input the lex
 //!    pipeline accepts. The projection is a pure mapping over the
-//!    borrowed AST; a panic here is a denial-of-service surface for
+//!    owned AST; a panic here is a denial-of-service surface for
 //!    every Pandoc-format consumer (pandoc → HTML / EPUB / DOCX / …).
 //!
 //! 2. **JSON round-trip is value-preserving**: the projection

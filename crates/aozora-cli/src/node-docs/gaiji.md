@@ -42,7 +42,7 @@ pub struct Gaiji<'src> {
 
 `Resolved` is either a single Unicode scalar or one of 25
 predefined static combining sequences (e.g. か゚ — `か` + the IPA
-voicing-pair-mark — kept as a static constant so the borrowed-AST
+voicing-pair-mark — kept as a static constant so the owned-AST
 stays `Copy`).
 
 ## When emitted

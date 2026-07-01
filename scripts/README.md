@@ -115,12 +115,12 @@ Output rolls into `$XDG_STATE_HOME/aozora/deps-check.log`
 `post-merge` hook surfaces freshness via `just deps-status` so the
 developer sees the report whenever they pull.
 
-## `corpus_sweep.sh` (planned)
+## Corpus sweep (`just corpus-sweep`)
 
-Reserved name for an opt-in 17 K aozora-corpus sweep that takes
-2–5 min. Not yet implemented; `just corpus-sweep` (which loads the
-corpus through `aozora-corpus` and walks every document) covers the
-same invariants today.
+The opt-in ~17 K aozora-corpus sweep (2–5 min) runs through
+`just corpus-sweep`, which loads the corpus via `aozora-corpus` and
+walks every document. There is no separate `corpus_sweep.sh` script —
+the Justfile recipe is the supported entry point.
 
 ## Profiling (samply)
 

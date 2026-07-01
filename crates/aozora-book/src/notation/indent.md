@@ -24,7 +24,7 @@ The 字下げ / 地付き / 地上げ directives also have a **single-line** for
 　［＃地付き］平和への誓い
 ```
 
-In the borrowed AST a single-line directive is a **zero-width marker**
+In the owned AST a single-line directive is a **zero-width marker**
 node (`Node::Indent` / `AlignEnd`), not a wrapping container — it
 renders as an empty span and the following text stays a sibling:
 

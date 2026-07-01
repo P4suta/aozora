@@ -1,7 +1,7 @@
 # Rust library
 
 The first-class binding. Full type safety, zero copy, and the
-borrowed-arena AST exposed directly.
+owned AST exposed directly.
 
 ## Adding to a project
 
@@ -28,13 +28,13 @@ impl Document {
 
 pub struct Tree<'a> { /* borrows from Document */ }
 impl<'a> Tree<'a> {
-    pub fn nodes(&self) -> impl Iterator<Item = Node<'a>>;
+    pub fn nodes(&self) -> impl Iterator<Item = NodeRefOwned<'a>>;
     pub fn to_html(&self) -> String;
     pub fn to_source(&self) -> String;
     pub fn diagnostics(&self) -> &[Diagnostic];
 }
 
-pub enum Node<'src> { Plain(&'src str), Ruby(Ruby<'src>), … }
+pub enum NodeOwned { Ruby(RubyOwned), Gaiji(GaijiOwned), … }
 ```
 
 See [Library Quickstart](../getting-started/library.md) for the

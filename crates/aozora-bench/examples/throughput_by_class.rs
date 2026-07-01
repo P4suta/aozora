@@ -398,7 +398,7 @@ fn measure_all(banded: &SizeBandedCorpus, parallel: bool) -> AllReport {
 fn measure_band(docs: &[(String, String)], parallel: bool) -> BandReport {
     // Pre-size the per-thread arena to `source.len() * 4` before each
     // parse. The factor matches the production `Document::new` path
-    // and covers borrowed-AST shape on every observed corpus doc.
+    // and covers owned-AST shape on every observed corpus doc.
     // When the worker's arena is already at least that large
     // (steady state after the first big doc), `reset_with_hint`
     // degrades to plain `reset()` — no syscall. The growth path

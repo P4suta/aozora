@@ -39,7 +39,7 @@ use proptest::prelude::*;
 /// Annotations are emitted on `Sentinel::Inline` positions, so they
 /// surface as `NodeRefOwned::Inline(NodeOwned::Directive(_))`. Container
 /// open/close hits never carry annotations; block-leaf hits in the
-/// borrowed AST are reserved for non-annotation block primitives
+/// owned AST are reserved for non-annotation block primitives
 /// (page break, section break, sashie, …).
 fn count_annotations(out: &aozora_pipeline::OwnedLexOutput) -> usize {
     out.registry

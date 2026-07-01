@@ -111,7 +111,7 @@ surface editor tooling uses for semantic tokens and document symbols:
 for entry in tree.source_nodes() {
     let span = entry.source_span;            // byte range into the source
     // `entry.node` is a `NodeRef`: Inline / BlockLeaf / BlockOpen /
-    // BlockClose, each wrapping the borrowed AST node or container kind.
+    // BlockClose, each wrapping the owned AST node or container kind.
     println!("{}..{}  {:?}", span.start, span.end, entry.node);
 }
 ```

@@ -1,21 +1,21 @@
 //! One-shot wall-time measurement of the [`ParseCache`] reparse and the
-//! borrowed-tree access it lends (#237 Stage B'1) — distinct from
+//! borrowed-tree access it lends — distinct from
 //! `measure_incremental`, which times the tree-sitter snapshot rebuild (a
 //! different subsystem).
 //!
 //! Builds a synthetic document of `N` blank-line-separated plain-prose
 //! paragraphs and times two things:
 //!
-//! - a full [`ParseCache::reparse`] (the cost the editor pays per debounced
-//!   keystroke under the current foundation — every reparse is a full parse);
+//! - a full [`ParseCache::reparse`] (the cold-path cost — a from-scratch
+//!   full parse; the warm path is [`ParseCache::reparse_incremental`]);
 //! - a [`ParseCache::with_tree`] call, which is now **cheap**: the owned parse
 //!   output is retained and lent as a borrowed `Tree::view`, so a request
 //!   handler reaches the tree without re-parsing.
 //!
-//! Note: under #237 Stage B'1 every reparse is a full parse, so a follow-up
-//! edit is *not* faster via segment reuse (`cache_hits == 0`). Incremental
-//! reuse — and a faster "warm" reparse — returns in a later #237 PR. The win
-//! delivered here is the cheap per-request `with_tree`.
+//! Note: this example times the full-parse (cold) path and the cheap
+//! per-request `with_tree`. Incremental segment reuse — a warm reparse
+//! with `cache_hits > 0` — ships as [`ParseCache::reparse_incremental`].
+//! The win shown here is the cheap per-request `with_tree`.
 //!
 //! Run with:
 //! ```text
@@ -46,7 +46,7 @@ fn main() {
     let doc = plain_paragraphs(n);
     println!("synthetic doc: {n} paragraphs, {} bytes", doc.len());
 
-    // A full parse from scratch — the per-keystroke cost.
+    // A full parse from scratch — the cold-path cost.
     let mut cache = ParseCache::default();
     let t = Instant::now();
     let (_d0, stats) = cache.reparse(&doc);

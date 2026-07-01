@@ -28,7 +28,7 @@
 //! [`OwnedLexOutput`] *as observed externally*, even though the
 //! internal pipeline runs SIMD trigger scans over scratch buffers.
 //! The determinism + sentinel-alignment proptests in
-//! `tests/property_borrowed_arena.rs` pin the contract.
+//! `tests/property_owned_output.rs` pin the contract.
 
 #![forbid(unsafe_code)]
 

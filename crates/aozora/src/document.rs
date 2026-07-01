@@ -510,8 +510,8 @@ mod tests {
     fn edit_equivalence_full_reparse() {
         // The edited document parses to the same Tree shape as
         // re-parsing the spliced source from scratch — this is the
-        // observable property `Document::edit` ships under, and the
-        // future incremental implementation will preserve.
+        // observable property `Document::edit` ships under, which the
+        // incremental engine preserves.
         let original = Document::new("｜青梅《おうめ》です。");
         // Replace 《おうめ》 with 《せいばい》.
         let span_start = original.source().find('《').expect("《 present");
