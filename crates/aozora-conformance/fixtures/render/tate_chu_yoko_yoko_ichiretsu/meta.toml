@@ -1,0 +1,6 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# 横一列 — a short punctuation run (`!?`) set on one horizontal line — is a
+# corpus-attested prose synonym of 縦中横 (combine-upright) and canonicalizes
+# to ［＃「!?」は縦中横］ on serialize.
+feature = "tcy"
+level = "should"

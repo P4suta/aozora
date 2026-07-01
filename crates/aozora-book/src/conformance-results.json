@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 72,
-  "passed": 72,
+  "total": 73,
+  "passed": 73,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 46,
-      "passed": 46,
+      "total": 47,
+      "passed": 47,
       "failed": 0
     }
   },
@@ -487,6 +487,13 @@
       "case": "tate_chu_yoko_found",
       "feature": "tate_chu_yoko",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "tate_chu_yoko_yoko_ichiretsu",
+      "feature": "tcy",
+      "level": "should",
       "passed": true,
       "message": null
     },

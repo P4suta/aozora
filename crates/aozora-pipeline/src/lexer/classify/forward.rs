@@ -842,10 +842,12 @@ impl RecogniseCtx<'_, '_> {
         // `は縦中横` and the corpus compound `は縦中横、行右/左小書き` (numbered
         // list markers like 「１）」 set horizontal *and* small). Recognise the
         // compound as 縦中横 — the dominant transform; the small-script
-        // fine-positioning normalises away on serialize (idempotent).
+        // fine-positioning normalises away on serialize (idempotent). `は横一列`
+        // (a short punctuation run like `！？` set on one horizontal line) is a
+        // corpus-attested prose synonym of 縦中横 and canonicalises to it.
         if !matches!(
             extracted.suffix,
-            "は縦中横" | "は縦中横、行右小書き" | "は縦中横、行左小書き"
+            "は縦中横" | "は縦中横、行右小書き" | "は縦中横、行左小書き" | "は横一列"
         ) {
             return ForwardTcy::NotTcy;
         }
