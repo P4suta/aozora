@@ -28,7 +28,7 @@ mod walk;
 
 pub use classes::AOZORA_CLASSES;
 pub use html_owned::render_html_owned;
-pub use serialize_owned::serialize_owned;
+pub use serialize_owned::{SerializeOptions, serialize_owned, serialize_owned_with};
 
 #[cfg(test)]
 mod tests {

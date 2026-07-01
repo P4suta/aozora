@@ -25,13 +25,31 @@ use crate::serialize::{
 use crate::walk::{SentinelKind, WalkSinkOwned, walk_owned};
 use aozora_pipeline::{has_long_rule_line, isolate_decorative_rules};
 use aozora_syntax::format::ForwardOrigin;
+use aozora_syntax::lint::canonical_directive;
 use aozora_syntax::owned::{
     AngleQuoteOwned, ContentOwned, ContentRange, DirectiveOwned, ForwardFormatOwned,
     GaijiCanonicalOwned, GaijiOwned, HeadingHintOwned, HeadingOwned, IllustrationOwned,
     KaeritenOwned, MarginNoteOwned, NodeOwned, NodeRefOwned, NodeStore, OwnedLexOutput, RubyOwned,
     SegmentOwned,
 };
-use aozora_syntax::{BoutenPosition, EnclosureKind, ForwardAttr, RubySide, is_ruby_base_char};
+use aozora_syntax::{
+    BoutenPosition, DirectiveKind, EnclosureKind, ForwardAttr, RubySide, is_ruby_base_char,
+};
+
+/// Options controlling how the owned AST is re-emitted to Aozora source.
+///
+/// The default (`fix_notation: false`) preserves the strong contract that
+/// every directive round-trips its `raw` bytes verbatim — including the
+/// `DirectiveKind::Unknown` near-misses the notation-hygiene lint flags.
+/// Opting in (`aozora fmt --fix-notation`) lets the serializer rewrite those
+/// flagged near-misses to their canonical spelling via the single
+/// [`canonical_directive`] authority.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SerializeOptions {
+    /// Rewrite `DirectiveKind::Unknown` directives whose body is a verified
+    /// near-miss (per [`canonical_directive`]) to their canonical spelling.
+    pub fix_notation: bool,
+}
 
 /// Serialize an [`OwnedLexOutput`] back to Aozora source text.
 ///
@@ -45,8 +63,26 @@ use aozora_syntax::{BoutenPosition, EnclosureKind, ForwardAttr, RubySide, is_rub
 /// Does not panic in normal use: `String` cannot fail as a [`Write`] sink.
 #[must_use]
 pub fn serialize_owned(out: &OwnedLexOutput) -> String {
+    serialize_owned_with(out, SerializeOptions::default())
+}
+
+/// Serialize an [`OwnedLexOutput`] back to Aozora source text with explicit
+/// [`SerializeOptions`].
+///
+/// With the default options this is identical to [`serialize_owned`]. With
+/// `fix_notation` enabled, `DirectiveKind::Unknown` near-misses are rewritten
+/// to canonical form (see [`SerializeOptions`]); the rewrite is idempotent
+/// because a canonical body parses to a recognized (non-`Unknown`) node and so
+/// is never revisited on a second pass.
+///
+/// # Panics
+///
+/// Does not panic in normal use: `String` cannot fail as a [`Write`] sink.
+#[must_use]
+pub fn serialize_owned_with(out: &OwnedLexOutput, opts: SerializeOptions) -> String {
     let mut s = NewlineCappedWriter::with_capacity(out.normalized.len().saturating_mul(2));
-    serialize_owned_into(out, &mut s).expect("writing to NewlineCappedWriter never fails");
+    serialize_owned_into_with(out, &mut s, opts)
+        .expect("writing to NewlineCappedWriter never fails");
     let raw = s.into_string();
     if has_long_rule_line(&raw) {
         isolate_decorative_rules(&raw)
@@ -66,10 +102,30 @@ pub fn serialize_owned(out: &OwnedLexOutput) -> String {
 /// Panics if the normalized text exceeds `u32::MAX` bytes — inherited from the
 /// lexer's `Span` width contract; in practice unreachable.
 pub fn serialize_owned_into<W: Write>(out: &OwnedLexOutput, writer: &mut W) -> fmt::Result {
+    serialize_owned_into_with(out, writer, SerializeOptions::default())
+}
+
+/// Serialize an [`OwnedLexOutput`] into the given writer with explicit
+/// [`SerializeOptions`].
+///
+/// # Errors
+///
+/// Propagates write errors from `writer`.
+///
+/// # Panics
+///
+/// Panics if the normalized text exceeds `u32::MAX` bytes — inherited from the
+/// lexer's `Span` width contract; in practice unreachable.
+pub fn serialize_owned_into_with<W: Write>(
+    out: &OwnedLexOutput,
+    writer: &mut W,
+    opts: SerializeOptions,
+) -> fmt::Result {
     let mut tracking = TrackingWriter::new(writer);
     let mut sink = SerializeSinkOwned {
         store: &out.store,
         out: &mut tracking,
+        fix_notation: opts.fix_notation,
     };
     walk_owned(out, &mut sink)
 }
@@ -79,6 +135,9 @@ pub fn serialize_owned_into<W: Write>(out: &OwnedLexOutput, writer: &mut W) -> f
 struct SerializeSinkOwned<'a, W: Write> {
     store: &'a NodeStore,
     out: &'a mut TrackingWriter<W>,
+    /// When set, rewrite `DirectiveKind::Unknown` near-misses to canonical form
+    /// (`aozora fmt --fix-notation`).
+    fix_notation: bool,
 }
 
 impl<W: Write> WalkSinkOwned for SerializeSinkOwned<'_, W> {
@@ -93,7 +152,7 @@ impl<W: Write> WalkSinkOwned for SerializeSinkOwned<'_, W> {
         match (kind, node) {
             (SentinelKind::Inline, NodeRefOwned::Inline(n))
             | (SentinelKind::BlockLeaf, NodeRefOwned::BlockLeaf(n)) => {
-                emit_aozora_owned(n, self.store, self.out)
+                emit_aozora_owned(n, self.store, self.out, self.fix_notation)
             }
             (SentinelKind::BlockOpen, NodeRefOwned::BlockOpen(open)) => {
                 emit_container_open(open, self.out)
@@ -113,13 +172,14 @@ fn emit_aozora_owned<W: Write>(
     node: NodeOwned,
     store: &NodeStore,
     out: &mut TrackingWriter<W>,
+    fix_notation: bool,
 ) -> fmt::Result {
     match node {
         NodeOwned::Ruby(r) => emit_ruby_owned(&r, store, out),
         NodeOwned::Format(f) => emit_format_owned(&f, store, out),
         NodeOwned::Gaiji(g) => emit_gaiji_owned(&g, store, out),
         NodeOwned::Kaeriten(k) => emit_kaeriten_owned(k, store, out),
-        NodeOwned::Directive(a) => emit_annotation_owned(a, store, out),
+        NodeOwned::Directive(a) => emit_annotation_owned(a, store, out, fix_notation),
         NodeOwned::AngleQuote(d) => emit_angle_quote_owned(d, store, out),
         NodeOwned::MarginNote(s) => emit_side_note_owned(&s, store, out),
         NodeOwned::PageBreak => out.write_str("［＃改ページ］"),
@@ -418,12 +478,32 @@ fn emit_kaeriten_owned<W: Write>(k: KaeritenOwned, store: &NodeStore, out: &mut 
 
 /// Serialize a directive by writing its `raw` bytes verbatim (they already
 /// include the `［＃…］` brackets).
+///
+/// With `fix_notation` set, an `Unknown` directive whose trimmed body is a
+/// verified near-miss (per [`canonical_directive`]) is rewritten to
+/// `［＃<canonical>］` instead. The rewrite is idempotent: the canonical body
+/// parses to a recognized (non-`Unknown`) node, so a second serialize pass
+/// never re-enters this branch and re-emits verbatim.
 fn emit_annotation_owned<W: Write>(
     a: DirectiveOwned,
     store: &NodeStore,
     out: &mut W,
+    fix_notation: bool,
 ) -> fmt::Result {
-    out.write_str(store.resolve_str(a.raw))
+    let raw = store.resolve_str(a.raw);
+    if fix_notation && a.kind == DirectiveKind::Unknown {
+        let body = raw
+            .strip_prefix("［＃")
+            .and_then(|s| s.strip_suffix('］'))
+            .unwrap_or(raw)
+            .trim();
+        if let Some(canonical) = canonical_directive(body) {
+            out.write_str("［＃")?;
+            out.write_str(canonical.as_ref())?;
+            return out.write_char('］');
+        }
+    }
+    out.write_str(raw)
 }
 
 /// Serialize an angle-quote to its `≪…≫` form.

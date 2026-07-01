@@ -13,7 +13,8 @@
 //!    `--write` mode relies on this fixed point; a violation means the
 //!    formatter would rewrite its own canonical output.
 
-use aozora_fmt::format_source;
+use aozora::render::SerializeOptions;
+use aozora_fmt::{format_source, format_source_with};
 use proptest::collection::vec as proptest_vec;
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -98,6 +99,18 @@ proptest! {
         let once = format_source(&text);
         let twice = format_source(&once);
         prop_assert_eq!(&once, &twice, "second pass changed the output");
+    }
+
+    /// The `--fix-notation` autofix path is *also* a fixed point:
+    /// `format_with(format_with(x)) == format_with(x)`. `--write` combined
+    /// with `--fix-notation` runs the `write_back` idempotency guard against
+    /// this, so a counter-example would refuse to rewrite (or corrupt) files.
+    #[test]
+    fn format_source_with_fix_notation_is_idempotent(text in document_strategy()) {
+        let fix = SerializeOptions { fix_notation: true };
+        let once = format_source_with(&text, fix);
+        let twice = format_source_with(&once, fix);
+        prop_assert_eq!(&once, &twice, "second fix-notation pass changed the output");
     }
 }
 

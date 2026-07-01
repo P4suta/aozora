@@ -16,6 +16,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use aozora::Document;
+use aozora::render::SerializeOptions;
 
 mod cli;
 mod discover;
@@ -50,7 +51,19 @@ use report::Outcome;
 /// The returned `String` is byte-identical on the second pass.
 #[must_use]
 pub fn format_source(source: &str) -> String {
-    Document::new(source).parse().to_source()
+    format_source_with(source, SerializeOptions::default())
+}
+
+/// Canonicalise an aozora source string under explicit [`SerializeOptions`].
+///
+/// With the default options this equals [`format_source`]. With
+/// `fix_notation` enabled it additionally rewrites non-canonical directive
+/// near-misses to their canonical spelling — the `--fix-notation` autofix —
+/// which stays a second-pass fixed point (the canonical form parses to a
+/// recognized node and is not rewritten again).
+#[must_use]
+pub fn format_source_with(source: &str, opts: SerializeOptions) -> String {
+    Document::new(source).parse().to_source_with(opts)
 }
 
 /// Run the formatter for an already-parsed [`Cli`] and return the process
@@ -87,7 +100,7 @@ fn run_stdin(args: &FmtArgs, mode: &Mode) -> Result<Outcome> {
     io::stdin()
         .read_to_string(&mut old)
         .context("reading stdin")?;
-    let new = process::format_guarded(&old)?;
+    let new = process::format_guarded(&old, args.serialize_options())?;
 
     match mode {
         Mode::Stdout => {
@@ -138,29 +151,32 @@ fn stdin_check(report: &CheckReport, color: ColorChoice, old: &str, new: &str) -
 
 /// Multi-source path: dispatch the resolved file set by mode.
 fn run_files(args: &FmtArgs, mode: &Mode, resolved: &Resolved) -> Result<Outcome> {
+    let opts = args.serialize_options();
     match mode {
-        Mode::Stdout => run_stdout(resolved),
-        Mode::Write { list } => Ok(discovery_base(resolved).max(run_write(&resolved.files, *list))),
-        Mode::List => Ok(discovery_base(resolved).max(run_list(&resolved.files))),
-        Mode::Check(CheckReport::Json) => report::run_check_json(resolved),
+        Mode::Stdout => run_stdout(resolved, opts),
+        Mode::Write { list } => {
+            Ok(discovery_base(resolved).max(run_write(&resolved.files, *list, opts)))
+        }
+        Mode::List => Ok(discovery_base(resolved).max(run_list(&resolved.files, opts))),
+        Mode::Check(CheckReport::Json) => report::run_check_json(resolved, opts),
         Mode::Check(CheckReport::Diff) => {
             let base = discovery_base(resolved);
-            Ok(base.max(run_check(args.color(), &resolved.files, true)?))
+            Ok(base.max(run_check(args.color(), &resolved.files, true, opts)?))
         }
         Mode::Check(CheckReport::Plain) => {
             let base = discovery_base(resolved);
-            Ok(base.max(run_check(args.color(), &resolved.files, false)?))
+            Ok(base.max(run_check(args.color(), &resolved.files, false, opts)?))
         }
     }
 }
 
 /// Default stdout mode only makes sense for a single input.
-fn run_stdout(resolved: &Resolved) -> Result<Outcome> {
+fn run_stdout(resolved: &Resolved, opts: SerializeOptions) -> Result<Outcome> {
     let base = discovery_base(resolved);
     match resolved.files.as_slice() {
         [] => Ok(base),
         [path] => {
-            let fmt = process::read_and_format(path)?;
+            let fmt = process::read_and_format(path, opts)?;
             io::stdout().write_all(fmt.new.as_bytes())?;
             Ok(base)
         }
@@ -171,10 +187,10 @@ fn run_stdout(resolved: &Resolved) -> Result<Outcome> {
     }
 }
 
-fn run_write(files: &[PathBuf], list: bool) -> Outcome {
+fn run_write(files: &[PathBuf], list: bool, opts: SerializeOptions) -> Outcome {
     fold_files(files, |path| {
-        let fmt = process::read_and_format(path)?;
-        process::write_back(path, &fmt)?;
+        let fmt = process::read_and_format(path, opts)?;
+        process::write_back(path, &fmt, opts)?;
         if list && fmt.changed() {
             println!("{}", path.display());
         }
@@ -182,9 +198,9 @@ fn run_write(files: &[PathBuf], list: bool) -> Outcome {
     })
 }
 
-fn run_list(files: &[PathBuf]) -> Outcome {
+fn run_list(files: &[PathBuf], opts: SerializeOptions) -> Outcome {
     fold_files(files, |path| {
-        let fmt = process::read_and_format(path)?;
+        let fmt = process::read_and_format(path, opts)?;
         if fmt.changed() {
             println!("{}", path.display());
         }
@@ -193,10 +209,15 @@ fn run_list(files: &[PathBuf]) -> Outcome {
     })
 }
 
-fn run_check(color: ColorChoice, files: &[PathBuf], diff: bool) -> Result<Outcome> {
+fn run_check(
+    color: ColorChoice,
+    files: &[PathBuf],
+    diff: bool,
+    opts: SerializeOptions,
+) -> Result<Outcome> {
     if !diff {
         return Ok(fold_files(files, |path| {
-            let fmt = process::read_and_format(path)?;
+            let fmt = process::read_and_format(path, opts)?;
             Ok(if fmt.changed() {
                 eprintln!("aozora-fmt: {} would be reformatted", path.display());
                 Outcome::WouldReformat
@@ -207,7 +228,7 @@ fn run_check(color: ColorChoice, files: &[PathBuf], diff: bool) -> Result<Outcom
     }
     let mut out = auto_stdout(color);
     let outcome = fold_files(files, |path| {
-        let fmt = process::read_and_format(path)?;
+        let fmt = process::read_and_format(path, opts)?;
         Ok(if fmt.changed() {
             report::write_diff(&mut out, &path.display().to_string(), &fmt.old, &fmt.new)?;
             Outcome::WouldReformat
@@ -284,5 +305,28 @@ mod tests {
         let once = format_source(input);
         let twice = format_source(&once);
         assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn fix_notation_rewrites_flagged_near_miss_only_when_opted_in() {
+        let fix = SerializeOptions { fix_notation: true };
+        let near_miss = "あ［＃字下げ終わり］";
+        // Default fmt keeps the flagged near-miss verbatim.
+        assert!(
+            format_source(near_miss).contains("［＃字下げ終わり］"),
+            "default fmt must not rewrite notation"
+        );
+        // Opt-in rewrites it to the canonical spelling.
+        let fixed = format_source_with(near_miss, fix);
+        assert!(
+            fixed.contains("［＃ここで字下げ終わり］"),
+            "fix-notation should canonicalise the directive; got {fixed:?}"
+        );
+        // A genuine editorial Unknown is left untouched even with the flag.
+        let editorial = "あ［＃底本では「蒼空」］";
+        assert!(
+            format_source_with(editorial, fix).contains("［＃底本では「蒼空」］"),
+            "fix-notation must not touch genuine editorial Unknowns"
+        );
     }
 }

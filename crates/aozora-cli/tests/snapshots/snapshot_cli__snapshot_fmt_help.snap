@@ -57,6 +57,13 @@ Options:
       --write
           Overwrite the input file with the formatted output. Ignored when reading from stdin
 
+      --fix-notation
+          Rewrite non-canonical directive near-misses to their canonical spelling (e.g. `［＃字下げ終わり］`
+          → `［＃ここで字下げ終わり］`), the fixes suggested by the `aozora::lint::non_canonical_directive`
+          warnings. Opt-in: without this flag `fmt` keeps every directive's raw bytes verbatim.
+          Idempotent, so it composes with `--check` (report whether notation needs fixing) and
+          `--write`
+
   -h, --help
           Print help (see a summary with '-h')
 

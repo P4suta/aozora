@@ -6,8 +6,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind, set_hook, take_hook};
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
+use aozora::render::SerializeOptions;
 
-use crate::format_source;
+use crate::format_source_with;
 
 /// A formatted file: the original bytes and the canonical form.
 #[derive(Debug)]
@@ -24,20 +25,20 @@ impl Formatted {
 }
 
 /// Read `path` and canonicalise it (panic-guarded).
-pub(crate) fn read_and_format(path: &Path) -> Result<Formatted> {
+pub(crate) fn read_and_format(path: &Path, opts: SerializeOptions) -> Result<Formatted> {
     let old = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let new = format_guarded(&old)?;
+    let new = format_guarded(&old, opts)?;
     Ok(Formatted { old, new })
 }
 
 /// Rewrite `path` with its canonical form if it changed, upholding the
 /// formatter's idempotency contract: refuse to write when a second pass
 /// differs rather than corrupt the file.
-pub(crate) fn write_back(path: &Path, fmt: &Formatted) -> Result<()> {
+pub(crate) fn write_back(path: &Path, fmt: &Formatted, opts: SerializeOptions) -> Result<()> {
     if !fmt.changed() {
         return Ok(());
     }
-    let reformatted = format_guarded(&fmt.new)?;
+    let reformatted = format_guarded(&fmt.new, opts)?;
     if reformatted != fmt.new {
         bail!(
             "refusing to overwrite {}: formatting is not idempotent for this \
@@ -77,8 +78,8 @@ pub fn guard<T>(f: impl FnOnce() -> T) -> Result<T, Panicked> {
 
 /// Format `source` under [`guard`]. In `--write` mode the no-abort guarantee
 /// means no file is touched after a panic.
-pub(crate) fn format_guarded(source: &str) -> Result<String> {
-    guard(|| format_source(source)).map_err(|_| {
+pub(crate) fn format_guarded(source: &str, opts: SerializeOptions) -> Result<String> {
+    guard(|| format_source_with(source, opts)).map_err(|_| {
         anyhow!(
             "the formatter panicked while processing this input; no files were \
              modified. This is a bug — please report it at \
@@ -109,7 +110,8 @@ mod tests {
     #[test]
     fn format_guarded_canonicalises_ruby() {
         // A redundant explicit ｜ canonicalises to the bare ruby form.
-        let out = format_guarded("｜日本《にほん》").expect("format ok");
+        let out =
+            format_guarded("｜日本《にほん》", SerializeOptions::default()).expect("format ok");
         assert_eq!(out, "日本《にほん》", "bare canonical expected: {out:?}");
     }
 
@@ -142,7 +144,7 @@ mod tests {
     fn read_and_format_reads_then_canonicalises() {
         let path = scratch("read.afm");
         fs::write(&path, "｜日本《にほん》").expect("seed file");
-        let fmt = read_and_format(&path).expect("read+format");
+        let fmt = read_and_format(&path, SerializeOptions::default()).expect("read+format");
         assert_eq!(fmt.old, "｜日本《にほん》");
         assert_eq!(fmt.new, "日本《にほん》");
         assert!(fmt.changed());
@@ -152,7 +154,8 @@ mod tests {
     #[test]
     fn read_and_format_errors_on_missing_file() {
         let path = scratch("missing.afm");
-        let err = read_and_format(&path).expect_err("missing file must error");
+        let err = read_and_format(&path, SerializeOptions::default())
+            .expect_err("missing file must error");
         assert!(
             err.to_string().contains("reading"),
             "error should name the read step: {err:#}",
@@ -166,7 +169,7 @@ mod tests {
             old: "same".to_owned(),
             new: "same".to_owned(),
         };
-        write_back(&path, &fmt).expect("noop write_back");
+        write_back(&path, &fmt, SerializeOptions::default()).expect("noop write_back");
         assert!(
             !path.exists(),
             "unchanged formatting must not create or touch the file",
@@ -177,8 +180,8 @@ mod tests {
     fn write_back_rewrites_when_changed() {
         let path = scratch("write.afm");
         fs::write(&path, "｜日本《にほん》").expect("seed file");
-        let fmt = read_and_format(&path).expect("read+format");
-        write_back(&path, &fmt).expect("write_back");
+        let fmt = read_and_format(&path, SerializeOptions::default()).expect("read+format");
+        write_back(&path, &fmt, SerializeOptions::default()).expect("write_back");
         let written = fs::read_to_string(&path).expect("read back");
         assert_eq!(written, fmt.new);
         assert_eq!(written, "日本《にほん》");
@@ -201,7 +204,8 @@ mod tests {
             // so format_guarded(new) != new.
             new: "｜日本《にほん》".to_owned(),
         };
-        let err = write_back(&path, &fmt).expect_err("non-idempotent output must be refused");
+        let err = write_back(&path, &fmt, SerializeOptions::default())
+            .expect_err("non-idempotent output must be refused");
         assert!(
             err.to_string().contains("idempotent"),
             "guard message should mention idempotency: {err:#}",
