@@ -199,6 +199,9 @@ fn build_quick_fix(
         // choose which keyword they meant); the diagnostic's verbose
         // message lists the manual recovery steps.
         DiagnosticPayload::ResidualAnnotationMarker => None,
+        DiagnosticPayload::NonCanonicalDirective { canonical } => {
+            Some(rewrite_directive_action(uri, diag, &canonical))
+        }
     }
 }
 
@@ -247,6 +250,32 @@ fn delete_unmatched_close_action(
     changes.insert(uri.clone(), edits);
     CodeActionOrCommand::CodeAction(CodeAction {
         title: format!("対応のない `{close}` を削除する"),
+        kind: Some(CodeActionKind::QUICKFIX),
+        diagnostics: Some(vec![diag.clone()]),
+        edit: Some(WorkspaceEdit {
+            changes: Some(changes),
+            document_changes: None,
+            change_annotations: None,
+        }),
+        is_preferred: Some(true),
+        ..CodeAction::default()
+    })
+}
+
+fn rewrite_directive_action(uri: &Url, diag: &Diagnostic, canonical: &str) -> CodeActionOrCommand {
+    // Replace the whole ［＃…］ span (the diagnostic range) with the canonical
+    // directive. The lint's `span` is the full bracket extent, so a single
+    // range replace swaps the near-miss body without disturbing the delimiters.
+    let new_text = format!("［＃{canonical}］");
+    let title = format!("`{new_text}` に書き換える");
+    let edits = vec![TextEdit {
+        range: diag.range,
+        new_text,
+    }];
+    let mut changes = HashMap::new();
+    changes.insert(uri.clone(), edits);
+    CodeActionOrCommand::CodeAction(CodeAction {
+        title,
         kind: Some(CodeActionKind::QUICKFIX),
         diagnostics: Some(vec![diag.clone()]),
         edit: Some(WorkspaceEdit {
@@ -480,6 +509,22 @@ mod tests {
     fn residual_annotation_marker_offers_no_quick_fix() {
         let diag = diag_with_payload(DiagnosticPayload::ResidualAnnotationMarker);
         assert!(quick_fix_actions(&fake_uri(), slice::from_ref(&diag)).is_empty());
+    }
+
+    #[test]
+    fn quick_fix_non_canonical_directive_replaces_span_with_canonical() {
+        let diag = diag_with_payload(DiagnosticPayload::NonCanonicalDirective {
+            canonical: "ここで字下げ終わり".to_owned(),
+        });
+        let actions = quick_fix_actions(&fake_uri(), slice::from_ref(&diag));
+        assert_eq!(actions.len(), 1);
+        let CodeActionOrCommand::CodeAction(ca) = &actions[0] else {
+            unreachable!()
+        };
+        assert_eq!(ca.kind, Some(CodeActionKind::QUICKFIX));
+        assert_eq!(ca.is_preferred, Some(true));
+        // The whole ［＃…］ span is replaced with the canonical directive.
+        assert_eq!(single_edit_text(&actions[0]), "［＃ここで字下げ終わり］");
     }
 
     #[test]

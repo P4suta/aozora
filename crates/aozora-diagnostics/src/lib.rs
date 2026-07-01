@@ -81,6 +81,13 @@ pub enum DiagnosticPayload {
     /// `ResidualAnnotationMarker` — `［＃...］` pair survived classification
     /// (likely a typo or unsupported keyword).
     ResidualAnnotationMarker,
+    /// `NonCanonicalDirective` — the flagged `［＃…］` body is a verified
+    /// near-miss; `canonical` is the catalogue spelling the quick-fix
+    /// substitutes (bracket span and all).
+    NonCanonicalDirective {
+        /// The canonical directive body (without the `［＃` / `］` delimiters).
+        canonical: String,
+    },
 }
 
 /// Stringified [`PairKind`] for `serde_json` round-tripping.
@@ -197,6 +204,9 @@ pub fn describe(d: &AozoraDiagnostic) -> Described {
         AozoraDiagnostic::UnmatchedClose { span, kind, .. } => {
             describe_unmatched_close(*span, *kind)
         }
+        AozoraDiagnostic::NonCanonicalDirective {
+            span, canonical, ..
+        } => describe_non_canonical_directive(*span, canonical),
         // pipeline-internal sanity checks dispatch on the typed
         // `InternalCheckCode`; each fires a "pipeline bug, please
         // report" style message with the appropriate code.
@@ -340,6 +350,23 @@ fn describe_registry_position_mismatch(span: Span) -> Described {
     }
 }
 
+fn describe_non_canonical_directive(span: Span, canonical: &str) -> Described {
+    Described {
+        span,
+        message: format!(
+            "非正規の綴りの ［＃…］ 注記です。正規形は `［＃{canonical}］` です。\n\n\
+             この注記の中身は、登録済みの記法を非正規な綴り（送り仮名・同義語・綴りゆれ）で書いたものと判定され、Unknown 注記のまま保持されています。パーサは中身を書き換えません。\n\n\
+             直し方: `［＃{canonical}］` に書き換えてください。`aozora fmt --fix-notation` で自動修正できます。",
+        ),
+        code: "aozora::lint::non_canonical_directive",
+        severity: Severity::Warning,
+        unnecessary: false,
+        payload: Some(DiagnosticPayload::NonCanonicalDirective {
+            canonical: canonical.to_owned(),
+        }),
+    }
+}
+
 fn describe_unknown(other: &AozoraDiagnostic) -> Described {
     Described {
         span: Span::new(0, 0),
@@ -450,6 +477,15 @@ pub const CATALOGUE: &[CatalogueEntry] = &[
         fixed: "（パイプラインのバグ。手元の修正では直せません）",
     },
     CatalogueEntry {
+        code: "aozora::lint::non_canonical_directive",
+        title: "非正規の綴りの ［＃…］ 注記",
+        explain: "`［＃…］` の中身が、登録済みの記法を非正規な綴り（送り仮名・同義語・綴りゆれ）で書いたものと判定されました。例: `字下げ終わり`（正規形 `ここで字下げ終わり`）、`黒丸傍点`（正規形 `丸傍点`）、`中央寄せ`（正規形 `中央揃え`）。\n\n\
+                  パーサはこれを勝手に解釈せず Unknown 注記のまま保持します（入力者の誤記を記法として黙認しないため）。これは助言のみの警告で、`--strict` でない限り終了コードには影響しません。\n\n\
+                  直し方: 提示された正規形に書き換えてください。`aozora fmt --fix-notation` で一括自動修正できます。",
+        repro: "本文［＃字下げ終わり］",
+        fixed: "本文［＃ここで字下げ終わり］",
+    },
+    CatalogueEntry {
         code: "aozora::unknown-diagnostic",
         title: "未対応の診断",
         explain: "aozora-tools が認識していない種類の診断を、upstream の aozora パーサが返しました。aozora-tools と aozora パーサのバージョンが揃っていない可能性があります。\n\n\
@@ -523,6 +559,28 @@ mod tests {
             "{}",
             unmatched.message
         );
+    }
+
+    #[test]
+    fn non_canonical_directive_carries_canonical_payload() {
+        // `字下げ終わり` is a near-miss of the block close `ここで字下げ終わり`.
+        let described = describe_source("本文［＃字下げ終わり］");
+        let lint = described
+            .iter()
+            .find(|d| d.code == "aozora::lint::non_canonical_directive")
+            .expect("non-canonical-directive lint expected");
+        assert_eq!(lint.severity, Severity::Warning);
+        assert!(
+            lint.message.contains("ここで字下げ終わり"),
+            "message must name the canonical form: {}",
+            lint.message
+        );
+        match &lint.payload {
+            Some(DiagnosticPayload::NonCanonicalDirective { canonical }) => {
+                assert_eq!(canonical, "ここで字下げ終わり");
+            }
+            other => panic!("expected NonCanonicalDirective payload, got {other:?}"),
+        }
     }
 
     #[test]
@@ -655,6 +713,7 @@ mod tests {
             "aozora::unregistered-sentinel",
             "aozora::registry-out-of-order",
             "aozora::registry-position-mismatch",
+            "aozora::lint::non_canonical_directive",
             "aozora::unknown-diagnostic",
         ];
         for code in CODES {
