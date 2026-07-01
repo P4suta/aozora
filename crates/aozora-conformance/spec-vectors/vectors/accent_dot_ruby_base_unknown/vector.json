@@ -1,0 +1,55 @@
+{
+  "name": "accent_dot_ruby_base_unknown",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.21",
+    "note": "[provenance:hand-derived §6.21 + AOZORA-ANNOTATION 2026-07-01] #331 negative case: a ruby close 》 butts the directive, so there is no reclaimable Latin run (dot-over-ruby-base is not representable in a text-only forward leaf, the bouten-over-ruby limitation). The directive stays Directive{Unknown}, rendered as a hidden raw span and serialized verbatim."
+  },
+  "source": "語《かたり》［＃mは上ドット付き］\n",
+  "expected": {
+    "html": "<p><ruby>語<rp>(</rp><rt>かたり</rt><rp>)</rp></ruby><span class=\"aozora-directive\" hidden>［＃mは上ドット付き］</span></p>\n",
+    "serialize": "語《かたり》［＃mは上ドット付き］\n",
+    "nodes": [
+      {
+        "kind": "ruby",
+        "span": {
+          "start": 0,
+          "end": 18
+        }
+      },
+      {
+        "kind": "directive",
+        "span": {
+          "start": 18,
+          "end": 49
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "ruby",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 15,
+          "end": 18
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 18,
+          "end": 21
+        },
+        "close": {
+          "start": 46,
+          "end": 49
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

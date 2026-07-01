@@ -293,6 +293,17 @@ fn emit_format_owned<W: Write>(
         emit_content_as_plain_range(f.target, store, out)?;
         return out.write_str("」は「□」囲み］");
     }
+    if matches!(f.attr, ForwardAttr::AccentDot) {
+        // ドット付き (#331): the body is a selector grammar, not the
+        // `「target」は<keyword>` shape, so re-emit the interned raw body verbatim
+        // (byte-exact round-trip). The `Reclaimed` leading literal — the run the
+        // dots compose onto — was already emitted above.
+        out.write_str("［＃")?;
+        if let Some(id) = f.accent_body {
+            out.write_str(store.resolve_str(id))?;
+        }
+        return out.write_char('］');
+    }
     out.write_str("［＃「")?;
     emit_content_as_plain_range(f.target, store, out)?;
     out.write_str("」は")?;

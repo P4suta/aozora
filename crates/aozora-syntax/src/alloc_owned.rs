@@ -308,6 +308,34 @@ impl OwnedAllocator {
             attr,
             target,
             origin,
+            accent_body: None,
+        })
+    }
+
+    /// `NodeOwned::Format` for a #331 dotted-letter directive
+    /// ([`ForwardAttr::AccentDot`]): decorates the reclaimed `text` run and
+    /// interns the raw directive `body` (the selector grammar) so the renderer
+    /// can compose the dots and the serializer can re-emit it verbatim.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `text` is empty.
+    pub fn accent_dot(
+        &mut self,
+        text: ContentOwned,
+        body: &str,
+        origin: ForwardOrigin,
+    ) -> NodeOwned {
+        let target = self.push_nonempty(
+            text,
+            "classify stage must emit an accent-dot format with a non-empty target",
+        );
+        let accent_body = Some(self.store.intern(body));
+        NodeOwned::Format(ForwardFormatOwned {
+            attr: ForwardAttr::AccentDot,
+            target,
+            origin,
+            accent_body,
         })
     }
 

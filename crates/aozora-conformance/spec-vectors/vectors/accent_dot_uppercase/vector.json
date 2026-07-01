@@ -1,0 +1,37 @@
+{
+  "name": "accent_dot_uppercase",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.21",
+    "note": "[provenance:hand-derived §6.21 + AOZORA-ANNOTATION 2026-07-01] #331 case-preserving composition. An explicit uppercase selector T dots the capital T of the reclaimed run Ta → Ṭa (U+1E6C), distinct from the lowercase ṭ. Corpus-attested."
+  },
+  "source": "Ta［＃Tは下ドット付き］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-accent-dot\">Ṭa</span></p>\n",
+    "serialize": "Ta［＃Tは下ドット付き］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 33
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 2,
+          "end": 5
+        },
+        "close": {
+          "start": 30,
+          "end": 33
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

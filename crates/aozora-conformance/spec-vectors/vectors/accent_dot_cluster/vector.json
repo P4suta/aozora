@@ -1,0 +1,37 @@
+{
+  "name": "accent_dot_cluster",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.21",
+    "note": "[provenance:hand-derived §6.21 + AOZORA-ANNOTATION 2026-07-01] #331 cluster selector with the set adverb 「ともに」. Each listed letter's first occurrence is dotted independently — the s and the n of the reclaimed run Visnu → Viṣṇu. The adverb is spelling-only (preserved via the verbatim body)."
+  },
+  "source": "Visnu［＃snはともに下ドット付き］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-accent-dot\">Viṣṇu</span></p>\n",
+    "serialize": "Visnu［＃snはともに下ドット付き］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 46
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 5,
+          "end": 8
+        },
+        "close": {
+          "start": 43,
+          "end": 46
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

@@ -8,6 +8,41 @@
       "sexp": "(document (text))"
     },
     {
+      "name": "accent_dot_above",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "accent_dot_below",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "accent_dot_cluster",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "accent_dot_ordinal",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "accent_dot_ruby_base_unknown",
+      "error": false,
+      "sexp": "(document (implicit_ruby base: (ruby_base_implicit) reading: (ruby_reading)) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "accent_dot_tortoise",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "accent_dot_uppercase",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "align_end_container",
       "error": false,
       "sexp": "(document (slug body: (slug_body)) (newline) (text) (newline) (slug body: (slug_body)) (newline))"

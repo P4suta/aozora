@@ -491,6 +491,254 @@ fn try_match(bytes: &[u8], i: usize) -> Option<(usize, char)> {
     None
 }
 
+// ======================================================================
+// Dotted-letter composition (#331 ドット付き) — a *separate* facility from
+// the `〔…〕` digraph decomposition above.
+// ======================================================================
+//
+// The `［＃mは上ドット付き］` directive family addresses a base Latin letter in
+// the immediately-preceding run and asks for a combining dot above / below it
+// (`m` → ṁ, `s` → ṣ). Unlike the `〔…〕` ASCII-digraph scheme, the input is the
+// **directive body's selector grammar**, not an inline marker, so this code is
+// called from the forward-reference classifier / renderer — never from
+// `decompose_fragment`. Every attested `(letter, dot)` pair has a single NFC
+// precomposed scalar, so no combining-mark (U+0307 / U+0323) fallback is
+// needed. This makes `accent.rs` the one authority for "Latin letter +
+// diacritic → precomposed glyph".
+
+/// Position of the combining dot in a #331 dotted-letter directive:
+/// `上ドット付き` (above) or `下ドット付き` (below).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DotPosition {
+    /// 上ドット — combining dot above (NFC-composed, e.g. `m` → ṁ U+1E41).
+    Above,
+    /// 下ドット — combining dot below (NFC-composed, e.g. `s` → ṣ U+1E63).
+    Below,
+}
+
+/// `(base ASCII letter, DotPosition)` → precomposed Unicode glyph.
+///
+/// Only the pairs attested in the 17,889-work `aozorabunko_text` mirror are
+/// tabled (above: `m`, `n`; below: `s t h r n d m` + capitals `T`, `R`). Each
+/// has a single precomposed scalar, verified NFD-decomposing to base +
+/// U+0307/U+0323 — so composition never needs a combining-mark fallback.
+/// Case-preserving: `t` → ṭ, `T` → Ṭ.
+pub const ACCENT_DOT_TABLE: &[(char, DotPosition, char)] = &[
+    ('m', DotPosition::Above, 'ṁ'),
+    ('n', DotPosition::Above, 'ṅ'),
+    ('m', DotPosition::Below, 'ṃ'),
+    ('n', DotPosition::Below, 'ṇ'),
+    ('s', DotPosition::Below, 'ṣ'),
+    ('t', DotPosition::Below, 'ṭ'),
+    ('h', DotPosition::Below, 'ḥ'),
+    ('r', DotPosition::Below, 'ṛ'),
+    ('d', DotPosition::Below, 'ḍ'),
+    ('T', DotPosition::Below, 'Ṭ'),
+    ('R', DotPosition::Below, 'Ṛ'),
+];
+
+const _: () = {
+    // Pin the table to the corpus-attested count so a lost or duplicated entry
+    // surfaces at build time, mirroring the `ACCENT_DIGRAPHS` size assert.
+    assert!(
+        ACCENT_DOT_TABLE.len() == 11,
+        "ACCENT_DOT_TABLE must contain exactly 11 corpus-attested entries"
+    );
+};
+
+/// Compose a base letter with a dot at `pos` into its precomposed glyph.
+///
+/// Case-preserving (`t` → ṭ, `T` → Ṭ); returns `None` for any `(letter, pos)`
+/// pair not in [`ACCENT_DOT_TABLE`] (e.g. an uppercase `S`-below, which the
+/// corpus never asks for). 11 entries, so a linear scan beats a map.
+#[must_use]
+pub fn compose_dotted(base: char, pos: DotPosition) -> Option<char> {
+    ACCENT_DOT_TABLE
+        .iter()
+        .find(|&&(b, p, _)| b == base && p == pos)
+        .map(|&(_, _, glyph)| glyph)
+}
+
+/// Which occurrence of the addressed letter (within the preceding run) a
+/// clause selects. Counting is **case-insensitive** (an uppercase `S` counts
+/// toward a lowercase `s` ordinal); the composed glyph keeps the run char's
+/// actual case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Occ {
+    /// Bare selector (`mは…`) — the first occurrence.
+    First,
+    /// `Nつめの` — the N-th occurrence (1-indexed).
+    Nth(usize),
+    /// `最後の` — the last occurrence.
+    Last,
+}
+
+/// One resolved substitution instruction: dot `letter`'s `occ`-th occurrence
+/// at `pos`. Parsed from the directive body, applied against the run.
+#[derive(Debug, Clone, Copy)]
+struct DotOp {
+    letter: char,
+    pos: DotPosition,
+    occ: Occ,
+}
+
+/// Parse a leading decimal (ASCII `0-9` or fullwidth `０-９`) off `s`, returning
+/// the value and the remainder. `None` when `s` has no leading digit.
+fn parse_leading_number(s: &str) -> Option<(usize, &str)> {
+    let mut n: usize = 0;
+    let mut end = 0;
+    for (i, ch) in s.char_indices() {
+        let digit = match ch {
+            '0'..='9' => ch as usize - '0' as usize,
+            '０'..='９' => ch as usize - '０' as usize,
+            _ => break,
+        };
+        n = n.checked_mul(10)?.checked_add(digit)?;
+        end = i + ch.len_utf8();
+    }
+    (end != 0).then(|| (n, &s[end..]))
+}
+
+/// Parse a selector `[ordinal] letters` into an occurrence rule + the trailing
+/// ASCII letter run. `None` if no letters follow the ordinal.
+fn parse_selector(sel: &str) -> Option<(Occ, &str)> {
+    if let Some(rest) = sel.strip_prefix("最後の") {
+        return Some((Occ::Last, rest));
+    }
+    if let Some((n, rest)) = parse_leading_number(sel) {
+        // A bare number with no `つめの` (or `つめの` with no letters) is not a
+        // selector — decline.
+        let letters = rest.strip_prefix("つめの")?;
+        return Some((Occ::Nth(n), letters));
+    }
+    Some((Occ::First, sel))
+}
+
+/// Parse one clause `<selector>は[ともに|それぞれ]<上|下>ドット付き` into ops.
+///
+/// A cluster selector (`stはともに…`) yields one op per letter (each `First`);
+/// the `ともに` / `それぞれ` adverb is spelling-only (preserved via the raw
+/// body) so it is stripped and ignored. Declines any letter/pos pair absent
+/// from [`ACCENT_DOT_TABLE`], and an ordinal applied to a multi-letter cluster
+/// (not attested).
+fn parse_accent_clause(clause: &str) -> Option<Vec<DotOp>> {
+    let after_letters = clause.strip_suffix("ドット付き")?;
+    let (selector, tail) = after_letters.split_once('は')?;
+    // Optional set adverb, spelling-only.
+    let posword = tail
+        .strip_prefix("ともに")
+        .or_else(|| tail.strip_prefix("それぞれ"))
+        .unwrap_or(tail);
+    let pos = match posword {
+        "上" => DotPosition::Above,
+        "下" => DotPosition::Below,
+        _ => return None,
+    };
+    let (occ, letters) = parse_selector(selector)?;
+    if letters.is_empty() || !letters.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return None;
+    }
+    let chars: Vec<char> = letters.chars().collect();
+    // An ordinal names a single occurrence, so it cannot pair with a cluster.
+    if chars.len() > 1 && !matches!(occ, Occ::First) {
+        return None;
+    }
+    let mut ops = Vec::with_capacity(chars.len());
+    for &letter in &chars {
+        // Every addressed letter must be composable at this position; else the
+        // whole clause declines to `Unknown` (byte-exact, no lossy guess).
+        compose_dotted(letter, pos)?;
+        ops.push(DotOp { letter, pos, occ });
+    }
+    Some(ops)
+}
+
+/// Parse a dotted-letter directive body into substitution ops.
+///
+/// **PR-1 scope: single clause only.** Declines multi-clause bodies (`。` /
+/// `、`-joined), which the 10b selector grammar will handle, and word-qualified
+/// (`simhaのm…`) / `段目` table-row forms, which fall out naturally because
+/// their selector is not a pure ASCII-letter run.
+fn parse_accent_dot_body(body: &str) -> Option<Vec<DotOp>> {
+    if body.contains('。') || body.contains('、') {
+        return None;
+    }
+    parse_accent_clause(body)
+}
+
+/// Compose the dotted-letter substitutions described by directive `body` onto
+/// the reclaimed preceding `run`.
+///
+/// Returns the run with each addressed letter replaced by its precomposed
+/// dotted glyph (`Sam` + `mは上ドット付き` → `Saṁ`), or `None` when `body` is
+/// not a recognised single-clause dotted directive or an addressed occurrence
+/// is absent / not composable in `run`. This is the single shared entry point:
+/// the classifier calls it to decide whether to claim the directive (a `Some`
+/// result), and the renderer calls it to produce the visible glyphs.
+///
+/// Resolution is **resolve-all-then-substitute**: each op is mapped to an
+/// absolute byte index first, so an earlier substitution never shifts a later
+/// op's index.
+#[must_use]
+pub fn compose_accent_dots(run: &str, body: &str) -> Option<String> {
+    let ops = parse_accent_dot_body(body)?;
+    let mut subs: Vec<(usize, char, usize)> = Vec::with_capacity(ops.len());
+    for op in &ops {
+        let idx = resolve_occurrence(run, op.letter, op.pos, op.occ)?;
+        let base = run[idx..].chars().next()?;
+        let glyph = compose_dotted(base, op.pos)?;
+        subs.push((idx, glyph, base.len_utf8()));
+    }
+    subs.sort_by_key(|&(idx, _, _)| idx);
+    let mut out = String::with_capacity(run.len());
+    let mut last = 0;
+    for (idx, glyph, base_len) in subs {
+        // Two ops resolving to the same char would corrupt the output; reject.
+        if idx < last {
+            return None;
+        }
+        out.push_str(&run[last..idx]);
+        out.push(glyph);
+        last = idx + base_len;
+    }
+    out.push_str(&run[last..]);
+    Some(out)
+}
+
+/// Byte index of the addressed occurrence of `letter` in `run`, honouring
+/// composability. Counting is case-insensitive (`S` counts toward a lowercase
+/// `s`).
+///
+/// A bare (`First`) / `最後の` (`Last`) selector takes the first / last
+/// occurrence that is actually **composable** at `pos`, so a word-initial
+/// capital with no dotted glyph — the `N` of `Nara-sinha` under `nは上` —
+/// is skipped in favour of the intended lowercase letter. An `Nつめの`
+/// ordinal instead counts *every* case-insensitive occurrence (a capital `S`
+/// is position 1 for `２つめのs` over `Sāraksā`); the counted position must
+/// itself be composable, else the directive declines.
+fn resolve_occurrence(run: &str, letter: char, pos: DotPosition, occ: Occ) -> Option<usize> {
+    let target = letter.to_ascii_lowercase();
+    let composable = |idx: usize| {
+        run[idx..]
+            .chars()
+            .next()
+            .and_then(|c| compose_dotted(c, pos))
+            .is_some()
+    };
+    let mut hits = run
+        .char_indices()
+        .filter(|(_, c)| c.to_ascii_lowercase() == target)
+        .map(|(i, _)| i);
+    match occ {
+        Occ::First => hits.find(|&i| composable(i)),
+        Occ::Last => hits.rfind(|&i| composable(i)),
+        Occ::Nth(n) => n
+            .checked_sub(1)
+            .and_then(|k| hits.nth(k))
+            .filter(|&i| composable(i)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -686,5 +934,91 @@ mod tests {
             let expected: String = format!("_{ch}_");
             assert_eq!(*out, *expected, "pattern {pat:?} failed");
         }
+    }
+
+    // --- #331 dotted-letter composition ---
+
+    #[test]
+    fn dot_table_composes_case_preserving() {
+        assert_eq!(compose_dotted('m', DotPosition::Above), Some('ṁ'));
+        assert_eq!(compose_dotted('s', DotPosition::Below), Some('ṣ'));
+        assert_eq!(compose_dotted('T', DotPosition::Below), Some('Ṭ'));
+        // Un-tabled pairs decline (uppercase S-below is never requested).
+        assert_eq!(compose_dotted('S', DotPosition::Below), None);
+        assert_eq!(compose_dotted('m', DotPosition::Below), Some('ṃ'));
+    }
+
+    #[test]
+    fn accent_dot_single_clause_bare() {
+        assert_eq!(
+            compose_accent_dots("Sam", "mは上ドット付き").as_deref(),
+            Some("Saṁ")
+        );
+        assert_eq!(
+            compose_accent_dots("Sas", "sは下ドット付き").as_deref(),
+            Some("Saṣ")
+        );
+    }
+
+    #[test]
+    fn accent_dot_reclaims_tortoise_span_verbatim_brackets() {
+        // The `〔…〕` run keeps its brackets; only the addressed letter changes.
+        assert_eq!(
+            compose_accent_dots("〔Mīhr〕", "hは下ドット付き").as_deref(),
+            Some("〔Mīḥr〕")
+        );
+    }
+
+    #[test]
+    fn accent_dot_ordinal_counts_case_insensitively() {
+        // `２つめのs` over `Sisa`: S counts as 1, lowercase s as 2 → dot the s.
+        assert_eq!(
+            compose_accent_dots("Sisa", "２つめのsは下ドット付き").as_deref(),
+            Some("Siṣa")
+        );
+        // `最後の` picks the last occurrence.
+        assert_eq!(
+            compose_accent_dots("mama", "最後のmは上ドット付き").as_deref(),
+            Some("maṁa")
+        );
+    }
+
+    #[test]
+    fn accent_dot_cluster_with_set_adverb() {
+        // `snはともに下ドット付き` dots the first s and the first n → Viṣṇu.
+        assert_eq!(
+            compose_accent_dots("Visnu", "snはともに下ドット付き").as_deref(),
+            Some("Viṣṇu")
+        );
+    }
+
+    #[test]
+    fn accent_dot_declines_multi_clause_in_pr1() {
+        // 10b (`。`/`、`-joined) is deferred to PR2 — declines here.
+        assert_eq!(
+            compose_accent_dots("Padmasambhava", "mは上ドット付き。２つめのsは下ドット付き"),
+            None
+        );
+    }
+
+    #[test]
+    fn accent_dot_declines_word_qualified_and_dangyou() {
+        // `simhaのm` — selector isn't a pure ASCII-letter run.
+        assert_eq!(compose_accent_dots("simha", "simhaのmは上ドット付き"), None);
+        // 段目 table-row form.
+        assert_eq!(
+            compose_accent_dots("Sinha", "７段目、Sinhaのnは上ドット付き"),
+            None
+        );
+    }
+
+    #[test]
+    fn accent_dot_declines_absent_or_uncomposable_occurrence() {
+        // Letter absent from the run.
+        assert_eq!(compose_accent_dots("abc", "mは上ドット付き"), None);
+        // Nth out of range.
+        assert_eq!(compose_accent_dots("Sam", "２つめのmは上ドット付き"), None);
+        // First occurrence is uppercase S (not composable below) → declines.
+        assert_eq!(compose_accent_dots("Sax", "sは下ドット付き"), None);
     }
 }

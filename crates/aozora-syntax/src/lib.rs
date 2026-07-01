@@ -582,6 +582,10 @@ mod tests {
                 ForwardAttr::FontSize(FontShift(NonZeroI8::new(3).unwrap())),
                 "太字",
             ),
+            // AccentDot's body is the selector grammar (serialized from the
+            // interned `accent_body`, never `keyword()`), so it rides the 太字
+            // default too — `keyword()` is never called for it.
+            (ForwardAttr::AccentDot, "太字"),
         ];
         for (attr, kw) in cases {
             assert_eq!(attr.keyword(), kw, "keyword mismatch for {attr:?}");
