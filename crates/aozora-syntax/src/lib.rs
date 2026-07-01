@@ -170,6 +170,9 @@ pub enum BoutenPosition {
     /// Left of (below) the base text — the `左に` modifier
     /// (`［＃「X」の左に傍点］`).
     Left,
+    /// Both sides of the base text — the `の両側に` modifier
+    /// (`［＃「X」の両側に傍線］`).
+    Both,
 }
 
 /// Which side of the base text a ruby reading sits on.

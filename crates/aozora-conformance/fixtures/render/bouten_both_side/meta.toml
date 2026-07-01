@@ -1,0 +1,5 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# の両側に — both-side placement of a 傍点/傍線, the third value on the
+# BoutenPosition axis (Right / Left / Both). Serializes verbatim (の両側に).
+feature = "bouten"
+level = "should"

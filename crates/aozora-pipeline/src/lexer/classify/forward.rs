@@ -686,10 +686,13 @@ impl RecogniseCtx<'_, '_> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // Shape 1: `に<kind>` — default right-side placement.
         // Shape 2: `の左に<kind>` — left-side placement (position flipped).
+        // Shape 3: `の両側に<kind>` — both sides.
         let (position, kind_suffix) = if let Some(rest) = extracted.suffix.strip_prefix("に") {
             (BoutenPosition::Right, rest)
         } else if let Some(rest) = extracted.suffix.strip_prefix("の左に") {
             (BoutenPosition::Left, rest)
+        } else if let Some(rest) = extracted.suffix.strip_prefix("の両側に") {
+            (BoutenPosition::Both, rest)
         } else {
             return None;
         };

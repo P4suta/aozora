@@ -417,6 +417,7 @@ fn bouten_position_slug(p: BoutenPosition) -> &'static str {
     match p {
         BoutenPosition::Right => "right",
         BoutenPosition::Left => "left",
+        BoutenPosition::Both => "both",
         _ => "unknown",
     }
 }
@@ -650,8 +651,14 @@ fn container_attr(kind: RegionFormat) -> Attr {
                 "variant".to_owned(),
                 roman_slug(kind.keyword()).unwrap_or("unknown").to_owned(),
             )];
-            if matches!(position, BoutenPosition::Left) {
-                kvs.push(("position".to_owned(), "left".to_owned()));
+            match position {
+                BoutenPosition::Left => {
+                    kvs.push(("position".to_owned(), "left".to_owned()));
+                }
+                BoutenPosition::Both => {
+                    kvs.push(("position".to_owned(), "both".to_owned()));
+                }
+                _ => {}
             }
             ("container-bouten", kvs)
         }
