@@ -1,0 +1,5 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# Marker-suffix bouten: `傍点（白丸）` names the mark parenthetically after
+# 傍点 and canonicalizes to the marker-prefix keyword `白丸傍点` (WhiteCircle).
+feature = "bouten"
+level = "should"

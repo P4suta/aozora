@@ -1658,7 +1658,48 @@ pub(super) fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
     if s == "×傍点" {
         return Some(BoutenKind::Cross);
     }
-    BOUTEN_KINDS.iter().copied().find(|k| k.keyword() == s)
+    if let Some(kind) = BOUTEN_KINDS.iter().copied().find(|k| k.keyword() == s) {
+        return Some(kind);
+    }
+    // Marker-suffix spelling: `傍点（白丸）` / `傍点◎` — 傍点 first, then the
+    // mark named parenthetically or as a bare glyph. Resolve it to the same
+    // kind the canonical marker-prefix keyword (`白丸傍点`) yields. Bare
+    // `傍点` already matched Goma above, so a non-empty remainder here is a
+    // genuine marker.
+    let marker = s.strip_prefix("傍点").filter(|m| !m.is_empty())?;
+    bouten_kind_from_marker(marker)
+}
+
+/// Resolve the mark named in the `傍点（白丸）` / `傍点◎` suffix spelling to a
+/// [`BoutenKind`]. Parenthetical names are derived DRY from [`BOUTEN_KINDS`]
+/// (`<name>傍点` equals a kind's [`keyword`](BoutenKind::keyword)); the glyph
+/// arm covers the bare-glyph spellings the corpus uses. No new [`BoutenKind`]
+/// — every marker maps onto an existing variant.
+fn bouten_kind_from_marker(marker: &str) -> Option<BoutenKind> {
+    // `（白丸）` -> `白丸`; a bare glyph passes through unchanged.
+    let name = marker
+        .strip_prefix('（')
+        .and_then(|inner| inner.strip_suffix('）'))
+        .unwrap_or(marker);
+    match name {
+        "◎" => return Some(BoutenKind::DoubleCircle),
+        "○" | "◯" => return Some(BoutenKind::WhiteCircle),
+        "●" => return Some(BoutenKind::Circle),
+        "×" | "✕" => return Some(BoutenKind::Cross),
+        "△" => return Some(BoutenKind::WhiteTriangle),
+        "▲" => return Some(BoutenKind::BlackTriangle),
+        _ => {}
+    }
+    // `白丸` matches the kind whose keyword() is `白丸傍点`. Guard against an
+    // empty name (`傍点（）`) matching Goma's bare `傍点` keyword.
+    (!name.is_empty())
+        .then(|| {
+            BOUTEN_KINDS
+                .iter()
+                .copied()
+                .find(|k| k.keyword().strip_suffix("傍点") == Some(name))
+        })
+        .flatten()
 }
 
 /// Parse a 傍点/傍線 range-form body into `(kind, position, is_close)`.
