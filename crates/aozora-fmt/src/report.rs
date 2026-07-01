@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use anstream::AutoStream;
 use anstyle::{AnsiColor, Style};
 use anyhow::Result;
+use aozora::render::SerializeOptions;
 use serde::Serialize;
 use similar::{ChangeTag, DiffOp, TextDiff};
 
@@ -159,7 +160,7 @@ pub(crate) fn emit_json(outcome: Outcome, files: Vec<JsonFile>) -> io::Result<()
 
 /// `--check --json` over a resolved file set: collect every file's status
 /// (including discovery errors) into one JSON object and return the outcome.
-pub(crate) fn run_check_json(resolved: &Resolved) -> Result<Outcome> {
+pub(crate) fn run_check_json(resolved: &Resolved, opts: SerializeOptions) -> Result<Outcome> {
     let mut files = Vec::new();
     let mut outcome = Outcome::Ok;
     for err in &resolved.errors {
@@ -168,7 +169,7 @@ pub(crate) fn run_check_json(resolved: &Resolved) -> Result<Outcome> {
     }
     for path in &resolved.files {
         let label = path.display().to_string();
-        match process::read_and_format(path) {
+        match process::read_and_format(path, opts) {
             Ok(fmt) if fmt.changed() => {
                 files.push(JsonFile::would_reformat(label));
                 outcome = outcome.max(Outcome::WouldReformat);

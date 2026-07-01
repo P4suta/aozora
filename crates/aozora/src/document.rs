@@ -15,7 +15,7 @@
 use core::fmt;
 
 use aozora_pipeline::{NodeRefOwned, OwnedLexOutput, SourceNodeOwned, lex};
-use aozora_render::{render_html_owned, serialize_owned};
+use aozora_render::{SerializeOptions, render_html_owned, serialize_owned, serialize_owned_with};
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset};
 use aozora_syntax::owned::ContainerPair;
 
@@ -422,6 +422,31 @@ impl<'a> Tree<'a> {
     #[must_use]
     pub fn to_source(&self) -> String {
         serialize_owned(self.inner())
+    }
+
+    /// Re-emit Aozora source text with explicit [`SerializeOptions`].
+    ///
+    /// With the default options this equals [`Self::to_source`]. With
+    /// `fix_notation` enabled it additionally rewrites the notation-hygiene
+    /// lint's `DirectiveKind::Unknown` near-misses to canonical form — the
+    /// `aozora fmt --fix-notation` autofix.
+    ///
+    /// The rewrite is a second-pass fixed point. The emit-time substitution
+    /// can change a directive's block/inline nature — an inline
+    /// `［＃字下げ終わり］` becomes the block close `［＃ここで字下げ終わり］` —
+    /// so a normalizing re-parse re-flows the surrounding block structure.
+    /// After it, every directive is canonical, so a further `--fix-notation`
+    /// pass is a no-op: the serializer's `∘ parse` fixed-point contract holds
+    /// and `--write` stays idempotent.
+    #[must_use]
+    pub fn to_source_with(&self, opts: SerializeOptions) -> String {
+        let first = serialize_owned_with(self.inner(), opts);
+        if opts.fix_notation {
+            let doc = Document::new(first);
+            doc.parse().to_source()
+        } else {
+            first
+        }
     }
 
     /// Recover the source text **verbatim** — byte-for-byte equal to

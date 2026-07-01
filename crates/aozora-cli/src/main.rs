@@ -65,7 +65,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode, Stdio};
 
-use aozora::{DiagnosticSource, Document, json};
+use aozora::{DiagnosticSource, Document, json, render::SerializeOptions};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -231,6 +231,15 @@ struct FmtArgs {
     /// when reading from stdin.
     #[arg(long, conflicts_with = "check")]
     write: bool,
+
+    /// Rewrite non-canonical directive near-misses to their canonical
+    /// spelling (e.g. `［＃字下げ終わり］` → `［＃ここで字下げ終わり］`), the
+    /// fixes suggested by the `aozora::lint::non_canonical_directive`
+    /// warnings. Opt-in: without this flag `fmt` keeps every directive's
+    /// raw bytes verbatim. Idempotent, so it composes with `--check`
+    /// (report whether notation needs fixing) and `--write`.
+    #[arg(long)]
+    fix_notation: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -410,7 +419,10 @@ fn run_fmt_once(args: &FmtArgs) -> Result<ExitCode> {
     let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let doc = Document::new(source.clone());
     let tree = timer.measure("parse", || doc.parse());
-    let formatted = timer.measure("serialize", || tree.to_source());
+    let opts = SerializeOptions {
+        fix_notation: args.fix_notation,
+    };
+    let formatted = timer.measure("serialize", || tree.to_source_with(opts));
     // Timing covers read/parse/serialize; the comparison and I/O below
     // are not the parse cost a reader cares about, so report here.
     timer.report()?;

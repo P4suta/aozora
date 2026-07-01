@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use aozora::render::SerializeOptions;
 use clap::{Args, Parser, ValueEnum};
 
 const LONG_ABOUT: &str = concat!(
@@ -72,6 +73,14 @@ pub struct FmtArgs {
     /// When to colourise --diff output.
     #[arg(long, value_name = "WHEN", default_value = "auto")]
     color: ColorChoice,
+
+    /// Rewrite non-canonical directive near-misses to their canonical
+    /// spelling (e.g. `［＃字下げ終わり］` → `［＃ここで字下げ終わり］`), the
+    /// fixes flagged by the `aozora::lint::non_canonical_directive`
+    /// warnings. Opt-in: without it every directive round-trips its raw
+    /// bytes verbatim. Idempotent, so it composes with every mode.
+    #[arg(long)]
+    fix_notation: bool,
 }
 
 /// When to emit ANSI colour in terminal output (diffs, diagnostics, …).
@@ -119,6 +128,14 @@ impl FmtArgs {
     /// The chosen colour policy for diff output.
     pub(crate) fn color(&self) -> ColorChoice {
         self.color
+    }
+
+    /// The serialization options derived from the flags — currently just the
+    /// `--fix-notation` autofix opt-in.
+    pub(crate) fn serialize_options(&self) -> SerializeOptions {
+        SerializeOptions {
+            fix_notation: self.fix_notation,
+        }
     }
 
     /// Collapse the mutually-exclusive flags into a single [`Mode`].
