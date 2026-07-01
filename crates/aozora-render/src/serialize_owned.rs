@@ -31,7 +31,7 @@ use aozora_syntax::owned::{
     KaeritenOwned, MarginNoteOwned, NodeOwned, NodeRefOwned, NodeStore, OwnedLexOutput, RubyOwned,
     SegmentOwned,
 };
-use aozora_syntax::{BoutenPosition, ForwardAttr, RubySide, is_ruby_base_char};
+use aozora_syntax::{BoutenPosition, EnclosureKind, ForwardAttr, RubySide, is_ruby_base_char};
 
 /// Serialize an [`OwnedLexOutput`] back to Aozora source text.
 ///
@@ -285,6 +285,13 @@ fn emit_format_owned<W: Write>(
         }
         out.write_str(kind.keyword())?;
         return out.write_char('］');
+    }
+    if matches!(f.attr, ForwardAttr::Framed(EnclosureKind::Box)) {
+        // 「□」囲み: the keyword embeds the quoted glyph, so it can't come from
+        // `keyword()`. □ (U+25A1) is the canonical spelling of the Box kind.
+        out.write_str("［＃「")?;
+        emit_content_as_plain_range(f.target, store, out)?;
+        return out.write_str("」は「□」囲み］");
     }
     out.write_str("［＃「")?;
     emit_content_as_plain_range(f.target, store, out)?;

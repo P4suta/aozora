@@ -93,6 +93,16 @@
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)))"
     },
     {
+      "name": "box_enclosure",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "box_enclosure_no_referent",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "bracketed_kaeriten_no_pair",
       "error": true,
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)))"

@@ -107,6 +107,9 @@ impl AbsoluteSize {
 pub enum EnclosureKind {
     /// 罫囲み / 枠囲み / 枠囲い — a ruled rectangular frame.
     Rule,
+    /// 「□」囲み — a box-glyph enclosure. The glyph is □ (U+25A1); the box is
+    /// drawn by the stylesheet, so the glyph is re-emitted only on serialize.
+    Box,
 }
 
 /// Number of columns in a 段組 region. `1` is not a multi-column layout, so
@@ -503,6 +506,10 @@ impl ForwardAttr {
             Self::SmallScript(BoutenPosition::Right) => "行右小書き",
             Self::SmallScript(BoutenPosition::Left) => "行左小書き",
             Self::Framed(EnclosureKind::Rule) => "罫囲み",
+            // 「□」囲み: the source keyword embeds the quoted glyph, so serialize
+            // reconstructs it in a dedicated arm; this bare base word only feeds
+            // the keyword round-trip table.
+            Self::Framed(EnclosureKind::Box) => "囲み",
             Self::Horizontal => "横組み",
             Self::Caption => "キャプション",
             Self::CombineUpright => "縦中横",

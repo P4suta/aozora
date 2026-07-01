@@ -1,0 +1,59 @@
+{
+  "name": "box_enclosure",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.7",
+    "note": "[provenance:hand-derived §6.7 + AOZORA-ANNOTATION 2026-07-01] 「X」は「□」囲み boxes the target run in a box glyph (□, U+25A1) — the box member of the 罫囲み enclosure family (EnclosureKind::Box). Particle は, single target X; the は and the quoted □ glyph live in the suffix. Per §7.5 it consumes the immediately preceding fullwidth literal 一 (Reclaimed shape) and yields an emphasis node; §8 reference rendering is <span class=\"aozora-keigakomi-box\">…</span> — the box is drawn by the stylesheet, so the □ glyph is not emitted. Serialization re-emits 「□」囲み byte-exact from the Box kind's canonical spelling. Offsets from the §4 byte model (each fullwidth char = 3 bytes); cross-checked against the reference processor."
+  },
+  "source": "一［＃「一」は「□」囲み］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-keigakomi-box\">一</span></p>\n",
+    "serialize": "一［＃「一」は「□」囲み］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 39
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 15,
+          "end": 18
+        }
+      },
+      {
+        "kind": "quote",
+        "open": {
+          "start": 21,
+          "end": 24
+        },
+        "close": {
+          "start": 27,
+          "end": 30
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 36,
+          "end": 39
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
