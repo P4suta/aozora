@@ -1,0 +1,6 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# 文末より / 行末より N字上げ(揃え/字上がり) — raised alignment measured from
+# the end of the text (vs 地から = bottom margin). Same zero-width AlignEnd
+# hook with offset N.
+feature = "alignment"
+level = "should"

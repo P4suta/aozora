@@ -341,6 +341,17 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "ここで罫囲み終わり",
         family: BodyFamily::KeigakomiClose,
     },
+    // 表罫囲み (table-rule frame) renders identically to 罫囲み in the
+    // reference converter, so it folds into the same Rule enclosure (like
+    // 枠囲み/枠囲い) and canonicalizes to 罫囲み on serialize.
+    BodyPattern {
+        needle: "ここから表罫囲み",
+        family: BodyFamily::KeigakomiOpen,
+    },
+    BodyPattern {
+        needle: "ここで表罫囲み終わり",
+        family: BodyFamily::KeigakomiClose,
+    },
     // Block 割り注 (multi-line region; inline ［＃割り注］ stays WarichuOpen).
     BodyPattern {
         needle: "ここから割り注",
@@ -419,8 +430,33 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "ここから地より",
         family: BodyFamily::AlignEndBlockParamPrefix,
     },
+    // 文末より / 行末より — raised alignment measured from the END of the
+    // text (vs 地から = bottom margin). Same zero-width AlignEnd hook.
+    // `この行は行末より…` needs its own anchored needle.
+    BodyPattern {
+        needle: "文末より",
+        family: BodyFamily::AlignEndParamPrefix,
+    },
+    BodyPattern {
+        needle: "行末より",
+        family: BodyFamily::AlignEndParamPrefix,
+    },
+    BodyPattern {
+        needle: "この行は行末より",
+        family: BodyFamily::AlignEndParamPrefix,
+    },
     BodyPattern {
         needle: "地付き",
+        family: BodyFamily::AlignEnd0,
+    },
+    // 右寄せ / 地寄せ — wording variants of 地付き (inline-end alignment; in
+    // horizontal render inline-end == the right edge). Canonicalize to 地付き.
+    BodyPattern {
+        needle: "右寄せ",
+        family: BodyFamily::AlignEnd0,
+    },
+    BodyPattern {
+        needle: "地寄せ",
         family: BodyFamily::AlignEnd0,
     },
     BodyPattern {
@@ -1062,15 +1098,19 @@ pub(super) fn classify_annotation_body(
 
         // ----- Prefix-with-parameter families -----
         BodyFamily::AlignEndParamPrefix => {
-            // body == 地から{N}字上げ; remainder = body[match_end..]
+            // body == 地から/文末より/行末より{N}字上げ; remainder = body[match_end..].
+            // The verb is the intransitive 字上がり as well as 字上げ, with an
+            // optional 揃え suffix (`文末よりN字上げ揃え`).
             let rest = &body[match_end..];
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
-            (tail == "字上げ" && n >= 1).then(|| {
-                (
-                    EmitKind::Aozora(alloc.line(LineFormat::AlignEnd { offset: n })),
-                    None,
-                )
-            })
+            (matches!(tail, "字上げ" | "字上がり" | "字上げ揃え" | "字上がり揃え") && n >= 1).then(
+                || {
+                    (
+                        EmitKind::Aozora(alloc.line(LineFormat::AlignEnd { offset: n })),
+                        None,
+                    )
+                },
+            )
         }
         BodyFamily::TopIndentPrefix => {
             // body == 天から{N}字下げ — single-line indent from the top
@@ -1639,7 +1679,7 @@ fn resolve_indent_segment(segment: &str, block: &mut IndentBlock) -> Option<()> 
     match segment {
         "ゴシック体" | "ゴチック" if !styles.bold => styles.bold = true,
         "横書き" | "横組み" if !styles.horizontal => styles.horizontal = true,
-        "罫囲み" if !styles.framed => styles.framed = true,
+        "罫囲み" | "表罫囲み" if !styles.framed => styles.framed = true,
         // 小さい活字 = one stage smaller (FontShift(-1)).
         "小さい活字" if styles.font.is_none() => {
             styles.font = Some(FontShift(NonZeroI8::new(-1)?));

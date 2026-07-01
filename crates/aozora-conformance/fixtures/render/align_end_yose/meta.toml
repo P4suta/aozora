@@ -1,0 +1,5 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# 右寄せ / 地寄せ are wording variants of 地付き (inline-end alignment,
+# offset 0). They canonicalize to ［＃地付き］ on serialize.
+feature = "alignment"
+level = "should"
