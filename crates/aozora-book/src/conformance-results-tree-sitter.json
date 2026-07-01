@@ -1,7 +1,7 @@
 {
   "implementation": "tree-sitter",
-  "total": 75,
-  "passed": 41,
+  "total": 76,
+  "passed": 42,
   "failed": 34,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 5
     },
     "should": {
-      "total": 49,
-      "passed": 20,
+      "total": 50,
+      "passed": 21,
       "failed": 29
     }
   },
@@ -409,6 +409,13 @@
     {
       "case": "nested_ruby",
       "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "non_canonical_directive",
+      "feature": "lint",
       "level": "should",
       "passed": true,
       "message": null

@@ -21,6 +21,7 @@ use aozora_spec::Diagnostic;
 use aozora_syntax::accent::compose_accent_dots;
 use aozora_syntax::alloc_owned::OwnedAllocator;
 use aozora_syntax::format::ForwardOrigin;
+use aozora_syntax::lint::canonical_directive;
 use aozora_syntax::owned::{ContentOwned, NodeOwned, SegmentOwned};
 use aozora_syntax::{
     AbsoluteSize, BoutenPosition, DirectiveKind, EnclosureKind, FontShift, ForwardAttr,
@@ -563,10 +564,17 @@ impl RecogniseCtx<'_, '_> {
         let payload = self.alloc.make_directive(raw, DirectiveKind::Unknown);
         let node = self.alloc.annotation(payload);
         let payload_for_seg = self.alloc.make_directive(raw, DirectiveKind::Unknown);
-        let pending_diagnostic = tcy_pending.or_else(|| {
-            body.starts_with("ここから")
-                .then(|| Diagnostic::unrecognised_container_directive(directive_span))
-        });
+        // Notation-hygiene lint: a body that is a verified near-miss of a
+        // recognized directive (kept as Unknown) gets a canonical-form
+        // suggestion. Catalogue bodies are disjoint from the ここから / 縦中横
+        // cases below, so the priority is only defensive — never double-fires.
+        let pending_diagnostic = canonical_directive(body)
+            .map(|canonical| Diagnostic::non_canonical_directive(directive_span, canonical))
+            .or(tcy_pending)
+            .or_else(|| {
+                body.starts_with("ここから")
+                    .then(|| Diagnostic::unrecognised_container_directive(directive_span))
+            });
         AnnotationMatch {
             emit: EmitKind::Aozora(node),
             annotation_payload: Some(payload_for_seg),

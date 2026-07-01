@@ -29,6 +29,7 @@ use thiserror::Error;
 pub mod accent;
 pub mod alloc_owned;
 pub mod format;
+pub mod lint;
 pub mod node_kind;
 pub mod owned;
 

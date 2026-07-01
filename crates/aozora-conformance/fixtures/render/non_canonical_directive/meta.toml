@@ -1,0 +1,6 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# Notation-hygiene lint: ［＃改行を挿入］ is a verified near-miss of the
+# recognized ［＃改行］, kept as Unknown (verbatim round-trip) but flagged with
+# an aozora::lint::non_canonical_directive warning suggesting the canonical.
+feature = "lint"
+level = "should"
