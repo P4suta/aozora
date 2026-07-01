@@ -30,6 +30,7 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-bouten",
     "aozora-bouten-batsu",
     "aozora-bouten-bosen",
+    "aozora-bouten-both",
     "aozora-bouten-goma",
     "aozora-bouten-hasen",
     "aozora-bouten-janome",
@@ -130,6 +131,7 @@ pub(crate) fn bouten_kind_slug(kind: BoutenKind) -> &'static str {
 pub(crate) const fn bouten_position_slug(pos: BoutenPosition) -> &'static str {
     match pos {
         BoutenPosition::Left => "left",
+        BoutenPosition::Both => "both",
         _ => "right",
     }
 }
@@ -504,7 +506,11 @@ mod tests {
             RegionFormat::CombineUpright,
         ];
         for &kind in BOUTEN_KINDS {
-            for position in [BoutenPosition::Right, BoutenPosition::Left] {
+            for position in [
+                BoutenPosition::Right,
+                BoutenPosition::Left,
+                BoutenPosition::Both,
+            ] {
                 containers.push(RegionFormat::Bouten { kind, position });
             }
         }

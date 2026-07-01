@@ -288,6 +288,7 @@ fn emit_format_owned<W: Write>(
         emit_bouten_targets_owned(store.resolve_content_range(f.target), store, out)?;
         match position {
             BoutenPosition::Left => out.write_str("の左に")?,
+            BoutenPosition::Both => out.write_str("の両側に")?,
             _ => out.write_char('に')?,
         }
         out.write_str(kind.keyword())?;

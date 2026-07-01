@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 74,
-  "passed": 74,
+  "total": 75,
+  "passed": 75,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 48,
-      "passed": 48,
+      "total": 49,
+      "passed": 49,
       "failed": 0
     }
   },
@@ -107,6 +107,13 @@
     },
     {
       "case": "bouten_black_triangle",
+      "feature": "bouten",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "bouten_both_side",
       "feature": "bouten",
       "level": "should",
       "passed": true,

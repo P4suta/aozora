@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 74,
+  "total": 75,
   "passed": 41,
-  "failed": 33,
+  "failed": 34,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,9 +15,9 @@
       "failed": 5
     },
     "should": {
-      "total": 48,
+      "total": 49,
       "passed": 20,
-      "failed": 28
+      "failed": 29
     }
   },
   "cases": [
@@ -107,6 +107,13 @@
     },
     {
       "case": "bouten_black_triangle",
+      "feature": "bouten",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "bouten_both_side",
       "feature": "bouten",
       "level": "should",
       "passed": false,

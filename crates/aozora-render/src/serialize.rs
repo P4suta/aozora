@@ -148,6 +148,7 @@ pub(crate) const fn heading_level_word(kind: HeadingKind) -> &'static str {
 const fn bouten_left_prefix(position: BoutenPosition) -> &'static str {
     match position {
         BoutenPosition::Left => "左に",
+        BoutenPosition::Both => "両側に",
         _ => "",
     }
 }
