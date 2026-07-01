@@ -1460,19 +1460,40 @@ pub(super) fn classify_general_image_body(
 /// it matches nothing and the directive falls through to `Directive{Unknown}`.
 /// The 同行 / 窓 styles cross with every level (`同行中見出し`, `窓小見出し`, …).
 pub(super) fn parse_heading_keyword(s: &str) -> Option<(HeadingStyle, HeadingKind)> {
-    // An optional 同行 / 窓 style prefix, else the standard style; `rest` is
-    // the remaining 大/中/小見出し keyword.
-    let (style, rest) = [
+    let (style, rest) = strip_heading_style(s);
+    let kind = match rest {
+        "大見出し" => HeadingKind::Large,
+        "中見出し" => HeadingKind::Medium,
+        "小見出し" => HeadingKind::Small,
+        _ => return None,
+    };
+    Some((style, kind))
+}
+
+/// Strip an optional 同行 / 窓 style prefix, returning the style and the
+/// remaining `大/中/小見出(し)` stem. Shared by the strict open/hint parser
+/// and the 送り仮名-tolerant close parser.
+fn strip_heading_style(s: &str) -> (HeadingStyle, &str) {
+    [
         ("同行", HeadingStyle::SameLine),
         ("窓", HeadingStyle::Window),
     ]
     .into_iter()
     .find_map(|(prefix, style)| s.strip_prefix(prefix).map(|rest| (style, rest)))
-    .unwrap_or((HeadingStyle::Standard, s));
+    .unwrap_or((HeadingStyle::Standard, s))
+}
+
+/// Heading keyword for a **close** marker only. Tolerates the 送り仮名-elided
+/// stem (`中見出` for `中見出し`) that appears in the wild solely on the
+/// closing `…見出終わり` — the open and forward-hint forms keep requiring the
+/// full `見出し` via [`parse_heading_keyword`]. The close still serializes
+/// back to the canonical `見出し` keyword, so the round-trip is a fixed point.
+fn parse_heading_close_keyword(s: &str) -> Option<(HeadingStyle, HeadingKind)> {
+    let (style, rest) = strip_heading_style(s);
     let kind = match rest {
-        "大見出し" => HeadingKind::Large,
-        "中見出し" => HeadingKind::Medium,
-        "小見出し" => HeadingKind::Small,
+        "大見出し" | "大見出" => HeadingKind::Large,
+        "中見出し" | "中見出" => HeadingKind::Medium,
+        "小見出し" | "小見出" => HeadingKind::Small,
         _ => return None,
     };
     Some((style, kind))
@@ -1501,7 +1522,7 @@ fn parse_heading_directive(body: &str) -> Option<(RegionFormat, bool)> {
         ));
     }
     if let Some(rest) = body.strip_prefix("ここで") {
-        let (style, level) = parse_heading_keyword(rest.strip_suffix("終わり")?)?;
+        let (style, level) = parse_heading_close_keyword(rest.strip_suffix("終わり")?)?;
         return Some((
             RegionFormat::Heading {
                 level,
@@ -1512,7 +1533,7 @@ fn parse_heading_directive(body: &str) -> Option<(RegionFormat, bool)> {
         ));
     }
     if let Some(inner) = body.strip_suffix("終わり") {
-        let (style, level) = parse_heading_keyword(inner)?;
+        let (style, level) = parse_heading_close_keyword(inner)?;
         return Some((
             RegionFormat::Heading {
                 level,
