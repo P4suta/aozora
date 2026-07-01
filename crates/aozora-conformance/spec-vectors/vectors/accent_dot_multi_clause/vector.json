@@ -1,0 +1,37 @@
+{
+  "name": "accent_dot_multi_clause",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.21",
+    "note": "[provenance:hand-derived §6.21 + AOZORA-ANNOTATION 2026-07-01] #331 multi-clause selector grammar. A `。`-joined body composes several dots onto the *same* reclaimed run: `mは上ドット付き` dots the m (First) above and `２つめのsは下ドット付き` dots the 2nd s (case-insensitive count) below → Saṁṣa. All clauses' ops resolve against one run and apply together (resolve-all-then-substitute), so the whole directive is a single emphasis node."
+  },
+  "source": "Samsa［＃mは上ドット付き。２つめのsは下ドット付き］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-accent-dot\">Saṁṣa</span></p>\n",
+    "serialize": "Samsa［＃mは上ドット付き。２つめのsは下ドット付き］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 73
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 5,
+          "end": 8
+        },
+        "close": {
+          "start": 70,
+          "end": 73
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

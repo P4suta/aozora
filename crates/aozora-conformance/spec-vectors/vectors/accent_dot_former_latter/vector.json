@@ -1,0 +1,37 @@
+{
+  "name": "accent_dot_former_latter",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.21",
+    "note": "[provenance:hand-derived §6.21 + AOZORA-ANNOTATION 2026-07-01] #331 `前の` (former) / `後の` (latter) selectors over a `、`-joined clause pair. The run Konkana has two n's; 前の takes the first (dot above → ṅ) and 後の the last (dot below → ṇ) → Koṅkaṇa."
+  },
+  "source": "Konkana［＃前のnは上ドット付き、後のnは下ドット付き］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-accent-dot\">Koṅkaṇa</span></p>\n",
+    "serialize": "Konkana［＃前のnは上ドット付き、後のnは下ドット付き］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 75
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 7,
+          "end": 10
+        },
+        "close": {
+          "start": 72,
+          "end": 75
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
