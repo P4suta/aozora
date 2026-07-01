@@ -9,6 +9,7 @@ interface EditorProps {
   onInput: (next: string) => void;
   onParse?: (payload: ParserState) => void;
   onReady?: (view: EditorView) => void;
+  onOpenPalette?: () => void;
 }
 
 export default function Editor(props: EditorProps) {
@@ -34,6 +35,7 @@ export default function Editor(props: EditorProps) {
       initialValue: props.value,
       onChange: (next) => props.onInput(next),
       onParse: (payload) => props.onParse?.(payload),
+      onOpenPalette: () => props.onOpenPalette?.(),
     });
     mounted = true;
     props.onReady?.(view);

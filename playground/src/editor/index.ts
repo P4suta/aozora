@@ -30,6 +30,8 @@ export interface AozoraEditorOptions {
   initialValue: string;
   onChange?: (next: string) => void;
   onParse?: (payload: ParserState) => void;
+  /** Open the command palette (bound to Mod-Shift-p). */
+  onOpenPalette?: () => void;
 }
 
 /**
@@ -103,6 +105,16 @@ export function createAozoraEditor(options: AozoraEditorOptions): EditorView {
       inlayHintsCompartment.of(aozoraInlayHints),
       keymap.of([
         ...aozoraWrapKeymap,
+        {
+          // Open the command palette. Mod-Shift-p avoids the browser's
+          // Mod-p (print) and CM6's own bindings.
+          key: 'Mod-Shift-p',
+          run: () => {
+            options.onOpenPalette?.();
+            return true;
+          },
+          preventDefault: true,
+        },
         ...closeBracketsKeymap,
         // 注意：indentWithTab は **入れない**。
         //   - 青空文庫記法では tab インデントは使わず全角スペースで字下げするのが流儀
