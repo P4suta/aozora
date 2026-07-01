@@ -363,6 +363,11 @@
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
     },
     {
+      "name": "left_ruby_pair",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "line_bold_single",
       "error": true,
       "sexp": "(document (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (newline))"

@@ -830,6 +830,10 @@ pub(super) fn editorial_note_kind(body: &str) -> Option<DirectiveKind> {
         Some(DirectiveKind::RubyAttached)
     } else if is_ruby_retarget_body(body) {
         Some(DirectiveKind::RubyRetarget)
+    } else if body == "左にルビ付き" {
+        Some(DirectiveKind::RubyPairOpen)
+    } else if is_ruby_pair_close_body(body) {
+        Some(DirectiveKind::RubyPairClose)
     } else {
         None
     }
@@ -849,6 +853,15 @@ fn is_ruby_retarget_body(body: &str) -> bool {
     body.strip_prefix("ルビは「")
         .and_then(|r| r.strip_suffix("」にかかる"))
         .is_some_and(|x| !x.is_empty())
+}
+
+/// Whether `body` is a left-side-ruby span closer `左に「Y」のルビ付き終わり`
+/// (whole body, reading `Y` non-empty). The matching opener is the fixed
+/// `左にルビ付き` body.
+fn is_ruby_pair_close_body(body: &str) -> bool {
+    body.strip_prefix("左に「")
+        .and_then(|r| r.strip_suffix("」のルビ付き終わり"))
+        .is_some_and(|y| !y.is_empty())
 }
 
 /// Whether `body` is exactly a numbered input-typist note `入力者注(N)` with an

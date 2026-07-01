@@ -333,6 +333,22 @@ fn render_annotation_owned<W: Write>(
         DirectiveKind::RubyAttached | DirectiveKind::RubyRetarget => {
             return out.write_str(r#"<sup class="aozora-ruby-note">ルビ</sup>"#);
         }
+        DirectiveKind::RubyPairOpen => {
+            return out.write_str(r#"<sup class="aozora-ruby-note">左ルビ</sup>"#);
+        }
+        DirectiveKind::RubyPairClose => {
+            // ［＃左に「Y」のルビ付き終わり］ → show the left-ruby reading Y. Y is
+            // the gloss (not surrounding text), so it does not double-render;
+            // recover it from the raw bracket the classifier guaranteed.
+            let raw = store.resolve_str(a.raw);
+            let y = raw
+                .strip_prefix("［＃左に「")
+                .and_then(|r| r.strip_suffix("」のルビ付き終わり］"))
+                .unwrap_or(raw);
+            out.write_str(r#"<sup class="aozora-ruby-note">左ルビ「"#)?;
+            escape_text(y, out)?;
+            return out.write_str("」</sup>");
+        }
         _ => {}
     }
     out.write_str(r#"<span class="aozora-directive" hidden>"#)?;
