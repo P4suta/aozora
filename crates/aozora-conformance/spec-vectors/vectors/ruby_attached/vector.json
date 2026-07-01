@@ -1,0 +1,48 @@
+{
+  "name": "ruby_attached",
+  "meta": {
+    "feature": "annotation",
+    "level": "should",
+    "spec_section": "6.14",
+    "note": "[provenance:hand-derived §6.14 + AOZORA-ANNOTATION 2026-07-01] 「X」にルビ is a ruby-presence editorial note — a proofreading marker that the run X carries a ruby gloss (the gloss text is NOT in the directive, so this is not renderable ruby). Whole body matches 「X」にルビ; classified as editorial kind ruby-attached. Bracket-only: the preceding 親 is left in place (consumes only the ［＃…］), so §8 renders 親 once followed by a compact <sup class=\"aozora-ruby-note\">ルビ</sup> marker — NOT X, which would double-render. Serialize re-emits the raw bracket byte-exact. Offsets from the §4 byte model (each fullwidth char = 3 bytes); cross-checked against the reference processor."
+  },
+  "source": "親［＃「親」にルビ］\n",
+  "expected": {
+    "html": "<p>親<sup class=\"aozora-ruby-note\">ルビ</sup></p>\n",
+    "serialize": "親［＃「親」にルビ］\n",
+    "nodes": [
+      {
+        "kind": "directive",
+        "span": {
+          "start": 3,
+          "end": 30
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 15,
+          "end": 18
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 27,
+          "end": 30
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
