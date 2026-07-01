@@ -196,7 +196,10 @@ impl<'src> Converter<'src> {
         // the `format_inline` attr match so the debug-span fallback can't leak
         // a duplicate either. The emphasis markup is dropped rather than
         // duplicated — a value-returning projection cannot retroactively wrap an
-        // already-emitted run, same as the streaming HTML path.
+        // already-emitted run, same as the streaming HTML path. A `Detached`
+        // decoration (#333) is *not* `Referenced`, so it falls through and is
+        // projected styled by `format_inline`: it owns its (once-only) literal,
+        // the bracket being a separate `Referenced` node.
         if let N::Format(f) = node
             && matches!(f.origin, ForwardOrigin::Referenced)
         {

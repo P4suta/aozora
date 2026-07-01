@@ -461,6 +461,22 @@ pub enum ForwardOrigin {
     /// no-referent classifier paths; everywhere else it is the natural
     /// fall-through of the guards that special-case `Reclaimed`/`Referenced`.
     SelfContained,
+    /// The styled-literal half of a **non-adjacent** forward-reference split
+    /// pair (`太字の［＃「太字」は太字］`). The classifier located the target as an
+    /// *interior* occurrence of the current plain run — present, but not
+    /// byte-adjacent to the bracket — and pulled that occurrence out of the
+    /// surrounding plain run into this decoration leaf, so it renders **once**,
+    /// styled. The directive bracket stays a separate
+    /// [`Referenced`](Self::Referenced) node (renders nothing, serializes the
+    /// `［＃…］` alone). This is the provenance dual of `Referenced`: the
+    /// renderer styles the target (**not** a no-op), and the serializer emits
+    /// the literal **alone** — no bracket, because the bracket is the separate
+    /// `Referenced` node's job (unlike [`Reclaimed`](Self::Reclaimed), which
+    /// re-emits literal *and* bracket from one node). #228-safe by construction:
+    /// the literal was removed from the plain run, so exactly one copy exists.
+    /// Produced only by the interior-referent resolver path (#333), never via
+    /// [`from_consume`](Self::from_consume).
+    Detached,
 }
 
 impl ForwardOrigin {

@@ -89,6 +89,13 @@ pub mod codes {
     /// A forward-reference bouten target occurs more than once before it.
     pub const BOUTEN_TARGET_AMBIGUOUS: &str = "aozora::lex::bouten_target_ambiguous";
 
+    /// An inline-style forward reference whose present target cannot be styled
+    /// in place.
+    ///
+    /// `X` is a ruby base, on an earlier line, inside another construct, or one
+    /// of several targets. The directive is kept; the styling is not applied.
+    pub const FORWARD_REFERENT_NOT_STYLABLE: &str = "aozora::lex::forward_referent_not_stylable";
+
     /// A page/section break appeared inside a single-line container.
     pub const BREAK_IN_SINGLE_LINE_CONTAINER: &str = "aozora::lex::break_in_single_line_container";
 
@@ -538,6 +545,36 @@ pub enum Diagnostic {
         span: Span,
     },
 
+    /// An inline-style forward reference (`［＃「X」は太字／斜体］`, `［＃「X」に傍点］`,
+    /// `は縦中横`, `は「□」囲み`, …) named a target `X` that *is* present in the
+    /// preceding text but cannot be styled in place: it is a ruby base
+    /// (`我《われ》…［＃「我」に傍点］`), on an earlier line, inside another construct,
+    /// or one of several quoted targets. The directive is retained and the text
+    /// round-trips, but the emphasis is **not** applied to the earlier run. The
+    /// label spans the directive.
+    #[error("forward-reference target found but not stylable in place")]
+    #[diagnostic(
+        code("aozora::lex::forward_referent_not_stylable"),
+        url(
+            "https://p4suta.github.io/aozora/notation/diagnostics.html#forward-referent-not-stylable"
+        ),
+        severity(Warning),
+        help(
+            "the quoted target is a ruby base, on an earlier line, inside another \
+             construct, or one of several targets — move the `［＃…］` next to a \
+             plain occurrence of the target so the styling can be applied"
+        )
+    )]
+    ForwardReferentNotStylable {
+        /// Caret location for miette rendering — the same byte-range as
+        /// the `span` field below, as the `(offset, length)` pair miette
+        /// wants.
+        #[label("target not stylable in place")]
+        at: miette::SourceSpan,
+        /// Byte-range of the `［＃「X」は…］` directive in the sanitized source.
+        span: Span,
+    },
+
     /// A page or section break (`［＃改ページ］` / `［＃改段］` / …) appeared
     /// inside a single-line container — a single-line layout directive
     /// (`［＃地付き］` / `［＃N字下げ］`) sharing a source line with a later
@@ -845,6 +882,16 @@ impl Diagnostic {
         }
     }
 
+    /// Constructor for [`Diagnostic::ForwardReferentNotStylable`].
+    #[must_use]
+    pub fn forward_referent_not_stylable(at: Span) -> Self {
+        let (offset, length) = span_to_miette_parts(at);
+        Self::ForwardReferentNotStylable {
+            at: miette::SourceSpan::new(offset.into(), length),
+            span: at,
+        }
+    }
+
     /// Constructor for [`Diagnostic::BreakInSingleLineContainer`]. The
     /// `container` is the stable family tag of the dropped single-line
     /// container (`indent` / `align-end` / `warichu`).
@@ -923,6 +970,7 @@ impl Diagnostic {
             | Self::UnrecognisedContainerDirective { .. }
             | Self::TcyTargetNotFound { .. }
             | Self::BoutenTargetAmbiguous { .. }
+            | Self::ForwardReferentNotStylable { .. }
             | Self::BreakInSingleLineContainer { .. }
             | Self::KaeritenOutsideKanbun { .. } => Severity::Warning,
             Self::AccentDecompositionApplied { .. } => Severity::Note,
@@ -953,6 +1001,7 @@ impl Diagnostic {
             | Self::UnrecognisedContainerDirective { .. }
             | Self::TcyTargetNotFound { .. }
             | Self::BoutenTargetAmbiguous { .. }
+            | Self::ForwardReferentNotStylable { .. }
             | Self::BreakInSingleLineContainer { .. }
             | Self::BracketedKaeritenNoPair { .. }
             | Self::KaeritenOutsideKanbun { .. }
@@ -976,6 +1025,7 @@ impl Diagnostic {
             | Self::UnrecognisedContainerDirective { span, .. }
             | Self::TcyTargetNotFound { span, .. }
             | Self::BoutenTargetAmbiguous { span, .. }
+            | Self::ForwardReferentNotStylable { span, .. }
             | Self::BreakInSingleLineContainer { span, .. }
             | Self::BracketedKaeritenNoPair { span, .. }
             | Self::KaeritenOutsideKanbun { span, .. }
@@ -1013,6 +1063,7 @@ impl Diagnostic {
             | Self::UnrecognisedContainerDirective { at, span, .. }
             | Self::TcyTargetNotFound { at, span, .. }
             | Self::BoutenTargetAmbiguous { at, span, .. }
+            | Self::ForwardReferentNotStylable { at, span, .. }
             | Self::BreakInSingleLineContainer { at, span, .. }
             | Self::BracketedKaeritenNoPair { at, span, .. }
             | Self::KaeritenOutsideKanbun { at, span, .. }
@@ -1043,6 +1094,7 @@ impl Diagnostic {
             Self::UnrecognisedContainerDirective { .. } => codes::UNRECOGNISED_CONTAINER_DIRECTIVE,
             Self::TcyTargetNotFound { .. } => codes::TCY_TARGET_NOT_FOUND,
             Self::BoutenTargetAmbiguous { .. } => codes::BOUTEN_TARGET_AMBIGUOUS,
+            Self::ForwardReferentNotStylable { .. } => codes::FORWARD_REFERENT_NOT_STYLABLE,
             Self::BreakInSingleLineContainer { .. } => codes::BREAK_IN_SINGLE_LINE_CONTAINER,
             Self::BracketedKaeritenNoPair { .. } => codes::BRACKETED_KAERITEN_NO_PAIR,
             Self::KaeritenOutsideKanbun { .. } => codes::KAERITEN_OUTSIDE_KANBUN,
@@ -1052,10 +1104,10 @@ impl Diagnostic {
     }
 
     /// Every stable diagnostic code [`Self::code`] can return, in
-    /// catalogue order: the fifteen source-level codes followed by the
+    /// catalogue order: the sixteen source-level codes followed by the
     /// four pipeline-internal check codes. Backs `aozora explain`'s
     /// catalogue and the round-trip coverage test.
-    pub const ALL_CODES: [&'static str; 19] = [
+    pub const ALL_CODES: [&'static str; 20] = [
         codes::SOURCE_CONTAINS_PUA,
         codes::UNCLOSED_BRACKET,
         codes::UNMATCHED_CLOSE,
@@ -1067,6 +1119,7 @@ impl Diagnostic {
         codes::UNRECOGNISED_CONTAINER_DIRECTIVE,
         codes::TCY_TARGET_NOT_FOUND,
         codes::BOUTEN_TARGET_AMBIGUOUS,
+        codes::FORWARD_REFERENT_NOT_STYLABLE,
         codes::BREAK_IN_SINGLE_LINE_CONTAINER,
         codes::BRACKETED_KAERITEN_NO_PAIR,
         codes::KAERITEN_OUTSIDE_KANBUN,
@@ -1119,6 +1172,7 @@ impl Diagnostic {
             codes::UNRECOGNISED_CONTAINER_DIRECTIVE => Self::unrecognised_container_directive(at),
             codes::TCY_TARGET_NOT_FOUND => Self::tcy_target_not_found(at),
             codes::BOUTEN_TARGET_AMBIGUOUS => Self::bouten_target_ambiguous(at),
+            codes::FORWARD_REFERENT_NOT_STYLABLE => Self::forward_referent_not_stylable(at),
             codes::BREAK_IN_SINGLE_LINE_CONTAINER => {
                 Self::break_in_single_line_container(at, "align-end")
             }
@@ -1337,6 +1391,10 @@ mod tests {
             "aozora::lex::bouten_target_ambiguous"
         );
         assert_eq!(
+            codes::FORWARD_REFERENT_NOT_STYLABLE,
+            "aozora::lex::forward_referent_not_stylable"
+        );
+        assert_eq!(
             codes::BREAK_IN_SINGLE_LINE_CONTAINER,
             "aozora::lex::break_in_single_line_container"
         );
@@ -1428,6 +1486,11 @@ mod tests {
         assert_eq!(bouten.source(), DiagnosticSource::Source);
         assert_eq!(bouten.code(), codes::BOUTEN_TARGET_AMBIGUOUS);
 
+        let not_stylable = Diagnostic::forward_referent_not_stylable(Span::new(0, 18));
+        assert_eq!(not_stylable.severity(), Severity::Warning);
+        assert_eq!(not_stylable.source(), DiagnosticSource::Source);
+        assert_eq!(not_stylable.code(), codes::FORWARD_REFERENT_NOT_STYLABLE);
+
         let break_slc = Diagnostic::break_in_single_line_container(Span::new(0, 18), "align-end");
         assert_eq!(break_slc.severity(), Severity::Warning);
         assert_eq!(break_slc.source(), DiagnosticSource::Source);
@@ -1461,7 +1524,7 @@ mod tests {
     fn explain_covers_every_catalogued_code() {
         assert_eq!(
             Diagnostic::ALL_CODES.len(),
-            19,
+            20,
             "ALL_CODES must list every code code() can return"
         );
         for &code in &Diagnostic::ALL_CODES {

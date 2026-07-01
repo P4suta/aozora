@@ -229,6 +229,24 @@ The label spans the directive. **Fix:** reword so the quoted target is
 unique before the directive. (Multi-target brackets like `［＃「A」「B」に傍点］`
 name distinct runs and are never flagged.)
 
+## Forward referent not stylable
+
+`aozora::lex::forward_referent_not_stylable` · **Warning**
+
+```text
+我《われ》は［＃「我」に傍点］          (target 「我」 is a ruby base)
+```
+
+An inline-style forward reference (`［＃「X」は太字／斜体］`, `［＃「X」に傍点］`,
+`は縦中横`, `は「□」囲み`, …) named a target `X` that **is** present in the
+preceding text but cannot be styled in place: it is a ruby base, on an
+earlier line, inside another construct, or one of several quoted targets.
+The directive is retained and the text round-trips unchanged, but the
+emphasis is **not** applied to the earlier run. (When the target is a plain
+run in the same line the style *is* applied — see the bold/傍点 sections.)
+The label spans the directive. **Fix:** move the `［＃…］` next to a plain
+occurrence of the target, or accept that the styling cannot be represented.
+
 ## Mismatched bouten container
 
 `aozora::lex::mismatched_bouten_container` · **Error**

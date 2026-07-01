@@ -273,8 +273,15 @@ fn emit_format_owned<W: Write>(
     store: &NodeStore,
     out: &mut W,
 ) -> fmt::Result {
-    if matches!(f.origin, ForwardOrigin::Reclaimed) {
+    if matches!(f.origin, ForwardOrigin::Reclaimed | ForwardOrigin::Detached) {
         emit_content_as_plain_range(f.target, store, out)?;
+    }
+    // A `Detached` decoration (#333) is the styled-literal half of a
+    // non-adjacent forward split: it serializes as the bare literal above,
+    // because the `［＃…］` directive is a *separate* `Referenced` node that
+    // emits the bracket itself. Return before the bracket-emitting block.
+    if matches!(f.origin, ForwardOrigin::Detached) {
+        return Ok(());
     }
     if let ForwardAttr::Bouten { kind, position } = f.attr {
         out.write_str("［＃")?;
