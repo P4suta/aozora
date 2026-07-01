@@ -7,7 +7,7 @@ bench harness measure each stage independently, and maps every
 diagnostic to a single stage boundary.
 
 The single public entry [`lex`] drives all four stages
-and lands the resulting borrowed AST inside an
+and lands the resulting owned AST inside an
 `aozora_syntax::borrowed::Arena` provided by the caller. The legacy
 "normalize / registry / validate" steps disappeared into a fused
 walk inside `lex`; they no longer have standalone stage functions.
@@ -133,7 +133,7 @@ that does what was once three separate stages:
   text with single-codepoint placeholders.
 - **Register** — build the [`Registry`] (an `EytzingerMap<u32, NodeRef<'src>>`,
   see [van Emde Boas / Eytzinger layout](veb.md)) keyed by sentinel
-  byte position so the post-process walk can recover the borrowed-AST
+  byte position so the post-process walk can recover the owned-AST
   node from a normalised position in `O(log n)`.
 - **Validate + diagnostics** — collect every sanitize / pair /
   classify diagnostic, sort by span, and pin stable codes

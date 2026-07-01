@@ -87,7 +87,7 @@ flowchart TD
 | Crate | Role |
 |---|---|
 | `aozora-veb` | `no_std` Eytzinger-layout sorted-set lookup. Cache-friendly binary search for sub-256-entry registries. |
-| `aozora-syntax` | AST node types — `Node<'src>`, `Container<'src>`, `Bouten<'src>`, `Ruby<'src>`, …. Borrows from the bumpalo arena. |
+| `aozora-syntax` | AST node types — `NodeOwned` and its owned payloads (`RubyOwned`, `GaijiOwned`, `Container`, …). Owned and lifetime-free. |
 | `aozora-encoding` | Shift_JIS decoding, JIS X 0213 patch, 外字 PHF resolver, accent decomposition. |
 | `aozora-scan` | SIMD-friendly multi-pattern byte scanner (the tokenize stage's trigger scan). One of three crates that locally relaxes `unsafe_code` — for aligned-load SIMD intrinsics. |
 

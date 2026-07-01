@@ -14,7 +14,7 @@ flowchart TD
     src["source text<br/>(UTF-8 or Shift_JIS)"]
     decode["Shift_JIS decode<br/>(aozora-encoding)"]
     lex["Lex<br/>(aozora-pipeline::lex)<br/>sanitize → tokenize → pair → classify"]
-    tree["Tree&lt;'arena&gt;<br/>(borrowed AST)"]
+    tree["Tree&lt;'_&gt;<br/>(owned AST view)"]
     render["Render<br/>(aozora-render)<br/>html  /  serialize"]
     out["HTML  /  canonical 青空文庫 source"]
 
@@ -79,7 +79,7 @@ a different cost / cache profile:
 Splitting them lets the parser ship two surface APIs without code
 duplication:
 
-- [`lex`] — fused, allocates one borrowed-AST tree.
+- [`lex`] — fused, allocates one owned-AST tree.
 - Per-stage calls (`sanitize`, `tokenize`, `pair`, `classify`) —
   used by the bench harness's per-stage probes and the integration
   tests in `crates/aozora-pipeline/tests/`.

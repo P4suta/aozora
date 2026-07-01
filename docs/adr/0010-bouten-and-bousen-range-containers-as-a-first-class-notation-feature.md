@@ -84,6 +84,12 @@ The `mismatched_bouten_container` diagnostic is scoped to the 点/線
   `bouten_kind_from_suffix`, so they still fall through to
   `Annotation{Unknown}` (none appear in range form in the corpus).
 
+> **Update (2026-07-01):** both point-in-time notes above have since been
+> overtaken by implementation — `bouten_kind_from_suffix` now recognises the
+> `鎖線` / `破線` / `黒三角傍点` variants, and the `mismatched_bouten_container`
+> diagnostic is emitted. The Context / Consequences above remain the snapshot
+> at decision time.
+
 ## Alternatives considered
 
 - **Inline paired annotations (warichu-style).** Emit the open/close as

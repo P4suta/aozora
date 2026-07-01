@@ -15,7 +15,7 @@ no inner content. They appear on their own line in the source.
 
 ## AST shape
 
-`［＃改ページ］` is its own borrowed-AST node; the three 段 / 丁 / 見開き
+`［＃改ページ］` is its own owned-AST node; the three 段 / 丁 / 見開き
 breaks share one `SectionBreak` node tagged by [`SectionKind`]:
 
 ```rust,ignore

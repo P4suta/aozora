@@ -1,6 +1,6 @@
 # 0018. Minimal-diff splice and source-region ownership
 
-- Status: accepted
+- Status: superseded by [ADR-0019](0019-coupled-and-container-minimal-diff-splice.md)
 - Date: 2026-06-24
 - Deciders: @P4suta
 - Tags: architecture, api
@@ -128,7 +128,7 @@ full corpus (17,889 works at time of writing).
 - Issues #202 (this work), #189 (coremodel-purification umbrella), #229
   (`ForwardOrigin` provenance enum).
 
-[`ForwardOrigin`]: https://docs.rs/aozora/latest/aozora/syntax/borrowed/enum.ForwardOrigin.html
+[`ForwardOrigin`]: https://docs.rs/aozora/latest/aozora/enum.ForwardOrigin.html
 [`Tree::owned_regions`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.owned_regions
 [`Tree::to_source_verbatim`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.to_source_verbatim
 [`Tree::splice_source`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.splice_source

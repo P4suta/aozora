@@ -175,10 +175,10 @@ smallvec = "1.15"
 # SIMD-friendly substring scan
 memchr = "2.8"
 
-# Multi-pattern search (forward-reference target precedence check;
-# annotation prefix DFA in a future commit). `default-features = false`
-# at the workspace level so each consumer (aozora-lexer / aozora-scan)
-# opts into exactly the features it needs.
+# Multi-pattern search: the trigger-trigram scan automaton in `aozora-scan`
+# and the annotation-keyword body dispatcher in `aozora-pipeline`
+# (`classify::directive::build_body_dispatcher`). `default-features = false`
+# at the workspace level so each consumer opts into exactly the features it needs.
 aho-corasick = { version = "1.1", default-features = false }
 aozora-encoding = { version = "0.4.1", path = "crates/aozora-encoding" }
 # publish=false → path-only (see aozora-trace above).

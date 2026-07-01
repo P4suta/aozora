@@ -1,6 +1,6 @@
 //! Render path totality + structural soundness.
 //!
-//! Two complementary properties on the borrowed-AST → HTML path:
+//! Two complementary properties on the owned-AST → HTML path:
 //!
 //! 1. **Totality**: [`html::render_to_string`] must not panic on any
 //!    input the lexer accepts (which is "any UTF-8 string" — the

@@ -4,6 +4,7 @@
 - Date: 2026-06-25
 - Deciders: @P4suta
 - Tags: architecture, api
+- Supersedes: [ADR-0018](0018-minimal-diff-splice-and-source-region-ownership.md)
 
 ## Context
 
@@ -175,8 +176,8 @@ These are terminal truths surfaced by the verify step, not deferrals.
 - Issues #202 (this work), #189 (coremodel-purification umbrella), #229
   (`ForwardOrigin` provenance enum).
 
-[`ForwardOrigin`]: https://docs.rs/aozora/latest/aozora/syntax/borrowed/enum.ForwardOrigin.html
-[`Node`]: https://docs.rs/aozora/latest/aozora/syntax/borrowed/enum.Node.html
+[`ForwardOrigin`]: https://docs.rs/aozora/latest/aozora/enum.ForwardOrigin.html
+[`Node`]: https://docs.rs/aozora/latest/aozora/owned/enum.NodeOwned.html
 [`Tree::owned_regions`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.owned_regions
 [`Tree::coupling`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.coupling
 [`Tree::splice`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.splice

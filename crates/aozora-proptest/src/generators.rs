@@ -58,11 +58,11 @@ pub fn kanji_fragment(max_len: usize) -> impl Strategy<Value = String> {
 /// U+3041–U+3096.
 ///
 /// Used for ruby-reading round-trip properties. The upper bound is
-/// U+3096 (rather than U+309F) to exclude the hiragana voicing /
-/// iteration marks, which the lexer's ruby parser does not currently
-/// special-case — keeping the generator conservative here avoids
-/// exercising behaviour that is covered by hand-written unit tests
-/// instead.
+/// U+3096 (rather than U+309F) to exclude the combining voicing marks
+/// (U+3099 / U+309A): a leading combining mark would perturb an
+/// NFC-stable round-trip assertion. Ruby readings are captured as
+/// opaque spans, so the lexer does no per-codepoint handling of the
+/// reading either way.
 ///
 /// # Panics
 ///

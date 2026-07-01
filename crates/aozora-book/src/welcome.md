@@ -14,8 +14,8 @@ Bunko `.txt` source.
 
 The repository is **CommonMark-free, Markdown-free**: aozora deals
 *only* with the 青空文庫 notation. The renderer emits semantic HTML5;
-the lexer reports structured diagnostics; the AST is a borrowed-arena
-tree that can be walked in O(n) without copying source bytes. If you
+the lexer reports structured diagnostics; the AST is an owned,
+lifetime-free tree that can be walked in O(n). If you
 want a Markdown dialect that *also* understands aozora notation, see
 the sibling project [afm](https://github.com/P4suta/afm), which is
 built on top of this parser.

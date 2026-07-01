@@ -41,7 +41,6 @@ Phase 2（CodeMirror 6 + aozora-tools 機能移植 + Docker 化）は完了済�
 
 - **IndexedDB 永続化** — localStorage 版は実装済み（`storage.ts`・タブを閉じても source 復元）。大容量・複数ドキュメント用に IndexedDB へ拡張する余地
 - **モバイル最適化** — 現状 760px 切替の最小レスポンシブのみ。タッチでの折り畳み・タブ操作の改善余地大
-- **長文用の gzip share URL** — `lz-string` 等で base64url + 圧縮、URL 長制限の緩和
 - **複数ファイル管理** — ブラウザ内で複数 "ドキュメント" を Tab 切替、それぞれ別 `?text=` 共有
 - **設定の URL 共有** — `?vertical=1&inlay=0` 等、エディタ設定もリンクで共有
 - **左右ペインの同期スクロール** — エディタの可視範囲と preview の可視範囲を同期
@@ -66,7 +65,8 @@ Phase 2（CodeMirror 6 + aozora-tools 機能移植 + Docker 化）は完了済�
 
 > 実装済み: **E2E テスト（Playwright）**（#335・`e2e/smoke.spec.ts` + CI `e2e` job）、
 > **i18n（英語 UI）**（#336・`src/i18n/`・ランタイム言語切替）、
-> **og:image / og:description**（`index.html` の OG/Twitter カード）。
+> **og:image / og:description**（`index.html` の OG/Twitter カード）、
+> **gzip share URL**（#319・反復の多い長文は `?c=` lz-string 圧縮、プレーン `?text=` と自動切替）。
 
 ### コーパス・サンプル
 
@@ -77,9 +77,7 @@ Phase 2（CodeMirror 6 + aozora-tools 機能移植 + Docker 化）は完了済�
 
 ## 「今すぐ次にやるなら」候補（実装者視点）
 
-| 候補 | 規模 | 投資対効果 | コメント |
-|---|---|---|---|
-| **gzip share URL** | S | ★★ | `lz-string` 等で長文共有を可能に（プレーン `?text=` 共有は実装済み） |
+現在、ショートリスト該当なし（直近候補はすべて実装済み）。
 
 > 実装済み: **E2E テスト（Playwright）**（#335）、**i18n（英語 UI）**（#336）、
-> **コマンドパレット**（#334・全角キー打鍵不能問題を解決）。
+> **コマンドパレット**（#334・全角キー打鍵不能問題を解決）、**gzip share URL**（#319・`?c=` 圧縮）。

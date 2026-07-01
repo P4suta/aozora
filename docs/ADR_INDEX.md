@@ -24,8 +24,10 @@ back.
 | [0015](./adr/0015-spec-syntax-layer-boundary.md)                                     | The spec / syntax layer boundary                                      | accepted |
 | [0016](./adr/0016-consolidate-tooling-into-the-aozora-monorepo.md)                   | Consolidate the editor/CLI tooling into the aozora monorepo           | accepted |
 | [0017](./adr/0017-ecosystem-dependency-pin-policy.md)                                | Ecosystem dependency-pin policy                                       | accepted |
-| [0018](./adr/0018-minimal-diff-splice-and-source-region-ownership.md)                | Minimal-diff splice and source-region ownership                       | accepted |
+| [0018](./adr/0018-minimal-diff-splice-and-source-region-ownership.md)                | Minimal-diff splice and source-region ownership                       | superseded by [0019](./adr/0019-coupled-and-container-minimal-diff-splice.md) |
 | [0019](./adr/0019-coupled-and-container-minimal-diff-splice.md)                      | Coupled and container minimal-diff splice                             | accepted |
+| [0020](./adr/0020-release-secret-hardening-trusted-publishing.md)                    | Release secret hardening via Trusted Publishing and environment gates | accepted |
+| [0021](./adr/0021-cli-release-stays-hand-written.md)                                 | CLI release stays hand-written (cargo-dist not adopted)               | accepted |
 
 ## Authoring a new ADR
 

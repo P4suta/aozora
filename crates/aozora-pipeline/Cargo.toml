@@ -1,6 +1,6 @@
 [package]
 name = "aozora-pipeline"
-description = "Aozora notation lex pipeline — orchestrator + lexer (sanitize → tokenize → pair → classify) producing a borrowed-arena AST. Internal crate; depend on the aozora umbrella crate instead."
+description = "Aozora notation lex pipeline — orchestrator + lexer (sanitize → tokenize → pair → classify) producing an owned, lifetime-free AST. Internal crate; depend on the aozora umbrella crate instead."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

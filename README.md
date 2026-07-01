@@ -25,8 +25,8 @@ and page / section breaks.
 
 The parser is **CommonMark-free, Markdown-free** — this repository deals
 only with the 青空文庫 notation itself. The renderer emits semantic HTML5;
-the lexer reports structured diagnostics; the AST is a borrowed-arena
-tree that can be walked in O(n) without copying source bytes.
+the lexer reports structured diagnostics; the AST is an owned,
+lifetime-free tree that can be walked in O(n).
 
 ## Installation
 
@@ -106,7 +106,7 @@ them. Pick the one that fits the language and runtime you already have.
 
 | You are… | Use | Why |
 |---|---|---|
-| Writing Rust | umbrella [`aozora`](./crates/aozora) library | Zero-copy borrowed AST, full type safety — the fastest path. |
+| Writing Rust | umbrella [`aozora`](./crates/aozora) library | Owned, lifetime-free AST, full type safety — the fastest path. |
 | At a shell / in CI | the `aozora` CLI | `check` / `render` / `fmt` / `pandoc`, reads stdin, exits with a code. |
 | In the browser, Node, or TypeScript | [`aozora-wasm`](./crates/aozora-wasm) (npm) | wasm-bindgen `Document` class; runs client-side and at the edge. |
 | Writing Python | [`aozora-py`](./crates/aozora-py) (PyO3) | In-process native module via maturin; idiomatic Python API. |
@@ -143,7 +143,7 @@ consumers usually import only this one.
 |---|---|
 | [`crates/aozora`](./crates/aozora) | Top-level facade. `Document::parse() → Tree<'_>`, structured `Diagnostic`s, `SLUGS` catalogue, `canonicalise_slug`. The single front door. |
 | [`crates/aozora-spec`](./crates/aozora-spec) | Single source of truth for shared types: `Span`, `TriggerKind`, `PairKind`, `Diagnostic`, PUA sentinel codepoints, `SLUGS` dispatch table. No internal dependency. |
-| [`crates/aozora-syntax`](./crates/aozora-syntax) | AST types (`Node` borrowed-arena variants, `ContainerKind`, `BoutenKind`, `Indent`). |
+| [`crates/aozora-syntax`](./crates/aozora-syntax) | AST types (`NodeOwned` variants, `ContainerKind`, `BoutenKind`, `Indent`). |
 | [`crates/aozora-encoding`](./crates/aozora-encoding) | Shift_JIS decoding + 外字 lookup (compile-time PHF, JIS X 0213 + UCS resolution). |
 | [`crates/aozora-scan`](./crates/aozora-scan) | SIMD-friendly multi-pattern scanner backends (Teddy / structural-bitmap / Hoehrmann DFA / naive fallback). |
 | [`crates/aozora-veb`](./crates/aozora-veb) | Eytzinger-layout sorted-set lookup (cache-friendly binary search). |
@@ -166,7 +166,7 @@ consumers usually import only this one.
 | [`crates/aozora-xtask`](./crates/aozora-xtask) | Repo automation (samply wrapper, trace analysis, corpus pack/unpack, schema dumps). |
 
 See the [Architecture chapter](https://p4suta.github.io/aozora/arch/pipeline.html)
-of the handbook for the layered design, the borrowed-arena AST, the
+of the handbook for the layered design, the owned AST, the
 SIMD scanner backends, and the dependency graph between these
 crates.
 
@@ -201,7 +201,7 @@ testing strategy, and lint policy.
 ## Documentation
 
 - 📚 [**Handbook**](https://p4suta.github.io/aozora/) — the mdbook
-  site: notation reference, architecture (borrowed-arena AST,
+  site: notation reference, architecture (owned AST,
   SIMD scanner backends, encoding), bindings (Rust / WASM / C ABI /
   Python), performance (samply / bench / corpus sweep), CLI / API /
   env reference, and the contributor guide.

@@ -201,18 +201,18 @@ respectively. CI runs all of these in `just ci`.
 
 ## Coding standards
 
-- **Borrowed-arena AST.** Parsers return `Tree<'arena>` borrowed
-  from the `Document`'s [`bumpalo`](https://docs.rs/bumpalo) arena.
-  No owned-AST mirror exists; downstream consumers either walk the
-  borrow or call `tree.to_source() / tree.to_html()`.
+- **Owned AST.** `Document::parse()` returns a `Tree<'_>` view whose
+  `'_` borrows only the source, not a parse arena; the AST it wraps is
+  owned and lifetime-free (the sole AST). Downstream consumers walk the
+  tree or call `tree.to_source() / tree.to_html()`.
 - **`aozora-spec` is the single source of truth.** `Span`,
   `TriggerKind`, `PairKind`, `Diagnostic`, and PUA sentinel
   codepoints live there. New shared types belong in `aozora-spec`,
   never in `aozora-pipeline` or `aozora-syntax`.
-- **Pure functions over mutation.** `lex(&str, &Arena) ->
-  LexOutput<'_>` and `html::render_to_string(&LexOutput) -> String`
-  are pure. Avoid hidden global state, thread-locals, or
-  `OnceCell`-backed caches.
+- **Pure functions over mutation.** Parsing (`Document::parse`) and
+  rendering (`tree.to_html()`) are pure functions of their input.
+  Avoid hidden global state, thread-locals, or `OnceCell`-backed
+  caches.
 - **No comments that just restate the code.** A short `//` line is
   fine when it captures a non-obvious invariant or the *why* behind
   an unusual choice. Multi-paragraph docstrings are reserved for
@@ -229,8 +229,8 @@ The end-to-end TDD flow is roughly:
    [`crates/aozora-conformance/fixtures/render/`](./crates/aozora-conformance/)
    (and a spec vector in `../aozora-notation-spec` for normative cases,
    synced via `just sync-spec-vectors`).
-2. **AST variant** — add a borrowed-arena variant to `Node` in
-   `crates/aozora-syntax/src/borrowed/types.rs`.
+2. **AST variant** — add a variant to the owned `NodeOwned` enum in
+   `crates/aozora-syntax/src/owned/payload.rs`.
 3. **Lexer test (red)** — add a case to the relevant stage test
    under `crates/aozora-pipeline/tests/`.
 4. **Lexer impl (green)** — wire the recogniser into the appropriate

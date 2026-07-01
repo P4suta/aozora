@@ -23,8 +23,10 @@ fi
 SMOKE_C="crates/aozora-ffi/tests/c_smoke/smoke.c"
 SMOKE_BIN="target/release/aozora_ffi_smoke"
 
-# 2. Compile the C harness, linking against the cdylib.
-gcc -O2 -Wall -Wextra -o "$SMOKE_BIN" "$SMOKE_C" \
+# 2. Compile the C harness, linking against the cdylib. `-I target/release`
+#    is where build.rs mirrors the cbindgen-generated `aozora.h` that
+#    smoke.c includes.
+gcc -O2 -Wall -Wextra -I target/release -o "$SMOKE_BIN" "$SMOKE_C" \
     -L target/release -laozora_ffi
 
 # 3. Run with the cdylib's directory on LD_LIBRARY_PATH so dlopen
