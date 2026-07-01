@@ -1,5 +1,6 @@
 import { createSignal, For, onCleanup, Show } from 'solid-js';
 import type { ProfilePhaseEntry } from '../editor';
+import { t } from '../i18n';
 
 interface PerfBadgeProps {
   parseDurationMs: number;
@@ -44,7 +45,7 @@ export default function PerfBadge(props: PerfBadgeProps) {
         type="button"
         class="perf-badge"
         onClick={() => setOpen((v) => !v)}
-        title="クリックでメソッド別レイテンシを展開"
+        title={t('perfExpand')}
         aria-haspopup="true"
         aria-expanded={open()}
       >
@@ -56,17 +57,17 @@ export default function PerfBadge(props: PerfBadgeProps) {
         </Show>
       </button>
       <Show when={open() && props.profile.length > 0}>
-        <div class="perf-popover" role="dialog" aria-label="性能プロファイル">
+        <div class="perf-popover" role="dialog" aria-label={t('perfProfile')}>
           <div class="perf-popover-header">
-            <span>メソッド別レイテンシ</span>
+            <span>{t('perfHeader')}</span>
             <span class="perf-popover-sub">{props.byteLen.toLocaleString()} bytes</span>
           </div>
           <table class="perf-table">
             <thead>
               <tr>
-                <th>メソッド</th>
-                <th>時間</th>
-                <th>スループット</th>
+                <th>{t('perfColMethod')}</th>
+                <th>{t('perfColTime')}</th>
+                <th>{t('perfColThroughput')}</th>
               </tr>
             </thead>
             <tbody>
@@ -82,7 +83,7 @@ export default function PerfBadge(props: PerfBadgeProps) {
                 )}
               </For>
               <tr class="perf-total">
-                <td>合計</td>
+                <td>{t('perfTotal')}</td>
                 <td class="perf-num">
                   {fmtMs(props.profile.reduce((acc, p) => acc + p.duration_ms, 0))}
                 </td>
@@ -97,8 +98,9 @@ export default function PerfBadge(props: PerfBadgeProps) {
           </table>
           <div class="perf-popover-footer">
             <span class="perf-popover-sub">
-              計測は <code>performance.now()</code> 経由。 PerfBadge の数値は{' '}
-              <code>parse + toHtml</code> のみ。
+              {t('perfFooterPre')} <code>performance.now()</code>
+              {t('perfFooterMid')} <code>parse + toHtml</code>
+              {t('perfFooterPost')}
             </span>
           </div>
         </div>

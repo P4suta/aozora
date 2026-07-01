@@ -8,6 +8,7 @@ import {
 } from '@codemirror/autocomplete';
 import type { EditorView } from '@codemirror/view';
 import { loadSlugCatalog, type SlugEntry } from './slugCatalog';
+import { t, type MessageKey } from '../i18n';
 
 /**
  * Structured snippets — single-character triggers that immediately
@@ -22,8 +23,8 @@ import { loadSlugCatalog, type SlugEntry } from './slugCatalog';
 interface TriggerSnippet {
   trigger: string;
   snippet: string;
-  label: string;
-  detail: string;
+  labelKey: MessageKey;
+  detailKey: MessageKey;
 }
 
 const TRIGGER_SNIPPETS: TriggerSnippet[] = [
@@ -32,42 +33,42 @@ const TRIGGER_SNIPPETS: TriggerSnippet[] = [
   {
     trigger: '#',
     snippet: '［＃${1:body}］',
-    label: '＃ アノテーション',
-    detail: '［＃...］ 一行注記の即時テンプレ',
+    labelKey: 'compAnn',
+    detailKey: 'compAnnDetail',
   },
   {
     trigger: '＃',
     snippet: '［＃${1:body}］',
-    label: '＃ アノテーション',
-    detail: '［＃...］ 一行注記の即時テンプレ',
+    labelKey: 'compAnn',
+    detailKey: 'compAnnDetail',
   },
   // ｜ → ｜${base}《${reading}》：明示ルビ。trigger の ｜ を保持して
   // ${base} を最初に selection、Tab で reading に進む
   {
     trigger: '|',
     snippet: '｜${1:base}《${2:reading}》',
-    label: '｜ ルビ（明示）',
-    detail: '｜base《reading》 で明示ルビ',
+    labelKey: 'compRuby',
+    detailKey: 'compRubyDetail',
   },
   {
     trigger: '｜',
     snippet: '｜${1:base}《${2:reading}》',
-    label: '｜ ルビ（明示）',
-    detail: '｜base《reading》 で明示ルビ',
+    labelKey: 'compRuby',
+    detailKey: 'compRubyDetail',
   },
   // 《 → 《${reading}》：直前 CJK 文字に読みを振る暗黙ルビ
   {
     trigger: '《',
     snippet: '《${1:reading}》',
-    label: '《 ルビ（暗黙）',
-    detail: '直前の漢字に読みを振る',
+    labelKey: 'compImplicitRuby',
+    detailKey: 'compImplicitRubyDetail',
   },
   // ※ → ※［＃「${description}」、${mencode}］：外字テンプレート
   {
     trigger: '※',
     snippet: '※［＃「${1:description}」、${2:mencode}］',
-    label: '※ 外字',
-    detail: '※［＃「desc」、mencode］',
+    labelKey: 'compGaiji',
+    detailKey: 'compGaijiDetail',
   },
 ];
 
@@ -138,9 +139,9 @@ function slugCompletion(entry: SlugEntry): Completion {
  */
 function buildSnippetCompletion(trig: TriggerSnippet): Completion {
   return {
-    label: trig.label,
+    label: t(trig.labelKey),
     type: 'snippet',
-    detail: trig.detail,
+    detail: t(trig.detailKey),
     apply: snippet(trig.snippet),
   };
 }

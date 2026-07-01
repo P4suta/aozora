@@ -24,6 +24,7 @@ import { aozoraFolding } from './folding';
 import { halfToFullWidthFilter } from './onType';
 import { aozoraWrapKeymap } from './wrapCommands';
 import { aozoraInlayHints } from './inlayHints';
+import { t } from '../i18n';
 
 export interface AozoraEditorOptions {
   parent: HTMLElement;
@@ -89,7 +90,7 @@ export function createAozoraEditor(options: AozoraEditorOptions): EditorView {
       EditorState.allowMultipleSelections.of(true),
       EditorState.tabSize.of(2),
       EditorView.lineWrapping,
-      placeholder('青空文庫記法を入力…\nサンプル選択またはガイドから読み始めてもOK'),
+      placeholder(t('editorPlaceholder')),
       closeBrackets(),
       aozoraCloseBracketsConfig,
       parserStateField,

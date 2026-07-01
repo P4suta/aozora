@@ -2,11 +2,28 @@ import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'so
 import type { EditorView } from '@codemirror/view';
 import { WRAP_PALETTE, getWrapCommand } from '../editor';
 import { fuzzyRank } from '../editor/fuzzy';
+import { t, type MessageKey } from '../i18n';
 
 interface CommandPaletteProps {
   open: boolean;
   view: EditorView | null;
   onClose: () => void;
+}
+
+// Wrap-command id → catalogue key, so each command's label is translated (the
+// `WRAP_SHAPES` descriptions are module-level constants and can't call `t()`).
+const CMD_KEY: Record<string, MessageKey> = {
+  'aozora.wrap.ruby': 'cmdRuby',
+  'aozora.wrap.angleQuote': 'cmdAngleQuote',
+  'aozora.wrap.bouten': 'cmdBouten',
+  'aozora.wrap.kagikakko': 'cmdKagikakko',
+  'aozora.wrap.kikkou': 'cmdKikkou',
+  'aozora.wrap.chuki': 'cmdChuki',
+};
+
+function describe(id: string): string {
+  const key = CMD_KEY[id];
+  return key ? t(key) : id;
 }
 
 // Surfaces the selection-wrap commands — especially the three full-width-bracket
@@ -18,7 +35,7 @@ export default function CommandPalette(props: CommandPaletteProps) {
   let inputRef!: HTMLInputElement;
 
   const results = createMemo(() =>
-    fuzzyRank(query(), WRAP_PALETTE, (c) => `${c.id} ${c.description}`),
+    fuzzyRank(query(), WRAP_PALETTE, (c) => `${c.id} ${describe(c.id)}`),
   );
 
   createEffect(() => {
@@ -82,20 +99,20 @@ export default function CommandPalette(props: CommandPaletteProps) {
           class="command-palette-modal"
           role="dialog"
           aria-modal="true"
-          aria-label="コマンドパレット"
+          aria-label={t('paletteAriaLabel')}
         >
           <input
             ref={inputRef}
             type="text"
             class="command-palette-input"
-            placeholder="コマンドを検索…（囲み記法など）"
+            placeholder={t('palettePlaceholder')}
             value={query()}
             onInput={(e) => {
               setQuery(e.currentTarget.value);
               setSelected(0);
             }}
             onKeyDown={onInputKey}
-            aria-label="コマンド検索"
+            aria-label={t('paletteSearchLabel')}
           />
           <ul class="command-palette-list" role="listbox">
             <For each={results()}>
@@ -109,13 +126,13 @@ export default function CommandPalette(props: CommandPaletteProps) {
                   onClick={() => run(cmd.id)}
                   onMouseEnter={() => setSelected(i())}
                 >
-                  <span class="command-palette-desc">{cmd.description}</span>
+                  <span class="command-palette-desc">{describe(cmd.id)}</span>
                   <span class="command-palette-id">{cmd.id}</span>
                 </li>
               )}
             </For>
             <Show when={results().length === 0}>
-              <li class="command-palette-empty">一致するコマンドがありません</li>
+              <li class="command-palette-empty">{t('paletteEmpty')}</li>
             </Show>
           </ul>
         </div>

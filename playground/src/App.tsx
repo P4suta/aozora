@@ -13,6 +13,7 @@ import NotationGuide from './components/NotationGuide';
 import CommandPalette from './components/CommandPalette';
 import SettingsPanel from './components/SettingsPanel';
 import { error as logError } from './logger';
+import { t, tf } from './i18n';
 
 const EMPTY_ENVELOPE = '{"schemaVersion":1,"data":[]}';
 
@@ -75,7 +76,7 @@ export default function App() {
       });
     if (urlRead.status === 'invalid') {
       // 起動時の URL デコード失敗を通知。setSource は走らないので default に落ちている。
-      flashToast('共有 URL のデコードに失敗しました');
+      flashToast(t('toastShareDecodeFail'));
     }
   });
 
@@ -96,7 +97,7 @@ export default function App() {
         const ok = saveSource(text);
         if (!ok && !storageFailNotified) {
           storageFailNotified = true;
-          flashToast('編集内容の保存に失敗しました（容量不足の可能性）');
+          flashToast(t('toastSaveFail'));
         }
         if (ok) storageFailNotified = false;
       }, 500);
@@ -109,6 +110,11 @@ export default function App() {
   });
 
   const share = createMemo(() => buildShareUrl(source()));
+
+  // Keep the browser tab title in sync with the UI language.
+  createEffect(() => {
+    document.title = t('appTitle');
+  });
 
   function handleParse(ps: ParserState) {
     setParsePayload({
@@ -126,15 +132,15 @@ export default function App() {
   async function copyShareUrl() {
     const { url, tooLong } = share();
     if (tooLong) {
-      flashToast('テキストが長すぎて URL 共有できません');
+      flashToast(t('shareTitleTooLong'));
       return;
     }
     try {
       await navigator.clipboard.writeText(url);
-      flashToast('URL をコピーしました');
+      flashToast(t('toastUrlCopied'));
     } catch (err) {
       logError('Clipboard write failed:', err);
-      flashToast('クリップボードに書き込めませんでした');
+      flashToast(t('toastClipboardFail'));
     }
   }
 
@@ -149,22 +155,22 @@ export default function App() {
     <div class="app">
       <header class="app-header">
         <div class="brand">
-          <h1>青空文庫記法 Playground</h1>
+          <h1>{t('appTitle')}</h1>
           <p class="tagline">
             <a href="https://github.com/P4suta/aozora" target="_blank" rel="noopener noreferrer">
               aozora
             </a>{' '}
-            — Rust + WebAssembly 製の高速パーサー。入力に応じてリアルタイムに HTML を生成します。
+            {t('tagline')}
           </p>
         </div>
         <div class="header-controls">
-          <div class="layout-mode-group" role="group" aria-label="レイアウト切替">
+          <div class="layout-mode-group" role="group" aria-label={t('layoutGroup')}>
             <button
               type="button"
               class={`layout-btn ${layoutMode() === 'editor' ? 'active' : ''}`}
               onClick={() => setLayoutMode('editor')}
-              aria-label="エディタのみ表示"
-              title="エディタのみ"
+              aria-label={t('layoutEditor')}
+              title={t('layoutEditorShort')}
             >
               ⌨
             </button>
@@ -172,8 +178,8 @@ export default function App() {
               type="button"
               class={`layout-btn ${layoutMode() === 'split' ? 'active' : ''}`}
               onClick={() => setLayoutMode('split')}
-              aria-label="分割表示"
-              title="分割"
+              aria-label={t('layoutSplit')}
+              title={t('layoutSplitShort')}
             >
               ⇆
             </button>
@@ -181,8 +187,8 @@ export default function App() {
               type="button"
               class={`layout-btn ${layoutMode() === 'preview' ? 'active' : ''}`}
               onClick={() => setLayoutMode('preview')}
-              aria-label="プレビューのみ表示"
-              title="プレビューのみ"
+              aria-label={t('layoutPreview')}
+              title={t('layoutPreviewShort')}
             >
               👁
             </button>
@@ -190,35 +196,35 @@ export default function App() {
           <SampleLoader
             onPick={(text, title) => {
               setSource(text);
-              flashToast(`サンプル「${title}」を読み込みました`);
+              flashToast(tf('toastSampleLoaded', { title }));
             }}
           />
           <button
             type="button"
             class="palette-btn"
             onClick={() => setPaletteOpen(true)}
-            title="コマンドパレットを開く（Ctrl/⌘+Shift+P）"
-            aria-label="コマンドパレットを開く"
+            title={t('paletteOpenTitle')}
+            aria-label={t('paletteOpen')}
           >
             <span class="btn-icon">⌘</span>
-            <span class="btn-text">コマンド</span>
+            <span class="btn-text">{t('paletteText')}</span>
           </button>
           <button
             type="button"
             class="guide-btn"
             onClick={() => setShowGuide(true)}
-            title="記法ガイドを開く"
-            aria-label="記法ガイドを開く"
+            title={t('guideOpen')}
+            aria-label={t('guideOpen')}
           >
             <span class="btn-icon">📖</span>
-            <span class="btn-text">記法ガイド</span>
+            <span class="btn-text">{t('guideText')}</span>
           </button>
           <SettingsPanel
             view={editorView()}
             onResetStorage={() => {
               clearStoredSource();
               setSource(DEFAULT_TEXT);
-              flashToast('保存をリセットしました');
+              flashToast(t('toastStorageReset'));
             }}
           />
           <button
@@ -226,39 +232,38 @@ export default function App() {
             class="share-btn"
             onClick={copyShareUrl}
             disabled={share().tooLong}
-            title={share().tooLong ? 'テキストが長すぎて URL 共有できません' : 'URL をコピー'}
-            aria-label="共有 URL をコピー"
+            title={share().tooLong ? t('shareTitleTooLong') : t('shareTitle')}
+            aria-label={t('shareLabel')}
           >
             <span class="btn-icon">🔗</span>
-            <span class="btn-text">共有 URL をコピー</span>
+            <span class="btn-text">{t('shareLabel')}</span>
           </button>
         </div>
       </header>
       <Show when={wasmError()}>
         <div class="error-banner error-banner-critical" role="alert">
-          <div class="error-banner-title">⚠ WASM の初期化に失敗しました</div>
+          <div class="error-banner-title">{t('wasmErrorTitle')}</div>
           <div class="error-banner-detail">
             <code>{wasmError()}</code>
           </div>
           <div class="error-banner-hint">
-            WebAssembly が無効化されている、もしくは CSP / 拡張機能によりロードが
-            ブロックされている可能性があります。
+            {t('wasmErrorHint')}
             <button
               type="button"
               class="error-banner-action"
               onClick={() => location.reload()}
             >
-              ページを再読み込み
+              {t('wasmErrorReload')}
             </button>
           </div>
         </div>
       </Show>
       <Show when={!wasmReady() && !wasmError()}>
-        <div class="status-banner">WASM 初期化中…</div>
+        <div class="status-banner">{t('wasmLoading')}</div>
       </Show>
       <main class={`app-main mode-${layoutMode()}`}>
         <section class="pane editor-pane">
-          <div class="pane-title">入力（青空文庫記法）</div>
+          <div class="pane-title">{t('editorPaneTitle')}</div>
           <Editor
             value={source()}
             onInput={(v) => setSource(v)}
@@ -269,7 +274,7 @@ export default function App() {
         </section>
         <section class="pane preview-pane-wrapper">
           <div class="pane-title-row">
-            <span class="pane-title">出力</span>
+            <span class="pane-title">{t('outputPaneTitle')}</span>
             <PerfBadge
               parseDurationMs={parsePayload().parseDurationMs}
               byteLen={parsePayload().byteLen}

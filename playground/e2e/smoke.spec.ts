@@ -89,4 +89,17 @@ test.describe('playground smoke', () => {
     await page.keyboard.press('Escape');
     await expect(palette).toHaveCount(0);
   });
+
+  test('言語トグルで UI 言語が双方向に切り替わる', async ({ page }) => {
+    // Boot language follows navigator.language, so don't assume the initial —
+    // exercise the toggle both ways.
+    await ready(page);
+    await page.locator('.settings-trigger').click();
+    await page.locator('input[name="lang-pref"][value="en"]').check();
+    await expect(page.locator('.guide-btn .btn-text')).toHaveText('Guide');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    await page.locator('input[name="lang-pref"][value="ja"]').check();
+    await expect(page.locator('.guide-btn .btn-text')).toHaveText('記法ガイド');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
+  });
 });

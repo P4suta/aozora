@@ -3,6 +3,7 @@ import { EditorView } from '@codemirror/view';
 import { createAozoraEditor, externalUpdate, type ParserState } from '../editor';
 import { ensureWasmReady } from '../wasm-loader';
 import { error as logError } from '../logger';
+import { t } from '../i18n';
 
 interface EditorProps {
   value: string;
@@ -26,8 +27,7 @@ export default function Editor(props: EditorProps) {
       // 何もできないので、host に静的なメッセージだけ出して abort。
       // 重要：App.tsx 側の error-banner（再読み込みボタン付き）が並んで
       // 出ているので、ユーザーへの行動指示はそちらに任せる。
-      host.innerHTML =
-        '<div class="editor-disabled-placeholder">WASM が読み込めなかったため、エディタを起動できません。<br/>上部のバナーから再読み込みしてください。</div>';
+      host.innerHTML = `<div class="editor-disabled-placeholder">${t('editorDisabled')}</div>`;
       return;
     }
     view = createAozoraEditor({
