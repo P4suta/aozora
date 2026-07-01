@@ -235,7 +235,7 @@ fn render_format_owned<W: Write>(
                 ForwardAttr::SuperScript => ("sup", "</sup>"),
                 ForwardAttr::SubScript => ("sub", "</sub>"),
                 ForwardAttr::SmallScript(_)
-                | ForwardAttr::Framed
+                | ForwardAttr::Framed(_)
                 | ForwardAttr::Horizontal
                 | ForwardAttr::Caption
                 | ForwardAttr::FontSizeAbsolute(_) => ("span", "</span>"),

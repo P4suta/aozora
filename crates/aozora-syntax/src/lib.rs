@@ -33,8 +33,9 @@ pub mod node_kind;
 pub mod owned;
 
 pub use format::{
-    AbsoluteSize, BlockStyles, ColumnCount, FontShift, Format, ForwardAttr, ForwardOrigin,
-    IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, RegionClose, RegionFormat,
+    AbsoluteSize, BlockStyles, ColumnCount, EnclosureKind, FontShift, Format, ForwardAttr,
+    ForwardOrigin, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, RegionClose,
+    RegionFormat,
 };
 pub use node_kind::NodeKind;
 
@@ -535,7 +536,7 @@ mod tests {
                 "行右小書き",
             ),
             (ForwardAttr::SmallScript(BoutenPosition::Left), "行左小書き"),
-            (ForwardAttr::Framed, "罫囲み"),
+            (ForwardAttr::Framed(EnclosureKind::Rule), "罫囲み"),
             (ForwardAttr::Horizontal, "横組み"),
             (ForwardAttr::Caption, "キャプション"),
             (ForwardAttr::CombineUpright, "縦中横"),

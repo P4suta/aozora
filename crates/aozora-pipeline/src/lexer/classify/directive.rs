@@ -19,8 +19,8 @@ use aozora_syntax::alloc_owned::OwnedAllocator;
 use aozora_syntax::owned::DirectiveOwned;
 use aozora_syntax::{
     AbsoluteSize, BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition, ColumnCount,
-    DirectiveKind, FontShift, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi,
-    LineFormat, LineWidth, RegionClose, RegionFormat, SectionKind,
+    DirectiveKind, EnclosureKind, FontShift, HeadingKind, HeadingStyle, IndentBlock, IndentLayout,
+    Kumi, LineFormat, LineWidth, RegionClose, RegionFormat, SectionKind,
 };
 
 use super::EmitKind;
@@ -924,8 +924,14 @@ pub(super) fn classify_annotation_body(
                 None,
             )
         }),
-        BodyFamily::KeigakomiOpen => Some((EmitKind::BlockOpen(RegionFormat::Framed), None)),
-        BodyFamily::KeigakomiClose => Some((EmitKind::BlockClose(RegionClose::Framed), None)),
+        BodyFamily::KeigakomiOpen => Some((
+            EmitKind::BlockOpen(RegionFormat::Framed(EnclosureKind::Rule)),
+            None,
+        )),
+        BodyFamily::KeigakomiClose => Some((
+            EmitKind::BlockClose(RegionClose::Framed(EnclosureKind::Rule)),
+            None,
+        )),
         BodyFamily::WarichuBlockOpen => Some((EmitKind::BlockOpen(RegionFormat::Warichu), None)),
         BodyFamily::WarichuBlockEnd => Some((EmitKind::BlockClose(RegionClose::Warichu), None)),
         BodyFamily::IndentBlock1 => Some((

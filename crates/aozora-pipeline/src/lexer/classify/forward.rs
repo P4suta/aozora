@@ -22,7 +22,8 @@ use aozora_syntax::alloc_owned::OwnedAllocator;
 use aozora_syntax::format::ForwardOrigin;
 use aozora_syntax::owned::{ContentOwned, NodeOwned, SegmentOwned};
 use aozora_syntax::{
-    AbsoluteSize, BoutenPosition, DirectiveKind, FontShift, ForwardAttr, MarginNoteKind, Span,
+    AbsoluteSize, BoutenPosition, DirectiveKind, EnclosureKind, FontShift, ForwardAttr,
+    MarginNoteKind, Span,
 };
 
 use super::super::pair::{PairEvent, PairKind};
@@ -1329,7 +1330,7 @@ impl RecogniseCtx<'_, '_> {
             forward_attr_from_suffix(rest)?
         } else if let Some(rest) = extracted.suffix.strip_prefix("に") {
             match forward_attr_from_suffix(rest)? {
-                framed @ ForwardAttr::Framed => framed,
+                framed @ ForwardAttr::Framed(_) => framed,
                 _ => return None,
             }
         } else {
@@ -1387,7 +1388,7 @@ pub(super) fn forward_attr_from_suffix(s: &str) -> Option<ForwardAttr> {
         "行左小書き" => ForwardAttr::SmallScript(BoutenPosition::Left),
         // 枠囲み / 枠囲い (okurigana variant) are corpus spellings of the frame
         // decoration; all canonicalise to 罫囲み on serialize.
-        "罫囲み" | "枠囲み" | "枠囲い" => ForwardAttr::Framed,
+        "罫囲み" | "枠囲み" | "枠囲い" => ForwardAttr::Framed(EnclosureKind::Rule),
         "横組み" => ForwardAttr::Horizontal,
         "キャプション" => ForwardAttr::Caption,
         // 絶対サイズ: `「X」は小文字` (corpus-attested) and its 特大/大/中 siblings.

@@ -70,8 +70,8 @@ pub use aozora_spec::{
 /// consumers don't have to depend on `aozora-syntax` directly — `aozora` is the
 /// single editor-facing front door.
 pub use aozora_syntax::{
-    BlockStyles, BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, FontShift, Format,
-    ForwardAttr, ForwardOrigin, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi,
+    BlockStyles, BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, EnclosureKind, FontShift,
+    Format, ForwardAttr, ForwardOrigin, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi,
     LineFormat, LineWidth, NodeKind, RegionClose, RegionFormat, RubySide, SectionKind,
     owned::{ContentOwned, NodeOwned, NodeStore},
 };
