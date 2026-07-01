@@ -98,6 +98,11 @@
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
     },
     {
+      "name": "bold_forward_interior",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
       "name": "bold_forward_no_referent",
       "error": true,
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
@@ -121,6 +126,11 @@
       "name": "bouten_chain_line",
       "error": true,
       "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (text) (newline))"
+    },
+    {
+      "name": "bouten_forward_interior",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
     },
     {
       "name": "bouten_forward_no_referent",

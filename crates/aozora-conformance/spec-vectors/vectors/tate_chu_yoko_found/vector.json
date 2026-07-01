@@ -3,14 +3,21 @@
   "meta": {
     "feature": "tate_chu_yoko",
     "level": "must",
-    "spec_section": "6.3",
-    "note": "[provenance:hand-derived §6.3 + AOZORA-ANNOTATION 2026-06-17] Happy-path 縦中横: the target ３３ precedes the directive (明治３３年…), so it is recognised and the directive consumed with no diagnostic. The target is non-adjacent (年 intervenes before the bracket), so the forward node stays Referenced (ADR 0003 §6.2): HTML renders ３３ once in the surrounding run and drops the combine-upright styling — re-rendering the target would double ３３ (the duplication bug fixed in reference impl #228). serialize re-emits the bracket form unchanged with the literal left upstream. Complements the recovery case (vector tate_chu_yoko) where the target is absent and tcy-target-not-found is raised."
+    "spec_section": "7.5",
+    "note": "[provenance:hand-derived §6.3+§7.5 + reference impl #333] 縦中横 with a NON-adjacent referent: ３３ occurs in the same plain run before the directive (明治３３年…, 年 intervenes). Per §7.5 the most-recent plain occurrence inside the run is styled in place — the parser splices a detached decoration at ３３ (the combine-upright span) while the directive bracket stays a forward reference that renders nothing, so ３３ appears exactly once, now styled (the reference-impl #228 no-double-render invariant holds). serialize re-emits the bracket form unchanged. Complements the recovery case (vector tate_chu_yoko) where the target is absent and tcy-target-not-found is raised. Offsets from the §3 byte model."
   },
   "source": "明治３３年［＃「３３」は縦中横］に。\n",
   "expected": {
-    "html": "<p>明治３３年に。</p>\n",
+    "html": "<p>明治<span class=\"aozora-combine-upright\">３３</span>年に。</p>\n",
     "serialize": "明治３３年［＃「３３」は縦中横］に。\n",
     "nodes": [
+      {
+        "kind": "combineUpright",
+        "span": {
+          "start": 6,
+          "end": 12
+        }
+      },
       {
         "kind": "combineUpright",
         "span": {

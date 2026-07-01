@@ -4,7 +4,7 @@
     "feature": "composite",
     "level": "must",
     "spec_section": "6.1",
-    "note": "[provenance:hand-derived §6.1+§6.2 + AOZORA-ANNOTATION 2026-06-17] The only 青梅 preceding the bracket is the ruby base, so the forward bouten target resolves to it: a non-adjacent target that is itself a ruby base, which per ADR 0003 §6.2 stays Referenced (bouten-over-ruby is not representable, so it cannot fold into a text-only forward leaf). HTML therefore renders 青梅 once — inside the ruby base — and drops the emphasis markup; re-rendering the target would double 青梅 (the duplication bug fixed in reference impl #228). The bouten node still exists (the bracket round-trips), so serialize re-emits the bracket form unchanged with the literal left upstream. Offsets from the §3 byte model. Serialize canonicalises right-side ruby to the BARE form (the explicit ｜ is dropped) per ADR 0003 §6.1 / ADR 0002: ｜ is emitted only when a bare 《reading》 would re-parse to a different base; here every base is an all-kanji run whose preceding char is non-base (line start / 　 / の), so the bare form re-parses identically."
+    "note": "[provenance:hand-derived §6.1+§6.2+§7.5 + AOZORA-ANNOTATION 2026-06-17] The only 青梅 preceding the bracket is the ruby base, so the forward bouten target resolves to it: a non-adjacent target that is itself a ruby base, which per ADR 0003 §6.2 stays a forward reference (bouten-over-ruby is not representable, so it cannot fold into a text-only forward leaf, nor be spliced in place). HTML therefore renders 青梅 once — inside the ruby base — and drops the emphasis markup; re-rendering the target would double 青梅 (the duplication bug fixed in reference impl #228). Because the styling cannot be applied in place, §7.5 raises forward-referent-not-stylable spanning the directive. The bouten node still exists (the bracket round-trips), so serialize re-emits the bracket form unchanged with the literal left upstream. Offsets from the §3 byte model. Serialize canonicalises right-side ruby to the BARE form (the explicit ｜ is dropped) per ADR 0003 §6.1 / ADR 0002: ｜ is emitted only when a bare 《reading》 would re-parse to a different base; here every base is an all-kanji run whose preceding char is non-base (line start / 　 / の), so the bare form re-parses identically."
   },
   "source": "｜青梅《おうめ》には［＃「青梅」に傍点］という街道がある。\n",
   "expected": {
@@ -61,6 +61,15 @@
         }
       }
     ],
-    "diagnostics": []
+    "diagnostics": [
+      {
+        "code": "forward-referent-not-stylable",
+        "severity": "warning",
+        "span": {
+          "start": 30,
+          "end": 60
+        }
+      }
+    ]
   }
 }

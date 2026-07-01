@@ -924,8 +924,8 @@ mod tests {
     fn tate_chu_yoko_projects_to_tcy_span() {
         // The directive sits immediately after ３３, so the literal folds into
         // the node (`Reclaimed`) and the tcy span is the sole copy. (The
-        // non-adjacent `明治３３年［＃…］` form is `Referenced` — covered by
-        // `referenced_forward_is_not_double_projected`.)
+        // non-adjacent `明治３３年［＃…］` form splices a `Detached` decoration —
+        // covered by `non_adjacent_forward_styles_referent_once`.)
         let blocks = project("明治３３［＃「３３」は縦中横］年に。\n");
         let (_, inner) = find_span(&blocks, "tate-chu-yoko").expect("tcy span");
         assert_eq!(
@@ -936,23 +936,26 @@ mod tests {
     }
 
     #[test]
-    fn referenced_forward_is_not_double_projected() {
-        // #231: a non-adjacent forward (`Referenced`) keeps its target literal
-        // in the upstream run, so the projection must render it once with no
-        // styled span. Projecting `f.target` too would double 青空 — the same
-        // root cause as the HTML bug #228.
+    fn non_adjacent_forward_styles_referent_once() {
+        // #333: the non-adjacent referent 青空 is styled in place (a `Detached`
+        // decoration projected as a bouten span), while the bracket stays
+        // `Referenced` and projects nothing. 青空 appears exactly once — the
+        // styling is added, the #231/#228 no-double-projection invariant holds.
         let blocks = project("青空の下を歩く［＃「青空」に傍点］");
-        assert!(
-            find_span(&blocks, "bouten").is_none(),
-            "Referenced bouten must not emit a styled span: {blocks:?}"
+        let (_, inner) = find_span(&blocks, "bouten").expect("styled referent span");
+        assert_eq!(
+            inner,
+            &[Inline::Str("青空".to_owned())],
+            "the decoration styles 青空"
         );
         let Some(Block::Para(inlines)) = blocks.first() else {
             panic!("expected a single Para, got {blocks:?}");
         };
+        assert_eq!(inlines.len(), 2, "styled span + plain tail: {inlines:?}");
         assert_eq!(
-            inlines.as_slice(),
-            &[Inline::Str("青空の下を歩く".to_owned())],
-            "the literal 青空 must appear exactly once, upstream"
+            inlines[1],
+            Inline::Str("の下を歩く".to_owned()),
+            "the tail after the referent stays plain"
         );
     }
 

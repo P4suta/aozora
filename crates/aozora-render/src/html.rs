@@ -322,11 +322,18 @@ mod tests {
     }
 
     #[test]
-    fn referenced_contiguous_forward_does_not_double_render() {
+    fn referenced_contiguous_forward_styles_referent_once() {
+        // #333: the non-adjacent referent 青空 is now styled in place (a
+        // `Detached` decoration spliced into the plain run), while the bracket
+        // stays `Referenced` and renders nothing. 青空 still appears exactly
+        // once — the styling is added, the #228 no-double-render invariant holds.
         let html = render("青空の下を歩く［＃「青空」に傍点］");
-        assert_eq!(html, "<p>青空の下を歩く</p>\n");
+        assert_eq!(
+            html,
+            "<p><em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">青空</em>の下を歩く</p>\n"
+        );
         assert_eq!(html.matches("青空").count(), 1, "青空 must not duplicate");
-        assert!(!html.contains("<em"), "no emphasis wrapper: {html}");
+        assert!(html.contains("<em"), "referent now styled: {html}");
     }
 
     #[test]

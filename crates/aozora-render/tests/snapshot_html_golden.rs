@@ -66,9 +66,11 @@ fn snapshot_xss_payload_is_escaped() {
 }
 
 #[test]
-fn snapshot_referenced_contiguous_forward_no_double_render() {
-    // #228: a non-adjacent (`Referenced`) forward leaves its literal in the
-    // upstream plain run; the styled copy is dropped, not duplicated.
+fn snapshot_contiguous_forward_styles_referent() {
+    // #333: a non-adjacent referent in the same plain run is styled in place
+    // (a `Detached` decoration spliced at 青空) while the bracket stays
+    // `Referenced` and renders nothing — 青空 appears once, now bouten-styled,
+    // preserving the #228 no-double-render invariant.
     insta::assert_snapshot!(render("青空の下を歩く［＃「青空」に傍点］"));
 }
 
