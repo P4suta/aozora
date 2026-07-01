@@ -345,8 +345,16 @@ mod tests {
         let editor_note = a.make_directive("［＃入力者注(1)］", DirectiveKind::EditorNote);
         render_into(a.annotation(editor_note), &mut nodes);
         // Ruby-placement notes render a compact `aozora-ruby-note` marker.
-        for kind in [DirectiveKind::RubyAttached, DirectiveKind::RubyRetarget] {
-            let p = a.make_directive("［＃「親」にルビ］", kind);
+        for (kind, raw) in [
+            (DirectiveKind::RubyAttached, "［＃「親」にルビ］"),
+            (DirectiveKind::RubyRetarget, "［＃ルビは「親」にかかる］"),
+            (DirectiveKind::RubyPairOpen, "［＃左にルビ付き］"),
+            (
+                DirectiveKind::RubyPairClose,
+                "［＃左に「よみ」のルビ付き終わり］",
+            ),
+        ] {
+            let p = a.make_directive(raw, kind);
             render_into(a.annotation(p), &mut nodes);
         }
 

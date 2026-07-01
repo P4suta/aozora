@@ -430,6 +430,15 @@ pub enum DirectiveKind {
     /// nearby ruby applies to the run `X` (disambiguation, not renderable
     /// ruby). Rendered as a compact marker; the raw bracket round-trips.
     RubyRetarget,
+    /// Left-side-ruby span opener (`［＃左にルビ付き］`) — marks the start of a
+    /// run that carries a left-side ruby whose reading is named on the matching
+    /// [`Self::RubyPairClose`]. A raw-preserving `Direct` directive (the pair is
+    /// not coupled at the splice layer, like the inline warichu pair).
+    RubyPairOpen,
+    /// Left-side-ruby span closer (`［＃左に「Y」のルビ付き終わり］`) — names the
+    /// left-side ruby reading `Y` for the span opened by [`Self::RubyPairOpen`].
+    /// `Y` is preserved verbatim in the raw bracket and shown in the marker.
+    RubyPairClose,
 }
 
 /// Parse- and render-time error surface for `aozora-syntax` consumers.

@@ -487,6 +487,8 @@ fn annotation_kind_slug(k: DirectiveKind) -> &'static str {
         DirectiveKind::EditorNote => "editor-note",
         DirectiveKind::RubyAttached => "ruby-attached",
         DirectiveKind::RubyRetarget => "ruby-retarget",
+        DirectiveKind::RubyPairOpen => "ruby-pair-open",
+        DirectiveKind::RubyPairClose => "ruby-pair-close",
         _ => "other",
     }
 }

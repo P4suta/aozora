@@ -1,0 +1,66 @@
+{
+  "name": "left_ruby_pair",
+  "meta": {
+    "feature": "annotation",
+    "level": "should",
+    "spec_section": "6.14",
+    "note": "[provenance:hand-derived §6.14 + AOZORA-ANNOTATION 2026-07-01] The left-side-ruby span pair: ［＃左にルビ付き］ opens and ［＃左に「Y」のルビ付き終わり］ closes a run carrying a left-side ruby whose reading Y is named on the closer. Both are raw-preserving Direct directives (editorial kinds ruby-pair-open / ruby-pair-close), not coupled at the tree level (like the inline warichu pair). §8 renders a compact marker on each — 左ルビ on the opener and 左ルビ「Y」 on the closer; Y is a gloss (not surrounding text), so it does not double-render. Serialize re-emits both raw brackets byte-exact, preserving Y verbatim. Offsets from the §4 byte model (each fullwidth char = 3 bytes); cross-checked against the reference processor."
+  },
+  "source": "親［＃左にルビ付き］子［＃左に「よみ」のルビ付き終わり］\n",
+  "expected": {
+    "html": "<p>親<sup class=\"aozora-ruby-note\">左ルビ</sup>子<sup class=\"aozora-ruby-note\">左ルビ「よみ」</sup></p>\n",
+    "serialize": "親［＃左にルビ付き］子［＃左に「よみ」のルビ付き終わり］\n",
+    "nodes": [
+      {
+        "kind": "directive",
+        "span": {
+          "start": 3,
+          "end": 30
+        }
+      },
+      {
+        "kind": "directive",
+        "span": {
+          "start": 33,
+          "end": 84
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 27,
+          "end": 30
+        }
+      },
+      {
+        "kind": "quote",
+        "open": {
+          "start": 45,
+          "end": 48
+        },
+        "close": {
+          "start": 54,
+          "end": 57
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 33,
+          "end": 36
+        },
+        "close": {
+          "start": 81,
+          "end": 84
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
