@@ -95,6 +95,7 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-margin-note",
     "aozora-page-break",
     "aozora-ruby-left",
+    "aozora-ruby-note",
     "aozora-section-break",
     "aozora-section-break-kaicho",
     "aozora-section-break-kaidan",
@@ -343,6 +344,11 @@ mod tests {
         // EditorNote renders a visible 注N superscript from its raw shape.
         let editor_note = a.make_directive("［＃入力者注(1)］", DirectiveKind::EditorNote);
         render_into(a.annotation(editor_note), &mut nodes);
+        // Ruby-placement notes render a compact `aozora-ruby-note` marker.
+        for kind in [DirectiveKind::RubyAttached, DirectiveKind::RubyRetarget] {
+            let p = a.make_directive("［＃「親」にルビ］", kind);
+            render_into(a.annotation(p), &mut nodes);
+        }
 
         // Nodes needing Content. `content_plain` takes `&mut self` but
         // returns a Content borrowing the arena (not the allocator), so

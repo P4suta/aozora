@@ -485,6 +485,8 @@ fn annotation_kind_slug(k: DirectiveKind) -> &'static str {
         DirectiveKind::BaseTextVariant => "base-text-variant",
         DirectiveKind::InvalidRubySpan => "invalid-ruby-span",
         DirectiveKind::EditorNote => "editor-note",
+        DirectiveKind::RubyAttached => "ruby-attached",
+        DirectiveKind::RubyRetarget => "ruby-retarget",
         _ => "other",
     }
 }

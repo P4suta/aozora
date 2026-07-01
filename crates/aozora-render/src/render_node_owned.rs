@@ -325,6 +325,14 @@ fn render_annotation_owned<W: Write>(
             escape_text(n, out)?;
             return out.write_str("</sup>");
         }
+        // Ruby-placement editorial notes: a compact visible marker rather than a
+        // hidden span (so they do not vanish), but NOT the annotated run `X` —
+        // `X` is typically the immediately-preceding text, so re-emitting it
+        // would double-render. The raw bracket (with `X`) round-trips on
+        // serialize; the reader sees only the marker.
+        DirectiveKind::RubyAttached | DirectiveKind::RubyRetarget => {
+            return out.write_str(r#"<sup class="aozora-ruby-note">ルビ</sup>"#);
+        }
         _ => {}
     }
     out.write_str(r#"<span class="aozora-directive" hidden>"#)?;

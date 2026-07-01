@@ -421,6 +421,15 @@ pub enum DirectiveKind {
     /// numbered note listed in the file's 凡例. Rendered as a visible `注N`
     /// superscript; typed distinctly so it leaves the `Unknown` bucket.
     EditorNote,
+    /// Ruby-presence editorial note (`［＃「X」にルビ］`) — records that the run
+    /// `X` carries a ruby gloss in the source. The gloss text itself is not in
+    /// the directive; this is a proofreading marker, not renderable ruby.
+    /// Rendered as a compact visible marker; the raw bracket round-trips.
+    RubyAttached,
+    /// Ruby-binding editorial note (`［＃ルビは「X」にかかる］`) — records that a
+    /// nearby ruby applies to the run `X` (disambiguation, not renderable
+    /// ruby). Rendered as a compact marker; the raw bracket round-trips.
+    RubyRetarget,
 }
 
 /// Parse- and render-time error surface for `aozora-syntax` consumers.

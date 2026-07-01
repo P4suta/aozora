@@ -433,6 +433,11 @@
       "sexp": "(document (ERROR (ruby_base_implicit)) (gaiji (gaiji_marker) (slug body: (slug_body))) (ERROR (ruby_base_implicit)) (newline))"
     },
     {
+      "name": "ruby_attached",
+      "error": true,
+      "sexp": "(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "ruby_explicit",
       "error": false,
       "sexp": "(document (text) (explicit_ruby base: (ruby_base_explicit) reading: (ruby_reading)) (text) (newline))"
@@ -441,6 +446,11 @@
       "name": "ruby_implicit",
       "error": false,
       "sexp": "(document (implicit_ruby base: (ruby_base_implicit) reading: (ruby_reading)) (text) (newline))"
+    },
+    {
+      "name": "ruby_retarget",
+      "error": false,
+      "sexp": "(document (slug body: (slug_body)) (newline))"
     },
     {
       "name": "sashie",

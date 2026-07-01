@@ -826,9 +826,29 @@ pub(super) fn editorial_note_kind(body: &str) -> Option<DirectiveKind> {
         Some(DirectiveKind::BaseTextVariant)
     } else if is_editor_note_body(body) {
         Some(DirectiveKind::EditorNote)
+    } else if is_ruby_attached_body(body) {
+        Some(DirectiveKind::RubyAttached)
+    } else if is_ruby_retarget_body(body) {
+        Some(DirectiveKind::RubyRetarget)
     } else {
         None
     }
+}
+
+/// Whether `body` is exactly a ruby-presence note `「X」にルビ` (whole body, `X`
+/// non-empty). A proofreading marker that the run `X` carries a ruby gloss.
+fn is_ruby_attached_body(body: &str) -> bool {
+    body.strip_prefix("「")
+        .and_then(|r| r.strip_suffix("」にルビ"))
+        .is_some_and(|x| !x.is_empty())
+}
+
+/// Whether `body` is exactly a ruby-binding note `ルビは「X」にかかる` (whole body,
+/// `X` non-empty). Records that a nearby ruby applies to the run `X`.
+fn is_ruby_retarget_body(body: &str) -> bool {
+    body.strip_prefix("ルビは「")
+        .and_then(|r| r.strip_suffix("」にかかる"))
+        .is_some_and(|x| !x.is_empty())
 }
 
 /// Whether `body` is exactly a numbered input-typist note `入力者注(N)` with an
