@@ -1,0 +1,55 @@
+{
+  "name": "bouten_forward_interior",
+  "meta": {
+    "feature": "bouten",
+    "level": "should",
+    "spec_section": "7.5",
+    "note": "[provenance:hand-derived §6.2+§7.5 + reference impl #333] A 傍点 forward reference whose target 青空 occurs earlier in the same plain run but is NOT byte-adjacent to the bracket (の下を歩く intervenes). Per §7.5 the most-recent plain occurrence is styled in place: the parser splices a detached bouten decoration at [0,6) while the directive bracket stays a forward reference that renders nothing. 青空 appears exactly once, now bouten-marked; serialize reproduces the source byte-for-byte. Offsets from the §3 byte model."
+  },
+  "source": "青空の下を歩く［＃「青空」に傍点］\n",
+  "expected": {
+    "html": "<p><em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">青空</em>の下を歩く</p>\n",
+    "serialize": "青空の下を歩く［＃「青空」に傍点］\n",
+    "nodes": [
+      {
+        "kind": "bouten",
+        "span": {
+          "start": 0,
+          "end": 6
+        }
+      },
+      {
+        "kind": "bouten",
+        "span": {
+          "start": 21,
+          "end": 51
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 27,
+          "end": 30
+        },
+        "close": {
+          "start": 36,
+          "end": 39
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 21,
+          "end": 24
+        },
+        "close": {
+          "start": 48,
+          "end": 51
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

@@ -91,6 +91,13 @@ pub enum RegionRole {
     /// like [`ForwardReclaimed`](Self::ForwardReclaimed) but with no reclaimed
     /// prefix.
     ForwardSelfContained,
+    /// The styled-literal half of a **non-adjacent** forward-reference split
+    /// ([`ForwardOrigin::Detached`]) — a decoration leaf materialised at an
+    /// interior occurrence of the target run (#333). The literal lives wholly
+    /// inside the region, so editing it is a [`Direct`](SpliceSafety::Direct)
+    /// splice; the directive bracket is the coupled
+    /// [`ForwardReferenced`](Self::ForwardReferenced) partner, derived on demand.
+    ForwardDetached,
     /// Out-of-character-range glyph (外字).
     Gaiji,
     /// Single-line layout directive (字下げ / 地付き / 中央 / 罫囲み).
@@ -289,6 +296,13 @@ pub(crate) fn classify_node_ref(node: NodeRefOwned) -> (RegionRole, SpliceSafety
                     Coupled(CoupledKind::ForwardReference),
                 ),
                 ForwardOrigin::SelfContained => (RegionRole::ForwardSelfContained, Direct),
+                // The styled-literal half of a non-adjacent split (#333): its
+                // literal lives wholly inside the region, so a byte-replace is a
+                // complete local edit — `Direct`, exactly like the interstitial
+                // plain run it was carved out of. (It must NOT be `Coupled`: the
+                // identity-splice gate would call `first_quoted` on the raw
+                // literal and decline.)
+                ForwardOrigin::Detached => (RegionRole::ForwardDetached, Direct),
             },
             NodeOwned::HeadingHint(h) => {
                 if h.self_contained {
@@ -723,10 +737,11 @@ impl Tree<'_> {
 
     /// The span of the **unique** occurrence of `target` in the sanitized
     /// source before `before`, but only when it lies wholly within a single
-    /// plain interstitial run. `None` if the target is absent, appears more
-    /// than once (an ambiguous referent), or its occurrence falls inside a
-    /// classified construct (e.g. a ruby base) — the irreducible cases a
-    /// coupled edit must decline rather than guess.
+    /// plain interstitial run — or a [`ForwardDetached`](RegionRole::ForwardDetached)
+    /// decoration tile, whose bytes *are* the literal (#333). `None` if the
+    /// target is absent, appears more than once (an ambiguous referent), or its
+    /// occurrence falls inside another classified construct (e.g. a ruby base) —
+    /// the irreducible cases a coupled edit must decline rather than guess.
     fn unique_upstream_plain(&self, before: u32, target: &str) -> Option<Span> {
         let prefix = self.sanitized().get(..before as usize)?;
         let mut hit: Option<usize> = None;
@@ -742,7 +757,11 @@ impl Tree<'_> {
         let start = u32::try_from(hit?).ok()?;
         let span = Span::new(start, start + u32::try_from(target.len()).ok()?);
         let region = self.owned_region_at(SourceOffset::new(span.start))?;
-        (region.role == RegionRole::Interstitial && span.end <= region.span.end).then_some(span)
+        let carries_literal = matches!(
+            region.role,
+            RegionRole::Interstitial | RegionRole::ForwardDetached
+        );
+        (carries_literal && span.end <= region.span.end).then_some(span)
     }
 }
 

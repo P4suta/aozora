@@ -162,7 +162,10 @@ fn render_side_note_owned<W: Write>(
 /// A `Referenced` origin emits **nothing** — its
 /// target literal already lives in the upstream plain run (or a ruby base), so
 /// re-rendering it here would double the text (#228). This is load-bearing and
-/// pinned by the curated `Referenced` inputs.
+/// pinned by the curated `Referenced` inputs. A `Detached` decoration (#333) is
+/// *not* `Referenced`, so it falls through the gate and renders styled — it is
+/// the styled-literal half of a non-adjacent split, and its literal was removed
+/// from the plain run, so rendering it here is the sole (correct) copy.
 fn render_format_owned<W: Write>(
     f: &ForwardFormatOwned,
     store: &NodeStore,

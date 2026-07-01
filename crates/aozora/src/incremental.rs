@@ -1219,6 +1219,14 @@ fn node_forbids_region_reuse(node: NodeRefOwned) -> bool {
         role,
         RegionRole::ForwardReclaimed
             | RegionRole::ForwardSelfContained
+            // A `ForwardDetached` decoration (#333) is `Direct` in bytes, but its
+            // very *existence* is a whole-prefix predicate — it exists only
+            // because a downstream bracket references it, and duplicating the
+            // target word upstream flips the interior/adjacency decision. A
+            // node-free region re-lex cannot see that, so decline reuse (its
+            // coupled bracket already forces a full parse; this is defence in
+            // depth + keeps the invariant self-documenting).
+            | RegionRole::ForwardDetached
             | RegionRole::HeadingSelfContained
             | RegionRole::Kaeriten
     )

@@ -318,7 +318,7 @@ impl RecogniseCtx<'_, '_> {
         // Forward-reference warnings point at the whole `［＃…］` directive,
         // not at the (possibly pulled-back) consume span.
         let directive_span = Span::new(open_span.start, close_span.end);
-        if let Some((node, consume_start, ambiguous)) =
+        if let Some((node, consume_start, diag)) =
             self.classify_forward_bouten(view, open_idx, close_idx)
         {
             return Some(AnnotationMatch {
@@ -326,8 +326,7 @@ impl RecogniseCtx<'_, '_> {
                 annotation_payload: None,
                 consume_start,
                 consume_end: close_span.end,
-                pending_diagnostic: ambiguous
-                    .then(|| Diagnostic::bouten_target_ambiguous(directive_span)),
+                pending_diagnostic: diag.into_diagnostic(directive_span),
             });
         }
         // Range bouten `「X」～「Y」に<kind>` — applies the marks to the whole
@@ -376,13 +375,13 @@ impl RecogniseCtx<'_, '_> {
         // referent (`ShapedNoTarget`) carries a warning down the
         // fall-through path while still degrading to `Directive{Unknown}`.
         let tcy_pending = match self.classify_forward_tcy(view, open_idx, close_idx) {
-            ForwardTcy::Recognised(node, consume_start) => {
+            ForwardTcy::Recognised(node, consume_start, diag) => {
                 return Some(AnnotationMatch {
                     emit: EmitKind::Aozora(node),
                     annotation_payload: None,
                     consume_start,
                     consume_end: close_span.end,
-                    pending_diagnostic: None,
+                    pending_diagnostic: diag.into_diagnostic(directive_span),
                 });
             }
             ForwardTcy::ShapedNoTarget => Some(Diagnostic::tcy_target_not_found(directive_span)),
@@ -402,7 +401,7 @@ impl RecogniseCtx<'_, '_> {
         // `「X」は「□」囲み` — box-character enclosure (§6.7). Its `は「…」囲み`
         // suffix is disjoint from every emphasis keyword, so ordering versus
         // emphasis is free; kept adjacent as another `は`-form leaf.
-        if let Some((node, consume_start)) =
+        if let Some((node, consume_start, diag)) =
             self.classify_forward_box_enclosure(view, open_idx, close_idx)
         {
             return Some(AnnotationMatch {
@@ -410,10 +409,10 @@ impl RecogniseCtx<'_, '_> {
                 annotation_payload: None,
                 consume_start,
                 consume_end: close_span.end,
-                pending_diagnostic: tcy_pending,
+                pending_diagnostic: diag.into_diagnostic(directive_span).or(tcy_pending),
             });
         }
-        if let Some((node, consume_start)) =
+        if let Some((node, consume_start, diag)) =
             self.classify_forward_emphasis(view, open_idx, close_idx)
         {
             return Some(AnnotationMatch {
@@ -421,7 +420,7 @@ impl RecogniseCtx<'_, '_> {
                 annotation_payload: None,
                 consume_start,
                 consume_end: close_span.end,
-                pending_diagnostic: tcy_pending,
+                pending_diagnostic: diag.into_diagnostic(directive_span).or(tcy_pending),
             });
         }
 
@@ -683,7 +682,7 @@ impl RecogniseCtx<'_, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(NodeOwned, u32, bool)> {
+    ) -> Option<(NodeOwned, u32, ForwardDiag)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // Shape 1: `に<kind>` — default right-side placement.
         // Shape 2: `の左に<kind>` — left-side placement (position flipped).
@@ -717,7 +716,7 @@ impl RecogniseCtx<'_, '_> {
                 self.alloc
                     .bouten(kind, target, position, ForwardOrigin::SelfContained),
                 open_span.start,
-                false,
+                ForwardDiag::None,
             ));
         }
         // A forward-reference bouten only makes sense when every named
@@ -732,51 +731,40 @@ impl RecogniseCtx<'_, '_> {
                 return None;
             }
         }
-        // Pull the consume span back to swallow the preceding literal
-        // target when the (single) target sits *immediately* before the
-        // `［`. Without this the canonical
-        //     <target>［＃「<target>」に傍点］
-        // renders as `<target><em class="bouten">…<target>…</em>` —
-        // the surrounding plain run still carries the raw literal and
-        // the renderer faithfully emits the bouten's own content,
-        // producing the visible duplication that bit the playground
-        // welcome page. Letting `try_bracket_emit::flush_plain_up_to`
-        // see the earlier `consume_start` is the same trick Ruby has
-        // always used to claim its base text (see `try_ruby_emit`).
-        //
-        // Multi-target (`「A」「B」`) deliberately stays on the legacy
-        // `open_span.start` consume — the targets are non-contiguous
-        // in the source (e.g. `AとB`) and the current truncating
-        // `flush_plain_up_to` API cannot splice a hole in the middle
-        // of a pending plain run. That shape is the rarer corpus
-        // pattern; we accept the duplication there until a future
-        // change teaches the lexer to splice rather than truncate.
-        let consume_start = if let [only] = extracted.targets.as_slice() {
-            find_immediate_predecessor_target_position(view.events, self.source, open_idx, only)
-                .unwrap_or(open_span.start)
-        } else {
-            open_span.start
+        // Multi-target `「A」「B」` names non-contiguous runs that cannot be
+        // spliced into one leaf — keep the legacy `Referenced` consume (renders
+        // nothing) and report the loss.
+        let [only] = extracted.targets.as_slice() else {
+            let target = build_bouten_target(&extracted.targets, self.alloc);
+            return Some((
+                self.alloc
+                    .bouten(kind, target, position, ForwardOrigin::Referenced),
+                open_span.start,
+                ForwardDiag::NotStylable,
+            ));
         };
-        let origin = ForwardOrigin::from_consume(consume_start, open_span.start);
-        // Ambiguity: a *single* target that occurs more than once in the
-        // look-back window has no unique referent. Multi-target brackets
-        // (`「A」「B」`) name distinct runs and are not "ambiguous" in this
-        // sense, so they never flag. `matches` counts non-overlapping
-        // occurrences, which is the right notion of "candidate runs".
-        let ambiguous = if let [only] = extracted.targets.as_slice() {
-            self.source[..open_span.start as usize]
+        // Single target: shared #333 resolution (`build_bouten_target([x])` ==
+        // `content_plain(x)`, so the bouten node is identical). Then overlay the
+        // bouten ambiguity diagnostic when the styled target occurs ≥2 times in
+        // the look-back (`matches` counts non-overlapping candidate runs).
+        let (node, consume_start, diag) = self.resolve_forward_format(
+            view,
+            open_idx,
+            open_span.start,
+            ForwardAttr::Bouten { kind, position },
+            only,
+        );
+        let diag = if matches!(diag, ForwardDiag::None)
+            && self.source[..open_span.start as usize]
                 .matches(only)
                 .count()
                 >= 2
+        {
+            ForwardDiag::Ambiguous
         } else {
-            false
+            diag
         };
-        let target = build_bouten_target(&extracted.targets, self.alloc);
-        Some((
-            self.alloc.bouten(kind, target, position, origin),
-            consume_start,
-            ambiguous,
-        ))
+        Some((node, consume_start, diag))
     }
 }
 
@@ -819,8 +807,9 @@ fn build_bouten_target(targets: &[&str], alloc: &mut OwnedAllocator) -> ContentO
 /// bracket degrades to `Directive{Unknown}`), and from a bracket that is
 /// not a 縦中横 directive at all (silent fall-through).
 enum ForwardTcy {
-    /// A 縦中横 with a located target — the node plus its consume start.
-    Recognised(NodeOwned, u32),
+    /// A 縦中横 with a located target — the node, its consume start, and the
+    /// directive-level diagnostic (#333: `NotStylable` for a declined referent).
+    Recognised(NodeOwned, u32, ForwardDiag),
     /// `は縦中横` shape matched but the target has no preceding referent.
     ShapedNoTarget,
     /// Not a 縦中横 directive.
@@ -870,22 +859,24 @@ impl RecogniseCtx<'_, '_> {
         if !forward_target_is_preceded(view.events, self.source, open_idx, first) {
             return ForwardTcy::ShapedNoTarget;
         }
-        // Same `consume_start` shrink as `classify_forward_bouten`: pull
-        // the span back to swallow the immediately-preceding literal so
-        // `昭和64［＃「64」は縦中横］年` renders as `昭和<span
-        // class="tcy">64</span>年` instead of doubling the digits.
+        // Resolve the target position (#333), shared with the emphasis / box
+        // families: `昭和64［＃「64」は縦中横］年` (adjacent) pulls `64` back into a
+        // `Reclaimed` tcy; a non-adjacent plain referent splices a `Detached`
+        // tcy decoration; a declined referent stays `Referenced` + reports it.
         let Some(&PairEvent::PairOpen {
             span: open_span, ..
         }) = view.events.get(open_idx)
         else {
             return ForwardTcy::NotTcy;
         };
-        let consume_start =
-            find_immediate_predecessor_target_position(view.events, self.source, open_idx, first)
-                .unwrap_or(open_span.start);
-        let origin = ForwardOrigin::from_consume(consume_start, open_span.start);
-        let text = self.alloc.content_plain(first);
-        ForwardTcy::Recognised(self.alloc.tate_chu_yoko(text, origin), consume_start)
+        let (node, consume_start, diag) = self.resolve_forward_format(
+            view,
+            open_idx,
+            open_span.start,
+            ForwardAttr::CombineUpright,
+            first,
+        );
+        ForwardTcy::Recognised(node, consume_start, diag)
     }
 }
 
@@ -1014,6 +1005,97 @@ fn find_immediate_predecessor_target_position(
     } else {
         None
     }
+}
+
+/// Where a forward-reference target `X` resolves relative to its `［`, given
+/// the current pending plain run — the three-way generalisation of
+/// [`find_immediate_predecessor_target_position`] that drives #333.
+///
+/// - [`Adjacent`](ForwardReferent::Adjacent): `X` butts the bracket — pull it
+///   back into a `Reclaimed` node (case A, unchanged behaviour).
+/// - [`Interior`](ForwardReferent::Interior): `X` is a plain occurrence inside
+///   the pending run but *not* adjacent — the caller materialises a `Detached`
+///   decoration at `[start, end)` and keeps the bracket `Referenced` (case B).
+/// - [`Unresolvable`](ForwardReferent::Unresolvable): `X` is present in the
+///   look-back but not in the pending run (a ruby base, an earlier line, or
+///   inside a prior construct) — keep it `Referenced`, declined.
+///
+/// The window `[pending_plain_start, ［)` is pure plain source by construction
+/// (every completed node resets `pending_plain_start` to a byte past itself,
+/// every newline flushes it), so a window `rfind` selects exactly the §7.5
+/// most-recent-preceding *base-text* occurrence when one is representable and
+/// returns `Unresolvable` otherwise — the ruby-base / cross-line decline falls
+/// out for free, with no separate detector.
+enum ForwardReferent {
+    Adjacent(u32),
+    Interior { start: u32, end: u32 },
+    Unresolvable,
+}
+
+/// The directive-level diagnostic a forward recognizer asks the dispatch to
+/// attach (#333). Orthogonal to the emitted node.
+enum ForwardDiag {
+    /// No diagnostic.
+    None,
+    /// A styled target that occurs more than once in the look-back — the
+    /// chosen run may be unintended (`bouten_target_ambiguous`).
+    Ambiguous,
+    /// The target is present but not stylable in place — a ruby base, an
+    /// earlier line, a prior construct, or one of several targets
+    /// (`forward_referent_not_stylable`).
+    NotStylable,
+}
+
+impl ForwardDiag {
+    /// Build the concrete directive-span diagnostic this signal names, if any.
+    fn into_diagnostic(self, directive_span: Span) -> Option<Diagnostic> {
+        match self {
+            Self::None => None,
+            Self::Ambiguous => Some(Diagnostic::bouten_target_ambiguous(directive_span)),
+            Self::NotStylable => Some(Diagnostic::forward_referent_not_stylable(directive_span)),
+        }
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each parameter is an independent input to the pure resolution — the events \
+              table, source, bracket index, target text, and the pending-run window start."
+)]
+fn resolve_forward_referent(
+    events: &[PairEvent],
+    source: &str,
+    open_idx: usize,
+    target: &str,
+    pending_plain_start: Option<u32>,
+) -> ForwardReferent {
+    let Some(&PairEvent::PairOpen { span, .. }) = events.get(open_idx) else {
+        return ForwardReferent::Unresolvable;
+    };
+    let cutoff = span.start as usize;
+    let len = target.len();
+    // A: byte-adjacent — the most-recent occurrence by definition. `target`
+    // is canonical UTF-8, so a byte-slice compare is a string compare.
+    if cutoff >= len && &source.as_bytes()[cutoff - len..cutoff] == target.as_bytes() {
+        return u32::try_from(cutoff - len)
+            .map_or(ForwardReferent::Unresolvable, ForwardReferent::Adjacent);
+    }
+    // B: most-recent occurrence *within the current pending plain run*.
+    let Some(window_start) = pending_plain_start.map(|p| p as usize) else {
+        return ForwardReferent::Unresolvable;
+    };
+    if window_start >= cutoff {
+        return ForwardReferent::Unresolvable;
+    }
+    source[window_start..cutoff]
+        .rfind(target)
+        .map_or(ForwardReferent::Unresolvable, |rel| {
+            let start = window_start + rel;
+            match (u32::try_from(start), u32::try_from(start + len)) {
+                (Ok(start), Ok(end)) => ForwardReferent::Interior { start, end },
+                _ => ForwardReferent::Unresolvable,
+            }
+        })
 }
 
 /// Result of walking the `［＃「…」「…」…<particle><keyword>］`
@@ -1347,12 +1429,66 @@ impl RecogniseCtx<'_, '_> {
 /// `作者附記［＃「作者附記」は太字］` shape) so the `<b>` / `<i>` is its sole
 /// rendered copy.
 impl RecogniseCtx<'_, '_> {
+    /// Shared #333 resolution for the single-target `forward_format` families
+    /// (emphasis / 縦中横 / box enclosure). The caller has already confirmed the
+    /// target is preceded (not self-contained) and holds the `attr` + open
+    /// span. Returns the bracket node, its consume start, and the diagnostic;
+    /// for the interior case it also stashes the styled `Detached` decoration
+    /// in `self.pending_decoration` for `try_bracket_emit` to splice.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the caller already holds the body view, bracket index, open-span start, \
+                  resolved attribute, and target text — each an independent input."
+    )]
+    fn resolve_forward_format(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        open_span_start: u32,
+        attr: ForwardAttr,
+        only: &str,
+    ) -> (NodeOwned, u32, ForwardDiag) {
+        let text = self.alloc.content_plain(only);
+        match resolve_forward_referent(
+            view.events,
+            self.source,
+            open_idx,
+            only,
+            self.pending_plain_start,
+        ) {
+            ForwardReferent::Adjacent(consume_start) => (
+                self.alloc
+                    .forward_format(attr, text, ForwardOrigin::Reclaimed),
+                consume_start,
+                ForwardDiag::None,
+            ),
+            ForwardReferent::Interior { start, end } => {
+                let deco = self
+                    .alloc
+                    .forward_format(attr, text, ForwardOrigin::Detached);
+                self.pending_decoration = Some((deco, Span::new(start, end)));
+                (
+                    self.alloc
+                        .forward_format(attr, text, ForwardOrigin::Referenced),
+                    open_span_start,
+                    ForwardDiag::None,
+                )
+            }
+            ForwardReferent::Unresolvable => (
+                self.alloc
+                    .forward_format(attr, text, ForwardOrigin::Referenced),
+                open_span_start,
+                ForwardDiag::NotStylable,
+            ),
+        }
+    }
+
     fn classify_forward_emphasis(
         &mut self,
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(NodeOwned, u32)> {
+    ) -> Option<(NodeOwned, u32, ForwardDiag)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // The particle is tied to the decoration. `は` is the dominant emphasis
         // form (`「X」は太字`). The frame decoration also takes the "applied to"
@@ -1390,14 +1526,10 @@ impl RecogniseCtx<'_, '_> {
                 self.alloc
                     .forward_format(attr, text, ForwardOrigin::SelfContained),
                 open_span.start,
+                ForwardDiag::None,
             ));
         }
-        let consume_start =
-            find_immediate_predecessor_target_position(view.events, self.source, open_idx, only)
-                .unwrap_or(open_span.start);
-        let origin = ForwardOrigin::from_consume(consume_start, open_span.start);
-        let text = self.alloc.content_plain(only);
-        Some((self.alloc.forward_format(attr, text, origin), consume_start))
+        Some(self.resolve_forward_format(view, open_idx, open_span.start, attr, only))
     }
 }
 
@@ -1419,7 +1551,7 @@ impl RecogniseCtx<'_, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(NodeOwned, u32)> {
+    ) -> Option<(NodeOwned, u32, ForwardDiag)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let [target] = extracted.targets.as_slice() else {
             return None;
@@ -1447,14 +1579,10 @@ impl RecogniseCtx<'_, '_> {
                 self.alloc
                     .forward_format(attr, text, ForwardOrigin::SelfContained),
                 open_span.start,
+                ForwardDiag::None,
             ));
         }
-        let consume_start =
-            find_immediate_predecessor_target_position(view.events, self.source, open_idx, target)
-                .unwrap_or(open_span.start);
-        let origin = ForwardOrigin::from_consume(consume_start, open_span.start);
-        let text = self.alloc.content_plain(target);
-        Some((self.alloc.forward_format(attr, text, origin), consume_start))
+        Some(self.resolve_forward_format(view, open_idx, open_span.start, attr, target))
     }
 }
 

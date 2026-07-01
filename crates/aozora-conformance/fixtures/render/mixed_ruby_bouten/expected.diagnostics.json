@@ -1,1 +1,1 @@
-{"schemaVersion":1,"data":[]}
+{"schemaVersion":1,"data":[{"kind":"forward_referent_not_stylable","severity":"warning","source":"source","span":{"start":30,"end":60}}]}

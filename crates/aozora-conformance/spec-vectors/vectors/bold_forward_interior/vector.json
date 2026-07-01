@@ -1,0 +1,55 @@
+{
+  "name": "bold_forward_interior",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "7.5",
+    "note": "[provenance:hand-derived §6.12+§7.5 + reference impl #333] A 太字 forward reference whose target 太字 occurs earlier in the same plain run but is NOT byte-adjacent to the bracket (の intervenes). Per §7.5 the most-recent plain occurrence is styled in place: the parser splices a detached decoration at [0,6) rendered as the bold run, while the directive bracket at [9,39) stays a forward reference that renders nothing. 太字 appears exactly once, now bold; serialize reproduces the source byte-for-byte (the decoration emits the bare literal, the bracket re-emits ［＃…］). Offsets from the §3 byte model."
+  },
+  "source": "太字の［＃「太字」は太字］テスト\n",
+  "expected": {
+    "html": "<p><b class=\"aozora-futoji\">太字</b>のテスト</p>\n",
+    "serialize": "太字の［＃「太字」は太字］テスト\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 6
+        }
+      },
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 9,
+          "end": 39
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "quote",
+        "open": {
+          "start": 15,
+          "end": 18
+        },
+        "close": {
+          "start": 24,
+          "end": 27
+        }
+      },
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 9,
+          "end": 12
+        },
+        "close": {
+          "start": 36,
+          "end": 39
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
