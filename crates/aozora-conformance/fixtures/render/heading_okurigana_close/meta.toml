@@ -1,0 +1,7 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# Okurigana-elided heading close: `中見出終わり` (for `中見出し終わり`) closes a
+# paired 中見出し region. The close stem is 送り仮名-tolerant; the open and
+# forward-hint forms still require the full 見出し. Serializes back to the
+# canonical `中見出し終わり` (fixed point).
+feature = "heading"
+level = "should"

@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 68,
+  "total": 69,
   "passed": 37,
-  "failed": 31,
+  "failed": 32,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,9 +15,9 @@
       "failed": 5
     },
     "should": {
-      "total": 42,
+      "total": 43,
       "passed": 16,
-      "failed": 26
+      "failed": 27
     }
   },
   "cases": [
@@ -219,6 +219,13 @@
     },
     {
       "case": "heading_hint",
+      "feature": "heading",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "heading_okurigana_close",
       "feature": "heading",
       "level": "should",
       "passed": false,
