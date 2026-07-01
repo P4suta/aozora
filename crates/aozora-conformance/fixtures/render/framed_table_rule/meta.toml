@@ -1,0 +1,5 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# 表罫囲み (table-rule frame) renders identically to 罫囲み and folds into the
+# same Rule enclosure (like 枠囲み/枠囲い), canonicalizing to 罫囲み on serialize.
+feature = "container"
+level = "should"
