@@ -471,6 +471,48 @@ jobs:
       - name: Build wasm-pack package
         run: wasm-pack build --target web --release crates/aozora-wasm
 
+  # Playground Playwright E2E (#335 D-5). Builds the WASM engine, installs bun
+  # deps + chromium, and drives a prod `vite preview` build through a real
+  # browser — the vitest suite stubs WASM, so this is the only true end-to-end
+  # WASM smoke. Host runner (NOT the dev image / `setup-dev-image`, which loads
+  # the Rust image) so `playwright install --with-deps` can apt-install the
+  # browser's system libraries. Gated on `playground || rust` (a WASM/render
+  # change can break the preview). Kept out of `ci-parallel` — see the Justfile
+  # `playground-e2e` note (shared-node_modules EEXIST race).
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.playground == 'true' || needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+        with:
+          key: e2e
+      - name: Install wasm32-unknown-unknown target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa  # v0.4.0
+        with:
+          version: 'v0.15.0'
+      - name: Build wasm-pack package
+        run: wasm-pack build --target web --release crates/aozora-wasm
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: '1.3.14'
+      - name: Install playground deps
+        working-directory: playground
+        run: bun install --frozen-lockfile
+      - name: Install Playwright chromium + system deps
+        working-directory: playground
+        run: bun x playwright install --with-deps chromium
+      - name: Run Playwright E2E
+        working-directory: playground
+        run: bun x playwright test
+
   # aarch64 cross-compile + qemu-user execution of the SIMD scanner
   # tests. The NEON Teddy kernel only builds on `target_arch =
   # "aarch64"`; this job runs the proptest cross-validation against
@@ -666,6 +708,7 @@ jobs:
       - book
       - book-test
       - playground-checks
+      - e2e
     runs-on: ubuntu-latest
     steps:
       # Fail iff a job that actually RAN ended in failure/cancelled. Jobs
