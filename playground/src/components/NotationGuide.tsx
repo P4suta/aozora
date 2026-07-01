@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { marked, type Tokens } from 'marked';
 import notationGuideSource from '../notation-guide.md?raw';
+import { t } from '../i18n';
 
 interface NotationGuideProps {
   open: boolean;
@@ -121,16 +122,16 @@ export default function NotationGuide(props: NotationGuideProps) {
           class="notation-guide-modal"
           role="dialog"
           aria-modal="true"
-          aria-label="青空文庫記法 完全リファレンス"
+          aria-label={t('guideModalLabel')}
           ref={modalRef}
         >
           <header class="notation-guide-header">
-            <h2>📖 青空文庫記法 リファレンス</h2>
+            <h2>{t('guideModalHeader')}</h2>
             <button
               type="button"
               class="notation-guide-close"
               onClick={props.onClose}
-              aria-label="閉じる"
+              aria-label={t('close')}
             >
               ×
             </button>

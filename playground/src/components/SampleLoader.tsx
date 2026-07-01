@@ -1,5 +1,6 @@
 import { For } from 'solid-js';
 import { SAMPLES } from '../samples';
+import { t } from '../i18n';
 
 interface SampleLoaderProps {
   /** Called with the selected sample's body text and its display title. */
@@ -16,10 +17,10 @@ export default function SampleLoader(props: SampleLoaderProps) {
 
   return (
     <label class="sample-loader">
-      <span class="sample-label">サンプル:</span>
+      <span class="sample-label">{t('sampleLabel')}</span>
       <select onChange={onChange} value="">
         <option value="" disabled>
-          選択してください…
+          {t('sampleSelectPlaceholder')}
         </option>
         <For each={SAMPLES}>
           {(sample) => <option value={sample.id}>{sample.title}</option>}

@@ -5,6 +5,7 @@ import { halfToFullWidthFilter } from '../editor/onType';
 import { aozoraInlayHints } from '../editor/inlayHints';
 import { clearStoredSource } from '../storage';
 import { applyTheme, loadThemePref, saveThemePref, type ThemePref } from '../theme';
+import { locale, setLocale, t, type Locale } from '../i18n';
 
 interface SettingsPanelProps {
   view: EditorView | null;
@@ -15,6 +16,11 @@ const THEME_CHOICES: ReadonlyArray<{ value: ThemePref; label: string }> = [
   { value: 'auto', label: 'Auto' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
+];
+
+const LANG_CHOICES: ReadonlyArray<{ value: Locale; label: string }> = [
+  { value: 'ja', label: '日本語' },
+  { value: 'en', label: 'English' },
 ];
 
 export default function SettingsPanel(props: SettingsPanelProps) {
@@ -56,13 +62,17 @@ export default function SettingsPanel(props: SettingsPanelProps) {
     applyTheme(pref);
   }
 
+  function pickLang(next: Locale) {
+    setLocale(next);
+  }
+
   return (
     <div class="settings-panel-root" ref={rootEl}>
       <button
         type="button"
         class="settings-trigger"
         onClick={() => setOpen((v) => !v)}
-        title="エディタ設定"
+        title={t('settingsTrigger')}
         aria-haspopup="true"
         aria-expanded={open()}
       >
@@ -73,24 +83,24 @@ export default function SettingsPanel(props: SettingsPanelProps) {
           <label class="settings-row">
             <input type="checkbox" checked={halfWidth()} onChange={toggleHalfWidth} />
             <span class="settings-label">
-              半角→全角の即時変換
-              <span class="settings-sub">[ → ［ 、 | → ｜ など 8 種</span>
+              {t('settingHalfWidth')}
+              <span class="settings-sub">{t('settingHalfWidthSub')}</span>
             </span>
           </label>
           <label class="settings-row">
             <input type="checkbox" checked={inlay()} onChange={toggleInlay} />
             <span class="settings-label">
-              外字インレイヒント
-              <span class="settings-sub">※［＃...］の後ろに →解決字 を表示</span>
+              {t('settingInlay')}
+              <span class="settings-sub">{t('settingInlaySub')}</span>
             </span>
           </label>
           <div class="settings-divider" />
           <div class="settings-row settings-row-radio">
             <span class="settings-label">
-              テーマ
-              <span class="settings-sub">Auto は OS 設定に追従</span>
+              {t('settingTheme')}
+              <span class="settings-sub">{t('settingThemeSub')}</span>
             </span>
-            <div class="settings-radio-group" role="radiogroup" aria-label="テーマ">
+            <div class="settings-radio-group" role="radiogroup" aria-label={t('settingTheme')}>
               <For each={THEME_CHOICES}>
                 {(choice) => (
                   <label class="settings-radio">
@@ -100,6 +110,28 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                       value={choice.value}
                       checked={theme() === choice.value}
                       onChange={() => pickTheme(choice.value)}
+                    />
+                    <span>{choice.label}</span>
+                  </label>
+                )}
+              </For>
+            </div>
+          </div>
+          <div class="settings-row settings-row-radio">
+            <span class="settings-label">
+              {t('settingLanguage')}
+              <span class="settings-sub">{t('settingLanguageSub')}</span>
+            </span>
+            <div class="settings-radio-group" role="radiogroup" aria-label={t('settingLanguage')}>
+              <For each={LANG_CHOICES}>
+                {(choice) => (
+                  <label class="settings-radio">
+                    <input
+                      type="radio"
+                      name="lang-pref"
+                      value={choice.value}
+                      checked={locale() === choice.value}
+                      onChange={() => pickLang(choice.value)}
                     />
                     <span>{choice.label}</span>
                   </label>
@@ -117,8 +149,8 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               setOpen(false);
             }}
           >
-            保存をリセット
-            <span class="settings-sub">localStorage の編集内容を消去（共有 URL は影響なし）</span>
+            {t('settingReset')}
+            <span class="settings-sub">{t('settingResetSub')}</span>
           </button>
         </div>
       </Show>

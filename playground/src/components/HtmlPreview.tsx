@@ -1,4 +1,5 @@
 import { createSignal } from 'solid-js';
+import { t } from '../i18n';
 
 interface HtmlPreviewProps {
   html: string;
@@ -13,9 +14,9 @@ export default function HtmlPreview(props: HtmlPreviewProps) {
           type="button"
           class={`writing-mode-btn ${vertical() ? 'active' : ''}`}
           onClick={() => setVertical((v) => !v)}
-          title={vertical() ? '横書きに切り替え' : '縦書きに切り替え'}
+          title={vertical() ? t('writingToHorizontal') : t('writingToVertical')}
         >
-          {vertical() ? '↻ 横書' : '↺ 縦書'}
+          {vertical() ? t('writingHorizontalLabel') : t('writingVerticalLabel')}
         </button>
       </div>
       <div

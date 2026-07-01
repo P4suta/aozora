@@ -1,5 +1,6 @@
 import { hoverTooltip, type Tooltip } from '@codemirror/view';
 import { byteToUtf16, parserStateField, utf16ToByte, type ParserState } from './parserState';
+import { t } from '../i18n';
 
 interface GaijiResolution {
   span: { start: number; end: number };
@@ -55,7 +56,7 @@ export const aozoraHover = hoverTooltip((view, pos): Tooltip | null => {
       dom.className = 'cm-tooltip-aozora-gaiji';
       const resolvedHtml = r.resolved
         ? `<strong>${escapeHtml(r.resolved)}</strong>`
-        : `<span class="muted">(未解決)</span>`;
+        : `<span class="muted">${t('hoverUnresolved')}</span>`;
       const cp = formatCodepoint(r.codepoint);
       const cpHtml = cp ? ` <span class="muted">${cp}</span>` : '';
       const mencodeHtml = r.mencode
