@@ -17,12 +17,10 @@ Phase 2（CodeMirror 6 + aozora-tools 機能移植 + Docker 化）は完了済�
 | **S4-Q1** | `ruby` kind の span 形状（base + reading 全体 vs 分離） | 全体を 1 mark でハイライト | ruby base / reading の色を分けたくなった時に `nodes_json` を実機調査 |
 | **S6-Q1** | `pairs_json` の sanitized-source coords と raw source coords の乖離 | PUA 含み入力は linked editing を実機で検証していない | PUA を含む入力で linked editing が破綻したという報告が来た時 |
 | **S6-Q2** | 4 種括弧（`［］/《》/「」/〔〕`）すべてに linked editing するかルビ系除外か | 全 4 種に対応、ただし最小ペア（1文字）のみ | 「ルビの開き括弧消したら閉じ括弧消える挙動が邪魔」という報告が来た時 |
-| **S7-Q1** | スラグカタログを TS ハードコード vs aozora-spec 連動 | aozora-wasm の `slugs_json()` で完全同期済み（実質解決） | aozora-spec で SLUGS の derive serde が入れば JSON export も検討 |
 | **S9-Q1** | `pairs_json` が `containerOpen`/`containerClose` ペアも出すか | 出していないと仮定して `nodes_json` から stack で自前マッチ | `pairs_json` が container を出すようになった時に folding.ts を簡素化 |
 | **S11-Q1** | 半角→全角変換の context awareness（スラグ内で `[` 抑制等） | コンテキスト判定なしの単純全変換 | スラグ内で意図的に `[` を残したいユーザー要求が来た時 |
 | **S12-Q1** | wrap コマンドの un-wrap（既に wrapper 内なら剥がす）挙動 | un-wrap 未実装、常に追加 wrap | aozora-tools VSCode 拡張の挙動を実機で見比べて差分があれば追従 |
-| **S12-Q2** | 全角キー（`「`, `〔`, `＃`）のキーバインド | コマンドパレットも未実装、ASCII の 3 キーのみバインド | 「コマンドパレット欲しい」報告が来た時 |
-| **S13-Q1** | inlay hints のオン/オフ UI | SettingsPanel で実装済み（実質解決） | — |
+| **S12-Q2** | 全角キー（`「`, `〔`, `＃`）のキーバインド | コマンドパレット実装済み（#334・Mod-Shift-P / ⌘ ボタン・fuzzy 検索）。ASCII 3 キーは従来どおりバインド | — |
 | **S15-Q1** | 記法ガイドの markdown レンダラ | `marked` を採用済み（~10 KB gzip） | bundle 削減が課題になったら自前簡易レンダラに切替 |
 
 ### 今回スコープ外として明示的に除外した選択肢
@@ -41,7 +39,7 @@ Phase 2（CodeMirror 6 + aozora-tools 機能移植 + Docker 化）は完了済�
 
 ### 実用度を上げる
 
-- **localStorage / IndexedDB 永続化** — タブを閉じても source が復元される。`?text=` 共有とは別レイヤ
+- **IndexedDB 永続化** — localStorage 版は実装済み（`storage.ts`・タブを閉じても source 復元）。大容量・複数ドキュメント用に IndexedDB へ拡張する余地
 - **モバイル最適化** — 現状 760px 切替の最小レスポンシブのみ。タッチでの折り畳み・タブ操作の改善余地大
 - **長文用の gzip share URL** — `lz-string` 等で base64url + 圧縮、URL 長制限の緩和
 - **複数ファイル管理** — ブラウザ内で複数 "ドキュメント" を Tab 切替、それぞれ別 `?text=` 共有
@@ -63,16 +61,17 @@ Phase 2（CodeMirror 6 + aozora-tools 機能移植 + Docker 化）は完了済�
 
 ### 開発・運用面
 
-- **E2E テスト（Playwright）** — 13 機能すべてを自動テスト、CI で回す
-- **i18n（英語 UI）** — UI と記法ガイドを英訳、海外開発者へのリーチ
 - **A11y 強化** — spoken preview、focus order、screen reader 対応
-- **og:image / og:description** — SNS シェア時のプレビューカード
 - **カスタム CSS テーマ** — 横組み本 / 縦組み本 / モダン Web 風など preview の見た目を選択
+
+> 実装済み: **E2E テスト（Playwright）**（#335・`e2e/smoke.spec.ts` + CI `e2e` job）、
+> **i18n（英語 UI）**（#336・`src/i18n/`・ランタイム言語切替）、
+> **og:image / og:description**（`index.html` の OG/Twitter カード）。
 
 ### コーパス・サンプル
 
 - **青空文庫からの作品 import** — ZIP URL 入力で .txt をフェッチ → Shift_JIS decode → 編集開始
-- **代表作品のプリセット拡充** — 現在 9 サンプルだが、長文（章単位）も載せて速度を体感させる
+- **代表作品のプリセット拡充** — 現在 16 サンプルだが、長文（章単位）も載せて速度を体感させる
 
 ---
 
@@ -80,7 +79,7 @@ Phase 2（CodeMirror 6 + aozora-tools 機能移植 + Docker 化）は完了済�
 
 | 候補 | 規模 | 投資対効果 | コメント |
 |---|---|---|---|
-| **E2E テスト（Playwright）** | M（半日〜1 日） | ★★★ | エディタ + WASM の結合テスト。13 機能 + Docker + localStorage の品質保証、docs.yml の CI に組み込む |
-| **i18n（英語 UI）** | M | ★★ | 海外向けリーチ、ただし日本語前提の記法なので効果は限定的 |
-| **gzip share URL** | S | ★★ | `lz-string` 等で長文共有を可能に |
-| **VSCode 拡張のコマンドパレット相当** | M | ★★ | 全角キー打鍵不能問題の解決。CM6 のシンプルな fuzzy menu で OK |
+| **gzip share URL** | S | ★★ | `lz-string` 等で長文共有を可能に（プレーン `?text=` 共有は実装済み） |
+
+> 実装済み: **E2E テスト（Playwright）**（#335）、**i18n（英語 UI）**（#336）、
+> **コマンドパレット**（#334・全角キー打鍵不能問題を解決）。
