@@ -1764,6 +1764,25 @@ playground-build: playground-wasm
 # All playground gates in one shot — typecheck + test + build.
 playground-all: playground-typecheck playground-test playground-build
 
+# Playwright E2E smoke suite (#335 D-5). Runs in the dev-image `playground`
+# service (bun + Rust present): `_playground-ensure` builds the WASM engine +
+# bun deps, then chromium is installed and Playwright drives a prod
+# `vite preview` build (its `webServer`). Best-effort locally — chromium's
+# system libraries are not in the dev image, so a local run may fail at browser
+# launch; the CI `e2e` job (host runner, `playwright install --with-deps`) is
+# the authoritative gate. Deliberately NOT wired into `ci-parallel`: a second
+# concurrent bun-install lane against the shared node_modules volume would
+# re-introduce the `EEXIST` race.
+playground-e2e: _playground-ensure
+    # One root container does browser-install + test together: `--with-deps`
+    # apt-installs chromium's system libraries (libnspr4 etc., absent from the
+    # dev image) which needs root, and a single `docker compose run` keeps the
+    # browser cache (unmounted `~/.cache/ms-playwright`) and the test run in the
+    # same ephemeral container. (CI runs the equivalent as separate steps on one
+    # host runner, where the filesystem is shared and sudo is available.)
+    docker compose run --rm --no-TTY --user root playground \
+        bash -c "bun x playwright install --with-deps chromium && bun x playwright test"
+
 # --- profiling (samply, host-only) -------------------------------------------
 # samply uses perf_event_open(2) which Docker's seccomp profile blocks; the
 # xtask binary therefore runs on the host (not via {{_dev}}). Requires

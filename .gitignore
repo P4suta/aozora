@@ -42,6 +42,12 @@ Thumbs.db
 # Vite build output for the web playground
 /playground/dist/
 
+# Playwright E2E artifacts (#335)
+/playground/test-results/
+/playground/playwright-report/
+/playground/blob-report/
+/playground/.playwright/
+
 # Coverage
 /coverage/
 *.profraw
