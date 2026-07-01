@@ -22,7 +22,7 @@ use aozora_syntax::owned::{
     GaijiCanonicalOwned, GaijiOwned, HeadingHintOwned, HeadingOwned, IllustrationOwned,
     KaeritenOwned, MarginNoteOwned, NodeOwned, NodeStore, RubyOwned, SegmentOwned,
 };
-use aozora_syntax::{DirectiveKind, ForwardAttr, RubySide};
+use aozora_syntax::{DirectiveKind, EnclosureKind, ForwardAttr, RubySide};
 
 use crate::classes;
 use crate::render_node::{
@@ -225,6 +225,15 @@ fn render_format_owned<W: Write>(
                 // as-is so no content is dropped.
                 None => render_content_range_owned(f.target, store, out)?,
             }
+            out.write_str("</span>")
+        }
+        // 「□」囲み: draw a CSS box around the target. The □ glyph names the
+        // enclosure kind (serialize-only), so it is never emitted here — the box
+        // is drawn by the stylesheet. (`EnclosureKind::Rule` falls through to the
+        // slug-keyed arm below and keeps `aozora-keigakomi-inline`.)
+        ForwardAttr::Framed(EnclosureKind::Box) => {
+            out.write_str(r#"<span class="aozora-keigakomi-box">"#)?;
+            render_content_range_owned(f.target, store, out)?;
             out.write_str("</span>")
         }
         // The HTML element is semantic; the `aozora-*` slug comes from the

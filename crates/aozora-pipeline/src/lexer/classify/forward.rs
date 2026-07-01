@@ -398,6 +398,20 @@ impl RecogniseCtx<'_, '_> {
                 pending_diagnostic: tcy_pending,
             });
         }
+        // `「X」は「□」囲み` — box-character enclosure (§6.7). Its `は「…」囲み`
+        // suffix is disjoint from every emphasis keyword, so ordering versus
+        // emphasis is free; kept adjacent as another `は`-form leaf.
+        if let Some((node, consume_start)) =
+            self.classify_forward_box_enclosure(view, open_idx, close_idx)
+        {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start,
+                consume_end: close_span.end,
+                pending_diagnostic: tcy_pending,
+            });
+        }
         if let Some((node, consume_start)) =
             self.classify_forward_emphasis(view, open_idx, close_idx)
         {
@@ -1363,6 +1377,63 @@ impl RecogniseCtx<'_, '_> {
                 .unwrap_or(open_span.start);
         let origin = ForwardOrigin::from_consume(consume_start, open_span.start);
         let text = self.alloc.content_plain(only);
+        Some((self.alloc.forward_format(attr, text, origin), consume_start))
+    }
+}
+
+/// Classify a `［＃「X」は「□」囲み］` box-character enclosure — the 「□」 box
+/// member of the 罫囲み enclosure family ([`EnclosureKind::Box`], §6.7).
+///
+/// A single target `X`; the `は` particle and the quoted `□` glyph live in the
+/// suffix, mirroring [`Self::classify_forward_left_ruby`] /
+/// [`Self::classify_forward_side_note`]. Structurally it is an emphasis-style
+/// treatment (it boxes the target run, like `「X」は太字` bolds it), so it reuses
+/// the same `forward_target_is_preceded` pull-back / `SelfContained` logic as
+/// [`Self::classify_forward_emphasis`]. The `は「` prefix + `」囲み` suffix shape
+/// excludes every `の注記` / `のルビ` / `に…` form; only the canonical `□`
+/// (U+25A1) glyph is claimed — any other glyph stays `Directive{Unknown}` until
+/// it earns its own [`EnclosureKind`] member.
+impl RecogniseCtx<'_, '_> {
+    fn classify_forward_box_enclosure(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> Option<(NodeOwned, u32)> {
+        let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
+        let [target] = extracted.targets.as_slice() else {
+            return None;
+        };
+        let glyph = extracted
+            .suffix
+            .strip_prefix("は「")?
+            .strip_suffix("」囲み")?;
+        if glyph != "□" {
+            return None;
+        }
+        let attr = ForwardAttr::Framed(EnclosureKind::Box);
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        if !forward_target_is_preceded(view.events, self.source, open_idx, target) {
+            // No referent: the quoted target is itself the boxed run. Consume the
+            // whole bracket (no pull-back) so region tiling is byte-identical to
+            // the old `Unknown` and the #228 double-render is impossible.
+            let text = self.alloc.content_plain(target);
+            return Some((
+                self.alloc
+                    .forward_format(attr, text, ForwardOrigin::SelfContained),
+                open_span.start,
+            ));
+        }
+        let consume_start =
+            find_immediate_predecessor_target_position(view.events, self.source, open_idx, target)
+                .unwrap_or(open_span.start);
+        let origin = ForwardOrigin::from_consume(consume_start, open_span.start);
+        let text = self.alloc.content_plain(target);
         Some((self.alloc.forward_format(attr, text, origin), consume_start))
     }
 }
