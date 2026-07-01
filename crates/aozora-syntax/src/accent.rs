@@ -601,8 +601,20 @@ fn parse_leading_number(s: &str) -> Option<(usize, &str)> {
 
 /// Parse a selector `[ordinal] letters` into an occurrence rule + the trailing
 /// ASCII letter run. `None` if no letters follow the ordinal.
+///
+/// `前の` (former) / `後の` (latter) name the earlier / later occurrence of a
+/// letter that appears twice across a `、`-joined clause pair
+/// (`前のn…、後のn…`), so they map to the first / last occurrence — identical to
+/// a bare selector / `最後の`, which is correct for the attested two-occurrence
+/// runs.
 fn parse_selector(sel: &str) -> Option<(Occ, &str)> {
     if let Some(rest) = sel.strip_prefix("最後の") {
+        return Some((Occ::Last, rest));
+    }
+    if let Some(rest) = sel.strip_prefix("前の") {
+        return Some((Occ::First, rest));
+    }
+    if let Some(rest) = sel.strip_prefix("後の") {
         return Some((Occ::Last, rest));
     }
     if let Some((n, rest)) = parse_leading_number(sel) {
@@ -655,15 +667,18 @@ fn parse_accent_clause(clause: &str) -> Option<Vec<DotOp>> {
 
 /// Parse a dotted-letter directive body into substitution ops.
 ///
-/// **PR-1 scope: single clause only.** Declines multi-clause bodies (`。` /
-/// `、`-joined), which the 10b selector grammar will handle, and word-qualified
-/// (`simhaのm…`) / `段目` table-row forms, which fall out naturally because
-/// their selector is not a pure ASCII-letter run.
+/// A body may be one clause or several `。` / `、`-joined clauses
+/// (`mは上ドット付き。２つめのsは下ドット付き`); every clause addresses the *same*
+/// reclaimed run, so their ops are concatenated and applied together. Any
+/// clause that is not a well-formed single clause fails the whole body — which
+/// is exactly how word-qualified (`simhaのm…`) and `段目` table-row forms
+/// decline, since their `、`-split pieces are not pure ASCII-letter selectors.
 fn parse_accent_dot_body(body: &str) -> Option<Vec<DotOp>> {
-    if body.contains('。') || body.contains('、') {
-        return None;
+    let mut ops = Vec::new();
+    for clause in body.split(['。', '、']) {
+        ops.extend(parse_accent_clause(clause)?);
     }
-    parse_accent_clause(body)
+    (!ops.is_empty()).then_some(ops)
 }
 
 /// Compose the dotted-letter substitutions described by directive `body` onto
@@ -993,11 +1008,20 @@ mod tests {
     }
 
     #[test]
-    fn accent_dot_declines_multi_clause_in_pr1() {
-        // 10b (`。`/`、`-joined) is deferred to PR2 — declines here.
+    fn accent_dot_multi_clause_composes() {
+        // `。`-joined clauses all address the same reclaimed run.
         assert_eq!(
-            compose_accent_dots("Padmasambhava", "mは上ドット付き。２つめのsは下ドット付き"),
-            None
+            compose_accent_dots("Samsa", "mは上ドット付き。２つめのsは下ドット付き").as_deref(),
+            Some("Saṁṣa")
+        );
+    }
+
+    #[test]
+    fn accent_dot_former_latter_pair() {
+        // `前の` / `後の` over the two n's of Konkana → first ṅ (above), last ṇ (below).
+        assert_eq!(
+            compose_accent_dots("Konkana", "前のnは上ドット付き、後のnは下ドット付き").as_deref(),
+            Some("Koṅkaṇa")
         );
     }
 

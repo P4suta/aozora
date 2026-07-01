@@ -23,6 +23,21 @@
       "sexp": "(document (text) (slug body: (slug_body)) (newline))"
     },
     {
+      "name": "accent_dot_dangyou_unknown",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "accent_dot_former_latter",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
+      "name": "accent_dot_multi_clause",
+      "error": false,
+      "sexp": "(document (text) (slug body: (slug_body)) (newline))"
+    },
+    {
       "name": "accent_dot_ordinal",
       "error": false,
       "sexp": "(document (text) (slug body: (slug_body)) (newline))"

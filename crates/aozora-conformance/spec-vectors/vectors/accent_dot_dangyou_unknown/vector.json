@@ -1,0 +1,37 @@
+{
+  "name": "accent_dot_dangyou_unknown",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.21",
+    "note": "[provenance:hand-derived §6.21 + AOZORA-ANNOTATION 2026-07-01] #331 negative case: a `段目` table-row reference with word-qualified selectors (`Sinhaのn`, `Visnuのsn`) addresses letters of named words in a table, not the adjacent run. Its `、`-split pieces are not pure ASCII-letter selectors, so the directive stays Directive{Unknown}, rendered as a hidden raw span and serialized verbatim."
+  },
+  "source": "Sinha［＃４段目、Sinhaのnは上ドット付き、Visnuのsnはともに下ドット付き］\n",
+  "expected": {
+    "html": "<p>Sinha<span class=\"aozora-directive\" hidden>［＃４段目、Sinhaのnは上ドット付き、Visnuのsnはともに下ドット付き］</span></p>\n",
+    "serialize": "Sinha［＃４段目、Sinhaのnは上ドット付き、Visnuのsnはともに下ドット付き］\n",
+    "nodes": [
+      {
+        "kind": "directive",
+        "span": {
+          "start": 5,
+          "end": 99
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 5,
+          "end": 8
+        },
+        "close": {
+          "start": 96,
+          "end": 99
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}
