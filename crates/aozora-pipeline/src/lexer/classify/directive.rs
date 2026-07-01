@@ -1463,7 +1463,12 @@ pub(super) fn classify_general_image_body(
     alloc: &mut OwnedAllocator,
 ) -> Option<EmitKind> {
     let middle = body.strip_suffix("入る")?;
-    let paren = middle.find('（')?;
+    // The file spec `（file、横W×縦H）` is always the LAST paren group before
+    // `入る`; use `rfind` so a description that itself embeds `（…）` (e.g.
+    // `…（1798）…の図（fig.png、…）入る`) splits at the file paren, not the
+    // first inner one. For a single-paren body `rfind == find`, so every
+    // already-recognized body is byte-identical.
+    let paren = middle.rfind('（')?;
     let description = &middle[..paren];
     if description.is_empty() {
         return None;

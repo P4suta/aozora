@@ -1,7 +1,7 @@
 {
   "implementation": "tree-sitter",
-  "total": 73,
-  "passed": 40,
+  "total": 74,
+  "passed": 41,
   "failed": 33,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 5
     },
     "should": {
-      "total": 47,
-      "passed": 19,
+      "total": 48,
+      "passed": 20,
       "failed": 28
     }
   },
@@ -452,6 +452,13 @@
       "case": "sashie",
       "feature": "sashie",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "sashie_nested_paren_desc",
+      "feature": "sashie",
+      "level": "should",
       "passed": true,
       "message": null
     },

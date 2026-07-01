@@ -1,0 +1,6 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# General-image body whose description embeds a paren group `（甲）`. The file
+# spec is the LAST paren before 入る, so the description keeps its inner
+# parens instead of splitting at the first one (rfind, not find).
+feature = "sashie"
+level = "should"
