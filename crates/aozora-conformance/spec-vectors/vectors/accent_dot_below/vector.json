@@ -1,0 +1,37 @@
+{
+  "name": "accent_dot_below",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.21",
+    "note": "[provenance:hand-derived §6.21 + AOZORA-ANNOTATION 2026-07-01] #331 dotted-letter composition, dot below. The reclaimed run Sas has an uppercase S (word-initial, no dotted glyph) and a lowercase s; a bare selector takes the first *composable* occurrence, so the lowercase s becomes ṣ (U+1E63) and the capital S is left untouched. Reclaimed origin."
+  },
+  "source": "Sas［＃sは下ドット付き］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-accent-dot\">Saṣ</span></p>\n",
+    "serialize": "Sas［＃sは下ドット付き］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 34
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 31,
+          "end": 34
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

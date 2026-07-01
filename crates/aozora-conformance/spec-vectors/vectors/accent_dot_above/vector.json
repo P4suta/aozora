@@ -1,0 +1,37 @@
+{
+  "name": "accent_dot_above",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.21",
+    "note": "[provenance:hand-derived §6.21 + AOZORA-ANNOTATION 2026-07-01] #331 dotted-letter composition (aozora annotation etc.html). The directive addresses a base Latin letter in the immediately-preceding run — no 「X」 quote — and composes a combining dot above it: the m of the reclaimed Sam becomes ṁ (NFC U+1E41). Reclaimed origin: §7.5 pulls the run back so the styled span is its sole rendered copy; §7.6 serialize re-emits the literal run then the raw directive body byte-exact. Offsets from the §4 byte model (fullwidth = 3 bytes); cross-checked against the reference processor."
+  },
+  "source": "Sam［＃mは上ドット付き］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-accent-dot\">Saṁ</span></p>\n",
+    "serialize": "Sam［＃mは上ドット付き］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 34
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 3,
+          "end": 6
+        },
+        "close": {
+          "start": 31,
+          "end": 34
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

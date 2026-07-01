@@ -1,0 +1,37 @@
+{
+  "name": "accent_dot_ordinal",
+  "meta": {
+    "feature": "emphasis",
+    "level": "should",
+    "spec_section": "6.21",
+    "note": "[provenance:hand-derived §6.21 + AOZORA-ANNOTATION 2026-07-01] #331 ordinal selector 「Nつめの」. Counting is case-insensitive over the reclaimed run Sisa — the capital S is occurrence 1, the lowercase s is 2 — so 「２つめのs」 dots the lowercase s → Siṣa. The counted position must itself be composable."
+  },
+  "source": "Sisa［＃２つめのsは下ドット付き］\n",
+  "expected": {
+    "html": "<p><span class=\"aozora-accent-dot\">Siṣa</span></p>\n",
+    "serialize": "Sisa［＃２つめのsは下ドット付き］\n",
+    "nodes": [
+      {
+        "kind": "emphasis",
+        "span": {
+          "start": 0,
+          "end": 47
+        }
+      }
+    ],
+    "pairs": [
+      {
+        "kind": "bracket",
+        "open": {
+          "start": 4,
+          "end": 7
+        },
+        "close": {
+          "start": 44,
+          "end": 47
+        }
+      }
+    ],
+    "diagnostics": []
+  }
+}

@@ -23,6 +23,7 @@ use aozora_syntax::{BoutenKind, BoutenPosition, HeadingKind, HeadingStyle};
 /// accepts a numeric variant should match `aozora-indent` / etc. as a
 /// stem and allow a trailing `-<n>`.
 pub const AOZORA_CLASSES: &[&str] = &[
+    "aozora-accent-dot",
     "aozora-align-end",
     "aozora-angle-quote",
     "aozora-body-end",
@@ -409,6 +410,14 @@ mod tests {
                 &mut nodes,
             );
         }
+        // AccentDot (#331) needs an interned body + a composable run, so it uses
+        // its own constructor rather than the loop above; this exercises the
+        // `aozora-accent-dot` class through the compose path.
+        let dotted = a.content_plain("Sam");
+        render_into(
+            a.accent_dot(dotted, "mは上ドット付き", ForwardOrigin::Reclaimed),
+            &mut nodes,
+        );
         // FontSize positive → font-larger above; its negative magnitude
         // (font-smaller) is the only other class the variant produces.
         let smaller = a.content_plain("小");

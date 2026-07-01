@@ -300,6 +300,8 @@ pub enum Format {
     CombineUpright,
     /// 分数 (fraction, `「a/b」は分数`).
     Fraction,
+    /// ドット付き (#331 dotted-letter composition, `mは上ドット付き` → ṁ).
+    AccentDot,
     /// 字下げ (indent).
     Indent,
     /// 地付き / 地から N 字上げ (end alignment).
@@ -342,6 +344,7 @@ impl Format {
             Self::SmallScript(_) => "smallScript",
             Self::CombineUpright => "combineUpright",
             Self::Fraction => "fraction",
+            Self::AccentDot => "accentDot",
             Self::Indent => "indent",
             Self::AlignEnd => "alignEnd",
             Self::Center => "center",
@@ -399,6 +402,11 @@ pub enum ForwardAttr {
     /// 分数 (`「a/b」は分数`). The render arm splits the target on `/` (ASCII)
     /// or `／` (fullwidth) into a `<sup>`/`<sub>` fraction.
     Fraction,
+    /// ドット付き (#331). Composes a combining dot onto an addressed Latin letter
+    /// in the reclaimed run (`Sam` + `mは上ドット付き` → `Saṁ`). The selector
+    /// grammar lives in the raw directive body, interned on the owned leaf's
+    /// `accent_body` (this attribute stays a `Copy` unit, arena-free).
+    AccentDot,
 }
 
 /// A forward emphasis node's target-text provenance — whether `serialize`
@@ -488,6 +496,7 @@ impl ForwardAttr {
             Self::Bouten { kind, .. } => Format::Bouten(kind),
             Self::CombineUpright => Format::CombineUpright,
             Self::Fraction => Format::Fraction,
+            Self::AccentDot => Format::AccentDot,
         }
     }
 

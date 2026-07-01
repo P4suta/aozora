@@ -16,6 +16,7 @@
 use core::fmt::{self, Write};
 
 use aozora_syntax::GaijiCanonical;
+use aozora_syntax::accent::compose_accent_dots;
 use aozora_syntax::format::ForwardOrigin;
 use aozora_syntax::owned::{
     AngleQuoteOwned, ContentOwned, ContentRange, DirectiveOwned, ForwardFormatOwned,
@@ -236,6 +237,9 @@ fn render_format_owned<W: Write>(
             render_content_range_owned(f.target, store, out)?;
             out.write_str("</span>")
         }
+        // ドット付き (#331): compose the addressed letters of the reclaimed run
+        // into their precomposed dotted glyphs (ṁ / ṣ) — see `render_accent_dot`.
+        ForwardAttr::AccentDot => render_accent_dot(f, store, out),
         // The HTML element is semantic; the `aozora-*` slug comes from the
         // spec slug table, keyed by the canonical keyword.
         attr => {
@@ -257,6 +261,30 @@ fn render_format_owned<W: Write>(
             out.write_str(close)
         }
     }
+}
+
+/// Render a #331 dotted-letter forward: compose the addressed letters of the
+/// reclaimed run into their precomposed glyphs inside an `aozora-accent-dot`
+/// span. The selector grammar lives in the interned `accent_body`; the shared
+/// composer (also the classifier's validator) produces the visible run. A
+/// literal class (not slug-derived) keeps this off the `slugs.rs` / Hepburn
+/// path; a body-less or structured target falls back to the run verbatim.
+fn render_accent_dot<W: Write>(
+    f: &ForwardFormatOwned,
+    store: &NodeStore,
+    out: &mut W,
+) -> fmt::Result {
+    out.write_str(r#"<span class="aozora-accent-dot">"#)?;
+    match (store.content_range_as_plain(f.target), f.accent_body) {
+        (Some(run), Some(body_id)) => match compose_accent_dots(run, store.resolve_str(body_id)) {
+            Some(composed) => escape_text(&composed, out)?,
+            // Unreachable post-classify; render the run rather than drop it.
+            None => escape_text(run, out)?,
+        },
+        // A structured / body-less target can't be composed; emit as-is.
+        _ => render_content_range_owned(f.target, store, out)?,
+    }
+    out.write_str("</span>")
 }
 
 /// Render a gaiji node to a `<span class="aozora-gaiji">`.

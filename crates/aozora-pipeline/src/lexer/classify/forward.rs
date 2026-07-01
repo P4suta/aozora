@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use core::num::NonZeroI8;
 
 use aozora_spec::Diagnostic;
+use aozora_syntax::accent::compose_accent_dots;
 use aozora_syntax::alloc_owned::OwnedAllocator;
 use aozora_syntax::format::ForwardOrigin;
 use aozora_syntax::owned::{ContentOwned, NodeOwned, SegmentOwned};
@@ -414,6 +415,25 @@ impl RecogniseCtx<'_, '_> {
         }
         if let Some((node, consume_start)) =
             self.classify_forward_emphasis(view, open_idx, close_idx)
+        {
+            return Some(AnnotationMatch {
+                emit: EmitKind::Aozora(node),
+                annotation_payload: None,
+                consume_start,
+                consume_end: close_span.end,
+                pending_diagnostic: tcy_pending,
+            });
+        }
+
+        // `<run>［＃mは上ドット付き］` — dotted-letter composition (#331). Gated on
+        // the `ドット付き` suffix so the reclaim look-back (which copies the
+        // preceding run) never runs on ordinary directives. Unlike the styling
+        // recognisers above it addresses a bare Latin letter in the preceding
+        // run — no `「X」` quote — so it must run its own reclaim, not
+        // `extract_forward_quote_targets`.
+        if body.ends_with("ドット付き")
+            && let Some((node, consume_start)) =
+                self.classify_forward_accent_dot(view, open_idx, body)
         {
             return Some(AnnotationMatch {
                 emit: EmitKind::Aozora(node),
@@ -1436,6 +1456,81 @@ impl RecogniseCtx<'_, '_> {
         let text = self.alloc.content_plain(target);
         Some((self.alloc.forward_format(attr, text, origin), consume_start))
     }
+}
+
+/// Classify a `<run>［＃mは上ドット付き］` dotted-letter directive (#331).
+///
+/// The directive addresses a base Latin letter *inside the immediately-
+/// preceding run* — a bare word (`Padma-sambhava`) or a decomposed `〔…〕`
+/// accent span — and asks for a combining dot above / below it. This is
+/// sub-run occurrence addressing, not the `「X」は…` quote shape, so it reclaims
+/// the preceding run directly (never `extract_forward_quote_targets`). The run
+/// is pulled back (the styled span is the sole rendered copy, #228-safe); the
+/// raw body is interned for byte-exact serialize and render-time composition.
+/// `aozora_syntax::accent::compose_accent_dots` is the single authority for the
+/// selector grammar and glyph table, shared with the renderer — a `Some`
+/// result both validates the claim and (in the renderer) produces the glyphs.
+impl RecogniseCtx<'_, '_> {
+    fn classify_forward_accent_dot(
+        &mut self,
+        view: BodyView<'_>,
+        open_idx: usize,
+        body: &str,
+    ) -> Option<(NodeOwned, u32)> {
+        let &PairEvent::PairOpen {
+            span: open_span, ..
+        } = view.events.get(open_idx)?
+        else {
+            return None;
+        };
+        let bracket_start = open_span.start as usize;
+        let run_start = reclaim_accent_run_start(&self.source[..bracket_start])?;
+        let run = &self.source[run_start..bracket_start];
+        // Validate the body against the run: the shared composer declines any
+        // multi-clause / word-qualified / 段目 form and any unresolvable or
+        // uncomposable letter, leaving those as `Directive{Unknown}`.
+        compose_accent_dots(run, body)?;
+        // Store the reclaimed run *uncomposed* — the renderer composes on the
+        // fly and the serializer re-emits it verbatim before the raw body.
+        let text = self.alloc.content_plain(run);
+        let consume_start = u32::try_from(run_start).ok()?;
+        let origin = ForwardOrigin::from_consume(consume_start, open_span.start);
+        Some((self.alloc.accent_dot(text, body, origin), consume_start))
+    }
+}
+
+/// Byte offset where the run immediately preceding a dotted-letter directive
+/// begins, or `None` when the bracket is butted by a non-Latin character
+/// (a `》` ruby close, Japanese text) — which declines the directive.
+///
+/// A prefix ending in `〕` reclaims the whole decomposed `〔…〕` accent span
+/// (sanitize keeps its brackets, so it is a contiguous run); otherwise the
+/// maximal trailing run of Latin letters / Latin-Extended glyphs / `-` word
+/// joiners is reclaimed.
+fn reclaim_accent_run_start(prefix: &str) -> Option<usize> {
+    if prefix.ends_with('〕') {
+        // `〔…〕` does not nest, so the matching open is the last `〔`.
+        return prefix.rfind('〔');
+    }
+    let mut start = prefix.len();
+    for (i, ch) in prefix.char_indices().rev() {
+        if is_latin_run_char(ch) {
+            start = i;
+        } else {
+            break;
+        }
+    }
+    (start < prefix.len()).then_some(start)
+}
+
+/// A character that participates in a reclaimable Latin run: ASCII letters,
+/// the Latin-1 / Latin-Extended-A ranges (accented vowels like ā, ç produced
+/// by `〔…〕` decomposition), the Latin-Extended-Additional range (dotted
+/// glyphs like ṁ), and the `-` word joiner (`Nara-sinha`).
+fn is_latin_run_char(ch: char) -> bool {
+    ch.is_ascii_alphabetic()
+        || ch == '-'
+        || matches!(ch, '\u{00C0}'..='\u{024F}' | '\u{1E00}'..='\u{1EFF}')
 }
 
 /// Map the keyword after `は` to a forward-scope [`ForwardAttr`].
