@@ -317,6 +317,30 @@ the directive's run is cut short. Paired block forms (`［＃ここから…］ 
 typography keeps the layout across pages). The label points at the break.
 **Fix:** move the break off the line, or use the paired block form.
 
+# Notation-hygiene lint
+
+`aozora::lint::*` codes are *advisory* authoring lints, not lex faults: the
+parser keeps the input verbatim (the body round-trips unchanged) and the exit
+code stays `0` unless `--strict`. They flag notation spelled as a near-miss of
+a recognized construct so an author can tidy it up.
+
+## Non-canonical directive
+
+`aozora::lint::non_canonical_directive` · **Warning**
+
+```text
+前段。［＃改行を挿入］後段。   (改行を挿入 is a non-canonical ［＃改行］)
+```
+
+A `［＃…］` body that is a verified near-miss of a recognized directive —
+送り仮名 drift (`字下げ終り` → `ここで字下げ終わり`), a synonym (`表組` → `表`,
+`中央寄せ` → `中央揃え`), or a malformed prefix / close (`ここか3字下げ` →
+`ここから3字下げ`) — parses as an Unknown directive instead of the intended
+construct. The lint suggests the canonical spelling in its message; the body
+itself is left untouched (Unknown round-trips verbatim). The catalogue is a
+closed, parser-verified map, so genuine editorial notes never fire. **Fix:**
+rewrite to the canonical form (`aozora fmt --fix-notation`, planned).
+
 # Internal
 
 `aozora::internal` · **Error** · source = `Internal`

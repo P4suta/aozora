@@ -16,7 +16,6 @@
 //!
 //! Output goes to stdout; non-zero exit only on argument errors.
 
-use std::borrow::Cow;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
@@ -389,14 +388,14 @@ fn explain_kind(tag: &str) -> Option<String> {
 /// help / URL that `aozora check` attaches to the diagnostic, sourced
 /// from [`aozora::Diagnostic::explain`] so the two never diverge.
 fn explain_diagnostic(arg: &str) -> Option<String> {
-    // Accept the full `aozora::lex::<token>` code or the bare trailing
-    // token; expand the short form to the canonical code.
-    let code: Cow<'_, str> = if arg.contains("::") {
-        Cow::Borrowed(arg)
+    // Accept the full `aozora::lex::<token>` / `aozora::lint::<token>` code or
+    // the bare trailing token; expand the short form against both namespaces.
+    let info = if arg.contains("::") {
+        Diagnostic::explain(arg)?
     } else {
-        Cow::Owned(format!("aozora::lex::{arg}"))
+        Diagnostic::explain(&format!("aozora::lex::{arg}"))
+            .or_else(|| Diagnostic::explain(&format!("aozora::lint::{arg}")))?
     };
-    let info = Diagnostic::explain(&code)?;
     let mut out = format!(
         "{}\n{} · {}",
         info.code,

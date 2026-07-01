@@ -42,6 +42,8 @@
 //! library-bug diagnostics out of the [`crate::Diagnostic`] stream
 //! reach for [`Diagnostic::source`].
 
+use std::borrow::Cow;
+
 use miette::Diagnostic as MietteDiagnostic;
 use thiserror::Error;
 
@@ -107,6 +109,14 @@ pub mod codes {
 
     /// A 傍点 range opener was closed by a 傍線 closer (or vice-versa).
     pub const MISMATCHED_BOUTEN_CONTAINER: &str = "aozora::lex::mismatched_bouten_container";
+
+    /// A `［＃…］` body spelled as a near-miss of a recognized directive.
+    ///
+    /// 送り仮名 drift, a synonym, or a malformed prefix / close, kept as
+    /// Unknown; the notation-hygiene lint suggests its canonical spelling.
+    /// The `aozora::lint::*` namespace marks an advisory authoring lint,
+    /// distinct from the `aozora::lex::*` lex faults above.
+    pub const NON_CANONICAL_DIRECTIVE: &str = "aozora::lint::non_canonical_directive";
 
     /// Pipeline-internal: an `［＃` digraph survived classification
     /// into the normalized text. Indicates a missing recogniser for
@@ -416,6 +426,32 @@ pub enum Diagnostic {
         /// Container family named by the *close* marker.
         close_kind: &'static str,
         /// Byte-range of the close marker in the sanitized source.
+        span: Span,
+    },
+
+    /// A `［＃…］` body spelled as a verified near-miss of a recognized
+    /// directive — kept as `DirectiveKind::Unknown`; the canonical spelling
+    /// is offered as a fix. Advisory only, so it never blocks (exit 0 unless
+    /// `--strict`). See [`codes::NON_CANONICAL_DIRECTIVE`].
+    #[error("non-canonical directive; the canonical form is `{canonical}`")]
+    #[diagnostic(
+        code("aozora::lint::non_canonical_directive"),
+        url("https://p4suta.github.io/aozora/notation/diagnostics.html#non-canonical-directive"),
+        severity(Warning),
+        help(
+            "this ［＃…］ body matches a recognized directive spelled \
+             non-canonically, so it was kept as an Unknown directive; rewrite \
+             it to the canonical form (`aozora fmt --fix-notation`, planned)."
+        )
+    )]
+    NonCanonicalDirective {
+        /// Caret location for miette — the same byte-range as `span`.
+        #[label("non-canonical directive")]
+        at: miette::SourceSpan,
+        /// The catalogue canonical spelling. Owned for the parameterized /
+        /// forward-form entries, borrowed for the literal maps.
+        canonical: Cow<'static, str>,
+        /// Byte-range of the directive in the sanitized source.
         span: Span,
     },
 
@@ -794,6 +830,17 @@ impl Diagnostic {
         }
     }
 
+    /// Constructor for [`Diagnostic::NonCanonicalDirective`].
+    #[must_use]
+    pub fn non_canonical_directive(at: Span, canonical: impl Into<Cow<'static, str>>) -> Self {
+        let (offset, length) = span_to_miette_parts(at);
+        Self::NonCanonicalDirective {
+            at: miette::SourceSpan::new(offset.into(), length),
+            canonical: canonical.into(),
+            span: at,
+        }
+    }
+
     /// Constructor for [`Diagnostic::AccentDecompositionApplied`].
     #[must_use]
     pub fn accent_decomposition_applied(at: Span) -> Self {
@@ -972,7 +1019,8 @@ impl Diagnostic {
             | Self::BoutenTargetAmbiguous { .. }
             | Self::ForwardReferentNotStylable { .. }
             | Self::BreakInSingleLineContainer { .. }
-            | Self::KaeritenOutsideKanbun { .. } => Severity::Warning,
+            | Self::KaeritenOutsideKanbun { .. }
+            | Self::NonCanonicalDirective { .. } => Severity::Warning,
             Self::AccentDecompositionApplied { .. } => Severity::Note,
             Self::UnclosedBracket { .. }
             | Self::UnmatchedClose { .. }
@@ -1005,7 +1053,8 @@ impl Diagnostic {
             | Self::BreakInSingleLineContainer { .. }
             | Self::BracketedKaeritenNoPair { .. }
             | Self::KaeritenOutsideKanbun { .. }
-            | Self::MismatchedBoutenContainer { .. } => DiagnosticSource::Source,
+            | Self::MismatchedBoutenContainer { .. }
+            | Self::NonCanonicalDirective { .. } => DiagnosticSource::Source,
             Self::Internal { .. } => DiagnosticSource::Internal,
         }
     }
@@ -1030,6 +1079,7 @@ impl Diagnostic {
             | Self::BracketedKaeritenNoPair { span, .. }
             | Self::KaeritenOutsideKanbun { span, .. }
             | Self::MismatchedBoutenContainer { span, .. }
+            | Self::NonCanonicalDirective { span, .. }
             | Self::Internal { span, .. } => *span,
         }
     }
@@ -1068,6 +1118,7 @@ impl Diagnostic {
             | Self::BracketedKaeritenNoPair { at, span, .. }
             | Self::KaeritenOutsideKanbun { at, span, .. }
             | Self::MismatchedBoutenContainer { at, span, .. }
+            | Self::NonCanonicalDirective { at, span, .. }
             | Self::Internal { at, span, .. } => (at, span),
         };
         *span = span.shifted(by);
@@ -1099,15 +1150,16 @@ impl Diagnostic {
             Self::BracketedKaeritenNoPair { .. } => codes::BRACKETED_KAERITEN_NO_PAIR,
             Self::KaeritenOutsideKanbun { .. } => codes::KAERITEN_OUTSIDE_KANBUN,
             Self::MismatchedBoutenContainer { .. } => codes::MISMATCHED_BOUTEN_CONTAINER,
+            Self::NonCanonicalDirective { .. } => codes::NON_CANONICAL_DIRECTIVE,
             Self::Internal { check, .. } => check.as_code(),
         }
     }
 
     /// Every stable diagnostic code [`Self::code`] can return, in
-    /// catalogue order: the sixteen source-level codes followed by the
+    /// catalogue order: the seventeen source-level codes followed by the
     /// four pipeline-internal check codes. Backs `aozora explain`'s
     /// catalogue and the round-trip coverage test.
-    pub const ALL_CODES: [&'static str; 20] = [
+    pub const ALL_CODES: [&'static str; 21] = [
         codes::SOURCE_CONTAINS_PUA,
         codes::UNCLOSED_BRACKET,
         codes::UNMATCHED_CLOSE,
@@ -1124,6 +1176,7 @@ impl Diagnostic {
         codes::BRACKETED_KAERITEN_NO_PAIR,
         codes::KAERITEN_OUTSIDE_KANBUN,
         codes::MISMATCHED_BOUTEN_CONTAINER,
+        codes::NON_CANONICAL_DIRECTIVE,
         codes::RESIDUAL_ANNOTATION_MARKER,
         codes::UNREGISTERED_SENTINEL,
         codes::REGISTRY_OUT_OF_ORDER,
@@ -1181,6 +1234,7 @@ impl Diagnostic {
             codes::MISMATCHED_BOUTEN_CONTAINER => {
                 Self::mismatched_bouten_container(at, "傍点", "傍線")
             }
+            codes::NON_CANONICAL_DIRECTIVE => Self::non_canonical_directive(at, "中央揃え"),
             codes::RESIDUAL_ANNOTATION_MARKER => {
                 Self::internal(at, InternalCheckCode::ResidualAnnotationMarker)
             }
@@ -1524,7 +1578,7 @@ mod tests {
     fn explain_covers_every_catalogued_code() {
         assert_eq!(
             Diagnostic::ALL_CODES.len(),
-            20,
+            21,
             "ALL_CODES must list every code code() can return"
         );
         for &code in &Diagnostic::ALL_CODES {
