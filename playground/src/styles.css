@@ -153,7 +153,8 @@ body {
 }
 
 .share-btn,
-.guide-btn {
+.guide-btn,
+.palette-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -168,13 +169,15 @@ body {
   min-height: 36px;
 }
 
-.guide-btn {
+.guide-btn,
+.palette-btn {
   background: transparent;
   color: var(--fg);
   border: 1px solid var(--border);
 }
 
-.guide-btn:hover {
+.guide-btn:hover,
+.palette-btn:hover {
   background: var(--accent-bg);
   color: var(--accent);
   border-color: var(--accent);
@@ -838,6 +841,81 @@ body {
   color: var(--accent);
 }
 
+/* Command palette (#334) — mirrors the notation-guide overlay, docked near the
+   top like a typical Cmd-K palette. */
+.command-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 210;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 1rem 2rem;
+}
+
+.command-palette-modal {
+  background: var(--bg-elev);
+  color: var(--fg);
+  border-radius: 8px;
+  max-width: 560px;
+  width: 100%;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+.command-palette-input {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 1rem;
+  padding: 0.85rem 1rem;
+  outline: none;
+}
+
+.command-palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem;
+  overflow-y: auto;
+}
+
+.command-palette-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.command-palette-item.active {
+  background: var(--accent-bg);
+}
+
+.command-palette-desc {
+  font-size: 0.9rem;
+  color: var(--fg);
+}
+
+.command-palette-id {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.command-palette-empty {
+  padding: 0.75rem 0.65rem;
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+}
+
 .notation-guide-content {
   display: flex;
   flex: 1 1 auto;
@@ -1062,11 +1140,13 @@ body {
 
   /* Icon-only buttons on phones to save horizontal real estate. */
   .guide-btn .btn-text,
+  .palette-btn .btn-text,
   .share-btn .btn-text {
     display: none;
   }
 
   .guide-btn,
+  .palette-btn,
   .share-btn {
     min-width: 40px;
     justify-content: center;

@@ -77,4 +77,16 @@ test.describe('playground smoke', () => {
     await nodesTab.click();
     await expect(nodesTab).toHaveAttribute('aria-selected', 'true');
   });
+
+  test('コマンドパレットが開き絞り込みと Escape で閉じる', async ({ page }) => {
+    await ready(page);
+    await page.locator('.palette-btn').click();
+    const palette = page.locator('.command-palette-modal');
+    await expect(palette).toBeVisible();
+    // Romaji query hits the command id (`aozora.wrap.chuki`).
+    await page.locator('.command-palette-input').fill('chuki');
+    await expect(page.locator('.command-palette-item')).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await expect(palette).toHaveCount(0);
+  });
 });
