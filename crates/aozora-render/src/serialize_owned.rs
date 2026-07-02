@@ -384,9 +384,14 @@ fn emit_format_owned<W: Write>(
         };
         write!(out, "{}段階{word}文字", shift.magnitude())?;
     } else if let ForwardAttr::AlignEnd { offset } = f.attr {
-        // Anchor is not distinguished in the model (like LineFormat::AlignEnd);
-        // canonicalise to 文末より…字上げ揃え, which re-parses to the same offset.
-        write!(out, "文末より{offset}字上げ揃え")?;
+        // Anchor is not distinguished in the model (like LineFormat::AlignEnd), so
+        // canonicalise: 0 → 地付き (the zero-lift spelling), else 文末より…字上げ揃え.
+        // Both re-parse to the same offset.
+        if offset == 0 {
+            out.write_str("地付き")?;
+        } else {
+            write!(out, "文末より{offset}字上げ揃え")?;
+        }
     } else if let ForwardAttr::Accent(mark) = f.attr {
         // アクサン / ウムラウト: the suffix carries the bracketed mark symbol, not a
         // bare keyword (so `keyword()` returns its 太字 default) — re-emit the

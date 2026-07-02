@@ -658,6 +658,8 @@ impl RecogniseCtx<'_, '_> {
             (BoutenPosition::Right, r)
         } else if let Some(r) = after.strip_prefix("の左に") {
             (BoutenPosition::Left, r)
+        } else if let Some(r) = after.strip_prefix("の両側に") {
+            (BoutenPosition::Both, r)
         } else {
             return None;
         };
@@ -1756,16 +1758,26 @@ fn parse_accent_suffix(s: &str) -> Option<ForwardAttr> {
     Some(ForwardAttr::Accent(mark))
 }
 
-/// Parse a `文末より N字上げ揃え` / `行末より N字上がり` end-alignment suffix into
-/// a [`ForwardAttr::AlignEnd`] — the forward-scope analogue of the line-form
-/// `AlignEndParamPrefix` (§7.6). Mirrors its verb set (`字上げ` / `字上がり`,
-/// optional `揃え`) and, like the line-form `LineFormat::AlignEnd`, collapses
-/// the 文末 / 行末 anchor to the offset alone. Returns `None` for a
-/// missing/zero magnitude or any other suffix (→ `Directive{Unknown}`).
+/// Parse a `地付き` / `文末より N字上げ揃え` / `行末より N字上がり` end-alignment
+/// suffix into a [`ForwardAttr::AlignEnd`] — the forward-scope analogue of the
+/// line-form `AlignEndParamPrefix` (§7.6). Mirrors its verb set (`字上げ` /
+/// `字上がり`, optional `揃え`) and, like the line-form `LineFormat::AlignEnd`,
+/// collapses the 文末 / 行末 / 地より / 地から anchor to the offset alone. `地付き`
+/// is the zero-lift form (`offset: 0`, flush to the text-end edge). Returns
+/// `None` for a missing/zero magnitude or any other suffix (→
+/// `Directive{Unknown}`).
 fn parse_align_end_suffix(s: &str) -> Option<ForwardAttr> {
+    // 地付き — flush to the text-end edge (zero lift); the forward analogue of
+    // the `地付き` line form (LineFormat::AlignEnd { offset: 0 }). A distinct
+    // lexeme with no magnitude, so it can't ride the prefix+digit path below.
+    if s == "地付き" {
+        return Some(ForwardAttr::AlignEnd { offset: 0 });
+    }
     let rest = s
         .strip_prefix("文末より")
-        .or_else(|| s.strip_prefix("行末より"))?;
+        .or_else(|| s.strip_prefix("行末より"))
+        .or_else(|| s.strip_prefix("地より"))
+        .or_else(|| s.strip_prefix("地から"))?;
     let (offset, tail) = parse_decimal_u8_prefix(rest)?;
     (matches!(tail, "字上げ" | "字上がり" | "字上げ揃え" | "字上がり揃え") && offset >= 1)
         .then_some(ForwardAttr::AlignEnd { offset })
@@ -1875,6 +1887,23 @@ mod tests {
             forward_attr_from_suffix("文末より3字上げ"),
             Some(ForwardAttr::AlignEnd { offset: 3 })
         );
+        // 地付き is the zero-lift form; 地より / 地から are accepted anchors.
+        assert_eq!(
+            forward_attr_from_suffix("地付き"),
+            Some(ForwardAttr::AlignEnd { offset: 0 })
+        );
+        assert_eq!(
+            forward_attr_from_suffix("地より１字上げ"),
+            Some(ForwardAttr::AlignEnd { offset: 1 })
+        );
+        assert_eq!(
+            forward_attr_from_suffix("地より１１字上げ"),
+            Some(ForwardAttr::AlignEnd { offset: 11 })
+        );
+        // Misspelling, zero magnitude, and 、-joined compound all stay Unknown.
+        assert_eq!(forward_attr_from_suffix("地付け"), None);
+        assert_eq!(forward_attr_from_suffix("地より0字上げ"), None);
+        assert_eq!(forward_attr_from_suffix("地付き、地より３字アキ"), None);
         // Zero offset and unrelated suffixes stay Unknown.
         assert_eq!(forward_attr_from_suffix("文末より0字上げ"), None);
         assert_eq!(forward_attr_from_suffix("文末より字上げ"), None);

@@ -168,7 +168,6 @@ const fn body_family_mode(family: BodyFamily) -> MatchMode {
         | BodyFamily::HorizontalBlockOpen
         | BodyFamily::HorizontalBlockEnd
         | BodyFamily::FontSizeBlockEnd
-        | BodyFamily::ColumnsBlockEnd
         | BodyFamily::WarichuOpen
         | BodyFamily::WarichuClose
         | BodyFamily::KaeritenSingle
@@ -179,6 +178,7 @@ const fn body_family_mode(family: BodyFamily) -> MatchMode {
         | BodyFamily::AlignEndBlockParamPrefix
         | BodyFamily::IndentBlockEnd
         | BodyFamily::IndentKumiBlockEnd
+        | BodyFamily::ColumnsBlockEnd
         | BodyFamily::OkuriganaPrefix
         | BodyFamily::TopIndentPrefix
         | BodyFamily::KaigyouTentsukiPrefix => MatchMode::Prefix,
@@ -386,12 +386,13 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "改行天付き",
         family: BodyFamily::KaigyouTentsukiPrefix,
     },
+    // Columns close: ここで[N]段組[み]終わり. Bare ここで mirrors the ここから
+    // opener catch-all (IndentBlockParamPrefix); LeftmostLongest keeps every
+    // longer ここで…終わり closer winning over it, and the handler validates the
+    // 段組[み]終わり tail so non-columns ここで… bodies (and 、-joined compounds)
+    // decline to Unknown.
     BodyPattern {
-        needle: "ここで段組終わり",
-        family: BodyFamily::ColumnsBlockEnd,
-    },
-    BodyPattern {
-        needle: "ここで段組み終わり",
+        needle: "ここで",
         family: BodyFamily::ColumnsBlockEnd,
     },
     // Section / page break (exact).
@@ -961,12 +962,7 @@ pub(super) fn classify_annotation_body(
     // `ContainerKind::Heading`. Tried before the body dispatcher: their
     // keywords overlap the `ここから…` / `…終わり` shapes but always carry a
     // `見出し` keyword, so a non-heading `ここから…` body falls through.
-    if let Some((region, is_open)) = parse_heading_directive(body) {
-        let emit = if is_open {
-            EmitKind::BlockOpen(region)
-        } else {
-            EmitKind::BlockClose(RegionClose::of(region))
-        };
+    if let Some(emit) = parse_heading_directive(body) {
         return Some((emit, None));
     }
     let dfa = body_dispatcher();
@@ -1111,8 +1107,15 @@ pub(super) fn classify_annotation_body(
             Some((EmitKind::BlockClose(RegionClose::FontSize { larger }), None))
         }
         BodyFamily::ColumnsBlockEnd => {
-            // Close marker carries no count; the open-side payload is authoritative.
-            Some((EmitKind::BlockClose(RegionClose::Columns), None))
+            // ここで[N]段組[み]終わり. An optional leading digit run (full/half-width)
+            // is a redundant restatement of the open-side ColumnCount, which is
+            // authoritative for pairing/render, so it is validated then DISCARDED
+            // (RegionClose::Columns is a unit variant). Requires the exact 段組/段組み
+            // tail; any other remainder (incl. 、-joined compounds) declines → Unknown.
+            let rest = &body[match_end..]; // after ここで
+            let rest = parse_decimal_u8_prefix(rest).map_or(rest, |(_n, tail)| tail);
+            (rest == "段組終わり" || rest == "段組み終わり")
+                .then_some((EmitKind::BlockClose(RegionClose::Columns), None))
         }
         BodyFamily::WarichuOpen => {
             let p = alloc.make_directive("［＃割り注］", DirectiveKind::WarichuOpen);
@@ -1581,75 +1584,79 @@ fn strip_heading_style(s: &str) -> (HeadingStyle, &str) {
     .unwrap_or((HeadingStyle::Standard, s))
 }
 
-/// Heading keyword for a **close** marker only. Tolerates the 送り仮名-elided
+/// Heading level for a **close** marker only. Tolerates the 送り仮名-elided
 /// stem (`中見出` for `中見出し`) that appears in the wild solely on the
 /// closing `…見出終わり` — the open and forward-hint forms keep requiring the
-/// full `見出し` via [`parse_heading_keyword`]. The close still serializes
-/// back to the canonical `見出し` keyword, so the round-trip is a fixed point.
-fn parse_heading_close_keyword(s: &str) -> Option<(HeadingStyle, HeadingKind)> {
+/// full `見出し` via [`parse_heading_keyword`]. A leveled close serializes back
+/// to the canonical `見出し` keyword, so the round-trip is a fixed point.
+///
+/// The bare `見出し` / `見出` close (no 大/中/小 level) yields `None` for the
+/// level, but only in [`HeadingStyle::Standard`]: a level-less serialize drops
+/// the style word, so `窓見出し` etc. must stay Unknown to remain lossless.
+fn parse_heading_close_level(s: &str) -> Option<(HeadingStyle, Option<HeadingKind>)> {
     let (style, rest) = strip_heading_style(s);
-    let kind = match rest {
-        "大見出し" | "大見出" => HeadingKind::Large,
-        "中見出し" | "中見出" => HeadingKind::Medium,
-        "小見出し" | "小見出" => HeadingKind::Small,
+    let level = match rest {
+        "大見出し" | "大見出" => Some(HeadingKind::Large),
+        "中見出し" | "中見出" => Some(HeadingKind::Medium),
+        "小見出し" | "小見出" => Some(HeadingKind::Small),
+        // Bare close: no level. Style-less only — `窓見出し` etc. never occur, and
+        // a level-less serialize drops style, so keep those Unknown (lossless).
+        "見出し" | "見出" if matches!(style, HeadingStyle::Standard) => None,
         _ => return None,
     };
-    Some((style, kind))
+    Some((style, level))
 }
 
 /// Recognise a **paired** (`STYLEレベル見出し` / `…見出し終わり`) or **block**
 /// (`ここからSTYLEレベル見出し` / `ここでSTYLEレベル見出し終わり`) heading
-/// directive body, returning `(container, is_open)`. These delimit their
+/// directive body, returning the [`EmitKind`] to emit. These delimit their
 /// content and route through the container pairing machinery as
 /// [`RegionFormat::Heading`] (the counterpart of the `は`-form leaf heading).
+///
+/// A close carries its own level via [`RegionClose::Heading`] so the bare,
+/// level-less `ここで見出し終わり` close can round-trip as `level: None` rather
+/// than backfilling a lossy level from the open.
 ///
 /// The forward-reference `「X」は…見出し` hint starts with `「`, so it never
 /// matches here; a `ここから…` / `…終わり` body that is not a heading keyword
 /// (e.g. `ここから2字下げ`) fails `parse_heading_keyword` and falls through to
 /// the body dispatcher.
-fn parse_heading_directive(body: &str) -> Option<(RegionFormat, bool)> {
+fn parse_heading_directive(body: &str) -> Option<EmitKind> {
     if let Some(rest) = body.strip_prefix("ここから") {
         let (style, level) = parse_heading_keyword(rest)?;
-        return Some((
-            RegionFormat::Heading {
-                level,
-                style,
-                padded: true,
-            },
-            true,
-        ));
+        return Some(EmitKind::BlockOpen(RegionFormat::Heading {
+            level,
+            style,
+            padded: true,
+        }));
     }
     if let Some(rest) = body.strip_prefix("ここで") {
-        let (style, level) = parse_heading_close_keyword(rest.strip_suffix("終わり")?)?;
-        return Some((
-            RegionFormat::Heading {
-                level,
-                style,
-                padded: true,
-            },
-            false,
-        ));
+        let (style, level) = parse_heading_close_level(rest.strip_suffix("終わり")?)?;
+        return Some(EmitKind::BlockClose(RegionClose::Heading {
+            level,
+            style,
+            padded: true,
+        }));
     }
     if let Some(inner) = body.strip_suffix("終わり") {
-        let (style, level) = parse_heading_close_keyword(inner)?;
-        return Some((
-            RegionFormat::Heading {
-                level,
-                style,
-                padded: false,
-            },
-            false,
-        ));
-    }
-    let (style, level) = parse_heading_keyword(body)?;
-    Some((
-        RegionFormat::Heading {
+        let (style, level) = parse_heading_close_level(inner)?;
+        // The paired (`…終わり`, no `ここで`) close REQUIRES an explicit level: a
+        // bare `見出し終わり` has neither the `ここで` block-scope signal nor a
+        // level word, so it is too ambiguous to claim (0 corpus occ) and stays
+        // Unknown. Only the `ここで` block close (below) admits the level-less form.
+        let level = Some(level?);
+        return Some(EmitKind::BlockClose(RegionClose::Heading {
             level,
             style,
             padded: false,
-        },
-        true,
-    ))
+        }));
+    }
+    let (style, level) = parse_heading_keyword(body)?;
+    Some(EmitKind::BlockOpen(RegionFormat::Heading {
+        level,
+        style,
+        padded: false,
+    }))
 }
 
 /// Signed stage count for a `ここから{N}段階大きな/小さな文字` block opener,

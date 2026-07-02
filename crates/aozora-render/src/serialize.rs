@@ -345,8 +345,19 @@ pub(crate) fn emit_container_close<W: Write>(close: RegionClose, out: &mut W) ->
             kumi_width: Some(width),
         } => write!(out, "［＃ここで字下げ、{}字組み終わり］", width.0),
         RegionClose::LineWidth => out.write_str("［＃ここで字詰め終わり］"),
+        // Level-less bare close (`ここで見出し終わり` / `見出し終わり`): the open
+        // payload drives pairing/render, so the close carries no level word.
         RegionClose::Heading {
-            level,
+            level: None,
+            padded,
+            ..
+        } => write!(
+            out,
+            "［＃{}見出し終わり］",
+            if padded { "ここで" } else { "" }
+        ),
+        RegionClose::Heading {
+            level: Some(level),
             style,
             padded,
         } => write!(
