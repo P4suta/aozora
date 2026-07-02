@@ -66,7 +66,7 @@ enum BodyFamily {
     WarichuOpen,         // 割り注
     WarichuClose,        // 割り注終わり
     KaeritenSingle,      // body must equal one of 12 single-char marks
-    KaeritenCompound,    // body must equal one of 6 compound marks
+    KaeritenCompound,    // body must equal one of 8 compound marks
 
     // === Prefix-with-parameter (parse body[match_end..]) ===
     AlignEndParamPrefix,      // 地から → 地から{N}字上げ
@@ -673,6 +673,16 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     },
     BodyPattern {
         needle: "三レ",
+        family: BodyFamily::KaeritenCompound,
+    },
+    // Group + level combinations (上二 / 下二) — the outer 上中下 mark paired
+    // with an inner order number, attested in kanbun corpus text.
+    BodyPattern {
+        needle: "上二",
+        family: BodyFamily::KaeritenCompound,
+    },
+    BodyPattern {
+        needle: "下二",
         family: BodyFamily::KaeritenCompound,
     },
     // Kaeriten single marks (12).
