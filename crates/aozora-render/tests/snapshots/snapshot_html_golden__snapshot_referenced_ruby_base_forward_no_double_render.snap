@@ -2,4 +2,4 @@
 source: crates/aozora-render/tests/snapshot_html_golden.rs
 expression: "render(\"我《われ》の名は［＃「我」に傍点］\")"
 ---
-<p><ruby>我<rp>(</rp><rt>われ</rt><rp>)</rp></ruby>の名は</p>
+<p><ruby><em class="aozora-bouten aozora-bouten-goma aozora-bouten-right">我</em><rp>(</rp><rt>われ</rt><rp>)</rp></ruby>の名は</p>

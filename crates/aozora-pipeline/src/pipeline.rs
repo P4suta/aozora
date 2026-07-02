@@ -30,7 +30,7 @@
 //! the token / event lists are `Vec`s, and the classify stage builds the owned
 //! AST directly into an
 //! [`OwnedAllocator`]'s
-//! [`NodeStore`](aozora_syntax::owned::NodeStore), which threads straight into
+//! [`NodeStore`], which threads straight into
 //! the returned [`OwnedLexOutput`]. There is no bumpalo arena.
 //!
 //! # Why `build` is the terminal transition
@@ -46,7 +46,7 @@ use aozora_spec::{Diagnostic, PairLink};
 
 use aozora_syntax::alloc_owned::OwnedAllocator;
 use aozora_syntax::format::ForwardOrigin;
-use aozora_syntax::owned::{NodeOwned, OwnedLexOutput, RegistryOwned};
+use aozora_syntax::owned::{NodeOwned, NodeStore, OwnedLexOutput, RegistryOwned};
 use aozora_syntax::{ForwardAttr, RegionClose, RegionFormat, Span};
 
 use crate::owned_lex::OwnedNormalizer;
@@ -261,9 +261,21 @@ impl Pipeline<'_, Paired> {
             let mut events_iter = events.into_iter();
             let mut classify_stream = classify(&mut events_iter, &sanitized_text, &mut alloc);
             let spans: Vec<ClassifiedSpan> = (&mut classify_stream).collect();
-            let classify_diagnostics: Vec<Diagnostic> = classify_stream.take_diagnostics();
+            let mut classify_diagnostics: Vec<Diagnostic> = classify_stream.take_diagnostics();
             drop(classify_stream);
-            for span in &lower_spans(spans, &sanitized_text, &mut alloc) {
+            let (lowered, ruby_base_decorated) = lower_spans(spans, &sanitized_text, &mut alloc);
+            // Ruby-base forward emphasis (#384): a directive the lowering pass
+            // decorated onto a preceding ruby base is no longer an unstyled
+            // decline, so drop its `forward_referent_not_stylable` warning. Only
+            // the decorated directive spans are suppressed — cross-line /
+            // multi-target / prior-construct declines keep their warning.
+            if !ruby_base_decorated.is_empty() {
+                classify_diagnostics.retain(|d| {
+                    !(matches!(d, Diagnostic::ForwardReferentNotStylable { .. })
+                        && ruby_base_decorated.contains(&d.span()))
+                });
+            }
+            for span in &lowered {
                 normalizer.emit(span);
             }
             // Move the owned products out, ending the normalizer's borrow of
@@ -322,11 +334,15 @@ impl Pipeline<'_, Paired> {
 /// the reclaimed text twice. This overlap-truncate cured the #180 round-trip
 /// pathology; the surviving [`ForwardOrigin`] on each forward leaf is necessary
 /// provenance (#202).
+///
+/// Returns the lowered spans and the set of forward-directive spans the
+/// ruby-base emphasis phase (#384) decorated — the builder suppresses those
+/// directives' `forward_referent_not_stylable` warnings.
 fn lower_spans(
     spans: Vec<ClassifiedSpan>,
     source: &str,
     alloc: &mut OwnedAllocator,
-) -> Vec<ClassifiedSpan> {
+) -> (Vec<ClassifiedSpan>, Vec<Span>) {
     // Phase 0: resolve forward heading hints whose referent is the bare line
     // directly above the directive into promoted `Heading` nodes.
     let spans = promote_headings(spans, source, alloc);
@@ -356,7 +372,100 @@ fn lower_spans(
         out.push(span);
     }
     // Second phase: fold S4-foldable inline-range emphasis into forward leaves.
-    fold_inline_emphasis(out, source, alloc)
+    let mut out = fold_inline_emphasis(out, source, alloc);
+    // Third phase: apply a declined forward emphasis onto a preceding ruby base
+    // it uniquely names (#384).
+    let decorated = decorate_ruby_bases(&mut out, source, alloc.store());
+    (out, decorated)
+}
+
+/// Whether a forward attribute decorates a whole run as a single emphasis
+/// wrapper, so it can style a ruby base (#384). Excludes the sub-character /
+/// target-splitting attributes — [`ForwardAttr::AccentDot`] (addresses letters
+/// via an interned directive body the ruby cannot carry),
+/// [`ForwardAttr::Accent`] (composes a single Latin letter), and
+/// [`ForwardAttr::Fraction`] (splits the target on a slash) — which are never
+/// meaningful over a kanji base and stay declined.
+const fn attr_decorates_ruby_base(attr: ForwardAttr) -> bool {
+    !matches!(
+        attr,
+        ForwardAttr::AccentDot | ForwardAttr::Accent(_) | ForwardAttr::Fraction
+    )
+}
+
+/// Apply a declined forward emphasis directive (`［＃「X」に傍点/罫囲み/…］`, a
+/// [`ForwardOrigin::Referenced`] leaf) onto a preceding ruby whose base is the
+/// *unique* referent named `X` (#384). The classifier declines these because a
+/// ruby base cannot be pulled into a plain forward leaf (bouten-over-ruby is not
+/// representable); instead we set that ruby's `base_emphasis` so the renderer
+/// wraps the base in the attribute's emphasis element. The directive leaf stays
+/// `Referenced` (serializes the bracket verbatim, renders nothing), so serialize
+/// stays byte-identical.
+///
+/// Uniqueness is load-bearing, not "nearest ruby wins": the target must match
+/// **exactly one** preceding ruby base and **no** preceding plain-text run
+/// anywhere in the look-back — a plain copy that precedes the ruby (cross-line
+/// or same-line, out of the classifier's reset window) is a competing referent,
+/// so we decline and keep the honest `forward_referent_not_stylable` warning.
+/// Returns the directive spans decorated, so the builder can suppress exactly
+/// those warnings.
+fn decorate_ruby_bases(out: &mut [ClassifiedSpan], source: &str, store: &NodeStore) -> Vec<Span> {
+    let mut decorated: Vec<Span> = Vec::new();
+    for idx in 0..out.len() {
+        // Fire only on a declined (Referenced) forward directive with a
+        // whole-run-decoratable attribute.
+        let SpanKind::Aozora(NodeOwned::Format(f)) = out[idx].kind else {
+            continue;
+        };
+        if !matches!(f.origin, ForwardOrigin::Referenced) || !attr_decorates_ruby_base(f.attr) {
+            continue;
+        }
+        // A ruby base is a single `Plain` run; a structured target never matches.
+        let Some(target) = store.content_range_as_plain(f.target) else {
+            continue;
+        };
+        // Scan the whole look-back for the unique referent.
+        let mut ruby_match: Option<usize> = None;
+        let mut ambiguous = false;
+        for j in 0..idx {
+            match &out[j].kind {
+                SpanKind::Aozora(NodeOwned::Ruby(r)) => {
+                    if store.content_range_as_plain(r.base) == Some(target) {
+                        if ruby_match.is_some() {
+                            ambiguous = true;
+                            break;
+                        }
+                        ruby_match = Some(j);
+                    }
+                }
+                // Any preceding plain run that carries the target text — before
+                // the ruby, so invisible to the classifier's reset window — is a
+                // competing referent that forces a decline.
+                SpanKind::Plain => {
+                    let s =
+                        &source[out[j].source_span.start as usize..out[j].source_span.end as usize];
+                    if s.contains(target) {
+                        ambiguous = true;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if ambiguous {
+            continue;
+        }
+        let Some(ruby_idx) = ruby_match else {
+            continue;
+        };
+        let attr = f.attr;
+        let directive_span = out[idx].source_span;
+        if let SpanKind::Aozora(NodeOwned::Ruby(ref mut r)) = out[ruby_idx].kind {
+            r.base_emphasis = Some(attr);
+            decorated.push(directive_span);
+        }
+    }
+    decorated
 }
 
 /// Byte position where `target` begins, **only if** it is the bare line

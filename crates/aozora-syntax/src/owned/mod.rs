@@ -73,6 +73,7 @@ mod tests {
             base,
             reading,
             side: RubySide::Right,
+            base_emphasis: None,
         };
         let node = NodeOwned::Ruby(ruby);
 

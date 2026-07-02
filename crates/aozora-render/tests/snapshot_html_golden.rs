@@ -76,8 +76,10 @@ fn snapshot_contiguous_forward_styles_referent() {
 
 #[test]
 fn snapshot_referenced_ruby_base_forward_no_double_render() {
-    // #228: the bouten target resolves to a ruby base (not representable as a
-    // text-only leaf), so it stays `Referenced` — the ruby renders once with
-    // no trailing emphasis wrapper.
+    // #384: the bouten target resolves to a ruby base (not representable as a
+    // text-only leaf), so the bracket stays `Referenced` (renders nothing) and
+    // the lowering pass decorates the ruby's base instead — 我 renders once,
+    // now emphasis-wrapped inside the `<ruby>`, preserving the #228
+    // no-double-render invariant.
     insta::assert_snapshot!(render("我《われ》の名は［＃「我」に傍点］"));
 }

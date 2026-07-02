@@ -337,14 +337,20 @@ mod tests {
     }
 
     #[test]
-    fn referenced_ruby_base_forward_does_not_double_render() {
+    fn referenced_ruby_base_forward_styles_base_once() {
+        // #384: the forward target 我 is a ruby base, so it cannot be pulled into
+        // a plain forward leaf; the lowering pass instead decorates the ruby's
+        // base (render-only `base_emphasis`). The bracket stays `Referenced` and
+        // renders nothing, so 我 appears exactly once — now styled inside the
+        // `<ruby>`, before the `<rt>` — and the #228 no-double-render invariant
+        // still holds.
         let html = render("我《われ》の名は［＃「我」に傍点］");
         assert_eq!(
             html,
-            "<p><ruby>我<rp>(</rp><rt>われ</rt><rp>)</rp></ruby>の名は</p>\n"
+            "<p><ruby><em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">我</em><rp>(</rp><rt>われ</rt><rp>)</rp></ruby>の名は</p>\n"
         );
         assert_eq!(html.matches("我").count(), 1, "我 must not duplicate");
-        assert!(!html.contains("<em"), "no emphasis wrapper: {html}");
+        assert!(html.contains("<em"), "ruby base now styled (#384): {html}");
     }
 
     #[test]

@@ -4,11 +4,11 @@
     "feature": "composite",
     "level": "must",
     "spec_section": "6.1",
-    "note": "[provenance:hand-derived §6.1+§6.2+§7.5 + AOZORA-ANNOTATION 2026-06-17] The only 青梅 preceding the bracket is the ruby base, so the forward bouten target resolves to it: a non-adjacent target that is itself a ruby base, which per ADR 0003 §6.2 stays a forward reference (bouten-over-ruby is not representable, so it cannot fold into a text-only forward leaf, nor be spliced in place). HTML therefore renders 青梅 once — inside the ruby base — and drops the emphasis markup; re-rendering the target would double 青梅 (the duplication bug fixed in reference impl #228). Because the styling cannot be applied in place, §7.5 raises forward-referent-not-stylable spanning the directive. The bouten node still exists (the bracket round-trips), so serialize re-emits the bracket form unchanged with the literal left upstream. Offsets from the §3 byte model. Serialize canonicalises right-side ruby to the BARE form (the explicit ｜ is dropped) per ADR 0003 §6.1 / ADR 0002: ｜ is emitted only when a bare 《reading》 would re-parse to a different base; here every base is an all-kanji run whose preceding char is non-base (line start / 　 / の), so the bare form re-parses identically."
+    "note": "[provenance:hand-derived §6.1+§6.2+§7.5 + AOZORA-ANNOTATION 2026-06-17; amended for reference-impl #384/ADR-0023] The only 青梅 preceding the bracket is the ruby base, so the forward bouten target resolves to it: a non-adjacent target that is itself a ruby base. Per ADR-0023 (amending ADR 0003 §6.2 / ADR 0019), when the target is the UNIQUE such occurrence (no competing plain-text copy) the emphasis is applied to the ruby base in place as a render-only decoration: HTML renders 青梅 once — inside the ruby base — now wrapped in the bouten emphasis element (the #228 no-double-render invariant holds; the target is not re-rendered). The directive stays a forward reference and the decoration is render-only, never serialized, so serialize re-emits the bracket form unchanged with the literal left upstream (the bouten node still exists, the bracket round-trips). Because the styling IS applied, §7.5 raises NO forward-referent-not-stylable (a non-unique target — a ruby base that also appears as plain text, or two same-base rubies — stays declined and keeps the warning). Offsets from the §3 byte model. Serialize canonicalises right-side ruby to the BARE form (the explicit ｜ is dropped) per ADR 0003 §6.1 / ADR 0002: ｜ is emitted only when a bare 《reading》 would re-parse to a different base; here every base is an all-kanji run whose preceding char is non-base (line start / 　 / の), so the bare form re-parses identically."
   },
   "source": "｜青梅《おうめ》には［＃「青梅」に傍点］という街道がある。\n",
   "expected": {
-    "html": "<p><ruby>青梅<rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby>にはという街道がある。</p>\n",
+    "html": "<p><ruby><em class=\"aozora-bouten aozora-bouten-goma aozora-bouten-right\">青梅</em><rp>(</rp><rt>おうめ</rt><rp>)</rp></ruby>にはという街道がある。</p>\n",
     "serialize": "青梅《おうめ》には［＃「青梅」に傍点］という街道がある。\n",
     "nodes": [
       {
@@ -61,15 +61,6 @@
         }
       }
     ],
-    "diagnostics": [
-      {
-        "code": "forward-referent-not-stylable",
-        "severity": "warning",
-        "span": {
-          "start": 30,
-          "end": 60
-        }
-      }
-    ]
+    "diagnostics": []
   }
 }

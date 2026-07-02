@@ -128,9 +128,30 @@ fn render_content_one_owned<W: Write>(
 
 /// Render a ruby node to a `<ruby>` element (a left-side ruby classes its
 /// `<rt>` for below-the-line placement).
+///
+/// When `base_emphasis` is set (#384) — a declined forward directive
+/// `［＃「X」に傍点/罫囲み/…］` named this ruby's base as its unique referent — the
+/// base is wrapped in that attribute's emphasis element **inside** the `<ruby>`,
+/// before the `<rt>`, so the emphasis marks the base glyphs and not the reading.
+/// The wrapper is derived by reusing [`render_format_owned`] over a synthetic
+/// [`ForwardOrigin::SelfContained`] leaf on the base, so every attribute kind
+/// (傍点 → `<em>`, 罫囲み → framed `<span>`, 行右小書き / 太字 / 二重傍線 / …) wraps
+/// identically; the separate `Referenced` directive leaf still renders nothing,
+/// so exactly one styled copy exists (no #228 double-render).
 fn render_ruby_owned<W: Write>(r: &RubyOwned, store: &NodeStore, out: &mut W) -> fmt::Result {
     out.write_str("<ruby>")?;
-    render_content_range_owned(r.base, store, out)?;
+    match r.base_emphasis {
+        Some(attr) => {
+            let deco = ForwardFormatOwned {
+                attr,
+                target: r.base,
+                origin: ForwardOrigin::SelfContained,
+                accent_body: None,
+            };
+            render_format_owned(&deco, store, out)?;
+        }
+        None => render_content_range_owned(r.base, store, out)?,
+    }
     // A left-side ruby (saidoku building block) marks its `<rt>` with a class
     // so a stylesheet can place the reading below; the right-side form is
     // unchanged.

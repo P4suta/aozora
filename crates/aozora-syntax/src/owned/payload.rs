@@ -111,6 +111,18 @@ pub struct RubyOwned {
     pub reading: ContentRange,
     /// Which side the reading sits on.
     pub side: RubySide,
+    /// Render-only forward emphasis applied to the base (#384). Set by the
+    /// lowering pass when a declined forward directive `［＃「X」に傍点/罫囲み/
+    /// 行右小書き/…］` (a [`ForwardOrigin::Referenced`](crate::ForwardOrigin)
+    /// leaf) names this ruby's base as its *unique* preceding referent — the
+    /// classic `｜X《y》…［＃「X」は罫囲み］` where the target is a ruby base and
+    /// so cannot be pulled into a plain forward leaf (bouten-over-ruby is not
+    /// representable). The renderer wraps the base in the attribute's emphasis
+    /// element; the directive leaf stays `Referenced` (serializes the bracket
+    /// verbatim, renders nothing), so `base_emphasis` is never read by
+    /// `to_source` — it is a render decoration, not a serialized field. As a
+    /// `Copy` `Option<ForwardAttr>` it keeps `RubyOwned` `Copy` and inline.
+    pub base_emphasis: Option<ForwardAttr>,
 }
 
 /// Margin note (注記 / 傍記).
