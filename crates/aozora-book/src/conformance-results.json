@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 87,
-  "passed": 87,
+  "total": 88,
+  "passed": 88,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 61,
-      "passed": 61,
+      "total": 62,
+      "passed": 62,
       "failed": 0
     }
   },
@@ -452,6 +452,13 @@
       "case": "line_width_container",
       "feature": "container",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "margin_note_pair",
+      "feature": "annotation",
+      "level": "should",
       "passed": true,
       "message": null
     },

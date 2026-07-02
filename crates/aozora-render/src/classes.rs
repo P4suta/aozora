@@ -379,6 +379,22 @@ mod tests {
             let p = a.make_directive(raw, kind);
             render_into(a.annotation(p), &mut nodes);
         }
+        // Margin-note span markers render a compact `aozora-margin-note` marker.
+        for (kind, raw) in [
+            (DirectiveKind::MarginNotePairOpen, "［＃注記付き］"),
+            (DirectiveKind::MarginNotePairOpen, "［＃左に注記付き］"),
+            (
+                DirectiveKind::MarginNotePairClose,
+                "［＃「よみ」の注記付き終わり］",
+            ),
+            (
+                DirectiveKind::MarginNotePairClose,
+                "［＃左に「よみ」の注記付き終わり］",
+            ),
+        ] {
+            let p = a.make_directive(raw, kind);
+            render_into(a.annotation(p), &mut nodes);
+        }
 
         // Nodes needing Content. `content_plain` takes `&mut self` but
         // returns a Content borrowing the arena (not the allocator), so
