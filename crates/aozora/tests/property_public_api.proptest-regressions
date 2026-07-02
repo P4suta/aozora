@@ -4,6 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 68d55ad76cfafc375ddb8f7a06526c3f72cab4533cbee1c8beda984b86d58f63 # shrinks to s = ""
-cc 1160583e1425ea04c1ab88e4d0619b4b31203bd14c793bfd0c626acea2fc4bd0 # shrinks to s = ""
-cc d9252928c242b7631dff094773032f32880aa8aa8896b7f1b1ada7bfccd58d24 # shrinks to s = "≪］］［＃［＃］］"
+cc 95c05976f3752087c442f52c7098acf244f91b00b5557a61b865a755ab7918b8 # shrinks to s = "≪］］"

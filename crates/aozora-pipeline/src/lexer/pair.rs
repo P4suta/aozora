@@ -46,6 +46,18 @@
 //!   The stack is *not* popped — this is deliberately conservative, so
 //!   a well-formed outer pair like `［...］` still closes correctly even
 //!   when an inner stray `》` appears inside the body.
+//! * **Bracket is a hard pairing scope** (refines the stray-close rule
+//!   for `］` only): a `］` closes the *nearest enclosing* `［`, even when
+//!   non-bracket opens are stacked above it, force-resolving those opens
+//!   as [`PairEvent::Unclosed`] (innermost-first) before the
+//!   [`PairEvent::PairClose`]. This keeps an unbalanced `「` inside a
+//!   directive body — an image caption `［＃「…（fig）入る］`, a composed-glyph
+//!   gaiji `［＃「口＋「皐」…］`, a typo-note quoting literal quotes — from
+//!   swallowing the `］` so the bracket never closes and the classifier
+//!   sinks the rest of the document to plain. A balanced body never
+//!   triggers it (the top *is* the bracket, matched directly). A `」`
+//!   still cannot cross a bracket downward — only `］` gets this scope.
+//!   See ADR-0025 (`docs/adr/`).
 
 use core::mem;
 
@@ -181,6 +193,11 @@ where
 /// * `links`: resolved `(open, close)` pairs accumulated as the
 ///   stack matches; mirrors `PairOutputIn::links` for streaming
 ///   callers that don't go through `pair_in`.
+/// * `pending`: FIFO queue of events a single trigger produced beyond
+///   the one it returns directly. A `］` that closes a bracket buried
+///   under dangling non-bracket opens yields several events at once
+///   (`Unclosed`… then `PairClose`); the head is returned and the tail
+///   is buffered here, drained front-first before the next token.
 /// * `eof_drain`: cursor through the residual stack at end-of-input
 ///   used to emit one `Unclosed` event per remaining open frame.
 /// * `finished`: terminal flag set after the eof drain completes,
@@ -198,6 +215,9 @@ where
     /// Mirrors the `PairOutputIn::links` side-table for streaming
     /// callers that don't go through `pair_in`.
     links: Vec<PairLink>,
+    /// Events queued by the current trigger to surface on later
+    /// `next()` calls, drained front-first. Empty on the fast paths.
+    pending: SmallVec<[PairEvent; 4]>,
     eof_drain: bool,
     finished: bool,
 }
@@ -212,6 +232,7 @@ where
             stack: SmallVec::new(),
             diagnostics: Vec::new(),
             links: Vec::new(),
+            pending: SmallVec::new(),
             eof_drain: false,
             finished: false,
         }
@@ -264,6 +285,46 @@ where
                     span,
                 };
             }
+
+            // A `］` treats its bracket as a *hard pairing scope*: it closes
+            // the nearest enclosing `［`, force-resolving any non-bracket opens
+            // stacked above that bracket as `Unclosed` (innermost-first). This
+            // is what stops an unbalanced `「` inside a directive body — e.g.
+            // `［＃「…（fig）入る］` or the composed-glyph gaiji
+            // `［＃「口＋「皐」…］` — from burying the `］` so the bracket never
+            // closes and the classifier sinks the rest of the document to plain.
+            // The balanced case never reaches here (the fast path above returns).
+            if pair_kind == PairKind::Bracket
+                && let Some(bracket_pos) = self
+                    .stack
+                    .iter()
+                    .rposition(|&(k, _)| k == PairKind::Bracket)
+            {
+                // Everything above `bracket_pos` is non-bracket by construction
+                // (it is the top-most bracket). Pop those top-first so the
+                // innermost dangling open surfaces first, matching the EOF-drain
+                // order (`next`), then close the bracket itself.
+                while self.stack.len() > bracket_pos + 1 {
+                    let (k, open_span) = self.stack.pop().expect("len > bracket_pos + 1");
+                    self.diagnostics
+                        .push(Diagnostic::unclosed_bracket(open_span, k));
+                    self.pending.push(PairEvent::Unclosed {
+                        kind: k,
+                        span: open_span,
+                    });
+                }
+                let (_, open_span) = self.stack.pop().expect("bracket at bracket_pos");
+                self.links
+                    .push(PairLink::new(PairKind::Bracket, open_span, span));
+                self.pending.push(PairEvent::PairClose {
+                    kind: PairKind::Bracket,
+                    span,
+                });
+                // `pending` now holds [Unclosed…(innermost-first), PairClose];
+                // surface the head and let `next` drain the rest in order.
+                return self.pending.remove(0);
+            }
+
             self.diagnostics
                 .push(Diagnostic::unmatched_close(span, pair_kind));
             return PairEvent::Unmatched {
@@ -286,6 +347,12 @@ where
     fn next(&mut self) -> Option<PairEvent> {
         if self.finished {
             return None;
+        }
+        // A single `］` may have produced several events (dangling-open
+        // unwind + the bracket close); surface the buffered tail before
+        // pulling the next token so ordering is preserved.
+        if !self.pending.is_empty() {
+            return Some(self.pending.remove(0));
         }
         if self.eof_drain {
             // Drain residual stack entries as Unclosed events. We pop

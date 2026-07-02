@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 96,
-  "passed": 47,
-  "failed": 49,
+  "total": 101,
+  "passed": 48,
+  "failed": 53,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,9 +15,9 @@
       "failed": 9
     },
     "should": {
-      "total": 63,
-      "passed": 23,
-      "failed": 40
+      "total": 68,
+      "passed": 24,
+      "failed": 44
     }
   },
   "cases": [
@@ -232,6 +232,27 @@
       "message": null
     },
     {
+      "case": "directive_body_unbalanced_quote",
+      "feature": "recovery",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "directive_indent_bare_quote",
+      "feature": "recovery",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "directive_typo_note_literal_quotes",
+      "feature": "recovery",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
       "case": "emphasis_mixed",
       "feature": "emphasis",
       "level": "should",
@@ -276,6 +297,13 @@
     {
       "case": "gaiji_bare",
       "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "gaiji_composed_glyph_unbalanced_quote",
+      "feature": "recovery",
       "level": "should",
       "passed": true,
       "message": null
@@ -489,6 +517,13 @@
       "level": "should",
       "passed": true,
       "message": null
+    },
+    {
+      "case": "nested_directive_unbalanced_inner_quote",
+      "feature": "recovery",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
     },
     {
       "case": "nested_ruby",
