@@ -65,6 +65,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   root run. `_playground-fix-perms` normalises volume ownership to the compose
   runtime UID (guarded by a `find ! -uid` scan, so it is a no-op when clean)
   before every playground gate.
+- **vscode**: the preview pane and HTML export now adopt the renderer's
+  canonical stylesheet (ADR-0024) instead of hand-rolled CSS. This fixes two
+  dead class names — `.aozora_gaiji` / `.aozora_tcy` (underscores the renderer
+  never emits) — that silently broke gaiji highlighting and 縦中横, and styles
+  every notation class for the first time. The preview follows the editor's
+  light/dark theme rather than a hardcoded page colour. A new CI `vscode` job
+  (tsc + biome + esbuild bundle + tests; `just vscode-ci` locally) closes the
+  gap that let the drift land unnoticed — the extension was previously ungated.
 
 
 ### Build

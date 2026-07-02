@@ -1804,6 +1804,19 @@ playground-e2e: playground-wasm _playground-ensure
     docker compose run --rm --no-TTY --user root playground \
         bash -c "bun x playwright install --with-deps chromium && bun x playwright test"
 
+# --- VS Code extension (TypeScript, esbuild-bundled) --------------------------
+#
+# The extension lives under `editors/vscode/` and is its own Bun project.
+# `vscode-ci` mirrors the CI `vscode` job: biome lint + tsc typecheck
+# (`check`), the esbuild bundle (`compile`, which inlines the renderer's
+# canonical stylesheet — ADR-0024), and the `node --test` security suite. It
+# runs in the dev image (bun present) over the bind-mounted checkout. Like
+# `playground-e2e`, it's a bun gate kept out of the change-aware `ci-parallel`;
+# the CI `vscode` job (host runner) is the authoritative gate — run this for a
+# quick local check.
+vscode-ci:
+    {{_dev}} bash -euc 'cd editors/vscode && bun install --frozen-lockfile && bun run check && bun run compile && bun run test'
+
 # --- profiling (samply, host-only) -------------------------------------------
 # samply uses perf_event_open(2) which Docker's seccomp profile blocks; the
 # xtask binary therefore runs on the host (not via {{_dev}}). Requires
