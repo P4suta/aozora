@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 86,
+  "total": 87,
   "passed": 44,
-  "failed": 42,
+  "failed": 43,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,9 +15,9 @@
       "failed": 5
     },
     "should": {
-      "total": 60,
+      "total": 61,
       "passed": 23,
-      "failed": 37
+      "failed": 38
     }
   },
   "cases": [
@@ -248,6 +248,13 @@
     {
       "case": "enclosure_kinds",
       "feature": "emphasis",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "forward_bouten_nested_gaiji",
+      "feature": "bouten",
       "level": "should",
       "passed": false,
       "message": "grammar produced ERROR / MISSING node(s)"

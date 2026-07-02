@@ -1,0 +1,10 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# Nested-gaiji-base forward bouten in an INSTALLED forward-target index
+# (>=64 quote bodies). The target `冢※［＃「土へん＋冢」…］` embeds a nested
+# `「…」`; the forward-target index now pairs quotes with a balanced stack
+# (mirroring pair.rs PairKind::Quote) so the whole outer body is indexed —
+# the installed lookup resolves the preceding referent and the bouten is
+# Reclaimed, rendering the emphasis exactly ONCE (not the pre-fix
+# SelfContained double-render of the raw gaiji markup).
+feature = "bouten"
+level = "should"
