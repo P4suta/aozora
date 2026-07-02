@@ -18,6 +18,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `classes::canonical_stylesheet_matches_emitted_classes` pins the sheet's
   selectors to `AOZORA_CLASSES` exactly, so notation styling can no longer drift
   from the emitted classes. See ADR-0024.
+- **trace**: `aozora-xtask trace <sub> --format json` emits the typed analysis
+  report (`hot` / `libs` / `rollup` / `stacks` / `compare` / `flame`) as pretty
+  JSON instead of the human table — scriptable and diff-friendly. Every report
+  now derives `Serialize` (camelCase fields, snake_case enum tags); `cache`
+  ignores the flag. Closes the long-standing `TableRenderable` "structured
+  serializable form (planned)" gap.
 
 ### Changed
 

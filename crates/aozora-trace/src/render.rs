@@ -6,8 +6,9 @@
 //! `tabled` etc. — the format is fixed-width 3-column "rank / pct /
 //! label" and rolling our own keeps the dep graph trivial.
 
-/// Implemented by every analysis report. Render to stdout-friendly
-/// text or to a structured serializable form (planned).
+/// Implemented by every analysis report. Renders to stdout-friendly
+/// fixed-width text; every report also derives [`serde::Serialize`],
+/// so `xtask trace … --format json` can emit the same data as JSON.
 pub trait TableRenderable {
     /// Render the report as a self-contained, fixed-width text block
     /// (title, header, separator, rows), ready to print to stdout.

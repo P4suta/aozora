@@ -1309,3 +1309,148 @@ fn cache_sidecar_path_strips_gz_and_appends_symbols_json() {
         "plain json ⇒ stem + .symbols.json"
     );
 }
+
+// ---- JSON serialization (`xtask trace … --format json`) ------------
+//
+// Every report derives `Serialize`; the `--format json` path emits the
+// same typed data. These pin the wire shape: struct fields are
+// camelCase, unit enums are snake_case, and the output round-trips.
+
+#[test]
+fn hot_report_serializes_camelcase_fields_and_snakecase_enums() {
+    let report = analysis::hot_leaves(&simple_trace(), 5);
+    let v = serde_json::to_value(&report).expect("HotReport serializes");
+    assert_eq!(v["mode"], json!("leaf"), "HotMode ⇒ snake_case");
+    assert_eq!(v["totalSamples"], json!(4), "total_samples ⇒ totalSamples");
+    let row = &v["rows"][0];
+    assert_eq!(row["label"], json!("b"));
+    assert_eq!(row["kind"], json!("leaf_hot"), "RowKind ⇒ snake_case");
+    assert!(
+        row.get("inclSamples").is_some(),
+        "incl_samples ⇒ inclSamples"
+    );
+    assert!(row.get("selfPct").is_some(), "self_pct ⇒ selfPct");
+    assert!(
+        row.get("incl_samples").is_none(),
+        "no snake_case field leaks through"
+    );
+}
+
+#[test]
+fn hot_inclusive_mode_serializes_as_inclusive() {
+    let v = serde_json::to_value(analysis::hot_inclusive(&simple_trace(), 5)).expect("serializes");
+    assert_eq!(v["mode"], json!("inclusive"));
+}
+
+#[test]
+fn rollup_report_serializes_distinct_funcs_as_camelcase() {
+    let trace = build_trace(
+        &["aho_corasick::find"],
+        &[(0, Some(0))],
+        &[Some(0)],
+        &[(1, 0)],
+        &[(None, 0)],
+        &[(Some(0), 4)],
+        &["bin"],
+    );
+    let v = serde_json::to_value(analysis::rollup(&trace, &two_pattern_categorizer()))
+        .expect("RollupReport serializes");
+    assert_eq!(v["totalSamples"], json!(4));
+    let scan = v["rows"]
+        .as_array()
+        .expect("rows array")
+        .iter()
+        .find(|r| r["category"] == json!("scan"))
+        .expect("scan row");
+    assert_eq!(
+        scan["distinctFuncs"],
+        json!(1),
+        "distinct_funcs ⇒ camelCase"
+    );
+    assert_eq!(scan["samples"], json!(4));
+}
+
+#[test]
+fn library_report_serializes_camelcase() {
+    let trace = build_trace(
+        &["a", "b"],
+        &[(0, Some(0)), (1, Some(0))],
+        &[Some(0)],
+        &[(1, 0), (2, 1)],
+        &[(None, 0), (Some(0), 1)],
+        &[(Some(1), 6)],
+        &["binA"],
+    );
+    let v = serde_json::to_value(analysis::library_distribution(&trace)).expect("serializes");
+    assert_eq!(v["totalSamples"], json!(6));
+    assert_eq!(v["rows"][0]["library"], json!("binA"));
+    assert_eq!(v["rows"][0]["samples"], json!(6));
+}
+
+#[test]
+fn matched_stacks_report_serializes_camelcase() {
+    let trace = build_trace(
+        &["a", "b"],
+        &[(0, Some(0)), (1, Some(0))],
+        &[Some(0)],
+        &[(1, 0), (2, 1)],
+        &[(None, 0), (Some(0), 1)],
+        &[(Some(1), 2)],
+        &["bin"],
+    );
+    let re = Regex::new("^b$").expect("regex");
+    let v = serde_json::to_value(analysis::matching_stacks(&trace, &re, 10)).expect("serializes");
+    assert_eq!(v["filter"], json!("^b$"));
+    assert_eq!(v["totalSamples"], json!(2));
+    assert_eq!(v["matchedSamples"], json!(2), "matched_samples ⇒ camelCase");
+    assert_eq!(v["stacks"][0]["frames"], json!(["b", "a"]), "leaf-first");
+}
+
+#[test]
+fn comparison_report_serializes_status_and_camelcase_totals() {
+    let before = build_trace(
+        &["f"],
+        &[(0, Some(0))],
+        &[Some(0)],
+        &[(1, 0)],
+        &[(None, 0)],
+        &[(Some(0), 1)],
+        &["bin"],
+    );
+    let after = build_trace(
+        &["g"],
+        &[(0, Some(0))],
+        &[Some(0)],
+        &[(1, 0)],
+        &[(None, 0)],
+        &[(Some(0), 1)],
+        &["bin"],
+    );
+    let v = serde_json::to_value(analysis::compare(&before, &after, 10)).expect("serializes");
+    assert_eq!(v["beforeTotal"], json!(1), "before_total ⇒ beforeTotal");
+    assert_eq!(v["afterTotal"], json!(1), "after_total ⇒ afterTotal");
+    let statuses: Vec<&Value> = v["rows"]
+        .as_array()
+        .expect("rows array")
+        .iter()
+        .map(|r| &r["status"])
+        .collect();
+    assert!(statuses.contains(&&json!("appeared")), "g appeared");
+    assert!(statuses.contains(&&json!("disappeared")), "f disappeared");
+}
+
+#[test]
+fn folded_stacks_serialize_as_stack_and_samples() {
+    let v = serde_json::to_value(analysis::folded_stacks(&simple_trace())).expect("serializes");
+    assert_eq!(v[0]["stack"], json!(["a", "b"]), "root-first stack array");
+    assert_eq!(v[0]["samples"], json!(3));
+}
+
+#[test]
+fn report_round_trips_through_pretty_json_string() {
+    // `emit` uses `to_string_pretty`; the output must re-parse.
+    let s =
+        serde_json::to_string_pretty(&analysis::hot_leaves(&simple_trace(), 5)).expect("pretty");
+    let parsed: Value = serde_json::from_str(&s).expect("re-parses");
+    assert_eq!(parsed["totalSamples"], json!(4));
+}

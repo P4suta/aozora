@@ -13,7 +13,8 @@ use crate::render::{Align, Column, TableBuilder};
 use crate::{TableRenderable, Trace};
 
 /// One distinct call stack matching the filter.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MatchedStack {
     /// Frame labels, leaf first.
     pub frames: Vec<String>,
@@ -25,7 +26,8 @@ pub struct MatchedStack {
 
 /// Result of [`matching_stacks`]: the call stacks containing a frame
 /// that matched the filter regex.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MatchedStacksReport {
     /// The filter regex source that was matched against frame labels.
     pub filter: String,
