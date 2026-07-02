@@ -131,42 +131,51 @@ pub(super) fn install_forward_target_index_from_source(source: &str) {
     }
     let opens: Vec<usize> = memmem::find_iter(bytes, QUOTE_OPEN).collect();
 
-    // For each `「`, find the next `」` and slice the body. UTF-8
-    // boundaries are guaranteed because both delimiters are 3-byte
-    // sequences carved from `&str` source. The set of quote bodies is
-    // the set of *candidate* forward-reference targets — every
-    // `［＃「X」に傍点／は見出し／は縦中横］` names its target with a `「」`
-    // pair, so the target appears as a quote body at least once (inside
-    // its own directive).
+    // Pair each `「` with its BALANCED `」` via a quote-only stack,
+    // mirroring the pair stage (`PairKind::Quote`, pair.rs) so a quote
+    // body is sliced at the same extent the recognisers see through
+    // `view.links`. A target whose text embeds a nested `「…」` — a
+    // forward-referenced gaiji base such as `冢※［＃「土へん＋冢」…］` — is
+    // captured whole instead of truncated at the inner `」` (the naive
+    // "first `」`" scan recorded `冢※［＃「土へん＋冢`, a body no recogniser
+    // queries, so the real target was absent from the index and every
+    // installed-doc lookup wrongly returned "not preceded"). When quote
+    // depth never exceeds 1 (every non-nested document) the innermost
+    // open is always the immediately-preceding one, so this yields the
+    // identical body set the first-`」` scan did — byte-for-byte
+    // unchanged wherever there are no nested quotes.
     //
-    // The stored value must be the target's first occurrence **as a
-    // substring of the source text** — the same question the
-    // `source[..cutoff].contains(target)` fallback answers — NOT the
-    // position of the `「` that introduced this body. The canonical
-    // forward reference is `語句［＃「語句」に傍点］`, where the referent
-    // `語句` is *bare* text before the bracket and the only `「語句」`
-    // pair lives *inside* the directive (after `［`). Recording the
-    // quote position there would put `first_position` past every
-    // directive's cutoff, so `first_pos < cutoff` is always false and
-    // the bouten silently degrades to `Directive{Unknown}` — exactly
-    // the bug that dropped ~half of all corpus 傍点/見出し once a
-    // document crossed the 64-quote AC-install threshold. `memmem::find`
-    // over the whole source picks up the bare referent.
+    // The stored value is the body's first occurrence **as a substring
+    // of the source** (`memmem::find` over the whole source) — the same
+    // question the `source[..cutoff].contains(target)` fallback answers —
+    // NOT the position of the `「` that introduced this body. The
+    // canonical reference is `語句［＃「語句」に傍点］`, whose referent is
+    // *bare* text before the bracket while the only `「語句」` pair lives
+    // *inside* the directive. Because the position is a body-keyed global
+    // substring find, it is independent of which `「` inserted the entry,
+    // so the stack pairing never shifts a stored position.
     let mut first_positions: HashMap<String, u32> = HashMap::with_capacity(opens.len());
-    for open_pos in opens {
-        let body_start = open_pos + QUOTE_OPEN.len();
-        let Some(rel_close) = memmem::find(&bytes[body_start..], QUOTE_CLOSE) else {
-            // Unclosed `「` — nothing to index for this open.
+    let mut open_stack: Vec<usize> = Vec::new();
+    let mut opens_iter = opens.iter().copied().peekable();
+    for close_pos in memmem::find_iter(bytes, QUOTE_CLOSE) {
+        // Push every `「` that opens before this `」`.
+        while opens_iter.peek().is_some_and(|&op| op < close_pos) {
+            open_stack.push(opens_iter.next().expect("peeked Some"));
+        }
+        // Match this `」` to the innermost still-open `「`; a stray close
+        // with an empty stack has nothing to index.
+        let Some(open_pos) = open_stack.pop() else {
             continue;
         };
-        let body = &source[body_start..body_start + rel_close];
+        let body_start = open_pos + QUOTE_OPEN.len();
+        let body = &source[body_start..close_pos];
         if body.is_empty() {
             continue;
         }
         first_positions.entry(body.to_owned()).or_insert_with(|| {
-            // First substring occurrence anywhere in the source. The
-            // body provably occurs at `body_start` (its own quote), so
-            // `find` never returns `None`; the fallback keeps it total.
+            // First substring occurrence anywhere in the source. The body
+            // provably occurs at `body_start` (its own quote), so `find`
+            // never returns `None`; the fallback keeps it total.
             let first = memmem::find(bytes, body.as_bytes()).unwrap_or(body_start);
             u32::try_from(first).expect("source positions fit in u32 per sanitize-stage cap")
         });
