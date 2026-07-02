@@ -1,0 +1,7 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# Level-less bare heading close: `ここで見出し終わり` (no 大/中/小 word) closes a
+# block heading region. The open payload drives pairing/render (<h1> from
+# 大見出し); the close carries `level: None` and serializes back byte-exact as
+# the bare `ここで見出し終わり` (round-trip fixed point, never backfilled).
+feature = "heading"
+level = "should"

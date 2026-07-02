@@ -449,13 +449,15 @@ pub enum ForwardAttr {
     /// separately (the suffix carries the bracketed mark symbol, not a bare
     /// keyword), so [`Self::keyword`] falls through to its 太字 default.
     Accent(AccentMark),
-    /// End-relative alignment — `「X」は文末より N字上げ揃え` — lifts the target
-    /// run `offset` full-width chars off the text-end edge. The forward-scope
-    /// analogue of [`LineFormat::AlignEnd`]; like it, the anchor (文末 / 行末) is
-    /// not distinguished, only the offset. Serialized separately (it carries a
-    /// magnitude), so [`Self::keyword`] falls through to its 太字 default.
+    /// End-relative alignment — `「X」は文末より N字上げ揃え` / `「X」は地付き` —
+    /// aligns the target run to the text-end edge. `offset` 0 is flush-to-end
+    /// (`地付き`); N ≥ 1 lifts the run N full-width chars off the edge. The
+    /// forward-scope analogue of [`LineFormat::AlignEnd`]; like it, the input
+    /// anchor (文末 / 行末 / 地より / 地から) is not distinguished, only the offset.
+    /// Serialized separately (it carries a magnitude), so [`Self::keyword`]
+    /// falls through to its 太字 default.
     AlignEnd {
-        /// Chars lifted off the text-end edge (always ≥ 1 for this form).
+        /// Chars lifted off the text-end edge; 0 = flush (`地付き`), N ≥ 1 = lift.
         offset: u8,
     },
 }
@@ -940,8 +942,11 @@ pub enum RegionClose {
     },
     /// `<見出し>終わり` / `ここで<見出し>終わり`.
     Heading {
-        /// The 大 / 中 / 小 outline level.
-        level: HeadingKind,
+        /// The 大 / 中 / 小 outline level. `None` for the level-less bare
+        /// `ここで見出し終わり` close (the open payload stays authoritative for
+        /// pairing/render; this only round-trips the close marker's own
+        /// spelling); `Some(k)` for a leveled close.
+        level: Option<HeadingKind>,
         /// Standard / 同行 / 窓 style.
         style: HeadingStyle,
         /// `true` = `ここで` block close; `false` = paired `…終わり` close.
@@ -997,7 +1002,9 @@ impl RegionClose {
                 style,
                 padded,
             } => Self::Heading {
-                level,
+                // `of` always yields a leveled close (a `None` close originates
+                // only from the classifier parsing a bare `見出し終わり` marker).
+                level: Some(level),
                 style,
                 padded,
             },

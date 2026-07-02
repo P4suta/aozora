@@ -1,0 +1,7 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# Range both-side placement: `「甲」～「丙」の両側に傍線` marks the 甲…丙 run with a
+# 傍線 on both margins — the third BoutenPosition value (Right / Left / Both) on
+# the ～-range forward form. Collapses to the single-target canonical
+# `［＃「甲乙丙」の両側に傍線］` (range→run fixed point).
+feature = "bouten"
+level = "should"

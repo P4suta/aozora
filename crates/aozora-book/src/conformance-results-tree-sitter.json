@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 84,
+  "total": 86,
   "passed": 44,
-  "failed": 40,
+  "failed": 42,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,9 +15,9 @@
       "failed": 5
     },
     "should": {
-      "total": 58,
+      "total": 60,
       "passed": 23,
-      "failed": 35
+      "failed": 37
     }
   },
   "cases": [
@@ -183,6 +183,13 @@
       "message": "grammar produced ERROR / MISSING node(s)"
     },
     {
+      "case": "bouten_range_both_side",
+      "feature": "bouten",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
       "case": "bouten_target_ambiguous",
       "feature": "bouten",
       "level": "should",
@@ -296,6 +303,13 @@
     },
     {
       "case": "heading_hint",
+      "feature": "heading",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "heading_levelless_close",
       "feature": "heading",
       "level": "should",
       "passed": false,

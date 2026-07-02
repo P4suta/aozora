@@ -139,14 +139,6 @@ fn parameterized_region_close(body: &str) -> Option<String> {
     {
         return Some("ここで字下げ終わり".to_owned());
     }
-    // ここで{N}段組[み]終わり → ここで段組終わり.
-    for tail in ["段組終わり", "段組み終わり"] {
-        if let Some(n) = inner.strip_suffix(tail)
-            && is_digit_run(n)
-        {
-            return Some("ここで段組終わり".to_owned());
-        }
-    }
     // ここで{N}段階(大きな|小さな)文字終わり → ここで(大きな|小さな)文字終わり.
     for size in ["大きな", "小さな"] {
         if let Some(n) = inner.strip_suffix(&format!("段階{size}文字終わり"))
@@ -236,6 +228,7 @@ fn forward_form(body: &str) -> Option<String> {
         ("は下付き", "は下付き小文字"),
         ("は上付き", "は上付き小文字"),
         ("はすべて下付き小文字", "は下付き小文字"),
+        ("は地付け", "は地付き"),
     ] {
         if let Some(head) = body.strip_suffix(variant_kw) {
             return Some(format!("{head}{canonical_kw}"));
@@ -319,6 +312,7 @@ pub const CATALOGUE_SAMPLES: &[&str] = &[
     "「2」は下付き",
     "「2」は上付き",
     "「abc」はすべて下付き小文字",
+    "「幕。」は地付け",
     "「GHQ」の小文字",
     "「強調」ゴシック体",
     "「語」は傍点",
@@ -336,7 +330,6 @@ pub const CATALOGUE_SAMPLES: &[&str] = &[
     "ここで左から右への横組み終わり",
     "ここで横組みの表終わり",
     "ここで2字下げ終わり",
-    "ここで2段組終わり",
     "ここで1段階小さな文字終わり",
     "ここで字下げ終わり」",
     // Region-open synonyms.
@@ -414,6 +407,7 @@ mod tests {
             ("「2」は下付き", "「2」は下付き小文字"),
             ("「2」は上付き", "「2」は上付き小文字"),
             ("「abc」はすべて下付き小文字", "「abc」は下付き小文字"),
+            ("「幕。」は地付け", "「幕。」は地付き"),
             ("「GHQ」の小文字", "「GHQ」は小文字"),
             ("「強調」ゴシック体", "「強調」はゴシック体"),
             ("「語」は傍点", "「語」に傍点"),
@@ -484,7 +478,6 @@ mod tests {
     fn region_numeric_parameterized() {
         for (v, c) in [
             ("ここで2字下げ終わり", "ここで字下げ終わり"),
-            ("ここで3段組終わり", "ここで段組終わり"),
             ("ここで1段階小さな文字終わり", "ここで小さな文字終わり"),
             ("ここで字下げ終わり」", "ここで字下げ終わり"),
             ("以下2字下げ", "ここから2字下げ"),
