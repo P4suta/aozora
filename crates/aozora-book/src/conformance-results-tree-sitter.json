@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 77,
+  "total": 78,
   "passed": 42,
-  "failed": 35,
+  "failed": 36,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,9 +15,9 @@
       "failed": 5
     },
     "should": {
-      "total": 51,
+      "total": 52,
       "passed": 21,
-      "failed": 30
+      "failed": 31
     }
   },
   "cases": [
@@ -184,6 +184,13 @@
     },
     {
       "case": "center_page",
+      "feature": "container",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "center_page_region",
       "feature": "container",
       "level": "should",
       "passed": false,
