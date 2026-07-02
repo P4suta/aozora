@@ -1,5 +1,10 @@
-/* aozora-render が出力する HTML 要素のためのスタイル。
- * クラス名の正本は crates/aozora-render/src/render_node.rs。 */
+/* Playground preview shell + theme bridge.
+ *
+ * 記法そのものの見た目（`.aozora-*`）は、レンダラが所有する正準スタイルシート
+ * crates/aozora-render/assets/aozora-notation.css が単一の権威。main.tsx が
+ * それを import し、ここでは (1) プレビュー枠のレイアウト／スクロール、
+ * (2) 正準シートの `--aozora-*` フックを Playground テーマ変数へ橋渡し、だけを行う。
+ * これで VS Code プレビュー等と記法スタイルが二重管理にならず drift しない。 */
 
 .html-preview-shell {
   display: flex;
@@ -42,259 +47,29 @@
 .html-preview {
   padding: 1.25rem 1.5rem;
   font-size: 16px;
-  line-height: 1.9;
   overflow-wrap: anywhere;
   flex: 1 1 auto;
   overflow: auto;
 }
 
+/* 縦書き時のスクロール挙動のみ（writing-mode / text-orientation は正準シートの
+ * `.aozora-notation.aozora-vertical` が担当）。 */
 .html-preview.is-vertical {
-  writing-mode: vertical-rl;
-  -webkit-writing-mode: vertical-rl;
-  text-orientation: mixed;
   overflow-x: auto;
   overflow-y: hidden;
   overflow-wrap: break-word;
   max-height: 100%;
-  /* 縦書き時は明朝体を明示。`.aozora-doc` でも serif 指定済みだが、
-   * Web ブラウザがゴシックを優先するケースが多いため、縦書き表示時に
-   * 強めの font-family 指定で本らしい組版に寄せる。 */
-  font-family: var(--font-serif);
-  line-height: 2.0;
 }
 
-.html-preview.is-vertical .aozora-page-break,
-.html-preview.is-vertical .aozora-section-break {
-  border-top: none;
-  border-right: 2px dashed var(--fg-muted);
-  margin: 0 1.5em;
-}
-
-.aozora-doc {
-  font-family: var(--font-serif);
-  color: var(--fg);
-}
-
-.aozora-doc :is(p, div) {
-  margin: 0 0 0.75rem 0;
-}
-
-/* ===== ルビ ===== */
-.aozora-doc ruby {
-  ruby-position: over;
-}
-
-.aozora-doc rt {
-  font-size: 0.5em;
-  color: var(--fg-muted);
-  font-family: inherit;
-}
-
-.aozora-doc rp {
-  display: none;
-}
-
-/* ===== 二重山括弧 ===== */
-.aozora-angle-quote {
-  color: var(--accent);
-  background: var(--accent-bg);
-  padding: 0 0.1em;
-  border-radius: 0.15em;
-}
-
-/* ===== 傍点 ===== */
-.aozora-bouten {
-  font-style: normal;
-  -webkit-text-emphasis-style: filled sesame;
-  text-emphasis-style: filled sesame;
-  -webkit-text-emphasis-position: over right;
-  text-emphasis-position: over right;
-}
-
-.aozora-bouten-goma {
-  -webkit-text-emphasis-style: filled sesame;
-  text-emphasis-style: filled sesame;
-}
-
-.aozora-bouten-white-sesame {
-  -webkit-text-emphasis-style: open sesame;
-  text-emphasis-style: open sesame;
-}
-
-.aozora-bouten-circle {
-  -webkit-text-emphasis-style: filled circle;
-  text-emphasis-style: filled circle;
-}
-
-.aozora-bouten-white-circle {
-  -webkit-text-emphasis-style: open circle;
-  text-emphasis-style: open circle;
-}
-
-.aozora-bouten-double-circle {
-  -webkit-text-emphasis-style: filled double-circle;
-  text-emphasis-style: filled double-circle;
-}
-
-.aozora-bouten-janome {
-  -webkit-text-emphasis-style: open double-circle;
-  text-emphasis-style: open double-circle;
-}
-
-.aozora-bouten-cross {
-  -webkit-text-emphasis-style: '×';
-  text-emphasis-style: '×';
-}
-
-.aozora-bouten-white-triangle {
-  -webkit-text-emphasis-style: open triangle;
-  text-emphasis-style: open triangle;
-}
-
-.aozora-bouten-wavy-line {
-  text-decoration: underline wavy;
-  text-decoration-color: var(--accent);
-  -webkit-text-emphasis-style: none;
-  text-emphasis-style: none;
-}
-
-.aozora-bouten-under-line {
-  text-decoration: underline;
-  -webkit-text-emphasis-style: none;
-  text-emphasis-style: none;
-}
-
-.aozora-bouten-double-under-line {
-  text-decoration: underline double;
-  -webkit-text-emphasis-style: none;
-  text-emphasis-style: none;
-}
-
-.aozora-bouten-left {
-  -webkit-text-emphasis-position: under left;
-  text-emphasis-position: under left;
-}
-
-.aozora-bouten-right {
-  -webkit-text-emphasis-position: over right;
-  text-emphasis-position: over right;
-}
-
-/* ===== 外字 ===== */
-.aozora-gaiji {
-  background: var(--token-gaiji-bg);
-  color: var(--token-gaiji);
-  padding: 0 0.15em;
-  border-radius: 0.18em;
-  border-bottom: 1px dotted var(--token-gaiji-border);
-}
-
-/* ===== 字下げコンテナ・インライン ===== */
-.aozora-container,
-.aozora-container-indent {
-  display: block;
-}
-
-.aozora-container-indent-1 { padding-inline-start: 1em; }
-.aozora-container-indent-2 { padding-inline-start: 2em; }
-.aozora-container-indent-3 { padding-inline-start: 3em; }
-.aozora-container-indent-4 { padding-inline-start: 4em; }
-.aozora-container-indent-5 { padding-inline-start: 5em; }
-.aozora-container-indent-6 { padding-inline-start: 6em; }
-.aozora-container-indent-7 { padding-inline-start: 7em; }
-.aozora-container-indent-8 { padding-inline-start: 8em; }
-.aozora-container-indent-9 { padding-inline-start: 9em; }
-.aozora-container-indent-10 { padding-inline-start: 10em; }
-
-.aozora-indent {
-  display: inline-block;
-}
-.aozora-indent-1 { width: 1em; }
-.aozora-indent-2 { width: 2em; }
-.aozora-indent-3 { width: 3em; }
-.aozora-indent-4 { width: 4em; }
-.aozora-indent-5 { width: 5em; }
-.aozora-indent-6 { width: 6em; }
-.aozora-indent-7 { width: 7em; }
-.aozora-indent-8 { width: 8em; }
-.aozora-indent-9 { width: 9em; }
-.aozora-indent-10 { width: 10em; }
-
-/* ===== 字上げ（地寄せ） ===== */
-.aozora-container-align-end {
-  text-align: end;
-}
-
-.aozora-align-end {
-  display: inline-block;
-  min-width: 0.5em;
-}
-
-/* ===== 罫囲み ===== */
-.aozora-container-keigakomi {
-  border: 1px solid var(--fg-muted);
-  padding: 0.5em 0.75em;
-  margin: 0.5em 0;
-}
-
-/* ===== 割注 ===== */
-.aozora-warichu,
-.aozora-container-warichu {
-  font-size: 0.8em;
-  color: var(--fg-muted);
-}
-
-.aozora-warichu::before {
-  content: '（';
-}
-.aozora-warichu::after {
-  content: '）';
-}
-
-/* ===== 返り点 ===== */
-.aozora-kaeriten {
-  font-size: 0.7em;
-  vertical-align: super;
-  color: var(--accent);
-}
-
-/* ===== 縦中横 ===== */
-.aozora-combine-upright {
-  display: inline-block;
-}
-
-/* ===== 改ページ ===== */
-.aozora-page-break {
-  display: block;
-  border-top: 2px dashed var(--fg-muted);
-  margin: 1.5em 0;
-  padding-top: 0.4em;
-  font-size: 0.7em;
-  color: var(--fg-muted);
-  text-align: center;
-}
-
-.aozora-page-break::before {
-  content: '— 改ページ —';
-}
-
-/* ===== セクション区切り（改丁・改段・改見開き） ===== */
-.aozora-section-break {
-  display: block;
-  border-top: 1px dashed var(--border);
-  margin: 1em 0;
-  padding-top: 0.3em;
-  font-size: 0.7em;
-  color: var(--fg-muted);
-  text-align: center;
-  opacity: 0.85;
-}
-
-.aozora-section-break-kaicho::before { content: '— 改丁 —'; }
-.aozora-section-break-kaidan::before { content: '— 改段 —'; }
-.aozora-section-break-kaimihiraki::before { content: '— 改見開き —'; }
-
-/* ===== 注記（aozora-render が hidden 付きで埋め込む） ===== */
-.aozora-directive[hidden] {
-  display: none;
+/* 正準シートの `--aozora-*` フックを Playground テーマへ橋渡し。 */
+.aozora-notation {
+  --aozora-fg: var(--fg);
+  --aozora-muted: var(--fg-muted);
+  --aozora-accent: var(--accent);
+  --aozora-accent-bg: var(--accent-bg);
+  --aozora-border: var(--border);
+  --aozora-serif: var(--font-serif);
+  --aozora-gaiji-fg: var(--token-gaiji);
+  --aozora-gaiji-bg: var(--token-gaiji-bg);
+  --aozora-gaiji-border: var(--token-gaiji-border);
 }

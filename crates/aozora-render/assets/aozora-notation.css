@@ -1,0 +1,504 @@
+/*
+ * aozora-notation.css — canonical reference stylesheet for the HTML the
+ * aozora renderer emits.
+ *
+ * This file is the SINGLE SOURCE OF TRUTH for how every `aozora-*` class in
+ * `crate::classes::AOZORA_CLASSES` is presented. The renderer itself emits
+ * only semantic class hooks (never inline style); consumers — the playground,
+ * the VS Code preview, the `aozora` HTML export — adopt this sheet instead of
+ * hand-rolling their own copy (which is how the class-name drift bugs crept
+ * in). `crate::classes` tests assert that the `.aozora-*` selectors here match
+ * `AOZORA_CLASSES` exactly, so a renamed class or a forgotten style is a
+ * compile-time-adjacent test failure, not a silent visual regression.
+ *
+ * Theming: every colour / font hook is a `--aozora-*` custom property with a
+ * self-contained fallback, so the sheet renders correctly stand-alone and a
+ * consumer can bridge its own theme by setting the `--aozora-*` variables on
+ * the container.
+ *
+ * Scope hooks (NOT renderer-emitted; applied by the consumer to the render
+ * container): `.aozora-notation` (required, base typography) and
+ * `.aozora-vertical` (optional,縦書き / vertical writing mode).
+ */
+
+/* ── Container + theme defaults ─────────────────────────────────────── */
+.aozora-notation {
+  --aozora-fg: currentColor;
+  --aozora-muted: #6b6b6b;
+  --aozora-accent: #0b66c3;
+  --aozora-accent-bg: rgba(11, 102, 195, 0.12);
+  --aozora-border: #c8c8c8;
+  --aozora-serif: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
+  --aozora-gaiji-fg: #7a5900;
+  --aozora-gaiji-bg: #fff7d6;
+  --aozora-gaiji-border: #d4b24a;
+
+  font-family: var(--aozora-serif);
+  color: var(--aozora-fg);
+  line-height: 1.9;
+}
+
+.aozora-notation :is(p, div) {
+  margin: 0 0 0.75rem 0;
+}
+
+/* 縦書き。consumer が縦書きトグルでこのクラスを container に付ける。 */
+.aozora-notation.aozora-vertical {
+  writing-mode: vertical-rl;
+  -webkit-writing-mode: vertical-rl;
+  text-orientation: mixed;
+  line-height: 2;
+}
+
+/* ── ルビ (§ruby) ──────────────────────────────────────────────────── */
+.aozora-notation ruby {
+  ruby-position: over;
+}
+.aozora-notation rt {
+  font-size: 0.5em;
+  color: var(--aozora-muted);
+  font-family: inherit;
+}
+.aozora-notation rp {
+  display: none;
+}
+
+/* 左ルビ — 親文字の下（縦書きでは左側）に読みを置く。 */
+.aozora-ruby-left {
+  ruby-position: under;
+}
+/* ルビ注記 — ルビを注記として扱う形。読みを控えめに。 */
+.aozora-ruby-note rt {
+  color: var(--aozora-muted);
+  font-style: normal;
+}
+
+/* ── 傍点 (§bouten) ────────────────────────────────────────────────── */
+.aozora-bouten {
+  font-style: normal;
+  -webkit-text-emphasis: filled sesame var(--aozora-fg);
+  text-emphasis: filled sesame var(--aozora-fg);
+  -webkit-text-emphasis-position: over right;
+  text-emphasis-position: over right;
+}
+/* ゴマ点（黒） */
+.aozora-bouten-goma {
+  -webkit-text-emphasis-style: filled sesame;
+  text-emphasis-style: filled sesame;
+}
+/* 白ゴマ点 */
+.aozora-bouten-shirogoma {
+  -webkit-text-emphasis-style: open sesame;
+  text-emphasis-style: open sesame;
+}
+/* 丸（黒） */
+.aozora-bouten-maru {
+  -webkit-text-emphasis-style: filled circle;
+  text-emphasis-style: filled circle;
+}
+/* 白丸 */
+.aozora-bouten-shiromaru {
+  -webkit-text-emphasis-style: open circle;
+  text-emphasis-style: open circle;
+}
+/* 二重丸 */
+.aozora-bouten-nijumaru {
+  -webkit-text-emphasis-style: filled double-circle;
+  text-emphasis-style: filled double-circle;
+}
+/* 蛇の目（白二重丸） */
+.aozora-bouten-janome {
+  -webkit-text-emphasis-style: open double-circle;
+  text-emphasis-style: open double-circle;
+}
+/* 黒三角 */
+.aozora-bouten-kurosankaku {
+  -webkit-text-emphasis-style: filled triangle;
+  text-emphasis-style: filled triangle;
+}
+/* 白三角 */
+.aozora-bouten-shirosankaku {
+  -webkit-text-emphasis-style: open triangle;
+  text-emphasis-style: open triangle;
+}
+/* ×（ばつ） */
+.aozora-bouten-batsu {
+  -webkit-text-emphasis-style: "\00d7";
+  text-emphasis-style: "\00d7";
+}
+/* 傍線（実線）／二重傍線／波線／鎖線／破線 は text-decoration 系で表現 */
+.aozora-bouten-bosen {
+  text-decoration: underline;
+  text-decoration-color: var(--aozora-fg);
+  -webkit-text-emphasis-style: none;
+  text-emphasis-style: none;
+}
+.aozora-bouten-nijubosen {
+  text-decoration: underline double;
+  text-decoration-color: var(--aozora-fg);
+  -webkit-text-emphasis-style: none;
+  text-emphasis-style: none;
+}
+.aozora-bouten-namisen {
+  text-decoration: underline wavy;
+  text-decoration-color: var(--aozora-accent);
+  -webkit-text-emphasis-style: none;
+  text-emphasis-style: none;
+}
+.aozora-bouten-kusarisen {
+  text-decoration: underline dashed;
+  text-decoration-color: var(--aozora-accent);
+  -webkit-text-emphasis-style: none;
+  text-emphasis-style: none;
+}
+.aozora-bouten-hasen {
+  text-decoration: underline dashed;
+  text-decoration-color: var(--aozora-fg);
+  -webkit-text-emphasis-style: none;
+  text-emphasis-style: none;
+}
+/* 傍点の位置（右／左／両側）。既定は over right。 */
+.aozora-bouten-right {
+  -webkit-text-emphasis-position: over right;
+  text-emphasis-position: over right;
+}
+.aozora-bouten-left {
+  -webkit-text-emphasis-position: under left;
+  text-emphasis-position: under left;
+}
+.aozora-bouten-both {
+  -webkit-text-emphasis-position: over right;
+  text-emphasis-position: over right;
+}
+
+/* ── 太字・斜体 (§emphasis) ────────────────────────────────────────── */
+.aozora-futoji {
+  font-weight: 700;
+}
+.aozora-shatai {
+  display: inline-block;
+  transform: skewX(-12deg);
+}
+
+/* ── フォントサイズ (§font-size) ───────────────────────────────────── */
+.aozora-font-extra-large { font-size: 1.8em; }
+.aozora-font-large { font-size: 1.4em; }
+.aozora-font-larger { font-size: 1.2em; }
+.aozora-font-medium { font-size: 1em; }
+.aozora-font-small { font-size: 0.85em; }
+.aozora-font-smaller { font-size: 0.75em; }
+
+/* ── 上付き・下付き・小書き (§positioned) ──────────────────────────── */
+.aozora-uwatsuki {
+  vertical-align: super;
+  font-size: 0.75em;
+}
+.aozora-shitatsuki {
+  vertical-align: sub;
+  font-size: 0.75em;
+}
+.aozora-kogaki-right {
+  vertical-align: super;
+  font-size: 0.7em;
+}
+.aozora-kogaki-left {
+  vertical-align: sub;
+  font-size: 0.7em;
+}
+
+/* ── 分数 (§bunsu) ─────────────────────────────────────────────────── */
+.aozora-bunsu {
+  white-space: nowrap;
+}
+
+/* ── アクセント分解 (§accent) — 合成済みグリフ。装飾なし。 */
+.aozora-accent {
+  font-style: normal;
+}
+.aozora-accent-dot {
+  font-style: normal;
+}
+
+/* ── 縦中横 (§tcy) — 縦書き時に半角数字等を1マスに正立合成する。
+ *    これが欠けていると縦書きで数字が縦積みになる（既知バグの修正点）。
+ *    横書きでは text-combine-upright は無効なので無条件付与でよい。 */
+.aozora-combine-upright {
+  -webkit-text-combine: horizontal;
+  text-combine-upright: all;
+}
+
+/* ── 横組み (§yokogumi) — 縦書き本文中で横に組む。 */
+.aozora-yokogumi,
+.aozora-container-yokogumi {
+  writing-mode: horizontal-tb;
+  -webkit-writing-mode: horizontal-tb;
+  text-orientation: mixed;
+}
+.aozora-yokogumi {
+  display: inline-block;
+}
+.aozora-container-yokogumi {
+  display: block;
+}
+
+/* ── 二重山括弧 (§angle-quote) ─────────────────────────────────────── */
+.aozora-angle-quote {
+  color: var(--aozora-accent);
+  background: var(--aozora-accent-bg);
+  padding: 0 0.1em;
+  border-radius: 0.15em;
+}
+
+/* ── 外字 (§gaiji) ─────────────────────────────────────────────────── */
+.aozora-gaiji {
+  color: var(--aozora-gaiji-fg);
+  background: var(--aozora-gaiji-bg);
+  padding: 0 0.15em;
+  border-radius: 0.18em;
+  border-bottom: 1px dotted var(--aozora-gaiji-border);
+}
+
+/* ── 囲み（丸・点線丸・二重罫） (§enclosure) ───────────────────────── */
+.aozora-enclosure-circle,
+.aozora-enclosure-circle-dotted {
+  display: inline-block;
+  border: 1px solid var(--aozora-fg);
+  border-radius: 50%;
+  padding: 0 0.25em;
+  line-height: 1.2;
+}
+.aozora-enclosure-circle-dotted {
+  border-style: dotted;
+}
+.aozora-enclosure-double-rule {
+  display: inline-block;
+  border: 3px double var(--aozora-fg);
+  padding: 0 0.2em;
+}
+
+/* ── 罫囲み (§keigakomi) ───────────────────────────────────────────── */
+.aozora-keigakomi-box,
+.aozora-container-keigakomi {
+  display: block;
+  border: 1px solid var(--aozora-border);
+  padding: 0.5em 0.75em;
+  margin: 0.5em 0;
+}
+.aozora-keigakomi-inline {
+  border: 1px solid var(--aozora-border);
+  padding: 0 0.25em;
+}
+
+/* ── 字下げ・字上げ・折り返し (§indent) ────────────────────────────── */
+.aozora-container,
+.aozora-container-indent {
+  display: block;
+}
+.aozora-container-indent-1 { padding-inline-start: 1em; }
+.aozora-container-indent-2 { padding-inline-start: 2em; }
+.aozora-container-indent-3 { padding-inline-start: 3em; }
+.aozora-container-indent-4 { padding-inline-start: 4em; }
+.aozora-container-indent-5 { padding-inline-start: 5em; }
+.aozora-container-indent-6 { padding-inline-start: 6em; }
+.aozora-container-indent-7 { padding-inline-start: 7em; }
+.aozora-container-indent-8 { padding-inline-start: 8em; }
+.aozora-container-indent-9 { padding-inline-start: 9em; }
+.aozora-container-indent-10 { padding-inline-start: 10em; }
+
+/* 折り返し字下げ（ぶら下げ）。 */
+.aozora-container-wrap-indent {
+  display: block;
+  padding-inline-start: 1em;
+  text-indent: -1em;
+}
+
+.aozora-indent {
+  display: inline-block;
+}
+.aozora-indent-1 { inline-size: 1em; }
+.aozora-indent-2 { inline-size: 2em; }
+.aozora-indent-3 { inline-size: 3em; }
+.aozora-indent-4 { inline-size: 4em; }
+.aozora-indent-5 { inline-size: 5em; }
+.aozora-indent-6 { inline-size: 6em; }
+.aozora-indent-7 { inline-size: 7em; }
+.aozora-indent-8 { inline-size: 8em; }
+.aozora-indent-9 { inline-size: 9em; }
+.aozora-indent-10 { inline-size: 10em; }
+
+/* 字上げ（地寄せ）。 */
+.aozora-container-align-end {
+  text-align: end;
+}
+.aozora-align-end {
+  display: inline-block;
+  min-inline-size: 0.5em;
+}
+.aozora-align-end-1 { inline-size: 1em; }
+.aozora-align-end-2 { inline-size: 2em; }
+.aozora-align-end-3 { inline-size: 3em; }
+.aozora-align-end-4 { inline-size: 4em; }
+.aozora-align-end-5 { inline-size: 5em; }
+.aozora-align-end-6 { inline-size: 6em; }
+.aozora-align-end-7 { inline-size: 7em; }
+.aozora-align-end-8 { inline-size: 8em; }
+.aozora-align-end-9 { inline-size: 9em; }
+.aozora-align-end-10 { inline-size: 10em; }
+
+/* ── 中央揃え (§center) ────────────────────────────────────────────── */
+.aozora-center,
+.aozora-container-center {
+  display: block;
+  text-align: center;
+}
+
+/* ── 太字・斜体・字詰め・組み コンテナ (§container styles) ─────────── */
+.aozora-container-futoji { font-weight: 700; }
+.aozora-container-shatai {
+  font-style: normal;
+  transform: skewX(-12deg);
+}
+.aozora-container-font-larger { font-size: 1.2em; }
+.aozora-container-font-smaller { font-size: 0.8em; }
+
+/* 字詰め（1行の字数）。data-width を持つが視覚幅は consumer 環境依存なので
+ * ブロックとしてのみ扱う。 */
+.aozora-container-line-width {
+  display: block;
+}
+/* 組み（N行N字）。 */
+.aozora-container-line-kumi {
+  display: block;
+}
+
+/* 段組み。data-columns を CSS 変数に橋渡しできないため既定は素直な block。 */
+.aozora-container-columns {
+  display: block;
+}
+
+/* 表。 */
+.aozora-container-table {
+  display: block;
+  border-collapse: collapse;
+}
+
+/* ── 行レベル・フォント/太字マーカー (§line markers) ───────────────── */
+/* renderer は内容のない空 <span> マーカーとして出力する（下流ツール向け）。
+ * プレビュー上は不可視で、視覚表現は持たない設計。 */
+.aozora-line-font-extra-large,
+.aozora-line-font-large,
+.aozora-line-font-medium,
+.aozora-line-font-small,
+.aozora-line-futoji {
+  display: none;
+}
+
+/* ── 割注 (§warichu) — renderer は括弧を出さないので CSS で付与する。 */
+.aozora-warichu,
+.aozora-container-warichu {
+  font-size: 0.8em;
+  color: var(--aozora-muted);
+}
+.aozora-warichu::before { content: "（"; }
+.aozora-warichu::after { content: "）"; }
+
+/* ── 返り点 (§kaeriten) ────────────────────────────────────────────── */
+.aozora-kaeriten {
+  font-size: 0.7em;
+  vertical-align: super;
+  color: var(--aozora-accent);
+}
+
+/* ── 見出し (§heading) ─────────────────────────────────────────────── */
+.aozora-heading {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.aozora-heading-large { font-size: 1.6em; }
+.aozora-heading-medium { font-size: 1.3em; }
+.aozora-heading-small { font-size: 1.1em; }
+/* 同行見出し — 本文と同じ行に置く。 */
+.aozora-heading-same-line {
+  display: inline;
+  font-size: 1em;
+}
+/* 窓見出し — 罫で囲った見出し。 */
+.aozora-heading-window {
+  display: inline-block;
+  border: 1px solid var(--aozora-border);
+  padding: 0 0.4em;
+}
+/* 見出しヒント（構造推定の控えめな印）。 */
+.aozora-heading-hint {
+  font-weight: 600;
+}
+
+/* ── キャプション・挿絵・傍注・入力者注 (§notes) ──────────────────── */
+.aozora-caption {
+  display: block;
+  font-size: 0.9em;
+  color: var(--aozora-muted);
+  text-align: center;
+}
+.aozora-illustration {
+  display: inline-block;
+  border: 1px dashed var(--aozora-border);
+  padding: 0.2em 0.5em;
+  color: var(--aozora-muted);
+  font-size: 0.9em;
+}
+.aozora-margin-note {
+  color: var(--aozora-muted);
+  font-size: 0.8em;
+}
+.aozora-editor-note {
+  color: var(--aozora-muted);
+  font-size: 0.9em;
+}
+
+/* ── 改ページ (§page-break) ────────────────────────────────────────── */
+.aozora-page-break {
+  display: block;
+  border-block-start: 2px dashed var(--aozora-muted);
+  margin: 1.5em 0;
+  padding-block-start: 0.4em;
+  font-size: 0.7em;
+  color: var(--aozora-muted);
+  text-align: center;
+}
+.aozora-page-break::before { content: "— 改ページ —"; }
+
+/* ── セクション区切り（改丁・改段・改見開き） (§section-break) ─────── */
+.aozora-section-break {
+  display: block;
+  border-block-start: 1px dashed var(--aozora-border);
+  margin: 1em 0;
+  padding-block-start: 0.3em;
+  font-size: 0.7em;
+  color: var(--aozora-muted);
+  text-align: center;
+  opacity: 0.85;
+}
+.aozora-section-break-kaicho::before { content: "— 改丁 —"; }
+.aozora-section-break-kaidan::before { content: "— 改段 —"; }
+.aozora-section-break-kaimihiraki::before { content: "— 改見開き —"; }
+
+/* 縦書きでは区切りの罫を天地でなく左右方向に。 */
+.aozora-vertical .aozora-page-break,
+.aozora-vertical .aozora-section-break {
+  border-block-start: none;
+  border-inline-end: 2px dashed var(--aozora-muted);
+  margin: 0 1.5em;
+  padding-block-start: 0;
+  padding-inline-end: 0.4em;
+}
+
+/* ── 本文終わりマーカー・隠し注記 (§structural) ───────────────────── */
+/* aozora-body-end は本文の終端を示す構造マーカーで視覚表現を持たない。 */
+.aozora-body-end {
+  display: none;
+}
+/* renderer が hidden 付きで埋め込む原文注記。 */
+.aozora-directive[hidden] {
+  display: none;
+}
