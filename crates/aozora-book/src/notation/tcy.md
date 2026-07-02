@@ -95,6 +95,14 @@ SVG with rotated glyphs) would lock consumers into a specific
 typographic model. The class-hook output keeps the HTML semantic and
 defers presentation to the consumer.
 
+The renderer still ships no CSS, but the crate now ships a **canonical
+reference stylesheet** (`crates/aozora-render/assets/aozora-notation.css`)
+whose screen default is exactly `text-combine-upright: all` on
+`.aozora-combine-upright`. The playground and VS Code preview adopt it,
+so 縦中横 combines correctly in vertical mode out of the box; a consumer
+wanting the print or e-book variant above overrides that one rule. See
+[ADR-0024](https://github.com/P4suta/aozora/blob/main/docs/adr/0024-canonical-reference-stylesheet.md).
+
 ## AST shape
 
 ```rust,ignore

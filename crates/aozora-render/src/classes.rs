@@ -639,4 +639,109 @@ mod tests {
         assert_eq!(bouten_position_slug(BoutenPosition::Left), "left");
         assert_eq!(bouten_position_slug(BoutenPosition::Right), "right");
     }
+
+    /// The canonical reference stylesheet
+    /// (`assets/aozora-notation.css`) is the single source of truth for
+    /// how every emitted `aozora-*` class is presented. This test pins
+    /// its `.aozora-*` selectors to [`AOZORA_CLASSES`] *exactly*, so a
+    /// renamed class (the `aozora_gaiji` / `aozora_tcy` drift that broke
+    /// the VS Code preview), a typo, or a forgotten style is a test
+    /// failure rather than a silent visual regression. The two consumer
+    /// scope hooks — `.aozora-notation` (base) and `.aozora-vertical`
+    /// (縦書き) — are not renderer-emitted, so they are the only
+    /// non-`AOZORA_CLASSES` selectors the sheet may carry.
+    #[test]
+    fn canonical_stylesheet_matches_emitted_classes() {
+        const CSS: &str = include_str!("../assets/aozora-notation.css");
+
+        let styled = extract_css_classes(CSS);
+        let scope: BTreeSet<String> = ["aozora-notation", "aozora-vertical"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let emitted: BTreeSet<String> = AOZORA_CLASSES.iter().map(|s| (*s).to_owned()).collect();
+
+        for hook in &scope {
+            assert!(
+                styled.contains(hook),
+                "canonical stylesheet must use the consumer scope hook `.{hook}`",
+            );
+        }
+
+        let notation: BTreeSet<String> = styled.difference(&scope).cloned().collect();
+
+        let dead: Vec<&String> = notation.difference(&emitted).collect();
+        assert!(
+            dead.is_empty(),
+            "canonical stylesheet references classes the renderer never emits \
+             (dead / typo'd): {dead:?}",
+        );
+
+        let missing: Vec<&String> = emitted.difference(&notation).collect();
+        assert!(
+            missing.is_empty(),
+            "canonical stylesheet is missing a rule for emitted classes: {missing:?}",
+        );
+    }
+
+    /// Collect every `.aozora-*` class selector in the stylesheet,
+    /// normalising open-ended numeric variants to their stem
+    /// (`aozora-indent-3` → `aozora-indent`) to match how
+    /// [`AOZORA_CLASSES`] lists them. Block comments are stripped first so
+    /// class names mentioned in prose do not count.
+    fn extract_css_classes(css: &str) -> BTreeSet<String> {
+        let mut cleaned = String::with_capacity(css.len());
+        let mut chars = css.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '/' && chars.peek() == Some(&'*') {
+                chars.next();
+                let mut prev = '\0';
+                for d in chars.by_ref() {
+                    if prev == '*' && d == '/' {
+                        break;
+                    }
+                    prev = d;
+                }
+            } else {
+                cleaned.push(c);
+            }
+        }
+
+        let bytes = cleaned.as_bytes();
+        let mut out = BTreeSet::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'.' {
+                let start = i + 1;
+                let mut j = start;
+                while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'-') {
+                    j += 1;
+                }
+                let ident = &cleaned[start..j];
+                if ident
+                    .strip_prefix("aozora-")
+                    .is_some_and(|rest| !rest.is_empty())
+                {
+                    out.insert(normalize_numeric_variant(ident));
+                }
+                i = j.max(i + 1);
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// Strip a trailing `-<digits>` so `aozora-indent-3` collapses to the
+    /// `aozora-indent` stem `AOZORA_CLASSES` records. No emitted class
+    /// name ends in a digit, so this never corrupts a real name.
+    fn normalize_numeric_variant(cls: &str) -> String {
+        if let Some(idx) = cls.rfind('-') {
+            let suffix = &cls[idx + 1..];
+            if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) {
+                return cls[..idx].to_owned();
+            }
+        }
+        cls.to_owned()
+    }
 }

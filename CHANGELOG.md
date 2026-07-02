@@ -10,6 +10,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **render / playground**: a canonical reference stylesheet,
+  `crates/aozora-render/assets/aozora-notation.css`, is now the single source of
+  truth for how every `aozora-*` class is presented (theming via `--aozora-*`
+  custom properties, a `.aozora-vertical` hook for 縦書き). The playground adopts
+  it instead of hand-rolling its own copy, and
+  `classes::canonical_stylesheet_matches_emitted_classes` pins the sheet's
+  selectors to `AOZORA_CLASSES` exactly, so notation styling can no longer drift
+  from the emitted classes. See ADR-0024.
 - **trace**: `aozora-xtask trace <sub> --format json` emits the typed analysis
   report (`hot` / `libs` / `rollup` / `stacks` / `compare` / `flame`) as pretty
   JSON instead of the human table — scriptable and diff-friendly. Every report
@@ -51,6 +59,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   use; the Extism plugin exports `schema_version` (snake_case, matching every
   other export). Pre-existing — it survived because no gate exercised the Go
   SDK at runtime (CodeQL only compiles it); now covered by `smoke-go`.
+- **playground**: 縦中横 (tate-chu-yoko) no longer renders as stacked digits in
+  vertical writing mode. The preview never set `text-combine-upright: all` on
+  `.aozora-combine-upright` (the property was absent from the entire repo), and
+  the hand-rolled 傍点 rules had drifted to class names the renderer never emits.
+  Fixed at the root by the canonical reference stylesheet above; a Playwright
+  test now asserts the computed `text-combine-upright` in vertical mode.
+- **build**: `just playground-build` (any `vite build`) no longer fails with
+  `EACCES` while emptying `dist` when the `playground-dist` /
+  `playground-node-modules` named volumes carry root-owned files from an earlier
+  root run. `_playground-fix-perms` normalises volume ownership to the compose
+  runtime UID (guarded by a `find ! -uid` scan, so it is a no-op when clean)
+  before every playground gate.
 
 
 ### Build

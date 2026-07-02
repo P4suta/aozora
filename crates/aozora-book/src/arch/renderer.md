@@ -19,7 +19,7 @@ aozora emits stable class names that downstream stylesheets can hook:
 | AST node | HTML | Class hook |
 |---|---|---|
 | `Ruby` | `<ruby>X<rt>Y</rt></ruby>` | (no class — semantic ruby element) |
-| `Bouten { kind: Sesame }` | `<em class="aozora-bouten-sesame">…</em>` | `aozora-bouten-<slug>` |
+| `Bouten { kind: Goma }` | `<em class="aozora-bouten-goma">…</em>` | `aozora-bouten-<slug>` |
 | `Tcy` | `<span class="aozora-combine-upright">…</span>` | `aozora-combine-upright` |
 | `Gaiji { resolution: Direct }` | `<span data-aozora-gaiji-jis="1-94-37">字</span>` | `data-aozora-gaiji-*` |
 | `Gaiji { resolution: Fallback }` | `<span class="aozora-gaiji-fallback" title="…">[…]</span>` | `aozora-gaiji-fallback` |
@@ -43,6 +43,24 @@ output:
 - Survives content-security-policy regimes that block `style` attrs.
 - Stays diff-able (the rendered HTML is stable across runs;
   presentation churn doesn't ripple into snapshot tests).
+
+### Canonical reference stylesheet
+
+"Each consumer ships its own stylesheet" once meant *each consumer
+hand-rolls* one, and three copies (playground, VS Code preview, HTML
+export) drifted apart — most notably 縦中横 lost its
+`text-combine-upright: all` and broke in vertical writing mode. So the
+crate now ships a **canonical reference stylesheet**,
+[`assets/aozora-notation.css`](https://github.com/P4suta/aozora/blob/main/crates/aozora-render/assets/aozora-notation.css),
+covering every `aozora-*` class with correct defaults (theming via
+`--aozora-*` custom properties, a `.aozora-vertical` hook for 縦書き).
+Consumers adopt it instead of re-deriving it, and may still override.
+The renderer still injects *no* CSS into its HTML — the sheet is a
+separate asset — so consumers with their own pipeline (e.g. `afm`) are
+unaffected. `classes::canonical_stylesheet_matches_emitted_classes`
+pins the sheet's selectors to `AOZORA_CLASSES` exactly, so a renamed or
+unstyled class fails CI rather than silently rendering wrong. See
+[ADR-0024](https://github.com/P4suta/aozora/blob/main/docs/adr/0024-canonical-reference-stylesheet.md).
 
 ### HTML escaping
 

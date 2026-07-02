@@ -20,7 +20,7 @@ export default function HtmlPreview(props: HtmlPreviewProps) {
         </button>
       </div>
       <div
-        class={`html-preview aozora-doc ${vertical() ? 'is-vertical' : ''}`}
+        class={`html-preview aozora-notation ${vertical() ? 'is-vertical aozora-vertical' : ''}`}
         // aozora-render の出力は <script>/<a href>/on*= を一切 emit せず、テキストは
         // escape_text で <>&"' をエンティティ化済み。innerHTML で挿入しても XSS 経路は
         // 存在しない（crates/aozora-render/src/render_node.rs 確認済み）。
