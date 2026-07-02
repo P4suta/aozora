@@ -1,0 +1,8 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# Forward-reference end alignment — `「X」は文末より N字上げ揃え` — lifts the
+# reclaimed run `X` off the text-end edge by N full-width chars. The forward
+# analogue of the line-form `文末より N字上げ` (align_end_text_end); reuses the
+# same AlignEnd offset model (anchor not distinguished) and the line form's
+# `aozora-align-end` render class.
+feature = "alignment"
+level = "should"

@@ -243,27 +243,51 @@ fn render_format_owned<W: Write>(
         // ドット付き (#331): compose the addressed letters of the reclaimed run
         // into their precomposed dotted glyphs (ṁ / ṣ) — see `render_accent_dot`.
         ForwardAttr::AccentDot => render_accent_dot(f, store, out),
+        // 文末より N字上げ揃え: end-align the run. Reuses the line-form's
+        // `aozora-align-end` class / `data-offset` so the two scopes style
+        // identically; without this explicit arm the run would fall through to
+        // the bold default below.
+        ForwardAttr::AlignEnd { offset } => {
+            write!(
+                out,
+                r#"<span class="aozora-align-end" data-offset="{offset}">"#
+            )?;
+            render_content_range_owned(f.target, store, out)?;
+            out.write_str("</span>")
+        }
         // The HTML element is semantic; the `aozora-*` slug comes from the
         // spec slug table, keyed by the canonical keyword.
-        attr => {
-            let (el, close) = match attr {
-                ForwardAttr::Italic => ("i", "</i>"),
-                ForwardAttr::SuperScript => ("sup", "</sup>"),
-                ForwardAttr::SubScript => ("sub", "</sub>"),
-                ForwardAttr::SmallScript(_)
-                | ForwardAttr::Framed(_)
-                | ForwardAttr::Horizontal
-                | ForwardAttr::Caption
-                | ForwardAttr::FontSizeAbsolute(_) => ("span", "</span>"),
-                // Bold and any future weight default to the bold element.
-                _ => ("b", "</b>"),
-            };
-            let slug = aozora_spec::roman_slug(attr.keyword()).unwrap_or("futoji");
-            write!(out, r#"<{el} class="aozora-{slug}">"#)?;
-            render_content_range_owned(f.target, store, out)?;
-            out.write_str(close)
-        }
+        attr => render_forward_semantic(f, attr, store, out),
     }
+}
+
+/// Render a forward attribute that maps to a plain semantic element keyed by
+/// its canonical-keyword slug (太字 / 斜体 / 上下付き / 小書き / 絶対サイズ / …).
+/// The parameterized and bespoke attributes (bouten / font-size / fraction /
+/// box / accent-dot / align-end) are handled by their own arms in
+/// [`render_format_owned`]; this is the catch-all for the simple styled runs.
+fn render_forward_semantic<W: Write>(
+    f: &ForwardFormatOwned,
+    attr: ForwardAttr,
+    store: &NodeStore,
+    out: &mut W,
+) -> fmt::Result {
+    let (el, close) = match attr {
+        ForwardAttr::Italic => ("i", "</i>"),
+        ForwardAttr::SuperScript => ("sup", "</sup>"),
+        ForwardAttr::SubScript => ("sub", "</sub>"),
+        ForwardAttr::SmallScript(_)
+        | ForwardAttr::Framed(_)
+        | ForwardAttr::Horizontal
+        | ForwardAttr::Caption
+        | ForwardAttr::FontSizeAbsolute(_) => ("span", "</span>"),
+        // Bold and any future weight default to the bold element.
+        _ => ("b", "</b>"),
+    };
+    let slug = aozora_spec::roman_slug(attr.keyword()).unwrap_or("futoji");
+    write!(out, r#"<{el} class="aozora-{slug}">"#)?;
+    render_content_range_owned(f.target, store, out)?;
+    out.write_str(close)
 }
 
 /// Render a #331 dotted-letter forward: compose the addressed letters of the
