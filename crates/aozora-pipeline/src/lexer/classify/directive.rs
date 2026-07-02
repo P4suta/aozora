@@ -52,6 +52,7 @@ enum BodyFamily {
     KeigakomiOpen,       // 罫囲み
     KeigakomiClose,      // 罫囲み終わり
     IndentBlock1,        // ここから字下げ → Indent { amount: 1 }
+    PageCenterBlockOpen, // ここからページの左右中央 → Indent { amount: 0, center }
     AlignEndBlock0,      // ここから地付き → AlignEnd { offset: 0 }
     IndentBlockEnd,      // ここで字下げ終わり
     AlignEndBlockEnd,    // ここで地付き終わり
@@ -157,6 +158,7 @@ const fn body_family_mode(family: BodyFamily) -> MatchMode {
         | BodyFamily::WarichuBlockOpen
         | BodyFamily::WarichuBlockEnd
         | BodyFamily::IndentBlock1
+        | BodyFamily::PageCenterBlockOpen
         | BodyFamily::AlignEndBlock0
         | BodyFamily::AlignEndBlockEnd
         | BodyFamily::LineWidthBlockEnd
@@ -199,6 +201,10 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     BodyPattern {
         needle: "ここから字下げ",
         family: BodyFamily::IndentBlock1,
+    },
+    BodyPattern {
+        needle: "ここからページの左右中央",
+        family: BodyFamily::PageCenterBlockOpen,
     },
     BodyPattern {
         needle: "ここから地付き",
@@ -1008,6 +1014,20 @@ pub(super) fn classify_annotation_body(
                 amount: 1,
                 wrap: None,
                 center: false,
+                layout: IndentLayout::None,
+                styles: BlockStyles::EMPTY,
+            })),
+            None,
+        )),
+        // `ここからページの左右中央` — a page-centred block with no indent. Reuses
+        // the indent-region model (`center` flag, `amount: 0`) so it pairs with
+        // the shared `ここで字下げ終わり` close; `emit_indent_open` renders the
+        // short opener back verbatim.
+        BodyFamily::PageCenterBlockOpen => Some((
+            EmitKind::BlockOpen(RegionFormat::Indent(IndentBlock {
+                amount: 0,
+                wrap: None,
+                center: true,
                 layout: IndentLayout::None,
                 styles: BlockStyles::EMPTY,
             })),
