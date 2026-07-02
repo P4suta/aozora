@@ -930,6 +930,33 @@ where
     /// an unrecognised `Quote` folds into the surrounding plain run,
     /// same as the legacy buffered-replay behaviour).
     fn handle_stream_event(&mut self, event: PairEvent) {
+        // A nested Ruby / AngleQuote inside the streamed Quote/Tortoise
+        // is recognised WITHOUT touching the streaming depth — so do it
+        // before borrowing the streaming frame. This is what makes
+        // `「駄目《だめ》」` form a ruby (and a nested `≪…≫` resolve)
+        // instead of leaking as literal text: the sub-frame runs the
+        // same recogniser as at top level, and `pending_plain_start` —
+        // kept live through the quote — supplies the ruby base.
+        // `process_event` checks `frame` before `streaming`, so the
+        // sub-frame's body buffers correctly and streaming resumes once
+        // it closes. (Nested `［＃…］` Bracket directives inside a quote
+        // are handled separately: they need the `※` refmark held for
+        // gaiji and shift the Unknown-directive budget.)
+        if let PairEvent::PairOpen { kind, span } = &event
+            && matches!(kind, PairKind::Ruby | PairKind::AngleQuote)
+        {
+            // Ruby / AngleQuote preserve `pending_plain_start` (no flush)
+            // so the recogniser can pull `consume_start` back over the
+            // preceding text; neither consumes a `※` refmark.
+            self.open_frame(
+                PairEvent::PairOpen {
+                    kind: *kind,
+                    span: *span,
+                },
+                None,
+            );
+            return;
+        }
         // Defensive — only called when streaming is Some.
         let stream = self
             .streaming
@@ -1336,21 +1363,20 @@ where
     }
 
     fn process_event(&mut self, event: PairEvent) {
-        // Stream-through path for top-level Quote / Tortoise — see
-        // `StreamingFrame` for the rationale. Bypasses both frame
-        // buffering AND replay; events flow straight through.
-        if self.streaming.is_some() {
-            self.handle_stream_event(event);
-            return;
-        }
+        // Frame buffering comes first — checked BEFORE `streaming` so a
+        // sub-frame opened mid-stream for a nested Ruby / AngleQuote
+        // (`《…》` / `≪…≫` inside a `「…」` quote — see
+        // `handle_stream_event`) actually accumulates its body instead of
+        // the quote's stream-through path swallowing it. Once the
+        // sub-frame's outer pair closes, recognition runs and the frame
+        // clears, so `streaming` resumes on the next event.
         if self.frame.is_some() {
-            // Inside a frame: every event accumulates. A pending
-            // refmark cannot exist while a frame is open (frames are
-            // opened from top level and the refmark would have been
-            // absorbed or flushed there).
+            // A pending refmark cannot coexist with an open frame: it is
+            // absorbed into the frame's `gaiji_refmark` or folded to
+            // plain before the frame opens.
             debug_assert!(
                 self.pending_refmark.is_none(),
-                "frames are opened from top level; any pending refmark should have been absorbed or flushed before frame entry"
+                "a pending refmark should have been absorbed or flushed before frame entry"
             );
             let outer_closed = self.append_to_frame(event);
             if outer_closed {
@@ -1359,26 +1385,31 @@ where
             return;
         }
 
-        // Top level. If a refmark is pending, decide based on the
-        // current event:
-        if self.pending_refmark.is_some() {
-            if let PairEvent::PairOpen {
-                kind: PairKind::Bracket,
-                ..
-            } = &event
-            {
-                // Will be absorbed by the next handle_top_level call.
-            } else {
-                // Refmark not followed by Bracket: fold into plain
-                // up to the end of the refmark, then continue
-                // processing the new event normally. The refmark's
-                // span gets absorbed by `flush_plain_up_to` because
-                // we set `pending_plain_start` to `rm.start` before
-                // taking it.
-                let rm = self.pending_refmark.take().expect("checked Some");
-                if self.pending_plain_start.is_none() {
-                    self.pending_plain_start = Some(rm.start);
+        // Stream-through path for top-level Quote / Tortoise — see
+        // `StreamingFrame` for the rationale. Body events flow straight
+        // through, except a nested Ruby / AngleQuote opens a sub-frame
+        // (buffered by the frame check above).
+        if self.streaming.is_some() {
+            self.handle_stream_event(event);
+            return;
+        }
+
+        // Top level. A `※` refmark held from the previous event is
+        // absorbed only by an immediately-following Bracket open (gaiji);
+        // otherwise it folds into the plain run (its span is picked up
+        // because `pending_plain_start` is set to `rm.start` first).
+        if self.pending_refmark.is_some()
+            && !matches!(
+                event,
+                PairEvent::PairOpen {
+                    kind: PairKind::Bracket,
+                    ..
                 }
+            )
+        {
+            let rm = self.pending_refmark.take().expect("checked Some");
+            if self.pending_plain_start.is_none() {
+                self.pending_plain_start = Some(rm.start);
             }
         }
 

@@ -1,0 +1,3 @@
+# Regression: multiple ruby readings inside one 「…」 quote.
+feature = "ruby"
+level = "should"

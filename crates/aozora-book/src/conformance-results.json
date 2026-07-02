@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 91,
-  "passed": 91,
+  "total": 94,
+  "passed": 94,
   "failed": 0,
   "by_level": {
     "may": {
@@ -10,13 +10,13 @@
       "failed": 0
     },
     "must": {
-      "total": 26,
-      "passed": 26,
+      "total": 28,
+      "passed": 28,
       "failed": 0
     },
     "should": {
-      "total": 62,
-      "passed": 62,
+      "total": 63,
+      "passed": 63,
       "failed": 0
     }
   },
@@ -533,6 +533,13 @@
       "message": null
     },
     {
+      "case": "ruby_barred_in_quote",
+      "feature": "ruby",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
       "case": "ruby_base_bouten_ambiguous",
       "feature": "composite",
       "level": "must",
@@ -564,6 +571,20 @@
       "case": "ruby_implicit",
       "feature": "ruby",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_in_quote",
+      "feature": "ruby",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_multi_in_quote",
+      "feature": "ruby",
+      "level": "should",
       "passed": true,
       "message": null
     },
