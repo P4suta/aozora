@@ -94,9 +94,10 @@ impl AbsoluteSize {
 ///
 /// 青空文庫 attests a family of enclosures that share the [`Format::Framed`]
 /// identity and differ only on this style axis: 罫囲み / 枠囲み / 枠囲い (a
-/// ruled frame) and 「□」囲み (a box glyph), plus the long tail 二重罫囲み /
-/// 点線丸囲み / ミシン罫囲み / 表罫囲み. This mirrors how the 傍点 kinds share
-/// [`Format::Bouten`] via [`BoutenKind`].
+/// ruled frame), 「□」囲み (a box glyph), ○付き文字 (an encircled character),
+/// 点線丸囲み (a dotted circle), and 二重罫囲み (a double rule), plus the
+/// remaining tail ミシン罫囲み / 表罫囲み (folded onto [`Self::Rule`]). This
+/// mirrors how the 傍点 kinds share [`Format::Bouten`] via [`BoutenKind`].
 //
 // Deliberately NOT `#[non_exhaustive]`: every classifier / render / serialize
 // site must handle each kind explicitly, so a new member is compiler-flagged
@@ -110,6 +111,13 @@ pub enum EnclosureKind {
     /// 「□」囲み — a box-glyph enclosure. The glyph is □ (U+25A1); the box is
     /// drawn by the stylesheet, so the glyph is re-emitted only on serialize.
     Box,
+    /// ○付き文字 — an encircled character (`「X」は○付き文字`). The circle is
+    /// drawn by the stylesheet around the target run.
+    Circle,
+    /// 点線丸囲み — a dotted circular enclosure (`「X」は点線丸囲み`).
+    CircleDotted,
+    /// 二重罫囲み — a double-ruled rectangular frame (`「X」は二重罫囲み`).
+    DoubleRule,
 }
 
 /// Number of columns in a 段組 region. `1` is not a multi-column layout, so
@@ -545,6 +553,11 @@ impl ForwardAttr {
             // reconstructs it in a dedicated arm; this bare base word only feeds
             // the keyword round-trip table.
             Self::Framed(EnclosureKind::Box) => "囲み",
+            // These three carry no embedded glyph, so the keyword *is* the whole
+            // `は…` suffix and serialize round-trips through the default path.
+            Self::Framed(EnclosureKind::Circle) => "○付き文字",
+            Self::Framed(EnclosureKind::CircleDotted) => "点線丸囲み",
+            Self::Framed(EnclosureKind::DoubleRule) => "二重罫囲み",
             Self::Horizontal => "横組み",
             Self::Caption => "キャプション",
             Self::CombineUpright => "縦中横",

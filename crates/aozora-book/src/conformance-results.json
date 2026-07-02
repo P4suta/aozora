@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 81,
-  "passed": 81,
+  "total": 82,
+  "passed": 82,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 55,
-      "passed": 55,
+      "total": 56,
+      "passed": 56,
       "failed": 0
     }
   },
@@ -220,6 +220,13 @@
     {
       "case": "empty_ruby_reading",
       "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "enclosure_kinds",
+      "feature": "emphasis",
       "level": "should",
       "passed": true,
       "message": null

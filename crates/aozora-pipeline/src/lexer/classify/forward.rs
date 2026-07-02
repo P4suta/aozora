@@ -1683,8 +1683,10 @@ fn is_latin_run_char(ch: char) -> bool {
 /// `SuperScript`, 下付き小文字 → `SubScript`, 行右小書き → `SmallScript(Right)`,
 /// 行左小書き → `SmallScript(Left)`, and `N段階大きな/小さな文字` → `FontSize`
 /// (per <https://www.aozora.gr.jp/annotation/etc.html>). 分数 → `Fraction`
-/// (`「a/b」は分数`, the render arm typesets the `/`-split target). Unknown
-/// suffixes return `None` (→ `Directive{Unknown}`).
+/// (`「a/b」は分数`, the render arm typesets the `/`-split target). 罫囲み /
+/// 枠囲み / 枠囲い / ○付き文字 / 点線丸囲み / 二重罫囲み → the corresponding
+/// [`EnclosureKind`] under `Framed` (`「□」囲み` is claimed earlier, by the box
+/// recogniser). Unknown suffixes return `None` (→ `Directive{Unknown}`).
 pub(super) fn forward_attr_from_suffix(s: &str) -> Option<ForwardAttr> {
     Some(match s {
         "太字" | "ゴシック体" | "ゴチック" => ForwardAttr::Bold,
@@ -1696,6 +1698,12 @@ pub(super) fn forward_attr_from_suffix(s: &str) -> Option<ForwardAttr> {
         // 枠囲み / 枠囲い (okurigana variant) are corpus spellings of the frame
         // decoration; all canonicalise to 罫囲み on serialize.
         "罫囲み" | "枠囲み" | "枠囲い" => ForwardAttr::Framed(EnclosureKind::Rule),
+        // Other single-target enclosures whose suffix carries no embedded glyph
+        // (unlike 「□」囲み). Each has its own EnclosureKind so serialize
+        // round-trips the exact keyword rather than folding onto 罫囲み.
+        "○付き文字" => ForwardAttr::Framed(EnclosureKind::Circle),
+        "点線丸囲み" => ForwardAttr::Framed(EnclosureKind::CircleDotted),
+        "二重罫囲み" => ForwardAttr::Framed(EnclosureKind::DoubleRule),
         "横組み" => ForwardAttr::Horizontal,
         "キャプション" => ForwardAttr::Caption,
         // 絶対サイズ: `「X」は小文字` (corpus-attested) and its 特大/大/中 siblings.
@@ -1745,7 +1753,35 @@ fn parse_font_size_suffix(s: &str) -> Option<ForwardAttr> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ForwardAttr, forward_attr_from_suffix};
+    use super::{EnclosureKind, ForwardAttr, forward_attr_from_suffix};
+
+    #[test]
+    fn enclosure_suffixes_map_to_their_kinds() {
+        // Each glyph-free enclosure suffix picks its own EnclosureKind so
+        // serialize can round-trip the exact keyword.
+        assert_eq!(
+            forward_attr_from_suffix("○付き文字"),
+            Some(ForwardAttr::Framed(EnclosureKind::Circle))
+        );
+        assert_eq!(
+            forward_attr_from_suffix("点線丸囲み"),
+            Some(ForwardAttr::Framed(EnclosureKind::CircleDotted))
+        );
+        assert_eq!(
+            forward_attr_from_suffix("二重罫囲み"),
+            Some(ForwardAttr::Framed(EnclosureKind::DoubleRule))
+        );
+        // The ruled-frame spellings stay folded onto Rule.
+        assert_eq!(
+            forward_attr_from_suffix("罫囲み"),
+            Some(ForwardAttr::Framed(EnclosureKind::Rule))
+        );
+        // 破線枠囲み is a block-compound segment, not a forward suffix — it must
+        // NOT be claimed here (it stays Unknown).
+        assert_eq!(forward_attr_from_suffix("破線枠囲み"), None);
+        // A near-miss glyph-bearing form is not one of these bare suffixes.
+        assert_eq!(forward_attr_from_suffix("丸囲み"), None);
+    }
 
     #[test]
     fn fraction_suffix_matches_only_the_exact_single_form() {

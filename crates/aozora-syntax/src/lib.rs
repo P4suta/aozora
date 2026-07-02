@@ -560,6 +560,12 @@ mod tests {
             (ForwardAttr::SmallScript(BoutenPosition::Left), "行左小書き"),
             (ForwardAttr::Framed(EnclosureKind::Rule), "罫囲み"),
             (ForwardAttr::Framed(EnclosureKind::Box), "囲み"),
+            (ForwardAttr::Framed(EnclosureKind::Circle), "○付き文字"),
+            (
+                ForwardAttr::Framed(EnclosureKind::CircleDotted),
+                "点線丸囲み",
+            ),
+            (ForwardAttr::Framed(EnclosureKind::DoubleRule), "二重罫囲み"),
             (ForwardAttr::Horizontal, "横組み"),
             (ForwardAttr::Caption, "キャプション"),
             (ForwardAttr::CombineUpright, "縦中横"),

@@ -231,15 +231,19 @@ fn render_format_owned<W: Write>(
             }
             out.write_str("</span>")
         }
-        // 「□」囲み: draw a CSS box around the target. The □ glyph names the
-        // enclosure kind (serialize-only), so it is never emitted here — the box
-        // is drawn by the stylesheet. (`EnclosureKind::Rule` falls through to the
-        // slug-keyed arm below and keeps `aozora-keigakomi-inline`.)
-        ForwardAttr::Framed(EnclosureKind::Box) => {
-            out.write_str(r#"<span class="aozora-keigakomi-box">"#)?;
-            render_content_range_owned(f.target, store, out)?;
-            out.write_str("</span>")
-        }
+        // Enclosures drawn as a CSS-styled span — the glyph / keyword names the
+        // kind (serialize-only) and the stylesheet draws the frame, one class per
+        // kind: 「□」囲み / ○付き文字 / 点線丸囲み / 二重罫囲み. 罫囲み has no
+        // dedicated span class (`None`) and keeps the slug-keyed
+        // `aozora-keigakomi-inline` via the semantic fall-through.
+        ForwardAttr::Framed(kind) => match framed_span_class(kind) {
+            Some(class) => {
+                write!(out, r#"<span class="{class}">"#)?;
+                render_content_range_owned(f.target, store, out)?;
+                out.write_str("</span>")
+            }
+            None => render_forward_semantic(f, f.attr, store, out),
+        },
         // ドット付き (#331): compose the addressed letters of the reclaimed run
         // into their precomposed dotted glyphs (ṁ / ṣ) — see `render_accent_dot`.
         ForwardAttr::AccentDot => render_accent_dot(f, store, out),
@@ -258,6 +262,21 @@ fn render_format_owned<W: Write>(
         // The HTML element is semantic; the `aozora-*` slug comes from the
         // spec slug table, keyed by the canonical keyword.
         attr => render_forward_semantic(f, attr, store, out),
+    }
+}
+
+/// The dedicated `aozora-*` span class for an enclosure that the stylesheet
+/// draws around its target, or `None` for [`EnclosureKind::Rule`], which keeps
+/// the slug-keyed `aozora-keigakomi-inline` semantic rendering. Exhaustive so a
+/// future enclosure kind is compiler-flagged here rather than silently sharing
+/// the ruled-frame class.
+const fn framed_span_class(kind: EnclosureKind) -> Option<&'static str> {
+    match kind {
+        EnclosureKind::Rule => None,
+        EnclosureKind::Box => Some("aozora-keigakomi-box"),
+        EnclosureKind::Circle => Some("aozora-enclosure-circle"),
+        EnclosureKind::CircleDotted => Some("aozora-enclosure-circle-dotted"),
+        EnclosureKind::DoubleRule => Some("aozora-enclosure-double-rule"),
     }
 }
 
