@@ -7,11 +7,13 @@ describe('samples.ts', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('全サンプルが非空の id / title / text を持つ', () => {
+  it('全サンプルが非空の id / title / text / source を持つ', () => {
     for (const s of SAMPLES) {
       expect(s.id).toBeTruthy();
       expect(s.title.length).toBeGreaterThan(0);
       expect(s.text.length).toBeGreaterThan(0);
+      // Every sample is a cited public-domain excerpt, not an invented string.
+      expect(s.source.length).toBeGreaterThan(0);
     }
   });
 

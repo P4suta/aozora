@@ -2,83 +2,114 @@ export interface Sample {
   id: string;
   title: string;
   text: string;
+  /**
+   * Provenance of the excerpt (著者『作品』). Every sample is a short passage
+   * from a public-domain work on 青空文庫 (copyright expired), so it is safe to
+   * ship verbatim; the citation is shown in the picker.
+   */
+  source: string;
 }
 
+/**
+ * Demo samples for the playground. Each is a real, copyright-safe excerpt from
+ * 青空文庫 chosen to demonstrate one notation feature, verified to render with
+ * zero diagnostics. Prefer real corpus text over invented strings so the demo
+ * is both authentic and self-documenting.
+ */
 export const SAMPLES: Sample[] = [
   {
     id: 'ruby',
     title: 'ルビ（明示）',
-    text: '｜青梅《おうめ》街道を歩く。',
+    // 雑司ヶ谷 contains ヶ, so automatic base detection stops short — the ｜
+    // delimiter is required to make the whole word the ruby base.
+    text: '「先生｜雑司ヶ谷《ぞうしがや》の銀杏はもう散ってしまったでしょうか」',
+    source: '夏目漱石『こころ』',
   },
   {
     id: 'ruby-implicit',
     title: '暗黙ルビ',
-    text: '青梅《おうめ》という地名。',
+    text: '悟浄《ごじょう》の肉体はもはや疲れ切っていた。',
+    source: '中島敦『悟浄出世』',
   },
   {
     id: 'bouten',
     title: '傍点',
-    text: '青空［＃「青空」に傍点］を見上げる。',
+    text: 'ふらんす［＃「ふらんす」に傍点］はあまりに遠し',
+    source: '中島敦『十年』',
   },
   {
     id: 'ruby-bouten',
     title: 'ルビ＋傍点',
-    text: '｜青梅《おうめ》には［＃「青梅」に傍点］という街道がある。',
+    // ruby on 閑《しづか》 coexists with a forward bouten on a *different* word
+    // (しみ入る) — both render cleanly.
+    text: '閑《しづか》さや岩にしみ入る［＃「しみ入る」に傍点］蝉の声',
+    source: '芥川竜之介『芭蕉雑記』',
   },
   {
     id: 'indent',
     title: '字下げブロック',
-    text: '本文。\n［＃ここから2字下げ］\n段落の中身。\n別の行。\n［＃ここで字下げ終わり］\n通常段落。',
+    text: '［＃ここから２字下げ］\n花の頃を越えてかしこし馬に嫁\n［＃ここで字下げ終わり］',
+    source: '夏目漱石『草枕』',
   },
   {
     id: 'gaiji',
     title: '外字（第3水準）',
-    text: '珍しき木※［＃「木＋吶のつくり」、第3水準1-85-54］が立つ。',
+    text: '美女、瞳を※［＃「目＋爭」、第3水準1-88-85］《みは》る。',
+    source: '泉鏡花『海神別荘』',
   },
   {
     id: 'angle-quote',
     title: '二重山括弧',
-    text: '≪重要≫な点について述べる。',
+    text: '≪風は冷気をつつんでゐる≫',
+    source: '北条民雄『烙印をおされて』',
   },
   {
     id: 'page-break',
     title: '改ページ',
-    text: '第一章\n本文。\n［＃改ページ］\n第二章\n続き。',
+    text: '　マリヤンが聞いたら何というだろうか？\n［＃改ページ］\n　　　風物抄',
+    source: '中島敦『環礁』',
   },
   {
     id: 'heading',
     title: '大見出し',
-    text: '［＃ここから大見出し］\n第一章 出発\n［＃ここで大見出し終わり］\n本文がここから始まる。',
+    text: '［＃ここから大見出し］\n夢と現実\n［＃ここで大見出し終わり］',
+    source: '与謝野晶子『晶子詩篇全集』',
   },
   {
     id: 'tcy',
     title: '縦中横',
-    text: '第［＃縦中横］12［＃縦中横終わり］巻を読む。',
+    text: '（［＃縦中横］10［＃縦中横終わり］）「かいともし、とうよ」',
+    source: '佐藤春夫『現代語訳 徒然草』',
   },
   {
     id: 'warichu',
     title: '割り注',
-    text: '本文［＃割り注］注釈のテキスト［＃割り注終わり］のあとに続く。',
+    text: '一、乳油［＃割り注］洋名バタ［＃割り注終わり］',
+    source: '福沢諭吉『肉食之説』',
   },
   {
     id: 'keigakomi',
     title: '罫囲み',
-    text: '［＃ここから罫囲み］\n囲みの中の文章。\n［＃ここで罫囲み終わり］',
+    text: '［＃ここから罫囲み］\n　今夜、ほうせきをもらいに行く。いくら用心しても、だめだよ。二十めんそう\n［＃ここで罫囲み終わり］',
+    source: '江戸川乱歩『ふしぎな人』',
   },
   {
     id: 'bousen',
     title: '傍線',
-    text: '重要な箇所［＃「重要な箇所」に傍線］を確認する。',
+    text: '虚子ハ男子ヲ挙ゲタ。僕ガ年尾［＃「年尾」に傍線］トツケテヤッタ。',
+    source: '夏目漱石『吾輩は猫である』中篇自序',
   },
   {
     id: 'jitsuki',
     title: '地付き',
-    text: '本文。\n［＃地付き］署名',
+    text: '［＃地付き］――Ｊ・Ｂ・ステェア「サモア地誌」――',
+    source: '中島敦『光と風と夢』',
   },
   {
     id: 'kitchen-sink',
     title: '全部のせ',
-    text: '｜山《やま》や［＃改ページ］\n≪秘密≫の話題。\n青空［＃「青空」に傍点］を見上げる。\n［＃ここから1字下げ］\n字下げされた段落。\n［＃ここで字下げ終わり］',
+    text: '［＃２字下げ］お猿［＃「お猿」は中見出し］\n\nお猿が出て来た、\n負はれて出て来た。\nお目をぱちくり［＃「ぱちくり」に傍点］、\n赤ん坊《ぼ》のお猿。',
+    source: '与謝野晶子『晶子詩篇全集拾遺』',
   },
   {
     id: 'long-form',
@@ -96,6 +127,7 @@ export const SAMPLES: Sample[] = [
 ［＃ここで字下げ終わり］
 
 　しかし、文名は容易に揚《あが》らず、生活は日を逐《お》うて苦しくなる。李徴はようやく｜焦躁《しょうそう》に駆られて来た［＃「焦躁」に傍点］。`,
+    source: '中島敦『山月記』',
   },
 ];
 

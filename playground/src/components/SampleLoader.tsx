@@ -23,7 +23,11 @@ export default function SampleLoader(props: SampleLoaderProps) {
           {t('sampleSelectPlaceholder')}
         </option>
         <For each={SAMPLES}>
-          {(sample) => <option value={sample.id}>{sample.title}</option>}
+          {(sample) => (
+            <option value={sample.id}>
+              {sample.title} — {sample.source}
+            </option>
+          )}
         </For>
       </select>
     </label>
