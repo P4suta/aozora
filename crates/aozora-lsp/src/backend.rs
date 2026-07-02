@@ -499,7 +499,10 @@ impl LanguageServer for AozoraLanguageServer {
                         // edit; resolve_provider stays None until a
                         // future heavier action (e.g. "rename slug
                         // across document") needs lazy loading.
-                        code_action_kinds: Some(vec![CodeActionKind::REFACTOR_REWRITE]),
+                        code_action_kinds: Some(vec![
+                            CodeActionKind::QUICKFIX,
+                            CodeActionKind::REFACTOR_REWRITE,
+                        ]),
                         ..CodeActionOptions::default()
                     },
                 )),
