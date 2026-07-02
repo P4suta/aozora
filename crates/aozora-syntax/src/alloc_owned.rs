@@ -811,8 +811,14 @@ mod tests {
             NodeOwned::SectionBreak(SectionKind::Kaicho)
         );
         assert_eq!(
-            a.line(LineFormat::Indent { amount: 2 }),
-            NodeOwned::Line(LineFormat::Indent { amount: 2 })
+            a.line(LineFormat::Indent {
+                amount: 2,
+                end_offset: None
+            }),
+            NodeOwned::Line(LineFormat::Indent {
+                amount: 2,
+                end_offset: None
+            })
         );
     }
 

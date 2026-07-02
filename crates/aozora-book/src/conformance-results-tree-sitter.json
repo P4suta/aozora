@@ -1,7 +1,7 @@
 {
   "implementation": "tree-sitter",
-  "total": 80,
-  "passed": 42,
+  "total": 81,
+  "passed": 43,
   "failed": 38,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 5
     },
     "should": {
-      "total": 54,
-      "passed": 21,
+      "total": 55,
+      "passed": 22,
       "failed": 33
     }
   },
@@ -104,6 +104,13 @@
       "level": "should",
       "passed": false,
       "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "both_margin_indent",
+      "feature": "container",
+      "level": "should",
+      "passed": true,
+      "message": null
     },
     {
       "case": "bouten",

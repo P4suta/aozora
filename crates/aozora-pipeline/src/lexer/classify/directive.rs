@@ -114,9 +114,10 @@ enum BodyFamily {
     WarichuBlockOpen,
     /// `ここで割り注終わり` — block 割り注 closer.
     WarichuBlockEnd,
-    /// `天から` → `天から{N}字下げ` — a single-line indent measured from the
-    /// top margin; identical to a plain `{N}字下げ`, so it emits an
-    /// `Indent` leaf.
+    /// `天から` / `天より` → `天X{N}字下げ` — a single-line indent measured
+    /// from the top margin; identical to a plain `{N}字下げ`, so it emits an
+    /// `Indent` leaf. Also carries the both-margin compound
+    /// (`天X{N}字下げ、地より{M}字上げで`) — see [`parse_both_margin_tail`].
     TopIndentPrefix,
     /// `改行天付き` → `改行天付き、折り返して{N}字下げ` — the ここから-less
     /// bare sibling of the top-flush hanging indent (amount 0 + wrap N).
@@ -371,6 +372,14 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     // 改行天付き、折り返して{N}字下げ hanging indent.
     BodyPattern {
         needle: "天から",
+        family: BodyFamily::TopIndentPrefix,
+    },
+    // 天より — the alternate wording of 天から (both "measured from the top
+    // margin"); attested only in the both-margin compound
+    // (`天より{N}字下げ、地より{M}字上げで`). Routes through the same
+    // TopIndentPrefix arm, which canonicalises to a plain `{N}字下げ` head.
+    BodyPattern {
+        needle: "天より",
         family: BodyFamily::TopIndentPrefix,
     },
     BodyPattern {
@@ -1143,16 +1152,23 @@ pub(super) fn classify_annotation_body(
             )
         }
         BodyFamily::TopIndentPrefix => {
-            // body == 天から{N}字下げ — single-line indent from the top
-            // margin, identical to a plain {N}字下げ (Indent leaf).
+            // body == 天から/天より{N}字下げ[、地より{M}字…] — single-line indent
+            // from the top margin. The plain form is identical to a plain
+            // {N}字下げ (Indent leaf); the both-margin compound also lifts M
+            // chars off the foot edge.
             let rest = &body[match_end..];
             let (n, tail) = parse_decimal_u8_prefix(rest)?;
-            (tail == "字下げ" && n >= 1).then(|| {
-                (
-                    EmitKind::Aozora(alloc.line(LineFormat::Indent { amount: n })),
+            if tail == "字下げ" && n >= 1 {
+                Some((
+                    EmitKind::Aozora(alloc.line(LineFormat::Indent {
+                        amount: n,
+                        end_offset: None,
+                    })),
                     None,
-                )
-            })
+                ))
+            } else {
+                parse_both_margin_tail(n, tail).map(|lf| (EmitKind::Aozora(alloc.line(lf)), None))
+            }
         }
         BodyFamily::KaigyouTentsukiPrefix => {
             // body == 改行天付き、折り返して{N}字下げ — the ここから-less bare
@@ -1279,9 +1295,16 @@ pub(super) fn classify_annotation_body(
             let (n, tail) = parse_decimal_u8_prefix(body)?;
             if tail == "字下げ" && n >= 1 {
                 Some((
-                    EmitKind::Aozora(alloc.line(LineFormat::Indent { amount: n })),
+                    EmitKind::Aozora(alloc.line(LineFormat::Indent {
+                        amount: n,
+                        end_offset: None,
+                    })),
                     None,
                 ))
+            } else if let Some(lf) = parse_both_margin_tail(n, tail) {
+                // Both-margin compound: ［＃{N}字下げ[て][、]地より{M}字(あき|上げ)[で|て]］
+                // — a head indent plus a foot-edge lift on one single line.
+                Some((EmitKind::Aozora(alloc.line(lf)), None))
             } else {
                 // Bare-range font-size open: ［＃{N}段階大きな/小さな文字］ —
                 // the ここから-less sibling of the block opener, closed by the
@@ -1724,6 +1747,45 @@ fn resolve_indent_segment(segment: &str, block: &mut IndentBlock) -> Option<()> 
     Some(())
 }
 
+/// Parse the both-margin compound tail of a head-indent directive into a
+/// single-line [`LineFormat::Indent`] carrying both margins.
+///
+/// `amount` is the head indent already parsed from the digits before `字下げ`;
+/// `tail` is the remainder starting at that `字下げ` verb. This one recogniser
+/// covers the whole single-line family
+/// (`［＃{N}字下げ[て][、]地より{M}字(あき|上げ)[で|て]］`, and the
+/// `天より`-headed variant via [`BodyFamily::TopIndentPrefix`]): the `字あき`
+/// spelling is normalised to `字上げ` (both lift `M` full-width chars off the
+/// foot edge), the `、` join is optional (a bare join also appears), and the
+/// trailing `で` / `て` connective is optional. Returns `None` for a tail that
+/// is not a well-formed both-margin compound, so the caller falls through to
+/// the `Directive{Unknown}` catch-all (lossless). The region opener
+/// `［＃ここから…、地から…字下げ］` and the count-less `［＃下げて、…］` never reach
+/// here — the former routes through `IndentBlockParamPrefix`, the latter has no
+/// anchored needle.
+fn parse_both_margin_tail(amount: u8, tail: &str) -> Option<LineFormat> {
+    // Head verb: 字下げ, with an optional て connective (字下げて).
+    let rest = tail.strip_prefix("字下げ")?;
+    let rest = rest.strip_prefix('て').unwrap_or(rest);
+    // Optional 、 between the head and bottom clauses (a bare join also appears).
+    let rest = rest.strip_prefix('、').unwrap_or(rest);
+    // Bottom clause: 地より{M}字(あき|上げ)[で|て].
+    let rest = rest.strip_prefix("地より")?;
+    let (offset, rest) = parse_decimal_u8_prefix(rest)?;
+    let rest = rest
+        .strip_prefix("字あき")
+        .or_else(|| rest.strip_prefix("字上げ"))?;
+    // Optional trailing で / て connective; nothing else may follow.
+    let rest = rest
+        .strip_prefix('で')
+        .or_else(|| rest.strip_prefix('て'))
+        .unwrap_or(rest);
+    (amount >= 1 && offset >= 1 && rest.is_empty()).then_some(LineFormat::Indent {
+        amount,
+        end_offset: Some(offset),
+    })
+}
+
 fn parse_indent_line_layout(after: &str) -> Option<IndentLayout> {
     let (lead, rest) = parse_decimal_u8_prefix(after)?;
     let lead = NonZeroU8::new(lead)?; // folds the `lead >= 1` guard
@@ -1940,4 +2002,51 @@ pub(super) fn parse_decimal_u8_prefix(s: &str) -> Option<(u8, &str)> {
     }
     let value_u8 = u8::try_from(value).ok()?;
     Some((value_u8, &s[consumed..]))
+}
+
+#[cfg(test)]
+mod both_margin_tests {
+    use super::*;
+
+    /// Every both-margin spelling attested in the corpus resolves to the same
+    /// `Indent { amount, end_offset: Some }` leaf. `tail` is the remainder after
+    /// the head digits (the `字下げ…` verb onward); `天より`/`天から` heads reach
+    /// the helper with the same tail after the prefix + digits are stripped.
+    #[test]
+    fn corpus_both_margin_spellings_all_resolve() {
+        for (amount, tail, want) in [
+            // ［＃２１字下げ、地より２字あきで］ — 字あき normalises to 字上げ.
+            (21, "字下げ、地より2字あきで", (21u8, 2u8)),
+            // ［＃天より３１字下げ、地より２字上げで］ (post-prefix tail).
+            (31, "字下げ、地より2字上げで", (31, 2)),
+            // ［＃２８字下げて、地より３字上げて］ — て head + て tail.
+            (28, "字下げて、地より3字上げて", (28, 3)),
+            // ［＃２０字下げて、地より１字あきで］ — て head + 字あき + で.
+            (20, "字下げて、地より1字あきで", (20, 1)),
+            // ［＃天より３２字下げて地より３字上げで］ — BARE join (no 、).
+            (32, "字下げて地より3字上げで", (32, 3)),
+        ] {
+            assert_eq!(
+                parse_both_margin_tail(amount, tail),
+                Some(LineFormat::Indent {
+                    amount: want.0,
+                    end_offset: Some(want.1),
+                }),
+                "both-margin tail {tail:?} must resolve",
+            );
+        }
+    }
+
+    /// Forms that are deliberately NOT both-margin decline (fall through to the
+    /// `Directive{Unknown}` catch-all): a plain head indent with no bottom
+    /// clause, and a bottom clause missing its explicit count.
+    #[test]
+    fn non_both_margin_tails_decline() {
+        // Plain head indent, no 地より clause — the caller's plain arm owns this.
+        assert_eq!(parse_both_margin_tail(2, "字下げ"), None);
+        // Bottom clause without an explicit count declines.
+        assert_eq!(parse_both_margin_tail(2, "字下げ、地より字上げで"), None);
+        // A trailing remnant after the bottom clause declines (lossless).
+        assert_eq!(parse_both_margin_tail(2, "字下げ、地より2字上げでX"), None);
+    }
 }

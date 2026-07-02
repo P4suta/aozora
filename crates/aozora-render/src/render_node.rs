@@ -291,9 +291,21 @@ pub(crate) fn write_heading_close<W: Write>(
 /// a zero-width hook span; the actual layout is left to a stylesheet.
 pub(crate) fn render_line<W: Write>(lf: LineFormat, writer: &mut W) -> fmt::Result {
     match lf {
-        LineFormat::Indent { amount } => write!(
+        LineFormat::Indent {
+            amount,
+            end_offset: None,
+        } => write!(
             writer,
             r#"<span class="aozora-indent aozora-indent-{amount}" data-amount="{amount}"></span>"#,
+        ),
+        // Both-margin compound: the head-indent classes plus the existing
+        // align-end classes for the foot-edge lift (reused, not new tokens).
+        LineFormat::Indent {
+            amount,
+            end_offset: Some(offset),
+        } => write!(
+            writer,
+            r#"<span class="aozora-indent aozora-indent-{amount} aozora-align-end aozora-align-end-{offset}" data-amount="{amount}" data-offset="{offset}"></span>"#,
         ),
         LineFormat::AlignEnd { offset: 0 } => {
             writer.write_str(r#"<span class="aozora-align-end" data-offset="0"></span>"#)

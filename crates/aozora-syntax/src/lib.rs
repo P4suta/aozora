@@ -625,8 +625,14 @@ mod tests {
             "different level ⇒ not equal"
         );
         assert_eq!(
-            LineFormat::Indent { amount: 4 },
-            LineFormat::Indent { amount: 4 }
+            LineFormat::Indent {
+                amount: 4,
+                end_offset: None
+            },
+            LineFormat::Indent {
+                amount: 4,
+                end_offset: None
+            }
         );
         assert!(matches!(
             LineFormat::AlignEnd { offset: 0 },

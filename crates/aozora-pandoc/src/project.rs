@@ -444,8 +444,12 @@ fn gaiji_inline(g: GaijiOwned, store: &NodeStore) -> Inline {
 /// Project a single-line layout directive (字下げ / 地付き / 中央 / 罫囲み).
 fn line_inline(lf: LineFormat) -> Inline {
     let attr = match lf {
-        LineFormat::Indent { amount } => {
-            class_attr_kv("indent", vec![("amount".to_owned(), amount.to_string())])
+        LineFormat::Indent { amount, end_offset } => {
+            let mut kvs = vec![("amount".to_owned(), amount.to_string())];
+            if let Some(offset) = end_offset {
+                kvs.push(("offset".to_owned(), offset.to_string()));
+            }
+            class_attr_kv("indent", kvs)
         }
         LineFormat::AlignEnd { offset } => {
             class_attr_kv("align-end", vec![("offset".to_owned(), offset.to_string())])
@@ -1393,7 +1397,10 @@ mod tests {
 
     #[test]
     fn line_inline_indent_carries_amount() {
-        let inline = line_inline(LineFormat::Indent { amount: 4 });
+        let inline = line_inline(LineFormat::Indent {
+            amount: 4,
+            end_offset: None,
+        });
         match inline {
             Inline::Span(attr, inner) => {
                 assert!(has_class(&attr, "indent"), "indent class: {:?}", attr.1);

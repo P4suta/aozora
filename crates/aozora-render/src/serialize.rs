@@ -99,8 +99,21 @@ pub(crate) fn emit_section_break<W: Write>(kind: SectionKind, out: &mut W) -> fm
 
 pub(crate) fn emit_line<W: Write>(lf: LineFormat, out: &mut W) -> fmt::Result {
     match lf {
-        LineFormat::Indent { amount: 1 } => out.write_str("［＃字下げ］"),
-        LineFormat::Indent { amount } => write!(out, "［＃{amount}字下げ］"),
+        // Both-margin compound: a head indent plus a foot-edge lift. `字あき`
+        // is canonicalised to the `地よりM字上げで` spelling (same foot-edge
+        // semantics; the `て`/bare-join input variants converge here too).
+        LineFormat::Indent {
+            amount,
+            end_offset: Some(offset),
+        } => write!(out, "［＃{amount}字下げ、地より{offset}字上げで］"),
+        LineFormat::Indent {
+            amount: 1,
+            end_offset: None,
+        } => out.write_str("［＃字下げ］"),
+        LineFormat::Indent {
+            amount,
+            end_offset: None,
+        } => write!(out, "［＃{amount}字下げ］"),
         LineFormat::AlignEnd { offset: 0 } => out.write_str("［＃地付き］"),
         LineFormat::AlignEnd { offset } => write!(out, "［＃地から{offset}字上げ］"),
         LineFormat::Center { page: true } => out.write_str("［＃ページの左右中央］"),

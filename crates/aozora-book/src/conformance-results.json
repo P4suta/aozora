@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 80,
-  "passed": 80,
+  "total": 81,
+  "passed": 81,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 54,
-      "passed": 54,
+      "total": 55,
+      "passed": 55,
       "failed": 0
     }
   },
@@ -101,6 +101,13 @@
     {
       "case": "bold_inline",
       "feature": "emphasis",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "both_margin_indent",
+      "feature": "container",
       "level": "should",
       "passed": true,
       "message": null
