@@ -120,6 +120,28 @@ pub enum EnclosureKind {
     DoubleRule,
 }
 
+/// The diacritical mark of a forward accent directive
+/// (`「X」はアクサン（´）付き` / `…ウムラウト（¨）付き`) — which precomposed
+/// accented glyph the single quoted Latin letter maps to.
+///
+/// The mark *word* (アクサン) does not distinguish acute from grave — the
+/// bracketed *symbol* does (´ = U+00B4 vs ｀ = U+FF40); ウムラウト（¨） (¨ =
+/// U+00A8) names the umlaut. Composition reuses the `〔…〕` accent digraph table
+/// via [`crate::accent::compose_accent`], the single authority for the
+/// "Latin letter plus diacritic yields a precomposed glyph" mapping;
+/// [`Format::AccentDot`] is the sibling combining-dot facility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum AccentMark {
+    /// アクサン（´） — acute accent (`e` → é). Accent-table marker byte `'`.
+    Acute,
+    /// ウムラウト（¨） — umlaut / diaeresis (`o` → ö). Marker byte `:`.
+    Umlaut,
+    /// アクサン（｀） — grave accent (`e` → è). Marker byte `` ` ``. Corpus-absent
+    /// but supported for completeness.
+    Grave,
+}
+
 /// Number of columns in a 段組 region. `1` is not a multi-column layout, so
 /// `NonZero` rules out the degenerate case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -310,6 +332,10 @@ pub enum Format {
     Fraction,
     /// ドット付き (#331 dotted-letter composition, `mは上ドット付き` → ṁ).
     AccentDot,
+    /// アクサン / ウムラウト (forward accent mark, `「e」はアクサン（´）付き` → é).
+    /// The [`AccentMark`] rides the scope sum ([`ForwardAttr::Accent`]); the
+    /// attribute identity discards it, like [`Self::AccentDot`].
+    Accent,
     /// 字下げ (indent).
     Indent,
     /// 地付き / 地から N 字上げ (end alignment).
@@ -353,6 +379,7 @@ impl Format {
             Self::CombineUpright => "combineUpright",
             Self::Fraction => "fraction",
             Self::AccentDot => "accentDot",
+            Self::Accent => "accent",
             Self::Indent => "indent",
             Self::AlignEnd => "alignEnd",
             Self::Center => "center",
@@ -415,6 +442,13 @@ pub enum ForwardAttr {
     /// grammar lives in the raw directive body, interned on the owned leaf's
     /// `accent_body` (this attribute stays a `Copy` unit, arena-free).
     AccentDot,
+    /// アクサン / ウムラウト — map a single quoted Latin letter to its precomposed
+    /// accented glyph (`「e」はアクサン（´）付き` → é, `「o」はウムラウト（¨）付き` → ö).
+    /// The letter rides on the owned leaf's `target`; only the [`AccentMark`] is
+    /// carried here (no interned body, unlike [`Self::AccentDot`]). Serialized
+    /// separately (the suffix carries the bracketed mark symbol, not a bare
+    /// keyword), so [`Self::keyword`] falls through to its 太字 default.
+    Accent(AccentMark),
     /// End-relative alignment — `「X」は文末より N字上げ揃え` — lifts the target
     /// run `offset` full-width chars off the text-end edge. The forward-scope
     /// analogue of [`LineFormat::AlignEnd`]; like it, the anchor (文末 / 行末) is
@@ -530,6 +564,7 @@ impl ForwardAttr {
             Self::CombineUpright => Format::CombineUpright,
             Self::Fraction => Format::Fraction,
             Self::AccentDot => Format::AccentDot,
+            Self::Accent(_) => Format::Accent,
             Self::AlignEnd { .. } => Format::AlignEnd,
         }
     }

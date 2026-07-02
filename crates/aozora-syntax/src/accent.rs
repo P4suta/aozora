@@ -33,6 +33,8 @@
 
 use std::borrow::Cow;
 
+use crate::format::AccentMark;
+
 /// The full accent decomposition table in spec-page order.
 ///
 /// Public for downstream iteration (tests, doc-builders, corpus
@@ -489,6 +491,29 @@ fn try_match(bytes: &[u8], i: usize) -> Option<(usize, char)> {
         return Some((2, ch));
     }
     None
+}
+
+/// Compose a single Latin `letter` with an accent `mark` into its precomposed
+/// glyph, reusing the `〔…〕` accent digraph table ([`ACCENT_TABLE`], via its
+/// `ACCENT_DIGRAPHS` perfect-hash mirror).
+///
+/// The forward accent directive (`「e」はアクサン（´）付き` → é) names its mark
+/// symbolically, so this maps [`AccentMark`] to the table's ASCII marker byte
+/// (Acute → `'`, Umlaut → `:`, Grave → `` ` ``), builds the 2-byte key, and
+/// looks it up. Returns `None` when `letter` is not ASCII-alphabetic or the
+/// `(letter, mark)` pair has no precomposed form (e.g. `q` + acute) — the
+/// classifier then declines to `Directive{Unknown}` and the renderer emits the
+/// letter unstyled. This is the single authority shared by the forward-accent
+/// classifier and renderer, mirroring [`compose_dotted`]'s role for `AccentDot`.
+#[must_use]
+pub fn compose_accent(letter: char, mark: AccentMark) -> Option<char> {
+    let base = u8::try_from(letter).ok().filter(u8::is_ascii_alphabetic)?;
+    let marker = match mark {
+        AccentMark::Acute => b'\'',
+        AccentMark::Umlaut => b':',
+        AccentMark::Grave => b'`',
+    };
+    ACCENT_DIGRAPHS.get(&[base, marker][..]).copied()
 }
 
 // ======================================================================
@@ -949,6 +974,30 @@ mod tests {
             let expected: String = format!("_{ch}_");
             assert_eq!(*out, *expected, "pattern {pat:?} failed");
         }
+    }
+
+    // --- forward accent-mark composition ---
+
+    #[test]
+    fn compose_accent_maps_corpus_pairs() {
+        assert_eq!(compose_accent('e', AccentMark::Acute), Some('é'));
+        assert_eq!(compose_accent('o', AccentMark::Umlaut), Some('ö'));
+        assert_eq!(compose_accent('a', AccentMark::Umlaut), Some('ä'));
+        // Grave is corpus-absent but supported.
+        assert_eq!(compose_accent('e', AccentMark::Grave), Some('è'));
+        // Case-preserving via the shared table.
+        assert_eq!(compose_accent('E', AccentMark::Acute), Some('É'));
+    }
+
+    #[test]
+    fn compose_accent_declines_uncomposable() {
+        // `q` has no accented form in the table.
+        assert_eq!(compose_accent('q', AccentMark::Acute), None);
+        // Non-ASCII / non-letter targets decline.
+        assert_eq!(compose_accent('あ', AccentMark::Acute), None);
+        assert_eq!(compose_accent('1', AccentMark::Umlaut), None);
+        // `g` + umlaut is not a real pair (no `g:` entry).
+        assert_eq!(compose_accent('g', AccentMark::Umlaut), None);
     }
 
     // --- #331 dotted-letter composition ---

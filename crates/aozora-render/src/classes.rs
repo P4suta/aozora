@@ -23,6 +23,7 @@ use aozora_syntax::{BoutenKind, BoutenPosition, HeadingKind, HeadingStyle};
 /// accepts a numeric variant should match `aozora-indent` / etc. as a
 /// stem and allow a trailing `-<n>`.
 pub const AOZORA_CLASSES: &[&str] = &[
+    "aozora-accent",
     "aozora-accent-dot",
     "aozora-align-end",
     "aozora-angle-quote",
@@ -176,10 +177,10 @@ mod tests {
     use aozora_syntax::alloc_owned::OwnedAllocator;
     use aozora_syntax::owned::{NodeOwned, NodeStore};
     use aozora_syntax::{
-        AbsoluteSize, BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition, ColumnCount,
-        Container, DirectiveKind, EnclosureKind, FontShift, ForwardAttr, ForwardOrigin,
-        HEADING_KINDS, HEADING_STYLES, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi,
-        LineFormat, LineWidth, MarginNoteKind, RegionFormat, SECTION_KINDS,
+        AbsoluteSize, AccentMark, BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition,
+        ColumnCount, Container, DirectiveKind, EnclosureKind, FontShift, ForwardAttr,
+        ForwardOrigin, HEADING_KINDS, HEADING_STYLES, HeadingKind, HeadingStyle, IndentBlock,
+        IndentLayout, Kumi, LineFormat, LineWidth, MarginNoteKind, RegionFormat, SECTION_KINDS,
     };
     use core::num::{NonZeroI8, NonZeroU8};
     use std::collections::BTreeSet;
@@ -440,6 +441,18 @@ mod tests {
         let dotted = a.content_plain("Sam");
         render_into(
             a.accent_dot(dotted, "mは上ドット付き", ForwardOrigin::Reclaimed),
+            &mut nodes,
+        );
+        // Accent (forward accent-mark): the letter rides on the target (no
+        // interned body), so it uses `forward_format`; a composable single
+        // letter exercises the `aozora-accent` class through the compose path.
+        let accented = a.content_plain("e");
+        render_into(
+            a.forward_format(
+                ForwardAttr::Accent(AccentMark::Acute),
+                accented,
+                ForwardOrigin::Reclaimed,
+            ),
             &mut nodes,
         );
         // FontSize positive → font-larger above; its negative magnitude

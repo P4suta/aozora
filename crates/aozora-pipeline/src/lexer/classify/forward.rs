@@ -18,13 +18,13 @@ use std::collections::HashMap;
 use core::num::NonZeroI8;
 
 use aozora_spec::Diagnostic;
-use aozora_syntax::accent::compose_accent_dots;
+use aozora_syntax::accent::{compose_accent, compose_accent_dots};
 use aozora_syntax::alloc_owned::OwnedAllocator;
 use aozora_syntax::format::ForwardOrigin;
 use aozora_syntax::lint::canonical_directive;
 use aozora_syntax::owned::{ContentOwned, NodeOwned, SegmentOwned};
 use aozora_syntax::{
-    AbsoluteSize, BoutenPosition, DirectiveKind, EnclosureKind, FontShift, ForwardAttr,
+    AbsoluteSize, AccentMark, BoutenPosition, DirectiveKind, EnclosureKind, FontShift, ForwardAttr,
     MarginNoteKind, Span,
 };
 
@@ -1522,6 +1522,18 @@ impl RecogniseCtx<'_, '_> {
         let [only] = extracted.targets.as_slice() else {
             return None;
         };
+        // Forward accent (`「e」はアクサン（´）付き` → é): the quoted target must be a
+        // single Latin letter composable with this mark. Word-qualified /
+        // positional / multi-letter forms would misrender, so decline them to a
+        // byte-exact `Directive{Unknown}` here (mirrors how
+        // `classify_forward_accent_dot` validates via `compose_accent_dots`).
+        if let ForwardAttr::Accent(mark) = attr {
+            let mut cs = only.chars();
+            match (cs.next(), cs.next()) {
+                (Some(letter), None) if compose_accent(letter, mark).is_some() => {}
+                _ => return None,
+            }
+        }
         let &PairEvent::PairOpen {
             span: open_span, ..
         } = view.events.get(open_idx)?
@@ -1717,8 +1729,31 @@ pub(super) fn forward_attr_from_suffix(s: &str) -> Option<ForwardAttr> {
         // comma-joined compound (`「3」は上付き小文字、「1/143」は分数`) yields a
         // suffix that is not exactly `分数`, so it stays `Directive{Unknown}`.
         "分数" => ForwardAttr::Fraction,
-        _ => return parse_font_size_suffix(s).or_else(|| parse_align_end_suffix(s)),
+        _ => {
+            return parse_font_size_suffix(s)
+                .or_else(|| parse_align_end_suffix(s))
+                .or_else(|| parse_accent_suffix(s));
+        }
     })
+}
+
+/// Parse a forward accent-mark suffix (`アクサン（´）付き` / `アクサン（｀）付き` /
+/// `ウムラウト（¨）付き`) into a [`ForwardAttr::Accent`].
+///
+/// The mark *word* does not distinguish acute from grave — the bracketed symbol
+/// does (´ U+00B4 vs ｀ U+FF40); ウムラウト（¨） (¨ U+00A8) is the umlaut. Only the
+/// canonical fullwidth-paren spelling (U+FF08 / U+FF09) is claimed; the
+/// classifier separately requires the quoted target to be a *single composable
+/// letter*, so word-qualified / positional / half-width-paren forms decline.
+/// Any other suffix returns `None` (→ `Directive{Unknown}`).
+fn parse_accent_suffix(s: &str) -> Option<ForwardAttr> {
+    let mark = match s {
+        "アクサン（´）付き" => AccentMark::Acute,
+        "アクサン（｀）付き" => AccentMark::Grave,
+        "ウムラウト（¨）付き" => AccentMark::Umlaut,
+        _ => return None,
+    };
+    Some(ForwardAttr::Accent(mark))
 }
 
 /// Parse a `文末より N字上げ揃え` / `行末より N字上がり` end-alignment suffix into
@@ -1753,7 +1788,30 @@ fn parse_font_size_suffix(s: &str) -> Option<ForwardAttr> {
 
 #[cfg(test)]
 mod tests {
-    use super::{EnclosureKind, ForwardAttr, forward_attr_from_suffix};
+    use super::{AccentMark, EnclosureKind, ForwardAttr, forward_attr_from_suffix};
+
+    #[test]
+    fn accent_suffixes_map_to_their_marks() {
+        // The bracketed symbol distinguishes acute (´) from grave (｀); ウムラウト
+        // (¨) is the umlaut. Fullwidth parens (U+FF08 / U+FF09) are canonical.
+        assert_eq!(
+            forward_attr_from_suffix("アクサン（´）付き"),
+            Some(ForwardAttr::Accent(AccentMark::Acute))
+        );
+        assert_eq!(
+            forward_attr_from_suffix("アクサン（｀）付き"),
+            Some(ForwardAttr::Accent(AccentMark::Grave))
+        );
+        assert_eq!(
+            forward_attr_from_suffix("ウムラウト（¨）付き"),
+            Some(ForwardAttr::Accent(AccentMark::Umlaut))
+        );
+        // Half-width parens are not the canonical spelling — declined here (the
+        // corpus half-width forms are all word-qualified anyway).
+        assert_eq!(forward_attr_from_suffix("アクサン(´)付き"), None);
+        // A bare mark word with no bracketed symbol is not a claimable suffix.
+        assert_eq!(forward_attr_from_suffix("アクサン付き"), None);
+    }
 
     #[test]
     fn enclosure_suffixes_map_to_their_kinds() {
