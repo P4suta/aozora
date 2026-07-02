@@ -1,5 +1,5 @@
 {
-  "unknown_total": 1974,
+  "unknown_total": 2374,
   "files_analyzed": 17889,
-  "note": "ratchet-down Unknown-degradation budget; lower on improvement, never raise. Re-capture with `xtask corpus audit-gate --update`. 2026-07-03: raised 1884->1974 as a one-time UNDERCOUNT CORRECTION, not a recogniser regression — the bracket-hard-scope pair fix (Category C sink) surfaces directives whose bodies hold an unbalanced quote and that previously SANK to plain (never reaching the Directive{Unknown} counter at all). Balanced directives are byte-identical (render_gate + fast path); only previously-hidden unbalanced-quote directives now count. Render output is strictly better (leaked brackets are gone)."
+  "note": "ratchet-down Unknown-degradation budget; lower on improvement, never raise. Re-capture with `xtask corpus audit-gate --update`. Two one-time UNDERCOUNT CORRECTIONS during the 2026-07-03 ruby-leak campaign, both surfacing directives that previously SANK/folded to plain (never reaching the Directive{Unknown} counter) — not recogniser regressions; top-level directives stay byte-identical: 1884->1974 (bracket-hard-scope pair fix, Category C) and 1974->2374 (quote-interior directive/gaiji, WS-2b). Render output is strictly better both times."
 }

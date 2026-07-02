@@ -1,0 +1,1 @@
+(document (text) (gaiji (gaiji_marker) (slug body: (slug_body))) (text) (newline))
