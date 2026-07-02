@@ -1,0 +1,5 @@
+# Regression: a ruby whose base sits inside a 「…」 quote pair (dialogue)
+# used to leak as literal 《…》 — the stream-through path swallowed the
+# nested pair. It now forms a <ruby> like any other.
+feature = "ruby"
+level = "must"

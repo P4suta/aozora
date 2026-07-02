@@ -63,6 +63,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **notation / parser**: 振り仮名 (ruby) inside a `「…」` quote — the vast majority
+  of dialogue ruby — no longer leaks as literal `《…》`. The classifier's
+  stream-through path for `「…」` / `〔…〕` quotes swallowed every nested pair, so a
+  `《reading》` (or `≪…≫`) inside dialogue never reached the ruby recogniser and
+  replayed as plain text (`「駄目《だめ》」` rendered `「駄目《だめ》」` instead of a
+  `<ruby>`). It now opens a sub-frame for the nested Ruby / AngleQuote and
+  recognises it exactly as at top level; base detection is unchanged, so the
+  explicit `｜base《reading》` form works too. Over the 17,889-work corpus this
+  clears ruby leaks in 5,994 files (rendered-HTML ruby-leak rate 51.1 % →
+  17.6 %; the remainder is gaiji-base ruby, fixed separately). Round-trip
+  byte-identity, the round-trip fixed point, and source-region tiling all still
+  hold. Regression fixtures: `ruby_in_quote`, `ruby_barred_in_quote`,
+  `ruby_multi_in_quote`.
 - **go**: The Go host SDK's `Open` called a non-existent `schemaVersion`
   plugin export and failed with `unknown function: schemaVersion` on every
   use; the Extism plugin exports `schema_version` (snake_case, matching every
