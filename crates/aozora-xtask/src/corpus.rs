@@ -194,6 +194,26 @@ pub(crate) enum CorpusTarget {
         #[arg(long)]
         root: Option<PathBuf>,
     },
+    /// Render-leak audit: render every corpus document to HTML and report
+    /// where aozora notation control markers (`《 》 ［＃ ｜`) survive into
+    /// the *visible* text of the output — the signature of a notation that
+    /// failed to resolve (e.g. a ruby that never attached to its base and
+    /// leaked as literal `《…》`). Report-only measurement (always exit 0);
+    /// the enforcing gate is `render-leak-gate`. The legitimate literal
+    /// `《…》` an `≪…≫` angle-quote emits (inside an `aozora-angle-quote`
+    /// span) and empty ruby `《》` are excluded structurally.
+    RenderAudit {
+        /// Corpus root directory of `.txt` files. Defaults to
+        /// `$AOZORA_CORPUS_ROOT`.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Sample offenders to print per marker category.
+        #[arg(long, default_value_t = 12)]
+        top: usize,
+        /// Process at most N files (debugging; default: whole corpus).
+        #[arg(long)]
+        limit: Option<usize>,
+    },
 }
 
 pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
@@ -220,6 +240,9 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             tolerance,
         } => audit_gate(root.as_deref(), baseline, *update, *tolerance),
         CorpusTarget::Verbatim { root } => verbatim_gate(root.as_deref()),
+        CorpusTarget::RenderAudit { root, top, limit } => {
+            render_audit(root.as_deref(), *top, *limit)
+        }
     }
 }
 
@@ -1175,6 +1198,323 @@ fn verbatim_one(item: CorpusItem) -> VerbatimOutcome {
     }
 }
 
+/// A notation control marker that leaked into rendered visible text.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LeakCat {
+    /// A non-empty ruby delimiter `《` (with `》`) survived — a ruby that
+    /// never attached to its base and replayed as literal text.
+    Ruby,
+    /// A fullwidth ruby-base marker `｜` survived — the renderer should
+    /// always consume it.
+    Bar,
+    /// An annotation open `［＃` survived — a directive (incl. gaiji
+    /// `※［＃…］`) that never resolved.
+    Directive,
+}
+
+/// One leaked marker plus a small visible-text context window.
+struct LeakHit {
+    cat: LeakCat,
+    snippet: String,
+}
+
+/// Per-document render-audit outcome.
+enum DocRenderOutcome {
+    /// Rendered, no leaked markers.
+    Clean,
+    /// Neither UTF-8 nor Shift_JIS — skipped (mirrors `corpus_sweep`).
+    DecodeSkipped,
+    /// Skipped by `--limit` (not rendered).
+    LimitSkipped,
+    /// `to_html()` panicked; carries the label.
+    Panicked(String),
+    /// Rendered and leaked ≥1 marker.
+    Leaked { label: String, hits: Vec<LeakHit> },
+}
+
+/// Render-leak audit (report-only): render every corpus document to HTML
+/// and count aozora notation control markers surviving into *visible*
+/// text. Never fails — the enforcing counterpart is `render_leak_gate`.
+fn render_audit(root: Option<&Path>, top: usize, limit: Option<usize>) -> Result<(), String> {
+    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
+        eprintln!(
+            "xtask corpus render-audit: skipped — pass --root or set $AOZORA_CORPUS_ROOT (no corpus to walk)"
+        );
+        return Ok(());
+    }
+
+    let corpus = resolve_corpus(root)?;
+    let root_display = corpus.root().display().to_string();
+    eprintln!("xtask corpus render-audit: rendering {root_display} …");
+    let start = Instant::now();
+
+    // A ruby leak on a pathological doc must never abort the sweep.
+    let prev_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+
+    let counter = std::sync::atomic::AtomicUsize::new(0);
+    let results: Vec<Result<DocRenderOutcome, aozora_corpus::CorpusError>> =
+        par_load_decoded(&corpus, |item| {
+            if let Some(n) = limit
+                && counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= n
+            {
+                return DocRenderOutcome::LimitSkipped;
+            }
+            render_audit_one(item)
+        });
+
+    panic::set_hook(prev_hook);
+
+    let mut scanned = 0usize;
+    let mut decode_skipped = 0usize;
+    let mut limit_skipped = 0usize;
+    let mut panicked = 0usize;
+    let mut panicked_labels: Vec<String> = Vec::new();
+    let mut walk_errors = 0usize;
+    let mut ruby = CatAgg::default();
+    let mut bar = CatAgg::default();
+    let mut directive = CatAgg::default();
+
+    for r in results {
+        match r {
+            Err(_) => walk_errors += 1,
+            Ok(DocRenderOutcome::Clean) => scanned += 1,
+            Ok(DocRenderOutcome::DecodeSkipped) => decode_skipped += 1,
+            Ok(DocRenderOutcome::LimitSkipped) => limit_skipped += 1,
+            Ok(DocRenderOutcome::Panicked(label)) => {
+                scanned += 1;
+                panicked += 1;
+                if panicked_labels.len() < top {
+                    panicked_labels.push(label);
+                }
+            }
+            Ok(DocRenderOutcome::Leaked { label, hits }) => {
+                scanned += 1;
+                for cat in [LeakCat::Ruby, LeakCat::Bar, LeakCat::Directive] {
+                    let agg = match cat {
+                        LeakCat::Ruby => &mut ruby,
+                        LeakCat::Bar => &mut bar,
+                        LeakCat::Directive => &mut directive,
+                    };
+                    agg.record(cat, &label, &hits, top);
+                }
+            }
+        }
+    }
+
+    let elapsed = start.elapsed().as_secs_f64();
+    let denom = scanned.max(1) as f64;
+    eprintln!(
+        "\nxtask corpus render-audit: rendered {scanned} docs \
+         ({decode_skipped} undecodable, {limit_skipped} limit-skipped, \
+         {panicked} panicked, {walk_errors} walk-error(s)) in {elapsed:.1}s\n"
+    );
+    for (name, glyphs, agg) in [
+        ("ruby", "《…》", &ruby),
+        ("bar", "｜", &bar),
+        ("directive", "［＃…］", &directive),
+    ] {
+        let rate = 100.0 * agg.files as f64 / denom;
+        eprintln!(
+            "  {name:<9} {glyphs:<6} leaks: {:>6} files ({rate:5.2}%), {:>7} occurrences",
+            agg.files, agg.occurrences
+        );
+    }
+    for (name, agg) in [("ruby", &ruby), ("bar", &bar), ("directive", &directive)] {
+        if agg.samples.is_empty() {
+            continue;
+        }
+        eprintln!("\n  [{name}] sample offenders:");
+        for (label, snippet) in &agg.samples {
+            eprintln!("    {label} — …{snippet}…");
+        }
+    }
+    if !panicked_labels.is_empty() {
+        eprintln!("\n  [panicked] to_html() panicked on:");
+        for label in &panicked_labels {
+            eprintln!("    {label}");
+        }
+    }
+    Ok(())
+}
+
+/// Aggregated leak stats for one marker category.
+#[derive(Default)]
+struct CatAgg {
+    files: usize,
+    occurrences: usize,
+    samples: Vec<(String, String)>,
+}
+
+impl CatAgg {
+    /// Fold one document's hits of category `cat` into the aggregate.
+    fn record(&mut self, cat: LeakCat, label: &str, hits: &[LeakHit], top: usize) {
+        let n = hits.iter().filter(|h| h.cat == cat).count();
+        if n == 0 {
+            return;
+        }
+        self.files += 1;
+        self.occurrences += n;
+        if self.samples.len() < top
+            && let Some(hit) = hits.iter().find(|h| h.cat == cat)
+        {
+            self.samples.push((label.to_owned(), hit.snippet.clone()));
+        }
+    }
+}
+
+/// Render one document and scan its visible text for leaked markers.
+fn render_audit_one(item: CorpusItem) -> DocRenderOutcome {
+    let label = item.label;
+    let decoded = match decode_auto(&item.bytes) {
+        Ok(t) => t.into_owned(),
+        Err(_) => return DocRenderOutcome::DecodeSkipped,
+    };
+    // Render only the literary body — the standard header legend
+    // documents the notation glyphs verbatim and would swamp the signal.
+    let text = aozora_body(&decoded);
+    let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| Document::new(text).parse().to_html()))
+    else {
+        return DocRenderOutcome::Panicked(label);
+    };
+    let hits = visible_leak_markers(&html);
+    if hits.is_empty() {
+        DocRenderOutcome::Clean
+    } else {
+        DocRenderOutcome::Leaked { label, hits }
+    }
+}
+
+/// Scan rendered HTML for notation control markers surviving into the
+/// visible text. Two legitimate sources of `《…》` are excluded
+/// structurally: empty ruby `《》` (a `《》：ルビ` legend / `empty_ruby`
+/// fixture), and the literal delimiters an `≪…≫` angle-quote emits inside
+/// an `aozora-angle-quote` span (stripped, nesting-aware, by
+/// [`strip_to_visible_text`]).
+fn visible_leak_markers(html: &str) -> Vec<LeakHit> {
+    let visible = strip_to_visible_text(html);
+    let text = html_unescape_min(&visible);
+    let chars: Vec<char> = text.chars().collect();
+    let mut hits = Vec::new();
+    for idx in 0..chars.len() {
+        let cat = match chars[idx] {
+            // Non-empty ruby-open: `《` not immediately closed by `》`.
+            '《' if chars.get(idx + 1) != Some(&'》') => Some(LeakCat::Ruby),
+            '｜' => Some(LeakCat::Bar),
+            // Annotation open `［＃` (incl. gaiji `※［＃`).
+            '［' if chars.get(idx + 1) == Some(&'＃') => Some(LeakCat::Directive),
+            _ => None,
+        };
+        if let Some(cat) = cat {
+            hits.push(LeakHit {
+                cat,
+                snippet: snippet_around(&chars, idx),
+            });
+        }
+    }
+    hits
+}
+
+/// Collect the visible text of `html`: drop everything inside `<…>` tags,
+/// and drop the entire content of spans that do not display —
+/// `aozora-angle-quote` (whose `《…》` delimiters are legitimate output)
+/// and any element carrying the `hidden` attribute (a resolved directive
+/// preserves its raw `［＃…］` inside `<span class="aozora-directive"
+/// hidden>`, which the reader never sees). Span nesting is tracked so a
+/// gaiji/ruby span nested inside a suppressed span is suppressed with it.
+fn strip_to_visible_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let n = html.len();
+    let bytes = html.as_bytes();
+    let mut i = 0;
+    let mut span_depth: i32 = 0;
+    // `Some(d)`: suppressing text until span depth returns to `d`.
+    let mut suppress_target: Option<i32> = None;
+    while i < n {
+        if bytes[i] == b'<' {
+            let end = html[i..].find('>').map_or(n - 1, |o| i + o);
+            let tag = &html[i..=end];
+            if tag.starts_with("</span") {
+                span_depth -= 1;
+                if let Some(t) = suppress_target
+                    && span_depth <= t
+                {
+                    suppress_target = None;
+                }
+            } else if is_span_open(tag) {
+                let suppressed = tag.contains("aozora-angle-quote") || tag.contains(" hidden");
+                if suppress_target.is_none() && suppressed {
+                    suppress_target = Some(span_depth);
+                }
+                span_depth += 1;
+            }
+            i = end + 1;
+        } else {
+            let ch = html[i..].chars().next().unwrap_or('\u{fffd}');
+            if suppress_target.is_none() {
+                out.push(ch);
+            }
+            i += ch.len_utf8();
+        }
+    }
+    out
+}
+
+/// Strip the standard Aozora boilerplate so the audit sees only the
+/// literary body: the header legend block (everything up to and including
+/// the 2nd delimiter line — a run of ≥10 `-`), which literally documents
+/// `《》 ｜ ［＃］` and would otherwise register as leaks, and the
+/// bibliographic footer from the first `底本：` line onward.
+fn aozora_body(src: &str) -> String {
+    let lines: Vec<&str> = src.lines().collect();
+    let is_delim = |l: &str| {
+        let t = l.trim_end();
+        t.len() >= 10 && t.chars().all(|c| c == '-')
+    };
+    let delims: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| is_delim(l))
+        .map(|(i, _)| i)
+        .collect();
+    let start = if delims.len() >= 2 { delims[1] + 1 } else { 0 };
+    let end = lines
+        .iter()
+        .enumerate()
+        .skip(start)
+        .find(|(_, l)| {
+            let t = l.trim_start();
+            t.starts_with("底本：") || t.starts_with("底本:")
+        })
+        .map_or(lines.len(), |(i, _)| i);
+    lines[start..end].join("\n")
+}
+
+/// `<span>` or `<span …>` opening tag (not `</span>`, not `<sub>`/`<sup>`).
+fn is_span_open(tag: &str) -> bool {
+    let Some(rest) = tag.strip_prefix("<span") else {
+        return false;
+    };
+    matches!(rest.as_bytes().first(), Some(b' ' | b'>' | b'/'))
+}
+
+/// Undo the five entities `aozora-render`'s escaper emits (`&amp;` last so
+/// `&amp;lt;` → `&lt;`, not `<`).
+fn html_unescape_min(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&amp;", "&")
+}
+
+/// A short visible-text window around a leak, for triage.
+fn snippet_around(chars: &[char], idx: usize) -> String {
+    let start = idx.saturating_sub(6);
+    let end = (idx + 8).min(chars.len());
+    chars[start..end].iter().collect()
+}
+
 fn resolve_corpus(root: Option<&Path>) -> Result<FilesystemCorpus, String> {
     let path: PathBuf = match root {
         Some(p) => p.to_path_buf(),
@@ -1619,6 +1959,96 @@ mod tests {
         assert_eq!(band_slot(LARGE_MAX - 1), 2, "just under 2MB → band 2");
         assert_eq!(band_slot(LARGE_MAX), 3, "2MB boundary → band 3");
         assert_eq!(band_slot(u32::MAX), 3, "huge → band 3");
+    }
+
+    // ---- render-leak scanner ------------------------------------------
+
+    fn cats(html: &str) -> (usize, usize, usize) {
+        let hits = visible_leak_markers(html);
+        let count = |c: LeakCat| hits.iter().filter(|h| h.cat == c).count();
+        (
+            count(LeakCat::Ruby),
+            count(LeakCat::Bar),
+            count(LeakCat::Directive),
+        )
+    }
+
+    #[test]
+    fn leak_detects_quote_interior_ruby() {
+        // The reported bug: a ruby that leaked as literal `《…》`.
+        assert_eq!(cats("<p>「駄目《だめ》」</p>"), (1, 0, 0));
+    }
+
+    #[test]
+    fn leak_detects_barred_ruby_and_directive_in_quote() {
+        assert_eq!(cats("<p>「一｜時《じ》」</p>"), (1, 1, 0));
+        assert_eq!(
+            cats("<p>「娘［＃１段階小さな文字］」</p>"),
+            (0, 0, 1),
+            "leaked font-size directive inside a quote",
+        );
+    }
+
+    #[test]
+    fn leak_ignores_resolved_ruby() {
+        // A correctly-formed <ruby> emits no bare 《》.
+        let html = "<p><ruby>瞳<rp>(</rp><rt>ひとみ</rt><rp>)</rp></ruby></p>";
+        assert_eq!(cats(html), (0, 0, 0));
+    }
+
+    #[test]
+    fn leak_ignores_angle_quote_delimiters() {
+        // `≪…≫` legitimately renders literal 《…》 inside an angle-quote span.
+        let html = "<p><span class=\"aozora-angle-quote\">《重要》</span>な記述。</p>";
+        assert_eq!(cats(html), (0, 0, 0));
+    }
+
+    #[test]
+    fn leak_ignores_nested_span_inside_angle_quote() {
+        // A gaiji span nested inside an angle-quote must be suppressed with
+        // it (span-depth tracking), and the outer 《…》 delimiters too.
+        let html = "<p><span class=\"aozora-angle-quote\">《<span class=\"aozora-gaiji\" \
+                    data-codepoint=\"U+775C\">睜</span>》</span></p>";
+        assert_eq!(cats(html), (0, 0, 0));
+    }
+
+    #[test]
+    fn leak_ignores_hidden_directive() {
+        // A resolved directive keeps its raw ［＃…］ inside a hidden span.
+        let html = "<p><span class=\"aozora-directive\" hidden>［＃］</span>：入力者注</p>";
+        assert_eq!(cats(html), (0, 0, 0));
+    }
+
+    #[test]
+    fn leak_ignores_empty_ruby() {
+        // `《》` with no reading renders literally by design (empty_ruby).
+        assert_eq!(cats("<p>青梅《》</p>"), (0, 0, 0));
+    }
+
+    #[test]
+    fn aozora_body_strips_header_and_footer() {
+        let src = "表題\n著者\n\n\
+                   -------------------------------------------------------\n\
+                   【テキスト中に現れる記号について】\n\
+                   《》：ルビ\n\
+                   ｜：ルビの付く文字列の始まりを特定する記号\n\
+                   -------------------------------------------------------\n\
+                   \n本文の「駄目《だめ》」です。\n\n\
+                   底本：「作品集」出版社\n入力：誰か\n";
+        let body = aozora_body(src);
+        assert!(body.contains("本文の"), "body kept: {body:?}");
+        assert!(!body.contains("《》：ルビ"), "header legend stripped");
+        assert!(!body.contains("ルビの付く文字列"), "bar legend stripped");
+        assert!(!body.contains("底本"), "footer stripped");
+    }
+
+    #[test]
+    fn is_span_open_discriminates() {
+        assert!(is_span_open("<span>"));
+        assert!(is_span_open("<span class=\"aozora-gaiji\">"));
+        assert!(!is_span_open("</span>"));
+        assert!(!is_span_open("<sub>"));
+        assert!(!is_span_open("<sup>"));
     }
 
     // ---- year_of ------------------------------------------------------
