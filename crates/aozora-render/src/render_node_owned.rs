@@ -16,14 +16,14 @@
 use core::fmt::{self, Write};
 
 use aozora_syntax::GaijiCanonical;
-use aozora_syntax::accent::compose_accent_dots;
+use aozora_syntax::accent::{compose_accent, compose_accent_dots};
 use aozora_syntax::format::ForwardOrigin;
 use aozora_syntax::owned::{
     AngleQuoteOwned, ContentOwned, ContentRange, DirectiveOwned, ForwardFormatOwned,
     GaijiCanonicalOwned, GaijiOwned, HeadingHintOwned, HeadingOwned, IllustrationOwned,
     KaeritenOwned, MarginNoteOwned, NodeOwned, NodeStore, RubyOwned, SegmentOwned,
 };
-use aozora_syntax::{DirectiveKind, EnclosureKind, ForwardAttr, RubySide};
+use aozora_syntax::{AccentMark, DirectiveKind, EnclosureKind, ForwardAttr, RubySide};
 
 use crate::classes;
 use crate::render_node::{
@@ -247,6 +247,10 @@ fn render_format_owned<W: Write>(
         // ドット付き (#331): compose the addressed letters of the reclaimed run
         // into their precomposed dotted glyphs (ṁ / ṣ) — see `render_accent_dot`.
         ForwardAttr::AccentDot => render_accent_dot(f, store, out),
+        // アクサン / ウムラウト: compose the single target letter with its accent
+        // mark into the precomposed glyph (é / ö) — see `render_accent`. Its own
+        // arm keeps it off the bold catch-all below (the #376/#385 bug class).
+        ForwardAttr::Accent(mark) => render_accent(f, mark, store, out),
         // 文末より N字上げ揃え: end-align the run. Reuses the line-form's
         // `aozora-align-end` class / `data-offset` so the two scopes style
         // identically; without this explicit arm the run would fall through to
@@ -329,6 +333,31 @@ fn render_accent_dot<W: Write>(
         },
         // A structured / body-less target can't be composed; emit as-is.
         _ => render_content_range_owned(f.target, store, out)?,
+    }
+    out.write_str("</span>")
+}
+
+/// Render a forward accent-mark forward: compose the single target letter with
+/// its accent `mark` into the precomposed glyph (é / ö) inside an
+/// `aozora-accent` span. The shared composer (also the classifier's validator)
+/// is the single authority; a structured or non-composable target — unreachable
+/// post-classify — falls back to the target verbatim rather than dropping it.
+fn render_accent<W: Write>(
+    f: &ForwardFormatOwned,
+    mark: AccentMark,
+    store: &NodeStore,
+    out: &mut W,
+) -> fmt::Result {
+    out.write_str(r#"<span class="aozora-accent">"#)?;
+    match store.content_range_as_plain(f.target) {
+        Some(run) => match run.chars().next().and_then(|c| compose_accent(c, mark)) {
+            Some(glyph) => out.write_char(glyph)?,
+            // Unreachable post-classify (validated single composable letter);
+            // emit the run rather than drop it.
+            None => escape_text(run, out)?,
+        },
+        // A structured target can't be composed; emit as-is.
+        None => render_content_range_owned(f.target, store, out)?,
     }
     out.write_str("</span>")
 }

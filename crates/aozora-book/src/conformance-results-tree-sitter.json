@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 82,
-  "passed": 43,
-  "failed": 39,
+  "total": 84,
+  "passed": 44,
+  "failed": 40,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,16 +15,30 @@
       "failed": 5
     },
     "should": {
-      "total": 56,
-      "passed": 22,
-      "failed": 34
+      "total": 58,
+      "passed": 23,
+      "failed": 35
     }
   },
   "cases": [
     {
+      "case": "accent_acute_forward",
+      "feature": "emphasis",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
       "case": "accent_decomposition_applied",
       "feature": "accent",
       "level": "may",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "accent_umlaut_forward",
+      "feature": "emphasis",
+      "level": "should",
       "passed": true,
       "message": null
     },

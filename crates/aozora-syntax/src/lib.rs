@@ -34,9 +34,9 @@ pub mod node_kind;
 pub mod owned;
 
 pub use format::{
-    AbsoluteSize, BlockStyles, ColumnCount, EnclosureKind, FontShift, Format, ForwardAttr,
-    ForwardOrigin, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth, RegionClose,
-    RegionFormat,
+    AbsoluteSize, AccentMark, BlockStyles, ColumnCount, EnclosureKind, FontShift, Format,
+    ForwardAttr, ForwardOrigin, IndentBlock, IndentLayout, Kumi, LineFormat, LineWidth,
+    RegionClose, RegionFormat,
 };
 pub use node_kind::NodeKind;
 
@@ -596,6 +596,9 @@ mod tests {
             // interned `accent_body`, never `keyword()`), so it rides the 太字
             // default too — `keyword()` is never called for it.
             (ForwardAttr::AccentDot, "太字"),
+            // Accent's suffix carries the bracketed mark symbol (serialized in a
+            // dedicated arm, never `keyword()`), so it rides the 太字 default too.
+            (ForwardAttr::Accent(AccentMark::Acute), "太字"),
         ];
         for (attr, kw) in cases {
             assert_eq!(attr.keyword(), kw, "keyword mismatch for {attr:?}");

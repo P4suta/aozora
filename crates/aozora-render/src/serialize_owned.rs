@@ -33,7 +33,8 @@ use aozora_syntax::owned::{
     SegmentOwned,
 };
 use aozora_syntax::{
-    BoutenPosition, DirectiveKind, EnclosureKind, ForwardAttr, RubySide, is_ruby_base_char,
+    AccentMark, BoutenPosition, DirectiveKind, EnclosureKind, ForwardAttr, RubySide,
+    is_ruby_base_char,
 };
 
 /// Options controlling how the owned AST is re-emitted to Aozora source.
@@ -386,10 +387,26 @@ fn emit_format_owned<W: Write>(
         // Anchor is not distinguished in the model (like LineFormat::AlignEnd);
         // canonicalise to 文末より…字上げ揃え, which re-parses to the same offset.
         write!(out, "文末より{offset}字上げ揃え")?;
+    } else if let ForwardAttr::Accent(mark) = f.attr {
+        // アクサン / ウムラウト: the suffix carries the bracketed mark symbol, not a
+        // bare keyword (so `keyword()` returns its 太字 default) — re-emit the
+        // exact source suffix for a byte-exact round-trip.
+        out.write_str(accent_suffix(mark))?;
     } else {
         out.write_str(f.attr.keyword())?;
     }
     out.write_char('］')
+}
+
+/// The exact `は`-suffix source for a forward accent [`AccentMark`], for a
+/// byte-exact round-trip: fullwidth parens (U+FF08 / U+FF09) wrapping the mark
+/// symbol (´ U+00B4 / ｀ U+FF40 / ¨ U+00A8).
+const fn accent_suffix(mark: AccentMark) -> &'static str {
+    match mark {
+        AccentMark::Acute => "アクサン（´）付き",
+        AccentMark::Grave => "アクサン（｀）付き",
+        AccentMark::Umlaut => "ウムラウト（¨）付き",
+    }
 }
 
 /// Serialize the bouten target(s) as quoted `「…」` runs. A single `Plain`
