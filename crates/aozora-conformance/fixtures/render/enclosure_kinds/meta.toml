@@ -1,0 +1,8 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# Forward-reference enclosure kinds that carry no embedded glyph: ○付き文字
+# (encircled character), 点線丸囲み (dotted circle), 二重罫囲み (double rule).
+# Each has its own EnclosureKind so serialize round-trips the exact keyword
+# (unlike 罫囲み/枠囲み/表罫囲み, which fold onto Rule). Real corpus targets,
+# each byte-adjacent to its directive so the run is reclaimed and rendered once.
+feature = "emphasis"
+level = "should"

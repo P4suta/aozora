@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 81,
+  "total": 82,
   "passed": 43,
-  "failed": 38,
+  "failed": 39,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,9 +15,9 @@
       "failed": 5
     },
     "should": {
-      "total": 55,
+      "total": 56,
       "passed": 22,
-      "failed": 33
+      "failed": 34
     }
   },
   "cases": [
@@ -220,6 +220,13 @@
     {
       "case": "empty_ruby_reading",
       "feature": "ruby",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "enclosure_kinds",
+      "feature": "emphasis",
       "level": "should",
       "passed": false,
       "message": "grammar produced ERROR / MISSING node(s)"
