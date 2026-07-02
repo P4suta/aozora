@@ -218,6 +218,7 @@ impl OwnedAllocator {
             base,
             reading,
             side: RubySide::Right,
+            base_emphasis: None,
         })
     }
 
@@ -236,6 +237,7 @@ impl OwnedAllocator {
             base,
             reading,
             side: RubySide::Left,
+            base_emphasis: None,
         })
     }
 

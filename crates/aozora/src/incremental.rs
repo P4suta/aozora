@@ -30,8 +30,8 @@ use std::sync::Arc;
 
 use crate::splice::{RegionRole, classify_node_ref};
 use crate::{
-    CoupledKind, Diagnostic, Document, NodeRefOwned, OwnedLexOutput, PairLink, SourceNodeOwned,
-    SpliceSafety,
+    CoupledKind, Diagnostic, Document, NodeOwned, NodeRefOwned, OwnedLexOutput, PairLink,
+    SourceNodeOwned, SpliceSafety,
 };
 
 /// Read-only byte view of a **sanitized** buffer the incremental engine cuts,
@@ -1204,6 +1204,14 @@ pub(crate) fn minimal_balanced_region<S: SanitizedSrc>(
 ///   (`［＃「X」は中見出し］` with no earlier `X`) shares this whole-prefix
 ///   classification — an earlier `X` flips it to a referent-bearing hint — and
 ///   is declined for the same reason.
+/// - **Render-coupled**: a **ruby with base emphasis** (`｜X《y》…［＃「X」は罫囲み］`,
+///   #384) is `Direct` in bytes (it fully owns its base + reading), but its
+///   *render* depends on the declined forward directive that set its
+///   `base_emphasis`. An edit that removes / retargets that directive without
+///   touching the ruby's region would reuse the cached ruby with a stale
+///   emphasis — a divergence the serialize byte-identity gate cannot see (the
+///   directive change is in the source) — so the ruby's region is not reusable
+///   while `base_emphasis.is_some()`.
 ///
 /// Single-sources the classification through [`classify_node_ref`] (the #202
 /// splice authority) so this region-reuse guard and the #202 splice cannot
@@ -1229,6 +1237,21 @@ fn node_forbids_region_reuse(node: NodeRefOwned) -> bool {
             | RegionRole::ForwardDetached
             | RegionRole::HeadingSelfContained
             | RegionRole::Kaeriten
+    ) || matches!(
+        // A ruby whose base carries render-only forward emphasis (#384) is
+        // `Direct` in bytes (it fully owns its base + reading), but its *render*
+        // now depends on a declined forward directive elsewhere: the lowering
+        // pass set `base_emphasis` because a downstream `［＃「X」は…］` named the
+        // base. An edit that removes / retargets that directive without
+        // intersecting the ruby's region would reuse the cached ruby with a
+        // stale `base_emphasis`, so the incremental render keeps an emphasis a
+        // full parse would drop. Serialize stays byte-identical (the directive
+        // change is in the source), so the byte-identity gate cannot catch it —
+        // decline region reuse here. `is_some()` reads only the ruby's `Copy`
+        // Option tag, so it is store-free (see the note below).
+        node,
+        NodeRefOwned::Inline(NodeOwned::Ruby(r)) | NodeRefOwned::BlockLeaf(NodeOwned::Ruby(r))
+            if r.base_emphasis.is_some()
     )
 }
 
@@ -1449,9 +1472,12 @@ fn splice_prologue<S: SanitizedSrc>(
 /// [`relexed_is_balanced`] via the prologue, and the
 /// [`node_forbids_region_reuse`] coupling guard),
 /// every one of which reads only a node's `source_span` (`Copy`,
-/// store-independent) and the `NodeRefOwned` **discriminant** (`BlockOpen` /
-/// `BlockClose` / `Inline` / …) — and never resolves a `StrId`/`ContentRange`
-/// against a store. The `debug_assert` below pins this invariant: a future
+/// store-independent), the `NodeRefOwned` **discriminant** (`BlockOpen` /
+/// `BlockClose` / `Inline` / …), plus the ruby's `Copy` `base_emphasis`
+/// Option-tag (`.is_some()`, a store-free read of the inline
+/// [`ForwardAttr`](aozora_syntax::ForwardAttr) niche) — and never resolves a
+/// `StrId`/`ContentRange` against a store. The `debug_assert` below pins this
+/// invariant: a future
 /// change that resolves a region node's payload here must instead graft it into
 /// a real store rather than read it off the transient re-lex store this
 /// `relexed` is about to drop.
@@ -2013,6 +2039,67 @@ mod tests {
         assert!(
             reparse_incremental_diagnostics_only(&base, &new_san.as_str(), edit).is_none(),
             "a self-contained forward must forbid region reuse",
+        );
+    }
+
+    /// #384 BREAK-2 guard (unit): a ruby whose base carries render-only forward
+    /// emphasis is `Direct` in bytes but render-coupled to a declined directive
+    /// elsewhere, so its region must not be reused. An un-decorated ruby stays
+    /// freely reusable.
+    #[test]
+    fn ruby_base_emphasis_forbids_region_reuse() {
+        use aozora_syntax::ForwardAttr;
+        use aozora_syntax::alloc_owned::OwnedAllocator;
+
+        let mut a = OwnedAllocator::new();
+        let base = a.content_plain("青梅");
+        let reading = a.content_plain("おうめ");
+        let NodeOwned::Ruby(mut r) = a.ruby(base, reading) else {
+            unreachable!("ruby() builds a Ruby node");
+        };
+        // Un-decorated: Direct, freely reusable.
+        assert!(
+            !node_forbids_region_reuse(NodeRefOwned::Inline(NodeOwned::Ruby(r))),
+            "a plain ruby must stay freely reusable (Direct)",
+        );
+        // Decorated (#384): render-coupled, must forbid region reuse.
+        r.base_emphasis = Some(ForwardAttr::Bold);
+        assert!(
+            node_forbids_region_reuse(NodeRefOwned::Inline(NodeOwned::Ruby(r))),
+            "a ruby whose base carries forward emphasis must forbid region reuse: \
+             its render depends on a declined directive outside the region",
+        );
+    }
+
+    /// #384 BREAK-2 guard (end-to-end): a doc with a ruby-base forward emphasis
+    /// (`｜青梅《おうめ》…［＃「青梅」は罫囲み］`) carries a `base_emphasis` ruby whose
+    /// render depends on the declined directive. A far-paragraph edit that does
+    /// not intersect the ruby must not reuse the cached ruby (stale emphasis), so
+    /// the diagnostics-only incremental reparse declines to a full parse.
+    #[test]
+    fn ruby_base_emphasis_doc_declines() {
+        let cached = owned("むかし。\n\n｜青梅《おうめ》は［＃「青梅」は罫囲み］\n");
+        let san = cached.sanitized.clone();
+        assert!(
+            cached.source_nodes.iter().any(|sn| matches!(
+                sn.node,
+                NodeRefOwned::Inline(NodeOwned::Ruby(r)) if r.base_emphasis.is_some()
+            )),
+            "fixture must carry a base_emphasis ruby, got {:?}",
+            cached
+                .source_nodes
+                .iter()
+                .map(|sn| sn.node)
+                .collect::<Vec<_>>(),
+        );
+        let at = san.find("むかし").expect("first paragraph") + "むかし".len();
+        let edit = at..at;
+        let new_san = apply_edit(&san, edit.clone(), "、！");
+        let pieces = pieces_of(&cached);
+        let base = DiagBaseRef::from_cached(&cached, &pieces);
+        assert!(
+            reparse_incremental_diagnostics_only(&base, &new_san.as_str(), edit).is_none(),
+            "a ruby-base forward emphasis must forbid region reuse",
         );
     }
 

@@ -146,9 +146,9 @@ pub struct ClassifiedSpan {
 /// # Memory layout
 ///
 /// The `Aozora(NodeOwned)` variant is *not* boxed —
-/// `NodeOwned` is `Copy` and 16 bytes, so storing it
-/// inline keeps `SpanKind` to `Aozora`-variant size while avoiding
-/// the `Box` indirection the legacy owned shape paid.
+/// `NodeOwned` is `Copy` and small (a handful of machine words), so
+/// storing it inline keeps `SpanKind` to `Aozora`-variant size while
+/// avoiding the `Box` indirection the legacy owned shape paid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SpanKind {
