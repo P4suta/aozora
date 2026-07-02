@@ -28,6 +28,7 @@ back.
 | [0019](./adr/0019-coupled-and-container-minimal-diff-splice.md)                      | Coupled and container minimal-diff splice                             | accepted |
 | [0020](./adr/0020-release-secret-hardening-trusted-publishing.md)                    | Release secret hardening via Trusted Publishing and environment gates | accepted |
 | [0021](./adr/0021-cli-release-stays-hand-written.md)                                 | CLI release stays hand-written (cargo-dist not adopted)               | accepted |
+| [0022](./adr/0022-notation-hygiene-layer-roles.md)                                   | Notation-hygiene layer roles: parser / linter / formatter             | accepted |
 
 ## Authoring a new ADR
 
