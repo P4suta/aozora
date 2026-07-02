@@ -12,6 +12,8 @@
 import * as vscode from "vscode";
 import type { LanguageClient } from "vscode-languageclient/node";
 
+import { aozoraNotationStyles } from "./notationStyles";
+
 interface RenderHtmlResult {
   html: string;
 }
@@ -121,21 +123,18 @@ function wrapStandalone(title: string, body: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${escapeHtml(title)}</title>
 <style>
-  html { writing-mode: vertical-rl; }
+  /* Self-contained share / print form. Prose font / colour come from
+     .aozora-notation; 縦書き from .aozora-vertical (both on <body>). */
   body {
-    font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif CJK JP", serif;
-    line-height: 1.9;
     max-block-size: 40em;
     margin: 1.5em auto;
     padding: 0 1em;
-    color: #222;
     background: #fdf6e3;
   }
-  rt { font-size: 0.55em; }
-  .aozora_gaiji { background: #fff7d6; padding: 0 0.1em; border-radius: 0.15em; }
+  ${aozoraNotationStyles}
 </style>
 </head>
-<body>
+<body class="aozora-notation aozora-vertical">
 ${body}
 </body>
 </html>

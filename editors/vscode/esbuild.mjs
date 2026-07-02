@@ -39,6 +39,12 @@ const baseConfig = {
   // typings) or smuggle in a duplicate that diverges from the host's
   // version.
   external: ["vscode"],
+  // Inline the renderer's canonical notation stylesheet
+  // (crates/aozora-render/assets/aozora-notation.css) as a string at
+  // build time, so the preview + HTML export share one source of truth
+  // instead of hand-rolling `.aozora-*` CSS (which had drifted to dead
+  // class names). The `.vsix` ships the inlined copy — no asset file.
+  loader: { ".css": "text" },
   // Production: minify for size, no source map (those leak source via
   // .vsix and inflate the package without runtime benefit). Dev: keep
   // source map for breakpoints in the Extension Development Host.

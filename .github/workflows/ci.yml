@@ -60,6 +60,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       book: ${{ steps.filter.outputs.book }}
       playground: ${{ steps.filter.outputs.playground }}
+      vscode: ${{ steps.filter.outputs.vscode }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d  # v4.0.1
@@ -89,6 +90,12 @@ jobs:
             # playground when the WASM engine changes.
             playground:
               - 'playground/**'
+            # The VS Code extension. It inlines the renderer's canonical
+            # stylesheet at build time, so a change to that asset (under
+            # `crates/**` = the `rust` filter, which the `vscode` job ORs)
+            # also re-validates it.
+            vscode:
+              - 'editors/vscode/**'
 
   msrv:
     needs: changes
@@ -513,6 +520,33 @@ jobs:
         working-directory: playground
         run: bun x playwright test
 
+  # VS Code extension: typecheck + lint + bundle + test. Previously
+  # ungated — the preview / HTML export had drifted to dead class names
+  # (`aozora_gaiji`, `aozora_tcy`) with no CI to catch it. ORs `rust`
+  # because the extension inlines the renderer's canonical stylesheet at
+  # build time (esbuild.mjs), so a change to that asset must re-check.
+  vscode:
+    needs: changes
+    if: needs.changes.outputs.vscode == 'true' || needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: '1.3.14'
+      - name: Install deps
+        working-directory: editors/vscode
+        run: bun install --frozen-lockfile
+      - name: Typecheck + lint
+        working-directory: editors/vscode
+        run: bun run check
+      - name: Bundle (inlines the canonical stylesheet)
+        working-directory: editors/vscode
+        run: bun run compile
+      - name: Test
+        working-directory: editors/vscode
+        run: bun run test
+
   # aarch64 cross-compile + qemu-user execution of the SIMD scanner
   # tests. The NEON Teddy kernel only builds on `target_arch =
   # "aarch64"`; this job runs the proptest cross-validation against
@@ -709,6 +743,7 @@ jobs:
       - book-test
       - playground-checks
       - e2e
+      - vscode
     runs-on: ubuntu-latest
     steps:
       # Fail iff a job that actually RAN ended in failure/cancelled. Jobs

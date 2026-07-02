@@ -17,6 +17,8 @@
 import * as vscode from "vscode";
 import type { LanguageClient } from "vscode-languageclient/node";
 
+import { aozoraNotationStyles } from "./notationStyles";
+
 interface RenderHtmlResult {
   html: string;
 }
@@ -221,35 +223,30 @@ async function renderInto(state: PreviewState, client: LanguageClient): Promise<
  *   flips, which would chop tall content. We unset both `max-width`
  *   and `max-height` and pin a fixed `height: calc(100vh - 3em)` so
  *   the WebView's natural horizontal scrollbar handles overflow.
- * - `text-orientation: mixed` (the default) keeps Latin / Arabic
- *   numerals horizontal inside vertical text — matching the typical
- *   typesetting convention. Two-digit numbers wrapped in
- *   `<span class="aozora_tcy">` (縦中横) are already handled by the
- *   renderer's CSS class taxonomy.
+ * - The canonical stylesheet's `.aozora-vertical` hook (applied to
+ *   `<body>`) supplies `writing-mode` / `text-orientation`; 縦中横
+ *   combines correctly via its `.aozora-combine-upright {
+ *   text-combine-upright: all }` rule.
  */
 function wrapHtml(body: string, mode: WritingMode): string {
-  const verticalRules =
+  // writing-mode / text-orientation come from the canonical
+  // `.aozora-vertical` hook on <body>; only the WebView container quirks
+  // for vertical layout live here — a `max-width` would become a *height*
+  // clamp once the writing mode flips and chop tall content, so unset it
+  // and pin a viewport-height box the WebView scrolls horizontally.
+  const verticalChrome =
     mode === "vertical"
       ? `
     body {
-      writing-mode: vertical-rl;
-      -webkit-writing-mode: vertical-rl;
-      text-orientation: mixed;
       max-width: none;
       max-height: none;
       height: calc(100vh - 3em);
       margin: 1.5em 0;
       padding: 1em 2em;
     }
-    rt {
-      /* Ruby above the base run reads top-down in vertical text;
-         the browser handles this once writing-mode is set, but the
-         existing letter-spacing nudges look right only in horizontal,
-         so we soften them here. */
-      letter-spacing: 0.02em;
-    }
   `
       : "";
+  const bodyClass = mode === "vertical" ? "aozora-notation aozora-vertical" : "aozora-notation";
   return `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -263,23 +260,13 @@ function wrapHtml(body: string, mode: WritingMode): string {
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'" />
   <title>Aozora Preview</title>
   <style>
+    /* Follow the editor theme instead of a hardcoded page colour; the
+       prose font / colour / line-height come from .aozora-notation. */
     body {
-      font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
-      line-height: 1.9;
       max-width: 42em;
       margin: 1.5em auto;
       padding: 0 1em;
-      color: #222;
-      background: #fdf6e3;
-    }
-    rt {
-      font-size: 0.55em;
-      letter-spacing: 0.05em;
-    }
-    .aozora_gaiji {
-      background: #fff7d6;
-      padding: 0 0.1em;
-      border-radius: 0.15em;
+      background: var(--vscode-editor-background, #fdf6e3);
     }
     h1, h2, h3 {
       font-weight: 600;
@@ -287,10 +274,11 @@ function wrapHtml(body: string, mode: WritingMode): string {
       margin-top: 2em;
     }
     p { margin: 0.5em 0; }
-    ${verticalRules}
+    ${aozoraNotationStyles}
+    ${verticalChrome}
   </style>
 </head>
-<body>
+<body class="${bodyClass}">
 ${body}
 </body>
 </html>`;
