@@ -11,7 +11,8 @@ use crate::render::{Align, Column, TableBuilder};
 use crate::{TableRenderable, Trace};
 
 /// Per-library sample distribution, produced by [`library_distribution`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LibraryReport {
     /// Total sample weight across the trace (the percentage denominator).
     pub total_samples: u64,
@@ -20,7 +21,8 @@ pub struct LibraryReport {
 }
 
 /// One library's share of the samples.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LibraryRow {
     /// Library name, or `(unattributed)` for samples whose leaf frame
     /// maps to no library.

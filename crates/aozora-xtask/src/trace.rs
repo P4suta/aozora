@@ -22,7 +22,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
 use aozora_trace::{
     Categorizer, RollupConfig, SymbolCache, Symbolicator, TableRenderable, Trace, analysis,
@@ -30,8 +30,24 @@ use aozora_trace::{
 
 #[derive(Args)]
 pub(crate) struct TraceArgs {
+    /// Output format for the report-producing subcommands (`cache`
+    /// writes a sidecar and ignores it). `human` is the fixed-width
+    /// tables; `json` is the typed report serialized as pretty JSON.
+    #[arg(long, value_enum, global = true, default_value_t = TraceFormat::Human)]
+    pub(crate) format: TraceFormat,
     #[command(subcommand)]
     pub(crate) cmd: TraceCmd,
+}
+
+/// Output selector for `xtask trace`, mirroring `aozora kinds`'
+/// two-value `--format`.
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub(crate) enum TraceFormat {
+    /// Fixed-width human tables (folded-stack text for `flame`). Default.
+    #[default]
+    Human,
+    /// Pretty-printed JSON of the typed report.
+    Json,
 }
 
 #[derive(Subcommand)]
@@ -115,6 +131,7 @@ pub(crate) enum TraceCmd {
 }
 
 pub(crate) fn dispatch(args: TraceArgs) -> Result<(), String> {
+    let format = args.format;
     match args.cmd {
         TraceCmd::Cache {
             trace,
@@ -126,26 +143,47 @@ pub(crate) fn dispatch(args: TraceArgs) -> Result<(), String> {
             top,
             inclusive,
             binary,
-        } => cmd_hot(&trace, top, inclusive, binary.as_deref()),
-        TraceCmd::Libs { trace } => cmd_libs(&trace),
+        } => emit(&cmd_hot(&trace, top, inclusive, binary.as_deref())?, format),
+        TraceCmd::Libs { trace } => emit(&cmd_libs(&trace)?, format),
         TraceCmd::Rollup {
             trace,
             config,
             binary,
-        } => cmd_rollup(&trace, config.as_deref(), binary.as_deref()),
+        } => emit(
+            &cmd_rollup(&trace, config.as_deref(), binary.as_deref())?,
+            format,
+        ),
         TraceCmd::Stacks {
             trace,
             pattern,
             limit,
             binary,
-        } => cmd_stacks(&trace, &pattern, limit, binary.as_deref()),
+        } => emit(
+            &cmd_stacks(&trace, &pattern, limit, binary.as_deref())?,
+            format,
+        ),
         TraceCmd::Compare {
             before,
             after,
             top,
             binary,
-        } => cmd_compare(&before, &after, top, binary.as_deref()),
-        TraceCmd::Flame { trace, binary } => cmd_flame(&trace, binary.as_deref()),
+        } => emit(
+            &cmd_compare(&before, &after, top, binary.as_deref())?,
+            format,
+        ),
+        TraceCmd::Flame { trace, binary } => {
+            // Flame's human form is folded-stack text, not a table, so it
+            // doesn't go through `emit`; JSON serialises the folded list.
+            let folded = cmd_flame(&trace, binary.as_deref())?;
+            match format {
+                TraceFormat::Human => print!("{}", analysis::render_folded(&folded)),
+                TraceFormat::Json => {
+                    let json = serde_json::to_string_pretty(&folded).map_err(|e| e.to_string())?;
+                    println!("{json}");
+                }
+            }
+            Ok(())
+        }
     }
 }
 
@@ -195,43 +233,41 @@ fn cmd_cache(trace_path: &Path, binary: &Path, lib_name: Option<&str>) -> Result
     Ok(())
 }
 
+// Each `cmd_*` loads and analyses, returning the typed report; `dispatch`
+// renders it via `emit` per `--format`. Keeping the format concern out of
+// these keeps them at their original arity (and single-purpose).
+
 fn cmd_hot(
     trace_path: &Path,
     top: usize,
     inclusive: bool,
     binary: Option<&Path>,
-) -> Result<(), String> {
+) -> Result<analysis::HotReport, String> {
     let trace = load_with_symbols(trace_path, binary)?;
-    let report = if inclusive {
+    Ok(if inclusive {
         analysis::hot_inclusive(&trace, top)
     } else {
         analysis::hot_leaves(&trace, top)
-    };
-    println!("{}", report.render_table());
-    Ok(())
+    })
 }
 
-fn cmd_libs(trace_path: &Path) -> Result<(), String> {
+fn cmd_libs(trace_path: &Path) -> Result<analysis::LibraryReport, String> {
     let trace = Trace::load(trace_path).map_err(|e| e.to_string())?;
-    let report = analysis::library_distribution(&trace);
-    println!("{}", report.render_table());
-    Ok(())
+    Ok(analysis::library_distribution(&trace))
 }
 
 fn cmd_rollup(
     trace_path: &Path,
     config: Option<&Path>,
     binary: Option<&Path>,
-) -> Result<(), String> {
+) -> Result<analysis::RollupReport, String> {
     let trace = load_with_symbols(trace_path, binary)?;
     let cfg = match config {
         Some(p) => RollupConfig::from_toml_file(p).map_err(|e| e.to_string())?,
         None => RollupConfig::aozora_defaults(),
     };
     let categorizer: Categorizer = cfg.compile().map_err(|e| e.to_string())?;
-    let report = analysis::rollup(&trace, &categorizer);
-    println!("{}", report.render_table());
-    Ok(())
+    Ok(analysis::rollup(&trace, &categorizer))
 }
 
 fn cmd_stacks(
@@ -239,12 +275,10 @@ fn cmd_stacks(
     pattern: &str,
     limit: usize,
     binary: Option<&Path>,
-) -> Result<(), String> {
+) -> Result<analysis::MatchedStacksReport, String> {
     let trace = load_with_symbols(trace_path, binary)?;
     let regex = regex::Regex::new(pattern).map_err(|e| format!("bad regex: {e}"))?;
-    let report = analysis::matching_stacks(&trace, &regex, limit);
-    println!("{}", report.render_table());
-    Ok(())
+    Ok(analysis::matching_stacks(&trace, &regex, limit))
 }
 
 fn cmd_compare(
@@ -252,19 +286,34 @@ fn cmd_compare(
     after: &Path,
     top: usize,
     binary: Option<&Path>,
-) -> Result<(), String> {
+) -> Result<analysis::ComparisonReport, String> {
     let b = load_with_symbols(before, binary)?;
     let a = load_with_symbols(after, binary)?;
-    let report = analysis::compare(&b, &a, top);
-    println!("{}", report.render_table());
-    Ok(())
+    Ok(analysis::compare(&b, &a, top))
 }
 
-fn cmd_flame(trace_path: &Path, binary: Option<&Path>) -> Result<(), String> {
+fn cmd_flame(
+    trace_path: &Path,
+    binary: Option<&Path>,
+) -> Result<Vec<analysis::FoldedStack>, String> {
     let trace = load_with_symbols(trace_path, binary)?;
-    let folded = analysis::folded_stacks(&trace);
-    let text = analysis::render_folded(&folded);
-    print!("{text}");
+    Ok(analysis::folded_stacks(&trace))
+}
+
+/// Emit a report as the human table or pretty JSON, per `--format`.
+/// Every analysis report is both [`TableRenderable`] and
+/// [`serde::Serialize`], so this one helper serves all of them.
+fn emit<R: TableRenderable + serde::Serialize>(
+    report: &R,
+    format: TraceFormat,
+) -> Result<(), String> {
+    match format {
+        TraceFormat::Human => println!("{}", report.render_table()),
+        TraceFormat::Json => {
+            let json = serde_json::to_string_pretty(report).map_err(|e| e.to_string())?;
+            println!("{json}");
+        }
+    }
     Ok(())
 }
 
