@@ -710,6 +710,32 @@ where
                     frame.links.push(u32::MAX);
                 }
             }
+            PairEvent::Unclosed { kind, .. } => {
+                // The pair stage force-resolved a dangling open. When a
+                // hard-scope `］` unwinds a non-bracket open buried above the
+                // bracket (see `pair.rs`), drop its inner-stack entry so the
+                // buffer can still close on the following `PairClose(Bracket)`.
+                // The event stays in the body with no link (`u32::MAX`), so
+                // forward recognisers see an unresolved pair and decline —
+                // the body round-trips as raw bytes.
+                //
+                // Guard `pos > 0`: the frame's OUTERMOST open lives at
+                // inner-stack position 0 and may only be closed by a real
+                // `PairClose`. A hard-scope unwind never targets it (it pops
+                // opens stacked *above* the bracket), so a matching
+                // position-0 entry can only be that outermost open surfacing
+                // via the EOF drain — popping it would spuriously empty the
+                // inner stack and run recognition on a never-closed body. Not
+                // popping keeps the frame open for the replay-to-plain path,
+                // byte-identical to before.
+                if let Some(pos) = frame.inner_stack.iter().rposition(|&(k, _)| k == *kind)
+                    && pos > 0
+                {
+                    frame.inner_stack.remove(pos);
+                }
+                frame.body.push(event);
+                frame.links.push(u32::MAX);
+            }
             _ => {
                 frame.body.push(event);
                 frame.links.push(u32::MAX);

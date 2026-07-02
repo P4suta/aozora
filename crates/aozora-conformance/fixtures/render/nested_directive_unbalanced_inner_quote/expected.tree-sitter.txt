@@ -1,0 +1,1 @@
+(document (ERROR (ruby_base_implicit)) (slug body: (slug_body)) (ERROR (ruby_base_implicit)) (text) (ERROR) (text) (text) (text) (newline))

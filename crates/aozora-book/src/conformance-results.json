@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 96,
-  "passed": 96,
+  "total": 101,
+  "passed": 101,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 63,
-      "passed": 63,
+      "total": 68,
+      "passed": 68,
       "failed": 0
     }
   },
@@ -232,6 +232,27 @@
       "message": null
     },
     {
+      "case": "directive_body_unbalanced_quote",
+      "feature": "recovery",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "directive_indent_bare_quote",
+      "feature": "recovery",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "directive_typo_note_literal_quotes",
+      "feature": "recovery",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
       "case": "emphasis_mixed",
       "feature": "emphasis",
       "level": "should",
@@ -276,6 +297,13 @@
     {
       "case": "gaiji_bare",
       "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "gaiji_composed_glyph_unbalanced_quote",
+      "feature": "recovery",
       "level": "should",
       "passed": true,
       "message": null
@@ -486,6 +514,13 @@
     {
       "case": "nested_containers",
       "feature": "composite",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "nested_directive_unbalanced_inner_quote",
+      "feature": "recovery",
       "level": "should",
       "passed": true,
       "message": null
