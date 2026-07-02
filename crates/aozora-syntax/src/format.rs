@@ -567,9 +567,20 @@ impl ForwardAttr {
 #[non_exhaustive]
 pub enum LineFormat {
     /// `［＃天から N字下げ］` — indent the line by `amount` full-width chars.
+    ///
+    /// `end_offset` carries the *both-margin* compound
+    /// (`［＃N字下げ、地よりM字上げで］`): a single line set with both a head
+    /// indent (`amount`) and a foot-edge lift of `M` full-width chars —
+    /// `Some(M)` has the same foot-edge semantics as an
+    /// [`AlignEnd`](Self::AlignEnd) with `offset: M`. `None` is the plain
+    /// head-only indent.
     Indent {
         /// Full-width characters to indent by.
         amount: u8,
+        /// `Some(M)` lifts the line `M` full-width chars off the foot edge (the
+        /// `、地よりM字上げで` clause of the both-margin compound); `None` = a
+        /// plain head-only indent.
+        end_offset: Option<u8>,
     },
     /// `［＃地付き］` / `［＃地から N字上げ］` — end alignment.
     AlignEnd {

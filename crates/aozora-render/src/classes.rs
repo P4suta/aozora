@@ -296,7 +296,22 @@ mod tests {
         render_into(a.kaeriten("一"), &mut nodes);
         render_into(a.line(LineFormat::Center { page: true }), &mut nodes);
         render_into(a.line(LineFormat::Center { page: false }), &mut nodes);
-        render_into(a.line(LineFormat::Indent { amount: 2 }), &mut nodes);
+        render_into(
+            a.line(LineFormat::Indent {
+                amount: 2,
+                end_offset: None,
+            }),
+            &mut nodes,
+        );
+        // Both-margin compound emits the align-end classes alongside the indent
+        // classes (both stems already listed in `AOZORA_CLASSES`).
+        render_into(
+            a.line(LineFormat::Indent {
+                amount: 2,
+                end_offset: Some(2),
+            }),
+            &mut nodes,
+        );
         render_into(a.line(LineFormat::AlignEnd { offset: 0 }), &mut nodes);
         render_into(a.line(LineFormat::AlignEnd { offset: 2 }), &mut nodes);
         render_into(a.line(LineFormat::Bold), &mut nodes);
