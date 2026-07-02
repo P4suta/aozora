@@ -36,6 +36,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **perf / pipeline**: the classifier's per-ruby synthetic event stream
+  (`build_synth_ruby_view`) now lands in a `SmallVec<[_; 16]>` instead of two
+  fresh heap `Vec`s. A ruby is ~5 events, so it stays inline — and since the
+  ~200 ruby/file that dominate the corpus each paid two mallocs there, this was
+  **~67 % of all owned-lex heap allocations**. Owned allocation pressure drops
+  from **489.1 → 191.9 blocks/file (−61 %)** with byte-identical output and
+  small-band throughput unchanged/slightly up (owned/borrowed 1.07). The
+  `owned-alloc` ratchet baseline is lowered accordingly.
 - **api**: ⚠ BREAKING (source-only) — complete the `wire` → `json` migration by
   dropping the `*Wire` type suffix. `aozora::json::{SpanWire, DiagnosticWire,
   NodeWire, PairWire, ContainerPairWire, OffsetWire, SlugWire, ByteSpanWire,
