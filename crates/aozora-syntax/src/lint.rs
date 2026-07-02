@@ -41,6 +41,18 @@ const EXACT: &[(&str, &str)] = &[
     // Line font-size compound: gothic weight normalised to the sole recognised
     // line weight (太字). Lossy (gothic→bold) but faithful by Aozora convention.
     ("中文字、ゴシック体", "中文字、太字"),
+    // Region-close synonyms — okurigana drift / 文字下げ / 横書き=横組み /
+    // 横組みの表=表, all resolving to the canonical `ここで…終わり` close.
+    ("ここで字下げおわり", "ここで字下げ終わり"),
+    ("ここで字下げ終り", "ここで字下げ終わり"),
+    ("ここで文字下げ終わり", "ここで字下げ終わり"),
+    ("ここで横書き終わり", "ここで横組み終わり"),
+    ("ここで左から右への横組み終わり", "ここで横組み終わり"),
+    ("ここで横組みの表終わり", "ここで表終わり"),
+    // Region-open synonyms — 地付きで/こ地付き=地付き, 横書き=横組み.
+    ("地付きで", "地付き"),
+    ("こ地付き", "地付き"),
+    ("ここから横書き", "ここから横組み"),
 ];
 
 /// Map a non-canonical `［＃…］` directive body to its canonical spelling, or
@@ -63,9 +75,18 @@ fn is_digit_run(s: &str) -> bool {
             .all(|c| c.is_ascii_digit() || ('０'..='９').contains(&c))
 }
 
-/// Digit-preserving rules — the `{N}` run is copied verbatim.
+/// Digit-preserving rules — the `{N}` run is copied verbatim. Grouped by the
+/// scope each family normalises (font-size / region-open / region-close /
+/// alignment); the first group to claim the body wins.
 fn parameterized(body: &str) -> Option<String> {
-    // {N}回り大きな/小さな文字 → {N}段階…文字.
+    parameterized_font_size(body)
+        .or_else(|| parameterized_indent_open(body))
+        .or_else(|| parameterized_region_close(body))
+        .or_else(|| parameterized_align(body))
+}
+
+/// `{N}回り大きな/小さな文字` → `{N}段階…文字`.
+fn parameterized_font_size(body: &str) -> Option<String> {
     for size in ["大きな文字", "小さな文字"] {
         if let Some(n) = body
             .strip_suffix(size)
@@ -75,8 +96,13 @@ fn parameterized(body: &str) -> Option<String> {
             return Some(format!("{n}段階{size}"));
         }
     }
-    // ここか{N}字下げ / ここより{N}字下げ → ここから{N}字下げ.
-    for bad in ["ここか", "ここより"] {
+    None
+}
+
+/// Region-open indent synonyms → canonical `ここから{N}字下げ`.
+fn parameterized_indent_open(body: &str) -> Option<String> {
+    // ここか / ここより / 以下 {N}字下げ (malformed or 以下-prefixed open).
+    for bad in ["ここか", "ここより", "以下"] {
         if let Some(n) = body
             .strip_prefix(bad)
             .and_then(|rest| rest.strip_suffix("字下げ"))
@@ -85,8 +111,90 @@ fn parameterized(body: &str) -> Option<String> {
             return Some(format!("ここから{n}字下げ"));
         }
     }
+    // ここから最後まで{N}字下げ (drop 最後まで) / ここから{N}　字下げ (drop the
+    // stray full-width space).
+    if let Some(n) = body
+        .strip_prefix("ここから最後まで")
+        .and_then(|r| r.strip_suffix("字下げ"))
+        .filter(|n| is_digit_run(n))
+        .or_else(|| {
+            body.strip_prefix("ここから")
+                .and_then(|r| r.strip_suffix("　字下げ"))
+                .filter(|n| is_digit_run(n))
+        })
+    {
+        return Some(format!("ここから{n}字下げ"));
+    }
+    None
+}
+
+/// Region-close okurigana / magnitude / stray-bracket drift → `ここで…終わり`.
+/// Tail-anchored and digit-run guarded, so `、`-bearing compound closes (which
+/// carry a second axis) never match.
+fn parameterized_region_close(body: &str) -> Option<String> {
+    let inner = body.strip_prefix("ここで")?;
+    // ここで{N}字下げ終わり → ここで字下げ終わり (drop the redundant N).
+    if let Some(n) = inner.strip_suffix("字下げ終わり")
+        && is_digit_run(n)
+    {
+        return Some("ここで字下げ終わり".to_owned());
+    }
+    // ここで{N}段組[み]終わり → ここで段組終わり.
+    for tail in ["段組終わり", "段組み終わり"] {
+        if let Some(n) = inner.strip_suffix(tail)
+            && is_digit_run(n)
+        {
+            return Some("ここで段組終わり".to_owned());
+        }
+    }
+    // ここで{N}段階(大きな|小さな)文字終わり → ここで(大きな|小さな)文字終わり.
+    for size in ["大きな", "小さな"] {
+        if let Some(n) = inner.strip_suffix(&format!("段階{size}文字終わり"))
+            && is_digit_run(n)
+        {
+            return Some(format!("ここで{size}文字終わり"));
+        }
+    }
+    // ここで…終わり」 → drop a stray trailing `」`.
+    if let Some(head) = body.strip_suffix('」')
+        && head.ends_with("終わり")
+    {
+        return Some(head.to_owned());
+    }
+    None
+}
+
+/// 字上げ / 字下げ numeric spellings → the recognised alignment / indent leaf.
+fn parameterized_align(body: &str) -> Option<String> {
     // {N}字下げて → {N}字下げ.
     if let Some(n) = body.strip_suffix("字下げて")
+        && is_digit_run(n)
+    {
+        return Some(format!("{n}字下げ"));
+    }
+    // 地付き、地より{N}字アキ / 字あき → 地から{N}字上げ (bottom-align with gap).
+    for tail in ["字アキ", "字あき"] {
+        if let Some(n) = body
+            .strip_prefix("地付き、地より")
+            .and_then(|r| r.strip_suffix(tail))
+            && is_digit_run(n)
+        {
+            return Some(format!("地から{n}字上げ"));
+        }
+    }
+    // 行末から{N}字上で地付き → 地から{N}字上げ.
+    if let Some(n) = body
+        .strip_prefix("行末から")
+        .and_then(|r| r.strip_suffix("字上で地付き"))
+        && is_digit_run(n)
+    {
+        return Some(format!("地から{n}字上げ"));
+    }
+    // この行{N}字下げ → {N}字下げ (the digit-run guard excludes editorial
+    // `この行は…N字下げ` prose).
+    if let Some(n) = body
+        .strip_prefix("この行")
+        .and_then(|r| r.strip_suffix("字下げ"))
         && is_digit_run(n)
     {
         return Some(format!("{n}字下げ"));
@@ -221,6 +329,27 @@ pub const CATALOGUE_SAMPLES: &[&str] = &[
     "「甫」に「ママ」と注記",
     // Bare parenthesised 縦中横 target.
     "（一）は縦中横",
+    // Region-close synonyms (EXACT + parameterized).
+    "ここで字下げおわり",
+    "ここで文字下げ終わり",
+    "ここで横書き終わり",
+    "ここで左から右への横組み終わり",
+    "ここで横組みの表終わり",
+    "ここで2字下げ終わり",
+    "ここで2段組終わり",
+    "ここで1段階小さな文字終わり",
+    "ここで字下げ終わり」",
+    // Region-open synonyms.
+    "地付きで",
+    "こ地付き",
+    "ここから横書き",
+    "以下2字下げ",
+    "ここから最後まで2字下げ",
+    "ここから2　字下げ",
+    // 字上げ / 字下げ numeric.
+    "地付き、地より3字アキ",
+    "行末から2字上で地付き",
+    "この行2字下げ",
 ];
 
 #[cfg(test)]
@@ -334,6 +463,49 @@ mod tests {
             canonical_directive("「xxxiii」は33を表すローマ数字の小文字"),
             None
         );
+    }
+
+    #[test]
+    fn region_synonyms_resolve() {
+        for (v, c) in [
+            ("ここで字下げおわり", "ここで字下げ終わり"),
+            ("ここで横書き終わり", "ここで横組み終わり"),
+            ("ここで横組みの表終わり", "ここで表終わり"),
+            ("地付きで", "地付き"),
+            ("こ地付き", "地付き"),
+            ("ここから横書き", "ここから横組み"),
+        ] {
+            assert_eq!(canonical_directive(v).as_deref(), Some(c), "variant {v:?}");
+            assert_eq!(canonical_directive(c), None, "canonical {c:?} re-matched");
+        }
+    }
+
+    #[test]
+    fn region_numeric_parameterized() {
+        for (v, c) in [
+            ("ここで2字下げ終わり", "ここで字下げ終わり"),
+            ("ここで3段組終わり", "ここで段組終わり"),
+            ("ここで1段階小さな文字終わり", "ここで小さな文字終わり"),
+            ("ここで字下げ終わり」", "ここで字下げ終わり"),
+            ("以下2字下げ", "ここから2字下げ"),
+            ("ここから最後まで4字下げ", "ここから4字下げ"),
+            ("ここから2　字下げ", "ここから2字下げ"),
+            ("地付き、地より3字アキ", "地から3字上げ"),
+            ("地付き、地より3字あき", "地から3字上げ"),
+            ("行末から2字上で地付き", "地から2字上げ"),
+            ("この行2字下げ", "2字下げ"),
+        ] {
+            assert_eq!(canonical_directive(v).as_deref(), Some(c), "variant {v:?}");
+            assert_eq!(canonical_directive(c), None, "canonical {c:?} re-matched");
+        }
+    }
+
+    #[test]
+    fn region_numeric_excludes_editorial_and_compound() {
+        // digit-run guard: editorial `この行は…N字下げ` prose never matches.
+        assert_eq!(canonical_directive("この行は底本では３字下げ"), None);
+        // A `、`-bearing compound close keeps its second axis (not folded away).
+        assert_eq!(canonical_directive("ここで小文字、字下げ終わり"), None);
     }
 
     #[test]
