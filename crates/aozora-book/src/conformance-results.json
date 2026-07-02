@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 79,
-  "passed": 79,
+  "total": 80,
+  "passed": 80,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 53,
-      "passed": 53,
+      "total": 54,
+      "passed": 54,
       "failed": 0
     }
   },
@@ -242,6 +242,13 @@
       "case": "gaiji_composed_seiji",
       "feature": "gaiji",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "gaiji_locator_tolerance",
+      "feature": "gaiji",
+      "level": "should",
       "passed": true,
       "message": null
     },

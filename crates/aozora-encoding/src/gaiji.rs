@@ -334,14 +334,24 @@ pub fn parse_gaiji_body(body: &str) -> GaijiBody<'_> {
     {
         let desc = &rest[..close];
         let tail = rest[close + '」'.len_utf8()..].trim();
+        // A simple quoted gaiji has an empty tail, a `、mencode` tail, or
+        // (shape 2) a mencode-shaped tail fused directly after `」` with no
+        // separating `、` (`「金＋夫」第3水準1-93-4`). The bare tail is gated on
+        // it actually being a mencode, so a non-mencode tail (e.g. a `に傍点`
+        // forward directive) falls through to the composed scan below.
+        let bare_mencode_tail =
+            !tail.is_empty() && is_mencode_shaped(mencode_resolution_token(tail));
         if !desc.is_empty()
             && !desc.contains(['「', '」'])
-            && (tail.is_empty() || tail.starts_with('、'))
+            && (tail.is_empty() || tail.starts_with('、') || bare_mencode_tail)
         {
-            let mencode = tail
-                .strip_prefix('、')
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
+            let mencode = tail.strip_prefix('、').map_or_else(
+                || (!tail.is_empty()).then_some(tail),
+                |m| {
+                    let m = m.trim();
+                    (!m.is_empty()).then_some(m)
+                },
+            );
             return GaijiBody {
                 description: desc,
                 mencode,
@@ -349,15 +359,28 @@ pub fn parse_gaiji_body(body: &str) -> GaijiBody<'_> {
             };
         }
     }
-    // Composed / bare form: right-to-left mencode scan.
-    let shaped = |t: &str| is_mencode_shaped(t) || is_page_line_shaped(t);
+    // Composed / bare form: right-to-left mencode scan. The run admits both
+    // the canonical page-line forms and the near-miss ones (fused 上/中/下,
+    // full-width minus, poetry locators).
+    let shaped = |t: &str| is_mencode_shaped(t) || is_near_miss_page_line_shaped(t);
     let commas: Vec<usize> = body.match_indices('、').map(|(i, _)| i).collect();
     let tokens: Vec<&str> = body.split('、').map(str::trim).collect();
     let mut run_start = tokens.len();
     while run_start > 0 && shaped(tokens[run_start - 1]) {
         run_start -= 1;
     }
-    if run_start == tokens.len() || run_start == 0 {
+    // FP guard: a near-miss-only page-line token (one the canonical form
+    // rejects) is admitted only when the run is anchored by a real mencode
+    // token (第N水準 / U+ / bare N-N-N). This is what keeps a proofreader /
+    // 段組 directive tail (`、58-下15`) from being promoted to a gaiji, while
+    // the canonical description-anchored forms (`小書き片仮名ン、500-下-19`)
+    // keep resolving without a men-ku-ten.
+    let run = &tokens[run_start..];
+    let uses_near_miss = run
+        .iter()
+        .any(|t| is_near_miss_page_line_shaped(t) && !is_page_line_shaped(t));
+    let anchored = run.iter().any(|t| is_mencode_shaped(t));
+    if run_start == tokens.len() || run_start == 0 || (uses_near_miss && !anchored) {
         return GaijiBody {
             description: body,
             mencode: None,
@@ -600,20 +623,70 @@ pub fn is_mencode_shaped(s: &str) -> bool {
         && rest.chars().any(|c| c.is_ascii_digit())
 }
 
-/// Whether `s` is a 底本ページ-行 reference — `-`-joined parts, each a
-/// digit run, a 上 / 中 / 下 column marker, or a volume marker
+/// Whether `s` is a canonical 底本ページ-行 reference — `-`-joined parts, each
+/// a digit run, a 上 / 中 / 下 column marker, or a volume marker
 /// (`144-上-9`, `372-10`, `7巻-42-下-10`).
+///
+/// This is the strict form the description-anchored gaiji rely on (a
+/// `小書き片仮名ン、500-下-19` glyph carries only this provenance tail with no
+/// men-ku-ten), so it stays exact. The looser near-miss spellings live in
+/// the private `is_near_miss_page_line_shaped` (mencode-anchored).
 #[must_use]
 pub fn is_page_line_shaped(s: &str) -> bool {
     !s.is_empty() && s.split('-').all(is_page_line_part)
 }
 
-/// One `-`-separated component of a 底本ページ-行 reference.
+/// One `-`-separated component of a canonical 底本ページ-行 reference.
 fn is_page_line_part(p: &str) -> bool {
     if let Some(volume) = p.strip_suffix('巻') {
         return matches!(volume, "上" | "中" | "下" | "前" | "後") || is_digit_run(volume);
     }
     matches!(p, "上" | "中" | "下") || is_digit_run(p)
+}
+
+/// The 上 / 中 / 下 column markers plus their 段 register variants, longest
+/// first so a `下段` prefix/suffix strips before the shorter `下`.
+const COLUMN_MARKERS: [&str; 6] = ["上段", "中段", "下段", "上", "中", "下"];
+
+/// Whether `s` is a *near-miss* 底本ページ-行 reference — a superset of
+/// [`is_page_line_shaped`] that also tolerates the corpus-attested near-miss
+/// spellings: a full-width U+FF0D `－` separator (`94－11`), a 上/中/下(+段)
+/// register fused directly to a digit run on either side (`下8`, `109下`,
+/// `下段5`), and the poetry/register locator (`P61`, `下段5首目`).
+///
+/// These near-misses collide with proofreader / 段組 directive tails, so
+/// [`parse_gaiji_body`] admits a near-miss-only token only when the run is
+/// also anchored by a real mencode token. A bare 段 register (`上段`) is
+/// deliberately *not* accepted — it is a 段組 directive operand, not a
+/// page-line part.
+fn is_near_miss_page_line_shaped(s: &str) -> bool {
+    !s.is_empty() && s.split(['-', '－']).all(is_near_miss_page_line_part)
+}
+
+/// One separator-separated component of a near-miss 底本ページ-行 reference.
+fn is_near_miss_page_line_part(p: &str) -> bool {
+    if let Some(volume) = p.strip_suffix('巻') {
+        return matches!(volume, "上" | "中" | "下" | "前" | "後") || is_digit_run(volume);
+    }
+    // Poetry/register locator: an optional leading `P` page prefix and an
+    // optional trailing `首目` line-counter wrap the digit / column core
+    // (`P61`, `下段5首目`).
+    let core = p.strip_prefix('P').unwrap_or(p);
+    let core = core.strip_suffix("首目").unwrap_or(core);
+    // Bare marker stays the canonical set only; a bare 段 register (`上段`)
+    // is a 段組 operand and must not read as a page-line part.
+    if matches!(core, "上" | "中" | "下") {
+        return true;
+    }
+    // Register marker fused before a digit run (`下8`, `下段5`) or after one
+    // (`109下`, `109下段`).
+    if let Some(rest) = COLUMN_MARKERS.iter().find_map(|m| core.strip_prefix(m)) {
+        return is_digit_run(rest);
+    }
+    if let Some(rest) = COLUMN_MARKERS.iter().find_map(|m| core.strip_suffix(m)) {
+        return is_digit_run(rest);
+    }
+    is_digit_run(core)
 }
 
 /// A non-empty run of ASCII or full-width decimal digits.
@@ -827,6 +900,125 @@ mod tests {
                 quoted: false,
             }
         );
+    }
+
+    #[test]
+    fn near_miss_page_line_is_a_superset_of_canonical() {
+        // Canonical forms are accepted by both predicates.
+        for s in ["144-上-9", "7巻-42-下-10", "372-10"] {
+            assert!(is_page_line_shaped(s), "canonical {s}");
+            assert!(is_near_miss_page_line_shaped(s), "near-miss superset {s}");
+        }
+        // Near-miss-only forms: rejected by canonical, accepted by near-miss.
+        // Shape 1: 上/中/下 fused directly before a digit run.
+        // Shape 3: full-width minus U+FF0D separator; 下 fused after digits.
+        // Shape 4: poetry/register locator (段 / 首目 / `P` page prefix).
+        for s in [
+            "383-下8",
+            "2-下3",
+            "323-上1",
+            "94－11",
+            "92－３",
+            "109下－4",
+            "69-下段9首目",
+            "P61-下段5首目",
+        ] {
+            assert!(!is_page_line_shaped(s), "canonical must reject {s}");
+            assert!(is_near_miss_page_line_shaped(s), "near-miss accepts {s}");
+        }
+        // A bare 段 register is a 段組 operand, NOT a page-line part — both
+        // predicates reject it, so `［＃ここから２段組、上段］` stays a directive.
+        for s in ["上段", "下段", "中段", "38-上段-1"] {
+            assert!(!is_page_line_shaped(s), "canonical rejects bare 段 {s}");
+            assert!(
+                !is_near_miss_page_line_shaped(s),
+                "near-miss rejects bare 段 {s}"
+            );
+        }
+        // Neither accepts non-page-line tails.
+        for s in ["U+304B", "巻-3-4", "X1－1", "漢字", ""] {
+            assert!(!is_page_line_shaped(s));
+            assert!(!is_near_miss_page_line_shaped(s));
+        }
+    }
+
+    #[test]
+    fn parse_gaiji_body_handles_near_miss_locators() {
+        // Shape 1: 上/中/下 fused before a digit run in the page-line tail.
+        assert_eq!(
+            parse_gaiji_body("「※」は「てへん＋劣」、第3水準1-84-77、383-下8"),
+            GaijiBody {
+                description: "「※」は「てへん＋劣」",
+                mencode: Some("第3水準1-84-77、383-下8"),
+                quoted: false,
+            }
+        );
+        // Shape 2: mencode fused directly after `」` with no separating `、`.
+        assert_eq!(
+            parse_gaiji_body("「金＋夫」第3水準1-93-4"),
+            GaijiBody {
+                description: "金＋夫",
+                mencode: Some("第3水準1-93-4"),
+                quoted: true,
+            }
+        );
+        // Shape 3: full-width minus separator in a composed description's
+        // page-line tail (the relaxed split is what makes the run shaped).
+        assert_eq!(
+            parse_gaiji_body(
+                "「※」は「いしへん」＋「乏」、読みは「いしばり」、第3水準1-88-93、94－11"
+            ),
+            GaijiBody {
+                description: "「※」は「いしへん」＋「乏」、読みは「いしばり」",
+                mencode: Some("第3水準1-88-93、94－11"),
+                quoted: false,
+            }
+        );
+        // Shape 4: poetry/register locator with `P` prefix + 段 + 首目.
+        assert_eq!(
+            parse_gaiji_body("「※」は「王へん」に「干」、第3水準1-87-83、P61-下段5首目"),
+            GaijiBody {
+                description: "「※」は「王へん」に「干」",
+                mencode: Some("第3水準1-87-83、P61-下段5首目"),
+                quoted: false,
+            }
+        );
+    }
+
+    #[test]
+    fn near_miss_locators_resolve_to_the_menkuten_glyph() {
+        // The relaxed provenance tail is irrelevant to resolution: the glyph
+        // comes from the men-ku-ten anchor. 第3水準1-93-4 = 鈇 (U+9207).
+        let body = recognize_gaiji_body("「金＋夫」第3水準1-93-4").expect("shape 2 is a gaiji");
+        assert_eq!(
+            lookup(
+                None,
+                body.mencode.map(mencode_resolution_token),
+                body.description
+            ),
+            Some(Resolved::Char('\u{9207}'))
+        );
+    }
+
+    #[test]
+    fn near_miss_page_line_requires_a_mencode_anchor() {
+        // A near-miss-only tail with no men-ku-ten anchor is NOT enough on its
+        // own — it collides with proofreader / 段組 directive tails, so it stays
+        // a directive rather than being promoted to a gaiji.
+        assert!(recognize_gaiji_body("「あ」に「い」、94－11").is_none());
+        assert!(recognize_gaiji_body("「あ」に「い」、383-下8").is_none());
+        // Real proofreader / layout directives with a near-miss-shaped tail.
+        assert!(recognize_gaiji_body("ここから２段組、上段").is_none());
+        assert!(recognize_gaiji_body("底本の閉じ括弧は「』」、58-下15").is_none());
+        assert!(recognize_gaiji_body("底本ルビは「もら」と誤記、175-上段-4").is_none());
+        // WITH a men-ku-ten anchor the same near-miss tail IS a gaiji.
+        assert!(recognize_gaiji_body("「あ」に「い」、第3水準1-15-94、383-下8").is_some());
+        // A canonical description-anchored gaiji keeps resolving with only a
+        // page-line tail (no men-ku-ten) — the anchor rule never touches it.
+        assert!(recognize_gaiji_body("小書き片仮名ン、500-下-19").is_some());
+        // Plain directives stay directives.
+        assert!(recognize_gaiji_body("改ページ").is_none());
+        assert!(recognize_gaiji_body("ここから2字下げ").is_none());
     }
 
     #[test]
