@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 79,
+  "total": 80,
   "passed": 42,
-  "failed": 37,
+  "failed": 38,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,9 +15,9 @@
       "failed": 5
     },
     "should": {
-      "total": 53,
+      "total": 54,
       "passed": 21,
-      "failed": 32
+      "failed": 33
     }
   },
   "cases": [
@@ -244,6 +244,13 @@
       "level": "must",
       "passed": true,
       "message": null
+    },
+    {
+      "case": "gaiji_locator_tolerance",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
     },
     {
       "case": "heading",

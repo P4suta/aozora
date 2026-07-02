@@ -1,0 +1,11 @@
+# Conformance metadata. Read by xtask conformance run.
+#
+# Gaiji references whose men-ku-ten anchor (第N水準N-N-N) is followed by a
+# near-miss 底本ページ-行 / provenance tail that the strict page-line parser
+# rejected — a fused 上/中/下 register (`383-下8`), a full-width U+FF0D `－`
+# separator (`94－11`), a mencode fused directly after `」` with no `、`
+# (`「金＋夫」第3水準1-93-4`), and the poetry/register locator (`P61-下段5首目`).
+# The tolerance resolves these to their JIS glyph; the near-miss tail is
+# preserved verbatim on serialize.
+feature = "gaiji"
+level = "should"
