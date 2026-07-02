@@ -19,7 +19,8 @@ use std::collections::HashMap;
 use crate::Trace;
 
 /// One row in the folded output.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FoldedStack {
     /// Frame labels in root → leaf order (the order the folded-stack
     /// format expects), ready to join with `;`.

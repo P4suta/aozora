@@ -90,8 +90,12 @@ just trace-flame   /tmp/aozora-corpus-<ts>.json.gz | flamegraph.pl > flame.svg
 ```
 
 Each analysis returns a typed report — `HotReport`, `LibraryReport`,
-`RollupReport`, `ComparisonReport`, `MatchedStacksReport`,
-`FlameReport` — whose module docstring explains the algorithm.
+`RollupReport`, `ComparisonReport`, `MatchedStacksReport`, or a
+`FoldedStack` list (flame) — whose module docstring explains the
+algorithm. Pass `--format json` (after the subcommand, e.g.
+`aozora-xtask trace hot <trace> --format json`) to emit that typed
+report as pretty JSON instead of the human table — handy for scripting
+or diffing across runs. `cache` writes a sidecar and ignores the flag.
 
 ## Why a pure-Rust DWARF symbolicator?
 

@@ -14,7 +14,8 @@ use crate::render::{Align, Column, TableBuilder};
 use crate::{Categorizer, TableRenderable, Trace};
 
 /// Per-category sample rollup, produced by [`rollup`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RollupReport {
     /// Total sample weight across the trace (the percentage denominator).
     pub total_samples: u64,
@@ -24,7 +25,8 @@ pub struct RollupReport {
 }
 
 /// One category's aggregated samples.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RollupRow {
     /// Category label (a [`crate::RollupConfig`] category, or
     /// `unknown` for unmatched functions).

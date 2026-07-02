@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 
+### Added
+
+- **trace**: `aozora-xtask trace <sub> --format json` emits the typed analysis
+  report (`hot` / `libs` / `rollup` / `stacks` / `compare` / `flame`) as pretty
+  JSON instead of the human table — scriptable and diff-friendly. Every report
+  now derives `Serialize` (camelCase fields, snake_case enum tags); `cache`
+  ignores the flag. Closes the long-standing `TableRenderable` "structured
+  serializable form (planned)" gap.
+
 ### Changed
 
 - **api**: ⚠ BREAKING (source-only) — complete the `wire` → `json` migration by

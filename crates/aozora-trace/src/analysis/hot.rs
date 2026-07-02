@@ -37,7 +37,8 @@ use crate::render::{Align, Column, TableBuilder};
 use crate::{TableRenderable, Trace};
 
 /// Aggregated top-N hot-frame report.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HotReport {
     /// Whether rows were aggregated leaf-only or inclusively.
     pub mode: HotMode,
@@ -49,7 +50,8 @@ pub struct HotReport {
 }
 
 /// Which counting view a [`HotReport`] used.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HotMode {
     /// Count only the leaf-most frame of each sample.
     Leaf,
@@ -58,7 +60,8 @@ pub enum HotMode {
 }
 
 /// One function's entry in a [`HotReport`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HotRow {
     /// Function label (symbolicated name, or a hex address if
     /// unresolved).
@@ -82,7 +85,8 @@ pub struct HotRow {
 /// Visual annotation for one row, derived from the `incl_pct` /
 /// `self_pct` ratio + label shape. Helps the eye distinguish
 /// "actual hot work" from "structural call-chain frame".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RowKind {
     /// Pure leaf: self ≈ incl. The CPU was here when the sample
     /// fired the majority of the time it was on the stack.

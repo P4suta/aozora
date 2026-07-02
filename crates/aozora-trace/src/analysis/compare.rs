@@ -18,7 +18,8 @@ use crate::render::{Align, Column, TableBuilder};
 use crate::{TableRenderable, Trace};
 
 /// Result of diffing two traces, produced by [`compare`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ComparisonReport {
     /// Total samples in the `before` trace (for context in the header).
     pub before_total: u64,
@@ -29,7 +30,8 @@ pub struct ComparisonReport {
 }
 
 /// One function's before/after comparison.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ComparisonRow {
     /// Function (leaf-frame) label.
     pub label: String,
@@ -44,7 +46,8 @@ pub struct ComparisonRow {
 }
 
 /// How a function's presence changed between the two traces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ChangeStatus {
     /// Present in both traces; its percentage moved (possibly by zero).
     Shifted,
