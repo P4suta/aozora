@@ -42,6 +42,29 @@ test.describe('playground smoke', () => {
     await expect(preview).toHaveClass(/is-vertical/);
   });
 
+  test('縦中横(TCY)が縦書きで text-combine-upright: all で合成される', async ({ page }) => {
+    // ユーザー報告の回帰ガード: 正準スタイルシートが `.aozora-combine-upright`
+    // に `text-combine-upright: all` を当てていないと、縦書きで半角数字が縦積みに
+    // なる。クラス付与だけでなく computed-style を検証する。
+    await ready(page);
+    await page.getByRole('tab', { name: 'HTML preview' }).click();
+    const editor = page.locator('.cm-host .cm-content');
+    await editor.click();
+    await page.keyboard.press('ControlOrMeta+a');
+    // ruby テストと同じ pressSequentially。エディタは全角括弧をオートクローズ
+    // するが、閉じ括弧を打つと type-over で吸収されるので素直に全文を打てる。
+    await editor.pressSequentially('明治［＃縦中横］33［＃縦中横終わり］年');
+
+    const tcy = page.locator('.html-preview .aozora-combine-upright');
+    await expect(tcy).toContainText('33');
+
+    // 縦書きに切り替え、縦中横が実際に合成される computed-style を確認。
+    await page.locator('.writing-mode-btn').click();
+    await expect(page.locator('.html-preview')).toHaveClass(/aozora-vertical/);
+    const combine = await tcy.evaluate((el) => getComputedStyle(el).textCombineUpright);
+    expect(combine).toBe('all');
+  });
+
   test('レイアウトボタンで表示モードが切り替わる', async ({ page }) => {
     await ready(page);
     // First `.layout-btn` is editor-only (⌨) → `main.app-main.mode-editor`.

@@ -1719,11 +1719,27 @@ hooks:
 # `node_modules` / `dist` live in named volumes (no host bleed).
 
 _pg := "docker compose run --rm --no-TTY playground"
+# Same service but privileged (root), for the one-off ownership fix below.
+_pg_root := "docker compose run --rm --no-TTY --user 0 playground"
 
 # Build the WASM `pkg/` that `vite.config.ts`'s alias targets. Must run
 # before `playground-build` (when `.d.ts` is missing or stale).
 playground-wasm:
     {{_dev}} wasm-pack build --target web --release crates/aozora-wasm
+
+# Normalise the playground's `node_modules` / `dist` named-volume trees to
+# the compose runtime UID/GID. Docker creates a named volume root-owned on
+# first mount, and a build that once ran as root (e.g. an old CI run over the
+# same volume) leaves root-owned files behind, so the service — which runs as
+# the host UID (compose `user:`) — then fails `vite build` (which empties
+# dist) and bun's writes with EACCES. A one-off privileged (`--user 0`)
+# container fixes ownership. Guard on `find ! -uid` (not just the top dir:
+# the root can be correct while a child is stale) so a full `chown -R` runs
+# only when some entry is wrongly owned — a cheap early-exit scan when clean, so
+# it is safe to depend on from `_playground-ensure` on every run. (In CI,
+# AOZORA_UID=0 → the volumes match the root runtime and this no-ops.)
+_playground-fix-perms:
+    {{_pg_root}} sh -euc 'u={{ env_var_or_default("AOZORA_UID", "1000") }}; g={{ env_var_or_default("AOZORA_GID", "1000") }}; for d in node_modules dist; do [ -d "$d" ] || continue; if [ -n "$(find "$d" ! -uid "$u" -print -quit)" ]; then chown -R "$u:$g" "$d"; fi; done'
 
 # Ensure the playground's prerequisites exist before typecheck / test:
 # the wasm `pkg/` that tsc + vite alias `aozora-wasm` to, and the bun
@@ -1732,7 +1748,7 @@ playground-wasm:
 # `bun install` is a fast lockfile check. A FRESH checkout now
 # self-initialises here instead of failing `just ci` with
 # "cannot find module 'aozora-wasm'" / "tsc: command not found".
-_playground-ensure:
+_playground-ensure: _playground-fix-perms
     [ -d crates/aozora-wasm/pkg ] || just playground-wasm
     {{_pg}} bun install
 
@@ -1757,23 +1773,28 @@ playground-ci: _playground-ensure
     {{_pg}} bun run test
 
 # Production build of the playground. Regenerates the WASM bundle
-# first so the vite alias target is always fresh.
-playground-build: playground-wasm
+# first so the vite alias target is always fresh; `_playground-ensure`
+# then guarantees bun deps and correct volume ownership so `vite build`
+# can empty `dist`.
+playground-build: playground-wasm _playground-ensure
     {{_pg}} bun run build
 
 # All playground gates in one shot — typecheck + test + build.
 playground-all: playground-typecheck playground-test playground-build
 
 # Playwright E2E smoke suite (#335 D-5). Runs in the dev-image `playground`
-# service (bun + Rust present): `_playground-ensure` builds the WASM engine +
-# bun deps, then chromium is installed and Playwright drives a prod
-# `vite preview` build (its `webServer`). Best-effort locally — chromium's
+# service (bun + Rust present): `playground-wasm` rebuilds the WASM engine
+# fresh (the E2E exercises runtime *rendering*, so a stale `pkg/` — which
+# `_playground-ensure`'s "build only if absent" guard would happily keep —
+# must not be trusted; this mirrors the CI e2e job, which always builds wasm),
+# `_playground-ensure` adds bun deps, then chromium is installed and Playwright
+# drives a prod `vite preview` build (its `webServer`). Best-effort locally — chromium's
 # system libraries are not in the dev image, so a local run may fail at browser
 # launch; the CI `e2e` job (host runner, `playwright install --with-deps`) is
 # the authoritative gate. Deliberately NOT wired into `ci-parallel`: a second
 # concurrent bun-install lane against the shared node_modules volume would
 # re-introduce the `EEXIST` race.
-playground-e2e: _playground-ensure
+playground-e2e: playground-wasm _playground-ensure
     # One root container does browser-install + test together: `--with-deps`
     # apt-installs chromium's system libraries (libnspr4 etc., absent from the
     # dev image) which needs root, and a single `docker compose run` keeps the
