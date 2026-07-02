@@ -10,6 +10,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **corpus / xtask**: `aozora-xtask corpus render-audit` renders every corpus
+  document to HTML and reports where aozora notation control markers (`《…》`
+  ruby, `｜` ruby-base, `［＃…］` directive) survive into the *visible* text of
+  the output — the signature of a notation that failed to resolve (e.g. a ruby
+  that never attached to its base and leaked as literal `《…》`). Report-only
+  measurement; the enforcing counterpart gate follows. Legitimate `≪…≫`
+  angle-quote delimiters, empty ruby `《》`, and `hidden` directive spans are
+  excluded structurally, and the standard header/footer legend is stripped so
+  the audit sees only the literary body.
 - **render / playground**: a canonical reference stylesheet,
   `crates/aozora-render/assets/aozora-notation.css`, is now the single source of
   truth for how every `aozora-*` class is presented (theming via `--aozora-*`
