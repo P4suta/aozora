@@ -419,6 +419,16 @@ fn empty_explicit_ruby_span(
     Some(Span::new(bar_pos, close_span.end))
 }
 
+/// The synthetic event stream, its parallel link table, and the index of
+/// the synthetic `《` open, as returned by [`build_synth_ruby_view`]. Both
+/// buffers are inline-16 `SmallVec`s, so a ruby (~5 events) allocates no
+/// heap.
+type SynthRubyView = (
+    smallvec::SmallVec<[PairEvent; 16]>,
+    smallvec::SmallVec<[u32; 16]>,
+    usize,
+);
+
 /// Build the synthetic event / link stream `recognize_ruby` expects in the
 /// streaming model: `[optional Solo(Bar), Text(base), ...body events...]`,
 /// with links shifted to account for the prepended prefix. Returns the
@@ -427,13 +437,22 @@ fn empty_explicit_ruby_span(
 /// offset, `end` = the `《` open); `bar_byte_offset` is the position of a
 /// `｜` inside it for the explicit form. Returns `None` when an explicit
 /// `｜` base would leave the base text empty.
+///
+/// The two buffers are `SmallVec<[_; 16]>`: a ruby is `[Text(base),
+/// PairOpen, reading…, PairClose]` — ~5 events — so the synth stays inline
+/// and allocates zero heap for the ~200 ruby/file that dominate the parse.
+/// (Plain `Vec::with_capacity` here was ~67% of ALL owned-pipeline heap
+/// allocations — two mallocs per ruby.) The `[16]` inline size matches
+/// `Frame::body`, whose contents this is a superset of.
 fn build_synth_ruby_view(
     body: BodyView<'_>,
     prev_text_range: Span,
     bar_byte_offset: Option<usize>,
-) -> Option<(Vec<PairEvent>, Vec<u32>, usize)> {
-    let mut synth: Vec<PairEvent> = Vec::with_capacity(body.events.len() + 2);
-    let mut synth_links: Vec<u32> = Vec::with_capacity(body.events.len() + 2);
+) -> Option<SynthRubyView> {
+    let mut synth: smallvec::SmallVec<[PairEvent; 16]> =
+        smallvec::SmallVec::with_capacity(body.events.len() + 2);
+    let mut synth_links: smallvec::SmallVec<[u32; 16]> =
+        smallvec::SmallVec::with_capacity(body.events.len() + 2);
     let synth_open_idx = if let Some(bar_off) = bar_byte_offset {
         let bar_pos = prev_text_range.start + u32::try_from(bar_off).expect("bar offset fits");
         let bar_span = Span::new(bar_pos, bar_pos + u32::try_from('｜'.len_utf8()).unwrap());
@@ -1024,8 +1043,8 @@ where
             build_synth_ruby_view(body, prev_text_range, bar_byte_offset)?;
         let synth_close_idx = synth_open_idx + (close_idx - open_idx);
         let synth_view = BodyView {
-            events: &synth,
-            links: &synth_links,
+            events: synth.as_slice(),
+            links: synth_links.as_slice(),
         };
         let mut ctx = RecogniseCtx {
             alloc: self.alloc,
