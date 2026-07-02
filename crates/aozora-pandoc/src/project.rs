@@ -497,6 +497,8 @@ fn annotation_kind_slug(k: DirectiveKind) -> &'static str {
         DirectiveKind::RubyRetarget => "ruby-retarget",
         DirectiveKind::RubyPairOpen => "ruby-pair-open",
         DirectiveKind::RubyPairClose => "ruby-pair-close",
+        DirectiveKind::MarginNotePairOpen => "margin-note-pair-open",
+        DirectiveKind::MarginNotePairClose => "margin-note-pair-close",
         _ => "other",
     }
 }

@@ -452,6 +452,43 @@ fn render_annotation_owned<W: Write>(
             escape_text(y, out)?;
             return out.write_str("」</sup>");
         }
+        DirectiveKind::MarginNotePairOpen => {
+            // ［＃注記付き］ / ［＃左に注記付き］ → a compact marker at the span
+            // start; the note text is named on the matching close. The `左に`
+            // form sits on the left, so distinguish the marker label.
+            let raw = store.resolve_str(a.raw);
+            let label = if raw.starts_with("［＃左に") {
+                "左注記"
+            } else {
+                "注記"
+            };
+            out.write_str(r#"<sup class="aozora-margin-note">"#)?;
+            out.write_str(label)?;
+            return out.write_str("</sup>");
+        }
+        DirectiveKind::MarginNotePairClose => {
+            // ［＃「Y」の注記付き終わり］ / ［＃左に「Y」の注記付き終わり］ → show the
+            // margin-note text Y. Y is the note (not surrounding text), so it
+            // does not double-render; recover it from the raw bracket the
+            // classifier guaranteed (may hold a nested ［＃…］ gaiji, echoed
+            // as literal notation).
+            let raw = store.resolve_str(a.raw);
+            let left = raw.starts_with("［＃左に「");
+            let (label, prefix) = if left {
+                ("左注記", "［＃左に「")
+            } else {
+                ("注記", "［＃「")
+            };
+            let y = raw
+                .strip_prefix(prefix)
+                .and_then(|r| r.strip_suffix("」の注記付き終わり］"))
+                .unwrap_or(raw);
+            out.write_str(r#"<sup class="aozora-margin-note">"#)?;
+            out.write_str(label)?;
+            out.write_str("「")?;
+            escape_text(y, out)?;
+            return out.write_str("」</sup>");
+        }
         _ => {}
     }
     out.write_str(r#"<span class="aozora-directive" hidden>"#)?;

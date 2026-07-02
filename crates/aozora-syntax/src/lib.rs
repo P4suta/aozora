@@ -443,6 +443,17 @@ pub enum DirectiveKind {
     /// left-side ruby reading `Y` for the span opened by [`Self::RubyPairOpen`].
     /// `Y` is preserved verbatim in the raw bracket and shown in the marker.
     RubyPairClose,
+    /// Margin-note span opener (`［＃注記付き］` / `［＃左に注記付き］`) — marks the
+    /// start of a run that carries a margin note whose text is named on the
+    /// matching [`Self::MarginNotePairClose`]. A raw-preserving `Direct`
+    /// directive (the pair is not coupled at the splice layer, like the inline
+    /// warichu pair). The `左に` prefix records that the note sits on the left.
+    MarginNotePairOpen,
+    /// Margin-note span closer (`［＃「Y」の注記付き終わり］` / `［＃左に「Y」の注記
+    /// 付き終わり］`) — names the margin-note text `Y` for the span opened by
+    /// [`Self::MarginNotePairOpen`]. `Y` is preserved verbatim in the raw
+    /// bracket (it may contain a nested `［＃…］` gaiji) and shown in the marker.
+    MarginNotePairClose,
 }
 
 /// Parse- and render-time error surface for `aozora-syntax` consumers.

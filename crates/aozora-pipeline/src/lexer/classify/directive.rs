@@ -896,6 +896,10 @@ pub(super) fn editorial_note_kind(body: &str) -> Option<DirectiveKind> {
         Some(DirectiveKind::RubyPairOpen)
     } else if is_ruby_pair_close_body(body) {
         Some(DirectiveKind::RubyPairClose)
+    } else if body == "注記付き" || body == "左に注記付き" {
+        Some(DirectiveKind::MarginNotePairOpen)
+    } else if is_margin_note_pair_close_body(body) {
+        Some(DirectiveKind::MarginNotePairClose)
     } else {
         None
     }
@@ -923,6 +927,17 @@ fn is_ruby_retarget_body(body: &str) -> bool {
 fn is_ruby_pair_close_body(body: &str) -> bool {
     body.strip_prefix("左に「")
         .and_then(|r| r.strip_suffix("」のルビ付き終わり"))
+        .is_some_and(|y| !y.is_empty())
+}
+
+/// Whether `body` is a margin-note span closer `「Y」の注記付き終わり` or
+/// `左に「Y」の注記付き終わり` (whole body, note text `Y` non-empty). The matching
+/// opener is the fixed `注記付き` / `左に注記付き` body. `Y` may contain a nested
+/// `［＃…］` gaiji, which the bracket pairer keeps inside the outer directive.
+fn is_margin_note_pair_close_body(body: &str) -> bool {
+    body.strip_prefix("左に「")
+        .or_else(|| body.strip_prefix("「"))
+        .and_then(|r| r.strip_suffix("」の注記付き終わり"))
         .is_some_and(|y| !y.is_empty())
 }
 
