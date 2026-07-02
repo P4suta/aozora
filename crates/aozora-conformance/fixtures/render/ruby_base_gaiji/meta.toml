@@ -1,0 +1,7 @@
+# Regression (original report): a ruby whose base is a gaiji reference
+# `※［＃…］《みは》` used to leak as literal 《みは》 — the gaiji resolves to a
+# glyph distinct from its source and is emitted as its own node, so the
+# ruby found no plain run to attach to. It now adopts the gaiji as a
+# Segment::Gaiji base.
+feature = "ruby"
+level = "must"

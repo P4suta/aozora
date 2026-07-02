@@ -314,6 +314,16 @@ fn emit_ruby_owned<W: Write>(
 /// itself a ruby-base character or `｜`. A right-side base is always a single
 /// `Plain`; the resolved run is matched accordingly.
 fn ruby_needs_bar_owned(base_run: &[ContentOwned], prev: Option<char>, store: &NodeStore) -> bool {
+    // A gaiji base (`※［＃…］《…》`) re-parses implicitly via the classifier's
+    // deferred-emit, so it never needs an explicit `｜` — and a preceding
+    // character cannot extend into it (the gaiji is a single structured
+    // node). Emitting a bar here would inject a `｜` absent from the source
+    // and break the round-trip fixed point.
+    if let [ContentOwned::Segments(range)] = base_run
+        && matches!(store.resolve_seg_range(*range), [SegmentOwned::Gaiji(_)])
+    {
+        return false;
+    }
     let plain = match base_run {
         [ContentOwned::Plain(id)] => Some(store.resolve_str(*id)),
         _ => None,

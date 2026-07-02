@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 94,
-  "passed": 94,
+  "total": 96,
+  "passed": 96,
   "failed": 0,
   "by_level": {
     "may": {
@@ -10,8 +10,8 @@
       "failed": 0
     },
     "must": {
-      "total": 28,
-      "passed": 28,
+      "total": 30,
+      "passed": 30,
       "failed": 0
     },
     "should": {
@@ -549,6 +549,20 @@
     {
       "case": "ruby_base_framed_forward",
       "feature": "composite",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_gaiji",
+      "feature": "ruby",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_gaiji_flushed",
+      "feature": "gaiji",
       "level": "must",
       "passed": true,
       "message": null
