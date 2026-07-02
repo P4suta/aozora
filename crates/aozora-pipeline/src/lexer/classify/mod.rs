@@ -94,7 +94,7 @@ use super::instrumentation::{
 // inherent methods (single intern, no arena); the produced `NodeOwned`s thread
 // straight into the lex output's `NodeStore`.
 use aozora_syntax::alloc_owned::OwnedAllocator;
-use aozora_syntax::owned::{ContentOwned, DirectiveOwned, NodeOwned, SegmentOwned};
+use aozora_syntax::owned::{ContentOwned, DirectiveOwned, GaijiOwned, NodeOwned, SegmentOwned};
 use aozora_syntax::{DirectiveKind, RegionClose, RegionFormat, Span, is_ruby_base_char};
 
 use super::pair::{PairEvent, PairKind};
@@ -282,6 +282,14 @@ where
     streaming: Option<StreamingFrame>,
     pending_plain_start: Option<u32>,
     pending_refmark: Option<Span>,
+    /// A just-recognised gaiji held back one step so an immediately-
+    /// following `《…》` ruby can take it as its base (`※［＃…］《みは》`).
+    /// A gaiji resolves to a glyph distinct from its `※［＃…］` source and
+    /// is emitted as its own node, so a ruby cannot reach back to reclaim
+    /// it once yielded — instead the emit is deferred here. Flushed as a
+    /// standalone gaiji span by `process_event` / `finalize` when the next
+    /// event is not the adjacent ruby that would consume it.
+    pending_ruby_base: Option<PendingRubyBase>,
     diagnostics: Vec<Diagnostic>,
     /// Bracketed kaeriten observed in document order, drained by
     /// [`Self::finalize_kaeriten`] in [`Self::take_diagnostics`] for the
@@ -300,6 +308,26 @@ where
 struct StreamingFrame {
     kind: PairKind,
     depth: u32,
+}
+
+/// A gaiji emit deferred one step so an adjacent `《…》` ruby can adopt it
+/// as its base. `span` is the ready-to-yield standalone gaiji span (used
+/// when no ruby follows); `payload` rebuilds the glyph as a
+/// `Segment::Gaiji` inside the ruby base when one does.
+struct PendingRubyBase {
+    span: ClassifiedSpan,
+    payload: GaijiOwned,
+}
+
+/// Outcome of [`ClassifyStream::try_ruby_over_gaiji_base`].
+enum GaijiBaseRuby {
+    /// No adjacent deferred gaiji — continue to the plain-base path.
+    NotApplicable,
+    /// A ruby over the gaiji base was formed.
+    Emitted(ClassifiedSpan),
+    /// The reading was empty (or the pair malformed); the gaiji was
+    /// flushed standalone and the `《》` falls through to plain replay.
+    Declined,
 }
 
 /// Body window passed to recogniser helpers.
@@ -502,6 +530,7 @@ where
             streaming: None,
             pending_plain_start: None,
             pending_refmark: None,
+            pending_ruby_base: None,
             diagnostics: Vec::new(),
             kaeriten_obs: Vec::new(),
             finished: false,
@@ -752,8 +781,13 @@ where
                     // the rebuild closes pathological doc 50685's
                     // memcpy_memmove 25.13 % bucket and doc 49178's
                     // 22.63 %, both attributed to this hot path.
-                    if let Some(span) = self.try_gaiji_emit(view, open_idx, rm_span) {
-                        self.push_output(span);
+                    if let Some((span, payload)) = self.try_gaiji_emit(view, open_idx, rm_span) {
+                        // Defer the emit one step: an immediately-following
+                        // `《…》` ruby can adopt this gaiji as its base
+                        // (`※［＃…］《みは》`). `process_event` / `finalize`
+                        // flush it as a standalone span when the next event
+                        // is not that ruby.
+                        self.pending_ruby_base = Some(PendingRubyBase { span, payload });
                         return;
                     }
                     // Gaiji recognition declined. Fold the refmark bytes
@@ -930,6 +964,33 @@ where
     /// an unrecognised `Quote` folds into the surrounding plain run,
     /// same as the legacy buffered-replay behaviour).
     fn handle_stream_event(&mut self, event: PairEvent) {
+        // A nested Ruby / AngleQuote inside the streamed Quote/Tortoise
+        // is recognised WITHOUT touching the streaming depth — so do it
+        // before borrowing the streaming frame. This is what makes
+        // `「駄目《だめ》」` form a ruby (and a nested `≪…≫` resolve)
+        // instead of leaking as literal text: the sub-frame runs the
+        // same recogniser as at top level, and `pending_plain_start` —
+        // kept live through the quote — supplies the ruby base.
+        // `process_event` checks `frame` before `streaming`, so the
+        // sub-frame's body buffers correctly and streaming resumes once
+        // it closes. (Nested `［＃…］` Bracket directives inside a quote
+        // are handled separately: they need the `※` refmark held for
+        // gaiji and shift the Unknown-directive budget.)
+        if let PairEvent::PairOpen { kind, span } = &event
+            && matches!(kind, PairKind::Ruby | PairKind::AngleQuote)
+        {
+            // Ruby / AngleQuote preserve `pending_plain_start` (no flush)
+            // so the recogniser can pull `consume_start` back over the
+            // preceding text; neither consumes a `※` refmark.
+            self.open_frame(
+                PairEvent::PairOpen {
+                    kind: *kind,
+                    span: *span,
+                },
+                None,
+            );
+            return;
+        }
         // Defensive — only called when streaming is Some.
         let stream = self
             .streaming
@@ -993,6 +1054,73 @@ where
         }
     }
 
+    /// Form a ruby whose base is a deferred gaiji held in
+    /// `pending_ruby_base` (`※［＃…］《みは》`) — the gaiji resolves to a glyph
+    /// distinct from its source and was emitted as its own node, so there
+    /// is no plain run to walk back over. Adopts the gaiji as a
+    /// `Segment::Gaiji` base; the reading is built from the `《…》` body as
+    /// for a plain-base ruby. See [`GaijiBaseRuby`] for the outcomes.
+    fn try_ruby_over_gaiji_base(
+        &mut self,
+        body: BodyView<'_>,
+        open_idx: usize,
+        close_idx: usize,
+    ) -> GaijiBaseRuby {
+        let PairEvent::PairOpen {
+            span: open_span, ..
+        } = body.events[open_idx]
+        else {
+            return GaijiBaseRuby::NotApplicable;
+        };
+        let gaiji_base = self.pending_plain_start.is_none()
+            && self
+                .pending_ruby_base
+                .as_ref()
+                .is_some_and(|p| p.span.source_span.end == open_span.start);
+        if !gaiji_base {
+            return GaijiBaseRuby::NotApplicable;
+        }
+        let pending = self.pending_ruby_base.take().expect("checked Some");
+        let PairEvent::PairClose {
+            span: close_span, ..
+        } = body.events[close_idx]
+        else {
+            self.push_output(pending.span);
+            return GaijiBaseRuby::Declined;
+        };
+        if open_span.end >= close_span.start {
+            // Empty `《》` reading — not a ruby. The gaiji stands alone and
+            // the empty pair falls through to plain replay.
+            self.push_output(pending.span);
+            return GaijiBaseRuby::Declined;
+        }
+        let reading = {
+            let mut ctx = RecogniseCtx {
+                alloc: self.alloc,
+                source: self.source,
+                diagnostics: Vec::new(),
+                pending_plain_start: None,
+                pending_decoration: None,
+            };
+            let reading = ctx.build_content_from_body(
+                body,
+                &BodyWindow {
+                    events: open_idx + 1..close_idx,
+                    bytes: open_span.end..close_span.start,
+                },
+            );
+            self.diagnostics.append(&mut ctx.diagnostics);
+            reading
+        };
+        let seg = self.alloc.seg_gaiji(pending.payload);
+        let base = self.alloc.content_segments(&[seg]);
+        let node = self.alloc.ruby(base, reading);
+        GaijiBaseRuby::Emitted(ClassifiedSpan {
+            kind: SpanKind::Aozora(node),
+            source_span: Span::new(pending.span.source_span.start, close_span.end),
+        })
+    }
+
     fn try_ruby_emit(
         &mut self,
         body: BodyView<'_>,
@@ -1026,6 +1154,15 @@ where
         // before `ctx` reborrows `self.alloc`, so no borrow clash.
         if let Some(inner_open) = first_nested_ruby_open(body.events, open_idx + 1, close_idx) {
             self.diagnostics.push(Diagnostic::nested_ruby(inner_open));
+        }
+
+        // Gaiji-base ruby: the immediately-preceding construct is a
+        // deferred gaiji (`※［＃…］《みは》`) rather than a plain run. Fall
+        // through to the plain-base path only when not applicable.
+        match self.try_ruby_over_gaiji_base(body, open_idx, close_idx) {
+            GaijiBaseRuby::Emitted(span) => return Some(span),
+            GaijiBaseRuby::Declined => return None,
+            GaijiBaseRuby::NotApplicable => {}
         }
 
         // Determine the preceding plain run (the ruby base lives here) and
@@ -1229,7 +1366,7 @@ where
         body: BodyView<'_>,
         bracket_open_idx: usize,
         refmark_span: Span,
-    ) -> Option<ClassifiedSpan> {
+    ) -> Option<(ClassifiedSpan, GaijiOwned)> {
         let mut ctx = RecogniseCtx {
             alloc: self.alloc,
             source: self.source,
@@ -1258,10 +1395,13 @@ where
                     m.consume_end,
                 )));
         }
-        Some(ClassifiedSpan {
-            kind: SpanKind::Aozora(node),
-            source_span: Span::new(m.consume_start, m.consume_end),
-        })
+        Some((
+            ClassifiedSpan {
+                kind: SpanKind::Aozora(node),
+                source_span: Span::new(m.consume_start, m.consume_end),
+            },
+            m.payload,
+        ))
     }
 
     /// Final flush: emit any trailing Plain run covering the source
@@ -1303,10 +1443,15 @@ where
                 let _phase3_loop_guard = SubsystemGuard::new(Subsystem::LoopBody);
                 self.process_event(event);
             } else {
-                // Upstream exhausted. Close any active frame as
-                // unclosed (its body events fold back to plain;
-                // a gaiji-mode refmark also falls into plain),
+                // Upstream exhausted. A deferred gaiji with no following
+                // ruby is a standalone span — flush it FIRST (it precedes
+                // any dangling frame's body in source order). Then close
+                // any active frame as unclosed (its body events fold back
+                // to plain; a gaiji-mode refmark also falls into plain),
                 // then run final flush.
+                if let Some(pending) = self.pending_ruby_base.take() {
+                    self.push_output(pending.span);
+                }
                 if let Some(frame) = self.frame.take() {
                     let refmark = frame.gaiji_refmark;
                     self.replay_unrecognised_body(frame.body, refmark);
@@ -1336,21 +1481,20 @@ where
     }
 
     fn process_event(&mut self, event: PairEvent) {
-        // Stream-through path for top-level Quote / Tortoise — see
-        // `StreamingFrame` for the rationale. Bypasses both frame
-        // buffering AND replay; events flow straight through.
-        if self.streaming.is_some() {
-            self.handle_stream_event(event);
-            return;
-        }
+        // Frame buffering comes first — checked BEFORE `streaming` so a
+        // sub-frame opened mid-stream for a nested Ruby / AngleQuote
+        // (`《…》` / `≪…≫` inside a `「…」` quote — see
+        // `handle_stream_event`) actually accumulates its body instead of
+        // the quote's stream-through path swallowing it. Once the
+        // sub-frame's outer pair closes, recognition runs and the frame
+        // clears, so `streaming` resumes on the next event.
         if self.frame.is_some() {
-            // Inside a frame: every event accumulates. A pending
-            // refmark cannot exist while a frame is open (frames are
-            // opened from top level and the refmark would have been
-            // absorbed or flushed there).
+            // A pending refmark cannot coexist with an open frame: it is
+            // absorbed into the frame's `gaiji_refmark` or folded to
+            // plain before the frame opens.
             debug_assert!(
                 self.pending_refmark.is_none(),
-                "frames are opened from top level; any pending refmark should have been absorbed or flushed before frame entry"
+                "a pending refmark should have been absorbed or flushed before frame entry"
             );
             let outer_closed = self.append_to_frame(event);
             if outer_closed {
@@ -1359,26 +1503,51 @@ where
             return;
         }
 
-        // Top level. If a refmark is pending, decide based on the
-        // current event:
-        if self.pending_refmark.is_some() {
-            if let PairEvent::PairOpen {
-                kind: PairKind::Bracket,
-                ..
-            } = &event
-            {
-                // Will be absorbed by the next handle_top_level call.
-            } else {
-                // Refmark not followed by Bracket: fold into plain
-                // up to the end of the refmark, then continue
-                // processing the new event normally. The refmark's
-                // span gets absorbed by `flush_plain_up_to` because
-                // we set `pending_plain_start` to `rm.start` before
-                // taking it.
-                let rm = self.pending_refmark.take().expect("checked Some");
-                if self.pending_plain_start.is_none() {
-                    self.pending_plain_start = Some(rm.start);
+        // A deferred gaiji (`pending_ruby_base`) is adopted as a base only
+        // by a `《…》` ruby open immediately adjacent to it; any other event
+        // flushes it as a standalone gaiji span first, preserving source
+        // order. Checked after the frame guard so the ruby's own body
+        // events (while its sub-frame buffers) never flush it early.
+        let flush_gaiji = self.pending_ruby_base.as_ref().is_some_and(|pending| {
+            let gaiji_end = pending.span.source_span.end;
+            !matches!(
+                &event,
+                PairEvent::PairOpen {
+                    kind: PairKind::Ruby,
+                    span,
+                } if span.start == gaiji_end
+            )
+        });
+        if flush_gaiji {
+            let pending = self.pending_ruby_base.take().expect("checked Some");
+            self.push_output(pending.span);
+        }
+
+        // Stream-through path for top-level Quote / Tortoise — see
+        // `StreamingFrame` for the rationale. Body events flow straight
+        // through, except a nested Ruby / AngleQuote opens a sub-frame
+        // (buffered by the frame check above).
+        if self.streaming.is_some() {
+            self.handle_stream_event(event);
+            return;
+        }
+
+        // Top level. A `※` refmark held from the previous event is
+        // absorbed only by an immediately-following Bracket open (gaiji);
+        // otherwise it folds into the plain run (its span is picked up
+        // because `pending_plain_start` is set to `rm.start` first).
+        if self.pending_refmark.is_some()
+            && !matches!(
+                event,
+                PairEvent::PairOpen {
+                    kind: PairKind::Bracket,
+                    ..
                 }
+            )
+        {
+            let rm = self.pending_refmark.take().expect("checked Some");
+            if self.pending_plain_start.is_none() {
+                self.pending_plain_start = Some(rm.start);
             }
         }
 

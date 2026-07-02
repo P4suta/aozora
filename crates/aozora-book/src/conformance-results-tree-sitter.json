@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 91,
-  "passed": 45,
-  "failed": 46,
+  "total": 96,
+  "passed": 47,
+  "failed": 49,
   "by_level": {
     "may": {
       "total": 3,
@@ -10,14 +10,14 @@
       "failed": 0
     },
     "must": {
-      "total": 26,
-      "passed": 19,
-      "failed": 7
+      "total": 30,
+      "passed": 21,
+      "failed": 9
     },
     "should": {
-      "total": 62,
+      "total": 63,
       "passed": 23,
-      "failed": 39
+      "failed": 40
     }
   },
   "cases": [
@@ -533,6 +533,13 @@
       "message": null
     },
     {
+      "case": "ruby_barred_in_quote",
+      "feature": "ruby",
+      "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
       "case": "ruby_base_bouten_ambiguous",
       "feature": "composite",
       "level": "must",
@@ -545,6 +552,20 @@
       "level": "must",
       "passed": false,
       "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_base_gaiji",
+      "feature": "ruby",
+      "level": "must",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_base_gaiji_flushed",
+      "feature": "gaiji",
+      "level": "must",
+      "passed": true,
+      "message": null
     },
     {
       "case": "ruby_base_plus_preceding_plain",
@@ -566,6 +587,20 @@
       "level": "must",
       "passed": true,
       "message": null
+    },
+    {
+      "case": "ruby_in_quote",
+      "feature": "ruby",
+      "level": "must",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_multi_in_quote",
+      "feature": "ruby",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
     },
     {
       "case": "sashie",

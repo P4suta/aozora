@@ -1,0 +1,3 @@
+# Regression: the explicit ｜base《reading》 ruby form inside a 「…」 quote.
+feature = "ruby"
+level = "must"

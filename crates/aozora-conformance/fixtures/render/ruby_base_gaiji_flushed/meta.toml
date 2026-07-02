@@ -1,0 +1,4 @@
+# A gaiji NOT immediately followed by a 《…》 ruby renders as a standalone
+# gaiji span (the one-step deferral flushes cleanly).
+feature = "gaiji"
+level = "must"
