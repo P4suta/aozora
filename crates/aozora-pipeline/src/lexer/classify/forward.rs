@@ -1709,8 +1709,23 @@ pub(super) fn forward_attr_from_suffix(s: &str) -> Option<ForwardAttr> {
         // comma-joined compound (`「3」は上付き小文字、「1/143」は分数`) yields a
         // suffix that is not exactly `分数`, so it stays `Directive{Unknown}`.
         "分数" => ForwardAttr::Fraction,
-        _ => return parse_font_size_suffix(s),
+        _ => return parse_font_size_suffix(s).or_else(|| parse_align_end_suffix(s)),
     })
+}
+
+/// Parse a `文末より N字上げ揃え` / `行末より N字上がり` end-alignment suffix into
+/// a [`ForwardAttr::AlignEnd`] — the forward-scope analogue of the line-form
+/// `AlignEndParamPrefix` (§7.6). Mirrors its verb set (`字上げ` / `字上がり`,
+/// optional `揃え`) and, like the line-form `LineFormat::AlignEnd`, collapses
+/// the 文末 / 行末 anchor to the offset alone. Returns `None` for a
+/// missing/zero magnitude or any other suffix (→ `Directive{Unknown}`).
+fn parse_align_end_suffix(s: &str) -> Option<ForwardAttr> {
+    let rest = s
+        .strip_prefix("文末より")
+        .or_else(|| s.strip_prefix("行末より"))?;
+    let (offset, tail) = parse_decimal_u8_prefix(rest)?;
+    (matches!(tail, "字上げ" | "字上がり" | "字上げ揃え" | "字上がり揃え") && offset >= 1)
+        .then_some(ForwardAttr::AlignEnd { offset })
 }
 
 /// Parse a `N段階大きな文字` / `N段階小さな文字` font-size suffix into a
@@ -1748,5 +1763,27 @@ mod tests {
             None
         );
         assert_eq!(forward_attr_from_suffix("分数、縦中横"), None);
+    }
+
+    #[test]
+    fn align_end_suffix_parses_offset_and_verb_variants() {
+        // The corpus-attested form: `「訳者」は文末より１字上げ揃え`.
+        assert_eq!(
+            forward_attr_from_suffix("文末より１字上げ揃え"),
+            Some(ForwardAttr::AlignEnd { offset: 1 })
+        );
+        // Verb + anchor variants mirror the line-form recogniser.
+        assert_eq!(
+            forward_attr_from_suffix("行末より2字上がり"),
+            Some(ForwardAttr::AlignEnd { offset: 2 })
+        );
+        assert_eq!(
+            forward_attr_from_suffix("文末より3字上げ"),
+            Some(ForwardAttr::AlignEnd { offset: 3 })
+        );
+        // Zero offset and unrelated suffixes stay Unknown.
+        assert_eq!(forward_attr_from_suffix("文末より0字上げ"), None);
+        assert_eq!(forward_attr_from_suffix("文末より字上げ"), None);
+        assert_eq!(forward_attr_from_suffix("文頭より1字上げ"), None);
     }
 }

@@ -405,6 +405,7 @@ mod tests {
             ForwardAttr::FontSizeAbsolute(AbsoluteSize::Medium),
             ForwardAttr::FontSizeAbsolute(AbsoluteSize::Small),
             ForwardAttr::FontSize(fs(1)),
+            ForwardAttr::AlignEnd { offset: 1 },
         ] {
             let t = a.content_plain("強");
             render_into(

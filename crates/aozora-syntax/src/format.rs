@@ -407,6 +407,15 @@ pub enum ForwardAttr {
     /// grammar lives in the raw directive body, interned on the owned leaf's
     /// `accent_body` (this attribute stays a `Copy` unit, arena-free).
     AccentDot,
+    /// End-relative alignment — `「X」は文末より N字上げ揃え` — lifts the target
+    /// run `offset` full-width chars off the text-end edge. The forward-scope
+    /// analogue of [`LineFormat::AlignEnd`]; like it, the anchor (文末 / 行末) is
+    /// not distinguished, only the offset. Serialized separately (it carries a
+    /// magnitude), so [`Self::keyword`] falls through to its 太字 default.
+    AlignEnd {
+        /// Chars lifted off the text-end edge (always ≥ 1 for this form).
+        offset: u8,
+    },
 }
 
 /// A forward emphasis node's target-text provenance — whether `serialize`
@@ -513,6 +522,7 @@ impl ForwardAttr {
             Self::CombineUpright => Format::CombineUpright,
             Self::Fraction => Format::Fraction,
             Self::AccentDot => Format::AccentDot,
+            Self::AlignEnd { .. } => Format::AlignEnd,
         }
     }
 

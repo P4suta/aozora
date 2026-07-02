@@ -382,6 +382,10 @@ fn emit_format_owned<W: Write>(
             "小さな"
         };
         write!(out, "{}段階{word}文字", shift.magnitude())?;
+    } else if let ForwardAttr::AlignEnd { offset } = f.attr {
+        // Anchor is not distinguished in the model (like LineFormat::AlignEnd);
+        // canonicalise to 文末より…字上げ揃え, which re-parses to the same offset.
+        write!(out, "文末より{offset}字上げ揃え")?;
     } else {
         out.write_str(f.attr.keyword())?;
     }
