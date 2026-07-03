@@ -1,6 +1,6 @@
 [package]
 name = "aozora-diagnostics"
-description = "Renderer-agnostic diagnostic catalogue for aozora-flavored-markdown"
+description = "Renderer-agnostic diagnostic catalogue for Aozora Bunko notation"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

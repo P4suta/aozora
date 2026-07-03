@@ -1,6 +1,6 @@
 [package]
 name = "aozora-lsp"
-description = "Language Server Protocol implementation for aozora-flavored-markdown"
+description = "Language Server Protocol implementation for Aozora Bunko notation"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

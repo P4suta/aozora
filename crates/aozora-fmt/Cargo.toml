@@ -1,6 +1,6 @@
 [package]
 name = "aozora-fmt"
-description = "Idempotent formatter for aozora-flavored-markdown"
+description = "Idempotent formatter for Aozora Bunko notation"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
