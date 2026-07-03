@@ -9,34 +9,32 @@
   --accent: #b8336a;
   --accent-bg: rgba(184, 51, 106, 0.08);
   --accent-selection: rgba(184, 51, 106, 0.22);
-  --warn: #c97817;
-  --warn-bg: rgba(201, 120, 23, 0.10);
+  --on-accent: #fff;
   --error: #b03030;
+  --error-bg: rgba(176, 48, 48, 0.1);
   --success: #1f7d4a;
   /* Token colours used by aozora.css + editor/theme.ts */
   --token-ruby: var(--accent);
-  --token-ruby-reading: #5677ad;
   --token-bouten: #b56a1a;
   --token-bouten-bg: rgba(201, 120, 23, 0.06);
   --token-gaiji: #8a4faf;
   --token-gaiji-bg: rgba(138, 79, 175, 0.10);
   --token-gaiji-border: rgba(138, 79, 175, 0.55);
-  --token-section: var(--fg-muted);
-  --token-heading: var(--accent);
 
-  /*
-   * Font roles. Role names (ui / mono / serif) are shared with the
-   * sibling afm playground (afm uses the `--afm-pg-font-*` prefix);
-   * the *values* stay brand-specific. Each role keeps the widest
-   * stack we use anywhere so a single token serves every site:
-   *   - mono keeps the CJK fallbacks the editor needs (code with 日本語).
-   *   - serif keeps the vertical-writing mincho stack.
-   */
+  /* z-index スケール（テーマ非依存）: dropdown < modal < toast。
+     toast は常に最前面に置き、モーダル表示中でも通知が見えるようにする。 */
+  --z-dropdown: 100;
+  --z-modal: 200;
+  --z-toast: 300;
+
+  /* フォント役割（ui / mono / serif）。役割名は姉妹 afm playground と共有、値は
+     ブランド固有。全 font-family 使用箇所を賄う単一の権威（各所での直書きは避ける）。 */
   --font-ui:
-    'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', 'Source Han Serif JP',
-    system-ui, -apple-system, 'Segoe UI', sans-serif;
+    'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', system-ui, -apple-system,
+    'Segoe UI', sans-serif;
   --font-mono:
-    'Menlo', 'Consolas', 'Yu Gothic Mono', 'Noto Sans Mono CJK JP', monospace;
+    ui-monospace, 'Menlo', 'Consolas', 'Yu Gothic Mono', 'Noto Sans Mono CJK JP',
+    monospace;
   --font-serif:
     'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Noto Serif JP',
     'Source Han Serif JP', 'BIZ UDPMincho', serif;
@@ -56,12 +54,11 @@
   --accent: #ff8fb1;
   --accent-bg: rgba(255, 143, 177, 0.16);
   --accent-selection: rgba(255, 143, 177, 0.28);
-  --warn: #f0b46a;
-  --warn-bg: rgba(240, 180, 106, 0.14);
+  --on-accent: #16161b;
   --error: #ff9090;
+  --error-bg: rgba(255, 144, 144, 0.14);
   --success: #88dcaa;
   --token-ruby: var(--accent);
-  --token-ruby-reading: #8aa9d9;
   --token-bouten: #f0b46a;
   --token-bouten-bg: rgba(240, 180, 106, 0.10);
   --token-gaiji: #c8a8ff;
@@ -82,22 +79,23 @@ body,
 }
 
 body {
-  font-family:
-    'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', system-ui, -apple-system,
-    'Segoe UI', sans-serif;
+  font-family: var(--font-ui);
   background: var(--bg);
   color: var(--fg);
   font-size: 14px;
   line-height: 1.5;
+  /* iOS/Safari の回転時テキスト自動拡大を抑止（autoprefixer が -webkit- を付与）。 */
+  text-size-adjust: 100%;
 }
 
 .app {
   display: flex;
   flex-direction: column;
   /* 確定した viewport 高さ。dvh はモバイルの URL バー可視領域にフィットする。
-     vh は dvh 非対応ブラウザ向けの fallback（宣言順が重要）。
+     height:100% は #root（html,body,#root が height:100%）の連鎖で viewport 高さに解決され、
+     dvh 非対応ブラウザ向けの fallback になる（宣言順が重要・vh 単位を使わず lint も通る）。
      この確定高さが、下流の height:100% / max-height:100% チェーンを機能させる起点。 */
-  height: 100vh;
+  height: 100%;
   height: 100dvh;
   /* 極端に低い viewport で header/footer が溢れても body スクロールを生まないための保険。 */
   overflow: hidden;
@@ -175,7 +173,7 @@ body {
   gap: 0.35rem;
   padding: 0.4rem 0.75rem;
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   border: none;
   border-radius: 4px;
   font: inherit;
@@ -233,7 +231,7 @@ body {
 
 .layout-btn.active {
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
 }
 
 .share-btn:hover:not(:disabled) {
@@ -259,7 +257,7 @@ body {
 }
 
 .error-banner {
-  background: rgba(176, 48, 48, 0.1);
+  background: var(--error-bg);
   color: var(--error);
 }
 
@@ -293,7 +291,7 @@ body {
 
 .error-banner-action {
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   border: none;
   border-radius: 4px;
   padding: 0.3rem 0.7rem;
@@ -434,7 +432,7 @@ body {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 50;
+  z-index: var(--z-dropdown);
   min-width: 320px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -573,7 +571,7 @@ body {
   font-size: 13px;
   line-height: 1.55;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
   min-height: 100%;
 }
 
@@ -694,7 +692,7 @@ body {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  z-index: 100;
+  z-index: var(--z-dropdown);
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -808,11 +806,11 @@ body {
 
 .settings-radio:has(input:checked) {
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
 }
 
 .settings-radio:has(input:checked) input {
-  accent-color: white;
+  accent-color: var(--on-accent);
 }
 
 /* ===== Notation guide modal ===== */
@@ -820,7 +818,7 @@ body {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 200;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -875,11 +873,11 @@ body {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 210;
+  z-index: var(--z-modal);
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 12vh 1rem 2rem;
+  padding: 12dvh 1rem 2rem;
 }
 
 .command-palette-modal {
@@ -888,7 +886,7 @@ body {
   border-radius: 8px;
   max-width: 560px;
   width: 100%;
-  max-height: 70vh;
+  max-height: 70dvh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
@@ -935,7 +933,7 @@ body {
 .command-palette-id {
   font-size: 0.72rem;
   color: var(--fg-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 
 .command-palette-empty {
@@ -987,7 +985,7 @@ body {
 
 .toc-link.active {
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
 }
 
 .toc-l3 .toc-link {
@@ -1001,7 +999,7 @@ body {
 }
 
 .toc-l3 .toc-link.active {
-  color: white;
+  color: var(--on-accent);
 }
 
 .notation-guide-body {
@@ -1103,7 +1101,7 @@ body {
   border-radius: 6px;
   font-size: 0.85rem;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
-  z-index: 10;
+  z-index: var(--z-toast);
   animation: toast-in 0.16s ease-out;
 }
 
@@ -1158,7 +1156,6 @@ body {
     gap: 0.4rem;
     flex-wrap: nowrap;
     overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     padding-bottom: 0.15rem;
   }
@@ -1204,7 +1201,6 @@ body {
 
   .tab-bar {
     overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
   }
   .tab-bar::-webkit-scrollbar {
@@ -1267,7 +1263,7 @@ body {
     flex: 0 0 auto;
     border-right: none;
     border-bottom: 1px solid var(--border);
-    max-height: 32vh;
+    max-height: 32dvh;
     overflow-y: auto;
   }
 
@@ -1284,12 +1280,5 @@ body {
   .app-footer {
     padding: 0.5rem 0.75rem;
     font-size: 0.7rem;
-  }
-}
-
-/* iOS / Android Safari: prevent text-size adjustment on rotate. */
-@supports (-webkit-touch-callout: none) {
-  body {
-    -webkit-text-size-adjust: 100%;
   }
 }
