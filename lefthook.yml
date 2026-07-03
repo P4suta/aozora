@@ -167,6 +167,18 @@ pre-push:
         newly survives into visible rendered text. Run
         `just render-audit` (or `xtask corpus render-audit`) to find the
         offending document, then fix the classifier/renderer so it resolves.
+    # Render-correctness ratchet (#414): fail the push when structural render
+    # defects (I-A HTML tags don't balance, I-C undeclared aozora-* class) rise
+    # above corpus/render-correctness-baseline.json. Catches recognized-but-wrong
+    # output the recognition / leak gates cannot see. Runtime-skips (no-op) when
+    # AOZORA_CORPUS_ROOT is unset; the corpus CI job is the backstop.
+    render-correctness-gate:
+      run: just render-correctness-gate
+      fail_text: |
+        Render-correctness regression: a render change left more documents
+        structurally malformed (unbalanced HTML tags or an undeclared class).
+        Run `just render-correctness` (or `xtask corpus render-correctness`) to
+        find the offending document, then fix the renderer.
     # Owned-producer allocation-pressure ratchet (#237 P0.2-real): fail the
     # push when the owned lex path's allocation count / bytes (normalized
     # per-file / per-source-byte) regress beyond corpus/owned-alloc-baseline.json.

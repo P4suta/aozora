@@ -445,6 +445,40 @@ render-leak-gate-update:
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo run -p aozora-xtask -q -- corpus render-leak-gate --root /corpus --baseline corpus/render-leak-baseline.json --update
 
+# Render-correctness ratchet gate: fail when per-category structural render
+# defects (I-A HTML tags don't balance, I-C emitted aozora-* class absent from
+# AOZORA_CLASSES) rise above `corpus/render-correctness-baseline.json`. The
+# enforcing partner of `corpus render-correctness` (the per-file diagnostic).
+# Needs a corpus; runtime-skips (NOT a failure) when AOZORA_CORPUS_ROOT is unset.
+render-correctness-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; render-correctness-gate skipped (no corpus to walk)."
+        exit 0
+    fi
+    if [[ ! -d "$AOZORA_CORPUS_ROOT" ]]; then
+        echo "AOZORA_CORPUS_ROOT=$AOZORA_CORPUS_ROOT is not a directory." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus render-correctness-gate --root /corpus --baseline corpus/render-correctness-baseline.json
+
+# Re-capture the render-correctness baseline (ratchet down after a fix).
+render-correctness-gate-update:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; cannot capture a render-correctness baseline." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus render-correctness-gate --root /corpus --baseline corpus/render-correctness-baseline.json --update
+
 # Owned-producer allocation-pressure ratchet (#237 P0.2-real). Measures, via
 # dhat around `lex_owned` over the corpus, owned-path allocation count / bytes
 # normalized per-file / per-source-byte, and fails when either regresses beyond
