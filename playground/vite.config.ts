@@ -63,6 +63,18 @@ function cspInProd(): Plugin {
 export default defineConfig({
   base: '/aozora/playground/',
   plugins: [solidPlugin(), cspInProd()],
+  build: {
+    rollupOptions: {
+      // Two SPA entries, one per HTML file (no client router): the editor
+      // playground (index.html → src/main.tsx) and the notation gallery
+      // (gallery.html → src/gallery.tsx). Each is a Rollup input so `vite
+      // build` emits both pages under the `base` path.
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        gallery: fileURLToPath(new URL('./gallery.html', import.meta.url)),
+      },
+    },
+  },
   resolve: {
     alias: {
       'aozora-wasm': fileURLToPath(
