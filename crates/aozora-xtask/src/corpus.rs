@@ -1473,6 +1473,8 @@ struct CorrHit {
 enum CorrCat {
     /// I-A: tags do not balance (mismatched close or unclosed at EOF).
     Unbalanced,
+    /// I-B: a `<ruby>` has an empty base (reading annotates nothing).
+    BadRuby,
     /// I-C: an emitted `aozora-*` class is not in `AOZORA_CLASSES`.
     UndeclaredClass,
 }
@@ -1526,11 +1528,16 @@ fn scan_correctness(html: &str) -> Vec<CorrHit> {
     let mut hits = Vec::new();
     let mut stack: Vec<&str> = Vec::new();
     let mut broken = false;
+    // I-B: `Some(seen_content)` while scanning a `<ruby>` base (before its <rt>).
+    let mut ruby_base: Option<bool> = None;
     let bytes = html.as_bytes();
     let n = bytes.len();
     let mut i = 0;
     while i < n {
         if bytes[i] != b'<' {
+            if ruby_base == Some(false) && !bytes[i].is_ascii_whitespace() {
+                ruby_base = Some(true); // non-whitespace text = non-empty base
+            }
             i += 1;
             continue;
         }
@@ -1549,6 +1556,22 @@ fn scan_correctness(html: &str) -> Vec<CorrHit> {
             continue;
         }
         let name = tag_name(tag);
+        // I-B: the ruby base spans `<ruby>` up to its first `<rt>`/`<rp>`; an
+        // intervening non-whitespace text run or nested element makes it non-empty.
+        match name {
+            "ruby" => ruby_base = Some(false),
+            "rt" | "rp" => {
+                if ruby_base == Some(false) {
+                    hits.push(CorrHit {
+                        cat: CorrCat::BadRuby,
+                        snippet: "<ruby> with empty base".to_owned(),
+                    });
+                }
+                ruby_base = None;
+            }
+            _ if ruby_base == Some(false) => ruby_base = Some(true),
+            _ => {}
+        }
         let void = tag.ends_with("/>") || name == "img" || name == "br";
         if !void && !broken {
             stack.push(name);
@@ -1638,6 +1661,7 @@ fn render_correctness(root: Option<&Path>, top: usize, limit: Option<usize>) -> 
 
     let (mut scanned, mut decode_skipped, mut panicked) = (0usize, 0usize, 0usize);
     let mut unbalanced = CatAgg::default();
+    let mut bad_ruby = CatAgg::default();
     let mut undeclared = CatAgg::default();
     for r in results {
         match r {
@@ -1650,6 +1674,7 @@ fn render_correctness(root: Option<&Path>, top: usize, limit: Option<usize>) -> 
             Ok(DocCorrOutcome::Defective { label, hits }) => {
                 scanned += 1;
                 record_corr(&mut unbalanced, CorrCat::Unbalanced, &label, &hits, top);
+                record_corr(&mut bad_ruby, CorrCat::BadRuby, &label, &hits, top);
                 record_corr(
                     &mut undeclared,
                     CorrCat::UndeclaredClass,
@@ -1668,6 +1693,7 @@ fn render_correctness(root: Option<&Path>, top: usize, limit: Option<usize>) -> 
     );
     let cats = [
         ("I-A unbalanced-tags", &unbalanced),
+        ("I-B empty-ruby-base", &bad_ruby),
         ("I-C undeclared-class", &undeclared),
     ];
     for (name, agg) in cats {
@@ -1692,6 +1718,9 @@ struct RenderCorrectnessBaseline {
     note: String,
     /// I-A: documents whose rendered HTML tags do not balance.
     unbalanced: MarkerStat,
+    /// I-B: documents with a `<ruby>` whose base is empty.
+    #[serde(default)]
+    bad_ruby: MarkerStat,
     /// I-C: documents emitting an `aozora-*` class absent from `AOZORA_CLASSES`.
     undeclared: MarkerStat,
 }
@@ -1702,6 +1731,7 @@ fn tally_render_correctness(
     results: Vec<Result<DocCorrOutcome, aozora_corpus::CorpusError>>,
 ) -> (RenderCorrectnessBaseline, usize, usize) {
     let mut unbalanced = CatAgg::default();
+    let mut bad_ruby = CatAgg::default();
     let mut undeclared = CatAgg::default();
     let (mut scanned, mut panicked) = (0usize, 0usize);
     for r in results {
@@ -1714,21 +1744,21 @@ fn tally_render_correctness(
             Ok(DocCorrOutcome::Defective { label, hits }) => {
                 scanned += 1;
                 record_corr(&mut unbalanced, CorrCat::Unbalanced, &label, &hits, 0);
+                record_corr(&mut bad_ruby, CorrCat::BadRuby, &label, &hits, 0);
                 record_corr(&mut undeclared, CorrCat::UndeclaredClass, &label, &hits, 0);
             }
             Ok(DocCorrOutcome::DecodeSkipped | DocCorrOutcome::LimitSkipped) | Err(_) => {}
         }
     }
+    let stat = |a: &CatAgg| MarkerStat {
+        files: a.files,
+        occurrences: a.occurrences,
+    };
     let current = RenderCorrectnessBaseline {
         note: String::new(),
-        unbalanced: MarkerStat {
-            files: unbalanced.files,
-            occurrences: unbalanced.occurrences,
-        },
-        undeclared: MarkerStat {
-            files: undeclared.files,
-            occurrences: undeclared.occurrences,
-        },
+        unbalanced: stat(&unbalanced),
+        bad_ruby: stat(&bad_ruby),
+        undeclared: stat(&undeclared),
     };
     (current, scanned, panicked)
 }
@@ -1747,6 +1777,7 @@ fn correctness_regressions(
             current.unbalanced,
             baseline.unbalanced,
         ),
+        ("I-B empty-ruby-base", current.bad_ruby, baseline.bad_ruby),
         (
             "I-C undeclared-class",
             current.undeclared,
@@ -1766,10 +1797,10 @@ fn correctness_regressions(
 
 const CORRECTNESS_NOTE: &str = "Render-correctness ratchet: per-category (files, occurrences) of \
     structural render defects — I-A rendered HTML tags do not balance (unclosed region / unbalanced \
-    inline span), I-C emitted aozora-* class absent from AOZORA_CLASSES. Defects may only SHRINK; any \
-    rise fails the gate, ratchet down with `--update`. Run `xtask corpus render-correctness` to find \
-    WHICH document regressed. Residual (2026-07-04): I-A = inline 割注 open/close imbalance in source \
-    (#415), to fix; I-C = 0.";
+    inline span), I-B a <ruby> has an empty base, I-C emitted aozora-* class absent from \
+    AOZORA_CLASSES. Defects may only SHRINK; any rise fails the gate, ratchet down with `--update`. \
+    Run `xtask corpus render-correctness` to find WHICH document regressed. Residual (2026-07-04): \
+    I-A = inline 割注 open/close imbalance in source (#415), to fix; I-B = 0; I-C = 0.";
 
 /// Render-correctness ratchet gate (the enforcing partner of
 /// `render-correctness`): fail when any per-category defect count rises above
@@ -1809,12 +1840,11 @@ fn render_correctness_gate(
         fs::write(baseline_path, json)
             .map_err(|e| format!("write {}: {e}", baseline_path.display()))?;
         eprintln!(
-            "render-correctness-gate: wrote baseline {} — I-A {}f/{}o, I-C {}f/{}o",
+            "render-correctness-gate: wrote baseline {} — I-A {}f, I-B {}f, I-C {}f",
             baseline_path.display(),
             current.unbalanced.files,
-            current.unbalanced.occurrences,
+            current.bad_ruby.files,
             current.undeclared.files,
-            current.undeclared.occurrences,
         );
         return Ok(());
     }
@@ -1829,10 +1859,12 @@ fn render_correctness_gate(
     }
     eprintln!(
         "render-correctness-gate: scanned {scanned} docs in {elapsed:.1}s — \
-         I-A {}f, I-C {}f (baseline I-A {}f, I-C {}f)",
+         I-A {}f, I-B {}f, I-C {}f (baseline I-A {}f, I-B {}f, I-C {}f)",
         current.unbalanced.files,
+        current.bad_ruby.files,
         current.undeclared.files,
         baseline.unbalanced.files,
+        baseline.bad_ruby.files,
         baseline.undeclared.files,
     );
     if !problems.is_empty() {
@@ -2606,6 +2638,61 @@ fn _unused_marker(_: OsString) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- scan_correctness (I-A / I-B / I-C) ---------------------------
+
+    #[test]
+    fn scan_correctness_flags_each_defect_class() {
+        let count = |html: &str, cat: CorrCat| {
+            scan_correctness(html)
+                .iter()
+                .filter(|h| h.cat == cat)
+                .count()
+        };
+        // I-B: an empty ruby base fires; a real base (text or nested element)
+        // does not — proves the check is not vacuous (corpus reports 0).
+        assert_eq!(
+            count(
+                "<ruby><rp>(</rp><rt>あ</rt><rp>)</rp></ruby>",
+                CorrCat::BadRuby
+            ),
+            1
+        );
+        assert_eq!(
+            count(
+                "<ruby>猫<rp>(</rp><rt>ねこ</rt><rp>)</rp></ruby>",
+                CorrCat::BadRuby
+            ),
+            0
+        );
+        assert_eq!(
+            count(
+                r#"<ruby><span class="aozora-gaiji">x</span><rp>(</rp><rt>y</rt><rp>)</rp></ruby>"#,
+                CorrCat::BadRuby,
+            ),
+            0,
+        );
+        // I-A: unclosed div at EOF, and a stray close; a balanced doc is clean.
+        assert_eq!(count("<div>x", CorrCat::Unbalanced), 1);
+        assert_eq!(count("<p><span>x</p>", CorrCat::Unbalanced), 1);
+        assert_eq!(count("<p>x</p>", CorrCat::Unbalanced), 0);
+        // I-C: an undeclared class fires; a real class (numeric stem collapsed)
+        // does not.
+        assert_eq!(
+            count(
+                r#"<span class="aozora-zzz-bogus"></span>"#,
+                CorrCat::UndeclaredClass
+            ),
+            1,
+        );
+        assert_eq!(
+            count(
+                r#"<span class="aozora-gaiji"></span>"#,
+                CorrCat::UndeclaredClass
+            ),
+            0
+        );
+    }
 
     // ---- band_slot ----------------------------------------------------
 
