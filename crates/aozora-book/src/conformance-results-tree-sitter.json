@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 106,
-  "passed": 52,
-  "failed": 54,
+  "total": 114,
+  "passed": 54,
+  "failed": 60,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,9 +15,9 @@
       "failed": 9
     },
     "should": {
-      "total": 73,
-      "passed": 28,
-      "failed": 45
+      "total": 81,
+      "passed": 30,
+      "failed": 51
     }
   },
   "cases": [
@@ -631,6 +631,55 @@
       "message": null
     },
     {
+      "case": "ruby_base_greek",
+      "feature": "ruby",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_base_hiragana",
+      "feature": "ruby",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_base_kanakanji_boundary",
+      "feature": "ruby",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_base_katakana",
+      "feature": "ruby",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_base_latin",
+      "feature": "ruby",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_base_latin_barred",
+      "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_latin_in_quote",
+      "feature": "ruby",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
       "case": "ruby_base_plus_preceding_plain",
       "feature": "composite",
       "level": "must",
@@ -643,6 +692,13 @@
       "level": "should",
       "passed": false,
       "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_base_small_kana_declines",
+      "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
     },
     {
       "case": "ruby_explicit",

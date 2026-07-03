@@ -95,7 +95,7 @@ use super::instrumentation::{
 // straight into the lex output's `NodeStore`.
 use aozora_syntax::alloc_owned::OwnedAllocator;
 use aozora_syntax::owned::{ContentOwned, DirectiveOwned, GaijiOwned, NodeOwned, SegmentOwned};
-use aozora_syntax::{DirectiveKind, RegionClose, RegionFormat, Span, is_ruby_base_char};
+use aozora_syntax::{DirectiveKind, RegionClose, RegionFormat, Span, ruby_base_class};
 
 use super::pair::{PairEvent, PairKind};
 use super::token::TriggerKind;
@@ -1731,15 +1731,17 @@ impl<'s> RecogniseCtx<'_, 's> {
             });
         }
 
-        // Implicit form: trailing-kanji run of the preceding Text.
-        let kanji_offset = trailing_kanji_start(prev_text);
-        if kanji_offset == prev_text.len() {
+        // Implicit form: the trailing same-class base run of the preceding
+        // Text (kanji, or a non-kanji word/letter run — see
+        // `trailing_ruby_base_start`).
+        let base_offset = trailing_ruby_base_start(prev_text);
+        if base_offset == prev_text.len() {
             return None;
         }
         let consume_start =
-            prev_range.start + u32::try_from(kanji_offset).expect("kanji offset fits in u32");
+            prev_range.start + u32::try_from(base_offset).expect("base offset fits in u32");
         Some(RubyMatch {
-            base: &prev_text[kanji_offset..],
+            base: &prev_text[base_offset..],
             reading,
             consume_start,
             consume_end: close_span.end,
@@ -2080,10 +2082,23 @@ fn push_text_segment(
 /// offset reached while every char is a ruby-base char. Returns
 /// `text.len()` if the final char is not a ruby-base char (→ no
 /// implicit base available).
-fn trailing_kanji_start(text: &str) -> usize {
+/// Byte offset where the trailing implicit-ruby base run of `text` starts
+/// — the maximal run of a single `RubyBaseClass` ending at `text`'s end.
+/// Returns `text.len()` when the last char is not a base char (no implicit
+/// base). For a kanji-ending run this is byte-for-byte the historical
+/// `trailing_kanji_start` (the `Kanji` class equals the old set); a
+/// non-kanji-ending run now yields its same-class base (`Yahoo《ヤフー》`,
+/// `α《アルファ》`), never crossing into an adjacent class.
+fn trailing_ruby_base_start(text: &str) -> usize {
+    let Some(last) = text.chars().next_back() else {
+        return text.len();
+    };
+    let Some(base_class) = ruby_base_class(last) else {
+        return text.len();
+    };
     let mut start = text.len();
     for (idx, ch) in text.char_indices().rev() {
-        if is_ruby_base_char(ch) {
+        if ruby_base_class(ch) == Some(base_class) {
             start = idx;
         } else {
             break;
@@ -2127,9 +2142,9 @@ enum EmitKind {
     BlockClose(RegionClose),
 }
 
-// `is_ruby_base_char` now lives in `aozora_syntax` (single source of
-// truth shared with the serializer's bare-vs-`｜` decision); imported
-// at the top of this module.
+// `ruby_base_class` lives in `aozora_syntax` (single source of truth
+// shared with the serializer's bare-vs-`｜` decision); imported at the top
+// of this module and driven here by `trailing_ruby_base_start`.
 
 #[cfg(test)]
 mod tests {

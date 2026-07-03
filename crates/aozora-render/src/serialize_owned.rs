@@ -34,7 +34,7 @@ use aozora_syntax::owned::{
 };
 use aozora_syntax::{
     AccentMark, BoutenPosition, DirectiveKind, EnclosureKind, ForwardAttr, RubySide,
-    is_ruby_base_char,
+    ruby_base_class,
 };
 
 /// Options controlling how the owned AST is re-emitted to Aozora source.
@@ -309,10 +309,16 @@ fn emit_ruby_owned<W: Write>(
     out.write_char('》')
 }
 
-/// Decide whether a right-side ruby base needs an explicit `｜` start bar: true
-/// when the base contains a non-ruby-base character, or the preceding char is
-/// itself a ruby-base character or `｜`. A right-side base is always a single
-/// `Plain`; the resolved run is matched accordingly.
+/// Decide whether a right-side ruby base needs an explicit `｜` start bar:
+/// true when the base is not a uniform single `RubyBaseClass` run (a bare
+/// reading would re-parse a shorter base), or the preceding char is the
+/// same class as the base or `｜` (it would otherwise extend into the
+/// base). A right-side base is always a single `Plain`; the resolved run is
+/// matched accordingly. For a kanji base this is byte-for-byte the previous
+/// `is_ruby_base_char`-based rule (the `Kanji` class equals the old set);
+/// the class-awareness only governs the non-kanji bases that
+/// `trailing_ruby_base_start` newly forms — the same lockstep the
+/// classifier walks (ADR 0002).
 fn ruby_needs_bar_owned(base_run: &[ContentOwned], prev: Option<char>, store: &NodeStore) -> bool {
     // A gaiji base (`※［＃…］《…》`) re-parses implicitly via the classifier's
     // deferred-emit, so it never needs an explicit `｜` — and a preceding
@@ -329,8 +335,11 @@ fn ruby_needs_bar_owned(base_run: &[ContentOwned], prev: Option<char>, store: &N
         _ => None,
     };
     plain.is_none_or(|s| {
-        s.chars().any(|c| !is_ruby_base_char(c))
-            || prev.is_some_and(|c| is_ruby_base_char(c) || c == '｜')
+        let Some(base_class) = s.chars().next_back().and_then(ruby_base_class) else {
+            return true;
+        };
+        s.chars().any(|c| ruby_base_class(c) != Some(base_class))
+            || prev.is_some_and(|c| ruby_base_class(c) == Some(base_class) || c == '｜')
     })
 }
 
