@@ -1529,11 +1529,19 @@ where
         // base-start marker for a following ruby. Hold it out of the plain
         // run so `try_ruby_over_gaiji_base` can drop the redundant marker on
         // adoption (the gaiji is unambiguously the base), or `emit_pending_gaiji`
-        // can re-emit it as plain when the gaiji stands alone.
-        // `｜` (U+FF5C) is 3 UTF-8 bytes; `ends_with` guarantees ≥3 precede.
-        let bar = self.source[..m.consume_start as usize]
-            .ends_with('\u{ff5c}')
-            .then(|| Span::new(m.consume_start - 3, m.consume_start));
+        // can re-emit it as plain when the gaiji stands alone. Consume the
+        // WHOLE trailing `｜` run, not just the last bar: dropping only one
+        // per parse would leave the next `｜` adjacent to the gaiji, so
+        // re-serialising `｜｜※…《…》` would keep peeling one bar off each pass
+        // and never reach a fixed point (fmt-idempotence).
+        let before = &self.source[..m.consume_start as usize];
+        let bar_start = before.trim_end_matches('\u{ff5c}').len();
+        let bar = (bar_start < before.len()).then(|| {
+            Span::new(
+                u32::try_from(bar_start).expect("bar-run start is within the source (u32)"),
+                m.consume_start,
+            )
+        });
         self.flush_plain_up_to(bar.map_or(m.consume_start, |b| b.start));
         let node = self.alloc.gaiji(m.payload);
         self.pending_plain_start = None;

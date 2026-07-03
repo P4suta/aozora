@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc d22866b5d333ca57a0e4f438d536cb5fd9175ada48cdc60492f78475df5f4ccb # shrinks to text = "｜｜｜｜青空《あおぞら》"
+cc 8e9b93d07e8d80c41721b560af2c210db0648307aa15ba9e8971b4519e89f3c3 # shrinks to text = "｜｜｜※［＃「あ」、U+3042］《《》》"
