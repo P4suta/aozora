@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 122,
+  "total": 123,
   "passed": 58,
-  "failed": 64,
+  "failed": 65,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,9 +15,9 @@
       "failed": 9
     },
     "should": {
-      "total": 89,
+      "total": 90,
       "passed": 34,
-      "failed": 55
+      "failed": 56
     }
   },
   "cases": [
@@ -657,6 +657,13 @@
       "level": "must",
       "passed": true,
       "message": null
+    },
+    {
+      "case": "ruby_base_gaiji_multi_bar",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
     },
     {
       "case": "ruby_base_greek",
