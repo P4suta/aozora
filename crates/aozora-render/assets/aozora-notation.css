@@ -23,10 +23,10 @@
 
 /* ── Container + theme defaults ─────────────────────────────────────── */
 .aozora-notation {
-  --aozora-fg: currentColor;
+  --aozora-fg: currentcolor;
   --aozora-muted: #6b6b6b;
   --aozora-accent: #0b66c3;
-  --aozora-accent-bg: rgba(11, 102, 195, 0.12);
+  --aozora-accent-bg: rgb(11 102 195 / 12%);
   --aozora-border: #c8c8c8;
   --aozora-serif: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
   --aozora-gaiji-fg: #7a5900;
@@ -39,7 +39,7 @@
 }
 
 .aozora-notation :is(p, div) {
-  margin: 0 0 0.75rem 0;
+  margin: 0 0 0.75rem;
 }
 
 /* 縦書き。consumer が縦書きトグルでこのクラスを container に付ける。 */
@@ -54,11 +54,13 @@
 .aozora-notation ruby {
   ruby-position: over;
 }
+
 .aozora-notation rt {
   font-size: 0.5em;
   color: var(--aozora-muted);
   font-family: inherit;
 }
+
 .aozora-notation rp {
   display: none;
 }
@@ -67,6 +69,7 @@
 .aozora-ruby-left {
   ruby-position: under;
 }
+
 /* ルビ注記 — ルビを注記として扱う形。読みを控えめに。 */
 .aozora-ruby-note rt {
   color: var(--aozora-muted);
@@ -81,51 +84,61 @@
   -webkit-text-emphasis-position: over right;
   text-emphasis-position: over right;
 }
+
 /* ゴマ点（黒） */
 .aozora-bouten-goma {
   -webkit-text-emphasis-style: filled sesame;
   text-emphasis-style: filled sesame;
 }
+
 /* 白ゴマ点 */
 .aozora-bouten-shirogoma {
   -webkit-text-emphasis-style: open sesame;
   text-emphasis-style: open sesame;
 }
+
 /* 丸（黒） */
 .aozora-bouten-maru {
   -webkit-text-emphasis-style: filled circle;
   text-emphasis-style: filled circle;
 }
+
 /* 白丸 */
 .aozora-bouten-shiromaru {
   -webkit-text-emphasis-style: open circle;
   text-emphasis-style: open circle;
 }
+
 /* 二重丸 */
 .aozora-bouten-nijumaru {
   -webkit-text-emphasis-style: filled double-circle;
   text-emphasis-style: filled double-circle;
 }
+
 /* 蛇の目（白二重丸） */
 .aozora-bouten-janome {
   -webkit-text-emphasis-style: open double-circle;
   text-emphasis-style: open double-circle;
 }
+
 /* 黒三角 */
 .aozora-bouten-kurosankaku {
   -webkit-text-emphasis-style: filled triangle;
   text-emphasis-style: filled triangle;
 }
+
 /* 白三角 */
 .aozora-bouten-shirosankaku {
   -webkit-text-emphasis-style: open triangle;
   text-emphasis-style: open triangle;
 }
+
 /* ×（ばつ） */
 .aozora-bouten-batsu {
   -webkit-text-emphasis-style: "\00d7";
   text-emphasis-style: "\00d7";
 }
+
 /* 傍線（実線）／二重傍線／波線／鎖線／破線 は text-decoration 系で表現 */
 .aozora-bouten-bosen {
   text-decoration: underline;
@@ -133,39 +146,46 @@
   -webkit-text-emphasis-style: none;
   text-emphasis-style: none;
 }
+
 .aozora-bouten-nijubosen {
   text-decoration: underline double;
   text-decoration-color: var(--aozora-fg);
   -webkit-text-emphasis-style: none;
   text-emphasis-style: none;
 }
+
 .aozora-bouten-namisen {
   text-decoration: underline wavy;
   text-decoration-color: var(--aozora-accent);
   -webkit-text-emphasis-style: none;
   text-emphasis-style: none;
 }
+
 .aozora-bouten-kusarisen {
   text-decoration: underline dashed;
   text-decoration-color: var(--aozora-accent);
   -webkit-text-emphasis-style: none;
   text-emphasis-style: none;
 }
+
 .aozora-bouten-hasen {
   text-decoration: underline dashed;
   text-decoration-color: var(--aozora-fg);
   -webkit-text-emphasis-style: none;
   text-emphasis-style: none;
 }
+
 /* 傍点の位置（右／左／両側）。既定は over right。 */
 .aozora-bouten-right {
   -webkit-text-emphasis-position: over right;
   text-emphasis-position: over right;
 }
+
 .aozora-bouten-left {
   -webkit-text-emphasis-position: under left;
   text-emphasis-position: under left;
 }
+
 .aozora-bouten-both {
   -webkit-text-emphasis-position: over right;
   text-emphasis-position: over right;
@@ -175,6 +195,7 @@
 .aozora-futoji {
   font-weight: 700;
 }
+
 .aozora-shatai {
   display: inline-block;
   transform: skewX(-12deg);
@@ -193,14 +214,17 @@
   vertical-align: super;
   font-size: 0.75em;
 }
+
 .aozora-shitatsuki {
   vertical-align: sub;
   font-size: 0.75em;
 }
+
 .aozora-kogaki-right {
   vertical-align: super;
   font-size: 0.7em;
 }
+
 .aozora-kogaki-left {
   vertical-align: sub;
   font-size: 0.7em;
@@ -215,6 +239,7 @@
 .aozora-accent {
   font-style: normal;
 }
+
 .aozora-accent-dot {
   font-style: normal;
 }
@@ -234,9 +259,11 @@
   -webkit-writing-mode: horizontal-tb;
   text-orientation: mixed;
 }
+
 .aozora-yokogumi {
   display: inline-block;
 }
+
 .aozora-container-yokogumi {
   display: block;
 }
@@ -267,9 +294,11 @@
   padding: 0 0.25em;
   line-height: 1.2;
 }
+
 .aozora-enclosure-circle-dotted {
   border-style: dotted;
 }
+
 .aozora-enclosure-double-rule {
   display: inline-block;
   border: 3px double var(--aozora-fg);
@@ -284,6 +313,7 @@
   padding: 0.5em 0.75em;
   margin: 0.5em 0;
 }
+
 .aozora-keigakomi-inline {
   border: 1px solid var(--aozora-border);
   padding: 0 0.25em;
@@ -330,6 +360,7 @@
 .aozora-container-align-end {
   text-align: end;
 }
+
 .aozora-align-end {
   display: inline-block;
   min-inline-size: 0.5em;
@@ -354,6 +385,7 @@
 
 /* ── 太字・斜体・字詰め・組み コンテナ (§container styles) ─────────── */
 .aozora-container-futoji { font-weight: 700; }
+
 .aozora-container-shatai {
   font-style: normal;
   transform: skewX(-12deg);
@@ -366,6 +398,7 @@
 .aozora-container-line-width {
   display: block;
 }
+
 /* 組み（N行N字）。 */
 .aozora-container-line-kumi {
   display: block;
@@ -383,6 +416,7 @@
 }
 
 /* ── 行レベル・フォント/太字マーカー (§line markers) ───────────────── */
+
 /* renderer は内容のない空 <span> マーカーとして出力する（下流ツール向け）。
  * プレビュー上は不可視で、視覚表現は持たない設計。 */
 .aozora-line-font-extra-large,
@@ -417,17 +451,20 @@
 .aozora-heading-large { font-size: 1.6em; }
 .aozora-heading-medium { font-size: 1.3em; }
 .aozora-heading-small { font-size: 1.1em; }
+
 /* 同行見出し — 本文と同じ行に置く。 */
 .aozora-heading-same-line {
   display: inline;
   font-size: 1em;
 }
+
 /* 窓見出し — 罫で囲った見出し。 */
 .aozora-heading-window {
   display: inline-block;
   border: 1px solid var(--aozora-border);
   padding: 0 0.4em;
 }
+
 /* 見出しヒント（構造推定の控えめな印）。 */
 .aozora-heading-hint {
   font-weight: 600;
@@ -440,6 +477,7 @@
   color: var(--aozora-muted);
   text-align: center;
 }
+
 .aozora-illustration {
   display: inline-block;
   border: 1px dashed var(--aozora-border);
@@ -447,10 +485,12 @@
   color: var(--aozora-muted);
   font-size: 0.9em;
 }
+
 .aozora-margin-note {
   color: var(--aozora-muted);
   font-size: 0.8em;
 }
+
 .aozora-editor-note {
   color: var(--aozora-muted);
   font-size: 0.9em;
@@ -494,10 +534,12 @@
 }
 
 /* ── 本文終わりマーカー・隠し注記 (§structural) ───────────────────── */
+
 /* aozora-body-end は本文の終端を示す構造マーカーで視覚表現を持たない。 */
 .aozora-body-end {
   display: none;
 }
+
 /* renderer が hidden 付きで埋め込む原文注記。 */
 .aozora-directive[hidden] {
   display: none;

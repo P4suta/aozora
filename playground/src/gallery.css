@@ -27,7 +27,7 @@
   font-size: 1.05rem;
   margin: 0 0 0.75rem;
   padding-bottom: 0.3rem;
-  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, currentcolor 20%, transparent);
 }
 
 .gallery-columns {
@@ -39,7 +39,7 @@
 
 .gallery-h,
 .gallery-v {
-  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border: 1px solid color-mix(in srgb, currentcolor 16%, transparent);
   border-radius: 8px;
   padding: 1rem 1.15rem;
   overflow: auto;

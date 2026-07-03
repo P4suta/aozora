@@ -40,7 +40,7 @@
 
 .writing-mode-btn.active {
   background: var(--accent);
-  color: white;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -55,8 +55,7 @@
 /* 縦書き時のスクロール挙動のみ（writing-mode / text-orientation は正準シートの
  * `.aozora-notation.aozora-vertical` が担当）。 */
 .html-preview.is-vertical {
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: auto hidden;
   overflow-wrap: break-word;
   max-height: 100%;
 }
