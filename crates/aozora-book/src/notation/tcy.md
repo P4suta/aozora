@@ -31,25 +31,19 @@ intervenes), it stays `ForwardOrigin::Referenced`: the literal is left in
 its run and the streaming renderer drops the markup rather than
 duplicating the text — see [傍点](bouten.md#default-rendering).
 
-## Container form
+## No container form
 
-For longer mixed-orientation runs (multi-line table data, Latin
-abbreviations spanning a paragraph), the container form sits inside
-an outer indent block:
+Unlike most block decorations, 縦中横 has **no**
+`［＃ここから縦中横］…［＃ここで縦中横終わり］` container form. The official
+notation (spec §6.3) defines only the inline forward reference
+`X［＃「X」は縦中横］`; there is no `aozora-combine-upright-block` class and the
+recogniser has no `ここから縦中横` opener. A stray block-region marker is
+therefore **preserved verbatim** as a hidden `aozora-directive` (it never opens
+a block), so no content is lost — it simply is not styled.
 
-```text
-［＃ここから縦中横］
-27 / 100 = 0.27
-［＃ここで縦中横終わり］
-```
-
-Renders as:
-
-```html
-<div class="aozora-combine-upright-block">
-27 / 100 = 0.27
-</div>
-```
+For a longer horizontal-in-vertical run (multi-line table data, a Latin phrase
+spanning a paragraph), use 横組み (horizontal writing) rather than repeating
+縦中横; 縦中横 is for uprighting a short digit/letter cluster inside one column.
 
 ## Common targets
 
