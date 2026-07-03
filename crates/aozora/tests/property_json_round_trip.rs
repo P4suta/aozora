@@ -39,7 +39,7 @@ fn assert_envelope_is_well_formed_json(label: &str, source: &str, json: &str) {
     let parsed: serde_json::Value = serde_json::from_str(json).unwrap_or_else(|e| {
         panic!("{label} envelope is not valid JSON for source {source:?}\n{e}\n---\n{json}")
     });
-    // Envelope shape contract: top-level object with `schema_version`
+    // Envelope shape contract: top-level object with `schemaVersion`
     // = 1 and a `data` array. A regression that drops either is a
     // JSON-shape break.
     let obj = parsed.as_object().unwrap_or_else(|| {
@@ -49,12 +49,12 @@ fn assert_envelope_is_well_formed_json(label: &str, source: &str, json: &str) {
         .get("schemaVersion")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or_else(|| {
-            panic!("{label} envelope missing schema_version for source {source:?}\n---\n{json}")
+            panic!("{label} envelope missing schemaVersion for source {source:?}\n---\n{json}")
         });
     assert_eq!(
         u32::try_from(version).ok(),
         Some(json::SCHEMA_VERSION),
-        "{label} envelope schema_version drift for source {source:?}: got {version}, expected {expected}",
+        "{label} envelope schemaVersion drift for source {source:?}: got {version}, expected {expected}",
         expected = json::SCHEMA_VERSION,
     );
     assert!(

@@ -313,7 +313,7 @@ pub mod bindings {
         }
 
         /// All gaiji resolutions found in the document, packaged in
-        /// the standard `{schema_version, data:[...]}` wire envelope.
+        /// the standard `{schemaVersion, data:[...]}` wire envelope.
         /// Powers inlay-hint UIs that show `→GLYPH` after every
         /// `※［＃…］` span.
         ///
@@ -444,12 +444,12 @@ mod tests {
         );
         assert!(
             json.contains(r#""schemaVersion":1"#),
-            "json missing schema_version: {json}"
+            "json missing schemaVersion: {json}"
         );
     }
 
     /// Round-trip JSON parse: every wire output must be valid JSON
-    /// that decodes to a `{ schema_version, data }` object.
+    /// that decodes to a `{ schemaVersion, data }` object.
     #[test]
     fn diagnostics_json_round_trips_envelope() {
         let doc = Document::new("abc\u{E001}def".to_owned());
