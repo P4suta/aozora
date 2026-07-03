@@ -37,7 +37,7 @@ fn main() {
 ```
 
 Each entry is `{ kind, severity, source, span: { start, end },
-codepoint? }`. `schema_version` lets a consumer branch before an added
+codepoint? }`. `schemaVersion` lets a consumer branch before an added
 variant shows up; see the [JSON output](../json/overview.md) chapter
 for the full schema and the `"unknown"` fallback contract.
 

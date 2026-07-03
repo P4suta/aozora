@@ -48,7 +48,7 @@
 //! Every JSON-returning plugin function delegates to [`aozora::json`]:
 //!
 //! ```json
-//! { "schema_version": 1, "data": [ … ] }
+//! { "schemaVersion": 1, "data": [ … ] }
 //! ```
 //!
 //! [`aozora::json::SCHEMA_VERSION`] bumps on any breaking change to that
@@ -124,7 +124,7 @@ mod logic {
 
     /// Parse `source` and serialize its diagnostics through the shared
     /// [`aozora::json`] authority. Empty document →
-    /// `{"schema_version":1,"data":[]}`.
+    /// `{"schemaVersion":1,"data":[]}`.
     ///
     /// # Errors
     ///
@@ -210,7 +210,7 @@ mod plugin {
     }
 
     /// Parse the input source and return the diagnostics wire envelope
-    /// (`{ "schema_version": 1, "data": [ … ] }`).
+    /// (`{ "schemaVersion": 1, "data": [ … ] }`).
     #[plugin_fn]
     pub fn diagnostics_json(input: String) -> FnResult<String> {
         Ok(logic::render_diagnostics_json(input).map_err(Error::msg)?)
