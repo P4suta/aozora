@@ -8,8 +8,10 @@
 //! offers and the LSP `canonicalize` code action snaps user input to.
 //!
 //! The two tables stay in sync via the
-//! `every_slug_dispatches_in_phase3_body_dispatcher` integration test
-//! living in `aozora-pipeline`.
+//! `every_canonical_slug_parses_without_residual_marker` integration
+//! test (in `aozora-pipeline/tests/slug_canonical_round_trip.rs`),
+//! which asserts every `SLUGS` entry the classifier dispatches without
+//! leaking a residual annotation marker.
 //!
 //! ## Why a separate table
 //!

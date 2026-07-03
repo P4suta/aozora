@@ -70,18 +70,23 @@ Three philosophies, used consistently:
 
 ## Thread safety
 
-`Document` is `Send` but not `Sync` — the bumpalo arena does not
-support concurrent allocation. Pass a `Document` between threads
-freely; do not share `&Document` across threads.
+`Document` and `Tree<'_>` are both **`Send + Sync`**. `Document`
+owns only its source `Box<str>` and a `Copy` diagnostic policy; the
+parse output (`OwnedLexOutput`) owns its whole AST in flat,
+`u32`-handle-addressed `Vec`s with no interior mutability — there is
+no arena and nothing that blocks sharing across threads. Pass a
+`Document` between threads or share `&Document` / `&Tree` freely.
 
-`Tree<'_>` borrows from `&Document`, so by Rust's lifetime
-rules the same shape applies: a `&Tree` is `Send + Sync` (it's
-just `&` to immutable data), but it can't outlive its `Document`.
+`Tree<'_>` borrows only `&Document`'s source, so it still can't
+outlive its `Document` — but within that lifetime it moves and shares
+across threads like any owned value. A consumer that needs a parse
+result with **no** lifetime calls `Document::parse_owned`, which
+returns the `Send + Sync` `OwnedLexOutput` directly.
 
 For *parallel* corpus processing (e.g. the corpus sweep harness
 parsing 1000s of documents concurrently), each thread creates its
-own `Document` from its own source. The arena resets per-`Document`,
-so there's no contention point.
+own `Document` from its own source — there is no shared parse state
+and so no contention point.
 
 ## MSRV policy
 

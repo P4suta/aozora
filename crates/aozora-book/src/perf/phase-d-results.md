@@ -47,4 +47,4 @@ would rot; the recipe + per-release artefact pair stays current
 without an editing step here.
 
 [`EytzingerMap`]: https://docs.rs/aozora-veb/latest/aozora_veb/struct.EytzingerMap.html
-[`NodeRef`]: https://docs.rs/aozora-syntax/latest/aozora_syntax/borrowed/enum.NodeRef.html
+[`NodeRef`]: https://docs.rs/aozora-syntax/latest/aozora_syntax/owned/enum.NodeRefOwned.html

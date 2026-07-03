@@ -647,7 +647,7 @@ where
     /// (its span is contiguous with the surrounding text).
     fn flush_plain_up_to(&mut self, end: u32) {
         #[cfg(feature = "classify-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::FlushPlain);
+        let _classify_guard = SubsystemGuard::new(Subsystem::FlushPlain);
         // A pending refmark contributes its bytes to the plain run.
         if let Some(rm) = self.pending_refmark.take()
             && self.pending_plain_start.is_none()
@@ -688,7 +688,7 @@ where
     /// absorbed (the gaiji shape).
     fn open_frame(&mut self, open_event: PairEvent, gaiji_refmark: Option<Span>) {
         #[cfg(feature = "classify-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::OpenFrame);
+        let _classify_guard = SubsystemGuard::new(Subsystem::OpenFrame);
         let mut body: smallvec::SmallVec<[PairEvent; 16]> = smallvec::SmallVec::new();
         let mut links: smallvec::SmallVec<[u32; 16]> = smallvec::SmallVec::new();
         // Inner stack tracks NESTED opens; the outer open lives at
@@ -716,7 +716,7 @@ where
     /// buffer.
     fn append_to_frame(&mut self, event: PairEvent) -> bool {
         #[cfg(feature = "classify-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::FrameAppend);
+        let _classify_guard = SubsystemGuard::new(Subsystem::FrameAppend);
         let frame = self
             .frame
             .as_mut()
@@ -792,7 +792,7 @@ where
     /// resulting span. Called when the OUTERMOST pair has just closed.
     fn recognize_and_emit(&mut self) {
         #[cfg(feature = "classify-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::RecognizeAndEmit);
+        let _classify_guard = SubsystemGuard::new(Subsystem::RecognizeAndEmit);
         let frame = self
             .frame
             .take()
@@ -940,7 +940,7 @@ where
         refmark: Option<Span>,
     ) {
         #[cfg(feature = "classify-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::ReplayBody);
+        let _classify_guard = SubsystemGuard::new(Subsystem::ReplayBody);
         #[cfg(feature = "classify-instrument")]
         record_replay_body_size(body.len() as u64);
         if let Some(rm) = refmark
@@ -1278,7 +1278,7 @@ where
         close_idx: usize,
     ) -> Option<ClassifiedSpan> {
         #[cfg(feature = "classify-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::TryRubyEmit);
+        let _classify_guard = SubsystemGuard::new(Subsystem::TryRubyEmit);
         // Ruby recognition uses the PRECEDING text (if any) as the
         // base — but in the streaming model we don't have that text in
         // the body buffer. We walk back through `pending_outputs` and
@@ -1442,7 +1442,7 @@ where
         close_idx: usize,
     ) -> Option<ClassifiedSpan> {
         #[cfg(feature = "classify-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::TryBracketEmit);
+        let _classify_guard = SubsystemGuard::new(Subsystem::TryBracketEmit);
         let mut ctx = RecogniseCtx {
             alloc: self.alloc,
             source: self.source,
@@ -1610,7 +1610,7 @@ where
 
     fn next(&mut self) -> Option<ClassifiedSpan> {
         #[cfg(feature = "classify-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::IterDispatch);
+        let _classify_guard = SubsystemGuard::new(Subsystem::IterDispatch);
         loop {
             if let Some(span) = self.pending_outputs_pop_front() {
                 return Some(span);
@@ -1625,7 +1625,7 @@ where
             drop(events_next_guard);
             if let Some(event) = next_event {
                 #[cfg(feature = "classify-instrument")]
-                let _phase3_loop_guard = SubsystemGuard::new(Subsystem::LoopBody);
+                let _classify_loop_guard = SubsystemGuard::new(Subsystem::LoopBody);
                 self.process_event(event);
             } else {
                 // Upstream exhausted. A deferred gaiji with no following
@@ -1801,7 +1801,7 @@ impl<'s> RecogniseCtx<'_, 's> {
         close_idx: usize,
     ) -> Option<RubyMatch<'s>> {
         #[cfg(feature = "classify-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::Ruby);
+        let _classify_guard = SubsystemGuard::new(Subsystem::Ruby);
         let events = view.events;
         let PairEvent::PairOpen {
             span: open_span, ..
@@ -1968,7 +1968,7 @@ impl RecogniseCtx<'_, '_> {
     /// the slot.
     fn build_content_from_body(&mut self, view: BodyView<'_>, window: &BodyWindow) -> ContentOwned {
         #[cfg(feature = "classify-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::BuildContent);
+        let _classify_guard = SubsystemGuard::new(Subsystem::BuildContent);
         debug_assert!(
             window.events.start <= window.events.end,
             "body window event range must be non-inverted",
