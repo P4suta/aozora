@@ -15,7 +15,10 @@
 use core::fmt;
 
 use aozora_pipeline::{NodeRefOwned, OwnedLexOutput, SourceNodeOwned, lex};
-use aozora_render::{SerializeOptions, render_html_owned, serialize_owned, serialize_owned_with};
+use aozora_render::{
+    RenderOptions, SerializeOptions, render_html_owned, render_html_owned_normalized,
+    serialize_owned, serialize_owned_with,
+};
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset};
 use aozora_syntax::owned::ContainerPair;
 
@@ -416,6 +419,32 @@ impl<'a> Tree<'a> {
     #[must_use]
     pub fn to_html(&self) -> String {
         render_html_owned(self.inner())
+    }
+
+    /// Render the tree to a semantic-HTML5 string with explicit
+    /// [`RenderOptions`].
+    ///
+    /// With the default options (`normalize_directives: false`) this is
+    /// byte-identical to [`Self::to_html`]: an `Unknown` directive the parser
+    /// did not recognise renders as an inert `<span class="aozora-directive"
+    /// hidden>`, so the default render never depends on the notation-hygiene
+    /// catalogue.
+    ///
+    /// With `normalize_directives` enabled, verified Tier1 near-misses (per the
+    /// single `aozora_syntax::lint::canonical_directive` authority, reached
+    /// transitively through the formatter's `fix_notation` rewrite) render as
+    /// if they were their canonical spelling — a known 揺れ becomes a real
+    /// element instead of a hidden directive span. This is the opt-in,
+    /// read-only "render as if canonical" role of ADR-0022: it reuses the
+    /// formatter rewrite as an internal, throwaway step feeding a reparse, and
+    /// never mutates this document's source or the default parse/render.
+    #[must_use]
+    pub fn to_html_with(&self, opts: RenderOptions) -> String {
+        if opts.normalize_directives {
+            render_html_owned_normalized(self.inner())
+        } else {
+            self.to_html()
+        }
     }
 
     /// Re-emit Aozora source text from the parsed tree.

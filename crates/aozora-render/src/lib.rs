@@ -7,6 +7,10 @@
 //!
 //! - [`html_owned::render_html_owned`] — owned-AST HTML rendering. Pair with
 //!   [`aozora_pipeline::lex`].
+//! - [`html_owned::render_html_owned_normalized`] — the opt-in twin that first
+//!   normalises Tier1 directive near-misses to canonical form (via the
+//!   formatter rewrite) so a known 揺れ renders non-inert. See
+//!   [`html_owned::RenderOptions`] and ADR-0022's fourth role.
 //! - `serialize_owned` — round-trip the parsed tree back to
 //!   Aozora source text.
 //!
@@ -27,7 +31,7 @@ pub mod serialize_owned;
 mod walk;
 
 pub use classes::AOZORA_CLASSES;
-pub use html_owned::render_html_owned;
+pub use html_owned::{RenderOptions, render_html_owned, render_html_owned_normalized};
 pub use serialize_owned::{SerializeOptions, serialize_owned, serialize_owned_with};
 
 #[cfg(test)]

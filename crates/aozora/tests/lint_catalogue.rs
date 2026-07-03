@@ -11,7 +11,7 @@
 //! rotting.
 
 use aozora::Document;
-use aozora::render::SerializeOptions;
+use aozora::render::{RenderOptions, SerializeOptions};
 use aozora_syntax::lint::{CATALOGUE_SAMPLES, canonical_directive};
 
 const LINT_CODE: &str = "aozora::lint::non_canonical_directive";
@@ -94,6 +94,91 @@ fn fix_notation_resolves_every_variant_and_is_idempotent() {
         assert_eq!(
             fixed, again,
             "fix-notation must be idempotent for {variant:?}"
+        );
+    }
+}
+
+/// Build a source that gives `variant`'s canonical spelling a fair render
+/// context. A forward-reference form only renders non-inert when its referent
+/// is present in the preceding text, so prepend the forward target literal:
+/// the first `「X」`'s inner text for a quoted forward, or — for the
+/// bare-parenthesised 縦中横 target `（…）`, whose canonical `「（…）」は縦中横`
+/// quotes the paren run — the whole `（…）` operand. Every non-forward form
+/// (region open/close, alignment, marker synonyms) gets a neutral `あ` lead.
+fn render_context_source(variant: &str) -> String {
+    // Quoted forward target: prepend the first 「X」 inner text.
+    if let Some(open) = variant.find('「') {
+        let rest = &variant[open + '「'.len_utf8()..];
+        if let Some(close) = rest.find('」') {
+            return format!("{referent}［＃{variant}］", referent = &rest[..close]);
+        }
+    }
+    // Bare-parenthesised 縦中横 target: prepend the whole （…） operand.
+    if variant.starts_with('（')
+        && let Some(close) = variant.find('）')
+    {
+        return format!(
+            "{referent}［＃{variant}］",
+            referent = &variant[..close + '）'.len_utf8()]
+        );
+    }
+    format!("あ［＃{variant}］")
+}
+
+/// The seam pin (ADR-0022's fourth, opt-in render role): for every catalogue
+/// variant, the normalise-render path replaces the inert `Unknown` directive
+/// span with a real rendering of the canonical spelling. The existing
+/// round-trip test proves a canonical is not itself a lint variant, but never
+/// that it *renders* non-inert; this closes that gap. The default render stays
+/// inert — the parser never reinterprets a near-miss — so the win is entirely
+/// in the opt-in path.
+#[test]
+fn normalize_render_replaces_every_inert_variant() {
+    let norm = RenderOptions {
+        normalize_directives: true,
+    };
+    for &variant in CATALOGUE_SAMPLES {
+        let source = render_context_source(variant);
+
+        // (a) Without normalisation the near-miss is inert: the parser keeps it
+        // Unknown and renders the hidden `aozora-directive` span.
+        let default_html = Document::new(source.clone()).parse().to_html();
+        assert!(
+            default_html.contains("aozora-directive"),
+            "variant {variant:?} should render inert by default; got {default_html:?}"
+        );
+
+        // (b) With normalisation the canonical replaces the near-miss: the
+        // rendered HTML contains NEITHER `aozora-directive` NOR a ` hidden>`
+        // span — the reader sees a visible element (or, for a referent-less /
+        // region form, nothing), never an inert directive / heading-hint span.
+        let normalized_html = Document::new(source.clone()).parse().to_html_with(norm);
+        assert!(
+            !normalized_html.contains("aozora-directive") && !normalized_html.contains(" hidden>"),
+            "variant {variant:?} still renders inert after normalisation; \
+             source {source:?} gave {normalized_html:?}"
+        );
+    }
+}
+
+/// The default render is unchanged by the new seam: `to_html_with` with the
+/// default (opt-out) [`RenderOptions`] is byte-identical to `to_html()` across
+/// plain text, a construct, a real directive, and a catalogue near-miss. Only
+/// the opt-in flag can alter output.
+#[test]
+fn default_render_options_are_byte_identical_to_to_html() {
+    for source in [
+        "ただの平文です。",
+        "｜青梅《おうめ》",
+        "重要［＃「重要」は太字］",
+        "あ［＃斜体字］",
+    ] {
+        let doc = Document::new(source.to_owned());
+        let tree = doc.parse();
+        assert_eq!(
+            tree.to_html_with(RenderOptions::default()),
+            tree.to_html(),
+            "default RenderOptions must be byte-identical to to_html() for {source:?}"
         );
     }
 }
