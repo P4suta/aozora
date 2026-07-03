@@ -1,0 +1,67 @@
+/* Notation-gallery page layout. The notation styling itself comes from the
+   canonical aozora-notation.css (loaded first in gallery.tsx); this file only
+   lays out the two-column horizontal / vertical comparison and inherits the
+   theme bridge variables from aozora.css. */
+
+.gallery {
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+}
+
+.gallery-title {
+  font-size: 1.6rem;
+  margin: 0 0 0.35rem;
+}
+
+.gallery-lead {
+  margin: 0 0 2.25rem;
+  opacity: 0.72;
+}
+
+.gallery-section {
+  margin: 0 0 2.5rem;
+}
+
+.gallery-family-label {
+  font-size: 1.05rem;
+  margin: 0 0 0.75rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.gallery-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.gallery-h,
+.gallery-v {
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-radius: 8px;
+  padding: 1rem 1.15rem;
+  overflow: auto;
+}
+
+/* Column caption: 横書き / 縦書き. */
+.gallery-mode {
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+  margin-bottom: 0.6rem;
+}
+
+/* The vertical preview needs an explicit block-size so vertical-rl text has a
+   column to flow down into (and to scroll if it overflows). */
+.gallery-v .html-preview.aozora-vertical {
+  block-size: 13rem;
+}
+
+@media (max-width: 40rem) {
+  .gallery-columns {
+    grid-template-columns: 1fr;
+  }
+}
