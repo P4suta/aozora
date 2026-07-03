@@ -969,7 +969,7 @@ pub(super) fn classify_annotation_body(
     alloc: &mut OwnedAllocator,
 ) -> Option<(EmitKind, Option<DirectiveOwned>)> {
     #[cfg(feature = "classify-instrument")]
-    let _phase3_guard = SubsystemGuard::new(Subsystem::BodyDispatcher);
+    let _classify_guard = SubsystemGuard::new(Subsystem::BodyDispatcher);
     if body.is_empty() {
         return None;
     }

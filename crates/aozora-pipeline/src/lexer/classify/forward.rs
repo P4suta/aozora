@@ -107,7 +107,7 @@ pub(super) fn install_forward_target_index_from_source(source: &str) {
     const QUOTE_CLOSE: &[u8] = b"\xE3\x80\x8D";
 
     #[cfg(feature = "classify-instrument")]
-    let _phase3_guard = SubsystemGuard::new(Subsystem::ForwardIndexInstall);
+    let _classify_guard = SubsystemGuard::new(Subsystem::ForwardIndexInstall);
 
     let bytes = source.as_bytes();
     // Step A.1: cheap up-front count with early break at the
@@ -272,7 +272,7 @@ impl RecogniseCtx<'_, '_> {
         close_idx: usize,
     ) -> Option<AnnotationMatch> {
         #[cfg(feature = "classify-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::Directive);
+        let _classify_guard = SubsystemGuard::new(Subsystem::Directive);
         let events = view.events;
         let PairEvent::PairOpen {
             span: open_span, ..
@@ -918,7 +918,7 @@ fn forward_target_is_preceded(
     target: &str,
 ) -> bool {
     #[cfg(feature = "classify-instrument")]
-    let _phase3_guard = SubsystemGuard::new(Subsystem::ForwardTargetCheck);
+    let _classify_guard = SubsystemGuard::new(Subsystem::ForwardTargetCheck);
     let Some(PairEvent::PairOpen { span, .. }) = events.get(open_idx) else {
         return false;
     };

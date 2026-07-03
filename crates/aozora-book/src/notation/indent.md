@@ -112,9 +112,11 @@ implementation in Rust is a *recursive container node*. That choice:
 - Makes the canonical-source pass trivial (each container
   prints its opener, walks its children, prints its closer).
 
-The trade-off is one extra heap touch per container — a single
-`bumpalo` slice for `children`. The arena is already hot, so the cost
-is negligible (`bumpalo` returns aligned pointers in O(1) bumps).
+The trade-off is one extra entry per container — the `children` live
+as a `SegRange` handle into the tree's shared segment pool, not a
+separate allocation. The pool is a single growable `Vec`, so
+appending a child run is an amortised O(1) push with no per-node
+allocation.
 
 ## See also
 
