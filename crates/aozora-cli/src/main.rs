@@ -65,7 +65,10 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode, Stdio};
 
-use aozora::{DiagnosticSource, Document, json, render::SerializeOptions};
+use aozora::{
+    DiagnosticSource, Document, json,
+    render::{RenderOptions, SerializeOptions},
+};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -246,6 +249,17 @@ struct FmtArgs {
 struct RenderArgs {
     #[command(flatten)]
     common: CommonArgs,
+
+    /// Render verified non-canonical directive near-misses as if they were
+    /// their canonical spelling (e.g. `［＃「梅」は小書き］` renders 梅 as
+    /// small-letter emphasis instead of an inert hidden directive span) — the
+    /// same near-misses `aozora::lint::non_canonical_directive` flags and
+    /// `aozora fmt --fix-notation` rewrites. Opt-in and read-only: without this
+    /// flag an unrecognised directive stays a hidden `aozora-directive` span,
+    /// and this never rewrites the input source. Aliased `--fix-notation` for
+    /// symmetry with `aozora fmt`.
+    #[arg(long, alias = "fix-notation")]
+    normalize: bool,
 }
 
 /// `aozora inspect <kind>` — which JSON envelope to emit. The data
@@ -472,7 +486,10 @@ fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
     let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let doc = Document::new(source);
     let tree = timer.measure("parse", || doc.parse());
-    let html = timer.measure("render", || tree.to_html());
+    let opts = RenderOptions {
+        normalize_directives: args.normalize,
+    };
+    let html = timer.measure("render", || tree.to_html_with(opts));
     let mut stdout = io::stdout().lock();
     stdout
         .write_all(html.as_bytes())
