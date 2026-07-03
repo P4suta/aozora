@@ -1825,7 +1825,8 @@ const CORRECTNESS_NOTE: &str = "Render-correctness ratchet: per-category (files,
     inline span), I-B a <ruby> has an empty base, I-C emitted aozora-* class absent from \
     AOZORA_CLASSES. Defects may only SHRINK; any rise fails the gate, ratchet down with `--update`. \
     Run `xtask corpus render-correctness` to find WHICH document regressed. Residual (2026-07-04): \
-    I-A = inline 割注 open/close imbalance in source (#415), to fix; I-B = 0; I-C = 0.";
+    I-A = 6 unclosed inline 太字 containers straddling </p> in degraded source (#420); inline 割注 \
+    span imbalance resolved (#415); I-B = 0; I-C = 0.";
 
 /// Render-correctness ratchet gate (the enforcing partner of
 /// `render-correctness`): fail when any per-category defect count rises above
