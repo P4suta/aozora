@@ -189,30 +189,69 @@ pub enum RubySide {
     Left,
 }
 
-/// Characters eligible as an implicit-ruby base (the run a bare
-/// `《reading》` attaches to). Covers:
+/// The character class an implicit-ruby base run belongs to.
 ///
-/// * CJK Unified Ideographs (main block + Extension A)
-/// * CJK Compatibility Ideographs
-/// * CJK Unified Ideographs Extension B..F (supplementary plane)
-/// * `々` (U+3005) ideographic iteration mark — usually kanji-like
-/// * `〆` (U+3006) ideographic closing mark — sometimes used as kanji
+/// A bare `《reading》` attaches to the maximal run of a *single* class
+/// immediately preceding it — mixing classes would move where the base
+/// starts on re-parse, so a run stays within one class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RubyBaseClass {
+    /// CJK ideographs (main block + Ext A/B..F + compatibility) plus the
+    /// iteration marks `々` / `〆` — the historical base set.
+    Kanji,
+    /// Hiragana (letters + `ゝ` / `ゞ`).
+    Hiragana,
+    /// Katakana (letters + `ー` / `ヽ` / `ヾ`), excluding the small `ヵ` /
+    /// `ヶ` (see [`ruby_base_class`]).
+    Katakana,
+    /// Basic + fullwidth Latin letters.
+    Latin,
+    /// Greek letters.
+    Greek,
+}
+
+/// Classify a character for implicit-ruby base attachment, or `None` when
+/// it cannot start or extend a base run.
 ///
-/// Single source of truth shared by the classifier's implicit-base
-/// detection and the serializer's canonical bare-vs-`｜` decision
-/// (ADR 0002): the serializer drops `｜` only when a bare reading would
-/// re-parse to the *same* base, which is decided with this predicate.
+/// Single source of truth shared by the classifier's implicit-base walk
+/// ([`is_ruby_base_char`]'s callers) and the serializer's canonical
+/// bare-vs-`｜` decision (ADR 0002): the serializer drops `｜` only when a
+/// bare reading would re-parse to the *same* base, decided by comparing
+/// classes here — so both sides must move in lockstep.
+///
+/// The small katakana `ヵ` (U+30F5) and `ヶ` (U+30F6) are deliberately
+/// excluded from every class. Treating them as `Kanji` would over-grow a
+/// base such as `数ヶ所《かしょ》` (base `所` → `数ヶ所`, wrong reading);
+/// treating them as `Katakana` would put the base on the `ヶ` itself — so
+/// `六ヶ《むつか》` correctly *declines* instead of guessing.
 #[must_use]
-pub const fn is_ruby_base_char(ch: char) -> bool {
-    matches!(
-        ch,
+pub const fn ruby_base_class(ch: char) -> Option<RubyBaseClass> {
+    Some(match ch {
         '\u{3400}'..='\u{4DBF}'
         | '\u{4E00}'..='\u{9FFF}'
         | '\u{F900}'..='\u{FAFF}'
         | '\u{20000}'..='\u{2FFFF}'
         | '々'
-        | '〆'
-    )
+        | '〆' => RubyBaseClass::Kanji,
+        '\u{3041}'..='\u{3096}' | '\u{309D}'..='\u{309E}' => RubyBaseClass::Hiragana,
+        // Katakana letters ァ..ヴ, phonetic ヷ..ヺ, and ー / ヽ / ヾ — but
+        // NOT the small ヵ(30F5) / ヶ(30F6) or the middle dot ・(30FB).
+        '\u{30A1}'..='\u{30F4}' | '\u{30F7}'..='\u{30FA}' | '\u{30FC}'..='\u{30FE}' => {
+            RubyBaseClass::Katakana
+        }
+        'A'..='Z' | 'a'..='z' | 'Ａ'..='Ｚ' | 'ａ'..='ｚ' => RubyBaseClass::Latin,
+        '\u{0391}'..='\u{03A9}' | '\u{03B1}'..='\u{03C9}' => RubyBaseClass::Greek,
+        _ => return None,
+    })
+}
+
+/// True when `ch` can serve as (part of) an implicit-ruby *kanji* base —
+/// the historical predicate, now expressed via [`ruby_base_class`]. Byte
+/// for byte identical to the pre-`RubyBaseClass` definition.
+#[must_use]
+pub const fn is_ruby_base_char(ch: char) -> bool {
+    matches!(ruby_base_class(ch), Some(RubyBaseClass::Kanji))
 }
 
 /// Which annotation flavour an `owned::MarginNoteOwned` carries.

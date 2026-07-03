@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 106,
-  "passed": 106,
+  "total": 114,
+  "passed": 114,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 73,
-      "passed": 73,
+      "total": 81,
+      "passed": 81,
       "failed": 0
     }
   },
@@ -631,6 +631,55 @@
       "message": null
     },
     {
+      "case": "ruby_base_greek",
+      "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_hiragana",
+      "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_kanakanji_boundary",
+      "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_katakana",
+      "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_latin",
+      "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_latin_barred",
+      "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_latin_in_quote",
+      "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
       "case": "ruby_base_plus_preceding_plain",
       "feature": "composite",
       "level": "must",
@@ -640,6 +689,13 @@
     {
       "case": "ruby_base_quote_interior_gaiji",
       "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_small_kana_declines",
+      "feature": "ruby",
       "level": "should",
       "passed": true,
       "message": null
