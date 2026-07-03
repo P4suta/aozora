@@ -441,7 +441,7 @@ pub enum Diagnostic {
         help(
             "this ［＃…］ body matches a recognized directive spelled \
              non-canonically, so it was kept as an Unknown directive; rewrite \
-             it to the canonical form (`aozora fmt --fix-notation`, planned)."
+             it to the canonical form (`aozora fmt --fix-notation`)."
         )
     )]
     NonCanonicalDirective {

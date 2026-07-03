@@ -1,11 +1,12 @@
 //! `aozora-fmt` library: [`format_source`] runs the `parse ∘ to_source`
 //! round-trip that produces an idempotent, canonicalised aozora document.
-//! Every consumer — the binary, the `aozora-lsp` formatting handler, CI
-//! gates — reaches the same canonical form; the round-trip is a fixed point
-//! on the second pass.
+//! Every consumer — the standalone `aozora-fmt` binary, the `aozora` CLI's
+//! `fmt` subcommand, and the CI/test gates that cross-check against it —
+//! reaches the same canonical form; the round-trip is a fixed point on the
+//! second pass.
 //!
-//! The CLI itself lives here too ([`Cli`], [`run`]) so `xtask` can reach
-//! `Cli::command()` to generate completions and the man page.
+//! The standalone binary's clap surface ([`Cli`], [`run`]) lives here too so
+//! `src/main.rs` stays a thin shim over it.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -25,9 +26,8 @@ mod report;
 
 pub use cli::Cli;
 
-// Shared CLI plumbing, re-exported so the `aozora` CLI's `fmt` subcommand can
-// reuse the formatter's path discovery, colour policy, and panic guard instead
-// of re-implementing them.
+// Public CLI surface, re-exported for the standalone `aozora-fmt` binary
+// (`src/main.rs`) and this crate's integration tests.
 pub use cli::{ColorChoice, FmtArgs};
 pub use discover::{Input, Resolved, resolve};
 pub use process::{Panicked, guard};
@@ -73,8 +73,8 @@ pub fn run(cli: &Cli) -> ExitCode {
     run_args(&cli.args)
 }
 
-/// Run the formatter for already-parsed [`FmtArgs`] — the entry point the
-/// `aozora fmt` subcommand calls. Returns the same exit codes as [`run`].
+/// Run the formatter for already-parsed [`FmtArgs`]. [`run`] unwraps [`Cli`]
+/// and delegates here; returns the same exit codes (0 / 1 / 2).
 #[must_use]
 pub fn run_args(args: &FmtArgs) -> ExitCode {
     match dispatch(args) {

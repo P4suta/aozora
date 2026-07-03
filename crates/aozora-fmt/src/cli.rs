@@ -1,8 +1,8 @@
 //! Command-line surface for `aozora-fmt`: the clap [`Cli`] plus the [`Mode`]
 //! it derives once so the rest of the pipeline never juggles raw booleans.
 //!
-//! `Cli` is re-exported from the crate root so `xtask` can reach
-//! `Cli::command()` to generate shell completions and the man page.
+//! `Cli` is re-exported from the crate root so `src/main.rs` — the thin
+//! standalone-binary shim — can parse and run it.
 
 use std::path::{Path, PathBuf};
 
@@ -21,10 +21,10 @@ const LONG_ABOUT: &str = concat!(
 
 /// Idempotent formatter for aozora-flavored-markdown.
 ///
-/// A thin [`Parser`] newtype around [`FmtArgs`]. The standalone `aozora-fmt`
-/// binary and `xtask gen-assets` (via `Cli::command()`) use this; the `aozora`
-/// CLI's `fmt` subcommand reuses [`FmtArgs`] directly as a flattened subcommand.
-/// Keeping the flags in a separate [`Args`] struct lets both share one definition.
+/// A thin [`Parser`] newtype around [`FmtArgs`] for the standalone
+/// `aozora-fmt` binary (`src/main.rs`). The `aozora` CLI's `fmt` subcommand is
+/// a separate frontend with its own arguments; it shares this crate's
+/// formatting core ([`crate::format_source_with`]), not these flags.
 #[derive(Parser, Debug)]
 #[command(
     name = "aozora-fmt",
@@ -38,8 +38,8 @@ pub struct Cli {
     pub(crate) args: FmtArgs,
 }
 
-/// The formatter's argument surface, shared between the standalone `aozora-fmt`
-/// binary ([`Cli`]) and the `aozora fmt` subcommand.
+/// The formatter's argument surface for the standalone `aozora-fmt` binary
+/// ([`Cli`]). The `aozora fmt` subcommand defines its own arguments.
 #[derive(Args, Debug)]
 #[allow(
     clippy::struct_excessive_bools,
