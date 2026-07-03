@@ -435,6 +435,9 @@ fn render_annotation_owned<W: Write>(
     out: &mut W,
 ) -> fmt::Result {
     match a.kind {
+        // Top-level inline warichu balance is now owned by `RenderState`
+        // (sink-driven, #415); these arms are a defensive fallback that fires
+        // only for the non-occurring nested-`SegmentOwned::Directive` case.
         DirectiveKind::WarichuOpen => return out.write_str(r#"<span class="aozora-warichu">"#),
         DirectiveKind::WarichuClose => return out.write_str("</span>"),
         DirectiveKind::EditorNote => {

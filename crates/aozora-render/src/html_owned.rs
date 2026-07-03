@@ -14,7 +14,8 @@
 
 use core::fmt;
 
-use aozora_syntax::owned::{NodeRefOwned, NodeStore, OwnedLexOutput};
+use aozora_syntax::DirectiveKind;
+use aozora_syntax::owned::{NodeOwned, NodeRefOwned, NodeStore, OwnedLexOutput};
 
 use crate::html::{RenderState, escape_text_chunk};
 use crate::render_node_owned::render_owned;
@@ -89,7 +90,22 @@ impl<W: fmt::Write> WalkSinkOwned for HtmlSinkOwned<'_, W> {
         match (kind, node) {
             (SentinelKind::Inline, NodeRefOwned::Inline(n)) => {
                 self.state.ensure_in_paragraph(self.out)?;
-                render_owned(n, self.store, self.out)
+                // Inline warichu open / close are structural, not per-node:
+                // their span must stay balanced across paragraph boundaries, so
+                // `RenderState` owns the depth counter (mirroring container
+                // balance) rather than the AST emitter writing the tags
+                // unconditionally (#415). Every other inline node renders as
+                // before. Check `kind` through a borrow, then move `n` into
+                // `render_owned` on the fall-through.
+                match &n {
+                    NodeOwned::Directive(a) if a.kind == DirectiveKind::WarichuOpen => {
+                        self.state.open_warichu(self.out)
+                    }
+                    NodeOwned::Directive(a) if a.kind == DirectiveKind::WarichuClose => {
+                        self.state.close_warichu(self.out)
+                    }
+                    _ => render_owned(n, self.store, self.out),
+                }
             }
             (SentinelKind::BlockLeaf, NodeRefOwned::BlockLeaf(n)) => {
                 self.state.before_block_emit(self.out)?;

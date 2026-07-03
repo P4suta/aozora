@@ -28,6 +28,14 @@ pub(crate) struct RenderState {
     /// In-flight container opens. The close marker reads the matched open
     /// [`RegionFormat`] (open-authoritative).
     open_stack: Vec<RegionFormat>,
+    /// Count of open inline-warichu spans (`［＃割り注］`) awaiting their close
+    /// (`［＃割り注終わり］`). A warichu span is phrasing content, so it must
+    /// never straddle a `</p>` or `</div>`: [`Self::close_paragraph`] drains any
+    /// still-open span before closing the paragraph, and [`Self::close_warichu`]
+    /// absorbs a stray close with no matching open. Sources that mismatch the
+    /// block- and inline-warichu forms (9 corpus works, #415) rely on this to
+    /// stay balanced.
+    warichu_depth: u32,
 }
 
 impl RenderState {
@@ -52,6 +60,11 @@ impl RenderState {
     }
 
     pub(crate) fn close_paragraph<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
+        // A warichu span is phrasing content that must close before the
+        // enclosing paragraph (#415, Case 2): drain any still-open span here,
+        // the single choke-point every block-leaf / container / finish path
+        // routes through (via `before_block_emit` and `drain_open_containers`).
+        self.drain_open_warichu(out)?;
         if self.in_paragraph {
             out.write_str("</p>\n")?;
             self.in_paragraph = false;
@@ -125,6 +138,40 @@ impl RenderState {
     pub(crate) fn drain_open_containers<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
         while !self.open_stack.is_empty() {
             self.close_container(out)?;
+        }
+        Ok(())
+    }
+
+    /// Open an inline-warichu span (`［＃割り注］`), emitting its
+    /// `<span class="aozora-warichu">` and recording the open so its close is
+    /// balanced. The byte spelling matches the per-node fallback in
+    /// [`crate::render_node_owned`], so well-formed warichu output is unchanged.
+    pub(crate) fn open_warichu<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
+        out.write_str(r#"<span class="aozora-warichu">"#)?;
+        self.warichu_depth += 1;
+        Ok(())
+    }
+
+    /// Close one inline-warichu span (`［＃割り注終わり］`). A close with no
+    /// matching open — a source that mismatches the block- and inline-warichu
+    /// forms (#415, Case 1) — is absorbed as a no-op rather than emitting a stray
+    /// `</span>`.
+    pub(crate) fn close_warichu<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
+        if self.warichu_depth > 0 {
+            out.write_str("</span>")?;
+            self.warichu_depth -= 1;
+        }
+        Ok(())
+    }
+
+    /// Close every warichu span left open when the paragraph / document ends —
+    /// an inline `［＃割り注］` with no matching inline close (#415, Case 2). The
+    /// span renders as extending to the paragraph boundary, mirroring
+    /// [`Self::drain_open_containers`] for unclosed regions.
+    pub(crate) fn drain_open_warichu<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
+        while self.warichu_depth > 0 {
+            out.write_str("</span>")?;
+            self.warichu_depth -= 1;
         }
         Ok(())
     }
@@ -206,6 +253,63 @@ mod tests {
     #[test]
     fn plain_paragraph_wraps_in_p() {
         assert_eq!(render("Hello."), "<p>Hello.</p>\n");
+    }
+
+    /// A well-formed inline warichu pair emits the same balanced span it always
+    /// did — a byte-identity guard that the `RenderState`-owned depth machinery
+    /// (#415) does not perturb the correct case.
+    #[test]
+    fn warichu_wellformed_inline_pair_is_byte_identical() {
+        let html = render("前［＃割り注］上等／下等［＃割り注終わり］後");
+        assert_eq!(
+            html,
+            "<p>前<span class=\"aozora-warichu\">上等／下等</span>後</p>\n",
+        );
+        assert_eq!(
+            html.matches("<span").count(),
+            html.matches("</span>").count()
+        );
+    }
+
+    /// #415 Case 1: a block-form warichu open (`［＃ここから割り注］`) paired with an
+    /// inline-form close (`［＃割り注終わり］`) must not leak a stray `</span>` — the
+    /// unmatched inline close is absorbed as a no-op.
+    #[test]
+    fn warichu_block_open_inline_close_absorbs_stray_close() {
+        let html = render("［＃ここから割り注］\n上等\n［＃割り注終わり］");
+        assert_eq!(
+            html.matches("<span").count(),
+            html.matches("</span>").count(),
+            "span tags must balance (no stray </span>): {html}",
+        );
+        assert!(
+            !html.contains("</span>"),
+            "no warichu span was opened, so no </span> should appear: {html}",
+        );
+        // The block warichu container is still balanced.
+        assert_eq!(html.matches("<div").count(), html.matches("</div>").count());
+    }
+
+    /// #415 Case 2: an inline-form warichu open (`［＃割り注］`) paired with a
+    /// block-form close (`［＃ここで割り注終わり］`) must have its span drained before
+    /// the paragraph closes — the open `<span>` never straddles `</p>`.
+    #[test]
+    fn warichu_inline_open_block_close_drains_span() {
+        let html = render("前［＃割り注］上等［＃ここで割り注終わり］後");
+        assert_eq!(
+            html.matches("<span").count(),
+            html.matches("</span>").count(),
+            "span tags must balance (open span must be drained): {html}",
+        );
+        assert!(
+            html.contains(r#"<span class="aozora-warichu">"#),
+            "the inline warichu span must still open: {html}",
+        );
+        // The drained close lands before the paragraph boundary, not after it.
+        assert!(
+            html.contains("</span></p>"),
+            "the span must close before the </p>, not straddle it: {html}",
+        );
     }
 
     #[test]
