@@ -989,31 +989,67 @@ where
     /// open path (a nested `Bracket` / `Ruby` / `AngleQuote` inside
     /// an unrecognised `Quote` folds into the surrounding plain run,
     /// same as the legacy buffered-replay behaviour).
-    fn handle_stream_event(&mut self, event: PairEvent) {
-        // A nested Ruby / AngleQuote inside the streamed Quote/Tortoise
-        // is recognised WITHOUT touching the streaming depth — so do it
-        // before borrowing the streaming frame. This is what makes
-        // `「駄目《だめ》」` form a ruby (and a nested `≪…≫` resolve)
-        // instead of leaking as literal text: the sub-frame runs the
-        // same recogniser as at top level, and `pending_plain_start` —
-        // kept live through the quote — supplies the ruby base.
-        // `process_event` checks `frame` before `streaming`, so the
-        // sub-frame's body buffers correctly and streaming resumes once
-        // it closes. (Nested `［＃…］` Bracket directives inside a quote
-        // are handled separately: they need the `※` refmark held for
-        // gaiji and shift the Unknown-directive budget.)
-        if let PairEvent::PairOpen { kind, span } = &event
-            && matches!(kind, PairKind::Ruby | PairKind::AngleQuote)
+    /// Fold a held `※` refmark into the plain run unless the very next
+    /// event is the `［` that consumes it (the gaiji shape). The streaming
+    /// mirror of the top-level refmark block in `process_event`, which is
+    /// skipped while streaming because the stream-through check routes to
+    /// `handle_stream_event` first — so an orphan `※` inside a quote
+    /// round-trips as plain, exactly as at top level.
+    fn fold_held_refmark(&mut self, event: &PairEvent) {
+        if self.pending_refmark.is_some()
+            && !matches!(
+                event,
+                PairEvent::PairOpen {
+                    kind: PairKind::Bracket,
+                    ..
+                }
+            )
         {
-            // Ruby / AngleQuote preserve `pending_plain_start` (no flush)
-            // so the recogniser can pull `consume_start` back over the
-            // preceding text; neither consumes a `※` refmark.
+            let rm = self.pending_refmark.take().expect("checked Some");
+            if self.pending_plain_start.is_none() {
+                self.pending_plain_start = Some(rm.start);
+            }
+        }
+    }
+
+    fn handle_stream_event(&mut self, event: PairEvent) {
+        self.fold_held_refmark(&event);
+
+        // A nested Ruby / AngleQuote / Bracket inside the streamed
+        // Quote/Tortoise is recognised WITHOUT touching the streaming depth
+        // — so do it before borrowing the streaming frame. This is what
+        // makes `「駄目《だめ》」` form a ruby, a nested `≪…≫` resolve, and an
+        // in-quote directive / gaiji — `「…［＃「X」に傍点］…」`,
+        // `「…※［＃…水準…］《みは》…」` — resolve instead of leaking as literal
+        // text: the sub-frame runs the same recogniser as at top level, and
+        // `pending_plain_start` (kept live through the quote) supplies the
+        // ruby base or the forward-reference target. `process_event` checks
+        // `frame` before `streaming`, so the sub-frame's body buffers
+        // correctly and streaming resumes once it closes.
+        if let PairEvent::PairOpen { kind, span } = &event
+            && matches!(
+                kind,
+                PairKind::Ruby | PairKind::AngleQuote | PairKind::Bracket
+            )
+        {
+            // None of the three flush `pending_plain_start`, so the
+            // recogniser can pull `consume_start` back over the preceding
+            // text. Only a Bracket absorbs a held `※` refmark (the gaiji
+            // shape); Ruby / AngleQuote never do. Routing an in-quote gaiji
+            // through this Bracket sub-frame lets `try_gaiji_emit` null
+            // `pending_plain_start`, which is exactly the invariant
+            // `try_ruby_over_gaiji_base` needs to adopt an adjacent `《…》`.
+            let gaiji_refmark = if matches!(kind, PairKind::Bracket) {
+                self.pending_refmark.take()
+            } else {
+                None
+            };
             self.open_frame(
                 PairEvent::PairOpen {
                     kind: *kind,
                     span: *span,
                 },
-                None,
+                gaiji_refmark,
             );
             return;
         }
@@ -1068,6 +1104,17 @@ where
                         self.streaming = None;
                     }
                 }
+            }
+            PairEvent::Solo {
+                kind: TriggerKind::RefMark,
+                span,
+            } => {
+                // Hold the `※` pending the next event — the streaming
+                // mirror of the top-level `handle_top_level` refmark arm.
+                // The block at the top of this method folds it to plain if
+                // no `［` follows, or the Bracket sub-frame absorbs it as
+                // the gaiji shape.
+                self.pending_refmark = Some(span);
             }
             other => {
                 let Some(span) = other.span() else {
