@@ -16,7 +16,7 @@ Every JSON envelope has the form
 { "schemaVersion": 1, "data": [ /* … entries … */ ] }
 ```
 
-where `schema_version` is the major version of the JSON contract and
+where `schemaVersion` is the major version of the JSON contract and
 `data` is the per-endpoint payload array.
 
 The four endpoint envelopes are:
@@ -30,7 +30,7 @@ The four endpoint envelopes are:
 
 ## SCHEMA_VERSION
 
-The `schema_version` integer (`aozora::json::SCHEMA_VERSION`)
+The `schemaVersion` integer (`aozora::json::SCHEMA_VERSION`)
 bumps on any breaking change to the serialised shape — variant
 additions exposing as a new `kind` value, field renames, envelope
 restructuring. Clients should branch on the version and handle
