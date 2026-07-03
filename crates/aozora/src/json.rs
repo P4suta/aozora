@@ -41,7 +41,7 @@ use crate::{DiagnosticSource, Severity, Tree};
 /// changes).
 pub const SCHEMA_VERSION: u32 = 1;
 
-/// Project a slice of [`crate::Diagnostic`] into a `{ schema_version, data }`
+/// Project a slice of [`crate::Diagnostic`] into a `{ schemaVersion, data }`
 /// JSON envelope. Every entry has the shape
 /// `{ kind, span: { start, end }, codepoint? }`.
 ///
@@ -60,7 +60,7 @@ pub fn diagnostic_entries(diagnostics: &[crate::Diagnostic]) -> Vec<Diagnostic> 
 }
 
 /// Project an [`Tree`]'s source-keyed node side-table into a
-/// `{ schema_version, data }` JSON envelope.
+/// `{ schemaVersion, data }` JSON envelope.
 ///
 /// Every entry has the shape `{ kind, span: { start, end } }`,
 /// source-coordinate, sorted by `span.start`. Empty parse →
@@ -84,7 +84,7 @@ pub fn node_entries(tree: &Tree<'_>) -> Vec<Node> {
 }
 
 /// Project an [`Tree`]'s pair table into a
-/// `{ schema_version, data }` JSON envelope. Every entry has the shape
+/// `{ schemaVersion, data }` JSON envelope. Every entry has the shape
 /// `{ kind, open: { start, end }, close: { start, end } }`.
 ///
 /// One entry per matched open/close pair; unmatched closes and
@@ -114,7 +114,7 @@ pub fn pair_entries(tree: &Tree<'_>) -> Vec<Pair> {
 }
 
 /// Project an [`Tree`]'s container open/close pair table into a
-/// `{ schema_version, data }` JSON envelope.
+/// `{ schemaVersion, data }` JSON envelope.
 ///
 /// Each entry has the shape
 /// `{ kind, open: { offset }, close: { offset } }` where `kind` is
@@ -153,7 +153,7 @@ pub fn container_pair_entries(tree: &Tree<'_>) -> Vec<ContainerPair> {
 }
 
 /// Project the canonical slug catalogue ([`crate::SLUGS`]) into a
-/// `{ schema_version, data }` JSON envelope.
+/// `{ schemaVersion, data }` JSON envelope.
 ///
 /// Each entry has the shape `{ canonical, family, accepts_param, doc,
 /// partner }`: `family` is the camelCase form of the
@@ -184,7 +184,7 @@ pub fn slug_entries() -> Vec<Slug> {
 }
 
 /// Project resolved `※［＃…］` gaiji references from `source` into a
-/// `{ schema_version, data }` JSON envelope.
+/// `{ schemaVersion, data }` JSON envelope.
 ///
 /// Each entry is
 /// `{ span: { start, end }, description, mencode, codepoint, resolved }`
@@ -299,7 +299,7 @@ pub fn schema_container_pairs() -> serde_json::Value {
 }
 
 /// Wrap the per-entry schema in the canonical
-/// `{schema_version, data: […]}` envelope. The envelope shape is
+/// `{schemaVersion, data: […]}` envelope. The envelope shape is
 /// shared by all four wire functions; only the inner item schema
 /// varies.
 #[cfg(feature = "schema")]

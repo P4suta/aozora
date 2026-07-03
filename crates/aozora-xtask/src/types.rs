@@ -189,7 +189,7 @@ fn render_envelopes(out: &mut String) {
     out.push('\n');
     out.push_str("/** Generic wire envelope. Every endpoint emits this top-level shape. */\n");
     out.push_str(
-        "export interface JsonEnvelope<T> {\n  schema_version: 1;\n  data: ReadonlyArray<T>;\n}\n\n",
+        "export interface JsonEnvelope<T> {\n  schemaVersion: 1;\n  data: ReadonlyArray<T>;\n}\n\n",
     );
     out.push_str("export type DiagnosticsEnvelope    = JsonEnvelope<Diagnostic>;\n");
     out.push_str("export type NodesEnvelope          = JsonEnvelope<Node>;\n");
@@ -341,7 +341,7 @@ fn langs_check() -> Result<(), String> {
 /// `$defs` yields a single `Span` / `Offset`. Two transforms make
 /// it digestible: every `$def` gets a `title` equal to its key (so
 /// `quicktype` names types from the key, not the referencing property),
-/// and `schema_version`'s integer `const` is dropped (`quicktype` chokes
+/// and `schemaVersion`'s integer `const` is dropped (`quicktype` chokes
 /// on a numeric `const` — `s.codePointAt is not a function`); the precise
 /// committed schemas keep the `const`.
 fn write_combined_schema(root: &Path) -> Result<PathBuf, String> {
@@ -385,7 +385,7 @@ fn write_combined_schema(root: &Path) -> Result<PathBuf, String> {
             item_obj.remove("$defs");
         }
         defs.insert(item_title.clone(), items);
-        // The envelope type, referencing the item. `schema_version` is a
+        // The envelope type, referencing the item. `schemaVersion` is a
         // plain integer here (no `const`) for quicktype's sake.
         defs.insert(
             env_title.clone(),
@@ -607,6 +607,14 @@ mod tests {
         assert!(
             out.contains("interface JsonEnvelope<T>"),
             "generic envelope"
+        );
+        // The wire field is camelCase (the `Envelope` struct carries
+        // `#[serde(rename_all = "camelCase")]`), so the generated `.d.ts`
+        // must spell `schemaVersion`, not the Rust field name — a snake_case
+        // spelling here once shipped a `.d.ts` that disagreed with runtime.
+        assert!(
+            out.contains("schemaVersion: 1;") && !out.contains("schema_version"),
+            "envelope field must be camelCase schemaVersion: {out}"
         );
         for alias in [
             "DiagnosticsEnvelope",

@@ -63,7 +63,7 @@ change:
 4. Call an export with the source string:
    - `to_html` / `serialize` → a bare string;
    - `diagnostics_json` / `nodes_json` / `pairs_json` /
-     `container_pairs_json` → a `{ schema_version, data }`
+     `container_pairs_json` → a `{ schemaVersion, data }`
      [JSON envelope](../json/overview.md).
 5. Parse the envelope `data` with types generated from the committed
    JSON Schema.
