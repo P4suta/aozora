@@ -116,8 +116,11 @@ impl<W: fmt::Write> WalkSinkOwned for HtmlSinkOwned<'_, W> {
             (SentinelKind::BlockOpen, NodeRefOwned::BlockOpen(open)) => {
                 self.state.open_container(open, self.out)
             }
-            (SentinelKind::BlockClose, NodeRefOwned::BlockClose(_close)) => {
-                self.state.close_container(self.out)
+            (SentinelKind::BlockClose, NodeRefOwned::BlockClose(close)) => {
+                // Pass the close marker's inline-ness so a stray inline close in
+                // a paragraph gap cancels a pending reopen rather than popping a
+                // block off the stack (#420).
+                self.state.close_container(close.is_inline(), self.out)
             }
             // Sentinel without a matching registry entry: best-effort skip.
             _ => Ok(()),
