@@ -1824,15 +1824,20 @@ playground-test: _playground-ensure
     {{_pg}} bun run test
 
 # Combined playground gate for `ci-parallel`: ensure deps once, then
-# typecheck + test in a single sequential job. `ci-parallel` runs its
-# gates concurrently; if `playground-typecheck` and `playground-test`
+# typecheck + test + CSS lint in a single sequential job. `ci-parallel` runs
+# its gates concurrently; if `playground-typecheck` and `playground-test`
 # launched separately, their `_playground-ensure` (`bun install`) would
 # hard-link into the shared `node_modules` volume in parallel and hit
 # `Failed to link …: EEXIST`. One job keeps the install single-threaded.
+# `lint:css` runs stylelint over the playground CSS *and* the canonical
+# aozora-notation.css (visible in-container via the full-repo mount); this
+# single chokepoint wires it into both pre-push (ci-parallel) and CI
+# (playground-checks) with no ci.yml change.
 # Standalone `playground-typecheck` / `playground-test` are unchanged.
 playground-ci: _playground-ensure
     {{_pg}} bun run typecheck
     {{_pg}} bun run test
+    {{_pg}} bun run lint:css
 
 # Production build of the playground. Regenerates the WASM bundle
 # first so the vite alias target is always fresh; `_playground-ensure`
