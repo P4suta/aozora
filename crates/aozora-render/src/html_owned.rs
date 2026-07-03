@@ -19,7 +19,44 @@ use aozora_syntax::owned::{NodeOwned, NodeRefOwned, NodeStore, OwnedLexOutput};
 
 use crate::html::{RenderState, escape_text_chunk};
 use crate::render_node_owned::render_owned;
+use crate::serialize_owned::{SerializeOptions, serialize_owned_with};
 use crate::walk::{SentinelKind, WalkSinkOwned, walk_owned};
+
+/// Options controlling the opt-in HTML render path.
+///
+/// The default (`normalize_directives: false`) is the byte-identical,
+/// non-judgemental render: an `Unknown` directive body the parser did not
+/// recognise renders as an inert `<span class="aozora-directive" hidden>`, so
+/// output never depends on the notation-hygiene catalogue.
+///
+/// Opting in ([`render_html_owned_normalized`]) reinterprets verified Tier1
+/// near-misses (per `aozora_syntax::lint::canonical_directive`, reached
+/// *transitively* through the formatter's `fix_notation` rewrite — never a
+/// second copy of the catalogue) as their canonical spelling, so a known 揺れ
+/// renders as a real element instead of a hidden directive span. See
+/// ADR-0022's fourth role.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RenderOptions {
+    /// Render verified `DirectiveKind::Unknown` near-misses (per the
+    /// notation-hygiene catalogue) as if they were their canonical spelling.
+    pub normalize_directives: bool,
+}
+
+/// Render an [`OwnedLexOutput`] into HTML **after** normalising its Tier1
+/// directive near-misses to canonical form.
+///
+/// This is the opt-in twin of [`render_html_owned`]: it first re-serialises the
+/// tree with the formatter's `fix_notation` rewrite (the single
+/// `canonical_directive` authority, reached transitively — no catalogue copy
+/// lives here), then re-parses that ephemeral canonical source and renders it.
+/// The rewrite is an internal, throwaway step: neither the caller's source nor
+/// the default parse/render is mutated. A body with no catalogue entry is left
+/// verbatim, so it still renders as before.
+#[must_use]
+pub fn render_html_owned_normalized(out: &OwnedLexOutput) -> String {
+    let normalized = serialize_owned_with(out, SerializeOptions { fix_notation: true });
+    render_html_owned(&aozora_pipeline::lex(&normalized))
+}
 
 /// Render an [`OwnedLexOutput`] into a fresh `String`.
 ///
