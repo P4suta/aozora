@@ -1,6 +1,6 @@
 [package]
 name = "tree-sitter-aozora"
-description = "Tree-sitter grammar for aozora-flavored markdown — used by aozora-lsp for incremental parsing"
+description = "Tree-sitter grammar for Aozora Bunko notation — used by aozora-lsp for incremental parsing"
 # Inherit the unified workspace version (mirrors the pinned `aozora` parser), so
 # there is a single number to bump — same as the other workspace members.
 version.workspace = true
