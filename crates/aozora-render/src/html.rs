@@ -28,6 +28,16 @@ pub(crate) struct RenderState {
     /// In-flight container opens. The close marker reads the matched open
     /// [`RegionFormat`] (open-authoritative).
     open_stack: Vec<RegionFormat>,
+    /// Inline containers (`kind.is_inline()`) closed at a paragraph boundary,
+    /// awaiting reopen in the next paragraph. An inline container is phrasing
+    /// content, so a still-open one must not straddle `</p>`; but popping it off
+    /// `open_stack` would desync a later `［＃…終わり］` close marker. So
+    /// [`Self::close_paragraph`] closes it top-down and records it here, and
+    /// [`Self::ensure_in_paragraph`] reopens it (re-pushing onto `open_stack`) in
+    /// the next paragraph — keeping the stack consistent so the eventual close
+    /// still pairs. A never-closed inline container renders balanced in each
+    /// paragraph to EOF (#420).
+    reopen_after_para: Vec<RegionFormat>,
     /// Count of open inline-warichu spans (`［＃割り注］`) awaiting their close
     /// (`［＃割り注終わり］`). A warichu span is phrasing content, so it must
     /// never straddle a `</p>` or `</div>`: [`Self::close_paragraph`] drains any
@@ -55,6 +65,16 @@ impl RenderState {
             self.flush_pending_separator(out)?;
             out.write_str("<p>")?;
             self.in_paragraph = true;
+            // Reopen any inline containers `close_paragraph` closed at the last
+            // paragraph boundary (#420). `pop()` yields them in reverse of the
+            // top-down push order, i.e. outermost-first, restoring the original
+            // nesting; re-pushing onto `open_stack` keeps the eventual close
+            // paired. This runs only for real paragraphs — the `in_heading`
+            // early return above skips it.
+            while let Some(kind) = self.reopen_after_para.pop() {
+                render_node::render_container(Container { kind }, true, out)?;
+                self.open_stack.push(kind);
+            }
         }
         Ok(())
     }
@@ -66,6 +86,20 @@ impl RenderState {
         // routes through (via `before_block_emit` and `drain_open_containers`).
         self.drain_open_warichu(out)?;
         if self.in_paragraph {
+            // An inline container is phrasing content and sits at the TOP of
+            // `open_stack` (any block container is below it), so it must not
+            // straddle `</p>` either (#420). Close each open inline container
+            // top-down here and remember it, so `ensure_in_paragraph` can reopen
+            // it in the next paragraph — re-pushing onto `open_stack` keeps a
+            // later close marker paired.
+            while let Some(&kind) = self.open_stack.last() {
+                if !kind.is_inline() {
+                    break;
+                }
+                self.open_stack.pop();
+                render_node::render_container(Container { kind }, false, out)?;
+                self.reopen_after_para.push(kind);
+            }
             out.write_str("</p>\n")?;
             self.in_paragraph = false;
             self.pending_block_separator = false;
@@ -111,7 +145,25 @@ impl RenderState {
     /// Emit a container's closing tag — the mirror of [`Self::open_container`],
     /// reconstructed from the matched open [`RegionFormat`] popped off the stack
     /// (open-authoritative). A degraded empty stack best-effort skips.
-    pub(crate) fn close_container<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
+    pub(crate) fn close_container<W: fmt::Write>(
+        &mut self,
+        closing_inline: bool,
+        out: &mut W,
+    ) -> fmt::Result {
+        // An inline close marker (`［＃太字終わり］` etc.) that lands in the gap
+        // between a paragraph boundary and the next text cancels a pending
+        // reopen instead of no-oping (#420). `close_paragraph` already drained
+        // the paragraph's inline containers into `reopen_after_para`, so the
+        // stack is empty (or holds only the enclosing block) and a plain
+        // `open_stack.pop()` would silently lose the close — and the next
+        // paragraph would then wrongly re-apply the emphasis. The front entry
+        // is the innermost (closed first), matching the inner-first close
+        // order; a *block* close (`closing_inline == false`) still pops its
+        // region off the stack as usual, so block markup is unaffected.
+        if closing_inline && !self.reopen_after_para.is_empty() {
+            self.reopen_after_para.remove(0);
+            return Ok(());
+        }
         let Some(kind) = self.open_stack.pop() else {
             return Ok(());
         };
@@ -137,7 +189,8 @@ impl RenderState {
     /// to the end of the document. Mirrors the per-marker [`Self::close_container`].
     pub(crate) fn drain_open_containers<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
         while !self.open_stack.is_empty() {
-            self.close_container(out)?;
+            // EOF drain: no close marker, so pop the stack open-authoritatively.
+            self.close_container(false, out)?;
         }
         Ok(())
     }
@@ -362,10 +415,145 @@ mod tests {
 
     #[test]
     fn inline_container_stays_inside_paragraph() {
+        // Byte-identity regression guard for #420: a well-formed inline container
+        // opens AND closes within its paragraph, so the paragraph-boundary
+        // reopen machinery is a no-op — the top of `open_stack` is never inline
+        // at `close_paragraph`. Output must be exactly as before the fix.
         let html = render("前［＃太字］中［＃太字終わり］後");
         assert_eq!(
             html, "<p>前<b class=\"aozora-futoji\">中</b>後</p>\n",
             "inline container must stay within the paragraph",
+        );
+    }
+
+    /// True iff `<b>` is balanced at every `</p>` boundary — i.e. no open bold
+    /// ever straddles a paragraph close (#420). A `</b>` (`<`,`/`,`b`,`>`) never
+    /// contains the substring `<b`, so `matches("<b")` counts only opening tags.
+    fn bold_never_straddles_p_close(html: &str) -> bool {
+        let mut cursor = 0;
+        while let Some(rel) = html[cursor..].find("</p>") {
+            let end = cursor + rel; // start of this `</p>`
+            let prefix = &html[..end];
+            if prefix.matches("<b").count() != prefix.matches("</b>").count() {
+                return false;
+            }
+            cursor = end + "</p>".len();
+        }
+        true
+    }
+
+    /// #420: an inline 太字 container the source never closes must not leave an
+    /// open `<b>` straddling `</p>` across a paragraph break. The container is
+    /// closed before `</p>` and reopened in the next paragraph, so bold is
+    /// globally balanced and balanced at the `</p>` boundary.
+    #[test]
+    fn unclosed_bold_across_paragraph_break_never_straddles_p() {
+        let html = render("前［＃太字］中\n\n後");
+        assert_eq!(
+            html.matches("<b").count(),
+            html.matches("</b>").count(),
+            "bold must be globally balanced: {html}",
+        );
+        assert!(
+            bold_never_straddles_p_close(&html),
+            "no open <b> may straddle </p>: {html}",
+        );
+        assert!(
+            !html.contains("<b class=\"aozora-futoji\">中</p>"),
+            "the </b> must precede </p>, not straddle it: {html}",
+        );
+        assert!(
+            html.contains("</b></p>"),
+            "bold closes before the paragraph boundary: {html}",
+        );
+    }
+
+    /// #420: an unclosed inline 太字 that reaches EOF renders balanced, with each
+    /// trailing paragraph bold and no bold straddling any `</p>`.
+    #[test]
+    fn unclosed_bold_reaching_eof_is_balanced_each_paragraph() {
+        let html = render("前［＃太字］中\n\nもっと\n\n最後");
+        assert_eq!(
+            html.matches("<b").count(),
+            html.matches("</b>").count(),
+            "bold must be globally balanced to EOF: {html}",
+        );
+        assert_eq!(
+            html.matches("<b").count(),
+            3,
+            "the never-closed bold reopens in each of the 3 paragraphs: {html}",
+        );
+        assert!(
+            bold_never_straddles_p_close(&html),
+            "no open <b> may straddle </p> anywhere: {html}",
+        );
+        assert!(
+            html.contains("<p><b class=\"aozora-futoji\">もっと</b></p>"),
+            "a trailing paragraph is fully bold: {html}",
+        );
+    }
+
+    /// #420: a 太字 opened before a paragraph break and closed with
+    /// `［＃太字終わり］` in a later paragraph must still pair — the reopened
+    /// container stays on `open_stack`, so the close marker finds its match and
+    /// text after the close is no longer bold.
+    #[test]
+    fn bold_close_marker_after_paragraph_break_still_pairs() {
+        let html = render("前［＃太字］中\n\n後［＃太字終わり］尾");
+        assert_eq!(
+            html.matches("<b").count(),
+            html.matches("</b>").count(),
+            "bold must be balanced (close marker pairs): {html}",
+        );
+        assert!(
+            bold_never_straddles_p_close(&html),
+            "no open <b> may straddle </p>: {html}",
+        );
+        assert!(
+            html.contains("<p>前<b class=\"aozora-futoji\">中</b></p>"),
+            "first paragraph is bold and closes before </p>: {html}",
+        );
+        assert!(
+            html.contains("<p><b class=\"aozora-futoji\">後</b>尾</p>"),
+            "second paragraph reopens bold, the close marker ends it, 尾 is plain: {html}",
+        );
+    }
+
+    /// #420: an inline close marker landing in the *gap* between a paragraph
+    /// break and the next text (no intervening text) ends the emphasis — it
+    /// must cancel the pending reopen, not silently no-op and then wrongly
+    /// re-apply the emphasis to the following paragraph. Regression guard for
+    /// the reopen-cancel path.
+    #[test]
+    fn bold_close_in_paragraph_gap_ends_emphasis() {
+        // Single: the close cancels the pending reopen, so 後 is plain.
+        let html = render("前［＃太字］中\n\n［＃太字終わり］後");
+        assert_eq!(
+            html.matches("<b").count(),
+            html.matches("</b>").count(),
+            "bold balanced: {html}",
+        );
+        assert!(
+            html.contains("<p>前<b class=\"aozora-futoji\">中</b></p>")
+                && html.contains("<p>後</p>"),
+            "後 after a gap-close must be plain, not bold: {html}",
+        );
+        // Nested: both closes in the gap end both emphases (inner-first),
+        // leaving 後 plain — the outer/block markup is untouched.
+        let nested = render("前［＃太字］あ［＃斜体］い\n\n［＃斜体終わり］［＃太字終わり］後");
+        assert_eq!(
+            nested.matches("<b").count(),
+            nested.matches("</b>").count(),
+            "nested bold balanced: {nested}",
+        );
+        assert_eq!(
+            nested.matches("<i").count(),
+            nested.matches("</i>").count(),
+            "nested italic balanced: {nested}",
+        );
+        assert!(
+            nested.contains("<p>後</p>"),
+            "後 after nested gap-closes must be plain: {nested}",
         );
     }
 
