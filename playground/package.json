@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "lint:css": "stylelint --config ./.stylelintrc.json 'src/**/*.css' '../crates/aozora-render/assets/*.css'",
+    "lint:css:fix": "stylelint --fix --config ./.stylelintrc.json 'src/**/*.css' '../crates/aozora-render/assets/*.css'"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.2",
@@ -27,10 +29,21 @@
   "devDependencies": {
     "@playwright/test": "^1.49.0",
     "@vitest/ui": "^4.1.7",
+    "autoprefixer": "^10.5.2",
     "happy-dom": "^20.9.0",
+    "postcss": "^8.5.16",
+    "stylelint": "^17.14.0",
+    "stylelint-config-standard": "^40.0.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.14",
     "vite-plugin-solid": "^2.11.0",
     "vitest": "^4.1.7"
-  }
+  },
+  "browserslist": [
+    "Safari >= 16.2",
+    "iOS >= 16.2",
+    "Chrome >= 111",
+    "Edge >= 111",
+    "Firefox >= 121"
+  ]
 }

@@ -1,0 +1,36 @@
+{
+  "//": {
+    "no-descending-specificity": "disabled globally — high false-positive rule whose specificity comparison ignores @media / interactive-state context, so hover rules re-declared at lower specificity inside the 760px mobile block flag as 'descending' even though they never conflict. Only ~3 of ~8 fires are order-fixable (a @media block must follow the base rules), and the rule has no per-selector ignore. Every other config-standard rule stays enabled.",
+    "media-feature-range-notation": "pinned to 'prefix' (config-standard defaults to 'context') — the range form '(width <= 760px)' needs Safari 16.4, but the app's real floor is Safari 16.2 (gallery color-mix). Keep the '(max-width: 760px)' form.",
+    "unit-ban": "declaration-property-unit-disallowed-list forbids vh/svh/lvh on every block-axis sizing property (physical height* AND logical *block-size) — this is the exact viewport-collapse bug Part A fixed; only dvh is allowed for full-viewport height.",
+    "canonical-override": "crates/aozora-render/assets/*.css ships raw to the VS Code extension / afm and never passes through autoprefixer, so its hand-written -webkit-* fallbacks must survive. The vendor-prefix rules are the ONLY carve-out for it; all formatting rules still apply (single quality bar). NOTE: overrides.files globs are resolved relative to THIS config's directory, so the pattern is '../crates/...' (a tail-anchored '**/...' would anchor under playground/ and never match a file outside it).",
+    "webkit-scrollbar": "the two ::-webkit-scrollbar selectors in styles.css carry inline `stylelint-disable-line selector-no-vendor-prefix` — no standard equivalent exists and autoprefixer never rewrites selectors."
+  },
+  "extends": "stylelint-config-standard",
+  "ignoreFiles": ["dist/**", "node_modules/**"],
+  "rules": {
+    "no-descending-specificity": null,
+    "media-feature-range-notation": "prefix",
+    "declaration-property-unit-disallowed-list": {
+      "height": ["vh", "svh", "lvh"],
+      "min-height": ["vh", "svh", "lvh"],
+      "max-height": ["vh", "svh", "lvh"],
+      "block-size": ["vh", "svh", "lvh"],
+      "min-block-size": ["vh", "svh", "lvh"],
+      "max-block-size": ["vh", "svh", "lvh"]
+    },
+    "declaration-property-value-disallowed-list": {
+      "/color$/": ["/\\b(white|black)\\b/"],
+      "background": ["/\\b(white|black)\\b/"]
+    }
+  },
+  "overrides": [
+    {
+      "files": ["../crates/aozora-render/assets/*.css"],
+      "rules": {
+        "property-no-vendor-prefix": null,
+        "value-no-vendor-prefix": null
+      }
+    }
+  ]
+}
