@@ -184,7 +184,7 @@ on the hot path).
 
 - Unit tests in `mod tests {}` at the bottom of each module.
 - Integration tests in `crates/<crate>/tests/`. One file per area
-  (e.g. `tests/lexer_phase0.rs`, `tests/lexer_phase3.rs`).
+  (e.g. `tests/streaming_semantics.rs`, `tests/diagnostic_ordering.rs`).
 - Property tests prefixed `property_` (the `prop` recipe globs on
   this).
 - Doc tests inside ` ```rust ` blocks in rustdoc comments. CI runs

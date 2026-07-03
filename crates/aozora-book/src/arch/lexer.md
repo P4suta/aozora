@@ -7,8 +7,10 @@ bench harness measure each stage independently, and maps every
 diagnostic to a single stage boundary.
 
 The single public entry [`lex`] drives all four stages
-and lands the resulting owned AST inside an
-`aozora_syntax::borrowed::Arena` provided by the caller. The legacy
+and builds the resulting owned AST directly into a flat `NodeStore`
+(interned strings plus `u32`-handle-addressed content and segment
+pools) inside the returned `OwnedLexOutput` — there is no
+caller-provided arena. The legacy
 "normalize / registry / validate" steps disappeared into a fused
 walk inside `lex`; they no longer have standalone stage functions.
 
@@ -181,6 +183,6 @@ measurement attached.
   measure the per-stage cost on your own workload.
 
 [`lex`]: https://docs.rs/aozora-pipeline/latest/aozora_pipeline/fn.lex.html
-[`Node`]: https://docs.rs/aozora-syntax/latest/aozora_syntax/borrowed/enum.Node.html
+[`Node`]: https://docs.rs/aozora-syntax/latest/aozora_syntax/owned/enum.NodeOwned.html
 [`SLUGS`]: https://docs.rs/aozora-spec/latest/aozora_spec/static.SLUGS.html
 [`Registry`]: https://docs.rs/aozora-pipeline/latest/aozora_pipeline/struct.Registry.html

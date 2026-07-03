@@ -21,8 +21,9 @@ the AST walk — three things you'll need once you do anything beyond
 
 ## The lifetime model
 
-`Document` owns two things: a [`bumpalo::Bump`](https://docs.rs/bumpalo)
-arena and the source `Box<str>`. `Tree<'a>` borrows from both:
+`Document` owns the source `Box<str>` (plus a `Copy` diagnostic
+policy). `Document::parse` returns a `Tree<'a>` that owns all its AST
+data (an `OwnedLexOutput`) and borrows only the source:
 
 ```rust
 # extern crate aozora;
@@ -32,7 +33,7 @@ let tree = doc.parse();                     // Tree<'_> bound to &doc
 let html = tree.to_html();                  // walks the borrow
 # let _ = (&tree, &html);
 
-// dropping doc releases every node in a single Bump::reset()
+// the tree owns its AST (a flat NodeStore); dropping doc frees the source
 drop(doc);
 ```
 
@@ -120,9 +121,10 @@ Match on `entry.node` (`NodeRef`) to destructure a specific construct —
 e.g. `NodeRef::Inline(Node::Ruby(r))` gives you the ruby base and
 reading. A runnable version is `just example walk_ast`.
 
-The borrowed nodes are cheap to copy (they're effectively
-`(tag, &str, &Bump-slice)` triples), so you can keep references around
-freely as long as the `Document` lives.
+The owned nodes are cheap to copy — they're `Copy` tagged unions of
+scalars and `u32` handles into the tree's `NodeStore`, not pointers —
+so you can copy them out freely and resolve their text through the
+store for as long as the `Tree` lives.
 
 ## Round-trip and canonicalisation
 

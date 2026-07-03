@@ -42,8 +42,8 @@ call on the hot path.
 
 Static dispatch is the whole point: a trait object cannot carry a
 generic `S: OffsetSink` method, so a `&dyn`-based dispatcher would
-force every parse to allocate a heap `Vec<u32>` and memcpy it into
-the lex pipeline's bumpalo arena. The enum-and-match shape gives
+force every parse to allocate a scratch `Vec<u32>` and memcpy it into
+the lex pipeline's trigger-offset buffer. The enum-and-match shape gives
 us the same runtime-CPU adaptation a single binary needs without
 that detour.
 
@@ -82,7 +82,7 @@ Switching to a self-rolled Teddy:
   the lower 11 bits of a `u16`; we don't pay for the
   collision-verify pass Hyperscan's "fat-finger" packing requires.
 - **`OffsetSink` visitor.** Every kernel writes through the same
-  generic sink, so the lex pipeline's `BumpVec<'_, u32>` receives
+  generic sink, so the tokenizer's trigger-offset `Vec<u32>` receives
   offsets directly from the SIMD inner loop — the legacy
   heap-allocate-then-memcpy detour is gone.
 

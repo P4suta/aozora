@@ -76,7 +76,7 @@ impl RecogniseCtx<'_, '_> {
         bracket_open_idx: usize,
     ) -> Option<GaijiMatch> {
         #[cfg(feature = "classify-instrument")]
-        let _phase3_guard = SubsystemGuard::new(Subsystem::Gaiji);
+        let _classify_guard = SubsystemGuard::new(Subsystem::Gaiji);
         let events = view.events;
         let &PairEvent::PairOpen {
             kind: PairKind::Bracket,

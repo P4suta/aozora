@@ -51,7 +51,7 @@ const html = doc.toHtml();
 const canonical = doc.toSource();
 const diagnostics = JSON.parse(doc.diagnostics_json());
 console.log(html);
-doc.free();                                    // release the bumpalo arena
+doc.free();                                    // free the parse tree (the NodeStore)
 ```
 
 In TypeScript, the `.d.ts` file gives you full type checking on
@@ -104,8 +104,9 @@ LOC) costs nothing and keeps the bundle small.
 wasm-bindgen does wire `Drop` to a JS finalizer, but JS finalizers
 fire on the GC's schedule — which can be *minutes* after the last
 reference goes out of scope, especially on Node.js where the GC
-batches aggressively. For large documents this means the bumpalo
-arena (potentially several MB) sits unreleased.
+batches aggressively. For large documents this means the parse tree —
+the `OwnedLexOutput`'s `NodeStore` pools, potentially several MB —
+sits unreleased.
 
 Explicit `.free()` is the same idiom every wasm-bindgen library
 exposes for resource-heavy types. Consumers that want JS-native

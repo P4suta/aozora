@@ -134,7 +134,8 @@ A `flat C struct` projection of `Tree` would require:
 
 - Naming every Rust enum variant in C (not supported cleanly via
   cbindgen for tagged unions).
-- Translating the bumpalo arena into a malloc-backed block
+- Translating the owned `NodeStore` (the tree's flat,
+  `u32`-handle-addressed pools) into a malloc-backed block
   contiguous with the tree (which means copying the tree out).
 - Pinning the AST shape across the C ABI — internal refactors
   (e.g. adding a new `Node` variant) would break ABI without

@@ -82,12 +82,13 @@ non-breaking for downstream tooling that walks `preorder_with_tokens`.
 
 ## Why rowan, not classify-stage integration
 
-The bumpalo-arena AST stays the hot path; the CST sits on top as an
-editor-grade convenience layer rather than coupling lossless-tree
-concerns into the perf-critical classifier. rowan (over cstree)
-gives the lossless tree a maintained home — rust-analyzer's tree
-infrastructure with 86 reverse deps — and the bumpalo / Arc
-dual-allocator overhead is the price for keeping the AST untouched.
+The owned AST (the flat `NodeStore`) stays the hot path; the CST sits
+on top as an editor-grade convenience layer rather than coupling
+lossless-tree concerns into the perf-critical classifier. rowan (over
+cstree) gives the lossless tree a maintained home — rust-analyzer's
+tree infrastructure with 86 reverse deps — and the `NodeStore` / rowan
+`Arc` dual-representation overhead is the price for keeping the AST
+untouched.
 
 ## Cross-references
 

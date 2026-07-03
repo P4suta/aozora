@@ -44,9 +44,14 @@ The diagnostics JSON shape is shared across every binding — see
 
 ## Thread safety: `unsendable`
 
-The `Document` type is marked `unsendable` (PyO3 marker) because
-the underlying bumpalo arena uses interior `Cell` state. Concurrent
-access from another Python thread raises a `RuntimeError`:
+The `Document` type is marked `unsendable` (a PyO3 marker) as a
+*conservative* choice — not because the parser holds any thread-unsafe
+state. The wrapped Rust document owns only its source `Box<str>` plus a
+`Copy` diagnostic policy and derives an owned, lifetime-free parse tree
+on demand; there is no arena and no interior-mutable state, so the
+underlying document is itself `Send + Sync`. The marker simply pins the
+`PyO3` handle to its constructing Python thread, so access from another
+thread raises a `RuntimeError`:
 
 ```python
 import threading
@@ -57,27 +62,27 @@ def worker(): doc.to_html()              # raises RuntimeError on second thread
 threading.Thread(target=worker).start()  # boom
 ```
 
-For *parallel* corpus processing, create a `Document` per thread.
-The arena resets per-`Document`, so there's no contention point;
-each thread allocates from its own arena.
+For *parallel* corpus processing, create a `Document` per thread;
+each one is fully independent, so there is no shared state and no
+contention point.
 
-### Why not `Send`?
+### Why keep `unsendable`?
 
-PyO3 has a `Sendable` trait that enables cross-thread access for
-binding types. We don't enable it because:
+PyO3 has a `Send`-based marker that enables cross-thread access for
+binding types, and the underlying document now qualifies (`Send +
+Sync`). We keep the stricter `unsendable` contract deliberately:
 
-1. **Arena correctness.** `bumpalo::Bump` is `!Sync` — the per-page
-   allocator state isn't atomic. Marking it `Sendable` from PyO3 would
-   require a mutex around every allocation, which is the cost we
-   designed the arena to avoid in the first place.
+1. **Fail loud, not surprising.** Pinning the handle to its
+   constructing thread turns accidental cross-thread use into a loud
+   `RuntimeError` instead of a subtle bug. Relaxing the marker now
+   that the arena is gone is a code change tracked separately.
 2. **GIL semantics.** Python threads share the GIL; "concurrent" in
-   the Python sense is rarely actually parallel. The `unsendable`
-   marker turns the misuse case into a loud `RuntimeError` instead of
-   a silent data race.
+   the Python sense is rarely actually parallel, so sharing a single
+   handle across threads buys little.
 3. **Multiprocessing path.** The right answer for parallel corpus
-   work is `multiprocessing` (one `Document` per process — the
-   arenas are independent by construction). The `unsendable` marker
-   nudges users toward this.
+   work is `multiprocessing` (one `Document` per process — fully
+   independent by construction). The `unsendable` marker nudges users
+   toward this.
 
 ## Why JSON-encoded diagnostics?
 
