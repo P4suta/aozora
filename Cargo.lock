@@ -188,6 +188,7 @@ dependencies = [
  "aozora",
  "aozora-buildstamp",
  "aozora-encoding",
+ "aozora-fmt",
  "aozora-pandoc",
  "clap",
  "clap_complete",

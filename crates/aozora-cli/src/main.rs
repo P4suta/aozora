@@ -417,14 +417,14 @@ fn run_fmt_once(args: &FmtArgs) -> Result<ExitCode> {
     let encoding = args.common.resolved_encoding(&cfg);
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);
     let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
-    let doc = Document::new(source.clone());
-    let tree = timer.measure("parse", || doc.parse());
     let opts = SerializeOptions {
         fix_notation: args.fix_notation,
     };
-    let formatted = timer.measure("serialize", || tree.to_source_with(opts));
-    // Timing covers read/parse/serialize; the comparison and I/O below
-    // are not the parse cost a reader cares about, so report here.
+    // `aozora fmt` and the standalone `aozora-fmt` binary share one format
+    // core, so the canonical form can never drift between them.
+    let formatted = timer.measure("format", || aozora_fmt::format_source_with(&source, opts));
+    // Timing covers read/format; the comparison and I/O below are not the
+    // formatting cost a reader cares about, so report here.
     timer.report()?;
 
     // The lexer's sanitize stage strips BOM and normalises CRLF→LF;

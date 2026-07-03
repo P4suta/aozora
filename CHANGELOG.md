@@ -36,6 +36,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **cli / fmt**: `aozora fmt` now delegates to the shared
+  `aozora_fmt::format_source_with` instead of re-implementing the
+  `parse ∘ to_source` round-trip inline, so the `aozora` CLI and the standalone
+  `aozora-fmt` binary can never drift on the canonical form (ADR-0016
+  follow-up). Output is **byte-identical** — both paths already ran the same
+  transform — the only observable change is that `--timing` collapses the former
+  `parse` + `serialize` phases into one `format` phase. Also corrects stale
+  `aozora-fmt` module docs (the `aozora` CLI was never a `FmtArgs` consumer and
+  there is no `xtask gen-assets`) and drops the leftover "planned" note from the
+  `--fix-notation` non-canonical-directive help now that the autofix ships.
 - **perf / pipeline**: the classifier's per-ruby synthetic event stream
   (`build_synth_ruby_view`) now lands in a `SmallVec<[_; 16]>` instead of two
   fresh heap `Vec`s. A ruby is ~5 events, so it stays inline — and since the

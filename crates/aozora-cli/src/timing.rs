@@ -1,12 +1,14 @@
 //! Phase timing for the document subcommands (`--timing`).
 //!
 //! CLI-side instrumentation only: the parser stays a pure, hook-free
-//! function (ADR-0001). We wrap the three coarse stages every document
-//! subcommand shares — `read` (I/O + decode), `parse`, and the
-//! command's `output` step (render / serialize / inspect / pandoc) — in
-//! [`std::time::Instant`] and print the result to **stderr**, so a
-//! `render` / `inspect` pipeline's stdout stays byte-identical with or
-//! without `--timing`.
+//! function (ADR-0001). We wrap the coarse stages a document subcommand
+//! runs — `read` (I/O + decode), `parse`, and the command's `output` step
+//! (render / inspect / pandoc) — in [`std::time::Instant`] and print the
+//! result to **stderr**, so a `render` / `inspect` pipeline's stdout stays
+//! byte-identical with or without `--timing`. `fmt` is the exception: it
+//! delegates to the shared `aozora_fmt::format_source_with` core, which
+//! fuses parse and serialize, so it reports `read` + a single `format`
+//! stage instead of a separate `parse`.
 //!
 //! Finer, per-lex-phase numbers (sanitize / tokenize / pair / build)
 //! are a parser-development concern served by `xtask samply`, `just
