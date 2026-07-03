@@ -13,7 +13,7 @@ import { t, tf } from '../i18n';
  * Japanese message. Unknown kinds fall through as `info` with the
  * raw kind name displayed.
  *
- * Wording is loosely modelled on aozora-tools'
+ * Wording is loosely modelled on the in-repo
  * `crates/aozora-lsp/src/diagnostics.rs` but tuned for casual
  * playground use rather than typesetter precision.
  */

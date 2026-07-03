@@ -81,6 +81,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **diagnostics / fmt**: the "report this bug" URLs in the pipeline-internal
+  diagnostic catalogue and the formatter's panic guard pointed at the archived
+  `github.com/P4suta/aozora-tools` repo, so a user who hit one landed on a dead
+  page. They now point at `github.com/P4suta/aozora/issues`.
 - **notation / parser**: 振り仮名 (ruby) inside a `「…」` quote — the vast majority
   of dialogue ruby — no longer leaks as literal `《…》`. The classifier's
   stream-through path for `「…」` / `〔…〕` quotes swallowed every nested pair, so a
@@ -158,6 +162,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Documentation
 
+- **repo**: scrub the remaining references to the archived `aozora-tools` repo
+  (folded into this monorepo per ADR-0016) — crate READMEs, the top-level
+  "Related projects" table, handbook `p4suta.github.io/aozora-tools/*` URLs, and
+  the playground comments now point at `P4suta/aozora` and the in-repo
+  `editors/vscode` / `crates/aozora-lsp`. ADR migration records are kept as-is.
 - **handbook**: scrub the hand-maintained version literals (`v0.4.1` / `v0.5.0`)
   from `ref/api.md`, `bindings/python.md`, and the `contrib/release*.md` runbooks
   (link to install.md or use `vX.Y.Z` placeholders), leaving install.md the one

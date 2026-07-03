@@ -456,7 +456,7 @@ pub const CATALOGUE: &[CatalogueEntry] = &[
         code: "aozora::unregistered-sentinel",
         title: "未登録の内部 sentinel（パイプライン内部エラー）",
         explain: "解析パイプライン内部の整合性チェックが、レジストリに登録されていない私用領域 sentinel を検出しました。通常のソースからは到達しないコードで、aozora のパイプライン側のバグである可能性が高いです。\n\n\
-                  再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora-tools/issues",
+                  再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues",
         repro: "（通常のソースからは発生しません）",
         fixed: "（パイプラインのバグ。手元の修正では直せません）",
     },
@@ -464,7 +464,7 @@ pub const CATALOGUE: &[CatalogueEntry] = &[
         code: "aozora::registry-out-of-order",
         title: "プレースホルダーレジストリの順序破壊（パイプライン内部エラー）",
         explain: "プレースホルダーレジストリの並び順が、期待される昇順から崩れています。通常のソースからは到達しない内部整合性エラーで、aozora のパイプライン側のバグである可能性が高いです。\n\n\
-                  再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora-tools/issues",
+                  再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues",
         repro: "（通常のソースからは発生しません）",
         fixed: "（パイプラインのバグ。手元の修正では直せません）",
     },
@@ -472,7 +472,7 @@ pub const CATALOGUE: &[CatalogueEntry] = &[
         code: "aozora::registry-position-mismatch",
         title: "プレースホルダーレジストリの位置不一致（パイプライン内部エラー）",
         explain: "プレースホルダーが記録していた位置情報が、復元時の実際の位置と一致しませんでした。通常のソースからは到達しない内部整合性エラーで、aozora のパイプライン側のバグである可能性が高いです。\n\n\
-                  再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora-tools/issues",
+                  再現手順を添えて issue で報告してください: https://github.com/P4suta/aozora/issues",
         repro: "（通常のソースからは発生しません）",
         fixed: "（パイプラインのバグ。手元の修正では直せません）",
     },
@@ -488,7 +488,7 @@ pub const CATALOGUE: &[CatalogueEntry] = &[
     CatalogueEntry {
         code: "aozora::unknown-diagnostic",
         title: "未対応の診断",
-        explain: "aozora-tools が認識していない種類の診断を、upstream の aozora パーサが返しました。aozora-tools と aozora パーサのバージョンが揃っていない可能性があります。\n\n\
+        explain: "aozora の診断カタログが認識していない種類の診断コードを、パーサ本体が返しました。診断カタログとパーサのバージョンが揃っていない可能性があります（同一ワークスペースで公開されるため通常は lockstep です）。\n\n\
                   ツールを最新版に更新するか、バージョンの不一致がないか確認してください。",
         repro: "（バージョン不一致時に発生）",
         fixed: "（ツールのバージョンを揃えて再実行）",

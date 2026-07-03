@@ -217,7 +217,6 @@ testing strategy, and lint policy.
 | Repo | What it is |
 |---|---|
 | [`P4suta/afm`](https://github.com/P4suta/afm) | CommonMark + GFM + 青空文庫記法 integrated Markdown dialect, built on top of this parser. |
-| [`P4suta/aozora-tools`](https://github.com/P4suta/aozora-tools) | Authoring tools: formatter, LSP server, tree-sitter grammar, VS Code extension. |
 
 ## License
 
