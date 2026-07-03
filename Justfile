@@ -268,7 +268,7 @@ new-adr TITLE:
     sed -i -e "s/^# NNNN. TITLE_HERE/# ${n}. {{TITLE}}/" -e "s/YYYY-MM-DD/$(date +%F)/" "$f"
     echo "Created $f"
 
-# Phase O4 — WPT-style conformance runner. Three passes in one container:
+# Phase O4 — WPT-style conformance runner. Four passes in one container:
 #   1. `conformance run`     — walks aozora-conformance/fixtures/render/,
 #                              compares against the parser's own goldens,
 #                              writes a per-case results.json into the
@@ -284,9 +284,16 @@ new-adr TITLE:
 #                              per fixture; spec-vectors/tree-sitter-snapshot.json
 #                              for the vectors); any drift exits non-zero
 #                              (--update to refresh).
+#   4. `works_gate`          — byte-identical golden-HTML gate over a lean
+#                              set of REAL vendored 青空文庫 works
+#                              (fixtures/works/), catching render drift on
+#                              the notation COMBINATIONS the single-family
+#                              fixtures miss. Corpus-free (works are
+#                              vendored), so it belongs in this always-on
+#                              job. UPDATE_GOLDEN=1 refreshes its goldens.
 # Any pass exits non-zero on a `must`-tier regression or grammar drift.
 conformance:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- conformance run && cargo run -p aozora-xtask -q -- conformance vectors && cargo run -p aozora-xtask -q -- conformance run --implementation tree-sitter && cargo run -p aozora-xtask -q -- conformance vectors --implementation tree-sitter'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- conformance run && cargo run -p aozora-xtask -q -- conformance vectors && cargo run -p aozora-xtask -q -- conformance run --implementation tree-sitter && cargo run -p aozora-xtask -q -- conformance vectors --implementation tree-sitter && cargo test -p aozora-conformance --test works_gate'
 
 # Vendor the conformance vectors from the sibling aozora-notation-spec
 # repo into spec-vectors/ (the spec is the source of truth). Host-side —
