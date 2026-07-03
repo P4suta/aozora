@@ -65,6 +65,45 @@ test.describe('playground smoke', () => {
     expect(combine).toBe('all');
   });
 
+  test('縦書きで長文を入力してもページはスクロールせずプレビュー内で横スクロールする', async ({
+    page,
+  }) => {
+    // ユーザー報告の回帰ガード: 縦書き(vertical-rl)で長文を打つと、.app の高さが
+    // 不確定だとプレビューが縦(実際は横)に伸び続け、body スクロールが発生していた。
+    // .app を確定高さ(100dvh)の flex column にしたことで、溢れはプレビュー枠内の
+    // 横スクロール(inline 軸)に閉じ込められ、ページ自体は伸びない。
+    await page.setViewportSize({ width: 700, height: 480 });
+    await ready(page);
+    await page.getByRole('tab', { name: 'HTML preview' }).click();
+    await page.locator('.writing-mode-btn').click();
+    const preview = page.locator('.html-preview.is-vertical');
+    await expect(preview).toBeVisible();
+
+    const editor = page.locator('.cm-host .cm-content');
+    await editor.click();
+    await page.keyboard.press('ControlOrMeta+a');
+    const longText = 'あの日見た花の名前を僕達はまだ知らない。'.repeat(30);
+    await editor.pressSequentially(longText);
+    // プレビューの再描画が落ち着いてから計測する(空だと scrollWidth の判定が偽陰性)。
+    await expect(preview).toContainText('あの日見た花の名前');
+
+    // (1) ページ(ドキュメント)自体はスクロールしない。
+    const pageOverflow = await page.evaluate(
+      () => document.documentElement.scrollHeight - window.innerHeight,
+    );
+    expect(pageOverflow).toBeLessThanOrEqual(1); // sub-pixel の丸め許容
+
+    // (2) 溢れはプレビュー枠内へ閉じ込められ、かつ横(inline 軸)が実際にスクロール可能。
+    //     scrollWidth>clientWidth(溢れの事実)だけだと overflow-x:hidden でも真になり
+    //     「クリップされて読めない」退行を見逃すので、computed overflow-x も検証する。
+    const { overflows, overflowX } = await preview.evaluate((el) => ({
+      overflows: el.scrollWidth > el.clientWidth + 1,
+      overflowX: getComputedStyle(el).overflowX,
+    }));
+    expect(overflows).toBe(true); // 枠は content より狭い = ページを押し広げていない
+    expect(['auto', 'scroll']).toContain(overflowX); // ユーザーが実際に横スクロールできる
+  });
+
   test('レイアウトボタンで表示モードが切り替わる', async ({ page }) => {
     await ready(page);
     // First `.layout-btn` is editor-only (⌨) → `main.app-main.mode-editor`.

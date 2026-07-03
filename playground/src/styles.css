@@ -92,9 +92,24 @@ body {
 }
 
 .app {
-  display: grid;
-  grid-template-rows: auto auto 1fr auto;
-  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  /* 確定した viewport 高さ。dvh はモバイルの URL バー可視領域にフィットする。
+     vh は dvh 非対応ブラウザ向けの fallback（宣言順が重要）。
+     この確定高さが、下流の height:100% / max-height:100% チェーンを機能させる起点。 */
+  height: 100vh;
+  height: 100dvh;
+  /* 極端に低い viewport で header/footer が溢れても body スクロールを生まないための保険。 */
+  overflow: hidden;
+}
+
+/* 縦スタックで伸縮するのは .app-main ただ一つ。header/footer/バナーは content 高さで固定する。
+   これで読込中/エラーのバナーの有無に関わらず、main が常に残り高さを確定的に受け取る。 */
+.app-header,
+.app-footer,
+.status-banner,
+.error-banner {
+  flex: 0 0 auto;
 }
 
 .app-header {
@@ -293,6 +308,10 @@ body {
 }
 
 .app-main {
+  /* .app（flex column）の中で唯一伸縮する行 = 残り高さを全部受け取る。
+     内部は従来どおり 2 カラム grid。min-height:0 は grid item の min-content 下限を
+     解除して確定高さを子へ伝えるため保持必須（削ると縦書きの潰れが再発する）。 */
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 1px;
@@ -318,7 +337,10 @@ body {
   /* Default to split mode = stacked top/bottom on phones. */
   .app-main.mode-split {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(220px, 1fr) minmax(220px, 1fr);
+    /* 床は 0。各ペインは min-height:0 で内部スクロールを持つため、短い viewport
+       （横向きスマホ等）でも 220px 床でグリッドが .app（overflow:hidden）を突き破って
+       到達不能にクリップされることなく、素直に縮んで各ペイン内でスクロールできる。 */
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
 
@@ -682,6 +704,12 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  /* ヘッダー直下に絶対配置されるので、背の低い viewport では下端（言語切替・
+     設定リセット）が .app（overflow:hidden）にクリップされて到達不能になり得る。
+     ページスクロールに頼らず、ポップオーバー自身を viewport 内に収めて内部スクロール
+     させることで degrade する（5rem ≒ ヘッダー高 + 余白）。 */
+  max-height: calc(100dvh - 5rem);
+  overflow-y: auto;
 }
 
 .settings-row {
