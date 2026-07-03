@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 114,
-  "passed": 114,
+  "total": 117,
+  "passed": 117,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 81,
-      "passed": 81,
+      "total": 84,
+      "passed": 84,
       "failed": 0
     }
   },
@@ -344,6 +344,13 @@
       "message": null
     },
     {
+      "case": "gaiji_standalone_explicit_bar",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
       "case": "gaiji_standalone_in_quote",
       "feature": "gaiji",
       "level": "should",
@@ -620,6 +627,20 @@
       "case": "ruby_base_gaiji",
       "feature": "ruby",
       "level": "must",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_gaiji_explicit_bar",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_gaiji_explicit_bar_in_quote",
+      "feature": "gaiji",
+      "level": "should",
       "passed": true,
       "message": null
     },
