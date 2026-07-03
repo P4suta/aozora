@@ -54,6 +54,7 @@ use clap::{Args, Subcommand};
 use rayon::prelude::*;
 
 use aozora::pipeline::lexer::sanitize::sanitize;
+use aozora::render::AOZORA_CLASSES;
 use aozora::{DirectiveKind, Document, NodeKind, NodeOwned, NodeRefOwned};
 use aozora_corpus::{
     Archive, ArchiveBuilder, CorpusItem, EntryMeta, FilesystemCorpus, archive, par_load_decoded,
@@ -233,6 +234,30 @@ pub(crate) enum CorpusTarget {
         #[arg(long)]
         update: bool,
     },
+    /// Render-correctness audit: render every corpus document to HTML and
+    /// report *structural* defects that the recognition/leak gates cannot
+    /// see — a directive that is recognised (not `Unknown`) but rendered
+    /// wrong. Two invariants, checkable without ground truth:
+    ///   I-A  HTML tag balance — every open has a LIFO-matching close and the
+    ///        stack is empty at EOF (catches an unclosed region `<div>` from
+    ///        the `finish()` gap, or an unbalanced inline warichu `<span>`).
+    ///   I-C  every emitted `aozora-*` class (numeric suffix collapsed to its
+    ///        stem) is a member of `AOZORA_CLASSES` (catches an emitter
+    ///        writing a class the published contract / stylesheet omits, e.g.
+    ///        the `LineFormat::Framed` → bare `aozora-keigakomi` arm).
+    /// Report-only measurement (always exit 0). Needs a corpus; skips when none.
+    RenderCorrectness {
+        /// Corpus root directory of `.txt` files. Defaults to
+        /// `$AOZORA_CORPUS_ROOT`.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Sample offenders to print per defect category.
+        #[arg(long, default_value_t = 12)]
+        top: usize,
+        /// Process at most N files (debugging; default: whole corpus).
+        #[arg(long)]
+        limit: Option<usize>,
+    },
 }
 
 pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
@@ -267,6 +292,9 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             baseline,
             update,
         } => render_leak_gate(root.as_deref(), baseline, *update),
+        CorpusTarget::RenderCorrectness { root, top, limit } => {
+            render_correctness(root.as_deref(), *top, *limit)
+        }
     }
 }
 
@@ -1407,6 +1435,230 @@ fn render_audit_one(item: CorpusItem) -> DocRenderOutcome {
     } else {
         DocRenderOutcome::Leaked { label, hits }
     }
+}
+
+// ── Render-correctness invariants (I-A tag balance, I-C class membership) ──
+
+/// A structural render defect found on one document's HTML.
+#[derive(Clone)]
+struct CorrHit {
+    cat: CorrCat,
+    snippet: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CorrCat {
+    /// I-A: tags do not balance (mismatched close or unclosed at EOF).
+    Unbalanced,
+    /// I-C: an emitted `aozora-*` class is not in `AOZORA_CLASSES`.
+    UndeclaredClass,
+}
+
+/// Per-document render-correctness outcome (mirrors [`DocRenderOutcome`]).
+enum DocCorrOutcome {
+    Clean,
+    DecodeSkipped,
+    LimitSkipped,
+    Panicked,
+    Defective { label: String, hits: Vec<CorrHit> },
+}
+
+/// Collapse a trailing `-<digits>` run to its stem (matches the renderer's
+/// `classes::collect_classes`), so `aozora-indent-3` checks as `aozora-indent`.
+fn class_stem(c: &str) -> &str {
+    match c.rfind('-') {
+        Some(i) if i + 1 < c.len() && c[i + 1..].bytes().all(|b| b.is_ascii_digit()) => &c[..i],
+        _ => c,
+    }
+}
+
+/// The tag name of `<name …>` / `</name>` — bytes after `<`(`/`) up to the
+/// first delimiter.
+fn tag_name(tag: &str) -> &str {
+    let s = tag.trim_start_matches('<').trim_start_matches('/');
+    let end = s
+        .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+        .unwrap_or(s.len());
+    &s[..end]
+}
+
+/// The `aozora-*` class tokens declared in one opening tag's `class="…"`.
+fn classes_of(tag: &str) -> Vec<&str> {
+    let Some(p) = tag.find("class=\"") else {
+        return Vec::new();
+    };
+    let rest = &tag[p + "class=\"".len()..];
+    let end = rest.find('"').unwrap_or(rest.len());
+    rest[..end]
+        .split_whitespace()
+        .filter(|c| c.starts_with("aozora-"))
+        .collect()
+}
+
+/// Scan rendered `html` for I-A (tag balance) and I-C (undeclared class) in one
+/// linear pass. Raw `<` only ever starts a tag (the renderer entity-escapes all
+/// text and attribute values), so tag boundaries are unambiguous. Reports at
+/// most one imbalance per document (tracking stops after the first anomaly).
+fn scan_correctness(html: &str) -> Vec<CorrHit> {
+    let mut hits = Vec::new();
+    let mut stack: Vec<&str> = Vec::new();
+    let mut broken = false;
+    let bytes = html.as_bytes();
+    let n = bytes.len();
+    let mut i = 0;
+    while i < n {
+        if bytes[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        let end = html[i..].find('>').map_or(n - 1, |o| i + o);
+        let tag = &html[i..=end];
+        i = end + 1;
+        if tag.starts_with("</") {
+            let name = tag_name(tag);
+            if !broken && stack.pop() != Some(name) {
+                hits.push(CorrHit {
+                    cat: CorrCat::Unbalanced,
+                    snippet: format!("stray/mismatched </{name}>"),
+                });
+                broken = true;
+            }
+            continue;
+        }
+        let name = tag_name(tag);
+        let void = tag.ends_with("/>") || name == "img" || name == "br";
+        if !void && !broken {
+            stack.push(name);
+        }
+        for tok in classes_of(tag) {
+            let stem = class_stem(tok);
+            if !AOZORA_CLASSES.contains(&stem) {
+                hits.push(CorrHit {
+                    cat: CorrCat::UndeclaredClass,
+                    snippet: tok.to_owned(),
+                });
+            }
+        }
+    }
+    if !broken && !stack.is_empty() {
+        hits.push(CorrHit {
+            cat: CorrCat::Unbalanced,
+            snippet: format!("unclosed at EOF: <{}>", stack.join("><")),
+        });
+    }
+    hits
+}
+
+/// Render one document's literary body and scan for structural render defects.
+fn render_correctness_one(item: CorpusItem) -> DocCorrOutcome {
+    let label = item.label;
+    let decoded = match decode_auto(&item.bytes) {
+        Ok(t) => t.into_owned(),
+        Err(_) => return DocCorrOutcome::DecodeSkipped,
+    };
+    let text = aozora_body(&decoded);
+    let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| Document::new(text).parse().to_html()))
+    else {
+        return DocCorrOutcome::Panicked;
+    };
+    let hits = scan_correctness(&html);
+    if hits.is_empty() {
+        DocCorrOutcome::Clean
+    } else {
+        DocCorrOutcome::Defective { label, hits }
+    }
+}
+
+/// Fold one document's correctness hits of category `cat` into `agg`.
+fn record_corr(agg: &mut CatAgg, cat: CorrCat, label: &str, hits: &[CorrHit], top: usize) {
+    let n = hits.iter().filter(|h| h.cat == cat).count();
+    if n == 0 {
+        return;
+    }
+    agg.files += 1;
+    agg.occurrences += n;
+    if agg.samples.len() < top
+        && let Some(hit) = hits.iter().find(|h| h.cat == cat)
+    {
+        agg.samples.push((label.to_owned(), hit.snippet.clone()));
+    }
+}
+
+/// Render-correctness sweep: report I-A / I-C structural defects across the
+/// corpus. Report-only (always exit 0); the enforcing gate lands separately.
+fn render_correctness(root: Option<&Path>, top: usize, limit: Option<usize>) -> Result<(), String> {
+    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
+        eprintln!(
+            "xtask corpus render-correctness: skipped — pass --root or set $AOZORA_CORPUS_ROOT"
+        );
+        return Ok(());
+    }
+    let corpus = resolve_corpus(root)?;
+    eprintln!(
+        "xtask corpus render-correctness: rendering {} …",
+        corpus.root().display()
+    );
+    let start = Instant::now();
+    let prev_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let counter = std::sync::atomic::AtomicUsize::new(0);
+    let results: Vec<Result<DocCorrOutcome, aozora_corpus::CorpusError>> =
+        par_load_decoded(&corpus, |item| {
+            if let Some(n) = limit
+                && counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= n
+            {
+                return DocCorrOutcome::LimitSkipped;
+            }
+            render_correctness_one(item)
+        });
+    panic::set_hook(prev_hook);
+
+    let (mut scanned, mut decode_skipped, mut panicked) = (0usize, 0usize, 0usize);
+    let mut unbalanced = CatAgg::default();
+    let mut undeclared = CatAgg::default();
+    for r in results {
+        match r {
+            Ok(DocCorrOutcome::Clean) => scanned += 1,
+            Ok(DocCorrOutcome::DecodeSkipped) => decode_skipped += 1,
+            Ok(DocCorrOutcome::Panicked) => {
+                scanned += 1;
+                panicked += 1;
+            }
+            Ok(DocCorrOutcome::Defective { label, hits }) => {
+                scanned += 1;
+                record_corr(&mut unbalanced, CorrCat::Unbalanced, &label, &hits, top);
+                record_corr(
+                    &mut undeclared,
+                    CorrCat::UndeclaredClass,
+                    &label,
+                    &hits,
+                    top,
+                );
+            }
+            Ok(DocCorrOutcome::LimitSkipped) | Err(_) => {}
+        }
+    }
+    let elapsed = start.elapsed().as_secs_f64();
+    eprintln!(
+        "\nxtask corpus render-correctness: rendered {scanned} docs \
+         ({decode_skipped} undecodable, {panicked} panicked) in {elapsed:.1}s\n"
+    );
+    let cats = [
+        ("I-A unbalanced-tags", &unbalanced),
+        ("I-C undeclared-class", &undeclared),
+    ];
+    for (name, agg) in cats {
+        eprintln!(
+            "  {name:<22}: {:>6} files, {:>7} occurrences",
+            agg.files, agg.occurrences
+        );
+    }
+    for (name, agg) in cats {
+        for (label, snippet) in &agg.samples {
+            eprintln!("  [{name}] {label} — {snippet}");
+        }
+    }
+    Ok(())
 }
 
 /// Per-marker leak counts (files with ≥1 leak, and total occurrences) for
