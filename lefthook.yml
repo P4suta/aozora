@@ -156,6 +156,17 @@ pre-push:
         Verbatim-provenance regression: Tree::to_source_verbatim() no longer
         equals a fresh sanitize() of the source for one or more corpus docs.
         The I5 verbatim==sanitize invariant must hold byte-exact.
+    # Render-leak ratchet (#399): fail the push when notation control markers
+    # (《…》 / ｜ / ［＃…］) newly survive into visible rendered HTML above
+    # corpus/render-leak-baseline.json. Runtime-skips (no-op) when
+    # AOZORA_CORPUS_ROOT is unset; the corpus CI job is the backstop.
+    render-leak-gate:
+      run: just render-leak-gate
+      fail_text: |
+        Render-leak regression: an aozora notation marker (《…》 / ｜ / ［＃…］)
+        newly survives into visible rendered text. Run
+        `just render-audit` (or `xtask corpus render-audit`) to find the
+        offending document, then fix the classifier/renderer so it resolves.
     # Owned-producer allocation-pressure ratchet (#237 P0.2-real): fail the
     # push when the owned lex path's allocation count / bytes (normalized
     # per-file / per-source-byte) regress beyond corpus/owned-alloc-baseline.json.

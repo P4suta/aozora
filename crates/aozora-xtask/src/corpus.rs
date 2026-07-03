@@ -214,6 +214,25 @@ pub(crate) enum CorpusTarget {
         #[arg(long)]
         limit: Option<usize>,
     },
+    /// Render-leak ratchet gate: fail (exit 1) when the per-marker leak
+    /// counts (files + occurrences of `《…》` / `｜` / `［＃…］` surviving into
+    /// visible rendered text) rise above a committed baseline. The
+    /// enforcing counterpart of `render-audit`, modelled on `audit-gate`:
+    /// leaks may only shrink, never grow. `render-audit` remains the
+    /// per-file diagnostic to find WHICH document regressed. Needs a corpus;
+    /// skips (exit 0) when none is set. `--update` re-captures the baseline.
+    RenderLeakGate {
+        /// Corpus root directory of `.txt` files. Defaults to
+        /// `$AOZORA_CORPUS_ROOT`.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Committed baseline JSON path.
+        #[arg(long, default_value = "corpus/render-leak-baseline.json")]
+        baseline: PathBuf,
+        /// Re-capture the baseline from the current run (ratchet).
+        #[arg(long)]
+        update: bool,
+    },
 }
 
 pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
@@ -243,6 +262,11 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
         CorpusTarget::RenderAudit { root, top, limit } => {
             render_audit(root.as_deref(), *top, *limit)
         }
+        CorpusTarget::RenderLeakGate {
+            root,
+            baseline,
+            update,
+        } => render_leak_gate(root.as_deref(), baseline, *update),
     }
 }
 
@@ -1385,6 +1409,201 @@ fn render_audit_one(item: CorpusItem) -> DocRenderOutcome {
     }
 }
 
+/// Per-marker leak counts (files with ≥1 leak, and total occurrences) for
+/// the render-leak ratchet baseline.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, PartialEq, Eq, Debug)]
+struct MarkerStat {
+    files: usize,
+    occurrences: usize,
+}
+
+/// Committed baseline for the render-leak ratchet gate. Leaks may only
+/// shrink below these counts; any rise fails the gate.
+#[derive(Serialize, Deserialize)]
+struct RenderLeakBaseline {
+    #[serde(default)]
+    note: String,
+    ruby: MarkerStat,
+    bar: MarkerStat,
+    directive: MarkerStat,
+}
+
+/// Fold a corpus render sweep into per-marker `MarkerStat`s using the same
+/// `CatAgg` counting as `render-audit` (samples suppressed via `top = 0`).
+/// Returns `(current, scanned, panicked, walk_errors)`.
+fn tally_render_leaks(
+    results: Vec<Result<DocRenderOutcome, aozora_corpus::CorpusError>>,
+) -> (RenderLeakBaseline, usize, Vec<String>, usize) {
+    let mut ruby = CatAgg::default();
+    let mut bar = CatAgg::default();
+    let mut directive = CatAgg::default();
+    let mut scanned = 0usize;
+    let mut panicked: Vec<String> = Vec::new();
+    let mut walk_errors = 0usize;
+    for r in results {
+        match r {
+            Err(_) => walk_errors += 1,
+            Ok(DocRenderOutcome::DecodeSkipped | DocRenderOutcome::LimitSkipped) => {}
+            Ok(DocRenderOutcome::Clean) => scanned += 1,
+            Ok(DocRenderOutcome::Panicked(label)) => {
+                scanned += 1;
+                panicked.push(label);
+            }
+            Ok(DocRenderOutcome::Leaked { label, hits }) => {
+                scanned += 1;
+                ruby.record(LeakCat::Ruby, &label, &hits, 0);
+                bar.record(LeakCat::Bar, &label, &hits, 0);
+                directive.record(LeakCat::Directive, &label, &hits, 0);
+            }
+        }
+    }
+    let current = RenderLeakBaseline {
+        note: String::new(),
+        ruby: MarkerStat {
+            files: ruby.files,
+            occurrences: ruby.occurrences,
+        },
+        bar: MarkerStat {
+            files: bar.files,
+            occurrences: bar.occurrences,
+        },
+        directive: MarkerStat {
+            files: directive.files,
+            occurrences: directive.occurrences,
+        },
+    };
+    (current, scanned, panicked, walk_errors)
+}
+
+/// Compare a fresh tally against a baseline: a leak count may only shrink.
+/// Returns the per-marker regression messages (empty ⇒ pass) and whether
+/// any count dropped (a ratchet-down hint).
+fn leak_regressions(
+    current: &RenderLeakBaseline,
+    baseline: &RenderLeakBaseline,
+) -> (Vec<String>, bool) {
+    let mut problems: Vec<String> = Vec::new();
+    let mut dropped = false;
+    for (name, cur, base) in [
+        ("ruby 《…》", current.ruby, baseline.ruby),
+        ("bar ｜", current.bar, baseline.bar),
+        ("directive ［＃…］", current.directive, baseline.directive),
+    ] {
+        if cur.files > base.files {
+            problems.push(format!(
+                "{name}: {} files now leak (baseline {})",
+                cur.files, base.files
+            ));
+        }
+        if cur.occurrences > base.occurrences {
+            problems.push(format!(
+                "{name}: {} occurrences now leak (baseline {})",
+                cur.occurrences, base.occurrences
+            ));
+        }
+        dropped |= cur.files < base.files || cur.occurrences < base.occurrences;
+    }
+    (problems, dropped)
+}
+
+/// Render-leak ratchet gate (the enforcing partner of `render-audit`):
+/// fail when any per-marker leak count rises above the committed baseline.
+/// Modelled on `audit_gate`; `render-audit` remains the per-file diagnostic.
+fn render_leak_gate(root: Option<&Path>, baseline_path: &Path, update: bool) -> Result<(), String> {
+    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
+        eprintln!(
+            "xtask corpus render-leak-gate: skipped — pass --root or set $AOZORA_CORPUS_ROOT (no corpus to walk)"
+        );
+        return Ok(());
+    }
+    let corpus = resolve_corpus(root)?;
+    eprintln!(
+        "xtask corpus render-leak-gate: walking {} …",
+        corpus.root().display()
+    );
+    let start = Instant::now();
+
+    let prev_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let results = par_load_decoded(&corpus, render_audit_one);
+    panic::set_hook(prev_hook);
+
+    let (current, scanned, mut panicked, walk_errors) = tally_render_leaks(results);
+    let elapsed = start.elapsed().as_secs_f64();
+
+    if update {
+        let baseline = RenderLeakBaseline {
+            note: "Render-leak ratchet: per-marker (files, occurrences) of aozora notation control \
+                   markers (《…》 / ｜ / ［＃…］) surviving into VISIBLE rendered HTML. Leaks may only \
+                   SHRINK — any rise fails the gate; ratchet down on improvement with `--update`. Run \
+                   `xtask corpus render-audit` to find WHICH document regressed. The residual is a \
+                   documented long tail (2026-07-03, campaign #399): mixed kanji+gaiji ruby base (E2), \
+                   ヵ/ヶ ateji declines, symbol/digit/Cyrillic/kanbun bases, and authorial 《…》 with no \
+                   ruby base (a correct literal, not a leak) — irreducible or tracked follow-ups."
+                .to_owned(),
+            ..current
+        };
+        let mut json =
+            serde_json::to_string_pretty(&baseline).map_err(|e| format!("serialize: {e}"))?;
+        json.push('\n');
+        fs::write(baseline_path, json)
+            .map_err(|e| format!("write {}: {e}", baseline_path.display()))?;
+        eprintln!(
+            "render-leak-gate: wrote baseline {} — ruby {}f/{}o, bar {}f/{}o, directive {}f/{}o",
+            baseline_path.display(),
+            current.ruby.files,
+            current.ruby.occurrences,
+            current.bar.files,
+            current.bar.occurrences,
+            current.directive.files,
+            current.directive.occurrences,
+        );
+        return Ok(());
+    }
+
+    let text = fs::read_to_string(baseline_path)
+        .map_err(|e| format!("read {}: {e}", baseline_path.display()))?;
+    let baseline: RenderLeakBaseline = serde_json::from_str(&text)
+        .map_err(|e| format!("parse {}: {e}", baseline_path.display()))?;
+
+    let (mut problems, dropped) = leak_regressions(&current, &baseline);
+    if !panicked.is_empty() {
+        panicked.sort();
+        problems.push(format!(
+            "{} document(s) panicked in to_html(): {}",
+            panicked.len(),
+            panicked
+                .iter()
+                .take(5)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    if !problems.is_empty() {
+        return Err(format!(
+            "render-leak regression — aozora notation markers newly survive into visible rendered text:\n  {}\n\
+             Fix the classifier/renderer so the notation resolves; run \
+             `xtask corpus render-audit` to find the offending document(s). If the rise is an \
+             intentional, justified shift, re-baseline with `xtask corpus render-leak-gate --update`.",
+            problems.join("\n  ")
+        ));
+    }
+
+    eprintln!(
+        "render-leak-gate: PASS — {scanned} docs, no marker rose above baseline \
+         ({walk_errors} walk error(s), {elapsed:.1}s)"
+    );
+    if dropped {
+        eprintln!(
+            "render-leak-gate: leaks dropped below baseline — ratchet down with \
+             `xtask corpus render-leak-gate --update` so future regressions are caught against the new floor."
+        );
+    }
+    Ok(())
+}
+
 /// Scan rendered HTML for notation control markers surviving into the
 /// visible text. Two legitimate sources of `《…》` are excluded
 /// structurally: empty ruby `《》` (a `《》：ルビ` legend / `empty_ruby`
@@ -2518,5 +2737,70 @@ mod tests {
         let entries = vec![&meta];
         print_band_row("<50KB", &entries, false);
         print_band_row("<50KB", &entries, true);
+    }
+
+    fn stat(files: usize, occurrences: usize) -> MarkerStat {
+        MarkerStat { files, occurrences }
+    }
+
+    fn baseline(ruby: MarkerStat, bar: MarkerStat, directive: MarkerStat) -> RenderLeakBaseline {
+        RenderLeakBaseline {
+            note: String::new(),
+            ruby,
+            bar,
+            directive,
+        }
+    }
+
+    #[test]
+    fn leak_regressions_flags_only_rises() {
+        let base = baseline(stat(10, 100), stat(5, 50), stat(2, 20));
+
+        // Equal → pass, nothing dropped.
+        let (p, dropped) = leak_regressions(&base, &base);
+        assert!(p.is_empty());
+        assert!(!dropped);
+
+        // A file rise in ruby fails; a file drop in bar is a ratchet hint.
+        let up = baseline(stat(11, 100), stat(4, 50), stat(2, 20));
+        let (p, dropped) = leak_regressions(&up, &base);
+        assert_eq!(p.len(), 1, "only the ruby rise is flagged: {p:?}");
+        assert!(p[0].contains("ruby") && p[0].contains("files"));
+        assert!(dropped, "the bar drop is a ratchet-down hint");
+
+        // An occurrence rise with equal files still fails.
+        let occ = baseline(stat(10, 100), stat(5, 50), stat(2, 21));
+        let (p, _) = leak_regressions(&occ, &base);
+        assert_eq!(p.len(), 1);
+        assert!(p[0].contains("directive") && p[0].contains("occurrences"));
+    }
+
+    #[test]
+    fn tally_render_leaks_counts_files_and_occurrences() {
+        let leak = |label: &str, cats: &[LeakCat]| {
+            Ok(DocRenderOutcome::Leaked {
+                label: label.to_owned(),
+                hits: cats
+                    .iter()
+                    .map(|&cat| LeakHit {
+                        cat,
+                        snippet: String::new(),
+                    })
+                    .collect(),
+            })
+        };
+        let results = vec![
+            leak("a", &[LeakCat::Ruby, LeakCat::Ruby]), // 1 file, 2 ruby occ
+            leak("b", &[LeakCat::Ruby, LeakCat::Bar]),  // ruby +1/+1, bar +1/+1
+            Ok(DocRenderOutcome::Clean),
+            Ok(DocRenderOutcome::DecodeSkipped),
+        ];
+        let (cur, scanned, panicked, walk_errors) = tally_render_leaks(results);
+        assert_eq!(cur.ruby, stat(2, 3));
+        assert_eq!(cur.bar, stat(1, 1));
+        assert_eq!(cur.directive, stat(0, 0));
+        assert_eq!(scanned, 3, "2 leaked + 1 clean; decode-skip not scanned");
+        assert!(panicked.is_empty());
+        assert_eq!(walk_errors, 0);
     }
 }
