@@ -1,25 +1,27 @@
 :root {
   color-scheme: light dark;
+
   --bg: #fafafa;
-  --bg-elev: #ffffff;
+  --bg-elev: #fff;
   --bg-code: #f4f4f5;
   --fg: #1f2024;
   --fg-muted: #5a5a66;
   --border: #e3e3e8;
   --accent: #b8336a;
-  --accent-bg: rgba(184, 51, 106, 0.08);
-  --accent-selection: rgba(184, 51, 106, 0.22);
+  --accent-bg: rgb(184 51 106 / 8%);
+  --accent-selection: rgb(184 51 106 / 22%);
   --on-accent: #fff;
   --error: #b03030;
-  --error-bg: rgba(176, 48, 48, 0.1);
+  --error-bg: rgb(176 48 48 / 10%);
   --success: #1f7d4a;
+
   /* Token colours used by aozora.css + editor/theme.ts */
   --token-ruby: var(--accent);
   --token-bouten: #b56a1a;
-  --token-bouten-bg: rgba(201, 120, 23, 0.06);
+  --token-bouten-bg: rgb(201 120 23 / 6%);
   --token-gaiji: #8a4faf;
-  --token-gaiji-bg: rgba(138, 79, 175, 0.10);
-  --token-gaiji-border: rgba(138, 79, 175, 0.55);
+  --token-gaiji-bg: rgb(138 79 175 / 10%);
+  --token-gaiji-border: rgb(138 79 175 / 55%);
 
   /* z-index スケール（テーマ非依存）: dropdown < modal < toast。
      toast は常に最前面に置き、モーダル表示中でも通知が見えるようにする。 */
@@ -52,18 +54,18 @@
   --fg-muted: #a8a8b3;
   --border: #3a3a46;
   --accent: #ff8fb1;
-  --accent-bg: rgba(255, 143, 177, 0.16);
-  --accent-selection: rgba(255, 143, 177, 0.28);
+  --accent-bg: rgb(255 143 177 / 16%);
+  --accent-selection: rgb(255 143 177 / 28%);
   --on-accent: #16161b;
   --error: #ff9090;
-  --error-bg: rgba(255, 144, 144, 0.14);
+  --error-bg: rgb(255 144 144 / 14%);
   --success: #88dcaa;
   --token-ruby: var(--accent);
   --token-bouten: #f0b46a;
-  --token-bouten-bg: rgba(240, 180, 106, 0.10);
+  --token-bouten-bg: rgb(240 180 106 / 10%);
   --token-gaiji: #c8a8ff;
-  --token-gaiji-bg: rgba(200, 168, 255, 0.18);
-  --token-gaiji-border: rgba(200, 168, 255, 0.55);
+  --token-gaiji-bg: rgb(200 168 255 / 18%);
+  --token-gaiji-border: rgb(200 168 255 / 55%);
 }
 
 * {
@@ -84,6 +86,7 @@ body {
   color: var(--fg);
   font-size: 14px;
   line-height: 1.5;
+
   /* iOS/Safari の回転時テキスト自動拡大を抑止（autoprefixer が -webkit- を付与）。 */
   text-size-adjust: 100%;
 }
@@ -91,12 +94,14 @@ body {
 .app {
   display: flex;
   flex-direction: column;
+
   /* 確定した viewport 高さ。dvh はモバイルの URL バー可視領域にフィットする。
      height:100% は #root（html,body,#root が height:100%）の連鎖で viewport 高さに解決され、
      dvh 非対応ブラウザ向けの fallback になる（宣言順が重要・vh 単位を使わず lint も通る）。
      この確定高さが、下流の height:100% / max-height:100% チェーンを機能させる起点。 */
   height: 100%;
   height: 100dvh;
+
   /* 極端に低い viewport で header/footer が溢れても body スクロールを生まないための保険。 */
   overflow: hidden;
 }
@@ -320,6 +325,7 @@ body {
 .app-main.mode-editor {
   grid-template-columns: 1fr;
 }
+
 .app-main.mode-editor > .preview-pane-wrapper {
   display: none;
 }
@@ -327,6 +333,7 @@ body {
 .app-main.mode-preview {
   grid-template-columns: 1fr;
 }
+
 .app-main.mode-preview > .editor-pane {
   display: none;
 }
@@ -335,6 +342,7 @@ body {
   /* Default to split mode = stacked top/bottom on phones. */
   .app-main.mode-split {
     grid-template-columns: 1fr;
+
     /* 床は 0。各ペインは min-height:0 で内部スクロールを持つため、短い viewport
        （横向きスマホ等）でも 220px 床でグリッドが .app（overflow:hidden）を突き破って
        到達不能にクリップされることなく、素直に縮んで各ペイン内でスクロールできる。 */
@@ -437,7 +445,7 @@ body {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 18%);
   padding: 0.5rem 0;
   font-family: var(--font-ui);
 }
@@ -696,12 +704,13 @@ body {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.14);
+  box-shadow: 0 6px 16px rgb(0 0 0 / 14%);
   padding: 0.5rem;
   min-width: 240px;
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+
   /* ヘッダー直下に絶対配置されるので、背の低い viewport では下端（言語切替・
      設定リセット）が .app（overflow:hidden）にクリップされて到達不能になり得る。
      ページスクロールに頼らず、ポップオーバー自身を viewport 内に収めて内部スクロール
@@ -817,7 +826,7 @@ body {
 .notation-guide-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgb(0 0 0 / 50%);
   z-index: var(--z-modal);
   display: flex;
   align-items: center;
@@ -834,7 +843,7 @@ body {
   max-height: 100%;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 10px 40px rgb(0 0 0 / 25%);
   overflow: hidden;
 }
 
@@ -872,7 +881,7 @@ body {
 .command-palette-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgb(0 0 0 / 50%);
   z-index: var(--z-modal);
   display: flex;
   align-items: flex-start;
@@ -889,7 +898,7 @@ body {
   max-height: 70dvh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 10px 40px rgb(0 0 0 / 25%);
   overflow: hidden;
 }
 
@@ -1100,7 +1109,7 @@ body {
   padding: 0.55rem 0.95rem;
   border-radius: 6px;
   font-size: 0.85rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 18%);
   z-index: var(--z-toast);
   animation: toast-in 0.16s ease-out;
 }
@@ -1110,6 +1119,7 @@ body {
     opacity: 0;
     transform: translateY(6px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -1159,6 +1169,7 @@ body {
     scrollbar-width: none;
     padding-bottom: 0.15rem;
   }
+
   .header-controls::-webkit-scrollbar {
     display: none;
   }
@@ -1203,6 +1214,7 @@ body {
     overflow-x: auto;
     scrollbar-width: none;
   }
+
   .tab-bar::-webkit-scrollbar {
     display: none;
   }
