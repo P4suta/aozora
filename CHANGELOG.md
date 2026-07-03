@@ -144,6 +144,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### CI
 
+- **ci**: a new `version-literal-gate` (the `book-versions` job) fails CI and
+  pre-push when a `vX.Y.Z` literal appears in the handbook outside install.md,
+  mechanizing ADR-0009's single-source-of-truth rule. Gated on `rust || book` so
+  a handbook-only PR — the change most likely to introduce a stray pin — still
+  runs it.
 - **ci**: Gate the Go host SDK at runtime — add `smoke-go` (gofmt + go vet +
   go test against the freshly-built wasm) to `just ci` and the pre-push
   `ci-parallel`, alongside `smoke-ffi`. Previously CodeQL only compiled it.
@@ -153,6 +158,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Documentation
 
+- **handbook**: scrub the hand-maintained version literals (`v0.4.1` / `v0.5.0`)
+  from `ref/api.md`, `bindings/python.md`, and the `contrib/release*.md` runbooks
+  (link to install.md or use `vX.Y.Z` placeholders), leaving install.md the one
+  canonical pin. ADR-0009's deferred grep-gate is now implemented.
 - **release**: Document crates.io / npm / PyPI publishing
 - **release**: Record the pre-1.0 code-signing deferral decision (#70) (#70)
 

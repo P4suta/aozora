@@ -711,6 +711,22 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just book-test
 
+  # Handbook version-literal gate (ADR-0009). Pure grep over the book
+  # markdown — no dev image, no cargo — so it runs on the bare host with
+  # just installed. Gated on `rust || book` (NOT the `rust`-only `lint`
+  # matrix): a handbook-only PR, the change most likely to introduce a
+  # stray `vX.Y.Z`, still runs it. Pre-push `ci-parallel` runs it always.
+  book-versions:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.book == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: taiki-e/install-action@9bcaee1dcae34154180f412e2fa69355a7cda9f6  # v2.82.6
+        with:
+          tool: just
+      - run: just version-literal-gate
+
   # Single required status check. Every ci.yml job feeds in; this gate
   # passes iff none of them FAILED — a job that change-aware gating
   # SKIPPED counts as fine. Branch protection requires only `ci-success`
@@ -743,6 +759,7 @@ jobs:
       - python-wheel
       - book
       - book-test
+      - book-versions
       - playground-checks
       - e2e
       - vscode

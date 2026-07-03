@@ -58,14 +58,14 @@ That merge to `main` does the rest, unattended:
 ## Sanity check after release
 
 ```sh
-# Verify checksums
-curl -L -O https://github.com/P4suta/aozora/releases/download/v0.5.0/SHA256SUMS
-curl -L -O https://github.com/P4suta/aozora/releases/download/v0.5.0/aozora-v0.5.0-x86_64-unknown-linux-gnu.tar.gz
+# Verify checksums (vX.Y.Z = the tag you just released)
+curl -L -O https://github.com/P4suta/aozora/releases/download/vX.Y.Z/SHA256SUMS
+curl -L -O https://github.com/P4suta/aozora/releases/download/vX.Y.Z/aozora-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
 sha256sum --check SHA256SUMS
 
 # Verify the binary
-tar -xzf aozora-v0.5.0-*.tar.gz
-./aozora --version              # prints "aozora 0.5.0"
+tar -xzf aozora-vX.Y.Z-*.tar.gz
+./aozora --version              # prints "aozora X.Y.Z"
 ```
 
 ## Build channels (dev / nightly / stable)
@@ -202,7 +202,7 @@ image (`.github/dependabot.yml`) precisely so it cannot drift ahead of
 
 ## Publishing to crates.io
 
-Live since v0.4.1; owned by **release-plz**. When the Release PR merges, the
+Live since the first crates.io publish; owned by **release-plz**. When the Release PR merges, the
 `release-plz-release` job publishes every publishable crate at the new version
 in dependency order, tokenless via **crates.io OIDC trusted publishing** (no
 `CARGO_REGISTRY_TOKEN` — release-plz performs the OIDC exchange itself). Members
@@ -274,7 +274,7 @@ exercise — all of it manual, in this order. The two ruleset commands live in
    [release secrets runbook](releasing-secrets.md).
 6. **Trigger release-plz** (`gh workflow run release-plz.yml`) to open the first
    Release PR, add `release: approved`, and squash-merge it. Verify the chain:
-   crates.io publishes, `v0.5.0` is pushed, `release.yml` + the downstream
+   crates.io publishes, the `vX.Y.Z` tag is pushed, `release.yml` + the downstream
    publishers fan out.
 7. **Apply the `v*` tag-creation lock last** (App-only tag creation; see the
    rulesets README) — doing it earlier would block the current manual tag flow.
@@ -291,7 +291,7 @@ deliberate pre-1.0 decision.
 What we ship instead — and why it covers the current audience:
 
 - **Build provenance attestation** (`actions/attest-build-provenance`, since
-  v0.4.0): every archive carries a Sigstore-backed SLSA provenance statement,
+  the first tagged release): every archive carries a Sigstore-backed SLSA provenance statement,
   verifiable with `gh attestation verify <archive> --repo P4suta/aozora` — no
   certificates, no CA. It proves *which CI built which artefact from which
   source*: a supply-chain control, **not** an OS-level execution-trust signal.
