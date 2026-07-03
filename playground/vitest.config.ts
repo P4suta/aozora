@@ -28,5 +28,10 @@ export default defineConfig({
     globals: false,
     include: ['src/**/*.test.ts'],
     reporters: 'default',
+    // Process CSS so `?raw` imports resolve to real file text. Vitest stubs
+    // CSS to an empty module by default (even for `?raw`), which would make
+    // the theme-token audit read an empty styles.css. No test imports CSS for
+    // its styles, so enabling this only affects the `?raw` text reads.
+    css: true,
   },
 });
