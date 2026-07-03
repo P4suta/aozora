@@ -109,6 +109,10 @@ impl<W: fmt::Write> WalkSinkOwned for HtmlSinkOwned<'_, W> {
     }
 
     fn finish(&mut self) -> fmt::Result {
+        // Close any region a source left open (an unbalanced ［＃ここから…］):
+        // to_html must emit balanced markup even though to_source keeps the
+        // imbalance verbatim. The unclosed region extends to end-of-document.
+        self.state.drain_open_containers(self.out)?;
         self.state.close_paragraph(self.out)
     }
 }
