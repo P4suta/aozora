@@ -1,7 +1,7 @@
 {
   "implementation": "rust",
-  "total": 117,
-  "passed": 117,
+  "total": 122,
+  "passed": 122,
   "failed": 0,
   "by_level": {
     "may": {
@@ -15,8 +15,8 @@
       "failed": 0
     },
     "should": {
-      "total": 84,
-      "passed": 84,
+      "total": 89,
+      "passed": 89,
       "failed": 0
     }
   },
@@ -338,6 +338,13 @@
     },
     {
       "case": "gaiji_locator_tolerance",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "gaiji_multi_standalone",
       "feature": "gaiji",
       "level": "should",
       "passed": true,
@@ -696,6 +703,34 @@
     {
       "case": "ruby_base_latin_in_quote",
       "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_multi_gaiji_declined_bracket",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_multi_gaiji_explicit_bar",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_multi_gaiji_implicit",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_multi_gaiji_in_quote",
+      "feature": "gaiji",
       "level": "should",
       "passed": true,
       "message": null
