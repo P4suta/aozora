@@ -179,6 +179,17 @@ pre-push:
         structurally malformed (unbalanced HTML tags or an undeclared class).
         Run `just render-correctness` (or `xtask corpus render-correctness`) to
         find the offending document, then fix the renderer.
+    # Render-digest ratchet (#414): fail the push when a non-circular corpus
+    # metric moves the wrong way — panic count rose, a node/annotation kind
+    # vanished (recogniser regression), or gaiji resolution dropped. Runtime-
+    # skips (no-op) when AOZORA_CORPUS_ROOT is unset; the corpus CI job backstops.
+    digest-gate:
+      run: just digest-gate
+      fail_text: |
+        Render-digest regression: a known-good corpus metric moved the wrong
+        way (panic rose / a kind vanished / gaiji resolution dropped). Run
+        `just digest-gate` for detail; fix the recogniser/renderer — do not
+        raise the baseline.
     # Owned-producer allocation-pressure ratchet (#237 P0.2-real): fail the
     # push when the owned lex path's allocation count / bytes (normalized
     # per-file / per-source-byte) regress beyond corpus/owned-alloc-baseline.json.
