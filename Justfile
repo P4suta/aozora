@@ -479,6 +479,39 @@ render-correctness-gate-update:
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo run -p aozora-xtask -q -- corpus render-correctness-gate --root /corpus --baseline corpus/render-correctness-baseline.json --update
 
+# Render-digest ratchet gate: a non-circular distillation of `corpus audit`
+# (panic=0, kind presence-floor, gaiji resolution may only improve). Committed
+# at `corpus/render-digest.json`; `unknown_shapes_top` is the informational
+# worklist for the normalisation layer. Needs a corpus; runtime-skips otherwise.
+digest-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; digest-gate skipped (no corpus to walk)."
+        exit 0
+    fi
+    if [[ ! -d "$AOZORA_CORPUS_ROOT" ]]; then
+        echo "AOZORA_CORPUS_ROOT=$AOZORA_CORPUS_ROOT is not a directory." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus digest-gate --root /corpus --baseline corpus/render-digest.json
+
+# Re-capture the render-digest (ratchet after an improvement).
+digest-gate-update:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; cannot capture a render-digest." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus digest-gate --root /corpus --baseline corpus/render-digest.json --update
+
 # Owned-producer allocation-pressure ratchet (#237 P0.2-real). Measures, via
 # dhat around `lex_owned` over the corpus, owned-path allocation count / bytes
 # normalized per-file / per-source-byte, and fails when either regresses beyond

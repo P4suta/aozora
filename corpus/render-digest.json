@@ -1,0 +1,208 @@
+{
+  "note": "Corpus render-digest: a NON-CIRCULAR distillation of `corpus audit`, gated ONLY on known-good-direction ratchets (never actual == committed against parser output). panic_count may not rise; a node/annotation kind that was nonzero may not vanish (a family silently dropping out is a recogniser regression); the gaiji resolution rate (resolved/total) may only improve. `unknown_shapes_top` is INFORMATIONAL (never gated) — the occurrence-ranked worklist for the normalisation-layer catalogue (#414 Thrust 3). Re-capture with `--update`.",
+  "files_analyzed": 17889,
+  "panic_count": 0,
+  "gaiji_total": 48213,
+  "gaiji_resolved": 45648,
+  "node_kinds": {
+    "alignEnd": 20085,
+    "angleQuote": 93,
+    "bodyEnd": 242,
+    "bouten": 153204,
+    "center": 811,
+    "combineUpright": 18836,
+    "containerClose": 77541,
+    "containerOpen": 91540,
+    "directive": 36508,
+    "emphasis": 26194,
+    "forcedBreak": 156,
+    "gaiji": 48213,
+    "headingHint": 67646,
+    "illustration": 5753,
+    "indent": 81683,
+    "kaeriten": 34908,
+    "lineBold": 29,
+    "lineFontSize": 46,
+    "marginNote": 4014,
+    "pageBreak": 7122,
+    "ruby": 3577771,
+    "sectionBreak": 1828
+  },
+  "annotation_kinds": {
+    "asIs": 3806,
+    "editorNote": 31,
+    "empty": 14625,
+    "marginNotePairClose": 12,
+    "marginNotePairOpen": 12,
+    "rubyAttached": 16,
+    "rubyPairClose": 8,
+    "rubyPairOpen": 8,
+    "rubyRetarget": 136,
+    "textualNote": 9410,
+    "unknown": 2374,
+    "warichuClose": 3041,
+    "warichuOpen": 3029
+  },
+  "unknown_shapes_top": [
+    {
+      "key": "［＃「」は小書き］",
+      "count": 101
+    },
+    {
+      "key": "［＃「」に「」注記］",
+      "count": 56
+    },
+    {
+      "key": "［＃「」は「」の「」］",
+      "count": 49
+    },
+    {
+      "key": "［＃「」は、『谷崎潤一郎全集　第十九巻』（中央公論新社N年N月N日初版発行）と『谷崎潤一郎全集　第十五卷』（中央公論社N年N月N日発行）では「」］",
+      "count": 34
+    },
+    {
+      "key": "［＃「",
+      "count": 29
+    },
+    {
+      "key": "［＃「」は上に「」付き］",
+      "count": 18
+    },
+    {
+      "key": "［＃初出時「」］",
+      "count": 18
+    },
+    {
+      "key": "［＃ここからN字下げ、「」は返り点］",
+      "count": 17
+    },
+    {
+      "key": "［＃「」は筑摩版では「」］",
+      "count": 16
+    },
+    {
+      "key": "［＃「」は「」の右側に注記するような形で］",
+      "count": 14
+    },
+    {
+      "key": "［＃「」は上部に出ている］",
+      "count": 14
+    },
+    {
+      "key": "［＃「」は、『谷崎潤一郎全集　第十九巻』（中央公論新社N年N月N日初版発行）では「」、『谷崎潤一郎全集　第十五卷』（中央公論社N年N月N日発行）では「」］",
+      "count": 13
+    },
+    {
+      "key": "［＃「」にママの注記］",
+      "count": 12
+    },
+    {
+      "key": "［＃「」の「」に代えて「」］",
+      "count": 12
+    },
+    {
+      "key": "［＃「」は「」の誤記か］",
+      "count": 12
+    },
+    {
+      "key": "［＃「」に「」の注記］",
+      "count": 11
+    },
+    {
+      "key": "［＃「」の正字、「」、N-N］",
+      "count": 11
+    },
+    {
+      "key": "［＃「」は、『谷崎潤一郎全集　第二十巻』（中央公論新社N年N月N日初版発行）と『谷崎潤一郎全集　第十五卷』（中央公論社N年N月N日発行）では「」］",
+      "count": 11
+    },
+    {
+      "key": "［＃「」は「」の下にポイントを下げてN行で］",
+      "count": 11
+    },
+    {
+      "key": "［＃「」は上付き小文字、「」は分数］",
+      "count": 11
+    },
+    {
+      "key": "［＃下げて、地よりN字あきで］",
+      "count": 11
+    },
+    {
+      "key": "［＃底本N字伏字］",
+      "count": 11
+    },
+    {
+      "key": "［＃「」の下に「」］",
+      "count": 10
+    },
+    {
+      "key": "［＃「」は小書き右寄せ］",
+      "count": 10
+    },
+    {
+      "key": "［＃「」は注釈番号］",
+      "count": 10
+    },
+    {
+      "key": "［＃くさかんむり／（月＋曷）」、第N水準N-N-N］",
+      "count": 10
+    },
+    {
+      "key": "［＃一つ目の「」は「」付き］",
+      "count": 10
+    },
+    {
+      "key": "［＃地付き、地よりN字アキ］",
+      "count": 10
+    },
+    {
+      "key": "［＃「」と「」はN列に並ぶ］",
+      "count": 9
+    },
+    {
+      "key": "［＃「」に×傍点、伏字を起こした文字］",
+      "count": 9
+    },
+    {
+      "key": "［＃「」の中に「」］",
+      "count": 9
+    },
+    {
+      "key": "［＃「」は縦中横、「」は上付き小書き］",
+      "count": 9
+    },
+    {
+      "key": "［＃「」略］",
+      "count": 9
+    },
+    {
+      "key": "［＃ここからN字下げ、ここから数式］",
+      "count": 9
+    },
+    {
+      "key": "［＃図N入る］",
+      "count": 9
+    },
+    {
+      "key": "［＃底本は「」］",
+      "count": 9
+    },
+    {
+      "key": "［＃N行目］",
+      "count": 8
+    },
+    {
+      "key": "［＃（一）は縦中横］",
+      "count": 8
+    },
+    {
+      "key": "［＃「」に「」］",
+      "count": 7
+    },
+    {
+      "key": "［＃「」の「」を除く部分に傍点］",
+      "count": 7
+    }
+  ]
+}

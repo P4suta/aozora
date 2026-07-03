@@ -44,7 +44,7 @@
     reason = "the audit's line_of counts '\\n' in a one-shot prefix; pulling in the bytecount crate for an offline measurement tool is not worth a new dependency."
 )]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -276,6 +276,26 @@ pub(crate) enum CorpusTarget {
         #[arg(long)]
         update: bool,
     },
+    /// Render-digest ratchet gate: a committed, NON-CIRCULAR distillation of
+    /// the audit — gated only on known-good-direction ratchets (never an
+    /// equality oracle against parser output): `panic_count` may not rise, a
+    /// node/annotation kind that was nonzero may not vanish (a family silently
+    /// dropping out = a recogniser regression), and the gaiji resolution rate
+    /// may only improve. The top Unknown shapes are recorded informationally
+    /// (the occurrence-ranked worklist for the normalisation layer). Needs a
+    /// corpus; skips (exit 0) when none is set. `--update` re-captures.
+    DigestGate {
+        /// Corpus root directory of `.txt` files. Defaults to
+        /// `$AOZORA_CORPUS_ROOT`.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Committed digest JSON path.
+        #[arg(long, default_value = "corpus/render-digest.json")]
+        baseline: PathBuf,
+        /// Re-capture the digest from the current run (ratchet).
+        #[arg(long)]
+        update: bool,
+    },
 }
 
 pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
@@ -318,6 +338,11 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             baseline,
             update,
         } => render_correctness_gate(root.as_deref(), baseline, *update),
+        CorpusTarget::DigestGate {
+            root,
+            baseline,
+            update,
+        } => digest_gate(root.as_deref(), baseline, *update),
     }
 }
 
@@ -969,7 +994,7 @@ struct FileStat {
     diags: Vec<&'static str>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Kv {
     key: String,
     count: u64,
@@ -1882,6 +1907,150 @@ fn render_correctness_gate(
     Ok(())
 }
 
+/// Committed, non-circular distillation of the corpus audit. Only fields whose
+/// desirable direction is known a priori live here, and the gate asserts ONLY
+/// monotone ratchets in that direction — never `actual == committed` against
+/// parser output (the circularity the throwaway audit exists to avoid).
+#[derive(Serialize, Deserialize, Default)]
+struct RenderDigest {
+    #[serde(default)]
+    note: String,
+    files_analyzed: usize,
+    /// Ratchet: may not rise (catch_unwind-guarded; expected 0).
+    panic_count: usize,
+    gaiji_total: u64,
+    /// Ratchet: `resolved / total` may only improve.
+    gaiji_resolved: u64,
+    /// Presence floor: a kind nonzero here may not drop to zero.
+    node_kinds: BTreeMap<String, u64>,
+    annotation_kinds: BTreeMap<String, u64>,
+    /// Informational only (NOT gated): the occurrence-ranked Unknown-shape
+    /// worklist that drives the normalisation-layer catalogue (Thrust 3).
+    #[serde(default)]
+    unknown_shapes_top: Vec<Kv>,
+}
+
+/// Distil an [`AuditReport`] into the committed digest. `top_shapes` bounds the
+/// informational Unknown-shape worklist.
+fn digest_from_report(r: &AuditReport, top_shapes: usize) -> RenderDigest {
+    let to_map = |kvs: &[Kv]| -> BTreeMap<String, u64> {
+        kvs.iter()
+            .filter(|k| k.count > 0)
+            .map(|k| (k.key.clone(), k.count))
+            .collect()
+    };
+    RenderDigest {
+        note: String::new(),
+        files_analyzed: r.files_analyzed,
+        panic_count: r.panic_count,
+        gaiji_total: r.gaiji.total,
+        gaiji_resolved: r.gaiji.total.saturating_sub(r.gaiji.unresolved),
+        node_kinds: to_map(&r.node_kinds),
+        annotation_kinds: to_map(&r.annotation_kinds),
+        unknown_shapes_top: r
+            .unknown_shapes
+            .iter()
+            .take(top_shapes)
+            .map(|s| Kv {
+                key: s.shape.clone(),
+                count: s.count,
+            })
+            .collect(),
+    }
+}
+
+/// Known-good-direction ratchet violations (never an equality oracle).
+fn digest_regressions(cur: &RenderDigest, base: &RenderDigest) -> Vec<String> {
+    let mut p = Vec::new();
+    if cur.panic_count > base.panic_count {
+        p.push(format!(
+            "panic_count rose {} → {}",
+            base.panic_count, cur.panic_count
+        ));
+    }
+    let vanished = |kind: &str, was: u64, now: &BTreeMap<String, u64>, what: &str| {
+        (was > 0 && now.get(kind).copied().unwrap_or(0) == 0)
+            .then(|| format!("{what} kind '{kind}' vanished (was {was})"))
+    };
+    for (k, &was) in &base.node_kinds {
+        p.extend(vanished(k, was, &cur.node_kinds, "node"));
+    }
+    for (k, &was) in &base.annotation_kinds {
+        p.extend(vanished(k, was, &cur.annotation_kinds, "annotation"));
+    }
+    if cur.gaiji_total > 0 && base.gaiji_total > 0 {
+        #[expect(clippy::cast_precision_loss, reason = "counts well under 2^53")]
+        let rate = |res: u64, tot: u64| res as f64 / tot as f64;
+        let (cur_r, base_r) = (
+            rate(cur.gaiji_resolved, cur.gaiji_total),
+            rate(base.gaiji_resolved, base.gaiji_total),
+        );
+        if cur_r < base_r - 0.005 {
+            p.push(format!("gaiji resolution dropped {base_r:.4} → {cur_r:.4}"));
+        }
+    }
+    p
+}
+
+const DIGEST_NOTE: &str = "Corpus render-digest: a NON-CIRCULAR distillation of `corpus audit`, \
+    gated ONLY on known-good-direction ratchets (never actual == committed against parser output). \
+    panic_count may not rise; a node/annotation kind that was nonzero may not vanish (a family \
+    silently dropping out is a recogniser regression); the gaiji resolution rate (resolved/total) \
+    may only improve. `unknown_shapes_top` is INFORMATIONAL (never gated) — the occurrence-ranked \
+    worklist for the normalisation-layer catalogue (#414 Thrust 3). Re-capture with `--update`.";
+
+/// Render-digest ratchet gate. Reuses [`run_audit`]; asserts only monotone
+/// known-good-direction ratchets (see [`DIGEST_NOTE`]).
+fn digest_gate(root: Option<&Path>, baseline_path: &Path, update: bool) -> Result<(), String> {
+    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
+        eprintln!("xtask corpus digest-gate: skipped — pass --root or set $AOZORA_CORPUS_ROOT");
+        return Ok(());
+    }
+    let report = run_audit(root, None)?;
+    let current = digest_from_report(&report, 40);
+    if update {
+        let digest = RenderDigest {
+            note: DIGEST_NOTE.to_owned(),
+            ..current
+        };
+        let mut json =
+            serde_json::to_string_pretty(&digest).map_err(|e| format!("serialize: {e}"))?;
+        json.push('\n');
+        fs::write(baseline_path, json)
+            .map_err(|e| format!("write {}: {e}", baseline_path.display()))?;
+        let resolved_pct = (100 * digest.gaiji_resolved)
+            .checked_div(digest.gaiji_total)
+            .unwrap_or(0);
+        eprintln!(
+            "digest-gate: wrote {} — {} node kinds, {} annotation kinds, gaiji {}% resolved, panic {}",
+            baseline_path.display(),
+            digest.node_kinds.len(),
+            digest.annotation_kinds.len(),
+            resolved_pct,
+            digest.panic_count,
+        );
+        return Ok(());
+    }
+    let text = fs::read_to_string(baseline_path)
+        .map_err(|e| format!("read {}: {e}", baseline_path.display()))?;
+    let baseline: RenderDigest = serde_json::from_str(&text)
+        .map_err(|e| format!("parse {}: {e}", baseline_path.display()))?;
+    let problems = digest_regressions(&current, &baseline);
+    if problems.is_empty() {
+        eprintln!(
+            "digest-gate: PASS — {} node / {} annotation kinds present, gaiji resolution held, 0 panics.",
+            current.node_kinds.len(),
+            current.annotation_kinds.len(),
+        );
+        return Ok(());
+    }
+    Err(format!(
+        "render-digest regression:\n  {}\n  A change moved a known-good metric the wrong way. \
+         Fix the recogniser/renderer, do not raise the baseline.",
+        problems.join("\n  ")
+    ))
+}
+
 /// Per-marker leak counts (files with ≥1 leak, and total occurrences) for
 /// the render-leak ratchet baseline.
 #[derive(Serialize, Deserialize, Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -2691,6 +2860,41 @@ mod tests {
                 CorrCat::UndeclaredClass
             ),
             0
+        );
+    }
+
+    // ---- digest_regressions (non-circular ratchets) -------------------
+
+    #[test]
+    fn digest_regressions_flags_only_bad_directions() {
+        let mk = |nodes: &[(&str, u64)], gaiji_total: u64, gaiji_resolved: u64, panic: usize| {
+            RenderDigest {
+                node_kinds: nodes.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect(),
+                gaiji_total,
+                gaiji_resolved,
+                panic_count: panic,
+                ..Default::default()
+            }
+        };
+        let base = mk(&[("ruby", 100)], 1000, 950, 0);
+        // Identical → clean.
+        assert!(digest_regressions(&mk(&[("ruby", 100)], 1000, 950, 0), &base).is_empty());
+        // A kind that was nonzero vanished → flagged.
+        assert_eq!(digest_regressions(&mk(&[], 1000, 950, 0), &base).len(), 1);
+        // Gaiji resolution dropped → flagged.
+        assert_eq!(
+            digest_regressions(&mk(&[("ruby", 100)], 1000, 800, 0), &base).len(),
+            1
+        );
+        // Panic count rose → flagged.
+        assert_eq!(
+            digest_regressions(&mk(&[("ruby", 100)], 1000, 950, 3), &base).len(),
+            1
+        );
+        // Improvements (a new kind, higher resolution) → clean.
+        assert!(
+            digest_regressions(&mk(&[("ruby", 100), ("bouten", 50)], 1000, 990, 0), &base)
+                .is_empty()
         );
     }
 
