@@ -412,6 +412,39 @@ verbatim-gate:
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo run -p aozora-xtask -q -- corpus verbatim --root /corpus
 
+# Render-leak ratchet gate: fail when per-marker leak counts (notation
+# markers surviving into visible rendered HTML) rise above the committed
+# `corpus/render-leak-baseline.json`. The enforcing partner of
+# `corpus render-audit` (the per-file diagnostic). Needs a corpus.
+render-leak-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; render-leak-gate skipped (no corpus to walk)."
+        exit 0
+    fi
+    if [[ ! -d "$AOZORA_CORPUS_ROOT" ]]; then
+        echo "AOZORA_CORPUS_ROOT=$AOZORA_CORPUS_ROOT is not a directory." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus render-leak-gate --root /corpus --baseline corpus/render-leak-baseline.json
+
+# Re-capture the render-leak baseline (ratchet down after an improvement).
+render-leak-gate-update:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; cannot capture a render-leak baseline." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus render-leak-gate --root /corpus --baseline corpus/render-leak-baseline.json --update
+
 # Owned-producer allocation-pressure ratchet (#237 P0.2-real). Measures, via
 # dhat around `lex_owned` over the corpus, owned-path allocation count / bytes
 # normalized per-file / per-source-byte, and fails when either regresses beyond
