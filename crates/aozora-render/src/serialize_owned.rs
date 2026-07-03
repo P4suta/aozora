@@ -320,15 +320,17 @@ fn emit_ruby_owned<W: Write>(
 /// `trailing_ruby_base_start` newly forms — the same lockstep the
 /// classifier walks (ADR 0002).
 fn ruby_needs_bar_owned(base_run: &[ContentOwned], prev: Option<char>, store: &NodeStore) -> bool {
-    // A gaiji base (`※［＃…］《…》`) re-parses implicitly via the classifier's
-    // deferred-emit, so it never needs an explicit `｜` — and a preceding
-    // character cannot extend into it (the gaiji is a single structured
-    // node). Emitting a bar here would inject a `｜` absent from the source
-    // and break the round-trip fixed point.
-    if let [ContentOwned::Segments(range)] = base_run
-        && matches!(store.resolve_seg_range(*range), [SegmentOwned::Gaiji(_)])
-    {
-        return false;
+    // An all-gaiji base (`※［＃…］《…》` or an adjacent run `※…※…《…》`) re-parses
+    // implicitly via the classifier's deferred-emit accumulation, so it never
+    // needs an explicit `｜` — a preceding character cannot extend into a
+    // structured gaiji node, and adjacent gaiji re-accumulate into one base.
+    // Emitting a bar here would inject a `｜` absent from the source and break
+    // the round-trip fixed point.
+    if let [ContentOwned::Segments(range)] = base_run {
+        let segs = store.resolve_seg_range(*range);
+        if !segs.is_empty() && segs.iter().all(|s| matches!(s, SegmentOwned::Gaiji(_))) {
+            return false;
+        }
     }
     let plain = match base_run {
         [ContentOwned::Plain(id)] => Some(store.resolve_str(*id)),

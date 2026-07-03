@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 117,
-  "passed": 55,
-  "failed": 62,
+  "total": 122,
+  "passed": 58,
+  "failed": 64,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,9 +15,9 @@
       "failed": 9
     },
     "should": {
-      "total": 84,
-      "passed": 31,
-      "failed": 53
+      "total": 89,
+      "passed": 34,
+      "failed": 55
     }
   },
   "cases": [
@@ -342,6 +342,13 @@
       "level": "should",
       "passed": false,
       "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "gaiji_multi_standalone",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
     },
     {
       "case": "gaiji_standalone_explicit_bar",
@@ -699,6 +706,34 @@
       "level": "should",
       "passed": false,
       "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_base_multi_gaiji_declined_bracket",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
+      "case": "ruby_base_multi_gaiji_explicit_bar",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_base_multi_gaiji_implicit",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_base_multi_gaiji_in_quote",
+      "feature": "gaiji",
+      "level": "should",
+      "passed": true,
+      "message": null
     },
     {
       "case": "ruby_base_plus_preceding_plain",
