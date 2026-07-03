@@ -28,7 +28,8 @@ role split before it drifts.
 
 ## Decision
 
-Three layers, three roles, one catalogue.
+Four layers, four roles, one catalogue. (Three rewrite/observe layers plus the
+opt-in renderer/interpreter added in the 2026-07 render campaign.)
 
 - **Parser (`aozora-pipeline` classifier) — lossless and non-judgemental.**
   A `［＃…］` body it does not recognise stays `DirectiveKind::Unknown` and
@@ -52,11 +53,32 @@ Three layers, three roles, one catalogue.
   near-misses to canonical form and re-normalises, staying idempotent (the
   `write_back` guard depends on it).
 
-**Single canonical authority.** All three resolve the canonical spelling
+- **Renderer / interpreter (`RenderOptions::normalize_directives` /
+  `aozora render --normalize`) — opt-in and read-only.** A consumer may render
+  a document *as if* its Tier1 near-misses were canonical, so a known 揺れ
+  becomes a visible element instead of an inert hidden `aozora-directive` span.
+  It must (a) reuse `canonical_directive` — never a second copy — which it
+  satisfies by *borrowing the formatter transform*: it re-serialises through
+  `--fix-notation` and re-parses that throwaway canonical source, so the
+  catalogue is reached only transitively; (b) stay opt-in (default render is
+  the byte-identical, non-judgemental path); and (c) never mutate the caller's
+  source or the default parse/render — the formatter rewrite is an internal,
+  ephemeral step feeding a reparse it discards. This does **not** contradict
+  "the formatter is the only layer that rewrites *source*": the renderer
+  rewrites nothing persistent, only a throwaway buffer it never hands back.
+
+**Single canonical authority.** All four resolve the canonical spelling
 through the one `aozora_syntax::lint::canonical_directive` catalogue — the
 same single-authority discipline as `accent.rs` for glyph composition. No
 consumer keeps its own copy, so they cannot disagree, and a new near-miss
 family is added once.
+
+**Tier1 / Tier2.** `canonical_directive` is the **Tier1** catalogue:
+zero-false-positive, parser-verified near-misses (fixed map, no fuzzy match).
+Any future **Tier2** *degraded-form* matcher (looser heuristics, edit-distance,
+etc.) is a **separate** entry, invoked **only** by the opt-in renderer/interpreter
+path above — never by the parser, the default lint, or the default `fmt`. It
+would need its own ADR (see the zero-false-positive consequence below).
 
 ## Consequences
 
@@ -66,10 +88,18 @@ family is added once.
 - The parser stays free of "helpfulness" heuristics: correctness and the
   round-trip contract are never traded for convenience.
 - A tool that wants to reinterpret a directive goes through the linter
-  (advisory) or the formatter (opt-in rewrite) — never the parser.
+  (advisory), the formatter (opt-in rewrite), or the renderer/interpreter
+  (opt-in, read-only "render as if canonical") — never the parser.
+- The opt-in renderer's non-inert guarantee is pinned by the
+  `normalize_render_replaces_every_inert_variant` self-test (the `aozora`
+  crate's `lint_catalogue` integration test): for every catalogue sample the
+  default render stays an inert `aozora-directive` span, and the normalised
+  render replaces it with a real (non-`hidden`) rendering — so the seam can
+  never rot into rendering a known near-miss inert.
 - The catalogue's zero-false-positive discipline (fixed map + parse-round-trip
   self-test) is the guardrail. Broadening it to fuzzy / edit-distance
-  matching would relax that guarantee and needs its own ADR.
+  matching — a Tier2 degraded-form matcher — would relax that guarantee, is
+  reserved to the opt-in renderer/interpreter path, and needs its own ADR.
 
 ## Alternatives considered
 
@@ -93,5 +123,9 @@ family is added once.
 
 - Plan: the 2026-07 notation-hygiene + parser-coverage campaign (#372).
 - #371 (linter), #373 (`fmt --fix-notation`), #374 (LSP quick-fix).
+- Renderer/interpreter role: `RenderOptions::normalize_directives` /
+  `render_html_owned_normalized` (`aozora-render`), the `Tree::to_html_with`
+  facade (`aozora`), and `aozora render --normalize`, pinned by the
+  `normalize_render_replaces_every_inert_variant` self-test.
 - [ADR-0015](./0015-spec-syntax-layer-boundary.md) — the spec / syntax layer
   boundary this role split sits above.

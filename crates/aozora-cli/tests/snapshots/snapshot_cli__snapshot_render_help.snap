@@ -1,0 +1,65 @@
+---
+source: crates/aozora-cli/tests/snapshot_cli.rs
+expression: "run(&[\"render\", \"--help\"])"
+---
+Render Aozora notation to HTML on stdout
+
+Usage: aozora render [OPTIONS] [FILE]
+
+Arguments:
+  [FILE]
+          Input path; pass `-` (or omit) to read from stdin
+          
+          [default: -]
+
+Options:
+  -E, --encoding <ENCODING>
+          Source encoding. Falls back to `AOZORA_ENCODING`, then the `encoding` key in
+          `.aozora.toml`, then auto-detection
+
+          Possible values:
+          - auto: Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are
+            decoded as Shift_JIS. The right default — Aozora files ship as Shift_JIS, but UTF-8
+            mirrors are common, and the caller should not have to know which they have
+          - utf8: Force UTF-8; error if the input is not valid UTF-8
+          - sjis: Force Shift_JIS decoding
+          
+          [env: AOZORA_ENCODING=]
+
+      --config <PATH>
+          Read settings from this `.aozora.toml` instead of searching upward from the working
+          directory
+
+      --timing
+          Print per-phase timing (read / parse / output) to stderr. Writes only to stderr, so stdout
+          stays byte-identical — safe to leave on inside a `render` / `inspect` pipeline
+
+      --timing-format <TIMING_FORMAT>
+          Timing report format: `human` (aligned lines + total, the default) or `json` (a
+          `{schema_version, phases, total_nanos}` envelope for scripts and agents). Ignored without
+          `--timing`
+
+          Possible values:
+          - human: Aligned `name  duration` lines plus a total. The default
+          - json:  `{"schemaVersion":1,"phases":[{"name","nanos"}],"totalNanos"}` — the agent /
+            scripting view
+          
+          [default: human]
+
+      --watch
+          Re-run on every change to the input file (foreground; Ctrl-C to stop). Requires a file
+          path — not available on stdin
+
+      --normalize
+          Render verified non-canonical directive near-misses as if they were their canonical
+          spelling (e.g. `［＃「梅」は小書き］` renders 梅 as small-letter emphasis instead of an inert hidden
+          directive span) — the same near-misses `aozora::lint::non_canonical_directive` flags and
+          `aozora fmt --fix-notation` rewrites. Opt-in and read-only: without this flag an
+          unrecognised directive stays a hidden `aozora-directive` span, and this never rewrites the
+          input source. Aliased `--fix-notation` for symmetry with `aozora fmt`
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
