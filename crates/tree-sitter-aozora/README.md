@@ -62,5 +62,5 @@ let tree = parser.parse(source, None).unwrap();
 
 ## Repository
 
-Part of the [aozora-tools](https://github.com/P4suta/aozora-tools)
+Part of the [aozora](https://github.com/P4suta/aozora)
 workspace.

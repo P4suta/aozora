@@ -83,7 +83,7 @@ pub(crate) fn format_guarded(source: &str, opts: SerializeOptions) -> Result<Str
         anyhow!(
             "the formatter panicked while processing this input; no files were \
              modified. This is a bug — please report it at \
-             https://github.com/P4suta/aozora-tools/issues"
+             https://github.com/P4suta/aozora/issues"
         )
     })
 }

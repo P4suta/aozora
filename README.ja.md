@@ -180,7 +180,6 @@ just run render -E sjis FILE.txt > out.html
 | Repo | 概要 |
 |---|---|
 | [`P4suta/afm`](https://github.com/P4suta/afm) | CommonMark + GFM + 青空文庫記法 を統合した Markdown 方言。aozora を基盤として構築。 |
-| [`P4suta/aozora-tools`](https://github.com/P4suta/aozora-tools) | オーサリングツール: フォーマッタ、LSP サーバ、tree-sitter 文法、VS Code 拡張。 |
 
 ## ライセンス
 

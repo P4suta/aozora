@@ -34,7 +34,7 @@ aozora-fmt --write path/to/doc.afm other.afm
 Multiple files and directories are accepted; directories are searched
 recursively for `.afm` / `.aozora` / `.aozora.txt` sources. See
 `aozora-fmt --help` or the
-[CLI reference](https://p4suta.github.io/aozora-tools/fmt/cli.html)
+[CLI reference](https://p4suta.github.io/aozora/fmt/cli.html)
 for the full surface.
 
 Exit codes: `0` success or check-clean, `1` `--check` would
@@ -57,19 +57,18 @@ same function so editors and CI gates land on identical output.
 ## Install
 
 ```sh
-cargo install --git https://github.com/P4suta/aozora-tools --tag v0.4.1 --locked aozora-fmt
+cargo install --git https://github.com/P4suta/aozora --locked aozora-fmt
 ```
 
-Or download a pre-built binary from
-[the releases page](https://github.com/P4suta/aozora-tools/releases) —
-`aozora-fmt` is bundled in every `aozora-tools-vX.Y.Z-<target>`
-archive (Linux x86_64 / macOS arm64 / Windows x86_64).
+The same canonical formatting also ships as the `aozora fmt` subcommand of the
+main [`aozora`](https://github.com/P4suta/aozora) CLI, whose pre-built binaries
+are on [the releases page](https://github.com/P4suta/aozora/releases).
 
 ## Repository
 
-Part of the [aozora-tools][repo] workspace. See the
+Part of the [aozora][repo] workspace. See the
 [workspace README][repo] for the full picture and
 [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for the dev loop.
 
 [aozora]: https://github.com/P4suta/aozora
-[repo]: https://github.com/P4suta/aozora-tools
+[repo]: https://github.com/P4suta/aozora

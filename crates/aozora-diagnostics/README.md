@@ -1,7 +1,7 @@
 # aozora-diagnostics
 
 Renderer-agnostic diagnostic catalogue for
-[aozora-flavored-markdown](https://github.com/P4suta/aozora-tools).
+[aozora-flavored-markdown](https://github.com/P4suta/aozora).
 
 The aozora lexer emits diagnostics (unclosed brackets, stray closes, private-use
 codepoints, …). This crate turns each one into a `Described` record — a stable
@@ -22,5 +22,5 @@ assert_eq!(diags[0].code, "aozora::unclosed-bracket");
 assert_eq!(diags[0].severity, Severity::Error);
 ```
 
-Part of the [aozora-tools](https://github.com/P4suta/aozora-tools) workspace.
+Part of the [aozora](https://github.com/P4suta/aozora) workspace.
 Licensed under Apache-2.0 OR MIT.

@@ -43,13 +43,13 @@ completion, codeAction).
 ## Documentation
 
 The canonical documentation for `aozora-lsp` is the
-[handbook](https://p4suta.github.io/aozora-tools/lsp/overview.html):
+[handbook](https://p4suta.github.io/aozora/lsp/overview.html):
 
-- [Overview](https://p4suta.github.io/aozora-tools/lsp/overview.html)
-- [State model](https://p4suta.github.io/aozora-tools/lsp/state-model.html)
-- [Standard LSP capabilities](https://p4suta.github.io/aozora-tools/lsp/capabilities.html)
-- [Custom protocol extensions](https://p4suta.github.io/aozora-tools/lsp/extensions.html)
-- [Diagnostics catalogue](https://p4suta.github.io/aozora-tools/lsp/diagnostics.html)
+- [Overview](https://p4suta.github.io/aozora/lsp/overview.html)
+- [State model](https://p4suta.github.io/aozora/lsp/state-model.html)
+- [Standard LSP capabilities](https://p4suta.github.io/aozora/lsp/capabilities.html)
+- [Custom protocol extensions](https://p4suta.github.io/aozora/lsp/extensions.html)
+- [Diagnostics catalogue](https://p4suta.github.io/aozora/lsp/diagnostics.html)
 
 ## Run
 
@@ -75,22 +75,19 @@ idempotence, and concurrency invariant gate. The `burst` bench
 PR diff workflow (`.github/workflows/bench-diff.yml`) gates on.
 
 Profiling pipeline (samply) is documented in the
-[handbook's Profiling chapter](https://p4suta.github.io/aozora-tools/perf/samply.html).
+[handbook's Profiling chapter](https://p4suta.github.io/aozora/perf/samply.html).
 
 ## Install
 
 ```sh
-cargo install --git https://github.com/P4suta/aozora-tools --tag v0.4.1 --locked aozora-lsp
+cargo install --git https://github.com/P4suta/aozora --locked aozora-lsp
 ```
 
-Or grab a pre-built binary from
-[the releases page](https://github.com/P4suta/aozora-tools/releases) —
-`aozora-lsp` is bundled in every `aozora-tools-vX.Y.Z-<target>`
-archive, and the VS Code extension ships with the matching
-binary baked in (no separate install needed).
+The VS Code extension ships the matching `aozora-lsp` binary baked in, so no
+separate install is needed there; for other editors, `cargo install` as above.
 
 ## Repository
 
-Part of the [aozora-tools](https://github.com/P4suta/aozora-tools)
+Part of the [aozora](https://github.com/P4suta/aozora)
 workspace. See the [workspace README](../../README.md) for the
 full picture.

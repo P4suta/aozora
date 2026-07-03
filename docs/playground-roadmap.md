@@ -1,7 +1,7 @@
 # Playground ロードマップ
 
 `https://p4suta.github.io/aozora/playground/` の今後の方向性メモ。Phase 1（基盤）と
-Phase 2（CodeMirror 6 + aozora-tools 機能移植 + Docker 化）は完了済み。
+Phase 2（CodeMirror 6 + VSCode 拡張機能の移植 + Docker 化）は完了済み。
 
 このファイルは「いつ作る」ではなく「やるなら何を作る／なぜ未着手か」を残すための
 インデックス。優先度や〆切は付けない（必要に応じて issue / project に昇格）。
@@ -19,7 +19,7 @@ Phase 2（CodeMirror 6 + aozora-tools 機能移植 + Docker 化）は完了済�
 | **S6-Q2** | 4 種括弧（`［］/《》/「」/〔〕`）すべてに linked editing するかルビ系除外か | 全 4 種に対応、ただし最小ペア（1文字）のみ | 「ルビの開き括弧消したら閉じ括弧消える挙動が邪魔」という報告が来た時 |
 | **S9-Q1** | `pairs_json` が `containerOpen`/`containerClose` ペアも出すか | 出していないと仮定して `nodes_json` から stack で自前マッチ | `pairs_json` が container を出すようになった時に folding.ts を簡素化 |
 | **S11-Q1** | 半角→全角変換の context awareness（スラグ内で `[` 抑制等） | コンテキスト判定なしの単純全変換 | スラグ内で意図的に `[` を残したいユーザー要求が来た時 |
-| **S12-Q1** | wrap コマンドの un-wrap（既に wrapper 内なら剥がす）挙動 | un-wrap 未実装、常に追加 wrap | aozora-tools VSCode 拡張の挙動を実機で見比べて差分があれば追従 |
+| **S12-Q1** | wrap コマンドの un-wrap（既に wrapper 内なら剥がす）挙動 | un-wrap 未実装、常に追加 wrap | リポジトリ内の VSCode 拡張の挙動を実機で見比べて差分があれば追従 |
 | **S12-Q2** | 全角キー（`「`, `〔`, `＃`）のキーバインド | コマンドパレット実装済み（#334・Mod-Shift-P / ⌘ ボタン・fuzzy 検索）。ASCII 3 キーは従来どおりバインド | — |
 | **S15-Q1** | 記法ガイドの markdown レンダラ | `marked` を採用済み（~10 KB gzip） | bundle 削減が課題になったら自前簡易レンダラに切替 |
 

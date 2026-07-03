@@ -6,7 +6,7 @@ Live: <https://p4suta.github.io/aozora/playground/>
 
 ## エディタ機能
 
-ブラウザ上の CodeMirror 6 エディタに、`P4suta/aozora-tools` の VSCode 拡張機能から
+ブラウザ上の CodeMirror 6 エディタに、リポジトリ内の VSCode 拡張機能（`editors/vscode/`）から
 主要な編集体験を移植しています。
 
 - **シンタックスハイライト** — `nodes_json` から ruby / bouten / gaiji / 注記 / 見出し / 改ページなどを色分け

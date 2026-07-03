@@ -288,7 +288,6 @@ jobs:
   # were never compiled in CI and could silently rot out of sync with the
   # API. This job compiles + runs them: `test-doc` across the workspace
   # plus `test-doc-all` for the umbrella crate's feature-gated examples.
-  # Mirrors the sibling aozora-tools repo's doctest job.
   doctest:
     needs: [changes, dev-image]
     if: needs.changes.outputs.rust == 'true'
