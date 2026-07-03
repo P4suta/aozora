@@ -54,6 +54,7 @@ use clap::{Args, Subcommand};
 use rayon::prelude::*;
 
 use aozora::pipeline::lexer::sanitize::sanitize;
+use aozora::render::AOZORA_CLASSES;
 use aozora::{DirectiveKind, Document, NodeKind, NodeOwned, NodeRefOwned};
 use aozora_corpus::{
     Archive, ArchiveBuilder, CorpusItem, EntryMeta, FilesystemCorpus, archive, par_load_decoded,
@@ -233,6 +234,48 @@ pub(crate) enum CorpusTarget {
         #[arg(long)]
         update: bool,
     },
+    /// Render-correctness audit: render every corpus document to HTML and
+    /// report *structural* defects that the recognition/leak gates cannot
+    /// see — a directive that is recognised (not `Unknown`) but rendered
+    /// wrong. Two invariants, checkable without ground truth:
+    ///   I-A  HTML tag balance — every open has a LIFO-matching close and the
+    ///        stack is empty at EOF (catches an unclosed region `<div>` from
+    ///        the `finish()` gap, or an unbalanced inline warichu `<span>`).
+    ///   I-C  every emitted `aozora-*` class (numeric suffix collapsed to its
+    ///        stem) is a member of `AOZORA_CLASSES` (catches an emitter
+    ///        writing a class the published contract / stylesheet omits, e.g.
+    ///        the `LineFormat::Framed` → bare `aozora-keigakomi` arm).
+    /// Report-only measurement (always exit 0). Needs a corpus; skips when none.
+    RenderCorrectness {
+        /// Corpus root directory of `.txt` files. Defaults to
+        /// `$AOZORA_CORPUS_ROOT`.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Sample offenders to print per defect category.
+        #[arg(long, default_value_t = 12)]
+        top: usize,
+        /// Process at most N files (debugging; default: whole corpus).
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// Render-correctness ratchet gate: fail (exit 1) when the per-category
+    /// structural-defect counts (I-A unbalanced tags, I-C undeclared class)
+    /// rise above a committed baseline. The enforcing counterpart of
+    /// `render-correctness`, modelled on `render-leak-gate`: defects may only
+    /// shrink, never grow. Needs a corpus; skips (exit 0) when none is set.
+    /// `--update` re-captures the baseline (ratchet down on improvement).
+    RenderCorrectnessGate {
+        /// Corpus root directory of `.txt` files. Defaults to
+        /// `$AOZORA_CORPUS_ROOT`.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Committed baseline JSON path.
+        #[arg(long, default_value = "corpus/render-correctness-baseline.json")]
+        baseline: PathBuf,
+        /// Re-capture the baseline from the current run (ratchet).
+        #[arg(long)]
+        update: bool,
+    },
 }
 
 pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
@@ -267,6 +310,14 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             baseline,
             update,
         } => render_leak_gate(root.as_deref(), baseline, *update),
+        CorpusTarget::RenderCorrectness { root, top, limit } => {
+            render_correctness(root.as_deref(), *top, *limit)
+        }
+        CorpusTarget::RenderCorrectnessGate {
+            root,
+            baseline,
+            update,
+        } => render_correctness_gate(root.as_deref(), baseline, *update),
     }
 }
 
@@ -1407,6 +1458,396 @@ fn render_audit_one(item: CorpusItem) -> DocRenderOutcome {
     } else {
         DocRenderOutcome::Leaked { label, hits }
     }
+}
+
+// ── Render-correctness invariants (I-A tag balance, I-C class membership) ──
+
+/// A structural render defect found on one document's HTML.
+#[derive(Clone)]
+struct CorrHit {
+    cat: CorrCat,
+    snippet: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CorrCat {
+    /// I-A: tags do not balance (mismatched close or unclosed at EOF).
+    Unbalanced,
+    /// I-C: an emitted `aozora-*` class is not in `AOZORA_CLASSES`.
+    UndeclaredClass,
+}
+
+/// Per-document render-correctness outcome (mirrors [`DocRenderOutcome`]).
+enum DocCorrOutcome {
+    Clean,
+    DecodeSkipped,
+    LimitSkipped,
+    Panicked,
+    Defective { label: String, hits: Vec<CorrHit> },
+}
+
+/// Collapse a trailing `-<digits>` run to its stem (matches the renderer's
+/// `classes::collect_classes`), so `aozora-indent-3` checks as `aozora-indent`.
+fn class_stem(c: &str) -> &str {
+    match c.rfind('-') {
+        Some(i) if i + 1 < c.len() && c[i + 1..].bytes().all(|b| b.is_ascii_digit()) => &c[..i],
+        _ => c,
+    }
+}
+
+/// The tag name of `<name …>` / `</name>` — bytes after `<`(`/`) up to the
+/// first delimiter.
+fn tag_name(tag: &str) -> &str {
+    let s = tag.trim_start_matches('<').trim_start_matches('/');
+    let end = s
+        .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+        .unwrap_or(s.len());
+    &s[..end]
+}
+
+/// The `aozora-*` class tokens declared in one opening tag's `class="…"`.
+fn classes_of(tag: &str) -> Vec<&str> {
+    let Some(p) = tag.find("class=\"") else {
+        return Vec::new();
+    };
+    let rest = &tag[p + "class=\"".len()..];
+    let end = rest.find('"').unwrap_or(rest.len());
+    rest[..end]
+        .split_whitespace()
+        .filter(|c| c.starts_with("aozora-"))
+        .collect()
+}
+
+/// Scan rendered `html` for I-A (tag balance) and I-C (undeclared class) in one
+/// linear pass. Raw `<` only ever starts a tag (the renderer entity-escapes all
+/// text and attribute values), so tag boundaries are unambiguous. Reports at
+/// most one imbalance per document (tracking stops after the first anomaly).
+fn scan_correctness(html: &str) -> Vec<CorrHit> {
+    let mut hits = Vec::new();
+    let mut stack: Vec<&str> = Vec::new();
+    let mut broken = false;
+    let bytes = html.as_bytes();
+    let n = bytes.len();
+    let mut i = 0;
+    while i < n {
+        if bytes[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        let end = html[i..].find('>').map_or(n - 1, |o| i + o);
+        let tag = &html[i..=end];
+        i = end + 1;
+        if tag.starts_with("</") {
+            let name = tag_name(tag);
+            if !broken && stack.pop() != Some(name) {
+                hits.push(CorrHit {
+                    cat: CorrCat::Unbalanced,
+                    snippet: format!("stray/mismatched </{name}>"),
+                });
+                broken = true;
+            }
+            continue;
+        }
+        let name = tag_name(tag);
+        let void = tag.ends_with("/>") || name == "img" || name == "br";
+        if !void && !broken {
+            stack.push(name);
+        }
+        for tok in classes_of(tag) {
+            let stem = class_stem(tok);
+            if !AOZORA_CLASSES.contains(&stem) {
+                hits.push(CorrHit {
+                    cat: CorrCat::UndeclaredClass,
+                    snippet: tok.to_owned(),
+                });
+            }
+        }
+    }
+    if !broken && !stack.is_empty() {
+        hits.push(CorrHit {
+            cat: CorrCat::Unbalanced,
+            snippet: format!("unclosed at EOF: <{}>", stack.join("><")),
+        });
+    }
+    hits
+}
+
+/// Render one document's literary body and scan for structural render defects.
+fn render_correctness_one(item: CorpusItem) -> DocCorrOutcome {
+    let label = item.label;
+    let decoded = match decode_auto(&item.bytes) {
+        Ok(t) => t.into_owned(),
+        Err(_) => return DocCorrOutcome::DecodeSkipped,
+    };
+    let text = aozora_body(&decoded);
+    let Ok(html) = panic::catch_unwind(AssertUnwindSafe(|| Document::new(text).parse().to_html()))
+    else {
+        return DocCorrOutcome::Panicked;
+    };
+    let hits = scan_correctness(&html);
+    if hits.is_empty() {
+        DocCorrOutcome::Clean
+    } else {
+        DocCorrOutcome::Defective { label, hits }
+    }
+}
+
+/// Fold one document's correctness hits of category `cat` into `agg`.
+fn record_corr(agg: &mut CatAgg, cat: CorrCat, label: &str, hits: &[CorrHit], top: usize) {
+    let n = hits.iter().filter(|h| h.cat == cat).count();
+    if n == 0 {
+        return;
+    }
+    agg.files += 1;
+    agg.occurrences += n;
+    if agg.samples.len() < top
+        && let Some(hit) = hits.iter().find(|h| h.cat == cat)
+    {
+        agg.samples.push((label.to_owned(), hit.snippet.clone()));
+    }
+}
+
+/// Render-correctness sweep: report I-A / I-C structural defects across the
+/// corpus. Report-only (always exit 0); the enforcing gate lands separately.
+fn render_correctness(root: Option<&Path>, top: usize, limit: Option<usize>) -> Result<(), String> {
+    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
+        eprintln!(
+            "xtask corpus render-correctness: skipped — pass --root or set $AOZORA_CORPUS_ROOT"
+        );
+        return Ok(());
+    }
+    let corpus = resolve_corpus(root)?;
+    eprintln!(
+        "xtask corpus render-correctness: rendering {} …",
+        corpus.root().display()
+    );
+    let start = Instant::now();
+    let prev_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let counter = std::sync::atomic::AtomicUsize::new(0);
+    let results: Vec<Result<DocCorrOutcome, aozora_corpus::CorpusError>> =
+        par_load_decoded(&corpus, |item| {
+            if let Some(n) = limit
+                && counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= n
+            {
+                return DocCorrOutcome::LimitSkipped;
+            }
+            render_correctness_one(item)
+        });
+    panic::set_hook(prev_hook);
+
+    let (mut scanned, mut decode_skipped, mut panicked) = (0usize, 0usize, 0usize);
+    let mut unbalanced = CatAgg::default();
+    let mut undeclared = CatAgg::default();
+    for r in results {
+        match r {
+            Ok(DocCorrOutcome::Clean) => scanned += 1,
+            Ok(DocCorrOutcome::DecodeSkipped) => decode_skipped += 1,
+            Ok(DocCorrOutcome::Panicked) => {
+                scanned += 1;
+                panicked += 1;
+            }
+            Ok(DocCorrOutcome::Defective { label, hits }) => {
+                scanned += 1;
+                record_corr(&mut unbalanced, CorrCat::Unbalanced, &label, &hits, top);
+                record_corr(
+                    &mut undeclared,
+                    CorrCat::UndeclaredClass,
+                    &label,
+                    &hits,
+                    top,
+                );
+            }
+            Ok(DocCorrOutcome::LimitSkipped) | Err(_) => {}
+        }
+    }
+    let elapsed = start.elapsed().as_secs_f64();
+    eprintln!(
+        "\nxtask corpus render-correctness: rendered {scanned} docs \
+         ({decode_skipped} undecodable, {panicked} panicked) in {elapsed:.1}s\n"
+    );
+    let cats = [
+        ("I-A unbalanced-tags", &unbalanced),
+        ("I-C undeclared-class", &undeclared),
+    ];
+    for (name, agg) in cats {
+        eprintln!(
+            "  {name:<22}: {:>6} files, {:>7} occurrences",
+            agg.files, agg.occurrences
+        );
+    }
+    for (name, agg) in cats {
+        for (label, snippet) in &agg.samples {
+            eprintln!("  [{name}] {label} — {snippet}");
+        }
+    }
+    Ok(())
+}
+
+/// Committed baseline for the render-correctness ratchet gate. Structural
+/// render defects may only shrink below these counts; any rise fails the gate.
+#[derive(Serialize, Deserialize, Default)]
+struct RenderCorrectnessBaseline {
+    #[serde(default)]
+    note: String,
+    /// I-A: documents whose rendered HTML tags do not balance.
+    unbalanced: MarkerStat,
+    /// I-C: documents emitting an `aozora-*` class absent from `AOZORA_CLASSES`.
+    undeclared: MarkerStat,
+}
+
+/// Fold a render-correctness sweep into per-category `MarkerStat`s. Returns
+/// `(current, scanned, panicked)`.
+fn tally_render_correctness(
+    results: Vec<Result<DocCorrOutcome, aozora_corpus::CorpusError>>,
+) -> (RenderCorrectnessBaseline, usize, usize) {
+    let mut unbalanced = CatAgg::default();
+    let mut undeclared = CatAgg::default();
+    let (mut scanned, mut panicked) = (0usize, 0usize);
+    for r in results {
+        match r {
+            Ok(DocCorrOutcome::Clean) => scanned += 1,
+            Ok(DocCorrOutcome::Panicked) => {
+                scanned += 1;
+                panicked += 1;
+            }
+            Ok(DocCorrOutcome::Defective { label, hits }) => {
+                scanned += 1;
+                record_corr(&mut unbalanced, CorrCat::Unbalanced, &label, &hits, 0);
+                record_corr(&mut undeclared, CorrCat::UndeclaredClass, &label, &hits, 0);
+            }
+            Ok(DocCorrOutcome::DecodeSkipped | DocCorrOutcome::LimitSkipped) | Err(_) => {}
+        }
+    }
+    let current = RenderCorrectnessBaseline {
+        note: String::new(),
+        unbalanced: MarkerStat {
+            files: unbalanced.files,
+            occurrences: unbalanced.occurrences,
+        },
+        undeclared: MarkerStat {
+            files: undeclared.files,
+            occurrences: undeclared.occurrences,
+        },
+    };
+    (current, scanned, panicked)
+}
+
+/// Categories that rose above `baseline` (fails the gate), and whether any
+/// dropped (invites a ratchet-down with `--update`).
+fn correctness_regressions(
+    current: &RenderCorrectnessBaseline,
+    baseline: &RenderCorrectnessBaseline,
+) -> (Vec<String>, bool) {
+    let mut problems = Vec::new();
+    let mut dropped = false;
+    for (name, cur, base) in [
+        (
+            "I-A unbalanced-tags",
+            current.unbalanced,
+            baseline.unbalanced,
+        ),
+        (
+            "I-C undeclared-class",
+            current.undeclared,
+            baseline.undeclared,
+        ),
+    ] {
+        if cur.files > base.files {
+            problems.push(format!(
+                "{name}: {} files now defective (baseline {})",
+                cur.files, base.files
+            ));
+        }
+        dropped |= cur.files < base.files;
+    }
+    (problems, dropped)
+}
+
+const CORRECTNESS_NOTE: &str = "Render-correctness ratchet: per-category (files, occurrences) of \
+    structural render defects — I-A rendered HTML tags do not balance (unclosed region / unbalanced \
+    inline span), I-C emitted aozora-* class absent from AOZORA_CLASSES. Defects may only SHRINK; any \
+    rise fails the gate, ratchet down with `--update`. Run `xtask corpus render-correctness` to find \
+    WHICH document regressed. Residual (2026-07-04): I-A = inline 割注 open/close imbalance in source \
+    (#415), to fix; I-C = 0.";
+
+/// Render-correctness ratchet gate (the enforcing partner of
+/// `render-correctness`): fail when any per-category defect count rises above
+/// the committed baseline. Modelled on [`render_leak_gate`].
+fn render_correctness_gate(
+    root: Option<&Path>,
+    baseline_path: &Path,
+    update: bool,
+) -> Result<(), String> {
+    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
+        eprintln!(
+            "xtask corpus render-correctness-gate: skipped — pass --root or set $AOZORA_CORPUS_ROOT"
+        );
+        return Ok(());
+    }
+    let corpus = resolve_corpus(root)?;
+    eprintln!(
+        "xtask corpus render-correctness-gate: walking {} …",
+        corpus.root().display()
+    );
+    let start = Instant::now();
+    let prev_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let results = par_load_decoded(&corpus, render_correctness_one);
+    panic::set_hook(prev_hook);
+    let (current, scanned, panicked) = tally_render_correctness(results);
+    let elapsed = start.elapsed().as_secs_f64();
+
+    if update {
+        let baseline = RenderCorrectnessBaseline {
+            note: CORRECTNESS_NOTE.to_owned(),
+            ..current
+        };
+        let mut json =
+            serde_json::to_string_pretty(&baseline).map_err(|e| format!("serialize: {e}"))?;
+        json.push('\n');
+        fs::write(baseline_path, json)
+            .map_err(|e| format!("write {}: {e}", baseline_path.display()))?;
+        eprintln!(
+            "render-correctness-gate: wrote baseline {} — I-A {}f/{}o, I-C {}f/{}o",
+            baseline_path.display(),
+            current.unbalanced.files,
+            current.unbalanced.occurrences,
+            current.undeclared.files,
+            current.undeclared.occurrences,
+        );
+        return Ok(());
+    }
+
+    let text = fs::read_to_string(baseline_path)
+        .map_err(|e| format!("read {}: {e}", baseline_path.display()))?;
+    let baseline: RenderCorrectnessBaseline = serde_json::from_str(&text)
+        .map_err(|e| format!("parse {}: {e}", baseline_path.display()))?;
+    let (mut problems, dropped) = correctness_regressions(&current, &baseline);
+    if panicked > 0 {
+        problems.push(format!("{panicked} document(s) panicked while rendering"));
+    }
+    eprintln!(
+        "render-correctness-gate: scanned {scanned} docs in {elapsed:.1}s — \
+         I-A {}f, I-C {}f (baseline I-A {}f, I-C {}f)",
+        current.unbalanced.files,
+        current.undeclared.files,
+        baseline.unbalanced.files,
+        baseline.undeclared.files,
+    );
+    if !problems.is_empty() {
+        return Err(format!(
+            "render-correctness regression:\n  {}\n  A render change made more documents \
+             structurally malformed. Fix the renderer, do not raise the baseline.",
+            problems.join("\n  ")
+        ));
+    }
+    if dropped {
+        eprintln!(
+            "render-correctness-gate: PASS — defects dropped below baseline. Ratchet down with `--update`."
+        );
+    }
+    Ok(())
 }
 
 /// Per-marker leak counts (files with ≥1 leak, and total occurrences) for

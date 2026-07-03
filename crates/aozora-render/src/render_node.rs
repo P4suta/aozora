@@ -316,8 +316,12 @@ pub(crate) fn render_line<W: Write>(lf: LineFormat, writer: &mut W) -> fmt::Resu
         ),
         LineFormat::Center { .. } => writer.write_str(r#"<span class="aozora-center"></span>"#),
         // 罫囲み (line) routes through the paired 罫囲み container in practice,
-        // so this hook is classifier-unreachable; render a matching span.
-        LineFormat::Framed(_) => writer.write_str(r#"<span class="aozora-keigakomi"></span>"#),
+        // so this hook is classifier-unreachable (corpus render-correctness
+        // I-C confirms 0 occurrences across 17,889 works); emit the *declared*
+        // inline-keigakomi class so the output stays valid if ever reached.
+        LineFormat::Framed(_) => {
+            writer.write_str(r#"<span class="aozora-keigakomi-inline"></span>"#)
+        }
         LineFormat::Bold => writer.write_str(r#"<span class="aozora-line-futoji"></span>"#),
         // Absolute font-size line marker; `、太字` adds the line-bold class too.
         LineFormat::FontSizeAbsolute { size, bold } => {

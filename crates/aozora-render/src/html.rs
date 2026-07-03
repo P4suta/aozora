@@ -116,6 +116,18 @@ impl RenderState {
         self.after_block_emit();
         Ok(())
     }
+
+    /// Close every container left open at end-of-input. A source may open a
+    /// region (`［＃ここから字下げ］`) without a matching close; the AST and
+    /// `to_source` preserve that imbalance verbatim, but `to_html` must still
+    /// emit valid, balanced markup — the unclosed region renders as extending
+    /// to the end of the document. Mirrors the per-marker [`Self::close_container`].
+    pub(crate) fn drain_open_containers<W: fmt::Write>(&mut self, out: &mut W) -> fmt::Result {
+        while !self.open_stack.is_empty() {
+            self.close_container(out)?;
+        }
+        Ok(())
+    }
 }
 
 /// HTML-escape a plain-text chunk (the bytes between two structural matches in
