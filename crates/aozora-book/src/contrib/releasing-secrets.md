@@ -103,7 +103,7 @@ trusted publisher is bound per-crate to an exact **workflow filename**, so the
 14 crates already live under the old workflow must be re-pointed.
 
 **Bootstrap the 5 new crates (once).** Fourteen `aozora*` crates are already on
-crates.io from v0.4.1; five are new — `aozora-buildstamp`, `aozora-diagnostics`,
+crates.io; five are new — `aozora-buildstamp`, `aozora-diagnostics`,
 `aozora-fmt`, `tree-sitter-aozora`, `aozora-lsp`. Publish each once, by hand, in
 dependency order, so they exist before OIDC can take over:
 
@@ -128,7 +128,7 @@ crates.io → the crate → Settings → Trusted Publishing → Add → GitHub, 
 - Workflow filename: **`release-plz.yml`**
 - Environment: **`release-plz`**
 
-The 14 crates carried over from v0.4.1 already have a publisher pointing at the
+The 14 crates carried over from the previous release already have a publisher pointing at the
 retired `publish-crates.yml` / `release` environment — **update** those to
 `release-plz.yml` / `release-plz` (the OIDC `sub` claim is matched against the
 exact workflow + environment). The 5 bootstrapped crates get a fresh

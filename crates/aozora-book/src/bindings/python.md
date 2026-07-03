@@ -96,7 +96,7 @@ object per diagnostic per call.
 
 ## Wheel distribution
 
-aozora_py is on PyPI (since **v0.4.1**):
+aozora_py is on PyPI:
 
 ```sh
 pip install aozora_py

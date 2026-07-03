@@ -1033,6 +1033,34 @@ strict-code:
     fi
     echo "strict-code: clean (expect-count $expect_count / baseline $expect_baseline)"
 
+# Forbid version literals (vX.Y.Z) in the handbook outside install.md, so the
+# single-source-of-truth rule (ADR-0009) can't rot back into hand-maintained
+# version pins. install.md is the one canonical place a concrete version/tag is
+# written; every other page links to it or stays version-neutral. Pure grep, so
+# it runs on the bare host (no dev image) — matching the `book-versions` CI job.
+version-literal-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The one page allowed to pin a concrete version: its copy-paste install
+    # snippet is the whole reason it exists.
+    exempt="crates/aozora-book/src/getting-started/install.md"
+    hits=$(grep -HrnE 'v[0-9]+\.[0-9]+\.[0-9]+' --include='*.md' crates/aozora-book/src 2>/dev/null || true)
+    filtered=""
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        path="${line%%:*}"
+        [[ "$path" == "$exempt" ]] && continue
+        filtered+="${line}"$'\n'
+    done <<< "$hits"
+    if [[ -n "$filtered" ]]; then
+        echo "==> forbidden: version literal (vX.Y.Z) in the handbook outside install.md" >&2
+        echo "    ADR-0009: the handbook keeps one canonical version pin (install.md)." >&2
+        echo "    Link to it, or use version-neutral phrasing (releases/latest, vX.Y.Z)." >&2
+        printf '%s' "$filtered" >&2
+        exit 1
+    fi
+    echo "version-literal-gate: clean"
+
 # Format check (no-write): Rust (rustfmt) + TOML (taplo, taplo.toml policy)
 fmt-check:
     {{_dev}} cargo fmt --all -- --check
@@ -1599,9 +1627,10 @@ ci-parallel:
     # Background lane — no /cargo/target build-lock contention.
     for g in deny audit smoke-ffi; do want code && launch "$g" just "$g"; done
     want book && launch book-linkcheck just book-linkcheck
-    # fmt-check / typos / strict-code are cheap and apply to any file — always run.
-    # ci-fast-selftest guards the change-aware classifier itself (instant host bash).
-    for g in fmt-check typos strict-code ci-fast-selftest; do launch "$g" just "$g"; done
+    # fmt-check / typos / strict-code / version-literal-gate are cheap and apply
+    # to any file — always run. ci-fast-selftest guards the change-aware
+    # classifier itself (instant host bash).
+    for g in fmt-check typos strict-code version-literal-gate ci-fast-selftest; do launch "$g" just "$g"; done
     # playground-typecheck + playground-test share one `node_modules`
     # volume; launching them as two concurrent gates makes their
     # `_playground-ensure` (`bun install`) hard-link into that volume in

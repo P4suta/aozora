@@ -61,10 +61,13 @@ fix is to collapse them to one.
   with the existing `cargo set-version` / CHANGELOG / tag steps. If the
   runbook skips it, install.md goes stale; but it is now a single,
   named, easy-to-audit step rather than diffuse vigilance.
-- **A future guard is possible.** A `typos`-style grep gate could fail
-  CI when a `v[0-9]+\.[0-9]+\.[0-9]+` literal appears in any doc outside
-  install.md, mechanizing rule 2. Deferred — the runbook item is the
-  agreed floor for now.
+- **The guard is now mechanized.** The `version-literal-gate` recipe
+  (`Justfile`) fails CI and pre-push when a `v[0-9]+\.[0-9]+\.[0-9]+`
+  literal appears in any handbook page outside install.md, enforcing rule
+  2 automatically. It runs as the `book-versions` CI job (gated on
+  `rust || book`, so a handbook-only PR still triggers it) and in the
+  always-run lane of `ci-parallel`. The runbook checklist item stays as
+  the human counterpart for the one allowed pin.
 
 ## Alternatives considered
 
@@ -101,5 +104,5 @@ machine fact, which is what readers actually need.
   (alongside `cargo set-version` / CHANGELOG / tag)
 - Related: ADR-0006 (polyglot bindings) — a `SCHEMA_VERSION` bump there
   is the *machine*-side analogue of this docs-side discipline; ADR-0004
-  (lint/profile policy) for the `typos`-style gate pattern a future
-  guard would follow
+  (lint/profile policy) for the `typos`-style gate pattern the
+  `version-literal-gate` follows
