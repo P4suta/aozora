@@ -82,6 +82,12 @@ jobs:
               - 'docker-compose*.yml'
               - 'Justfile'
               - '.github/**'
+              # scripts/** hosts ci-classify.sh / verify-spec-vectors.sh /
+              # check-signed-commits.sh etc. Their only regression coverage
+              # (`ci-fast-selftest`) lives under `ci-parallel`, so a
+              # scripts-only PR must still run the Rust matrix — classify as
+              # `rust` (mirrors ci-classify.sh treating scripts/* as infra).
+              - 'scripts/**'
             book:
               - 'crates/aozora-book/**'
             # The Solid + Vite + WASM frontend. Its parse engine
@@ -390,6 +396,8 @@ jobs:
         run: cargo run -p aozora-xtask -q -- corpus render-correctness-gate --root "$AOZORA_CORPUS_ROOT" --baseline corpus/render-correctness-baseline.json
       - name: Render-digest ratchet gate (#414)
         run: cargo run -p aozora-xtask -q -- corpus digest-gate --root "$AOZORA_CORPUS_ROOT" --baseline corpus/render-digest.json
+      - name: Verbatim==sanitize gate (I5)
+        run: cargo run -p aozora-xtask -q -- corpus verbatim --root "$AOZORA_CORPUS_ROOT"
 
   # Phase M1 — Pandoc end-to-end smoke. Builds the CLI, runs
   # `aozora pandoc input.txt --format html` against a tiny ruby
@@ -441,6 +449,20 @@ jobs:
         with:
           key: smoke-ffi
       - run: bash crates/aozora-ffi/tests/c_smoke/run.sh
+
+  # Go SDK smoke — builds the Extism wasm and runs gofmt / go vet / go test
+  # against the Go binding (crates/aozora-go). CodeQL only *compiles* the Go
+  # binding; this is the ONLY CI job that executes `go test`, so a Go-SDK
+  # regression is caught here rather than at a contributor's local pre-push.
+  # Runs in the dev image (Go + Extism toolchain live there).
+  smoke-go:
+    needs: [changes, dev-image]
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: ./.github/actions/setup-dev-image
+      - run: just smoke-go
 
   # WASM build verification — install wasm32 target + wasm-pack, run
   # `wasm-pack build crates/aozora-wasm --target web --release`.
@@ -756,6 +778,7 @@ jobs:
       - corpus-audit-gate
       - pandoc-smoke
       - smoke-ffi
+      - smoke-go
       - wasm-build
       - cross-aarch64
       - wasm-test
