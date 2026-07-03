@@ -314,9 +314,17 @@ struct StreamingFrame {
 /// as its base. `span` is the ready-to-yield standalone gaiji span (used
 /// when no ruby follows); `payload` rebuilds the glyph as a
 /// `Segment::Gaiji` inside the ruby base when one does.
+///
+/// `bar` is the span of an explicit `｜` immediately preceding the gaiji
+/// (`元｜※［＃…］《…》`): it is held out of the preceding plain run so that,
+/// if a ruby adopts the gaiji, the redundant base-marker `｜` is dropped
+/// instead of leaking (the gaiji is unambiguously the base) while the
+/// ruby's source span still covers it for the tiling invariant. If no
+/// ruby follows, the `｜` is re-emitted as plain (`emit_pending_gaiji`).
 struct PendingRubyBase {
     span: ClassifiedSpan,
     payload: GaijiOwned,
+    bar: Option<Span>,
 }
 
 /// Outcome of [`ClassifyStream::try_ruby_over_gaiji_base`].
@@ -807,13 +815,13 @@ where
                     // the rebuild closes pathological doc 50685's
                     // memcpy_memmove 25.13 % bucket and doc 49178's
                     // 22.63 %, both attributed to this hot path.
-                    if let Some((span, payload)) = self.try_gaiji_emit(view, open_idx, rm_span) {
+                    if let Some(pending) = self.try_gaiji_emit(view, open_idx, rm_span) {
                         // Defer the emit one step: an immediately-following
                         // `《…》` ruby can adopt this gaiji as its base
                         // (`※［＃…］《みは》`). `process_event` / `finalize`
                         // flush it as a standalone span when the next event
                         // is not that ruby.
-                        self.pending_ruby_base = Some(PendingRubyBase { span, payload });
+                        self.pending_ruby_base = Some(pending);
                         return;
                     }
                     // Gaiji recognition declined. Fold the refmark bytes
@@ -1158,13 +1166,13 @@ where
             span: close_span, ..
         } = body.events[close_idx]
         else {
-            self.push_output(pending.span);
+            self.emit_pending_gaiji(pending);
             return GaijiBaseRuby::Declined;
         };
         if open_span.end >= close_span.start {
             // Empty `《》` reading — not a ruby. The gaiji stands alone and
             // the empty pair falls through to plain replay.
-            self.push_output(pending.span);
+            self.emit_pending_gaiji(pending);
             return GaijiBaseRuby::Declined;
         }
         let reading = {
@@ -1190,7 +1198,14 @@ where
         let node = self.alloc.ruby(base, reading);
         GaijiBaseRuby::Emitted(ClassifiedSpan {
             kind: SpanKind::Aozora(node),
-            source_span: Span::new(pending.span.source_span.start, close_span.end),
+            // Cover a dropped `｜` base-marker so the ruby region still tiles
+            // the source gap-free (the marker is consumed, not rendered).
+            source_span: Span::new(
+                pending
+                    .bar
+                    .map_or(pending.span.source_span.start, |b| b.start),
+                close_span.end,
+            ),
         })
     }
 
@@ -1439,7 +1454,7 @@ where
         body: BodyView<'_>,
         bracket_open_idx: usize,
         refmark_span: Span,
-    ) -> Option<(ClassifiedSpan, GaijiOwned)> {
+    ) -> Option<PendingRubyBase> {
         let mut ctx = RecogniseCtx {
             alloc: self.alloc,
             source: self.source,
@@ -1448,7 +1463,16 @@ where
             pending_decoration: None,
         };
         let m = ctx.recognize_gaiji(body, refmark_span, bracket_open_idx)?;
-        self.flush_plain_up_to(m.consume_start);
+        // An explicit `｜` (U+FF5C) immediately before the gaiji is a
+        // base-start marker for a following ruby. Hold it out of the plain
+        // run so `try_ruby_over_gaiji_base` can drop the redundant marker on
+        // adoption (the gaiji is unambiguously the base), or `emit_pending_gaiji`
+        // can re-emit it as plain when the gaiji stands alone.
+        // `｜` (U+FF5C) is 3 UTF-8 bytes; `ends_with` guarantees ≥3 precede.
+        let bar = self.source[..m.consume_start as usize]
+            .ends_with('\u{ff5c}')
+            .then(|| Span::new(m.consume_start - 3, m.consume_start));
+        self.flush_plain_up_to(bar.map_or(m.consume_start, |b| b.start));
         let node = self.alloc.gaiji(m.payload);
         self.pending_plain_start = None;
         // The gaiji still renders best-effort (as its description text)
@@ -1468,13 +1492,27 @@ where
                     m.consume_end,
                 )));
         }
-        Some((
-            ClassifiedSpan {
+        Some(PendingRubyBase {
+            span: ClassifiedSpan {
                 kind: SpanKind::Aozora(node),
                 source_span: Span::new(m.consume_start, m.consume_end),
             },
-            m.payload,
-        ))
+            payload: m.payload,
+            bar,
+        })
+    }
+
+    /// Emit a deferred gaiji that no ruby adopted: re-emit its held `｜`
+    /// base-marker (if any) as plain first — restoring the `元｜※［＃…］`
+    /// shape — then the standalone gaiji span.
+    fn emit_pending_gaiji(&mut self, pending: PendingRubyBase) {
+        if let Some(bar) = pending.bar {
+            self.push_output(ClassifiedSpan {
+                kind: SpanKind::Plain,
+                source_span: bar,
+            });
+        }
+        self.push_output(pending.span);
     }
 
     /// Final flush: emit any trailing Plain run covering the source
@@ -1523,7 +1561,7 @@ where
                 // to plain; a gaiji-mode refmark also falls into plain),
                 // then run final flush.
                 if let Some(pending) = self.pending_ruby_base.take() {
-                    self.push_output(pending.span);
+                    self.emit_pending_gaiji(pending);
                 }
                 if let Some(frame) = self.frame.take() {
                     let refmark = frame.gaiji_refmark;
@@ -1593,7 +1631,7 @@ where
         });
         if flush_gaiji {
             let pending = self.pending_ruby_base.take().expect("checked Some");
-            self.push_output(pending.span);
+            self.emit_pending_gaiji(pending);
         }
 
         // Stream-through path for top-level Quote / Tortoise — see
