@@ -80,7 +80,7 @@ export interface ContainerPair {
 
 /** Generic wire envelope. Every endpoint emits this top-level shape. */
 export interface JsonEnvelope<T> {
-  schema_version: 1;
+  schemaVersion: 1;
   data: ReadonlyArray<T>;
 }
 
