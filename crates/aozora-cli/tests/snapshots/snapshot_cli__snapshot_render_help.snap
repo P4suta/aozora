@@ -56,7 +56,14 @@ Options:
           directive span) — the same near-misses `aozora::lint::non_canonical_directive` flags and
           `aozora fmt --fix-notation` rewrites. Opt-in and read-only: without this flag an
           unrecognised directive stays a hidden `aozora-directive` span, and this never rewrites the
-          input source. Aliased `--fix-notation` for symmetry with `aozora fmt`
+          input source. Aliased `--fix-notation` for symmetry with `aozora fmt`. Consults the
+          zero-false-positive Tier1 catalogue only
+
+      --degraded
+          Additionally reduce the lossy / judgment "degraded" forms Tier1 refuses (Tier2) — e.g.
+          `［＃中文字、ゴシック体］` renders bold, and `［＃ここから最後まで３字下げ］` an indent that runs to the document
+          end. Implies `--normalize`, is render-only, and never rewrites the source (a Tier2 misfire
+          can reach only this render output). Looser than `--normalize`. See ADR-0026
 
   -h, --help
           Print help (see a summary with '-h')
