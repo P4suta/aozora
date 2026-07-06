@@ -9,7 +9,7 @@
 ## Context
 
 ADR-0018 landed the foundation of the minimal-diff edit splice (#202): a
-total source-region tiling ([`Tree::owned_regions`]) and a single-region
+total source-region tiling ([`Tree::regions`]) and a single-region
 splice for self-contained nodes. It deliberately deferred the regions whose
 ownership is **split** (a non-adjacent [`ForwardOrigin::Referenced`] forward,
 a heading hint, a margin note — the displayed literal lives in a separate
@@ -177,8 +177,8 @@ These are terminal truths surfaced by the verify step, not deferrals.
   (`ForwardOrigin` provenance enum).
 
 [`ForwardOrigin`]: https://docs.rs/aozora/latest/aozora/enum.ForwardOrigin.html
-[`Node`]: https://docs.rs/aozora/latest/aozora/owned/enum.NodeOwned.html
-[`Tree::owned_regions`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.owned_regions
+[`Node`]: https://docs.rs/aozora/latest/aozora/ast/enum.Node.html
+[`Tree::regions`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.regions
 [`Tree::coupling`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.coupling
 [`Tree::splice`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.splice
 [`SpliceSafety`]: https://docs.rs/aozora/latest/aozora/enum.SpliceSafety.html

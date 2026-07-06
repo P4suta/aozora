@@ -37,9 +37,9 @@ Add a **source-region ownership** layer in the `aozora` core crate
 (`crates/aozora/src/splice.rs`), as a purely additive read surface plus a
 minimal-diff splice primitive.
 
-**Ownership tiling.** [`Tree::owned_regions`] projects `source_nodes`
+**Ownership tiling.** [`Tree::regions`] projects `source_nodes`
 into a *total, gap-free, ordered, non-overlapping* tiling of the sanitized
-source: one `OwnedRegion` per classified node plus the interstitial plain
+source: one `Region` per classified node plus the interstitial plain
 runs between them. Concatenating every region's bytes reproduces
 [`Tree::to_source_verbatim`] exactly. This lives in core because the
 ownership truth is `SourceNode.source_span` (sanitized coordinates); the
@@ -129,6 +129,6 @@ full corpus (17,889 works at time of writing).
   (`ForwardOrigin` provenance enum).
 
 [`ForwardOrigin`]: https://docs.rs/aozora/latest/aozora/enum.ForwardOrigin.html
-[`Tree::owned_regions`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.owned_regions
+[`Tree::regions`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.regions
 [`Tree::to_source_verbatim`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.to_source_verbatim
 [`Tree::splice_source`]: https://docs.rs/aozora/latest/aozora/struct.Tree.html#method.splice_source

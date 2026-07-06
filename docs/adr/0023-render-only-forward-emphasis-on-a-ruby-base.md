@@ -39,16 +39,16 @@ splice decline stands.
 ## Decision
 
 Add a **render-only** decoration to the already-emitted ruby, rather than nest
-emphasis inside it (which the AST cannot express — `ForwardFormatOwned.target`
-is a `ContentRange` over `ContentOwned{Plain|Segments}` and holds no `Ruby`).
+emphasis inside it (which the AST cannot express — `ForwardFormat.target`
+is a `ContentRange` over `Content{Plain|Segments}` and holds no `Ruby`).
 
 ### Model
 
-`RubyOwned` gains `base_emphasis: Option<ForwardAttr>` (default `None`).
+`Ruby` gains `base_emphasis: Option<ForwardAttr>` (default `None`).
 `ForwardAttr` is `Copy` and carries the full forward attribute
 (`Framed`, `SmallScript`, `Bouten { kind, position }`, `Bold`, …) with no
-interned body, so `RubyOwned` stays `Copy` — no `Box`/`Id`, the inline cluster
-is preserved, and the `assert_copy::<RubyOwned>()` pin still holds. Because the
+interned body, so `Ruby` stays `Copy` — no `Box`/`Id`, the inline cluster
+is preserved, and the `assert_copy::<Ruby>()` pin still holds. Because the
 field rides on the ruby, not on `ForwardAttr`, downstream pins on `ForwardAttr`
 are untouched.
 
@@ -80,10 +80,10 @@ target (`Fraction`) all stay declined too.
 
 ### Render
 
-`render_ruby_owned` wraps the base render in the attribute's emphasis element,
+`render_ruby` wraps the base render in the attribute's emphasis element,
 placed **inside** `<ruby>`, before the base's `<rp>`, so the emphasis marks the
 base glyphs and the `<rt>` reading stays outside it. The wrapper is derived by
-reusing `render_format_owned` over a synthetic `ForwardOrigin::SelfContained`
+reusing `render_format` over a synthetic `ForwardOrigin::SelfContained`
 leaf on the base, so **every** attribute kind wraps identically —
 傍点 → `<em class="aozora-bouten …">`, 罫囲み → framed `<span>`, 行右小書き / 太字 /
 二重傍線 / 文字サイズ → their own elements — with no bouten special-case. The
@@ -117,7 +117,7 @@ reuse a cached ruby with stale emphasis. `.is_some()` reads only the ruby's
   (~50 corpus occurrences — `forward_referent_not_stylable` drops from 211 to
   161) with no false warning, attr-agnostically across 罫囲み / 行右小書き /
   二重傍線 / 太字 / 傍点 / 文字サイズ.
-- No new `NodeKind`/`DirectiveKind`; `RubyOwned` stays `Copy`; the node table,
+- No new `NodeKind`/`DirectiveKind`; `Ruby` stays `Copy`; the node table,
   pairs, container-pairs, serialize output, and the round-trip fixed point are
   all byte-identical. Only `to_html` and the diagnostics envelope change, and
   only for the resolved unique-ruby-base case. The corpus `Unknown` total is
@@ -139,7 +139,7 @@ reuse a cached ruby with stale emphasis. `.is_some()` reads only the ruby's
   yields the ruby to the consumer before it classifies the later directive, so
   it holds no `&mut` to reach back. The `lower_spans` post-pass is the correct
   seam.
-- **Nest a bouten node around the ruby.** Impossible: `ForwardFormatOwned.target`
+- **Nest a bouten node around the ruby.** Impossible: `ForwardFormat.target`
   cannot hold a `Ruby`, and widening it would reintroduce a boxed, non-`Copy`
   target for a single render case.
 - **Wrap the whole `<ruby>` in the emphasis.** Rejected: it emphasises the `<rt>`
@@ -159,13 +159,13 @@ reuse a cached ruby with stale emphasis. `.is_some()` reads only the ruby's
 
 ## References
 
-- `crates/aozora-syntax/src/owned/payload.rs` (`RubyOwned.base_emphasis`),
-  `crates/aozora-syntax/src/alloc_owned.rs` (`ruby` / `left_ruby`),
+- `crates/aozora-syntax/src/ast/payload.rs` (`Ruby.base_emphasis`),
+  `crates/aozora-syntax/src/alloc.rs` (`ruby` / `left_ruby`),
   `crates/aozora-syntax/src/format.rs` (`ForwardAttr`, `ForwardOrigin`).
 - `crates/aozora-pipeline/src/pipeline.rs`
   (`lower_spans`, `decorate_ruby_bases`, the diagnostic `retain`).
-- `crates/aozora-render/src/render_node_owned.rs`
-  (`render_ruby_owned`, `render_format_owned`).
+- `crates/aozora-render/src/render_node.rs`
+  (`render_ruby`, `render_format`).
 - `crates/aozora/src/incremental.rs` (`node_forbids_region_reuse`).
 - `crates/aozora-conformance/fixtures/render/mixed_ruby_bouten/`,
   `.../ruby_base_framed_forward/`, `.../ruby_base_bouten_ambiguous/`,

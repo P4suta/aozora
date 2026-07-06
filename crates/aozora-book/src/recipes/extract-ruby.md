@@ -14,7 +14,7 @@ carries no nested constructs.
 
 ```rust
 # extern crate aozora;
-use aozora::{Document, NodeOwned, NodeRefOwned};
+use aozora::{Document, Node, NodeRef};
 
 fn main() {
     let source = "｜青梅《おうめ》街道を｜逢《お》う";
@@ -24,7 +24,7 @@ fn main() {
 
     for sn in tree.source_nodes() {
         // Ruby is always an inline construct.
-        if let NodeRefOwned::Inline(NodeOwned::Ruby(ruby)) = sn.node {
+        if let NodeRef::Inline(Node::Ruby(ruby)) = sn.node {
             // `base` / `reading` are ContentRange handles; resolve them
             // against the store. `content_range_as_plain` is Some for the
             // common no-nested-construct case, None for mixed content.
@@ -56,25 +56,25 @@ fn main() {
   `None` when the run carries nested constructs (a gaiji reference or
   annotation inside the base, for instance). That is rare for readings
   but does happen for bases. To flatten those too, walk the resolved
-  content / segment runs instead of bailing (the owned `ContentOwned` /
-  `SegmentOwned` types live under the `syntax::owned` module):
+  content / segment runs instead of bailing (the owned `Content` /
+  `Segment` types live under the `syntax::ast` module):
 
   ```rust
   # extern crate aozora;
-  use aozora::syntax::owned::{ContentOwned, NodeStore, SegmentOwned};
-  use aozora::syntax::owned::ContentRange;
+  use aozora::syntax::ast::{Content, NodeStore, Segment};
+  use aozora::syntax::ast::ContentRange;
 
   fn text_of(range: ContentRange, store: &NodeStore) -> String {
       let mut out = String::new();
       for &content in store.resolve_content_range(range) {
           match content {
-              ContentOwned::Plain(id) => out.push_str(store.resolve_str(id)),
-              ContentOwned::Segments(seg_range) => {
+              Content::Plain(id) => out.push_str(store.resolve_str(id)),
+              Content::Segments(seg_range) => {
                   for seg in store.resolve_seg_range(seg_range) {
-                      if let SegmentOwned::Text(id) = seg {
+                      if let Segment::Text(id) = seg {
                           out.push_str(store.resolve_str(*id));
                       }
-                      // SegmentOwned::Gaiji / Directive carry non-plain
+                      // Segment::Gaiji / Directive carry non-plain
                       // payloads; handle them here if your glossary needs them.
                   }
               }
@@ -85,9 +85,9 @@ fn main() {
   }
   ```
 
-  `resolve_content_range` yields the run's `ContentOwned` entries; a
+  `resolve_content_range` yields the run's `Content` entries; a
   `Plain` resolves to one interned string, a `Segments` run to a
-  `SegmentOwned` sequence.
+  `Segment` sequence.
 
 - **`side`.** `ruby.side` is `RubySide::Right` for the standard
   `｜base《reading》` / implicit forms and `RubySide::Left` for the

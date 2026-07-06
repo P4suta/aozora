@@ -13,7 +13,7 @@
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
 use aozora_spec::Sentinel;
-use aozora_syntax::owned::NodeRefOwned;
+use aozora_syntax::ast::NodeRef;
 use proptest::prelude::*;
 
 #[allow(
@@ -57,21 +57,21 @@ fn assert_deterministic(source: &str) {
             "registry[{pos_a}] sentinel kind drift"
         );
         match (nr_a, nr_b) {
-            (NodeRefOwned::Inline(node_a), NodeRefOwned::Inline(node_b))
-            | (NodeRefOwned::BlockLeaf(node_a), NodeRefOwned::BlockLeaf(node_b)) => {
+            (NodeRef::Inline(node_a), NodeRef::Inline(node_b))
+            | (NodeRef::BlockLeaf(node_a), NodeRef::BlockLeaf(node_b)) => {
                 assert_eq!(
                     node_a.xml_node_name(),
                     node_b.xml_node_name(),
                     "registry[{pos_a}] inline / block-leaf payload kind drift"
                 );
             }
-            (NodeRefOwned::BlockOpen(kind_a), NodeRefOwned::BlockOpen(kind_b)) => {
+            (NodeRef::BlockOpen(kind_a), NodeRef::BlockOpen(kind_b)) => {
                 assert_eq!(
                     kind_a, kind_b,
                     "registry[{pos_a}] container open kind drift"
                 );
             }
-            (NodeRefOwned::BlockClose(kind_a), NodeRefOwned::BlockClose(kind_b)) => {
+            (NodeRef::BlockClose(kind_a), NodeRef::BlockClose(kind_b)) => {
                 assert_eq!(
                     kind_a, kind_b,
                     "registry[{pos_a}] container close kind drift"

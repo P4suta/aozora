@@ -18,8 +18,8 @@
 //! differential gate.
 //!
 //! All coordinates here are **sanitized-source** byte offsets (the space every
-//! [`OwnedLexOutput::source_span`](crate::SourceNodeOwned::source_span) and
-//! [`OwnedLexOutput::pairs`](crate::OwnedLexOutput::pairs) indexes); the
+//! [`LexOutput::source_span`](crate::SourceNode::source_span) and
+//! [`LexOutput::pairs`](crate::LexOutput::pairs) indexes); the
 //! raw↔sanitized bridge belongs to a later wiring PR. A cut is admitted only
 //! where the block-container depth is zero and no resolved delimiter pair
 //! straddles it — see [`structurally_safe`].
@@ -30,8 +30,7 @@ use std::sync::Arc;
 
 use crate::splice::{RegionRole, classify_node_ref};
 use crate::{
-    CoupledKind, Diagnostic, Document, NodeOwned, NodeRefOwned, OwnedLexOutput, PairLink,
-    SourceNodeOwned, SpliceSafety,
+    CoupledKind, Diagnostic, Document, LexOutput, Node, NodeRef, PairLink, SourceNode, SpliceSafety,
 };
 
 /// Read-only byte view of a **sanitized** buffer the incremental engine cuts,
@@ -143,13 +142,13 @@ impl SanitizedSrc for &str {
 /// tables (`source_nodes` / `pairs` / `diagnostics`).
 ///
 /// The LSP's per-keystroke hot path keeps only these two fields of the prior
-/// parse (its `DiagBase`) and never materialises the full [`OwnedLexOutput`].
+/// parse (its `DiagBase`) and never materialises the full [`LexOutput`].
 /// Both are store-independent: the prologue's region-find
 /// (`minimal_balanced_region` / [`PieceSeq::structurally_safe`] / the coupling
 /// guard) and the diagnostics splice read only `sanitized` and the
 /// [`PieceSeq`]'s self-contained queries — a node's `source_span` and the
-/// `NodeRefOwned` discriminant, never a `StrId`/`ContentRange` resolved against a
-/// [`crate::NodeStore`]. A full [`OwnedLexOutput`] projects into one via
+/// `NodeRef` discriminant, never a `StrId`/`ContentRange` resolved against a
+/// [`crate::NodeStore`]. A full [`LexOutput`] projects into one via
 /// [`DiagBaseRef::from_cached`] (paired with a [`PieceSeq`] built over the same
 /// tables by [`PieceSeq::from_contiguous`]).
 ///
@@ -172,7 +171,7 @@ pub struct DiagBaseRef<'a, S: SanitizedSrc = &'a str> {
 }
 
 impl<'a> DiagBaseRef<'a> {
-    /// Project a full [`OwnedLexOutput`]'s sanitized buffer plus a [`PieceSeq`]
+    /// Project a full [`LexOutput`]'s sanitized buffer plus a [`PieceSeq`]
     /// over its tables into a store-free diagnostics base.
     ///
     /// The caller owns the [`PieceSeq`] (so it can outlive this borrow). The
@@ -181,7 +180,7 @@ impl<'a> DiagBaseRef<'a> {
     /// byte-identical to `cached`'s (the [`PieceSeq`] ≡ contiguous invariant), so
     /// the prologue's region-find reads either interchangeably.
     #[must_use]
-    pub fn from_cached(cached: &'a OwnedLexOutput, pieces: &'a PieceSeq) -> Self {
+    pub fn from_cached(cached: &'a LexOutput, pieces: &'a PieceSeq) -> Self {
         Self {
             sanitized: &cached.sanitized,
             pieces,
@@ -247,7 +246,7 @@ impl RegionIndex {
     /// linear recurrence of `structurally_safe` exactly.
     #[must_use]
     pub(crate) fn build(
-        nodes: &[SourceNodeOwned],
+        nodes: &[SourceNode],
         pairs: &[PairLink],
         diagnostics: &[Diagnostic],
     ) -> Self {
@@ -258,8 +257,8 @@ impl RegionIndex {
         let mut max_end: u32 = 0;
         for sn in nodes {
             match sn.node {
-                NodeRefOwned::BlockOpen(_) => depth += 1,
-                NodeRefOwned::BlockClose(_) => depth = (depth - 1).max(0),
+                NodeRef::BlockOpen(_) => depth += 1,
+                NodeRef::BlockClose(_) => depth = (depth - 1).max(0),
                 _ => {}
             }
             depth_prefix.push(depth);
@@ -302,7 +301,7 @@ impl RegionIndex {
     /// keeps every block container and resolved pair whole. `nodes` must be the
     /// same slice the index was built over (sorted by `source_span.start`).
     #[must_use]
-    fn structurally_safe(&self, nodes: &[SourceNodeOwned], off: u32) -> bool {
+    fn structurally_safe(&self, nodes: &[SourceNode], off: u32) -> bool {
         let k = nodes.partition_point(|sn| sn.source_span.start < off);
         // A classified span with `start < off` whose `end > off` straddles `off`.
         let straddle = k > 0 && self.max_end_prefix[k - 1] > off;
@@ -362,7 +361,7 @@ struct PieceIndex {
 impl PieceIndex {
     /// Build the index once over a backing `nodes` / `pairs` / `diagnostics`
     /// triple. Verbatim [`RegionIndex::build`]; see it for the recurrence.
-    fn build(nodes: &[SourceNodeOwned], pairs: &[PairLink], diagnostics: &[Diagnostic]) -> Self {
+    fn build(nodes: &[SourceNode], pairs: &[PairLink], diagnostics: &[Diagnostic]) -> Self {
         Self {
             region: RegionIndex::build(nodes, pairs, diagnostics),
         }
@@ -386,7 +385,7 @@ struct PieceFlags {
 
 impl PieceFlags {
     /// Compute the flags over a piece's live `nodes` / `diags` slices.
-    fn compute(nodes: &[SourceNodeOwned], diags: &[Diagnostic]) -> Self {
+    fn compute(nodes: &[SourceNode], diags: &[Diagnostic]) -> Self {
         Self {
             has_whole_doc_scoped_diag: diags.iter().any(is_whole_document_scoped),
             has_unbalanced_delimiter: diags.iter().any(|d| {
@@ -414,7 +413,7 @@ impl PieceFlags {
 #[derive(Debug, Clone)]
 struct Piece {
     /// Whole backing source-node table (sorted by `source_span.start`), shared.
-    nodes: Arc<[SourceNodeOwned]>,
+    nodes: Arc<[SourceNode]>,
     /// This piece's live index range into [`nodes`](Self::nodes).
     n_range: Range<usize>,
     /// Whole backing pair table (sorted by `close.end`), shared.
@@ -542,7 +541,7 @@ impl PieceSeq {
     /// later `splice` can divide them at a safe cut by a clean partition.
     #[must_use]
     pub fn from_contiguous(
-        nodes: &[SourceNodeOwned],
+        nodes: &[SourceNode],
         pairs: &[PairLink],
         diagnostics: &[Diagnostic],
         san_len: u32,
@@ -574,13 +573,13 @@ impl PieceSeq {
     /// and `diagnostics` position-sorted. The bridge by which the corpus
     /// differential gate keeps reading the engine `&str`-first.
     #[must_use]
-    pub fn flatten(&self) -> (Vec<SourceNodeOwned>, Vec<PairLink>, Vec<Diagnostic>) {
+    pub fn flatten(&self) -> (Vec<SourceNode>, Vec<PairLink>, Vec<Diagnostic>) {
         let total = self.cum.last().map_or(0, |agg| agg.cum_count) as usize;
         let mut nodes = Vec::with_capacity(total);
         let mut pairs = Vec::new();
         for piece in &self.pieces {
             for sn in &piece.nodes[piece.n_range.start..piece.n_range.end] {
-                nodes.push(SourceNodeOwned {
+                nodes.push(SourceNode {
                     source_span: sn.source_span.shifted(piece.san_shift),
                     node: sn.node,
                 });
@@ -640,12 +639,12 @@ impl PieceSeq {
     #[must_use]
     #[allow(
         clippy::too_many_arguments,
-        reason = "the five inputs are irreducible: the region plus its three parallel re-lexed tables plus the sanitized length delta; bundling them into an ad-hoc struct would move the arity without adding meaning, and keeping raw tables decouples PieceSeq from OwnedLexOutput"
+        reason = "the five inputs are irreducible: the region plus its three parallel re-lexed tables plus the sanitized length delta; bundling them into an ad-hoc struct would move the arity without adding meaning, and keeping raw tables decouples PieceSeq from LexOutput"
     )]
     pub fn splice(
         &self,
         region: Range<u32>,
-        relexed_nodes: &[SourceNodeOwned],
+        relexed_nodes: &[SourceNode],
         relexed_pairs: &[PairLink],
         relexed_diags: &[Diagnostic],
         d_san: i64,
@@ -914,11 +913,11 @@ fn sort_diags(diags: &mut [Diagnostic]) {
 /// [`PieceSeq`] — the *next* edit's region-find base, from which the LSP also
 /// flattens this edit's diagnostics ([`PieceSeq::collect_diagnostics`]) — plus
 /// the reuse accounting the LSP reports as cache hits/misses. No
-/// [`OwnedLexOutput`] (no `normalized`, `registry`, `container_pairs`, or
+/// [`LexOutput`] (no `normalized`, `registry`, `container_pairs`, or
 /// [`crate::NodeStore`]) is built — that is the whole point of the hot path.
 ///
 /// The re-lexed region's piece carries the **re-lexed** sub-output's
-/// `NodeRefOwned` handles verbatim (no store graft). This is sound only because
+/// `NodeRef` handles verbatim (no store graft). This is sound only because
 /// the next edit's region-find reads those handles store-independently — see
 /// [`crate::reparse_incremental_diagnostics_only`] for the pinned invariant.
 #[derive(Debug)]
@@ -942,9 +941,9 @@ pub struct DiagSplice {
 struct Prologue {
     /// Minimal balanced region (sanitized coordinates) the edit re-lexes.
     region: Range<u32>,
-    /// The isolated re-lex of the edited region (a full [`OwnedLexOutput`] of
+    /// The isolated re-lex of the edited region (a full [`LexOutput`] of
     /// the region slice — `O(region)`, not `O(doc)`).
-    relexed: OwnedLexOutput,
+    relexed: LexOutput,
     /// Sanitized suffix shift (`new_len - old_len` over the edit), equal to the
     /// region re-lex's length delta.
     d_san: i64,
@@ -1078,11 +1077,7 @@ pub(crate) fn candidate_boundaries(source: &str) -> Vec<usize> {
         reason = "linear oracle for the RegionIndex::structurally_safe proptest"
     )
 )]
-pub(crate) fn structurally_safe(
-    san_off: u32,
-    nodes: &[SourceNodeOwned],
-    pairs: &[PairLink],
-) -> bool {
+pub(crate) fn structurally_safe(san_off: u32, nodes: &[SourceNode], pairs: &[PairLink]) -> bool {
     // Block-container nesting depth, via the same lenient LIFO the
     // normalizer uses (a stray close on an empty stack is ignored). Reject
     // the cut if a classified span strictly contains it, or depth is
@@ -1096,8 +1091,8 @@ pub(crate) fn structurally_safe(
             return false; // a classified span straddles the cut
         }
         match sn.node {
-            NodeRefOwned::BlockOpen(_) => depth += 1,
-            NodeRefOwned::BlockClose(_) => depth = (depth - 1).max(0),
+            NodeRef::BlockOpen(_) => depth += 1,
+            NodeRef::BlockClose(_) => depth = (depth - 1).max(0),
             _ => {}
         }
     }
@@ -1216,7 +1211,7 @@ pub(crate) fn minimal_balanced_region<S: SanitizedSrc>(
 /// Single-sources the classification through [`classify_node_ref`] (the #202
 /// splice authority) so this region-reuse guard and the #202 splice cannot
 /// drift.
-fn node_forbids_region_reuse(node: NodeRefOwned) -> bool {
+fn node_forbids_region_reuse(node: NodeRef) -> bool {
     let (role, safety) = classify_node_ref(node);
     matches!(
         safety,
@@ -1250,7 +1245,7 @@ fn node_forbids_region_reuse(node: NodeRefOwned) -> bool {
         // decline region reuse here. `is_some()` reads only the ruby's `Copy`
         // Option tag, so it is store-free (see the note below).
         node,
-        NodeRefOwned::Inline(NodeOwned::Ruby(r)) | NodeRefOwned::BlockLeaf(NodeOwned::Ruby(r))
+        NodeRef::Inline(Node::Ruby(r)) | NodeRef::BlockLeaf(Node::Ruby(r))
             if r.base_emphasis.is_some()
     )
 }
@@ -1260,12 +1255,12 @@ fn node_forbids_region_reuse(node: NodeRefOwned) -> bool {
 /// negative and returns to zero. An unbalanced region would have paired a
 /// container across the former cut boundary, so an isolated re-lex would nest
 /// it differently than the whole document does.
-fn relexed_is_balanced(nodes: &[SourceNodeOwned]) -> bool {
+fn relexed_is_balanced(nodes: &[SourceNode]) -> bool {
     let mut depth: i32 = 0;
     for sn in nodes {
         match sn.node {
-            NodeRefOwned::BlockOpen(_) => depth += 1,
-            NodeRefOwned::BlockClose(_) => {
+            NodeRef::BlockOpen(_) => depth += 1,
+            NodeRef::BlockClose(_) => {
                 depth -= 1;
                 if depth < 0 {
                     return false;
@@ -1286,7 +1281,7 @@ fn relexed_is_balanced(nodes: &[SourceNodeOwned]) -> bool {
 ///
 /// Reads only the store-free [`DiagBaseRef`] of the cached parse, so the
 /// diagnostics-only hot path can run it without ever materialising the full
-/// [`OwnedLexOutput`]. [`crate::reparse_incremental_diagnostics_only`] builds on
+/// [`LexOutput`]. [`crate::reparse_incremental_diagnostics_only`] builds on
 /// this single helper.
 ///
 /// Returns `None` (the caller then full-parses, trivially correct) when:
@@ -1394,7 +1389,7 @@ fn splice_prologue<S: SanitizedSrc>(
     //    changes it, bail conservatively.
     let new_r_end = usize::try_from(i64::from(region.end) + edit_delta).ok()?;
     let new_region_src = new_sanitized.slice(r_start..new_r_end)?;
-    let relexed = Document::new(&*new_region_src).parse_owned();
+    let relexed = Document::new(&*new_region_src).lex();
     if relexed.sanitized != *new_region_src {
         return None;
     }
@@ -1445,7 +1440,7 @@ fn splice_prologue<S: SanitizedSrc>(
 /// The LSP's per-keystroke hot path: compute the spliced diagnostics for the
 /// edited text `new_sanitized` (a sanitized fixed point) from the store-free
 /// [`DiagBaseRef`] of the prior parse and the single sanitized-coordinate edit
-/// `edit_old`, **without building an [`OwnedLexOutput`]**.
+/// `edit_old`, **without building an [`LexOutput`]**.
 ///
 /// A consumer trace established that the debounced `publishDiagnostics` path
 /// reads only `cache.diagnostics()`; the full tree (`with_tree`) is needed only
@@ -1462,8 +1457,8 @@ fn splice_prologue<S: SanitizedSrc>(
 ///
 /// # Store-free-base soundness
 ///
-/// The region's nodes carry the **re-lexed** sub-output's [`NodeRefOwned`]
-/// handles verbatim — **no store graft, no store clone**. A `NodeRefOwned` that
+/// The region's nodes carry the **re-lexed** sub-output's [`NodeRef`]
+/// handles verbatim — **no store graft, no store clone**. A `NodeRef` that
 /// embeds a `StrId`/`ContentRange` resolves only against the store it was built
 /// in (here, the re-lex's transient store, which is dropped). This is sound
 /// **only** because the resulting [`DiagSplice::pieces`] (the maintained
@@ -1472,7 +1467,7 @@ fn splice_prologue<S: SanitizedSrc>(
 /// [`relexed_is_balanced`] via the prologue, and the
 /// [`node_forbids_region_reuse`] coupling guard),
 /// every one of which reads only a node's `source_span` (`Copy`,
-/// store-independent), the `NodeRefOwned` **discriminant** (`BlockOpen` /
+/// store-independent), the `NodeRef` **discriminant** (`BlockOpen` /
 /// `BlockClose` / `Inline` / …), plus the ruby's `Copy` `base_emphasis`
 /// Option-tag (`.is_some()`, a store-free read of the inline
 /// [`ForwardAttr`](aozora_syntax::ForwardAttr) niche) — and never resolves a
@@ -1495,7 +1490,7 @@ pub(crate) fn reparse_incremental_diagnostics_only<S: SanitizedSrc>(
     } = splice_prologue(base, new_sanitized, edit_old)?;
 
     // Invariant pin (store-free base, see the doc above): the region nodes are
-    // carried with the re-lex's own `NodeRefOwned` handles and never resolved
+    // carried with the re-lex's own `NodeRef` handles and never resolved
     // against a store on this path. If a future change needs a region node's
     // resolved payload here, it must graft into a real store, not read it off
     // the transient re-lex store this `relexed` is about to drop. This assert
@@ -1543,13 +1538,13 @@ mod tests {
     use crate::Document;
 
     /// Parse `src` to a real owned lex output.
-    fn owned(src: &str) -> OwnedLexOutput {
-        Document::new(src).parse_owned()
+    fn output(src: &str) -> LexOutput {
+        Document::new(src).lex()
     }
 
     /// A [`PieceSeq`] over a cached output's store-free tables — the single-piece
     /// base the region-find prologue reads.
-    fn pieces_of(cached: &OwnedLexOutput) -> PieceSeq {
+    fn pieces_of(cached: &LexOutput) -> PieceSeq {
         PieceSeq::from_contiguous(
             &cached.source_nodes,
             &cached.pairs,
@@ -1560,7 +1555,7 @@ mod tests {
 
     /// The full ascending safe-cut set the region finder works over, for
     /// asserting endpoint membership.
-    fn safe_cuts(cached: &OwnedLexOutput) -> Vec<u32> {
+    fn safe_cuts(cached: &LexOutput) -> Vec<u32> {
         let len = u32::try_from(cached.sanitized.len()).unwrap();
         let mut cuts = vec![0u32];
         for b in candidate_boundaries(&cached.sanitized) {
@@ -1573,7 +1568,7 @@ mod tests {
         cuts
     }
 
-    fn assert_endpoint_safe(cached: &OwnedLexOutput, off: u32) {
+    fn assert_endpoint_safe(cached: &LexOutput, off: u32) {
         let len = u32::try_from(cached.sanitized.len()).unwrap();
         assert!(
             off == 0 || off == len || structurally_safe(off, &cached.source_nodes, &cached.pairs),
@@ -1585,7 +1580,7 @@ mod tests {
     fn edit_inside_paragraph_shrinks_below_whole_doc() {
         // Three blank-line-separated paragraphs, all plain text.
         let src = "あいうえお\n\nかきくけこ\n\nさしすせそ\n";
-        let cached = owned(src);
+        let cached = output(src);
         let pieces = pieces_of(&cached);
         let len = u32::try_from(cached.sanitized.len()).unwrap();
         // Edit inside the middle paragraph "かきくけこ".
@@ -1613,7 +1608,7 @@ mod tests {
     #[test]
     fn single_paragraph_has_no_interior_cut() {
         let src = "あいうえおかきくけこ\n";
-        let cached = owned(src);
+        let cached = output(src);
         let pieces = pieces_of(&cached);
         let edit = 3..6;
         assert_eq!(
@@ -1626,7 +1621,7 @@ mod tests {
     fn whole_document_scoped_diagnostic_yields_none() {
         // An unresolved standalone gaiji reference is whole-document-scoped.
         let src = "前の段落\n\n※［＃存在しない外字、第1水準1-2-3］\n\n後の段落\n";
-        let cached = owned(src);
+        let cached = output(src);
         let pieces = pieces_of(&cached);
         assert!(
             cached.diagnostics.iter().any(is_whole_document_scoped),
@@ -1648,7 +1643,7 @@ mod tests {
     #[test]
     fn out_of_bounds_edit_yields_none() {
         let src = "あいうえお\n\nかきくけこ\n";
-        let cached = owned(src);
+        let cached = output(src);
         let pieces = pieces_of(&cached);
         let len = cached.sanitized.len();
         // end past sanitized length.
@@ -1671,7 +1666,7 @@ mod tests {
     #[test]
     fn edit_spanning_blank_line_widens_to_both_paragraphs() {
         let src = "あいうえお\n\nかきくけこ\n\nさしすせそ\n";
-        let cached = owned(src);
+        let cached = output(src);
         let pieces = pieces_of(&cached);
         // Edit straddles the blank line between paragraph 1 and 2.
         let p1 = src.find("うえお").unwrap();
@@ -1695,7 +1690,7 @@ mod tests {
         // CRLF source (as real Aozora Bunko files are). Sanitize strips the
         // \r, so sanitized offsets are smaller than raw offsets.
         let src = "あいうえお\r\n\r\nかきくけこ\r\n\r\nさしすせそ\r\n";
-        let cached = owned(src);
+        let cached = output(src);
         let pieces = pieces_of(&cached);
         let san = &cached.sanitized;
         assert!(!san.contains('\r'), "sanitized buffer drops CR");
@@ -1721,7 +1716,7 @@ mod tests {
     #[test]
     fn crlf_single_paragraph_yields_none() {
         let src = "あいうえおかきくけこ\r\n";
-        let cached = owned(src);
+        let cached = output(src);
         let pieces = pieces_of(&cached);
         assert_eq!(
             minimal_balanced_region(&DiagBaseRef::from_cached(&cached, &pieces), 0..3),
@@ -1731,7 +1726,7 @@ mod tests {
 
     #[test]
     fn empty_document_yields_none() {
-        let cached = owned("");
+        let cached = output("");
         let pieces = pieces_of(&cached);
         assert_eq!(cached.sanitized.len(), 0, "empty source sanitizes to empty");
         // Zero-width edit on the empty document: the region is 0..0 == 0..len,
@@ -1751,7 +1746,7 @@ mod tests {
         // boundary. (Edits go through a variable to avoid the
         // `reversed_empty_ranges` lint on literal equal-bound ranges.)
         let src = "あいうえお\n\nかきくけこ\n\nさしすせそ\n";
-        let cached = owned(src);
+        let cached = output(src);
         let pieces = pieces_of(&cached);
         let len = u32::try_from(cached.sanitized.len()).unwrap();
         let at_offset = |at: usize| {
@@ -1798,7 +1793,7 @@ mod tests {
         // A resolvable standalone gaiji in the middle paragraph; an edit that
         // mangles its 面区点 tail makes the isolated re-lex emit a
         // whole-document-scoped UnresolvedGaiji, so the splice declines.
-        let cached = owned("前の段落\n\n※［＃ばける、第3水準1-15-94］\n\n後の段落\n");
+        let cached = output("前の段落\n\n※［＃ばける、第3水準1-15-94］\n\n後の段落\n");
         assert!(
             !cached.diagnostics.iter().any(is_whole_document_scoped),
             "fixture's gaiji resolves cleanly: {:?}",
@@ -1810,7 +1805,7 @@ mod tests {
         let at = san.find("1-15-94").expect("menkuten tail");
         let edit = at..at + "1-15-94".len();
         let new_san = apply_edit(&san, edit.clone(), "9-99-99");
-        let full = owned(&new_san);
+        let full = output(&new_san);
         assert_eq!(full.sanitized, new_san, "edit is a sanitize fixed point");
         assert!(
             full.diagnostics.iter().any(is_whole_document_scoped),
@@ -1830,7 +1825,7 @@ mod tests {
     fn inserted_lone_open_bracket_declines() {
         // Inserting a lone 《 into a paragraph leaves an unclosed ruby bracket;
         // the isolated re-lex reports UnclosedBracket, so the splice declines.
-        let cached = owned("前の段落\n\nかきくけこ\n\n後の段落\n");
+        let cached = output("前の段落\n\nかきくけこ\n\n後の段落\n");
         let san = cached.sanitized.clone();
         let at = san.find("くけこ").expect("middle paragraph");
         let edit = at..at;
@@ -1874,7 +1869,7 @@ mod tests {
         // re-lex cannot see the breakage. `inside_directive` must decline even
         // though the inserted byte carries no structure of its own. (Regression
         // for the corpus divergence #284 surfaced: 折口春洋/島の便り.txt.)
-        let cached = owned(
+        let cached = output(
             "序文の段落です。\n\n本文［＃割り注］注記の文字［＃割り注終わり］続き\n\n末尾の段落。\n",
         );
         let san = cached.sanitized.clone();
@@ -1901,7 +1896,7 @@ mod tests {
         // the earlier 青空) is text-coupled: editing an unrelated paragraph could
         // still perturb the reference, so the splice declines even though the
         // edit itself is local.
-        let cached = owned("彼は青空を見た\n\n［＃「青空」に傍点］\n\n後の段落\n");
+        let cached = output("彼は青空を見た\n\n［＃「青空」に傍点］\n\n後の段落\n");
         assert!(
             !cached.diagnostics.iter().any(is_whole_document_scoped),
             "the forward reference resolves unambiguously: {:?}",
@@ -1940,7 +1935,7 @@ mod tests {
         // an earlier region makes a full parse ambiguous while a naive splice
         // keeps the cached unambiguous node — so the node must forbid region
         // reuse. (Regression for the verify finding on #284.)
-        let cached = owned("むかし。\n\n青空［＃「青空」に傍点］\n");
+        let cached = output("むかし。\n\n青空［＃「青空」に傍点］\n");
         let san = cached.sanitized.clone();
         assert!(
             !cached.diagnostics.iter().any(is_whole_document_scoped),
@@ -1951,7 +1946,7 @@ mod tests {
         let edit = at..at;
         let new_san = apply_edit(&san, edit.clone(), "青空");
         // The duplicated target genuinely makes the full parse ambiguous.
-        let full = Document::new(new_san.as_str()).parse_owned();
+        let full = Document::new(new_san.as_str()).lex();
         assert!(
             full.diagnostics
                 .iter()
@@ -1978,14 +1973,14 @@ mod tests {
     /// producer in E1-2/E1-3.
     #[test]
     fn self_contained_forward_forbids_region_reuse() {
-        use aozora_syntax::alloc_owned::OwnedAllocator;
+        use aozora_syntax::alloc::Allocator;
         use aozora_syntax::{ForwardAttr, ForwardOrigin};
 
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let t = a.content_plain("X");
         let node = a.forward_format(ForwardAttr::Bold, t, ForwardOrigin::SelfContained);
         assert!(
-            node_forbids_region_reuse(NodeRefOwned::Inline(node)),
+            node_forbids_region_reuse(NodeRef::Inline(node)),
             "SelfContained must forbid region reuse: its classification depends \
              on the whole preceding prefix",
         );
@@ -1997,13 +1992,13 @@ mod tests {
     /// parse to a referent-bearing hint.
     #[test]
     fn self_contained_heading_forbids_region_reuse() {
-        use aozora_syntax::alloc_owned::OwnedAllocator;
+        use aozora_syntax::alloc::Allocator;
         use aozora_syntax::{HeadingKind, HeadingStyle};
 
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let node = a.heading_hint(HeadingKind::Medium, HeadingStyle::Standard, "序章", true);
         assert!(
-            node_forbids_region_reuse(NodeRefOwned::Inline(node)),
+            node_forbids_region_reuse(NodeRef::Inline(node)),
             "self-contained heading hint must forbid region reuse",
         );
     }
@@ -2017,7 +2012,7 @@ mod tests {
         // naive splice would keep the cached self-contained node *and* the new
         // upstream copy (the #228 double-render). So the node forbids region
         // reuse and the incremental reparse must decline.
-        let cached = owned("むかし。\n\n本文［＃「強調」は太字］\n");
+        let cached = output("むかし。\n\n本文［＃「強調」は太字］\n");
         let san = cached.sanitized.clone();
         assert!(
             cached
@@ -2049,23 +2044,23 @@ mod tests {
     #[test]
     fn ruby_base_emphasis_forbids_region_reuse() {
         use aozora_syntax::ForwardAttr;
-        use aozora_syntax::alloc_owned::OwnedAllocator;
+        use aozora_syntax::alloc::Allocator;
 
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let base = a.content_plain("青梅");
         let reading = a.content_plain("おうめ");
-        let NodeOwned::Ruby(mut r) = a.ruby(base, reading) else {
+        let Node::Ruby(mut r) = a.ruby(base, reading) else {
             unreachable!("ruby() builds a Ruby node");
         };
         // Un-decorated: Direct, freely reusable.
         assert!(
-            !node_forbids_region_reuse(NodeRefOwned::Inline(NodeOwned::Ruby(r))),
+            !node_forbids_region_reuse(NodeRef::Inline(Node::Ruby(r))),
             "a plain ruby must stay freely reusable (Direct)",
         );
         // Decorated (#384): render-coupled, must forbid region reuse.
         r.base_emphasis = Some(ForwardAttr::Bold);
         assert!(
-            node_forbids_region_reuse(NodeRefOwned::Inline(NodeOwned::Ruby(r))),
+            node_forbids_region_reuse(NodeRef::Inline(Node::Ruby(r))),
             "a ruby whose base carries forward emphasis must forbid region reuse: \
              its render depends on a declined directive outside the region",
         );
@@ -2078,12 +2073,12 @@ mod tests {
     /// the diagnostics-only incremental reparse declines to a full parse.
     #[test]
     fn ruby_base_emphasis_doc_declines() {
-        let cached = owned("むかし。\n\n｜青梅《おうめ》は［＃「青梅」は罫囲み］\n");
+        let cached = output("むかし。\n\n｜青梅《おうめ》は［＃「青梅」は罫囲み］\n");
         let san = cached.sanitized.clone();
         assert!(
             cached.source_nodes.iter().any(|sn| matches!(
                 sn.node,
-                NodeRefOwned::Inline(NodeOwned::Ruby(r)) if r.base_emphasis.is_some()
+                NodeRef::Inline(Node::Ruby(r)) if r.base_emphasis.is_some()
             )),
             "fixture must carry a base_emphasis ruby, got {:?}",
             cached
@@ -2110,7 +2105,7 @@ mod tests {
         // an adjacent region kanji→kana makes a full parse emit it while a splice
         // (whose re-lexed region holds no kaeriten) drops it. The node must
         // forbid region reuse.
-        let cached = owned("あいうえお［＃（レ）］\n\n漢字漢字漢字漢字漢\n");
+        let cached = output("あいうえお［＃（レ）］\n\n漢字漢字漢字漢字漢\n");
         let san = cached.sanitized.clone();
         assert!(
             !cached.diagnostics.iter().any(is_whole_document_scoped),
@@ -2120,7 +2115,7 @@ mod tests {
         let p2 = san.find("漢字漢字漢字漢字漢").expect("kanji paragraph");
         let edit = p2..p2 + "漢字漢字漢字漢字漢".len();
         let new_san = apply_edit(&san, edit.clone(), "かきくけこかきくけこ");
-        let full = Document::new(new_san.as_str()).parse_owned();
+        let full = Document::new(new_san.as_str()).lex();
         assert!(
             full.diagnostics
                 .iter()
@@ -2153,25 +2148,25 @@ mod oracle_proptests {
     use proptest::prelude::*;
 
     use super::{
-        DiagBaseRef, OwnedLexOutput, PieceSeq, Prologue, RegionIndex, candidate_boundaries,
+        DiagBaseRef, LexOutput, PieceSeq, Prologue, RegionIndex, candidate_boundaries,
         is_whole_document_scoped, minimal_balanced_region, node_forbids_region_reuse,
         splice_prologue, structurally_safe,
     };
-    use crate::{Diagnostic, Document, PairLink, SourceNodeOwned};
+    use crate::{Diagnostic, Document, PairLink, SourceNode};
 
     /// Parse a generated document to its owned lex output.
-    fn owned(src: &str) -> OwnedLexOutput {
-        Document::new(src).parse_owned()
+    fn output(src: &str) -> LexOutput {
+        Document::new(src).lex()
     }
 
     /// A [`RegionIndex`] over a cached output's store-free tables.
-    fn idx_of(cached: &OwnedLexOutput) -> RegionIndex {
+    fn idx_of(cached: &LexOutput) -> RegionIndex {
         RegionIndex::build(&cached.source_nodes, &cached.pairs, &cached.diagnostics)
     }
 
     /// A [`PieceSeq`] over a cached output's store-free tables (the single-piece
     /// region-find base the prologue reads).
-    fn pieces_of(cached: &OwnedLexOutput) -> PieceSeq {
+    fn pieces_of(cached: &LexOutput) -> PieceSeq {
         PieceSeq::from_contiguous(
             &cached.source_nodes,
             &cached.pairs,
@@ -2184,7 +2179,7 @@ mod oracle_proptests {
     /// reference the outward-scan [`minimal_balanced_region`] must match: all
     /// structurally-safe blank-line cuts (plus document ends), then the greatest
     /// cut `<= es` and least cut `>= ee`.
-    fn reference_region(cached: &OwnedLexOutput, edit: Range<usize>) -> Option<Range<u32>> {
+    fn reference_region(cached: &LexOutput, edit: Range<usize>) -> Option<Range<u32>> {
         if cached.diagnostics.iter().any(is_whole_document_scoped) {
             return None;
         }
@@ -2254,7 +2249,7 @@ mod oracle_proptests {
         /// at *every* offset of the document.
         #[test]
         fn structurally_safe_indexed_matches_oracle(doc in doc_strategy()) {
-            let cached = owned(&doc);
+            let cached = output(&doc);
             let index = idx_of(&cached);
             let len = u32::try_from(cached.sanitized.len()).expect("len fits u32");
             for off in 0..=len {
@@ -2274,7 +2269,7 @@ mod oracle_proptests {
             a in 0_usize..256,
             b in 0_usize..256,
         ) {
-            let cached = owned(&doc);
+            let cached = output(&doc);
             let pieces = pieces_of(&cached);
             let span = cached.sanitized.len() + 1;
             let es = a % span;
@@ -2298,7 +2293,7 @@ mod oracle_proptests {
             a in 0_usize..256,
             b in 0_usize..256,
         ) {
-            let cached = owned(&doc);
+            let cached = output(&doc);
             let index = idx_of(&cached);
             let span = cached.sanitized.len() + 1;
             let mut rs = u32::try_from(a % span).expect("fits u32");
@@ -2318,7 +2313,7 @@ mod oracle_proptests {
         /// sequence are pinned by `verify_seq_matches` in the splice proptests).
         #[test]
         fn flags_match_any_scans(doc in doc_strategy()) {
-            let cached = owned(&doc);
+            let cached = output(&doc);
             let seq = pieces_of(&cached);
             prop_assert_eq!(
                 seq.has_whole_doc_scoped_diag(),
@@ -2346,7 +2341,7 @@ mod oracle_proptests {
     /// Assert two source-node tables agree on the store-free projection the
     /// region-find consumes: byte spans and the `BlockOpen`/`BlockClose`/`Inline`
     /// discriminant (container depth).
-    fn assert_nodes_eq(got: &[SourceNodeOwned], want: &[SourceNodeOwned]) {
+    fn assert_nodes_eq(got: &[SourceNode], want: &[SourceNode]) {
         assert_eq!(got.len(), want.len(), "source_nodes length");
         for (g, w) in got.iter().zip(want) {
             assert_eq!(g.source_span, w.source_span, "source_span");
@@ -2403,7 +2398,7 @@ mod oracle_proptests {
     /// tables (node projection / pairs / diagnostics multiset), the sanitized
     /// total, and every region-find query at every offset against the linear
     /// oracle over the flattened tables.
-    fn verify_seq_matches(seq: &PieceSeq, full: &OwnedLexOutput) {
+    fn verify_seq_matches(seq: &PieceSeq, full: &LexOutput) {
         let san_len = u32::try_from(full.sanitized.len()).expect("len fits u32");
         let (nodes, pairs, diags) = seq.flatten();
         assert_nodes_eq(&nodes, &full.source_nodes);
@@ -2463,7 +2458,7 @@ mod oracle_proptests {
     struct EditState {
         seq: PieceSeq,
         current: String,
-        cached: OwnedLexOutput,
+        cached: LexOutput,
     }
 
     /// Try one plain edit. On a prologue-admitted, sanitize-fixed-point edit,
@@ -2471,7 +2466,7 @@ mod oracle_proptests {
     /// a full re-parse. Returns whether the edit was applied.
     fn try_safe_edit(state: &mut EditState, start: usize, end: usize, repl: &str) -> bool {
         let new_text = apply_text_edit(&state.current, start, end, repl);
-        let full_new = owned(&new_text);
+        let full_new = output(&new_text);
         if full_new.sanitized != new_text {
             return false; // not a sanitize fixed point — skip
         }
@@ -2508,7 +2503,7 @@ mod oracle_proptests {
         /// the linear oracle (the single-piece base case).
         #[test]
         fn pieceseq_from_contiguous_round_trips(doc in doc_strategy()) {
-            let cached = owned(&doc);
+            let cached = output(&doc);
             let san_len = u32::try_from(cached.sanitized.len()).expect("len fits u32");
             let seq = PieceSeq::from_contiguous(
                 &cached.source_nodes,
@@ -2541,7 +2536,7 @@ mod oracle_proptests {
                 0..7,
             ),
         ) {
-            let cached = owned(&doc);
+            let cached = output(&doc);
             let san_len = u32::try_from(cached.sanitized.len()).expect("len fits u32");
             let seq = PieceSeq::from_contiguous(
                 &cached.source_nodes,
@@ -2574,7 +2569,7 @@ mod oracle_proptests {
     /// than one live piece, and every query still matches a full re-parse.
     #[test]
     fn pieceseq_two_paragraph_edits_build_multi_piece() {
-        let cached = owned("あいうえお\n\nかきくけこ\n\nさしすせそ\n\nたちつてと\n");
+        let cached = output("あいうえお\n\nかきくけこ\n\nさしすせそ\n\nたちつてと\n");
         let san_len = u32::try_from(cached.sanitized.len()).expect("len fits u32");
         let seq = PieceSeq::from_contiguous(
             &cached.source_nodes,
@@ -2620,7 +2615,7 @@ mod oracle_proptests {
     /// leaving the bracketed-multi-piece case to the proptest generator's chance.
     #[test]
     fn pieceseq_multi_piece_with_block_container_stays_identical() {
-        let cached = owned(
+        let cached = output(
             "まえがきの段落\n\n\
              ［＃ここから２字下げ］\n本文のなかみ\n［＃ここで字下げ終わり］\n\n\
              あとがきの段落\n\nむすびのことば\n",
@@ -2671,7 +2666,7 @@ mod oracle_proptests {
         // piece carries nonzero interior depth), then `compact` it: the result
         // is a single piece whose every query is byte-identical to the
         // pre-compact sequence and to a full re-parse of the same text.
-        let cached = owned(
+        let cached = output(
             "まえがきの段落\n\n\
              ［＃ここから２字下げ］\n本文のなかみ\n［＃ここで字下げ終わり］\n\n\
              あとがきの段落\n\nむすびのことば\n",

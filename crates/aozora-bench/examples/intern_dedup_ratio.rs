@@ -36,7 +36,7 @@ use std::time::Instant;
 use aozora_corpus::{CorpusSource, FilesystemCorpus};
 use aozora_encoding::decode_auto;
 use aozora_pipeline::lex;
-use aozora_syntax::owned::InternStats;
+use aozora_syntax::ast::InternStats;
 fn main() {
     let Ok(root) = env::var("AOZORA_CORPUS_ROOT") else {
         eprintln!("AOZORA_CORPUS_ROOT not set; aborting");

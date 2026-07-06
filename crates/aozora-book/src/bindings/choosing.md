@@ -92,7 +92,7 @@ aozora's renderer emits **semantic HTML5**. The decision here is binary:
 
 If raw throughput is the deciding factor, the ordering is:
 
-1. **Rust, owned AST.** The library hands you owned `NodeOwned`s — no
+1. **Rust, owned AST.** The library hands you owned `Node`s — no
    serialise, no JSON. Nothing is faster.
 2. **In-process native bindings** (`aozora-py`, `aozora-wasm`, C ABI). One
    string copy in, one JSON projection out, but all in-process. Low,

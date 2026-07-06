@@ -9,9 +9,9 @@
 //!
 //! This layer answers, for every byte of the sanitized source, two questions:
 //!
-//! 1. **Who owns each source byte?** [`Tree::owned_regions`] projects the
+//! 1. **Who owns each source byte?** [`Tree::regions`] projects the
 //!    source-node table into a *total, non-overlapping, ordered* tiling: one
-//!    [`OwnedRegion`] per classified node plus the interstitial plain runs
+//!    [`Region`] per classified node plus the interstitial plain runs
 //!    between them. Concatenating every region's bytes reproduces
 //!    [`Tree::to_source_verbatim`] exactly.
 //!
@@ -55,11 +55,11 @@
 use core::error::Error;
 use core::fmt;
 
-use aozora_render::serialize::container_close_source;
+use aozora_render::spelling::source::container_close_source;
 use aozora_spec::{SourceOffset, Span};
 use aozora_syntax::{ForwardOrigin, RegionClose, RegionFormat};
 
-use crate::{Document, NodeOwned, NodeRefOwned, Tree};
+use crate::{Document, Node, NodeRef, Tree};
 
 /// What a single source region represents.
 ///
@@ -146,7 +146,7 @@ pub enum RegionRole {
     /// A paired-container close marker (`［＃ここで…終わり］`). Coupled with its
     /// matching open.
     ContainerClose,
-    /// A future [`NodeOwned`] variant not yet classified by this projection.
+    /// A future [`Node`] variant not yet classified by this projection.
     Other,
 }
 
@@ -194,12 +194,12 @@ pub enum SpliceSafety {
 
 /// A contiguous run of source bytes and what it owns.
 ///
-/// Yielded by [`Tree::owned_regions`] / [`Tree::owned_region_at`]. The
+/// Yielded by [`Tree::regions`] / [`Tree::region_at`]. The
 /// [`span`](Self::span) indexes the **sanitized** source — the same coordinate
 /// space as [`Tree::to_source_verbatim`] and every `source_span` on
 /// [`Tree::source_nodes`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OwnedRegion {
+pub struct Region {
     /// Half-open byte range in sanitized-source coordinates.
     pub span: Span,
     /// What the region represents.
@@ -273,23 +273,21 @@ impl fmt::Display for SpliceError {
 impl Error for SpliceError {}
 
 /// Classify a node region's role and splice safety. Pure: a function of the
-/// [`NodeRefOwned`] variant and (for a forward leaf) its [`ForwardOrigin`] alone.
+/// [`NodeRef`] variant and (for a forward leaf) its [`ForwardOrigin`] alone.
 ///
 /// `pub(crate)` so the incremental splice
 /// ([`crate::incremental`]) shares this single source of truth for the
 /// text-coupling check (a forward reference / heading hint / margin note
 /// resolves by whole-document text search, so a region re-lex cannot localise
 /// it).
-pub(crate) fn classify_node_ref(node: NodeRefOwned) -> (RegionRole, SpliceSafety) {
+pub(crate) fn classify_node_ref(node: NodeRef) -> (RegionRole, SpliceSafety) {
     use SpliceSafety::{Coupled, Direct, Opaque};
 
     match node {
-        NodeRefOwned::BlockOpen(_) => (RegionRole::ContainerOpen, Coupled(CoupledKind::Container)),
-        NodeRefOwned::BlockClose(_) => {
-            (RegionRole::ContainerClose, Coupled(CoupledKind::Container))
-        }
-        NodeRefOwned::Inline(n) | NodeRefOwned::BlockLeaf(n) => match n {
-            NodeOwned::Format(f) => match f.origin {
+        NodeRef::BlockOpen(_) => (RegionRole::ContainerOpen, Coupled(CoupledKind::Container)),
+        NodeRef::BlockClose(_) => (RegionRole::ContainerClose, Coupled(CoupledKind::Container)),
+        NodeRef::Inline(n) | NodeRef::BlockLeaf(n) => match n {
+            Node::Format(f) => match f.origin {
                 ForwardOrigin::Reclaimed => (RegionRole::ForwardReclaimed, Direct),
                 ForwardOrigin::Referenced => (
                     RegionRole::ForwardReferenced,
@@ -304,7 +302,7 @@ pub(crate) fn classify_node_ref(node: NodeRefOwned) -> (RegionRole, SpliceSafety
                 // literal and decline.)
                 ForwardOrigin::Detached => (RegionRole::ForwardDetached, Direct),
             },
-            NodeOwned::HeadingHint(h) => {
+            Node::HeadingHint(h) => {
                 if h.self_contained {
                     // No upstream referent — the bracket owns its target bytes,
                     // so editing it is a Direct splice (cf. ForwardSelfContained).
@@ -313,28 +311,28 @@ pub(crate) fn classify_node_ref(node: NodeRefOwned) -> (RegionRole, SpliceSafety
                     (RegionRole::HeadingHint, Coupled(CoupledKind::HeadingHint))
                 }
             }
-            NodeOwned::MarginNote(_) => (RegionRole::MarginNote, Coupled(CoupledKind::MarginNote)),
-            NodeOwned::Container(_) => (RegionRole::Container, Coupled(CoupledKind::Container)),
-            NodeOwned::Ruby(_) => (RegionRole::Ruby, Direct),
-            NodeOwned::Heading(_) => (RegionRole::Heading, Direct),
-            NodeOwned::Gaiji(_) => (RegionRole::Gaiji, Direct),
-            NodeOwned::Warichu(_) => (RegionRole::Warichu, Direct),
-            NodeOwned::AngleQuote(_) => (RegionRole::AngleQuote, Direct),
-            NodeOwned::Kaeriten(_) => (RegionRole::Kaeriten, Direct),
-            NodeOwned::Illustration(_) => (RegionRole::Illustration, Direct),
-            NodeOwned::Line(_) => (RegionRole::Line, Direct),
-            NodeOwned::PageBreak => (RegionRole::PageBreak, Direct),
-            NodeOwned::SectionBreak(_) => (RegionRole::SectionBreak, Direct),
+            Node::MarginNote(_) => (RegionRole::MarginNote, Coupled(CoupledKind::MarginNote)),
+            Node::Container(_) => (RegionRole::Container, Coupled(CoupledKind::Container)),
+            Node::Ruby(_) => (RegionRole::Ruby, Direct),
+            Node::Heading(_) => (RegionRole::Heading, Direct),
+            Node::Gaiji(_) => (RegionRole::Gaiji, Direct),
+            Node::Warichu(_) => (RegionRole::Warichu, Direct),
+            Node::AngleQuote(_) => (RegionRole::AngleQuote, Direct),
+            Node::Kaeriten(_) => (RegionRole::Kaeriten, Direct),
+            Node::Illustration(_) => (RegionRole::Illustration, Direct),
+            Node::Line(_) => (RegionRole::Line, Direct),
+            Node::PageBreak => (RegionRole::PageBreak, Direct),
+            Node::SectionBreak(_) => (RegionRole::SectionBreak, Direct),
             // Self-contained structural-marker leaves (#78) — they fully own
             // their rendered bytes, so editing the bracket is a Direct splice.
-            NodeOwned::BodyEnd => (RegionRole::BodyEnd, Direct),
-            NodeOwned::ForcedBreak => (RegionRole::ForcedBreak, Direct),
-            NodeOwned::Directive(_) => (RegionRole::Directive, Direct),
-            // `NodeOwned` is `#[non_exhaustive]`; an unknown future variant is
+            Node::BodyEnd => (RegionRole::BodyEnd, Direct),
+            Node::ForcedBreak => (RegionRole::ForcedBreak, Direct),
+            Node::Directive(_) => (RegionRole::Directive, Direct),
+            // `Node` is `#[non_exhaustive]`; an unknown future variant is
             // declined rather than assumed editable.
             _ => (RegionRole::Other, Opaque),
         },
-        // `NodeRefOwned` is `#[non_exhaustive]`; decline an unknown future variant.
+        // `NodeRef` is `#[non_exhaustive]`; decline an unknown future variant.
         _ => (RegionRole::Other, Opaque),
     }
 }
@@ -356,32 +354,30 @@ const INTERSTITIAL: (RegionRole, SpliceSafety) = (RegionRole::Interstitial, Spli
 /// hint *or* a promoted heading, but a `self_contained` re-parse is excluded for
 /// the same reason as `SelfContained` above; a container marker re-forms as an
 /// open or close.
-fn reparsed_in_family(node: NodeRefOwned, kind: CoupledKind) -> bool {
+fn reparsed_in_family(node: NodeRef, kind: CoupledKind) -> bool {
     let leaf = match node {
-        NodeRefOwned::Inline(n) | NodeRefOwned::BlockLeaf(n) => Some(n),
+        NodeRef::Inline(n) | NodeRef::BlockLeaf(n) => Some(n),
         _ => None,
     };
     match kind {
         CoupledKind::ForwardReference => {
-            matches!(leaf, Some(NodeOwned::Format(f)) if f.origin != ForwardOrigin::SelfContained)
+            matches!(leaf, Some(Node::Format(f)) if f.origin != ForwardOrigin::SelfContained)
         }
         CoupledKind::HeadingHint => {
-            matches!(leaf, Some(NodeOwned::HeadingHint(h)) if !h.self_contained)
-                || matches!(leaf, Some(NodeOwned::Heading(_)))
+            matches!(leaf, Some(Node::HeadingHint(h)) if !h.self_contained)
+                || matches!(leaf, Some(Node::Heading(_)))
         }
-        CoupledKind::MarginNote => matches!(leaf, Some(NodeOwned::MarginNote(_))),
+        CoupledKind::MarginNote => matches!(leaf, Some(Node::MarginNote(_))),
         CoupledKind::Container => {
-            matches!(
-                node,
-                NodeRefOwned::BlockOpen(_) | NodeRefOwned::BlockClose(_)
-            ) || matches!(leaf, Some(NodeOwned::Container(_)))
+            matches!(node, NodeRef::BlockOpen(_) | NodeRef::BlockClose(_))
+                || matches!(leaf, Some(Node::Container(_)))
         }
     }
 }
 
 impl Tree<'_> {
     /// Project the source-node table into a complete tiling of the sanitized
-    /// source: one [`OwnedRegion`] per classified node plus the interstitial
+    /// source: one [`Region`] per classified node plus the interstitial
     /// plain runs between (and around) them.
     ///
     /// The regions are contiguous, non-overlapping, and ordered by start
@@ -390,24 +386,24 @@ impl Tree<'_> {
     /// [`Tree::to_source_verbatim`] exactly. A truly empty source yields no
     /// regions.
     #[must_use]
-    pub fn owned_regions(&self) -> Vec<OwnedRegion> {
+    pub fn regions(&self) -> Vec<Region> {
         let nodes = self.source_nodes();
         // The sanitized length fits u32 — every offset in the tree is a u32
         // `Span` — so the saturating fallback is never taken.
         let src_len = u32::try_from(self.sanitized().len()).unwrap_or(u32::MAX);
-        let mut out: Vec<OwnedRegion> = Vec::with_capacity(nodes.len() * 2 + 1);
+        let mut out: Vec<Region> = Vec::with_capacity(nodes.len() * 2 + 1);
         let mut cursor: u32 = 0;
         for sn in nodes {
             let start = sn.source_span.start;
             if start > cursor {
-                out.push(OwnedRegion {
+                out.push(Region {
                     span: Span::new(cursor, start),
                     role: INTERSTITIAL.0,
                     safety: INTERSTITIAL.1,
                 });
             }
             let (role, safety) = classify_node_ref(sn.node);
-            out.push(OwnedRegion {
+            out.push(Region {
                 span: sn.source_span,
                 role,
                 safety,
@@ -415,7 +411,7 @@ impl Tree<'_> {
             cursor = sn.source_span.end;
         }
         if cursor < src_len {
-            out.push(OwnedRegion {
+            out.push(Region {
                 span: Span::new(cursor, src_len),
                 role: INTERSTITIAL.0,
                 safety: INTERSTITIAL.1,
@@ -424,21 +420,21 @@ impl Tree<'_> {
         out
     }
 
-    /// The [`OwnedRegion`] covering `off`, a sanitized-source byte offset.
+    /// The [`Region`] covering `off`, a sanitized-source byte offset.
     ///
     /// Returns the classified node region when `off` lands on a construct
     /// ([`O(log n)`](Tree::node_at_source)), or the surrounding interstitial
     /// run otherwise. Returns `None` only when `off` is past the end of the
     /// sanitized source.
     #[must_use]
-    pub fn owned_region_at(&self, off: SourceOffset) -> Option<OwnedRegion> {
+    pub fn region_at(&self, off: SourceOffset) -> Option<Region> {
         let src_len = u32::try_from(self.sanitized().len()).unwrap_or(u32::MAX);
         if off.get() >= src_len {
             return None;
         }
         if let Some(sn) = self.node_at_source(off) {
             let (role, safety) = classify_node_ref(sn.node);
-            return Some(OwnedRegion {
+            return Some(Region {
                 span: sn.source_span,
                 role,
                 safety,
@@ -455,7 +451,7 @@ impl Tree<'_> {
             nodes[next_idx - 1].source_span.end
         };
         let gap_end = nodes.get(next_idx).map_or(src_len, |n| n.source_span.start);
-        Some(OwnedRegion {
+        Some(Region {
             span: Span::new(gap_start, gap_end),
             role: INTERSTITIAL.0,
             safety: INTERSTITIAL.1,
@@ -475,7 +471,7 @@ impl Tree<'_> {
     /// This is read-only introspection (e.g. for an editor to highlight both
     /// sites). [`Tree::splice`] performs the actual coherent edit.
     #[must_use]
-    pub fn coupling(&self, region: OwnedRegion) -> Option<Coupling> {
+    pub fn coupling(&self, region: Region) -> Option<Coupling> {
         match region.safety {
             SpliceSafety::Coupled(CoupledKind::Container) => self.container_coupling(region.span),
             SpliceSafety::Coupled(kind) => {
@@ -524,9 +520,9 @@ impl Tree<'_> {
     ///
     /// Panics if `region` did not come from this tree (its span is out of
     /// bounds for the sanitized source, or not on a UTF-8 codepoint boundary).
-    /// Regions from this tree's [`Tree::owned_regions`] /
-    /// [`Tree::owned_region_at`] always satisfy the precondition.
-    pub fn splice(&self, region: OwnedRegion, replacement: &str) -> Result<String, SpliceError> {
+    /// Regions from this tree's [`Tree::regions`] /
+    /// [`Tree::region_at`] always satisfy the precondition.
+    pub fn splice(&self, region: Region, replacement: &str) -> Result<String, SpliceError> {
         match region.safety {
             SpliceSafety::Direct => Ok(splice_one(self.sanitized(), region.span, replacement)),
             SpliceSafety::Coupled(CoupledKind::Container) => {
@@ -558,8 +554,8 @@ impl Tree<'_> {
         let mut stack: Vec<Span> = Vec::new();
         for sn in self.source_nodes() {
             match sn.node {
-                NodeRefOwned::BlockOpen(_) => stack.push(sn.source_span),
-                NodeRefOwned::BlockClose(_) => {
+                NodeRef::BlockOpen(_) => stack.push(sn.source_span),
+                NodeRef::BlockClose(_) => {
                     if let Some(open_span) = stack.pop() {
                         let close_span = sn.source_span;
                         if span == open_span || span == close_span {
@@ -583,11 +579,7 @@ impl Tree<'_> {
     /// ([`RegionClose::of`]), and the 1:1 marker replacement preserves the
     /// document's nesting, so the edit is correct by construction — `O(marker)`,
     /// not `O(document)`.
-    fn splice_container(
-        &self,
-        region: OwnedRegion,
-        replacement: &str,
-    ) -> Result<String, SpliceError> {
+    fn splice_container(&self, region: Region, replacement: &str) -> Result<String, SpliceError> {
         let unverifiable = SpliceError::Unverifiable {
             role: region.role,
             kind: CoupledKind::Container,
@@ -660,7 +652,7 @@ impl Tree<'_> {
     /// silently desynced.
     fn splice_split(
         &self,
-        region: OwnedRegion,
+        region: Region,
         kind: CoupledKind,
         replacement: &str,
     ) -> Result<String, SpliceError> {
@@ -722,15 +714,15 @@ impl Tree<'_> {
     /// a single plain run (a 、-joined multi-target).
     fn coupled_target_text(&self, span: Span) -> Option<String> {
         let store = &self.lex_output().store;
-        let (NodeRefOwned::Inline(leaf) | NodeRefOwned::BlockLeaf(leaf)) =
+        let (NodeRef::Inline(leaf) | NodeRef::BlockLeaf(leaf)) =
             self.node_at_source(SourceOffset::new(span.start))?.node
         else {
             return None;
         };
         match leaf {
-            NodeOwned::Format(f) => store.content_range_as_plain(f.target).map(str::to_owned),
-            NodeOwned::HeadingHint(h) => Some(store.resolve_str(h.target).to_owned()),
-            NodeOwned::MarginNote(m) => store.content_range_as_plain(m.base).map(str::to_owned),
+            Node::Format(f) => store.content_range_as_plain(f.target).map(str::to_owned),
+            Node::HeadingHint(h) => Some(store.resolve_str(h.target).to_owned()),
+            Node::MarginNote(m) => store.content_range_as_plain(m.base).map(str::to_owned),
             _ => None,
         }
     }
@@ -756,7 +748,7 @@ impl Tree<'_> {
         }
         let start = u32::try_from(hit?).ok()?;
         let span = Span::new(start, start + u32::try_from(target.len()).ok()?);
-        let region = self.owned_region_at(SourceOffset::new(span.start))?;
+        let region = self.region_at(SourceOffset::new(span.start))?;
         let carries_literal = matches!(
             region.role,
             RegionRole::Interstitial | RegionRole::ForwardDetached
@@ -770,7 +762,7 @@ impl Tree<'_> {
 fn block_open_format_at(tree: &Tree<'_>, start: u32) -> Option<RegionFormat> {
     tree.node_at_source(SourceOffset::new(start))
         .and_then(|sn| match sn.node {
-            NodeRefOwned::BlockOpen(f) if sn.source_span.start == start => Some(f),
+            NodeRef::BlockOpen(f) if sn.source_span.start == start => Some(f),
             _ => None,
         })
 }
@@ -784,7 +776,7 @@ fn lone_open_format(marker: &str) -> Option<RegionFormat> {
     let doc = Document::new(marker);
     match doc.parse().source_nodes().first() {
         Some(sn) if sn.source_span.start == 0 => match sn.node {
-            NodeRefOwned::BlockOpen(f) => Some(f),
+            NodeRef::BlockOpen(f) => Some(f),
             _ => None,
         },
         _ => None,
@@ -827,29 +819,25 @@ fn window_reforms_coupled(window: &str, kind: CoupledKind, new_target: &str) -> 
     let tree = doc.parse();
     let store = &tree.lex_output().store;
     tree.source_nodes().iter().any(|sn| {
-        let (NodeRefOwned::Inline(leaf) | NodeRefOwned::BlockLeaf(leaf)) = sn.node else {
+        let (NodeRef::Inline(leaf) | NodeRef::BlockLeaf(leaf)) = sn.node else {
             return false;
         };
         let text = match (kind, leaf) {
             // A `SelfContained` re-parse is not a coupled re-formation (it owns
             // its target), so it must not satisfy the windowed verify either.
-            (CoupledKind::ForwardReference, NodeOwned::Format(f))
+            (CoupledKind::ForwardReference, Node::Format(f))
                 if f.origin != ForwardOrigin::SelfContained =>
             {
                 store.content_range_as_plain(f.target)
             }
             // A `self_contained` re-parse owns its target (no upstream copy), so
             // like the forward case above it is not a coupled re-formation.
-            (CoupledKind::HeadingHint, NodeOwned::HeadingHint(h)) if !h.self_contained => {
+            (CoupledKind::HeadingHint, Node::HeadingHint(h)) if !h.self_contained => {
                 Some(store.resolve_str(h.target))
             }
             // A promoted heading is an equally valid re-formation of the hint.
-            (CoupledKind::HeadingHint, NodeOwned::Heading(h)) => {
-                store.content_range_as_plain(h.text)
-            }
-            (CoupledKind::MarginNote, NodeOwned::MarginNote(m)) => {
-                store.content_range_as_plain(m.base)
-            }
+            (CoupledKind::HeadingHint, Node::Heading(h)) => store.content_range_as_plain(h.text),
+            (CoupledKind::MarginNote, Node::MarginNote(m)) => store.content_range_as_plain(m.base),
             _ => None,
         };
         text == Some(new_target)
@@ -907,7 +895,7 @@ mod tests {
         let doc = Document::new(src);
         let tree = doc.parse();
         let verbatim = tree.to_source_verbatim();
-        let regions = tree.owned_regions();
+        let regions = tree.regions();
 
         if verbatim.is_empty() {
             assert!(regions.is_empty(), "empty source must yield no regions");
@@ -952,10 +940,10 @@ mod tests {
     }
 
     /// Find the first region with the given role.
-    fn role_of(src: &str, role: RegionRole) -> OwnedRegion {
+    fn role_of(src: &str, role: RegionRole) -> Region {
         let doc = Document::new(src);
         let tree = doc.parse();
-        tree.owned_regions()
+        tree.regions()
             .into_iter()
             .find(|r| r.role == role)
             .unwrap_or_else(|| panic!("no {role:?} region in {src:?}"))
@@ -971,7 +959,7 @@ mod tests {
         assert_tiling("ただの本文です。");
         let doc = Document::new("ただの本文です。");
         let tree = doc.parse();
-        let regions = tree.owned_regions();
+        let regions = tree.regions();
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].role, RegionRole::Interstitial);
         assert_eq!(regions[0].safety, SpliceSafety::Direct);
@@ -1009,13 +997,13 @@ mod tests {
     #[test]
     fn self_contained_forward_is_direct() {
         use aozora_syntax::ForwardAttr;
-        use aozora_syntax::alloc_owned::OwnedAllocator;
+        use aozora_syntax::alloc::Allocator;
 
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let t = a.content_plain("X");
         let node = a.forward_format(ForwardAttr::Bold, t, ForwardOrigin::SelfContained);
         assert_eq!(
-            classify_node_ref(NodeRefOwned::Inline(node)),
+            classify_node_ref(NodeRef::Inline(node)),
             (RegionRole::ForwardSelfContained, SpliceSafety::Direct),
         );
     }
@@ -1096,7 +1084,7 @@ mod tests {
         let rtree = rt.parse();
         assert!(
             rtree
-                .owned_regions()
+                .regions()
                 .iter()
                 .any(|r| r.role == RegionRole::ContainerOpen)
         );
@@ -1167,7 +1155,7 @@ mod tests {
         let rt = Document::new(spliced.as_str());
         assert!(
             rt.parse()
-                .owned_regions()
+                .regions()
                 .iter()
                 .any(|r| r.role == RegionRole::ForwardReferenced)
         );
@@ -1255,18 +1243,18 @@ mod tests {
     }
 
     #[test]
-    fn owned_region_at_finds_node_and_gap() {
+    fn region_at_finds_node_and_gap() {
         let src = "あ｜青梅《おうめ》い";
         let doc = Document::new(src);
         let tree = doc.parse();
-        let head = tree.owned_region_at(SourceOffset::new(0)).unwrap();
+        let head = tree.region_at(SourceOffset::new(0)).unwrap();
         assert_eq!(head.role, RegionRole::Interstitial);
         assert_eq!(head.span.start, 0);
-        let ruby_off = SourceOffset::new(tree.owned_regions()[1].span.start);
-        let mid = tree.owned_region_at(ruby_off).unwrap();
+        let ruby_off = SourceOffset::new(tree.regions()[1].span.start);
+        let mid = tree.region_at(ruby_off).unwrap();
         assert_eq!(mid.role, RegionRole::Ruby);
         assert!(
-            tree.owned_region_at(SourceOffset::new(
+            tree.region_at(SourceOffset::new(
                 u32::try_from(tree.sanitized().len()).unwrap()
             ))
             .is_none(),

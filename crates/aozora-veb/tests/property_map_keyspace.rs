@@ -1,6 +1,6 @@
 //! Cross-validate [`EytzingerMap::get`] against [`BTreeMap::get`].
 //!
-//! `EytzingerMap` is the lookup side of the borrowed registry — every
+//! `EytzingerMap` is the lookup side of the owned registry — every
 //! renderer hit on a sentinel codepoint resolves through one of these.
 //! The decisive property here: for any sorted `[(K, V)]` input, the
 //! Eytzinger map agrees with `BTreeMap` on `get` for every probe.

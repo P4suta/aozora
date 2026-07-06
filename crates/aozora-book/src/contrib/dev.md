@@ -172,8 +172,8 @@ End-to-end TDD flow:
    `crates/aozora-conformance/fixtures/render/` (and, for a normative
    case, a spec vector in `../aozora-notation-spec`, synced via
    `just sync-spec-vectors`).
-2. **AST variant.** Add a variant to the owned `NodeOwned` enum in
-   `crates/aozora-syntax/src/owned/payload.rs`.
+2. **AST variant.** Add a variant to the owned `Node` enum in
+   `crates/aozora-syntax/src/ast/payload.rs`.
 3. **Lexer test (red).** Add a case to the relevant stage test
    under `crates/aozora-pipeline/tests/`.
 4. **Lexer impl (green).** Wire the recogniser into the appropriate

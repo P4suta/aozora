@@ -28,13 +28,13 @@ impl Document {
 
 pub struct Tree<'a> { /* borrows from Document */ }
 impl<'a> Tree<'a> {
-    pub fn nodes(&self) -> impl Iterator<Item = NodeRefOwned<'a>>;
+    pub fn nodes(&self) -> impl Iterator<Item = NodeRef<'a>>;
     pub fn to_html(&self) -> String;
     pub fn to_source(&self) -> String;
     pub fn diagnostics(&self) -> &[Diagnostic];
 }
 
-pub enum NodeOwned { Ruby(RubyOwned), Gaiji(GaijiOwned), … }
+pub enum Node { Ruby(Ruby), Gaiji(Gaiji), … }
 ```
 
 See [Library Quickstart](../getting-started/library.md) for the
@@ -72,7 +72,7 @@ Three philosophies, used consistently:
 
 `Document` and `Tree<'_>` are both **`Send + Sync`**. `Document`
 owns only its source `Box<str>` and a `Copy` diagnostic policy; the
-parse output (`OwnedLexOutput`) owns its whole AST in flat,
+parse output (`LexOutput`) owns its whole AST in flat,
 `u32`-handle-addressed `Vec`s with no interior mutability — there is
 no arena and nothing that blocks sharing across threads. Pass a
 `Document` between threads or share `&Document` / `&Tree` freely.
@@ -80,8 +80,8 @@ no arena and nothing that blocks sharing across threads. Pass a
 `Tree<'_>` borrows only `&Document`'s source, so it still can't
 outlive its `Document` — but within that lifetime it moves and shares
 across threads like any owned value. A consumer that needs a parse
-result with **no** lifetime calls `Document::parse_owned`, which
-returns the `Send + Sync` `OwnedLexOutput` directly.
+result with **no** lifetime calls `Document::lex`, which
+returns the `Send + Sync` `LexOutput` directly.
 
 For *parallel* corpus processing (e.g. the corpus sweep harness
 parsing 1000s of documents concurrently), each thread creates its

@@ -1,4 +1,4 @@
-//! Source-driven projection from an [`OwnedLexOutput`] to a
+//! Source-driven projection from an [`LexOutput`] to a
 //! [`pandoc_ast::Pandoc`] document.
 //!
 //! Walks the source linearly, slicing it into spans by the owned
@@ -11,27 +11,25 @@
 use aozora::{
     BoutenPosition, DirectiveKind, Format, ForwardAttr, ForwardOrigin, HeadingKind, HeadingStyle,
     IndentBlock, IndentLayout, LineFormat, RegionFormat, SectionKind, Span, roman_slug,
-    syntax::owned::{
-        AngleQuoteOwned, ContentOwned, ContentRange, DirectiveOwned, ForwardFormatOwned,
-        GaijiOwned, HeadingHintOwned, HeadingOwned, IllustrationOwned, KaeritenOwned,
-        MarginNoteOwned, NodeOwned, NodeRefOwned, NodeStore, OwnedLexOutput, RubyOwned,
-        SegmentOwned, SourceNodeOwned, WarichuOwned,
+    syntax::ast::{
+        AngleQuote, Content, ContentRange, Directive, ForwardFormat, Gaiji, Heading, HeadingHint,
+        Illustration, Kaeriten, LexOutput, MarginNote, Node, NodeRef, NodeStore, Ruby, Segment,
+        SourceNode, Warichu,
     },
 };
 use pandoc_ast::{Attr, Block, Inline, Pandoc};
 
 use crate::AOZORA_CLASS_PREFIX;
 
-/// Lift a parsed [`OwnedLexOutput`] to a [`pandoc_ast::Pandoc`] document.
+/// Lift a parsed [`LexOutput`] to a [`pandoc_ast::Pandoc`] document.
 ///
 /// See the crate-level docs for the projection rules.
 #[must_use]
-pub fn to_pandoc(out: &OwnedLexOutput) -> Pandoc {
+pub fn to_pandoc(out: &LexOutput) -> Pandoc {
     // `source_nodes` index into the sanitize-stage buffer, not the raw
     // user-supplied source. The owned lex output carries exactly that buffer
     // in `sanitized`, so the slice base already matches the source-node
-    // coordinate system — no re-sanitize is needed (the borrowed projection
-    // had to re-run sanitize to reconstruct it).
+    // coordinate system — no re-sanitize is needed.
     let mut converter = Converter::new(&out.sanitized, &out.source_nodes, &out.store);
     converter.run();
     Pandoc {
@@ -98,7 +96,7 @@ impl Frame {
 
 struct Converter<'src> {
     source: &'src str,
-    nodes: &'src [SourceNodeOwned],
+    nodes: &'src [SourceNode],
     /// Backing store the owned nodes' `StrId` / range payloads resolve against.
     store: &'src NodeStore,
     /// Stack of block frames. Always non-empty; the bottom frame is
@@ -112,7 +110,7 @@ struct Converter<'src> {
 }
 
 impl<'src> Converter<'src> {
-    fn new(source: &'src str, nodes: &'src [SourceNodeOwned], store: &'src NodeStore) -> Self {
+    fn new(source: &'src str, nodes: &'src [SourceNode], store: &'src NodeStore) -> Self {
         Self {
             source,
             nodes,
@@ -174,20 +172,20 @@ impl<'src> Converter<'src> {
         self.stack.last_mut().expect("stack always non-empty")
     }
 
-    fn dispatch_node(&mut self, entry: &SourceNodeOwned) {
+    fn dispatch_node(&mut self, entry: &SourceNode) {
         match entry.node {
-            NodeRefOwned::Inline(node) => self.dispatch_inline_node(node, entry.source_span),
-            NodeRefOwned::BlockLeaf(node) => self.dispatch_block_leaf(node, entry.source_span),
-            NodeRefOwned::BlockOpen(kind) => self.open_container(kind),
-            NodeRefOwned::BlockClose(_) => self.close_container(),
-            // `NodeRefOwned` is `#[non_exhaustive]`; treat unknown
+            NodeRef::Inline(node) => self.dispatch_inline_node(node, entry.source_span),
+            NodeRef::BlockLeaf(node) => self.dispatch_block_leaf(node, entry.source_span),
+            NodeRef::BlockOpen(kind) => self.open_container(kind),
+            NodeRef::BlockClose(_) => self.close_container(),
+            // `NodeRef` is `#[non_exhaustive]`; treat unknown
             // variants as pass-through plain text.
             _ => {}
         }
     }
 
-    fn dispatch_inline_node(&mut self, node: NodeOwned, _span: Span) {
-        use NodeOwned as N;
+    fn dispatch_inline_node(&mut self, node: Node, _span: Span) {
+        use Node as N;
         // A `Referenced` forward keeps its target literal in the upstream plain
         // run (or a ruby base); projecting `f.target` here would double it
         // (#231). Mirror the HTML renderer's origin gate (#228,
@@ -221,15 +219,15 @@ impl<'src> Converter<'src> {
             N::ForcedBreak => Inline::LineBreak,
             // Block-leaf variants slip through here only if the
             // pipeline misclassified them; render as fallback span.
-            // The debug form is the owned node's `Debug` (a non-canonical
-            // placeholder; substring-stable for the `*Owned` type names).
+            // The debug form is the node's `Debug` (a non-canonical
+            // placeholder, not a stable projection).
             other => Inline::Span(plain_attr(), vec![Inline::Str(format!("{other:?}"))]),
         };
         self.current_frame_mut().paragraph().push(inline);
     }
 
-    fn dispatch_block_leaf(&mut self, node: NodeOwned, _span: Span) {
-        use NodeOwned as N;
+    fn dispatch_block_leaf(&mut self, node: Node, _span: Span) {
+        use Node as N;
         // Block-leaf nodes close any in-flight paragraph and emit a
         // standalone block.
         self.current_frame_mut().flush_paragraph();
@@ -330,37 +328,37 @@ fn content_range_to_inlines(range: ContentRange, store: &NodeStore) -> Vec<Inlin
     buf
 }
 
-/// Resolve a bare [`ContentOwned`] payload field (warichu upper/lower,
+/// Resolve a bare [`Content`] payload field (warichu upper/lower,
 /// sashie caption) to its Pandoc inlines.
-fn content_to_inlines(content: ContentOwned, store: &NodeStore) -> Vec<Inline> {
+fn content_to_inlines(content: Content, store: &NodeStore) -> Vec<Inline> {
     let mut buf = Vec::new();
     push_content_inlines(content, store, &mut buf);
     buf
 }
 
-fn push_content_inlines(content: ContentOwned, store: &NodeStore, buf: &mut Vec<Inline>) {
+fn push_content_inlines(content: Content, store: &NodeStore, buf: &mut Vec<Inline>) {
     match content {
-        ContentOwned::Plain(id) => buf.push(Inline::Str(store.resolve_str(id).to_owned())),
-        ContentOwned::Segments(range) => {
+        Content::Plain(id) => buf.push(Inline::Str(store.resolve_str(id).to_owned())),
+        Content::Segments(range) => {
             for &seg in store.resolve_seg_range(range) {
                 match seg {
-                    SegmentOwned::Text(id) => {
+                    Segment::Text(id) => {
                         buf.push(Inline::Str(store.resolve_str(id).to_owned()));
                     }
-                    SegmentOwned::Gaiji(g) => buf.push(gaiji_inline(g, store)),
-                    SegmentOwned::Directive(a) => buf.push(annotation_inline(a, store)),
-                    // `SegmentOwned` is `#[non_exhaustive]`; future segment
+                    Segment::Gaiji(g) => buf.push(gaiji_inline(g, store)),
+                    Segment::Directive(a) => buf.push(annotation_inline(a, store)),
+                    // `Segment` is `#[non_exhaustive]`; future segment
                     // kinds get a placeholder until projection logic is added.
                     _ => buf.push(Inline::Str(String::new())),
                 }
             }
         }
-        // `ContentOwned` is `#[non_exhaustive]`.
+        // `Content` is `#[non_exhaustive]`.
         _ => {}
     }
 }
 
-fn ruby_inline(r: RubyOwned, store: &NodeStore) -> Inline {
+fn ruby_inline(r: Ruby, store: &NodeStore) -> Inline {
     let base_inlines = content_range_to_inlines(r.base, store);
     let reading_inlines = content_range_to_inlines(r.reading, store);
     let inner = vec![
@@ -370,7 +368,7 @@ fn ruby_inline(r: RubyOwned, store: &NodeStore) -> Inline {
     Inline::Span(class_attr("ruby"), inner)
 }
 
-fn side_note_inline(s: MarginNoteOwned, store: &NodeStore) -> Inline {
+fn side_note_inline(s: MarginNote, store: &NodeStore) -> Inline {
     let base_inlines = content_range_to_inlines(s.base, store);
     let note_inlines = content_range_to_inlines(s.note, store);
     let inner = vec![
@@ -383,7 +381,7 @@ fn side_note_inline(s: MarginNoteOwned, store: &NodeStore) -> Inline {
 /// Project a forward-reference emphasis node. 傍点 / 傍線 and 縦中横 carry
 /// dedicated spans; every other attribute (太字 / 斜体 / 小書き / …) falls
 /// through to a debug span, the legacy pandoc behaviour.
-fn format_inline(f: ForwardFormatOwned, store: &NodeStore) -> Inline {
+fn format_inline(f: ForwardFormat, store: &NodeStore) -> Inline {
     match f.attr {
         ForwardAttr::Bouten { kind, position } => {
             let attr = class_attr_kv(
@@ -406,9 +404,8 @@ fn format_inline(f: ForwardFormatOwned, store: &NodeStore) -> Inline {
             content_range_to_inlines(f.target, store),
         ),
         // Debug placeholder for un-projected emphasis (font-size / superscript
-        // / 太字 / 斜体 / …): the owned format's `Debug`, substring-stable on
-        // `ForwardFormat` / the attr name but not byte-identical to the
-        // borrowed dump.
+        // / 太字 / 斜体 / …): the format's `Debug`, substring-stable on
+        // `ForwardFormat` / the attr name.
         _ => Inline::Span(plain_attr(), vec![Inline::Str(format!("{f:?}"))]),
     }
 }
@@ -422,7 +419,7 @@ fn bouten_position_slug(p: BoutenPosition) -> &'static str {
     }
 }
 
-fn gaiji_inline(g: GaijiOwned, store: &NodeStore) -> Inline {
+fn gaiji_inline(g: Gaiji, store: &NodeStore) -> Inline {
     let mut kvs = vec![(
         "description".to_owned(),
         store.resolve_str(g.hint).to_owned(),
@@ -461,7 +458,7 @@ fn line_inline(lf: LineFormat) -> Inline {
     Inline::Span(attr, Vec::new())
 }
 
-fn warichu_inline(w: WarichuOwned, store: &NodeStore) -> Inline {
+fn warichu_inline(w: Warichu, store: &NodeStore) -> Inline {
     let upper = Inline::Span(
         class_attr("warichu-upper"),
         content_to_inlines(w.upper, store),
@@ -473,7 +470,7 @@ fn warichu_inline(w: WarichuOwned, store: &NodeStore) -> Inline {
     Inline::Span(class_attr("warichu"), vec![upper, lower])
 }
 
-fn annotation_inline(a: DirectiveOwned, store: &NodeStore) -> Inline {
+fn annotation_inline(a: Directive, store: &NodeStore) -> Inline {
     Inline::Span(
         class_attr_kv(
             "annotation",
@@ -503,7 +500,7 @@ fn annotation_kind_slug(k: DirectiveKind) -> &'static str {
     }
 }
 
-fn kaeriten_inline(k: KaeritenOwned, store: &NodeStore) -> Inline {
+fn kaeriten_inline(k: Kaeriten, store: &NodeStore) -> Inline {
     Inline::Span(
         class_attr_kv(
             "kaeriten",
@@ -513,14 +510,14 @@ fn kaeriten_inline(k: KaeritenOwned, store: &NodeStore) -> Inline {
     )
 }
 
-fn angle_quote_inline(d: AngleQuoteOwned, store: &NodeStore) -> Inline {
+fn angle_quote_inline(d: AngleQuote, store: &NodeStore) -> Inline {
     Inline::Span(
         class_attr("angle-quote"),
         content_range_to_inlines(d.content, store),
     )
 }
 
-fn heading_hint_inline(h: HeadingHintOwned, store: &NodeStore) -> Inline {
+fn heading_hint_inline(h: HeadingHint, store: &NodeStore) -> Inline {
     let target = store.resolve_str(h.target).to_owned();
     // A self-contained (no-referent) hint shows its quoted target as the heading
     // text; a referent-present hint stays an empty marker.
@@ -556,7 +553,7 @@ fn section_break_block(k: SectionKind) -> Block {
     )
 }
 
-fn aozora_heading_block(h: HeadingOwned, store: &NodeStore) -> Block {
+fn aozora_heading_block(h: Heading, store: &NodeStore) -> Block {
     let level: i64 = match h.kind {
         HeadingKind::Large => 1,
         HeadingKind::Medium => 2,
@@ -596,7 +593,7 @@ fn heading_style_slug(s: HeadingStyle) -> Option<&'static str> {
     }
 }
 
-fn sashie_block(s: IllustrationOwned, store: &NodeStore) -> Block {
+fn sashie_block(s: Illustration, store: &NodeStore) -> Block {
     // The general form's leading description is the alt; otherwise the
     // keyword 挿絵 form's trailing 「caption」 is the next-best alt text.
     let alt = s.description.map_or_else(
@@ -690,7 +687,7 @@ mod tests {
     #[test]
     fn plain_text_becomes_para() {
         let doc = Document::new("Hello, world.");
-        let pandoc = to_pandoc(&doc.parse_owned());
+        let pandoc = to_pandoc(&doc.lex());
         assert_eq!(pandoc.blocks.len(), 1, "{:?}", pandoc.blocks);
         match &pandoc.blocks[0] {
             Block::Para(inlines) => match inlines.as_slice() {
@@ -705,7 +702,7 @@ mod tests {
     #[test]
     fn double_newline_splits_paragraphs() {
         let doc = Document::new("One\nstill one.\n\nTwo.");
-        let pandoc = to_pandoc(&doc.parse_owned());
+        let pandoc = to_pandoc(&doc.lex());
         let para_count = pandoc
             .blocks
             .iter()
@@ -725,7 +722,7 @@ mod tests {
     #[test]
     fn ruby_projects_to_span() {
         let doc = Document::new("｜青梅《おうめ》");
-        let pandoc = to_pandoc(&doc.parse_owned());
+        let pandoc = to_pandoc(&doc.lex());
         let para = match &pandoc.blocks[0] {
             Block::Para(inlines) => inlines,
             other => panic!("expected Para, got {other:?}"),
@@ -750,7 +747,7 @@ mod tests {
     #[test]
     fn page_break_emits_horizontal_rule() {
         let doc = Document::new("before\n［＃改ページ］\nafter");
-        let pandoc = to_pandoc(&doc.parse_owned());
+        let pandoc = to_pandoc(&doc.lex());
         assert!(
             pandoc
                 .blocks
@@ -771,7 +768,7 @@ mod tests {
              ［＃ここで字下げ終わり］\n\n\
              after",
         );
-        let pandoc = to_pandoc(&doc.parse_owned());
+        let pandoc = to_pandoc(&doc.lex());
         let has_indent_div = pandoc.blocks.iter().any(|b| {
             matches!(
                 b,
@@ -789,7 +786,7 @@ mod tests {
     /// Project `src` through the full pipeline and return the doc blocks.
     fn project(src: &str) -> Vec<Block> {
         let doc = Document::new(src);
-        to_pandoc(&doc.parse_owned()).blocks
+        to_pandoc(&doc.lex()).blocks
     }
 
     /// Whether any class in `attr` ends with `suffix` (the `aozora-`
@@ -1383,7 +1380,7 @@ mod tests {
     #[test]
     fn pandoc_api_version_is_pinned() {
         let doc = Document::new("x");
-        let pandoc = to_pandoc(&doc.parse_owned());
+        let pandoc = to_pandoc(&doc.lex());
         assert_eq!(
             pandoc.pandoc_api_version,
             vec![1, 23],
@@ -1452,9 +1449,9 @@ mod tests {
         // Build the owned warichu payload directly via a store (the `／`-split
         // upper / lower form is not reachable as an inline leaf).
         let mut store = NodeStore::new();
-        let upper = ContentOwned::Plain(store.intern("上"));
-        let lower = ContentOwned::Plain(store.intern("下"));
-        let w = WarichuOwned { upper, lower };
+        let upper = Content::Plain(store.intern("上"));
+        let lower = Content::Plain(store.intern("下"));
+        let w = Warichu { upper, lower };
         match warichu_inline(w, &store) {
             Inline::Span(attr, inner) => {
                 assert!(has_class(&attr, "warichu"), "warichu class");
@@ -1518,8 +1515,8 @@ mod tests {
         // Build the owned heading payload directly via a store.
         let mut store = NodeStore::new();
         let text_id = store.intern("見出し");
-        let text = store.push_contents(&[ContentOwned::Plain(text_id)]);
-        let heading = HeadingOwned {
+        let text = store.push_contents(&[Content::Plain(text_id)]);
+        let heading = Heading {
             kind: HeadingKind::Small,
             style: HeadingStyle::SameLine,
             text,

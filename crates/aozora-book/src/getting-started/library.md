@@ -23,7 +23,7 @@ the AST walk — three things you'll need once you do anything beyond
 
 `Document` owns the source `Box<str>` (plus a `Copy` diagnostic
 policy). `Document::parse` returns a `Tree<'a>` that owns all its AST
-data (an `OwnedLexOutput`) and borrows only the source:
+data (an `LexOutput`) and borrows only the source:
 
 ```rust
 # extern crate aozora;

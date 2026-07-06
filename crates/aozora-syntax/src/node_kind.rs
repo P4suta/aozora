@@ -15,9 +15,9 @@
 /// Cross-cutting tag for an AST node or `NodeRef` projection.
 ///
 /// The first 18 variants ([`Self::Ruby`] through [`Self::Container`])
-/// project from `NodeOwned`'s discriminant. The
+/// project from `Node`'s discriminant. The
 /// final two ([`Self::ContainerOpen`] / [`Self::ContainerClose`])
-/// only arise from `NodeRefOwned`'s container open /
+/// only arise from `NodeRef`'s container open /
 /// close variants — the inline `Container` payload uses
 /// [`Self::Container`].
 ///

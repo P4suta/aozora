@@ -52,7 +52,7 @@ const AOZORA_DEFAULT_CATEGORIES: &[(&str, &[&str])] = &[
             r"aozora_pipeline::lexer::recognise",
         ],
     ),
-    ("intern", &[r"aozora_syntax::owned::intern", r"Interner"]),
+    ("intern", &[r"aozora_syntax::ast::intern", r"Interner"]),
     (
         "memchr_scan",
         &[

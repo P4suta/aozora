@@ -19,10 +19,10 @@ use core::num::NonZeroI8;
 
 use aozora_spec::Diagnostic;
 use aozora_syntax::accent::{compose_accent, compose_accent_dots};
-use aozora_syntax::alloc_owned::OwnedAllocator;
+use aozora_syntax::alloc::Allocator;
+use aozora_syntax::ast::{Content, Node, Segment};
 use aozora_syntax::format::ForwardOrigin;
 use aozora_syntax::lint::canonical_directive;
-use aozora_syntax::owned::{ContentOwned, NodeOwned, SegmentOwned};
 use aozora_syntax::{
     AbsoluteSize, AccentMark, BoutenPosition, DirectiveKind, EnclosureKind, FontShift, ForwardAttr,
     MarginNoteKind, Span,
@@ -531,7 +531,7 @@ impl RecogniseCtx<'_, '_> {
         &mut self,
         view: BodyView<'_>,
         open_idx: usize,
-    ) -> Option<(NodeOwned, bool)> {
+    ) -> Option<(Node, bool)> {
         let &PairEvent::PairOpen {
             span: open_span, ..
         } = view.events.get(open_idx)?
@@ -648,7 +648,7 @@ impl RecogniseCtx<'_, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(NodeOwned, u32)> {
+    ) -> Option<(Node, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // Extraction stops at the `～`, so the first quote is X; the suffix is
         // `～「Y」に<kind>` (or `〜「Y」…`).
@@ -701,7 +701,7 @@ impl RecogniseCtx<'_, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(NodeOwned, u32, ForwardDiag)> {
+    ) -> Option<(Node, u32, ForwardDiag)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // Shape 1: `に<kind>` — default right-side placement.
         // Shape 2: `の左に<kind>` — left-side placement (position flipped).
@@ -804,12 +804,12 @@ impl RecogniseCtx<'_, '_> {
 /// would ripple through every renderer / serializer). Callers that
 /// need the per-target list can walk `Content::iter` and filter on
 /// `SegmentRef::Text`.
-fn build_bouten_target(targets: &[&str], alloc: &mut OwnedAllocator) -> ContentOwned {
+fn build_bouten_target(targets: &[&str], alloc: &mut Allocator) -> Content {
     match targets {
         [] => alloc.content_plain(""),
         [only] => alloc.content_plain(only),
         many => {
-            let mut segs: Vec<SegmentOwned> = Vec::with_capacity(many.len() * 2 - 1);
+            let mut segs: Vec<Segment> = Vec::with_capacity(many.len() * 2 - 1);
             for (i, t) in many.iter().enumerate() {
                 if i > 0 {
                     segs.push(alloc.seg_text("、"));
@@ -831,7 +831,7 @@ fn build_bouten_target(targets: &[&str], alloc: &mut OwnedAllocator) -> ContentO
 enum ForwardTcy {
     /// A 縦中横 with a located target — the node, its consume start, and the
     /// directive-level diagnostic (#333: `NotStylable` for a declined referent).
-    Recognised(NodeOwned, u32, ForwardDiag),
+    Recognised(Node, u32, ForwardDiag),
     /// `は縦中横` shape matched but the target has no preceding referent.
     ShapedNoTarget,
     /// Not a 縦中横 directive.
@@ -1219,10 +1219,10 @@ fn extract_forward_quote_targets<'s>(
 ///
 /// When the (single) referent is the bare line immediately above the
 /// directive, the line is promoted in place to a block
-/// `HeadingOwned` (大→`<h1>` / 中→`<h2>` / 小→`<h3>`): the
+/// `Heading` (大→`<h1>` / 中→`<h2>` / 小→`<h3>`): the
 /// consume span is pulled back over that line so the heading element is
 /// its sole rendered copy. When the referent is not a clean preceding
-/// line, the classifier keeps the inline `HeadingHintOwned` marker
+/// line, the classifier keeps the inline `HeadingHint` marker
 /// at the directive position (information-preserving, never promoted to
 /// an empty or misplaced heading).
 ///
@@ -1241,7 +1241,7 @@ impl RecogniseCtx<'_, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(NodeOwned, u32)> {
+    ) -> Option<(Node, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let rest = extracted.suffix.strip_prefix("は")?;
         let (style, kind) = parse_heading_keyword(rest)?;
@@ -1312,7 +1312,7 @@ impl RecogniseCtx<'_, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(NodeOwned, u32)> {
+    ) -> Option<(Node, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let [target] = extracted.targets.as_slice() else {
             return None;
@@ -1346,7 +1346,7 @@ impl RecogniseCtx<'_, '_> {
 /// Classify a forward-reference **side annotation** — 注記 or 傍記. The
 /// structural twin of [`Self::classify_forward_left_ruby`] (same
 /// single-target pull-back), but the trailing keyword selects a distinct
-/// [`NodeOwned::MarginNote`] node and flavour:
+/// [`Node::MarginNote`] node and flavour:
 /// - `「X」の左に「Y」の注記` / bare `「X」に「Y」の注記` →
 ///   [`MarginNoteKind::Gloss`] (editorial gloss; round-trips `の注記`).
 /// - `「X」に「Y」の傍記` → [`MarginNoteKind::Marginal`] (the censorship-marker
@@ -1361,7 +1361,7 @@ impl RecogniseCtx<'_, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(NodeOwned, u32)> {
+    ) -> Option<(Node, u32)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let [target] = extracted.targets.as_slice() else {
             return None;
@@ -1411,7 +1411,7 @@ impl RecogniseCtx<'_, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<NodeOwned> {
+    ) -> Option<Node> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let [caption] = extracted.targets.as_slice() else {
             return None;
@@ -1471,7 +1471,7 @@ impl RecogniseCtx<'_, '_> {
         open_span_start: u32,
         attr: ForwardAttr,
         only: &str,
-    ) -> (NodeOwned, u32, ForwardDiag) {
+    ) -> (Node, u32, ForwardDiag) {
         let text = self.alloc.content_plain(only);
         match resolve_forward_referent(
             view.events,
@@ -1512,7 +1512,7 @@ impl RecogniseCtx<'_, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(NodeOwned, u32, ForwardDiag)> {
+    ) -> Option<(Node, u32, ForwardDiag)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         // The particle is tied to the decoration. `は` is the dominant emphasis
         // form (`「X」は太字`). The frame decoration also takes the "applied to"
@@ -1587,7 +1587,7 @@ impl RecogniseCtx<'_, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         close_idx: usize,
-    ) -> Option<(NodeOwned, u32, ForwardDiag)> {
+    ) -> Option<(Node, u32, ForwardDiag)> {
         let extracted = extract_forward_quote_targets(view, self.source, open_idx, close_idx)?;
         let [target] = extracted.targets.as_slice() else {
             return None;
@@ -1640,7 +1640,7 @@ impl RecogniseCtx<'_, '_> {
         view: BodyView<'_>,
         open_idx: usize,
         body: &str,
-    ) -> Option<(NodeOwned, u32)> {
+    ) -> Option<(Node, u32)> {
         let &PairEvent::PairOpen {
             span: open_span, ..
         } = view.events.get(open_idx)?

@@ -1,9 +1,9 @@
 //! Owned AST construction.
 //!
-//! [`OwnedAllocator`] builds [`NodeOwned`] and its payload types into an owned
-//! [`NodeStore`] (the [`StrInterner`](super::owned::StrInterner) plus the flat
+//! [`Allocator`] builds [`Node`] and its payload types into an owned
+//! [`NodeStore`] (the [`StrInterner`](super::ast::StrInterner) plus the flat
 //! content / segment pools). Byte-equal strings share a single interned
-//! [`StrId`](super::owned::StrId).
+//! [`StrId`](super::ast::StrId).
 //!
 //! ## Canonicalisation
 //!
@@ -11,7 +11,7 @@
 //! a single byte-identical form:
 //!
 //! - `content_plain("")` and `content_segments(&[])` both canonicalise to the
-//!   empty-segments form (an empty [`SegRange`](super::owned::SegRange)).
+//!   empty-segments form (an empty [`SegRange`](super::ast::SegRange)).
 //! - `content_segments` collapses an all-`Text` input into a single
 //!   concatenated `Plain` (the concatenation is re-interned).
 //! - Each `NonEmpty<Content>` field becomes a length-1 [`ContentRange`]; the
@@ -33,23 +33,23 @@ use crate::{
     MarginNoteKind, RubySide, SectionKind,
 };
 
-use super::owned::{
-    AngleQuoteOwned, ContentOwned, ContentRange, DirectiveOwned, ForwardFormatOwned,
-    GaijiCanonicalOwned, GaijiOwned, HeadingHintOwned, HeadingOwned, IllustrationOwned,
-    KaeritenOwned, MarginNoteOwned, NodeOwned, NodeStore, RubyOwned, SegmentOwned, WarichuOwned,
+use super::ast::{
+    AngleQuote, Content, ContentRange, Directive, ForwardFormat, Gaiji, GaijiCanonicalOwned,
+    Heading, HeadingHint, Illustration, Kaeriten, MarginNote, Node, NodeStore, Ruby, Segment,
+    Warichu,
 };
 
 /// `true` for the canonical empty-content form (an empty segment run).
-fn is_empty_content(c: ContentOwned) -> bool {
-    matches!(c, ContentOwned::Segments(r) if r.len == 0)
+fn is_empty_content(c: Content) -> bool {
+    matches!(c, Content::Segments(r) if r.len == 0)
 }
 
-/// Builder for [`NodeOwned`] and its payload types.
+/// Builder for [`Node`] and its payload types.
 ///
 /// Owns the [`NodeStore`] every produced handle resolves against; call
 /// [`Self::into_store`] at the end of a parse to hand it to the lex output.
 #[derive(Debug, Default)]
-pub struct OwnedAllocator {
+pub struct Allocator {
     store: NodeStore,
 }
 
@@ -57,7 +57,7 @@ pub struct OwnedAllocator {
     clippy::unused_self,
     reason = "every builder takes &(mut) self even when it is a pure wrapper, so call sites have a uniform shape."
 )]
-impl OwnedAllocator {
+impl Allocator {
     /// New allocator backed by an empty [`NodeStore`].
     #[must_use]
     pub fn new() -> Self {
@@ -83,65 +83,65 @@ impl OwnedAllocator {
 
     /// Build a plain-text body content. Empty input canonicalises to the
     /// empty-segments form.
-    pub fn content_plain(&mut self, s: &str) -> ContentOwned {
+    pub fn content_plain(&mut self, s: &str) -> Content {
         if s.is_empty() {
-            ContentOwned::Segments(self.store.push_segments(&[]))
+            Content::Segments(self.store.push_segments(&[]))
         } else {
-            ContentOwned::Plain(self.store.intern(s))
+            Content::Plain(self.store.intern(s))
         }
     }
 
     /// Build a body content from a sequence of segments. Empty input → the
     /// empty-segments form; all-`Text` input collapses into a single
     /// concatenated `Plain` (re-interned).
-    pub fn content_segments(&mut self, segs: &[SegmentOwned]) -> ContentOwned {
+    pub fn content_segments(&mut self, segs: &[Segment]) -> Content {
         if segs.is_empty() {
-            return ContentOwned::Segments(self.store.push_segments(&[]));
+            return Content::Segments(self.store.push_segments(&[]));
         }
-        if segs.iter().all(|s| matches!(s, SegmentOwned::Text(_))) {
+        if segs.iter().all(|s| matches!(s, Segment::Text(_))) {
             // Resolve each text run, concatenate, and re-intern the all-`Text`
             // collapse. Pre-size the buffer from the resolved lengths to avoid
             // reallocation.
             let total: usize = segs
                 .iter()
                 .map(|s| match s {
-                    SegmentOwned::Text(id) => self.store.resolve_str(*id).len(),
+                    Segment::Text(id) => self.store.resolve_str(*id).len(),
                     _ => 0,
                 })
                 .sum();
             let mut buf = String::with_capacity(total);
             for s in segs {
-                if let SegmentOwned::Text(id) = s {
+                if let Segment::Text(id) = s {
                     buf.push_str(self.store.resolve_str(*id));
                 }
             }
-            return ContentOwned::Plain(self.store.intern(&buf));
+            return Content::Plain(self.store.intern(&buf));
         }
-        ContentOwned::Segments(self.store.push_segments(segs))
+        Content::Segments(self.store.push_segments(segs))
     }
 
-    /// `SegmentOwned::Text(s)` — interns the string.
-    pub fn seg_text(&mut self, s: &str) -> SegmentOwned {
-        SegmentOwned::Text(self.store.intern(s))
+    /// `Segment::Text(s)` — interns the string.
+    pub fn seg_text(&mut self, s: &str) -> Segment {
+        Segment::Text(self.store.intern(s))
     }
 
-    /// `SegmentOwned::Gaiji(g)` — wraps a payload built via [`Self::make_gaiji`].
+    /// `Segment::Gaiji(g)` — wraps a payload built via [`Self::make_gaiji`].
     #[must_use]
-    pub fn seg_gaiji(&self, g: GaijiOwned) -> SegmentOwned {
-        SegmentOwned::Gaiji(g)
+    pub fn seg_gaiji(&self, g: Gaiji) -> Segment {
+        Segment::Gaiji(g)
     }
 
-    /// `SegmentOwned::Directive(a)` — wraps a payload built via [`Self::make_directive`].
+    /// `Segment::Directive(a)` — wraps a payload built via [`Self::make_directive`].
     #[must_use]
-    pub fn seg_annotation(&self, a: DirectiveOwned) -> SegmentOwned {
-        SegmentOwned::Directive(a)
+    pub fn seg_annotation(&self, a: Directive) -> Segment {
+        Segment::Directive(a)
     }
 
     // ---------------------------------------------------------------------
     // Payload builders (used by both Segment and Node constructors)
     // ---------------------------------------------------------------------
 
-    /// Build a [`GaijiOwned`] payload. `mencode` is classified into its
+    /// Build a [`Gaiji`] payload. `mencode` is classified into its
     /// [`GaijiCanonicalOwned`] form; the verbatim tail is interned for the
     /// `Unresolved` arm. The resolved glyph is derived on demand.
     pub fn make_gaiji(
@@ -149,7 +149,7 @@ impl OwnedAllocator {
         description: &str,
         mencode: Option<&str>,
         standalone: bool,
-    ) -> GaijiOwned {
+    ) -> Gaiji {
         let hint = self.store.intern(description);
         let canonical = match mencode {
             Some(m) => {
@@ -168,25 +168,25 @@ impl OwnedAllocator {
             }
             None => GaijiCanonicalOwned::Unresolved { mencode: None },
         };
-        GaijiOwned {
+        Gaiji {
             hint,
             canonical,
             standalone,
         }
     }
 
-    /// Build a [`DirectiveOwned`] payload.
+    /// Build a [`Directive`] payload.
     ///
     /// # Panics
     ///
     /// Panics if `raw` is empty (the `NonEmptyStr` contract the classify stage
     /// upholds before emitting an annotation).
-    pub fn make_directive(&mut self, raw: &str, kind: DirectiveKind) -> DirectiveOwned {
+    pub fn make_directive(&mut self, raw: &str, kind: DirectiveKind) -> Directive {
         assert!(
             !raw.is_empty(),
             "classify stage must emit Directive with non-empty raw bytes"
         );
-        DirectiveOwned {
+        Directive {
             raw: self.store.intern(raw),
             kind,
         }
@@ -194,27 +194,27 @@ impl OwnedAllocator {
 
     /// Push a `NonEmpty<Content>` field as a length-1 [`ContentRange`],
     /// upholding the non-empty contract.
-    fn push_nonempty(&mut self, c: ContentOwned, msg: &'static str) -> ContentRange {
+    fn push_nonempty(&mut self, c: Content, msg: &'static str) -> ContentRange {
         assert!(!is_empty_content(c), "{msg}");
         self.store.push_contents(&[c])
     }
 
     // ---------------------------------------------------------------------
-    // Node variant constructors (one per NodeOwned variant)
+    // Node variant constructors (one per Node variant)
     // ---------------------------------------------------------------------
 
-    /// `NodeOwned::Ruby(Ruby { base, reading, side: Right })`.
+    /// `Node::Ruby(Ruby { base, reading, side: Right })`.
     ///
     /// # Panics
     ///
     /// Panics if `base` or `reading` is empty.
-    pub fn ruby(&mut self, base: ContentOwned, reading: ContentOwned) -> NodeOwned {
+    pub fn ruby(&mut self, base: Content, reading: Content) -> Node {
         let base = self.push_nonempty(base, "classify stage must emit Ruby with non-empty base");
         let reading = self.push_nonempty(
             reading,
             "classify stage must emit Ruby with non-empty reading",
         );
-        NodeOwned::Ruby(RubyOwned {
+        Node::Ruby(Ruby {
             base,
             reading,
             side: RubySide::Right,
@@ -222,18 +222,18 @@ impl OwnedAllocator {
         })
     }
 
-    /// `NodeOwned::Ruby(Ruby { side: Left, … })` — a left-side ruby.
+    /// `Node::Ruby(Ruby { side: Left, … })` — a left-side ruby.
     ///
     /// # Panics
     ///
     /// Panics if `base` or `reading` is empty.
-    pub fn left_ruby(&mut self, base: ContentOwned, reading: ContentOwned) -> NodeOwned {
+    pub fn left_ruby(&mut self, base: Content, reading: Content) -> Node {
         let base = self.push_nonempty(base, "classify stage must emit Ruby with non-empty base");
         let reading = self.push_nonempty(
             reading,
             "classify stage must emit Ruby with non-empty reading",
         );
-        NodeOwned::Ruby(RubyOwned {
+        Node::Ruby(Ruby {
             base,
             reading,
             side: RubySide::Left,
@@ -241,17 +241,12 @@ impl OwnedAllocator {
         })
     }
 
-    /// `NodeOwned::MarginNote(MarginNote { kind, base, note })`.
+    /// `Node::MarginNote(MarginNote { kind, base, note })`.
     ///
     /// # Panics
     ///
     /// Panics if `base` or `note` is empty.
-    pub fn side_note(
-        &mut self,
-        kind: MarginNoteKind,
-        base: ContentOwned,
-        note: ContentOwned,
-    ) -> NodeOwned {
+    pub fn side_note(&mut self, kind: MarginNoteKind, base: Content, note: Content) -> Node {
         let base = self.push_nonempty(
             base,
             "classify stage must emit MarginNote with non-empty base",
@@ -260,10 +255,10 @@ impl OwnedAllocator {
             note,
             "classify stage must emit MarginNote with non-empty note",
         );
-        NodeOwned::MarginNote(MarginNoteOwned { kind, base, note })
+        Node::MarginNote(MarginNote { kind, base, note })
     }
 
-    /// `NodeOwned::Format` with a 傍点 attribute.
+    /// `Node::Format` with a 傍点 attribute.
     ///
     /// # Panics
     ///
@@ -275,23 +270,23 @@ impl OwnedAllocator {
     pub fn bouten(
         &mut self,
         kind: BoutenKind,
-        target: ContentOwned,
+        target: Content,
         position: BoutenPosition,
         origin: ForwardOrigin,
-    ) -> NodeOwned {
+    ) -> Node {
         self.forward_format(ForwardAttr::Bouten { kind, position }, target, origin)
     }
 
-    /// `NodeOwned::Format` with a 縦中横 attribute.
+    /// `Node::Format` with a 縦中横 attribute.
     ///
     /// # Panics
     ///
     /// Panics if `text` is empty.
-    pub fn tate_chu_yoko(&mut self, text: ContentOwned, origin: ForwardOrigin) -> NodeOwned {
+    pub fn tate_chu_yoko(&mut self, text: Content, origin: ForwardOrigin) -> Node {
         self.forward_format(ForwardAttr::CombineUpright, text, origin)
     }
 
-    /// `NodeOwned::Format` with the given forward-scope `attr` applied to `text`.
+    /// `Node::Format` with the given forward-scope `attr` applied to `text`.
     ///
     /// # Panics
     ///
@@ -299,14 +294,14 @@ impl OwnedAllocator {
     pub fn forward_format(
         &mut self,
         attr: ForwardAttr,
-        text: ContentOwned,
+        text: Content,
         origin: ForwardOrigin,
-    ) -> NodeOwned {
+    ) -> Node {
         let target = self.push_nonempty(
             text,
             "classify stage must emit a forward format with a non-empty target",
         );
-        NodeOwned::Format(ForwardFormatOwned {
+        Node::Format(ForwardFormat {
             attr,
             target,
             origin,
@@ -314,7 +309,7 @@ impl OwnedAllocator {
         })
     }
 
-    /// `NodeOwned::Format` for a #331 dotted-letter directive
+    /// `Node::Format` for a #331 dotted-letter directive
     /// ([`ForwardAttr::AccentDot`]): decorates the reclaimed `text` run and
     /// interns the raw directive `body` (the selector grammar) so the renderer
     /// can compose the dots and the serializer can re-emit it verbatim.
@@ -322,18 +317,13 @@ impl OwnedAllocator {
     /// # Panics
     ///
     /// Panics if `text` is empty.
-    pub fn accent_dot(
-        &mut self,
-        text: ContentOwned,
-        body: &str,
-        origin: ForwardOrigin,
-    ) -> NodeOwned {
+    pub fn accent_dot(&mut self, text: Content, body: &str, origin: ForwardOrigin) -> Node {
         let target = self.push_nonempty(
             text,
             "classify stage must emit an accent-dot format with a non-empty target",
         );
         let accent_body = Some(self.store.intern(body));
-        NodeOwned::Format(ForwardFormatOwned {
+        Node::Format(ForwardFormat {
             attr: ForwardAttr::AccentDot,
             target,
             origin,
@@ -341,49 +331,49 @@ impl OwnedAllocator {
         })
     }
 
-    /// `NodeOwned::Gaiji(g)`.
+    /// `Node::Gaiji(g)`.
     #[must_use]
-    pub fn gaiji(&self, g: GaijiOwned) -> NodeOwned {
-        NodeOwned::Gaiji(g)
+    pub fn gaiji(&self, g: Gaiji) -> Node {
+        Node::Gaiji(g)
     }
 
-    /// `NodeOwned::Line(lf)` — a single-line layout directive.
+    /// `Node::Line(lf)` — a single-line layout directive.
     #[must_use]
-    pub fn line(&self, lf: LineFormat) -> NodeOwned {
-        NodeOwned::Line(lf)
+    pub fn line(&self, lf: LineFormat) -> Node {
+        Node::Line(lf)
     }
 
-    /// `NodeOwned::Warichu(Warichu { upper, lower })` — bare-content fields.
+    /// `Node::Warichu(Warichu { upper, lower })` — bare-content fields.
     #[must_use]
-    pub fn warichu(&self, upper: ContentOwned, lower: ContentOwned) -> NodeOwned {
-        NodeOwned::Warichu(WarichuOwned { upper, lower })
+    pub fn warichu(&self, upper: Content, lower: Content) -> Node {
+        Node::Warichu(Warichu { upper, lower })
     }
 
-    /// `NodeOwned::PageBreak`.
+    /// `Node::PageBreak`.
     #[must_use]
-    pub fn page_break(&self) -> NodeOwned {
-        NodeOwned::PageBreak
+    pub fn page_break(&self) -> Node {
+        Node::PageBreak
     }
 
-    /// `NodeOwned::SectionBreak(k)`.
+    /// `Node::SectionBreak(k)`.
     #[must_use]
-    pub fn section_break(&self, k: SectionKind) -> NodeOwned {
-        NodeOwned::SectionBreak(k)
+    pub fn section_break(&self, k: SectionKind) -> Node {
+        Node::SectionBreak(k)
     }
 
-    /// `NodeOwned::BodyEnd`.
+    /// `Node::BodyEnd`.
     #[must_use]
-    pub fn body_end(&self) -> NodeOwned {
-        NodeOwned::BodyEnd
+    pub fn body_end(&self) -> Node {
+        Node::BodyEnd
     }
 
-    /// `NodeOwned::ForcedBreak`.
+    /// `Node::ForcedBreak`.
     #[must_use]
-    pub fn forced_break(&self) -> NodeOwned {
-        NodeOwned::ForcedBreak
+    pub fn forced_break(&self) -> Node {
+        Node::ForcedBreak
     }
 
-    /// `NodeOwned::Heading(Heading { kind, style, text })`.
+    /// `Node::Heading(Heading { kind, style, text })`.
     ///
     /// # Panics
     ///
@@ -392,13 +382,13 @@ impl OwnedAllocator {
         &mut self,
         kind: HeadingKind,
         style: HeadingStyle,
-        text: ContentOwned,
-    ) -> NodeOwned {
+        text: Content,
+    ) -> Node {
         let text = self.push_nonempty(text, "classify stage must emit Heading with non-empty text");
-        NodeOwned::Heading(HeadingOwned { kind, style, text })
+        Node::Heading(Heading { kind, style, text })
     }
 
-    /// `NodeOwned::HeadingHint(HeadingHint { level, style, target, self_contained })`.
+    /// `Node::HeadingHint(HeadingHint { level, style, target, self_contained })`.
     ///
     /// `self_contained` is set when the quoted target has no referent in the
     /// preceding source (a no-referent forward heading), so render shows the
@@ -417,12 +407,12 @@ impl OwnedAllocator {
         style: HeadingStyle,
         target: &str,
         self_contained: bool,
-    ) -> NodeOwned {
+    ) -> Node {
         assert!(
             !target.is_empty(),
             "classify stage must emit HeadingHint with non-empty target"
         );
-        NodeOwned::HeadingHint(HeadingHintOwned {
+        Node::HeadingHint(HeadingHint {
             level,
             style,
             target: self.store.intern(target),
@@ -430,7 +420,7 @@ impl OwnedAllocator {
         })
     }
 
-    /// `NodeOwned::Illustration` — keyword 挿絵 form.
+    /// `Node::Illustration` — keyword 挿絵 form.
     ///
     /// # Panics
     ///
@@ -444,8 +434,8 @@ impl OwnedAllocator {
         file: &str,
         number: Option<&str>,
         dimensions: Option<&str>,
-        caption: Option<ContentOwned>,
-    ) -> NodeOwned {
+        caption: Option<Content>,
+    ) -> Node {
         assert!(
             !file.is_empty(),
             "classify stage must emit Illustration with non-empty file path"
@@ -457,7 +447,7 @@ impl OwnedAllocator {
             .filter(|n| !n.is_empty())
             .map(|n| self.store.intern(n));
         let dimensions = dimensions.map(|d| self.store.intern(d));
-        NodeOwned::Illustration(IllustrationOwned {
+        Node::Illustration(Illustration {
             file,
             number,
             dimensions,
@@ -466,7 +456,7 @@ impl OwnedAllocator {
         })
     }
 
-    /// `NodeOwned::Illustration` — general image form (leading description, no
+    /// `Node::Illustration` — general image form (leading description, no
     /// 挿絵 keyword / number / caption).
     ///
     /// # Panics
@@ -477,7 +467,7 @@ impl OwnedAllocator {
         file: &str,
         description: &str,
         dimensions: Option<&str>,
-    ) -> NodeOwned {
+    ) -> Node {
         assert!(
             !file.is_empty(),
             "classify stage must emit Illustration with non-empty file path"
@@ -489,7 +479,7 @@ impl OwnedAllocator {
         let file = self.store.intern(file);
         let description = self.store.intern(description);
         let dimensions = dimensions.map(|d| self.store.intern(d));
-        NodeOwned::Illustration(IllustrationOwned {
+        Node::Illustration(Illustration {
             file,
             number: None,
             dimensions,
@@ -498,51 +488,51 @@ impl OwnedAllocator {
         })
     }
 
-    /// `NodeOwned::Kaeriten(Kaeriten { mark })`.
+    /// `Node::Kaeriten(Kaeriten { mark })`.
     ///
     /// # Panics
     ///
     /// Panics if `mark` is empty.
-    pub fn kaeriten(&mut self, mark: &str) -> NodeOwned {
+    pub fn kaeriten(&mut self, mark: &str) -> Node {
         assert!(
             !mark.is_empty(),
             "classify stage must emit Kaeriten with non-empty mark"
         );
-        NodeOwned::Kaeriten(KaeritenOwned {
+        Node::Kaeriten(Kaeriten {
             mark: self.store.intern(mark),
         })
     }
 
-    /// `NodeOwned::Directive(a)`.
+    /// `Node::Directive(a)`.
     #[must_use]
-    pub fn annotation(&self, a: DirectiveOwned) -> NodeOwned {
-        NodeOwned::Directive(a)
+    pub fn annotation(&self, a: Directive) -> Node {
+        Node::Directive(a)
     }
 
-    /// `NodeOwned::AngleQuote(AngleQuote { content })`.
+    /// `Node::AngleQuote(AngleQuote { content })`.
     ///
     /// # Panics
     ///
     /// Panics if `content` is empty.
-    pub fn angle_quote(&mut self, content: ContentOwned) -> NodeOwned {
+    pub fn angle_quote(&mut self, content: Content) -> Node {
         let content = self.push_nonempty(
             content,
             "classify stage pre-filters empty AngleQuote into plain",
         );
-        NodeOwned::AngleQuote(AngleQuoteOwned { content })
+        Node::AngleQuote(AngleQuote { content })
     }
 
-    /// `NodeOwned::Container(c)`.
+    /// `Node::Container(c)`.
     #[must_use]
-    pub fn container(&self, c: Container) -> NodeOwned {
-        NodeOwned::Container(c)
+    pub fn container(&self, c: Container) -> Node {
+        Node::Container(c)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    //! Per-variant round-trip tests for `OwnedAllocator`. Each builds one
-    //! `NodeOwned` and resolves its payloads against the store to confirm the
+    //! Per-variant round-trip tests for `Allocator`. Each builds one
+    //! `Node` and resolves its payloads against the store to confirm the
     //! fields match.
 
     use aozora_encoding::gaiji::MenKuTen;
@@ -551,17 +541,17 @@ mod tests {
 
     /// Resolve a length-1 `ContentRange` to its `Plain` text, or `None` for a
     /// mixed / multi-entry run.
-    fn plain(alloc: &OwnedAllocator, range: ContentRange) -> Option<&str> {
+    fn plain(alloc: &Allocator, range: ContentRange) -> Option<&str> {
         alloc.store().content_range_as_plain(range)
     }
 
     #[test]
     fn ruby_round_trip() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let base = a.content_plain("青梅");
         let reading = a.content_plain("おうめ");
         let n = a.ruby(base, reading);
-        let NodeOwned::Ruby(r) = n else {
+        let Node::Ruby(r) = n else {
             panic!("expected Ruby, got {n:?}");
         };
         assert_eq!(plain(&a, r.base), Some("青梅"));
@@ -571,10 +561,10 @@ mod tests {
 
     #[test]
     fn left_ruby_is_left_side() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let base = a.content_plain("未");
         let reading = a.content_plain("ザル");
-        let NodeOwned::Ruby(r) = a.left_ruby(base, reading) else {
+        let Node::Ruby(r) = a.left_ruby(base, reading) else {
             panic!("expected Ruby");
         };
         assert_eq!(r.side, RubySide::Left);
@@ -582,7 +572,7 @@ mod tests {
 
     #[test]
     fn bouten_round_trip() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let target = a.content_plain("青空");
         let n = a.bouten(
             BoutenKind::Goma,
@@ -590,7 +580,7 @@ mod tests {
             BoutenPosition::Right,
             ForwardOrigin::Referenced,
         );
-        let NodeOwned::Format(b) = n else {
+        let Node::Format(b) = n else {
             panic!("expected Format(Bouten), got {n:?}");
         };
         assert_eq!(
@@ -606,9 +596,9 @@ mod tests {
 
     #[test]
     fn tate_chu_yoko_round_trip() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let text = a.content_plain("12");
-        let NodeOwned::Format(t) = a.tate_chu_yoko(text, ForwardOrigin::Referenced) else {
+        let Node::Format(t) = a.tate_chu_yoko(text, ForwardOrigin::Referenced) else {
             panic!("expected Format(CombineUpright)");
         };
         assert_eq!(t.attr, ForwardAttr::CombineUpright);
@@ -617,10 +607,9 @@ mod tests {
 
     #[test]
     fn emphasis_round_trip() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let text = a.content_plain("重要");
-        let NodeOwned::Format(e) =
-            a.forward_format(ForwardAttr::Bold, text, ForwardOrigin::Reclaimed)
+        let Node::Format(e) = a.forward_format(ForwardAttr::Bold, text, ForwardOrigin::Reclaimed)
         else {
             panic!("expected Format(Bold)");
         };
@@ -631,10 +620,10 @@ mod tests {
 
     #[test]
     fn side_note_round_trip() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let base = a.content_plain("未来");
         let note = a.content_plain("みらい");
-        let NodeOwned::MarginNote(s) = a.side_note(MarginNoteKind::Gloss, base, note) else {
+        let Node::MarginNote(s) = a.side_note(MarginNoteKind::Gloss, base, note) else {
             panic!("expected MarginNote");
         };
         assert_eq!(s.kind, MarginNoteKind::Gloss);
@@ -644,9 +633,9 @@ mod tests {
 
     #[test]
     fn gaiji_full_metadata() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let g = a.make_gaiji("木＋吶のつくり", Some("第3水準1-85-54"), false);
-        let NodeOwned::Gaiji(gn) = a.gaiji(g) else {
+        let Node::Gaiji(gn) = a.gaiji(g) else {
             panic!("expected Gaiji");
         };
         assert_eq!(a.store().resolve_str(gn.hint), "木＋吶のつくり");
@@ -663,9 +652,9 @@ mod tests {
 
     #[test]
     fn gaiji_no_mencode_is_unresolved_none() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let g = a.make_gaiji("desc", None, true);
-        let NodeOwned::Gaiji(gn) = a.gaiji(g) else {
+        let Node::Gaiji(gn) = a.gaiji(g) else {
             panic!("expected Gaiji");
         };
         assert_eq!(
@@ -677,9 +666,9 @@ mod tests {
 
     #[test]
     fn gaiji_unresolved_keeps_mencode_tail() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let g = a.make_gaiji("謎", Some("未知の注記"), false);
-        let NodeOwned::Gaiji(gn) = a.gaiji(g) else {
+        let Node::Gaiji(gn) = a.gaiji(g) else {
             panic!("expected Gaiji");
         };
         let GaijiCanonicalOwned::Unresolved { mencode: Some(id) } = gn.canonical else {
@@ -690,9 +679,9 @@ mod tests {
 
     #[test]
     fn directive_round_trip() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let d = a.make_directive("［＃ママ］", DirectiveKind::Sic);
-        let NodeOwned::Directive(dn) = a.annotation(d) else {
+        let Node::Directive(dn) = a.annotation(d) else {
             panic!("expected Directive");
         };
         assert_eq!(a.store().resolve_str(dn.raw), "［＃ママ］");
@@ -701,16 +690,16 @@ mod tests {
 
     #[test]
     fn warichu_round_trip() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let upper = a.content_plain("上");
         let lower = a.content_plain("下");
-        let NodeOwned::Warichu(w) = a.warichu(upper, lower) else {
+        let Node::Warichu(w) = a.warichu(upper, lower) else {
             panic!("expected Warichu");
         };
-        let ContentOwned::Plain(u) = w.upper else {
+        let Content::Plain(u) = w.upper else {
             panic!("upper not plain");
         };
-        let ContentOwned::Plain(l) = w.lower else {
+        let Content::Plain(l) = w.lower else {
             panic!("lower not plain");
         };
         assert_eq!(a.store().resolve_str(u), "上");
@@ -719,10 +708,9 @@ mod tests {
 
     #[test]
     fn heading_round_trip() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let text = a.content_plain("第一章");
-        let NodeOwned::Heading(h) =
-            a.aozora_heading(HeadingKind::Large, HeadingStyle::Standard, text)
+        let Node::Heading(h) = a.aozora_heading(HeadingKind::Large, HeadingStyle::Standard, text)
         else {
             panic!("expected Heading");
         };
@@ -733,8 +721,8 @@ mod tests {
 
     #[test]
     fn heading_hint_round_trip() {
-        let mut a = OwnedAllocator::new();
-        let NodeOwned::HeadingHint(h) =
+        let mut a = Allocator::new();
+        let Node::HeadingHint(h) =
             a.heading_hint(HeadingKind::Medium, HeadingStyle::Window, "序章", false)
         else {
             panic!("expected HeadingHint");
@@ -747,9 +735,9 @@ mod tests {
 
     #[test]
     fn sashie_keyword_form() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let caption = a.content_plain("図一");
-        let NodeOwned::Illustration(s) =
+        let Node::Illustration(s) =
             a.sashie("cover.png", Some("1"), Some("横100×縦200"), Some(caption))
         else {
             panic!("expected Illustration");
@@ -761,7 +749,7 @@ mod tests {
             Some("横100×縦200")
         );
         assert!(s.description.is_none());
-        let Some(ContentOwned::Plain(cap)) = s.caption else {
+        let Some(Content::Plain(cap)) = s.caption else {
             panic!("expected a plain caption");
         };
         assert_eq!(a.store().resolve_str(cap), "図一");
@@ -769,8 +757,8 @@ mod tests {
 
     #[test]
     fn sashie_general_form() {
-        let mut a = OwnedAllocator::new();
-        let NodeOwned::Illustration(s) = a.sashie_general("fig.png", "キャラクターの図", None)
+        let mut a = Allocator::new();
+        let Node::Illustration(s) = a.sashie_general("fig.png", "キャラクターの図", None)
         else {
             panic!("expected Illustration");
         };
@@ -785,8 +773,8 @@ mod tests {
 
     #[test]
     fn kaeriten_round_trip() {
-        let mut a = OwnedAllocator::new();
-        let NodeOwned::Kaeriten(k) = a.kaeriten("（レ）") else {
+        let mut a = Allocator::new();
+        let Node::Kaeriten(k) = a.kaeriten("（レ）") else {
             panic!("expected Kaeriten");
         };
         assert_eq!(a.store().resolve_str(k.mark), "（レ）");
@@ -794,9 +782,9 @@ mod tests {
 
     #[test]
     fn angle_quote_round_trip() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let content = a.content_plain("重要");
-        let NodeOwned::AngleQuote(d) = a.angle_quote(content) else {
+        let Node::AngleQuote(d) = a.angle_quote(content) else {
             panic!("expected AngleQuote");
         };
         assert_eq!(plain(&a, d.content), Some("重要"));
@@ -804,20 +792,20 @@ mod tests {
 
     #[test]
     fn unit_leaf_constructors() {
-        let a = OwnedAllocator::new();
-        assert_eq!(a.page_break(), NodeOwned::PageBreak);
-        assert_eq!(a.body_end(), NodeOwned::BodyEnd);
-        assert_eq!(a.forced_break(), NodeOwned::ForcedBreak);
+        let a = Allocator::new();
+        assert_eq!(a.page_break(), Node::PageBreak);
+        assert_eq!(a.body_end(), Node::BodyEnd);
+        assert_eq!(a.forced_break(), Node::ForcedBreak);
         assert_eq!(
             a.section_break(SectionKind::Kaicho),
-            NodeOwned::SectionBreak(SectionKind::Kaicho)
+            Node::SectionBreak(SectionKind::Kaicho)
         );
         assert_eq!(
             a.line(LineFormat::Indent {
                 amount: 2,
                 end_offset: None
             }),
-            NodeOwned::Line(LineFormat::Indent {
+            Node::Line(LineFormat::Indent {
                 amount: 2,
                 end_offset: None
             })
@@ -826,18 +814,18 @@ mod tests {
 
     #[test]
     fn empty_content_canonicalises_to_empty_segments() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         assert!(is_empty_content(a.content_plain("")));
         assert!(is_empty_content(a.content_segments(&[])));
     }
 
     #[test]
     fn content_segments_collapses_all_text() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let s1 = a.seg_text("青");
         let s2 = a.seg_text("空");
         // All-Text input collapses to a single concatenated Plain.
-        let ContentOwned::Plain(id) = a.content_segments(&[s1, s2]) else {
+        let Content::Plain(id) = a.content_segments(&[s1, s2]) else {
             panic!("all-text content_segments must collapse to Plain");
         };
         assert_eq!(a.store().resolve_str(id), "青空");
@@ -846,7 +834,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "non-empty base")]
     fn ruby_empty_base_panics() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let base = a.content_plain("");
         let reading = a.content_plain("おうめ");
         let _ = a.ruby(base, reading);

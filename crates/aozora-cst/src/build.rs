@@ -2,7 +2,7 @@
 //! `SyntaxNode` tree using the public source-node + container-pair
 //! surface only.
 
-use aozora_pipeline::{NodeRefOwned, SourceNodeOwned};
+use aozora_pipeline::{NodeRef, SourceNode};
 use rowan::GreenNodeBuilder;
 
 use crate::kind::{SyntaxKind, SyntaxNode};
@@ -23,7 +23,7 @@ use crate::kind::{SyntaxKind, SyntaxNode};
 /// source; the meta crate's `aozora::cst::from_tree` runs the
 /// sanitize pass internally and exposes the same property.)
 #[must_use]
-pub fn build_cst(sanitized_source: &str, source_nodes: &[SourceNodeOwned]) -> SyntaxNode {
+pub fn build_cst(sanitized_source: &str, source_nodes: &[SourceNode]) -> SyntaxNode {
     let mut builder = GreenNodeBuilder::new();
     builder.start_node(rowan::SyntaxKind(SyntaxKind::Document as u16));
 
@@ -38,7 +38,7 @@ pub fn build_cst(sanitized_source: &str, source_nodes: &[SourceNodeOwned]) -> Sy
 struct Walker<'a, 'src> {
     builder: &'a mut GreenNodeBuilder<'static>,
     source: &'src str,
-    nodes: &'src [SourceNodeOwned],
+    nodes: &'src [SourceNode],
     cursor: usize,
     /// Container nesting depth. Each `BlockOpen` opens a `Container`
     /// node; the matching `BlockClose` finishes it. We do not track
@@ -51,7 +51,7 @@ impl<'a, 'src> Walker<'a, 'src> {
     fn new(
         builder: &'a mut GreenNodeBuilder<'static>,
         source: &'src str,
-        nodes: &'src [SourceNodeOwned],
+        nodes: &'src [SourceNode],
     ) -> Self {
         Self {
             builder,
@@ -88,20 +88,20 @@ impl<'a, 'src> Walker<'a, 'src> {
         self.cursor = end;
     }
 
-    fn dispatch_node(&mut self, entry: &SourceNodeOwned, span_start: usize, span_end: usize) {
+    fn dispatch_node(&mut self, entry: &SourceNode, span_start: usize, span_end: usize) {
         let span_text = &self.source[span_start..span_end];
         match entry.node {
-            NodeRefOwned::Inline(_) | NodeRefOwned::BlockLeaf(_) => {
+            NodeRef::Inline(_) | NodeRef::BlockLeaf(_) => {
                 self.start_node(SyntaxKind::Construct);
                 self.token(SyntaxKind::ConstructText, span_text);
                 self.builder.finish_node();
             }
-            NodeRefOwned::BlockOpen(_) => {
+            NodeRef::BlockOpen(_) => {
                 self.start_node(SyntaxKind::Container);
                 self.token(SyntaxKind::ContainerOpen, span_text);
                 self.open_containers += 1;
             }
-            NodeRefOwned::BlockClose(_) => {
+            NodeRef::BlockClose(_) => {
                 self.token(SyntaxKind::ContainerClose, span_text);
                 if self.open_containers > 0 {
                     self.builder.finish_node();
@@ -113,7 +113,7 @@ impl<'a, 'src> Walker<'a, 'src> {
                 // bytes are preserved and the lossless invariant
                 // still holds.
             }
-            // `NodeRefOwned` is `#[non_exhaustive]`; future variants
+            // `NodeRef` is `#[non_exhaustive]`; future variants
             // surface as plain bytes until the projection adds
             // dedicated handling.
             _ => self.token(SyntaxKind::Plain, span_text),

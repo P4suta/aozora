@@ -7,7 +7,7 @@
 //!   normalized text with Private-Use-Area sentinel characters at
 //!   Aozora construct positions, plus a side registry mapping sentinel
 //!   positions back to pre-classified
-//!   `aozora_syntax::owned::NodeOwned` values.
+//!   `aozora_syntax::ast::Node` values.
 //! - **Post-process AST walk** substitutes sentinels with the registry's
 //!   owned-AST values. That walk lives in `aozora`.
 //! - **Pure-functional pipeline**: every stage is `fn(input) -> output`
@@ -20,7 +20,7 @@
 //! | sanitize | BOM strip, CR/LF → LF, PUA collision pre-scan |
 //! | tokenize | Linear tokenize — emit trigger events (`｜《》［］※〔〕「」`) |
 //! | pair     | Balanced-stack pairing across all delimiters |
-//! | classify | Full-spec Aozora classification into `aozora_syntax::owned::NodeOwned` |
+//! | classify | Full-spec Aozora classification into `aozora_syntax::ast::Node` |
 //!
 //! After classify, the legacy normalize / registry / validate stages
 //! live as a fused walk inside
@@ -48,9 +48,9 @@
 //! ## Public surface
 //!
 //! After classify, the lexer module exposes only the per-stage functions
-//! used internally by [`crate::lex`]. The old owned
-//! "package result" type has been replaced by the borrowed
-//! `LexOutput<'a>` that [`crate::lex`] returns. External
+//! used internally by [`crate::lex`]. The single result type is
+//! the owned, lifetime-free `LexOutput` that [`crate::lex`]
+//! returns. External
 //! direct consumers of this module should be limited to the
 //! pipeline driver and benchmarks; everything else goes through
 //! [`crate::lex`].
@@ -88,7 +88,7 @@ pub use tokenize::{Tokenizer, tokenize};
 #[cfg(test)]
 mod tests {
     //! Sentinel-constant invariants. Other crate-public surface is
-    //! covered by per-stage tests and the borrowed-pipeline tests in
+    //! covered by per-stage tests and the lex-path tests in
     //! `aozora-pipeline`; this block keeps the structural invariants that
     //! every downstream consumer relies on (PUA range membership +
     //! pairwise distinctness) co-located with the re-exports.

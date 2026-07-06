@@ -1,4 +1,4 @@
-//! Fuzz target — `aozora_render::serialize_owned` idempotency.
+//! Fuzz target — `aozora_render::serialize` idempotency.
 //!
 //! Arbitrary UTF-8 source is lexed once and serialized back. The
 //! result is then re-lexed and re-serialized; the two outputs must
@@ -11,7 +11,7 @@
 #![no_main]
 
 use aozora_pipeline::lex;
-use aozora_render::serialize_owned;
+use aozora_render::serialize;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -35,10 +35,10 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let lex1 = lex(src);
-    let first = serialize_owned(&lex1);
+    let first = serialize(&lex1);
 
     let lex2 = lex(&first);
-    let second = serialize_owned(&lex2);
+    let second = serialize(&lex2);
 
     assert!(
         first == second,

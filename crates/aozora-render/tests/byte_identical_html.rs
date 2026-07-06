@@ -10,7 +10,7 @@
 //! renderers MUST produce byte-identical HTML.
 
 use aozora_pipeline::lex;
-use aozora_render::render_html_owned;
+use aozora_render::render_html;
 use proptest::prelude::*;
 
 /// Render plain text via the streaming `html::render_to_string`
@@ -19,7 +19,7 @@ use proptest::prelude::*;
 /// after wrapping.
 fn render_streaming(text: &str) -> String {
     let out = lex(text);
-    render_html_owned(&out)
+    render_html(&out)
 }
 
 /// All five HTML-unsafe ASCII characters in a single literal so

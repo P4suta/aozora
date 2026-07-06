@@ -1,7 +1,7 @@
 //! Walks `AOZORA_CORPUS_ROOT` and verifies the source-region ownership
 //! tiling and minimal-diff splice (#202) hold for every real document:
 //!
-//! * [`aozora::Tree::owned_regions`] is a complete, gap-free, ordered,
+//! * [`aozora::Tree::regions`] is a complete, gap-free, ordered,
 //!   non-overlapping cover of the verbatim (sanitized) source — the
 //!   region byte-slices concatenate back to it exactly.
 //! * No region is unclassified (`Opaque`) — every real construct is editable.
@@ -19,7 +19,7 @@
 //! invariant to the full 青空文庫 corpus. Skipped silently when
 //! `AOZORA_CORPUS_ROOT` is unset; never hard-fails on missing corpus.
 
-use aozora::{CoupledKind, Document, OwnedRegion, RegionRole, SpliceSafety};
+use aozora::{CoupledKind, Document, Region, RegionRole, SpliceSafety};
 use aozora_encoding::decode_auto;
 
 /// Cap the collected failures so a systemic regression does not produce
@@ -27,7 +27,7 @@ use aozora_encoding::decode_auto;
 const MAX_REPORTED: usize = 50;
 
 #[test]
-fn corpus_owned_regions_tile_the_source() {
+fn corpus_regions_tile_the_source() {
     let Some(source) = aozora_corpus::from_env() else {
         eprintln!("AOZORA_CORPUS_ROOT not set; skipping splice tiling sweep");
         return;
@@ -46,7 +46,7 @@ fn corpus_owned_regions_tile_the_source() {
         let doc = Document::new(utf8);
         let tree = doc.parse();
         let verbatim = tree.to_source_verbatim();
-        let regions = tree.owned_regions();
+        let regions = tree.regions();
 
         if let Err(why) = check_tiling(&verbatim, &regions) {
             failures.push(format!("{}: {why}", item.label));
@@ -72,7 +72,7 @@ fn corpus_owned_regions_tile_the_source() {
 
 /// Verify the regions form a complete, ordered, gap-free, non-overlapping
 /// cover whose byte-slices concatenate back to `verbatim`.
-fn check_tiling(verbatim: &str, regions: &[OwnedRegion]) -> Result<(), String> {
+fn check_tiling(verbatim: &str, regions: &[Region]) -> Result<(), String> {
     if verbatim.is_empty() {
         return if regions.is_empty() {
             Ok(())
@@ -122,7 +122,7 @@ enum Sample {
 
 /// The sample bucket for a region, or `None` for ones covered structurally
 /// elsewhere (e.g. a leaf container).
-fn sample_of(r: &OwnedRegion) -> Option<Sample> {
+fn sample_of(r: &Region) -> Option<Sample> {
     match (r.safety, r.role) {
         (SpliceSafety::Direct, _) => Some(Sample::Direct),
         (SpliceSafety::Coupled(CoupledKind::Container), RegionRole::ContainerOpen) => {
@@ -146,7 +146,7 @@ fn sample_of(r: &OwnedRegion) -> Option<Sample> {
 fn check_splice_sampled(
     tree: &aozora::Tree<'_>,
     verbatim: &str,
-    regions: &[OwnedRegion],
+    regions: &[Region],
 ) -> Result<(), String> {
     let mut sampled: Vec<Sample> = Vec::with_capacity(6);
     for r in regions {

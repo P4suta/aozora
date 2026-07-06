@@ -105,7 +105,7 @@ wasm-bindgen does wire `Drop` to a JS finalizer, but JS finalizers
 fire on the GC's schedule — which can be *minutes* after the last
 reference goes out of scope, especially on Node.js where the GC
 batches aggressively. For large documents this means the parse tree —
-the `OwnedLexOutput`'s `NodeStore` pools, potentially several MB —
+the `LexOutput`'s `NodeStore` pools, potentially several MB —
 sits unreleased.
 
 Explicit `.free()` is the same idiom every wasm-bindgen library

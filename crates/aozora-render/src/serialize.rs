@@ -1,461 +1,694 @@
-//! Lifetime-free Aozora-source serialize helpers.
+//! Aozora-source serializer over the semantic AST.
 //!
-//! The shared, AST-payload-free marker emitters the owned serializer
-//! (`serialize_owned`) and the source splice (#202) reuse: the
-//! container open/close marker spellers, the single-line layout-directive
-//! emitter, the heading keyword helpers, the `TrackingWriter` (tracks the last
-//! emitted char for the bare-`｜` decision), and the `NewlineCappedWriter`
-//! (caps the block-padding blank-line run so `serialize ∘ parse` is a fixed
-//! point). Every function takes only `Copy` scalar payloads, so the byte
-//! spelling is single-source.
+//! Serializes the normalized text back to Aozora source in a single forward
+//! walk, dispatching each PUA sentinel through an [`LexOutput`]'s
+//! [`Registry`](aozora_syntax::ast::Registry) and resolving every
+//! [`StrId`](aozora_syntax::ast::StrId) /
+//! [`ContentRange`] /
+//! [`SegRange`](aozora_syntax::ast::SegRange) against the [`NodeStore`].
+//!
+//! The container-marker spelling (`emit_container_open` / `emit_container_close`)
+//! and the writer machinery (`NewlineCappedWriter` / `TrackingWriter`) are
+//! **reused** from [`crate::spelling::source`] — they read only `Copy` `RegionFormat`
+//! / `RegionClose` discriminants, so there is a single byte-spelling authority.
+//! Only the AST-reading emitters live here.
+//!
+//! It runs a decorative-rule isolate post-pass so `serialize ∘ parse` is
+//! a round-trip fixed point.
 
 use core::fmt::{self, Write};
 
+use crate::spelling::source::{
+    NewlineCappedWriter, TrackingWriter, emit_container_close, emit_container_open, emit_line,
+    emit_section_break, heading_level_word, heading_style_keyword,
+};
+use crate::walk::{SentinelKind, WalkSink, walk};
+use aozora_pipeline::{has_long_rule_line, isolate_decorative_rules};
+use aozora_syntax::ast::{
+    AngleQuote, Content, ContentRange, Directive, ForwardFormat, Gaiji, GaijiCanonicalOwned,
+    Heading, HeadingHint, Illustration, Kaeriten, LexOutput, MarginNote, Node, NodeRef, NodeStore,
+    Ruby, Segment,
+};
+use aozora_syntax::format::ForwardOrigin;
+use aozora_syntax::lint::canonical_directive;
 use aozora_syntax::{
-    BlockStyles, BoutenPosition, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, LineFormat,
-    RegionClose, RegionFormat, SectionKind,
+    AccentMark, BoutenPosition, DirectiveKind, EnclosureKind, ForwardAttr, RubySide,
+    ruby_base_class,
 };
 
-/// The source text of the container **open** marker for `open`.
+/// Options controlling how the AST is re-emitted to Aozora source.
 ///
-/// `RegionFormat::Indent(2字下げ)` → `［＃ここから2字下げ］`, preserving every
-/// payload (N / width / offset / 字組み clause). The inverse of the
-/// classifier's open recognition.
+/// The default (`fix_notation: false`) preserves the strong contract that
+/// every directive round-trips its `raw` bytes verbatim — including the
+/// `DirectiveKind::Unknown` near-misses the notation-hygiene lint flags.
+/// Opting in (`aozora fmt --fix-notation`) lets the serializer rewrite those
+/// flagged near-misses to their canonical spelling via the single
+/// [`canonical_directive`] authority.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SerializeOptions {
+    /// Rewrite `DirectiveKind::Unknown` directives whose body is a verified
+    /// near-miss (per [`canonical_directive`]) to their canonical spelling.
+    pub fix_notation: bool,
+}
+
+/// Serialize an [`LexOutput`] back to Aozora source text.
 ///
-/// Used by the minimal-diff source splice (#202) to canonicalize a
-/// container's open marker. The serialization rule lives here (the single
-/// source of truth for marker spelling); the splice layer only calls it.
+/// `serialize ∘ parse` reaches a fixed point after one pass. The
+/// mandatory decorative-rule isolate post-pass (`has_long_rule_line` fast-path
+/// then `isolate_decorative_rules`) normalizes decorative rule lines so a
+/// second pass re-parses and re-serializes to identical bytes.
 ///
 /// # Panics
 ///
 /// Does not panic in normal use: `String` cannot fail as a [`Write`] sink.
 #[must_use]
-pub fn container_open_source(open: RegionFormat) -> String {
-    let mut s = String::new();
-    emit_container_open(open, &mut s).expect("String write is infallible");
-    s
+pub fn serialize(out: &LexOutput) -> String {
+    serialize_with(out, SerializeOptions::default())
 }
 
-/// The source text of the container **close** marker that matches `open`.
+/// Serialize an [`LexOutput`] back to Aozora source text with explicit
+/// [`SerializeOptions`].
 ///
-/// `RegionFormat::Indent(2字下げ)` → `［＃ここで字下げ終わり］`; a 字組み compound
-/// keeps its width. The close is a pure function of the open
-/// ([`RegionClose::of`]).
-///
-/// Used by the minimal-diff source splice (#202): when a container's family
-/// changes, the paired close marker must be rewritten to match the new open,
-/// and this derives it without the splice layer re-implementing the spelling.
+/// With the default options this is identical to [`serialize()`]. With
+/// `fix_notation` enabled, `DirectiveKind::Unknown` near-misses are rewritten
+/// to canonical form (see [`SerializeOptions`]); the rewrite is idempotent
+/// because a canonical body parses to a recognized (non-`Unknown`) node and so
+/// is never revisited on a second pass.
 ///
 /// # Panics
 ///
 /// Does not panic in normal use: `String` cannot fail as a [`Write`] sink.
 #[must_use]
-pub fn container_close_source(open: RegionFormat) -> String {
-    let mut s = String::new();
-    emit_container_close(RegionClose::of(open), &mut s).expect("String write is infallible");
-    s
+pub fn serialize_with(out: &LexOutput, opts: SerializeOptions) -> String {
+    let mut s = NewlineCappedWriter::with_capacity(out.normalized.len().saturating_mul(2));
+    serialize_into_with(out, &mut s, opts).expect("writing to NewlineCappedWriter never fails");
+    let raw = s.into_string();
+    if has_long_rule_line(&raw) {
+        isolate_decorative_rules(&raw)
+    } else {
+        raw
+    }
 }
 
-/// Wraps the serialize output and remembers the last `char` emitted.
+/// Serialize an [`LexOutput`] into the given writer.
 ///
-/// `emit_ruby` reads it to decide whether a bare `《reading》` would
-/// re-parse to the *same* base (drop `｜`) or a different one (keep `｜`)
-/// — ADR 0002. The predecessor may be a preceding NODE (e.g. a kaeriten
-/// `二`, which is a ruby-base char) and not just text, so the last char
-/// must be tracked at the writer, not per `on_text`.
-pub(crate) struct TrackingWriter<W: Write> {
-    inner: W,
-    last: Option<char>,
+/// # Errors
+///
+/// Propagates write errors from `writer`.
+///
+/// # Panics
+///
+/// Panics if the normalized text exceeds `u32::MAX` bytes — inherited from the
+/// lexer's `Span` width contract; in practice unreachable.
+pub fn serialize_into<W: Write>(out: &LexOutput, writer: &mut W) -> fmt::Result {
+    serialize_into_with(out, writer, SerializeOptions::default())
 }
 
-impl<W: Write> TrackingWriter<W> {
-    /// Wrap `inner`, with no predecessor char recorded yet. The construction
-    /// site for the owned serializer's tracking writer.
-    pub(crate) const fn new(inner: W) -> Self {
-        Self { inner, last: None }
-    }
-
-    /// The last `char` written so far, if any. `emit_ruby` reads it to
-    /// decide whether a bare `《reading》` drops the explicit `｜` (ADR 0002).
-    pub(crate) const fn last(&self) -> Option<char> {
-        self.last
-    }
+/// Serialize an [`LexOutput`] into the given writer with explicit
+/// [`SerializeOptions`].
+///
+/// # Errors
+///
+/// Propagates write errors from `writer`.
+///
+/// # Panics
+///
+/// Panics if the normalized text exceeds `u32::MAX` bytes — inherited from the
+/// lexer's `Span` width contract; in practice unreachable.
+pub fn serialize_into_with<W: Write>(
+    out: &LexOutput,
+    writer: &mut W,
+    opts: SerializeOptions,
+) -> fmt::Result {
+    let mut tracking = TrackingWriter::new(writer);
+    let mut sink = SerializeSink {
+        store: &out.store,
+        out: &mut tracking,
+        fix_notation: opts.fix_notation,
+    };
+    walk(out, &mut sink)
 }
 
-impl<W: Write> Write for TrackingWriter<W> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        if let Some(c) = s.chars().next_back() {
-            self.last = Some(c);
+/// [`WalkSink`] that re-emits Aozora source text from the AST,
+/// threading the [`NodeStore`] (the resolve authority) into every AST emitter.
+struct SerializeSink<'a, W: Write> {
+    store: &'a NodeStore,
+    out: &'a mut TrackingWriter<W>,
+    /// When set, rewrite `DirectiveKind::Unknown` near-misses to canonical form
+    /// (`aozora fmt --fix-notation`).
+    fix_notation: bool,
+}
+
+impl<W: Write> WalkSink for SerializeSink<'_, W> {
+    // Serialization copies `\n` verbatim, so it is not a structural event.
+    const WANTS_NEWLINES: bool = false;
+
+    fn on_text(&mut self, text: &str) -> fmt::Result {
+        self.out.write_str(text)
+    }
+
+    fn on_node(&mut self, kind: SentinelKind, node: NodeRef) -> fmt::Result {
+        match (kind, node) {
+            (SentinelKind::Inline, NodeRef::Inline(n))
+            | (SentinelKind::BlockLeaf, NodeRef::BlockLeaf(n)) => {
+                emit_aozora(n, self.store, self.out, self.fix_notation)
+            }
+            (SentinelKind::BlockOpen, NodeRef::BlockOpen(open)) => {
+                emit_container_open(open, self.out)
+            }
+            (SentinelKind::BlockClose, NodeRef::BlockClose(close)) => {
+                emit_container_close(close, self.out)
+            }
+            // Sentinel hit without a corresponding registry entry, or a
+            // kind/variant mismatch — best-effort skip.
+            _ => Ok(()),
         }
-        self.inner.write_str(s)
     }
 }
 
-pub(crate) fn emit_section_break<W: Write>(kind: SectionKind, out: &mut W) -> fmt::Result {
-    out.write_str("［＃")?;
-    out.write_str(kind.keyword())?;
-    out.write_char('］')
+/// Dispatch an owned [`Node`] to its per-variant source emitter.
+fn emit_aozora<W: Write>(
+    node: Node,
+    store: &NodeStore,
+    out: &mut TrackingWriter<W>,
+    fix_notation: bool,
+) -> fmt::Result {
+    match node {
+        Node::Ruby(r) => emit_ruby(&r, store, out),
+        Node::Format(f) => emit_format(&f, store, out),
+        Node::Gaiji(g) => emit_gaiji(&g, store, out),
+        Node::Kaeriten(k) => emit_kaeriten(k, store, out),
+        Node::Directive(a) => emit_annotation(a, store, out, fix_notation),
+        Node::AngleQuote(d) => emit_angle_quote(d, store, out),
+        Node::MarginNote(s) => emit_side_note(&s, store, out),
+        Node::PageBreak => out.write_str("［＃改ページ］"),
+        Node::BodyEnd => out.write_str("［＃本文終わり］"),
+        Node::ForcedBreak => out.write_str("［＃改行］"),
+        Node::SectionBreak(kind) => emit_section_break(kind, out),
+        Node::Line(lf) => emit_line(lf, out),
+        Node::Illustration(s) => emit_sashie(&s, store, out),
+        Node::HeadingHint(h) => emit_heading_hint(h, store, out),
+        Node::Heading(h) => emit_aozora_heading(&h, store, out),
+        // Variants not covered inline: Container is routed through the
+        // open/close sentinel path; Warichu lands here as a diagnostic
+        // placeholder.
+        _ => {
+            out.write_str("<!-- unsupported-aozora: ")?;
+            out.write_str(node.xml_node_name())?;
+            out.write_str(" -->")
+        }
+    }
 }
 
-pub(crate) fn emit_line<W: Write>(lf: LineFormat, out: &mut W) -> fmt::Result {
-    match lf {
-        // Both-margin compound: a head indent plus a foot-edge lift. `字あき`
-        // is canonicalised to the `地よりM字上げで` spelling (same foot-edge
-        // semantics; the `て`/bare-join input variants converge here too).
-        LineFormat::Indent {
-            amount,
-            end_offset: Some(offset),
-        } => write!(out, "［＃{amount}字下げ、地より{offset}字上げで］"),
-        LineFormat::Indent {
-            amount: 1,
-            end_offset: None,
-        } => out.write_str("［＃字下げ］"),
-        LineFormat::Indent {
-            amount,
-            end_offset: None,
-        } => write!(out, "［＃{amount}字下げ］"),
-        LineFormat::AlignEnd { offset: 0 } => out.write_str("［＃地付き］"),
-        LineFormat::AlignEnd { offset } => write!(out, "［＃地から{offset}字上げ］"),
-        LineFormat::Center { page: true } => out.write_str("［＃ページの左右中央］"),
-        LineFormat::Center { page: false } => out.write_str("［＃中央揃え］"),
-        LineFormat::Framed(_) => out.write_str("［＃罫囲み］"),
-        LineFormat::Bold => out.write_str("［＃この行はゴシック体］"),
-        // Absolute font-size line directive. `bold` canonicalises to `、太字`
-        // (the classifier only admits that spelling, so the round-trip is exact).
-        LineFormat::FontSizeAbsolute { size, bold } => {
-            write!(
-                out,
-                "［＃{}{}］",
-                size.keyword(),
-                if bold { "、太字" } else { "" }
-            )
+// ----------------------------------------------------------------------
+// Content resolve layer — resolve and emit a `Content` / `ContentRange`,
+// either verbatim or as plain text (gaiji written as its hint).
+// ----------------------------------------------------------------------
+
+/// Emit a single [`Content`] verbatim (plain text, or each segment's
+/// text / gaiji / directive).
+fn emit_content_one<W: Write>(c: Content, store: &NodeStore, out: &mut W) -> fmt::Result {
+    match c {
+        Content::Plain(id) => out.write_str(store.resolve_str(id)),
+        Content::Segments(range) => {
+            for seg in store.resolve_seg_range(range) {
+                match *seg {
+                    Segment::Text(id) => out.write_str(store.resolve_str(id))?,
+                    Segment::Gaiji(g) => emit_gaiji(&g, store, out)?,
+                    Segment::Directive(a) => out.write_str(store.resolve_str(a.raw))?,
+                    // `Segment` is `#[non_exhaustive]`; forward-compat skip.
+                    _ => {}
+                }
+            }
+            Ok(())
         }
-        // `LineFormat` is `#[non_exhaustive]`; forward-compat skip.
+        // `Content` is `#[non_exhaustive]`; forward-compat skip.
         _ => Ok(()),
     }
 }
 
-/// The optional `同行` / `窓` style prefix that precedes the level keyword in
-/// a `…は<style><level>見出し` directive (empty for the standard style).
-pub(crate) const fn heading_style_keyword(style: HeadingStyle) -> &'static str {
-    match style {
-        HeadingStyle::SameLine => "同行",
-        HeadingStyle::Window => "窓",
-        // Standard and any future style serialize without a prefix.
-        _ => "",
+/// Emit a [`ContentRange`] run (length 1 by construction) by serializing each
+/// resolved [`Content`].
+fn emit_content_range<W: Write>(
+    range: ContentRange,
+    store: &NodeStore,
+    out: &mut W,
+) -> fmt::Result {
+    for c in store.resolve_content_range(range) {
+        emit_content_one(*c, store, out)?;
     }
+    Ok(())
 }
 
-/// The `大 / 中 / 小見出し` level keyword (no delimiter), shared by the leaf
-/// heading, the hint, and the paired / block [`RegionFormat::Heading`].
-pub(crate) const fn heading_level_word(kind: HeadingKind) -> &'static str {
-    match kind {
-        HeadingKind::Medium => "中見出し",
-        HeadingKind::Small => "小見出し",
-        // 大見出し and any future level fall back to the 大見出し form.
-        _ => "大見出し",
-    }
-}
-
-/// `左に` left-side prefix for a bouten range marker, or `""`.
-const fn bouten_left_prefix(position: BoutenPosition) -> &'static str {
-    match position {
-        BoutenPosition::Left => "左に",
-        BoutenPosition::Both => "両側に",
-        _ => "",
-    }
-}
-
-/// Serialize a container open marker from its [`RegionFormat`]. 傍点 / 傍線
-/// ranges reconstruct `［＃<左に?><variant>］`; every other family spells its
-/// own opener (preserving every payload — dropping N / width / offset / the
-/// 字組み clause would be a §7.6 fixed-point violation).
-pub(crate) fn emit_container_open<W: Write>(open: RegionFormat, out: &mut W) -> fmt::Result {
-    match open {
-        RegionFormat::Bouten { kind, position } => write!(
-            out,
-            "［＃{}{}］",
-            bouten_left_prefix(position),
-            kind.keyword()
-        ),
-        RegionFormat::Indent(block) => emit_indent_open(block, out),
-        RegionFormat::Bold { padded: false } => out.write_str("［＃太字］"),
-        RegionFormat::Bold { padded: true } => out.write_str("［＃ここから太字］"),
-        RegionFormat::Italic { padded: false } => out.write_str("［＃斜体］"),
-        RegionFormat::Italic { padded: true } => out.write_str("［＃ここから斜体］"),
-        RegionFormat::AlignEnd { offset: 0 } => out.write_str("［＃ここから地付き］"),
-        RegionFormat::AlignEnd { offset } => write!(out, "［＃ここから地から{offset}字上げ］"),
-        RegionFormat::LineWidth(width) => write!(out, "［＃ここから{}字詰め］", width.0),
-        RegionFormat::Heading {
-            level,
-            style,
-            padded,
-        } => write!(
-            out,
-            "［＃{}{}{}］",
-            if padded { "ここから" } else { "" },
-            heading_style_keyword(style),
-            heading_level_word(level),
-        ),
-        RegionFormat::Columns(count) => write!(out, "［＃ここから{}段組み］", count.0),
-        RegionFormat::Table => out.write_str("［＃ここから表］"),
-        RegionFormat::Horizontal => out.write_str("［＃ここから横組み］"),
-        RegionFormat::FontSize(shift) => {
-            let word = if shift.larger() {
-                "大きな"
-            } else {
-                "小さな"
-            };
-            write!(out, "［＃ここから{}段階{word}文字］", shift.magnitude())
+/// Emit a single [`Content`] as plain text: a gaiji segment writes its
+/// `hint`, not its glyph form.
+fn emit_content_as_plain_one<W: Write>(c: Content, store: &NodeStore, out: &mut W) -> fmt::Result {
+    match c {
+        Content::Plain(id) => out.write_str(store.resolve_str(id)),
+        Content::Segments(range) => {
+            for seg in store.resolve_seg_range(range) {
+                match *seg {
+                    Segment::Text(id) => out.write_str(store.resolve_str(id))?,
+                    Segment::Gaiji(g) => out.write_str(store.resolve_str(g.hint))?,
+                    Segment::Directive(a) => out.write_str(store.resolve_str(a.raw))?,
+                    // `Segment` is `#[non_exhaustive]`; forward-compat skip.
+                    _ => {}
+                }
+            }
+            Ok(())
         }
-        RegionFormat::SmallScript(side) => {
-            write!(out, "［＃行{}小書き］", small_script_side_word(side))
-        }
-        RegionFormat::Caption { padded: true } => out.write_str("［＃ここからキャプション］"),
-        RegionFormat::Caption { padded: false } => out.write_str("［＃キャプション］"),
-        // `Warichu` is the block 割り注 region (the inline ［＃割り注］ is an
-        // `Directive{WarichuOpen}`), so it serializes to the ここから form.
-        RegionFormat::Warichu => out.write_str("［＃ここから割り注］"),
-        RegionFormat::Framed(_) => out.write_str("［＃罫囲み］"),
-        RegionFormat::CombineUpright => out.write_str("［＃縦中横］"),
-        // `RegionFormat` is `#[non_exhaustive]`; a future family falls back to
-        // the most common opener until it is given a spelling here.
-        _ => out.write_str("［＃ここから字下げ］"),
+        // `Content` is `#[non_exhaustive]`; forward-compat skip.
+        _ => Ok(()),
     }
 }
 
-/// Serialize a `［＃ここから…字下げ…］` opener from its [`IndentBlock`] (#78).
-///
-/// Built incrementally in a fixed **canonical clause order** (wrap → center →
-/// line-layout → bold → horizontal → framed → font), independent of the source
-/// order, so the compound is a 1-pass serialize fixed point. The order and
-/// keywords mirror `render_container_open` and [`BlockStyles::iter_formats`].
-/// The `..`-free destructure means a new [`IndentBlock`] / [`BlockStyles`]
-/// field is compiler-flagged here rather than silently dropped from the marker
-/// (the §7.6 param-drop bug class).
-fn emit_indent_open<W: Write>(block: IndentBlock, out: &mut W) -> fmt::Result {
-    let IndentBlock {
-        amount,
-        wrap,
-        center,
-        layout,
-        styles,
-    } = block;
-    let BlockStyles {
-        bold,
-        horizontal,
-        framed,
-        font,
-    } = styles;
+/// Emit a [`ContentRange`] run as plain text.
+fn emit_content_as_plain_range<W: Write>(
+    range: ContentRange,
+    store: &NodeStore,
+    out: &mut W,
+) -> fmt::Result {
+    for c in store.resolve_content_range(range) {
+        emit_content_as_plain_one(*c, store, out)?;
+    }
+    Ok(())
+}
 
-    // `［＃ここからページの左右中央］` — a pure page-centred block (`amount: 0`,
-    // `center`, no other clause). The short opener is its canonical spelling, so
-    // emit it verbatim rather than the synthetic `ここから0字下げ、…` numbered
-    // form, keeping `parse ∘ serialize` a fixed point for the source directive.
-    if amount == 0
-        && center
-        && wrap.is_none()
-        && matches!(layout, IndentLayout::None)
-        && !bold
-        && !horizontal
-        && !framed
-        && font.is_none()
-    {
-        return out.write_str("［＃ここからページの左右中央］");
-    }
+// ----------------------------------------------------------------------
+// Per-variant AST emitters.
+// ----------------------------------------------------------------------
 
-    // The idiomatic no-number `［＃ここから字下げ］` form is reserved for a bare
-    // single-char indent with no clauses; anything else takes the numbered form.
-    let bare = wrap.is_none()
-        && !center
-        && matches!(layout, IndentLayout::None)
-        && !bold
-        && !horizontal
-        && !framed
-        && font.is_none();
-    if amount == 1 && bare {
-        return out.write_str("［＃ここから字下げ］");
+/// Serialize a ruby node: a left-side ruby to its
+/// `base［＃「base」の左に「reading」のルビ］` form; a right-side ruby to
+/// `base《reading》`, prefixed with `｜` when the base needs an explicit bar.
+fn emit_ruby<W: Write>(r: &Ruby, store: &NodeStore, out: &mut TrackingWriter<W>) -> fmt::Result {
+    if matches!(r.side, RubySide::Left) {
+        emit_content_range(r.base, store, out)?;
+        out.write_str("［＃「")?;
+        emit_content_range(r.base, store, out)?;
+        out.write_str("」の左に「")?;
+        emit_content_range(r.reading, store, out)?;
+        return out.write_str("」のルビ］");
     }
+    if ruby_needs_bar(store.resolve_content_range(r.base), out.last(), store) {
+        out.write_char('｜')?;
+    }
+    emit_content_range(r.base, store, out)?;
+    out.write_char('《')?;
+    emit_content_range(r.reading, store, out)?;
+    out.write_char('》')
+}
 
-    write!(out, "［＃ここから{amount}字下げ")?;
-    if let Some(wrap) = wrap {
-        write!(out, "、折り返して{wrap}字下げ")?;
+/// Decide whether a right-side ruby base needs an explicit `｜` start bar:
+/// true when the base is not a uniform single `RubyBaseClass` run (a bare
+/// reading would re-parse a shorter base), or the preceding char is the
+/// same class as the base or `｜` (it would otherwise extend into the
+/// base). A right-side base is always a single `Plain`; the resolved run is
+/// matched accordingly. For a kanji base this is byte-for-byte the previous
+/// `is_ruby_base_char`-based rule (the `Kanji` class equals the old set);
+/// the class-awareness only governs the non-kanji bases that
+/// `trailing_ruby_base_start` newly forms — the same lockstep the
+/// classifier walks (ADR 0002).
+fn ruby_needs_bar(base_run: &[Content], prev: Option<char>, store: &NodeStore) -> bool {
+    // An all-gaiji base (`※［＃…］《…》` or an adjacent run `※…※…《…》`) re-parses
+    // implicitly via the classifier's deferred-emit accumulation, so it never
+    // needs an explicit `｜` — a preceding character cannot extend into a
+    // structured gaiji node, and adjacent gaiji re-accumulate into one base.
+    // Emitting a bar here would inject a `｜` absent from the source and break
+    // the round-trip fixed point.
+    if let [Content::Segments(range)] = base_run {
+        let segs = store.resolve_seg_range(*range);
+        if !segs.is_empty() && segs.iter().all(|s| matches!(s, Segment::Gaiji(_))) {
+            return false;
+        }
     }
-    if center {
-        out.write_str("、ページの左右中央に")?;
+    let plain = match base_run {
+        [Content::Plain(id)] => Some(store.resolve_str(*id)),
+        _ => None,
+    };
+    plain.is_none_or(|s| {
+        let Some(base_class) = s.chars().next_back().and_then(ruby_base_class) else {
+            return true;
+        };
+        s.chars().any(|c| ruby_base_class(c) != Some(base_class))
+            || prev.is_some_and(|c| ruby_base_class(c) == Some(base_class) || c == '｜')
+    })
+}
+
+/// Serialize a forward-format node to its `［＃…］` bracket form. A `Reclaimed`
+/// origin first re-emits the target literal; a bouten attribute uses the
+/// `…に<keyword>` (or `の左に`) shape; a font-size attribute spells its
+/// `N段階大きな/小さな文字` magnitude; every other attribute uses
+/// `［＃「target」は<keyword>］`.
+fn emit_format<W: Write>(f: &ForwardFormat, store: &NodeStore, out: &mut W) -> fmt::Result {
+    if matches!(f.origin, ForwardOrigin::Reclaimed | ForwardOrigin::Detached) {
+        emit_content_as_plain_range(f.target, store, out)?;
     }
-    match layout {
-        IndentLayout::Kumi(kumi) => write!(out, "、{}行{}字組みで", kumi.lines, kumi.width)?,
-        IndentLayout::LineWidth(width) => write!(out, "、{}字詰め", width.0)?,
-        IndentLayout::None => {}
+    // A `Detached` decoration (#333) is the styled-literal half of a
+    // non-adjacent forward split: it serializes as the bare literal above,
+    // because the `［＃…］` directive is a *separate* `Referenced` node that
+    // emits the bracket itself. Return before the bracket-emitting block.
+    if matches!(f.origin, ForwardOrigin::Detached) {
+        return Ok(());
     }
-    if bold {
-        out.write_str("、ゴシック体")?;
+    if let ForwardAttr::Bouten { kind, position } = f.attr {
+        out.write_str("［＃")?;
+        emit_bouten_targets(store.resolve_content_range(f.target), store, out)?;
+        match position {
+            BoutenPosition::Left => out.write_str("の左に")?,
+            BoutenPosition::Both => out.write_str("の両側に")?,
+            _ => out.write_char('に')?,
+        }
+        out.write_str(kind.keyword())?;
+        return out.write_char('］');
     }
-    if horizontal {
-        out.write_str("、横書き")?;
+    if matches!(f.attr, ForwardAttr::Framed(EnclosureKind::Box)) {
+        // 「□」囲み: the keyword embeds the quoted glyph, so it can't come from
+        // `keyword()`. □ (U+25A1) is the canonical spelling of the Box kind.
+        out.write_str("［＃「")?;
+        emit_content_as_plain_range(f.target, store, out)?;
+        return out.write_str("」は「□」囲み］");
     }
-    if framed {
-        out.write_str("、罫囲み")?;
+    if matches!(f.attr, ForwardAttr::AccentDot) {
+        // ドット付き (#331): the body is a selector grammar, not the
+        // `「target」は<keyword>` shape, so re-emit the interned raw body verbatim
+        // (byte-exact round-trip). The `Reclaimed` leading literal — the run the
+        // dots compose onto — was already emitted above.
+        out.write_str("［＃")?;
+        if let Some(id) = f.accent_body {
+            out.write_str(store.resolve_str(id))?;
+        }
+        return out.write_char('］');
     }
-    if let Some(shift) = font {
-        // `小さい活字` is the canonical one-stage-smaller spelling (the only
-        // font compound the corpus attests); a general magnitude falls back to
-        // the `N段階…文字` form so the field stays round-trippable.
-        if shift.0.get() == -1 {
-            out.write_str("、小さい活字")?;
-        } else if shift.larger() {
-            write!(out, "、{}段階大きな文字", shift.magnitude())?;
+    out.write_str("［＃「")?;
+    emit_content_as_plain_range(f.target, store, out)?;
+    out.write_str("」は")?;
+    if let ForwardAttr::FontSize(shift) = f.attr {
+        let word = if shift.larger() {
+            "大きな"
         } else {
-            write!(out, "、{}段階小さな文字", shift.magnitude())?;
+            "小さな"
+        };
+        write!(out, "{}段階{word}文字", shift.magnitude())?;
+    } else if let ForwardAttr::AlignEnd { offset } = f.attr {
+        // Anchor is not distinguished in the model (like LineFormat::AlignEnd), so
+        // canonicalise: 0 → 地付き (the zero-lift spelling), else 文末より…字上げ揃え.
+        // Both re-parse to the same offset.
+        if offset == 0 {
+            out.write_str("地付き")?;
+        } else {
+            write!(out, "文末より{offset}字上げ揃え")?;
+        }
+    } else if let ForwardAttr::Accent(mark) = f.attr {
+        // アクサン / ウムラウト: the suffix carries the bracketed mark symbol, not a
+        // bare keyword (so `keyword()` returns its 太字 default) — re-emit the
+        // exact source suffix for a byte-exact round-trip.
+        out.write_str(accent_suffix(mark))?;
+    } else {
+        out.write_str(f.attr.keyword())?;
+    }
+    out.write_char('］')
+}
+
+/// The exact `は`-suffix source for a forward accent [`AccentMark`], for a
+/// byte-exact round-trip: fullwidth parens (U+FF08 / U+FF09) wrapping the mark
+/// symbol (´ U+00B4 / ｀ U+FF40 / ¨ U+00A8).
+const fn accent_suffix(mark: AccentMark) -> &'static str {
+    match mark {
+        AccentMark::Acute => "アクサン（´）付き",
+        AccentMark::Grave => "アクサン（｀）付き",
+        AccentMark::Umlaut => "ウムラウト（¨）付き",
+    }
+}
+
+/// Serialize the bouten target(s) as quoted `「…」` runs. A single `Plain`
+/// target becomes one `「text」`; a segmented target is split on `、` into one
+/// `「part」` per piece (falling back to an empty `「」`). Operates on the
+/// resolved target run (always length 1).
+fn emit_bouten_targets<W: Write>(run: &[Content], store: &NodeStore, out: &mut W) -> fmt::Result {
+    if let [Content::Plain(id)] = run {
+        out.write_char('「')?;
+        out.write_str(store.resolve_str(*id))?;
+        return out.write_char('」');
+    }
+    let mut any = false;
+    for c in run {
+        if let Content::Segments(seg_range) = c {
+            for seg in store.resolve_seg_range(*seg_range) {
+                if let Segment::Text(id) = *seg {
+                    let t = store.resolve_str(id);
+                    for part in t.split('、').filter(|p| !p.is_empty()) {
+                        out.write_char('「')?;
+                        out.write_str(part)?;
+                        out.write_char('」')?;
+                        any = true;
+                    }
+                }
+            }
         }
     }
+    if !any {
+        out.write_char('「')?;
+        out.write_char('」')?;
+    }
+    Ok(())
+}
+
+/// Serialize a gaiji node to its `［＃「hint」…］` bracket form (prefixed with
+/// `※` unless `standalone`), appending the mencode tail when the canonical
+/// form carries one.
+fn emit_gaiji<W: Write>(g: &Gaiji, store: &NodeStore, out: &mut W) -> fmt::Result {
+    if !g.standalone {
+        out.write_char('※')?;
+    }
+    out.write_str("［＃")?;
+    let hint = store.resolve_str(g.hint);
+    if hint.contains(['「', '」']) {
+        out.write_str(hint)?;
+    } else {
+        out.write_char('「')?;
+        out.write_str(hint)?;
+        out.write_char('」')?;
+    }
+    if gaiji_has_mencode(g.canonical) {
+        out.write_char('、')?;
+        write_gaiji_mencode(g.canonical, store, out)?;
+    }
+    out.write_char('］')
+}
+
+/// Owned mirror of `GaijiCanonical::has_mencode`.
+const fn gaiji_has_mencode(c: GaijiCanonicalOwned) -> bool {
+    !matches!(c, GaijiCanonicalOwned::Unresolved { mencode: None })
+}
+
+/// Owned mirror of `GaijiCanonical::write_mencode` — resolves the
+/// `Unresolved` tail's [`StrId`](aozora_syntax::ast::StrId) against `store`.
+fn write_gaiji_mencode<W: Write>(
+    c: GaijiCanonicalOwned,
+    store: &NodeStore,
+    out: &mut W,
+) -> fmt::Result {
+    match c {
+        GaijiCanonicalOwned::MenKuTen(m) => write!(out, "{m}"),
+        GaijiCanonicalOwned::Unicode(ch) => write!(out, "U+{:04X}", ch as u32),
+        GaijiCanonicalOwned::Unresolved { mencode } => {
+            mencode.map_or(Ok(()), |id| out.write_str(store.resolve_str(id)))
+        }
+    }
+}
+
+/// Serialize a kaeriten mark to its `［＃<mark>］` bracket form.
+fn emit_kaeriten<W: Write>(k: Kaeriten, store: &NodeStore, out: &mut W) -> fmt::Result {
+    out.write_str("［＃")?;
+    out.write_str(store.resolve_str(k.mark))?;
+    out.write_char('］')
+}
+
+/// Serialize a directive by writing its `raw` bytes verbatim (they already
+/// include the `［＃…］` brackets).
+///
+/// With `fix_notation` set, an `Unknown` directive whose trimmed body is a
+/// verified near-miss (per [`canonical_directive`]) is rewritten to
+/// `［＃<canonical>］` instead. The rewrite is idempotent: the canonical body
+/// parses to a recognized (non-`Unknown`) node, so a second serialize pass
+/// never re-enters this branch and re-emits verbatim.
+fn emit_annotation<W: Write>(
+    a: Directive,
+    store: &NodeStore,
+    out: &mut W,
+    fix_notation: bool,
+) -> fmt::Result {
+    let raw = store.resolve_str(a.raw);
+    if fix_notation && a.kind == DirectiveKind::Unknown {
+        let body = raw
+            .strip_prefix("［＃")
+            .and_then(|s| s.strip_suffix('］'))
+            .unwrap_or(raw)
+            .trim();
+        if let Some(canonical) = canonical_directive(body) {
+            out.write_str("［＃")?;
+            out.write_str(canonical.as_ref())?;
+            return out.write_char('］');
+        }
+    }
+    out.write_str(raw)
+}
+
+/// Serialize an angle-quote to its `≪…≫` form.
+fn emit_angle_quote<W: Write>(d: AngleQuote, store: &NodeStore, out: &mut W) -> fmt::Result {
+    out.write_char('≪')?;
+    emit_content_range(d.content, store, out)?;
+    out.write_char('≫')
+}
+
+/// Serialize a margin note to its `base［＃「base」…］` form, using the kind's
+/// connector / suffix affixes around the note text.
+fn emit_side_note<W: Write>(s: &MarginNote, store: &NodeStore, out: &mut W) -> fmt::Result {
+    let (connector, suffix) = s.kind.serialize_affixes();
+    emit_content_range(s.base, store, out)?;
+    out.write_str("［＃「")?;
+    emit_content_range(s.base, store, out)?;
+    out.write_str(connector)?;
+    emit_content_range(s.note, store, out)?;
+    out.write_str(suffix)
+}
+
+/// Serialize an illustration to its `［＃…（file）…入る］` bracket form (a
+/// description, or `挿絵` + optional number; optional dimensions and caption).
+fn emit_sashie<W: Write>(s: &Illustration, store: &NodeStore, out: &mut W) -> fmt::Result {
+    out.write_str("［＃")?;
+    if let Some(description) = s.description {
+        out.write_str(store.resolve_str(description))?;
+    } else {
+        out.write_str("挿絵")?;
+        if let Some(number) = s.number {
+            out.write_str(store.resolve_str(number))?;
+        }
+    }
+    out.write_char('（')?;
+    out.write_str(store.resolve_str(s.file))?;
+    if let Some(dims) = s.dimensions {
+        out.write_char('、')?;
+        out.write_str(store.resolve_str(dims))?;
+    }
+    out.write_char('）')?;
+    if let Some(caption) = s.caption {
+        out.write_char('「')?;
+        emit_content_as_plain_one(caption, store, out)?;
+        out.write_char('」')?;
+    }
+    out.write_str("入る］")
+}
+
+/// Serialize a heading hint back to its `［＃「X」は…見出し］` bracket form.
+///
+/// `self_contained` is deliberately ignored: a no-referent forward heading
+/// serializes to the bracket alone, never fabricating a referent line. That
+/// keeps the round-trip a fixed point (a fabricated line would re-parse as a
+/// promotable referent — see `promote_headings` — diverging on the next pass).
+fn emit_heading_hint<W: Write>(h: HeadingHint, store: &NodeStore, out: &mut W) -> fmt::Result {
+    out.write_str("［＃「")?;
+    out.write_str(store.resolve_str(h.target))?;
+    out.write_str("」は")?;
+    out.write_str(heading_style_keyword(h.style))?;
+    out.write_str(heading_level_word(h.level))?;
     out.write_str("］")
 }
 
-/// 小書き side keyword: `右` / `左`.
-const fn small_script_side_word(side: BoutenPosition) -> &'static str {
-    match side {
-        BoutenPosition::Left => "左",
-        _ => "右",
-    }
+/// Serialize an Aozora heading to its referent line followed by the
+/// `［＃「text」は<style><level>見出し］` bracket.
+fn emit_aozora_heading<W: Write>(h: &Heading, store: &NodeStore, out: &mut W) -> fmt::Result {
+    emit_content_range(h.text, store, out)?;
+    out.write_str("\n［＃「")?;
+    emit_content_range(h.text, store, out)?;
+    out.write_str("」は")?;
+    out.write_str(heading_style_keyword(h.style))?;
+    out.write_str(heading_level_word(h.kind))?;
+    out.write_str("］")
 }
 
-/// Serialize a container close marker from the close's own [`RegionClose`].
-///
-/// Self-sufficient: the 字組み close keeps its own width, the 太字/斜体
-/// block-vs-inline form its own `padded`, the 傍点/傍線 close its own family
-/// (so a mismatched `［＃傍線終わり］` closing a `［＃傍点］` round-trips), and
-/// a stray close with no matching open still emits its marker.
-pub(crate) fn emit_container_close<W: Write>(close: RegionClose, out: &mut W) -> fmt::Result {
-    match close {
-        RegionClose::Bouten { kind, position } => write!(
-            out,
-            "［＃{}{}終わり］",
-            bouten_left_prefix(position),
-            kind.keyword()
-        ),
-        RegionClose::Bold { padded: false } => out.write_str("［＃太字終わり］"),
-        RegionClose::Bold { padded: true } => out.write_str("［＃ここで太字終わり］"),
-        RegionClose::Italic { padded: false } => out.write_str("［＃斜体終わり］"),
-        RegionClose::Italic { padded: true } => out.write_str("［＃ここで斜体終わり］"),
-        // #78 字組み compound — the close keeps its own width so the marker
-        // round-trips byte-exact; every other indent close is the generic form.
-        RegionClose::Indent {
-            kumi_width: Some(width),
-        } => write!(out, "［＃ここで字下げ、{}字組み終わり］", width.0),
-        RegionClose::LineWidth => out.write_str("［＃ここで字詰め終わり］"),
-        // Level-less bare close (`ここで見出し終わり` / `見出し終わり`): the open
-        // payload drives pairing/render, so the close carries no level word.
-        RegionClose::Heading {
-            level: None,
-            padded,
-            ..
-        } => write!(
-            out,
-            "［＃{}見出し終わり］",
-            if padded { "ここで" } else { "" }
-        ),
-        RegionClose::Heading {
-            level: Some(level),
-            style,
-            padded,
-        } => write!(
-            out,
-            "［＃{}{}{}終わり］",
-            if padded { "ここで" } else { "" },
-            heading_style_keyword(style),
-            heading_level_word(level),
-        ),
-        RegionClose::Columns => out.write_str("［＃ここで段組み終わり］"),
-        RegionClose::Table => out.write_str("［＃ここで表終わり］"),
-        RegionClose::Horizontal => out.write_str("［＃ここで横組み終わり］"),
-        RegionClose::FontSize { larger: true } => out.write_str("［＃ここで大きな文字終わり］"),
-        RegionClose::FontSize { larger: false } => out.write_str("［＃ここで小さな文字終わり］"),
-        RegionClose::SmallScript(side) => {
-            write!(out, "［＃行{}小書き終わり］", small_script_side_word(side))
-        }
-        RegionClose::Caption { padded: true } => out.write_str("［＃ここでキャプション終わり］"),
-        RegionClose::Caption { padded: false } => out.write_str("［＃キャプション終わり］"),
-        RegionClose::Warichu => out.write_str("［＃ここで割り注終わり］"),
-        RegionClose::Framed(_) => out.write_str("［＃罫囲み終わり］"),
-        RegionClose::AlignEnd => out.write_str("［＃ここで地付き終わり］"),
-        RegionClose::CombineUpright => out.write_str("［＃縦中横終わり］"),
-        // The generic `字下げ終わり` — the `Indent { kumi_width: None }` close
-        // (plain / 字詰め / 折り返して / 中央 indents) and the `#[non_exhaustive]`
-        // forward-compat fallback.
-        _ => out.write_str("［＃ここで字下げ終わり］"),
+#[cfg(test)]
+mod tests {
+    use crate::serialize::serialize;
+
+    /// `serialize ∘ parse` reaches a fixed point after one pass — the
+    /// canonical round-trip contract (end-to-end byte-identity is pinned by the
+    /// conformance golden).
+    fn assert_parity(src: &str) {
+        let first = serialize(&aozora_pipeline::lex(src));
+        let second = serialize(&aozora_pipeline::lex(&first));
+        assert_eq!(first, second, "serialize fixed point diverged for {src:?}");
     }
-}
 
-/// Output buffer that caps consecutive `\n` runs at two on-the-fly.
-///
-/// The classify stage pads every block sentinel with `\n\n`
-/// unconditionally, so naively round-tripping the serializer's
-/// output back through parse inflates the blank-line run by two
-/// per iteration. Capping at 2 here makes `serialize ∘ parse` a
-/// fixed point after the first pass.
-pub(crate) struct NewlineCappedWriter {
-    out: String,
-    trailing_newlines: usize,
-}
-
-impl NewlineCappedWriter {
-    pub(crate) fn with_capacity(cap: usize) -> Self {
-        Self {
-            out: String::with_capacity(cap),
-            trailing_newlines: 0,
+    #[test]
+    fn serialize_is_fixed_point_across_node_kinds() {
+        for src in [
+            "plain text",
+            "｜青梅《おうめ》",
+            "頃｜青梅《おうめ》",
+            "再読［＃「再読」の左に「さい」のルビ］",
+            "底本「青空」［＃「青空」の左に「注記」の注記］",
+            "可哀想［＃「可哀想」に傍点］",
+            "甲乙［＃「甲」「乙」に傍点］",
+            "重要［＃「重要」は太字］",
+            "X［＃「X」は3段階大きな文字］",
+            "※［＃「○○」、第3水準1-85-54］",
+            "一二［＃レ］",
+            "≪重要≫",
+            "見出し\n［＃「見出し」は大見出し］",
+            "［＃挿絵（fig.png、横480×縦640）入る］",
+            "［＃改ページ］",
+            "本編［＃本文終わり］",
+            "行頭［＃改行］行末",
+            "［＃ここから2字下げ］\nA\n［＃ここで字下げ終わり］",
+            "段落の文\n――――――――――――\n｜青梅《おうめ》の続き\n",
+        ] {
+            assert_parity(src);
         }
     }
 
-    fn push_str_internal(&mut self, s: &str) {
-        if s.is_empty() {
-            return;
-        }
-        if !s.contains('\n') {
-            self.out.push_str(s);
-            self.trailing_newlines = 0;
-            return;
-        }
-        let mut cursor = 0;
-        for (nl_pos, _) in s.match_indices('\n') {
-            if nl_pos > cursor {
-                self.out.push_str(&s[cursor..nl_pos]);
-                self.trailing_newlines = 0;
-            }
-            self.trailing_newlines += 1;
-            if self.trailing_newlines <= 2 {
-                self.out.push('\n');
-            }
-            cursor = nl_pos + 1;
-        }
-        if cursor < s.len() {
-            self.out.push_str(&s[cursor..]);
-            self.trailing_newlines = 0;
-        }
+    /// E1-1: a no-referent forward ([`ForwardOrigin::SelfContained`]) is not
+    /// [`ForwardOrigin::Reclaimed`], so the serializer emits **no** leading
+    /// literal — just the `［＃「X」は太字］` bracket. (`Reclaimed` would prefix
+    /// the literal `X`.) Pinned directly since the producer arrives in E1-2.
+    #[test]
+    fn self_contained_forward_serializes_bracket_only() {
+        use aozora_syntax::alloc::Allocator;
+        use aozora_syntax::ast::Node;
+        use aozora_syntax::{ForwardAttr, ForwardOrigin};
+
+        let mut a = Allocator::new();
+        let t = a.content_plain("X");
+        let node = a.forward_format(ForwardAttr::Bold, t, ForwardOrigin::SelfContained);
+        let Node::Format(f) = node else {
+            panic!("forward_format must build a Format node");
+        };
+        let store = a.into_store();
+
+        let mut s = String::new();
+        super::emit_format(&f, &store, &mut s).expect("serialize into String is infallible");
+        assert_eq!(s, "［＃「X」は太字］");
     }
 
-    pub(crate) fn into_string(self) -> String {
-        self.out
-    }
-}
+    /// E1-4: a self-contained heading hint serializes to the bracket alone — it
+    /// must NOT fabricate a referent line, which would re-parse as a promotable
+    /// heading (`promote_headings`) and break the round-trip fixed point.
+    #[test]
+    fn self_contained_heading_serializes_bracket_only() {
+        use aozora_syntax::alloc::Allocator;
+        use aozora_syntax::ast::Node;
+        use aozora_syntax::{HeadingKind, HeadingStyle};
 
-impl Write for NewlineCappedWriter {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.push_str_internal(s);
-        Ok(())
-    }
+        let mut a = Allocator::new();
+        let node = a.heading_hint(HeadingKind::Medium, HeadingStyle::Standard, "序章", true);
+        let Node::HeadingHint(h) = node else {
+            panic!("heading_hint must build a HeadingHint node");
+        };
+        let store = a.into_store();
 
-    fn write_char(&mut self, c: char) -> fmt::Result {
-        if c == '\n' {
-            self.trailing_newlines += 1;
-            if self.trailing_newlines <= 2 {
-                self.out.push('\n');
-            }
-        } else {
-            self.trailing_newlines = 0;
-            self.out.push(c);
-        }
-        Ok(())
+        let mut s = String::new();
+        super::emit_heading_hint(h, &store, &mut s).expect("serialize into String is infallible");
+        assert_eq!(s, "［＃「序章」は中見出し］");
     }
 }

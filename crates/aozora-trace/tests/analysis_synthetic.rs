@@ -461,10 +461,7 @@ fn categorizer_default_buckets_spot_checks() {
         ("aozora_pipeline::lexer::sanitize::run", "sanitize"),
         ("aozora_pipeline::lexer::pair::pair", "pair"),
         ("aozora_pipeline::lexer::classify::recognise", "classify"),
-        (
-            "aozora_syntax::owned::intern::StrInterner::intern",
-            "intern",
-        ),
+        ("aozora_syntax::ast::intern::StrInterner::intern", "intern"),
         ("memchr::memmem::find", "memchr_scan"),
         ("encoding_rs::Decoder::decode", "corpus_load_sjis"),
         ("aozora_corpus::iter::walk", "corpus_walk"),

@@ -237,7 +237,7 @@ impl AozoraLanguageServer {
 
     /// Custom LSP request `aozora/renderHtml`.
     ///
-    /// Returns the document's HTML rendering (via `aozora`'s borrowed
+    /// Returns the document's HTML rendering (via `aozora`'s AST
     /// HTML renderer). The `VSCode` preview pane consumes this on
     /// every `did_change` (debounced) so the webview stays in
     /// lock-step with the editor buffer.

@@ -35,8 +35,8 @@ use aozora_pipeline::lex;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, SpanKind, Token, classify, pair, sanitize, tokenize,
 };
-use aozora_syntax::alloc_owned::OwnedAllocator;
-use aozora_syntax::owned::NodeOwned;
+use aozora_syntax::alloc::Allocator;
+use aozora_syntax::ast::Node;
 
 /// Default pathological doc — kaeriten / annotation density extreme.
 /// Override via the `AOZORA_PROBE_DOC` env var (relative to
@@ -104,7 +104,7 @@ fn main() {
         drop(pair_stream.take_diagnostics());
         pair_total += t.elapsed().as_nanos() as u64;
 
-        let mut alloc = OwnedAllocator::new();
+        let mut alloc = Allocator::new();
         let t = Instant::now();
         let mut classify_stream = classify(pair_events, &sanitized.text, &mut alloc);
         let _classify_spans: Vec<ClassifiedSpan> = (&mut classify_stream).collect();
@@ -290,7 +290,7 @@ fn main() {
     let mut pair_stream = pair(tokens.into_iter());
     let pair_events: Vec<PairEvent> = (&mut pair_stream).collect();
     drop(pair_stream.take_diagnostics());
-    let mut alloc = OwnedAllocator::new();
+    let mut alloc = Allocator::new();
     let mut classify_stream = classify(pair_events.iter().cloned(), &sanitized.text, &mut alloc);
     let classify_spans: Vec<ClassifiedSpan> = (&mut classify_stream).collect();
     drop(classify_stream.take_diagnostics());
@@ -300,20 +300,20 @@ fn main() {
         if let SpanKind::Aozora(node) = &span.kind {
             aozora_count += 1;
             let name = match node {
-                NodeOwned::Ruby(_) => "Ruby",
-                NodeOwned::Format(_) => "Format",
-                NodeOwned::Gaiji(_) => "Gaiji",
-                NodeOwned::Line(_) => "Line",
-                NodeOwned::Warichu(_) => "Warichu",
-                NodeOwned::PageBreak => "PageBreak",
-                NodeOwned::SectionBreak(_) => "SectionBreak",
-                NodeOwned::Heading(_) => "Heading",
-                NodeOwned::HeadingHint(_) => "HeadingHint",
-                NodeOwned::Illustration(_) => "Illustration",
-                NodeOwned::Kaeriten(_) => "Kaeriten",
-                NodeOwned::Directive(_) => "Directive",
-                NodeOwned::AngleQuote(_) => "AngleQuote",
-                NodeOwned::Container(_) => "Container",
+                Node::Ruby(_) => "Ruby",
+                Node::Format(_) => "Format",
+                Node::Gaiji(_) => "Gaiji",
+                Node::Line(_) => "Line",
+                Node::Warichu(_) => "Warichu",
+                Node::PageBreak => "PageBreak",
+                Node::SectionBreak(_) => "SectionBreak",
+                Node::Heading(_) => "Heading",
+                Node::HeadingHint(_) => "HeadingHint",
+                Node::Illustration(_) => "Illustration",
+                Node::Kaeriten(_) => "Kaeriten",
+                Node::Directive(_) => "Directive",
+                Node::AngleQuote(_) => "AngleQuote",
+                Node::Container(_) => "Container",
                 _ => "_unknown",
             };
             *counts.entry(name).or_insert(0) += 1;

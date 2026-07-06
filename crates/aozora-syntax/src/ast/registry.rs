@@ -1,8 +1,8 @@
 //! Whole-document sentinel registry — single Eytzinger-keyed table.
 //!
-//! [`NodeRefOwned`] is the unified registry-hit view: inline payloads carry an
-//! owned [`NodeOwned`]; container discriminants carry `RegionFormat` /
-//! `RegionClose`. [`RegistryOwned`] wraps an [`EytzingerMap`] keyed by
+//! [`NodeRef`] is the unified registry-hit view: inline payloads carry an
+//! owned [`Node`]; container discriminants carry `RegionFormat` /
+//! `RegionClose`. [`Registry`] wraps an [`EytzingerMap`] keyed by
 //! normalized byte position; `node_at` is one binary search.
 
 use aozora_spec::{NormalizedOffset, Sentinel};
@@ -10,24 +10,24 @@ use aozora_veb::EytzingerMap;
 
 use crate::format::{RegionClose, RegionFormat};
 
-use super::payload::NodeOwned;
+use super::payload::Node;
 
 /// Unified view over a registry hit.
 ///
 /// Each variant tags the sentinel kind that fired; consumers pattern-match the
-/// variant once, then handle the inline payload (an owned [`NodeOwned`]) or the
+/// variant once, then handle the inline payload (an owned [`Node`]) or the
 /// container payload (a `Copy` [`RegionFormat`] / [`RegionClose`]
 /// discriminant) accordingly.
 ///
-/// `Copy` because every inlined payload is `Copy` ([`NodeOwned`] flattens its
+/// `Copy` because every inlined payload is `Copy` ([`Node`] flattens its
 /// `&str`/list payloads to `StrId`/ranges). No `Eq`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
-pub enum NodeRefOwned {
+pub enum NodeRef {
     /// Hit on an inline-sentinel position ([`Sentinel::Inline`]).
-    Inline(NodeOwned),
+    Inline(Node),
     /// Hit on a block-leaf-sentinel position ([`Sentinel::BlockLeaf`]).
-    BlockLeaf(NodeOwned),
+    BlockLeaf(Node),
     /// Hit on a block-container-open position ([`Sentinel::BlockOpen`]).
     /// Carries the authoritative open [`RegionFormat`].
     BlockOpen(RegionFormat),
@@ -36,7 +36,7 @@ pub enum NodeRefOwned {
     BlockClose(RegionClose),
 }
 
-impl NodeRefOwned {
+impl NodeRef {
     /// Sentinel kind that produced this entry.
     #[must_use]
     pub const fn sentinel_kind(self) -> Sentinel {
@@ -62,23 +62,23 @@ impl NodeRefOwned {
 /// Whole-document owned registry — single Eytzinger-keyed table.
 ///
 /// `node_at` is one binary search; every entry's sentinel kind is encoded by
-/// the [`NodeRefOwned`] variant. Not `Copy` (the map owns a `Vec`).
+/// the [`NodeRef`] variant. Not `Copy` (the map owns a `Vec`).
 #[derive(Debug, Clone)]
-pub struct RegistryOwned {
+pub struct Registry {
     /// Single `SoA` lookup table keyed by normalized byte position. Entries
     /// arrive in strictly increasing position order.
-    table: EytzingerMap<u32, NodeRefOwned>,
+    table: EytzingerMap<u32, NodeRef>,
 }
 
-impl RegistryOwned {
-    /// Construct from a position-sorted slice of `(position, NodeRefOwned)`.
+impl Registry {
+    /// Construct from a position-sorted slice of `(position, NodeRef)`.
     ///
     /// # Panics
     ///
     /// Inherits [`EytzingerMap::from_sorted_slice`]'s debug-only sorted-key
     /// precondition.
     #[must_use]
-    pub fn from_sorted_slice(entries: &[(u32, NodeRefOwned)]) -> Self {
+    pub fn from_sorted_slice(entries: &[(u32, NodeRef)]) -> Self {
         Self {
             table: EytzingerMap::from_sorted_slice(entries),
         }
@@ -106,17 +106,17 @@ impl RegistryOwned {
 
     /// Look up the entry at the given normalized-text byte position.
     #[must_use]
-    pub fn node_at(&self, pos: NormalizedOffset) -> Option<NodeRefOwned> {
+    pub fn node_at(&self, pos: NormalizedOffset) -> Option<NodeRef> {
         self.table.get(&pos.get()).copied()
     }
 
-    /// Iterate `(position, NodeRefOwned)` in ascending position order.
-    pub fn iter_sorted(&self) -> impl Iterator<Item = (u32, NodeRefOwned)> + '_ {
+    /// Iterate `(position, NodeRef)` in ascending position order.
+    pub fn iter_sorted(&self) -> impl Iterator<Item = (u32, NodeRef)> + '_ {
         self.table.iter_sorted().map(|(&p, &nr)| (p, nr))
     }
 
-    /// Iterate entries whose [`NodeRefOwned::sentinel_kind`] matches `kind`.
-    pub fn iter_kind(&self, kind: Sentinel) -> impl Iterator<Item = (u32, NodeRefOwned)> + '_ {
+    /// Iterate entries whose [`NodeRef::sentinel_kind`] matches `kind`.
+    pub fn iter_kind(&self, kind: Sentinel) -> impl Iterator<Item = (u32, NodeRef)> + '_ {
         self.iter_sorted()
             .filter(move |(_, nr)| nr.sentinel_kind() == kind)
     }
@@ -128,7 +128,7 @@ impl RegistryOwned {
     }
 }
 
-impl Default for RegistryOwned {
+impl Default for Registry {
     fn default() -> Self {
         Self::empty()
     }
@@ -169,28 +169,28 @@ mod tests {
 
     #[test]
     fn empty_registry_reports_empty() {
-        let r = RegistryOwned::empty();
+        let r = Registry::empty();
         assert!(r.is_empty(), "empty registry is empty");
         assert_eq!(r.len(), 0, "empty registry has zero entries");
     }
 
     #[test]
     fn node_at_dispatches_to_variant() {
-        let r = RegistryOwned::from_sorted_slice(&[
-            (10u32, NodeRefOwned::Inline(NodeOwned::PageBreak)),
-            (20u32, NodeRefOwned::BlockLeaf(NodeOwned::PageBreak)),
+        let r = Registry::from_sorted_slice(&[
+            (10u32, NodeRef::Inline(Node::PageBreak)),
+            (20u32, NodeRef::BlockLeaf(Node::PageBreak)),
             (
                 30u32,
-                NodeRefOwned::BlockOpen(RegionFormat::Framed(EnclosureKind::Rule)),
+                NodeRef::BlockOpen(RegionFormat::Framed(EnclosureKind::Rule)),
             ),
             (
                 40u32,
-                NodeRefOwned::BlockClose(RegionClose::Framed(EnclosureKind::Rule)),
+                NodeRef::BlockClose(RegionClose::Framed(EnclosureKind::Rule)),
             ),
         ]);
         assert!(matches!(
             r.node_at(NormalizedOffset::new(30)),
-            Some(NodeRefOwned::BlockOpen(RegionFormat::Framed(
+            Some(NodeRef::BlockOpen(RegionFormat::Framed(
                 EnclosureKind::Rule
             )))
         ));

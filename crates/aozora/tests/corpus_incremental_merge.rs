@@ -61,11 +61,11 @@ fn reparse_diagnostics_only_equals_full_parse() {
         // re-parse of the sanitized buffer never reproduces — a harness
         // asymmetry, not a splice property. So sanitize once, then take the parse
         // of the sanitized buffer as the cached baseline.
-        let san = Document::new(text).parse_owned().sanitized;
+        let san = Document::new(text).lex().sanitized;
         if san.is_empty() {
             continue;
         }
-        let cached = Document::new(san.as_str()).parse_owned();
+        let cached = Document::new(san.as_str()).lex();
         // Skip documents whose sanitized buffer is not itself a sanitize fixed
         // point (sanitize is non-idempotent for them): the incremental contract
         // assumes a stable sanitized baseline, and production would full-parse.
@@ -82,7 +82,7 @@ fn reparse_diagnostics_only_equals_full_parse() {
 
         // Idempotence precheck: only edits that are sanitize fixed points are
         // representative — production would full-parse a non-fixed-point edit.
-        let full = Document::new(new_san.as_str()).parse_owned();
+        let full = Document::new(new_san.as_str()).lex();
         if full.sanitized != new_san {
             continue;
         }

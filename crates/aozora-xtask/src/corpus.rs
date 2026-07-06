@@ -55,7 +55,7 @@ use rayon::prelude::*;
 
 use aozora::pipeline::lexer::sanitize::sanitize;
 use aozora::render::AOZORA_CLASSES;
-use aozora::{DirectiveKind, Document, NodeKind, NodeOwned, NodeRefOwned};
+use aozora::{DirectiveKind, Document, Node, NodeKind, NodeRef};
 use aozora_corpus::{
     Archive, ArchiveBuilder, CorpusItem, EntryMeta, FilesystemCorpus, archive, par_load_decoded,
 };
@@ -2421,7 +2421,7 @@ fn audit_one(item: CorpusItem) -> FileStat {
 /// strings.
 fn analyze(text: &str) -> FileStat {
     let doc = Document::new(text);
-    let out = doc.parse_owned();
+    let out = doc.lex();
     let mut s = FileStat::default();
 
     for sn in &out.source_nodes {
@@ -2429,8 +2429,7 @@ fn analyze(text: &str) -> FileStat {
             s.node_kinds[i] += 1;
         }
         match sn.node {
-            NodeRefOwned::Inline(NodeOwned::Directive(a))
-            | NodeRefOwned::BlockLeaf(NodeOwned::Directive(a)) => {
+            NodeRef::Inline(Node::Directive(a)) | NodeRef::BlockLeaf(Node::Directive(a)) => {
                 match a.kind {
                     DirectiveKind::Unknown => {
                         s.annotation_kinds[0] += 1;
@@ -2456,8 +2455,7 @@ fn analyze(text: &str) -> FileStat {
                     _ => {}
                 }
             }
-            NodeRefOwned::Inline(NodeOwned::Gaiji(g))
-            | NodeRefOwned::BlockLeaf(NodeOwned::Gaiji(g)) => {
+            NodeRef::Inline(Node::Gaiji(g)) | NodeRef::BlockLeaf(Node::Gaiji(g)) => {
                 s.gaiji_total += 1;
                 if g.resolve(&out.store).is_none() {
                     s.gaiji_unresolved += 1;
