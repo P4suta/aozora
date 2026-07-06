@@ -1,6 +1,6 @@
 //! Tier-2 wall-clock validation for the owned lex producer (#237 P0.2-real).
 //!
-//! The Tier-1 [`alloc_gate`](alloc_gate) ratchet is deterministic
+//! The Tier-1 `alloc_gate` ratchet is deterministic
 //! and CI-stable but cannot see index-resolution throughput (resolving
 //! `StrId` / ranges leaves no allocation footprint). This example measures the
 //! one thing the proxy can't: the owned producer's wall-clock throughput

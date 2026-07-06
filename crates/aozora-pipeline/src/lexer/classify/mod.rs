@@ -1957,7 +1957,7 @@ struct ContentBuild {
 }
 
 impl RecogniseCtx<'_, '_> {
-    /// Build a [`Content`](Content) for the body
+    /// Build a [`Content`] for the body
     /// window, recognising any nested gaiji / annotation constructs in
     /// a single forward sweep.
     ///
