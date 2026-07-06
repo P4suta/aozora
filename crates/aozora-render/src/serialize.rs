@@ -29,6 +29,7 @@ use aozora_syntax::ast::{
     Heading, HeadingHint, Illustration, Kaeriten, LexOutput, MarginNote, Node, NodeRef, NodeStore,
     Ruby, Segment,
 };
+use aozora_syntax::degraded::degraded_directive;
 use aozora_syntax::format::ForwardOrigin;
 use aozora_syntax::lint::canonical_directive;
 use aozora_syntax::{
@@ -36,19 +37,44 @@ use aozora_syntax::{
     ruby_base_class,
 };
 
+/// Which notation-hygiene catalogue tiers a serialize / render pass consults
+/// when it meets a `DirectiveKind::Unknown` near-miss.
+///
+/// The default (`Off`) is the byte-identical, non-judgemental path: an Unknown
+/// directive round-trips its raw bytes verbatim (serialize) / renders as an
+/// inert `<span class="aozora-directive" hidden>` (render), so output never
+/// depends on the catalogue. The three levels map exactly to the tiers of
+/// ADR-0022 / ADR-0026.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DirectiveNormalization {
+    /// Verbatim / inert — the byte-identical default.
+    #[default]
+    Off,
+    /// Tier1 only: rewrite verified zero-false-positive near-misses (per
+    /// [`canonical_directive`]) to canonical form. The level `fmt --fix-notation`
+    /// and `render --normalize` use.
+    Canonical,
+    /// Tier1 + Tier2: additionally reduce the lossy / judgment degraded forms
+    /// (per [`degraded_directive`]) Tier1 refuses. Constructed **only** by the
+    /// opt-in renderer ([`crate::render_html_normalized`] via `render --degraded`),
+    /// never by a persistent-write path, so a Tier2 misfire can reach only
+    /// `--degraded` render output — never source. See ADR-0026.
+    Degraded,
+}
+
 /// Options controlling how the AST is re-emitted to Aozora source.
 ///
-/// The default (`fix_notation: false`) preserves the strong contract that
-/// every directive round-trips its `raw` bytes verbatim — including the
+/// The default (`directives: Off`) preserves the strong contract that every
+/// directive round-trips its `raw` bytes verbatim — including the
 /// `DirectiveKind::Unknown` near-misses the notation-hygiene lint flags.
-/// Opting in (`aozora fmt --fix-notation`) lets the serializer rewrite those
-/// flagged near-misses to their canonical spelling via the single
+/// Opting in (`aozora fmt --fix-notation` = `Canonical`) lets the serializer
+/// rewrite those flagged near-misses to their canonical spelling via the single
 /// [`canonical_directive`] authority.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SerializeOptions {
-    /// Rewrite `DirectiveKind::Unknown` directives whose body is a verified
-    /// near-miss (per [`canonical_directive`]) to their canonical spelling.
-    pub fix_notation: bool,
+    /// Which notation-hygiene tiers to consult for `DirectiveKind::Unknown`
+    /// near-misses. `Degraded` is reserved for the opt-in renderer.
+    pub directives: DirectiveNormalization,
 }
 
 /// Serialize an [`LexOutput`] back to Aozora source text.
@@ -70,7 +96,7 @@ pub fn serialize(out: &LexOutput) -> String {
 /// [`SerializeOptions`].
 ///
 /// With the default options this is identical to [`serialize()`]. With
-/// `fix_notation` enabled, `DirectiveKind::Unknown` near-misses are rewritten
+/// `directives` not `Off`, `DirectiveKind::Unknown` near-misses are rewritten
 /// to canonical form (see [`SerializeOptions`]); the rewrite is idempotent
 /// because a canonical body parses to a recognized (non-`Unknown`) node and so
 /// is never revisited on a second pass.
@@ -124,7 +150,7 @@ pub fn serialize_into_with<W: Write>(
     let mut sink = SerializeSink {
         store: &out.store,
         out: &mut tracking,
-        fix_notation: opts.fix_notation,
+        directives: opts.directives,
     };
     walk(out, &mut sink)
 }
@@ -134,9 +160,9 @@ pub fn serialize_into_with<W: Write>(
 struct SerializeSink<'a, W: Write> {
     store: &'a NodeStore,
     out: &'a mut TrackingWriter<W>,
-    /// When set, rewrite `DirectiveKind::Unknown` near-misses to canonical form
-    /// (`aozora fmt --fix-notation`).
-    fix_notation: bool,
+    /// Which notation-hygiene tiers to apply to `DirectiveKind::Unknown`
+    /// near-misses (`Off` = verbatim; `Canonical` = Tier1; `Degraded` = Tier1+Tier2).
+    directives: DirectiveNormalization,
 }
 
 impl<W: Write> WalkSink for SerializeSink<'_, W> {
@@ -151,7 +177,7 @@ impl<W: Write> WalkSink for SerializeSink<'_, W> {
         match (kind, node) {
             (SentinelKind::Inline, NodeRef::Inline(n))
             | (SentinelKind::BlockLeaf, NodeRef::BlockLeaf(n)) => {
-                emit_aozora(n, self.store, self.out, self.fix_notation)
+                emit_aozora(n, self.store, self.out, self.directives)
             }
             (SentinelKind::BlockOpen, NodeRef::BlockOpen(open)) => {
                 emit_container_open(open, self.out)
@@ -171,14 +197,14 @@ fn emit_aozora<W: Write>(
     node: Node,
     store: &NodeStore,
     out: &mut TrackingWriter<W>,
-    fix_notation: bool,
+    directives: DirectiveNormalization,
 ) -> fmt::Result {
     match node {
         Node::Ruby(r) => emit_ruby(&r, store, out),
         Node::Format(f) => emit_format(&f, store, out),
         Node::Gaiji(g) => emit_gaiji(&g, store, out),
         Node::Kaeriten(k) => emit_kaeriten(k, store, out),
-        Node::Directive(a) => emit_annotation(a, store, out, fix_notation),
+        Node::Directive(a) => emit_annotation(a, store, out, directives),
         Node::AngleQuote(d) => emit_angle_quote(d, store, out),
         Node::MarginNote(s) => emit_side_note(&s, store, out),
         Node::PageBreak => out.write_str("［＃改ページ］"),
@@ -508,25 +534,33 @@ fn emit_kaeriten<W: Write>(k: Kaeriten, store: &NodeStore, out: &mut W) -> fmt::
 /// Serialize a directive by writing its `raw` bytes verbatim (they already
 /// include the `［＃…］` brackets).
 ///
-/// With `fix_notation` set, an `Unknown` directive whose trimmed body is a
-/// verified near-miss (per [`canonical_directive`]) is rewritten to
-/// `［＃<canonical>］` instead. The rewrite is idempotent: the canonical body
-/// parses to a recognized (non-`Unknown`) node, so a second serialize pass
-/// never re-enters this branch and re-emits verbatim.
+/// When `directives` is not `Off`, an `Unknown` directive whose trimmed body is
+/// a verified near-miss is rewritten to `［＃<canonical>］` instead. Tier1
+/// ([`canonical_directive`]) is tried first; at the `Degraded` level a Tier1
+/// miss then tries the lossy / judgment Tier2 reductions ([`degraded_directive`]).
+/// The rewrite is idempotent: the resolved body parses to a recognized
+/// (non-`Unknown`) node, so a second pass never re-enters this branch. Tier2 is
+/// reached only from the ephemeral `Degraded` render buffer, never from a
+/// persistent-write path — so a Tier2 reduction never rewrites source.
 fn emit_annotation<W: Write>(
     a: Directive,
     store: &NodeStore,
     out: &mut W,
-    fix_notation: bool,
+    directives: DirectiveNormalization,
 ) -> fmt::Result {
     let raw = store.resolve_str(a.raw);
-    if fix_notation && a.kind == DirectiveKind::Unknown {
+    if directives != DirectiveNormalization::Off && a.kind == DirectiveKind::Unknown {
         let body = raw
             .strip_prefix("［＃")
             .and_then(|s| s.strip_suffix('］'))
             .unwrap_or(raw)
             .trim();
-        if let Some(canonical) = canonical_directive(body) {
+        let resolved = canonical_directive(body).or_else(|| {
+            (directives == DirectiveNormalization::Degraded)
+                .then(|| degraded_directive(body))
+                .flatten()
+        });
+        if let Some(canonical) = resolved {
             out.write_str("［＃")?;
             out.write_str(canonical.as_ref())?;
             return out.write_char('］');

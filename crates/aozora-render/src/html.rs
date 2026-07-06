@@ -18,43 +18,46 @@ use aozora_syntax::DirectiveKind;
 use aozora_syntax::ast::{LexOutput, Node, NodeRef, NodeStore};
 
 use crate::render_node::render;
-use crate::serialize::{SerializeOptions, serialize_with};
+use crate::serialize::{DirectiveNormalization, SerializeOptions, serialize_with};
 use crate::spelling::html::{RenderState, escape_text_chunk};
 use crate::walk::{SentinelKind, WalkSink, walk};
 
 /// Options controlling the opt-in HTML render path.
 ///
-/// The default (`normalize_directives: false`) is the byte-identical,
-/// non-judgemental render: an `Unknown` directive body the parser did not
-/// recognise renders as an inert `<span class="aozora-directive" hidden>`, so
-/// output never depends on the notation-hygiene catalogue.
+/// The default (`directives: Off`) is the byte-identical, non-judgemental
+/// render: an `Unknown` directive body the parser did not recognise renders as
+/// an inert `<span class="aozora-directive" hidden>`, so output never depends on
+/// the notation-hygiene catalogue.
 ///
-/// Opting in ([`render_html_normalized`]) reinterprets verified Tier1
-/// near-misses (per `aozora_syntax::lint::canonical_directive`, reached
-/// *transitively* through the formatter's `fix_notation` rewrite — never a
-/// second copy of the catalogue) as their canonical spelling, so a known 揺れ
-/// renders as a real element instead of a hidden directive span. See
-/// ADR-0022's fourth role.
+/// Opting in ([`render_html_normalized`]) reinterprets near-misses as their
+/// canonical spelling — reached *transitively* through the formatter rewrite,
+/// never a second copy of the catalogue — so a known 揺れ renders as a real
+/// element instead of a hidden directive span. `Canonical` consults Tier1 only
+/// (`render --normalize`); `Degraded` additionally reduces the lossy / judgment
+/// Tier2 forms (`render --degraded`). See ADR-0022's fourth role and ADR-0026.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RenderOptions {
-    /// Render verified `DirectiveKind::Unknown` near-misses (per the
-    /// notation-hygiene catalogue) as if they were their canonical spelling.
-    pub normalize_directives: bool,
+    /// Which notation-hygiene tiers to apply to `DirectiveKind::Unknown`
+    /// near-misses when rendering.
+    pub directives: DirectiveNormalization,
 }
 
-/// Render an [`LexOutput`] into HTML **after** normalising its Tier1
-/// directive near-misses to canonical form.
+/// Render an [`LexOutput`] into HTML **after** normalising its `Unknown`
+/// directive near-misses at the given [`DirectiveNormalization`] level.
 ///
-/// This is the opt-in twin of [`render_html`]: it first re-serialises the
-/// tree with the formatter's `fix_notation` rewrite (the single
-/// `canonical_directive` authority, reached transitively — no catalogue copy
-/// lives here), then re-parses that ephemeral canonical source and renders it.
-/// The rewrite is an internal, throwaway step: neither the caller's source nor
-/// the default parse/render is mutated. A body with no catalogue entry is left
-/// verbatim, so it still renders as before.
+/// This is the opt-in twin of [`render_html`]: it first re-serialises the tree
+/// through the formatter rewrite (the single catalogue authority, reached
+/// transitively — no catalogue copy lives here), then re-parses that ephemeral
+/// canonical source and renders it. The rewrite is an internal, throwaway step:
+/// neither the caller's source nor the default parse/render is mutated. A body
+/// with no catalogue entry is left verbatim, so it still renders as before.
+///
+/// `level` is `Canonical` (Tier1) or `Degraded` (Tier1 + Tier2). `Degraded` is
+/// the sole construction site of that level, so the lossy / judgment Tier2
+/// reductions can reach only this throwaway render buffer — never source.
 #[must_use]
-pub fn render_html_normalized(out: &LexOutput) -> String {
-    let normalized = serialize_with(out, SerializeOptions { fix_notation: true });
+pub fn render_html_normalized(out: &LexOutput, level: DirectiveNormalization) -> String {
+    let normalized = serialize_with(out, SerializeOptions { directives: level });
     render_html(&aozora_pipeline::lex(&normalized))
 }
 

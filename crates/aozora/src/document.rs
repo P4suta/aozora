@@ -16,7 +16,8 @@ use core::fmt;
 
 use aozora_pipeline::{LexOutput, NodeRef, SourceNode, lex};
 use aozora_render::{
-    RenderOptions, SerializeOptions, render_html, render_html_normalized, serialize, serialize_with,
+    DirectiveNormalization, RenderOptions, SerializeOptions, render_html, render_html_normalized,
+    serialize, serialize_with,
 };
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset};
 use aozora_syntax::ast::ContainerPair;
@@ -423,26 +424,24 @@ impl<'a> Tree<'a> {
     /// Render the tree to a semantic-HTML5 string with explicit
     /// [`RenderOptions`].
     ///
-    /// With the default options (`normalize_directives: false`) this is
-    /// byte-identical to [`Self::to_html`]: an `Unknown` directive the parser
-    /// did not recognise renders as an inert `<span class="aozora-directive"
-    /// hidden>`, so the default render never depends on the notation-hygiene
-    /// catalogue.
+    /// With the default options (`directives: Off`) this is byte-identical to
+    /// [`Self::to_html`]: an `Unknown` directive the parser did not recognise
+    /// renders as an inert `<span class="aozora-directive" hidden>`, so the
+    /// default render never depends on the notation-hygiene catalogue.
     ///
-    /// With `normalize_directives` enabled, verified Tier1 near-misses (per the
-    /// single `aozora_syntax::lint::canonical_directive` authority, reached
-    /// transitively through the formatter's `fix_notation` rewrite) render as
-    /// if they were their canonical spelling — a known 揺れ becomes a real
-    /// element instead of a hidden directive span. This is the opt-in,
-    /// read-only "render as if canonical" role of ADR-0022: it reuses the
+    /// With `directives` not `Off`, verified near-misses (per the single
+    /// `aozora_syntax::lint::canonical_directive` authority — plus, at the
+    /// `Degraded` level, the lossy / judgment `aozora_syntax::degraded`
+    /// reductions — reached transitively through the formatter rewrite) render
+    /// as if they were their canonical spelling. This is the opt-in, read-only
+    /// "render as if canonical" role of ADR-0022 / ADR-0026: it reuses the
     /// formatter rewrite as an internal, throwaway step feeding a reparse, and
     /// never mutates this document's source or the default parse/render.
     #[must_use]
     pub fn to_html_with(&self, opts: RenderOptions) -> String {
-        if opts.normalize_directives {
-            render_html_normalized(self.inner())
-        } else {
-            self.to_html()
+        match opts.directives {
+            DirectiveNormalization::Off => self.to_html(),
+            level => render_html_normalized(self.inner(), level),
         }
     }
 
@@ -455,9 +454,9 @@ impl<'a> Tree<'a> {
     /// Re-emit Aozora source text with explicit [`SerializeOptions`].
     ///
     /// With the default options this equals [`Self::to_source`]. With
-    /// `fix_notation` enabled it additionally rewrites the notation-hygiene
+    /// `directives` not `Off` it additionally rewrites the notation-hygiene
     /// lint's `DirectiveKind::Unknown` near-misses to canonical form — the
-    /// `aozora fmt --fix-notation` autofix.
+    /// `aozora fmt --fix-notation` autofix (which constructs `Canonical`).
     ///
     /// The rewrite is a second-pass fixed point. The emit-time substitution
     /// can change a directive's block/inline nature — an inline
@@ -469,11 +468,11 @@ impl<'a> Tree<'a> {
     #[must_use]
     pub fn to_source_with(&self, opts: SerializeOptions) -> String {
         let first = serialize_with(self.inner(), opts);
-        if opts.fix_notation {
-            let doc = Document::new(first);
-            doc.parse().to_source()
-        } else {
-            first
+        match opts.directives {
+            DirectiveNormalization::Off => first,
+            DirectiveNormalization::Canonical | DirectiveNormalization::Degraded => {
+                Document::new(first).parse().to_source()
+            }
         }
     }
 
