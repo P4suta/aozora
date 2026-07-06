@@ -31,7 +31,7 @@
 
 use std::collections::HashMap;
 
-use aozora::{Coupling, OwnedRegion, SourceOffset, Span, SpliceError, SpliceSafety, Tree};
+use aozora::{Coupling, Region, SourceOffset, Span, SpliceError, SpliceSafety, Tree};
 use tower_lsp::lsp_types::{Position, PrepareRenameResponse, Range, TextEdit, Url, WorkspaceEdit};
 
 use crate::line_index::LineIndex;
@@ -53,7 +53,7 @@ pub fn prepare_rename_at(
         return None;
     }
     let off = line_index.byte_offset(text, position)?;
-    let region = tree.owned_region_at(SourceOffset::new(u32::try_from(off).ok()?))?;
+    let region = tree.region_at(SourceOffset::new(u32::try_from(off).ok()?))?;
     if !matches!(region.safety, SpliceSafety::Coupled(_)) {
         return None;
     }
@@ -106,7 +106,7 @@ pub fn rename_edit(
     let Ok(raw_off) = u32::try_from(off) else {
         return Ok(None);
     };
-    let Some(region) = tree.owned_region_at(SourceOffset::new(raw_off)) else {
+    let Some(region) = tree.region_at(SourceOffset::new(raw_off)) else {
         return Ok(None);
     };
     if !matches!(region.safety, SpliceSafety::Coupled(_)) {
@@ -145,7 +145,7 @@ fn edits_for_splice(
     line_index: &LineIndex,
     text: &str,
     new_source: &str,
-    region: OwnedRegion,
+    region: Region,
     new_name: &str,
 ) -> Vec<TextEdit> {
     match tree.coupling(region) {
@@ -505,7 +505,7 @@ mod tests {
         let tree = doc.parse();
         let line_index = LineIndex::new(src);
         let region = tree
-            .owned_region_at(SourceOffset::new(u32::try_from(off).unwrap()))
+            .region_at(SourceOffset::new(u32::try_from(off).unwrap()))
             .expect("region at offset");
         let spliced = tree.splice(region, new_name).expect("splice succeeds");
         let edit = rename_edit(

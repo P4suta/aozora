@@ -29,13 +29,13 @@
 //! Every stage operates on owned data: the sanitized text is an owned `String`,
 //! the token / event lists are `Vec`s, and the classify stage builds the owned
 //! AST directly into an
-//! [`OwnedAllocator`]'s
+//! [`Allocator`]'s
 //! [`NodeStore`], which threads straight into
-//! the returned [`OwnedLexOutput`]. There is no bumpalo arena.
+//! the returned [`LexOutput`]. There is no bumpalo arena.
 //!
 //! # Why `build` is the terminal transition
 //!
-//! The classify stage requires `&mut OwnedAllocator`. We collapse the classify
+//! The classify stage requires `&mut Allocator`. We collapse the classify
 //! stage + the normalize fold into a single terminal `.build()` call —
 //! inspection up through `Paired` works freely; the final pass is atomic.
 
@@ -44,12 +44,12 @@ use crate::lexer::{
 };
 use aozora_spec::{Diagnostic, PairLink};
 
-use aozora_syntax::alloc_owned::OwnedAllocator;
+use aozora_syntax::alloc::Allocator;
+use aozora_syntax::ast::{LexOutput, Node, NodeStore, Registry};
 use aozora_syntax::format::ForwardOrigin;
-use aozora_syntax::owned::{NodeOwned, NodeStore, OwnedLexOutput, RegistryOwned};
 use aozora_syntax::{ForwardAttr, RegionClose, RegionFormat, Span};
 
-use crate::owned_lex::OwnedNormalizer;
+use crate::fold::Normalizer;
 
 // =====================================================================
 // State markers (field-bound — each state carries the stage output it is
@@ -112,10 +112,10 @@ impl<'src> Pipeline<'src, Source> {
         }
     }
 
-    /// One-shot driver: run every stage and return the final [`OwnedLexOutput`].
+    /// One-shot driver: run every stage and return the final [`LexOutput`].
     /// Equivalent to [`crate::lex`].
     #[must_use]
-    pub fn run_to_completion(source: &'src str) -> OwnedLexOutput {
+    pub fn run_to_completion(source: &'src str) -> LexOutput {
         Self::new(source).sanitize().tokenize().pair().build()
     }
 
@@ -228,7 +228,7 @@ impl Pipeline<'_, Paired> {
     }
 
     /// Drive the classify stage + the owned normalizer fold and return the final
-    /// [`OwnedLexOutput`]. Terminal transition.
+    /// [`LexOutput`]. Terminal transition.
     ///
     /// # Diagnostic order
     ///
@@ -240,7 +240,7 @@ impl Pipeline<'_, Paired> {
     /// Panics if the sanitized source exceeds `u32::MAX` bytes (the lexer's
     /// `Span` width contract). In practice unreachable.
     #[must_use]
-    pub fn build(mut self) -> OwnedLexOutput {
+    pub fn build(mut self) -> LexOutput {
         let Paired {
             sanitized_text,
             events,
@@ -249,10 +249,10 @@ impl Pipeline<'_, Paired> {
         let sanitized_len =
             u32::try_from(sanitized_text.len()).expect("sanitize asserts source.len() <= u32::MAX");
 
-        let mut alloc = OwnedAllocator::new();
+        let mut alloc = Allocator::new();
 
         let (normalized, recorder, container_pairs, classify_diagnostics, norm_diagnostics, store) = {
-            let mut normalizer = OwnedNormalizer::new(&sanitized_text, sanitized_text.len() / 64);
+            let mut normalizer = Normalizer::new(&sanitized_text, sanitized_text.len() / 64);
 
             // Drain the pair events through the streaming `classify` Iterator
             // path; collect the classified spans and the classify diagnostics,
@@ -280,7 +280,7 @@ impl Pipeline<'_, Paired> {
             }
             // Move the owned products out, ending the normalizer's borrow of
             // `sanitized_text` so it can be moved into the output below.
-            let OwnedNormalizer {
+            let Normalizer {
                 out,
                 recorder,
                 container_pairs,
@@ -306,9 +306,9 @@ impl Pipeline<'_, Paired> {
 
         // Classifier emits in source order, so the recorder's entries are already
         // sorted by position; `from_sorted_slice` skips the redundant sort.
-        let registry = RegistryOwned::from_sorted_slice(&recorder.entries);
+        let registry = Registry::from_sorted_slice(&recorder.entries);
 
-        OwnedLexOutput::new(
+        LexOutput::new(
             normalized,
             sanitized_text,
             registry,
@@ -341,7 +341,7 @@ impl Pipeline<'_, Paired> {
 fn lower_spans(
     spans: Vec<ClassifiedSpan>,
     source: &str,
-    alloc: &mut OwnedAllocator,
+    alloc: &mut Allocator,
 ) -> (Vec<ClassifiedSpan>, Vec<Span>) {
     // Phase 0: resolve forward heading hints whose referent is the bare line
     // directly above the directive into promoted `Heading` nodes.
@@ -414,7 +414,7 @@ fn decorate_ruby_bases(out: &mut [ClassifiedSpan], source: &str, store: &NodeSto
     for idx in 0..out.len() {
         // Fire only on a declined (Referenced) forward directive with a
         // whole-run-decoratable attribute.
-        let SpanKind::Aozora(NodeOwned::Format(f)) = out[idx].kind else {
+        let SpanKind::Aozora(Node::Format(f)) = out[idx].kind else {
             continue;
         };
         if !matches!(f.origin, ForwardOrigin::Referenced) || !attr_decorates_ruby_base(f.attr) {
@@ -429,7 +429,7 @@ fn decorate_ruby_bases(out: &mut [ClassifiedSpan], source: &str, store: &NodeSto
         let mut ambiguous = false;
         for j in 0..idx {
             match &out[j].kind {
-                SpanKind::Aozora(NodeOwned::Ruby(r)) => {
+                SpanKind::Aozora(Node::Ruby(r)) => {
                     if store.content_range_as_plain(r.base) == Some(target) {
                         if ruby_match.is_some() {
                             ambiguous = true;
@@ -460,7 +460,7 @@ fn decorate_ruby_bases(out: &mut [ClassifiedSpan], source: &str, store: &NodeSto
         };
         let attr = f.attr;
         let directive_span = out[idx].source_span;
-        if let SpanKind::Aozora(NodeOwned::Ruby(ref mut r)) = out[ruby_idx].kind {
+        if let SpanKind::Aozora(Node::Ruby(ref mut r)) = out[ruby_idx].kind {
             r.base_emphasis = Some(attr);
             decorated.push(directive_span);
         }
@@ -502,10 +502,10 @@ fn find_heading_predecessor_position_at(
 fn promote_headings(
     mut spans: Vec<ClassifiedSpan>,
     source: &str,
-    alloc: &mut OwnedAllocator,
+    alloc: &mut Allocator,
 ) -> Vec<ClassifiedSpan> {
     for span in &mut spans {
-        let SpanKind::Aozora(NodeOwned::HeadingHint(hint)) = span.kind else {
+        let SpanKind::Aozora(Node::HeadingHint(hint)) = span.kind else {
             continue;
         };
         // Resolve the interned target to an owned string so the `&store` borrow
@@ -561,7 +561,7 @@ fn try_fold_inline(
     frame: &OpenFrame,
     close: &ClassifiedSpan,
     source: &str,
-    alloc: &mut OwnedAllocator,
+    alloc: &mut Allocator,
 ) -> Option<ClassifiedSpan> {
     let attr = foldable_inline_attr(frame.region)?;
     let SpanKind::BlockClose(close_region) = close.kind else {
@@ -599,7 +599,7 @@ fn try_fold_inline(
 fn fold_inline_emphasis(
     spans: Vec<ClassifiedSpan>,
     source: &str,
-    alloc: &mut OwnedAllocator,
+    alloc: &mut Allocator,
 ) -> Vec<ClassifiedSpan> {
     let mut output: Vec<ClassifiedSpan> = Vec::with_capacity(spans.len());
     let mut stack: Vec<OpenFrame> = Vec::new();

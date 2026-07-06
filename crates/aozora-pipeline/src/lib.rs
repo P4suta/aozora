@@ -4,12 +4,12 @@
 //! this single crate:
 //!
 //! - The orchestrator (the [`Pipeline`] state machine plus the [`lex`]
-//!   entry in `owned_lex`) drives the pipeline through its stages
+//!   entry in `fold`) drives the pipeline through its stages
 //!   (sanitize → tokenize → pair → classify). The single public entry
 //!   [`lex`] runs the whole thing and returns the result as an owned,
-//!   lifetime-free [`OwnedLexOutput`] (`Send + Sync`): the classify
+//!   lifetime-free [`LexOutput`] (`Send + Sync`): the classify
 //!   stage builds the owned nodes directly into an
-//!   `aozora_syntax::owned::NodeStore` (a string interner plus flat
+//!   `aozora_syntax::ast::NodeStore` (a string interner plus flat
 //!   content / segment pools addressed by `u32` handles) — there is no
 //!   arena.
 //! - The stage implementations live under [`lexer`] (`lexer::sanitize`
@@ -25,23 +25,23 @@
 //! # Observable equivalence
 //!
 //! [`lex`] is a pure function from source text to
-//! [`OwnedLexOutput`] *as observed externally*, even though the
+//! [`LexOutput`] *as observed externally*, even though the
 //! internal pipeline runs SIMD trigger scans over scratch buffers.
 //! The determinism + sentinel-alignment proptests in
 //! `tests/property_owned_output.rs` pin the contract.
 
 #![forbid(unsafe_code)]
 
+mod fold;
 pub mod lexer;
-mod owned_lex;
 pub mod pipeline;
 
 // Re-export the owned lex output + its source-node / node-ref surface so
 // `lex`'s return type is nameable at the crate root (keeps intra-doc links
 // resolvable under `-D warnings`) and downstream crates that depend only on
 // `aozora-pipeline` (e.g. `aozora-cst`) can name the owned node types.
-pub use aozora_syntax::owned::{NodeRefOwned, OwnedLexOutput, SourceNodeOwned};
-pub use owned_lex::lex;
+pub use aozora_syntax::ast::{LexOutput, NodeRef, SourceNode};
+pub use fold::lex;
 pub use pipeline::{Paired, Pipeline, Sanitized, Source, Tokenized};
 
 /// Eagerly initialise every lazily-built parser table.
@@ -77,7 +77,7 @@ mod tests {
 
     /// `aozora_scan::scan_offsets` MUST yield the exact same byte offsets that
     /// the tokenize-stage tokeniser uses for its trigger positions. We
-    /// cross-check at the [`OwnedLexOutput`] level: every PUA sentinel in
+    /// cross-check at the [`LexOutput`] level: every PUA sentinel in
     /// `normalized` must correspond to a consumed source trigger.
     #[test]
     fn lex_produces_normalized_with_pua_sentinels_for_trigger_inputs() {

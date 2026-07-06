@@ -6,12 +6,12 @@
 //! `serialize ∘ parse(s)` — must produce the same `s` byte-for-byte.
 
 use aozora_pipeline::lex;
-use aozora_render::serialize_owned;
+use aozora_render::serialize;
 use proptest::prelude::*;
 
 fn round_trip(src: &str) -> String {
     let out = lex(src);
-    serialize_owned(&out)
+    serialize(&out)
 }
 
 fn fixed_point(src: &str) -> bool {

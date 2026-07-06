@@ -7,24 +7,24 @@
 //! resolve against this store.
 
 use super::intern::{StrId, StrInterner};
-use super::payload::{ContentOwned, SegmentOwned};
+use super::payload::{Content, Segment};
 
-/// Half-open run of [`ContentOwned`] in [`NodeStore::resolve_content_range`];
+/// Half-open run of [`Content`] in [`NodeStore::resolve_content_range`];
 /// `len >= 1` (a content run is never empty).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContentRange {
-    /// Index of the first [`ContentOwned`] in the store's content `Vec`.
+    /// Index of the first [`Content`] in the store's content `Vec`.
     pub start: u32,
-    /// Number of [`ContentOwned`] entries in the run.
+    /// Number of [`Content`] entries in the run.
     pub len: u32,
 }
 
-/// Half-open run of [`SegmentOwned`] in [`NodeStore::resolve_seg_range`].
+/// Half-open run of [`Segment`] in [`NodeStore::resolve_seg_range`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SegRange {
-    /// Index of the first [`SegmentOwned`] in the store's segment `Vec`.
+    /// Index of the first [`Segment`] in the store's segment `Vec`.
     pub start: u32,
-    /// Number of [`SegmentOwned`] entries in the run.
+    /// Number of [`Segment`] entries in the run.
     pub len: u32,
 }
 
@@ -37,10 +37,10 @@ pub struct SegRange {
 pub struct NodeStore {
     /// String interner backing every [`StrId`] in the tree.
     pub interner: StrInterner,
-    /// Flat pool of [`ContentOwned`] entries; [`ContentRange`]s index here.
-    contents: Vec<ContentOwned>,
-    /// Flat pool of [`SegmentOwned`] entries; [`SegRange`]s index here.
-    segments: Vec<SegmentOwned>,
+    /// Flat pool of [`Content`] entries; [`ContentRange`]s index here.
+    contents: Vec<Content>,
+    /// Flat pool of [`Segment`] entries; [`SegRange`]s index here.
+    segments: Vec<Segment>,
 }
 
 impl NodeStore {
@@ -71,7 +71,7 @@ impl NodeStore {
     ///
     /// Panics if the content pool would exceed `u32::MAX` entries — not
     /// reachable for any realistic document.
-    pub fn push_contents(&mut self, items: &[ContentOwned]) -> ContentRange {
+    pub fn push_contents(&mut self, items: &[Content]) -> ContentRange {
         let start =
             u32::try_from(self.contents.len()).expect("content pool exceeds u32 entry count");
         let len = u32::try_from(items.len()).expect("content run exceeds u32 length");
@@ -85,7 +85,7 @@ impl NodeStore {
     ///
     /// Panics if the segment pool would exceed `u32::MAX` entries — not
     /// reachable for any realistic document.
-    pub fn push_segments(&mut self, items: &[SegmentOwned]) -> SegRange {
+    pub fn push_segments(&mut self, items: &[Segment]) -> SegRange {
         let start =
             u32::try_from(self.segments.len()).expect("segment pool exceeds u32 entry count");
         let len = u32::try_from(items.len()).expect("segment run exceeds u32 length");
@@ -99,7 +99,7 @@ impl NodeStore {
     ///
     /// Panics if the range falls outside the content pool.
     #[must_use]
-    pub fn resolve_content_range(&self, range: ContentRange) -> &[ContentOwned] {
+    pub fn resolve_content_range(&self, range: ContentRange) -> &[Content] {
         let start = range.start as usize;
         &self.contents[start..start + range.len as usize]
     }
@@ -110,13 +110,13 @@ impl NodeStore {
     ///
     /// Panics if the range falls outside the segment pool.
     #[must_use]
-    pub fn resolve_seg_range(&self, range: SegRange) -> &[SegmentOwned] {
+    pub fn resolve_seg_range(&self, range: SegRange) -> &[Segment] {
         let start = range.start as usize;
         &self.segments[start..start + range.len as usize]
     }
 
     /// Plain-text fast path over a length-1 content run: `Some(text)` iff the
-    /// run is exactly one [`ContentOwned::Plain`]; `None` for a `Segments` run
+    /// run is exactly one [`Content::Plain`]; `None` for a `Segments` run
     /// or any `len != 1`.
     ///
     /// Consumers reading a single-`Content` field (ruby base/reading,
@@ -129,7 +129,7 @@ impl NodeStore {
     #[must_use]
     pub fn content_range_as_plain(&self, range: ContentRange) -> Option<&str> {
         match self.resolve_content_range(range) {
-            [ContentOwned::Plain(id)] => Some(self.resolve_str(*id)),
+            [Content::Plain(id)] => Some(self.resolve_str(*id)),
             _ => None,
         }
     }
@@ -148,26 +148,23 @@ mod tests {
         let c = store.intern("c");
 
         // Two separate content runs must not alias.
-        let first = store.push_contents(&[ContentOwned::Plain(a)]);
-        let second = store.push_contents(&[ContentOwned::Plain(b), ContentOwned::Plain(c)]);
+        let first = store.push_contents(&[Content::Plain(a)]);
+        let second = store.push_contents(&[Content::Plain(b), Content::Plain(c)]);
 
         assert_eq!(first, ContentRange { start: 0, len: 1 });
         assert_eq!(second, ContentRange { start: 1, len: 2 });
-        assert_eq!(
-            store.resolve_content_range(first),
-            &[ContentOwned::Plain(a)]
-        );
+        assert_eq!(store.resolve_content_range(first), &[Content::Plain(a)]);
         assert_eq!(
             store.resolve_content_range(second),
-            &[ContentOwned::Plain(b), ContentOwned::Plain(c)]
+            &[Content::Plain(b), Content::Plain(c)]
         );
 
         // Segment ranges resolve independently.
-        let seg = store.push_segments(&[SegmentOwned::Text(a), SegmentOwned::Text(c)]);
+        let seg = store.push_segments(&[Segment::Text(a), Segment::Text(c)]);
         assert_eq!(seg, SegRange { start: 0, len: 2 });
         assert_eq!(
             store.resolve_seg_range(seg),
-            &[SegmentOwned::Text(a), SegmentOwned::Text(c)]
+            &[Segment::Text(a), Segment::Text(c)]
         );
     }
 
@@ -178,16 +175,16 @@ mod tests {
         let b = store.intern("bar");
 
         // Length-1 `Plain` run → the interned text (the 99%+ majority case).
-        let plain = store.push_contents(&[ContentOwned::Plain(a)]);
+        let plain = store.push_contents(&[Content::Plain(a)]);
         assert_eq!(store.content_range_as_plain(plain), Some("foo"));
 
         // A `Segments` run → `None` (mixed content; not the length-1 plain fast path).
-        let seg = store.push_segments(&[SegmentOwned::Text(a)]);
-        let mixed = store.push_contents(&[ContentOwned::Segments(seg)]);
+        let seg = store.push_segments(&[Segment::Text(a)]);
+        let mixed = store.push_contents(&[Content::Segments(seg)]);
         assert_eq!(store.content_range_as_plain(mixed), None);
 
         // A multi-entry run → `None` (only the length-1 fast path is plain).
-        let two = store.push_contents(&[ContentOwned::Plain(a), ContentOwned::Plain(b)]);
+        let two = store.push_contents(&[Content::Plain(a), Content::Plain(b)]);
         assert_eq!(store.content_range_as_plain(two), None);
     }
 }

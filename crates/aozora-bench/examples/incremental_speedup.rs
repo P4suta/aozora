@@ -5,7 +5,7 @@
 //! actual edit-latency win. For every corpus document it times, on the same
 //! machine in the same run (a self-baselining ratio):
 //!
-//! - **full** — `Document::parse_owned(new_text)` (a from-scratch parse, what
+//! - **full** — `Document::lex(new_text)` (a from-scratch parse, what
 //!   the LSP does today on any non-fast-path edit).
 //! - **diagnostics-only** —
 //!   `reparse_incremental_diagnostics_only(DiagBaseRef::from_cached(&cached, &pieces), …)`,
@@ -89,13 +89,13 @@ fn main() {
         if text.is_empty() {
             continue;
         }
-        let san = Document::new(text.as_ref()).parse_owned().sanitized;
+        let san = Document::new(text.as_ref()).lex().sanitized;
         if san.is_empty() {
             continue;
         }
         // Keep only sanitize fixed points (sanitize idempotent) — the engine
         // assumes a stable sanitized baseline.
-        if Document::new(san.as_str()).parse_owned().sanitized != san {
+        if Document::new(san.as_str()).lex().sanitized != san {
             continue;
         }
         docs.push(san);
@@ -112,7 +112,7 @@ fn main() {
         let b = band_of(san.len() as u64);
         bands[b].docs += 1;
 
-        let cached = Document::new(san.as_str()).parse_owned();
+        let cached = Document::new(san.as_str()).lex();
 
         // Plain ASCII insertion at a char boundary near the sanitized midpoint.
         let mut mid = san.len() / 2;
@@ -122,14 +122,14 @@ fn main() {
         let new_san = format!("{}x{}", &san[..mid], &san[mid..]);
 
         // Warm this document's data, then take a single measured call each.
-        black_box(Document::new(new_san.as_str()).parse_owned());
+        black_box(Document::new(new_san.as_str()).lex());
 
         let t_full = Instant::now();
-        black_box(Document::new(new_san.as_str()).parse_owned());
+        black_box(Document::new(new_san.as_str()).lex());
         let full_ns = t_full.elapsed().as_nanos();
 
         // The production hot path: diagnostics-only splice (no full
-        // OwnedLexOutput), splicing the maintained Tier-2 `PieceSeq`. Production
+        // LexOutput), splicing the maintained Tier-2 `PieceSeq`. Production
         // maintains the sequence across edits (it is not rebuilt per edit), so it
         // is built once outside the timer and the timer measures only the splice —
         // the true per-edit cost. `Some` exactly when the edit's locality is

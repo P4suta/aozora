@@ -58,7 +58,7 @@ the generated Go types:
 |---|---|---|
 | `ToHTML(src)` | `string` | Semantic HTML5 with `aozora-*` class hooks. |
 | `Serialize(src)` | JSON envelope | Canonical 青空文庫 source round-trip. |
-| `Nodes(src)` | JSON envelope | Borrowed-AST nodes with `Kind` + `Span`. |
+| `Nodes(src)` | JSON envelope | AST nodes with `Kind` + `Span`. |
 | `Diagnostics(src)` | JSON envelope | Same diagnostic schema as every other binding (see [WASM → API surface](wasm.md#api-surface)). |
 | `Pairs(src)` | JSON envelope | Matched ruby / bracket / quote pairs. |
 | `ContainerPairs(src)` | JSON envelope | Matched indent / align-end container pairs. |

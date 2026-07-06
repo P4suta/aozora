@@ -76,7 +76,7 @@ fn diag_debug(ds: &[Diagnostic]) -> Vec<String> {
 /// `RopeSrc::byte` divergence at a chunk boundary would change the region and so
 /// the reuse counts / node spans asserted below.
 fn compare_backends(doc: &str, edit: Range<usize>, ins: &str) {
-    let out = Document::new(doc).parse_owned();
+    let out = Document::new(doc).lex();
     let pieces = PieceSeq::from_contiguous(
         &out.source_nodes,
         &out.pairs,
@@ -131,7 +131,7 @@ fn compare_backends(doc: &str, edit: Range<usize>, ins: &str) {
 /// does not describe `doc`.
 fn assert_engine_parity(doc: &str, edit: Range<usize>, ins: &str) {
     assert_eq!(
-        Document::new(doc).parse_owned().sanitized.as_str(),
+        Document::new(doc).lex().sanitized.as_str(),
         doc,
         "the parity fixture must be a sanitize fixed point",
     );
@@ -231,7 +231,7 @@ proptest! {
         // Skip the rare non-fixed-point rather than feed `compare_backends` a base
         // that does not describe `doc`; the charset makes this almost never fire.
         prop_assume!(
-            Document::new(doc.as_str()).parse_owned().sanitized.as_str() == doc.as_str()
+            Document::new(doc.as_str()).lex().sanitized.as_str() == doc.as_str()
         );
         // A random char-boundary insert position (snapped up; `doc.len()` is a
         // valid boundary, i.e. an append).
@@ -275,7 +275,7 @@ fn lying_setup() -> (&'static str, String, Range<usize>) {
 #[should_panic(expected = "changed bytes outside edit_old")]
 fn lying_edit_trips_debug_assert_str() {
     let (old, new, edit_old) = lying_setup();
-    let out = Document::new(old).parse_owned();
+    let out = Document::new(old).lex();
     let pieces = PieceSeq::from_contiguous(
         &out.source_nodes,
         &out.pairs,
@@ -294,7 +294,7 @@ fn lying_edit_trips_debug_assert_str() {
 #[should_panic(expected = "changed bytes outside edit_old")]
 fn lying_edit_trips_debug_assert_rope() {
     let (old, new, edit_old) = lying_setup();
-    let out = Document::new(old).parse_owned();
+    let out = Document::new(old).lex();
     let pieces = PieceSeq::from_contiguous(
         &out.source_nodes,
         &out.pairs,

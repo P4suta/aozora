@@ -520,19 +520,19 @@ digest-gate-update:
         dev cargo run -p aozora-xtask -q -- corpus digest-gate --root /corpus --baseline corpus/render-digest.json --update
 
 # Owned-producer allocation-pressure ratchet (#237 P0.2-real). Measures, via
-# dhat around `lex_owned` over the corpus, owned-path allocation count / bytes
+# dhat around `lex` over the corpus, owned-path allocation count / bytes
 # normalized per-file / per-source-byte, and fails when either regresses beyond
 # the baseline tolerance (default 3%). Same corpus bind-mount and runtime-skip
 # (NOT a failure when AOZORA_CORPUS_ROOT is unset) as `audit-gate`.
 #
 # Usage:
 #   export AOZORA_CORPUS_ROOT=$HOME/aozora-corpus
-#   just owned-alloc-gate
-owned-alloc-gate:
+#   just alloc-gate
+alloc-gate:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
-        echo "AOZORA_CORPUS_ROOT is not set; owned-alloc-gate skipped (no corpus to walk)."
+        echo "AOZORA_CORPUS_ROOT is not set; alloc-gate skipped (no corpus to walk)."
         exit 0
     fi
     if [[ ! -d "$AOZORA_CORPUS_ROOT" ]]; then
@@ -542,12 +542,12 @@ owned-alloc-gate:
     docker compose run --rm \
         -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
         -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run --release -p aozora-bench --example owned_alloc_gate -- --root /corpus --baseline corpus/owned-alloc-baseline.json
+        dev cargo run --release -p aozora-bench --example alloc_gate -- --root /corpus --baseline corpus/alloc-baseline.json
 
-# Re-capture the owned-allocation baseline. Ratchet-down on improvement; raise
-# only with a PR justification plus a `just owned-throughput` run showing
+# Re-capture the allocation baseline. Ratchet-down on improvement; raise
+# only with a PR justification plus a `just throughput` run showing
 # wall-clock stays within budget.
-owned-alloc-gate-update:
+alloc-gate-update:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
@@ -557,22 +557,22 @@ owned-alloc-gate-update:
     docker compose run --rm \
         -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
         -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run --release -p aozora-bench --example owned_alloc_gate -- --root /corpus --baseline corpus/owned-alloc-baseline.json --update
+        dev cargo run --release -p aozora-bench --example alloc_gate -- --root /corpus --baseline corpus/alloc-baseline.json --update
 
 # Tier-2 wall-clock validation (#237 P0.2-real): owned-vs-borrowed lex MB/s per
 # size band, a same-machine self-baselining ratio. NOT a gate — run at the
 # P0.2-real landing commit and record the band ratios in the PR description.
-owned-throughput:
+throughput:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
-        echo "AOZORA_CORPUS_ROOT is not set; owned-throughput skipped (no corpus to walk)."
+        echo "AOZORA_CORPUS_ROOT is not set; throughput skipped (no corpus to walk)."
         exit 0
     fi
     docker compose run --rm \
         -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
         -e AOZORA_CORPUS_ROOT=/corpus \
-        dev cargo run --release -p aozora-bench --example owned_throughput
+        dev cargo run --release -p aozora-bench --example throughput
 
 # --- fuzzing -----------------------------------------------------------------
 #

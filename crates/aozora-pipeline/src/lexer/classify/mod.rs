@@ -1,4 +1,4 @@
-//! Classify stage — classify the pair-stage event stream into [`NodeOwned`] spans.
+//! Classify stage — classify the pair-stage event stream into [`Node`] spans.
 //!
 //! Walks the cross-linked [`PairEvent`] stream produced by the pair stage and
 //! produces a contiguous vector of [`ClassifiedSpan`] whose
@@ -12,7 +12,7 @@
 //!   unclosed opens, unmatched closes) are merged into one span so
 //!   the normalize stage can emit them verbatim in a single write.
 //! * [`SpanKind::Aozora`] — a classified Aozora construct, carrying the
-//!   concrete [`NodeOwned`] that the normalize stage will replace
+//!   concrete [`Node`] that the normalize stage will replace
 //!   with a PUA placeholder sentinel (see [`crate::INLINE_SENTINEL`] and friends).
 //! * [`SpanKind::Newline`] — a `\n` in the sanitized text, kept as its
 //!   own span kind because block-level annotations (normalize-stage block
@@ -90,11 +90,11 @@ use super::instrumentation::{
     record_yield,
 };
 
-// The classify stage builds the owned AST directly via `OwnedAllocator`'s
-// inherent methods (single intern, no arena); the produced `NodeOwned`s thread
+// The classify stage builds the owned AST directly via `Allocator`'s
+// inherent methods (single intern, no arena); the produced `Node`s thread
 // straight into the lex output's `NodeStore`.
-use aozora_syntax::alloc_owned::OwnedAllocator;
-use aozora_syntax::owned::{ContentOwned, DirectiveOwned, GaijiOwned, NodeOwned, SegmentOwned};
+use aozora_syntax::alloc::Allocator;
+use aozora_syntax::ast::{Content, Directive, Gaiji, Node, Segment};
 use aozora_syntax::{DirectiveKind, RegionClose, RegionFormat, Span, ruby_base_class};
 
 use super::pair::{PairEvent, PairKind};
@@ -145,8 +145,8 @@ pub struct ClassifiedSpan {
 ///
 /// # Memory layout
 ///
-/// The `Aozora(NodeOwned)` variant is *not* boxed —
-/// `NodeOwned` is `Copy` and small (a handful of machine words), so
+/// The `Aozora(Node)` variant is *not* boxed —
+/// `Node` is `Copy` and small (a handful of machine words), so
 /// storing it inline keeps `SpanKind` to `Aozora`-variant size while
 /// avoiding the `Box` indirection the legacy owned shape paid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,7 +160,7 @@ pub enum SpanKind {
     /// or `E002` (block-leaf) sentinel and records the node in the
     /// placeholder registry keyed at the sentinel's normalized
     /// position.
-    Aozora(NodeOwned),
+    Aozora(Node),
     /// Paired-container opener — `［＃ここから字下げ］`, `［＃罫囲み］`,
     /// etc. The normalizer emits an `E003` sentinel line; `post_process`
     /// matches it to the corresponding `BlockClose` via a balanced
@@ -195,7 +195,7 @@ pub enum SpanKind {
 pub fn classify<'src, 'al, I>(
     events: I,
     source: &'src str,
-    alloc: &'al mut OwnedAllocator,
+    alloc: &'al mut Allocator,
 ) -> ClassifyStream<'src, 'al, I::IntoIter>
 where
     I: IntoIterator<Item = PairEvent>,
@@ -245,7 +245,7 @@ where
 /// * `diagnostics`: non-fatal observations accumulated during the pass.
 #[allow(
     missing_debug_implementations,
-    reason = "the &mut OwnedAllocator field cannot derive Debug; the iterator is opaque to consumers"
+    reason = "the &mut Allocator field cannot derive Debug; the iterator is opaque to consumers"
 )]
 pub struct ClassifyStream<'src, 'al, I>
 where
@@ -254,7 +254,7 @@ where
     events: I,
     source: &'src str,
     source_len: u32,
-    alloc: &'al mut OwnedAllocator,
+    alloc: &'al mut Allocator,
     /// Buffered ready-to-yield spans drained one-per-`next()` by the
     /// consumer. `VecDeque` (not `SmallVec`) because the consumer pulls
     /// from the front and `SmallVec::remove(0)` is `O(N)`: the
@@ -315,7 +315,7 @@ struct StreamingFrame {
 /// `Segment::Gaiji` inside a ruby base when one does.
 struct PendingGaiji {
     span: ClassifiedSpan,
-    payload: GaijiOwned,
+    payload: Gaiji,
 }
 
 /// A source-contiguous run of one or more deferred gaiji, held one step so
@@ -410,7 +410,7 @@ pub(crate) struct BodyView<'b> {
 /// over-constraining helpers that thread synthetic source slices
 /// through `Cow`.
 pub(crate) struct RecogniseCtx<'al, 's> {
-    pub alloc: &'al mut OwnedAllocator,
+    pub alloc: &'al mut Allocator,
     pub source: &'s str,
     /// Non-fatal diagnostics raised while building *nested* content
     /// (a gaiji inside a ruby / annotation reading). The owning
@@ -431,7 +431,7 @@ pub(crate) struct RecogniseCtx<'al, 's> {
     /// splices the leaf into the plain run before flushing the tail. `None`
     /// for every other outcome (adjacent / self-contained / declined /
     /// non-forward).
-    pub pending_decoration: Option<(NodeOwned, Span)>,
+    pub pending_decoration: Option<(Node, Span)>,
 }
 
 /// One outermost open-pair frame currently being buffered.
@@ -562,7 +562,7 @@ impl<'src, 'al, I> ClassifyStream<'src, 'al, I>
 where
     I: Iterator<Item = PairEvent>,
 {
-    fn new(events: I, source: &'src str, alloc: &'al mut OwnedAllocator) -> Self {
+    fn new(events: I, source: &'src str, alloc: &'al mut Allocator) -> Self {
         Self {
             events,
             source,
@@ -671,7 +671,7 @@ where
     /// run at `deco.end` so the tail (up to the bracket's `consume_start`)
     /// flushes normally afterward. Pre: the caller has verified the pending
     /// run is open and `pending_start <= deco_span.start`.
-    fn splice_plain_around(&mut self, deco: NodeOwned, deco_span: Span) {
+    fn splice_plain_around(&mut self, deco: Node, deco_span: Span) {
         // Head plain run before the referent (often empty → emits nothing).
         self.flush_plain_up_to(deco_span.start);
         self.push_output(ClassifiedSpan {
@@ -1255,7 +1255,7 @@ where
             reading
         };
         let base_start = pending.start();
-        let segs: smallvec::SmallVec<[SegmentOwned; 2]> = pending
+        let segs: smallvec::SmallVec<[Segment; 2]> = pending
             .segs
             .iter()
             .map(|g| self.alloc.seg_gaiji(g.payload))
@@ -1379,7 +1379,7 @@ where
     /// Returns `None` when the body content is empty (`≪≫` with
     /// no payload) — the caller falls through to plain replay so the
     /// bytes show up as literal source. Emitting a `AngleQuote` span
-    /// here would violate the `borrowed::NonEmpty` invariant on the
+    /// here would violate the `NonEmpty` invariant on the
     /// `Content` payload.
     fn try_angle_quote_emit(
         &mut self,
@@ -1419,8 +1419,8 @@ where
         // flow through as plain text. The caller's fall-through path
         // (`replay_unrecognised_body`) handles the plain emission.
         let content_is_empty = match content {
-            ContentOwned::Plain(s) => self.alloc.store().resolve_str(s).is_empty(),
-            ContentOwned::Segments(segs) => segs.len == 0,
+            Content::Plain(s) => self.alloc.store().resolve_str(s).is_empty(),
+            Content::Segments(segs) => segs.len == 0,
             _ => false,
         };
         if content_is_empty {
@@ -1494,7 +1494,7 @@ where
         // Record bracketed kaeriten for the end-of-document pairing /
         // context checks (`finalize_kaeriten`). The directive span is the
         // whole `［＃…］`.
-        if let SpanKind::Aozora(NodeOwned::Kaeriten(k)) = kind {
+        if let SpanKind::Aozora(Node::Kaeriten(k)) = kind {
             let span = Span::new(m.consume_start, m.consume_end);
             let (family, rank, is_ladder) =
                 classify_kaeriten_mark(self.alloc.store().resolve_str(k.mark));
@@ -1762,13 +1762,13 @@ where
 /// already resolved into a `Content` via `build_content_from_body`.
 ///
 /// Collapsing inside the lexer (rather than leaving the splitting to
-/// the renderer) keeps the [`NodeOwned`] payload self-contained:
+/// the renderer) keeps the [`Node`] payload self-contained:
 /// The normalize stage stamps one PUA sentinel over the whole `｜…《…》` source
 /// span, and the inner gaiji/annotation never reach the top-level
 /// `spans` list or downstream consumers.
 struct RubyMatch<'s> {
     base: &'s str,
-    reading: ContentOwned,
+    reading: Content,
     consume_start: u32,
     consume_end: u32,
 }
@@ -1949,7 +1949,7 @@ struct BodyWalkCtx<'b> {
 /// per-shape helpers as a single `&mut` field keeps the helper
 /// signatures at ≤4 args.
 struct ContentBuild {
-    segments: Vec<SegmentOwned>,
+    segments: Vec<Segment>,
     /// Byte position of the earliest source byte not yet committed
     /// to a `Segment::Text`. Each successful gaiji / annotation emit
     /// advances this past the consumed bracket.
@@ -1957,7 +1957,7 @@ struct ContentBuild {
 }
 
 impl RecogniseCtx<'_, '_> {
-    /// Build a borrowed [`Content`](ContentOwned) for the body
+    /// Build a [`Content`](Content) for the body
     /// window, recognising any nested gaiji / annotation constructs in
     /// a single forward sweep.
     ///
@@ -1966,7 +1966,7 @@ impl RecogniseCtx<'_, '_> {
     /// dispatches each event index through two per-shape recognise
     /// helpers and falls through (advancing `i`) when neither claims
     /// the slot.
-    fn build_content_from_body(&mut self, view: BodyView<'_>, window: &BodyWindow) -> ContentOwned {
+    fn build_content_from_body(&mut self, view: BodyView<'_>, window: &BodyWindow) -> Content {
         #[cfg(feature = "classify-instrument")]
         let _classify_guard = SubsystemGuard::new(Subsystem::BuildContent);
         debug_assert!(
@@ -2136,7 +2136,7 @@ impl RecogniseCtx<'_, '_> {
         // wrap it as a `Segment::Gaiji` (not the `Unknown` annotation the
         // payload fallback would build) and flag an unresolved miss (#84).
         // Every other recogniser keeps the `Segment::Directive` path.
-        if let EmitKind::Aozora(NodeOwned::Gaiji(g)) = a.emit {
+        if let EmitKind::Aozora(Node::Gaiji(g)) = a.emit {
             build.segments.push(self.alloc.seg_gaiji(g));
             if g.resolve(self.alloc.store()).is_none() {
                 self.diagnostics
@@ -2192,10 +2192,10 @@ fn has_nested_candidate(body: &[PairEvent]) -> bool {
 /// compaction pass.
 #[inline]
 fn push_text_segment(
-    segments: &mut Vec<SegmentOwned>,
+    segments: &mut Vec<Segment>,
     source: &str,
     bytes: Range<u32>,
-    alloc: &mut OwnedAllocator,
+    alloc: &mut Allocator,
 ) {
     if !bytes.is_empty() {
         segments.push(alloc.seg_text(&source[bytes.start as usize..bytes.end as usize]));
@@ -2245,7 +2245,7 @@ fn trailing_ruby_base_start(text: &str) -> usize {
 /// falls back to its `Directive{Unknown}` synthesis path.
 struct AnnotationMatch {
     emit: EmitKind,
-    annotation_payload: Option<DirectiveOwned>,
+    annotation_payload: Option<Directive>,
     consume_start: u32,
     consume_end: u32,
     /// A non-fatal warning to surface for this bracket, if any —
@@ -2259,7 +2259,7 @@ struct AnnotationMatch {
 /// What to emit for a matched annotation.
 enum EmitKind {
     /// Inline or block-leaf — becomes [`SpanKind::Aozora`].
-    Aozora(NodeOwned),
+    Aozora(Node),
     /// Paired-container opener — becomes [`SpanKind::BlockOpen`]. Carries the
     /// authoritative open [`RegionFormat`].
     BlockOpen(RegionFormat),
@@ -2277,15 +2277,13 @@ mod tests {
     //! Owned-native classify-stage tests.
     //!
     //! The classifier now builds the owned AST directly, so these tests assert
-    //! on `NodeOwned` spans and resolve their payloads through the
-    //! `OwnedAllocator`'s `NodeStore`. End-to-end byte-identity of the rendered
+    //! on `Node` spans and resolve their payloads through the
+    //! `Allocator`'s `NodeStore`. End-to-end byte-identity of the rendered
     //! output is pinned separately by the conformance vectors, the corpus
     //! verbatim gate, and the render byte-identity gates — the frozen authority.
 
     use super::*;
-    use aozora_syntax::owned::{
-        ContentOwned, ContentRange, NodeOwned, NodeStore, SegmentOwned, StrId,
-    };
+    use aozora_syntax::ast::{Content, ContentRange, Node, NodeStore, Segment, StrId};
     use aozora_syntax::{BoutenKind, BoutenPosition, ForwardAttr, ForwardOrigin, SectionKind};
 
     use crate::lexer::pair::pair;
@@ -2312,13 +2310,13 @@ mod tests {
             self.store.resolve_str(id)
         }
 
-        /// Resolve a content run to its `ContentOwned` slice.
-        fn contents(&self, range: ContentRange) -> Vec<ContentOwned> {
+        /// Resolve a content run to its `Content` slice.
+        fn contents(&self, range: ContentRange) -> Vec<Content> {
             self.store.resolve_content_range(range).to_vec()
         }
 
         /// The single `SpanKind::Aozora` node, panicking if not exactly one.
-        fn only_aozora(&self) -> NodeOwned {
+        fn only_aozora(&self) -> Node {
             let mut found = None;
             for span in &self.spans {
                 if let SpanKind::Aozora(node) = span.kind {
@@ -2338,7 +2336,7 @@ mod tests {
     /// [`TestClassifyOutput`].
     macro_rules! run {
         ($name:ident, $src:expr) => {
-            let mut alloc = OwnedAllocator::new();
+            let mut alloc = Allocator::new();
             let mut pair_stream = pair(tokenize($src));
             let mut spans: Vec<ClassifiedSpan> = Vec::new();
             let classify_diagnostics: Vec<Diagnostic> = {
@@ -2385,7 +2383,7 @@ mod tests {
     #[test]
     fn explicit_ruby_collapses_to_plain_base_and_reading() {
         run!(out, "｜青梅《おうめ》");
-        let NodeOwned::Ruby(r) = out.only_aozora() else {
+        let Node::Ruby(r) = out.only_aozora() else {
             panic!("expected Ruby, got {:?}", out.only_aozora());
         };
         assert_eq!(out.plain(r.base), Some("青梅"));
@@ -2395,25 +2393,25 @@ mod tests {
     #[test]
     fn ruby_reading_with_embedded_gaiji_produces_segments() {
         run!(out, "｜日本《に※［＃「ほ」、第3水準1-85-54］ん》");
-        let NodeOwned::Ruby(r) = out.only_aozora() else {
+        let Node::Ruby(r) = out.only_aozora() else {
             panic!("expected Ruby");
         };
         assert_eq!(out.plain(r.base), Some("日本"));
         let reading = out.contents(r.reading);
-        let [ContentOwned::Segments(seg_range)] = reading[..] else {
+        let [Content::Segments(seg_range)] = reading[..] else {
             panic!("expected a single Segments reading, got {reading:?}");
         };
         let segs = out.store.resolve_seg_range(seg_range).to_vec();
         assert_eq!(segs.len(), 3);
-        assert!(matches!(segs[0], SegmentOwned::Text(t) if out.s(t) == "に"));
-        assert!(matches!(segs[1], SegmentOwned::Gaiji(_)));
-        assert!(matches!(segs[2], SegmentOwned::Text(t) if out.s(t) == "ん"));
+        assert!(matches!(segs[0], Segment::Text(t) if out.s(t) == "に"));
+        assert!(matches!(segs[1], Segment::Gaiji(_)));
+        assert!(matches!(segs[2], Segment::Text(t) if out.s(t) == "ん"));
     }
 
     #[test]
     fn top_level_gaiji_resolves() {
         run!(out, "※［＃「木＋吶のつくり」、第3水準1-85-54］");
-        let NodeOwned::Gaiji(g) = out.only_aozora() else {
+        let Node::Gaiji(g) = out.only_aozora() else {
             panic!("expected Gaiji");
         };
         assert_eq!(out.s(g.hint), "木＋吶のつくり");
@@ -2423,7 +2421,7 @@ mod tests {
     #[test]
     fn forward_bouten_reclaims_adjacent_literal() {
         run!(out, "青空［＃「青空」に傍点］");
-        let NodeOwned::Format(f) = out.only_aozora() else {
+        let Node::Format(f) = out.only_aozora() else {
             panic!("expected Format(Bouten)");
         };
         assert_eq!(
@@ -2458,14 +2456,14 @@ mod tests {
         let has_kaeriten = out
             .spans
             .iter()
-            .any(|s| matches!(s.kind, SpanKind::Aozora(NodeOwned::Kaeriten(_))));
+            .any(|s| matches!(s.kind, SpanKind::Aozora(Node::Kaeriten(_))));
         assert!(has_kaeriten, "expected a Kaeriten span: {:?}", out.spans);
     }
 
     #[test]
     fn unknown_annotation_is_directive_not_bare_bracket() {
         run!(out, "［＃まったく未知の注記です］");
-        let NodeOwned::Directive(d) = out.only_aozora() else {
+        let Node::Directive(d) = out.only_aozora() else {
             panic!("expected a Directive, got {:?}", out.only_aozora());
         };
         assert_eq!(d.kind, DirectiveKind::Unknown);
@@ -2475,18 +2473,18 @@ mod tests {
     #[test]
     fn page_break_and_section_break_classified() {
         run!(out, "［＃改ページ］");
-        assert!(matches!(out.only_aozora(), NodeOwned::PageBreak));
+        assert!(matches!(out.only_aozora(), Node::PageBreak));
         run!(out2, "［＃改丁］");
         assert!(matches!(
             out2.only_aozora(),
-            NodeOwned::SectionBreak(SectionKind::Kaicho)
+            Node::SectionBreak(SectionKind::Kaicho)
         ));
     }
 
     #[test]
     fn angle_quote_classified() {
         run!(out, "≪重要≫");
-        let NodeOwned::AngleQuote(d) = out.only_aozora() else {
+        let Node::AngleQuote(d) = out.only_aozora() else {
             panic!("expected AngleQuote, got {:?}", out.only_aozora());
         };
         assert_eq!(out.plain(d.content), Some("重要"));

@@ -1,6 +1,6 @@
 //! Aozora → Pandoc AST projection.
 //!
-//! `aozora-pandoc` lifts an [`aozora::OwnedLexOutput`] into a
+//! `aozora-pandoc` lifts an [`aozora::LexOutput`] into a
 //! [`pandoc_ast::Pandoc`] document so any of Pandoc's 50+ output
 //! formats (HTML, EPUB, LaTeX/PDF, DOCX, …) can render Aozora Bunko
 //! notation without each format growing its own Aozora codepath.
@@ -9,7 +9,7 @@
 //!
 //! Aozora has rich semantic markup that no single Pandoc native
 //! construct captures (ruby, bouten, tate-chu-yoko, gaiji, …).
-//! The crate maps each [`aozora::NodeOwned`] variant to a Pandoc
+//! The crate maps each [`aozora::Node`] variant to a Pandoc
 //! [`pandoc_ast::Inline::Span`] / [`pandoc_ast::Block::Div`] with
 //! a stable CSS class (e.g. `aozora-ruby`, `aozora-bouten`) plus
 //! attribute key/value pairs carrying the structured data
@@ -34,7 +34,7 @@
 //! use aozora_pandoc::to_pandoc;
 //!
 //! let doc = Document::new("｜青梅《おうめ》");
-//! let owned = doc.parse_owned();
+//! let owned = doc.lex();
 //! let pandoc = to_pandoc(&owned);
 //! // Serialize to Pandoc JSON for `pandoc -f json -t html`:
 //! let json = serde_json::to_string(&pandoc).expect("serialise pandoc ast");

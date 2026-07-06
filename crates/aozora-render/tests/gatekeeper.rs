@@ -15,32 +15,29 @@
 //!   markup shapes (inline ruby, page break, kaeriten, gaiji).
 
 use aozora_pipeline::{ALL_SENTINELS, lex};
-use aozora_render::{render_html_owned, serialize_owned};
-fn render_html(text: &str) -> String {
+use aozora_render::{render_html, serialize};
+fn html(text: &str) -> String {
     let out = lex(text);
-    render_html_owned(&out)
+    render_html(&out)
 }
 
 fn ser(text: &str) -> String {
     let out = lex(text);
-    serialize_owned(&out)
+    serialize(&out)
 }
 
 #[test]
 fn gatekeeper_html_entity_table_is_canonical() {
     // Pinned individually so the failure mode names which entity
     // drifted, rather than dumping a 5-char diff.
-    assert!(render_html("<").contains("&lt;"), "< must escape to &lt;");
-    assert!(render_html(">").contains("&gt;"), "> must escape to &gt;");
-    assert!(render_html("&").contains("&amp;"), "& must escape to &amp;");
-    assert!(
-        render_html("\"").contains("&quot;"),
-        "\" must escape to &quot;"
-    );
+    assert!(html("<").contains("&lt;"), "< must escape to &lt;");
+    assert!(html(">").contains("&gt;"), "> must escape to &gt;");
+    assert!(html("&").contains("&amp;"), "& must escape to &amp;");
+    assert!(html("\"").contains("&quot;"), "\" must escape to &quot;");
     // Apostrophe MUST be the hex form `&#x27;`. The decimal form
     // `&#39;` is forbidden — both renderer paths agreed on hex
     // after the html.rs vs render_node.rs unification.
-    let html = render_html("'");
+    let html = html("'");
     assert!(
         html.contains("&#x27;"),
         "apostrophe must be &#x27;, got: {html}"
@@ -57,7 +54,7 @@ fn gatekeeper_html_unsafe_set_is_exactly_five_chars() {
         .filter(|b| !matches!(*b, b'<' | b'>' | b'&' | b'"' | b'\''))
         .collect();
     let input = String::from_utf8(safe_ascii.clone()).unwrap();
-    let html = render_html(&input);
+    let html = html(&input);
     for &b in &safe_ascii {
         let c = b as char;
         assert!(
@@ -70,14 +67,14 @@ fn gatekeeper_html_unsafe_set_is_exactly_five_chars() {
 #[test]
 fn gatekeeper_empty_input_renders_to_empty_string() {
     // No `<p></p>`, no whitespace — completely empty.
-    assert_eq!(render_html(""), "");
+    assert_eq!(html(""), "");
 }
 
 #[test]
 fn gatekeeper_pure_japanese_pass_through_unescaped() {
     // Multi-byte UTF-8 must NEVER be escaped — only the 5 ASCII
     // unsafe chars ever change form.
-    let html = render_html("青空文庫の本文。");
+    let html = html("青空文庫の本文。");
     assert!(html.contains("青空文庫の本文。"), "got: {html}");
 }
 
@@ -86,14 +83,14 @@ fn gatekeeper_single_newline_becomes_br_double_closes_paragraph() {
     // The renderer's paragraph state machine has only these two
     // newline behaviours. Adding a third (e.g. CRLF handling) must
     // be a deliberate change.
-    let single = render_html("a\nb");
+    let single = html("a\nb");
     assert!(single.contains("a<br />\nb"), "got: {single}");
     assert!(
         !single.contains("</p>\n<p>"),
         "single \\n must NOT close para"
     );
 
-    let double = render_html("a\n\nb");
+    let double = html("a\n\nb");
     assert!(double.contains("<p>a</p>\n"), "got: {double}");
     assert!(double.contains("<p>b</p>\n"), "got: {double}");
 }
@@ -123,7 +120,7 @@ fn gatekeeper_pua_sentinel_codepoints_in_source_dont_emit_block_tags() {
     // and never accidentally trigger structural rendering. This
     // pins "PUA collision tolerance".
     for sentinel in ALL_SENTINELS {
-        let html = render_html(&sentinel.to_string());
+        let html = html(&sentinel.to_string());
         // No `<div class="aozora-...">` should appear from a stray PUA.
         assert!(
             !html.contains(r#"<div class="aozora-page-break""#),

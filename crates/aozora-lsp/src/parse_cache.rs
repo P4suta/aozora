@@ -7,7 +7,7 @@
 //! # Design
 //!
 //! Stage 0 of #237 made a parsed document an owned, lifetime-free
-//! [`OwnedLexOutput`] that is `Send + Sync`. [`ParseCache`] therefore retains
+//! [`LexOutput`] that is `Send + Sync`. [`ParseCache`] therefore retains
 //! that owned output across edits rather than only the text, and hands out
 //! cheap borrowed trees via [`Tree::view`] — no re-parse per request. The LSP
 //! backend wraps every per-document state in `Arc<DashMap<Url, OpenDocument>>`
@@ -41,7 +41,7 @@
 //! rename gesture. So the cache keeps a **store-free** `DiagBase` (sanitized
 //! text + diagnostics + the maintained [`PieceSeq`] the next edit's region-find
 //! needs) that the hot path splices in `O(region + #pieces)`, and
-//! materialises the full `O(doc)` [`OwnedLexOutput`] **lazily** — only when
+//! materialises the full `O(doc)` [`LexOutput`] **lazily** — only when
 //! [`ParseCache::with_tree`] is actually called — memoised in a [`OnceLock`]
 //! (seeded eagerly by a full parse so a structural request right after one is
 //! instant, and invalidated on every incremental splice).
@@ -51,7 +51,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use aozora::pipeline::lexer::sanitize::{is_rule_line_trimmed, sanitize};
-use aozora::{DiagBaseRef, DiagSplice, Diagnostic, Document, OwnedLexOutput, PieceSeq, Tree};
+use aozora::{DiagBaseRef, DiagSplice, Diagnostic, Document, LexOutput, PieceSeq, Tree};
 use ropey::{Rope, RopeSlice};
 use tracing::field::Empty as TracingEmpty;
 
@@ -131,7 +131,7 @@ struct DocFlags {
 /// ([`aozora::reparse_incremental_diagnostics_only_in`]) reads from the prior
 /// parse and produces for the next one, plus the raw↔sanitized line-map
 /// side-tables. Kept across edits so the per-keystroke path never has to
-/// materialise the full [`OwnedLexOutput`] or re-run `O(doc)` `sanitize`.
+/// materialise the full [`LexOutput`] or re-run `O(doc)` `sanitize`.
 #[derive(Debug)]
 struct DiagBase {
     /// Sanitized buffer of the most recent parse (a sanitize fixed point) — the
@@ -180,7 +180,7 @@ impl DiagBase {
 /// Keeps the store-free `DiagBase` of the most recent parse so the
 /// `publishDiagnostics` hot path answers in O(1) and splices the sanitized rope
 /// incrementally in `O(region)`, plus a lazily-materialised full
-/// [`OwnedLexOutput`] so the rare structural request (rename) can still get a
+/// [`LexOutput`] so the rare structural request (rename) can still get a
 /// borrowed [`Tree`] via [`Self::with_tree`] (#237 Tier 1).
 #[derive(Debug, Default)]
 pub struct ParseCache {
@@ -197,7 +197,7 @@ pub struct ParseCache {
     /// rename right after a full parse is instant) and reset to an empty
     /// [`OnceLock`] on every incremental splice (so the next structural request
     /// full-parses the current text once and memoises it).
-    tree: OnceLock<OwnedLexOutput>,
+    tree: OnceLock<LexOutput>,
     /// Consecutive incremental splices since the last full parse or compaction.
     /// Once this reaches [`MAX_SPLICES_BEFORE_FULL`] the splice's resulting base
     /// is compacted in place ([`PieceSeq::compact`], no re-parse) and it resets
@@ -220,7 +220,7 @@ impl ParseCache {
     /// full parse of `raw` otherwise. Reports `cache_hits` = reused nodes,
     /// `cache_misses` = re-lexed nodes on the fast path (#237 Tier 1/2).
     ///
-    /// On the fast path this never builds an [`OwnedLexOutput`] and never runs
+    /// On the fast path this never builds an [`LexOutput`] and never runs
     /// `O(doc)` `sanitize`: it splices the sanitized [`Rope`], stores the new
     /// `DiagBase`, and invalidates the lazy [`Self::with_tree`] cache, so the
     /// per-keystroke cost is `O(region + #diagnostics)` rather than `O(doc)`.
@@ -371,8 +371,8 @@ impl ParseCache {
         }
 
         let text = raw.to_string();
-        let mut out = Document::new(text.as_str()).parse_owned();
-        // `OwnedLexOutput.diagnostics` are in pipeline-stage order; the LSP
+        let mut out = Document::new(text.as_str()).lex();
+        // `LexOutput.diagnostics` are in pipeline-stage order; the LSP
         // surface expects them position-sorted. Sort once here at store time so
         // every read is byte-identical and O(1).
         out.diagnostics.sort_by(diagnostic_order);
@@ -443,7 +443,7 @@ impl ParseCache {
     /// oversized document (see `MAX_DOCUMENT_BYTES`, which skips the parse).
     ///
     /// **Lazy** (#237 Tier 1): the per-keystroke hot path stores only the
-    /// store-free `DiagBase`, so the full [`OwnedLexOutput`] is materialised
+    /// store-free `DiagBase`, so the full [`LexOutput`] is materialised
     /// here on first access — `O(doc)`, but only for the rare structural request
     /// (rename) that needs the tree — and memoised in a [`OnceLock`]. A full
     /// parse seeds the lock eagerly, so a structural request immediately after
@@ -456,9 +456,7 @@ impl ParseCache {
         // The rare structural path flattens the raw rope to a `&str` for the
         // parse + the borrowed tree's source. `O(doc)`, off the hot path.
         let text = self.raw.to_string();
-        let tree = self
-            .tree
-            .get_or_init(|| Document::new(text.as_str()).parse_owned());
+        let tree = self.tree.get_or_init(|| Document::new(text.as_str()).lex());
         Some(f(&Tree::view(&text, tree)))
     }
 

@@ -2,7 +2,7 @@
 //!
 //! Arbitrary bytes are decoded as UTF-8 (invalid sequences skip this
 //! iteration). The resulting source text is pushed through
-//! `lex` and the produced `OwnedLexOutput` is sanity-
+//! `lex` and the produced `LexOutput` is sanity-
 //! checked: the lexer must terminate without panicking, the
 //! normalized text must remain valid UTF-8, and every reported
 //! diagnostic span must be in-bounds. Targets parser-side panics in

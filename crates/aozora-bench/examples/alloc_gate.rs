@@ -1,8 +1,8 @@
 //! Deterministic allocation-pressure ratchet for the owned lex producer
-//! (`lex` / `Document::parse_owned`), the #237 P0.2-real perf gate.
+//! (`lex` / `Document::lex`), the #237 P0.2-real perf gate.
 //!
-//! The owned producer replaces the borrowed pipeline's single bumpalo arena
-//! with owned `Vec` / `String` storage (`NodeStore`, `StrInterner`). The worry
+//! The lex producer stores the AST in owned `Vec` / `String` storage
+//! (`NodeStore`, `StrInterner`). The worry
 //! the gate guards is that many small `Vec` pushes / re-grows inflate
 //! `malloc` traffic versus the bump allocator. Allocation *count* and *bytes*
 //! are a pure function of the input — unlike wall-clock they gate identically
@@ -11,21 +11,21 @@
 //! For every corpus document this measures, via dhat's [`dhat::HeapStats`]
 //! around `lex` only, the owned-path allocation delta (transient arena
 //! chunks + owned storage). Two normalized metrics are gated against a
-//! committed baseline at `corpus/owned-alloc-baseline.json`, mirroring
+//! committed baseline at `corpus/alloc-baseline.json`, mirroring
 //! `xtask corpus audit-gate`:
 //!
 //! - `alloc_blocks_per_file`        = Σ Δblocks / files   (malloc-count pressure)
 //! - `alloc_bytes_per_source_byte`  = Σ Δbytes  / Σ src   (volume amplification)
 //!
-//! A structural-parity check (owned vs borrowed registry / source-node / pair
-//! counts per document) is the correctness floor under the proxy: if the owned
-//! mirror started producing a *different amount* of data, the alloc baseline
+//! A structural-count check (the AST's registry / source-node / pair
+//! counts per document) is the correctness floor under the proxy: if the AST
+//! started producing a *different amount* of data, the alloc baseline
 //! would be measuring the wrong thing. (Byte-identity itself is proven by the
 //! conformance golden and the corpus round-trip fixed-point gate.)
 //!
 //! ```text
-//! AOZORA_CORPUS_ROOT=… cargo run --release --example owned_alloc_gate -p aozora-bench \
-//!     -- --baseline corpus/owned-alloc-baseline.json [--root DIR] [--update] [--tolerance 0.03]
+//! AOZORA_CORPUS_ROOT=… cargo run --release --example alloc_gate -p aozora-bench \
+//!     -- --baseline corpus/alloc-baseline.json [--root DIR] [--update] [--tolerance 0.03]
 //! ```
 //!
 //! Exit codes: `0` pass (or no corpus → skip), `1` over budget, `2` usage /
@@ -89,13 +89,13 @@ fn parse_args() -> Args {
             }
             "--limit" => limit = it.next().and_then(|s| s.parse().ok()),
             other => {
-                eprintln!("owned_alloc_gate: unknown argument {other:?}");
+                eprintln!("alloc_gate: unknown argument {other:?}");
                 process::exit(2);
             }
         }
     }
     let Some(baseline) = baseline else {
-        eprintln!("owned_alloc_gate: --baseline <path> is required");
+        eprintln!("alloc_gate: --baseline <path> is required");
         process::exit(2);
     };
     Args {
@@ -115,10 +115,7 @@ fn resolve_corpus(root: Option<&Path>) -> Box<dyn CorpusSource> {
         return match FilesystemCorpus::new(root.to_path_buf()) {
             Ok(c) => Box::new(c),
             Err(e) => {
-                eprintln!(
-                    "owned_alloc_gate: --root {} not usable: {e}",
-                    root.display()
-                );
+                eprintln!("alloc_gate: --root {} not usable: {e}", root.display());
                 process::exit(2);
             }
         };
@@ -126,11 +123,11 @@ fn resolve_corpus(root: Option<&Path>) -> Box<dyn CorpusSource> {
     if let Some(c) = aozora_corpus::from_env() {
         return c;
     }
-    println!("owned_alloc_gate: AOZORA_CORPUS_ROOT not set — skipped (no corpus).");
+    println!("alloc_gate: AOZORA_CORPUS_ROOT not set — skipped (no corpus).");
     process::exit(0);
 }
 
-/// Per-corpus owned-allocation totals.
+/// Per-corpus allocation totals.
 #[derive(Default)]
 struct Totals {
     files: u64,
@@ -198,14 +195,14 @@ fn main() {
     }
 
     if totals.files == 0 {
-        println!("owned_alloc_gate: corpus yielded 0 decodable documents — skipped.");
+        println!("alloc_gate: corpus yielded 0 decodable documents — skipped.");
         process::exit(0);
     }
 
     let blocks_per_file = totals.blocks_per_file();
     let bytes_per_source_byte = totals.bytes_per_source_byte();
     println!(
-        "owned_alloc_gate: {} files, {} decode errors",
+        "alloc_gate: {} files, {} decode errors",
         totals.files, totals.decode_errors
     );
     println!("  alloc_blocks_per_file       = {blocks_per_file:.4}");
@@ -214,7 +211,7 @@ fn main() {
     if args.update {
         write_baseline(&args, &totals, blocks_per_file, bytes_per_source_byte);
         println!(
-            "owned_alloc_gate: baseline written to {}",
+            "alloc_gate: baseline written to {}",
             args.baseline.display()
         );
         return;
@@ -241,15 +238,15 @@ fn main() {
 
     if failed {
         eprintln!(
-            "owned_alloc_gate: FAIL — owned allocation pressure regressed beyond +{:.1}%.\n  \
-             Re-baseline with `just owned-alloc-gate-update` only if the increase is intended,\n  \
-             and attach a `just owned-throughput` run showing wall-clock is within budget.",
+            "alloc_gate: FAIL — owned allocation pressure regressed beyond +{:.1}%.\n  \
+             Re-baseline with `just alloc-gate-update` only if the increase is intended,\n  \
+             and attach a `just throughput` run showing wall-clock is within budget.",
             tol * 100.0
         );
         process::exit(1);
     }
     println!(
-        "owned_alloc_gate: PASS (within +{:.1}% of baseline).",
+        "alloc_gate: PASS (within +{:.1}% of baseline).",
         tol * 100.0
     );
 }
@@ -258,7 +255,7 @@ fn main() {
 /// (NaN) is treated as a hard fail so a malformed baseline cannot pass blindly.
 fn check_metric(name: &str, current: f64, baseline: f64, tolerance: f64) -> bool {
     if !baseline.is_finite() {
-        eprintln!("owned_alloc_gate: baseline metric {name} missing/invalid");
+        eprintln!("alloc_gate: baseline metric {name} missing/invalid");
         return true;
     }
     let allowed = baseline * (1.0 + tolerance);
@@ -281,14 +278,11 @@ struct Baseline {
 
 fn read_baseline(path: &Path) -> Baseline {
     let Ok(text) = fs::read_to_string(path) else {
-        eprintln!("owned_alloc_gate: cannot read baseline {}", path.display());
+        eprintln!("alloc_gate: cannot read baseline {}", path.display());
         process::exit(2);
     };
     let Ok(v) = from_str::<Value>(&text) else {
-        eprintln!(
-            "owned_alloc_gate: baseline {} is not valid JSON",
-            path.display()
-        );
+        eprintln!("alloc_gate: baseline {} is not valid JSON", path.display());
         process::exit(2);
     };
     Baseline {
@@ -305,18 +299,18 @@ fn write_baseline(args: &Args, totals: &Totals, blocks_per_file: f64, bytes_per_
         "tolerance": args.tolerance,
         "files_analyzed": totals.files,
         "source_bytes_total": totals.source_bytes,
-        "owned_alloc_blocks_total": totals.alloc_blocks,
-        "owned_alloc_bytes_total": totals.alloc_bytes,
+        "alloc_blocks_total": totals.alloc_blocks,
+        "alloc_bytes_total": totals.alloc_bytes,
         "alloc_blocks_per_file": round4(blocks_per_file),
         "alloc_bytes_per_source_byte": round4(bytes_per_source_byte),
         "note": "owned lex producer (#237 P0.2-real) allocation-pressure ratchet; \
-                 regenerate with `just owned-alloc-gate-update`. Metrics normalized \
+                 regenerate with `just alloc-gate-update`. Metrics normalized \
                  per-file / per-source-byte so corpus drift does not trip the gate.",
     });
     let text = to_string_pretty(&json).expect("json serialize is infallible");
     if let Err(e) = fs::write(&args.baseline, format!("{text}\n")) {
         eprintln!(
-            "owned_alloc_gate: cannot write baseline {}: {e}",
+            "alloc_gate: cannot write baseline {}: {e}",
             args.baseline.display()
         );
         process::exit(2);

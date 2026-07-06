@@ -59,7 +59,7 @@ use aozora_pipeline::lex;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
 };
-use aozora_syntax::alloc_owned::OwnedAllocator;
+use aozora_syntax::alloc::Allocator;
 use rayon::prelude::*;
 
 // One arena per worker thread per measurement role. Reused across
@@ -67,7 +67,7 @@ use rayon::prelude::*;
 // are kept separate because the classify-stage measurement and the full
 // pipeline measurement run back-to-back inside a single
 // `measure_one` call — sharing one arena would force a reset
-// mid-call, after which the prior measurement's borrowed output
+// mid-call, after which the prior measurement's output (`LexOutput`)
 // would be invalidated.
 //
 // A: pre-size with 256 KB initial capacity to
@@ -93,7 +93,7 @@ struct PhaseSample {
     pair_ns: u64,
     classify_ns: u64,
     /// `lex` total — everything from sanitize through the
-    /// fused `ArenaNormalizer` walk that builds the borrowed registry.
+    /// fused `Normalizer` walk that builds the owned registry.
     full_ns: u64,
     /// Derived: `full_ns - (sanitize + tokenize + pair + classify)`.
     /// Estimate of the post-classify normalize+registry-build cost
@@ -218,7 +218,7 @@ fn measure_one(text: &str) -> PhaseSample {
     // pre-sized to `text.len() * 4` so the chunk-grow `mmap` fires
     // before the per-stage timer rather than inside it.
     let classify_ns = WORKER_ARENA_PHASE3.with(|_cell| {
-        let mut alloc = OwnedAllocator::new();
+        let mut alloc = Allocator::new();
         let t = Instant::now();
         let mut classify_stream = classify(pair_events, &sanitized.text, &mut alloc);
         let _classify_spans: Vec<ClassifiedSpan> = (&mut classify_stream).collect();

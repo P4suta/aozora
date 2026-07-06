@@ -1,6 +1,6 @@
 //! Tier-2 wall-clock validation for the owned lex producer (#237 P0.2-real).
 //!
-//! The Tier-1 [`owned_alloc_gate`](owned_alloc_gate) ratchet is deterministic
+//! The Tier-1 [`alloc_gate`](alloc_gate) ratchet is deterministic
 //! and CI-stable but cannot see index-resolution throughput (resolving
 //! `StrId` / ranges leaves no allocation footprint). This example measures the
 //! one thing the proxy can't: the owned producer's wall-clock throughput
@@ -14,7 +14,7 @@
 //! documents to be reproducible — reported, not judged).
 //!
 //! ```text
-//! AOZORA_CORPUS_ROOT=… cargo run --release --example owned_throughput -p aozora-bench
+//! AOZORA_CORPUS_ROOT=… cargo run --release --example throughput -p aozora-bench
 //! ```
 
 #![allow(
@@ -48,7 +48,7 @@ fn band_of(len: u64) -> usize {
 
 fn main() {
     let Some(corpus) = aozora_corpus::from_env() else {
-        println!("owned_throughput: AOZORA_CORPUS_ROOT not set — nothing to measure.");
+        println!("throughput: AOZORA_CORPUS_ROOT not set — nothing to measure.");
         process::exit(0);
     };
 
@@ -60,10 +60,10 @@ fn main() {
         }
     }
     if docs.is_empty() {
-        println!("owned_throughput: corpus yielded 0 decodable documents.");
+        println!("throughput: corpus yielded 0 decodable documents.");
         process::exit(0);
     }
-    eprintln!("owned_throughput: {} docs decoded, measuring…", docs.len());
+    eprintln!("throughput: {} docs decoded, measuring…", docs.len());
 
     // Warmup pass (discarded) to page in code and warm caches.
     for doc in &docs {
@@ -90,7 +90,7 @@ fn main() {
         bands[b].3 += 1;
     }
 
-    println!("=== owned_throughput (owned vs borrowed lex) ===\n");
+    println!("=== throughput (owned vs borrowed lex) ===\n");
     println!(
         "{:<20} {:>7} {:>12} {:>12} {:>8}",
         "band", "docs", "borrowed MB/s", "owned MB/s", "ratio"

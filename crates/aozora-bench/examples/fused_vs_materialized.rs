@@ -39,7 +39,7 @@ use aozora_pipeline::lex;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
 };
-use aozora_syntax::alloc_owned::OwnedAllocator;
+use aozora_syntax::alloc::Allocator;
 #[derive(Debug, Default)]
 struct BandStats {
     fused_ns_total: u128,
@@ -108,7 +108,7 @@ fn time_materialized(text: &str) -> u64 {
     let mut ps = pair(tokens.into_iter());
     let pe: Vec<PairEvent> = (&mut ps).collect();
     drop(ps.take_diagnostics());
-    let mut alloc = OwnedAllocator::new();
+    let mut alloc = Allocator::new();
     let mut cs = classify(pe, &sanitized.text, &mut alloc);
     let _spans: Vec<ClassifiedSpan> = (&mut cs).collect();
     drop(cs.take_diagnostics());

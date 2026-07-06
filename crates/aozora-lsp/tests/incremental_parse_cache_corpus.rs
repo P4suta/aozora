@@ -154,11 +154,11 @@ fn parse_cache_incremental_equals_full_on_crlf_corpus() {
         }
         // Work from a sanitize fixed point so the cached base is stable, exactly
         // like the engine gate and the measure example.
-        let san = aozora::Document::new(text.as_ref()).parse_owned().sanitized;
+        let san = aozora::Document::new(text.as_ref()).lex().sanitized;
         if san.is_empty() {
             continue;
         }
-        if aozora::Document::new(san.as_str()).parse_owned().sanitized != san {
+        if aozora::Document::new(san.as_str()).lex().sanitized != san {
             continue;
         }
         let Some(crlf) = crlf_variant(&san) else {
@@ -234,11 +234,11 @@ fn parse_cache_multi_edit_run_equals_full() {
         if text.is_empty() {
             continue;
         }
-        let san = aozora::Document::new(text.as_ref()).parse_owned().sanitized;
+        let san = aozora::Document::new(text.as_ref()).lex().sanitized;
         if san.is_empty() {
             continue;
         }
-        if aozora::Document::new(san.as_str()).parse_owned().sanitized != san {
+        if aozora::Document::new(san.as_str()).lex().sanitized != san {
             continue;
         }
         let Some(crlf) = crlf_variant(&san) else {
@@ -333,11 +333,11 @@ fn parse_cache_long_run_crosses_compaction_on_corpus_sample() {
         let Ok(text) = decode_auto(&item.bytes) else {
             continue;
         };
-        let san = aozora::Document::new(text.as_ref()).parse_owned().sanitized;
+        let san = aozora::Document::new(text.as_ref()).lex().sanitized;
         if san.is_empty() {
             continue;
         }
-        if aozora::Document::new(san.as_str()).parse_owned().sanitized != san {
+        if aozora::Document::new(san.as_str()).lex().sanitized != san {
             continue;
         }
         let Some(crlf) = crlf_variant(&san) else {

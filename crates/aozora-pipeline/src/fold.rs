@@ -1,26 +1,26 @@
 //! Owned lex API + the single-pass owned normalizer.
 //!
-//! Produces an [`OwnedLexOutput`] whose normalized text, registry, and side
+//! Produces an [`LexOutput`] whose normalized text, registry, and side
 //! tables are owned (lifetime-free, `Send + Sync`). The classify stage builds
-//! [`NodeOwned`] directly through an
-//! [`OwnedAllocator`](aozora_syntax::alloc_owned::OwnedAllocator); this module's
-//! [`OwnedNormalizer`] is the PUA-rewriter + position-recorder over those spans.
+//! [`Node`] directly through an
+//! [`Allocator`](aozora_syntax::alloc::Allocator); this module's
+//! [`Normalizer`] is the PUA-rewriter + position-recorder over those spans.
 //! Every interned string lives once, in the allocator's
 //! `NodeStore`, which threads straight into
-//! the output — no arena, no borrowed→owned conversion.
+//! the output — no arena, no conversion step.
 //!
 //! ## Pipeline
 //!
 //! 1. The sanitize / tokenize / pair stages run as owned-data helpers operating
 //!    on byte spans and event indices — they never construct AST.
 //! 2. The classify stage is invoked with an
-//!    [`OwnedAllocator`](aozora_syntax::alloc_owned::OwnedAllocator); owned AST
+//!    [`Allocator`](aozora_syntax::alloc::Allocator); owned AST
 //!    nodes land in its `NodeStore`, strings
-//!    interned through the store's [`StrInterner`](aozora_syntax::owned::StrInterner)
+//!    interned through the store's [`StrInterner`](aozora_syntax::ast::StrInterner)
 //!    so byte-equal content shares a single id.
 //! 3. A single fused walk emits the PUA-rewritten text and builds the
 //!    position-keyed registry + source-keyed side table, recording each
-//!    `NodeOwned` (which is `Copy`) directly.
+//!    `Node` (which is `Copy`) directly.
 
 use core::mem::discriminant;
 
@@ -29,38 +29,36 @@ use crate::lexer::{
     INLINE_SENTINEL, SpanKind,
 };
 use aozora_spec::{Diagnostic, NormalizedOffset, Span};
-use aozora_syntax::owned::{
-    ContainerPair, NodeOwned, NodeRefOwned, OwnedLexOutput, SourceNodeOwned,
-};
+use aozora_syntax::ast::{ContainerPair, LexOutput, Node, NodeRef, SourceNode};
 use aozora_syntax::{DirectiveKind, LineFormat, RegionClose, RegionFormat};
 
 /// Run the lex pipeline and materialise the result as an owned, lifetime-free
-/// [`OwnedLexOutput`] (`Send + Sync`).
+/// [`LexOutput`] (`Send + Sync`).
 ///
 /// The native owned producer: the classify stage builds the owned tree in one
 /// pass (the way the retired borrowed `lex` built the borrowed one), so the
 /// returned output owns all its payloads (interned strings, content / segment
-/// runs, side tables). This is what `Document::parse` / `Document::parse_owned`
+/// runs, side tables). This is what `Document::parse` / `Document::lex`
 /// call.
 #[must_use]
-pub fn lex(source: &str) -> OwnedLexOutput {
+pub fn lex(source: &str) -> LexOutput {
     crate::pipeline::Pipeline::run_to_completion(source)
 }
 
-/// Output recorder for the [`OwnedNormalizer`] fold.
+/// Output recorder for the [`Normalizer`] fold.
 ///
 /// Holds the position-keyed registry entries and the source-keyed side table.
-/// Each emitted [`NodeOwned`] is `Copy`, so recording it is a plain push — no
+/// Each emitted [`Node`] is `Copy`, so recording it is a plain push — no
 /// conversion, no second store (the allocator's
 /// `NodeStore` is authoritative and threads
 /// into the output separately).
 #[derive(Debug, Default)]
-pub(crate) struct OwnedRecorder {
-    pub(crate) entries: Vec<(u32, NodeRefOwned)>,
-    pub(crate) source_nodes: Vec<SourceNodeOwned>,
+pub(crate) struct Recorder {
+    pub(crate) entries: Vec<(u32, NodeRef)>,
+    pub(crate) source_nodes: Vec<SourceNode>,
 }
 
-impl OwnedRecorder {
+impl Recorder {
     fn with_capacity(hint: usize) -> Self {
         Self {
             entries: Vec::with_capacity(hint),
@@ -68,28 +66,28 @@ impl OwnedRecorder {
         }
     }
 
-    fn push(&mut self, pos: u32, source_span: Span, nref: NodeRefOwned) {
+    fn push(&mut self, pos: u32, source_span: Span, nref: NodeRef) {
         self.entries.push((pos, nref));
-        self.source_nodes.push(SourceNodeOwned {
+        self.source_nodes.push(SourceNode {
             source_span,
             node: nref,
         });
     }
 
-    fn record_inline(&mut self, pos: u32, source_span: Span, node: NodeOwned) {
-        self.push(pos, source_span, NodeRefOwned::Inline(node));
+    fn record_inline(&mut self, pos: u32, source_span: Span, node: Node) {
+        self.push(pos, source_span, NodeRef::Inline(node));
     }
 
-    fn record_block_leaf(&mut self, pos: u32, source_span: Span, node: NodeOwned) {
-        self.push(pos, source_span, NodeRefOwned::BlockLeaf(node));
+    fn record_block_leaf(&mut self, pos: u32, source_span: Span, node: Node) {
+        self.push(pos, source_span, NodeRef::BlockLeaf(node));
     }
 
     fn record_block_open(&mut self, pos: u32, source_span: Span, region: RegionFormat) {
-        self.push(pos, source_span, NodeRefOwned::BlockOpen(region));
+        self.push(pos, source_span, NodeRef::BlockOpen(region));
     }
 
     fn record_block_close(&mut self, pos: u32, source_span: Span, close: RegionClose) {
-        self.push(pos, source_span, NodeRefOwned::BlockClose(close));
+        self.push(pos, source_span, NodeRef::BlockClose(close));
     }
 }
 
@@ -100,14 +98,14 @@ impl OwnedRecorder {
 /// order, so every sentinel position is strictly greater than the previous and
 /// the registry consumes the entries via `from_sorted_slice` without
 /// re-sorting. The owned nodes are built upstream by the
-/// [`OwnedAllocator`](aozora_syntax::alloc_owned::OwnedAllocator) during the
+/// [`Allocator`](aozora_syntax::alloc::Allocator) during the
 /// classify stage; this walker is the PUA-rewriter + position-recorder and does
 /// zero AST allocation of its own.
 #[derive(Debug)]
-pub(crate) struct OwnedNormalizer<'src> {
+pub(crate) struct Normalizer<'src> {
     pub(crate) out: String,
     source: &'src str,
-    pub(crate) recorder: OwnedRecorder,
+    pub(crate) recorder: Recorder,
     /// Stack of in-flight container opens awaiting their matching close. Each
     /// entry is the (open `NormalizedOffset`, open [`RegionFormat`]) pushed by
     /// [`SpanKind::BlockOpen`] emission; [`SpanKind::BlockClose`] pops and emits
@@ -124,12 +122,12 @@ pub(crate) struct OwnedNormalizer<'src> {
     warichu_depth: u32,
 }
 
-impl<'src> OwnedNormalizer<'src> {
+impl<'src> Normalizer<'src> {
     pub(crate) fn new(source: &'src str, span_capacity_hint: usize) -> Self {
         Self {
             out: String::with_capacity(source.len()),
             source,
-            recorder: OwnedRecorder::with_capacity(span_capacity_hint),
+            recorder: Recorder::with_capacity(span_capacity_hint),
             open_stack: Vec::with_capacity(span_capacity_hint / 40),
             container_pairs: Vec::with_capacity(span_capacity_hint / 40),
             diagnostics: Vec::new(),
@@ -235,28 +233,28 @@ impl<'src> OwnedNormalizer<'src> {
     }
 
     /// Single-line-container break tracker for one classified `Aozora` node.
-    fn track_single_line_break(&mut self, node: NodeOwned, break_span: Span) {
+    fn track_single_line_break(&mut self, node: Node, break_span: Span) {
         match node {
-            NodeOwned::Line(LineFormat::Indent { .. }) => {
+            Node::Line(LineFormat::Indent { .. }) => {
                 self.pending_single_line = Some("indent");
             }
-            NodeOwned::Line(LineFormat::AlignEnd { .. }) => {
+            Node::Line(LineFormat::AlignEnd { .. }) => {
                 self.pending_single_line = Some("align-end");
             }
-            NodeOwned::Line(LineFormat::Center { .. }) => {
+            Node::Line(LineFormat::Center { .. }) => {
                 self.pending_single_line = Some("center");
             }
-            NodeOwned::Line(LineFormat::Bold) => {
+            Node::Line(LineFormat::Bold) => {
                 self.pending_single_line = Some("line-bold");
             }
-            NodeOwned::Directive(ann) => match ann.kind {
+            Node::Directive(ann) => match ann.kind {
                 DirectiveKind::WarichuOpen => self.warichu_depth += 1,
                 DirectiveKind::WarichuClose => {
                     self.warichu_depth = self.warichu_depth.saturating_sub(1);
                 }
                 _ => {}
             },
-            NodeOwned::PageBreak | NodeOwned::SectionBreak(_) => {
+            Node::PageBreak | Node::SectionBreak(_) => {
                 if let Some(container) = self.pending_single_line.take() {
                     self.diagnostics
                         .push(Diagnostic::break_in_single_line_container(
@@ -277,14 +275,14 @@ impl<'src> OwnedNormalizer<'src> {
 /// Whether an owned AST node is a standalone block (renders on its own line, no
 /// surrounding plain-text context required). Pinned by variant kind so adding a
 /// new standalone-block variant only needs updating here.
-fn is_standalone_block_for_render(node: NodeOwned) -> bool {
+fn is_standalone_block_for_render(node: Node) -> bool {
     matches!(
         node,
-        NodeOwned::PageBreak
-            | NodeOwned::SectionBreak(_)
-            | NodeOwned::BodyEnd
-            | NodeOwned::Heading(_)
-            | NodeOwned::Illustration(_)
+        Node::PageBreak
+            | Node::SectionBreak(_)
+            | Node::BodyEnd
+            | Node::Heading(_)
+            | Node::Illustration(_)
     )
 }
 
@@ -301,7 +299,7 @@ mod tests {
     use super::*;
     use aozora_spec::{NormalizedOffset, Sentinel};
     use aozora_syntax::IndentBlock;
-    use aozora_syntax::owned::ContentOwned;
+    use aozora_syntax::ast::Content;
 
     #[test]
     fn lex_materialises_ruby_resolving_back_to_source_text() {
@@ -315,15 +313,15 @@ mod tests {
         let Some(hit) = owned.registry.node_at(NormalizedOffset::new(pos)) else {
             panic!("expected an owned registry hit");
         };
-        let NodeRefOwned::Inline(NodeOwned::Ruby(r)) = hit else {
+        let NodeRef::Inline(Node::Ruby(r)) = hit else {
             panic!("expected an owned inline ruby, got {hit:?}");
         };
         let base = owned.store.resolve_content_range(r.base);
         let reading = owned.store.resolve_content_range(r.reading);
-        let ContentOwned::Plain(base_id) = base[0] else {
+        let Content::Plain(base_id) = base[0] else {
             panic!("expected a plain ruby base");
         };
-        let ContentOwned::Plain(reading_id) = reading[0] else {
+        let Content::Plain(reading_id) = reading[0] else {
             panic!("expected a plain ruby reading");
         };
         assert_eq!(owned.store.resolve_str(base_id), "青梅");
@@ -357,10 +355,10 @@ mod tests {
             .next()
             .expect("one entry");
         assert!(out.normalized.as_bytes()[pos as usize..].starts_with(&[0xEE, 0x80, 0x81]));
-        let NodeRefOwned::Inline(node) = nr else {
-            panic!("expected NodeRefOwned::Inline, got {nr:?}");
+        let NodeRef::Inline(node) = nr else {
+            panic!("expected NodeRef::Inline, got {nr:?}");
         };
-        assert!(matches!(node, NodeOwned::Ruby(_)));
+        assert!(matches!(node, Node::Ruby(_)));
     }
 
     #[test]
@@ -372,10 +370,10 @@ mod tests {
             .iter_kind(Sentinel::BlockLeaf)
             .next()
             .expect("one entry");
-        let NodeRefOwned::BlockLeaf(node) = nr else {
-            panic!("expected NodeRefOwned::BlockLeaf, got {nr:?}");
+        let NodeRef::BlockLeaf(node) = nr else {
+            panic!("expected NodeRef::BlockLeaf, got {nr:?}");
         };
-        assert!(matches!(node, NodeOwned::PageBreak));
+        assert!(matches!(node, Node::PageBreak));
     }
 
     #[test]
@@ -384,8 +382,8 @@ mod tests {
         assert_eq!(out.registry.count_kind(Sentinel::BlockOpen), 1);
         assert_eq!(out.registry.count_kind(Sentinel::BlockClose), 1);
         let (_, nr) = out.registry.iter_kind(Sentinel::BlockOpen).next().unwrap();
-        let NodeRefOwned::BlockOpen(kind) = nr else {
-            panic!("expected NodeRefOwned::BlockOpen, got {nr:?}");
+        let NodeRef::BlockOpen(kind) = nr else {
+            panic!("expected NodeRef::BlockOpen, got {nr:?}");
         };
         assert!(matches!(
             kind,
@@ -394,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_carry_through_to_owned_output() {
+    fn diagnostics_carry_through_to_output() {
         let out = lex("source has \u{E001} reserved sentinel");
         assert!(
             out.diagnostics
@@ -416,8 +414,8 @@ mod tests {
     fn container_kind_indent_amount_preserved() {
         let out = lex("［＃ここから3字下げ］\ntext\n［＃ここで字下げ終わり］");
         let (_, nr) = out.registry.iter_kind(Sentinel::BlockOpen).next().unwrap();
-        let NodeRefOwned::BlockOpen(kind) = nr else {
-            panic!("expected NodeRefOwned::BlockOpen, got {nr:?}");
+        let NodeRef::BlockOpen(kind) = nr else {
+            panic!("expected NodeRef::BlockOpen, got {nr:?}");
         };
         match kind {
             RegionFormat::Indent(IndentBlock { amount, .. }) => assert_eq!(amount, 3),

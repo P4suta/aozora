@@ -6,13 +6,13 @@
 use aozora::{CoupledKind, Document, RegionRole, SpliceError, SpliceSafety};
 
 #[test]
-fn owned_regions_cover_the_whole_source() {
+fn regions_cover_the_whole_source() {
     let src = "序章\n｜青梅《おうめ》の実、青空［＃「青空」に傍点］。";
     let doc = Document::new(src);
     let tree = doc.parse();
     let verbatim = tree.to_source_verbatim();
 
-    let regions = tree.owned_regions();
+    let regions = tree.regions();
     // Complete, contiguous cover.
     assert_eq!(regions.first().unwrap().span.start, 0);
     assert_eq!(regions.last().unwrap().span.end as usize, verbatim.len());
@@ -38,7 +38,7 @@ fn reclaimed_forward_is_direct_minimal_diff() {
     let tree = doc.parse();
 
     let region = tree
-        .owned_regions()
+        .regions()
         .into_iter()
         .find(|r| r.role == RegionRole::ForwardReclaimed)
         .expect("a reclaimed forward bouten");
@@ -59,7 +59,7 @@ fn referenced_forward_is_coupled() {
     let tree = doc.parse();
 
     let region = tree
-        .owned_regions()
+        .regions()
         .into_iter()
         .find(|r| r.role == RegionRole::ForwardReferenced)
         .expect("a referenced forward bouten");
@@ -91,7 +91,7 @@ fn ruby_base_forward_target_change_is_irreducible() {
     let doc = Document::new(src);
     let tree = doc.parse();
     let Some(region) = tree
-        .owned_regions()
+        .regions()
         .into_iter()
         .find(|r| r.role == RegionRole::ForwardReferenced)
     else {
@@ -113,7 +113,7 @@ fn ruby_base_forward_attribute_change_is_coherent() {
     let doc = Document::new(src);
     let tree = doc.parse();
     let Some(region) = tree
-        .owned_regions()
+        .regions()
         .into_iter()
         .find(|r| r.role == RegionRole::ForwardReferenced)
     else {
@@ -140,7 +140,7 @@ fn multi_target_forward_is_coupled_and_identity_safe() {
     let tree = doc.parse();
     let verbatim = tree.to_source_verbatim();
     let region = tree
-        .owned_regions()
+        .regions()
         .into_iter()
         .find(|r| r.role == RegionRole::ForwardReferenced)
         .expect("a multi-target forward bouten");
@@ -171,7 +171,7 @@ fn heading_hint_target_change_syncs() {
     let tree = doc.parse();
     let verbatim = tree.to_source_verbatim();
     let region = tree
-        .owned_regions()
+        .regions()
         .into_iter()
         .find(|r| r.role == RegionRole::HeadingHint)
         .expect("a forward heading hint");
@@ -205,7 +205,7 @@ fn margin_note_base_change_is_coherent() {
     let tree = doc.parse();
     let verbatim = tree.to_source_verbatim();
     let region = tree
-        .owned_regions()
+        .regions()
         .into_iter()
         .find(|r| r.role == RegionRole::MarginNote)
         .expect("a side-note margin note");
@@ -231,7 +231,7 @@ fn container_open_couples_to_its_close() {
     let tree = doc.parse();
 
     let open = tree
-        .owned_regions()
+        .regions()
         .into_iter()
         .find(|r| r.role == RegionRole::ContainerOpen)
         .expect("a container open");

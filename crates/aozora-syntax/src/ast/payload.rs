@@ -3,8 +3,8 @@
 //!
 //! Every text slice is a [`StrId`]; a non-empty content run is a
 //! [`ContentRange`]; a segment run is a [`SegRange`]; a bare `Content` field
-//! is an inline [`ContentOwned`]. Each scalar payload is held inline as its
-//! owned `XOwned` form (no `Box`/`Id`), so the whole cluster stays `Copy`.
+//! is an inline [`Content`]. Each scalar payload is held inline
+//! (no `Box`/`Id`), so the whole cluster stays `Copy`.
 
 use core::fmt;
 
@@ -22,23 +22,23 @@ use super::store::{ContentRange, NodeStore, SegRange};
 /// plain run or a mixed sequence of segments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ContentOwned {
+pub enum Content {
     /// Plain text.
     Plain(StrId),
     /// Mixed text + nested constructs.
     Segments(SegRange),
 }
 
-/// One element of a [`ContentOwned::Segments`] run.
+/// One element of a [`Content::Segments`] run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum SegmentOwned {
+pub enum Segment {
     /// Plain-text run between nested constructs.
     Text(StrId),
     /// Nested 外字 reference.
-    Gaiji(GaijiOwned),
+    Gaiji(Gaiji),
     /// Nested generic annotation.
-    Directive(DirectiveOwned),
+    Directive(Directive),
 }
 
 impl GaijiCanonicalOwned {
@@ -83,7 +83,7 @@ impl GaijiCanonicalOwned {
     }
 }
 
-impl GaijiOwned {
+impl Gaiji {
     /// Resolve to a concrete glyph via the canonical value: rebuilds the
     /// lifetime-free `GaijiCanonical` against `store` and delegates to the
     /// single `GaijiCanonical::resolve` authority, passing [`Self::hint`] as
@@ -104,7 +104,7 @@ impl GaijiOwned {
 
 /// Ruby (furigana) annotation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RubyOwned {
+pub struct Ruby {
     /// Base text the reading annotates.
     pub base: ContentRange,
     /// Furigana reading.
@@ -121,13 +121,13 @@ pub struct RubyOwned {
     /// element; the directive leaf stays `Referenced` (serializes the bracket
     /// verbatim, renders nothing), so `base_emphasis` is never read by
     /// `to_source` — it is a render decoration, not a serialized field. As a
-    /// `Copy` `Option<ForwardAttr>` it keeps `RubyOwned` `Copy` and inline.
+    /// `Copy` `Option<ForwardAttr>` it keeps `Ruby` `Copy` and inline.
     pub base_emphasis: Option<ForwardAttr>,
 }
 
 /// Margin note (注記 / 傍記).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MarginNoteOwned {
+pub struct MarginNote {
     /// 注記 vs 傍記.
     pub kind: MarginNoteKind,
     /// Preceding run the note attaches to.
@@ -138,7 +138,7 @@ pub struct MarginNoteOwned {
 
 /// Forward-reference emphasis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ForwardFormatOwned {
+pub struct ForwardFormat {
     /// Which forward-scope attribute decorates the run.
     pub attr: ForwardAttr,
     /// The decorated run.
@@ -171,7 +171,7 @@ pub enum GaijiCanonicalOwned {
 
 /// Out-of-range glyph (外字).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GaijiOwned {
+pub struct Gaiji {
     /// Free-form source description / resolver fallback key.
     pub hint: StrId,
     /// Typed canonical value.
@@ -182,16 +182,16 @@ pub struct GaijiOwned {
 
 /// Split annotation (割注).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WarichuOwned {
+pub struct Warichu {
     /// First (upper / right) half-size line.
-    pub upper: ContentOwned,
+    pub upper: Content,
     /// Second (lower / left) half-size line.
-    pub lower: ContentOwned,
+    pub lower: Content,
 }
 
 /// Heading (見出し).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HeadingOwned {
+pub struct Heading {
     /// 大 / 中 / 小 outline level.
     pub kind: HeadingKind,
     /// Standard / 同行 / 窓 style.
@@ -202,7 +202,7 @@ pub struct HeadingOwned {
 
 /// Heading hint (見出し指定).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HeadingHintOwned {
+pub struct HeadingHint {
     /// Intended outline level.
     pub level: HeadingKind,
     /// Standard / 同行 / 窓 style.
@@ -221,7 +221,7 @@ pub struct HeadingHintOwned {
 
 /// Illustration (挿絵).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IllustrationOwned {
+pub struct Illustration {
     /// Image path / filename.
     pub file: StrId,
     /// Optional figure number (raw digits).
@@ -229,14 +229,14 @@ pub struct IllustrationOwned {
     /// Optional verbatim `横W×縦H` size note.
     pub dimensions: Option<StrId>,
     /// Optional caption.
-    pub caption: Option<ContentOwned>,
+    pub caption: Option<Content>,
     /// Optional alt description.
     pub description: Option<StrId>,
 }
 
 /// Generic annotation (注記).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DirectiveOwned {
+pub struct Directive {
     /// Raw bytes between `［＃` and `］`.
     pub raw: StrId,
     /// Classification.
@@ -245,34 +245,34 @@ pub struct DirectiveOwned {
 
 /// Kanbun reading-order mark (返り点).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KaeritenOwned {
+pub struct Kaeriten {
     /// Kanbun reading-order mark.
     pub mark: StrId,
 }
 
 /// Angle quote (`≪…≫` -> `《…》`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AngleQuoteOwned {
+pub struct AngleQuote {
     /// Quoted run.
     pub content: ContentRange,
 }
 
-/// A single, no-lifetime AST node. Every scalar payload is held INLINE as its
-/// owned `XOwned` form (no `Box`/`Id`); `Copy` scalar-enum variants carry their
+/// A single, no-lifetime AST node. Every scalar payload is held INLINE
+/// (no `Box`/`Id`); `Copy` scalar-enum variants carry their
 /// value directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum NodeOwned {
+pub enum Node {
     /// Ruby (furigana) annotation.
-    Ruby(RubyOwned),
+    Ruby(Ruby),
     /// Forward-reference emphasis.
-    Format(ForwardFormatOwned),
+    Format(ForwardFormat),
     /// Out-of-range glyph (外字).
-    Gaiji(GaijiOwned),
+    Gaiji(Gaiji),
     /// Line-level format — `Copy` enum.
     Line(LineFormat),
     /// Split annotation (割注).
-    Warichu(WarichuOwned),
+    Warichu(Warichu),
     /// Page break — unit.
     PageBreak,
     /// Section break — `Copy` enum.
@@ -282,24 +282,24 @@ pub enum NodeOwned {
     /// Forced line break — unit.
     ForcedBreak,
     /// Heading (見出し).
-    Heading(HeadingOwned),
+    Heading(Heading),
     /// Heading hint (見出し指定).
-    HeadingHint(HeadingHintOwned),
+    HeadingHint(HeadingHint),
     /// Illustration (挿絵).
-    Illustration(IllustrationOwned),
+    Illustration(Illustration),
     /// Kanbun reading-order mark (返り点).
-    Kaeriten(KaeritenOwned),
+    Kaeriten(Kaeriten),
     /// Generic annotation (注記).
-    Directive(DirectiveOwned),
+    Directive(Directive),
     /// Angle quote (`≪…≫` -> `《…》`).
-    AngleQuote(AngleQuoteOwned),
+    AngleQuote(AngleQuote),
     /// Margin note (注記 / 傍記).
-    MarginNote(MarginNoteOwned),
+    MarginNote(MarginNote),
     /// Container — `Copy` enum.
     Container(Container),
 }
 
-impl NodeOwned {
+impl Node {
     /// Cross-cutting [`crate::NodeKind`] tag for this node.
     #[must_use]
     pub const fn kind(self) -> crate::NodeKind {
@@ -378,28 +378,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn owned_payloads_are_copy() {
+    fn payloads_are_copy() {
         // Pin the Copy chain — every owned payload must stay Copy. If a future
         // field breaks Copy, this fails to compile.
         const fn assert_copy<T: Copy>() {}
-        assert_copy::<ContentOwned>();
-        assert_copy::<SegmentOwned>();
-        assert_copy::<NodeOwned>();
-        assert_copy::<RubyOwned>();
-        assert_copy::<GaijiOwned>();
+        assert_copy::<Content>();
+        assert_copy::<Segment>();
+        assert_copy::<Node>();
+        assert_copy::<Ruby>();
+        assert_copy::<Gaiji>();
     }
 
     #[test]
     fn node_kind_tag_matches_variant() {
-        assert_eq!(NodeOwned::PageBreak.kind(), crate::NodeKind::PageBreak);
+        assert_eq!(Node::PageBreak.kind(), crate::NodeKind::PageBreak);
         assert_eq!(
-            NodeOwned::SectionBreak(SectionKind::Kaicho).kind(),
+            Node::SectionBreak(SectionKind::Kaicho).kind(),
             crate::NodeKind::SectionBreak
         );
     }
 
     #[test]
-    fn gaiji_owned_resolve_matches_canonical_authority() {
+    fn gaiji_resolve_matches_canonical_authority() {
         // Build an owned `Gaiji` per canonical arm and confirm the on-demand
         // glyph resolution is byte-identical to the `aozora-encoding`
         // `GaijiCanonical::resolve` authority. Uses `GaijiCanonical::from_mencode`
@@ -421,7 +421,7 @@ mod tests {
                     mencode: mencode.map(|m| store.intern(m)),
                 },
             };
-            let owned = GaijiOwned {
+            let owned = Gaiji {
                 hint: hint_id,
                 canonical: owned_canonical,
                 standalone: false,

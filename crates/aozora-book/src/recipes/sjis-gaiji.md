@@ -20,7 +20,7 @@ bytes and see how each gaiji reference resolved.
 
 ```rust,no_run
 # extern crate aozora;
-use aozora::{Document, NodeOwned, NodeRefOwned};
+use aozora::{Document, Node, NodeRef};
 use aozora::encoding::decode_sjis;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = &tree.lex_output().store;
 
     for sn in tree.source_nodes() {
-        if let NodeRefOwned::Inline(NodeOwned::Gaiji(g)) = sn.node {
+        if let NodeRef::Inline(Node::Gaiji(g)) = sn.node {
             // The gaiji payload's strings are StrId handles into the store;
             // `resolve(store)` derives the glyph against the JIS tables.
             let hint = store.resolve_str(g.hint);
@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 木＋吶のつくり → 吶
 ```
 
-`GaijiOwned` carries `hint` (the free-form source description, a
+`Gaiji` carries `hint` (the free-form source description, a
 `StrId`), `canonical` (the typed mencode value, e.g. `第3水準1-85-54`),
 and `standalone`. The resolved glyph is derived on demand via
 `resolve(store)`, which returns a `Resolved` (`None` when no table

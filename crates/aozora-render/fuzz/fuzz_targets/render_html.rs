@@ -1,4 +1,4 @@
-//! Fuzz target — `aozora_render::render_html_owned` on arbitrary
+//! Fuzz target — `aozora_render::render_html` on arbitrary
 //! UTF-8.
 //!
 //! Arbitrary bytes are decoded as UTF-8 (invalid sequences skip this
@@ -12,7 +12,7 @@
 #![no_main]
 
 use aozora_pipeline::lex;
-use aozora_render::render_html_owned;
+use aozora_render::render_html;
 use libfuzzer_sys::fuzz_target;
 
 /// PUA sentinel codepoints embedded by the lexer that the renderer
@@ -34,7 +34,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let lex_out = lex(src);
-    let html = render_html_owned(&lex_out);
+    let html = render_html(&lex_out);
     for sentinel in PUA_SENTINELS {
         assert!(
             !html.contains(sentinel),

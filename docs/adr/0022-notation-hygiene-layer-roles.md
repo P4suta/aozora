@@ -124,7 +124,7 @@ would need its own ADR (see the zero-false-positive consequence below).
 - Plan: the 2026-07 notation-hygiene + parser-coverage campaign (#372).
 - #371 (linter), #373 (`fmt --fix-notation`), #374 (LSP quick-fix).
 - Renderer/interpreter role: `RenderOptions::normalize_directives` /
-  `render_html_owned_normalized` (`aozora-render`), the `Tree::to_html_with`
+  `render_html_normalized` (`aozora-render`), the `Tree::to_html_with`
   facade (`aozora`), and `aozora render --normalize`, pinned by the
   `normalize_render_replaces_every_inert_variant` self-test.
 - [ADR-0015](./0015-spec-syntax-layer-boundary.md) — the spec / syntax layer

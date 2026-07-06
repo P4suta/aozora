@@ -1,7 +1,7 @@
 //! The CSS class names the HTML renderer can emit.
 //!
 //! [`AOZORA_CLASSES`] is the authoritative, public list of every
-//! `aozora-*` class [`crate::render_node`] / `crate::html` writes.
+//! `aozora-*` class `crate::render_node` / `crate::html` writes.
 //! Downstream consumers (e.g. the sibling `afm` crate) import it instead
 //! of hand-mirroring the contract. The `class_list_matches_emitted`
 //! test renders every `Node` + `ContainerKind` variant and asserts
@@ -172,10 +172,10 @@ pub(crate) const fn heading_style_slug(style: HeadingStyle) -> Option<&'static s
 #[cfg(test)]
 mod tests {
     use super::{AOZORA_CLASSES, bouten_kind_slug, bouten_position_slug};
-    use crate::render_node::render_container;
-    use crate::render_node_owned::render_owned;
-    use aozora_syntax::alloc_owned::OwnedAllocator;
-    use aozora_syntax::owned::{NodeOwned, NodeStore};
+    use crate::render_node::render;
+    use crate::spelling::html::render_container;
+    use aozora_syntax::alloc::Allocator;
+    use aozora_syntax::ast::{Node, NodeStore};
     use aozora_syntax::{
         AbsoluteSize, AccentMark, BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition,
         ColumnCount, Container, DirectiveKind, EnclosureKind, FontShift, ForwardAttr,
@@ -208,7 +208,7 @@ mod tests {
     /// the plumbing PR carries its own proof.
     #[test]
     fn self_contained_forward_renders_styled_run() {
-        let mut a = OwnedAllocator::new();
+        let mut a = Allocator::new();
         let bold_t = a.content_plain("強");
         let bold = a.forward_format(ForwardAttr::Bold, bold_t, ForwardOrigin::SelfContained);
         let bouten_t = a.content_plain("点");
@@ -221,11 +221,11 @@ mod tests {
         let store = a.into_store();
 
         let mut bold_html = String::new();
-        render_owned(bold, &store, &mut bold_html).expect("render into String is infallible");
+        render(bold, &store, &mut bold_html).expect("render into String is infallible");
         assert_eq!(bold_html, r#"<b class="aozora-futoji">強</b>"#);
 
         let mut bouten_html = String::new();
-        render_owned(bouten, &store, &mut bouten_html).expect("render into String is infallible");
+        render(bouten, &store, &mut bouten_html).expect("render into String is infallible");
         assert_eq!(
             bouten_html,
             r#"<em class="aozora-bouten aozora-bouten-goma aozora-bouten-right">点</em>"#
@@ -262,19 +262,19 @@ mod tests {
     /// Collect a built owned node for later rendering (the allocator's store is
     /// still borrowed mutably during the build, so the render pass runs after
     /// `into_store`).
-    fn render_into(node: NodeOwned, nodes: &mut Vec<NodeOwned>) {
+    fn render_into(node: Node, nodes: &mut Vec<Node>) {
         nodes.push(node);
     }
 
     /// Render one collected node, routing containers through the lifetime-free
     /// container tag writer and every other node through the owned renderer.
-    fn render_collected(node: NodeOwned, store: &NodeStore, set: &mut BTreeSet<String>) {
+    fn render_collected(node: Node, store: &NodeStore, set: &mut BTreeSet<String>) {
         let mut s = String::new();
-        if let NodeOwned::Container(c) = node {
+        if let Node::Container(c) = node {
             render_container(c, true, &mut s).expect("render into String is infallible");
             render_container(c, false, &mut s).expect("render into String is infallible");
         } else {
-            render_owned(node, store, &mut s).expect("render into String is infallible");
+            render(node, store, &mut s).expect("render into String is infallible");
         }
         collect_classes(&s, set);
     }
@@ -290,8 +290,8 @@ mod tests {
                   splitting would scatter the exhaustive enumeration"
     )]
     fn all_emitted_classes() -> BTreeSet<String> {
-        let mut a = OwnedAllocator::new();
-        let mut nodes: Vec<NodeOwned> = Vec::new();
+        let mut a = Allocator::new();
+        let mut nodes: Vec<Node> = Vec::new();
 
         // --- leaf nodes ---
         render_into(a.page_break(), &mut nodes);
