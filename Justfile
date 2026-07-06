@@ -519,6 +519,37 @@ digest-gate-update:
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo run -p aozora-xtask -q -- corpus digest-gate --root /corpus --baseline corpus/render-digest.json --update
 
+# Select a stratified, family-diverse set of real works to extend the golden
+# `fixtures/works/` set (#414). Deterministic greedy family set-cover under a
+# source-byte budget; writes `fixtures/works-selection.toml`.
+works-select:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; cannot select works." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus select-works --root /corpus
+
+# Vendor the works named in `works-selection.toml` into `fixtures/works/` and
+# seed their golden HTML. Run after `works-select` (and any manual slug edits).
+works-vendor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; cannot vendor works." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus vendor-works --root /corpus
+    docker compose run --rm -e UPDATE_GOLDEN=1 dev \
+        cargo test -p aozora-conformance --test works_gate
+
 # Owned-producer allocation-pressure ratchet (#237 P0.2-real). Measures, via
 # dhat around `lex` over the corpus, owned-path allocation count / bytes
 # normalized per-file / per-source-byte, and fails when either regresses beyond
