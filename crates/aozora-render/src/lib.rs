@@ -30,7 +30,7 @@ mod walk;
 
 pub use classes::AOZORA_CLASSES;
 pub use html::{RenderOptions, render_html, render_html_normalized};
-pub use serialize::{SerializeOptions, serialize, serialize_with};
+pub use serialize::{DirectiveNormalization, SerializeOptions, serialize, serialize_with};
 
 #[cfg(test)]
 mod tests {

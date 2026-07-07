@@ -271,6 +271,7 @@ fn discovery_base(resolved: &Resolved) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aozora::render::DirectiveNormalization;
 
     #[test]
     fn empty_input_formats_to_empty() {
@@ -309,7 +310,9 @@ mod tests {
 
     #[test]
     fn fix_notation_rewrites_flagged_near_miss_only_when_opted_in() {
-        let fix = SerializeOptions { fix_notation: true };
+        let fix = SerializeOptions {
+            directives: DirectiveNormalization::Canonical,
+        };
         let near_miss = "あ［＃字下げ終わり］";
         // Default fmt keeps the flagged near-miss verbatim.
         assert!(
