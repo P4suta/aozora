@@ -11,7 +11,7 @@
 //! Every JSON envelope has the shape
 //!
 //! ```json
-//! { "schemaVersion": 1, "data": [ /* …entries… */ ] }
+//! { "schemaVersion": 2, "data": [ /* …entries… */ ] }
 //! ```
 //!
 //! [`SCHEMA_VERSION`] is bumped on any breaking change to the
@@ -39,13 +39,17 @@ use crate::{DiagnosticSource, Severity, Tree};
 /// Wire-format schema version. Bumped on any breaking change to the
 /// serialised shape (variant additions, field renames, envelope
 /// changes).
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// Schema 2 (#435): added the `gothic` weight tag (emphasis / container);
+/// renamed the `lineBold` node kind to `lineGothic`; removed the
+/// `combineUprightRange` container tag (縦中横 has no paired-range form).
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Project a slice of [`crate::Diagnostic`] into a `{ schemaVersion, data }`
 /// JSON envelope. Every entry has the shape
 /// `{ kind, span: { start, end }, codepoint? }`.
 ///
-/// Empty input → `{"schemaVersion":1,"data":[]}`.
+/// Empty input → `{"schemaVersion":2,"data":[]}`.
 #[must_use]
 pub fn diagnostics(diagnostics: &[crate::Diagnostic]) -> String {
     serialize_envelope(&diagnostic_entries(diagnostics))
@@ -64,7 +68,7 @@ pub fn diagnostic_entries(diagnostics: &[crate::Diagnostic]) -> Vec<Diagnostic> 
 ///
 /// Every entry has the shape `{ kind, span: { start, end } }`,
 /// source-coordinate, sorted by `span.start`. Empty parse →
-/// `{"schemaVersion":1,"data":[]}`.
+/// `{"schemaVersion":2,"data":[]}`.
 #[must_use]
 pub fn nodes(tree: &Tree<'_>) -> String {
     serialize_envelope(&node_entries(tree))
@@ -93,7 +97,7 @@ pub fn node_entries(tree: &Tree<'_>) -> Vec<Node> {
 /// `textDocument/linkedEditingRange` and
 /// `textDocument/documentHighlight`.
 ///
-/// Empty parse → `{"schemaVersion":1,"data":[]}`.
+/// Empty parse → `{"schemaVersion":2,"data":[]}`.
 #[must_use]
 pub fn pairs(tree: &Tree<'_>) -> String {
     serialize_envelope(&pair_entries(tree))
@@ -127,7 +131,7 @@ pub fn pair_entries(tree: &Tree<'_>) -> Vec<Pair> {
 /// source-coordinate container pairs must translate through
 /// [`Tree::source_nodes`].
 ///
-/// Empty parse → `{"schemaVersion":1,"data":[]}`.
+/// Empty parse → `{"schemaVersion":2,"data":[]}`.
 #[must_use]
 pub fn container_pairs(tree: &Tree<'_>) -> String {
     serialize_envelope(&container_pair_entries(tree))
@@ -195,7 +199,7 @@ pub fn slug_entries() -> Vec<Slug> {
 /// audits. The scan + resolution are the single authority in
 /// [`crate::encoding::gaiji`]; this is only their wire projection.
 ///
-/// Empty / gaiji-free source → `{"schemaVersion":1,"data":[]}`.
+/// Empty / gaiji-free source → `{"schemaVersion":2,"data":[]}`.
 #[must_use]
 pub fn gaiji(source: &str) -> String {
     serialize_envelope(&gaiji_entries(source))
@@ -534,7 +538,7 @@ mod tests {
     #[test]
     fn slugs_envelope_lists_catalogue_with_known_families() {
         let json = slugs();
-        assert!(json.contains(r#""schemaVersion":1"#));
+        assert!(json.contains(r#""schemaVersion":2"#));
         assert!(json.contains(r#""canonical":"#));
         assert!(json.contains(r#""family":"#));
         // Guard against the silent `_ => "unknown"` degrade: every
@@ -547,13 +551,13 @@ mod tests {
 
     #[test]
     fn gaiji_resolutions_empty_envelope_for_plain_text() {
-        assert_eq!(gaiji("no gaiji here"), r#"{"schemaVersion":1,"data":[]}"#);
+        assert_eq!(gaiji("no gaiji here"), r#"{"schemaVersion":2,"data":[]}"#);
     }
 
     #[test]
     fn gaiji_resolutions_emits_resolved_entry_in_source_coords() {
         let json = gaiji("※［＃「々」］");
-        assert!(json.contains(r#""schemaVersion":1"#));
+        assert!(json.contains(r#""schemaVersion":2"#));
         assert!(
             json.contains(r#""span":{"start":0,"end":21}"#),
             "json: {json}"
@@ -577,13 +581,13 @@ mod tests {
 
     #[test]
     fn schema_version_is_one() {
-        assert_eq!(SCHEMA_VERSION, 1);
+        assert_eq!(SCHEMA_VERSION, 2);
     }
 
     #[test]
     fn empty_diagnostics_round_trip_envelope() {
         let json = diagnostics(&[]);
-        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
+        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
     }
 
     #[test]
@@ -591,7 +595,7 @@ mod tests {
         let doc = Document::new("plain");
         let tree = doc.parse();
         let json = nodes(&tree);
-        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
+        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
     }
 
     #[test]
@@ -599,7 +603,7 @@ mod tests {
         let doc = Document::new("plain");
         let tree = doc.parse();
         let json = pairs(&tree);
-        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
+        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
     }
 
     #[test]
@@ -607,7 +611,7 @@ mod tests {
         let doc = Document::new("abc\u{E001}def");
         let tree = doc.parse();
         let json = diagnostics(tree.diagnostics());
-        assert!(json.contains(r#""schemaVersion":1"#));
+        assert!(json.contains(r#""schemaVersion":2"#));
         assert!(json.contains(r#""kind":"source_contains_pua""#));
         assert!(json.contains(r#""codepoint":"""#) || json.contains(r#""codepoint":""#));
     }
@@ -618,7 +622,7 @@ mod tests {
         let tree = doc.parse();
         let json = nodes(&tree);
         assert!(json.contains(r#""kind":"ruby""#));
-        assert!(json.contains(r#""schemaVersion":1"#));
+        assert!(json.contains(r#""schemaVersion":2"#));
     }
 
     #[test]
@@ -666,10 +670,6 @@ mod tests {
             }
             .as_json_tag(),
             "boutenRange"
-        );
-        assert_eq!(
-            RegionFormat::CombineUpright.as_json_tag(),
-            "combineUprightRange"
         );
     }
 }

@@ -75,13 +75,13 @@ int main(void) {
 
     /* 3. diagnostics — envelope-shaped JSON for clean input.
      *    Phase A+B / L1 standardised every wire endpoint on
-     *    `{"schemaVersion": 1, "data": [...]}`; clean parse →
+     *    `{"schemaVersion": 2, "data": [...]}`; clean parse →
      *    `data: []`. We assert the canonical bytes verbatim. */
     AozoraBytes diag = {NULL, 0, 0};
     status = aozora_document_diagnostics_json(doc, &diag);
     failures += check("aozora_document_diagnostics_json returns Ok", status == 0);
     {
-        const char expected[] = "{\"schemaVersion\":1,\"data\":[]}";
+        const char expected[] = "{\"schemaVersion\":2,\"data\":[]}";
         size_t expected_len = sizeof(expected) - 1;
         failures += check("diagnostics JSON is the empty envelope",
                           diag.len == expected_len &&

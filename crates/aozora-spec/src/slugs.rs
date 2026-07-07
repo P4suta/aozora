@@ -782,6 +782,15 @@ pub const RENDER_SLUGS: &[RenderSlug] = &[
         roman: "futoji",
         jis: None,
     },
+    // ゴシック体 — gothic typeface, distinct from 太字 (#435). ゴシック is a
+    // loanword (gothic), so `reading: None` opts out of the Hepburn check like
+    // `caption`; the slug is the fixed CSS class `aozora-goshikku`.
+    RenderSlug {
+        canonical: "ゴシック体",
+        reading: None,
+        roman: "goshikku",
+        jis: None,
+    },
     RenderSlug {
         canonical: "上付き小文字",
         reading: Some("うわつき"),

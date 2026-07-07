@@ -33,7 +33,7 @@ var wasmBytes []byte
 // against. Open verifies the loaded plugin reports the same version, so a
 // plugin/SDK skew fails loudly instead of decoding against the wrong
 // shape. Mirrors aozora::json::SCHEMA_VERSION.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // Parser is a loaded aozora plugin instance. It is NOT safe for
 // concurrent use; create one per goroutine or guard it with a mutex.

@@ -846,10 +846,11 @@ enum ForwardTcy {
 /// form (`［＃縦中横］…［＃縦中横終わり］`) is handled by the
 /// paired-container classifier and not matched here.
 ///
-/// Multi-quote `［＃「A」「B」は縦中横］` bodies are not standard Aozora
-/// spec; we accept the first target's text and ignore the rest for
-/// robustness rather than failing, so the bracket still consumes via
-/// `classify_forward_tcy` instead of leaking to `Directive{Unknown}`.
+/// Only the exact `「X」は縦中横` shape is recognised (spec §6.3, #435).
+/// Multi-quote `［＃「A」「B」は縦中横］` bodies and the non-canonical
+/// `は縦中横、行右/左小書き` / `は横一列` variants decline to
+/// `Directive{Unknown}` (lossless verbatim) rather than being silently
+/// folded — each is served by an opt-in Tier1 lint / Tier2 render instead.
 impl RecogniseCtx<'_, '_> {
     fn classify_forward_tcy(
         &mut self,
@@ -861,19 +862,21 @@ impl RecogniseCtx<'_, '_> {
         else {
             return ForwardTcy::NotTcy;
         };
-        // `は縦中横` and the corpus compound `は縦中横、行右/左小書き` (numbered
-        // list markers like 「１）」 set horizontal *and* small). Recognise the
-        // compound as 縦中横 — the dominant transform; the small-script
-        // fine-positioning normalises away on serialize (idempotent). `は横一列`
-        // (a short punctuation run like `！？` set on one horizontal line) is a
-        // corpus-attested prose synonym of 縦中横 and canonicalises to it.
-        if !matches!(
-            extracted.suffix,
-            "は縦中横" | "は縦中横、行右小書き" | "は縦中横、行左小書き" | "は横一列"
-        ) {
+        // Only the exact spec form `「X」は縦中横` (spec §6.3) is recognised
+        // (#435). The non-canonical corpus variants decline to
+        // `Directive{Unknown}` (lossless verbatim), each served by an opt-in
+        // layer instead of a silent parser fold:
+        //   - `は縦中横、行右/左小書き` dropped the small-script axis silently
+        //     (data loss); it now stays Unknown.
+        //   - `は横一列` (a punctuation run set horizontal) → Unknown + Tier1
+        //     lint suggests `は縦中横`.
+        if extracted.suffix != "は縦中横" {
             return ForwardTcy::NotTcy;
         }
-        let Some(first) = extracted.targets.first() else {
+        // Single target only — a multi-quote `「A」「B」は縦中横` is not a real
+        // Aozora shape and used to keep only the first target (silent data
+        // loss); it now declines to `Directive{Unknown}`, mirroring emphasis.
+        let [first] = extracted.targets.as_slice() else {
             return ForwardTcy::NotTcy;
         };
         // The shape is a 縦中横 directive. If its target has no referent in
@@ -1699,28 +1702,29 @@ fn is_latin_run_char(ch: char) -> bool {
 
 /// Map the keyword after `は` to a forward-scope [`ForwardAttr`].
 ///
-/// 太字 → Bold, 斜体 → Italic (per
-/// <https://www.aozora.gr.jp/annotation/emphasis.html>). ゴシック体 / ゴチック
-/// are corpus spellings of bold — the guide writes 太字（ゴシック） — so both
-/// map to Bold and canonicalise to `太字` on serialize. 上付き小文字 →
+/// 太字 → Bold, ゴシック体 → Gothic (a distinct typeface, **not** a fold to
+/// 太字 — #435), 斜体 → Italic (per
+/// <https://www.aozora.gr.jp/annotation/emphasis.html>). ゴチック (1 corpus
+/// work) is not recognised — it declines to `Directive{Unknown}` and a Tier1
+/// lint suggests ゴシック体. 上付き小文字 →
 /// `SuperScript`, 下付き小文字 → `SubScript`, 行右小書き → `SmallScript(Right)`,
 /// 行左小書き → `SmallScript(Left)`, and `N段階大きな/小さな文字` → `FontSize`
 /// (per <https://www.aozora.gr.jp/annotation/etc.html>). 分数 → `Fraction`
 /// (`「a/b」は分数`, the render arm typesets the `/`-split target). 罫囲み /
-/// 枠囲み / 枠囲い / ○付き文字 / 点線丸囲み / 二重罫囲み → the corresponding
-/// [`EnclosureKind`] under `Framed` (`「□」囲み` is claimed earlier, by the box
-/// recogniser). Unknown suffixes return `None` (→ `Directive{Unknown}`).
+/// ○付き文字 / 点線丸囲み / 二重罫囲み → the corresponding [`EnclosureKind`]
+/// under `Framed` (`「□」囲み` is claimed earlier, by the box recogniser). The
+/// non-canonical 枠囲み / 枠囲い decline to `Directive{Unknown}` (Tier1 → 罫囲み).
+/// Unknown suffixes return `None` (→ `Directive{Unknown}`).
 pub(super) fn forward_attr_from_suffix(s: &str) -> Option<ForwardAttr> {
     Some(match s {
-        "太字" | "ゴシック体" | "ゴチック" => ForwardAttr::Bold,
+        "太字" => ForwardAttr::Bold,
+        "ゴシック体" => ForwardAttr::Gothic,
         "斜体" => ForwardAttr::Italic,
         "上付き小文字" => ForwardAttr::SuperScript,
         "下付き小文字" => ForwardAttr::SubScript,
         "行右小書き" => ForwardAttr::SmallScript(BoutenPosition::Right),
         "行左小書き" => ForwardAttr::SmallScript(BoutenPosition::Left),
-        // 枠囲み / 枠囲い (okurigana variant) are corpus spellings of the frame
-        // decoration; all canonicalise to 罫囲み on serialize.
-        "罫囲み" | "枠囲み" | "枠囲い" => ForwardAttr::Framed(EnclosureKind::Rule),
+        "罫囲み" => ForwardAttr::Framed(EnclosureKind::Rule),
         // Other single-target enclosures whose suffix carries no embedded glyph
         // (unlike 「□」囲み). Each has its own EnclosureKind so serialize
         // round-trips the exact keyword rather than folding onto 罫囲み.

@@ -57,7 +57,7 @@ human renderer in automation.
 | HTML | `aozora render FILE` | semantic HTML5 on stdout |
 | Pandoc AST (→ any format) | `aozora pandoc FILE` | Pandoc JSON on stdout |
 | Wire JSON Schema | `aozora schema {diagnostics\|nodes\|pairs\|container-pairs}` | JSON Schema |
-| Enum/wire-tag tables | `aozora kinds` | tables (human) by default; `--format json` emits `{"schemaVersion":1,"data":{nodeKinds,pairKinds,…}}` — the typed contract behind the wire format |
+| Enum/wire-tag tables | `aozora kinds` | tables (human) by default; `--format json` emits `{"schemaVersion":2,"data":{nodeKinds,pairKinds,…}}` — the typed contract behind the wire format |
 
 `--diagnostic-format` defaults to `human` on a TTY and `json` when piped,
 so a piped `aozora check` already yields machine output without a flag.

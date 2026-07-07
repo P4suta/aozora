@@ -34,7 +34,7 @@
 //! `aozora-wasm` / `aozora-py` emit byte-identical envelopes:
 //!
 //! ```json
-//! { "schemaVersion": 1, "data": [ … ] }
+//! { "schemaVersion": 2, "data": [ … ] }
 //! ```
 
 #![forbid(unsafe_code)]
@@ -132,7 +132,7 @@ mod bindings {
         }
 
         /// Diagnostics as a JSON envelope string. Empty parse →
-        /// `{"schemaVersion":1,"data":[]}`. Wire format defined in
+        /// `{"schemaVersion":2,"data":[]}`. Wire format defined in
         /// [`aozora::json`]. The Python wrapper's `diagnostics()`
         /// returns the parsed `data` list; this is the raw,
         /// byte-identical accessor.
@@ -266,7 +266,7 @@ mod tests {
     fn diagnostics_through_wire_is_empty_envelope_for_clean_input() {
         let doc = AozoraDoc::new("plain text".to_owned());
         let json = json::diagnostics(doc.parse().diagnostics());
-        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
+        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
     }
 
     /// Smoke: `decode_auto` round-trips a `Shift_JIS` payload that

@@ -1,5 +1,5 @@
 {
-  "unknown_total": 2374,
+  "unknown_total": 3794,
   "files_analyzed": 17889,
-  "note": "ratchet-down Unknown-degradation budget; lower on improvement, never raise. Re-capture with `xtask corpus audit-gate --update`. Two one-time UNDERCOUNT CORRECTIONS during the 2026-07-03 ruby-leak campaign, both surfacing directives that previously SANK/folded to plain (never reaching the Directive{Unknown} counter) — not recogniser regressions; top-level directives stay byte-identical: 1884->1974 (bracket-hard-scope pair fix, Category C) and 1974->2374 (quote-interior directive/gaiji, WS-2b). Render output is strictly better both times."
+  "note": "ratchet-down Unknown-degradation budget; lower on improvement, never raise. Re-capture with `xtask corpus audit-gate --update`. Deliberate raises: 1884→1974→2374; 2374→3794 (#435 — the parser stopped lossily absorbing 9 non-official convention forms — ゴチック / 枠囲み / 表罫囲み / 横一列 / 縦中横+小書き / multi-quote 縦中横 / 傍点（白丸）・傍点◎ / 中見出 close okurigana / bare 縦中横 range — which now decline to lossless Unknown, per ADR-0022/0027; each is still served by a Tier1 lint / --degraded render)."
 }

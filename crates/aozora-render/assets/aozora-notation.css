@@ -29,6 +29,7 @@
   --aozora-accent-bg: rgb(11 102 195 / 12%);
   --aozora-border: #c8c8c8;
   --aozora-serif: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
+  --aozora-sans: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
   --aozora-gaiji-fg: #7a5900;
   --aozora-gaiji-bg: #fff7d6;
   --aozora-gaiji-border: #d4b24a;
@@ -194,6 +195,11 @@
 /* ── 太字・斜体 (§emphasis) ────────────────────────────────────────── */
 .aozora-futoji {
   font-weight: 700;
+}
+
+/* ゴシック体 — a gothic (sans-serif) typeface, distinct from 太字 weight. */
+.aozora-goshikku {
+  font-family: var(--aozora-sans);
 }
 
 .aozora-shatai {
@@ -385,6 +391,7 @@
 
 /* ── 太字・斜体・字詰め・組み コンテナ (§container styles) ─────────── */
 .aozora-container-futoji { font-weight: 700; }
+.aozora-container-goshikku { font-family: var(--aozora-sans); }
 
 .aozora-container-shatai {
   font-style: normal;
@@ -423,7 +430,8 @@
 .aozora-line-font-large,
 .aozora-line-font-medium,
 .aozora-line-font-small,
-.aozora-line-futoji {
+.aozora-line-futoji,
+.aozora-line-goshikku {
   display: none;
 }
 

@@ -4,17 +4,17 @@
     "feature": "keigakomi",
     "level": "should",
     "spec_section": "6.7",
-    "note": "[provenance:reference-impl-aligned §6.7 + AOZORA-ANNOTATION 2026-07-01] The inline frame decoration accepts either particle — `は` (is framed) or `に` (frame applied to) — and the corpus spells the keyword 罫囲み / 枠囲み / 枠囲い (okurigana variant). This vector pins the に-particle + 枠囲み form; canonical serialize folds both the particle (に→は) and the keyword (枠囲み→罫囲み) so the construct re-forms identically, idempotent after pass 1 (§7.6). Distinct from 太字/斜体, which are は-only (§6.12)."
+    "note": "[provenance:reference-impl-aligned §6.7 + ADR-0027] The core recognises only the canonical 罫囲み; the non-canonical, corpus-rare 枠囲み / 枠囲い decline to a lossless Unknown directive (kept byte-exact, never folded to 罫囲み). A Tier1 lint suggests は罫囲み. This vector pins the に-particle + 枠囲み form declining verbatim. Bytes from the reference parser."
   },
   "source": "新興河上［＃「新興河上」に枠囲み］。\n",
   "expected": {
-    "html": "<p><span class=\"aozora-keigakomi-inline\">新興河上</span>。</p>\n",
-    "serialize": "新興河上［＃「新興河上」は罫囲み］。\n",
+    "html": "<p>新興河上<span class=\"aozora-directive\" hidden>［＃「新興河上」に枠囲み］</span>。</p>\n",
+    "serialize": "新興河上［＃「新興河上」に枠囲み］。\n",
     "nodes": [
       {
-        "kind": "emphasis",
+        "kind": "directive",
         "span": {
-          "start": 0,
+          "start": 12,
           "end": 51
         }
       }
@@ -43,6 +43,15 @@
         }
       }
     ],
-    "diagnostics": []
+    "diagnostics": [
+      {
+        "code": "non-canonical-directive",
+        "severity": "warning",
+        "span": {
+          "start": 12,
+          "end": 51
+        }
+      }
+    ]
   }
 }

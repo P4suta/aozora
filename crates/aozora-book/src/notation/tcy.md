@@ -101,8 +101,7 @@ wanting the print or e-book variant above overrides that one rule. See
 
 ```rust,ignore
 pub struct Tcy<'src> {
-    pub text: &'src str,
-    pub form: TcyForm,    // Inline | Container
+    pub text: &'src str,   // inline only — 縦中横 has no container form (§ above)
     pub span: Span,
 }
 ```

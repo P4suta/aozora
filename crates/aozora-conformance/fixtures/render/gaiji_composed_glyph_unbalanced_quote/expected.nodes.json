@@ -1,1 +1,1 @@
-{"schemaVersion":1,"data":[{"kind":"directive","span":{"start":12,"end":91}},{"kind":"ruby","span":{"start":104,"end":119}}]}
+{"schemaVersion":2,"data":[{"kind":"directive","span":{"start":12,"end":91}},{"kind":"ruby","span":{"start":104,"end":119}}]}

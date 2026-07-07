@@ -48,8 +48,9 @@ pub enum NodeKind {
     Warichu,
     /// 罫囲み (keigakomi) — ruled box.
     Framed,
-    /// 太字 line marker (`この行はゴシック体`) — bolds the line it sits on.
-    LineBold,
+    /// ゴシック体 line marker (`この行はゴシック体`) — sets the line it sits on
+    /// in gothic ([`crate::Format::Gothic`], distinct from 太字).
+    LineGothic,
     /// Absolute font-size line marker (`大文字` … `特大文字、太字`) — sizes the
     /// line it sits on.
     LineFontSize,
@@ -103,7 +104,7 @@ impl NodeKind {
         Self::Center,
         Self::Warichu,
         Self::Framed,
-        Self::LineBold,
+        Self::LineGothic,
         Self::LineFontSize,
         Self::PageBreak,
         Self::SectionBreak,
@@ -140,7 +141,7 @@ impl NodeKind {
             Self::Center => "center",
             Self::Warichu => "warichu",
             Self::Framed => "framed",
-            Self::LineBold => "lineBold",
+            Self::LineGothic => "lineGothic",
             Self::LineFontSize => "lineFontSize",
             Self::PageBreak => "pageBreak",
             Self::SectionBreak => "sectionBreak",

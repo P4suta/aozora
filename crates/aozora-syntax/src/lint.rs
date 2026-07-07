@@ -38,6 +38,22 @@ const EXACT: &[(&str, &str)] = &[
     ("改行を挿入", "改行"),
     ("斜体字", "斜体"),
     ("中中見出し", "中見出し"),
+    // ゴチック → ゴシック体 (the parser recognises ゴシック体 as a first-class
+    // gothic construct; ゴチック is the corpus-vanishing variant spelling, #435).
+    ("ゴチック", "ゴシック体"),
+    ("ここからゴチック", "ここからゴシック体"),
+    ("ここでゴチック終わり", "ここでゴシック体終わり"),
+    // 傍点 marker-suffix spellings → the canonical mark-prefix keyword (#435).
+    ("傍点（白丸）", "白丸傍点"),
+    ("傍点◎", "二重丸傍点"),
+    // 見出し close 送り仮名 elision (中見出 → 中見出し) — the heading-scope
+    // analogue of the 字下げ close okurigana entries above (#435).
+    ("中見出終わり", "中見出し終わり"),
+    ("大見出終わり", "大見出し終わり"),
+    ("小見出終わり", "小見出し終わり"),
+    ("ここで中見出終わり", "ここで中見出し終わり"),
+    ("ここで大見出終わり", "ここで大見出し終わり"),
+    ("ここで小見出終わり", "ここで小見出し終わり"),
     // Region-close synonyms — okurigana drift / 文字下げ / 横書き=横組み /
     // 横組みの表=表, all resolving to the canonical `ここで…終わり` close.
     ("ここで字下げおわり", "ここで字下げ終わり"),
@@ -204,6 +220,15 @@ fn forward_form(body: &str) -> Option<String> {
         ("は上付き", "は上付き小文字"),
         ("はすべて下付き小文字", "は下付き小文字"),
         ("は地付け", "は地付き"),
+        // #435 — parser now declines these; the lint suggests the canonical.
+        ("はゴチック", "はゴシック体"),
+        ("は枠囲み", "は罫囲み"),
+        ("は枠囲い", "は罫囲み"),
+        ("に枠囲み", "は罫囲み"),
+        ("に枠囲い", "は罫囲み"),
+        ("は横一列", "は縦中横"),
+        ("に傍点（白丸）", "に白丸傍点"),
+        ("に傍点◎", "に二重丸傍点"),
     ] {
         if let Some(head) = body.strip_suffix(variant_kw) {
             return Some(format!("{head}{canonical_kw}"));
@@ -290,6 +315,19 @@ pub const CATALOGUE_SAMPLES: &[&str] = &[
     "「強調」ゴシック体",
     "「語」は傍点",
     "「語」の傍点",
+    // #435 — the parser declines these; the lint suggests the canonical.
+    "ゴチック",
+    "ここでゴチック終わり",
+    "傍点（白丸）",
+    "傍点◎",
+    "中見出終わり",
+    "ここで中見出終わり",
+    "「梅」はゴチック",
+    "「梅」は枠囲み",
+    "「梅」に枠囲い",
+    "「!?」は横一列",
+    "「意志」に傍点（白丸）",
+    "「意志」に傍点◎",
     // Sic-marker annotation notes.
     "「甫」に「ママ」注記",
     "「甫」にママの注記",

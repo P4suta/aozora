@@ -1,1 +1,1 @@
-{"schemaVersion":1,"data":[{"kind":"nested_ruby","severity":"error","source":"source","span":{"start":12,"end":15}}]}
+{"schemaVersion":2,"data":[{"kind":"nested_ruby","severity":"error","source":"source","span":{"start":12,"end":15}}]}

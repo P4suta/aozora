@@ -7,13 +7,13 @@
 // ─────────────────────────────────────────────────────────
 
 /** Cross-cutting tag for an AST node or `NodeRef` projection. */
-export type NodeKind = "ruby" | "bouten" | "combineUpright" | "gaiji" | "indent" | "alignEnd" | "center" | "warichu" | "framed" | "lineBold" | "lineFontSize" | "pageBreak" | "sectionBreak" | "bodyEnd" | "forcedBreak" | "heading" | "headingHint" | "illustration" | "kaeriten" | "directive" | "angleQuote" | "emphasis" | "marginNote" | "container" | "containerOpen" | "containerClose";
+export type NodeKind = "ruby" | "bouten" | "combineUpright" | "gaiji" | "indent" | "alignEnd" | "center" | "warichu" | "framed" | "lineGothic" | "lineFontSize" | "pageBreak" | "sectionBreak" | "bodyEnd" | "forcedBreak" | "heading" | "headingHint" | "illustration" | "kaeriten" | "directive" | "angleQuote" | "emphasis" | "marginNote" | "container" | "containerOpen" | "containerClose";
 
 /** Pair kind for `pairs_json` output. */
 export type PairKind = "bracket" | "ruby" | "angleQuote" | "tortoise" | "quote";
 
 /** Container kind for `container_pairs` output. */
-export type ContainerKind = "indent" | "warichu" | "framed" | "alignEnd" | "lineWidth" | "boutenRange" | "bold" | "italic" | "heading" | "columns" | "table" | "horizontal" | "fontSize" | "smallScript" | "caption" | "combineUprightRange";
+export type ContainerKind = "indent" | "warichu" | "framed" | "alignEnd" | "lineWidth" | "boutenRange" | "bold" | "gothic" | "italic" | "heading" | "columns" | "table" | "horizontal" | "fontSize" | "smallScript" | "caption";
 
 /** Diagnostic severity tier (wire field `severity`). */
 export type Severity = "error" | "warning" | "note";
@@ -80,7 +80,7 @@ export interface ContainerPair {
 
 /** Generic wire envelope. Every endpoint emits this top-level shape. */
 export interface JsonEnvelope<T> {
-  schemaVersion: 1;
+  schemaVersion: 2;
   data: ReadonlyArray<T>;
 }
 

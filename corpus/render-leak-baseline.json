@@ -1,8 +1,8 @@
 {
   "note": "Render-leak ratchet: per-marker (files, occurrences) of aozora notation control markers (《…》 / ｜ / ［＃…］) surviving into VISIBLE rendered HTML. Leaks may only SHRINK — any rise fails the gate; ratchet down on improvement with `--update`. Run `xtask corpus render-audit` to find WHICH document regressed. The residual is a documented long tail (2026-07-03, campaign #399): mixed kanji+gaiji ruby base (E2), ヵ/ヶ ateji declines, symbol/digit/Cyrillic/kanbun bases, and authorial 《…》 with no ruby base (a correct literal, not a leak) — irreducible or tracked follow-ups.",
   "ruby": {
-    "files": 293,
-    "occurrences": 8711
+    "files": 292,
+    "occurrences": 8710
   },
   "bar": {
     "files": 452,

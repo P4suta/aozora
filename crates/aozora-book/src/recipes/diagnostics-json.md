@@ -33,7 +33,7 @@ fn main() {
 ## Expected output
 
 ```json
-{"schemaVersion":1,"data":[{"kind":"source_contains_pua","severity":"warning","source":"source","span":{"start":3,"end":6},"codepoint":""}]}
+{"schemaVersion":2,"data":[{"kind":"source_contains_pua","severity":"warning","source":"source","span":{"start":3,"end":6},"codepoint":""}]}
 ```
 
 Each entry is `{ kind, severity, source, span: { start, end },

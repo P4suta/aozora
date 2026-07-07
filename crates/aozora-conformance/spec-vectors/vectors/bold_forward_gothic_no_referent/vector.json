@@ -4,12 +4,12 @@
     "feature": "emphasis",
     "level": "should",
     "spec_section": "6.12",
-    "note": "[provenance:reference-impl-aligned §6.12 + AOZORA-ANNOTATION] No-referent ゴシック体 is self-contained Bold; serialize canonicalises ゴシック体→太字 (idempotent after pass 1, §6.12). The target is absent from the preceding text (no-referent), so §6.14 degradation no longer applies; serialize reconstructs the bracket byte-exact (§7.6). Bytes from the reference parser."
+    "note": "[provenance:reference-impl-aligned §6.12 + ADR-0027] ゴシック体 is a first-class gothic construct, distinct from 太字 (the corpus uses them in disjoint works; gothic is a typeface family, not a bold weight). A no-referent ゴシック体 is a self-contained gothic run; serialize preserves the ゴシック体 spelling byte-exact (§7.6) — it is NOT folded to 太字. Bytes from the reference parser."
   },
   "source": "本文［＃「強調」はゴシック体］。\n",
   "expected": {
-    "html": "<p>本文<b class=\"aozora-futoji\">強調</b>。</p>\n",
-    "serialize": "本文［＃「強調」は太字］。\n",
+    "html": "<p>本文<b class=\"aozora-goshikku\">強調</b>。</p>\n",
+    "serialize": "本文［＃「強調」はゴシック体］。\n",
     "nodes": [
       {
         "kind": "emphasis",

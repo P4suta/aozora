@@ -2,7 +2,7 @@
 //! projection of the shared `aozora::json` envelope.
 //!
 //! These verify the argv / dispatch / stdin / file plumbing and that
-//! the `{ "schemaVersion": 1, "data": [ … ] }` envelope reaches
+//! the `{ "schemaVersion": 2, "data": [ … ] }` envelope reaches
 //! stdout. The byte-level shape of each envelope is pinned by the unit
 //! tests in `aozora::json`; here we only confirm the CLI surfaces it
 //! (and that `slugs` needs no input while `gaiji` resolves references).
@@ -19,7 +19,7 @@ const BIN: &str = env!("CARGO_BIN_EXE_aozora");
 /// Every wire envelope opens with this versioned header; asserting the
 /// literal prefix is a structural check that needs no JSON parser in
 /// the (deliberately dep-light) test crate.
-const ENVELOPE_PREFIX: &str = r#"{"schemaVersion":1,"#;
+const ENVELOPE_PREFIX: &str = r#"{"schemaVersion":2,"#;
 
 fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
     let mut cmd = Command::new(BIN);

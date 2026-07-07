@@ -58,7 +58,7 @@ aozora-indent-8
 aozora-kaeriten
 aozora-keigakomi-inline
 aozora-kogaki-right
-aozora-line-futoji
+aozora-line-goshikku
 aozora-margin-note
 aozora-page-break
 aozora-ruby-left

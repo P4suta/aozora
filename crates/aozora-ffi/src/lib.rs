@@ -219,7 +219,7 @@ pub unsafe extern "C" fn aozora_document_to_html(
 ///
 /// On success, writes the bytes to `*out_json` and returns
 /// [`AozoraStatus::Ok`]. Empty document →
-/// `{"schemaVersion":1,"data":[]}`. The caller MUST call
+/// `{"schemaVersion":2,"data":[]}`. The caller MUST call
 /// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
 ///
 /// Wire format is defined in [`aozora::json`] and shared bit-for-bit
@@ -292,7 +292,7 @@ pub unsafe extern "C" fn aozora_document_diagnostics_text(
 ///
 /// On success, writes the bytes to `*out_json` and returns
 /// [`AozoraStatus::Ok`]. Empty parse →
-/// `{"schemaVersion":1,"data":[]}`. The caller MUST call
+/// `{"schemaVersion":2,"data":[]}`. The caller MUST call
 /// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
 ///
 /// Wire format is defined in [`aozora::json`] and shared bit-for-bit
@@ -332,7 +332,7 @@ pub unsafe extern "C" fn aozora_document_nodes_json(
 ///
 /// On success, writes the bytes to `*out_json` and returns
 /// [`AozoraStatus::Ok`]. Empty parse →
-/// `{"schemaVersion":1,"data":[]}`. The caller MUST call
+/// `{"schemaVersion":2,"data":[]}`. The caller MUST call
 /// [`aozora_bytes_free`] on the returned [`AozoraBytes`].
 ///
 /// Wire format is defined in [`aozora::json`] and shared bit-for-bit
@@ -450,7 +450,7 @@ mod tests {
         let json = unsafe { core::str::from_utf8(slice::from_raw_parts(diag.ptr, diag.len)) }
             .expect("json is utf8");
         // Envelope shape — wire format is {"schemaVersion":N,"data":[…]}.
-        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
+        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
         unsafe { aozora_bytes_free(diag) };
 
         unsafe { aozora_document_free(doc) };
@@ -472,7 +472,7 @@ mod tests {
         assert_eq!(status, AozoraStatus::Ok as c_int);
         let json = unsafe { core::str::from_utf8(slice::from_raw_parts(nodes.ptr, nodes.len)) }
             .expect("json is utf8");
-        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
+        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
         unsafe { aozora_bytes_free(nodes) };
         unsafe { aozora_document_free(doc) };
     }

@@ -12,7 +12,7 @@ Inspection methods come in two flavours:
   :meth:`Document.pairs`, :meth:`Document.container_pairs` — return native
   ``list[dict]``;
 * the ``*_json()`` accessors return the raw, byte-identical wire envelope
-  string (``{"schemaVersion": 1, "data": [...]}``) shared with the
+  string (``{"schemaVersion": 2, "data": [...]}``) shared with the
   WASM / FFI / Go drivers.
 
 The compiled extension lives in the private submodule

@@ -7,7 +7,7 @@ import aozora
 
 def _envelope(s: str) -> list:
     obj = json.loads(s)
-    assert obj["schemaVersion"] == 1
+    assert obj["schemaVersion"] == 2
     assert isinstance(obj["data"], list)
     return obj["data"]
 
@@ -28,7 +28,7 @@ def test_slugs_parsed_matches_json():
 def test_gaiji_resolutions_empty_for_plain_text():
     d = aozora.Document("plain text")
     assert d.gaiji() == []
-    assert d.gaiji_json() == '{"schemaVersion":1,"data":[]}'
+    assert d.gaiji_json() == '{"schemaVersion":2,"data":[]}'
 
 
 def test_gaiji_resolutions_resolves_reference():
