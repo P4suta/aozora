@@ -38,7 +38,7 @@ const FIXTURES: Fixture[] = [
   {
     family: 'tcy',
     label: '縦中横',
-    text: '（［＃縦中横］10［＃縦中横終わり］）「かいともし、とうよ」',
+    text: '（10［＃「10」は縦中横］）「かいともし、とうよ」',
   },
   {
     family: 'kaeriten',
