@@ -76,7 +76,7 @@ jobs:
 
       - name: Install Rust
         if: env.HAS_APP == 'true'
-        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
 
@@ -85,7 +85,7 @@ jobs:
       # it release-plz only warns and skips.
       - name: Install cargo-semver-checks
         if: env.HAS_APP == 'true'
-        uses: taiki-e/install-action@9bcaee1dcae34154180f412e2fa69355a7cda9f6 # v2.82.6
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
         with:
           tool: cargo-semver-checks
 
@@ -137,7 +137,7 @@ jobs:
 
       - name: Install Rust
         if: env.HAS_APP == 'true'
-        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
 
