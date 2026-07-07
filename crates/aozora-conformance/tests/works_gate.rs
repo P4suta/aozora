@@ -23,24 +23,15 @@
 //! UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test works_gate
 //! ```
 //!
-//! Vendored works and the family each was chosen to exercise:
-//!
-//! | slug                | families exercised                                    |
-//! |---------------------|-------------------------------------------------------|
-//! | akizuki-genshiroku  | 返り点/訓点 (kaeriten, 296×) + 外字                    |
-//! | caldecott-queen     | 挿絵 (illustration, 66× `<img>`)                       |
-//! | chiri-kaeru         | 外字 (gaiji, 24×)                                      |
-//! | fukuzawa-nikushoku  | 割り注 (warichu) + 左ルビ + 字下げ + 外字             |
-//! | miyoshi-nansoshu    | 見出し + 字下げ + 文字サイズ(小) + 外字 + ルビ        |
-//! | murayama-ahiru      | 見出し + 字下げ + ルビ (clean children's story)        |
-//! | ogawa-koinobori     | near-plain, ルビ-heavy (94×)                           |
-//! | orikuchi-matoi      | 傍線 (bosen, 98×) + 外字 + ルビ                        |
-//! | orikuchi-sekijin    | 縦中横 + 傍線 + 返り点 + 傍点 + 折り返し字下げ + ルビ  |
-//! | potter-peter        | 挿絵 (illustration, 60× `<img>`) + 字下げ              |
-//! | shimizu-kagaku      | 割り注 + 傍点 + ルビ (bar + base forms)                |
-//! | terada-tosa         | 傍点 (bouten, 84×) + 外字 + 字下げ + 地付き            |
-//! | toyoshima-kamoryo   | near-plain (pure paragraphs)                          |
-//! | watanabe-hanayome   | 縦中横 + 太字 + 字下げ + 外字 + ルビ                   |
+//! The original 14 works were hand-picked; the rest were selected reproducibly
+//! by `xtask corpus select-works` (a deterministic greedy family set-cover under
+//! a source-byte budget) — see `fixtures/works-selection.toml` for each work's
+//! corpus path and family profile. Rather than hand-maintain a "families
+//! exercised" table, `works_family_coverage_holds` pins the union of `aozora-*`
+//! render classes the whole set covers (`fixtures/works/COVERAGE.txt`).
+
+use std::collections::BTreeSet;
+use std::{env, fs};
 
 use aozora::Document;
 use aozora_conformance::{RenderFixture, fixtures_root};
@@ -65,4 +56,56 @@ fn load_works_fixtures() -> Vec<RenderFixture> {
     let fixtures = RenderFixture::load_group(&fixtures_root(), "works");
     assert!(!fixtures.is_empty(), "no works fixtures found");
     fixtures
+}
+
+/// The set of `aozora-*` render classes the whole works golden set exercises —
+/// an executable replacement for a hand-maintained "families exercised" table.
+/// Deleting a fixture that was the sole source of a class fails this test; new
+/// classes are fine (the check is coverage ⊇ baseline). Re-seed the committed
+/// `works/COVERAGE.txt` with `UPDATE_GOLDEN=1`.
+#[test]
+fn works_family_coverage_holds() {
+    let mut classes: BTreeSet<String> = BTreeSet::new();
+    for fixture in &load_works_fixtures() {
+        let html = Document::new(fixture.source.clone()).parse().to_html();
+        collect_aozora_classes(&html, &mut classes);
+    }
+    let mut rendered = String::new();
+    for class in &classes {
+        rendered.push_str(class);
+        rendered.push('\n');
+    }
+
+    let baseline = fixtures_root().join("works").join("COVERAGE.txt");
+    if env::var_os("UPDATE_GOLDEN").is_some() {
+        fs::write(&baseline, &rendered).expect("write COVERAGE.txt");
+        return;
+    }
+    let expected = fs::read_to_string(&baseline)
+        .expect("works/COVERAGE.txt missing — run with UPDATE_GOLDEN=1 to seed");
+    let missing: Vec<&str> = expected
+        .lines()
+        .filter(|l| !l.is_empty())
+        .filter(|c| !classes.contains(*c))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "works golden set no longer covers these render classes (a fixture that \
+         exercised them was removed?): {missing:?}. If intended, re-seed with UPDATE_GOLDEN=1."
+    );
+}
+
+/// Collect every `aozora-<token>` run (render class) appearing in `html`.
+fn collect_aozora_classes(html: &str, out: &mut BTreeSet<String>) {
+    let bytes = html.as_bytes();
+    let mut i = 0;
+    while let Some(pos) = html[i..].find("aozora-") {
+        let start = i + pos;
+        let mut end = start + "aozora-".len();
+        while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'-') {
+            end += 1;
+        }
+        out.insert(html[start..end].to_owned());
+        i = end;
+    }
 }
