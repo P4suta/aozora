@@ -299,31 +299,36 @@ fn degraded_reductions_are_render_only() {
 }
 
 /// Meaning-preservation axis (the structural fix): the parser deliberately keeps
-/// `中文字、ゴシック体` Unknown *to preserve its spelling* (only `、太字` is a
-/// recognised line weight). Tier1 must not override that preservation decision —
-/// the lossy fold lives in Tier2, reachable only from `--degraded`. This closes
-/// the recognition-vs-meaning gap that let the fold sit in Tier1 undetected.
+/// `ここから最後まで3字下げ` Unknown *to preserve its until-EOF scope* (the parser
+/// has no until-end indent concept). Tier1 must not override that preservation
+/// decision — the lossy reduction (dropping 最後まで) lives in Tier2, reachable
+/// only from `--degraded`. This closes the recognition-vs-meaning gap that let a
+/// lossy fold sit in Tier1 undetected.
+///
+/// (Before #435 this axis used `中文字、ゴシック体` → `中文字、太字`; that fold was
+/// removed when ゴシック体 became a first-class gothic construct, so the axis now
+/// exercises a still-lossy Tier2 rule.)
 #[test]
 fn tier1_never_overrides_parser_spelling_preservation() {
-    let preserved = "中文字、ゴシック体";
-    // The parser keeps it Unknown (inert) — spelling preserved.
-    let html = Document::new(format!("［＃{preserved}］\n強調\n"))
+    let preserved = "ここから最後まで3字下げ";
+    // The parser keeps it Unknown (inert) — scope preserved.
+    let html = Document::new(format!("［＃{preserved}］\n本文\n"))
         .parse()
         .to_html();
     assert!(
         html.contains("aozora-directive"),
-        "parser must keep {preserved:?} Unknown to preserve its spelling"
+        "parser must keep {preserved:?} Unknown to preserve its scope"
     );
-    // Tier1 must NOT resolve it (that would launder the spelling into 太字).
+    // Tier1 must NOT resolve it (that would launder the dropped 最後まで scope).
     assert_eq!(
         canonical_directive(preserved),
         None,
-        "Tier1 must not override the parser's spelling-preservation of {preserved:?}"
+        "Tier1 must not override the parser's preservation of {preserved:?}"
     );
     // It is a Tier2 reduction instead (opt-in, render-only).
     assert_eq!(
         degraded_directive(preserved).as_deref(),
-        Some("中文字、太字")
+        Some("ここから3字下げ")
     );
 }
 

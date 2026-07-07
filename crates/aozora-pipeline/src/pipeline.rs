@@ -527,11 +527,11 @@ fn promote_headings(
 const fn foldable_inline_attr(region: RegionFormat) -> Option<ForwardAttr> {
     match region {
         RegionFormat::Bold { padded: false } => Some(ForwardAttr::Bold),
+        RegionFormat::Gothic { padded: false } => Some(ForwardAttr::Gothic),
         RegionFormat::Italic { padded: false } => Some(ForwardAttr::Italic),
         RegionFormat::Caption { padded: false } => Some(ForwardAttr::Caption),
         RegionFormat::Bouten { kind, position } => Some(ForwardAttr::Bouten { kind, position }),
         RegionFormat::SmallScript(position) => Some(ForwardAttr::SmallScript(position)),
-        RegionFormat::CombineUpright => Some(ForwardAttr::CombineUpright),
         _ => None,
     }
 }

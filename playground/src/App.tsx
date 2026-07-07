@@ -15,7 +15,7 @@ import SettingsPanel from './components/SettingsPanel';
 import { error as logError } from './logger';
 import { t, tf } from './i18n';
 
-const EMPTY_ENVELOPE = '{"schemaVersion":1,"data":[]}';
+const EMPTY_ENVELOPE = '{"schemaVersion":2,"data":[]}';
 
 interface ParsePayload {
   html: string;

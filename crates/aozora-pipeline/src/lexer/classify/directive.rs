@@ -48,7 +48,7 @@ enum BodyFamily {
     SectionKaimihiraki,
     AlignEnd0,           // 地付き
     CenterMarker,        // ページの左右中央 / 中央揃え
-    LineBold,            // この行はゴシック体
+    LineGothic,          // この行はゴシック体
     KeigakomiOpen,       // 罫囲み
     KeigakomiClose,      // 罫囲み終わり
     IndentBlock1,        // ここから字下げ → Indent { amount: 1 }
@@ -103,12 +103,6 @@ enum BodyFamily {
     /// and open vs close.
     CaptionRange,
 
-    /// 縦中横 paired range (`縦中横` open / `縦中横終わり` close). A corpus
-    /// convention (not in the official 注記一覧, which defines only the
-    /// forward-reference `「X」は縦中横` leaf), kept as a tolerant extension.
-    /// `parse_tcy_range_body` reads the full body for open vs close.
-    CombineUprightRange,
-
     /// `ここから割り注` — block 割り注 opener (the multi-line region form;
     /// the inline `［＃割り注］` is [`Self::WarichuOpen`]). → `Container(Warichu)`.
     WarichuBlockOpen,
@@ -153,7 +147,7 @@ const fn body_family_mode(family: BodyFamily) -> MatchMode {
         | BodyFamily::SectionKaimihiraki
         | BodyFamily::AlignEnd0
         | BodyFamily::CenterMarker
-        | BodyFamily::LineBold
+        | BodyFamily::LineGothic
         | BodyFamily::KeigakomiOpen
         | BodyFamily::KeigakomiClose
         | BodyFamily::WarichuBlockOpen
@@ -187,8 +181,7 @@ const fn body_family_mode(family: BodyFamily) -> MatchMode {
         | BodyFamily::Emphasis
         | BodyFamily::SmallScriptRange
         | BodyFamily::CaptionRange
-        | BodyFamily::LineFontSize
-        | BodyFamily::CombineUprightRange => MatchMode::Reparse,
+        | BodyFamily::LineFontSize => MatchMode::Reparse,
     }
 }
 
@@ -330,14 +323,11 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "ここでキャプション終わり",
         family: BodyFamily::CaptionRange,
     },
-    // 縦中横 paired range. The bare 縦中横 needle anchors both the opener and
-    // its 縦中横終わり closer (re-parsed by `parse_tcy_range_body`). The
-    // forward-reference `「X」は縦中横` leaf starts with `「`, so it is not
-    // claimed here.
-    BodyPattern {
-        needle: "縦中横",
-        family: BodyFamily::CombineUprightRange,
-    },
+    // 縦中横 has no paired-range form (spec §6.3 defines only the forward-
+    // reference `「X」は縦中横` leaf). A bare `［＃縦中横］…［＃縦中横終わり］` is a
+    // non-canonical corpus convention that used to open a styling range,
+    // contradicting the handbook's own tcy page; it now stays verbatim
+    // `Directive{Unknown}` and never opens a block (#435).
     // Block 罫囲み (ここから form; the bare 罫囲み is also KeigakomiOpen).
     // LeftmostLongest keeps ここから罫囲み over the ここから indent prefix.
     BodyPattern {
@@ -348,17 +338,10 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "ここで罫囲み終わり",
         family: BodyFamily::KeigakomiClose,
     },
-    // 表罫囲み (table-rule frame) renders identically to 罫囲み in the
-    // reference converter, so it folds into the same Rule enclosure (like
-    // 枠囲み/枠囲い) and canonicalizes to 罫囲み on serialize.
-    BodyPattern {
-        needle: "ここから表罫囲み",
-        family: BodyFamily::KeigakomiOpen,
-    },
-    BodyPattern {
-        needle: "ここで表罫囲み終わり",
-        family: BodyFamily::KeigakomiClose,
-    },
+    // 表罫囲み / ミシン罫囲み (specific rule styles) are non-canonical and
+    // corpus-vanishing (2 / 1 works); they are *not* folded onto Rule (which
+    // would erase the rule-style spelling) — they decline to Directive{Unknown}
+    // (lossless verbatim), the core recognising only the canonical 罫囲み (#435).
     // Block 割り注 (multi-line region; inline ［＃割り注］ stays WarichuOpen).
     BodyPattern {
         needle: "ここから割り注",
@@ -485,7 +468,7 @@ static BODY_PATTERNS: &[BodyPattern] = &[
     },
     BodyPattern {
         needle: "この行はゴシック体",
-        family: BodyFamily::LineBold,
+        family: BodyFamily::LineGothic,
     },
     // Absolute font-size line directives (`大文字` … `特大文字、太字`). All four
     // size keywords anchor `LineFontSize`; `parse_line_font_size` re-reads the
@@ -624,17 +607,15 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         needle: "ここで斜体終わり",
         family: BodyFamily::Emphasis,
     },
-    // ゴシック体 / ゴチック — corpus spellings of 太字 (bold). The official
-    // guide writes 太字（ゴシック） and prescribes 太字 as the keyword
-    // (annotation/emphasis.html), so both canonicalise to `太字` on
-    // serialize. The bare openers also anchor their `…終わり` closers and
-    // the forward-reference `「X」はゴシック体` leaf.
+    // ゴシック体 — a first-class gothic typeface, distinct from 太字 (#435):
+    // the corpus uses ゴシック体 and 太字 in disjoint works and print sets a
+    // gothic family apart from a bold weight, so the parser keeps its own
+    // spelling and never folds it to 太字. The bare openers also anchor their
+    // `…終わり` closers and the forward-reference `「X」はゴシック体` leaf.
+    // ゴチック (1 corpus work) is *not* recognised — it declines to
+    // Directive{Unknown} and a Tier1 lint suggests ゴシック体.
     BodyPattern {
         needle: "ゴシック体",
-        family: BodyFamily::Emphasis,
-    },
-    BodyPattern {
-        needle: "ゴチック",
         family: BodyFamily::Emphasis,
     },
     BodyPattern {
@@ -642,15 +623,7 @@ static BODY_PATTERNS: &[BodyPattern] = &[
         family: BodyFamily::Emphasis,
     },
     BodyPattern {
-        needle: "ここからゴチック",
-        family: BodyFamily::Emphasis,
-    },
-    BodyPattern {
         needle: "ここでゴシック体終わり",
-        family: BodyFamily::Emphasis,
-    },
-    BodyPattern {
-        needle: "ここでゴチック終わり",
         family: BodyFamily::Emphasis,
     },
     // Kaeriten okurigana opener (full-width left paren U+FF08).
@@ -1022,7 +995,7 @@ pub(super) fn classify_annotation_body(
                 None,
             ))
         }
-        BodyFamily::LineBold => Some((EmitKind::Aozora(alloc.line(LineFormat::Bold)), None)),
+        BodyFamily::LineGothic => Some((EmitKind::Aozora(alloc.line(LineFormat::Gothic)), None)),
         BodyFamily::LineFontSize => parse_line_font_size(body).map(|(size, bold)| {
             (
                 EmitKind::Aozora(alloc.line(LineFormat::FontSizeAbsolute { size, bold })),
@@ -1352,11 +1325,11 @@ pub(super) fn classify_annotation_body(
             // `太字` / `斜体` / `ここから太字` / `ここで斜体終わり` … —
             // re-parse the full body for the kind, the block vs inline
             // form, and open vs close.
-            let (is_italic, padded, is_close) = parse_emphasis_body(body)?;
-            let region = if is_italic {
-                RegionFormat::Italic { padded }
-            } else {
-                RegionFormat::Bold { padded }
+            let (weight, padded, is_close) = parse_emphasis_body(body)?;
+            let region = match weight {
+                EmphasisWeight::Bold => RegionFormat::Bold { padded },
+                EmphasisWeight::Gothic => RegionFormat::Gothic { padded },
+                EmphasisWeight::Italic => RegionFormat::Italic { padded },
             };
             Some((open_or_close(region, is_close), None))
         }
@@ -1378,13 +1351,6 @@ pub(super) fn classify_annotation_body(
                 open_or_close(RegionFormat::Caption { padded }, is_close),
                 None,
             ))
-        }
-
-        BodyFamily::CombineUprightRange => {
-            // `縦中横` open / `縦中横終わり` close — re-parse the full body so a
-            // needle-prefix-but-longer body (`縦中横ほげ`) declines cleanly.
-            let is_close = parse_tcy_range_body(body)?;
-            Some((open_or_close(RegionFormat::CombineUpright, is_close), None))
         }
     }
 }
@@ -1596,24 +1562,26 @@ fn strip_heading_style(s: &str) -> (HeadingStyle, &str) {
     .unwrap_or((HeadingStyle::Standard, s))
 }
 
-/// Heading level for a **close** marker only. Tolerates the 送り仮名-elided
-/// stem (`中見出` for `中見出し`) that appears in the wild solely on the
-/// closing `…見出終わり` — the open and forward-hint forms keep requiring the
-/// full `見出し` via [`parse_heading_keyword`]. A leveled close serializes back
-/// to the canonical `見出し` keyword, so the round-trip is a fixed point.
+/// Heading level for a **close** marker only. Requires the full `見出し`
+/// keyword — the 送り仮名-elided stem (`中見出` for `中見出し`) is **not**
+/// recognised (#435): it declines to `Directive{Unknown}` (lossless) and a
+/// Tier1 lint suggests the canonical `見出し終わり`, matching how the
+/// structurally identical `字下げ` close okurigana is handled. A leveled close
+/// serializes back to the canonical `見出し` keyword, so the round-trip is a
+/// fixed point.
 ///
-/// The bare `見出し` / `見出` close (no 大/中/小 level) yields `None` for the
-/// level, but only in [`HeadingStyle::Standard`]: a level-less serialize drops
-/// the style word, so `窓見出し` etc. must stay Unknown to remain lossless.
+/// The bare `見出し` close (no 大/中/小 level) yields `None` for the level, but
+/// only in [`HeadingStyle::Standard`]: a level-less serialize drops the style
+/// word, so `窓見出し` etc. must stay Unknown to remain lossless.
 fn parse_heading_close_level(s: &str) -> Option<(HeadingStyle, Option<HeadingKind>)> {
     let (style, rest) = strip_heading_style(s);
     let level = match rest {
-        "大見出し" | "大見出" => Some(HeadingKind::Large),
-        "中見出し" | "中見出" => Some(HeadingKind::Medium),
-        "小見出し" | "小見出" => Some(HeadingKind::Small),
+        "大見出し" => Some(HeadingKind::Large),
+        "中見出し" => Some(HeadingKind::Medium),
+        "小見出し" => Some(HeadingKind::Small),
         // Bare close: no level. Style-less only — `窓見出し` etc. never occur, and
         // a level-less serialize drops style, so keep those Unknown (lossless).
-        "見出し" | "見出" if matches!(style, HeadingStyle::Standard) => None,
+        "見出し" if matches!(style, HeadingStyle::Standard) => None,
         _ => return None,
     };
     Some((style, level))
@@ -1754,9 +1722,9 @@ fn resolve_indent_segment(segment: &str, block: &mut IndentBlock) -> Option<()> 
     // Decorative styles (co-applied, close with the generic 字下げ終わり).
     let styles = &mut block.styles;
     match segment {
-        "ゴシック体" | "ゴチック" if !styles.bold => styles.bold = true,
+        "ゴシック体" if !styles.gothic => styles.gothic = true,
         "横書き" | "横組み" if !styles.horizontal => styles.horizontal = true,
-        "罫囲み" | "表罫囲み" if !styles.framed => styles.framed = true,
+        "罫囲み" if !styles.framed => styles.framed = true,
         // 小さい活字 = one stage smaller (FontShift(-1)).
         "小さい活字" if styles.font.is_none() => {
             styles.font = Some(FontShift(NonZeroI8::new(-1)?));
@@ -1827,56 +1795,18 @@ fn parse_indent_line_layout(after: &str) -> Option<IndentLayout> {
 /// [`BOUTEN_KINDS`] source rather than a hand-maintained second table —
 /// so a mark can never be recognised in the forward direction
 /// (`keyword`) yet silently missed here. `×傍点` is accepted as an input
-/// alias for the canonical ばつ傍点. Unknown suffixes return `None`,
-/// letting the annotation fall through to the `Directive{Unknown}`
-/// catch-all. Lookup is a short linear scan (14 entries, dominated by
-/// the leading-byte mismatch on the first compare).
+/// alias for the canonical ばつ傍点. Only the canonical mark-prefix keywords
+/// (`白丸傍点`, …) are recognised; the non-canonical `傍点（白丸）` /
+/// `傍点◎` marker-suffix spellings decline to `Directive{Unknown}` (#435),
+/// served by a Tier1 lint suggesting the canonical keyword. Unknown suffixes
+/// return `None`, letting the annotation fall through to the
+/// `Directive{Unknown}` catch-all. Lookup is a short linear scan (14 entries,
+/// dominated by the leading-byte mismatch on the first compare).
 pub(super) fn bouten_kind_from_suffix(s: &str) -> Option<BoutenKind> {
     if s == "×傍点" {
         return Some(BoutenKind::Cross);
     }
-    if let Some(kind) = BOUTEN_KINDS.iter().copied().find(|k| k.keyword() == s) {
-        return Some(kind);
-    }
-    // Marker-suffix spelling: `傍点（白丸）` / `傍点◎` — 傍点 first, then the
-    // mark named parenthetically or as a bare glyph. Resolve it to the same
-    // kind the canonical marker-prefix keyword (`白丸傍点`) yields. Bare
-    // `傍点` already matched Goma above, so a non-empty remainder here is a
-    // genuine marker.
-    let marker = s.strip_prefix("傍点").filter(|m| !m.is_empty())?;
-    bouten_kind_from_marker(marker)
-}
-
-/// Resolve the mark named in the `傍点（白丸）` / `傍点◎` suffix spelling to a
-/// [`BoutenKind`]. Parenthetical names are derived DRY from [`BOUTEN_KINDS`]
-/// (`<name>傍点` equals a kind's [`keyword`](BoutenKind::keyword)); the glyph
-/// arm covers the bare-glyph spellings the corpus uses. No new [`BoutenKind`]
-/// — every marker maps onto an existing variant.
-fn bouten_kind_from_marker(marker: &str) -> Option<BoutenKind> {
-    // `（白丸）` -> `白丸`; a bare glyph passes through unchanged.
-    let name = marker
-        .strip_prefix('（')
-        .and_then(|inner| inner.strip_suffix('）'))
-        .unwrap_or(marker);
-    match name {
-        "◎" => return Some(BoutenKind::DoubleCircle),
-        "○" | "◯" => return Some(BoutenKind::WhiteCircle),
-        "●" => return Some(BoutenKind::Circle),
-        "×" | "✕" => return Some(BoutenKind::Cross),
-        "△" => return Some(BoutenKind::WhiteTriangle),
-        "▲" => return Some(BoutenKind::BlackTriangle),
-        _ => {}
-    }
-    // `白丸` matches the kind whose keyword() is `白丸傍点`. Guard against an
-    // empty name (`傍点（）`) matching Goma's bare `傍点` keyword.
-    (!name.is_empty())
-        .then(|| {
-            BOUTEN_KINDS
-                .iter()
-                .copied()
-                .find(|k| k.keyword().strip_suffix("傍点") == Some(name))
-        })
-        .flatten()
+    BOUTEN_KINDS.iter().copied().find(|k| k.keyword() == s)
 }
 
 /// Parse a 傍点/傍線 range-form body into `(kind, position, is_close)`.
@@ -1960,37 +1890,38 @@ fn parse_line_font_size(body: &str) -> Option<(AbsoluteSize, bool)> {
     Some((size, bold))
 }
 
-/// Parse a 縦中横 paired-range body into `is_close`. `縦中横` opens, `縦中横
-/// 終わり` closes; any other body (incl. the longer `縦中横ほげ`) declines to
-/// `Directive{Unknown}`.
-fn parse_tcy_range_body(body: &str) -> Option<bool> {
-    match body {
-        "縦中横" => Some(false),
-        "縦中横終わり" => Some(true),
-        _ => None,
-    }
+/// The weight / typeface axis of an emphasis range: 太字 / ゴシック体 / 斜体.
+#[derive(Clone, Copy)]
+pub(super) enum EmphasisWeight {
+    /// 太字 (bold).
+    Bold,
+    /// ゴシック体 (gothic) — distinct from 太字 (#435).
+    Gothic,
+    /// 斜体 (italic).
+    Italic,
 }
 
-/// Parse a 太字 / 斜体 range / block body into `(is_italic, padded, is_close)`.
-/// `padded` is `true` for the `ここから…` / `ここで…終わり` block form, `false`
-/// for the bare inline range. Returns `None` (→ `Directive{Unknown}`) for any
-/// non-emphasis body.
-pub(super) fn parse_emphasis_body(body: &str) -> Option<(bool, bool, bool)> {
+/// Parse a 太字 / ゴシック体 / 斜体 range / block body into
+/// `(weight, padded, is_close)`. `padded` is `true` for the `ここから…` /
+/// `ここで…終わり` block form, `false` for the bare inline range. Returns `None`
+/// (→ `Directive{Unknown}`) for any non-emphasis body. ゴシック体 keeps its own
+/// [`EmphasisWeight::Gothic`] rather than folding to 太字 (#435); ゴチック is not
+/// recognised (declines to Unknown + Tier1 → ゴシック体).
+pub(super) fn parse_emphasis_body(body: &str) -> Option<(EmphasisWeight, bool, bool)> {
+    use EmphasisWeight::{Bold, Gothic, Italic};
     Some(match body {
-        "太字" | "ゴシック体" | "ゴチック" => (false, false, false),
-        "太字終わり" | "ゴシック体終わり" | "ゴチック終わり" => {
-            (false, false, true)
-        }
-        "ここから太字" | "ここからゴシック体" | "ここからゴチック" => {
-            (false, true, false)
-        }
-        "ここで太字終わり" | "ここでゴシック体終わり" | "ここでゴチック終わり" => {
-            (false, true, true)
-        }
-        "斜体" => (true, false, false),
-        "斜体終わり" => (true, false, true),
-        "ここから斜体" => (true, true, false),
-        "ここで斜体終わり" => (true, true, true),
+        "太字" => (Bold, false, false),
+        "太字終わり" => (Bold, false, true),
+        "ここから太字" => (Bold, true, false),
+        "ここで太字終わり" => (Bold, true, true),
+        "ゴシック体" => (Gothic, false, false),
+        "ゴシック体終わり" => (Gothic, false, true),
+        "ここからゴシック体" => (Gothic, true, false),
+        "ここでゴシック体終わり" => (Gothic, true, true),
+        "斜体" => (Italic, false, false),
+        "斜体終わり" => (Italic, false, true),
+        "ここから斜体" => (Italic, true, false),
+        "ここで斜体終わり" => (Italic, true, true),
         _ => return None,
     })
 }

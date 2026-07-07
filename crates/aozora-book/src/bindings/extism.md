@@ -40,7 +40,7 @@ source text as input and returns a string:
 The four `*_json` exports each emit the standard JSON envelope
 
 ```json
-{ "schemaVersion": 1, "data": [ /* … entries … */ ] }
+{ "schemaVersion": 2, "data": [ /* … entries … */ ] }
 ```
 
 The per-endpoint `data` entry shapes — and the committed JSON Schema for

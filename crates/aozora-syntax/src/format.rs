@@ -93,11 +93,13 @@ impl AbsoluteSize {
 /// The style of an enclosure (囲み) — a ruled frame, a box glyph, and so on.
 ///
 /// 青空文庫 attests a family of enclosures that share the [`Format::Framed`]
-/// identity and differ only on this style axis: 罫囲み / 枠囲み / 枠囲い (a
-/// ruled frame), 「□」囲み (a box glyph), ○付き文字 (an encircled character),
-/// 点線丸囲み (a dotted circle), and 二重罫囲み (a double rule), plus the
-/// remaining tail ミシン罫囲み / 表罫囲み (folded onto [`Self::Rule`]). This
-/// mirrors how the 傍点 kinds share [`Format::Bouten`] via [`BoutenKind`].
+/// identity and differ only on this style axis: 罫囲み (a ruled frame),
+/// 「□」囲み (a box glyph), ○付き文字 (an encircled character), 点線丸囲み (a
+/// dotted circle), and 二重罫囲み (a double rule). The non-canonical, corpus-
+/// vanishing 枠囲み / 枠囲い / 表罫囲み / ミシン罫囲み are **not** members: the
+/// core declines them to `Directive{Unknown}` (lossless) rather than fold their
+/// spelling onto [`Self::Rule`] (#435). This mirrors how the 傍点 kinds share
+/// [`Format::Bouten`] via [`BoutenKind`].
 //
 // Deliberately NOT `#[non_exhaustive]`: every classifier / render / serialize
 // site must handle each kind explicitly, so a new member is compiler-flagged
@@ -106,7 +108,7 @@ impl AbsoluteSize {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum EnclosureKind {
-    /// 罫囲み / 枠囲み / 枠囲い — a ruled rectangular frame.
+    /// 罫囲み — a ruled rectangular frame.
     Rule,
     /// 「□」囲み — a box-glyph enclosure. The glyph is □ (U+25A1); the box is
     /// drawn by the stylesheet, so the glyph is re-emitted only on serialize.
@@ -206,14 +208,14 @@ pub enum IndentLayout {
 // Deliberately NOT `#[non_exhaustive]`: a fifth decoration must be
 // compiler-flagged everywhere it is consumed, never silently defaulting to
 // "absent" (the §7.6 param-drop bug class). The serialize and render sites
-// destructure `{ bold, horizontal, framed, font }` with no `..` directly; the
+// destructure `{ gothic, horizontal, framed, font }` with no `..` directly; the
 // Pandoc kvs + JSON projection funnel through [`Self::iter_formats`], which
 // destructures exhaustively too — so every channel is guarded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BlockStyles {
-    /// `ゴシック体` — co-applied bold weight (`Format::Bold`).
-    pub bold: bool,
+    /// `ゴシック体` — co-applied gothic typeface (`Format::Gothic`).
+    pub gothic: bool,
     /// `横書き` / `横組み` — horizontal writing (`Format::Horizontal`).
     pub horizontal: bool,
     /// `罫囲み` — ruled box around the block (`Format::Framed`).
@@ -227,7 +229,7 @@ pub struct BlockStyles {
 impl BlockStyles {
     /// No decorations — the overwhelmingly common plain-indent case.
     pub const EMPTY: Self = Self {
-        bold: false,
+        gothic: false,
         horizontal: false,
         framed: false,
         font: None,
@@ -241,7 +243,7 @@ impl BlockStyles {
     }
 
     /// Project the set to its [`Format`] identities in **canonical order**
-    /// (`bold`, `horizontal`, `framed`, `font`). Serialize, render, and the
+    /// (`gothic`, `horizontal`, `framed`, `font`). Serialize, render, and the
     /// Pandoc / wire `modifiers` path all consume this one order, so the
     /// canonical emission never drifts.
     ///
@@ -252,13 +254,13 @@ impl BlockStyles {
     /// for serialize / render.
     pub fn iter_formats(self) -> impl Iterator<Item = Format> {
         let Self {
-            bold,
+            gothic,
             horizontal,
             framed,
             font,
         } = self;
         [
-            bold.then_some(Format::Bold),
+            gothic.then_some(Format::Gothic),
             horizontal.then_some(Format::Horizontal),
             framed.then_some(Format::Framed(EnclosureKind::Rule)),
             font.map(Format::FontSize),
@@ -305,6 +307,10 @@ pub struct IndentBlock {
 pub enum Format {
     /// 太字 (bold).
     Bold,
+    /// ゴシック体 (gothic / sans-serif). A distinct typeface family, **not** a
+    /// weight of 太字: the corpus uses ゴシック体 and 太字 in disjoint works and
+    /// print sets them differently, so the parser keeps them separate (#435).
+    Gothic,
     /// 斜体 (italic).
     Italic,
     /// 傍点 / 傍線 (emphasis dots / sidelines).
@@ -366,6 +372,7 @@ impl Format {
     pub const fn as_json_tag(self) -> &'static str {
         match self {
             Self::Bold => "bold",
+            Self::Gothic => "gothic",
             Self::Italic => "italic",
             Self::Bouten(_) => "bouten",
             Self::Framed(_) => "framed",
@@ -407,6 +414,8 @@ impl Format {
 pub enum ForwardAttr {
     /// 太字.
     Bold,
+    /// ゴシック体 — gothic typeface (distinct from 太字, see [`Format::Gothic`]).
+    Gothic,
     /// 斜体.
     Italic,
     /// 上付き小文字.
@@ -553,6 +562,7 @@ impl ForwardAttr {
     pub const fn format(self) -> Format {
         match self {
             Self::Bold => Format::Bold,
+            Self::Gothic => Format::Gothic,
             Self::Italic => Format::Italic,
             Self::SuperScript => Format::SuperScript,
             Self::SubScript => Format::SubScript,
@@ -580,6 +590,7 @@ impl ForwardAttr {
     #[must_use]
     pub const fn keyword(self) -> &'static str {
         match self {
+            Self::Gothic => "ゴシック体",
             Self::Italic => "斜体",
             Self::SuperScript => "上付き小文字",
             Self::SubScript => "下付き小文字",
@@ -644,15 +655,17 @@ pub enum LineFormat {
     },
     /// `［＃罫囲み］` — enclose the single line it sits on ([`EnclosureKind`]).
     Framed(EnclosureKind),
-    /// `［＃この行はゴシック体］` — bold the single line it sits on.
-    Bold,
+    /// `［＃この行はゴシック体］` — set the single line it sits on in gothic
+    /// ([`Format::Gothic`], distinct from 太字).
+    Gothic,
     /// `［＃大文字］` … `［＃特大文字、太字］` — an absolute font size applied to
     /// the whole line (the postfix headline form). `bold` records a co-applied
-    /// `、太字` / `、ゴシック体`.
+    /// `、太字` (the `、ゴシック体` postfix is not recognised on this line form —
+    /// see `parse_line_font_size`).
     FontSizeAbsolute {
         /// The absolute size.
         size: AbsoluteSize,
-        /// `true` for the `、太字` / `、ゴシック体` compound.
+        /// `true` for the `、太字` compound.
         bold: bool,
     },
 }
@@ -666,7 +679,7 @@ impl LineFormat {
             Self::AlignEnd { .. } => Format::AlignEnd,
             Self::Center { .. } => Format::Center,
             Self::Framed(k) => Format::Framed(k),
-            Self::Bold => Format::Bold,
+            Self::Gothic => Format::Gothic,
             Self::FontSizeAbsolute { size, .. } => Format::FontSizeAbsolute(size),
         }
     }
@@ -688,6 +701,12 @@ pub enum RegionFormat {
     /// 太字 range / block. `padded` = block-level (`<div>`, `\n\n` padded);
     /// `!padded` = inline bare range (`<b>`).
     Bold {
+        /// `true` = `ここから` block; `false` = inline bare range.
+        padded: bool,
+    },
+    /// ゴシック体 range / block (`［＃ここからゴシック体］ …`). The gothic
+    /// counterpart of [`Self::Bold`] (distinct typeface, [`Format::Gothic`]).
+    Gothic {
         /// `true` = `ここから` block; `false` = inline bare range.
         padded: bool,
     },
@@ -719,8 +738,6 @@ pub enum RegionFormat {
     },
     /// 行右 / 行左小書き range.
     SmallScript(BoutenPosition),
-    /// 縦中横 range (`［＃縦中横］ … ［＃縦中横終わり］`).
-    CombineUpright,
     /// 字下げ block (`［＃ここから N字下げ］ …`).
     Indent(IndentBlock),
     /// 地付き / 地から N 字上げ block.
@@ -750,12 +767,12 @@ impl RegionFormat {
     pub const fn format(self) -> Format {
         match self {
             Self::Bold { .. } => Format::Bold,
+            Self::Gothic { .. } => Format::Gothic,
             Self::Italic { .. } => Format::Italic,
             Self::Caption { .. } => Format::Caption,
             Self::Heading { level, style, .. } => Format::Heading { level, style },
             Self::Bouten { kind, .. } => Format::Bouten(kind),
             Self::SmallScript(p) => Format::SmallScript(p),
-            Self::CombineUpright => Format::CombineUpright,
             Self::Indent(_) => Format::Indent,
             Self::AlignEnd { .. } => Format::AlignEnd,
             Self::LineWidth(_) => Format::LineWidth,
@@ -783,6 +800,7 @@ impl RegionFormat {
             Self::LineWidth(_) => "lineWidth",
             Self::Bouten { .. } => "boutenRange",
             Self::Bold { .. } => "bold",
+            Self::Gothic { .. } => "gothic",
             Self::Italic { .. } => "italic",
             Self::Heading { .. } => "heading",
             Self::Columns(_) => "columns",
@@ -791,7 +809,6 @@ impl RegionFormat {
             Self::FontSize(_) => "fontSize",
             Self::SmallScript(_) => "smallScript",
             Self::Caption { .. } => "caption",
-            Self::CombineUpright => "combineUprightRange",
         }
     }
 
@@ -807,6 +824,7 @@ impl RegionFormat {
             Self::LineWidth(_) => "line-width",
             Self::Bouten { .. } => "bouten-range",
             Self::Bold { .. } => "bold",
+            Self::Gothic { .. } => "gothic",
             Self::Italic { .. } => "italic",
             Self::Heading { .. } => "heading",
             Self::Columns(_) => "columns",
@@ -815,7 +833,6 @@ impl RegionFormat {
             Self::FontSize(_) => "font-size",
             Self::SmallScript(_) => "small-script",
             Self::Caption { .. } => "caption",
-            Self::CombineUpright => "combine-upright-range",
         }
     }
 
@@ -831,10 +848,10 @@ impl RegionFormat {
             self,
             Self::Bouten { .. }
                 | Self::Bold { padded: false }
+                | Self::Gothic { padded: false }
                 | Self::Italic { padded: false }
                 | Self::SmallScript(_)
                 | Self::Caption { padded: false }
-                | Self::CombineUpright
         )
     }
 
@@ -869,6 +886,7 @@ impl RegionFormat {
             position: BoutenPosition::Right,
         },
         Self::Bold { padded: false },
+        Self::Gothic { padded: false },
         Self::Italic { padded: false },
         Self::Heading {
             level: HeadingKind::Large,
@@ -881,7 +899,6 @@ impl RegionFormat {
         Self::FontSize(FontShift(NonZeroI8::MIN)),
         Self::SmallScript(BoutenPosition::Right),
         Self::Caption { padded: false },
-        Self::CombineUpright,
     ];
 }
 
@@ -935,6 +952,11 @@ pub enum RegionClose {
         /// `true` = `ここで` block close; `false` = inline bare-range close.
         padded: bool,
     },
+    /// `ゴシック体終わり` (`!padded`) / `ここでゴシック体終わり` (`padded`).
+    Gothic {
+        /// `true` = `ここで` block close; `false` = inline bare-range close.
+        padded: bool,
+    },
     /// `斜体終わり` / `ここで斜体終わり`.
     Italic {
         /// `true` = `ここで` block close; `false` = inline bare-range close.
@@ -970,8 +992,6 @@ pub enum RegionClose {
         /// `true` = `ここで` block close; `false` = inline bare-range close.
         padded: bool,
     },
-    /// `縦中横終わり`.
-    CombineUpright,
 }
 
 impl RegionClose {
@@ -996,6 +1016,7 @@ impl RegionClose {
             RegionFormat::LineWidth(_) => Self::LineWidth,
             RegionFormat::Bouten { kind, position } => Self::Bouten { kind, position },
             RegionFormat::Bold { padded } => Self::Bold { padded },
+            RegionFormat::Gothic { padded } => Self::Gothic { padded },
             RegionFormat::Italic { padded } => Self::Italic { padded },
             RegionFormat::Heading {
                 level,
@@ -1016,7 +1037,6 @@ impl RegionClose {
             },
             RegionFormat::SmallScript(side) => Self::SmallScript(side),
             RegionFormat::Caption { padded } => Self::Caption { padded },
-            RegionFormat::CombineUpright => Self::CombineUpright,
         }
     }
 
@@ -1033,6 +1053,7 @@ impl RegionClose {
             Self::LineWidth => "line-width",
             Self::Bouten { .. } => "bouten-range",
             Self::Bold { .. } => "bold",
+            Self::Gothic { .. } => "gothic",
             Self::Italic { .. } => "italic",
             Self::Heading { .. } => "heading",
             Self::Columns => "columns",
@@ -1041,7 +1062,6 @@ impl RegionClose {
             Self::FontSize { .. } => "font-size",
             Self::SmallScript(_) => "small-script",
             Self::Caption { .. } => "caption",
-            Self::CombineUpright => "combine-upright-range",
         }
     }
 
@@ -1053,10 +1073,10 @@ impl RegionClose {
             self,
             Self::Bouten { .. }
                 | Self::Bold { padded: false }
+                | Self::Gothic { padded: false }
                 | Self::Italic { padded: false }
                 | Self::SmallScript(_)
                 | Self::Caption { padded: false }
-                | Self::CombineUpright
         )
     }
 
@@ -1097,15 +1117,15 @@ mod tests {
             "boutenRange"
         );
         assert_eq!(
-            RegionFormat::CombineUpright.as_json_tag(),
-            "combineUprightRange"
-        );
-        assert_eq!(
             RegionFormat::LineWidth(LineWidth(NonZeroU8::MIN)).as_json_tag(),
             "lineWidth"
         );
         assert_eq!(RegionFormat::Bold { padded: true }.as_json_tag(), "bold");
         assert_eq!(RegionFormat::Bold { padded: false }.as_json_tag(), "bold");
+        assert_eq!(
+            RegionFormat::Gothic { padded: true }.as_json_tag(),
+            "gothic"
+        );
     }
 
     /// Every open round-trips to a close discriminant and back to the same

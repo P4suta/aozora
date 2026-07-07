@@ -953,7 +953,7 @@ mod tests {
 
     #[test]
     fn wire_data_extracts_data_array() {
-        let json = r#"{ "schemaVersion": 1, "data": [1, 2, 3] }"#;
+        let json = r#"{ "schemaVersion": 2, "data": [1, 2, 3] }"#;
         let items = wire_data(json).expect("valid envelope");
         assert_eq!(items.len(), 3, "three data items");
         assert_eq!(items[0], Value::from(1), "first item preserved");
@@ -961,7 +961,7 @@ mod tests {
 
     #[test]
     fn wire_data_rejects_missing_data() {
-        let err = wire_data(r#"{ "schemaVersion": 1 }"#).expect_err("no data array");
+        let err = wire_data(r#"{ "schemaVersion": 2 }"#).expect_err("no data array");
         assert!(err.contains("data"), "error mentions missing data: {err}");
     }
 
@@ -1004,7 +1004,7 @@ mod tests {
     #[test]
     fn normalized_actual_diagnostics_kebabs_kind_and_drops_internal() {
         let wire = r#"{
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "data": [
                 { "kind": "source_contains_pua", "severity": "warning", "source": "library", "span": { "start": 0, "end": 1 } },
                 { "kind": "self_check", "severity": "error", "source": "internal", "span": { "start": 2, "end": 3 } }
@@ -1024,7 +1024,7 @@ mod tests {
     #[test]
     fn normalized_actual_diagnostics_requires_kind() {
         let wire = r#"{
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "data": [ { "severity": "warning", "source": "library", "span": { "start": 0, "end": 1 } } ]
         }"#;
         let err = err_of(normalized_actual_diagnostics(wire));

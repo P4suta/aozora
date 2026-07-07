@@ -119,7 +119,7 @@ pub(crate) fn emit_line<W: Write>(lf: LineFormat, out: &mut W) -> fmt::Result {
         LineFormat::Center { page: true } => out.write_str("［＃ページの左右中央］"),
         LineFormat::Center { page: false } => out.write_str("［＃中央揃え］"),
         LineFormat::Framed(_) => out.write_str("［＃罫囲み］"),
-        LineFormat::Bold => out.write_str("［＃この行はゴシック体］"),
+        LineFormat::Gothic => out.write_str("［＃この行はゴシック体］"),
         // Absolute font-size line directive. `bold` canonicalises to `、太字`
         // (the classifier only admits that spelling, so the round-trip is exact).
         LineFormat::FontSizeAbsolute { size, bold } => {
@@ -181,6 +181,8 @@ pub(crate) fn emit_container_open<W: Write>(open: RegionFormat, out: &mut W) -> 
         RegionFormat::Indent(block) => emit_indent_open(block, out),
         RegionFormat::Bold { padded: false } => out.write_str("［＃太字］"),
         RegionFormat::Bold { padded: true } => out.write_str("［＃ここから太字］"),
+        RegionFormat::Gothic { padded: false } => out.write_str("［＃ゴシック体］"),
+        RegionFormat::Gothic { padded: true } => out.write_str("［＃ここからゴシック体］"),
         RegionFormat::Italic { padded: false } => out.write_str("［＃斜体］"),
         RegionFormat::Italic { padded: true } => out.write_str("［＃ここから斜体］"),
         RegionFormat::AlignEnd { offset: 0 } => out.write_str("［＃ここから地付き］"),
@@ -217,7 +219,6 @@ pub(crate) fn emit_container_open<W: Write>(open: RegionFormat, out: &mut W) -> 
         // `Directive{WarichuOpen}`), so it serializes to the ここから form.
         RegionFormat::Warichu => out.write_str("［＃ここから割り注］"),
         RegionFormat::Framed(_) => out.write_str("［＃罫囲み］"),
-        RegionFormat::CombineUpright => out.write_str("［＃縦中横］"),
         // `RegionFormat` is `#[non_exhaustive]`; a future family falls back to
         // the most common opener until it is given a spelling here.
         _ => out.write_str("［＃ここから字下げ］"),
@@ -242,7 +243,7 @@ fn emit_indent_open<W: Write>(block: IndentBlock, out: &mut W) -> fmt::Result {
         styles,
     } = block;
     let BlockStyles {
-        bold,
+        gothic,
         horizontal,
         framed,
         font,
@@ -256,7 +257,7 @@ fn emit_indent_open<W: Write>(block: IndentBlock, out: &mut W) -> fmt::Result {
         && center
         && wrap.is_none()
         && matches!(layout, IndentLayout::None)
-        && !bold
+        && !gothic
         && !horizontal
         && !framed
         && font.is_none()
@@ -269,7 +270,7 @@ fn emit_indent_open<W: Write>(block: IndentBlock, out: &mut W) -> fmt::Result {
     let bare = wrap.is_none()
         && !center
         && matches!(layout, IndentLayout::None)
-        && !bold
+        && !gothic
         && !horizontal
         && !framed
         && font.is_none();
@@ -289,7 +290,7 @@ fn emit_indent_open<W: Write>(block: IndentBlock, out: &mut W) -> fmt::Result {
         IndentLayout::LineWidth(width) => write!(out, "、{}字詰め", width.0)?,
         IndentLayout::None => {}
     }
-    if bold {
+    if gothic {
         out.write_str("、ゴシック体")?;
     }
     if horizontal {
@@ -337,6 +338,8 @@ pub(crate) fn emit_container_close<W: Write>(close: RegionClose, out: &mut W) ->
         ),
         RegionClose::Bold { padded: false } => out.write_str("［＃太字終わり］"),
         RegionClose::Bold { padded: true } => out.write_str("［＃ここで太字終わり］"),
+        RegionClose::Gothic { padded: false } => out.write_str("［＃ゴシック体終わり］"),
+        RegionClose::Gothic { padded: true } => out.write_str("［＃ここでゴシック体終わり］"),
         RegionClose::Italic { padded: false } => out.write_str("［＃斜体終わり］"),
         RegionClose::Italic { padded: true } => out.write_str("［＃ここで斜体終わり］"),
         // #78 字組み compound — the close keeps its own width so the marker
@@ -380,7 +383,6 @@ pub(crate) fn emit_container_close<W: Write>(close: RegionClose, out: &mut W) ->
         RegionClose::Warichu => out.write_str("［＃ここで割り注終わり］"),
         RegionClose::Framed(_) => out.write_str("［＃罫囲み終わり］"),
         RegionClose::AlignEnd => out.write_str("［＃ここで地付き終わり］"),
-        RegionClose::CombineUpright => out.write_str("［＃縦中横終わり］"),
         // The generic `字下げ終わり` — the `Indent { kumi_width: None }` close
         // (plain / 字詰め / 折り返して / 中央 indents) and the `#[non_exhaustive]`
         // forward-compat fallback.

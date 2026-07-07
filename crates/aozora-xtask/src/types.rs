@@ -25,6 +25,9 @@ use std::process::Command;
 
 use serde_json::{Map, Value};
 
+use std::fmt::Write as _;
+
+use aozora::json::SCHEMA_VERSION;
 use aozora::pipeline::{NodeRef, PairKind};
 use aozora::syntax::{NodeKind, RegionFormat};
 use aozora::{DiagnosticSource, InternalCheckCode, Sentinel, Severity};
@@ -188,9 +191,11 @@ fn render_envelopes(out: &mut String) {
     out.push_str("// ─────────────────────────────────────────────────────────\n");
     out.push('\n');
     out.push_str("/** Generic wire envelope. Every endpoint emits this top-level shape. */\n");
-    out.push_str(
-        "export interface JsonEnvelope<T> {\n  schemaVersion: 1;\n  data: ReadonlyArray<T>;\n}\n\n",
-    );
+    write!(
+        out,
+        "export interface JsonEnvelope<T> {{\n  schemaVersion: {SCHEMA_VERSION};\n  data: ReadonlyArray<T>;\n}}\n\n",
+    )
+    .expect("writing to a String is infallible");
     out.push_str("export type DiagnosticsEnvelope    = JsonEnvelope<Diagnostic>;\n");
     out.push_str("export type NodesEnvelope          = JsonEnvelope<Node>;\n");
     out.push_str("export type PairsEnvelope          = JsonEnvelope<Pair>;\n");
@@ -613,7 +618,8 @@ mod tests {
         // must spell `schemaVersion`, not the Rust field name — a snake_case
         // spelling here once shipped a `.d.ts` that disagreed with runtime.
         assert!(
-            out.contains("schemaVersion: 1;") && !out.contains("schema_version"),
+            out.contains(&format!("schemaVersion: {SCHEMA_VERSION};"))
+                && !out.contains("schema_version"),
             "envelope field must be camelCase schemaVersion: {out}"
         );
         for alias in [

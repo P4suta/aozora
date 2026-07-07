@@ -25,7 +25,7 @@
 //! `aozora-wasm` / `aozora-py` emit byte-identical envelopes:
 //!
 //! ```json
-//! { "schemaVersion": 1, "data": [ … ] }
+//! { "schemaVersion": 2, "data": [ … ] }
 //! ```
 //!
 //! [`aozora::json::SCHEMA_VERSION`] bumps on any breaking change to
@@ -168,7 +168,7 @@ pub mod bindings {
         }
 
         /// Diagnostics as JSON. Empty parse →
-        /// `{"schemaVersion":1,"data":[]}`. Wire format defined in
+        /// `{"schemaVersion":2,"data":[]}`. Wire format defined in
         /// [`aozora::json`].
         #[wasm_bindgen(js_name = diagnosticsJson)]
         #[must_use]
@@ -282,7 +282,7 @@ pub mod bindings {
                 { "name": "gaiji_resolutions", "durationMs": g1  - g0  },
             ]);
             serde_json::json!({
-                "schemaVersion": 1,
+                "schemaVersion": 2,
                 "byteLen": self.inner.source().len(),
                 "data": entries,
             })
@@ -429,7 +429,7 @@ mod tests {
     fn diagnostics_json_is_empty_envelope_for_clean_input() {
         let doc = Document::new("plain".to_owned());
         let json = json::diagnostics(doc.parse().diagnostics());
-        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
+        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
     }
 
     /// PUA collision shows up as a `kind:"source_contains_pua"` entry
@@ -443,7 +443,7 @@ mod tests {
             "json missing diag kind: {json}"
         );
         assert!(
-            json.contains(r#""schemaVersion":1"#),
+            json.contains(r#""schemaVersion":2"#),
             "json missing schemaVersion: {json}"
         );
     }
@@ -460,7 +460,7 @@ mod tests {
             parsed
                 .get("schemaVersion")
                 .and_then(serde_json::Value::as_u64),
-            Some(1)
+            Some(2)
         );
         assert!(parsed.get("data").is_some_and(serde_json::Value::is_array));
     }
@@ -470,7 +470,7 @@ mod tests {
     fn nodes_json_is_empty_envelope_for_plain_text() {
         let doc = Document::new("hello, world".to_owned());
         let json = json::nodes(&doc.parse());
-        assert_eq!(json, r#"{"schemaVersion":1,"data":[]}"#);
+        assert_eq!(json, r#"{"schemaVersion":2,"data":[]}"#);
     }
 
     /// Ruby span emits a `kind:"ruby"` entry.

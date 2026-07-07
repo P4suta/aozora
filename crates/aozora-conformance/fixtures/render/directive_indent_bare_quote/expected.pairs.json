@@ -1,1 +1,1 @@
-{"schemaVersion":1,"data":[{"kind":"bracket","open":{"start":0,"end":3},"close":{"start":75,"end":78}},{"kind":"ruby","open":{"start":91,"end":94},"close":{"start":103,"end":106}}]}
+{"schemaVersion":2,"data":[{"kind":"bracket","open":{"start":0,"end":3},"close":{"start":75,"end":78}},{"kind":"ruby","open":{"start":91,"end":94},"close":{"start":103,"end":106}}]}

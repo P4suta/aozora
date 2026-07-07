@@ -53,7 +53,7 @@ test.describe('playground smoke', () => {
     await page.keyboard.press('ControlOrMeta+a');
     // ruby テストと同じ pressSequentially。エディタは全角括弧をオートクローズ
     // するが、閉じ括弧を打つと type-over で吸収されるので素直に全文を打てる。
-    await editor.pressSequentially('明治［＃縦中横］33［＃縦中横終わり］年');
+    await editor.pressSequentially('明治33［＃「33」は縦中横］年');
 
     const tcy = page.locator('.html-preview .aozora-combine-upright');
     await expect(tcy).toContainText('33');

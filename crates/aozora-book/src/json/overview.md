@@ -13,7 +13,7 @@ call into it and receive bit-identical output.
 Every JSON envelope has the form
 
 ```json
-{ "schemaVersion": 1, "data": [ /* … entries … */ ] }
+{ "schemaVersion": 2, "data": [ /* … entries … */ ] }
 ```
 
 where `schemaVersion` is the major version of the JSON contract and

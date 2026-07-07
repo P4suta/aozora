@@ -15,19 +15,19 @@ export class Document {
     return '';
   }
   diagnosticsJson(): string {
-    return '{"schemaVersion":1,"data":[]}';
+    return '{"schemaVersion":2,"data":[]}';
   }
   nodesJson(): string {
-    return '{"schemaVersion":1,"data":[]}';
+    return '{"schemaVersion":2,"data":[]}';
   }
   pairsJson(): string {
-    return '{"schemaVersion":1,"data":[]}';
+    return '{"schemaVersion":2,"data":[]}';
   }
   gaijiJson(): string {
-    return '{"schemaVersion":1,"data":[]}';
+    return '{"schemaVersion":2,"data":[]}';
   }
   profileJson(): string {
-    return '{"schemaVersion":1,"data":[]}';
+    return '{"schemaVersion":2,"data":[]}';
   }
   resolveGaijiAt(_byte_offset: number): string {
     return 'null';
@@ -41,7 +41,7 @@ export class Document {
 }
 
 export function slugsJson(): string {
-  return '{"schemaVersion":1,"data":[]}';
+  return '{"schemaVersion":2,"data":[]}';
 }
 
 export default async function init(): Promise<void> {

@@ -57,6 +57,7 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-container-font-larger",
     "aozora-container-font-smaller",
     "aozora-container-futoji",
+    "aozora-container-goshikku",
     "aozora-container-indent",
     "aozora-container-keigakomi",
     "aozora-container-line-kumi",
@@ -79,6 +80,7 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-font-smaller",
     "aozora-futoji",
     "aozora-gaiji",
+    "aozora-goshikku",
     "aozora-heading",
     "aozora-heading-hint",
     "aozora-heading-large",
@@ -98,6 +100,7 @@ pub const AOZORA_CLASSES: &[&str] = &[
     "aozora-line-font-medium",
     "aozora-line-font-small",
     "aozora-line-futoji",
+    "aozora-line-goshikku",
     "aozora-margin-note",
     "aozora-page-break",
     "aozora-ruby-left",
@@ -318,7 +321,7 @@ mod tests {
         );
         render_into(a.line(LineFormat::AlignEnd { offset: 0 }), &mut nodes);
         render_into(a.line(LineFormat::AlignEnd { offset: 2 }), &mut nodes);
-        render_into(a.line(LineFormat::Bold), &mut nodes);
+        render_into(a.line(LineFormat::Gothic), &mut nodes);
         for size in [
             AbsoluteSize::ExtraLarge,
             AbsoluteSize::Large,
@@ -530,7 +533,7 @@ mod tests {
                 center: false,
                 layout: IndentLayout::None,
                 styles: BlockStyles {
-                    bold: true,
+                    gothic: true,
                     horizontal: true,
                     framed: true,
                     font: Some(FontShift(NonZeroI8::new(-1).unwrap())),
@@ -543,6 +546,8 @@ mod tests {
             RegionFormat::LineWidth(lw(30)),
             RegionFormat::Bold { padded: false },
             RegionFormat::Bold { padded: true },
+            RegionFormat::Gothic { padded: false },
+            RegionFormat::Gothic { padded: true },
             RegionFormat::Italic { padded: false },
             RegionFormat::Italic { padded: true },
             RegionFormat::Columns(cc(2)),
@@ -554,7 +559,6 @@ mod tests {
             RegionFormat::SmallScript(BoutenPosition::Left),
             RegionFormat::Caption { padded: false },
             RegionFormat::Caption { padded: true },
-            RegionFormat::CombineUpright,
         ];
         for &kind in BOUTEN_KINDS {
             for position in [

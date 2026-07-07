@@ -13,7 +13,7 @@ use aozora::{Document, json};
 fn empty_parse_serialises_to_canonical_envelope() {
     let doc = Document::new("plain");
     let tree = doc.parse();
-    let canonical = r#"{"schemaVersion":1,"data":[]}"#;
+    let canonical = r#"{"schemaVersion":2,"data":[]}"#;
     assert_eq!(json::diagnostics(tree.diagnostics()), canonical);
     assert_eq!(json::nodes(&tree), canonical);
     assert_eq!(json::pairs(&tree), canonical);
@@ -22,7 +22,7 @@ fn empty_parse_serialises_to_canonical_envelope() {
 /// Schema version is one. Bumped only when JSON shape changes.
 #[test]
 fn schema_version_is_pinned_to_one() {
-    assert_eq!(json::SCHEMA_VERSION, 1);
+    assert_eq!(json::SCHEMA_VERSION, 2);
 }
 
 /// PUA collision diagnostic shape, byte-pinned.
@@ -32,7 +32,7 @@ fn pua_collision_diagnostic_byte_shape() {
     let tree = doc.parse();
     let json = json::diagnostics(tree.diagnostics());
     // Envelope present.
-    assert!(json.starts_with(r#"{"schemaVersion":1,"data":["#));
+    assert!(json.starts_with(r#"{"schemaVersion":2,"data":["#));
     assert!(json.ends_with("]}"));
     // Variant tag + severity / source axis + span shape.
     assert!(json.contains(r#""kind":"source_contains_pua""#));
@@ -73,7 +73,7 @@ fn ruby_node_byte_shape() {
     let doc = Document::new("｜青梅《おうめ》");
     let tree = doc.parse();
     let json = json::nodes(&tree);
-    assert!(json.starts_with(r#"{"schemaVersion":1,"data":["#));
+    assert!(json.starts_with(r#"{"schemaVersion":2,"data":["#));
     assert!(json.contains(r#""kind":"ruby""#));
     assert!(json.contains(r#""span":{"start":"#));
 }
@@ -84,7 +84,7 @@ fn ruby_pair_byte_shape() {
     let doc = Document::new("｜青梅《おうめ》");
     let tree = doc.parse();
     let json = json::pairs(&tree);
-    assert!(json.starts_with(r#"{"schemaVersion":1,"data":["#));
+    assert!(json.starts_with(r#"{"schemaVersion":2,"data":["#));
     assert!(json.contains(r#""kind":"ruby""#));
     assert!(json.contains(r#""open":{"start":"#));
     assert!(json.contains(r#""close":{"start":"#));
@@ -107,7 +107,7 @@ fn all_three_channels_emit_valid_json() {
             value
                 .get("schemaVersion")
                 .and_then(serde_json::Value::as_u64),
-            Some(1)
+            Some(2)
         );
         assert!(value.get("data").is_some_and(serde_json::Value::is_array));
     }

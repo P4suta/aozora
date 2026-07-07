@@ -42,7 +42,7 @@ pub(crate) enum SchemaKind {
 }
 
 /// Output format for `aozora kinds`: the human tables (default) or the
-/// machine `{"schemaVersion":1,"data":{…}}` envelope. Mirrors
+/// machine `{"schemaVersion":2,"data":{…}}` envelope. Mirrors
 /// [`crate::timing::TimingFormat`]'s two-value shape; `check`'s richer
 /// `DiagFormat` (with `auto` / `short`) is diagnostic-specific and does not
 /// apply here.
@@ -51,7 +51,7 @@ pub(crate) enum OutputFormat {
     /// `comfy-table` tables, one per enum. The default.
     #[default]
     Human,
-    /// The `{"schemaVersion":1,"data":{nodeKinds,pairKinds,…}}` envelope —
+    /// The `{"schemaVersion":2,"data":{nodeKinds,pairKinds,…}}` envelope —
     /// the agent / scripting view.
     Json,
 }
@@ -174,7 +174,7 @@ pub(crate) fn run_kinds(args: &KindsArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Emit the `{"schemaVersion":1,"data":{<jsonKey>:[{tag,summary}]}}` envelope.
+/// Emit the `{"schemaVersion":2,"data":{<jsonKey>:[{tag,summary}]}}` envelope.
 /// Single-line / compact, matching the `inspect` JSON envelopes (the
 /// `aozora::json::*` outputs) rather than the pretty-printed `schema` dump.
 fn write_kinds_json(out: &mut dyn Write, tables: &[KindTable]) -> Result<()> {
@@ -187,7 +187,7 @@ fn write_kinds_json(out: &mut dyn Write, tables: &[KindTable]) -> Result<()> {
             .collect();
         data.insert(t.json_key.to_owned(), serde_json::Value::Array(rows));
     }
-    let envelope = serde_json::json!({ "schemaVersion": 1, "data": data });
+    let envelope = serde_json::json!({ "schemaVersion": 2, "data": data });
     let line = serde_json::to_string(&envelope).context("serialize kinds envelope as JSON")?;
     writeln!(out, "{line}").context("write kinds JSON to stdout")
 }
@@ -269,7 +269,7 @@ fn describe_node(k: NodeKind) -> &'static str {
         NodeKind::Center => "Centring (中央) marker — ページの左右中央 / 中央揃え.",
         NodeKind::Warichu => "割注 — split-line annotation.",
         NodeKind::Framed => "罫囲み — ruled box.",
-        NodeKind::LineBold => "太字 line marker — この行はゴシック体.",
+        NodeKind::LineGothic => "ゴシック体 line marker — この行はゴシック体.",
         NodeKind::LineFontSize => "絶対サイズ line marker — ［＃大文字］ ほか.",
         NodeKind::PageBreak => "改ページ.",
         NodeKind::SectionBreak => "Section break.",

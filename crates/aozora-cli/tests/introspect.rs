@@ -64,7 +64,7 @@ fn kinds_format_json_emits_valid_envelope() {
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("kinds --format json must be valid JSON");
     assert_eq!(
-        parsed["schemaVersion"], 1,
+        parsed["schemaVersion"], 2,
         "envelope schemaVersion: {parsed}"
     );
     // Every section appears as a camelCase array under `data`.

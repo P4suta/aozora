@@ -1,1 +1,1 @@
-{"schemaVersion":1,"data":[{"kind":"bracket","open":{"start":18,"end":21},"close":{"start":30,"end":33}},{"kind":"bracket","open":{"start":6,"end":9},"close":{"start":36,"end":39}},{"kind":"ruby","open":{"start":54,"end":57},"close":{"start":60,"end":63}}]}
+{"schemaVersion":2,"data":[{"kind":"bracket","open":{"start":18,"end":21},"close":{"start":30,"end":33}},{"kind":"bracket","open":{"start":6,"end":9},"close":{"start":36,"end":39}},{"kind":"ruby","open":{"start":54,"end":57},"close":{"start":60,"end":63}}]}

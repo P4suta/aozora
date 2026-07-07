@@ -36,7 +36,7 @@ doc.pairs()             # matched open/close pair links
 doc.container_pairs()   # indent / warichu / keigakomi / alignEnd containers
 
 # …or the raw, byte-identical wire envelope strings shared with the
-# WASM / FFI / Go drivers ({"schemaVersion": 1, "data": [...]}):
+# WASM / FFI / Go drivers ({"schemaVersion": 2, "data": [...]}):
 doc.diagnostics_json()
 doc.nodes_json()
 

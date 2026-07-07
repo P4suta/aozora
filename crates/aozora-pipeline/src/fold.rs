@@ -244,8 +244,8 @@ impl<'src> Normalizer<'src> {
             Node::Line(LineFormat::Center { .. }) => {
                 self.pending_single_line = Some("center");
             }
-            Node::Line(LineFormat::Bold) => {
-                self.pending_single_line = Some("line-bold");
+            Node::Line(LineFormat::Gothic) => {
+                self.pending_single_line = Some("line-gothic");
             }
             Node::Directive(ann) => match ann.kind {
                 DirectiveKind::WarichuOpen => self.warichu_depth += 1,

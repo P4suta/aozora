@@ -39,13 +39,10 @@ use crate::lint::is_digit_run;
 /// syntactic self-test.
 #[must_use]
 pub fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
-    // D1 — line-scope 中文字、ゴシック体 → 中文字、太字. LOSSY: the parser keeps
-    // this Unknown *specifically* to preserve the ゴシック体 spelling (the sole
-    // recognised line weight is 太字); folding it erases that spelling. Render
-    // is identical (both bold), so the loss is notation-level only — opt-in only.
-    if body == "中文字、ゴシック体" {
-        return Some(Cow::Borrowed("中文字、太字"));
-    }
+    // (The former D1 — line-scope 中文字、ゴシック体 → 中文字、太字 — was removed
+    // in #435: ゴシック体 is now a first-class gothic construct distinct from
+    // 太字, so folding it to 太字 is a meaning change, not a faithful render.
+    // The rare 中文字、ゴシック体 size+gothic compound stays a verbatim Unknown.)
 
     // D2 — ここから最後まで{N}字下げ → ここから{N}字下げ. LOSSY: 最後まで marks an
     // indent that auto-closes at document/section end; the parser has no
@@ -97,7 +94,6 @@ pub fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
 /// `［＃sample］` parses to Unknown, `［＃<output>］` parses to a non-Unknown
 /// node, and `degraded_directive(output)` is `None` (idempotent).
 pub const DEGRADED_SAMPLES: &[&str] = &[
-    "中文字、ゴシック体",
     "ここから最後まで3字下げ",
     "地付き、地より3字アキ",
     "地付き、地より3字あき",
@@ -110,10 +106,6 @@ mod tests {
 
     #[test]
     fn migrated_families_reduce() {
-        assert_eq!(
-            degraded_directive("中文字、ゴシック体").as_deref(),
-            Some("中文字、太字")
-        );
         assert_eq!(
             degraded_directive("ここから最後まで3字下げ").as_deref(),
             Some("ここから3字下げ")

@@ -87,7 +87,7 @@ export interface ParserState {
   profile: ProfilePhaseEntry[];
 }
 
-const EMPTY_ENVELOPE = '{"schemaVersion":1,"data":[]}';
+const EMPTY_ENVELOPE = '{"schemaVersion":2,"data":[]}';
 
 const EMPTY_PARSER_STATE: ParserState = {
   doc: null,

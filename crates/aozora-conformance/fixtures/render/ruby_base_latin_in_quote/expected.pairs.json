@@ -1,1 +1,1 @@
-{"schemaVersion":1,"data":[{"kind":"ruby","open":{"start":8,"end":11},"close":{"start":20,"end":23}},{"kind":"quote","open":{"start":0,"end":3},"close":{"start":23,"end":26}}]}
+{"schemaVersion":2,"data":[{"kind":"ruby","open":{"start":8,"end":11},"close":{"start":20,"end":23}},{"kind":"quote","open":{"start":0,"end":3},"close":{"start":23,"end":26}}]}

@@ -134,7 +134,7 @@ parser output into a shell pipeline.
 | `gaiji` | Resolved `※［＃…］` references: `{ span, description, mencode, codepoint, resolved }`. Alias: `gaiji-resolutions`. |
 | `slugs` | The static `［＃…］` slug catalogue — needs no input. |
 
-Every envelope is `{ "schemaVersion": 1, "data": [ … ] }`; the per-kind
+Every envelope is `{ "schemaVersion": 2, "data": [ … ] }`; the per-kind
 item schema is the one `aozora schema <kind>` prints (see
 [JSON output](../json/overview.md)). `PATH` of `-` (or omitted) reads
 stdin and `--encoding`/`-E` applies; `slugs` ignores any input. Unlike
@@ -206,7 +206,7 @@ The **data** counterpart to `schema` is [`aozora inspect`](#aozora-inspect),
 which projects a parsed document into those same envelopes.
 
 `kinds` defaults to human tables; `aozora kinds --format json` emits the
-machine envelope `{"schemaVersion":1,"data":{"nodeKinds":[{"tag","summary"}],
+machine envelope `{"schemaVersion":2,"data":{"nodeKinds":[{"tag","summary"}],
 "pairKinds":[…],"severities":[…],"diagnosticSources":[…],"sentinels":[…],
 "internalCheckCodes":[…]}}` (one line, like the `inspect` envelopes).
 

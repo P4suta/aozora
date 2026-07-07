@@ -331,7 +331,7 @@ fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::R
             // Exhaustive destructure (no `..`) so a new decoration is
             // compiler-flagged here rather than silently dropped from the markup.
             let BlockStyles {
-                bold,
+                gothic,
                 horizontal,
                 framed,
                 font,
@@ -360,10 +360,10 @@ fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::R
             // #78 co-applied decorative styles — flat classes on the same
             // `<div>` (close stays a single `</div>`), reusing each
             // attribute's standalone-container class so one stylesheet rule
-            // serves both forms. Canonical order = bold, horizontal, framed,
+            // serves both forms. Canonical order = gothic, horizontal, framed,
             // font (matches `BlockStyles::iter_formats` / the serializer).
-            if bold {
-                writer.write_str(" aozora-container-futoji")?;
+            if gothic {
+                writer.write_str(" aozora-container-goshikku")?;
             }
             if horizontal {
                 writer.write_str(" aozora-container-yokogumi")?;
@@ -438,9 +438,15 @@ fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::R
         // following the indent / keigakomi container convention; the
         // `aozora-container-futoji` / `-shatai` class carries the styling.
         RegionFormat::Bold { padded: false } => writer.write_str(r#"<b class="aozora-futoji">"#),
+        RegionFormat::Gothic { padded: false } => {
+            writer.write_str(r#"<b class="aozora-goshikku">"#)
+        }
         RegionFormat::Italic { padded: false } => writer.write_str(r#"<i class="aozora-shatai">"#),
         RegionFormat::Bold { padded: true } => {
             writer.write_str(r#"<div class="aozora-container aozora-container-futoji">"#)
+        }
+        RegionFormat::Gothic { padded: true } => {
+            writer.write_str(r#"<div class="aozora-container aozora-container-goshikku">"#)
         }
         RegionFormat::Italic { padded: true } => {
             writer.write_str(r#"<div class="aozora-container aozora-container-shatai">"#)
@@ -484,11 +490,6 @@ fn render_container_open<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::R
         RegionFormat::Caption { padded: true } => {
             writer.write_str(r#"<div class="aozora-container aozora-caption">"#)
         }
-        // 縦中横 range — inline `<span>`, matching the forward-reference
-        // combine-upright leaf class so a stylesheet treats both alike.
-        RegionFormat::CombineUpright => {
-            writer.write_str(r#"<span class="aozora-combine-upright">"#)
-        }
         _ => writer.write_str(r#"<div class="aozora-container">"#),
     }
 }
@@ -500,11 +501,9 @@ fn render_container_close<W: Write>(kind: RegionFormat, writer: &mut W) -> fmt::
         RegionFormat::Heading { level, style, .. } => write_heading_close(level, style, writer),
         _ => writer.write_str(match kind {
             RegionFormat::Bouten { .. } => "</em>",
-            RegionFormat::Bold { padded: false } => "</b>",
+            RegionFormat::Bold { padded: false } | RegionFormat::Gothic { padded: false } => "</b>",
             RegionFormat::Italic { padded: false } => "</i>",
-            RegionFormat::SmallScript(_)
-            | RegionFormat::Caption { padded: false }
-            | RegionFormat::CombineUpright => "</span>",
+            RegionFormat::SmallScript(_) | RegionFormat::Caption { padded: false } => "</span>",
             _ => "</div>",
         }),
     }
@@ -604,7 +603,7 @@ pub(crate) fn render_line<W: Write>(lf: LineFormat, writer: &mut W) -> fmt::Resu
         LineFormat::Framed(_) => {
             writer.write_str(r#"<span class="aozora-keigakomi-inline"></span>"#)
         }
-        LineFormat::Bold => writer.write_str(r#"<span class="aozora-line-futoji"></span>"#),
+        LineFormat::Gothic => writer.write_str(r#"<span class="aozora-line-goshikku"></span>"#),
         // Absolute font-size line marker; `、太字` adds the line-bold class too.
         LineFormat::FontSizeAbsolute { size, bold } => {
             let slug = aozora_spec::roman_slug(size.keyword()).unwrap_or("font-small");

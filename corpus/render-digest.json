@@ -8,24 +8,24 @@
     "alignEnd": 20085,
     "angleQuote": 93,
     "bodyEnd": 242,
-    "bouten": 153204,
+    "bouten": 153146,
     "center": 811,
-    "combineUpright": 18836,
-    "containerClose": 77541,
-    "containerOpen": 91540,
-    "directive": 36508,
-    "emphasis": 26194,
+    "combineUpright": 17854,
+    "containerClose": 77414,
+    "containerOpen": 91430,
+    "directive": 37928,
+    "emphasis": 26109,
     "forcedBreak": 156,
     "gaiji": 48213,
     "headingHint": 67646,
     "illustration": 5753,
     "indent": 81683,
     "kaeriten": 34908,
-    "lineBold": 29,
     "lineFontSize": 46,
+    "lineGothic": 29,
     "marginNote": 4014,
     "pageBreak": 7122,
-    "ruby": 3577771,
+    "ruby": 3577772,
     "sectionBreak": 1828
   },
   "annotation_kinds": {
@@ -39,14 +39,30 @@
     "rubyPairOpen": 8,
     "rubyRetarget": 136,
     "textualNote": 9410,
-    "unknown": 2374,
+    "unknown": 3794,
     "warichuClose": 3041,
     "warichuOpen": 3029
   },
   "unknown_shapes_top": [
     {
+      "key": "［＃「」は縦中横、行右小書き］",
+      "count": 886
+    },
+    {
+      "key": "［＃縦中横終わり］",
+      "count": 165
+    },
+    {
+      "key": "［＃縦中横］",
+      "count": 165
+    },
+    {
       "key": "［＃「」は小書き］",
       "count": 101
+    },
+    {
+      "key": "［＃「」はゴチック］",
+      "count": 71
     },
     {
       "key": "［＃「」に「」注記］",
@@ -57,15 +73,31 @@
       "count": 49
     },
     {
+      "key": "［＃「」は横一列］",
+      "count": 35
+    },
+    {
       "key": "［＃「」は、『谷崎潤一郎全集　第十九巻』（中央公論新社N年N月N日初版発行）と『谷崎潤一郎全集　第十五卷』（中央公論社N年N月N日発行）では「」］",
       "count": 34
+    },
+    {
+      "key": "［＃「」に傍点（白丸）］",
+      "count": 32
     },
     {
       "key": "［＃「",
       "count": 29
     },
     {
+      "key": "［＃「」に傍点◎］",
+      "count": 26
+    },
+    {
       "key": "［＃「」は上に「」付き］",
+      "count": 18
+    },
+    {
+      "key": "［＃中見出終わり］",
       "count": 18
     },
     {
@@ -171,38 +203,6 @@
     {
       "key": "［＃「」は縦中横、「」は上付き小書き］",
       "count": 9
-    },
-    {
-      "key": "［＃「」略］",
-      "count": 9
-    },
-    {
-      "key": "［＃ここからN字下げ、ここから数式］",
-      "count": 9
-    },
-    {
-      "key": "［＃図N入る］",
-      "count": 9
-    },
-    {
-      "key": "［＃底本は「」］",
-      "count": 9
-    },
-    {
-      "key": "［＃N行目］",
-      "count": 8
-    },
-    {
-      "key": "［＃（一）は縦中横］",
-      "count": 8
-    },
-    {
-      "key": "［＃「」に「」］",
-      "count": 7
-    },
-    {
-      "key": "［＃「」の「」を除く部分に傍点］",
-      "count": 7
     }
   ]
 }

@@ -1,1 +1,1 @@
-{"schemaVersion":1,"data":[{"kind":"containerOpen","span":{"start":0,"end":21}},{"kind":"containerClose","span":{"start":36,"end":63}}]}
+{"schemaVersion":2,"data":[{"kind":"containerOpen","span":{"start":0,"end":21}},{"kind":"directive","span":{"start":36,"end":63}}]}
