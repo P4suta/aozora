@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::str;
 
 use aozora_pipeline::{ALL_SENTINELS, lex};
-use aozora_render::render_html_owned;
-use aozora_render::serialize_owned;
+use aozora_render::render_html;
+use aozora_render::serialize;
 #[test]
 fn render_html_regressions_replay_cleanly() {
     replay_each("render_html", |src| {
@@ -22,7 +22,7 @@ fn render_html_regressions_replay_cleanly() {
             return;
         }
         let lex_out = lex(src);
-        let html = render_html_owned(&lex_out);
+        let html = render_html(&lex_out);
         for sentinel in ALL_SENTINELS {
             assert!(
                 !html.contains(sentinel),
@@ -42,9 +42,9 @@ fn serialize_round_trip_regressions_replay_cleanly() {
             return;
         }
         let lex1 = lex(src);
-        let first = serialize_owned(&lex1);
+        let first = serialize(&lex1);
         let lex2 = lex(&first);
-        let second = serialize_owned(&lex2);
+        let second = serialize(&lex2);
         assert!(
             first == second,
             "I3 fixed-point broken\n  first  = {first:?}\n  second = {second:?}",

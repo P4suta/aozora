@@ -8,7 +8,7 @@ zero overhead for consumers that don't enable the feature.
 
 ## Why a CST exists
 
-The owned AST (`NodeOwned`) is great for renderers:
+The owned AST (`Node`) is great for renderers:
 classified spans, typed payload, no whitespace noise. It is the wrong
 shape for **source-faithful tooling**:
 

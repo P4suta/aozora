@@ -10,7 +10,7 @@
 //! For every corpus document two variants are driven, so the LF/CRLF split is
 //! explicit (the real corpus is CRLF + leading BOM; the engine bench is LF):
 //!
-//! - **LF** — the sanitize fixed point (`Document::parse_owned().sanitized`),
+//! - **LF** — the sanitize fixed point (`Document::lex().sanitized`),
 //!   the engine's own coordinate space. The LSP's LF-clean fast path
 //!   (`prior.sanitized == self.text`) applies, so no re-sanitize runs.
 //! - **CRLF** — the LF text with `\n`→`\r\n` and a leading `U+FEFF`, the real
@@ -20,7 +20,7 @@
 //!
 //! Per band (sanitized size) × variant, the timed columns isolate the passes:
 //!
-//! - `full`      — `Document::parse_owned(edited)`: a from-scratch parse, the
+//! - `full`      — `Document::lex(edited)`: a from-scratch parse, the
 //!   cost of any non-fast-path edit (the thing incremental beats).
 //! - `concat`    — pass 1: rebuild a contiguous `String` from the paragraph
 //!   ropes (what `reparse_pending` does before handing the engine a `&str`).
@@ -160,11 +160,11 @@ fn main() {
         if text.is_empty() {
             continue;
         }
-        let san = Document::new(text.as_ref()).parse_owned().sanitized;
+        let san = Document::new(text.as_ref()).lex().sanitized;
         if san.is_empty() {
             continue;
         }
-        if Document::new(san.as_str()).parse_owned().sanitized != san {
+        if Document::new(san.as_str()).lex().sanitized != san {
             continue;
         }
         docs.push(san);
@@ -209,9 +209,9 @@ fn measure_engine_floor(lf: &str) -> u128 {
     let Some(mid) = mid_line_boundary(lf) else {
         return 0;
     };
-    let cached = Document::new(lf).parse_owned();
+    let cached = Document::new(lf).lex();
     let new_lf = format!("{}x{}", &lf[..mid], &lf[mid..]);
-    black_box(Document::new(new_lf.as_str()).parse_owned());
+    black_box(Document::new(new_lf.as_str()).lex());
     let pieces = PieceSeq::from_contiguous(
         &cached.source_nodes,
         &cached.pairs,
@@ -246,7 +246,7 @@ fn measure_variant(a: &mut Acc, v: &str, mid: usize, is_crlf: bool, engine_ns: u
     // call is the warm incremental path), then warm the edited text's pages.
     let mut cache = ParseCache::default();
     let (_seed_diags, _seed_stats) = cache.reparse(v);
-    black_box(Document::new(edited.as_str()).parse_owned());
+    black_box(Document::new(edited.as_str()).lex());
 
     // Pass 1 — rope→String concat (what reparse_pending does each reparse).
     let rope = Rope::from(edited.as_str());
@@ -278,7 +278,7 @@ fn measure_variant(a: &mut Acc, v: &str, mid: usize, is_crlf: bool, engine_ns: u
 
     // full — the fallback cost (what a non-fast-path edit pays).
     let t = Instant::now();
-    black_box(Document::new(edited.as_str()).parse_owned());
+    black_box(Document::new(edited.as_str()).lex());
     let full_ns = t.elapsed().as_nanos();
 
     if fast {

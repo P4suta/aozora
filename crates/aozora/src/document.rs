@@ -4,7 +4,7 @@
 //! `Document` owns the source buffer; [`Document::parse`] returns a
 //! [`Tree<'_>`] whose `'a` lifetime tracks only that `&self` source borrow —
 //! the AST data itself is owned, lifetime-free, and `Send + Sync`
-//! (an `OwnedLexOutput`). Owning source removes the self-referential-struct
+//! (an `LexOutput`). Owning source removes the self-referential-struct
 //! problem that would otherwise plague driver wrappers (FFI/WASM/Py): callers
 //! can hold a `Document` inside any wrapper without juggling source lifetimes.
 //!
@@ -14,13 +14,13 @@
 
 use core::fmt;
 
-use aozora_pipeline::{NodeRefOwned, OwnedLexOutput, SourceNodeOwned, lex};
+use aozora_pipeline::{LexOutput, NodeRef, SourceNode, lex};
 use aozora_render::{
-    RenderOptions, SerializeOptions, render_html_owned, render_html_owned_normalized,
-    serialize_owned, serialize_owned_with,
+    DirectiveNormalization, RenderOptions, SerializeOptions, render_html, render_html_normalized,
+    serialize, serialize_with,
 };
 use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset};
-use aozora_syntax::owned::ContainerPair;
+use aozora_syntax::ast::ContainerPair;
 
 /// Diagnostic policy applied at parse time.
 ///
@@ -172,8 +172,8 @@ impl Document {
     /// Apply a node-aware minimal-diff edit and return a fresh [`Document`].
     ///
     /// `region` must come from this document's
-    /// [`Tree::owned_regions`](crate::Tree::owned_regions) /
-    /// [`Tree::owned_region_at`](crate::Tree::owned_region_at); `replacement`
+    /// [`Tree::regions`](crate::Tree::regions) /
+    /// [`Tree::region_at`](crate::Tree::region_at); `replacement`
     /// is the new source for the region's own bytes. Unlike [`Self::edit`] —
     /// which takes a raw byte span and trusts the caller — this routes through
     /// [`Tree::splice`](crate::Tree::splice): a
@@ -195,7 +195,7 @@ impl Document {
     /// caller still owns `self`).
     pub fn edit_region(
         &self,
-        region: crate::OwnedRegion,
+        region: crate::Region,
         replacement: &str,
     ) -> Result<Self, crate::SpliceError> {
         let spliced = self.parse().splice(region, replacement)?;
@@ -207,29 +207,29 @@ impl Document {
     /// Parse the document, returning a [`Tree<'_>`] view bound to `&self`'s
     /// lifetime (only its `source` borrow; the AST data is owned).
     ///
-    /// Delegates to [`Self::parse_owned`] — the default parse now produces the
+    /// Delegates to [`Self::lex`] — the default parse now produces the
     /// owned, lifetime-free representation — and wraps it with the source
     /// borrow so the editor-facing [`Tree`] surface keeps the same shape.
     #[must_use]
     pub fn parse(&self) -> Tree<'_> {
         Tree {
             source: &self.source,
-            inner: TreeInner::Owned(self.parse_owned()),
+            inner: TreeInner::Owned(self.lex()),
         }
     }
 
-    /// Parse the document into the owned, lifetime-free [`OwnedLexOutput`].
+    /// Parse the document into the owned, lifetime-free [`LexOutput`].
     ///
-    /// The owned twin of [`Self::parse`]: it runs the same lex pipeline through
-    /// the native owned fold ([`lex`]), so the result owns all its payloads and
+    /// The lower-level entry: [`Self::parse`] wraps this in a [`Tree`]. It runs
+    /// the lex pipeline through the native owned fold ([`lex`]), so the result owns all its payloads and
     /// is `Send + Sync`. Applies the same [`DiagnosticPolicy`] filtering as
     /// [`Self::parse`].
     ///
     /// This is the entry point the #237 incremental-reparse LSP consumer holds
     /// across edits; renderers reach it through `aozora_render`'s owned paths
-    /// (`serialize_owned` / `render_html_owned`).
+    /// (`serialize` / `render_html`).
     #[must_use]
-    pub fn parse_owned(&self) -> OwnedLexOutput {
+    pub fn lex(&self) -> LexOutput {
         let mut out = lex(&self.source);
         if self.diagnostic_policy == DiagnosticPolicy::DropInternal {
             out.diagnostics
@@ -250,14 +250,14 @@ impl fmt::Debug for Document {
 
 /// View into a parsed Aozora document.
 ///
-/// Wraps an owned, lifetime-free [`OwnedLexOutput`] (the `'a` lifetime now
+/// Wraps an owned, lifetime-free [`LexOutput`] (the `'a` lifetime now
 /// tracks only the `source` borrow). The output may be **owned** by this tree
 /// (the usual [`Document::parse`] case) or **borrowed** from a longer-lived
 /// holder (via [`Tree::view`], used by caches such as the LSP `ParseCache`
 /// that retain the owned output and want tree access without re-parsing).
 /// Renderer methods dispatch to `aozora_render`'s owned-AST implementations;
-/// the side-table accessors return owned types (`SourceNodeOwned` /
-/// `NodeRefOwned`) whose payload text resolves through the output's
+/// the side-table accessors return owned types (`SourceNode` /
+/// `NodeRef`) whose payload text resolves through the output's
 /// `NodeStore`.
 #[derive(Debug)]
 pub struct Tree<'a> {
@@ -266,22 +266,22 @@ pub struct Tree<'a> {
 }
 
 /// Storage for a [`Tree`]'s parsed output: either owned outright or borrowed
-/// from a longer-lived holder. Both forms expose the same `&OwnedLexOutput`
+/// from a longer-lived holder. Both forms expose the same `&LexOutput`
 /// through [`Tree::inner`].
 #[derive(Debug)]
 enum TreeInner<'a> {
     /// The tree owns its output (the [`Document::parse`] case).
-    Owned(OwnedLexOutput),
+    Owned(LexOutput),
     /// The tree borrows an output owned elsewhere (the [`Tree::view`] case).
-    Borrowed(&'a OwnedLexOutput),
+    Borrowed(&'a LexOutput),
 }
 
 impl<'a> Tree<'a> {
-    /// Build a [`Tree`] view that borrows an already-parsed [`OwnedLexOutput`].
+    /// Build a [`Tree`] view that borrows an already-parsed [`LexOutput`].
     /// Used by long-lived caches (e.g. the LSP `ParseCache`) that retain the
     /// owned output and want tree access without re-parsing.
     #[must_use]
-    pub fn view(source: &'a str, output: &'a OwnedLexOutput) -> Self {
+    pub fn view(source: &'a str, output: &'a LexOutput) -> Self {
         Self {
             source,
             inner: TreeInner::Borrowed(output),
@@ -289,7 +289,7 @@ impl<'a> Tree<'a> {
     }
 
     /// Borrow the underlying output regardless of owned/borrowed storage.
-    fn inner(&self) -> &OwnedLexOutput {
+    fn inner(&self) -> &LexOutput {
         match &self.inner {
             TreeInner::Owned(o) => o,
             TreeInner::Borrowed(o) => o,
@@ -324,9 +324,9 @@ impl<'a> Tree<'a> {
         &self.inner().pairs
     }
 
-    /// Borrow the underlying [`OwnedLexOutput`].
+    /// Borrow the underlying [`LexOutput`].
     #[must_use]
-    pub fn lex_output(&self) -> &OwnedLexOutput {
+    pub fn lex_output(&self) -> &LexOutput {
         self.inner()
     }
 
@@ -343,7 +343,7 @@ impl<'a> Tree<'a> {
     ///
     /// `O(log n)` over the source-keyed side-table.
     #[must_use]
-    pub fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNodeOwned> {
+    pub fn node_at_source(&self, src_off: SourceOffset) -> Option<&SourceNode> {
         self.inner().node_at_source(src_off)
     }
 
@@ -358,7 +358,7 @@ impl<'a> Tree<'a> {
     #[doc(hidden)]
     #[deprecated(note = "use lex_output().registry.node_at() for normalized-offset lookups")]
     #[must_use]
-    pub fn node_at_normalized(&self, normalized_off: NormalizedOffset) -> Option<NodeRefOwned> {
+    pub fn node_at_normalized(&self, normalized_off: NormalizedOffset) -> Option<NodeRef> {
         self.inner().registry.node_at(normalized_off)
     }
 
@@ -379,7 +379,7 @@ impl<'a> Tree<'a> {
     /// desyncs the registry cursor. See the *Notations in host literal
     /// contexts* recipe in the handbook.
     #[must_use]
-    pub fn source_nodes(&self) -> &[SourceNodeOwned] {
+    pub fn source_nodes(&self) -> &[SourceNode] {
         &self.inner().source_nodes
     }
 
@@ -418,47 +418,45 @@ impl<'a> Tree<'a> {
     /// Render the tree to a semantic-HTML5 string.
     #[must_use]
     pub fn to_html(&self) -> String {
-        render_html_owned(self.inner())
+        render_html(self.inner())
     }
 
     /// Render the tree to a semantic-HTML5 string with explicit
     /// [`RenderOptions`].
     ///
-    /// With the default options (`normalize_directives: false`) this is
-    /// byte-identical to [`Self::to_html`]: an `Unknown` directive the parser
-    /// did not recognise renders as an inert `<span class="aozora-directive"
-    /// hidden>`, so the default render never depends on the notation-hygiene
-    /// catalogue.
+    /// With the default options (`directives: Off`) this is byte-identical to
+    /// [`Self::to_html`]: an `Unknown` directive the parser did not recognise
+    /// renders as an inert `<span class="aozora-directive" hidden>`, so the
+    /// default render never depends on the notation-hygiene catalogue.
     ///
-    /// With `normalize_directives` enabled, verified Tier1 near-misses (per the
-    /// single `aozora_syntax::lint::canonical_directive` authority, reached
-    /// transitively through the formatter's `fix_notation` rewrite) render as
-    /// if they were their canonical spelling — a known 揺れ becomes a real
-    /// element instead of a hidden directive span. This is the opt-in,
-    /// read-only "render as if canonical" role of ADR-0022: it reuses the
+    /// With `directives` not `Off`, verified near-misses (per the single
+    /// `aozora_syntax::lint::canonical_directive` authority — plus, at the
+    /// `Degraded` level, the lossy / judgment `aozora_syntax::degraded`
+    /// reductions — reached transitively through the formatter rewrite) render
+    /// as if they were their canonical spelling. This is the opt-in, read-only
+    /// "render as if canonical" role of ADR-0022 / ADR-0026: it reuses the
     /// formatter rewrite as an internal, throwaway step feeding a reparse, and
     /// never mutates this document's source or the default parse/render.
     #[must_use]
     pub fn to_html_with(&self, opts: RenderOptions) -> String {
-        if opts.normalize_directives {
-            render_html_owned_normalized(self.inner())
-        } else {
-            self.to_html()
+        match opts.directives {
+            DirectiveNormalization::Off => self.to_html(),
+            level => render_html_normalized(self.inner(), level),
         }
     }
 
     /// Re-emit Aozora source text from the parsed tree.
     #[must_use]
     pub fn to_source(&self) -> String {
-        serialize_owned(self.inner())
+        serialize(self.inner())
     }
 
     /// Re-emit Aozora source text with explicit [`SerializeOptions`].
     ///
     /// With the default options this equals [`Self::to_source`]. With
-    /// `fix_notation` enabled it additionally rewrites the notation-hygiene
+    /// `directives` not `Off` it additionally rewrites the notation-hygiene
     /// lint's `DirectiveKind::Unknown` near-misses to canonical form — the
-    /// `aozora fmt --fix-notation` autofix.
+    /// `aozora fmt --fix-notation` autofix (which constructs `Canonical`).
     ///
     /// The rewrite is a second-pass fixed point. The emit-time substitution
     /// can change a directive's block/inline nature — an inline
@@ -469,12 +467,12 @@ impl<'a> Tree<'a> {
     /// and `--write` stays idempotent.
     #[must_use]
     pub fn to_source_with(&self, opts: SerializeOptions) -> String {
-        let first = serialize_owned_with(self.inner(), opts);
-        if opts.fix_notation {
-            let doc = Document::new(first);
-            doc.parse().to_source()
-        } else {
-            first
+        let first = serialize_with(self.inner(), opts);
+        match opts.directives {
+            DirectiveNormalization::Off => first,
+            DirectiveNormalization::Canonical | DirectiveNormalization::Degraded => {
+                Document::new(first).parse().to_source()
+            }
         }
     }
 
@@ -669,7 +667,7 @@ mod tests {
         // The retrieved span must cover the whole `｜青梅《おうめ》` run.
         assert_eq!(entry.source_span.start, bar_off);
         assert!(entry.source_span.end > bar_off);
-        assert!(matches!(entry.node, NodeRefOwned::Inline(_)));
+        assert!(matches!(entry.node, NodeRef::Inline(_)));
     }
 
     #[test]

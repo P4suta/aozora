@@ -30,21 +30,21 @@
 use aozora_pipeline::lex;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::*;
-use aozora_render::serialize_owned;
-use aozora_syntax::owned::{NodeOwned, NodeRefOwned};
+use aozora_render::serialize;
+use aozora_syntax::ast::{Node, NodeRef};
 use proptest::prelude::*;
 
 /// Walk every registry hit and pull out the `Directive` nodes.
 ///
 /// Annotations are emitted on `Sentinel::Inline` positions, so they
-/// surface as `NodeRefOwned::Inline(NodeOwned::Directive(_))`. Container
+/// surface as `NodeRef::Inline(Node::Directive(_))`. Container
 /// open/close hits never carry annotations; block-leaf hits in the
 /// owned AST are reserved for non-annotation block primitives
 /// (page break, section break, sashie, …).
-fn count_annotations(out: &aozora_pipeline::OwnedLexOutput) -> usize {
+fn count_annotations(out: &aozora_pipeline::LexOutput) -> usize {
     out.registry
         .iter_sorted()
-        .filter(|(_, nr)| matches!(nr, NodeRefOwned::Inline(NodeOwned::Directive(_))))
+        .filter(|(_, nr)| matches!(nr, NodeRef::Inline(Node::Directive(_))))
         .count()
 }
 
@@ -52,10 +52,10 @@ fn count_annotations(out: &aozora_pipeline::OwnedLexOutput) -> usize {
 /// guard for properties that only make sense when the input actually
 /// triggered the catch-all path; properties that hold *unconditionally*
 /// don't need this guard.
-fn has_annotation(out: &aozora_pipeline::OwnedLexOutput) -> bool {
+fn has_annotation(out: &aozora_pipeline::LexOutput) -> bool {
     out.registry
         .iter_sorted()
-        .any(|(_, nr)| matches!(nr, NodeRefOwned::Inline(NodeOwned::Directive(_))))
+        .any(|(_, nr)| matches!(nr, NodeRef::Inline(Node::Directive(_))))
 }
 
 /// Tier-A canary on a string: no bare `［＃` may appear without a
@@ -86,7 +86,7 @@ fn assert_annotation_invariants(source: &str) {
     // UTF-8 — true by construction (it's `&str`), but a `is_empty`
     // probe on every annotation closes the loop on (2).
     for (_, nr) in out_a.registry.iter_sorted() {
-        if let NodeRefOwned::Inline(NodeOwned::Directive(a)) = nr {
+        if let NodeRef::Inline(Node::Directive(a)) = nr {
             assert!(
                 !out_a.store.resolve_str(a.raw).is_empty(),
                 "annotation with empty raw bytes for source {source:?}"
@@ -95,7 +95,7 @@ fn assert_annotation_invariants(source: &str) {
     }
 
     // (3) lex → serialise → lex preserves the annotation count.
-    let serialised = serialize_owned(&out_a);
+    let serialised = serialize(&out_a);
     let out_b = lex(&serialised);
     let count_first = count_annotations(&out_a);
     let count_second = count_annotations(&out_b);

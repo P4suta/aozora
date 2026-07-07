@@ -19,7 +19,7 @@ no inner content. They appear on their own line in the source.
 breaks share one `SectionBreak` node tagged by [`SectionKind`]:
 
 ```rust,ignore
-// borrowed::Node variants
+// Node variants
 Node::PageBreak,                  // ［＃改ページ］
 Node::SectionBreak(SectionKind),  // ［＃改丁 / 改段 / 改見開き］
 

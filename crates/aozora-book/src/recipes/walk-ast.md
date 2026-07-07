@@ -6,14 +6,14 @@ build an index, or drive a custom renderer.
 
 ## Solution
 
-`Tree::source_nodes` returns a slice of `SourceNodeOwned`, one per
+`Tree::source_nodes` returns a slice of `SourceNode`, one per
 classified construct, sorted by source position. Each carries a
 `source_span` (byte offsets into the source) and a `node`, which is a
-`NodeRefOwned` tagging the sentinel kind that fired.
+`NodeRef` tagging the sentinel kind that fired.
 
 ```rust
 # extern crate aozora;
-use aozora::{Document, NodeRefOwned};
+use aozora::{Document, NodeRef};
 
 fn main() {
     let source = "｜青梅《おうめ》の［＃ここから2字下げ］街道《かいどう》［＃ここで字下げ終わり］";
@@ -23,17 +23,17 @@ fn main() {
     for sn in tree.source_nodes() {
         let span = sn.source_span;
         match sn.node {
-            NodeRefOwned::Inline(node) | NodeRefOwned::BlockLeaf(node) => {
-                // `node` is a NodeOwned; `.kind()` is the cross-cutting tag.
+            NodeRef::Inline(node) | NodeRef::BlockLeaf(node) => {
+                // `node` is a Node; `.kind()` is the cross-cutting tag.
                 println!("{:>3}..{:<3} {:?}", span.start, span.end, node.kind());
             }
-            NodeRefOwned::BlockOpen(kind) => {
+            NodeRef::BlockOpen(kind) => {
                 println!("{:>3}..{:<3} open  {kind:?}", span.start, span.end);
             }
-            NodeRefOwned::BlockClose(kind) => {
+            NodeRef::BlockClose(kind) => {
                 println!("{:>3}..{:<3} close {kind:?}", span.start, span.end);
             }
-            // `NodeRefOwned` is `#[non_exhaustive]`: a wildcard keeps the
+            // `NodeRef` is `#[non_exhaustive]`: a wildcard keeps the
             // match valid as future sentinel kinds are added.
             _ => {}
         }
@@ -56,18 +56,18 @@ depend on your input.)
 ## How the surface is shaped
 
 `source_nodes()` is the source-coordinate view — the one editor
-features and indexers want. The `NodeRefOwned` variant tells you where
+features and indexers want. The `NodeRef` variant tells you where
 the construct landed:
 
 - `Inline` — an inline construct (ruby, bouten, gaiji, 縦中横, …)
-  carrying a `NodeOwned`.
+  carrying a `Node`.
 - `BlockLeaf` — a standalone block construct (page break, section
-  break, heading) carrying a `NodeOwned`.
+  break, heading) carrying a `Node`.
 - `BlockOpen` / `BlockClose` — the two ends of a paired container
   (`［＃ここから…］` / `［＃ここで…終わり］`), carrying a `RegionFormat`
   (open) and a `RegionClose` (close) respectively.
 
-`NodeRefOwned::kind()` collapses all four into a single
+`NodeRef::kind()` collapses all four into a single
 [`NodeKind`][nodekind] tag when you only need the discriminant.
 
 ### Matching container open/close pairs
@@ -82,7 +82,7 @@ model.
 
 ### Reaching inside a node
 
-`NodeOwned` is an owned, lifetime-free enum; its payload fields hold
+`Node` is an owned, lifetime-free enum; its payload fields hold
 the construct's content as `StrId` / `ContentRange` handles into the
 tree's `NodeStore`. To pull text out of a specific variant — say the
 base and reading of a ruby node — match the variant and resolve its

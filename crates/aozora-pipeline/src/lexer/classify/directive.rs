@@ -15,8 +15,8 @@ use std::sync::OnceLock;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, Anchored, Input, MatchKind, StartKind};
 use core::num::{NonZeroI8, NonZeroU8};
 
-use aozora_syntax::alloc_owned::OwnedAllocator;
-use aozora_syntax::owned::DirectiveOwned;
+use aozora_syntax::alloc::Allocator;
+use aozora_syntax::ast::Directive;
 use aozora_syntax::{
     AbsoluteSize, BOUTEN_KINDS, BlockStyles, BoutenKind, BoutenPosition, ColumnCount,
     DirectiveKind, EnclosureKind, FontShift, HeadingKind, HeadingStyle, IndentBlock, IndentLayout,
@@ -966,8 +966,8 @@ fn is_editor_note_body(body: &str) -> bool {
 )]
 pub(super) fn classify_annotation_body(
     body: &str,
-    alloc: &mut OwnedAllocator,
-) -> Option<(EmitKind, Option<DirectiveOwned>)> {
+    alloc: &mut Allocator,
+) -> Option<(EmitKind, Option<Directive>)> {
     #[cfg(feature = "classify-instrument")]
     let _classify_guard = SubsystemGuard::new(Subsystem::BodyDispatcher);
     if body.is_empty() {
@@ -1136,9 +1136,9 @@ pub(super) fn classify_annotation_body(
             let p = alloc.make_directive("［＃割り注］", DirectiveKind::WarichuOpen);
             let node = alloc.annotation(p);
             // Re-build a payload for the segment-wrap case. The
-            // borrowed allocator interns by string content, so the
-            // second call hits the dedup table; the owned allocator
-            // pays a single `Box<str>` clone, which is cheap relative
+            // Allocator interns by string content, so the second
+            // call hits the dedup table; it pays at most a single
+            // `Box<str>` clone, which is cheap relative
             // to the rare nested-Warichu shape this case targets.
             let p2 = alloc.make_directive("［＃割り注］", DirectiveKind::WarichuOpen);
             Some((EmitKind::Aozora(node), Some(p2)))
@@ -1460,7 +1460,7 @@ const fn is_okurigana_char(ch: char) -> bool {
 /// `「caption」` (per <https://www.aozora.gr.jp/annotation/graphics.html>),
 /// and confirms the trailing `入る` keyword. The caption is plain content,
 /// rendered into `<figcaption>` (§8).
-fn classify_sashie_body(body: &str, alloc: &mut OwnedAllocator) -> Option<EmitKind> {
+fn classify_sashie_body(body: &str, alloc: &mut Allocator) -> Option<EmitKind> {
     // `挿絵（file）入る` and the numbered `挿絵{N}（file）入る` (N a run of
     // half/full-width digits before the `（`). A description *before* 挿絵
     // (`女性と犬の挿絵（…）`, `「…」のキャプション付きの挿絵（…）`) is a separate,
@@ -1529,10 +1529,7 @@ fn classify_sashie_body(body: &str, alloc: &mut OwnedAllocator) -> Option<EmitKi
 /// description, tried just before the `Directive{Unknown}` catch-all (it
 /// has no prefix needle because the description is arbitrary). Returns
 /// `None` for any body that is not a complete `<非空>（<file>）入る`.
-pub(super) fn classify_general_image_body(
-    body: &str,
-    alloc: &mut OwnedAllocator,
-) -> Option<EmitKind> {
+pub(super) fn classify_general_image_body(body: &str, alloc: &mut Allocator) -> Option<EmitKind> {
     let middle = body.strip_suffix("入る")?;
     // The file spec `（file、横W×縦H）` is always the LAST paren group before
     // `入る`; use `rfind` so a description that itself embeds `（…）` (e.g.

@@ -55,7 +55,7 @@ use rayon::prelude::*;
 
 use aozora::pipeline::lexer::sanitize::sanitize;
 use aozora::render::AOZORA_CLASSES;
-use aozora::{DirectiveKind, Document, NodeKind, NodeOwned, NodeRefOwned};
+use aozora::{DirectiveKind, Document, Node, NodeKind, NodeRef};
 use aozora_corpus::{
     Archive, ArchiveBuilder, CorpusItem, EntryMeta, FilesystemCorpus, archive, par_load_decoded,
 };
@@ -296,6 +296,56 @@ pub(crate) enum CorpusTarget {
         #[arg(long)]
         update: bool,
     },
+    /// Select a stratified, family-diverse set of real works to extend the
+    /// `fixtures/works/` golden set (WS-1 / #414). Deterministic greedy
+    /// weighted set-cover over the notation families, seeded by the works
+    /// already vendored, excluding Unknown-dominated, unclean, and >500 KiB
+    /// works. Writes a TOML manifest whose `slug` fields are blank for a human
+    /// to fill (romanising the kanji author/title is not automatable).
+    SelectWorks {
+        /// Corpus root directory of `.txt` files. Defaults to `$AOZORA_CORPUS_ROOT`.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// How many works to add on top of the already-vendored set.
+        #[arg(long, default_value_t = 66)]
+        target: usize,
+        /// Selection manifest to write.
+        #[arg(
+            long,
+            default_value = "crates/aozora-conformance/fixtures/works-selection.toml"
+        )]
+        out: PathBuf,
+        /// Directory of already-vendored works — seeds coverage and is excluded
+        /// from re-selection (matched by `source.txt` content).
+        #[arg(long, default_value = "crates/aozora-conformance/fixtures/works")]
+        vendored: PathBuf,
+        /// Maximum Unknown-annotation ratio a candidate may carry.
+        #[arg(long, default_value_t = 0.25)]
+        max_unknown_ratio: f64,
+        /// Hard budget on total vendored `source.txt` bytes — the objective is
+        /// weighted family coverage *per byte*, so small works that cover rare
+        /// families win. Default ~2 MiB keeps the golden set lean.
+        #[arg(long, default_value_t = 2_000_000)]
+        max_total_source_bytes: usize,
+    },
+    /// Vendor the works named in a selection manifest into `fixtures/works/`:
+    /// decode each corpus file, normalise CRLF→LF, and write `source.txt`.
+    /// Skips rows with an empty `slug`. Does NOT write `expected.html` — seed
+    /// that with `UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test works_gate`.
+    VendorWorks {
+        /// Corpus root directory of `.txt` files. Defaults to `$AOZORA_CORPUS_ROOT`.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Selection manifest to read.
+        #[arg(
+            long,
+            default_value = "crates/aozora-conformance/fixtures/works-selection.toml"
+        )]
+        manifest: PathBuf,
+        /// Destination works directory.
+        #[arg(long, default_value = "crates/aozora-conformance/fixtures/works")]
+        dest: PathBuf,
+    },
 }
 
 pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
@@ -343,6 +393,26 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             baseline,
             update,
         } => digest_gate(root.as_deref(), baseline, *update),
+        CorpusTarget::SelectWorks {
+            root,
+            target,
+            out,
+            vendored,
+            max_unknown_ratio,
+            max_total_source_bytes,
+        } => select_works(
+            root.as_deref(),
+            *target,
+            out,
+            vendored,
+            *max_unknown_ratio,
+            *max_total_source_bytes,
+        ),
+        CorpusTarget::VendorWorks {
+            root,
+            manifest,
+            dest,
+        } => vendor_works(root.as_deref(), manifest, dest),
     }
 }
 
@@ -2421,7 +2491,7 @@ fn audit_one(item: CorpusItem) -> FileStat {
 /// strings.
 fn analyze(text: &str) -> FileStat {
     let doc = Document::new(text);
-    let out = doc.parse_owned();
+    let out = doc.lex();
     let mut s = FileStat::default();
 
     for sn in &out.source_nodes {
@@ -2429,8 +2499,7 @@ fn analyze(text: &str) -> FileStat {
             s.node_kinds[i] += 1;
         }
         match sn.node {
-            NodeRefOwned::Inline(NodeOwned::Directive(a))
-            | NodeRefOwned::BlockLeaf(NodeOwned::Directive(a)) => {
+            NodeRef::Inline(Node::Directive(a)) | NodeRef::BlockLeaf(Node::Directive(a)) => {
                 match a.kind {
                     DirectiveKind::Unknown => {
                         s.annotation_kinds[0] += 1;
@@ -2456,8 +2525,7 @@ fn analyze(text: &str) -> FileStat {
                     _ => {}
                 }
             }
-            NodeRefOwned::Inline(NodeOwned::Gaiji(g))
-            | NodeRefOwned::BlockLeaf(NodeOwned::Gaiji(g)) => {
+            NodeRef::Inline(Node::Gaiji(g)) | NodeRef::BlockLeaf(Node::Gaiji(g)) => {
                 s.gaiji_total += 1;
                 if g.resolve(&out.store).is_none() {
                     s.gaiji_unresolved += 1;
@@ -2804,6 +2872,436 @@ fn truncate_for_display(s: &str, max_chars: usize) -> String {
     reason = "OsString is used by the parent module's command surface; clippy can't see across module boundaries"
 )]
 fn _unused_marker(_: OsString) {}
+
+// ================= WS-1: stratified golden-works selection (#414) =================
+//
+// The `fixtures/works/` golden set byte-compares the parser's own `to_html()`
+// over whole real works, catching drift on the notation *combinations* real
+// documents exhibit that single-construct fixtures miss. `select-works` grows
+// that set reproducibly: it fingerprints every corpus work by the notation
+// families it exercises, then runs a deterministic greedy weighted set-cover —
+// rare families (e.g. `lineBold`) weighted highest — over the works not already
+// vendored, excluding Unknown-dominated, unclean, and >500 KiB works. The value
+// of a new golden is the family *combination* it forces through `to_html()`, so
+// coverage (not proportional sampling) is the objective.
+
+/// Family universe: `NodeKind::ALL` (26) ∪ non-Unknown `ANN_KIND_LABELS` (13) ∪
+/// `GAIJI_FORM_LABELS` (6) = 45. Id layout: `[0,26)` node, `[26,39)` annotation,
+/// `[39,45)` gaiji.
+const FAM_NODE: usize = NodeKind::ALL.len();
+const FAM_ANN: usize = ANN_KIND_LABELS.len() - 1; // skip index 0 (unknown)
+const FAM_GAIJI: usize = GAIJI_FORM_LABELS.len();
+const FAM_TOTAL: usize = FAM_NODE + FAM_ANN + FAM_GAIJI;
+
+fn family_name(id: usize) -> &'static str {
+    if id < FAM_NODE {
+        NodeKind::ALL[id].as_json_tag()
+    } else if id < FAM_NODE + FAM_ANN {
+        ANN_KIND_LABELS[id - FAM_NODE + 1]
+    } else {
+        GAIJI_FORM_LABELS[id - FAM_NODE - FAM_ANN]
+    }
+}
+
+/// The family ids a document exercises (count > 0), ascending.
+fn family_ids(stat: &FileStat) -> Vec<usize> {
+    let mut ids = Vec::new();
+    for (i, &c) in stat.node_kinds.iter().enumerate() {
+        if c > 0 {
+            ids.push(i);
+        }
+    }
+    for i in 1..ANN_KIND_LABELS.len() {
+        if stat.annotation_kinds[i] > 0 {
+            ids.push(FAM_NODE + i - 1);
+        }
+    }
+    for (i, &c) in stat.gaiji_forms.iter().enumerate() {
+        if c > 0 {
+            ids.push(FAM_NODE + FAM_ANN + i);
+        }
+    }
+    ids
+}
+
+/// A deterministic ASCII slug from the aozora card id (the first digit run in
+/// the filename), e.g. `作品/種田山頭火/其中日記（49258…）.txt` → `w49258`. Card
+/// ids are unique per work, so slugs do not collide; a human may rename to a
+/// mnemonic before vendoring, but this keeps the bulk selection reproducible
+/// without romanising 80 kanji titles by hand.
+fn slug_from_label(label: &str) -> String {
+    let stem = label.rsplit('/').next().unwrap_or(label);
+    let digits: String = stem
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(char::is_ascii_digit)
+        .collect();
+    if digits.is_empty() {
+        format!("w{}", &blake3::hash(label.as_bytes()).to_hex()[..10])
+    } else {
+        format!("w{digits}")
+    }
+}
+
+/// The corpus filename's orthography tag, informational. (`mtime` is a vacuous
+/// era proxy on a flat checkout, so we surface the 新字新仮名 / 旧字旧仮名 axis
+/// the filename carries instead.)
+fn orthography_of(label: &str) -> &'static str {
+    for tag in ["新字新仮名", "旧字旧仮名", "新字旧仮名", "旧字新仮名"] {
+        if label.contains(tag) {
+            return tag;
+        }
+    }
+    ""
+}
+
+/// A candidate work's selection fingerprint.
+struct WorkProfile {
+    label: String,
+    len: usize,
+    band: usize,
+    orthography: &'static str,
+    families: Vec<usize>,
+    unknown_ratio: f64,
+    content_hash: blake3::Hash,
+    clean: bool,
+    decodable: bool,
+}
+
+/// Decode, lex, and render one work into a fingerprint. Both the AST walk
+/// (families) and the render (cleanliness) are `catch_unwind`-guarded.
+fn profile_one(item: CorpusItem) -> WorkProfile {
+    let label = item.label;
+    let orthography = orthography_of(&label);
+    let text = match decode_auto(&item.bytes) {
+        Ok(t) => t.into_owned(),
+        Err(_) => {
+            return WorkProfile {
+                label,
+                len: 0,
+                band: 0,
+                orthography,
+                families: Vec::new(),
+                unknown_ratio: 1.0,
+                content_hash: blake3::hash(b""),
+                clean: false,
+                decodable: false,
+            };
+        }
+    };
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let content_hash = blake3::hash(normalized.as_bytes());
+    let len = normalized.len();
+    let band = band_slot(u32::try_from(len).unwrap_or(u32::MAX));
+
+    let stat = panic::catch_unwind(AssertUnwindSafe(|| analyze(&text))).ok();
+    let (families, unknown_ratio) = stat.as_ref().map_or_else(
+        || (Vec::new(), 1.0),
+        |s| {
+            let ann_total: u64 = s.annotation_kinds.iter().sum();
+            let ratio = if ann_total == 0 {
+                0.0
+            } else {
+                (s.annotation_kinds[0] as f64) / (ann_total as f64)
+            };
+            (family_ids(s), ratio)
+        },
+    );
+    let clean = stat.is_some()
+        && panic::catch_unwind(AssertUnwindSafe(|| {
+            let html = Document::new(text.clone()).parse().to_html();
+            scan_correctness(&html).is_empty() && visible_leak_markers(&html).is_empty()
+        }))
+        .unwrap_or(false);
+
+    WorkProfile {
+        label,
+        len,
+        band,
+        orthography,
+        families,
+        unknown_ratio,
+        content_hash,
+        clean,
+        decodable: stat.is_some(),
+    }
+}
+
+/// Seed family coverage and the dedup hash-set from the already-vendored works.
+fn load_vendored(
+    dir: &Path,
+) -> (
+    std::collections::HashSet<usize>,
+    std::collections::HashSet<[u8; 32]>,
+) {
+    let mut covered = std::collections::HashSet::new();
+    let mut hashes = std::collections::HashSet::new();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return (covered, hashes);
+    };
+    for entry in entries.flatten() {
+        let src = entry.path().join("source.txt");
+        let Ok(text) = fs::read_to_string(&src) else {
+            continue;
+        };
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        hashes.insert(*blake3::hash(normalized.as_bytes()).as_bytes());
+        if let Ok(stat) = panic::catch_unwind(AssertUnwindSafe(|| analyze(&text))) {
+            for f in family_ids(&stat) {
+                covered.insert(f);
+            }
+        }
+    }
+    (covered, hashes)
+}
+
+#[derive(Serialize)]
+struct WorksManifest {
+    note: String,
+    work: Vec<WorkRow>,
+}
+
+#[derive(Serialize)]
+struct WorkRow {
+    path: String,
+    /// Blank on generation — a human fills a mnemonic romanisation (kanji
+    /// author/title is not deterministically romanisable).
+    slug: String,
+    size: usize,
+    band: &'static str,
+    orthography: &'static str,
+    families: Vec<&'static str>,
+    /// The families this work was the first (in selection order) to contribute.
+    new_families: Vec<&'static str>,
+}
+
+/// Deterministic greedy weighted set-cover selection of golden-work candidates.
+fn select_works(
+    root: Option<&Path>,
+    target: usize,
+    out: &Path,
+    vendored: &Path,
+    max_unknown_ratio: f64,
+    max_total_source_bytes: usize,
+) -> Result<(), String> {
+    let corpus = resolve_corpus(root)?;
+    eprintln!(
+        "xtask corpus select-works: walking {} …",
+        corpus.root().display()
+    );
+    let start = Instant::now();
+
+    let prev_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let mut profiles: Vec<WorkProfile> = par_load_decoded(&corpus, profile_one)
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect();
+    panic::set_hook(prev_hook);
+
+    // Determinism: `par_load_decoded` is unordered — sort by label first.
+    profiles.sort_by(|a, b| a.label.cmp(&b.label));
+
+    let (seed_covered, vendored_hashes) = load_vendored(vendored);
+
+    // Rarity weights from global family frequency over decodable works.
+    let mut global = [0u64; FAM_TOTAL];
+    for p in &profiles {
+        if p.decodable {
+            for &f in &p.families {
+                global[f] += 1;
+            }
+        }
+    }
+    let weight = |f: usize| -> f64 { 1.0 / ((global[f] as f64) + std::f64::consts::E).ln() };
+
+    let candidates: Vec<&WorkProfile> = profiles
+        .iter()
+        .filter(|p| {
+            p.decodable
+                && p.clean
+                && p.band < 2 // exclude Large / Pathological (byte budget)
+                && p.unknown_ratio < max_unknown_ratio
+                && !p.families.is_empty()
+                && !vendored_hashes.contains(p.content_hash.as_bytes())
+        })
+        .collect();
+
+    // Greedy under a hard byte budget. Coverage phase (gain > 0): rank by
+    // weighted coverage PER BYTE, so a small work covering a rare family beats a
+    // large one covering the same — this front-loads cheap rare-family coverage
+    // and keeps the golden set lean. Diversity phase (gain == 0, families
+    // saturated): keep adding combination-diverse works (family-set not a subset
+    // of one already chosen), smallest first. Integer keys → deterministic ties;
+    // candidates are label-sorted so equal keys break label-ascending.
+    let mut covered = seed_covered;
+    let mut selected_sets: Vec<Vec<usize>> = Vec::new();
+    let mut chosen: Vec<(&WorkProfile, Vec<usize>)> = Vec::new();
+    let mut used = vec![false; candidates.len()];
+    let mut spent: usize = 0;
+
+    while chosen.len() < target {
+        let mut best: Option<usize> = None;
+        let mut best_key = (i64::MIN, i64::MIN, i64::MIN);
+        for (i, c) in candidates.iter().enumerate() {
+            if used[i] || spent + c.len > max_total_source_bytes {
+                continue;
+            }
+            let gain: f64 = c
+                .families
+                .iter()
+                .filter(|f| !covered.contains(*f))
+                .map(|&f| weight(f))
+                .sum();
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_precision_loss,
+                clippy::cast_possible_wrap,
+                reason = "integer keys scale float coverage gains for deterministic ranking"
+            )]
+            let key = if gain > 0.0 {
+                // (phase=1, weighted gain per byte, weighted gain)
+                (
+                    1i64,
+                    (gain / c.len as f64 * 1e12) as i64,
+                    (gain * 1_000_000.0) as i64,
+                )
+            } else {
+                // Redundancy guard: skip a work whose family-set ⊆ one already chosen.
+                if selected_sets
+                    .iter()
+                    .any(|s| c.families.iter().all(|f| s.contains(f)))
+                {
+                    continue;
+                }
+                // (phase=0, distinct families PER BYTE → small diverse works win)
+                (
+                    0i64,
+                    (c.families.len() as f64 / c.len as f64 * 1e9) as i64,
+                    0i64,
+                )
+            };
+            if best.is_none() || key > best_key {
+                best = Some(i);
+                best_key = key;
+            }
+        }
+        let Some(i) = best else { break };
+        used[i] = true;
+        spent += candidates[i].len;
+        let new_families: Vec<usize> = candidates[i]
+            .families
+            .iter()
+            .copied()
+            .filter(|f| !covered.contains(f))
+            .collect();
+        for &f in &candidates[i].families {
+            covered.insert(f);
+        }
+        selected_sets.push(candidates[i].families.clone());
+        chosen.push((candidates[i], new_families));
+    }
+    let covered_total = covered.len();
+
+    let rows: Vec<WorkRow> = chosen
+        .iter()
+        .map(|(c, new)| WorkRow {
+            path: c.label.clone(),
+            slug: slug_from_label(&c.label),
+            size: c.len,
+            band: if c.band == 0 { "small" } else { "medium" },
+            orthography: c.orthography,
+            families: c.families.iter().map(|&f| family_name(f)).collect(),
+            new_families: new.iter().map(|&f| family_name(f)).collect(),
+        })
+        .collect();
+
+    let manifest = WorksManifest {
+        note: format!(
+            "Generated by `xtask corpus select-works` (deterministic). {} works \
+             to extend fixtures/works/. Slugs are the aozora card id (w<id>); \
+             rename any to a mnemonic before `xtask corpus vendor-works` if you \
+             like. Rows are a greedy weighted family set-cover under a source-byte \
+             budget; `new_families` is what each first contributed.",
+            rows.len()
+        ),
+        work: rows,
+    };
+    let toml = toml::to_string_pretty(&manifest).map_err(|e| format!("serialise manifest: {e}"))?;
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+    }
+    fs::write(out, &toml).map_err(|e| format!("write {}: {e}", out.display()))?;
+
+    eprintln!(
+        "select-works: {} candidates → {} selected ({} KiB source, {}/{} families covered incl. seed) \
+         in {:.1}s → {} (review, then vendor-works)",
+        candidates.len(),
+        manifest.work.len(),
+        spent / 1024,
+        covered_total,
+        FAM_TOTAL,
+        start.elapsed().as_secs_f64(),
+        out.display()
+    );
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct WorksManifestIn {
+    #[serde(default)]
+    work: Vec<WorkRowIn>,
+}
+
+#[derive(Deserialize)]
+struct WorkRowIn {
+    path: String,
+    #[serde(default)]
+    slug: String,
+}
+
+/// Vendor the slugged works from a selection manifest into `dest/<slug>/source.txt`
+/// (decoded, CRLF→LF). Skips rows with a blank slug; never writes `expected.html`.
+fn vendor_works(root: Option<&Path>, manifest: &Path, dest: &Path) -> Result<(), String> {
+    let corpus = resolve_corpus(root)?;
+    let raw = fs::read_to_string(manifest)
+        .map_err(|e| format!("read manifest {}: {e}", manifest.display()))?;
+    let parsed: WorksManifestIn =
+        toml::from_str(&raw).map_err(|e| format!("parse manifest: {e}"))?;
+
+    let (mut added, mut updated, mut unchanged, mut skipped) = (0u32, 0u32, 0u32, 0u32);
+    for row in &parsed.work {
+        if row.slug.trim().is_empty() {
+            skipped += 1;
+            continue;
+        }
+        let path = corpus.root().join(&row.path);
+        let bytes = fs::read(&path).map_err(|e| format!("read corpus {}: {e}", path.display()))?;
+        let text = decode_auto(&bytes).map_err(|e| format!("decode {}: {e:?}", row.path))?;
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let dir = dest.join(&row.slug);
+        fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+        let src = dir.join("source.txt");
+        match fs::read_to_string(&src) {
+            Ok(old) if old == normalized => unchanged += 1,
+            Ok(_) => {
+                fs::write(&src, &normalized)
+                    .map_err(|e| format!("write {}: {e}", src.display()))?;
+                updated += 1;
+            }
+            Err(_) => {
+                fs::write(&src, &normalized)
+                    .map_err(|e| format!("write {}: {e}", src.display()))?;
+                added += 1;
+            }
+        }
+    }
+    eprintln!(
+        "vendor-works: {added} added, {updated} updated, {unchanged} unchanged, {skipped} skipped \
+         (blank slug). Seed goldens: UPDATE_GOLDEN=1 cargo test -p aozora-conformance --test works_gate"
+    );
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -3535,5 +4033,54 @@ mod tests {
         assert_eq!(scanned, 3, "2 leaked + 1 clean; decode-skip not scanned");
         assert!(panicked.is_empty());
         assert_eq!(walk_errors, 0);
+    }
+
+    #[test]
+    fn slug_from_label_uses_card_id_then_hashes() {
+        assert_eq!(
+            slug_from_label("作品/種田山頭火/其中日記（49258_ruby_36099）.txt"),
+            "w49258"
+        );
+        assert_eq!(
+            slug_from_label("作品/岩野泡鳴/神秘的半獣主義（733_txt）.txt"),
+            "w733"
+        );
+        // No digits in the filename → deterministic content-hash fallback.
+        let a = slug_from_label("作品/中原中也/コキューの憶ひ出.txt");
+        assert!(a.starts_with('w') && a.len() == 11, "hash slug: {a}");
+        assert_eq!(
+            a,
+            slug_from_label("作品/中原中也/コキューの憶ひ出.txt"),
+            "slug is deterministic"
+        );
+    }
+
+    #[test]
+    fn orthography_of_reads_the_filename_tag() {
+        assert_eq!(orthography_of("x（新字新仮名）.txt"), "新字新仮名");
+        assert_eq!(orthography_of("x（旧字旧仮名）.txt"), "旧字旧仮名");
+        assert_eq!(orthography_of("plain.txt"), "");
+    }
+
+    #[test]
+    fn family_ids_and_names_span_the_universe() {
+        let mut node_kinds = [0u64; 26];
+        node_kinds[0] = 3; // first node family present
+        let mut annotation_kinds = [0u64; 14];
+        annotation_kinds[0] = 5; // Unknown — index 0 is NOT a family
+        annotation_kinds[1] = 2; // first annotation family present
+        let mut gaiji_forms = [0u64; 6];
+        gaiji_forms[0] = 1; // first gaiji family present
+        let s = FileStat {
+            node_kinds,
+            annotation_kinds,
+            gaiji_forms,
+            ..FileStat::default()
+        };
+        assert_eq!(family_ids(&s), vec![0, FAM_NODE, FAM_NODE + FAM_ANN]);
+        assert_eq!(family_name(0), NodeKind::ALL[0].as_json_tag());
+        assert_eq!(family_name(FAM_NODE), ANN_KIND_LABELS[1]);
+        assert_eq!(family_name(FAM_NODE + FAM_ANN), GAIJI_FORM_LABELS[0]);
+        assert_eq!(FAM_TOTAL, FAM_NODE + FAM_ANN + FAM_GAIJI);
     }
 }

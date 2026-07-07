@@ -9,7 +9,7 @@ diagnostic to a single stage boundary.
 The single public entry [`lex`] drives all four stages
 and builds the resulting owned AST directly into a flat `NodeStore`
 (interned strings plus `u32`-handle-addressed content and segment
-pools) inside the returned `OwnedLexOutput` — there is no
+pools) inside the returned `LexOutput` — there is no
 caller-provided arena. The legacy
 "normalize / registry / validate" steps disappeared into a fused
 walk inside `lex`; they no longer have standalone stage functions.
@@ -183,6 +183,6 @@ measurement attached.
   measure the per-stage cost on your own workload.
 
 [`lex`]: https://docs.rs/aozora-pipeline/latest/aozora_pipeline/fn.lex.html
-[`Node`]: https://docs.rs/aozora-syntax/latest/aozora_syntax/owned/enum.NodeOwned.html
+[`Node`]: https://docs.rs/aozora-syntax/latest/aozora_syntax/ast/enum.Node.html
 [`SLUGS`]: https://docs.rs/aozora-spec/latest/aozora_spec/static.SLUGS.html
 [`Registry`]: https://docs.rs/aozora-pipeline/latest/aozora_pipeline/struct.Registry.html

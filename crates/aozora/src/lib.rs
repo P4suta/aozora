@@ -31,7 +31,7 @@
 //! [`Document`] owns the source buffer plus a `Copy` diagnostic
 //! policy. [`Document::parse`] returns a [`Tree`] whose `&self`
 //! lifetime tracks only that source borrow — the AST data itself is
-//! owned, lifetime-free, and `Send + Sync` (an `OwnedLexOutput` backed
+//! owned, lifetime-free, and `Send + Sync` (an `LexOutput` backed
 //! by a flat `NodeStore`: a string interner plus content / segment
 //! pools addressed by `u32` handles). The interner deduplicates
 //! repeated string content; dropping the tree frees the store in one
@@ -58,7 +58,7 @@
 
 use core::ops::Range;
 
-pub use aozora_pipeline::{NodeRefOwned, OwnedLexOutput, SourceNodeOwned, lex};
+pub use aozora_pipeline::{LexOutput, NodeRef, SourceNode, lex};
 pub use aozora_spec::{
     ALL_SENTINELS, BLOCK_CLOSE_SENTINEL, BLOCK_LEAF_SENTINEL, BLOCK_OPEN_SENTINEL, Diagnostic,
     DiagnosticInfo, DiagnosticSource, INLINE_SENTINEL, InternalCheckCode, NormalizedOffset,
@@ -73,7 +73,7 @@ pub use aozora_syntax::{
     BlockStyles, BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, EnclosureKind, FontShift,
     Format, ForwardAttr, ForwardOrigin, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi,
     LineFormat, LineWidth, NodeKind, RegionClose, RegionFormat, RubySide, SectionKind,
-    owned::{ContentOwned, NodeOwned, NodeStore},
+    ast::{Content, Node, NodeStore},
 };
 
 mod diagnostics_text;
@@ -88,7 +88,7 @@ pub mod json;
 pub use diagnostics_text::diagnostics_text;
 pub use document::{DiagnosticPolicy, Document, ParseOptions, Tree};
 /// Source-region ownership and minimal-diff source splicing (#202).
-pub use splice::{CoupledKind, Coupling, OwnedRegion, RegionRole, SpliceError, SpliceSafety};
+pub use splice::{CoupledKind, Coupling, Region, RegionRole, SpliceError, SpliceSafety};
 
 pub use incremental::{DiagBaseRef, DiagSplice, PieceSeq, SanitizedSrc};
 
@@ -98,7 +98,7 @@ pub use incremental::{DiagBaseRef, DiagSplice, PieceSeq, SanitizedSrc};
 /// (#237 Tier 1/2). Splices the maintained [`PieceSeq`] (the next edit's
 /// region-find base, from which the LSP flattens this edit's diagnostics) from
 /// the store-free [`DiagBaseRef`] of the prior parse, **without building an
-/// [`OwnedLexOutput`]** — no normalized/sanitized string rebuild, no store
+/// [`LexOutput`]** — no normalized/sanitized string rebuild, no store
 /// clone/graft, no registry or container-pairs rebuild, and no whole-table
 /// re-materialization. Cost is `O(region + #pieces)`: the maintained sequence is
 /// spliced (prefix/suffix pieces shared by `Arc`), not rebuilt, versus a full
@@ -208,7 +208,7 @@ pub mod syntax {
 ///
 /// `Tree::to_html` / `Tree::to_source` cover the common cases; custom
 /// downstream renderers (EPUB, plain text, LaTeX, …) walk the owned
-/// `OwnedLexOutput` (its `source_nodes` + `NodeStore`) and can reuse the
+/// `LexOutput` (its `source_nodes` + `NodeStore`) and can reuse the
 /// shared byte-spelling helpers re-exported through this module.
 pub mod render {
     pub use aozora_render::*;

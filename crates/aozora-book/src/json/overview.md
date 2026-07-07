@@ -40,7 +40,7 @@ guarantees with later schemas.
 ## Stability vs. `non_exhaustive`
 
 [`Diagnostic`](https://docs.rs/aozora/latest/aozora/enum.Diagnostic.html)
-and [`Node`](https://docs.rs/aozora/latest/aozora/syntax/borrowed/enum.Node.html)
+and [`Node`](https://docs.rs/aozora/latest/aozora/syntax/ast/enum.Node.html)
 are `#[non_exhaustive]` — minor releases can add variants. The JSON
 format protects callers in two ways:
 

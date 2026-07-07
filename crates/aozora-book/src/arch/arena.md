@@ -3,12 +3,12 @@
 `Tree<'a>` is a **view** over an owned, lifetime-free parse result. Its
 `'a` lifetime tracks only one thing — the borrow of the source string
 owned by `Document`. The AST data itself is owned outright by an
-`OwnedLexOutput`, so it carries no arena lifetime and is `Send + Sync`.
+`LexOutput`, so it carries no arena lifetime and is `Send + Sync`.
 
 - `Document` owns the source `Box<str>` (and a `Copy` diagnostic
   policy). It holds no parse state.
 - `Document::parse` runs the owned lex pipeline and returns a
-  `Tree<'_>` that owns its `OwnedLexOutput` and borrows only `&self`'s
+  `Tree<'_>` that owns its `LexOutput` and borrows only `&self`'s
   source.
 - Every variable-length payload — interned strings, `Content` runs,
   `Segment` slices — lives in a flat `NodeStore` addressed by small
@@ -20,7 +20,7 @@ flowchart LR
         src["Box&lt;str&gt; source"]
     end
     subgraph Tree["Tree&lt;'a&gt;"]
-        out["OwnedLexOutput"]
+        out["LexOutput"]
         store["NodeStore: interner + content / segment Vecs"]
         out --- store
     end
@@ -44,12 +44,12 @@ three handle types index flat pools held by the `NodeStore`:
 | Handle | Resolves to | Backing pool |
 |---|---|---|
 | `StrId` | an interned `&str` | the `StrInterner` |
-| `ContentRange` | a `&[ContentOwned]` run (`len >= 1`) | the content `Vec` |
-| `SegRange` | a `&[SegmentOwned]` slice | the segment `Vec` |
+| `ContentRange` | a `&[Content]` run (`len >= 1`) | the content `Vec` |
+| `SegRange` | a `&[Segment]` slice | the segment `Vec` |
 
 ```rust,ignore
 use aozora::Document;
-use aozora::syntax::owned::{NodeOwned, NodeRefOwned};
+use aozora::syntax::ast::{Node, NodeRef};
 
 let doc = Document::new("｜青梅《おうめ》");
 let tree = doc.parse();
@@ -57,7 +57,7 @@ let out = tree.lex_output();
 
 // Walk the source-keyed side table; resolve a ruby base through the store.
 for sn in tree.source_nodes() {
-    if let NodeRefOwned::Inline(NodeOwned::Ruby(r)) = sn.node {
+    if let NodeRef::Inline(Node::Ruby(r)) = sn.node {
         // `content_range_as_plain` resolves a length-1 `Plain` run to its text.
         if let Some(base) = out.store.content_range_as_plain(r.base) {
             assert_eq!(base, "青梅");
@@ -109,7 +109,7 @@ The #237 incremental-reparse work needs the opposite: a representation a
 long-lived consumer (the LSP `ParseCache`, an out-of-process segment
 cache) can **own, cache, and move across threads**. Replacing the
 arena's pointers with `u32` handles into owned `Vec`s makes the whole
-`OwnedLexOutput` lifetime-free and `Send + Sync`, while keeping the
+`LexOutput` lifetime-free and `Send + Sync`, while keeping the
 same `Copy`, cache-friendly node shape the arena gave. The classify
 stage now builds owned nodes directly into the store — there is no
 intermediate borrowed tree to convert from.
@@ -117,17 +117,17 @@ intermediate borrowed tree to convert from.
 ## How the AST shape interacts with the lifetime
 
 ```rust,ignore
-pub enum NodeOwned {
-    Ruby(RubyOwned),         // ContentRange base / reading
-    Gaiji(GaijiOwned),       // gaiji reference payload
-    Kaeriten(KaeritenOwned),
+pub enum Node {
+    Ruby(Ruby),         // ContentRange base / reading
+    Gaiji(Gaiji),       // gaiji reference payload
+    Kaeriten(Kaeriten),
     Container(Container),    // a nested block region
     PageBreak,               // a Copy unit variant
     // … and more variants, every payload Copy or a u32 handle
 }
 ```
 
-`NodeOwned` is a tagged union of scalars and `u32` handles — fully
+`Node` is a tagged union of scalars and `u32` handles — fully
 `Copy`, with no lifetime parameter. The only lifetime in the public
 surface is the `'a` on `Tree<'a>`, and it tracks the **source** borrow,
 nothing more:
@@ -142,13 +142,13 @@ fn render(tree: &aozora::Tree<'_>) -> String {
 
 Owning the AST removes the old arena trade-off ("you can't outlive the
 `Document`"). A consumer that wants a result with **no** lifetime calls
-`Document::parse_owned`, which returns an `OwnedLexOutput` directly:
+`Document::lex`, which returns an `LexOutput` directly:
 
 ```rust,ignore
-use aozora::{Document, OwnedLexOutput};
+use aozora::{Document, LexOutput};
 
 // Send + Sync, no lifetime — cache it, move it across threads.
-let owned: OwnedLexOutput = Document::new("｜青梅《おうめ》").parse_owned();
+let owned: LexOutput = Document::new("｜青梅《おうめ》").lex();
 ```
 
 A cache that retains the owned output can hand out cheap `Tree` views

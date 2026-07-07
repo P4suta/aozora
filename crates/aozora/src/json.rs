@@ -22,7 +22,7 @@
 //!
 //! # Stability vs. `non_exhaustive`
 //!
-//! Both [`crate::Diagnostic`] and [`crate::NodeOwned`] are
+//! Both [`crate::Diagnostic`] and [`crate::Node`] are
 //! `#[non_exhaustive]` upstream so the library can add variants in
 //! minor releases. The wire format protects callers by:
 //!

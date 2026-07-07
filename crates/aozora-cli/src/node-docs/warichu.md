@@ -31,7 +31,7 @@ pub struct Warichu<'src> {
 }
 ```
 
-`upper` / `lower` are plain [`ContentOwned`](https://docs.rs/aozora/latest/aozora/owned/enum.ContentOwned.html);
+`upper` / `lower` are plain [`Content`](https://docs.rs/aozora/latest/aozora/ast/enum.Content.html);
 empty halves are valid (one-sided warichu).
 
 ## When emitted

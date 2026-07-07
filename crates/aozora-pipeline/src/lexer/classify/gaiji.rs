@@ -12,16 +12,16 @@ use super::super::token::TriggerKind;
 use super::{BodyView, RecogniseCtx};
 use aozora_encoding::gaiji as gaiji_resolve;
 use aozora_syntax::Span;
-use aozora_syntax::owned::GaijiOwned;
+use aozora_syntax::ast::Gaiji;
 
 /// Intermediate result of `recognize_gaiji`.
 ///
-/// Holds the payload (`GaijiOwned`) rather than a wrapped
+/// Holds the payload (`Gaiji`) rather than a wrapped
 /// node so the caller can route it to either `alloc.gaiji(p)`
 /// (top-level span) or `alloc.seg_gaiji(p)` (nested inside a body
 /// content) without re-paying the description / mencode intern cost.
 pub(super) struct GaijiMatch {
-    pub(super) payload: GaijiOwned,
+    pub(super) payload: Gaiji,
     pub(super) consume_start: u32,
     pub(super) consume_end: u32,
 }

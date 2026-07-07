@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use aozora::render::SerializeOptions;
+use aozora::render::{DirectiveNormalization, SerializeOptions};
 use clap::{Args, Parser, ValueEnum};
 
 const LONG_ABOUT: &str = concat!(
@@ -131,10 +131,15 @@ impl FmtArgs {
     }
 
     /// The serialization options derived from the flags — currently just the
-    /// `--fix-notation` autofix opt-in.
+    /// `--fix-notation` autofix opt-in, which applies zero-false-positive Tier1
+    /// only (`Canonical`); the lossy Tier2 reductions are render-only (ADR-0026).
     pub(crate) fn serialize_options(&self) -> SerializeOptions {
         SerializeOptions {
-            fix_notation: self.fix_notation,
+            directives: if self.fix_notation {
+                DirectiveNormalization::Canonical
+            } else {
+                DirectiveNormalization::Off
+            },
         }
     }
 

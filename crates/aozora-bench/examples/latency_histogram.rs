@@ -34,7 +34,7 @@ use aozora_pipeline::lex;
 use aozora_pipeline::lexer::{
     ClassifiedSpan, PairEvent, Token, classify, pair, sanitize, tokenize,
 };
-use aozora_syntax::alloc_owned::OwnedAllocator;
+use aozora_syntax::alloc::Allocator;
 const BUCKETS: usize = 10;
 const MIN_NS: u64 = 1_000;
 const MAX_NS: u64 = 1_000_000_000;
@@ -84,7 +84,7 @@ fn main() {
         drop(ps.take_diagnostics());
         pair_ns.push(t.elapsed().as_nanos() as u64);
 
-        let mut alloc = OwnedAllocator::new();
+        let mut alloc = Allocator::new();
         let t = Instant::now();
         let mut cs = classify(pe, &sanitized.text, &mut alloc);
         let _spans: Vec<ClassifiedSpan> = (&mut cs).collect();

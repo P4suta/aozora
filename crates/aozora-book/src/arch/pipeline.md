@@ -114,7 +114,7 @@ order and what each backend looks like in `samply`.
 Bracket matching is a single linear-time stack walk over the trigger
 event stream. Classify then does the *actual* recognition: each
 opener type maps via the [`SLUGS`] dispatch table to a recogniser,
-and the recogniser produces the borrowed `Node<'arena>` that
+and the recogniser produces the owned, lifetime-free `Node` that
 [`lex`] then registers and substitutes a PUA sentinel for.
 The slug canonicalisation makes prefix collisions
 (`ここから2字下げ` vs `ここから2字下げ、地寄せ`) deterministic without

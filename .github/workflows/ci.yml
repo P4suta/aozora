@@ -389,7 +389,7 @@ jobs:
       - name: Incremental-merge gate (#237)
         run: cargo test -p aozora --release --test corpus_incremental_merge -- --nocapture
       - name: Owned-allocation-pressure ratchet (#237 P0.2-real)
-        run: cargo run --release -p aozora-bench --example owned_alloc_gate -- --root "$AOZORA_CORPUS_ROOT" --baseline corpus/owned-alloc-baseline.json
+        run: cargo run --release -p aozora-bench --example alloc_gate -- --root "$AOZORA_CORPUS_ROOT" --baseline corpus/alloc-baseline.json
       - name: Render-leak ratchet gate (#399)
         run: cargo run -p aozora-xtask -q -- corpus render-leak-gate --root "$AOZORA_CORPUS_ROOT" --baseline corpus/render-leak-baseline.json
       - name: Render-correctness ratchet gate (#414)

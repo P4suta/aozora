@@ -2,13 +2,13 @@
 //!
 //! # AST shape
 //!
-//! The **sole AST** is the owned AST defined in [`mod@owned`]:
+//! The **sole AST** is the owned AST defined in [`mod@ast`]:
 //! lifetime-free, `Copy`-able nodes whose string and run payloads are
 //! `u32` handles into a flat `NodeStore` (a string interner plus
 //! content / segment pools), deduplicated through the store's interner.
 //! Public consumers (`aozora` meta crate, FFI / WASM / Python drivers,
 //! CLI) parse via `aozora::Document::parse()` and walk the owned
-//! `owned::NodeOwned` values.
+//! `ast::Node` values.
 //!
 //! # Top-level surface
 //!
@@ -19,7 +19,7 @@
 //! formatting model (`Format` / `ForwardAttr` / `LineFormat` /
 //! `RegionFormat` / `RegionClose` and their `NonZero` parameters) lives
 //! under [`mod@format`]. The owned AST node types live under
-//! [`mod@owned`]; the builder under [`mod@alloc_owned`].
+//! [`mod@ast`]; the builder under [`mod@alloc`].
 
 #![forbid(unsafe_code)]
 
@@ -27,11 +27,12 @@ use miette::Diagnostic;
 use thiserror::Error;
 
 pub mod accent;
-pub mod alloc_owned;
+pub mod alloc;
+pub mod ast;
+pub mod degraded;
 pub mod format;
 pub mod lint;
 pub mod node_kind;
-pub mod owned;
 
 pub use format::{
     AbsoluteSize, AccentMark, BlockStyles, ColumnCount, EnclosureKind, FontShift, Format,
@@ -68,7 +69,7 @@ pub struct Container {
 
 /// Which 傍点 (emphasis dot) or 傍線 (sideline) mark decorates a run.
 ///
-/// Carried by both the forward-reference `owned::ForwardFormatOwned` leaf and the
+/// Carried by both the forward-reference `ast::ForwardFormat` leaf and the
 /// paired [`crate::RegionFormat::Bouten`]. The 点 (dot) vs 線 (line) split —
 /// see [`Self::is_line`] — is the family boundary the
 /// `mismatched_bouten_container` diagnostic enforces. Each variant maps to a
@@ -254,7 +255,7 @@ pub const fn is_ruby_base_char(ch: char) -> bool {
     matches!(ruby_base_class(ch), Some(RubyBaseClass::Kanji))
 }
 
-/// Which annotation flavour an `owned::MarginNoteOwned` carries.
+/// Which annotation flavour an `ast::MarginNote` carries.
 ///
 /// 注記 and 傍記 share the `MarginNote` structure (a note attached to a
 /// preceding run) but round-trip to distinct keywords, so the flavour is
@@ -273,7 +274,7 @@ pub enum MarginNoteKind {
 
 impl MarginNoteKind {
     /// The `(connector, suffix)` source literals that wrap the note text
-    /// when an `owned::MarginNoteOwned` of this flavour round-trips
+    /// when an `ast::MarginNote` of this flavour round-trips
     /// back to source as `base［＃「base{connector}note{suffix}`.
     ///
     /// Renderers call this instead of matching the (`non_exhaustive`)
@@ -290,7 +291,7 @@ impl MarginNoteKind {
     }
 }
 
-/// Which section-break directive an `owned::NodeOwned::SectionBreak` carries —
+/// Which section-break directive an `ast::Node::SectionBreak` carries —
 /// the stronger page-structure breaks beyond the plain `［＃改ページ］`.
 ///
 /// Each variant maps to its canonical keyword via [`Self::keyword`];
@@ -326,7 +327,7 @@ pub enum HeadingKind {
 
 impl HeadingKind {
     /// The numeric outline level — `1` = 大, `2` = 中, `3` = 小 — carried by
-    /// the inline `owned::HeadingHintOwned`'s `data-level` attribute.
+    /// the inline `ast::HeadingHint`'s `data-level` attribute.
     ///
     /// The single source of the 大/中/小 → 1/2/3 mapping (the renderer and the
     /// classifier both key on this instead of an ad-hoc local table).
@@ -430,7 +431,7 @@ impl SectionKind {
     }
 }
 
-/// Classifies a generic `owned::DirectiveOwned` annotation that no more
+/// Classifies a generic `ast::Directive` annotation that no more
 /// specific node recogniser claimed.
 ///
 /// [`Unknown`](Self::Unknown) is the catch-all for Aozora-shaped `［＃…］`

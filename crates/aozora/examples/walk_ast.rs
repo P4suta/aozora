@@ -29,7 +29,7 @@ fn main() {
 
     for entry in tree.source_nodes() {
         let span = entry.source_span;
-        // `entry.node` is a `NodeRefOwned`: Inline / BlockLeaf / BlockOpen /
+        // `entry.node` is a `NodeRef`: Inline / BlockLeaf / BlockOpen /
         // BlockClose, each wrapping the owned AST node or container
         // kind. Its Debug form is a compact, accurate kind label.
         println!(

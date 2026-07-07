@@ -38,9 +38,6 @@ const EXACT: &[(&str, &str)] = &[
     ("改行を挿入", "改行"),
     ("斜体字", "斜体"),
     ("中中見出し", "中見出し"),
-    // Line font-size compound: gothic weight normalised to the sole recognised
-    // line weight (太字). Lossy (gothic→bold) but faithful by Aozora convention.
-    ("中文字、ゴシック体", "中文字、太字"),
     // Region-close synonyms — okurigana drift / 文字下げ / 横書き=横組み /
     // 横組みの表=表, all resolving to the canonical `ここで…終わり` close.
     ("ここで字下げおわり", "ここで字下げ終わり"),
@@ -69,7 +66,7 @@ pub fn canonical_directive(body: &str) -> Option<Cow<'static, str>> {
 }
 
 /// A digit run: one or more ASCII `0-9` or full-width `０-９` characters.
-fn is_digit_run(s: &str) -> bool {
+pub(crate) fn is_digit_run(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
             .all(|c| c.is_ascii_digit() || ('０'..='９').contains(&c))
@@ -111,17 +108,11 @@ fn parameterized_indent_open(body: &str) -> Option<String> {
             return Some(format!("ここから{n}字下げ"));
         }
     }
-    // ここから最後まで{N}字下げ (drop 最後まで) / ここから{N}　字下げ (drop the
-    // stray full-width space).
+    // ここから{N}　字下げ → drop the stray full-width space.
     if let Some(n) = body
-        .strip_prefix("ここから最後まで")
-        .and_then(|r| r.strip_suffix("字下げ"))
-        .filter(|n| is_digit_run(n))
-        .or_else(|| {
-            body.strip_prefix("ここから")
-                .and_then(|r| r.strip_suffix("　字下げ"))
-                .filter(|n| is_digit_run(n))
-        })
+        .strip_prefix("ここから")
+        .and_then(|r| r.strip_suffix("　字下げ"))
+        && is_digit_run(n)
     {
         return Some(format!("ここから{n}字下げ"));
     }
@@ -156,31 +147,15 @@ fn parameterized_region_close(body: &str) -> Option<String> {
     None
 }
 
-/// 字上げ / 字下げ numeric spellings → the recognised alignment / indent leaf.
+/// 字下げ numeric-spelling drift → the recognised indent leaf. (The lossy
+/// 地より…字アキ→地から…字上げ and 行末から…地付き re-derivations moved to
+/// [`crate::degraded`] — they fold measurement vocabularies, not spellings.)
 fn parameterized_align(body: &str) -> Option<String> {
     // {N}字下げて → {N}字下げ.
     if let Some(n) = body.strip_suffix("字下げて")
         && is_digit_run(n)
     {
         return Some(format!("{n}字下げ"));
-    }
-    // 地付き、地より{N}字アキ / 字あき → 地から{N}字上げ (bottom-align with gap).
-    for tail in ["字アキ", "字あき"] {
-        if let Some(n) = body
-            .strip_prefix("地付き、地より")
-            .and_then(|r| r.strip_suffix(tail))
-            && is_digit_run(n)
-        {
-            return Some(format!("地から{n}字上げ"));
-        }
-    }
-    // 行末から{N}字上で地付き → 地から{N}字上げ.
-    if let Some(n) = body
-        .strip_prefix("行末から")
-        .and_then(|r| r.strip_suffix("字上で地付き"))
-        && is_digit_run(n)
-    {
-        return Some(format!("地から{n}字上げ"));
     }
     // この行{N}字下げ → {N}字下げ (the digit-run guard excludes editorial
     // `この行は…N字下げ` prose).
@@ -302,8 +277,6 @@ pub const CATALOGUE_SAMPLES: &[&str] = &[
     "「梅」に黒丸傍点",
     "「梅」は斜体字",
     "「梅」傍点",
-    // Line font-size compound (EXACT).
-    "中文字、ゴシック体",
     // Forward keyword / particle drift.
     "「文」の部分はイタリック体",
     "「AB」は横書き",
@@ -337,11 +310,8 @@ pub const CATALOGUE_SAMPLES: &[&str] = &[
     "こ地付き",
     "ここから横書き",
     "以下2字下げ",
-    "ここから最後まで2字下げ",
     "ここから2　字下げ",
-    // 字上げ / 字下げ numeric.
-    "地付き、地より3字アキ",
-    "行末から2字上で地付き",
+    // 字下げ numeric.
     "この行2字下げ",
 ];
 
@@ -358,10 +328,10 @@ mod tests {
             canonical_directive("字下げおわり").as_deref(),
             Some("ここで字下げ終わり")
         );
-        assert_eq!(
-            canonical_directive("中文字、ゴシック体").as_deref(),
-            Some("中文字、太字")
-        );
+        // 中文字、ゴシック体 is lossy (gothic→bold erases the spelling the parser
+        // keeps Unknown to preserve), so it is NOT Tier1 — it moved to
+        // [`crate::degraded`] (Tier2, opt-in render only). Pin the boundary.
+        assert_eq!(canonical_directive("中文字、ゴシック体"), None);
     }
 
     #[test]
@@ -481,11 +451,7 @@ mod tests {
             ("ここで1段階小さな文字終わり", "ここで小さな文字終わり"),
             ("ここで字下げ終わり」", "ここで字下げ終わり"),
             ("以下2字下げ", "ここから2字下げ"),
-            ("ここから最後まで4字下げ", "ここから4字下げ"),
             ("ここから2　字下げ", "ここから2字下げ"),
-            ("地付き、地より3字アキ", "地から3字上げ"),
-            ("地付き、地より3字あき", "地から3字上げ"),
-            ("行末から2字上で地付き", "地から2字上げ"),
             ("この行2字下げ", "2字下げ"),
         ] {
             assert_eq!(canonical_directive(v).as_deref(), Some(c), "variant {v:?}");

@@ -1,5 +1,5 @@
 //! Criterion bench for kaeriten classification through the public
-//! borrowed-pipeline entry point.
+//! owned `lex` entry point.
 //!
 //! `classify_kaeriten` itself is crate-private, so the bench drives
 //! it via [`aozora_pipeline::lex`] on synthetic inputs:

@@ -24,7 +24,7 @@
 use aozora_pipeline::lexer::{PairEvent, PairKind, classify, pair, tokenize};
 use aozora_pipeline::{Pipeline, lex};
 use aozora_spec::{Diagnostic, Sentinel};
-use aozora_syntax::alloc_owned::OwnedAllocator;
+use aozora_syntax::alloc::Allocator;
 // =====================================================================
 // 1. Drop / early-termination
 // =====================================================================
@@ -58,7 +58,7 @@ fn pair_stream_drop_partway_does_not_panic_and_diagnostics_remain_readable() {
 #[test]
 fn classify_stream_drop_partway_does_not_corrupt_global_state() {
     let src = "abc｜D《e》fgh";
-    let mut alloc = OwnedAllocator::new();
+    let mut alloc = Allocator::new();
 
     {
         let mut pair_stream = pair(tokenize(src));

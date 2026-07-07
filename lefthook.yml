@@ -192,17 +192,17 @@ pre-push:
         raise the baseline.
     # Owned-producer allocation-pressure ratchet (#237 P0.2-real): fail the
     # push when the owned lex path's allocation count / bytes (normalized
-    # per-file / per-source-byte) regress beyond corpus/owned-alloc-baseline.json.
+    # per-file / per-source-byte) regress beyond corpus/alloc-baseline.json.
     # Same corpus bind-mount + runtime-skip (no-op when AOZORA_CORPUS_ROOT
     # unset) as audit-gate; the corpus CI job is the backstop.
-    owned-alloc-gate:
-      run: just owned-alloc-gate
+    alloc-gate:
+      run: just alloc-gate
       fail_text: |
-        Owned-allocation regression: the owned lex producer (lex_owned /
-        Document::parse_owned) now allocates more than corpus/owned-alloc-baseline.json
+        Owned-allocation regression: the owned lex producer (lex /
+        Document::lex) now allocates more than corpus/alloc-baseline.json
         allows. Shrink the owned storage (NodeStore / StrInterner) layout, or —
-        if the increase is intended — re-baseline with `just owned-alloc-gate-update`
-        and attach a `just owned-throughput` run showing wall-clock is in budget.
+        if the increase is intended — re-baseline with `just alloc-gate-update`
+        and attach a `just throughput` run showing wall-clock is in budget.
     # Mirror every CI job that's reachable from inside the dev image
     # (lint / build / test / prop / drift-gate / conformance /
     # smoke-ffi / deny / audit / shear / coverage / book-build /

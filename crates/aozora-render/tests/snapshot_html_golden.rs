@@ -14,10 +14,10 @@
 //! mass conformance failure.
 
 use aozora_pipeline::lex;
-use aozora_render::render_html_owned;
+use aozora_render::render_html;
 fn render(source: &str) -> String {
     let out = lex(source);
-    render_html_owned(&out)
+    render_html(&out)
 }
 
 #[test]

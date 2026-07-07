@@ -44,7 +44,7 @@ use std::env;
 use std::process;
 use std::time::Instant;
 
-use aozora::render::render_html_owned;
+use aozora::render::render_html;
 use aozora_bench::{SizeBand, SizeBandedCorpus, corpus_size_bands};
 use aozora_corpus::CorpusItem;
 use aozora_pipeline::lex;
@@ -157,7 +157,7 @@ fn measure_all(banded: &SizeBandedCorpus, repeat: usize) -> AllReport {
             let mut last_html_len: u64 = 0;
             for _ in 0..repeat {
                 let t = Instant::now();
-                let html = render_html_owned(&out);
+                let html = render_html(&out);
                 samples.push(t.elapsed().as_nanos() as u64);
                 last_html_len = html.len() as u64;
                 drop(html);

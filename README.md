@@ -143,7 +143,7 @@ consumers usually import only this one.
 |---|---|
 | [`crates/aozora`](./crates/aozora) | Top-level facade. `Document::parse() → Tree<'_>`, structured `Diagnostic`s, `SLUGS` catalogue, `canonicalise_slug`. The single front door. |
 | [`crates/aozora-spec`](./crates/aozora-spec) | Single source of truth for shared types: `Span`, `TriggerKind`, `PairKind`, `Diagnostic`, PUA sentinel codepoints, `SLUGS` dispatch table. No internal dependency. |
-| [`crates/aozora-syntax`](./crates/aozora-syntax) | AST types (`NodeOwned` variants, `ContainerKind`, `BoutenKind`, `Indent`). |
+| [`crates/aozora-syntax`](./crates/aozora-syntax) | AST types (`Node` variants, `ContainerKind`, `BoutenKind`, `Indent`). |
 | [`crates/aozora-encoding`](./crates/aozora-encoding) | Shift_JIS decoding + 外字 lookup (compile-time PHF, JIS X 0213 + UCS resolution). |
 | [`crates/aozora-scan`](./crates/aozora-scan) | SIMD-friendly multi-pattern scanner backends (Teddy / structural-bitmap / Hoehrmann DFA / naive fallback). |
 | [`crates/aozora-veb`](./crates/aozora-veb) | Eytzinger-layout sorted-set lookup (cache-friendly binary search). |

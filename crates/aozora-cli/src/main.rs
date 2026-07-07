@@ -67,7 +67,7 @@ use std::process::{Command as Process, ExitCode, Stdio};
 
 use aozora::{
     DiagnosticSource, Document, json,
-    render::{RenderOptions, SerializeOptions},
+    render::{DirectiveNormalization, RenderOptions, SerializeOptions},
 };
 
 use anyhow::{Context, Result};
@@ -257,9 +257,19 @@ struct RenderArgs {
     /// `aozora fmt --fix-notation` rewrites. Opt-in and read-only: without this
     /// flag an unrecognised directive stays a hidden `aozora-directive` span,
     /// and this never rewrites the input source. Aliased `--fix-notation` for
-    /// symmetry with `aozora fmt`.
+    /// symmetry with `aozora fmt`. Consults the zero-false-positive Tier1
+    /// catalogue only.
     #[arg(long, alias = "fix-notation")]
     normalize: bool,
+
+    /// Additionally reduce the lossy / judgment "degraded" forms Tier1 refuses
+    /// (Tier2) — e.g. `［＃中文字、ゴシック体］` renders bold, and
+    /// `［＃ここから最後まで３字下げ］` an indent that runs to the document end.
+    /// Implies `--normalize`, is render-only, and never rewrites the source
+    /// (a Tier2 misfire can reach only this render output). Looser than
+    /// `--normalize`. See ADR-0026.
+    #[arg(long)]
+    degraded: bool,
 }
 
 /// `aozora inspect <kind>` — which JSON envelope to emit. The data
@@ -432,7 +442,13 @@ fn run_fmt_once(args: &FmtArgs) -> Result<ExitCode> {
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);
     let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let opts = SerializeOptions {
-        fix_notation: args.fix_notation,
+        // fmt only ever applies zero-FP Tier1 (`Canonical`); the lossy Tier2
+        // reductions are render-only and must never rewrite source.
+        directives: if args.fix_notation {
+            DirectiveNormalization::Canonical
+        } else {
+            DirectiveNormalization::Off
+        },
     };
     // `aozora fmt` and the standalone `aozora-fmt` binary share one format
     // core, so the canonical form can never drift between them.
@@ -487,7 +503,15 @@ fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
     let doc = Document::new(source);
     let tree = timer.measure("parse", || doc.parse());
     let opts = RenderOptions {
-        normalize_directives: args.normalize,
+        // --degraded implies --normalize and adds Tier2; --normalize alone is
+        // Tier1; neither is the byte-identical default.
+        directives: if args.degraded {
+            DirectiveNormalization::Degraded
+        } else if args.normalize {
+            DirectiveNormalization::Canonical
+        } else {
+            DirectiveNormalization::Off
+        },
     };
     let html = timer.measure("render", || tree.to_html_with(opts));
     let mut stdout = io::stdout().lock();
@@ -549,7 +573,7 @@ fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
     let mut timer = Timer::new(args.common.timing, args.common.timing_format);
     let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
     let doc = Document::new(source);
-    let owned = timer.measure("parse", || doc.parse_owned());
+    let owned = timer.measure("parse", || doc.lex());
     let json = timer
         .measure("pandoc", || {
             serde_json::to_string(&aozora_pandoc::to_pandoc(&owned))

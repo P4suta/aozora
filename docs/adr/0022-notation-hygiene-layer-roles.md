@@ -75,10 +75,12 @@ family is added once.
 
 **Tier1 / Tier2.** `canonical_directive` is the **Tier1** catalogue:
 zero-false-positive, parser-verified near-misses (fixed map, no fuzzy match).
-Any future **Tier2** *degraded-form* matcher (looser heuristics, edit-distance,
-etc.) is a **separate** entry, invoked **only** by the opt-in renderer/interpreter
-path above — never by the parser, the default lint, or the default `fmt`. It
-would need its own ADR (see the zero-false-positive consequence below).
+Any **Tier2** *degraded-form* matcher (lossy folds, judgment re-derivations) is a
+**separate** entry, invoked **only** by the opt-in renderer/interpreter path
+above — never by the parser, the default lint, or the default `fmt`. This
+placeholder is discharged by [ADR-0026](./0026-notation-hygiene-restratification.md),
+which re-stratifies the lossy / judgment reductions that had sedimented into
+Tier1 out to `aozora_syntax::degraded` (Tier2, render-only).
 
 ## Consequences
 
@@ -124,7 +126,7 @@ would need its own ADR (see the zero-false-positive consequence below).
 - Plan: the 2026-07 notation-hygiene + parser-coverage campaign (#372).
 - #371 (linter), #373 (`fmt --fix-notation`), #374 (LSP quick-fix).
 - Renderer/interpreter role: `RenderOptions::normalize_directives` /
-  `render_html_owned_normalized` (`aozora-render`), the `Tree::to_html_with`
+  `render_html_normalized` (`aozora-render`), the `Tree::to_html_with`
   facade (`aozora`), and `aozora render --normalize`, pinned by the
   `normalize_render_replaces_every_inert_variant` self-test.
 - [ADR-0015](./0015-spec-syntax-layer-boundary.md) — the spec / syntax layer
