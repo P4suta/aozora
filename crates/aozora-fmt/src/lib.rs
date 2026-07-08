@@ -21,16 +21,19 @@ use aozora::render::SerializeOptions;
 
 mod cli;
 mod discover;
+mod encoding;
 mod process;
 mod report;
 
 pub use cli::Cli;
 
 // Public CLI surface, re-exported for the standalone `aozora-fmt` binary
-// (`src/main.rs`) and this crate's integration tests.
+// (`src/main.rs`), the `aozora` CLI's `fmt`/`lint` subcommands, and this
+// crate's integration tests.
 pub use cli::{ColorChoice, FmtArgs};
 pub use discover::{Input, Resolved, resolve};
-pub use process::{Panicked, guard};
+pub use encoding::{Encoding, decode};
+pub use process::{Formatted, Panicked, guard, read_and_format, write_back};
 pub use report::auto_stdout;
 
 /// Compiles and runs the fenced Rust example in this crate's `README.md` as a
@@ -57,8 +60,8 @@ pub fn format_source(source: &str) -> String {
 /// Canonicalise an aozora source string under explicit [`SerializeOptions`].
 ///
 /// With the default options this equals [`format_source`]. With
-/// `fix_notation` enabled it additionally rewrites non-canonical directive
-/// near-misses to their canonical spelling — the `--fix-notation` autofix —
+/// `DirectiveNormalization::Canonical` it additionally rewrites non-canonical
+/// directive near-misses to their canonical spelling — the `--fix` autofix —
 /// which stays a second-pass fixed point (the canonical form parses to a
 /// recognized node and is not rewritten again).
 #[must_use]
@@ -66,40 +69,75 @@ pub fn format_source_with(source: &str, opts: SerializeOptions) -> String {
     Document::new(source).parse().to_source_with(opts)
 }
 
-/// Run the formatter for an already-parsed [`Cli`] and return the process
-/// exit code (0 success, 1 `--check` would reformat, 2 error).
-#[must_use]
-pub fn run(cli: &Cli) -> ExitCode {
-    run_args(&cli.args)
+/// Constant-per-run engine context: how to decode inputs and the program name
+/// to prefix diagnostics with (`aozora-fmt` for the standalone binary,
+/// `aozora fmt` for the `aozora` CLI subcommand). Threaded through the engine
+/// so both frontends share one implementation with no lexical special-casing.
+#[derive(Copy, Clone)]
+struct Ctx {
+    encoding: Encoding,
+    color: ColorChoice,
+    program: &'static str,
 }
 
-/// Run the formatter for already-parsed [`FmtArgs`]. [`run`] unwraps [`Cli`]
-/// and delegates here; returns the same exit codes (0 / 1 / 2).
+/// Run the formatter for an already-parsed [`Cli`], returning the exit code.
+///
+/// The standalone binary's entry point (0 success, 1 `--check` would reformat,
+/// 2 error). Resolves the encoding from `-E/--encoding` (else auto) and labels
+/// diagnostics `aozora-fmt`.
 #[must_use]
-pub fn run_args(args: &FmtArgs) -> ExitCode {
-    match dispatch(args) {
+pub fn run(cli: &Cli) -> ExitCode {
+    run_engine(
+        &cli.args,
+        cli.args.encoding().unwrap_or_default(),
+        cli.color,
+        "aozora-fmt",
+    )
+}
+
+/// Run the formatter engine for already-parsed [`FmtArgs`] under an explicit
+/// `encoding`, `color`, and `program` label, returning the exit code
+/// (0 / 1 / 2).
+///
+/// This is the single entry both frontends share: `encoding`, `color`, and
+/// `program` are caller-injected so there is one implementation and no
+/// per-frontend policy. The `aozora` CLI's `fmt` subcommand calls it after
+/// folding `.aozora.toml`, passing its config-resolved encoding, its global
+/// `--color`, and `"aozora fmt"`; the standalone binary uses [`run`].
+#[must_use]
+pub fn run_engine(
+    args: &FmtArgs,
+    encoding: Encoding,
+    color: ColorChoice,
+    program: &'static str,
+) -> ExitCode {
+    let ctx = Ctx {
+        encoding,
+        color,
+        program,
+    };
+    match dispatch(args, ctx) {
         Ok(outcome) => outcome.exit_code(),
         Err(err) => {
-            eprintln!("aozora-fmt: {err:#}");
+            eprintln!("{program}: {err:#}");
             ExitCode::from(2)
         }
     }
 }
 
-fn dispatch(args: &FmtArgs) -> Result<Outcome> {
+fn dispatch(args: &FmtArgs, ctx: Ctx) -> Result<Outcome> {
     let mode = args.mode();
     match resolve(args.paths())? {
-        Input::Stdin => run_stdin(args, &mode),
-        Input::Files(resolved) => run_files(args, &mode, &resolved),
+        Input::Stdin => run_stdin(args, ctx, &mode),
+        Input::Files(resolved) => run_files(args, ctx, &mode, &resolved),
     }
 }
 
 /// Single-source path: read stdin once, then apply the mode.
-fn run_stdin(args: &FmtArgs, mode: &Mode) -> Result<Outcome> {
-    let mut old = String::new();
-    io::stdin()
-        .read_to_string(&mut old)
-        .context("reading stdin")?;
+fn run_stdin(args: &FmtArgs, ctx: Ctx, mode: &Mode) -> Result<Outcome> {
+    let mut raw = Vec::new();
+    io::stdin().read_to_end(&mut raw).context("reading stdin")?;
+    let old = decode(&raw, ctx.encoding).context("decoding stdin")?;
     let new = process::format_guarded(&old, args.serialize_options())?;
 
     match mode {
@@ -114,11 +152,11 @@ fn run_stdin(args: &FmtArgs, mode: &Mode) -> Result<Outcome> {
             }
             Ok(Outcome::Ok)
         }
-        Mode::Check(report) => stdin_check(report, args.color(), &old, &new),
+        Mode::Check(report) => stdin_check(report, ctx, &old, &new),
     }
 }
 
-fn stdin_check(report: &CheckReport, color: ColorChoice, old: &str, new: &str) -> Result<Outcome> {
+fn stdin_check(report: &CheckReport, ctx: Ctx, old: &str, new: &str) -> Result<Outcome> {
     let changed = old != new;
     let outcome = if changed {
         Outcome::WouldReformat
@@ -128,11 +166,11 @@ fn stdin_check(report: &CheckReport, color: ColorChoice, old: &str, new: &str) -
     match report {
         CheckReport::Plain => {
             if changed {
-                eprintln!("aozora-fmt: <stdin> would be reformatted");
+                eprintln!("{}: <stdin> would be reformatted", ctx.program);
             }
         }
         CheckReport::Diff if changed => {
-            let mut out = auto_stdout(color);
+            let mut out = auto_stdout(ctx.color);
             report::write_diff(&mut out, "<stdin>", old, new)?;
             out.flush()?;
         }
@@ -150,33 +188,33 @@ fn stdin_check(report: &CheckReport, color: ColorChoice, old: &str, new: &str) -
 }
 
 /// Multi-source path: dispatch the resolved file set by mode.
-fn run_files(args: &FmtArgs, mode: &Mode, resolved: &Resolved) -> Result<Outcome> {
+fn run_files(args: &FmtArgs, ctx: Ctx, mode: &Mode, resolved: &Resolved) -> Result<Outcome> {
     let opts = args.serialize_options();
     match mode {
-        Mode::Stdout => run_stdout(resolved, opts),
+        Mode::Stdout => run_stdout(ctx, resolved, opts),
         Mode::Write { list } => {
-            Ok(discovery_base(resolved).max(run_write(&resolved.files, *list, opts)))
+            Ok(discovery_base(ctx, resolved).max(run_write(ctx, &resolved.files, *list, opts)))
         }
-        Mode::List => Ok(discovery_base(resolved).max(run_list(&resolved.files, opts))),
-        Mode::Check(CheckReport::Json) => report::run_check_json(resolved, opts),
+        Mode::List => Ok(discovery_base(ctx, resolved).max(run_list(ctx, &resolved.files, opts))),
+        Mode::Check(CheckReport::Json) => report::run_check_json(ctx.encoding, resolved, opts),
         Mode::Check(CheckReport::Diff) => {
-            let base = discovery_base(resolved);
-            Ok(base.max(run_check(args.color(), &resolved.files, true, opts)?))
+            let base = discovery_base(ctx, resolved);
+            Ok(base.max(run_check(ctx, &resolved.files, true, opts)?))
         }
         Mode::Check(CheckReport::Plain) => {
-            let base = discovery_base(resolved);
-            Ok(base.max(run_check(args.color(), &resolved.files, false, opts)?))
+            let base = discovery_base(ctx, resolved);
+            Ok(base.max(run_check(ctx, &resolved.files, false, opts)?))
         }
     }
 }
 
 /// Default stdout mode only makes sense for a single input.
-fn run_stdout(resolved: &Resolved, opts: SerializeOptions) -> Result<Outcome> {
-    let base = discovery_base(resolved);
+fn run_stdout(ctx: Ctx, resolved: &Resolved, opts: SerializeOptions) -> Result<Outcome> {
+    let base = discovery_base(ctx, resolved);
     match resolved.files.as_slice() {
         [] => Ok(base),
         [path] => {
-            let fmt = process::read_and_format(path, opts)?;
+            let fmt = read_and_format(path, opts, ctx.encoding)?;
             io::stdout().write_all(fmt.new.as_bytes())?;
             Ok(base)
         }
@@ -187,10 +225,10 @@ fn run_stdout(resolved: &Resolved, opts: SerializeOptions) -> Result<Outcome> {
     }
 }
 
-fn run_write(files: &[PathBuf], list: bool, opts: SerializeOptions) -> Outcome {
-    fold_files(files, |path| {
-        let fmt = process::read_and_format(path, opts)?;
-        process::write_back(path, &fmt, opts)?;
+fn run_write(ctx: Ctx, files: &[PathBuf], list: bool, opts: SerializeOptions) -> Outcome {
+    fold_files(ctx, files, |path| {
+        let fmt = read_and_format(path, opts, ctx.encoding)?;
+        write_back(path, &fmt, opts)?;
         if list && fmt.changed() {
             println!("{}", path.display());
         }
@@ -198,9 +236,9 @@ fn run_write(files: &[PathBuf], list: bool, opts: SerializeOptions) -> Outcome {
     })
 }
 
-fn run_list(files: &[PathBuf], opts: SerializeOptions) -> Outcome {
-    fold_files(files, |path| {
-        let fmt = process::read_and_format(path, opts)?;
+fn run_list(ctx: Ctx, files: &[PathBuf], opts: SerializeOptions) -> Outcome {
+    fold_files(ctx, files, |path| {
+        let fmt = read_and_format(path, opts, ctx.encoding)?;
         if fmt.changed() {
             println!("{}", path.display());
         }
@@ -209,26 +247,21 @@ fn run_list(files: &[PathBuf], opts: SerializeOptions) -> Outcome {
     })
 }
 
-fn run_check(
-    color: ColorChoice,
-    files: &[PathBuf],
-    diff: bool,
-    opts: SerializeOptions,
-) -> Result<Outcome> {
+fn run_check(ctx: Ctx, files: &[PathBuf], diff: bool, opts: SerializeOptions) -> Result<Outcome> {
     if !diff {
-        return Ok(fold_files(files, |path| {
-            let fmt = process::read_and_format(path, opts)?;
+        return Ok(fold_files(ctx, files, |path| {
+            let fmt = read_and_format(path, opts, ctx.encoding)?;
             Ok(if fmt.changed() {
-                eprintln!("aozora-fmt: {} would be reformatted", path.display());
+                eprintln!("{}: {} would be reformatted", ctx.program, path.display());
                 Outcome::WouldReformat
             } else {
                 Outcome::Ok
             })
         }));
     }
-    let mut out = auto_stdout(color);
-    let outcome = fold_files(files, |path| {
-        let fmt = process::read_and_format(path, opts)?;
+    let mut out = auto_stdout(ctx.color);
+    let outcome = fold_files(ctx, files, |path| {
+        let fmt = read_and_format(path, opts, ctx.encoding)?;
         Ok(if fmt.changed() {
             report::write_diff(&mut out, &path.display().to_string(), &fmt.old, &fmt.new)?;
             Outcome::WouldReformat
@@ -243,14 +276,14 @@ fn run_check(
 /// Run `per_file` over every file, folding outcomes and turning a per-file
 /// error into [`Outcome::Error`] (reported to stderr) without aborting the
 /// rest of the run.
-fn fold_files<F>(files: &[PathBuf], mut per_file: F) -> Outcome
+fn fold_files<F>(ctx: Ctx, files: &[PathBuf], mut per_file: F) -> Outcome
 where
     F: FnMut(&Path) -> Result<Outcome>,
 {
     let mut outcome = Outcome::Ok;
     for path in files {
         let one = per_file(path).unwrap_or_else(|err| {
-            eprintln!("aozora-fmt: {err:#}");
+            eprintln!("{}: {err:#}", ctx.program);
             Outcome::Error
         });
         outcome = outcome.max(one);
@@ -259,10 +292,10 @@ where
 }
 
 /// Report accumulated discovery errors and seed the run outcome with them.
-fn discovery_base(resolved: &Resolved) -> Outcome {
+fn discovery_base(ctx: Ctx, resolved: &Resolved) -> Outcome {
     let mut outcome = Outcome::Ok;
     for err in &resolved.errors {
-        eprintln!("aozora-fmt: {err}");
+        eprintln!("{}: {err}", ctx.program);
         outcome = Outcome::Error;
     }
     outcome
@@ -309,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn fix_notation_rewrites_flagged_near_miss_only_when_opted_in() {
+    fn fix_rewrites_flagged_near_miss_only_when_opted_in() {
         let fix = SerializeOptions {
             directives: DirectiveNormalization::Canonical,
         };
@@ -323,13 +356,13 @@ mod tests {
         let fixed = format_source_with(near_miss, fix);
         assert!(
             fixed.contains("［＃ここで字下げ終わり］"),
-            "fix-notation should canonicalise the directive; got {fixed:?}"
+            "fix should canonicalise the directive; got {fixed:?}"
         );
         // A genuine editorial Unknown is left untouched even with the flag.
         let editorial = "あ［＃底本では「蒼空」］";
         assert!(
             format_source_with(editorial, fix).contains("［＃底本では「蒼空」］"),
-            "fix-notation must not touch genuine editorial Unknowns"
+            "fix must not touch genuine editorial Unknowns"
         );
     }
 }

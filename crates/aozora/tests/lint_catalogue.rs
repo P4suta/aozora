@@ -13,7 +13,7 @@
 use aozora::Document;
 use aozora::render::{DirectiveNormalization, RenderOptions, SerializeOptions};
 use aozora_syntax::degraded::{DEGRADED_SAMPLES, degraded_directive};
-use aozora_syntax::lint::{CATALOGUE_SAMPLES, canonical_directive};
+use aozora_syntax::lint::{CATALOGUE_SAMPLES, EDITORIAL_MUST_STAY_UNKNOWN, canonical_directive};
 
 const LINT_CODE: &str = "aozora::lint::non_canonical_directive";
 
@@ -57,14 +57,14 @@ fn every_variant_is_unknown_and_fires_the_lint() {
     }
 }
 
-/// The `aozora fmt --fix-notation` autofix is the third consumer of the
+/// The `aozora fmt --fix` autofix is the third consumer of the
 /// canonical catalogue (after the pipeline lint and the LSP quick-fix). For
 /// every catalogue sample it must: keep the variant verbatim (still
 /// lint-flagged) by default, resolve the near-miss when opted in (so the lint
 /// no longer fires), and stay a second-pass fixed point — the `write_back`
 /// idempotency guard depends on the last property.
 #[test]
-fn fix_notation_resolves_every_variant_and_is_idempotent() {
+fn fix_resolves_every_variant_and_is_idempotent() {
     let fix = SerializeOptions {
         directives: DirectiveNormalization::Canonical,
     };
@@ -83,21 +83,18 @@ fn fix_notation_resolves_every_variant_and_is_idempotent() {
             "default fmt output should still fire the lint for {variant:?}"
         );
 
-        // --fix-notation rewrites the near-miss to canonical form, so the
+        // --fix rewrites the near-miss to canonical form, so the
         // notation-hygiene lint no longer fires on the result.
         let fixed = Document::new(input.clone()).parse().to_source_with(fix);
         assert!(
             !source_fires_lint(&fixed),
-            "fix-notation should resolve the near-miss {variant:?}; got {fixed:?}"
+            "fix should resolve the near-miss {variant:?}; got {fixed:?}"
         );
 
         // The rewrite is a second-pass fixed point: every directive is now
         // canonical (non-Unknown), so a further fix pass is a no-op.
         let again = Document::new(fixed.clone()).parse().to_source_with(fix);
-        assert_eq!(
-            fixed, again,
-            "fix-notation must be idempotent for {variant:?}"
-        );
+        assert_eq!(fixed, again, "fix must be idempotent for {variant:?}");
     }
 }
 
@@ -197,6 +194,39 @@ fn genuine_editorial_unknown_does_not_fire() {
     }
 }
 
+/// The negative catalogue (`EDITORIAL_MUST_STAY_UNKNOWN`, the corpus-residue
+/// refuse-list): every editorial / compound / gaiji-composition body must
+/// resolve in NEITHER Tier1 nor Tier2, stay a lossless `Unknown` directive, and
+/// never fire the lint. This anchors the zero-FP invariant from the negative
+/// side — a rule that over-generalises into editorial prose fails here.
+#[test]
+fn catalogue_refuses_every_editorial_body() {
+    for &body in EDITORIAL_MUST_STAY_UNKNOWN {
+        assert_eq!(
+            canonical_directive(body),
+            None,
+            "Tier1 must refuse editorial body {body:?}"
+        );
+        assert_eq!(
+            degraded_directive(body),
+            None,
+            "Tier2 must refuse editorial body {body:?}"
+        );
+        assert!(
+            !fires_lint(body),
+            "editorial body {body:?} wrongly fired the notation-hygiene lint"
+        );
+        // It stays a lossless Unknown: parses to the hidden directive span.
+        let html = Document::new(format!("あ\n［＃{body}］\n本文\n"))
+            .parse()
+            .to_html();
+        assert!(
+            html.contains("aozora-directive"),
+            "editorial body {body:?} must stay an inert Unknown directive"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tier2 (`aozora_syntax::degraded`) — the opt-in, render-only home for the
 // lossy / judgment reductions migrated out of Tier1 (ADR-0026).
@@ -259,7 +289,7 @@ fn tier1_and_tier2_are_disjoint() {
 /// The blast-radius pin: a Tier2 reduction reaches ONLY the opt-in `Degraded`
 /// render. Under `Degraded` each migrated form renders non-inert; under
 /// `Canonical` (`render --normalize`) it stays inert (it left Tier1); and
-/// `fmt --fix-notation` (= `Canonical` serialize) leaves it byte-verbatim, so a
+/// `fmt --fix` (= `Canonical` serialize) leaves it byte-verbatim, so a
 /// lossy Tier2 reduction can never rewrite source.
 #[test]
 fn degraded_reductions_are_render_only() {
@@ -289,11 +319,11 @@ fn degraded_reductions_are_render_only() {
             "degraded sample {sample:?} must stay inert under --normalize (Tier1 only); \
              got {canon_html:?}"
         );
-        // (c) fmt --fix-notation leaves the exact bytes verbatim (no source rewrite).
+        // (c) fmt --fix leaves the exact bytes verbatim (no source rewrite).
         let fixed = Document::new(source.clone()).parse().to_source_with(fix);
         assert!(
             fixed.contains(&format!("［＃{sample}］")),
-            "fmt --fix-notation must keep degraded sample {sample:?} verbatim; got {fixed:?}"
+            "fmt --fix must keep degraded sample {sample:?} verbatim; got {fixed:?}"
         );
     }
 }

@@ -11,8 +11,9 @@ aozora <SUBCOMMAND> [OPTIONS] [ARGS]
 
 | Subcommand | What it does |
 |---|---|
-| `check` | Lex + report diagnostics. |
-| `fmt` | Round-trip `parse ∘ to_source` (canonicalise). |
+| `check` | Lex + report every diagnostic. |
+| `lint` | Report notation-hygiene lints (`aozora::lint::*`); `--fix` rewrites in place. |
+| `fmt` | Round-trip `parse ∘ to_source` (canonicalise); one or many files. |
 | `render` | Render to HTML on stdout. |
 | `inspect` | Emit a document's JSON (`nodes`/`pairs`/`container-pairs`/`diagnostics`/`gaiji`) or the static `slugs` catalogue. |
 | `pandoc` | Project to a Pandoc AST (JSON, or pipe through `pandoc`). |
@@ -21,16 +22,19 @@ aozora <SUBCOMMAND> [OPTIONS] [ARGS]
 | `explain` | Print prose for a `NodeKind` tag, or help / severity / URL for a diagnostic code. |
 | `completions` | Print a shell completion script (bash / zsh / fish / powershell / elvish / nushell). |
 
-There are **no global options** beyond clap's `-h`/`--help` and
-`-V`/`--version`; the input-shaping flags below are per-subcommand. All
-document subcommands accept `-` (or no path) to read **stdin**.
+The one **global** option is `--color {auto,always,never}` (accepted after
+any subcommand). Every other flag below is per-subcommand. All document
+subcommands accept `-` (or no path) to read **stdin**.
 
 | Common flag | Subcommands | Effect |
 |---|---|---|
-| `-E`, `--encoding {auto,utf8,sjis}` | check / fmt / render / inspect / pandoc | Source encoding. **Default `auto`** — UTF-8 if the bytes are valid UTF-8, else Shift_JIS. |
+| `-E`, `--encoding {auto,utf8,sjis}` | check / lint / fmt / render / inspect / pandoc | Source encoding. **Default `auto`** — UTF-8 if the bytes are valid UTF-8, else Shift_JIS. |
+| `--color {auto,always,never}` | global | ANSI colour policy. `auto` honours `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE` and whether the stream is a terminal. |
+| `--timing` | check / lint / fmt / render / inspect / pandoc | Print per-phase timing to stderr (`--timing-format {human,json}`); stdout stays byte-identical. |
+| `--config PATH` / `--watch` | check / lint / fmt / render / inspect / pandoc | Use a specific `.aozora.toml`; re-run on file change (needs a path). |
 
-Colour follows the terminal and the `NO_COLOR` environment variable
-(miette honours it); there is no `--no-color` flag.
+There is no `--color` *disable* flag beyond `--color never`; the
+`NO_COLOR` environment variable disables colour too.
 
 ## `aozora check`
 
@@ -69,20 +73,55 @@ aozora check --diagnostic-format short -   # one line per diagnostic, from stdin
 cat src.txt | aozora check                 # json envelope (stderr is piped)
 ```
 
-## `aozora fmt`
+## `aozora lint`
 
 ```text
-aozora fmt [OPTIONS] [PATH]
+aozora lint [OPTIONS] [PATH]
 ```
 
-Round-trip the source through `parse ∘ to_source`. Default prints the
-canonical form on stdout.
+Report the advisory **notation-hygiene** lints (the `aozora::lint::*`
+namespace, currently `non_canonical_directive`) — the authoring-hygiene view,
+where `check` reports *every* diagnostic. See
+[Notation hygiene](../notation/hygiene.md).
 
 | Option | Effect |
 |---|---|
-| `--check` | Exit non-zero if the formatted output differs from the input (after the sanitize stage: BOM strip, CRLF→LF). Mutually exclusive with `--write`. |
-| `--write` | Overwrite the input file with the canonical form. Ignored when reading from stdin. |
+| `--strict`, `-s` | Exit non-zero (`1`) if any lint fired. |
+| `--fix` | Rewrite the flagged directive near-misses to their canonical form in place — the zero-false-positive Tier1 autofix. Needs a file (not stdin). Same transform as `fmt --fix --write`. |
+| `--diagnostic-format {human,json,short}` | How to render lints (shared with `check`). |
 | `--encoding`, `-E` | Source encoding (see above). |
+
+Exit codes mirror `check`: `0` (tolerant default), `1` (`--strict` with a
+lint present), `2` (usage error).
+
+```sh
+aozora lint src.txt                        # report notation-hygiene lints
+aozora lint --strict src.txt               # any lint -> exit 1 (CI gate)
+aozora lint --fix src.txt                  # rewrite flagged near-misses in place
+```
+
+## `aozora fmt`
+
+```text
+aozora fmt [OPTIONS] [PATH]...
+```
+
+Round-trip the source through `parse ∘ to_source`. Reads stdin, one file,
+many files, or directories (searched for `*.afm`, `*.aozora`, `*.aozora.txt`).
+Default prints the canonical form on stdout (single input only).
+
+| Option | Effect |
+|---|---|
+| `--check` | Exit non-zero if any input differs from its canonical form. |
+| `--write`, `-w` | Overwrite each input file in place. Ignored on stdin. |
+| `--diff` | Print a unified diff of every file that would change (implies `--check`). |
+| `--list`, `-l` | List only the paths that would change (`gofmt -l`). |
+| `--json` | Emit the check result as JSON (implies `--check`). |
+| `--fix` | Also canonicalise flagged directive near-misses (Tier1). Composes with every mode. |
+| `--encoding`, `-E` | Source encoding (see above). |
+
+The standalone `aozora-fmt` binary shares this exact surface and formatting
+core, so `aozora fmt` and `aozora-fmt` can never drift.
 
 Exit codes: `0` (success, or no diff under `--check`), `1` (formatting
 mismatch under `--check`), `2` (usage error).
@@ -91,6 +130,8 @@ mismatch under `--check`), `2` (usage error).
 aozora fmt src.txt > formatted.txt
 aozora fmt --check src.txt                 # CI gate
 aozora fmt --write src.txt                 # in-place
+aozora fmt --diff docs/                     # unified diff over a directory
+aozora fmt --fix --write src.txt            # canonicalise notation in place
 cat src.txt | aozora fmt                    # stdin -> stdout
 ```
 
@@ -102,9 +143,16 @@ aozora render [OPTIONS] [PATH]
 
 Render the parsed tree to HTML on stdout. Accepts `--encoding`/`-E`.
 
+| Option | Effect |
+|---|---|
+| `--normalize` | Render verified Tier1 near-misses as their canonical spelling (e.g. `［＃「梅」は小書き］` as small-letter emphasis instead of an inert span). Read-only; never rewrites source. |
+| `--degraded` | Additionally reduce the lossy / judgment **Tier2** forms Tier1 refuses (e.g. `［＃ここから最後まで３字下げ］` as an indent to the document end). Implies `--normalize`, render-only. See [Notation hygiene](../notation/hygiene.md). |
+
 ```sh
 aozora render src.txt > out.html
 aozora render -E sjis crime.txt > crime.html
+aozora render --normalize src.txt          # interpret Tier1 near-misses
+aozora render --degraded src.txt           # + Tier2 degraded reductions
 cat src.txt | aozora render -
 ```
 

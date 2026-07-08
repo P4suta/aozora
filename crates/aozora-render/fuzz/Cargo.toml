@@ -32,3 +32,10 @@ path = "fuzz_targets/serialize_round_trip.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "catalogue_normalization"
+path = "fuzz_targets/catalogue_normalization.rs"
+test = false
+doc = false
+bench = false

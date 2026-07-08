@@ -101,18 +101,18 @@ proptest! {
         prop_assert_eq!(&once, &twice, "second pass changed the output");
     }
 
-    /// The `--fix-notation` autofix path is *also* a fixed point:
+    /// The `--fix` autofix path is *also* a fixed point:
     /// `format_with(format_with(x)) == format_with(x)`. `--write` combined
-    /// with `--fix-notation` runs the `write_back` idempotency guard against
+    /// with `--fix` runs the `write_back` idempotency guard against
     /// this, so a counter-example would refuse to rewrite (or corrupt) files.
     #[test]
-    fn format_source_with_fix_notation_is_idempotent(text in document_strategy()) {
+    fn format_source_with_fix_is_idempotent(text in document_strategy()) {
         let fix = SerializeOptions {
             directives: DirectiveNormalization::Canonical,
         };
         let once = format_source_with(&text, fix);
         let twice = format_source_with(&once, fix);
-        prop_assert_eq!(&once, &twice, "second fix-notation pass changed the output");
+        prop_assert_eq!(&once, &twice, "second fix pass changed the output");
     }
 }
 

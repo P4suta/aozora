@@ -13,6 +13,7 @@ use similar::{ChangeTag, DiffOp, TextDiff};
 
 use crate::cli::ColorChoice;
 use crate::discover::Resolved;
+use crate::encoding::Encoding;
 use crate::process;
 
 /// The aggregate result of a run. Ordered so folding with `max` keeps the
@@ -160,7 +161,11 @@ pub(crate) fn emit_json(outcome: Outcome, files: Vec<JsonFile>) -> io::Result<()
 
 /// `--check --json` over a resolved file set: collect every file's status
 /// (including discovery errors) into one JSON object and return the outcome.
-pub(crate) fn run_check_json(resolved: &Resolved, opts: SerializeOptions) -> Result<Outcome> {
+pub(crate) fn run_check_json(
+    encoding: Encoding,
+    resolved: &Resolved,
+    opts: SerializeOptions,
+) -> Result<Outcome> {
     let mut files = Vec::new();
     let mut outcome = Outcome::Ok;
     for err in &resolved.errors {
@@ -169,7 +174,7 @@ pub(crate) fn run_check_json(resolved: &Resolved, opts: SerializeOptions) -> Res
     }
     for path in &resolved.files {
         let label = path.display().to_string();
-        match process::read_and_format(path, opts) {
+        match process::read_and_format(path, opts, encoding) {
             Ok(fmt) if fmt.changed() => {
                 files.push(JsonFile::would_reformat(label));
                 outcome = outcome.max(Outcome::WouldReformat);

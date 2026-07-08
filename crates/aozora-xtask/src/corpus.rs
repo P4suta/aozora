@@ -55,6 +55,8 @@ use rayon::prelude::*;
 
 use aozora::pipeline::lexer::sanitize::sanitize;
 use aozora::render::AOZORA_CLASSES;
+use aozora::syntax::degraded::degraded_directive;
+use aozora::syntax::lint::canonical_directive;
 use aozora::{DirectiveKind, Document, Node, NodeKind, NodeRef};
 use aozora_corpus::{
     Archive, ArchiveBuilder, CorpusItem, EntryMeta, FilesystemCorpus, archive, par_load_decoded,
@@ -346,6 +348,34 @@ pub(crate) enum CorpusTarget {
         #[arg(long, default_value = "crates/aozora-conformance/fixtures/works")]
         dest: PathBuf,
     },
+    /// Classify the corpus `Unknown` residue against the notation-hygiene
+    /// catalogues — the reproducible mining worklist for growing them.
+    ///
+    /// Runs the full audit, then buckets every raw Unknown body by whether
+    /// Tier1 (`canonical_directive`), Tier2 (`degraded_directive`), or neither
+    /// (the discovery *residue*) resolves it. The residue is shape-aggregated
+    /// and occurrence-ranked with a raw example each. Like `audit`, the JSON
+    /// report is a throwaway measurement — never committed. Needs a corpus.
+    ClassifyUnknown {
+        /// Corpus root directory of `.txt` files. Defaults to `$AOZORA_CORPUS_ROOT`.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Write the JSON report here instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Residue shapes to print in the human (stderr) summary.
+        #[arg(long, default_value_t = 40)]
+        top: usize,
+    },
+    /// Report which of the 45 notation families the vendored golden works
+    /// (`fixtures/works/`) exercise, and which are still missing — the concrete
+    /// target for golden-coverage growth. Reads only the committed fixtures, so
+    /// it needs no corpus.
+    FamilyCoverage {
+        /// Vendored golden-works directory to measure.
+        #[arg(long, default_value = "crates/aozora-conformance/fixtures/works")]
+        vendored: PathBuf,
+    },
 }
 
 pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
@@ -413,6 +443,10 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             manifest,
             dest,
         } => vendor_works(root.as_deref(), manifest, dest),
+        CorpusTarget::ClassifyUnknown { root, out, top } => {
+            classify_unknown(root.as_deref(), out.as_deref(), *top)
+        }
+        CorpusTarget::FamilyCoverage { vendored } => family_coverage(vendored),
     }
 }
 
@@ -2924,6 +2958,190 @@ fn family_ids(stat: &FileStat) -> Vec<usize> {
     ids
 }
 
+/// The notation-hygiene catalogue bucket a raw `［＃…］` Unknown body falls into.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Bucket {
+    /// Tier1 ([`canonical_directive`]) resolves it — a zero-FP near-miss.
+    Tier1,
+    /// Tier1 declines but Tier2 ([`degraded_directive`]) reduces it (render-only).
+    Tier2,
+    /// Neither catalogue matches — the discovery residue.
+    Residue,
+}
+
+/// Strip the `［＃…］` frame exactly as the serializer's `emit_annotation` does
+/// (the single authority), then classify the trimmed body.
+fn classify_body(raw: &str) -> Bucket {
+    let body = raw
+        .strip_prefix("［＃")
+        .and_then(|s| s.strip_suffix('］'))
+        .unwrap_or(raw)
+        .trim();
+    if canonical_directive(body).is_some() {
+        Bucket::Tier1
+    } else if degraded_directive(body).is_some() {
+        Bucket::Tier2
+    } else {
+        Bucket::Residue
+    }
+}
+
+#[derive(Serialize)]
+struct ResidueRow {
+    shape: String,
+    count: u64,
+    /// The raw body of this shape's highest-count member — the concrete text a
+    /// human vets (the shape elides `「…」` / digit operands).
+    sample: String,
+    /// First-seen `corpus-relative-path:line` of the sample.
+    example: String,
+}
+
+#[derive(Serialize)]
+struct ClassifyReport {
+    files_analyzed: usize,
+    unknown_total: u64,
+    tier1_occurrences: u64,
+    tier2_occurrences: u64,
+    residue_occurrences: u64,
+    /// `(tier1 + tier2) / unknown_total` — the share the catalogues already cover.
+    resolved_ratio: f64,
+    residue_distinct_shapes: usize,
+    residue_shapes: Vec<ResidueRow>,
+}
+
+/// Bucket a set of raw Unknown bodies against the catalogues into a
+/// [`ClassifyReport`] — the pure, corpus-free core of `classify-unknown`.
+/// `bodies` is expected sorted by count descending, so each residue shape's
+/// first-seen member is its highest-count sample.
+fn classify_report(
+    bodies: &[UnknownRow],
+    files_analyzed: usize,
+    unknown_total: u64,
+) -> ClassifyReport {
+    let (mut t1, mut t2, mut residue) = (0_u64, 0_u64, 0_u64);
+    let mut residue_map: BTreeMap<String, (u64, String, String)> = BTreeMap::new();
+    for row in bodies {
+        match classify_body(&row.body) {
+            Bucket::Tier1 => t1 += row.count,
+            Bucket::Tier2 => t2 += row.count,
+            Bucket::Residue => {
+                residue += row.count;
+                let e = residue_map
+                    .entry(row.shape.clone())
+                    .or_insert_with(|| (0, row.body.clone(), row.example.clone()));
+                e.0 += row.count;
+            }
+        }
+    }
+
+    let mut residue_shapes: Vec<ResidueRow> = residue_map
+        .into_iter()
+        .map(|(shape, (count, sample, example))| ResidueRow {
+            shape,
+            count,
+            sample,
+            example,
+        })
+        .collect();
+    residue_shapes.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.shape.cmp(&b.shape)));
+
+    ClassifyReport {
+        files_analyzed,
+        unknown_total,
+        tier1_occurrences: t1,
+        tier2_occurrences: t2,
+        residue_occurrences: residue,
+        resolved_ratio: (t1 + t2) as f64 / unknown_total.max(1) as f64,
+        residue_distinct_shapes: residue_shapes.len(),
+        residue_shapes,
+    }
+}
+
+/// `corpus classify-unknown`: bucket the Unknown residue against the catalogues.
+fn classify_unknown(root: Option<&Path>, out: Option<&Path>, top: usize) -> Result<(), String> {
+    let audit = run_audit(root, None)?;
+    let report = classify_report(
+        &audit.unknown_bodies,
+        audit.files_analyzed,
+        audit.unknown_total,
+    );
+
+    eprintln!(
+        "xtask corpus classify-unknown: {} files, {} Unknown occurrences\n  \
+         Tier1-covered: {}\n  Tier2-covered: {}\n  residue: {} \
+         ({} distinct shapes)\n  resolved: {:.1}%",
+        report.files_analyzed,
+        report.unknown_total,
+        report.tier1_occurrences,
+        report.tier2_occurrences,
+        report.residue_occurrences,
+        report.residue_distinct_shapes,
+        report.resolved_ratio * 100.0,
+    );
+    for r in report.residue_shapes.iter().take(top) {
+        eprintln!(
+            "  {:>6}  {}  (e.g. {} @ {})",
+            r.count, r.shape, r.sample, r.example
+        );
+    }
+
+    let json = serde_json::to_string_pretty(&report).map_err(|e| format!("serialize: {e}"))?;
+    match out {
+        Some(path) => {
+            fs::write(path, json).map_err(|e| format!("write {}: {e}", path.display()))?;
+            eprintln!(
+                "xtask corpus classify-unknown: JSON report → {}",
+                path.display()
+            );
+        }
+        None => println!("{json}"),
+    }
+    Ok(())
+}
+
+/// The family ids in `[0, FAM_TOTAL)` not present in `covered`, as names — the
+/// pure set-difference behind `family-coverage`.
+fn missing_families(covered: &std::collections::HashSet<usize>) -> Vec<&'static str> {
+    (0..FAM_TOTAL)
+        .filter(|id| !covered.contains(id))
+        .map(family_name)
+        .collect()
+}
+
+/// `corpus family-coverage`: which of the 45 notation families the vendored
+/// golden works exercise, and which remain uncovered. Reads only committed
+/// fixtures, so it needs no corpus.
+fn family_coverage(vendored: &Path) -> Result<(), String> {
+    if !vendored.is_dir() {
+        return Err(format!("not a directory: {}", vendored.display()));
+    }
+    let (covered, _hashes) = load_vendored(vendored);
+    let missing = missing_families(&covered);
+
+    eprintln!(
+        "xtask corpus family-coverage: {}/{FAM_TOTAL} families exercised by {}",
+        covered.len(),
+        vendored.display(),
+    );
+    if missing.is_empty() {
+        eprintln!("  all {FAM_TOTAL} families covered");
+    } else {
+        eprintln!("  missing ({}): {}", missing.len(), missing.join(", "));
+    }
+
+    let report = serde_json::json!({
+        "total": FAM_TOTAL,
+        "covered": covered.len(),
+        "missing": missing,
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).map_err(|e| format!("serialize: {e}"))?
+    );
+    Ok(())
+}
+
 /// A deterministic ASCII slug from the aozora card id (the first digit run in
 /// the filename), e.g. `作品/種田山頭火/其中日記（49258…）.txt` → `w49258`. Card
 /// ids are unique per work, so slugs do not collide; a human may rename to a
@@ -4082,5 +4300,79 @@ mod tests {
         assert_eq!(family_name(FAM_NODE), ANN_KIND_LABELS[1]);
         assert_eq!(family_name(FAM_NODE + FAM_ANN), GAIJI_FORM_LABELS[0]);
         assert_eq!(FAM_TOTAL, FAM_NODE + FAM_ANN + FAM_GAIJI);
+    }
+
+    #[test]
+    fn classify_body_buckets_against_catalogues() {
+        // A Tier1 near-miss, framed as it appears in the corpus.
+        assert_eq!(classify_body("［＃字下げ終わり］"), Bucket::Tier1);
+        // A Tier2 degraded (lossy) form.
+        assert_eq!(
+            classify_body("［＃ここから最後まで3字下げ］"),
+            Bucket::Tier2
+        );
+        // Genuine editorial prose — the discovery residue, matched by neither.
+        assert_eq!(
+            classify_body("［＃「甲」は「乙」の誤記か］"),
+            Bucket::Residue
+        );
+        // The frame strip + trim mirrors the serializer: a bare body classifies too.
+        assert_eq!(classify_body("字下げ終わり"), Bucket::Tier1);
+    }
+
+    #[test]
+    fn classify_report_tallies_buckets_and_ranks_residue() {
+        fn row(body: &str, count: u64, example: &str, shape: &str) -> UnknownRow {
+            UnknownRow {
+                body: body.to_owned(),
+                count,
+                example: example.to_owned(),
+                shape: shape.to_owned(),
+            }
+        }
+        // Bodies sorted by count desc, as run_audit emits them.
+        let bodies = vec![
+            row(
+                "［＃「甲」は「乙」の誤記か］",
+                7,
+                "a:1",
+                "［＃「」は「」の誤記か］",
+            ), // residue
+            row("［＃字下げ終わり］", 5, "b:2", "［＃字下げ終わり］"), // Tier1
+            row(
+                "［＃ここから最後まで3字下げ］",
+                3,
+                "c:3",
+                "［＃ここから最後までN字下げ］",
+            ), // Tier2
+            row("［＃初出時「甲」］", 2, "d:4", "［＃初出時「」］"),   // residue
+        ];
+        let r = classify_report(&bodies, 100, 17);
+
+        assert_eq!(r.tier1_occurrences, 5);
+        assert_eq!(r.tier2_occurrences, 3);
+        assert_eq!(r.residue_occurrences, 9); // 7 + 2
+        assert_eq!(r.residue_distinct_shapes, 2);
+        assert!((r.resolved_ratio - 8.0 / 17.0).abs() < 1e-9);
+        // Residue ranked by count descending, with the highest-count sample kept.
+        assert_eq!(r.residue_shapes[0].count, 7);
+        assert_eq!(r.residue_shapes[0].sample, "［＃「甲」は「乙」の誤記か］");
+        assert_eq!(r.residue_shapes[1].count, 2);
+    }
+
+    #[test]
+    fn missing_families_is_the_uncovered_complement() {
+        let mut covered: std::collections::HashSet<usize> = (0..FAM_TOTAL).collect();
+        assert!(
+            missing_families(&covered).is_empty(),
+            "full set → none missing"
+        );
+
+        covered.remove(&0);
+        covered.remove(&FAM_NODE); // first annotation family
+        let missing = missing_families(&covered);
+        assert_eq!(missing.len(), 2);
+        assert!(missing.contains(&family_name(0)));
+        assert!(missing.contains(&family_name(FAM_NODE)));
     }
 }

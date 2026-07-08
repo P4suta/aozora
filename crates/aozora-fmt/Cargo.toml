@@ -21,6 +21,7 @@ path = "src/lib.rs"
 
 [dependencies]
 aozora = { workspace = true }
+aozora-encoding = { workspace = true } # Shift_JIS / UTF-8 source decode
 clap = { workspace = true }
 anyhow = { workspace = true }
 similar = { workspace = true } # unified diff for --diff

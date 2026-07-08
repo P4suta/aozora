@@ -26,8 +26,7 @@ path = "src/main.rs"
 # library `aozora` crate light for plain library consumers.
 aozora = { workspace = true, features = ["schema"] }
 aozora-buildstamp = { workspace = true } # channel-aware `--version` stamp
-aozora-encoding = { workspace = true }
-aozora-fmt = { workspace = true } # `aozora fmt` delegates to the shared format core
+aozora-fmt = { workspace = true } # shared format core + the `Encoding` decoder
 aozora-pandoc = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }

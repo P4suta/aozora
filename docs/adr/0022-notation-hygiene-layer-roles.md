@@ -14,7 +14,7 @@ malformed prefix / close), e.g. `字下げ終わり` for `ここで字下げ終�
 `黒丸傍点` for `丸傍点`, `中央寄せ` for `中央揃え`:
 
 - the pipeline lint `aozora::lint::non_canonical_directive` (#371),
-- the `aozora fmt --fix-notation` autofix (#373),
+- the `aozora fmt --fix` autofix (#373),
 - the LSP "replace with canonical" quick-fix (#374).
 
 Three consumers now reason about "what did this near-miss mean?". Without a
@@ -47,9 +47,9 @@ opt-in renderer/interpreter added in the 2026-07 render campaign.)
   suggested canonical parses to a recognised node). The linter observes; it
   never mutates source.
 
-- **Formatter (`aozora fmt --fix-notation`) — the only layer that rewrites
+- **Formatter (`aozora fmt --fix`) — the only layer that rewrites
   source, and only opt-in.** Default `fmt` preserves the parser's verbatim
-  contract for `Unknown` directives; `--fix-notation` rewrites the flagged
+  contract for `Unknown` directives; `--fix` rewrites the flagged
   near-misses to canonical form and re-normalises, staying idempotent (the
   `write_back` guard depends on it).
 
@@ -59,7 +59,7 @@ opt-in renderer/interpreter added in the 2026-07 render campaign.)
   becomes a visible element instead of an inert hidden `aozora-directive` span.
   It must (a) reuse `canonical_directive` — never a second copy — which it
   satisfies by *borrowing the formatter transform*: it re-serialises through
-  `--fix-notation` and re-parses that throwaway canonical source, so the
+  `--fix` and re-parses that throwaway canonical source, so the
   catalogue is reached only transitively; (b) stay opt-in (default render is
   the byte-identical, non-judgemental path); and (c) never mutate the caller's
   source or the default parse/render — the formatter rewrite is an internal,
@@ -116,7 +116,7 @@ Tier1 out to `aozora_syntax::degraded` (Tier2, render-only).
   drift; a fix in one would not reach the others. The single-authority
   catalogue is the entire point.
 
-- **Make `--fix-notation` the default.** Rejected: `fmt`'s contract is that
+- **Make `--fix` the default.** Rejected: `fmt`'s contract is that
   it never changes meaning-bearing bytes it cannot prove equivalent.
   Rewriting a directive body is a semantic edit the user should opt into, so
   it stays behind a flag while the verbatim round-trip remains the default.
@@ -124,7 +124,7 @@ Tier1 out to `aozora_syntax::degraded` (Tier2, render-only).
 ## References
 
 - Plan: the 2026-07 notation-hygiene + parser-coverage campaign (#372).
-- #371 (linter), #373 (`fmt --fix-notation`), #374 (LSP quick-fix).
+- #371 (linter), #373 (`fmt --fix`), #374 (LSP quick-fix).
 - Renderer/interpreter role: `RenderOptions::normalize_directives` /
   `render_html_normalized` (`aozora-render`), the `Tree::to_html_with`
   facade (`aozora`), and `aozora render --normalize`, pinned by the

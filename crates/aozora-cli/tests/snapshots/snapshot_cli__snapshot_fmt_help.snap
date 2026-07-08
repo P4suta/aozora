@@ -2,20 +2,35 @@
 source: crates/aozora-cli/tests/snapshot_cli.rs
 expression: "run(&[\"fmt\", \"--help\"])"
 ---
-Round-trip parse ∘ to_source and emit the canonical form
+Format documents: round-trip parse ∘ to_source to the canonical form. Reads stdin, one file, many
+files, or directories; `--check` / `--diff` / `--list` verify without writing, `--write` rewrites in
+place, `--fix` also canonicalises flagged directive near-misses
 
-Usage: aozora fmt [OPTIONS] [FILE]
+Usage: aozora fmt [OPTIONS] [PATH]...
 
 Arguments:
-  [FILE]
-          Input path; pass `-` (or omit) to read from stdin
-          
-          [default: -]
+  [PATH]...
+          Files or directories to format. Use `-`, or omit, to read stdin
 
 Options:
+      --check
+          Verify inputs are already formatted; exit 1 if any would change
+
+  -w, --write
+          Rewrite files in place (no-op when already canonical)
+
+      --diff
+          Print a unified diff for every file that would change. Implies --check
+
+  -l, --list
+          List only the paths that would change (gofmt -l). Combine with -w
+
+      --json
+          Emit the --check result as machine-readable JSON. Implies --check
+
   -E, --encoding <ENCODING>
-          Source encoding. Falls back to `AOZORA_ENCODING`, then the `encoding` key in
-          `.aozora.toml`, then auto-detection
+          Source encoding. Falls back to `AOZORA_ENCODING`, then auto-detection (valid UTF-8 as-is,
+          otherwise Shift_JIS — the Aozora Bunko default)
 
           Possible values:
           - auto: Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are
@@ -25,6 +40,12 @@ Options:
           - sjis: Force Shift_JIS decoding
           
           [env: AOZORA_ENCODING=]
+
+      --fix
+          Rewrite non-canonical directive near-misses to their canonical spelling (e.g. `［＃字下げ終わり］`
+          → `［＃ここで字下げ終わり］`), the fixes flagged by the `aozora::lint::non_canonical_directive`
+          warnings. Opt-in: without it every directive round-trips its raw bytes verbatim.
+          Idempotent, so it composes with every mode
 
       --config <PATH>
           Read settings from this `.aozora.toml` instead of searching upward from the working
@@ -49,20 +70,6 @@ Options:
       --watch
           Re-run on every change to the input file (foreground; Ctrl-C to stop). Requires a file
           path — not available on stdin
-
-      --check
-          Exit non-zero if the formatted output differs from the input (after the lexer's sanitize
-          stage: BOM strip, CRLF→LF). Mutually exclusive with `--write`
-
-      --write
-          Overwrite the input file with the formatted output. Ignored when reading from stdin
-
-      --fix-notation
-          Rewrite non-canonical directive near-misses to their canonical spelling (e.g. `［＃字下げ終わり］`
-          → `［＃ここで字下げ終わり］`), the fixes suggested by the `aozora::lint::non_canonical_directive`
-          warnings. Opt-in: without this flag `fmt` keeps every directive's raw bytes verbatim.
-          Idempotent, so it composes with `--check` (report whether notation needs fixing) and
-          `--write`
 
       --color <WHEN>
           When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /

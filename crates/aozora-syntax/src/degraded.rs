@@ -21,7 +21,7 @@
 //!
 //! Invoked **only** by the opt-in renderer/interpreter
 //! (`RenderOptions::directives == Degraded` / `aozora render --degraded`) — never
-//! by the parser, the default lint, the default `fmt`, or `fmt --fix-notation`.
+//! by the parser, the default lint, the default `fmt`, or `fmt --fix`.
 //! Because `DirectiveNormalization::Degraded` is constructed at a single
 //! ephemeral render site, a Tier2 misfire can reach only `--degraded` render
 //! output; it never rewrites source. See ADR-0026.
@@ -35,7 +35,7 @@ use crate::lint::is_digit_run;
 /// `body` is the trimmed inner text, without the `［＃` / `］` delimiters. See
 /// the module docs for the Tier1/Tier2 contract. Each rule was migrated out of
 /// Tier1 because it loses or re-derives meaning: admitting it there let
-/// `fmt --fix-notation` rewrite source lossily and hid the loss behind a purely
+/// `fmt --fix` rewrite source lossily and hid the loss behind a purely
 /// syntactic self-test.
 #[must_use]
 pub fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {

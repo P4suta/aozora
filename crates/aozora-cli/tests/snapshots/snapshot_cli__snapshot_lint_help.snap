@@ -1,10 +1,12 @@
 ---
 source: crates/aozora-cli/tests/snapshot_cli.rs
-expression: "run(&[\"render\", \"--help\"])"
+expression: "run(&[\"lint\", \"--help\"])"
 ---
-Render Aozora notation to HTML on stdout
+Report notation-hygiene lints (`aozora::lint::*`) — non-canonical directive near-misses and their
+suggested canonical spelling. The authoring-hygiene view (`check` reports every diagnostic); `--fix`
+rewrites the flagged near-misses in place (the Tier1 autofix)
 
-Usage: aozora render [OPTIONS] [FILE]
+Usage: aozora lint [OPTIONS] [FILE]
 
 Arguments:
   [FILE]
@@ -50,20 +52,29 @@ Options:
           Re-run on every change to the input file (foreground; Ctrl-C to stop). Requires a file
           path — not available on stdin
 
-      --normalize
-          Render verified non-canonical directive near-misses as if they were their canonical
-          spelling (e.g. `［＃「梅」は小書き］` renders 梅 as small-letter emphasis instead of an inert hidden
-          directive span) — the same near-misses `aozora::lint::non_canonical_directive` flags and
-          `aozora fmt --fix` rewrites. Opt-in and read-only: without this flag an unrecognised
-          directive stays a hidden `aozora-directive` span, and this never rewrites the input source
-          (a read-only projection applies `--normalize`; a source rewrite uses `fmt --fix`).
-          Consults the zero-false-positive Tier1 catalogue only
+  -s, --strict
+          Exit non-zero if any lint fired. Also settable via `AOZORA_STRICT` or the `strict` key in
+          `.aozora.toml`. Shared with `check`
+          
+          [env: AOZORA_STRICT=]
 
-      --degraded
-          Additionally reduce the lossy / judgment "degraded" forms Tier1 refuses (Tier2) — e.g.
-          `［＃中文字、ゴシック体］` renders bold, and `［＃ここから最後まで３字下げ］` an indent that runs to the document
-          end. Implies `--normalize`, is render-only, and never rewrites the source (a Tier2 misfire
-          can reach only this render output). Looser than `--normalize`. See ADR-0026
+      --diagnostic-format <DIAGNOSTIC_FORMAT>
+          How to render lints: `human` / `json` / `short` — the same views and `.aozora.toml` /
+          `AOZORA_DIAGNOSTIC_FORMAT` fallbacks as `check`
+
+          Possible values:
+          - auto:  Graphical (`human`) on a terminal, machine (`json`) when piped
+          - human: miette graphical report — source snippet + caret + label + help
+          - json:  The `aozora::json` JSON envelope — the cross-binding machine view
+          - short: One grep-able line per diagnostic: `path:offset: severity[code]: msg`
+          
+          [env: AOZORA_DIAGNOSTIC_FORMAT=]
+
+      --fix
+          Rewrite the flagged directive near-misses to their canonical spelling in place — the
+          zero-false-positive Tier1 autofix. This is the same source transform as `aozora fmt --fix
+          --write` (one shared engine), so it also canonicalises ruby bars and whitespace, not only
+          directives. Needs a file path; it cannot rewrite stdin
 
       --color <WHEN>
           When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
@@ -83,3 +94,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  aozora lint src.txt           # report notation-hygiene lints
+  aozora lint --strict src.txt  # any lint -> exit 1 (CI gate)
+  aozora lint --fix src.txt     # rewrite flagged near-misses in place
+  cat src.txt | aozora lint     # read from stdin (--fix needs a file)

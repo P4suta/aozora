@@ -1,9 +1,10 @@
 # CLI Quickstart
 
-The `aozora` binary covers three operations:
+The `aozora` binary covers four document operations:
 
 ```sh
-aozora check  FILE.txt          # lex + report diagnostics on stderr
+aozora check  FILE.txt          # lex + report every diagnostic on stderr
+aozora lint   FILE.txt          # report notation-hygiene lints (--fix rewrites)
 aozora fmt    FILE.txt          # round-trip parse ∘ to_source, print to stdout
 aozora render FILE.txt          # render to HTML on stdout
 ```
@@ -33,12 +34,15 @@ aozora fmt --check src.txt
 
 | Flag | Subcommand | Effect |
 |---|---|---|
-| `-E sjis`, `--encoding sjis` | all | Decode Shift_JIS source. Default is UTF-8. |
-| `--strict` | `check` | Exit non-zero on any diagnostic. |
+| `-E sjis`, `--encoding sjis` | all | Decode Shift_JIS source. Default `auto` (UTF-8, else Shift_JIS). |
+| `--strict` | `check` / `lint` | Exit non-zero on any diagnostic / lint. |
+| `--fix` | `fmt` / `lint` | Rewrite flagged directive near-misses to canonical form (Tier1). |
 | `--check` | `fmt` | Exit non-zero if formatted output differs from input. |
-| `--write` | `fmt` | Overwrite the input file with the canonical form. (Ignored when reading from stdin.) |
-| `--no-color` | all | Disable ANSI colour in diagnostics output. |
-| `--verbose` | all | Print parse phase timings to stderr. |
+| `--write` | `fmt` | Overwrite the input file with the canonical form. (Ignored on stdin.) |
+| `--diff` / `--list` / `--json` | `fmt` | Report what would change (unified diff / paths / JSON) without writing. |
+| `--normalize` / `--degraded` | `render` | Render near-misses as their canonical (Tier1) / degraded (Tier2) form. |
+| `--color {auto,always,never}` | all | ANSI colour policy (global). Honours `NO_COLOR` / `CLICOLOR`. |
+| `--timing` | all | Print per-phase timing to stderr (stdout stays byte-identical). |
 
 ## Exit codes
 
@@ -72,11 +76,14 @@ full list.
 
 ## Why not a single subcommand?
 
-`check` / `fmt` / `render` are intentionally separate so each one has
+`check` / `lint` / `fmt` / `render` are intentionally separate so each one has
 a single, predictable failure mode in shell pipelines:
 
 - `check` exits 0 on parse success, regardless of warnings (use
   `--strict` for "no diagnostics allowed").
+- `lint` is `check` filtered to the advisory notation-hygiene lints
+  (`aozora::lint::*`); `--fix` applies the Tier1 autofix in place. See
+  [Notation hygiene](../notation/hygiene.md).
 - `fmt` is a *pure-text* transform: stdin in, canonical text out.
   `--check` upgrades it to a CI gate without forking a second binary.
 - `render` is a *pure-text-to-HTML* transform with the same

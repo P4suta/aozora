@@ -8,7 +8,14 @@ Usage: aozora [OPTIONS] <COMMAND>
 
 Commands:
   check        Run the lexer over a file and report diagnostics
-  fmt          Round-trip parse ∘ to_source and emit the canonical form
+  lint         Report notation-hygiene lints (`aozora::lint::*`) — non-canonical directive
+               near-misses and their suggested canonical spelling. The authoring-hygiene view
+               (`check` reports every diagnostic); `--fix` rewrites the flagged near-misses in place
+               (the Tier1 autofix)
+  fmt          Format documents: round-trip parse ∘ to_source to the canonical form. Reads stdin,
+               one file, many files, or directories; `--check` / `--diff` / `--list` verify without
+               writing, `--write` rewrites in place, `--fix` also canonicalises flagged directive
+               near-misses
   render       Render Aozora notation to HTML on stdout
   inspect      Emit a parsed document's JSON for one `aozora::json` envelope — `nodes` / `pairs` /
                `container-pairs` / `diagnostics` / `gaiji` — or the static `slugs` catalogue. The

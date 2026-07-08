@@ -51,7 +51,7 @@ pub enum DirectiveNormalization {
     #[default]
     Off,
     /// Tier1 only: rewrite verified zero-false-positive near-misses (per
-    /// [`canonical_directive`]) to canonical form. The level `fmt --fix-notation`
+    /// [`canonical_directive`]) to canonical form. The level `fmt --fix`
     /// and `render --normalize` use.
     Canonical,
     /// Tier1 + Tier2: additionally reduce the lossy / judgment degraded forms
@@ -67,7 +67,7 @@ pub enum DirectiveNormalization {
 /// The default (`directives: Off`) preserves the strong contract that every
 /// directive round-trips its `raw` bytes verbatim — including the
 /// `DirectiveKind::Unknown` near-misses the notation-hygiene lint flags.
-/// Opting in (`aozora fmt --fix-notation` = `Canonical`) lets the serializer
+/// Opting in (`aozora fmt --fix` = `Canonical`) lets the serializer
 /// rewrite those flagged near-misses to their canonical spelling via the single
 /// [`canonical_directive`] authority.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
