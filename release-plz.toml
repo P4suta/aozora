@@ -56,7 +56,6 @@ changelog_include = [
   "aozora-buildstamp",
   "aozora-cli",
   "aozora-cst",
-  "aozora-diagnostics",
   "aozora-encoding",
   "aozora-fmt",
   "aozora-lsp",

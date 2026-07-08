@@ -57,6 +57,35 @@ impl PairKind {
             Self::Quote => "quote",
         }
     }
+
+    /// The open delimiter literal for this pair (`［`, `《`, `≪`, `〔`, `「`).
+    ///
+    /// The single authority for the delimiter glyphs: diagnostic prose,
+    /// quick-fix titles, and any renderer that needs to name a delimiter
+    /// read them from here rather than hard-coding the character.
+    #[must_use]
+    pub const fn open_str(self) -> &'static str {
+        match self {
+            Self::Bracket => "［",
+            Self::Ruby => "《",
+            Self::AngleQuote => "≪",
+            Self::Tortoise => "〔",
+            Self::Quote => "「",
+        }
+    }
+
+    /// The close delimiter literal for this pair (`］`, `》`, `≫`, `〕`, `」`).
+    /// Counterpart of [`Self::open_str`].
+    #[must_use]
+    pub const fn close_str(self) -> &'static str {
+        match self {
+            Self::Bracket => "］",
+            Self::Ruby => "》",
+            Self::AngleQuote => "≫",
+            Self::Tortoise => "〕",
+            Self::Quote => "」",
+        }
+    }
 }
 
 /// Resolved open/close pair, as observed by the pair stage.
@@ -115,6 +144,21 @@ mod tests {
             for b in &variants[i + 1..] {
                 assert_ne!(a, b);
             }
+        }
+    }
+
+    #[test]
+    fn open_and_close_str_cover_every_pair_kind() {
+        let cases = [
+            (PairKind::Bracket, "［", "］"),
+            (PairKind::Ruby, "《", "》"),
+            (PairKind::AngleQuote, "≪", "≫"),
+            (PairKind::Tortoise, "〔", "〕"),
+            (PairKind::Quote, "「", "」"),
+        ];
+        for (kind, open, close) in cases {
+            assert_eq!(kind.open_str(), open, "open_str for {kind:?}");
+            assert_eq!(kind.close_str(), close, "close_str for {kind:?}");
         }
     }
 
