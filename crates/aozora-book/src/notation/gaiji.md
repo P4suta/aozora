@@ -21,7 +21,7 @@ The leading `※` (U+203B, reference mark) opens the annotation; the
 3. A **Unicode codepoint** (`U+5F85`) when the character has one.
 
 aozora resolves gaiji references through a compile-time
-[PHF](https://docs.rs/phf) lookup table built from the JIS X 0213
+[PHF](https://docs.rs/phf/latest/phf/) lookup table built from the JIS X 0213
 official mapping plus the Unicode UCS register, with the descriptive
 name as a tertiary fallback.
 

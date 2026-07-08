@@ -25,7 +25,7 @@ flowchart TD
     raw --> sjis --> utf8 --> sanitize --> pua --> classified
 ```
 
-The Shift_JIS decode itself uses [`encoding_rs`](https://docs.rs/encoding_rs)
+The Shift_JIS decode itself uses [`encoding_rs`](https://docs.rs/encoding_rs/latest/encoding_rs/)
 — the same crate Firefox uses for HTML decoding. Battle-tested,
 SIMD-accelerated, and handles every Shift_JIS variant Aozora Bunko
 sources have used since the 1990s. We add a thin patch layer for

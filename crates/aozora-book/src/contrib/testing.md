@@ -64,7 +64,7 @@ JIS X 0213 gaiji, and accent decomposition edge cases.
 
 ## Layer 2: property tests
 
-[`proptest`](https://docs.rs/proptest) generators in
+[`proptest`](https://docs.rs/proptest/latest/proptest/) generators in
 `crates/aozora-proptest` drive parse / render / round-trip
 invariants. Default 128 cases per `proptest!` block (CI budget);
 `just prop-deep` runs 4096 per block (release-cut budget).

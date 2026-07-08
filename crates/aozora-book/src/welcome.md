@@ -17,7 +17,7 @@ The repository is **CommonMark-free, Markdown-free**: aozora deals
 the lexer reports structured diagnostics; the AST is an owned,
 lifetime-free tree that can be walked in O(n). If you
 want a Markdown dialect that *also* understands aozora notation, see
-the sibling project [afm](https://github.com/P4suta/afm), which is
+the sibling project [afm](https://github.com/P4suta/aozora-flavored-markdown), which is
 built on top of this parser.
 
 ## What this handbook is for

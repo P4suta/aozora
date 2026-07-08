@@ -11,7 +11,7 @@ Three cargo-fuzz harnesses live in this workspace:
 
 Each crate keeps its harness binaries under `crates/<crate>/fuzz/`
 (an out-of-workspace nightly-only sub-crate, mirroring the
-[afm](https://github.com/P4suta/afm) layout).
+[afm](https://github.com/P4suta/aozora-flavored-markdown) layout).
 
 ## Workflow
 

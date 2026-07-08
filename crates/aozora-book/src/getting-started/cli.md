@@ -51,7 +51,7 @@ aozora fmt --check src.txt
 ## Diagnostics format
 
 `aozora check` prints diagnostics in
-[`miette`](https://docs.rs/miette) style — a coloured source snippet
+[`miette`](https://docs.rs/miette/latest/miette/) style — a coloured source snippet
 with carets pointing at the byte range, a short message, and (where
 applicable) a help line:
 

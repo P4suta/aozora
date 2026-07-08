@@ -141,7 +141,7 @@ nodes   = decode<Node[]>(env.data)            // step 6
 Extism publishes host SDKs for roughly **15 languages** — including
 Java, PHP, Ruby, .NET, Elixir, Haskell, OCaml, C/C++, and more — plus the
 pure-Go [`aozora-go`](go.md) reference. Browse the current set at the
-[Extism host-SDK docs](https://extism.org/docs/concepts/host-sdk).
+[Extism host-SDK docs](https://extism.org/docs/concepts/host-sdk/).
 
 - **Types** for every supported language are generated from the
   committed JSON Schema by `just types-langs` (the quicktype
