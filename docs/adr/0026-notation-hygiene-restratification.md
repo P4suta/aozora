@@ -58,14 +58,14 @@ output is unchanged — these bodies were, and remain, `Unknown` by default.
 1. **Tier2 is reduction-only and render/interpreter-scoped.** A separate
    `aozora_syntax::degraded::degraded_directive` catalogue — never merged into
    the Tier1 fixed map (`aozora_syntax::lint::canonical_directive`), never called
-   by the parser, the default lint, the default `fmt`, or `fmt --fix-notation`.
+   by the parser, the default lint, the default `fmt`, or `fmt --fix`.
    Each entry returns a **directly parser-recognised** spelling (the opt-in
    renderer does a single serialize→lex pass, so a Tier1-*key* output would
    re-lex to `Unknown`), and is disjoint from Tier1 and idempotent.
 
 2. **The four sedimented families move from Tier1 to Tier2.** `canonical_directive`
    now returns `None` for them; `degraded_directive` reduces them. `fmt
-   --fix-notation` and the default lint consequently stop rewriting / flagging
+   --fix` and the default lint consequently stop rewriting / flagging
    them — an improvement, since those were the lossy source rewrites.
 
 3. **Containment is a type-level invariant.** The shared `bool fix_notation` /
@@ -73,7 +73,7 @@ output is unchanged — these bodies were, and remain, `Unknown` by default.
    `DirectiveNormalization { Off, Canonical, Degraded }`. `Degraded` — the only
    level that consults Tier2 — is constructed at exactly **one** ephemeral site
    (`render_html_normalized`, a throwaway buffer that is lexed and discarded).
-   Every persistent-write path (`fmt --fix-notation`, `to_source_with`,
+   Every persistent-write path (`fmt --fix`, `to_source_with`,
    `write_back`) can hold at most `Canonical`. Therefore a Tier2 misfire can
    reach only `render --degraded` output; it can never rewrite source.
 
@@ -94,7 +94,7 @@ output is unchanged — these bodies were, and remain, `Unknown` by default.
   editorial / compound / composition bodies (which stay inert **by design**).
 - A lossy reduction can no longer sit in Tier1 undetected: the meaning axis
   fails first.
-- `fmt --fix-notation` and the default lint no longer touch the migrated forms;
+- `fmt --fix` and the default lint no longer touch the migrated forms;
   their lossy source rewrites are gone.
 - A future opt-in degraded *advisory* lint may reuse the same `degraded`
   catalogue as a second consumer — explicitly deferred.
@@ -102,7 +102,7 @@ output is unchanged — these bodies were, and remain, `Unknown` by default.
 ## Alternatives considered
 
 - **Leave the four families in Tier1 (document only).** Rejected: it keeps lossy
-  source rewrites live in `fmt --fix-notation` and leaves the zero-FP claim
+  source rewrites live in `fmt --fix` and leaves the zero-FP claim
   overstated.
 - **Build a full Tier2 matcher with a fresh (empty) catalogue.** Rejected:
   measurement showed no *net-new* safe reduction in the corpus top-40; a

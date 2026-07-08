@@ -25,7 +25,7 @@ principles — **not** from the spec's or handbook's permissiveness, which
 tolerate more drift than a clean core should. The guiding telos: the **core
 parser is an opinionated, limited, unified canonical vocabulary** — the one
 clear way future authors are guided to write — while the surrounding layers
-(Tier1 lint did-you-mean, `fmt --fix-notation`, `--degraded` render) still accept
+(Tier1 lint did-you-mean, `fmt --fix`, `--degraded` render) still accept
 every corpus variant, so **nothing is lost**.
 
 ## Decision

@@ -65,8 +65,13 @@ appear in the maintained corpus:
 - **キャプション alignment** edge cases that the spec lists but no
   active work uses (verified against the corpus sweep).
 
-These are kept as a generic `Directive{Unknown}` and rendered
-best-effort (the "no bare `［＃`" guarantee still holds); a `ここから…`
+These are kept as a lossless `Directive{Unknown}` that round-trips
+verbatim (the "no bare `［＃`" guarantee still holds); a `ここから…`
 opener that names no known container also emits
 [`unrecognised_container_directive`](diagnostics.md#unrecognised-container-directive).
 Adding full support is a one-PR job once a real corpus document needs it.
+
+Near-miss spellings of *recognised* constructs (`字下げ終わり`, `ゴチック`) are
+also kept `Unknown`, but the opt-in [notation-hygiene](hygiene.md) layers can
+flag, canonicalise, or degraded-render them on request — the parser itself
+never guesses.
