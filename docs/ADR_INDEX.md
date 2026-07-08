@@ -29,6 +29,12 @@ back.
 | [0020](./adr/0020-release-secret-hardening-trusted-publishing.md)                    | Release secret hardening via Trusted Publishing and environment gates | accepted |
 | [0021](./adr/0021-cli-release-stays-hand-written.md)                                 | CLI release stays hand-written (cargo-dist not adopted)               | accepted |
 | [0022](./adr/0022-notation-hygiene-layer-roles.md)                                   | Notation-hygiene layer roles: parser / linter / formatter             | accepted |
+| [0023](./adr/0023-render-only-forward-emphasis-on-a-ruby-base.md)                    | Render-only forward emphasis on a ruby base                           | accepted |
+| [0024](./adr/0024-canonical-reference-stylesheet.md)                                 | Canonical reference stylesheet for notation presentation              | accepted |
+| [0025](./adr/0025-bracket-is-a-hard-pairing-scope.md)                                | `［＃…］` is a hard pairing scope in the pair stage                     | accepted |
+| [0026](./adr/0026-notation-hygiene-restratification.md)                              | Notation-hygiene re-stratification: Tier1 purity and render-only Tier2 | accepted |
+| [0027](./adr/0027-core-parser-notation-purification.md)                              | Core parser notation purification: decline non-canonical forms         | accepted |
+| [0028](./adr/0028-remove-dead-framed-and-invalidrubyspan-core-surfaces.md)           | Remove dead Framed and InvalidRubySpan core surfaces                   | accepted |
 
 ## Authoring a new ADR
 

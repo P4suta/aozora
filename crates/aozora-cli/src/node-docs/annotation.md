@@ -33,7 +33,7 @@ pub struct Directive<'src> {
 ```
 
 `DirectiveKind` discriminates the recognised sub-variants
-(`Unknown`, `Sic`, `BaseTextVariant`, `InvalidRubySpan`, …); `raw`
+(`Unknown`, `Sic`, `BaseTextVariant`, …); `raw`
 carries the raw bracket body for any further analysis.
 
 ## When emitted

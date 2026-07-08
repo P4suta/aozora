@@ -79,6 +79,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   recovery. See ADR-0011.
 
 
+### Removed
+
+- **core / syntax**: ⚠ BREAKING (source-only) — removed two dead core enum
+  surfaces from `aozora-syntax` that were declared and wired but never
+  constructed from source. `DirectiveKind::InvalidRubySpan` (malformed ruby is
+  handled by the diagnostics channel — an `empty-ruby-reading` / `nested-ruby`
+  diagnostic plus lossless plain-text replay — never a typed directive) and
+  `LineFormat::Framed` / the `NodeKind::Framed` (`"framed"`) node kind it
+  projected to (the `罫囲み` line spelling is claimed by the paired container
+  `RegionFormat::Framed` and the forward `「X」は罫囲み` by `ForwardAttr::Framed`,
+  so the line scope had no source path — a byproduct of the symmetric per-scope
+  enum design in #207, with an asymmetric round-trip). The live enclosure
+  surfaces stay: `Format::Framed`, all of `EnclosureKind`, `ForwardAttr::Framed`,
+  `RegionFormat::Framed`, and the `ContainerKind` `"framed"` tag. **The emitted
+  JSON is byte-identical and `schemaVersion` stays 2** — the only wire-adjacent
+  change is the generated TypeScript `NodeKind` union dropping its dead `"framed"`
+  member, so only source that *names* that member needs updating. The golden
+  family universe shrinks 45 → 43. See ADR-0028 and #455.
+
+
 ### Fixed
 
 - **diagnostics / fmt**: the "report this bug" URLs in the pipeline-internal

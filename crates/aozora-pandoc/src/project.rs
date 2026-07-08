@@ -452,7 +452,6 @@ fn line_inline(lf: LineFormat) -> Inline {
             class_attr_kv("align-end", vec![("offset".to_owned(), offset.to_string())])
         }
         LineFormat::Center { .. } => class_attr_kv("center", Vec::new()),
-        LineFormat::Framed(_) => class_attr("keigakomi"),
         _ => plain_attr(),
     };
     Inline::Span(attr, Vec::new())
@@ -488,7 +487,6 @@ fn annotation_kind_slug(k: DirectiveKind) -> &'static str {
         DirectiveKind::Unknown => "unknown",
         DirectiveKind::Sic => "sic",
         DirectiveKind::BaseTextVariant => "base-text-variant",
-        DirectiveKind::InvalidRubySpan => "invalid-ruby-span",
         DirectiveKind::EditorNote => "editor-note",
         DirectiveKind::RubyAttached => "ruby-attached",
         DirectiveKind::RubyRetarget => "ruby-retarget",
@@ -681,7 +679,7 @@ fn container_attr(kind: RegionFormat) -> Attr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aozora::{Document, EnclosureKind};
+    use aozora::Document;
 
     /// Plain text round-trips into a single Pandoc Para of `Inline::Str`.
     #[test]
@@ -1434,17 +1432,6 @@ mod tests {
     }
 
     #[test]
-    fn line_inline_keigakomi_is_empty_marker() {
-        match line_inline(LineFormat::Framed(EnclosureKind::Rule)) {
-            Inline::Span(attr, inner) => {
-                assert!(has_class(&attr, "keigakomi"), "keigakomi class");
-                assert!(inner.is_empty(), "keigakomi marker span is empty");
-            }
-            other => panic!("expected Span, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn warichu_inline_builder_wraps_upper_and_lower() {
         // Build the owned warichu payload directly via a store (the `／`-split
         // upper / lower form is not reachable as an inline leaf).
@@ -1482,10 +1469,6 @@ mod tests {
         assert_eq!(
             annotation_kind_slug(DirectiveKind::BaseTextVariant),
             "base-text-variant"
-        );
-        assert_eq!(
-            annotation_kind_slug(DirectiveKind::InvalidRubySpan),
-            "invalid-ruby-span"
         );
     }
 

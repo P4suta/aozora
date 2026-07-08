@@ -72,5 +72,5 @@ project to this variant.
   open boundary.
 - [ContainerClose](container-close.md) — `NodeRef` projection of the
   close boundary.
-- [Indent](indent.md), [AlignEnd](align-end.md), [Warichu](warichu.md),
-  [Framed](keigakomi.md) — single-line counterparts.
+- [Indent](indent.md), [AlignEnd](align-end.md),
+  [Warichu](warichu.md) — single-line counterparts.

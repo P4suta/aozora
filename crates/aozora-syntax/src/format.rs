@@ -653,8 +653,6 @@ pub enum LineFormat {
         /// `true` for `ページの左右中央` (page centre), `false` for `中央揃え`.
         page: bool,
     },
-    /// `［＃罫囲み］` — enclose the single line it sits on ([`EnclosureKind`]).
-    Framed(EnclosureKind),
     /// `［＃この行はゴシック体］` — set the single line it sits on in gothic
     /// ([`Format::Gothic`], distinct from 太字).
     Gothic,
@@ -678,7 +676,6 @@ impl LineFormat {
             Self::Indent { .. } => Format::Indent,
             Self::AlignEnd { .. } => Format::AlignEnd,
             Self::Center { .. } => Format::Center,
-            Self::Framed(k) => Format::Framed(k),
             Self::Gothic => Format::Gothic,
             Self::FontSizeAbsolute { size, .. } => Format::FontSizeAbsolute(size),
         }
@@ -1204,9 +1201,11 @@ mod tests {
     #[test]
     fn scope_projections_are_total() {
         assert_eq!(ForwardAttr::Bold.format(), Format::Bold);
+        assert_eq!(LineFormat::Gothic.format(), Format::Gothic);
         assert_eq!(
-            LineFormat::Framed(EnclosureKind::Rule).format(),
-            Format::Framed(EnclosureKind::Rule)
+            RegionFormat::Framed(EnclosureKind::Rule).format(),
+            Format::Framed(EnclosureKind::Rule),
+            "the enclosure identity is reached via the live block / forward scopes"
         );
         assert_eq!(RegionFormat::Warichu.format(), Format::Warichu);
         assert_eq!(
