@@ -397,15 +397,17 @@ fn explain_diagnostic(arg: &str) -> Option<String> {
             .or_else(|| Diagnostic::explain(&format!("aozora::lint::{arg}")))?
     };
     let mut out = format!(
-        "{}\n{} · {}",
+        "{}  —  {}\n{} · {}\n\n{}",
         info.code,
+        info.title,
         info.severity.as_json_str(),
-        info.source.as_json_str()
+        info.source.as_json_str(),
+        info.body,
     );
-    if !info.help.is_empty() {
-        out.push_str("\n\n");
-        out.push_str(&info.help);
-    }
+    out.push_str("\n\n再現例:\n");
+    out.push_str(info.repro);
+    out.push_str("\n\n修正後:\n");
+    out.push_str(info.fixed);
     if let Some(url) = &info.url {
         out.push_str("\n\nsee: ");
         out.push_str(url);

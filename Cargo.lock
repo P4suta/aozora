@@ -239,15 +239,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aozora-diagnostics"
-version = "0.4.1"
-dependencies = [
- "aozora",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "aozora-encoding"
 version = "0.4.1"
 dependencies = [
@@ -299,7 +290,6 @@ dependencies = [
  "aozora",
  "aozora-buildstamp",
  "aozora-corpus",
- "aozora-diagnostics",
  "aozora-encoding",
  "aozora-fmt",
  "arc-swap",

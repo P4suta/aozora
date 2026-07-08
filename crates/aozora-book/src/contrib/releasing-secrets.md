@@ -102,15 +102,15 @@ that does not exist yet (*"initial publish requires an API token."*), and a
 trusted publisher is bound per-crate to an exact **workflow filename**, so the
 14 crates already live under the old workflow must be re-pointed.
 
-**Bootstrap the 5 new crates (once).** Fourteen `aozora*` crates are already on
-crates.io; five are new — `aozora-buildstamp`, `aozora-diagnostics`,
-`aozora-fmt`, `tree-sitter-aozora`, `aozora-lsp`. Publish each once, by hand, in
+**Bootstrap the new crates (once).** Fourteen `aozora*` crates are already on
+crates.io; the rest are new — `aozora-buildstamp`, `aozora-fmt`,
+`tree-sitter-aozora`, `aozora-lsp`. Publish each once, by hand, in
 dependency order, so they exist before OIDC can take over:
 
 ```sh
 # a crates.io API token with publish-new + publish-update scopes
 export CARGO_REGISTRY_TOKEN=cio_xxx
-for c in aozora-buildstamp aozora-diagnostics aozora-fmt tree-sitter-aozora aozora-lsp; do
+for c in aozora-buildstamp aozora-fmt tree-sitter-aozora aozora-lsp; do
   cargo publish -p "$c"            # their library deps are already on crates.io
 done
 unset CARGO_REGISTRY_TOKEN
