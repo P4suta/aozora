@@ -26,7 +26,6 @@ members = [
   "crates/aozora-query",
   "crates/aozora-fmt",
   "crates/tree-sitter-aozora",
-  "crates/aozora-diagnostics",
   "crates/aozora-lsp",
 ]
 # `aozora-book` is the mdbook source tree and `aozora-go` is a standalone
@@ -188,7 +187,6 @@ aozora-cst = { version = "0.4.1", path = "crates/aozora-cst" }
 aozora-query = { version = "0.4.1", path = "crates/aozora-query" }
 aozora-proptest = { version = "0.4.1", path = "crates/aozora-proptest" }
 aozora-fmt = { version = "0.4.1", path = "crates/aozora-fmt" }
-aozora-diagnostics = { version = "0.4.1", path = "crates/aozora-diagnostics" }
 # Build-identity leaf: depended on ONLY by the binaries (aozora-cli / aozora-lsp)
 # so its git-probing build.rs never invalidates the hot library crates' caches.
 aozora-buildstamp = { version = "0.4.1", path = "crates/aozora-buildstamp" }

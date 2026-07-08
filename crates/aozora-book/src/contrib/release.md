@@ -214,7 +214,7 @@ PyPI) are skipped automatically.
 **Single front door, still.** The parser is built from many internal crates
 (`aozora-spec`, `aozora-syntax`, `aozora-pipeline`, `aozora-render`,
 `aozora-encoding`, `aozora-scan`, `aozora-veb`, `aozora-cst`, `aozora-query`,
-`aozora-proptest`, `aozora-diagnostics`, `aozora-fmt`, `tree-sitter-aozora`).
+`aozora-proptest`, `aozora-fmt`, `tree-sitter-aozora`).
 They are on crates.io so the umbrella `aozora` crate and the `aozora-lsp` /
 `aozora-cli` binaries can depend on them, but they carry **no API-stability
 contract** — their crate descriptions say so, and downstream consumers should
