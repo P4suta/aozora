@@ -49,9 +49,11 @@
 )]
 #![forbid(unsafe_code)]
 
+mod color;
 mod completions;
 mod config;
 mod diagnostics_render;
+mod input;
 mod introspect;
 mod manpage;
 mod timing;
@@ -69,6 +71,7 @@ use aozora::{
     DiagnosticSource, Document, json,
     render::{DirectiveNormalization, RenderOptions, SerializeOptions},
 };
+use aozora_fmt::ColorChoice;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -98,6 +101,13 @@ Document subcommands read stdin when given '-' or no path."
 struct Cli {
     #[command(subcommand)]
     command: Command,
+
+    /// When to colourise diagnostics: `auto` (colour on a terminal,
+    /// honouring `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or
+    /// `never`. Global — accepted after any subcommand. Governs `check`'s
+    /// graphical diagnostics; `kinds` tables are always monochrome.
+    #[arg(long, global = true, value_name = "WHEN", default_value = "auto")]
+    color: ColorChoice,
 }
 
 #[derive(Debug, Subcommand)]
@@ -341,6 +351,10 @@ fn main() -> ExitCode {
     let raw: Vec<OsString> = env::args_os().collect();
     let cli = Cli::parse_from(raw);
 
+    // Install the colour hook before any diagnostic `Report` is constructed:
+    // miette captures its handler at construction time (see `color::install`).
+    color::install(cli.color);
+
     let result = match cli.command {
         Command::Check(opts) => run_check(&opts),
         Command::Fmt(opts) => run_fmt(&opts),
@@ -380,6 +394,9 @@ fn run_watched(common: &CommonArgs, once: impl Fn() -> Result<ExitCode>) -> Resu
 }
 
 fn run_check(args: &CheckArgs) -> Result<ExitCode> {
+    if let Some(code) = input::guard_stdin(&args.common.file, "check") {
+        return Ok(code);
+    }
     run_watched(&args.common, || run_check_once(args))
 }
 
@@ -433,6 +450,9 @@ fn run_check_once(args: &CheckArgs) -> Result<ExitCode> {
 }
 
 fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
+    if let Some(code) = input::guard_stdin(&args.common.file, "fmt") {
+        return Ok(code);
+    }
     run_watched(&args.common, || run_fmt_once(args))
 }
 
@@ -492,6 +512,9 @@ fn run_fmt_once(args: &FmtArgs) -> Result<ExitCode> {
 }
 
 fn run_render(args: &RenderArgs) -> Result<ExitCode> {
+    if let Some(code) = input::guard_stdin(&args.common.file, "render") {
+        return Ok(code);
+    }
     run_watched(&args.common, || run_render_once(args))
 }
 
@@ -523,7 +546,27 @@ fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
 }
 
 fn run_inspect(args: &InspectArgs) -> Result<ExitCode> {
+    // `slugs` is a static catalogue that reads no input, so it must stay
+    // usable on a bare terminal — guard only the kinds that read stdin.
+    if !matches!(args.which, InspectKind::Slugs) {
+        let cmd = inspect_cmd(args.which);
+        if let Some(code) = input::guard_stdin(&args.common.file, &cmd) {
+            return Ok(code);
+        }
+    }
     run_watched(&args.common, || run_inspect_once(args))
+}
+
+/// The stdin-hint command string for an `inspect` kind, e.g.
+/// `inspect nodes` — the value-enum tag mirrors what the user typed, so the
+/// hint's `aozora <cmd> <FILE>` is copy-pasteable.
+fn inspect_cmd(kind: InspectKind) -> String {
+    let tag = kind
+        .to_possible_value()
+        .expect("every non-skipped InspectKind variant has a value-enum name")
+        .get_name()
+        .to_owned();
+    format!("inspect {tag}")
 }
 
 fn run_inspect_once(args: &InspectArgs) -> Result<ExitCode> {
@@ -564,6 +607,9 @@ fn inspect_json(args: &InspectArgs, timer: &mut Timer) -> Result<String> {
 }
 
 fn run_pandoc(args: &PandocArgs) -> Result<ExitCode> {
+    if let Some(code) = input::guard_stdin(&args.common.file, "pandoc") {
+        return Ok(code);
+    }
     run_watched(&args.common, || run_pandoc_once(args))
 }
 

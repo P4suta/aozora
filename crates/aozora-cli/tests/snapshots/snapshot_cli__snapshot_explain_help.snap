@@ -4,7 +4,7 @@ expression: "run(&[\"explain\", \"--help\"])"
 ---
 Print prose for a `NodeKind` tag, or help / severity / URL for a diagnostic code
 
-Usage: aozora explain <TARGET>
+Usage: aozora explain [OPTIONS] <TARGET>
 
 Arguments:
   <TARGET>
@@ -12,6 +12,19 @@ Arguments:
           a diagnostic code (e.g. `aozora::lex::unclosed_bracket`, or the short `unclosed_bracket`)
 
 Options:
+      --color <WHEN>
+          When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
+          `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Global — accepted after any
+          subcommand. Governs `check`'s graphical diagnostics; `kinds` tables are always monochrome
+
+          Possible values:
+          - auto:   Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` /
+            `CLICOLOR_FORCE`)
+          - always: Always colour, even when piped
+          - never:  Never colour
+          
+          [default: auto]
+
   -h, --help
           Print help (see a summary with '-h')
 
