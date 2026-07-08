@@ -64,6 +64,19 @@ Options:
           Re-run on every change to the input file (foreground; Ctrl-C to stop). Requires a file
           path — not available on stdin
 
+      --color <WHEN>
+          When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
+          `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Global — accepted after any
+          subcommand. Governs `check`'s graphical diagnostics; `kinds` tables are always monochrome
+
+          Possible values:
+          - auto:   Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` /
+            `CLICOLOR_FORCE`)
+          - always: Always colour, even when piped
+          - never:  Never colour
+          
+          [default: auto]
+
   -h, --help
           Print help (see a summary with '-h')
 

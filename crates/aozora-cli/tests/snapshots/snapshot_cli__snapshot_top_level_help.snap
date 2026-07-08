@@ -4,7 +4,7 @@ expression: "run(&[\"--help\"])"
 ---
 Aozora Bunko notation parser CLI
 
-Usage: aozora <COMMAND>
+Usage: aozora [OPTIONS] <COMMAND>
 
 Commands:
   check        Run the lexer over a file and report diagnostics
@@ -28,6 +28,19 @@ Commands:
   help         Print this message or the help of the given subcommand(s)
 
 Options:
+      --color <WHEN>
+          When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
+          `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Global — accepted after any
+          subcommand. Governs `check`'s graphical diagnostics; `kinds` tables are always monochrome
+
+          Possible values:
+          - auto:   Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` /
+            `CLICOLOR_FORCE`)
+          - always: Always colour, even when piped
+          - never:  Never colour
+          
+          [default: auto]
+
   -h, --help
           Print help (see a summary with '-h')
 
