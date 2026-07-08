@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use aozora::render::{DirectiveNormalization, SerializeOptions};
 use clap::{Args, Parser, ValueEnum};
 
+use crate::encoding::Encoding;
+
 const LONG_ABOUT: &str = concat!(
     "Idempotent formatter for aozora-flavored-markdown.\n\n",
     "With no path (or `-`) it reads stdin and writes the canonical form to ",
@@ -36,6 +38,12 @@ pub struct Cli {
     /// The formatter flags, shared with `aozora fmt`.
     #[command(flatten)]
     pub(crate) args: FmtArgs,
+
+    /// When to colourise --diff output. (The `aozora` CLI supplies this from
+    /// its own global `--color`; the standalone binary owns the flag here so
+    /// colour stays a single caller-injected policy, not a per-frontend one.)
+    #[arg(long, value_name = "WHEN", default_value = "auto")]
+    pub(crate) color: ColorChoice,
 }
 
 /// The formatter's argument surface for the standalone `aozora-fmt` binary
@@ -70,9 +78,10 @@ pub struct FmtArgs {
     #[arg(long, conflicts_with_all = ["write", "list", "diff"])]
     json: bool,
 
-    /// When to colourise --diff output.
-    #[arg(long, value_name = "WHEN", default_value = "auto")]
-    color: ColorChoice,
+    /// Source encoding. Falls back to `AOZORA_ENCODING`, then auto-detection
+    /// (valid UTF-8 as-is, otherwise Shift_JIS — the Aozora Bunko default).
+    #[arg(long, short = 'E', value_name = "ENCODING", env = "AOZORA_ENCODING")]
+    encoding: Option<Encoding>,
 
     /// Rewrite non-canonical directive near-misses to their canonical
     /// spelling (e.g. `［＃字下げ終わり］` → `［＃ここで字下げ終わり］`), the
@@ -80,7 +89,7 @@ pub struct FmtArgs {
     /// warnings. Opt-in: without it every directive round-trips its raw
     /// bytes verbatim. Idempotent, so it composes with every mode.
     #[arg(long)]
-    fix_notation: bool,
+    fix: bool,
 }
 
 /// When to emit ANSI colour in terminal output (diffs, diagnostics, …).
@@ -121,21 +130,24 @@ pub(crate) enum CheckReport {
 
 impl FmtArgs {
     /// The positional path arguments (possibly including `-` for stdin).
-    pub(crate) fn paths(&self) -> &[PathBuf] {
+    #[must_use]
+    pub fn paths(&self) -> &[PathBuf] {
         &self.paths
     }
 
-    /// The chosen colour policy for diff output.
-    pub(crate) fn color(&self) -> ColorChoice {
-        self.color
+    /// The `-E/--encoding` override, if any (else the caller's default —
+    /// `AOZORA_ENCODING`, the `.aozora.toml` key, or auto-detection).
+    #[must_use]
+    pub fn encoding(&self) -> Option<Encoding> {
+        self.encoding
     }
 
     /// The serialization options derived from the flags — currently just the
-    /// `--fix-notation` autofix opt-in, which applies zero-false-positive Tier1
-    /// only (`Canonical`); the lossy Tier2 reductions are render-only (ADR-0026).
+    /// `--fix` autofix opt-in, which applies zero-false-positive Tier1 only
+    /// (`Canonical`); the lossy Tier2 reductions are render-only (ADR-0026).
     pub(crate) fn serialize_options(&self) -> SerializeOptions {
         SerializeOptions {
-            directives: if self.fix_notation {
+            directives: if self.fix {
                 DirectiveNormalization::Canonical
             } else {
                 DirectiveNormalization::Off

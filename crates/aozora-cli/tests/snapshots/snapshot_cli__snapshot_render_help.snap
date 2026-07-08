@@ -54,10 +54,10 @@ Options:
           Render verified non-canonical directive near-misses as if they were their canonical
           spelling (e.g. `［＃「梅」は小書き］` renders 梅 as small-letter emphasis instead of an inert hidden
           directive span) — the same near-misses `aozora::lint::non_canonical_directive` flags and
-          `aozora fmt --fix-notation` rewrites. Opt-in and read-only: without this flag an
-          unrecognised directive stays a hidden `aozora-directive` span, and this never rewrites the
-          input source. Aliased `--fix-notation` for symmetry with `aozora fmt`. Consults the
-          zero-false-positive Tier1 catalogue only
+          `aozora fmt --fix` rewrites. Opt-in and read-only: without this flag an unrecognised
+          directive stays a hidden `aozora-directive` span, and this never rewrites the input source
+          (a read-only projection applies `--normalize`; a source rewrite uses `fmt --fix`).
+          Consults the zero-false-positive Tier1 catalogue only
 
       --degraded
           Additionally reduce the lossy / judgment "degraded" forms Tier1 refuses (Tier2) — e.g.

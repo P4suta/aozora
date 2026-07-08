@@ -59,7 +59,6 @@ mod manpage;
 mod timing;
 mod watch;
 
-use std::borrow::Cow;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -69,9 +68,12 @@ use std::process::{Command as Process, ExitCode, Stdio};
 
 use aozora::{
     DiagnosticSource, Document, json,
-    render::{DirectiveNormalization, RenderOptions, SerializeOptions},
+    render::{DirectiveNormalization, RenderOptions},
 };
 use aozora_fmt::ColorChoice;
+// The formatter crate owns the source-encoding value-enum so both frontends
+// share one decoder; re-exported crate-wide so `config` can name it.
+pub(crate) use aozora_fmt::Encoding;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -114,8 +116,11 @@ struct Cli {
 enum Command {
     /// Run the lexer over a file and report diagnostics.
     Check(CheckArgs),
-    /// Round-trip parse ∘ to_source and emit the canonical form.
-    Fmt(FmtArgs),
+    /// Format documents: round-trip parse ∘ to_source to the canonical
+    /// form. Reads stdin, one file, many files, or directories; `--check`
+    /// / `--diff` / `--list` verify without writing, `--write` rewrites in
+    /// place, `--fix` also canonicalises flagged directive near-misses.
+    Fmt(FmtCmd),
     /// Render Aozora notation to HTML on stdout.
     Render(RenderArgs),
     /// Emit a parsed document's JSON for one `aozora::json`
@@ -151,12 +156,11 @@ enum Command {
     Man(ManArgs),
 }
 
-/// Flags shared by every document subcommand: where to read, how to
-/// decode, and whether to print timing. Flattened into each so `file`
-/// and `-E/--encoding` are declared once and `--timing` has a single
-/// home (it spans check / render / fmt / inspect / pandoc).
+/// Where to read a single document and how to decode it — the input source
+/// shared by the FILE-taking document subcommands (check / render / inspect /
+/// pandoc). `fmt` reads many PATHs, so it uses `aozora_fmt::FmtArgs` instead.
 #[derive(Debug, Parser)]
-struct CommonArgs {
+struct InputArgs {
     /// Input path; pass `-` (or omit) to read from stdin.
     #[arg(default_value = "-")]
     file: PathBuf,
@@ -165,7 +169,14 @@ struct CommonArgs {
     /// `encoding` key in `.aozora.toml`, then auto-detection.
     #[arg(long, short = 'E', value_enum, env = "AOZORA_ENCODING")]
     encoding: Option<Encoding>,
+}
 
+/// Cross-cutting document-subcommand behaviour, independent of how input is
+/// read: the `.aozora.toml` source and the timing / watch controls. Flattened
+/// by every document subcommand — including `fmt` — so these flags are declared
+/// once and behave identically across the CLI.
+#[derive(Debug, Parser)]
+struct CrossCutArgs {
     /// Read settings from this `.aozora.toml` instead of searching
     /// upward from the working directory.
     #[arg(long, value_name = "PATH")]
@@ -189,18 +200,28 @@ struct CommonArgs {
     watch: bool,
 }
 
+/// The single-FILE document flags: input source + cross-cutting behaviour,
+/// flattened by check / render / inspect / pandoc.
+#[derive(Debug, Parser)]
+struct CommonArgs {
+    #[command(flatten)]
+    input: InputArgs,
+    #[command(flatten)]
+    cross: CrossCutArgs,
+}
+
 impl CommonArgs {
     /// Load the effective `.aozora.toml`: an explicit `--config`, else an
     /// upward search from the working directory, else all-default.
     fn load_config(&self) -> Result<config::ConfigFile> {
         let cwd = env::current_dir().context("failed to read the working directory")?;
-        config::ConfigFile::resolve(self.config.as_deref(), &cwd)
+        config::ConfigFile::resolve(self.cross.config.as_deref(), &cwd)
     }
 
     /// Effective encoding: `-E/--encoding` (or `AOZORA_ENCODING`, both via
     /// clap), else the config's `encoding`, else auto-detect.
     fn resolved_encoding(&self, cfg: &config::ConfigFile) -> Encoding {
-        self.encoding.or(cfg.encoding).unwrap_or_default()
+        self.input.encoding.or(cfg.encoding).unwrap_or_default()
     }
 }
 
@@ -229,30 +250,19 @@ struct CheckArgs {
     diagnostic_format: Option<DiagFormat>,
 }
 
+/// `aozora fmt` — the standalone formatter's full surface (positional PATHs,
+/// `--check` / `--write` / `--diff` / `--list` / `--json` / `--fix` /
+/// `-E/--encoding`), backed by the one `aozora-fmt` engine, plus the CLI's
+/// cross-cutting `--config` / `--timing` / `--watch`. Both frontends share the
+/// single `aozora_fmt::FmtArgs` definition, so the canonical form and the flag
+/// vocabulary can never drift between `aozora fmt` and `aozora-fmt`.
 #[derive(Debug, Parser)]
-struct FmtArgs {
+struct FmtCmd {
     #[command(flatten)]
-    common: CommonArgs,
+    fmt: aozora_fmt::FmtArgs,
 
-    /// Exit non-zero if the formatted output differs from the input
-    /// (after the lexer's sanitize stage: BOM strip, CRLF→LF). Mutually
-    /// exclusive with `--write`.
-    #[arg(long, conflicts_with = "write")]
-    check: bool,
-
-    /// Overwrite the input file with the formatted output. Ignored
-    /// when reading from stdin.
-    #[arg(long, conflicts_with = "check")]
-    write: bool,
-
-    /// Rewrite non-canonical directive near-misses to their canonical
-    /// spelling (e.g. `［＃字下げ終わり］` → `［＃ここで字下げ終わり］`), the
-    /// fixes suggested by the `aozora::lint::non_canonical_directive`
-    /// warnings. Opt-in: without this flag `fmt` keeps every directive's
-    /// raw bytes verbatim. Idempotent, so it composes with `--check`
-    /// (report whether notation needs fixing) and `--write`.
-    #[arg(long)]
-    fix_notation: bool,
+    #[command(flatten)]
+    cross: CrossCutArgs,
 }
 
 #[derive(Debug, Parser)]
@@ -264,12 +274,12 @@ struct RenderArgs {
     /// their canonical spelling (e.g. `［＃「梅」は小書き］` renders 梅 as
     /// small-letter emphasis instead of an inert hidden directive span) — the
     /// same near-misses `aozora::lint::non_canonical_directive` flags and
-    /// `aozora fmt --fix-notation` rewrites. Opt-in and read-only: without this
-    /// flag an unrecognised directive stays a hidden `aozora-directive` span,
-    /// and this never rewrites the input source. Aliased `--fix-notation` for
-    /// symmetry with `aozora fmt`. Consults the zero-false-positive Tier1
-    /// catalogue only.
-    #[arg(long, alias = "fix-notation")]
+    /// `aozora fmt --fix` rewrites. Opt-in and read-only: without this flag an
+    /// unrecognised directive stays a hidden `aozora-directive` span, and this
+    /// never rewrites the input source (a read-only projection applies
+    /// `--normalize`; a source rewrite uses `fmt --fix`). Consults the
+    /// zero-false-positive Tier1 catalogue only.
+    #[arg(long)]
     normalize: bool,
 
     /// Additionally reduce the lossy / judgment "degraded" forms Tier1 refuses
@@ -332,21 +342,6 @@ struct PandocArgs {
     format: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Default, ValueEnum, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum Encoding {
-    /// Detect the source encoding: valid UTF-8 is used as-is, otherwise
-    /// the bytes are decoded as Shift_JIS. The right default — Aozora
-    /// files ship as Shift_JIS, but UTF-8 mirrors are common, and the
-    /// caller should not have to know which they have.
-    #[default]
-    Auto,
-    /// Force UTF-8; error if the input is not valid UTF-8.
-    Utf8,
-    /// Force Shift_JIS decoding.
-    Sjis,
-}
-
 fn main() -> ExitCode {
     let raw: Vec<OsString> = env::args_os().collect();
     let cli = Cli::parse_from(raw);
@@ -357,7 +352,7 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Check(opts) => run_check(&opts),
-        Command::Fmt(opts) => run_fmt(&opts),
+        Command::Fmt(opts) => run_fmt(&opts, cli.color),
         Command::Render(opts) => run_render(&opts),
         Command::Inspect(opts) => run_inspect(&opts),
         Command::Kinds(opts) => introspect::run_kinds(&opts),
@@ -380,21 +375,21 @@ fn main() -> ExitCode {
 /// Run `once`, or — with `--watch` — run it now and re-run on every
 /// change to the input file. `--watch` on stdin is a usage error (2).
 fn run_watched(common: &CommonArgs, once: impl Fn() -> Result<ExitCode>) -> Result<ExitCode> {
-    if !common.watch {
+    if !common.cross.watch {
         return once();
     }
-    if common.file.as_os_str() == "-" {
+    if common.input.file.as_os_str() == "-" {
         let _drop = writeln!(
             io::stderr(),
             "aozora: --watch needs a file path; it cannot watch stdin"
         );
         return Ok(ExitCode::from(2));
     }
-    watch::watch(&common.file, once)
+    watch::watch(&common.input.file, once)
 }
 
 fn run_check(args: &CheckArgs) -> Result<ExitCode> {
-    if let Some(code) = input::guard_stdin(&args.common.file, "check") {
+    if let Some(code) = input::guard_stdin(&args.common.input.file, "check") {
         return Ok(code);
     }
     run_watched(&args.common, || run_check_once(args))
@@ -409,8 +404,8 @@ fn run_check_once(args: &CheckArgs) -> Result<ExitCode> {
         .unwrap_or_default();
     let strict = args.strict || cfg.strict.unwrap_or(false);
 
-    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
-    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
+    let mut timer = Timer::new(args.common.cross.timing, args.common.cross.timing_format);
+    let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
     let doc = Document::new(source);
     let tree = timer.measure("parse", || doc.parse());
     let diagnostics = tree.diagnostics();
@@ -422,7 +417,7 @@ fn run_check_once(args: &CheckArgs) -> Result<ExitCode> {
             .measure("render", || {
                 diagnostics_render::render(
                     diagnostic_format,
-                    &display_path(&args.common.file),
+                    &display_path(&args.common.input.file),
                     &doc,
                     diagnostics,
                 )
@@ -449,70 +444,59 @@ fn run_check_once(args: &CheckArgs) -> Result<ExitCode> {
     Ok(code)
 }
 
-fn run_fmt(args: &FmtArgs) -> Result<ExitCode> {
-    if let Some(code) = input::guard_stdin(&args.common.file, "fmt") {
+fn run_fmt(args: &FmtCmd, color: ColorChoice) -> Result<ExitCode> {
+    // Anti-hang guard: fmt reading an interactive TTY with no file would block
+    // forever. `resolve` reports whether the paths degrade to stdin.
+    if matches!(
+        aozora_fmt::resolve(args.fmt.paths()),
+        Ok(aozora_fmt::Input::Stdin)
+    ) && let Some(code) = input::guard_stdin(Path::new("-"), "fmt")
+    {
         return Ok(code);
     }
-    run_watched(&args.common, || run_fmt_once(args))
+    fmt_watched(args, || run_fmt_once(args, color))
 }
 
-fn run_fmt_once(args: &FmtArgs) -> Result<ExitCode> {
-    let cfg = args.common.load_config()?;
-    let encoding = args.common.resolved_encoding(&cfg);
-    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
-    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
-    let opts = SerializeOptions {
-        // fmt only ever applies zero-FP Tier1 (`Canonical`); the lossy Tier2
-        // reductions are render-only and must never rewrite source.
-        directives: if args.fix_notation {
-            DirectiveNormalization::Canonical
-        } else {
-            DirectiveNormalization::Off
-        },
-    };
-    // `aozora fmt` and the standalone `aozora-fmt` binary share one format
-    // core, so the canonical form can never drift between them.
-    let formatted = timer.measure("format", || aozora_fmt::format_source_with(&source, opts));
-    // Timing covers read/format; the comparison and I/O below are not the
-    // formatting cost a reader cares about, so report here.
-    timer.report()?;
-
-    // The lexer's sanitize stage strips BOM and normalises CRLF→LF;
-    // the canonical form is fixed-point on the sanitized input, not
-    // the raw bytes — apply the same normalisation to compare apples
-    // to apples.
-    let sanitized = source
-        .strip_prefix('\u{feff}')
-        .unwrap_or(&source)
-        .replace("\r\n", "\n");
-
-    if args.check {
-        if formatted == sanitized {
-            return Ok(ExitCode::SUCCESS);
-        }
+/// `--watch` for `fmt`: re-run on every change to the single input file.
+/// fmt takes many PATHs, so watch requires exactly one non-stdin path.
+fn fmt_watched(args: &FmtCmd, once: impl Fn() -> Result<ExitCode>) -> Result<ExitCode> {
+    if !args.cross.watch {
+        return once();
+    }
+    let files: Vec<&PathBuf> = args
+        .fmt
+        .paths()
+        .iter()
+        .filter(|p| p.as_os_str() != "-")
+        .collect();
+    let [path] = files.as_slice() else {
         let _drop = writeln!(
             io::stderr(),
-            "aozora fmt: {} would be reformatted",
-            display_path(&args.common.file)
+            "aozora fmt: --watch needs exactly one file path (not stdin or multiple paths)"
         );
-        return Ok(ExitCode::from(1));
-    }
+        return Ok(ExitCode::from(2));
+    };
+    watch::watch(path, once)
+}
 
-    if args.write && args.common.file.as_os_str() != "-" {
-        fs::write(&args.common.file, &formatted)
-            .with_context(|| format!("failed to write {}", display_path(&args.common.file)))?;
-        return Ok(ExitCode::SUCCESS);
-    }
+fn run_fmt_once(args: &FmtCmd, color: ColorChoice) -> Result<ExitCode> {
+    // Fold `.aozora.toml` into the effective encoding (flag/env > config >
+    // auto), then hand off to the single shared engine — the same code the
+    // standalone `aozora-fmt` binary runs, so behaviour can never diverge.
+    let cwd = env::current_dir().context("failed to read the working directory")?;
+    let cfg = config::ConfigFile::resolve(args.cross.config.as_deref(), &cwd)?;
+    let encoding = args.fmt.encoding().or(cfg.encoding).unwrap_or_default();
 
-    let mut stdout = io::stdout().lock();
-    stdout
-        .write_all(formatted.as_bytes())
-        .context("failed to write to stdout")?;
-    Ok(ExitCode::SUCCESS)
+    let mut timer = Timer::new(args.cross.timing, args.cross.timing_format);
+    let code = timer.measure("format", || {
+        aozora_fmt::run_engine(&args.fmt, encoding, color, "aozora fmt")
+    });
+    timer.report()?;
+    Ok(code)
 }
 
 fn run_render(args: &RenderArgs) -> Result<ExitCode> {
-    if let Some(code) = input::guard_stdin(&args.common.file, "render") {
+    if let Some(code) = input::guard_stdin(&args.common.input.file, "render") {
         return Ok(code);
     }
     run_watched(&args.common, || run_render_once(args))
@@ -521,8 +505,8 @@ fn run_render(args: &RenderArgs) -> Result<ExitCode> {
 fn run_render_once(args: &RenderArgs) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
-    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
-    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
+    let mut timer = Timer::new(args.common.cross.timing, args.common.cross.timing_format);
+    let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
     let doc = Document::new(source);
     let tree = timer.measure("parse", || doc.parse());
     let opts = RenderOptions {
@@ -550,7 +534,7 @@ fn run_inspect(args: &InspectArgs) -> Result<ExitCode> {
     // usable on a bare terminal — guard only the kinds that read stdin.
     if !matches!(args.which, InspectKind::Slugs) {
         let cmd = inspect_cmd(args.which);
-        if let Some(code) = input::guard_stdin(&args.common.file, &cmd) {
+        if let Some(code) = input::guard_stdin(&args.common.input.file, &cmd) {
             return Ok(code);
         }
     }
@@ -570,7 +554,7 @@ fn inspect_cmd(kind: InspectKind) -> String {
 }
 
 fn run_inspect_once(args: &InspectArgs) -> Result<ExitCode> {
-    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
+    let mut timer = Timer::new(args.common.cross.timing, args.common.cross.timing_format);
     let json = inspect_json(args, &mut timer)?;
     let mut stdout = io::stdout().lock();
     writeln!(stdout, "{json}").context("failed to write to stdout")?;
@@ -589,7 +573,7 @@ fn inspect_json(args: &InspectArgs, timer: &mut Timer) -> Result<String> {
     }
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
-    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
+    let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
     if matches!(args.which, InspectKind::GaijiResolutions) {
         return Ok(timer.measure("serialize", || json::gaiji(&source)));
     }
@@ -607,7 +591,7 @@ fn inspect_json(args: &InspectArgs, timer: &mut Timer) -> Result<String> {
 }
 
 fn run_pandoc(args: &PandocArgs) -> Result<ExitCode> {
-    if let Some(code) = input::guard_stdin(&args.common.file, "pandoc") {
+    if let Some(code) = input::guard_stdin(&args.common.input.file, "pandoc") {
         return Ok(code);
     }
     run_watched(&args.common, || run_pandoc_once(args))
@@ -616,8 +600,8 @@ fn run_pandoc(args: &PandocArgs) -> Result<ExitCode> {
 fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
     let cfg = args.common.load_config()?;
     let encoding = args.common.resolved_encoding(&cfg);
-    let mut timer = Timer::new(args.common.timing, args.common.timing_format);
-    let source = timer.measure("read", || read_source(&args.common.file, encoding))?;
+    let mut timer = Timer::new(args.common.cross.timing, args.common.cross.timing_format);
+    let source = timer.measure("read", || read_source(&args.common.input.file, encoding))?;
     let doc = Document::new(source);
     let owned = timer.measure("parse", || doc.lex());
     let json = timer
@@ -673,16 +657,9 @@ fn read_source(path: &Path, encoding: Encoding) -> Result<String> {
         fs::read(path).with_context(|| format!("failed to read {}", display_path(path)))?
     };
 
-    match encoding {
-        Encoding::Auto => aozora_encoding::decode_auto(&raw)
-            .map(Cow::into_owned)
-            .map_err(|e| anyhow::anyhow!("input is neither valid UTF-8 nor Shift_JIS: {e}")),
-        Encoding::Utf8 => String::from_utf8(raw)
-            .map_err(|e| e.utf8_error())
-            .context("input is not valid UTF-8 (use --encoding sjis for Aozora Bunko files)"),
-        Encoding::Sjis => aozora_encoding::decode_sjis(&raw)
-            .map_err(|e| anyhow::anyhow!("Shift_JIS decode failed: {e}")),
-    }
+    // The formatter crate owns the decoder, so `check`/`render`/`inspect`/
+    // `pandoc` and both `fmt` frontends resolve bytes identically.
+    aozora_fmt::decode(&raw, encoding)
 }
 
 fn display_path(path: &Path) -> String {

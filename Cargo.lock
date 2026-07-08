@@ -275,6 +275,7 @@ dependencies = [
  "anstyle",
  "anyhow",
  "aozora",
+ "aozora-encoding",
  "clap",
  "proptest",
  "serde",

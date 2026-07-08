@@ -8,25 +8,43 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use aozora::render::SerializeOptions;
 
+use crate::encoding::{self, Encoding};
 use crate::format_source_with;
 
-/// A formatted file: the original bytes and the canonical form.
+/// A formatted file: the original decoded source and the canonical form.
 #[derive(Debug)]
-pub(crate) struct Formatted {
-    pub(crate) old: String,
-    pub(crate) new: String,
+pub struct Formatted {
+    /// The decoded source, before canonicalisation.
+    pub old: String,
+    /// The canonical form.
+    pub new: String,
 }
 
 impl Formatted {
     /// True when canonicalisation changed the source.
-    pub(crate) fn changed(&self) -> bool {
+    #[must_use]
+    pub fn changed(&self) -> bool {
         self.old != self.new
     }
 }
 
-/// Read `path` and canonicalise it (panic-guarded).
-pub(crate) fn read_and_format(path: &Path, opts: SerializeOptions) -> Result<Formatted> {
-    let old = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+/// Read `path` under `encoding` and canonicalise it (panic-guarded).
+///
+/// Shared verbatim with the `aozora` CLI's `lint --fix`, so its source rewrite
+/// is byte-identical to `fmt --fix --write`.
+///
+/// # Errors
+///
+/// Returns an error if `path` cannot be read, its bytes do not decode under
+/// `encoding`, or the formatter panics on the input.
+pub fn read_and_format(
+    path: &Path,
+    opts: SerializeOptions,
+    encoding: Encoding,
+) -> Result<Formatted> {
+    let raw = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let old =
+        encoding::decode(&raw, encoding).with_context(|| format!("decoding {}", path.display()))?;
     let new = format_guarded(&old, opts)?;
     Ok(Formatted { old, new })
 }
@@ -34,7 +52,14 @@ pub(crate) fn read_and_format(path: &Path, opts: SerializeOptions) -> Result<For
 /// Rewrite `path` with its canonical form if it changed, upholding the
 /// formatter's idempotency contract: refuse to write when a second pass
 /// differs rather than corrupt the file.
-pub(crate) fn write_back(path: &Path, fmt: &Formatted, opts: SerializeOptions) -> Result<()> {
+///
+/// Shared with the `aozora` CLI's `lint --fix` (see [`read_and_format`]).
+///
+/// # Errors
+///
+/// Returns an error (leaving the file untouched) if the canonical form is not
+/// idempotent — a second pass differs — or if the write fails.
+pub fn write_back(path: &Path, fmt: &Formatted, opts: SerializeOptions) -> Result<()> {
     if !fmt.changed() {
         return Ok(());
     }
@@ -144,7 +169,8 @@ mod tests {
     fn read_and_format_reads_then_canonicalises() {
         let path = scratch("read.afm");
         fs::write(&path, "｜日本《にほん》").expect("seed file");
-        let fmt = read_and_format(&path, SerializeOptions::default()).expect("read+format");
+        let fmt = read_and_format(&path, SerializeOptions::default(), Encoding::Auto)
+            .expect("read+format");
         assert_eq!(fmt.old, "｜日本《にほん》");
         assert_eq!(fmt.new, "日本《にほん》");
         assert!(fmt.changed());
@@ -154,7 +180,7 @@ mod tests {
     #[test]
     fn read_and_format_errors_on_missing_file() {
         let path = scratch("missing.afm");
-        let err = read_and_format(&path, SerializeOptions::default())
+        let err = read_and_format(&path, SerializeOptions::default(), Encoding::Auto)
             .expect_err("missing file must error");
         assert!(
             err.to_string().contains("reading"),
@@ -180,7 +206,8 @@ mod tests {
     fn write_back_rewrites_when_changed() {
         let path = scratch("write.afm");
         fs::write(&path, "｜日本《にほん》").expect("seed file");
-        let fmt = read_and_format(&path, SerializeOptions::default()).expect("read+format");
+        let fmt = read_and_format(&path, SerializeOptions::default(), Encoding::Auto)
+            .expect("read+format");
         write_back(&path, &fmt, SerializeOptions::default()).expect("write_back");
         let written = fs::read_to_string(&path).expect("read back");
         assert_eq!(written, fmt.new);
