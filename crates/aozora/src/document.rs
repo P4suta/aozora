@@ -456,13 +456,13 @@ impl<'a> Tree<'a> {
     /// With the default options this equals [`Self::to_source`]. With
     /// `directives` not `Off` it additionally rewrites the notation-hygiene
     /// lint's `DirectiveKind::Unknown` near-misses to canonical form — the
-    /// `aozora fmt --fix-notation` autofix (which constructs `Canonical`).
+    /// `aozora fmt --fix` autofix (which constructs `Canonical`).
     ///
     /// The rewrite is a second-pass fixed point. The emit-time substitution
     /// can change a directive's block/inline nature — an inline
     /// `［＃字下げ終わり］` becomes the block close `［＃ここで字下げ終わり］` —
     /// so a normalizing re-parse re-flows the surrounding block structure.
-    /// After it, every directive is canonical, so a further `--fix-notation`
+    /// After it, every directive is canonical, so a further `--fix`
     /// pass is a no-op: the serializer's `∘ parse` fixed-point contract holds
     /// and `--write` stays idempotent.
     #[must_use]

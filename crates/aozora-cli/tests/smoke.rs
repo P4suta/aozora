@@ -229,7 +229,7 @@ fn fmt_encoding_sjis_decodes_shift_jis() {
 
 #[test]
 fn fmt_fix_rewrites_flagged_directive_near_miss() {
-    // `--fix` (renamed from `--fix-notation`) applies the Tier1 autofix.
+    // `--fix` applies the zero-false-positive Tier1 autofix.
     let (status, stdout, _) = run(&["fmt", "--fix"], Some("あ［＃字下げ終わり］"));
     assert!(status.success(), "fmt --fix must succeed");
     assert!(

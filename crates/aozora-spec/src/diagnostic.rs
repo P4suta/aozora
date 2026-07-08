@@ -448,7 +448,7 @@ pub enum Diagnostic {
         help(
             "this ［＃…］ body matches a recognized directive spelled \
              non-canonically, so it was kept as an Unknown directive; rewrite \
-             it to the canonical form (`aozora fmt --fix-notation`)."
+             it to the canonical form (`aozora fmt --fix`)."
         )
     )]
     NonCanonicalDirective {
@@ -1484,7 +1484,7 @@ impl Diagnostic {
                 "非正規の綴りの ［＃…］ 注記です。正規形は `［＃{canonical}］` です。\n\n\
                  この注記の中身は、登録済みの記法を非正規な綴り（送り仮名・同義語・綴りゆれ）で書いたものと\
                  判定され、Unknown 注記のまま保持されています。パーサは中身を書き換えません。\n\n\
-                 直し方: `［＃{canonical}］` に書き換えてください。`aozora fmt --fix-notation` で自動修正できます。",
+                 直し方: `［＃{canonical}］` に書き換えてください。`aozora fmt --fix` で自動修正できます。",
             ),
             Self::Internal { check, .. } => match check {
                 InternalCheckCode::ResidualAnnotationMarker =>

@@ -342,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn fix_notation_rewrites_flagged_near_miss_only_when_opted_in() {
+    fn fix_rewrites_flagged_near_miss_only_when_opted_in() {
         let fix = SerializeOptions {
             directives: DirectiveNormalization::Canonical,
         };
@@ -356,13 +356,13 @@ mod tests {
         let fixed = format_source_with(near_miss, fix);
         assert!(
             fixed.contains("［＃ここで字下げ終わり］"),
-            "fix-notation should canonicalise the directive; got {fixed:?}"
+            "fix should canonicalise the directive; got {fixed:?}"
         );
         // A genuine editorial Unknown is left untouched even with the flag.
         let editorial = "あ［＃底本では「蒼空」］";
         assert!(
             format_source_with(editorial, fix).contains("［＃底本では「蒼空」］"),
-            "fix-notation must not touch genuine editorial Unknowns"
+            "fix must not touch genuine editorial Unknowns"
         );
     }
 }
