@@ -83,6 +83,24 @@ pub fn degraded_directive(body: &str) -> Option<Cow<'static, str>> {
         return Some(Cow::Owned(format!("地から{n}字上げ")));
     }
 
+    // D6 — 下げて[、]地より{N}字あきで / 字アキで → 地から{N}字上げ. JUDGMENT/LOSSY,
+    // sibling of D3/D4. The both-margin parser only anchors when a leading 字下げ
+    // *count* is present, so the count-less 下げて head-indent has no needle and the
+    // whole body falls to Unknown. The trailing 地より{N}字あきで is the D3/D4
+    // gap-from-bottom, folded onto the bottom-anchored raise leaf via the same
+    // アキ≡上げ identity; the unquantified head-indent is dropped — lossy, hence
+    // render-only. Both the comma'd (下げて、地より) and bare (下げて地より) corpus
+    // spellings resolve.
+    for prefix in ["下げて、地より", "下げて地より"] {
+        for tail in ["字あきで", "字アキで"] {
+            if let Some(n) = body.strip_prefix(prefix).and_then(|r| r.strip_suffix(tail))
+                && is_digit_run(n)
+            {
+                return Some(Cow::Owned(format!("地から{n}字上げ")));
+            }
+        }
+    }
+
     None
 }
 
@@ -98,6 +116,9 @@ pub const DEGRADED_SAMPLES: &[&str] = &[
     "地付き、地より3字アキ",
     "地付き、地より3字あき",
     "行末から2字上で地付き",
+    "下げて、地より3字あきで",
+    "下げて、地より3字アキで",
+    "下げて地より3字あきで",
 ];
 
 #[cfg(test)]
@@ -120,6 +141,15 @@ mod tests {
         );
         assert_eq!(
             degraded_directive("行末から2字上で地付き").as_deref(),
+            Some("地から2字上げ")
+        );
+        // D6 — both the comma'd and bare 下げて…字あきで spellings.
+        assert_eq!(
+            degraded_directive("下げて、地より2字あきで").as_deref(),
+            Some("地から2字上げ")
+        );
+        assert_eq!(
+            degraded_directive("下げて地より2字あきで").as_deref(),
             Some("地から2字上げ")
         );
     }

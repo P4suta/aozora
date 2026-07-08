@@ -1,0 +1,1 @@
+(document (implicit_ruby base: (ruby_base_implicit) reading: (ruby_reading)) (slug body: (slug_body)) (newline))

@@ -190,6 +190,14 @@ pre-push:
         way (panic rose / a kind vanished / gaiji resolution dropped). Run
         `just digest-gate` for detail; fix the recogniser/renderer — do not
         raise the baseline.
+    catalogue-sweep-gate:
+      run: just catalogue-sweep-gate
+      fail_text: |
+        Catalogue-sweep regression: the Tier1/Tier2 catalogues either regressed
+        (a matched shape fell back to residue / residue grew) or silently began
+        matching a NEW shape. Run `just catalogue-sweep-gate` for detail. A new
+        match must be vetted as a genuine near-miss (not an editorial
+        false-positive) before re-baselining with `just catalogue-sweep-gate-update`.
     # Owned-producer allocation-pressure ratchet (#237 P0.2-real): fail the
     # push when the owned lex path's allocation count / bytes (normalized
     # per-file / per-source-byte) regress beyond corpus/alloc-baseline.json.

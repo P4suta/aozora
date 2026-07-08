@@ -1,0 +1,6 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# Golden family-coverage: exercises the `rubyPairOpen` / `rubyPairClose`
+# annotations (#454) — the `［＃左にルビ付き］…［＃左に「Y」のルビ付き終わり］`
+# left-side ruby-pair span.
+feature = "ruby"
+level = "should"

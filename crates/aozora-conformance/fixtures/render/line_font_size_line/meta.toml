@@ -1,0 +1,6 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# Golden family-coverage: exercises the `lineFontSize` NodeKind (#454), the bare
+# line-level absolute font-size directive — distinct from the forward
+# `「…」は大文字` form (which is an Emphasis node).
+feature = "font-size"
+level = "should"

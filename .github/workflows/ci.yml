@@ -396,6 +396,8 @@ jobs:
         run: cargo run -p aozora-xtask -q -- corpus render-correctness-gate --root "$AOZORA_CORPUS_ROOT" --baseline corpus/render-correctness-baseline.json
       - name: Render-digest ratchet gate (#414)
         run: cargo run -p aozora-xtask -q -- corpus digest-gate --root "$AOZORA_CORPUS_ROOT" --baseline corpus/render-digest.json
+      - name: Catalogue-sweep ratchet gate (#454)
+        run: cargo run -p aozora-xtask -q -- corpus catalogue-sweep-gate --root "$AOZORA_CORPUS_ROOT" --baseline corpus/catalogue-coverage.json
       - name: Verbatim==sanitize gate (I5)
         run: cargo run -p aozora-xtask -q -- corpus verbatim --root "$AOZORA_CORPUS_ROOT"
 
