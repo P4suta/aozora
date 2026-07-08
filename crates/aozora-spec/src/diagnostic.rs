@@ -121,8 +121,8 @@ pub mod codes {
     /// Prefix of every advisory notation-hygiene *lint* code.
     ///
     /// The single authority for the lint-vs-lex split that
-    /// [`Diagnostic::is_lint`] and the LSP filter on: a code in this namespace
-    /// is authoring guidance, not a malformed-input fault.
+    /// [`crate::Diagnostic::is_lint`] and the LSP filter on: a code in this
+    /// namespace is authoring guidance, not a malformed-input fault.
     pub const LINT_NAMESPACE: &str = "aozora::lint::";
 
     /// Pipeline-internal: an `［＃` digraph survived classification
