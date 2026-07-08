@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
 keywords.workspace = true
@@ -40,3 +41,7 @@ proptest = { workspace = true }
 # `phf` is used only through the `build.rs`-generated, `include!`d gaiji
 # table (`phf::Map`), invisible to cargo-shear's source scan.
 ignored = ["phf"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

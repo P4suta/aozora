@@ -37,11 +37,12 @@
 //! repeated string content; dropping the tree frees the store in one
 //! step, with no per-node `Drop`.
 //!
-//! Internal build-block crates (`aozora-spec`, `aozora-syntax`,
-//! `aozora-pipeline`, `aozora-render`, `aozora-encoding`) are
-//! `publish = false` and reachable only through this meta crate's
+//! The build-block crates (`aozora-spec`, `aozora-syntax`,
+//! `aozora-pipeline`, `aozora-render`, `aozora-encoding`) are each
+//! published in their own right, but consumers depend on `aozora`
+//! alone and reach them through this meta crate's
 //! [`pipeline`] / [`syntax`] / [`render`] / [`encoding`] / [`json`]
-//! modules. Depend on `aozora` alone; see the
+//! modules. See the
 //! [Architecture chapter of the handbook](https://p4suta.github.io/aozora/arch/pipeline.html)
 //! for the layered design.
 //!
@@ -55,6 +56,10 @@
 )]
 #![doc = include_str!("../../../README.md")]
 #![forbid(unsafe_code)]
+// Emit "Available on crate feature `…`" badges on docs.rs (and the
+// GitHub-Pages build when RUSTDOCFLAGS carries `--cfg docsrs`). Inert on
+// stable — `docsrs` is unset, so this never trips `feature(doc_cfg)`.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use core::ops::Range;
 
@@ -82,6 +87,7 @@ mod incremental;
 mod splice;
 
 #[cfg(feature = "json")]
+#[cfg_attr(docsrs, doc(cfg(feature = "json")))]
 pub mod json;
 
 /// Plain-text diagnostic rendering (`miette`-free, every target).
@@ -187,8 +193,8 @@ pub fn prewarm() {
 /// (`pipeline::lexer::*` for the phase functions, `pipeline::Pipeline`
 /// for the type-state machine) reach through this module so the
 /// wider workspace can keep `aozora` as the single front door. The
-/// `aozora-pipeline` crate is `publish = false` and only callable
-/// via this re-export.
+/// `aozora-pipeline` crate is published in its own right, but is
+/// normally reached through this re-export.
 pub mod pipeline {
     pub use aozora_pipeline::*;
 }
@@ -238,6 +244,7 @@ pub mod encoding {
 /// // Walk the rowan SyntaxNode tree …
 /// ```
 #[cfg(feature = "cst")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cst")))]
 pub mod cst {
     pub use aozora_cst::*;
 
@@ -272,6 +279,7 @@ pub mod cst {
 /// let captures = q.captures(&cst);
 /// ```
 #[cfg(feature = "query")]
+#[cfg_attr(docsrs, doc(cfg(feature = "query")))]
 pub mod query {
     pub use aozora_query::*;
 }
@@ -289,6 +297,7 @@ pub mod query {
 /// inside the parser also surfaces inside the consumer's test
 /// harness.
 #[cfg(feature = "proptest")]
+#[cfg_attr(docsrs, doc(cfg(feature = "proptest")))]
 pub mod proptest {
     pub use aozora_proptest::*;
 }

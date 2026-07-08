@@ -9,7 +9,7 @@
 //! ## Why this crate exists
 //!
 //! `aozora-lsp` needs **size-independent** request latency. The
-//! semantic Rust parser (`aozora-parser`) re-parses the entire
+//! semantic Rust parser (`aozora`) re-parses the entire
 //! document on every call — fine for KB-sized docs, painful for
 //! 40-100 KB docs (414 ms per parse, multiple handlers per
 //! keystroke). Tree-sitter's incremental algorithm reuses

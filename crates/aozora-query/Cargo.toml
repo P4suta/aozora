@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
 keywords.workspace = true
@@ -23,3 +24,7 @@ thiserror = { workspace = true }
 aozora = { path = "../aozora", features = ["cst", "query"] }
 proptest = { workspace = true }
 aozora-proptest = { path = "../aozora-proptest" }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

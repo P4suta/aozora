@@ -97,7 +97,7 @@ jobs:
         # output (static.files/, trait.impl/, search index), which fails
         # intermittently while documenting the umbrella `aozora` crate's
         # re-export pages. Matches the `just doc` recipe's fix.
-        run: cargo doc --workspace --no-deps --document-private-items --jobs 1
+        run: cargo doc --workspace --no-deps --document-private-items --all-features --jobs 1
 
       - name: Build mdbook handbook
         run: mdbook build crates/aozora-book
