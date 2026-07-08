@@ -3010,15 +3010,18 @@ struct ClassifyReport {
     residue_shapes: Vec<ResidueRow>,
 }
 
-/// `corpus classify-unknown`: bucket the Unknown residue against the catalogues.
-fn classify_unknown(root: Option<&Path>, out: Option<&Path>, top: usize) -> Result<(), String> {
-    let report = run_audit(root, None)?;
-
+/// Bucket a set of raw Unknown bodies against the catalogues into a
+/// [`ClassifyReport`] — the pure, corpus-free core of `classify-unknown`.
+/// `bodies` is expected sorted by count descending, so each residue shape's
+/// first-seen member is its highest-count sample.
+fn classify_report(
+    bodies: &[UnknownRow],
+    files_analyzed: usize,
+    unknown_total: u64,
+) -> ClassifyReport {
     let (mut t1, mut t2, mut residue) = (0_u64, 0_u64, 0_u64);
-    // shape → (count, sample raw body, example location); bodies arrive sorted
-    // desc by count, so the first-inserted member is the highest-count sample.
     let mut residue_map: BTreeMap<String, (u64, String, String)> = BTreeMap::new();
-    for row in &report.unknown_bodies {
+    for row in bodies {
         match classify_body(&row.body) {
             Bucket::Tier1 => t1 += row.count,
             Bucket::Tier2 => t2 += row.count,
@@ -3043,34 +3046,46 @@ fn classify_unknown(root: Option<&Path>, out: Option<&Path>, top: usize) -> Resu
         .collect();
     residue_shapes.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.shape.cmp(&b.shape)));
 
-    let resolved_ratio = (t1 + t2) as f64 / report.unknown_total.max(1) as f64;
+    ClassifyReport {
+        files_analyzed,
+        unknown_total,
+        tier1_occurrences: t1,
+        tier2_occurrences: t2,
+        residue_occurrences: residue,
+        resolved_ratio: (t1 + t2) as f64 / unknown_total.max(1) as f64,
+        residue_distinct_shapes: residue_shapes.len(),
+        residue_shapes,
+    }
+}
+
+/// `corpus classify-unknown`: bucket the Unknown residue against the catalogues.
+fn classify_unknown(root: Option<&Path>, out: Option<&Path>, top: usize) -> Result<(), String> {
+    let audit = run_audit(root, None)?;
+    let report = classify_report(
+        &audit.unknown_bodies,
+        audit.files_analyzed,
+        audit.unknown_total,
+    );
 
     eprintln!(
         "xtask corpus classify-unknown: {} files, {} Unknown occurrences\n  \
-         Tier1-covered: {t1}\n  Tier2-covered: {t2}\n  residue: {residue} \
+         Tier1-covered: {}\n  Tier2-covered: {}\n  residue: {} \
          ({} distinct shapes)\n  resolved: {:.1}%",
         report.files_analyzed,
         report.unknown_total,
-        residue_shapes.len(),
-        resolved_ratio * 100.0,
+        report.tier1_occurrences,
+        report.tier2_occurrences,
+        report.residue_occurrences,
+        report.residue_distinct_shapes,
+        report.resolved_ratio * 100.0,
     );
-    for r in residue_shapes.iter().take(top) {
+    for r in report.residue_shapes.iter().take(top) {
         eprintln!(
             "  {:>6}  {}  (e.g. {} @ {})",
             r.count, r.shape, r.sample, r.example
         );
     }
 
-    let report = ClassifyReport {
-        files_analyzed: report.files_analyzed,
-        unknown_total: report.unknown_total,
-        tier1_occurrences: t1,
-        tier2_occurrences: t2,
-        residue_occurrences: residue,
-        resolved_ratio,
-        residue_distinct_shapes: residue_shapes.len(),
-        residue_shapes,
-    };
     let json = serde_json::to_string_pretty(&report).map_err(|e| format!("serialize: {e}"))?;
     match out {
         Some(path) => {
@@ -3085,6 +3100,15 @@ fn classify_unknown(root: Option<&Path>, out: Option<&Path>, top: usize) -> Resu
     Ok(())
 }
 
+/// The family ids in `[0, FAM_TOTAL)` not present in `covered`, as names — the
+/// pure set-difference behind `family-coverage`.
+fn missing_families(covered: &std::collections::HashSet<usize>) -> Vec<&'static str> {
+    (0..FAM_TOTAL)
+        .filter(|id| !covered.contains(id))
+        .map(family_name)
+        .collect()
+}
+
 /// `corpus family-coverage`: which of the 45 notation families the vendored
 /// golden works exercise, and which remain uncovered. Reads only committed
 /// fixtures, so it needs no corpus.
@@ -3093,10 +3117,7 @@ fn family_coverage(vendored: &Path) -> Result<(), String> {
         return Err(format!("not a directory: {}", vendored.display()));
     }
     let (covered, _hashes) = load_vendored(vendored);
-    let missing: Vec<&'static str> = (0..FAM_TOTAL)
-        .filter(|id| !covered.contains(id))
-        .map(family_name)
-        .collect();
+    let missing = missing_families(&covered);
 
     eprintln!(
         "xtask corpus family-coverage: {}/{FAM_TOTAL} families exercised by {}",
@@ -4297,5 +4318,61 @@ mod tests {
         );
         // The frame strip + trim mirrors the serializer: a bare body classifies too.
         assert_eq!(classify_body("字下げ終わり"), Bucket::Tier1);
+    }
+
+    #[test]
+    fn classify_report_tallies_buckets_and_ranks_residue() {
+        fn row(body: &str, count: u64, example: &str, shape: &str) -> UnknownRow {
+            UnknownRow {
+                body: body.to_owned(),
+                count,
+                example: example.to_owned(),
+                shape: shape.to_owned(),
+            }
+        }
+        // Bodies sorted by count desc, as run_audit emits them.
+        let bodies = vec![
+            row(
+                "［＃「甲」は「乙」の誤記か］",
+                7,
+                "a:1",
+                "［＃「」は「」の誤記か］",
+            ), // residue
+            row("［＃字下げ終わり］", 5, "b:2", "［＃字下げ終わり］"), // Tier1
+            row(
+                "［＃ここから最後まで3字下げ］",
+                3,
+                "c:3",
+                "［＃ここから最後までN字下げ］",
+            ), // Tier2
+            row("［＃初出時「甲」］", 2, "d:4", "［＃初出時「」］"),   // residue
+        ];
+        let r = classify_report(&bodies, 100, 17);
+
+        assert_eq!(r.tier1_occurrences, 5);
+        assert_eq!(r.tier2_occurrences, 3);
+        assert_eq!(r.residue_occurrences, 9); // 7 + 2
+        assert_eq!(r.residue_distinct_shapes, 2);
+        assert!((r.resolved_ratio - 8.0 / 17.0).abs() < 1e-9);
+        // Residue ranked by count descending, with the highest-count sample kept.
+        assert_eq!(r.residue_shapes[0].count, 7);
+        assert_eq!(r.residue_shapes[0].sample, "［＃「甲」は「乙」の誤記か］");
+        assert_eq!(r.residue_shapes[1].count, 2);
+    }
+
+    #[test]
+    fn missing_families_is_the_uncovered_complement() {
+        let mut covered: std::collections::HashSet<usize> = (0..FAM_TOTAL).collect();
+        assert!(
+            missing_families(&covered).is_empty(),
+            "full set → none missing"
+        );
+
+        covered.remove(&0);
+        covered.remove(&FAM_NODE); // first annotation family
+        let missing = missing_families(&covered);
+        assert_eq!(missing.len(), 2);
+        assert!(missing.contains(&family_name(0)));
+        assert!(missing.contains(&family_name(FAM_NODE)));
     }
 }
