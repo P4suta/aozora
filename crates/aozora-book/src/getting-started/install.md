@@ -119,7 +119,7 @@ ownership rules.
 ## Python
 
 The wheel is on PyPI as
-[`aozora_py`](https://pypi.org/project/aozora_py/):
+[`aozora_py`](https://pypi.org/project/aozora-py/):
 
 ```sh
 pip install aozora_py

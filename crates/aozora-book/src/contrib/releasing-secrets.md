@@ -239,7 +239,7 @@ the Token-Permissions and Pinned-Dependencies posture from regressing.
 ## References
 
 - GitHub — Security hardening for GitHub Actions:
-  <https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions>
+  <https://docs.github.com/en/actions/reference/security/secure-use>
 - GitHub — Managing environments / deployment protection rules:
   <https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments>
 - GitHub — Security hardening with OpenID Connect:
@@ -247,5 +247,5 @@ the Token-Permissions and Pinned-Dependencies posture from regressing.
 - crates.io — Trusted Publishing: <https://crates.io/docs/trusted-publishing>
   · `rust-lang/crates-io-auth-action`: <https://github.com/rust-lang/crates-io-auth-action>
 - PyPI — Trusted Publishers: <https://docs.pypi.org/trusted-publishers/>
-- npm — Trusted Publishers: <https://docs.npmjs.com/trusted-publishers>
+- npm — Trusted Publishers: <https://docs.npmjs.com/trusted-publishers/>
 - OpenSSF Scorecard: <https://github.com/ossf/scorecard>

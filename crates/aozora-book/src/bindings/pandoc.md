@@ -90,4 +90,4 @@ don't need to write Rust.
 
 [pandoc-ast]: https://hackage.haskell.org/package/pandoc-types
 [nodekind]: ../json/overview.md
-[lib]: https://docs.rs/aozora-pandoc
+[lib]: https://docs.rs/aozora-pandoc/latest/aozora_pandoc/

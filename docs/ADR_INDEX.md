@@ -42,7 +42,7 @@ back.
 
 ## Numbering
 
-`aozora` was split out of [`P4suta/afm`](https://github.com/P4suta/afm)
+`aozora` was split out of [`P4suta/afm`](https://github.com/P4suta/aozora-flavored-markdown)
 (afm ADR-0010, "extract aozora core"). The parser-layer decisions that
 originated on the afm side moved here and were **renumbered** into this
 repo's own sequence; afm keeps redirect stubs (`NNNN-MOVED.md`) pointing

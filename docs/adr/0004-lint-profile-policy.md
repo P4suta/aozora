@@ -6,7 +6,7 @@
 - Tags: infra, policy
 
 > Shared policy between this repo and the sibling
-> [`afm`](https://github.com/P4suta/afm) repo. afm keeps a redirect stub
+> [`afm`](https://github.com/P4suta/aozora-flavored-markdown) repo. afm keeps a redirect stub
 > (its ADR-0006); the canonical statement is here. Both repos enforce the
 > same `[workspace.lints]` and `just strict-code` gates against the same
 > rationale.

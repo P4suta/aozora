@@ -11,7 +11,7 @@ every workspace crate is reachable via the side panel.
 ## Why `/api/` instead of `docs.rs`?
 
 aozora is on crates.io, so
-[`docs.rs/aozora`](https://docs.rs/aozora) hosts the released API
+[`docs.rs/aozora`](https://docs.rs/aozora/latest/aozora/) hosts the released API
 reference. We *also* build and deploy the full rustdoc under `/api/`
 on every `main` push: the in-tree copy tracks the development tip —
 ahead of whatever the latest crates.io release renders on `docs.rs` —

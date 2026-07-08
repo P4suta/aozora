@@ -49,7 +49,7 @@ from stdin.
 
 The three formats:
 
-- **`human`** — a graphical [`miette`](https://docs.rs/miette) report:
+- **`human`** — a graphical [`miette`](https://docs.rs/miette/latest/miette/) report:
   the source line, a caret under the span, the label, the help, and a
   link to the [diagnostics catalogue](../notation/diagnostics.md).
 - **`json`** — the `aozora::json` diagnostics envelope, byte-identical to
