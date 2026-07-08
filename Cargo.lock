@@ -187,7 +187,6 @@ dependencies = [
  "anyhow",
  "aozora",
  "aozora-buildstamp",
- "aozora-encoding",
  "aozora-fmt",
  "aozora-pandoc",
  "clap",
