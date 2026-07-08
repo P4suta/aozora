@@ -22,7 +22,7 @@ The `aozora check` CLI renders diagnostics three ways, chosen with
 `--diagnostic-format`:
 
 - **`human`** (the default on a terminal) — a graphical
-  [`miette`](https://docs.rs/miette) report: the source line, a caret
+  [`miette`](https://docs.rs/miette/latest/miette/) report: the source line, a caret
   under the offending span, the label, the help text, and a link back to
   this page.
 - **`json`** (the default when stderr is piped) — the `aozora::json`

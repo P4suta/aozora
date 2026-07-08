@@ -99,4 +99,4 @@ untouched.
 - [`Document::edit`](https://docs.rs/aozora/latest/aozora/struct.Document.html#method.edit)
   — the incremental-parse counterpart that reuses the same CST.
 
-[rowan]: https://docs.rs/rowan
+[rowan]: https://docs.rs/rowan/latest/rowan/
