@@ -68,6 +68,17 @@ fn snapshot_check_help() {
 }
 
 #[test]
+fn snapshot_lint_help() {
+    insta::with_settings!({
+        filters => vec![
+            (r"\d+\.\d+\.\d+(?:-[\w.]+)?", "[VERSION]"),
+        ],
+    }, {
+        insta::assert_snapshot!(run(&["lint", "--help"]));
+    });
+}
+
+#[test]
 fn snapshot_fmt_help() {
     insta::with_settings!({
         filters => vec![

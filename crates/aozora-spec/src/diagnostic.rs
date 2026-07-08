@@ -118,6 +118,13 @@ pub mod codes {
     /// distinct from the `aozora::lex::*` lex faults above.
     pub const NON_CANONICAL_DIRECTIVE: &str = "aozora::lint::non_canonical_directive";
 
+    /// Prefix of every advisory notation-hygiene *lint* code.
+    ///
+    /// The single authority for the lint-vs-lex split that
+    /// [`Diagnostic::is_lint`] and the LSP filter on: a code in this namespace
+    /// is authoring guidance, not a malformed-input fault.
+    pub const LINT_NAMESPACE: &str = "aozora::lint::";
+
     /// Pipeline-internal: an `［＃` digraph survived classification
     /// into the normalized text. Indicates a missing recogniser for
     /// the keyword.
@@ -1331,6 +1338,18 @@ impl Diagnostic {
         }
     }
 
+    /// True when this diagnostic is an advisory notation-hygiene *lint*.
+    ///
+    /// A code in the [`codes::LINT_NAMESPACE`] (`aozora::lint::*`), surfaced by
+    /// `aozora lint` and the LSP as authoring guidance, as opposed to the
+    /// `aozora::lex::*` faults that report malformed input. The single
+    /// authority for the lint-vs-lex split, so callers never string-match the
+    /// prefix themselves.
+    #[must_use]
+    pub fn is_lint(&self) -> bool {
+        self.code().starts_with(codes::LINT_NAMESPACE)
+    }
+
     /// The long-form Japanese explanation for this diagnostic, written
     /// for the typesetter (何が起きた / 何が問題 / どう直す).
     ///
@@ -2037,5 +2056,20 @@ mod tests {
         // so they share the umbrella help/url.
         assert_eq!(resid.help, unreg.help);
         assert_eq!(resid.url, unreg.url);
+    }
+
+    #[test]
+    fn is_lint_selects_only_the_lint_namespace() {
+        // The one lint code today is `aozora::lint::non_canonical_directive`.
+        let lint = Diagnostic::non_canonical_directive(Span::new(0, 3), "ここで字下げ終わり");
+        assert!(lint.is_lint(), "notation-hygiene lint must be a lint");
+        assert!(lint.code().starts_with(codes::LINT_NAMESPACE));
+
+        // Lex faults and internal checks are not lints.
+        let lex = Diagnostic::unclosed_bracket(Span::new(0, 1), PairKind::Bracket);
+        assert!(!lex.is_lint(), "a lex fault is not a lint: {}", lex.code());
+        let internal =
+            Diagnostic::internal(Span::new(0, 0), InternalCheckCode::ResidualAnnotationMarker);
+        assert!(!internal.is_lint(), "an internal check is not a lint");
     }
 }

@@ -1,36 +1,23 @@
 ---
 source: crates/aozora-cli/tests/snapshot_cli.rs
-expression: "run(&[\"fmt\", \"--help\"])"
+expression: "run(&[\"lint\", \"--help\"])"
 ---
-Format documents: round-trip parse ∘ to_source to the canonical form. Reads stdin, one file, many
-files, or directories; `--check` / `--diff` / `--list` verify without writing, `--write` rewrites in
-place, `--fix` also canonicalises flagged directive near-misses
+Report notation-hygiene lints (`aozora::lint::*`) — non-canonical directive near-misses and their
+suggested canonical spelling. The authoring-hygiene view (`check` reports every diagnostic); `--fix`
+rewrites the flagged near-misses in place (the Tier1 autofix)
 
-Usage: aozora fmt [OPTIONS] [PATH]...
+Usage: aozora lint [OPTIONS] [FILE]
 
 Arguments:
-  [PATH]...
-          Files or directories to format. Use `-`, or omit, to read stdin
+  [FILE]
+          Input path; pass `-` (or omit) to read from stdin
+          
+          [default: -]
 
 Options:
-      --check
-          Verify inputs are already formatted; exit 1 if any would change
-
-  -w, --write
-          Rewrite files in place (no-op when already canonical)
-
-      --diff
-          Print a unified diff for every file that would change. Implies --check
-
-  -l, --list
-          List only the paths that would change (gofmt -l). Combine with -w
-
-      --json
-          Emit the --check result as machine-readable JSON. Implies --check
-
   -E, --encoding <ENCODING>
-          Source encoding. Falls back to `AOZORA_ENCODING`, then auto-detection (valid UTF-8 as-is,
-          otherwise Shift_JIS — the Aozora Bunko default)
+          Source encoding. Falls back to `AOZORA_ENCODING`, then the `encoding` key in
+          `.aozora.toml`, then auto-detection
 
           Possible values:
           - auto: Detect the source encoding: valid UTF-8 is used as-is, otherwise the bytes are
@@ -40,12 +27,6 @@ Options:
           - sjis: Force Shift_JIS decoding
           
           [env: AOZORA_ENCODING=]
-
-      --fix
-          Rewrite non-canonical directive near-misses to their canonical spelling (e.g. `［＃字下げ終わり］`
-          → `［＃ここで字下げ終わり］`), the fixes flagged by the `aozora::lint::non_canonical_directive`
-          warnings. Opt-in: without it every directive round-trips its raw bytes verbatim.
-          Idempotent, so it composes with every mode
 
       --config <PATH>
           Read settings from this `.aozora.toml` instead of searching upward from the working
@@ -71,6 +52,30 @@ Options:
           Re-run on every change to the input file (foreground; Ctrl-C to stop). Requires a file
           path — not available on stdin
 
+  -s, --strict
+          Exit non-zero if any lint fired. Also settable via `AOZORA_STRICT` or the `strict` key in
+          `.aozora.toml`. Shared with `check`
+          
+          [env: AOZORA_STRICT=]
+
+      --diagnostic-format <DIAGNOSTIC_FORMAT>
+          How to render lints: `human` / `json` / `short` — the same views and `.aozora.toml` /
+          `AOZORA_DIAGNOSTIC_FORMAT` fallbacks as `check`
+
+          Possible values:
+          - auto:  Graphical (`human`) on a terminal, machine (`json`) when piped
+          - human: miette graphical report — source snippet + caret + label + help
+          - json:  The `aozora::json` JSON envelope — the cross-binding machine view
+          - short: One grep-able line per diagnostic: `path:offset: severity[code]: msg`
+          
+          [env: AOZORA_DIAGNOSTIC_FORMAT=]
+
+      --fix
+          Rewrite the flagged directive near-misses to their canonical spelling in place — the
+          zero-false-positive Tier1 autofix. This is the same source transform as `aozora fmt --fix
+          --write` (one shared engine), so it also canonicalises ruby bars and whitespace, not only
+          directives. Needs a file path; it cannot rewrite stdin
+
       --color <WHEN>
           When to colourise diagnostics: `auto` (colour on a terminal, honouring `NO_COLOR` /
           `CLICOLOR` / `CLICOLOR_FORCE`), `always`, or `never`. Global — accepted after any
@@ -89,3 +94,9 @@ Options:
 
   -V, --version
           Print version
+
+Examples:
+  aozora lint src.txt           # report notation-hygiene lints
+  aozora lint --strict src.txt  # any lint -> exit 1 (CI gate)
+  aozora lint --fix src.txt     # rewrite flagged near-misses in place
+  cat src.txt | aozora lint     # read from stdin (--fix needs a file)

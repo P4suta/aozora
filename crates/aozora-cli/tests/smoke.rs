@@ -201,6 +201,113 @@ fn fmt_write_overwrites_file_on_disk() {
     );
 }
 
+#[test]
+fn fmt_diff_prints_unified_diff() {
+    // The subcommand now exposes the standalone engine's --diff (unified diff
+    // of the change) — a capability the pre-consolidation `aozora fmt` lacked.
+    let (status, stdout, _) = run(
+        &["fmt", "--diff", "--color", "never"],
+        Some("｜日本《にほん》"),
+    );
+    assert!(!status.success(), "--diff on dirty input exits non-zero");
+    assert!(
+        stdout.contains("@@") && stdout.contains("-｜日本") && stdout.contains("+日本"),
+        "expected a unified diff hunk: {stdout:?}"
+    );
+}
+
+#[test]
+fn fmt_encoding_sjis_decodes_shift_jis() {
+    // `-E sjis` now reaches the standalone engine too. 「日本」in Shift_JIS.
+    let f = write_temp("");
+    fs::write(f.path(), [0x93, 0xfa, 0x96, 0x7b]).expect("seed sjis");
+    let path = f.path().to_str().unwrap();
+    let (status, stdout, stderr) = run(&["fmt", "--encoding", "sjis", path], None);
+    assert!(status.success(), "sjis decode must succeed: {stderr:?}");
+    assert!(stdout.contains("日本"), "expected decoded 日本: {stdout:?}");
+}
+
+#[test]
+fn fmt_fix_rewrites_flagged_directive_near_miss() {
+    // `--fix` (renamed from `--fix-notation`) applies the Tier1 autofix.
+    let (status, stdout, _) = run(&["fmt", "--fix"], Some("あ［＃字下げ終わり］"));
+    assert!(status.success(), "fmt --fix must succeed");
+    assert!(
+        stdout.contains("ここで字下げ終わり"),
+        "--fix should canonicalise the directive: {stdout:?}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// `aozora lint` — notation-hygiene lints (aozora::lint::*)
+// ---------------------------------------------------------------------
+
+#[test]
+fn lint_reports_non_canonical_directive() {
+    let (_, _, stderr) = run(
+        &["lint", "--diagnostic-format", "short"],
+        Some("あ［＃字下げ終わり］"),
+    );
+    assert!(
+        stderr.contains("aozora::lint::non_canonical_directive"),
+        "lint must flag the near-miss: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("ここで字下げ終わり"),
+        "lint must suggest the canonical form: {stderr:?}"
+    );
+}
+
+#[test]
+fn lint_clean_input_is_silent_and_succeeds() {
+    let (status, stdout, stderr) = run(&["lint"], Some("ただの本文"));
+    assert!(status.success(), "clean input exits 0: {stderr:?}");
+    assert!(stdout.is_empty() && stderr.is_empty(), "lint stays silent");
+}
+
+#[test]
+fn lint_strict_exits_non_zero_when_a_lint_fires() {
+    let (status, _, _) = run(&["lint", "--strict"], Some("あ［＃字下げ終わり］"));
+    assert!(!status.success(), "--strict must exit 1 on a lint");
+}
+
+#[test]
+fn lint_ignores_non_lint_lex_faults() {
+    // An unclosed bracket is a lex fault (`aozora::lex::*`), not a lint, so
+    // `lint` stays silent on it — the is_lint() namespace filter at work.
+    let (_, _, stderr) = run(&["lint", "--diagnostic-format", "short"], Some("あ［＃"));
+    assert!(
+        !stderr.contains("aozora::lint::"),
+        "lint must not surface lex faults: {stderr:?}"
+    );
+}
+
+#[test]
+fn lint_fix_rewrites_file_then_relints_clean() {
+    let f = write_temp("あ［＃字下げ終わり］");
+    let path = f.path().to_str().unwrap();
+    let (status, _, stderr) = run(&["lint", "--fix", path], None);
+    assert!(status.success(), "lint --fix must succeed: {stderr:?}");
+    let written = fs::read_to_string(path).expect("read back");
+    assert!(
+        written.contains("ここで字下げ終わり"),
+        "lint --fix must canonicalise in place: {written:?}"
+    );
+    // Re-linting the fixed file is clean.
+    let (status, _, _) = run(&["lint", "--strict", path], None);
+    assert!(status.success(), "fixed file must re-lint clean");
+}
+
+#[test]
+fn lint_fix_on_stdin_is_a_usage_error() {
+    let (status, _, stderr) = run(&["lint", "--fix"], Some("あ"));
+    assert!(!status.success(), "lint --fix on stdin must fail");
+    assert!(
+        stderr.contains("cannot rewrite stdin"),
+        "expected a stdin hint: {stderr:?}"
+    );
+}
+
 // ---------------------------------------------------------------------
 // `aozora render` — HTML output path
 // ---------------------------------------------------------------------

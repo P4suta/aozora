@@ -68,7 +68,7 @@ use std::process::{Command as Process, ExitCode, Stdio};
 
 use aozora::{
     DiagnosticSource, Document, json,
-    render::{DirectiveNormalization, RenderOptions},
+    render::{DirectiveNormalization, RenderOptions, SerializeOptions},
 };
 use aozora_fmt::ColorChoice;
 // The formatter crate owns the source-encoding value-enum so both frontends
@@ -116,6 +116,11 @@ struct Cli {
 enum Command {
     /// Run the lexer over a file and report diagnostics.
     Check(CheckArgs),
+    /// Report notation-hygiene lints (`aozora::lint::*`) — non-canonical
+    /// directive near-misses and their suggested canonical spelling. The
+    /// authoring-hygiene view (`check` reports every diagnostic); `--fix`
+    /// rewrites the flagged near-misses in place (the Tier1 autofix).
+    Lint(LintArgs),
     /// Format documents: round-trip parse ∘ to_source to the canonical
     /// form. Reads stdin, one file, many files, or directories; `--check`
     /// / `--diff` / `--list` verify without writing, `--write` rewrites in
@@ -250,6 +255,35 @@ struct CheckArgs {
     diagnostic_format: Option<DiagFormat>,
 }
 
+#[derive(Debug, Parser)]
+#[command(after_long_help = "Examples:
+  aozora lint src.txt           # report notation-hygiene lints
+  aozora lint --strict src.txt  # any lint -> exit 1 (CI gate)
+  aozora lint --fix src.txt     # rewrite flagged near-misses in place
+  cat src.txt | aozora lint     # read from stdin (--fix needs a file)")]
+struct LintArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+
+    /// Exit non-zero if any lint fired. Also settable via `AOZORA_STRICT`
+    /// or the `strict` key in `.aozora.toml`. Shared with `check`.
+    #[arg(long, short = 's', env = "AOZORA_STRICT")]
+    strict: bool,
+
+    /// How to render lints: `human` / `json` / `short` — the same views and
+    /// `.aozora.toml` / `AOZORA_DIAGNOSTIC_FORMAT` fallbacks as `check`.
+    #[arg(long, value_enum, env = "AOZORA_DIAGNOSTIC_FORMAT")]
+    diagnostic_format: Option<DiagFormat>,
+
+    /// Rewrite the flagged directive near-misses to their canonical spelling
+    /// in place — the zero-false-positive Tier1 autofix. This is the same
+    /// source transform as `aozora fmt --fix --write` (one shared engine), so
+    /// it also canonicalises ruby bars and whitespace, not only directives.
+    /// Needs a file path; it cannot rewrite stdin.
+    #[arg(long)]
+    fix: bool,
+}
+
 /// `aozora fmt` — the standalone formatter's full surface (positional PATHs,
 /// `--check` / `--write` / `--diff` / `--list` / `--json` / `--fix` /
 /// `-E/--encoding`), backed by the one `aozora-fmt` engine, plus the CLI's
@@ -352,6 +386,7 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Check(opts) => run_check(&opts),
+        Command::Lint(opts) => run_lint(&opts),
         Command::Fmt(opts) => run_fmt(&opts, cli.color),
         Command::Render(opts) => run_render(&opts),
         Command::Inspect(opts) => run_inspect(&opts),
@@ -442,6 +477,94 @@ fn run_check_once(args: &CheckArgs) -> Result<ExitCode> {
 
     timer.report()?;
     Ok(code)
+}
+
+fn run_lint(args: &LintArgs) -> Result<ExitCode> {
+    if let Some(code) = input::guard_stdin(&args.common.input.file, "lint") {
+        return Ok(code);
+    }
+    run_watched(&args.common, || run_lint_once(args))
+}
+
+fn run_lint_once(args: &LintArgs) -> Result<ExitCode> {
+    let cfg = args.common.load_config()?;
+    let encoding = args.common.resolved_encoding(&cfg);
+    let diagnostic_format = args
+        .diagnostic_format
+        .or(cfg.diagnostic_format)
+        .unwrap_or_default();
+    let strict = args.strict || cfg.strict.unwrap_or(false);
+    let path = &args.common.input.file;
+
+    if args.fix {
+        return run_lint_fix(path, encoding, diagnostic_format, strict);
+    }
+
+    let mut timer = Timer::new(args.common.cross.timing, args.common.cross.timing_format);
+    let source = timer.measure("read", || read_source(path, encoding))?;
+    let doc = Document::new(source);
+    let tree = timer.measure("parse", || doc.parse());
+    let lints = lint_diagnostics(&tree);
+    timer.report()?;
+
+    if lints.is_empty() {
+        return Ok(ExitCode::SUCCESS);
+    }
+    diagnostics_render::render(diagnostic_format, &display_path(path), &doc, &lints)
+        .context("failed to write lints")?;
+    // Lint codes are advisory and never `Internal`, so there is no exit-3 arm
+    // (unlike `check`): tolerated by default, exit 1 under `--strict` for CI.
+    Ok(if strict {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// `aozora lint --fix`: apply the Tier1 autofix in place through the same
+/// guarded engine `fmt --fix --write` uses, then re-lint the result and report
+/// anything the autofix could not resolve.
+fn run_lint_fix(
+    path: &Path,
+    encoding: Encoding,
+    diagnostic_format: DiagFormat,
+    strict: bool,
+) -> Result<ExitCode> {
+    if path.as_os_str() == "-" {
+        anyhow::bail!("lint --fix needs a file path; it cannot rewrite stdin");
+    }
+    let opts = SerializeOptions {
+        directives: DirectiveNormalization::Canonical,
+    };
+    let fmt = aozora_fmt::read_and_format(path, opts, encoding)?;
+    aozora_fmt::write_back(path, &fmt, opts)?;
+
+    // Re-lint the written form: the Tier1 autofix resolves every flagged
+    // near-miss, so this is normally empty, but reporting the residue keeps
+    // `--fix` honest if a body was flagged yet declined a canonical.
+    let doc = Document::new(fmt.new);
+    let tree = doc.parse();
+    let residual = lint_diagnostics(&tree);
+    if residual.is_empty() {
+        return Ok(ExitCode::SUCCESS);
+    }
+    diagnostics_render::render(diagnostic_format, &display_path(path), &doc, &residual)
+        .context("failed to write lints")?;
+    Ok(if strict {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// The notation-hygiene lints (`aozora::lint::*`) from a parsed tree — the
+/// advisory subset `aozora lint` reports, filtered from every diagnostic.
+fn lint_diagnostics(tree: &aozora::Tree<'_>) -> Vec<aozora::Diagnostic> {
+    tree.diagnostics()
+        .iter()
+        .filter(|d| d.is_lint())
+        .cloned()
+        .collect()
 }
 
 fn run_fmt(args: &FmtCmd, color: ColorChoice) -> Result<ExitCode> {
