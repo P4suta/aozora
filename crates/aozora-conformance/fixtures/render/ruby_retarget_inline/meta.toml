@@ -1,0 +1,5 @@
+# Phase O4 conformance metadata. Read by xtask conformance run.
+# Golden family-coverage: exercises the `rubyRetarget` annotation (#454) —
+# `［＃ルビは「X」にかかる］` re-anchors the preceding ruby onto span X.
+feature = "ruby"
+level = "should"

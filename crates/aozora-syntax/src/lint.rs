@@ -362,8 +362,10 @@ pub const CATALOGUE_SAMPLES: &[&str] = &[
 /// ([`crate::degraded::degraded_directive`]) may ever match:
 ///
 /// - **Editorial prose** — bibliographic / collation / conjecture / semantic
-///   notes (edition names, `では`, `誤記か`, `伏字`, `注釈番号`, `正字`).
-///   Matching one would launder an editor's note into a directive.
+///   notes (edition names, `では`, `誤記か`, `伏字`, `注釈番号`, `正字`) and
+///   free-form spatial-layout descriptions (`上に…付き`, `右側に…形で`) for which
+///   the core models no construct. Matching one would launder an editor's note
+///   into a directive.
 /// - **Multi-axis compounds** — `、`-joined two-directive bodies that ADR-0027
 ///   deliberately declines (repairing them would silently drop an axis).
 /// - **Gaiji-composition descriptions** — `「X」の下に「Y」` glyph builds, owned
@@ -386,6 +388,14 @@ pub const EDITORIAL_MUST_STAY_UNKNOWN: &[&str] = &[
     "「甲」の「乙」に代えて「丙」",
     "一つ目の「甲」は「乙」付き",
     "「甲」は「乙」の右側に注記するような形で",
+    // Spatial / layout descriptions the vertical core models no construct for —
+    // ruby/annotation attaches only right (default) or 左に (left), never 上に
+    // (above); "上部に出ている" / "下にポイントを下げて…行で" are free-form position
+    // prose. Folding any onto a real leaf would be a spatial lie, so they stay
+    // inert — the decoys adjacent to Tier2's 下げて… indent rule (D6).
+    "「甲」は上に「乙」付き",
+    "「甲」は上部に出ている",
+    "「甲」は「乙」の下にポイントを下げて2行で",
     // Multi-axis compounds — ADR-0027 declines these (dropping an axis is lossy).
     "「甲」は縦中横、行右小書き",
     "ここから3字下げ、「甲」は返り点",

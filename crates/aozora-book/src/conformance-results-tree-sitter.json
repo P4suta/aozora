@@ -1,8 +1,8 @@
 {
   "implementation": "tree-sitter",
-  "total": 124,
-  "passed": 58,
-  "failed": 66,
+  "total": 127,
+  "passed": 60,
+  "failed": 67,
   "by_level": {
     "may": {
       "total": 3,
@@ -15,9 +15,9 @@
       "failed": 9
     },
     "should": {
-      "total": 91,
-      "passed": 34,
-      "failed": 57
+      "total": 94,
+      "passed": 36,
+      "failed": 58
     }
   },
   "cases": [
@@ -526,6 +526,13 @@
       "message": "grammar produced ERROR / MISSING node(s)"
     },
     {
+      "case": "line_font_size_line",
+      "feature": "font-size",
+      "level": "should",
+      "passed": true,
+      "message": null
+    },
+    {
       "case": "line_width_container",
       "feature": "container",
       "level": "must",
@@ -797,6 +804,20 @@
       "level": "should",
       "passed": false,
       "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_pair_left",
+      "feature": "ruby",
+      "level": "should",
+      "passed": false,
+      "message": "grammar produced ERROR / MISSING node(s)"
+    },
+    {
+      "case": "ruby_retarget_inline",
+      "feature": "ruby",
+      "level": "should",
+      "passed": true,
+      "message": null
     },
     {
       "case": "sashie",

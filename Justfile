@@ -293,7 +293,7 @@ new-adr TITLE:
 #                              job. UPDATE_GOLDEN=1 refreshes its goldens.
 # Any pass exits non-zero on a `must`-tier regression or grammar drift.
 conformance:
-    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- conformance run && cargo run -p aozora-xtask -q -- conformance vectors && cargo run -p aozora-xtask -q -- conformance run --implementation tree-sitter && cargo run -p aozora-xtask -q -- conformance vectors --implementation tree-sitter && cargo test -p aozora-conformance --test works_gate'
+    {{_dev}} bash -c 'set -euo pipefail; cargo run -p aozora-xtask -q -- conformance run && cargo run -p aozora-xtask -q -- conformance vectors && cargo run -p aozora-xtask -q -- conformance run --implementation tree-sitter && cargo run -p aozora-xtask -q -- conformance vectors --implementation tree-sitter && cargo test -p aozora-conformance --test works_gate && cargo run -p aozora-xtask -q -- corpus family-coverage'
 
 # Vendor the conformance vectors from the sibling aozora-notation-spec
 # repo into spec-vectors/ (the spec is the source of truth). Host-side —
@@ -518,6 +518,39 @@ digest-gate-update:
         -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo run -p aozora-xtask -q -- corpus digest-gate --root /corpus --baseline corpus/render-digest.json --update
+
+# Catalogue-sweep ratchet gate: pin the Tier1/Tier2-matched Unknown shape set and
+# per-tier resolved-occurrence counts (`corpus/catalogue-coverage.json`). Residue
+# may only shrink; a newly-matched shape fails until a human confirms it is a
+# genuine near-miss (the zero-FP guard). Needs a corpus; runtime-skips otherwise.
+catalogue-sweep-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; catalogue-sweep-gate skipped (no corpus to walk)."
+        exit 0
+    fi
+    if [[ ! -d "$AOZORA_CORPUS_ROOT" ]]; then
+        echo "AOZORA_CORPUS_ROOT=$AOZORA_CORPUS_ROOT is not a directory." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus catalogue-sweep-gate --root /corpus --baseline corpus/catalogue-coverage.json
+
+# Re-capture the catalogue-coverage baseline (ratchet after vetting a near-miss).
+catalogue-sweep-gate-update:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "${AOZORA_CORPUS_ROOT:-}" ]]; then
+        echo "AOZORA_CORPUS_ROOT is not set; cannot capture catalogue coverage." >&2
+        exit 1
+    fi
+    docker compose run --rm \
+        -v "$AOZORA_CORPUS_ROOT":/corpus:ro \
+        -e AOZORA_CORPUS_ROOT=/corpus \
+        dev cargo run -p aozora-xtask -q -- corpus catalogue-sweep-gate --root /corpus --baseline corpus/catalogue-coverage.json --update
 
 # Select a stratified, family-diverse set of real works to extend the golden
 # `fixtures/works/` set (#414). Deterministic greedy family set-cover under a

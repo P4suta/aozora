@@ -298,6 +298,24 @@ pub(crate) enum CorpusTarget {
         #[arg(long)]
         update: bool,
     },
+    /// Catalogue-sweep ratchet gate: pin the Tier1/Tier2-matched Unknown shape
+    /// set and per-tier resolved-occurrence counts, and fail if the catalogues
+    /// regress OR silently start matching a new shape. The corpus-side twin of
+    /// `classify-unknown` — where that prints a throwaway worklist, this gates a
+    /// committed baseline: residue may only shrink, resolved occurrences may only
+    /// rise, and a newly-matched shape fails until a human confirms it is a
+    /// genuine near-miss (not an editorial false-positive) and re-baselines.
+    CatalogueSweepGate {
+        /// Corpus root directory of `.txt` files. Defaults to `$AOZORA_CORPUS_ROOT`.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Committed catalogue-coverage JSON path.
+        #[arg(long, default_value = "corpus/catalogue-coverage.json")]
+        baseline: PathBuf,
+        /// Re-capture the coverage baseline from the current run (ratchet).
+        #[arg(long)]
+        update: bool,
+    },
     /// Select a stratified, family-diverse set of real works to extend the
     /// `fixtures/works/` golden set (WS-1 / #414). Deterministic greedy
     /// weighted set-cover over the notation families, seeded by the works
@@ -329,6 +347,13 @@ pub(crate) enum CorpusTarget {
         /// families win. Default ~2 MiB keeps the golden set lean.
         #[arg(long, default_value_t = 2_000_000)]
         max_total_source_bytes: usize,
+        /// Force-include the smallest clean corpus work exercising each named
+        /// family (repeatable), on top of the greedy selection — the direct way
+        /// to fill a specific uncovered family. A family no clean work exercises
+        /// (e.g. `invalidRubySpan`) is reported as unsatisfiable (craft a
+        /// `fixtures/render/` fixture instead).
+        #[arg(long = "require-family", value_name = "FAMILY")]
+        require_family: Vec<String>,
     },
     /// Vendor the works named in a selection manifest into `fixtures/works/`:
     /// decode each corpus file, normalise CRLF→LF, and write `source.txt`.
@@ -367,14 +392,33 @@ pub(crate) enum CorpusTarget {
         #[arg(long, default_value_t = 40)]
         top: usize,
     },
-    /// Report which of the 45 notation families the vendored golden works
-    /// (`fixtures/works/`) exercise, and which are still missing — the concrete
-    /// target for golden-coverage growth. Reads only the committed fixtures, so
-    /// it needs no corpus.
+    /// Gate golden family coverage: every one of the 45 notation families must
+    /// be either exercised by the golden fixtures OR listed in
+    /// [`STRUCTURALLY_UNREACHABLE`] (the "covered OR correctly-irreducible"
+    /// invariant). Counts the union of the vendored golden works
+    /// (`fixtures/works/`) AND the crafted render fixtures (`fixtures/render/`),
+    /// so a structurally-rare family with no clean corpus work is covered by a
+    /// crafted fixture. Reads only committed fixtures, so it needs no corpus.
     FamilyCoverage {
         /// Vendored golden-works directory to measure.
         #[arg(long, default_value = "crates/aozora-conformance/fixtures/works")]
         vendored: PathBuf,
+        /// Crafted render-fixtures directory, also counted toward coverage.
+        #[arg(long, default_value = "crates/aozora-conformance/fixtures/render")]
+        render: PathBuf,
+    },
+    /// Probe which of the 45 notation families a single source exercises — the
+    /// authoring aid for crafting a `fixtures/render/` fixture that fills a
+    /// specific uncovered family (run it on candidate notation until the target
+    /// family appears). Uses the same `analyze` walk `family-coverage` counts, so
+    /// its answer is exactly what the golden set would gain. Reads no corpus.
+    FamilyProbe {
+        /// Source text to analyse inline.
+        #[arg(long, conflicts_with = "file")]
+        text: Option<String>,
+        /// Read the source from this file instead of `--text`.
+        #[arg(long)]
+        file: Option<PathBuf>,
     },
 }
 
@@ -423,6 +467,11 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             baseline,
             update,
         } => digest_gate(root.as_deref(), baseline, *update),
+        CorpusTarget::CatalogueSweepGate {
+            root,
+            baseline,
+            update,
+        } => catalogue_sweep_gate(root.as_deref(), baseline, *update),
         CorpusTarget::SelectWorks {
             root,
             target,
@@ -430,6 +479,7 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             vendored,
             max_unknown_ratio,
             max_total_source_bytes,
+            require_family,
         } => select_works(
             root.as_deref(),
             *target,
@@ -437,6 +487,7 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
             vendored,
             *max_unknown_ratio,
             *max_total_source_bytes,
+            require_family,
         ),
         CorpusTarget::VendorWorks {
             root,
@@ -446,7 +497,8 @@ pub(crate) fn dispatch(args: &CorpusArgs) -> Result<(), String> {
         CorpusTarget::ClassifyUnknown { root, out, top } => {
             classify_unknown(root.as_deref(), out.as_deref(), *top)
         }
-        CorpusTarget::FamilyCoverage { vendored } => family_coverage(vendored),
+        CorpusTarget::FamilyCoverage { vendored, render } => family_coverage(vendored, render),
+        CorpusTarget::FamilyProbe { text, file } => family_probe(text.as_deref(), file.as_deref()),
     }
 }
 
@@ -2937,6 +2989,11 @@ fn family_name(id: usize) -> &'static str {
     }
 }
 
+/// Reverse of [`family_name`]: the family id a name denotes, or `None`.
+fn family_id_by_name(name: &str) -> Option<usize> {
+    (0..FAM_TOTAL).find(|&id| family_name(id) == name)
+}
+
 /// The family ids a document exercises (count > 0), ascending.
 fn family_ids(stat: &FileStat) -> Vec<usize> {
     let mut ids = Vec::new();
@@ -3100,6 +3157,190 @@ fn classify_unknown(root: Option<&Path>, out: Option<&Path>, top: usize) -> Resu
     Ok(())
 }
 
+/// Committed baseline for the catalogue-sweep ratchet gate: the Tier1/Tier2
+/// matched Unknown-shape sets and per-tier resolved-occurrence counts. Unlike
+/// [`ClassifyReport`] (a throwaway worklist that carries `path:line` samples),
+/// this is deterministic and diff-stable — shape sets are `BTreeMap`s and no
+/// example locations are recorded.
+#[derive(Serialize, Deserialize, Default, Clone)]
+struct CatalogueCoverage {
+    #[serde(default)]
+    note: String,
+    files_analyzed: usize,
+    unknown_total: u64,
+    /// Occurrences Tier1 ([`canonical_directive`]) resolves.
+    tier1_occurrences: u64,
+    /// Occurrences Tier2 ([`degraded_directive`]) reduces (render-only).
+    tier2_occurrences: u64,
+    /// Occurrences neither catalogue matches — the discovery residue.
+    residue_occurrences: u64,
+    /// Shape → summed occurrences the Tier1 catalogue resolves.
+    tier1_shapes: BTreeMap<String, u64>,
+    /// Shape → summed occurrences the Tier2 catalogue reduces.
+    tier2_shapes: BTreeMap<String, u64>,
+}
+
+/// Bucket the Unknown bodies into the committed coverage baseline. Reuses
+/// [`classify_body`]; keys the matched-shape maps by the normalised `shape`
+/// (digits / `「…」` operands elided) so the baseline is small and stable.
+fn catalogue_coverage(
+    bodies: &[UnknownRow],
+    files_analyzed: usize,
+    unknown_total: u64,
+) -> CatalogueCoverage {
+    let (mut t1, mut t2, mut residue) = (0_u64, 0_u64, 0_u64);
+    let mut tier1_shapes: BTreeMap<String, u64> = BTreeMap::new();
+    let mut tier2_shapes: BTreeMap<String, u64> = BTreeMap::new();
+    for row in bodies {
+        match classify_body(&row.body) {
+            Bucket::Tier1 => {
+                t1 += row.count;
+                *tier1_shapes.entry(row.shape.clone()).or_default() += row.count;
+            }
+            Bucket::Tier2 => {
+                t2 += row.count;
+                *tier2_shapes.entry(row.shape.clone()).or_default() += row.count;
+            }
+            Bucket::Residue => residue += row.count,
+        }
+    }
+    CatalogueCoverage {
+        note: String::new(),
+        files_analyzed,
+        unknown_total,
+        tier1_occurrences: t1,
+        tier2_occurrences: t2,
+        residue_occurrences: residue,
+        tier1_shapes,
+        tier2_shapes,
+    }
+}
+
+/// Ratchet violations (never an equality oracle). The corpus is fixed, so the
+/// matched-shape set changes ONLY when a catalogue rule changes: a new match is
+/// an unconfirmed near-miss (or false-positive) a human must vet; a lost match
+/// or grown residue is a rule regression.
+fn catalogue_regressions(cur: &CatalogueCoverage, base: &CatalogueCoverage) -> Vec<String> {
+    let mut p = Vec::new();
+    let mut new_matches =
+        |tier: &str, cur_m: &BTreeMap<String, u64>, base_m: &BTreeMap<String, u64>| {
+            for shape in cur_m.keys() {
+                if !base_m.contains_key(shape) {
+                    p.push(format!(
+                        "{tier} now matches a new shape {shape} — confirm it is a genuine \
+                     near-miss (not an editorial false-positive), then re-baseline with --update"
+                    ));
+                }
+            }
+        };
+    new_matches("Tier1", &cur.tier1_shapes, &base.tier1_shapes);
+    new_matches("Tier2", &cur.tier2_shapes, &base.tier2_shapes);
+    let mut lost_matches =
+        |tier: &str, cur_m: &BTreeMap<String, u64>, base_m: &BTreeMap<String, u64>| {
+            for shape in base_m.keys() {
+                if !cur_m.contains_key(shape) {
+                    p.push(format!(
+                        "{tier} no longer matches {shape} — a catalogue rule regressed \
+                         (the shape fell back to residue). Fix the rule, do not --update."
+                    ));
+                }
+            }
+        };
+    lost_matches("Tier1", &cur.tier1_shapes, &base.tier1_shapes);
+    lost_matches("Tier2", &cur.tier2_shapes, &base.tier2_shapes);
+    if cur.tier1_occurrences < base.tier1_occurrences {
+        p.push(format!(
+            "Tier1 occurrences fell {} → {}",
+            base.tier1_occurrences, cur.tier1_occurrences
+        ));
+    }
+    if cur.tier2_occurrences < base.tier2_occurrences {
+        p.push(format!(
+            "Tier2 occurrences fell {} → {}",
+            base.tier2_occurrences, cur.tier2_occurrences
+        ));
+    }
+    if cur.residue_occurrences > base.residue_occurrences {
+        p.push(format!(
+            "residue grew {} → {} — Unknown coverage regressed",
+            base.residue_occurrences, cur.residue_occurrences
+        ));
+    }
+    p
+}
+
+const CATALOGUE_NOTE: &str = "Catalogue-sweep coverage baseline: the Tier1 \
+    (`canonical_directive`) / Tier2 (`degraded_directive`) matched Unknown-shape sets and \
+    per-tier resolved-occurrence counts over the corpus. Ratchet: residue may only shrink and \
+    resolved occurrences may only rise; a newly-matched shape FAILS the gate until a human \
+    confirms it is a genuine near-miss (not an editorial false-positive) and re-baselines — the \
+    zero-false-positive guard from the corpus side. A lost match or grown residue is a catalogue \
+    regression (fix the rule, do not --update). Re-capture with `xtask corpus catalogue-sweep-gate --update`.";
+
+/// Catalogue-sweep ratchet gate. Reuses [`run_audit`] + [`classify_body`]; the
+/// corpus-side twin of `classify-unknown` (see [`CATALOGUE_NOTE`]).
+fn catalogue_sweep_gate(
+    root: Option<&Path>,
+    baseline_path: &Path,
+    update: bool,
+) -> Result<(), String> {
+    if root.is_none() && std::env::var_os("AOZORA_CORPUS_ROOT").is_none() {
+        eprintln!(
+            "xtask corpus catalogue-sweep-gate: skipped — pass --root or set $AOZORA_CORPUS_ROOT"
+        );
+        return Ok(());
+    }
+    let report = run_audit(root, None)?;
+    let current = catalogue_coverage(
+        &report.unknown_bodies,
+        report.files_analyzed,
+        report.unknown_total,
+    );
+
+    if update {
+        let coverage = CatalogueCoverage {
+            note: CATALOGUE_NOTE.to_owned(),
+            ..current
+        };
+        let mut json =
+            serde_json::to_string_pretty(&coverage).map_err(|e| format!("serialize: {e}"))?;
+        json.push('\n');
+        fs::write(baseline_path, json)
+            .map_err(|e| format!("write {}: {e}", baseline_path.display()))?;
+        eprintln!(
+            "catalogue-sweep-gate: wrote {} — Tier1 {} occ / {} shapes, Tier2 {} occ / {} shapes, residue {} occ",
+            baseline_path.display(),
+            coverage.tier1_occurrences,
+            coverage.tier1_shapes.len(),
+            coverage.tier2_occurrences,
+            coverage.tier2_shapes.len(),
+            coverage.residue_occurrences,
+        );
+        return Ok(());
+    }
+
+    let text = fs::read_to_string(baseline_path)
+        .map_err(|e| format!("read {}: {e}", baseline_path.display()))?;
+    let baseline: CatalogueCoverage = serde_json::from_str(&text)
+        .map_err(|e| format!("parse {}: {e}", baseline_path.display()))?;
+    let problems = catalogue_regressions(&current, &baseline);
+    if problems.is_empty() {
+        eprintln!(
+            "catalogue-sweep-gate: PASS — Tier1 {} / Tier2 {} / residue {} occ; {} + {} matched shapes held.",
+            current.tier1_occurrences,
+            current.tier2_occurrences,
+            current.residue_occurrences,
+            current.tier1_shapes.len(),
+            current.tier2_shapes.len(),
+        );
+        return Ok(());
+    }
+    Err(format!(
+        "catalogue-sweep regression:\n  {}",
+        problems.join("\n  ")
+    ))
+}
+
 /// The family ids in `[0, FAM_TOTAL)` not present in `covered`, as names — the
 /// pure set-difference behind `family-coverage`.
 fn missing_families(covered: &std::collections::HashSet<usize>) -> Vec<&'static str> {
@@ -3109,32 +3350,92 @@ fn missing_families(covered: &std::collections::HashSet<usize>) -> Vec<&'static 
         .collect()
 }
 
-/// `corpus family-coverage`: which of the 45 notation families the vendored
-/// golden works exercise, and which remain uncovered. Reads only committed
+/// The families no source exercises via the [`analyze`] (`source_nodes`) walk,
+/// so `family-coverage` can never count them — the negative catalogue that makes
+/// "covered OR correctly-irreducible" *provable* (mirrors the
+/// `EDITORIAL_MUST_STAY_UNKNOWN` refuse-list on the notation-hygiene side).
+///
+/// - `warichu` / `container`: **not dead** — live POST-FOLD nodes
+///   (`Node::Warichu` / `Node::Container`, built in splice/render). The pre-fold
+///   `source_nodes` carry their `…Open` / `…Close` directive forms instead,
+///   which ARE covered as their own families. This walk simply predates the fold.
+/// - `framed` / `invalidRubySpan`: **dead core surface** — the parser never
+///   constructs `LineFormat::Framed` / `DirectiveKind::InvalidRubySpan` from any
+///   source (tracked for removal-or-wiring in #455). Until #455, they are
+///   correctly-irreducible here.
+const STRUCTURALLY_UNREACHABLE: &[&str] = &["warichu", "framed", "container", "invalidRubySpan"];
+
+/// `corpus family-coverage`: assert every one of the 45 notation families is
+/// either exercised by the golden fixtures (real works `∪` crafted render
+/// fixtures) or listed in [`STRUCTURALLY_UNREACHABLE`]. Reads only committed
 /// fixtures, so it needs no corpus.
-fn family_coverage(vendored: &Path) -> Result<(), String> {
+fn family_coverage(vendored: &Path, render: &Path) -> Result<(), String> {
     if !vendored.is_dir() {
         return Err(format!("not a directory: {}", vendored.display()));
     }
-    let (covered, _hashes) = load_vendored(vendored);
+    // Union coverage from the real golden works AND the crafted render fixtures.
+    let (mut covered, _hw) = load_vendored(vendored);
+    let (render_covered, _hr) = load_vendored(render);
+    covered.extend(render_covered);
     let missing = missing_families(&covered);
 
     eprintln!(
-        "xtask corpus family-coverage: {}/{FAM_TOTAL} families exercised by {}",
+        "xtask corpus family-coverage: {}/{FAM_TOTAL} families exercised (works ∪ render fixtures)",
         covered.len(),
-        vendored.display(),
     );
-    if missing.is_empty() {
-        eprintln!("  all {FAM_TOTAL} families covered");
-    } else {
-        eprintln!("  missing ({}): {}", missing.len(), missing.join(", "));
-    }
 
-    let report = serde_json::json!({
-        "total": FAM_TOTAL,
-        "covered": covered.len(),
-        "missing": missing,
-    });
+    // A missing family is only acceptable if it is structurally unreachable;
+    // anything else is a reachable family that lost its golden fixture.
+    let regressed: Vec<&str> = missing
+        .iter()
+        .copied()
+        .filter(|m| !STRUCTURALLY_UNREACHABLE.contains(m))
+        .collect();
+    if regressed.is_empty() {
+        eprintln!(
+            "family-coverage: PASS — {} covered + {} structurally-unreachable = {FAM_TOTAL} \
+             (covered OR correctly-irreducible).",
+            covered.len(),
+            STRUCTURALLY_UNREACHABLE.len(),
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "family-coverage regression: reachable families no longer covered: {}. \
+             Add a golden work (`select-works --require-family`) or a `fixtures/render/` \
+             fixture; only add to STRUCTURALLY_UNREACHABLE (with rationale) if a family \
+             genuinely became unreachable.",
+            regressed.join(", ")
+        ))
+    }
+}
+
+/// `corpus family-probe`: the notation families a single source exercises,
+/// via the exact [`analyze`] → [`family_ids`] walk `family-coverage` counts.
+fn family_probe(text: Option<&str>, file: Option<&Path>) -> Result<(), String> {
+    let src = match (text, file) {
+        (Some(t), _) => t.to_owned(),
+        (None, Some(f)) => {
+            fs::read_to_string(f).map_err(|e| format!("read {}: {e}", f.display()))?
+        }
+        (None, None) => return Err("pass --text <SOURCE> or --file <PATH>".to_owned()),
+    };
+    let stat = panic::catch_unwind(AssertUnwindSafe(|| analyze(&src)))
+        .map_err(|_| "parse panicked".to_owned())?;
+    let names: Vec<&'static str> = family_ids(&stat)
+        .iter()
+        .map(|&id| family_name(id))
+        .collect();
+    eprintln!(
+        "xtask corpus family-probe: {} families — {}",
+        names.len(),
+        if names.is_empty() {
+            "(none)".to_owned()
+        } else {
+            names.join(", ")
+        }
+    );
+    let report = serde_json::json!({ "families": names });
     println!(
         "{}",
         serde_json::to_string_pretty(&report).map_err(|e| format!("serialize: {e}"))?
@@ -3301,7 +3602,20 @@ fn select_works(
     vendored: &Path,
     max_unknown_ratio: f64,
     max_total_source_bytes: usize,
+    require_family: &[String],
 ) -> Result<(), String> {
+    // Resolve --require-family names up front — a typo fails before the walk.
+    let required: Vec<(String, usize)> = require_family
+        .iter()
+        .map(|name| {
+            family_id_by_name(name)
+                .map(|id| (name.clone(), id))
+                .ok_or_else(|| {
+                    format!("unknown family '{name}' (run `family-coverage` for the 45 names)")
+                })
+        })
+        .collect::<Result<_, _>>()?;
+
     let corpus = resolve_corpus(root)?;
     eprintln!(
         "xtask corpus select-works: walking {} …",
@@ -3357,6 +3671,53 @@ fn select_works(
     let mut chosen: Vec<(&WorkProfile, Vec<usize>)> = Vec::new();
     let mut used = vec![false; candidates.len()];
     let mut spent: usize = 0;
+
+    // Force-include the smallest clean work per --require-family, ahead of the
+    // greedy pass. Skips a family already covered (by seed or a prior force-pick)
+    // so overlapping requirements coalesce; a family no candidate exercises is
+    // reported unsatisfiable (it needs a crafted render fixture, not a work).
+    let mut unsatisfiable: Vec<&'static str> = Vec::new();
+    for (name, id) in &required {
+        if covered.contains(id) {
+            continue;
+        }
+        let pick = candidates
+            .iter()
+            .enumerate()
+            .filter(|(i, c)| !used[*i] && c.families.contains(id))
+            .min_by(|(_, a), (_, b)| a.len.cmp(&b.len).then_with(|| a.label.cmp(&b.label)))
+            .map(|(i, _)| i);
+        match pick {
+            Some(i) => {
+                let c = candidates[i];
+                used[i] = true;
+                spent += c.len;
+                let new_families: Vec<usize> = c
+                    .families
+                    .iter()
+                    .copied()
+                    .filter(|f| !covered.contains(f))
+                    .collect();
+                for &f in &c.families {
+                    covered.insert(f);
+                }
+                selected_sets.push(c.families.clone());
+                chosen.push((c, new_families));
+                eprintln!(
+                    "select-works: require-family {name} → {} ({} B)",
+                    c.label, c.len
+                );
+            }
+            None => unsatisfiable.push(family_name(*id)),
+        }
+    }
+    if !unsatisfiable.is_empty() {
+        eprintln!(
+            "select-works: WARNING — no clean corpus work exercises {}; craft a \
+             fixtures/render/ fixture for each instead",
+            unsatisfiable.join(", ")
+        );
+    }
 
     while chosen.len() < target {
         let mut best: Option<usize> = None;
@@ -4361,6 +4722,78 @@ mod tests {
     }
 
     #[test]
+    fn catalogue_coverage_collects_matched_shape_sets() {
+        fn row(body: &str, count: u64, shape: &str) -> UnknownRow {
+            UnknownRow {
+                body: body.to_owned(),
+                count,
+                example: "x:1".to_owned(),
+                shape: shape.to_owned(),
+            }
+        }
+        let bodies = vec![
+            row("［＃字下げ終わり］", 5, "［＃字下げ終わり］"), // Tier1
+            row(
+                "［＃下げて、地より2字あきで］",
+                4,
+                "［＃下げて、地よりN字あきで］",
+            ), // Tier2 (D6)
+            row(
+                "［＃「甲」は「乙」の誤記か］",
+                7,
+                "［＃「」は「」の誤記か］",
+            ), // residue
+        ];
+        let c = catalogue_coverage(&bodies, 100, 16);
+        assert_eq!(c.tier1_occurrences, 5);
+        assert_eq!(c.tier2_occurrences, 4);
+        assert_eq!(c.residue_occurrences, 7);
+        // Matched shapes are keyed by the normalised shape; residue is NOT recorded.
+        assert_eq!(c.tier1_shapes.get("［＃字下げ終わり］"), Some(&5));
+        assert_eq!(
+            c.tier2_shapes.get("［＃下げて、地よりN字あきで］"),
+            Some(&4)
+        );
+        assert!(!c.tier1_shapes.contains_key("［＃「」は「」の誤記か］"));
+        assert!(!c.tier2_shapes.contains_key("［＃「」は「」の誤記か］"));
+    }
+
+    #[test]
+    fn catalogue_regressions_flags_new_match_lost_and_residue_growth() {
+        let base = CatalogueCoverage {
+            tier1_occurrences: 10,
+            tier2_occurrences: 5,
+            residue_occurrences: 100,
+            tier1_shapes: BTreeMap::from([("［＃字下げ終わり］".to_owned(), 10)]),
+            tier2_shapes: BTreeMap::from([("［＃下げて、地よりN字あきで］".to_owned(), 5)]),
+            ..Default::default()
+        };
+        // Identical → no violations.
+        assert!(catalogue_regressions(&base, &base).is_empty());
+
+        // A brand-new Tier2 match not in the baseline → the false-positive guard.
+        let mut new_match = base.clone();
+        new_match
+            .tier2_shapes
+            .insert("［＃地付き、地よりN字アキ］".to_owned(), 3);
+        new_match.tier2_occurrences = 8;
+        new_match.residue_occurrences = 97;
+        let p = catalogue_regressions(&new_match, &base);
+        assert_eq!(p.len(), 1);
+        assert!(p[0].contains("now matches a new shape"));
+
+        // A lost Tier1 match (fell back to residue) → catalogue regression.
+        let mut regressed = base.clone();
+        regressed.tier1_shapes.clear();
+        regressed.tier1_occurrences = 0;
+        regressed.residue_occurrences = 110;
+        let p = catalogue_regressions(&regressed, &base);
+        assert!(p.iter().any(|m| m.contains("no longer matches")));
+        assert!(p.iter().any(|m| m.contains("Tier1 occurrences fell")));
+        assert!(p.iter().any(|m| m.contains("residue grew")));
+    }
+
+    #[test]
     fn missing_families_is_the_uncovered_complement() {
         let mut covered: std::collections::HashSet<usize> = (0..FAM_TOTAL).collect();
         assert!(
@@ -4374,5 +4807,20 @@ mod tests {
         assert_eq!(missing.len(), 2);
         assert!(missing.contains(&family_name(0)));
         assert!(missing.contains(&family_name(FAM_NODE)));
+    }
+
+    #[test]
+    fn structurally_unreachable_families_are_valid_and_distinct() {
+        let mut seen = std::collections::HashSet::new();
+        for name in STRUCTURALLY_UNREACHABLE {
+            assert!(
+                family_id_by_name(name).is_some(),
+                "{name} is not a family name (typo / renamed?)"
+            );
+            assert!(seen.insert(*name), "{name} listed twice");
+        }
+        // The invariant the family-coverage gate enforces: the unreachable set is
+        // a subset of the universe, leaving a coverable remainder.
+        assert!(STRUCTURALLY_UNREACHABLE.len() < FAM_TOTAL);
     }
 }
