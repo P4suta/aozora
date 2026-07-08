@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
 keywords.workspace = true
@@ -33,3 +34,7 @@ criterion = { workspace = true }
 [[bench]]
 name = "accent_decompose"
 harness = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

@@ -164,3 +164,7 @@ ignored = ["shuttle"]
 
 [lints]
 workspace = true
+
+[package.metadata.docs.rs]
+features = ["internals"]
+rustdoc-args = ["--cfg", "docsrs"]

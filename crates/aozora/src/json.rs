@@ -260,6 +260,7 @@ struct Envelope<'a, T> {
 /// schema artefact under `crates/aozora-book/src/json/`, and by the
 /// `aozora schema` CLI subcommand for ad-hoc introspection.
 #[cfg(feature = "schema")]
+#[cfg_attr(docsrs, doc(cfg(feature = "schema")))]
 #[must_use]
 pub fn schema_diagnostics() -> serde_json::Value {
     envelope_schema(
@@ -271,6 +272,7 @@ pub fn schema_diagnostics() -> serde_json::Value {
 
 /// JSON Schema for the [`nodes`] envelope output.
 #[cfg(feature = "schema")]
+#[cfg_attr(docsrs, doc(cfg(feature = "schema")))]
 #[must_use]
 pub fn schema_nodes() -> serde_json::Value {
     envelope_schema(
@@ -282,6 +284,7 @@ pub fn schema_nodes() -> serde_json::Value {
 
 /// JSON Schema for the [`pairs`] envelope output.
 #[cfg(feature = "schema")]
+#[cfg_attr(docsrs, doc(cfg(feature = "schema")))]
 #[must_use]
 pub fn schema_pairs() -> serde_json::Value {
     envelope_schema(
@@ -293,6 +296,7 @@ pub fn schema_pairs() -> serde_json::Value {
 
 /// JSON Schema for the [`container_pairs`] envelope output.
 #[cfg(feature = "schema")]
+#[cfg_attr(docsrs, doc(cfg(feature = "schema")))]
 #[must_use]
 pub fn schema_container_pairs() -> serde_json::Value {
     envelope_schema(

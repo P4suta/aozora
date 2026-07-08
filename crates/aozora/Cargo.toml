@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
 keywords.workspace = true
@@ -107,3 +108,7 @@ aozora-proptest = { path = "../aozora-proptest" }
 # cargo-shear sees only the dev usage and flags the optional [dependencies]
 # entry as misplaced — but the feature gate is the supported public surface.
 ignored = ["proptest"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
