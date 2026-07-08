@@ -906,7 +906,7 @@ lint: fmt-check clippy typos strict-code doc
 # deterministic; doc generation is fast enough that the throughput cost is
 # negligible against not having to rerun a flaky required check.
 doc:
-    {{_dev}} env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --jobs 1
+    {{_dev}} env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --all-features --jobs 1
 
 # Forbid patterns that hide bugs or introduce unstable/unsafe surface in our
 # own crates. Every check is defensive — each represents a pattern we have

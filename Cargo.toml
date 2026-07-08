@@ -42,7 +42,6 @@ license = "Apache-2.0 OR MIT"
 description = "Aozora Bunko notation (青空文庫記法) parser: ruby, bouten, 縦中横, 外字, kaeriten, indent containers, page breaks"
 repository = "https://github.com/P4suta/aozora"
 homepage = "https://p4suta.github.io/aozora/"
-documentation = "https://docs.rs/aozora"
 authors = ["aozora contributors"]
 readme = "README.md"
 keywords = ["aozora", "japanese", "typography", "parser", "ruby"]

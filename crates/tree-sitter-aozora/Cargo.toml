@@ -38,3 +38,7 @@ cc = { version = "1", features = ["parallel"] }
 tree-sitter = "0.26"
 
 # parser.c is committed (generated from grammar.js); building needs only a C toolchain.
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

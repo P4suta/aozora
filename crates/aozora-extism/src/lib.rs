@@ -55,7 +55,7 @@
 //! shape. The `schema_version` plugin export lets a host assert wasm/SDK
 //! compatibility at load time.
 //!
-//! [`aozora-ffi`]: https://docs.rs/aozora-ffi
+//! [`aozora-ffi`]: https://p4suta.github.io/aozora/api/aozora_ffi/index.html
 
 #![forbid(unsafe_code)]
 
