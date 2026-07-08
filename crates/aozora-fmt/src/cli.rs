@@ -89,7 +89,7 @@ pub struct FmtArgs {
 /// subcommands share one colour policy with the formatter.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum ColorChoice {
-    /// Colour when stdout is a terminal (honours `NO_COLOR`).
+    /// Colour when stdout is a terminal (honours `NO_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE`).
     Auto,
     /// Always colour, even when piped.
     Always,
