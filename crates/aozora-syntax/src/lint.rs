@@ -15,7 +15,7 @@
 //! target a body the parser already recognizes.
 //!
 //! Single authority (the [`crate::accent`] precedent): the pipeline lint
-//! (`aozora-pipeline`), the `aozora fmt --fix-notation` autofix
+//! (`aozora-pipeline`), the `aozora fmt --fix` autofix
 //! (`aozora-render`), and the LSP quick-fix all resolve the canonical form
 //! here, on the trimmed body string, with no `DirectiveKind` dependency.
 
@@ -351,6 +351,49 @@ pub const CATALOGUE_SAMPLES: &[&str] = &[
     "ここから2　字下げ",
     // 字下げ numeric.
     "この行2字下げ",
+];
+
+/// Bodies that MUST stay a lossless `Unknown` — the negative catalogue that
+/// anchors the zero-false-positive invariant from the *other* side.
+///
+/// Drawn from the occurrence-ranked corpus residue (`corpus/render-digest.json`
+/// `unknown_shapes_top`), these are the three families that dominate the tail
+/// and that neither Tier1 ([`canonical_directive`]) nor Tier2
+/// ([`crate::degraded::degraded_directive`]) may ever match:
+///
+/// - **Editorial prose** — bibliographic / collation / conjecture / semantic
+///   notes (edition names, `では`, `誤記か`, `伏字`, `注釈番号`, `正字`).
+///   Matching one would launder an editor's note into a directive.
+/// - **Multi-axis compounds** — `、`-joined two-directive bodies that ADR-0027
+///   deliberately declines (repairing them would silently drop an axis).
+/// - **Gaiji-composition descriptions** — `「X」の下に「Y」` glyph builds, owned
+///   by the 外字 layer, not the directive catalogues.
+///
+/// The `catalogue_refuses_every_editorial_body` self-test in the `aozora` crate
+/// asserts both catalogues return `None` for every entry; each catalogue-growth
+/// PR adds the adjacent editorial bodies its new rule sits near, so a future
+/// rule that over-generalises fails here instead of laundering prose.
+pub const EDITORIAL_MUST_STAY_UNKNOWN: &[&str] = &[
+    // Editorial prose — bibliographic / collation / conjecture / semantic.
+    "底本では「蒼空」",
+    "入力者注",
+    "未完",
+    "「甲」は「乙」の誤記か",
+    "初出時「甲」",
+    "「甲」は筑摩版では「乙」",
+    "底本3字伏字",
+    "「甲」は注釈番号",
+    "「甲」の「乙」に代えて「丙」",
+    "一つ目の「甲」は「乙」付き",
+    "「甲」は「乙」の右側に注記するような形で",
+    // Multi-axis compounds — ADR-0027 declines these (dropping an axis is lossy).
+    "「甲」は縦中横、行右小書き",
+    "ここから3字下げ、「甲」は返り点",
+    "「甲」は上付き小文字、「乙」は分数",
+    "「甲」は縦中横、「乙」は上付き小書き",
+    // Gaiji-composition descriptions — owned by the 外字 layer.
+    "「窗」の下に「心」",
+    "「甲」の中に「乙」",
 ];
 
 #[cfg(test)]
