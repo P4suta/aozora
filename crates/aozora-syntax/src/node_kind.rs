@@ -14,7 +14,7 @@
 
 /// Cross-cutting tag for an AST node or `NodeRef` projection.
 ///
-/// The first 18 variants ([`Self::Ruby`] through [`Self::Container`])
+/// The first 23 variants ([`Self::Ruby`] through [`Self::Container`])
 /// project from `Node`'s discriminant. The
 /// final two ([`Self::ContainerOpen`] / [`Self::ContainerClose`])
 /// only arise from `NodeRef`'s container open /
@@ -46,8 +46,6 @@ pub enum NodeKind {
     Center,
     /// 割注 (warichu) — split-line annotation.
     Warichu,
-    /// 罫囲み (keigakomi) — ruled box.
-    Framed,
     /// ゴシック体 line marker (`この行はゴシック体`) — sets the line it sits on
     /// in gothic ([`crate::Format::Gothic`], distinct from 太字).
     LineGothic,
@@ -94,7 +92,7 @@ impl NodeKind {
     /// Used by `aozora kinds` (CLI introspection) and the
     /// TypeScript / JSON-Schema codegen so the artefact list
     /// tracks the enum without a hand-maintained parallel.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 25] = [
         Self::Ruby,
         Self::Bouten,
         Self::CombineUpright,
@@ -103,7 +101,6 @@ impl NodeKind {
         Self::AlignEnd,
         Self::Center,
         Self::Warichu,
-        Self::Framed,
         Self::LineGothic,
         Self::LineFontSize,
         Self::PageBreak,
@@ -140,7 +137,6 @@ impl NodeKind {
             Self::AlignEnd => "alignEnd",
             Self::Center => "center",
             Self::Warichu => "warichu",
-            Self::Framed => "framed",
             Self::LineGothic => "lineGothic",
             Self::LineFontSize => "lineFontSize",
             Self::PageBreak => "pageBreak",
@@ -179,7 +175,6 @@ mod tests {
         assert_eq!(NodeKind::AlignEnd.as_json_tag(), "alignEnd");
         assert_eq!(NodeKind::Center.as_json_tag(), "center");
         assert_eq!(NodeKind::Warichu.as_json_tag(), "warichu");
-        assert_eq!(NodeKind::Framed.as_json_tag(), "framed");
         assert_eq!(NodeKind::PageBreak.as_json_tag(), "pageBreak");
         assert_eq!(NodeKind::SectionBreak.as_json_tag(), "sectionBreak");
         assert_eq!(NodeKind::BodyEnd.as_json_tag(), "bodyEnd");

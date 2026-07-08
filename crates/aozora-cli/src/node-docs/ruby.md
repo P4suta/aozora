@@ -61,5 +61,7 @@ opener.
 
 - [AngleQuote](angle-quote.md) — `≪…≫` double-angle quotation
   (displays as `《…》`).
-- [Directive::InvalidRubySpan](annotation.md) — fallback when the
-  ruby pair could not be parsed cleanly.
+
+Malformed ruby (empty `《》` reading, nested `《`, an unclosed
+bracket) is not a node kind: the parser emits a diagnostic (see
+above) and replays the raw bytes as plain text losslessly.

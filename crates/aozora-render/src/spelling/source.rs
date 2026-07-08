@@ -118,7 +118,6 @@ pub(crate) fn emit_line<W: Write>(lf: LineFormat, out: &mut W) -> fmt::Result {
         LineFormat::AlignEnd { offset } => write!(out, "［＃地から{offset}字上げ］"),
         LineFormat::Center { page: true } => out.write_str("［＃ページの左右中央］"),
         LineFormat::Center { page: false } => out.write_str("［＃中央揃え］"),
-        LineFormat::Framed(_) => out.write_str("［＃罫囲み］"),
         LineFormat::Gothic => out.write_str("［＃この行はゴシック体］"),
         // Absolute font-size line directive. `bold` canonicalises to `、太字`
         // (the classifier only admits that spelling, so the round-trip is exact).

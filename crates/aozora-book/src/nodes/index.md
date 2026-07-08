@@ -18,7 +18,6 @@ or one shell invocation — away.
 | [Indent](indent.md) | `indent` | `［＃2字下げ］` |
 | [AlignEnd](align-end.md) | `alignEnd` | `［＃地から2字上げ］` |
 | [Warichu](warichu.md) | `warichu` | `［＃割り注］...` |
-| [Framed](keigakomi.md) | `keigakomi` | `［＃罫囲み］` |
 | [PageBreak](page-break.md) | `pageBreak` | `［＃改ページ］` |
 | [SectionBreak](section-break.md) | `sectionBreak` | `［＃改丁］` |
 | [Heading](aozora-heading.md) | `heading` | `［＃見出し］` |

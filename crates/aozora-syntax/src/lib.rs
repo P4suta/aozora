@@ -449,8 +449,6 @@ pub enum DirectiveKind {
     Sic,
     /// Source-text divergence note (`［＃「X」は底本では「Y」］`).
     BaseTextVariant,
-    /// A ruby span that couldn't be parsed cleanly.
-    InvalidRubySpan,
     /// Inline warichu opener — `［＃割り注］`.
     WarichuOpen,
     /// Inline warichu closer — `［＃割り注終わり］`.

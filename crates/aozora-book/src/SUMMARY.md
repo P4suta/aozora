@@ -20,7 +20,6 @@
   - [Indent](nodes/indent.md)
   - [AlignEnd](nodes/align-end.md)
   - [Warichu](nodes/warichu.md)
-  - [Framed](nodes/keigakomi.md)
   - [PageBreak](nodes/page-break.md)
   - [SectionBreak](nodes/section-break.md)
   - [Heading](nodes/aozora-heading.md)

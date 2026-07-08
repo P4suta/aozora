@@ -245,8 +245,7 @@ pub(crate) enum CorpusTarget {
     ///        the `finish()` gap, or an unbalanced inline warichu `<span>`).
     ///   I-C  every emitted `aozora-*` class (numeric suffix collapsed to its
     ///        stem) is a member of `AOZORA_CLASSES` (catches an emitter
-    ///        writing a class the published contract / stylesheet omits, e.g.
-    ///        the `LineFormat::Framed` → bare `aozora-keigakomi` arm).
+    ///        writing a class the published contract / stylesheet omits).
     /// Report-only measurement (always exit 0). Needs a corpus; skips when none.
     RenderCorrectness {
         /// Corpus root directory of `.txt` files. Defaults to
@@ -350,7 +349,7 @@ pub(crate) enum CorpusTarget {
         /// Force-include the smallest clean corpus work exercising each named
         /// family (repeatable), on top of the greedy selection — the direct way
         /// to fill a specific uncovered family. A family no clean work exercises
-        /// (e.g. `invalidRubySpan`) is reported as unsatisfiable (craft a
+        /// (e.g. `rubyRetarget`) is reported as unsatisfiable (craft a
         /// `fixtures/render/` fixture instead).
         #[arg(long = "require-family", value_name = "FAMILY")]
         require_family: Vec<String>,
@@ -392,7 +391,7 @@ pub(crate) enum CorpusTarget {
         #[arg(long, default_value_t = 40)]
         top: usize,
     },
-    /// Gate golden family coverage: every one of the 45 notation families must
+    /// Gate golden family coverage: every one of the 43 notation families must
     /// be either exercised by the golden fixtures OR listed in
     /// [`STRUCTURALLY_UNREACHABLE`] (the "covered OR correctly-irreducible"
     /// invariant). Counts the union of the vendored golden works
@@ -407,7 +406,7 @@ pub(crate) enum CorpusTarget {
         #[arg(long, default_value = "crates/aozora-conformance/fixtures/render")]
         render: PathBuf,
     },
-    /// Probe which of the 45 notation families a single source exercises — the
+    /// Probe which of the 43 notation families a single source exercises — the
     /// authoring aid for crafting a `fixtures/render/` fixture that fills a
     /// specific uncovered family (run it on candidate notation until the target
     /// family appears). Uses the same `analyze` walk `family-coverage` counts, so
@@ -1083,11 +1082,10 @@ impl PrevArchive {
 /// `DirectiveKind` variants, in the fixed order used by
 /// [`FileStat::annotation_kinds`] / the report's `annotation_kinds`
 /// table. `Unknown` is index 0 — it is the one that matters.
-const ANN_KIND_LABELS: [&str; 14] = [
+const ANN_KIND_LABELS: [&str; 13] = [
     "unknown",
     "asIs",
     "textualNote",
-    "invalidRubySpan",
     "warichuOpen",
     "warichuClose",
     "empty",
@@ -1104,7 +1102,7 @@ const ANN_KIND_LABELS: [&str; 14] = [
 /// `DirectiveKind` bucket must bump both in lock-step or the per-kind tally
 /// indexes out of bounds.
 const _: () = assert!(
-    ANN_KIND_LABELS.len() == 14,
+    ANN_KIND_LABELS.len() == 13,
     "bump annotation_kinds arrays to match"
 );
 
@@ -1124,7 +1122,7 @@ const GAIJI_FORM_LABELS: [&str; 6] = [
 /// these would otherwise index out of bounds and panic per-file (see the audit
 /// path at `s.node_kinds[i] += 1`).
 const _: () = assert!(
-    NodeKind::ALL.len() == 26,
+    NodeKind::ALL.len() == 25,
     "bump node_kinds arrays to NodeKind::ALL.len()"
 );
 
@@ -1137,9 +1135,9 @@ struct FileStat {
     decode_error: bool,
     panicked: bool,
     /// Indexed parallel to [`NodeKind::ALL`].
-    node_kinds: [u64; 26],
+    node_kinds: [u64; 25],
     /// Indexed parallel to [`ANN_KIND_LABELS`].
-    annotation_kinds: [u64; 14],
+    annotation_kinds: [u64; 13],
     gaiji_total: u64,
     gaiji_unresolved: u64,
     /// Indexed parallel to [`GAIJI_FORM_LABELS`].
@@ -2595,17 +2593,16 @@ fn analyze(text: &str) -> FileStat {
                     }
                     DirectiveKind::Sic => s.annotation_kinds[1] += 1,
                     DirectiveKind::BaseTextVariant => s.annotation_kinds[2] += 1,
-                    DirectiveKind::InvalidRubySpan => s.annotation_kinds[3] += 1,
-                    DirectiveKind::WarichuOpen => s.annotation_kinds[4] += 1,
-                    DirectiveKind::WarichuClose => s.annotation_kinds[5] += 1,
-                    DirectiveKind::Empty => s.annotation_kinds[6] += 1,
-                    DirectiveKind::EditorNote => s.annotation_kinds[7] += 1,
-                    DirectiveKind::RubyAttached => s.annotation_kinds[8] += 1,
-                    DirectiveKind::RubyRetarget => s.annotation_kinds[9] += 1,
-                    DirectiveKind::RubyPairOpen => s.annotation_kinds[10] += 1,
-                    DirectiveKind::RubyPairClose => s.annotation_kinds[11] += 1,
-                    DirectiveKind::MarginNotePairOpen => s.annotation_kinds[12] += 1,
-                    DirectiveKind::MarginNotePairClose => s.annotation_kinds[13] += 1,
+                    DirectiveKind::WarichuOpen => s.annotation_kinds[3] += 1,
+                    DirectiveKind::WarichuClose => s.annotation_kinds[4] += 1,
+                    DirectiveKind::Empty => s.annotation_kinds[5] += 1,
+                    DirectiveKind::EditorNote => s.annotation_kinds[6] += 1,
+                    DirectiveKind::RubyAttached => s.annotation_kinds[7] += 1,
+                    DirectiveKind::RubyRetarget => s.annotation_kinds[8] += 1,
+                    DirectiveKind::RubyPairOpen => s.annotation_kinds[9] += 1,
+                    DirectiveKind::RubyPairClose => s.annotation_kinds[10] += 1,
+                    DirectiveKind::MarginNotePairOpen => s.annotation_kinds[11] += 1,
+                    DirectiveKind::MarginNotePairClose => s.annotation_kinds[12] += 1,
                     // `DirectiveKind` is #[non_exhaustive]; a future variant
                     // is simply not bucketed until this match is extended.
                     _ => {}
@@ -2728,8 +2725,8 @@ fn merge(
     corpus_root: String,
     elapsed_secs: f64,
 ) -> AuditReport {
-    let mut node_kinds = [0u64; 26];
-    let mut ann = [0u64; 14];
+    let mut node_kinds = [0u64; 25];
+    let mut ann = [0u64; 13];
     let mut gforms = [0u64; 6];
     let mut gaiji_total = 0u64;
     let mut gaiji_unresolved = 0u64;
@@ -2971,9 +2968,9 @@ fn _unused_marker(_: OsString) {}
 // of a new golden is the family *combination* it forces through `to_html()`, so
 // coverage (not proportional sampling) is the objective.
 
-/// Family universe: `NodeKind::ALL` (26) ∪ non-Unknown `ANN_KIND_LABELS` (13) ∪
-/// `GAIJI_FORM_LABELS` (6) = 45. Id layout: `[0,26)` node, `[26,39)` annotation,
-/// `[39,45)` gaiji.
+/// Family universe: `NodeKind::ALL` (25) ∪ non-Unknown `ANN_KIND_LABELS` (12) ∪
+/// `GAIJI_FORM_LABELS` (6) = 43. Id layout: `[0,25)` node, `[25,37)` annotation,
+/// `[37,43)` gaiji.
 const FAM_NODE: usize = NodeKind::ALL.len();
 const FAM_ANN: usize = ANN_KIND_LABELS.len() - 1; // skip index 0 (unknown)
 const FAM_GAIJI: usize = GAIJI_FORM_LABELS.len();
@@ -3355,17 +3352,13 @@ fn missing_families(covered: &std::collections::HashSet<usize>) -> Vec<&'static 
 /// "covered OR correctly-irreducible" *provable* (mirrors the
 /// `EDITORIAL_MUST_STAY_UNKNOWN` refuse-list on the notation-hygiene side).
 ///
-/// - `warichu` / `container`: **not dead** — live POST-FOLD nodes
-///   (`Node::Warichu` / `Node::Container`, built in splice/render). The pre-fold
-///   `source_nodes` carry their `…Open` / `…Close` directive forms instead,
-///   which ARE covered as their own families. This walk simply predates the fold.
-/// - `framed` / `invalidRubySpan`: **dead core surface** — the parser never
-///   constructs `LineFormat::Framed` / `DirectiveKind::InvalidRubySpan` from any
-///   source (tracked for removal-or-wiring in #455). Until #455, they are
-///   correctly-irreducible here.
-const STRUCTURALLY_UNREACHABLE: &[&str] = &["warichu", "framed", "container", "invalidRubySpan"];
+/// `warichu` / `container` are **not dead** — they are live POST-FOLD nodes
+/// (`Node::Warichu` / `Node::Container`, built in splice/render). The pre-fold
+/// `source_nodes` carry their `…Open` / `…Close` directive forms instead, which
+/// ARE covered as their own families. This walk simply predates the fold.
+const STRUCTURALLY_UNREACHABLE: &[&str] = &["warichu", "container"];
 
-/// `corpus family-coverage`: assert every one of the 45 notation families is
+/// `corpus family-coverage`: assert every one of the 43 notation families is
 /// either exercised by the golden fixtures (real works `∪` crafted render
 /// fixtures) or listed in [`STRUCTURALLY_UNREACHABLE`]. Reads only committed
 /// fixtures, so it needs no corpus.
@@ -3611,7 +3604,7 @@ fn select_works(
             family_id_by_name(name)
                 .map(|id| (name.clone(), id))
                 .ok_or_else(|| {
-                    format!("unknown family '{name}' (run `family-coverage` for the 45 names)")
+                    format!("unknown family '{name}' (run `family-coverage` for the 43 names)")
                 })
         })
         .collect::<Result<_, _>>()?;
@@ -4480,7 +4473,7 @@ mod tests {
         let mk = |label: &str, body: &str, line: u32| FileStat {
             label: label.to_owned(),
             annotation_kinds: {
-                let mut a = [0u64; 14];
+                let mut a = [0u64; 13];
                 a[0] = 1;
                 a
             },
@@ -4643,9 +4636,9 @@ mod tests {
 
     #[test]
     fn family_ids_and_names_span_the_universe() {
-        let mut node_kinds = [0u64; 26];
+        let mut node_kinds = [0u64; 25];
         node_kinds[0] = 3; // first node family present
-        let mut annotation_kinds = [0u64; 14];
+        let mut annotation_kinds = [0u64; 13];
         annotation_kinds[0] = 5; // Unknown — index 0 is NOT a family
         annotation_kinds[1] = 2; // first annotation family present
         let mut gaiji_forms = [0u64; 6];
