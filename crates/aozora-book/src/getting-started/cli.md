@@ -1,12 +1,14 @@
 # CLI Quickstart
 
-The `aozora` binary covers four document operations:
+The `aozora` binary covers six document operations:
 
 ```sh
-aozora check  FILE.txt          # lex + report every diagnostic on stderr
-aozora lint   FILE.txt          # report notation-hygiene lints (--fix rewrites)
-aozora fmt    FILE.txt          # round-trip parse ∘ to_source, print to stdout
-aozora render FILE.txt          # render to HTML on stdout
+aozora check   FILE.txt         # lex + report every diagnostic on stderr
+aozora lint    FILE.txt         # report notation-hygiene lints (--fix rewrites)
+aozora fmt     FILE.txt         # round-trip parse ∘ to_source, print to stdout
+aozora render  FILE.txt         # render to HTML on stdout
+aozora inspect nodes FILE.txt   # emit parsed data as JSON (nodes/pairs/gaiji/…)
+aozora pandoc  FILE.txt         # project to a Pandoc AST (JSON on stdout)
 ```
 
 `-` (or no path argument) reads from stdin. `--encoding sjis` (alias
@@ -51,6 +53,7 @@ aozora fmt --check src.txt
 | `0` | Success. |
 | `1` | Diagnostics emitted under `--strict`, or formatting mismatch under `--check`. |
 | `2` | Usage error (bad flag, missing file, decode error). |
+| `3` | An `Internal`-source diagnostic fired during `check` — a library bug, not bad input; please report it. |
 
 Piping into a reader that quits early — `aozora render FILE | head` — exits `0`
 quietly: the broken pipe is a success, not an error
@@ -59,24 +62,32 @@ quietly: the broken pipe is a success, not an error
 ## Diagnostics format
 
 `aozora check` prints diagnostics in
-[`miette`](https://docs.rs/miette/latest/miette/) style — a coloured source snippet
-with carets pointing at the byte range, a short message, and (where
-applicable) a help line:
+[`miette`](https://docs.rs/miette/latest/miette/) style — the stable dotted
+code and its catalogue URL, a source snippet with carets pointing at the byte
+range, a short message, a help line, and a pointer to `aozora explain`.
+Running `check` on a one-line `input.txt` whose only content is `｜青空《》`
+(an explicit ruby base with an empty `《》` reading) prints:
 
 ```text
-  × ruby reading mismatch: target spans 3 chars but ｜《》 reading is empty
-   ╭─[input.txt:42:9]
-42 │ ｜青梅《》
-   · ───┬───
-   ·    ╰── empty reading
+aozora::lex::empty_ruby_reading (https://p4suta.github.io/aozora/notation/diagnostics.html#empty-ruby-reading)
+
+  × ruby base given but reading is empty
+   ╭─[input.txt:1:1]
+ 1 │ ｜青空《》
+   · ─────┬────
+   ·      ╰── empty reading
    ╰────
-  help: provide a reading inside 《…》 or remove the ｜ marker
+  help: the `《…》` reading after the `｜` base is empty — supply a reading or
+        remove the `｜…《》` markers to keep the base as plain text
+
+help: run `aozora explain <code>` for details, e.g.
+      aozora explain empty_ruby_reading
 ```
 
-Every diagnostic carries a stable dotted code
-(`aozora::lex::empty_ruby_reading`, `aozora::lex::unresolved_gaiji`, …);
-see the [Diagnostics catalogue](../notation/diagnostics.md) for the
-full list.
+Every diagnostic carries a stable dotted code (here
+`aozora::lex::empty_ruby_reading`); run `aozora explain <code>` for the same
+help and URL, or see the [Diagnostics catalogue](../notation/diagnostics.md)
+for the full list.
 
 ## Why not a single subcommand?
 

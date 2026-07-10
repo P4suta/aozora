@@ -2963,7 +2963,7 @@ fn _unused_marker(_: OsString) {}
 // documents exhibit that single-construct fixtures miss. `select-works` grows
 // that set reproducibly: it fingerprints every corpus work by the notation
 // families it exercises, then runs a deterministic greedy weighted set-cover —
-// rare families (e.g. `lineBold`) weighted highest — over the works not already
+// rare families (e.g. `lineGothic`) weighted highest — over the works not already
 // vendored, excluding Unknown-dominated, unclean, and >500 KiB works. The value
 // of a new golden is the family *combination* it forces through `to_html()`, so
 // coverage (not proportional sampling) is the objective.
