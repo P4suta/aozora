@@ -10,6 +10,7 @@ use aozora::render::SerializeOptions;
 
 use crate::encoding::{self, Encoding};
 use crate::format_source_with;
+use crate::source;
 
 /// A formatted file: the original decoded source and the canonical form.
 #[derive(Debug)]
@@ -42,7 +43,7 @@ pub fn read_and_format(
     opts: SerializeOptions,
     encoding: Encoding,
 ) -> Result<Formatted> {
-    let raw = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let raw = source::read_file(path)?;
     let old =
         encoding::decode(&raw, encoding).with_context(|| format!("decoding {}", path.display()))?;
     let new = format_guarded(&old, opts)?;

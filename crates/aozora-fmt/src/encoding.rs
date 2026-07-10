@@ -11,6 +11,8 @@ use std::borrow::Cow;
 use anyhow::{Context, Result};
 use clap::ValueEnum;
 
+use crate::source;
+
 /// How to decode source bytes into text.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -29,22 +31,29 @@ pub enum Encoding {
 
 /// Decode `raw` under `encoding` into an owned `String`.
 ///
+/// The decoded text is checked against the parser core's `u32` span limit:
+/// Shift_JIS → UTF-8 can expand past it even when the raw bytes fit, so this is
+/// the choke point every read path shares.
+///
 /// # Errors
 ///
 /// Returns an error when the bytes do not decode under the chosen encoding
 /// (invalid UTF-8 for [`Encoding::Utf8`], a Shift_JIS decode failure for
-/// [`Encoding::Sjis`], or neither for [`Encoding::Auto`]).
+/// [`Encoding::Sjis`], or neither for [`Encoding::Auto`]), or when the decoded
+/// text exceeds [`MAX_SOURCE_BYTES`](crate::MAX_SOURCE_BYTES).
 pub fn decode(raw: &[u8], encoding: Encoding) -> Result<String> {
-    match encoding {
+    let text = match encoding {
         Encoding::Auto => aozora_encoding::decode_auto(raw)
             .map(Cow::into_owned)
-            .map_err(|e| anyhow::anyhow!("input is neither valid UTF-8 nor Shift_JIS: {e}")),
+            .map_err(|e| anyhow::anyhow!("input is neither valid UTF-8 nor Shift_JIS: {e}"))?,
         Encoding::Utf8 => String::from_utf8(raw.to_vec())
             .map_err(|e| e.utf8_error())
-            .context("input is not valid UTF-8 (use --encoding sjis for Aozora Bunko files)"),
+            .context("input is not valid UTF-8 (use --encoding sjis for Aozora Bunko files)")?,
         Encoding::Sjis => aozora_encoding::decode_sjis(raw)
-            .map_err(|e| anyhow::anyhow!("Shift_JIS decode failed: {e}")),
-    }
+            .map_err(|e| anyhow::anyhow!("Shift_JIS decode failed: {e}"))?,
+    };
+    source::ensure_within_span_limit(text.len() as u64)?;
+    Ok(text)
 }
 
 #[cfg(test)]
