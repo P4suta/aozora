@@ -69,6 +69,24 @@ pub fn format_source_with(source: &str, opts: SerializeOptions) -> String {
     Document::new(source).parse().to_source_with(opts)
 }
 
+/// Does `err`, or any error in its `source` chain, carry a broken-pipe
+/// [`io::Error`]?
+///
+/// When a downstream reader closes the pipe early — the canonical
+/// `aozora render big.txt | head` — the next write to stdout fails with
+/// [`io::ErrorKind::BrokenPipe`]. Both CLI frontends treat that as a normal,
+/// silent success (exit 0) rather than an error, matching `ripgrep` and `bat`.
+/// The error may be wrapped by `anyhow` context, so the whole chain is
+/// searched. See ADR-0029.
+#[must_use]
+pub fn is_broken_pipe(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<io::Error>()
+            .is_some_and(|io_err| io_err.kind() == io::ErrorKind::BrokenPipe)
+    })
+}
+
 /// Constant-per-run engine context: how to decode inputs and the program name
 /// to prefix diagnostics with (`aozora-fmt` for the standalone binary,
 /// `aozora fmt` for the `aozora` CLI subcommand). Threaded through the engine
@@ -118,6 +136,9 @@ pub fn run_engine(
     };
     match dispatch(args, ctx) {
         Ok(outcome) => outcome.exit_code(),
+        // A reader that closed our stdout pipe early (`aozora fmt … | head`) is
+        // a normal, silent success, not an error — see ADR-0029.
+        Err(err) if is_broken_pipe(&err) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("{program}: {err:#}");
             ExitCode::from(2)
@@ -148,7 +169,7 @@ fn run_stdin(args: &FmtArgs, ctx: Ctx, mode: &Mode) -> Result<Outcome> {
         Mode::Write { .. } => bail!("--write requires a file path, not stdin"),
         Mode::List => {
             if old != new {
-                println!("<stdin>");
+                writeln!(io::stdout(), "<stdin>")?;
             }
             Ok(Outcome::Ok)
         }
@@ -193,9 +214,9 @@ fn run_files(args: &FmtArgs, ctx: Ctx, mode: &Mode, resolved: &Resolved) -> Resu
     match mode {
         Mode::Stdout => run_stdout(ctx, resolved, opts),
         Mode::Write { list } => {
-            Ok(discovery_base(ctx, resolved).max(run_write(ctx, &resolved.files, *list, opts)))
+            Ok(discovery_base(ctx, resolved).max(run_write(ctx, &resolved.files, *list, opts)?))
         }
-        Mode::List => Ok(discovery_base(ctx, resolved).max(run_list(ctx, &resolved.files, opts))),
+        Mode::List => Ok(discovery_base(ctx, resolved).max(run_list(ctx, &resolved.files, opts)?)),
         Mode::Check(CheckReport::Json) => report::run_check_json(ctx.encoding, resolved, opts),
         Mode::Check(CheckReport::Diff) => {
             let base = discovery_base(ctx, resolved);
@@ -225,22 +246,22 @@ fn run_stdout(ctx: Ctx, resolved: &Resolved, opts: SerializeOptions) -> Result<O
     }
 }
 
-fn run_write(ctx: Ctx, files: &[PathBuf], list: bool, opts: SerializeOptions) -> Outcome {
+fn run_write(ctx: Ctx, files: &[PathBuf], list: bool, opts: SerializeOptions) -> Result<Outcome> {
     fold_files(ctx, files, |path| {
         let fmt = read_and_format(path, opts, ctx.encoding)?;
         write_back(path, &fmt, opts)?;
         if list && fmt.changed() {
-            println!("{}", path.display());
+            writeln!(io::stdout(), "{}", path.display())?;
         }
         Ok(Outcome::Ok)
     })
 }
 
-fn run_list(ctx: Ctx, files: &[PathBuf], opts: SerializeOptions) -> Outcome {
+fn run_list(ctx: Ctx, files: &[PathBuf], opts: SerializeOptions) -> Result<Outcome> {
     fold_files(ctx, files, |path| {
         let fmt = read_and_format(path, opts, ctx.encoding)?;
         if fmt.changed() {
-            println!("{}", path.display());
+            writeln!(io::stdout(), "{}", path.display())?;
         }
         // gofmt -l is informational: a clean exit even when files are listed.
         Ok(Outcome::Ok)
@@ -249,7 +270,7 @@ fn run_list(ctx: Ctx, files: &[PathBuf], opts: SerializeOptions) -> Outcome {
 
 fn run_check(ctx: Ctx, files: &[PathBuf], diff: bool, opts: SerializeOptions) -> Result<Outcome> {
     if !diff {
-        return Ok(fold_files(ctx, files, |path| {
+        return fold_files(ctx, files, |path| {
             let fmt = read_and_format(path, opts, ctx.encoding)?;
             Ok(if fmt.changed() {
                 eprintln!("{}: {} would be reformatted", ctx.program, path.display());
@@ -257,7 +278,7 @@ fn run_check(ctx: Ctx, files: &[PathBuf], diff: bool, opts: SerializeOptions) ->
             } else {
                 Outcome::Ok
             })
-        }));
+        });
     }
     let mut out = auto_stdout(ctx.color);
     let outcome = fold_files(ctx, files, |path| {
@@ -268,7 +289,7 @@ fn run_check(ctx: Ctx, files: &[PathBuf], diff: bool, opts: SerializeOptions) ->
         } else {
             Outcome::Ok
         })
-    });
+    })?;
     out.flush()?;
     Ok(outcome)
 }
@@ -276,19 +297,28 @@ fn run_check(ctx: Ctx, files: &[PathBuf], diff: bool, opts: SerializeOptions) ->
 /// Run `per_file` over every file, folding outcomes and turning a per-file
 /// error into [`Outcome::Error`] (reported to stderr) without aborting the
 /// rest of the run.
-fn fold_files<F>(ctx: Ctx, files: &[PathBuf], mut per_file: F) -> Outcome
+///
+/// A broken output pipe is the one exception: it is terminal for the whole run
+/// (every later stdout write would fail too), so it propagates as `Err` for
+/// [`run_engine`] to turn into a quiet exit 0 rather than being logged per-file
+/// and downgraded to [`Outcome::Error`] (exit 2). See ADR-0029.
+fn fold_files<F>(ctx: Ctx, files: &[PathBuf], mut per_file: F) -> Result<Outcome>
 where
     F: FnMut(&Path) -> Result<Outcome>,
 {
     let mut outcome = Outcome::Ok;
     for path in files {
-        let one = per_file(path).unwrap_or_else(|err| {
-            eprintln!("{}: {err:#}", ctx.program);
-            Outcome::Error
-        });
+        let one = match per_file(path) {
+            Ok(one) => one,
+            Err(err) if is_broken_pipe(&err) => return Err(err),
+            Err(err) => {
+                eprintln!("{}: {err:#}", ctx.program);
+                Outcome::Error
+            }
+        };
         outcome = outcome.max(one);
     }
-    outcome
+    Ok(outcome)
 }
 
 /// Report accumulated discovery errors and seed the run outcome with them.
@@ -309,6 +339,23 @@ mod tests {
     #[test]
     fn empty_input_formats_to_empty() {
         assert_eq!(format_source(""), "");
+    }
+
+    #[test]
+    fn is_broken_pipe_finds_epipe_through_context() {
+        // The io::Error is wrapped in an anyhow context, mirroring the CLI's
+        // `write_all(..).context("failed to write to stdout")?` path.
+        let err = anyhow::Error::new(io::Error::from(io::ErrorKind::BrokenPipe))
+            .context("failed to write to stdout");
+        assert!(is_broken_pipe(&err));
+    }
+
+    #[test]
+    fn is_broken_pipe_rejects_other_errors() {
+        let other = anyhow::Error::new(io::Error::from(io::ErrorKind::PermissionDenied))
+            .context("failed to write to stdout");
+        assert!(!is_broken_pipe(&other));
+        assert!(!is_broken_pipe(&anyhow::anyhow!("plain non-io error")));
     }
 
     #[test]

@@ -52,6 +52,10 @@ aozora fmt --check src.txt
 | `1` | Diagnostics emitted under `--strict`, or formatting mismatch under `--check`. |
 | `2` | Usage error (bad flag, missing file, decode error). |
 
+Piping into a reader that quits early — `aozora render FILE | head` — exits `0`
+quietly: the broken pipe is a success, not an error
+([ADR-0029](https://github.com/P4suta/aozora/blob/main/docs/adr/0029-broken-pipe-exit-semantics.md)).
+
 ## Diagnostics format
 
 `aozora check` prints diagnostics in
