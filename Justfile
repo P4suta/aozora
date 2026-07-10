@@ -644,9 +644,12 @@ throughput:
 # nightly-only sub-crates outside the main workspace (so the workspace
 # build doesn't pull libfuzzer-sys). Targets currently registered:
 #
-#   aozora-pipeline / lex_into_arena
+#   aozora-pipeline / lex
+#   aozora-pipeline / classify
+#   aozora-pipeline / ffi_no_abort
 #   aozora-render   / render_html
 #   aozora-render   / serialize_round_trip
+#   aozora-render   / catalogue_normalization
 #   aozora-encoding / decode_sjis
 #
 # Workflow:
@@ -665,37 +668,53 @@ throughput:
 #
 # See `docs/fuzz-workflow.md` for the long-form description.
 
-# Run an arbitrary fuzz target with arbitrary args (escape hatch).
+# cargo-fuzz is binstalled as a musl-static binary (Dockerfile), so its
+# built-in default `--target` is its own musl triple — for which no std ships
+# in the nightly image and with which ASan (dynamic-only on Linux) is
+# incompatible, so every sanitized build fails before a single fuzz iteration.
+# Pin the harnesses to the host gnu triple, whose std the nightly toolchain
+# does carry, so `just fuzz-*` actually builds and runs in the canonical image.
+_fuzz_target := "x86_64-unknown-linux-gnu"
+
+# Run an arbitrary fuzz target with arbitrary args (escape hatch — the caller
+# supplies TARGET, the `--target` triple (see `_fuzz_target` above), and any
+# libFuzzer args). The gated recipes below inject `--target` for you.
 fuzz CRATE *ARGS:
     {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run {{ARGS}}'
 
 # 60-second smoke fuzz — fits inside a development inner loop.
 fuzz-quick CRATE TARGET:
-    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run {{TARGET}} -- -max_total_time=60'
+    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=60'
 
 # 5-minute deep fuzz — the gate to clear before tagging a release.
 fuzz-deep CRATE TARGET:
-    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run {{TARGET}} -- -max_total_time=300'
+    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=300'
 
 # 15-minute marathon fuzz — the strongest single-target soak we run by
 # hand. Reach for this after a clean fuzz-deep cycle when you want to
 # push the corpus another order of magnitude.
 fuzz-marathon CRATE TARGET:
-    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run {{TARGET}} -- -max_total_time=900'
+    {{_dev}} bash -c 'cd crates/{{CRATE}}/fuzz && cargo +nightly fuzz run --target {{_fuzz_target}} {{TARGET}} -- -max_total_time=900'
 
 # Run every registered fuzz target in turn for 60 s each.
 fuzz-all-quick:
-    just fuzz-quick aozora-pipeline lex_into_arena
+    just fuzz-quick aozora-pipeline lex
+    just fuzz-quick aozora-pipeline classify
+    just fuzz-quick aozora-pipeline ffi_no_abort
     just fuzz-quick aozora-render render_html
     just fuzz-quick aozora-render serialize_round_trip
+    just fuzz-quick aozora-render catalogue_normalization
     just fuzz-quick aozora-encoding decode_sjis
 
 # Run every registered fuzz target in turn for 5 min each — the
 # release pre-flight gate.
 fuzz-all-deep:
-    just fuzz-deep aozora-pipeline lex_into_arena
+    just fuzz-deep aozora-pipeline lex
+    just fuzz-deep aozora-pipeline classify
+    just fuzz-deep aozora-pipeline ffi_no_abort
     just fuzz-deep aozora-render render_html
     just fuzz-deep aozora-render serialize_round_trip
+    just fuzz-deep aozora-render catalogue_normalization
     just fuzz-deep aozora-encoding decode_sjis
 
 # Reproduce every artifact under crates/<crate>/fuzz/artifacts/<target>/
@@ -719,7 +738,7 @@ fuzz-triage CRATE TARGET:
         # invoking it), so strip the prefix accordingly.
         rel="${art#crates/${crate}/fuzz/}"
         echo "==> ${art}"
-        out=$({{_dev}} bash -c "cd crates/${crate}/fuzz && cargo +nightly fuzz run ${target} ${rel} 2>&1" || true)
+        out=$({{_dev}} bash -c "cd crates/${crate}/fuzz && cargo +nightly fuzz run --target {{_fuzz_target}} ${target} ${rel} 2>&1" || true)
         # Slice out the panic block: from `thread … panicked at`
         # through the line just before the stack trace begins. That's
         # exactly where the fuzz target's panic message prints its
@@ -771,9 +790,12 @@ fuzz-status:
     #!/usr/bin/env bash
     set -euo pipefail
     targets=(
-        "aozora-pipeline lex_into_arena"
+        "aozora-pipeline lex"
+        "aozora-pipeline classify"
+        "aozora-pipeline ffi_no_abort"
         "aozora-render render_html"
         "aozora-render serialize_round_trip"
+        "aozora-render catalogue_normalization"
         "aozora-encoding decode_sjis"
     )
     printf "%-22s  %-22s  %-10s  %-12s\n" crate target pending_crashes pinned_regressions
@@ -1272,9 +1294,18 @@ audit:
 shear:
     {{_dev}} cargo shear
 
-# Semver break detection (runs against published baseline once crates are on crates.io)
+# Semver break detection against the crates.io baseline. cargo-semver-checks
+# hard-aborts the whole run on the first publishable crate with no registry
+# baseline, so exclude the crates that have never been published — until their
+# first crates.io release, at which point they drop off this list. (Bin-only
+# and `publish = false` members are skipped automatically; a real break makes
+# the run exit non-zero, which is expected on a breaking release.)
 semver:
-    {{_dev}} cargo semver-checks check-release --workspace
+    {{_dev}} cargo semver-checks check-release --workspace \
+        --exclude aozora-buildstamp \
+        --exclude aozora-fmt \
+        --exclude aozora-lsp \
+        --exclude tree-sitter-aozora
 
 # --- dependency follow-up (local-only, no remote CI) -------------------------
 # Policy: workspace deps track @latest. The mechanism is purely local —
