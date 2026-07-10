@@ -22,6 +22,13 @@ before approving the Release PR):
   seven targets (pipeline `lex` / `classify` / `ffi_no_abort`, render
   `render_html` / `serialize_round_trip` / `catalogue_normalization`,
   encoding `decode_sjis`) reports zero crash / leak / oom artifacts.
+- [ ] The `cross-os` workflow is green from a manual dispatch on the
+  release commit (**Actions → cross-os → Run workflow**). It runs the
+  workspace test suite natively on macOS and Windows — the platforms
+  `release.yml` ships binaries for but only *builds* on — so a Windows-only
+  path / CRLF regression cannot slip into a release. Local `just` cannot
+  reproduce these runners (Docker-only policy's documented exception), so
+  this green run is CI-authoritative.
 
 ```text
 1. Land changes on main with Conventional Commits (feat / fix / perf / …).
