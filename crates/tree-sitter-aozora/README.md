@@ -30,14 +30,25 @@ See `grammar.js` for the full disambiguation rules.
 
 ## Build
 
-`parser.c` is committed (regenerated via `tree-sitter generate`
-from `grammar.js`). Downstream consumers only need a C
-toolchain — `node` and the tree-sitter CLI are required only to
-regenerate.
+`grammar.js` is the source of truth. `tree-sitter generate` compiles it into
+the committed `src/parser.c` (+ `src/grammar.json` / `src/node-types.json`),
+and `build.rs` turns `parser.c` into the static parser the Rust binding
+links against — so downstream consumers only need a C toolchain, not the
+tree-sitter CLI.
+
+Regeneration is drift-gated: `xtask conformance grammar --check` (run by
+`just drift-gate` in CI) fails if the committed artefacts have drifted from a
+fresh generate of `grammar.js`. The dev image pins the tree-sitter CLI to the
+same version as the `tree-sitter` runtime crate, and the CLI embeds its own JS
+engine to evaluate `grammar.js`, so regeneration needs no `node`.
 
 ```sh
-# Regenerate parser.c from grammar.js (writes src/parser.c)
-npx tree-sitter generate
+# Regenerate the committed artefacts from grammar.js (writes src/parser.c,
+# src/grammar.json, src/node-types.json), then commit the diff.
+just grammar
+
+# Verify the committed artefacts match a fresh generate (the drift gate).
+just grammar-check
 
 # Test the grammar (Rust integration tests in bindings/rust/lib.rs)
 cargo test -p tree-sitter-aozora
