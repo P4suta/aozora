@@ -35,6 +35,7 @@ back.
 | [0026](./adr/0026-notation-hygiene-restratification.md)                              | Notation-hygiene re-stratification: Tier1 purity and render-only Tier2 | accepted |
 | [0027](./adr/0027-core-parser-notation-purification.md)                              | Core parser notation purification: decline non-canonical forms         | accepted |
 | [0028](./adr/0028-remove-dead-framed-and-invalidrubyspan-core-surfaces.md)           | Remove dead Framed and InvalidRubySpan core surfaces                   | accepted |
+| [0029](./adr/0029-broken-pipe-exit-semantics.md)                                     | Broken-pipe exit semantics                                             | accepted |
 
 ## Authoring a new ADR
 

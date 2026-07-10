@@ -279,6 +279,10 @@ aozora explain unresolved_gaiji              # short form of the code
 | `2` | Usage error (bad flag, unreadable file, decode failure). |
 | `3` | An `Internal`-source diagnostic fired during `check` — a library bug. |
 
+A downstream reader that closes stdout early — `aozora render FILE | head` — is
+a normal success: the resulting broken pipe is swallowed and the command exits
+`0` silently rather than reporting an error ([ADR-0029](https://github.com/P4suta/aozora/blob/main/docs/adr/0029-broken-pipe-exit-semantics.md)).
+
 ## Environment
 
 | Variable | Effect |

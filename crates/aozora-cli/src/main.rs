@@ -399,6 +399,9 @@ fn main() -> ExitCode {
 
     match result {
         Ok(code) => code,
+        // A reader that closed our stdout pipe early (`aozora render … | head`)
+        // is a normal, silent success, not an error — see ADR-0029.
+        Err(err) if aozora_fmt::is_broken_pipe(&err) => ExitCode::SUCCESS,
         // Input past the parser core's u32 span limit is a usage error (2), not
         // the generic failure (1): the graceful rejection the py/wasm bindings
         // already give, instead of the lexer assert's SIGABRT.

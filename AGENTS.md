@@ -74,6 +74,10 @@ dependent — the only non-deterministic output surface).
 | `2` | Usage error (bad flag, unreadable file, decode failure). |
 | `3` | An `Internal`-source diagnostic fired — a library bug, distinct from bad input. |
 
+A reader that closes stdout early — `aozora render FILE | head` — is a normal
+success: the broken pipe is swallowed and the command exits `0` with no stderr
+(ADR-0029), so it never masquerades as a `1`/`2` failure in a pipeline.
+
 Encoding is auto-detected (UTF-8 → else Shift_JIS); force with
 `-E {utf8,sjis}`. Every document subcommand accepts `-` for stdin.
 
