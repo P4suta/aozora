@@ -14,12 +14,12 @@
 
 use core::fmt;
 
-use aozora_pipeline::{LexOutput, NodeRef, SourceNode, lex};
+use aozora_pipeline::{LexOutput, SourceNode, lex};
 use aozora_render::{
     DirectiveNormalization, RenderOptions, SerializeOptions, render_html, render_html_normalized,
     serialize, serialize_with,
 };
-use aozora_spec::{Diagnostic, NormalizedOffset, PairLink, SourceOffset};
+use aozora_spec::{Diagnostic, PairLink, SourceOffset};
 use aozora_syntax::ast::ContainerPair;
 
 /// Diagnostic policy applied at parse time.
@@ -347,21 +347,6 @@ impl<'a> Tree<'a> {
         self.inner().node_at_source(src_off)
     }
 
-    /// Find the registry entry at `normalized_off` — a byte offset into
-    /// the normalized PUA-rewritten text.
-    ///
-    /// The normalized coordinate space is a low-level implementation
-    /// detail with no external consumer. Source-coordinate lookups should
-    /// use [`Self::node_at_source`]; a consumer that genuinely needs a
-    /// normalized-offset lookup (e.g. the afm integration) should reach
-    /// the `registry` through [`Self::lex_output`] directly.
-    #[doc(hidden)]
-    #[deprecated(note = "use lex_output().registry.node_at() for normalized-offset lookups")]
-    #[must_use]
-    pub fn node_at_normalized(&self, normalized_off: NormalizedOffset) -> Option<NodeRef> {
-        self.inner().registry.node_at(normalized_off)
-    }
-
     /// Borrow the source-keyed side table directly. Sorted by
     /// `source_span.start`; useful for editor surfaces that want to
     /// iterate every classified node (semantic tokens, document
@@ -408,7 +393,7 @@ impl<'a> Tree<'a> {
     /// through container bodies use the open/close offsets to slice
     /// the normalized text.
     ///
-    /// Coordinates are [`NormalizedOffset`] — they index the
+    /// Coordinates are [`aozora_spec::NormalizedOffset`] — they index the
     /// PUA-rewritten text, not the original source.
     #[must_use]
     pub fn container_pairs(&self) -> &[ContainerPair] {
@@ -507,6 +492,7 @@ impl<'a> Tree<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aozora_pipeline::NodeRef;
 
     #[test]
     fn document_borrows_source() {
