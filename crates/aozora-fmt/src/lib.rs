@@ -11,7 +11,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -24,6 +24,7 @@ mod discover;
 mod encoding;
 mod process;
 mod report;
+mod source;
 
 pub use cli::Cli;
 
@@ -35,6 +36,7 @@ pub use discover::{Input, Resolved, resolve};
 pub use encoding::{Encoding, decode};
 pub use process::{Formatted, Panicked, guard, read_and_format, write_back};
 pub use report::auto_stdout;
+pub use source::{MAX_SOURCE_BYTES, OversizeInput, is_oversize_input, read_file, read_stdin};
 
 /// Compiles and runs the fenced Rust example in this crate's `README.md` as a
 /// doctest, so the documented public API (`format_source`) can't silently
@@ -156,8 +158,7 @@ fn dispatch(args: &FmtArgs, ctx: Ctx) -> Result<Outcome> {
 
 /// Single-source path: read stdin once, then apply the mode.
 fn run_stdin(args: &FmtArgs, ctx: Ctx, mode: &Mode) -> Result<Outcome> {
-    let mut raw = Vec::new();
-    io::stdin().read_to_end(&mut raw).context("reading stdin")?;
+    let raw = read_stdin()?;
     let old = decode(&raw, ctx.encoding).context("decoding stdin")?;
     let new = process::format_guarded(&old, args.serialize_options())?;
 

@@ -61,8 +61,7 @@ mod watch;
 
 use std::env;
 use std::ffi::OsString;
-use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode, Stdio};
 
@@ -403,6 +402,13 @@ fn main() -> ExitCode {
         // A reader that closed our stdout pipe early (`aozora render … | head`)
         // is a normal, silent success, not an error — see ADR-0029.
         Err(err) if aozora_fmt::is_broken_pipe(&err) => ExitCode::SUCCESS,
+        // Input past the parser core's u32 span limit is a usage error (2), not
+        // the generic failure (1): the graceful rejection the py/wasm bindings
+        // already give, instead of the lexer assert's SIGABRT.
+        Err(err) if aozora_fmt::is_oversize_input(&err) => {
+            let _drop = writeln!(io::stderr(), "aozora: {err:#}");
+            ExitCode::from(2)
+        }
         Err(err) => {
             let _drop = writeln!(io::stderr(), "aozora: {err:#}");
             ExitCode::FAILURE
@@ -773,18 +779,16 @@ fn run_pandoc_once(args: &PandocArgs) -> Result<ExitCode> {
 }
 
 fn read_source(path: &Path, encoding: Encoding) -> Result<String> {
+    // The formatter crate owns both the guarded readers and the decoder, so
+    // `check`/`render`/`inspect`/`pandoc` and both `fmt` frontends read and
+    // resolve bytes identically — including the oversize-input rejection
+    // (before the read for files, mid-read for stdin, and after decode for
+    // Shift_JIS → UTF-8 expansion).
     let raw = if path.as_os_str() == "-" {
-        let mut buf = Vec::new();
-        io::stdin()
-            .read_to_end(&mut buf)
-            .context("failed to read from stdin")?;
-        buf
+        aozora_fmt::read_stdin()?
     } else {
-        fs::read(path).with_context(|| format!("failed to read {}", display_path(path)))?
+        aozora_fmt::read_file(path)?
     };
-
-    // The formatter crate owns the decoder, so `check`/`render`/`inspect`/
-    // `pandoc` and both `fmt` frontends resolve bytes identically.
     aozora_fmt::decode(&raw, encoding)
 }
 

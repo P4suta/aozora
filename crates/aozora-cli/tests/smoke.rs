@@ -16,7 +16,7 @@
 //! be a step up if the suite grows; for now `Command` reads cleanly.
 
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::process::{Command, ExitStatus, Stdio};
 
 use tempfile::NamedTempFile;
@@ -46,12 +46,19 @@ fn run(args: &[&str], stdin: Option<&str>) -> (ExitStatus, String, String) {
     }
     let mut child = cmd.spawn().expect("spawn aozora");
     if let Some(s) = stdin {
-        child
+        // A command may legitimately exit before reading stdin — `lint --fix -`
+        // rejects a stdin path up front. Its read end then closes and this write
+        // races to a BrokenPipe; that is expected, not a test failure.
+        match child
             .stdin
             .as_mut()
             .expect("piped stdin")
             .write_all(s.as_bytes())
-            .expect("write stdin");
+        {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {}
+            Err(e) => panic!("write stdin: {e}"),
+        }
     }
     let output = child.wait_with_output().expect("wait");
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
