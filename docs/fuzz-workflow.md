@@ -1,12 +1,15 @@
 # Fuzz workflow
 
-Three cargo-fuzz harnesses live in this workspace:
+Seven cargo-fuzz harnesses live in this workspace:
 
 | Crate | Target | What it asserts |
 |-------|--------|-----------------|
 | `aozora-pipeline` | `lex` | `lex` is panic-free, normalized text stays valid UTF-8, every diagnostic span is in-bounds |
+| `aozora-pipeline` | `classify` | the `tokenize → pair → classify` chain panic-frees, tiles every source byte with char-boundary spans, and keeps diagnostic spans non-inverted |
+| `aozora-pipeline` | `ffi_no_abort` | the `extern "C"` FFI surface never aborts (`panic = "abort"`), returns a well-formed status/handle, and its HTML carries no PUA sentinel |
 | `aozora-render` | `render_html` | `lex` → `render_to_string` is panic-free and never leaks PUA sentinels (U+E001..U+E004) into the rendered HTML |
 | `aozora-render` | `serialize_round_trip` | I3 fixed-point invariant: `serialize(serialize(x))` byte-equals `serialize(x)` |
+| `aozora-render` | `catalogue_normalization` | `serialize_with` under `Canonical` / `Degraded` panic-frees, leaves the default path byte-identical, and is a second-pass fixed point |
 | `aozora-encoding` | `decode_sjis` | `decode_sjis` is panic-free on adversarial bytes and returns valid UTF-8 on success |
 
 Each crate keeps its harness binaries under `crates/<crate>/fuzz/`
@@ -26,8 +29,8 @@ just fuzz-deep aozora-render render_html
 just fuzz-marathon aozora-render serialize_round_trip
 
 # Sweep every registered target in turn.
-just fuzz-all-quick      # 60 s × 4 targets
-just fuzz-all-deep       # 5 min × 4 targets
+just fuzz-all-quick      # 60 s × 7 targets
+just fuzz-all-deep       # 5 min × 7 targets
 
 # At-a-glance health: pending crashes vs pinned regressions per target.
 just fuzz-status

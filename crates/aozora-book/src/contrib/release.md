@@ -15,6 +15,14 @@ publishers. **Humans never hand-edit a version or hand-push a release tag.**
 
 ## Cutting a release
 
+Pre-flight (run locally before landing the release-triggering changes, or
+before approving the Release PR):
+
+- [ ] `just fuzz-all-deep` is green — the 5-minute cargo-fuzz soak of all
+  seven targets (pipeline `lex` / `classify` / `ffi_no_abort`, render
+  `render_html` / `serialize_round_trip` / `catalogue_normalization`,
+  encoding `decode_sjis`) reports zero crash / leak / oom artifacts.
+
 ```text
 1. Land changes on main with Conventional Commits (feat / fix / perf / …).
    release-plz opens or updates the "Release PR" automatically.

@@ -279,6 +279,10 @@ pub(crate) fn escape_text_chunk<W: Write>(chunk: &str, out: &mut W) -> fmt::Resu
             // Hex form `&#x27;` matches `escape_text` so the
             // streaming and per-node renderers produce byte-identical output.
             b'\'' => "&#x27;",
+            // INVARIANT(escape): `pos` only ever indexes one of the five needle
+            // bytes — established by escape_text_chunk's memchr3/memchr scans,
+            // which yield positions of exactly `< > & " '`; exercised by the
+            // `render_html` fuzz target.
             _ => unreachable!("escape iterator yielded non-needle byte"),
         };
         out.write_str(entity)?;
