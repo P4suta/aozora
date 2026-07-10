@@ -402,6 +402,100 @@ fn render_accepts_sjis_input_with_explicit_encoding_flag() {
     );
 }
 
+// ---------------------------------------------------------------------
+// Broken pipe (EPIPE) — `aozora … | head` must exit 0 quietly (ADR-0029)
+// ---------------------------------------------------------------------
+//
+// Unix-only: closing a pipe's read end early is POSIX EPIPE semantics, and
+// Rust's runtime resets SIGPIPE to SIG_IGN so the write surfaces as an
+// `io::ErrorKind::BrokenPipe` we can detect rather than a signal kill.
+
+/// A source whose render / inspect / fmt output each far exceed the OS pipe
+/// buffer (~64 KiB). A ruby line renders to `<ruby>…<rt>…</rt></ruby>`,
+/// contributes a node, and serializes back to canonical text, so all three
+/// output channels grow past the buffer at this repeat count — guaranteeing a
+/// downstream reader that leaves after one line breaks the pipe *mid-write*.
+#[cfg(unix)]
+fn oversized_source() -> String {
+    "｜青梅《おうめ》\n".repeat(50_000)
+}
+
+/// Spawn `aozora ARGS BIGFILE`, read a token amount of stdout, then drop the
+/// read end while the child is still writing. Returns the child's
+/// `(status, stderr)`; a broken pipe must land as a quiet success.
+#[cfg(unix)]
+fn broken_pipe_run(args: &[&str], input_path: &str) -> (ExitStatus, String) {
+    use std::io::Read;
+
+    let mut child = Command::new(BIN)
+        .args(args)
+        .arg(input_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn aozora");
+
+    // Read one small chunk, then drop the read end of the pipe. Output is
+    // > 1 MiB against a ~64 KiB pipe buffer, so the child cannot have finished:
+    // its next stdout write gets EPIPE.
+    {
+        let mut stdout = child.stdout.take().expect("piped stdout");
+        let mut buf = [0u8; 64];
+        // Ignore the byte count (and a racy read error): consuming any prefix
+        // is enough — dropping `stdout` next closes the read end of the pipe.
+        let _n = stdout.read(&mut buf);
+    }
+
+    let output = child.wait_with_output().expect("wait");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    (output.status, stderr)
+}
+
+#[cfg(unix)]
+#[test]
+fn render_exits_zero_and_silent_on_broken_pipe() {
+    let f = write_temp(&oversized_source());
+    let (status, stderr) = broken_pipe_run(&["render"], f.path().to_str().unwrap());
+    assert!(
+        status.success(),
+        "render into a closed pipe must exit 0: status={status:?} stderr={stderr:?}"
+    );
+    assert!(
+        stderr.is_empty(),
+        "a broken pipe must stay silent on stderr: {stderr:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn inspect_exits_zero_and_silent_on_broken_pipe() {
+    let f = write_temp(&oversized_source());
+    let (status, stderr) = broken_pipe_run(&["inspect", "nodes"], f.path().to_str().unwrap());
+    assert!(
+        status.success(),
+        "inspect into a closed pipe must exit 0: status={status:?} stderr={stderr:?}"
+    );
+    assert!(
+        stderr.is_empty(),
+        "a broken pipe must stay silent on stderr: {stderr:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn fmt_exits_zero_and_silent_on_broken_pipe() {
+    let f = write_temp(&oversized_source());
+    let (status, stderr) = broken_pipe_run(&["fmt"], f.path().to_str().unwrap());
+    assert!(
+        status.success(),
+        "fmt into a closed pipe must exit 0: status={status:?} stderr={stderr:?}"
+    );
+    assert!(
+        stderr.is_empty(),
+        "a broken pipe must stay silent on stderr: {stderr:?}"
+    );
+}
+
 #[test]
 fn render_auto_detects_sjis_without_encoding_flag() {
     // The default encoding is `auto`: a raw SJIS file renders correctly

@@ -400,6 +400,9 @@ fn main() -> ExitCode {
 
     match result {
         Ok(code) => code,
+        // A reader that closed our stdout pipe early (`aozora render … | head`)
+        // is a normal, silent success, not an error — see ADR-0029.
+        Err(err) if aozora_fmt::is_broken_pipe(&err) => ExitCode::SUCCESS,
         Err(err) => {
             let _drop = writeln!(io::stderr(), "aozora: {err:#}");
             ExitCode::FAILURE
