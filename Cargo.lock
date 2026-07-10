@@ -187,6 +187,7 @@ dependencies = [
  "anyhow",
  "aozora",
  "aozora-buildstamp",
+ "aozora-conformance",
  "aozora-fmt",
  "aozora-pandoc",
  "clap",
@@ -263,6 +264,7 @@ name = "aozora-ffi"
 version = "0.4.1"
 dependencies = [
  "aozora",
+ "aozora-conformance",
  "cbindgen",
 ]
 

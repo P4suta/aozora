@@ -1453,8 +1453,26 @@ smoke-go: extism-build
 # builds the abi3 wheel, installs it, then runs mypy --strict + pytest.
 # Kept out of `just ci` (the dev image can't run it); mirrored by the
 # ci.yml `python-wheel` job. Knobs: AOZORA_PY_PYTHON / AOZORA_PY_VENV.
+#
+# The cross-surface parity gate's Python channel (`tests/test_fixture_parity.py`)
+# rides on this pytest run and its `python-wheel` CI mirror — a DOCUMENTED
+# `ci-parallel` exception: the dev image ships no Python interpreter, so
+# there is no in-container lane for it (same rationale as smoke-ffi).
 smoke-py:
     bash scripts/smoke-py.sh
+
+# Cross-surface parity gate — wasm (Node) channel. Builds the wasm-pack
+# `--target nodejs` package and walks every render fixture through it,
+# asserting each surface (html / serialize / diagnostics / nodes / pairs /
+# container_pairs) is byte-identical to the committed golden — the same
+# golden the in-process `render_gate` pins. The `--target web` pkg the
+# playground consumes is a separate out-dir, so this leaves it untouched.
+# Wired into `ci-parallel` (foreground tail, right after `extism-build`)
+# and the CI `wasm-build` job (host mirror: two raw steps). The sibling
+# CLI / FFI / Python / Go walkers cover the other channels.
+parity-wasm:
+    {{_dev}} bash -euc 'wasm-pack build --target nodejs --release crates/aozora-wasm --out-dir pkg-nodejs \
+        && node crates/aozora-wasm/tests/js/parity.mjs crates/aozora-wasm/pkg-nodejs'
 
 # --- changelog ---------------------------------------------------------------
 
@@ -1833,7 +1851,7 @@ ci-parallel:
         else
             echo ":: prop-deep skipped (SKIP_TAGS=deep or AOZORA_CI_FAST: no code change)"
         fi
-        for gate in shear test-doc test-doc-all book-test extism-build smoke-go doc corpus-sweep; do
+        for gate in shear test-doc test-doc-all book-test extism-build parity-wasm smoke-go doc corpus-sweep; do
             case "$gate" in
                 book-test) want book || { skip "$gate"; continue; } ;;
                 *) want code || { skip "$gate"; continue; } ;;

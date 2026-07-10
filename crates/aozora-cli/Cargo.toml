@@ -43,6 +43,13 @@ notify = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 insta = { workspace = true }
+# Golden-fixture loader for the cross-surface parity gate
+# (`tests/fixture_parity.rs`). Declared path-only (no version) on
+# purpose: aozora-conformance is a dev-only, `publish = false` crate, so
+# cargo STRIPS this dev-dependency from the published manifest. A
+# versioned dev-dep would make crates.io require aozora-conformance to
+# exist on the registry and would fail the `aozora-cli` publish.
+aozora-conformance = { path = "../aozora-conformance" }
 
 [package.metadata.docs.rs]
 all-features = true
