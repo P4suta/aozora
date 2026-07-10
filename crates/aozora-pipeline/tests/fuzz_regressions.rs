@@ -26,7 +26,7 @@ use std::str;
 
 use aozora_pipeline::lex;
 #[test]
-fn lex_into_arena_regressions_replay_cleanly() {
+fn lex_regressions_replay_cleanly() {
     replay_each("lex", |src| {
         let out = lex(src);
         for diag in &out.diagnostics {

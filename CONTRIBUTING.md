@@ -112,7 +112,7 @@ just ci                        # replica of the full CI pipeline
 
 # Before a release:
 just prop-deep                 # 4096 cases per block — deeper than CI
-just fuzz parse_render -- -runs=10000   # cargo-fuzz smoke
+just fuzz-all-deep             # cargo-fuzz release pre-flight (all 7 targets)
 ```
 
 `just --list` enumerates everything available.
@@ -217,6 +217,25 @@ respectively. CI runs all of these in `just ci`.
   fine when it captures a non-obvious invariant or the *why* behind
   an unusual choice. Multi-paragraph docstrings are reserved for
   public API surfaces.
+
+### Invariant panics
+
+`unreachable!()` and `.expect()` guard invariants the type system cannot
+express — a branch the surrounding code has already made impossible, or a
+`None` / `Err` an earlier stage rules out. On the hot classify and render
+paths, prefer a loud panic over a silent fallback: a wrong-but-quiet default
+ships the wrong bytes on a green build, which is strictly worse than a
+crash the fuzz targets and corpus gates catch (correctness beats liveness
+here). Every such site carries a one-line rationale in this form:
+
+```rust
+// INVARIANT(<stage>): <why> — established by <fn>, exercised by <fuzz/gate>
+```
+
+naming the code that upholds the invariant and the fuzz target or gate that
+would fire if it ever broke, so a reader can audit the claim without tracing
+the whole call graph. Do **not** reach for one to swallow an error you simply
+have not handled yet — that is a `?` or a real match arm, not an invariant.
 
 See the [Architecture chapter of the handbook](https://p4suta.github.io/aozora/arch/pipeline.html)
 for the layered crate boundaries this implies.

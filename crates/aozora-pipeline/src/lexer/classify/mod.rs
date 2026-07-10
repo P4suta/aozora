@@ -695,6 +695,10 @@ where
         // body[0], so we record its position there.
         let mut inner_stack = smallvec::SmallVec::new();
         let &PairEvent::PairOpen { kind, .. } = &open_event else {
+            // INVARIANT(classify): open_frame is only ever entered with a
+            // PairOpen — established by its two call sites, both of which pass
+            // a freshly built PairEvent::PairOpen; exercised by the `classify`
+            // fuzz target's span-tiling assertions.
             unreachable!("open_frame called with non-PairOpen event");
         };
         inner_stack.push((kind, 0_usize));
@@ -812,6 +816,10 @@ where
             kind: open_kind, ..
         } = body[open_idx]
         else {
+            // INVARIANT(classify): body[0] is the frame's outer open —
+            // established by open_frame, which pushes the PairOpen at body[0]
+            // before any other event is appended; exercised by the `classify`
+            // fuzz target.
             unreachable!("frame body[0] must be PairOpen");
         };
 
@@ -1391,12 +1399,19 @@ where
             span: open_span, ..
         } = body.events[open_idx]
         else {
+            // INVARIANT(classify): open_idx addresses the frame's outer open —
+            // established by open_frame (PairOpen at body[0]); exercised by the
+            // `classify` fuzz target.
             unreachable!("body[open_idx] must be PairOpen");
         };
         let PairEvent::PairClose {
             span: close_span, ..
         } = body.events[close_idx]
         else {
+            // INVARIANT(classify): close_idx addresses the frame's outer close —
+            // established by append_to_frame, which appends the PairClose that
+            // closes the outermost pair at body[len - 1]; exercised by the
+            // `classify` fuzz target.
             unreachable!("body[close_idx] must be PairClose");
         };
         let mut ctx = RecogniseCtx {
@@ -2122,8 +2137,10 @@ impl RecogniseCtx<'_, '_> {
             span: close_span, ..
         } = body.view.events[close_idx]
         else {
-            // Pair-stage invariant: PairOpen's link always targets a
-            // PairClose of the matching kind.
+            // INVARIANT(classify): a PairOpen's link always targets a matching
+            // PairClose — established by the pair stage's link side-table, which
+            // only ever points an open at its resolved close; exercised by the
+            // `classify` fuzz target.
             unreachable!("PairOpen link must target a PairClose");
         };
         push_text_segment(
