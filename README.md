@@ -135,7 +135,7 @@ for the full subcommand reference.
 
 ## Crate layout
 
-aozora is a 22-crate workspace.
+aozora is a 26-crate workspace (plus the `aozora-go` Go module).
 [`crates/aozora`](./crates/aozora) is the public facade — library
 consumers usually import only this one.
 
@@ -152,7 +152,10 @@ consumers usually import only this one.
 | [`crates/aozora-cst`](./crates/aozora-cst) | rowan-backed lossless concrete syntax tree. Editor/formatter surface. |
 | [`crates/aozora-query`](./crates/aozora-query) | Tree-sitter-style pattern DSL (`SyntaxKind` + capture) for queries over the CST. |
 | [`crates/aozora-pandoc`](./crates/aozora-pandoc) | Pandoc AST projection (`Tree` → `pandoc_ast::Pandoc`); unlocks 50+ output formats via Pandoc writers. |
-| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` binary: `check` / `fmt` / `render` / `inspect` / `kinds` / `schema` / `explain` / `pandoc` / `completions`. |
+| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` binary: `check` / `lint` / `fmt` / `render` / `inspect` / `kinds` / `schema` / `explain` / `pandoc` / `completions`. |
+| [`crates/aozora-fmt`](./crates/aozora-fmt) | Standalone idempotent formatter (`aozora-fmt` binary) — the engine behind `aozora fmt`, shared with editors and CI. |
+| [`crates/aozora-lsp`](./crates/aozora-lsp) | Language server (tower-lsp / stdio): diagnostics, formatting, hover, completion, semantic tokens. Bundled in the VS Code extension. |
+| [`crates/tree-sitter-aozora`](./crates/tree-sitter-aozora) | Tree-sitter grammar — the syntactic skeleton `aozora-lsp` queries on every keystroke. |
 | [`crates/aozora-wasm`](./crates/aozora-wasm) | `wasm32-unknown-unknown` target for `wasm-pack build --target web`. |
 | [`crates/aozora-ffi`](./crates/aozora-ffi) | C ABI driver (opaque handle, JSON-encoded structured data). |
 | [`crates/aozora-extism`](./crates/aozora-extism) | Extism (WASM) plugin driver — one portable `aozora.wasm` for polyglot host SDKs (Go / Java / PHP / Ruby / …). The breadth strategy for new languages (ADR-0006). |
@@ -162,6 +165,7 @@ consumers usually import only this one.
 | [`crates/aozora-conformance`](./crates/aozora-conformance) | WPT-style conformance fixture runner (golden HTML / serialize / diagnostics / JSON across 60 fixtures). |
 | [`crates/aozora-corpus`](./crates/aozora-corpus) | Corpus source abstraction for sweep tests (dev-only, set `AOZORA_CORPUS_ROOT`). |
 | [`crates/aozora-proptest`](./crates/aozora-proptest) | Shared proptest strategies (`aozora_fragment` / `pathological_aozora` / `unicode_adversarial` and friends; dev-only). |
+| [`crates/aozora-buildstamp`](./crates/aozora-buildstamp) | Compile-time, channel-aware build-version stamp for the binaries (`aozora` CLI / `aozora-lsp`). |
 | [`crates/aozora-trace`](./crates/aozora-trace) | DWARF symbolicator for samply traces. |
 | [`crates/aozora-xtask`](./crates/aozora-xtask) | Repo automation (samply wrapper, trace analysis, corpus pack/unpack, schema dumps). |
 

@@ -5,8 +5,8 @@ Language Server (tower-lsp) for
 (`.afm` / `.aozora` / `.aozora.txt`).
 
 `aozora-lsp` speaks LSP on stdio. Pair it with the bundled
-[VS Code extension](../../editors/vscode) or any LSP-capable
-editor (Neovim, Helix, Emacs, Zed, …).
+[VS Code extension](https://github.com/P4suta/aozora/tree/main/editors/vscode)
+or any LSP-capable editor (Neovim, Helix, Emacs, Zed, …).
 
 ## Capabilities
 
@@ -89,5 +89,6 @@ separate install is needed there; for other editors, `cargo install` as above.
 ## Repository
 
 Part of the [aozora](https://github.com/P4suta/aozora)
-workspace. See the [workspace README](../../README.md) for the
+workspace. See the
+[workspace README](https://github.com/P4suta/aozora#readme) for the
 full picture.

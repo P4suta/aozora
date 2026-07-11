@@ -746,11 +746,13 @@ jobs:
       - uses: ./.github/actions/setup-dev-image
       - run: just book-test
 
-  # Handbook version-literal gate (ADR-0009). Pure grep over the book
-  # markdown — no dev image, no cargo — so it runs on the bare host with
-  # just installed. Gated on `rust || book` (NOT the `rust`-only `lint`
-  # matrix): a handbook-only PR, the change most likely to introduce a
-  # stray `vX.Y.Z`, still runs it. Pre-push `ci-parallel` runs it always.
+  # Host-side hygiene grep gates — no dev image, no cargo — so they run on
+  # the bare host with just installed. `version-literal-gate` (ADR-0009):
+  # handbook keeps one canonical version pin. `readme-gate` (F9): every
+  # publishable crate ships a README with absolute (non-404) links.
+  # Gated on `rust || book` (NOT the `rust`-only `lint` matrix): a
+  # handbook-only PR, the change most likely to introduce a stray `vX.Y.Z`,
+  # still runs it. Pre-push `ci-parallel` runs both always.
   book-versions:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.book == 'true'
@@ -761,6 +763,7 @@ jobs:
         with:
           tool: just
       - run: just version-literal-gate
+      - run: just readme-gate
 
   # Single required status check. Every ci.yml job feeds in; this gate
   # passes iff none of them FAILED — a job that change-aware gating
