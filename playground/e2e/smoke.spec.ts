@@ -152,6 +152,15 @@ test.describe('playground smoke', () => {
     await expect(palette).toHaveCount(0);
   });
 
+  test('フッターにパーサのビルドバージョンが表示される', async ({ page }) => {
+    // The footer version is read from the wasm engine (`version()` → the
+    // aozora-buildstamp stamp), so it only appears once `wasmReady()`. The
+    // stamp is a semver triple with an optional channel/sha suffix, e.g.
+    // `aozora 0.5.0` or `aozora 0.5.0-dev+g3672e3f`.
+    await ready(page);
+    await expect(page.locator('.app-version')).toHaveText(/aozora \d+\.\d+\.\d+/);
+  });
+
   test('言語トグルで UI 言語が双方向に切り替わる', async ({ page }) => {
     // Boot language follows navigator.language, so don't assume the initial —
     // exercise the toggle both ways.

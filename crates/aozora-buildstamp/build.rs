@@ -16,9 +16,10 @@
 //!
 //! `rerun-if-changed` is scoped to the git refs that actually move the answer, so
 //! the daily edit→build loop on one commit never re-runs this script — keeping the
-//! binaries' incremental builds fast. The crate is a leaf depended on ONLY by the
-//! binaries (`aozora-cli` / `aozora-lsp`), never by the hot library crates, so the
-//! git probe never invalidates their caches.
+//! front-ends' incremental builds fast. The crate is a leaf depended on ONLY by the
+//! front-ends (`aozora-cli` / `aozora-lsp` binaries + the `aozora-wasm` playground
+//! driver, wasm32-only), never by the hot library crates, so the git probe never
+//! invalidates their caches.
 
 use std::env;
 use std::path::{Path, PathBuf};
