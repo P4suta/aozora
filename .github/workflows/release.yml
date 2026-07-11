@@ -3,7 +3,13 @@
 # Trigger on: annotated tags matching `v*`, plus manual `workflow_dispatch`
 # for dry runs. Builds the `aozora` CLI on three target triples
 # (linux-gnu x86_64, macos arm64, windows-msvc x86_64) and uploads the
-# archives + SHA256SUMS to the GitHub Release.
+# archives + SHA256SUMS + per-target CycloneDX SBOMs to the GitHub Release.
+#
+# Supply chain: release binaries are compiled with `cargo auditable build`,
+# which embeds the exact dependency tree into the artefact so a downloaded
+# `aozora` answers `cargo audit bin`. A CycloneDX SBOM (`.cdx.json`) is
+# emitted per target from Cargo.lock and is itself provenance-attested
+# alongside the archives — the bill of materials carries its own provenance.
 #
 # Release builds run on native GitHub Actions runners with the
 # matching stable rustc, *not* inside the dev Docker image. The
@@ -68,6 +74,13 @@ jobs:
         with:
           key: release-${{ matrix.target }}
 
+      # cargo-auditable makes `cargo build` embed the dependency tree into
+      # the binary; cargo-cyclonedx emits the CycloneDX SBOM. Both install
+      # as prebuilt binaries (SHA-pinned action, Dependabot-bumped).
+      - uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3  # v2.82.9
+        with:
+          tool: cargo-auditable,cargo-cyclonedx
+
       # Stamp the binary's `--version` (aozora-buildstamp build.rs reads
       # AOZORA_BUILD_VERSION, set here once into $GITHUB_ENV so it reaches the
       # build step). On a tag push → the clean stable triple `${tag#v}` (==
@@ -82,7 +95,7 @@ jobs:
           fi
 
       - name: Build aozora CLI
-        run: cargo build --release --target ${{ matrix.target }} --package aozora-cli
+        run: cargo auditable build --release --target ${{ matrix.target }} --package aozora-cli
 
       # Phase P4 — C ABI shared library + auto-generated header.
       # `aozora-ffi`'s `build.rs` writes `aozora.h` into
@@ -91,7 +104,7 @@ jobs:
       # the Release archive so C/C++ consumers can link without
       # building from source.
       - name: Build aozora-ffi (C ABI)
-        run: cargo build --release --target ${{ matrix.target }} --package aozora-ffi
+        run: cargo auditable build --release --target ${{ matrix.target }} --package aozora-ffi
 
       - name: Assemble archive
         id: archive
@@ -179,6 +192,29 @@ jobs:
             echo "name=${name}"
           } >> "$GITHUB_OUTPUT"
 
+      # CycloneDX SBOM for the CLI's resolved dependency graph on this target
+      # triple (platform-specific deps differ per triple, so it is emitted per
+      # artefact). cargo-cyclonedx reads Cargo.lock; `--manifest-path` scopes it
+      # to the aozora-cli crate and it writes the file adjacent to that manifest,
+      # which we rename to match the archive. Attested in the publish job.
+      - name: Generate CycloneDX SBOM
+        id: sbom
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo cyclonedx \
+            --manifest-path crates/aozora-cli/Cargo.toml \
+            --target ${{ matrix.target }} \
+            --format json --all --override-filename sbom
+          # The forced base name is `sbom`; the version-dependent suffix
+          # (`sbom.json` vs `sbom.cdx.json`) is matched leniently — content is
+          # JSON either way (--format json), and we rename it to `.cdx.json`.
+          src="$(find crates/aozora-cli -maxdepth 1 -type f -name 'sbom*' -print -quit)"
+          [[ -n "${src}" ]] || { echo "::error::cargo-cyclonedx produced no SBOM"; exit 1; }
+          sbom="${RUNNER_TEMP}/${{ steps.archive.outputs.name }}.cdx.json"
+          mv "${src}" "${sbom}"
+          echo "sbom=${sbom}" >> "$GITHUB_OUTPUT"
+
       - name: Upload build artefacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
@@ -186,6 +222,7 @@ jobs:
           path: |
             ${{ steps.archive.outputs.archive }}
             ${{ steps.archive.outputs.checksum }}
+            ${{ steps.sbom.outputs.sbom }}
           retention-days: 7
 
   publish:
@@ -228,6 +265,7 @@ jobs:
           subject-path: |
             artefacts/aozora-*.tar.gz
             artefacts/aozora-*.zip
+            artefacts/aozora-*.cdx.json
 
       # release-plz owns the single root CHANGELOG.md; the tag points at the
       # merge commit that added this version's section, so the notes are just
@@ -252,6 +290,7 @@ jobs:
           files: |
             artefacts/aozora-*.tar.gz
             artefacts/aozora-*.zip
+            artefacts/aozora-*.cdx.json
             artefacts/*.sha256
             artefacts/SHA256SUMS
           body_path: CHANGES.md
