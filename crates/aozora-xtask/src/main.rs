@@ -57,6 +57,7 @@ mod corpus;
 mod deps;
 mod grammar;
 mod schema;
+mod spec_vectors;
 mod trace;
 mod types;
 mod version;
@@ -124,6 +125,36 @@ enum Cmd {
     /// identity. `nightly.yml` / `release.yml` call this so the binaries are
     /// stamped from one place. `nightly` needs `--date YYYYMMDD`.
     Version(VersionArgs),
+    /// Vendor / drift-check the conformance vectors against the sibling
+    /// `aozora-notation-spec` repo (the source of truth). `sync` copies the
+    /// vectors + schema + RUNNER.md into
+    /// `crates/aozora-conformance/spec-vectors/`; `check` fails the build
+    /// when the vendored copy has drifted (`--allow-missing` skips where the
+    /// sibling isn't checked out, i.e. the dev container / cloud CI).
+    SpecVectors(SpecVectorsArgs),
+}
+
+#[derive(Args)]
+struct SpecVectorsArgs {
+    #[command(subcommand)]
+    op: SpecVectorsOp,
+}
+
+#[derive(Subcommand)]
+enum SpecVectorsOp {
+    /// Fail when the vendored `spec-vectors/` has drifted from the sibling
+    /// spec's `conformance/` subtree (vectors + schema + RUNNER.md).
+    Check {
+        /// Treat an absent sibling checkout as a skip (exit 0) instead of an
+        /// error. The vendored copy is authoritative where the spec isn't
+        /// checked out (dev container / cloud CI).
+        #[arg(long)]
+        allow_missing: bool,
+    },
+    /// Copy the vectors + schema + RUNNER.md out of the sibling spec into the
+    /// vendored copy, replacing them wholesale so spec-side deletions
+    /// propagate. Commit the diff.
+    Sync,
 }
 
 #[derive(Args)]
@@ -342,6 +373,7 @@ fn main() {
         Cmd::Types(args) => types::dispatch(&args),
         Cmd::Conformance(args) => conformance::dispatch(&args),
         Cmd::Version(args) => version::dispatch(&args),
+        Cmd::SpecVectors(args) => spec_vectors::dispatch(&args),
     };
     if let Err(err) = result {
         eprintln!("xtask: {err}");
