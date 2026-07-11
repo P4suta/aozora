@@ -28,6 +28,7 @@ criterion = { workspace = true }
 dhat = { workspace = true }
 iai-callgrind = { workspace = true }
 aozora-pipeline = { workspace = true }
+aozora-render = { workspace = true } # render_hot_path example: aozora_render::render_html
 aozora-scan = { workspace = true }
 aozora-syntax = { workspace = true }
 memchr = { workspace = true }

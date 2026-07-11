@@ -9,7 +9,7 @@
 //! Every variant carries a byte-range [`Span`] in the *sanitized* source
 //! — the sanitize-stage output (BOM stripped, CRLF→LF, 〔…〕 accents decomposed),
 //! which is the text the later stages tokenize. To render a snippet,
-//! attach that sanitized text (e.g. via `aozora::pipeline::lexer::sanitize`)
+//! attach that sanitized text (e.g. via `aozora_pipeline::lexer::sanitize`)
 //! so miette's caret lands on the right character; for input with no BOM /
 //! CRLF / accent digraphs the sanitized text equals the original bytes.
 //!

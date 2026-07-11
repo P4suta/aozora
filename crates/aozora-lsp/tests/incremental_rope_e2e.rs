@@ -12,8 +12,8 @@
 use std::sync::Arc;
 
 use aozora::Diagnostic;
-use aozora::pipeline::lexer::sanitize::sanitize;
 use aozora_lsp::internals::{ByteEdit, OpenDocument, ParseCache};
+use aozora_pipeline::lexer::sanitize::sanitize;
 use proptest::prelude::*;
 use proptest::sample::Index;
 use proptest::test_runner::TestCaseError;

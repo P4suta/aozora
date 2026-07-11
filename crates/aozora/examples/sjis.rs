@@ -5,7 +5,7 @@
 //!
 //! Handbook recipe: <https://p4suta.github.io/aozora/getting-started/library.html>
 //! (Library Quickstart → Shift_JIS input). Uses only the `aozora`
-//! umbrella surface (`aozora::encoding` re-exports the encoding crate).
+//! umbrella surface (`aozora::encoding` re-exports the decode entry points).
 //!
 //! Run with:
 //!

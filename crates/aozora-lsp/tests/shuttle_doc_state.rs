@@ -46,8 +46,8 @@
 use std::collections::HashMap;
 use std::env;
 
-use aozora::pipeline::lexer::sanitize::sanitize;
 use aozora_lsp::internals::{ByteEdit, ParseCache, apply_edits};
+use aozora_pipeline::lexer::sanitize::sanitize;
 use ropey::Rope;
 use shuttle::sync::{Arc, Mutex as ShuttleMutex};
 use shuttle::thread;

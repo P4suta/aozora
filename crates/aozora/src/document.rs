@@ -713,10 +713,10 @@ mod tests {
 
     /// The independent oracle: run the real sanitize stage on `doc` and
     /// assert the parsed tree reproduces it verbatim through both
-    /// surfaces. `sanitize` is reached via the unconditional
-    /// `crate::pipeline` re-export (same path `cst::from_tree` uses).
+    /// surfaces. `sanitize` is reached through the internal
+    /// `aozora-pipeline` crate directly (same path `cst::from_tree` uses).
     fn assert_verbatim_equals_sanitize(doc: &str) {
-        use crate::pipeline::lexer::sanitize::sanitize;
+        use aozora_pipeline::lexer::sanitize::sanitize;
         let expected = sanitize(doc).text;
         let d = Document::new(doc);
         let t = d.parse();

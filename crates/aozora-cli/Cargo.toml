@@ -25,6 +25,10 @@ path = "src/main.rs"
 # binary that needs schema runtime, so feature-gating here keeps the
 # library `aozora` crate light for plain library consumers.
 aozora = { workspace = true, features = ["schema"] }
+# Direct dep on the internal lexer crate: the diagnostics renderer reaches
+# `aozora_pipeline::lexer::sanitize` for caret placement — an internal,
+# no-contract surface the umbrella deliberately does not re-export.
+aozora-pipeline = { workspace = true }
 aozora-buildstamp = { workspace = true } # channel-aware `--version` stamp
 aozora-fmt = { workspace = true } # shared format core + the `Encoding` decoder
 aozora-pandoc = { workspace = true }

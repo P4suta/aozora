@@ -28,9 +28,9 @@ use serde_json::{Map, Value};
 use std::fmt::Write as _;
 
 use aozora::json::SCHEMA_VERSION;
-use aozora::pipeline::{NodeRef, PairKind};
-use aozora::syntax::{NodeKind, RegionFormat};
 use aozora::{DiagnosticSource, InternalCheckCode, Sentinel, Severity};
+use aozora_pipeline::{NodeRef, PairKind};
+use aozora_syntax::{NodeKind, RegionFormat};
 
 use crate::TypesArgs;
 use crate::TypesOp;

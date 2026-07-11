@@ -8,8 +8,8 @@
 //! breaks every editor surface that walks the CST.
 
 use aozora::Document;
-use aozora::pipeline::lexer::sanitize;
 use aozora_cst::build_cst;
+use aozora_pipeline::lexer::sanitize;
 use aozora_proptest::config::default_config;
 use aozora_proptest::generators::{aozora_fragment, pathological_aozora, unicode_adversarial};
 use proptest::prelude::*;

@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use aozora::encoding::gaiji::{GaijiBody, parse_gaiji_body};
+use aozora_encoding::gaiji::{GaijiBody, parse_gaiji_body};
 use tree_sitter::{Node, Tree};
 use tree_sitter_aozora::kind;
 

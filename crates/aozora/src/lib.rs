@@ -39,10 +39,15 @@
 //!
 //! The build-block crates (`aozora-spec`, `aozora-syntax`,
 //! `aozora-pipeline`, `aozora-render`, `aozora-encoding`) are each
-//! published in their own right, but consumers depend on `aozora`
-//! alone and reach them through this meta crate's
-//! [`pipeline`] / [`syntax`] / [`render`] / [`encoding`] / [`json`]
-//! modules. See the
+//! published in their own right, but carry **no API-stability contract
+//! of their own** — they are free to churn between minor versions.
+//! This umbrella is the stable seam: it re-exports a *curated* surface
+//! (never a `pub use …::*` glob), so a refactor inside a build-block
+//! crate cannot silently reshape what `aozora` consumers see. The
+//! parsed-AST types live at the crate root ([`Document`], [`Tree`],
+//! [`Node`], [`NodeRef`], [`LexOutput`], …); the [`syntax::ast`] /
+//! [`render`] / [`encoding`] / [`json`] modules expose the few extra
+//! types those surfaces document as stable. See the
 //! [Architecture chapter of the handbook](https://p4suta.github.io/aozora/arch/pipeline.html)
 //! for the layered design.
 //!
@@ -76,8 +81,9 @@ pub use aozora_spec::{
 /// single editor-facing front door.
 pub use aozora_syntax::{
     BlockStyles, BoutenKind, BoutenPosition, ColumnCount, DirectiveKind, EnclosureKind, FontShift,
-    Format, ForwardAttr, ForwardOrigin, HeadingKind, HeadingStyle, IndentBlock, IndentLayout, Kumi,
-    LineFormat, LineWidth, NodeKind, RegionClose, RegionFormat, RubySide, SectionKind,
+    Format, ForwardAttr, ForwardOrigin, GaijiCanonical, HeadingKind, HeadingStyle, IndentBlock,
+    IndentLayout, Kumi, LineFormat, LineWidth, MenKuTen, NodeKind, RegionClose, RegionFormat,
+    Resolved, RubySide, SectionKind,
     ast::{Content, Node, NodeStore},
 };
 
@@ -187,47 +193,58 @@ pub fn prewarm() {
     aozora_pipeline::prewarm();
 }
 
-/// Re-export of [`aozora_pipeline`] under a stable name.
+/// Owned AST node types — [`crate::Node`] and its payload structs, the
+/// [`crate::NodeStore`], `Segment` / `ContentRange` handles, and the
+/// string interner — under the `syntax::ast` path.
 ///
-/// Editor integrations that want per-phase access
-/// (`pipeline::lexer::*` for the phase functions, `pipeline::Pipeline`
-/// for the type-state machine) reach through this module so the
-/// wider workspace can keep `aozora` as the single front door. The
-/// `aozora-pipeline` crate is published in its own right, but is
-/// normally reached through this re-export.
-pub mod pipeline {
-    pub use aozora_pipeline::*;
-}
-
-/// Re-export of [`aozora_syntax`] — owned AST node types, the
-/// `NodeStore`, and the string interner.
-///
-/// External callers normally reach through [`Document`] /
-/// [`Tree`] for the parsed-AST surface; this module exposes
-/// the underlying types when they need to construct nodes directly
-/// (custom renderers, owned-tree transforms).
+/// The parsed-AST types most callers need are already at the crate
+/// root (reached through [`crate::Document`] / [`crate::Tree`]); this
+/// module is the explicit re-export of the underlying
+/// [`aozora_syntax::ast`] surface
+/// for code that constructs or walks nodes directly (custom renderers,
+/// owned-tree transforms). It is a named re-export of `ast`, **not** a
+/// glob of the whole no-contract `aozora-syntax` crate: the lint /
+/// degraded-lowering helpers and other internals stay private to the
+/// umbrella. Workspace tools that need them depend on `aozora-syntax`
+/// directly.
 pub mod syntax {
-    pub use aozora_syntax::*;
+    pub use aozora_syntax::ast;
 }
 
-/// Re-export of [`aozora_render`] — owned-AST HTML / source emitters.
+/// Rendering options for the owned-AST emitters.
 ///
-/// `Tree::to_html` / `Tree::to_source` cover the common cases; custom
-/// downstream renderers (EPUB, plain text, LaTeX, …) walk the owned
-/// `LexOutput` (its `source_nodes` + `NodeStore`) and can reuse the
-/// shared byte-spelling helpers re-exported through this module.
+/// [`crate::Tree::to_html`] / [`crate::Tree::to_source`] cover the
+/// common cases; [`crate::Tree::to_html_with`] /
+/// [`crate::Tree::to_source_with`] take the [`crate::render::RenderOptions`] /
+/// [`crate::render::SerializeOptions`] re-exported here (a
+/// [`crate::render::DirectiveNormalization`] level selects how an
+/// `Unknown` directive is lowered). These three
+/// option types are the stable render surface. The renderer *functions*
+/// themselves live in the no-contract `aozora-render` crate; a
+/// downstream renderer (EPUB, plain text, LaTeX, …) that drives them —
+/// or reuses the byte-spelling helpers — depends on `aozora-render`
+/// directly.
 pub mod render {
-    pub use aozora_render::*;
+    pub use aozora_render::{DirectiveNormalization, RenderOptions, SerializeOptions};
 }
 
-/// Re-export of [`aozora_encoding`] — Shift_JIS decoding and gaiji
-/// resolution.
+/// Shift_JIS / UTF-8 source decoding.
 ///
-/// The sanitize stage of the lex pipeline runs encoding detection
-/// first; callers that want to drive encoding without parsing can reach
-/// through this module.
+/// The parser proper is strictly UTF-8; decode a Shift_JIS archive
+/// with [`crate::encoding::decode_sjis`] (force) or
+/// [`crate::encoding::decode_auto`] (sniff) before handing the `String`
+/// to [`crate::Document::new`]. Both are strict — they error on
+/// malformed bytes rather than substituting replacement characters. The
+/// [`crate::encoding::Suijun`] helpers classify a gaiji reference by its
+/// JIS X 0213 level. Gaiji *resolution* is the parser's job: it is read
+/// off the `Gaiji` node (see [`crate::Resolved`]), not called through
+/// this module, so the resolver internals stay in the no-contract
+/// `aozora-encoding` crate.
 pub mod encoding {
-    pub use aozora_encoding::*;
+    pub use aozora_encoding::{
+        DecodeError, Suijun, decode_auto, decode_auto_into, decode_sjis, decode_sjis_into,
+        has_utf8_bom, is_platform_dependent, jis_level, level_table_sizes,
+    };
 }
 
 /// Lossless concrete syntax tree.
@@ -246,7 +263,7 @@ pub mod encoding {
 #[cfg(feature = "cst")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cst")))]
 pub mod cst {
-    pub use aozora_cst::*;
+    pub use aozora_cst::{AozoraLanguage, SyntaxKind, SyntaxNode, SyntaxToken, build_cst};
 
     /// Convenience wrapper over [`aozora_cst::build_cst`].
     ///
@@ -256,7 +273,7 @@ pub mod cst {
     /// function; calling it again is cheap.
     #[must_use]
     pub fn from_tree(tree: &crate::Tree<'_>) -> SyntaxNode {
-        use crate::pipeline::lexer::sanitize;
+        use aozora_pipeline::lexer::sanitize;
         let sanitized = sanitize(tree.source());
         build_cst(&sanitized.text, tree.source_nodes())
     }
@@ -281,7 +298,7 @@ pub mod cst {
 #[cfg(feature = "query")]
 #[cfg_attr(docsrs, doc(cfg(feature = "query")))]
 pub mod query {
-    pub use aozora_query::*;
+    pub use aozora_query::{Capture, Query, QueryError, compile};
 }
 
 /// Aozora-shaped `proptest` strategies.
@@ -299,7 +316,7 @@ pub mod query {
 #[cfg(feature = "proptest")]
 #[cfg_attr(docsrs, doc(cfg(feature = "proptest")))]
 pub mod proptest {
-    pub use aozora_proptest::*;
+    pub use aozora_proptest::{config, generators};
 }
 
 #[cfg(test)]

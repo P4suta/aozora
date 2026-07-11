@@ -90,10 +90,14 @@ full subcommand surface.
 - 📚 [Handbook](https://p4suta.github.io/aozora/) — notation reference, architecture, bindings, CLI
 - 📖 [API reference](https://docs.rs/aozora) — this crate's rustdoc
 
-The umbrella crate re-exports its build blocks (`aozora-spec`,
-`aozora-syntax`, `aozora-pipeline`, `aozora-render`, `aozora-encoding`,
-…) through its `pipeline` / `syntax` / `render` / `encoding` / `json`
-modules; depend on `aozora` alone and reach them from here.
+The build-block crates (`aozora-spec`, `aozora-syntax`,
+`aozora-pipeline`, `aozora-render`, `aozora-encoding`, …) carry no
+API-stability contract of their own. This umbrella is the stable
+seam: it re-exports a *curated* surface — the parsed-AST types at the
+crate root (`Document`, `Tree`, `Node`, …) plus the `syntax::ast` /
+`render` / `encoding` / `json` modules — never a `pub use …::*` glob,
+so a refactor inside a build block cannot silently reshape what
+`aozora` consumers see. Depend on `aozora` alone.
 
 ## License
 

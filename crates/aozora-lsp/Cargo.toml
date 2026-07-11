@@ -21,6 +21,12 @@ path = "src/lib.rs"
 
 [dependencies]
 aozora = { workspace = true }
+# Direct deps on internal crates the LSP reaches past the umbrella's curated
+# surface: `aozora_pipeline::lexer::sanitize` (incremental parse-cache) and
+# `aozora_encoding::gaiji` (hover / inlay-hint resolution). Both are
+# no-contract internal surfaces the umbrella deliberately does not re-export.
+aozora-pipeline = { workspace = true }
+aozora-encoding = { workspace = true }
 aozora-buildstamp = { workspace = true } # channel-aware --version stamp
 tree-sitter-aozora = { workspace = true }
 tree-sitter = "0.26"
@@ -62,10 +68,10 @@ futures = "0.3"
 # semantic-token deltas, the document-symbol outline, and the diagnostic
 # catalogue so a regression in any of them is a reviewable diff.
 insta = "1"
-# Corpus iteration + Shift-JIS decode for the `measure_reparse_pending`
-# profiling example (AOZORA_CORPUS_ROOT-gated, like aozora-bench's benches).
+# Corpus iteration for the `measure_reparse_pending` profiling example
+# (AOZORA_CORPUS_ROOT-gated, like aozora-bench's benches). Shift-JIS decode
+# for that example comes from the `aozora-encoding` runtime dependency above.
 aozora-corpus = { workspace = true }
-aozora-encoding = { workspace = true }
 
 [[bench]]
 name = "burst"

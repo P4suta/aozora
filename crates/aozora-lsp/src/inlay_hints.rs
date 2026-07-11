@@ -3,7 +3,7 @@
 //! Walks the pre-extracted [`crate::gaiji_spans::GaijiSpan`] list that
 //! `OpenDocument` keeps current under the write lock, and emits a small
 //! "→ glyph" inlay just *after* every `※［＃…］` span whose
-//! description+mencode resolve through [`aozora::encoding::gaiji::lookup`].
+//! description+mencode resolve through [`aozora_encoding::gaiji::lookup`].
 //!
 //! The span list lives behind an `Arc<[GaijiSpan]>` the handler clones,
 //! so concurrent inlay calls (VS Code fires several per cursor move)
@@ -11,7 +11,7 @@
 //! [`crate::line_index::LineIndex`] the handler is
 //! `O(log lines + visible spans)`, independent of document size.
 
-use aozora::encoding::gaiji;
+use aozora_encoding::gaiji;
 use tower_lsp::lsp_types::{
     InlayHint, InlayHintKind, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
     MarkupContent, MarkupKind, Range,

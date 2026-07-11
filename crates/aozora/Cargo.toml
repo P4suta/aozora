@@ -19,10 +19,12 @@ workspace = true
 # Document wraps the lex pipeline and returns a `Tree<'_>` whose
 # lifetime borrows only the source; the parsed AST is owned. The five
 # building-block crates below are published in their own right (the
-# umbrella is on crates.io, so its transitive deps must be too); this
-# meta crate is the recommended single front door, re-exposing them via
-# the `aozora::pipeline` / `aozora::syntax` / `aozora::render` /
-# `aozora::encoding` modules so most consumers depend on just `aozora`.
+# umbrella is on crates.io, so its transitive deps must be too), but
+# carry no API-stability contract of their own. This meta crate is the
+# recommended single front door: it re-exports a *curated* surface (the
+# parsed-AST types at the crate root plus the `aozora::syntax::ast` /
+# `aozora::render` / `aozora::encoding` modules — never a `::*` glob),
+# so most consumers depend on just `aozora`.
 aozora-render = { workspace = true }
 aozora-pipeline = { workspace = true }
 aozora-syntax = { workspace = true }
