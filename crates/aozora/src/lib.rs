@@ -48,13 +48,13 @@
 //!
 //! ---
 //!
-//! The project README follows; its Quickstart example is compiled and
-//! run as a doctest so it can never drift from the live API.
+//! The crate README follows; its Quickstart example is compiled as a
+//! doctest so it can never drift from the live API.
 #![allow(
     clippy::doc_markdown,
     reason = "the included README is human-facing prose; proper nouns (PyO3, x86_64, macOS, …) are intentionally not code-spanned"
 )]
-#![doc = include_str!("../../../README.md")]
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 // Emit "Available on crate feature `…`" badges on docs.rs (and the
 // GitHub-Pages build when RUSTDOCFLAGS carries `--cfg docsrs`). Inert on

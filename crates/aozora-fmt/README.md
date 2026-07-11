@@ -68,7 +68,8 @@ are on [the releases page](https://github.com/P4suta/aozora/releases).
 
 Part of the [aozora][repo] workspace. See the
 [workspace README][repo] for the full picture and
-[`CONTRIBUTING.md`](../../CONTRIBUTING.md) for the dev loop.
+[`CONTRIBUTING.md`](https://github.com/P4suta/aozora/blob/main/CONTRIBUTING.md)
+for the dev loop.
 
 [aozora]: https://github.com/P4suta/aozora
 [repo]: https://github.com/P4suta/aozora
