@@ -44,6 +44,10 @@ export function slugsJson(): string {
   return '{"schemaVersion":2,"data":[]}';
 }
 
+export function version(): string {
+  return '0.0.0-test';
+}
+
 export default async function init(): Promise<void> {
   /* no-op */
 }

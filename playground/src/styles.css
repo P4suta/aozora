@@ -1145,6 +1145,10 @@ body {
   text-decoration: underline;
 }
 
+.app-version {
+  font-variant-numeric: tabular-nums;
+}
+
 /* =========================================================
  * Mobile / narrow viewport optimisations
  * ========================================================= */
