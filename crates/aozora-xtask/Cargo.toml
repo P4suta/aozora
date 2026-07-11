@@ -24,6 +24,13 @@ clap = { workspace = true }
 aozora = { workspace = true, features = ["schema", "json"] }
 aozora-corpus = { workspace = true }
 aozora-encoding = { workspace = true }
+# Direct deps on internal crates the corpus/render audits reach past the
+# umbrella's curated surface: `aozora_pipeline::lexer::sanitize`,
+# `aozora_render::AOZORA_CLASSES`, and `aozora_syntax::{degraded,lint}` +
+# `NodeKind`/`RegionFormat`. All no-contract internal surfaces.
+aozora-pipeline = { workspace = true }
+aozora-render = { workspace = true }
+aozora-syntax = { workspace = true }
 aozora-trace = { workspace = true }
 blake3 = { workspace = true }
 rayon = { workspace = true }

@@ -63,11 +63,11 @@ use std::process;
 use std::slice;
 use std::time::Instant;
 
-use aozora::pipeline::has_long_rule_line;
-use aozora::pipeline::lexer::sanitize::sanitize;
 use aozora::{DiagBaseRef, Document, PieceSeq, reparse_incremental_diagnostics_only};
 use aozora_encoding::decode_auto;
 use aozora_lsp::internals::{ByteEdit, LineIndex, ParseCache, apply_edits};
+use aozora_pipeline::has_long_rule_line;
+use aozora_pipeline::lexer::sanitize::sanitize;
 use ropey::Rope;
 
 /// Size bands in bytes (sanitized length): `[lo, hi)` — same split as

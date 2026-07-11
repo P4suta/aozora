@@ -2,7 +2,7 @@
 //!
 //! When the cursor sits inside a `※［＃description、mencode］` (or the
 //! `U+XXXX` variant) token, returns a Markdown block that shows the
-//! resolved character (via `aozora::encoding::gaiji::lookup`), the raw
+//! resolved character (via `aozora_encoding::gaiji::lookup`), the raw
 //! description, and the mencode. Misses (cursor not in a gaiji span,
 //! malformed body) return `None` and the editor falls back to no hover.
 //!
@@ -16,7 +16,7 @@
 
 use std::ops::Range as ByteRange;
 
-use aozora::encoding::gaiji;
+use aozora_encoding::gaiji;
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Range};
 
 use crate::position::{byte_offset_to_position, position_to_byte_offset};

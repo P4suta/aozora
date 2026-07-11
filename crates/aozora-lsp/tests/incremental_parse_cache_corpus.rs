@@ -19,9 +19,9 @@
 #![cfg(feature = "internals")]
 
 use aozora::Diagnostic;
-use aozora::pipeline::lexer::sanitize::sanitize;
 use aozora_encoding::decode_auto;
 use aozora_lsp::internals::{ByteEdit, ParseCache};
+use aozora_pipeline::lexer::sanitize::sanitize;
 use ropey::Rope;
 
 /// Render diagnostics to a comparable `Vec<String>`.

@@ -50,8 +50,8 @@ use std::cmp::Ordering;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use aozora::pipeline::lexer::sanitize::{is_rule_line_trimmed, sanitize};
 use aozora::{DiagBaseRef, DiagSplice, Diagnostic, Document, LexOutput, PieceSeq, Tree};
+use aozora_pipeline::lexer::sanitize::{is_rule_line_trimmed, sanitize};
 use ropey::{Rope, RopeSlice};
 use tracing::field::Empty as TracingEmpty;
 

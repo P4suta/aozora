@@ -53,15 +53,15 @@ use std::time::Instant;
 use clap::{Args, Subcommand};
 use rayon::prelude::*;
 
-use aozora::pipeline::lexer::sanitize::sanitize;
-use aozora::render::AOZORA_CLASSES;
-use aozora::syntax::degraded::degraded_directive;
-use aozora::syntax::lint::canonical_directive;
 use aozora::{DirectiveKind, Document, Node, NodeKind, NodeRef};
 use aozora_corpus::{
     Archive, ArchiveBuilder, CorpusItem, EntryMeta, FilesystemCorpus, archive, par_load_decoded,
 };
 use aozora_encoding::decode_auto;
+use aozora_pipeline::lexer::sanitize::sanitize;
+use aozora_render::AOZORA_CLASSES;
+use aozora_syntax::degraded::degraded_directive;
+use aozora_syntax::lint::canonical_directive;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::panic::{self, AssertUnwindSafe};

@@ -54,7 +54,7 @@ use tower_lsp::lsp_types::{
 };
 use tower_lsp::{Client, LanguageServer};
 
-use aozora::encoding::gaiji;
+use aozora_encoding::gaiji;
 
 use crate::document_symbol::document_symbols;
 use crate::folding_range::folding_ranges;

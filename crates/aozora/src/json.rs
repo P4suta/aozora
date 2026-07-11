@@ -33,8 +33,8 @@
 
 use serde::Serialize;
 
-use crate::encoding::gaiji::{self, find_span, gaiji_resolutions, resolve_at};
 use crate::{DiagnosticSource, Severity, Tree};
+use aozora_encoding::gaiji::{self, find_span, gaiji_resolutions, resolve_at};
 
 /// Wire-format schema version. Bumped on any breaking change to the
 /// serialised shape (variant additions, field renames, envelope
@@ -197,7 +197,7 @@ pub fn slug_entries() -> Vec<Slug> {
 ///
 /// Powers inlay-hint UIs (`→GLYPH` after each reference) and batch gaiji
 /// audits. The scan + resolution are the single authority in
-/// [`crate::encoding::gaiji`]; this is only their wire projection.
+/// [`aozora_encoding::gaiji`]; this is only their wire projection.
 ///
 /// Empty / gaiji-free source → `{"schemaVersion":2,"data":[]}`.
 #[must_use]

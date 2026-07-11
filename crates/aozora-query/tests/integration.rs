@@ -2,8 +2,8 @@
 //! DSL string, assert the captures cover what we expect.
 
 use aozora::Document;
-use aozora::pipeline::lexer::sanitize;
 use aozora_cst::build_cst;
+use aozora_pipeline::lexer::sanitize;
 use aozora_query::compile;
 
 fn cst_for(src: &str) -> aozora_cst::SyntaxNode {

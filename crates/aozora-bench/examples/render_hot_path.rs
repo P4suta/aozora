@@ -44,10 +44,10 @@ use std::env;
 use std::process;
 use std::time::Instant;
 
-use aozora::render::render_html;
 use aozora_bench::{SizeBand, SizeBandedCorpus, corpus_size_bands};
 use aozora_corpus::CorpusItem;
 use aozora_pipeline::lex;
+use aozora_render::render_html;
 const NS_PER_S: f64 = 1_000_000_000.0;
 
 fn main() {

@@ -17,7 +17,7 @@ use std::io::{self, IsTerminal, Write};
 
 use aozora::Document;
 use aozora::json;
-use aozora::pipeline::lexer::sanitize;
+use aozora_pipeline::lexer::sanitize;
 use clap::ValueEnum;
 use miette::{NamedSource, Report};
 

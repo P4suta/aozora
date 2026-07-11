@@ -10,7 +10,7 @@
 //!   round-trip (the same canonical form `aozora-fmt` produces) and
 //!   returns a single document-replace `TextEdit`.
 //! - `textDocument/hover` — when the cursor sits inside a
-//!   `※［＃…］` gaiji reference, resolves via `aozora::encoding::gaiji`
+//!   `※［＃…］` gaiji reference, resolves via `aozora_encoding::gaiji`
 //!   and returns a Markdown explanation.
 //!
 //! The stable public surface is intentionally tiny: [`Cli`] (so `xtask`
