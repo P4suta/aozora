@@ -35,7 +35,6 @@ aozora-trace = { workspace = true }
 blake3 = { workspace = true }
 rayon = { workspace = true }
 regex = { workspace = true }
-rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
@@ -43,3 +42,10 @@ tree-sitter = "0.26"
 tree-sitter-aozora = { workspace = true }
 walkdir = { workspace = true }
 zstd = { workspace = true }
+
+# `posix_fadvise(POSIX_FADV_DONTNEED)` for `corpus uncache` is Linux-only
+# (rustix's `fs` module is configured out on Windows and macOS lacks
+# `Advice::DontNeed`), so the dependency is scoped to Linux targets — the
+# workspace still compiles on the macOS/Windows cross-os lane.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true }
