@@ -452,6 +452,7 @@ name = "aozora-wasm"
 version = "0.4.1"
 dependencies = [
  "aozora",
+ "aozora-buildstamp",
  "serde-wasm-bindgen",
  "serde_json",
  "wasm-bindgen",

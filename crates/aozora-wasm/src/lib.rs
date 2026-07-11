@@ -105,6 +105,19 @@ pub mod bindings {
         aozora::prewarm();
     }
 
+    /// The parser's channel-aware build version.
+    ///
+    /// Examples: `0.5.0` (stable), `0.5.0-dev+g3672e3f` (a local
+    /// checkout), or `0.5.0-nightly.20260629+g3672e3f` (a scheduled
+    /// build). The playground renders this in its footer so a deployed
+    /// build is traceable back to a commit. Single authority:
+    /// [`aozora_buildstamp::VERSION`] — never a hard-coded literal.
+    #[wasm_bindgen]
+    #[must_use]
+    pub fn version() -> String {
+        aozora_buildstamp::VERSION.to_owned()
+    }
+
     /// High-resolution wall-clock for the profile helper. Returns
     /// milliseconds (f64) using the browser `performance.now()` so
     /// sub-millisecond precision is preserved. Falls back to 0.0 if

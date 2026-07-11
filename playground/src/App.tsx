@@ -4,7 +4,7 @@ import Editor from './components/Editor';
 import PreviewPane from './components/PreviewPane';
 import SampleLoader from './components/SampleLoader';
 import PerfBadge from './components/PerfBadge';
-import { ensureWasmReady } from './wasm-loader';
+import { ensureWasmReady, version as wasmParserVersion } from './wasm-loader';
 import type { HeadingEntry, ParserState, ProfilePhaseEntry } from './editor';
 import { buildShareUrl, readShareTextFromUrl, syncTextToUrl } from './share';
 import { clearStoredSource, loadStoredSource, saveSource } from './storage';
@@ -57,6 +57,10 @@ export default function App() {
   const [source, setSource] = createSignal(initialText);
   const [wasmReady, setWasmReady] = createSignal(false);
   const [wasmError, setWasmError] = createSignal<string | null>(null);
+  // Parser build version for the footer — read from the wasm engine once it
+  // initialises (aozora-buildstamp is the single authority; no hard-coded
+  // literal). Null until the engine resolves.
+  const [wasmVersion, setWasmVersion] = createSignal<string | null>(null);
   const [toast, setToast] = createSignal<string | null>(null);
   const [parsePayload, setParsePayload] = createSignal<ParsePayload>(EMPTY_PAYLOAD);
   const [editorView, setEditorView] = createSignal<EditorView | null>(null);
@@ -69,7 +73,10 @@ export default function App() {
 
   onMount(() => {
     ensureWasmReady()
-      .then(() => setWasmReady(true))
+      .then(() => {
+        setWasmReady(true);
+        setWasmVersion(wasmParserVersion());
+      })
       .catch((err: unknown) => {
         logError('WASM init failed:', err);
         setWasmError(err instanceof Error ? err.message : String(err));
@@ -322,6 +329,14 @@ export default function App() {
         >
           GitHub
         </a>
+        <Show when={wasmVersion()}>
+          {(v) => (
+            <>
+              {' · '}
+              <span class="app-version">aozora {v()}</span>
+            </>
+          )}
+        </Show>
       </footer>
     </div>
   );
