@@ -6,6 +6,7 @@
   <a href="https://github.com/P4suta/aozora/releases/latest"><img alt="latest release" src="https://img.shields.io/github/v/release/P4suta/aozora?display_name=tag&sort=semver"></a>
   <a href="./LICENSE-APACHE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue"></a>
   <a href="./rust-toolchain.toml"><img alt="msrv" src="https://img.shields.io/badge/rust-1.96-orange"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/P4suta/aozora"><img alt="OpenSSF Scorecard" src="https://api.securityscorecards.dev/projects/github.com/P4suta/aozora/badge"></a>
 </p>
 
 <p align="center">
@@ -100,7 +101,7 @@ aozora check -E sjis FILE.txt   # Shift_JIS ソース (青空文庫の標準)
 
 ## クレート構成
 
-aozora は22クレートの workspace です。
+aozora は26クレートの workspace です (加えて `aozora-go` Go モジュール)。
 [`crates/aozora`](./crates/aozora) が公開ファサードで、ライブラリ
 利用者は通常このひとつだけインポートします。
 
@@ -117,14 +118,20 @@ aozora は22クレートの workspace です。
 | [`crates/aozora-cst`](./crates/aozora-cst) | rowan ベースのロスレス具象構文木 (CST)。エディタ/フォーマッタ向け。 |
 | [`crates/aozora-query`](./crates/aozora-query) | tree-sitter 風パターン DSL (`SyntaxKind` + capture)。CST に対するクエリ。 |
 | [`crates/aozora-pandoc`](./crates/aozora-pandoc) | Pandoc AST への射影 (`Tree` → `pandoc_ast::Pandoc`)。50+ 出力フォーマットに繋がる。 |
-| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` バイナリ本体: `check` / `fmt` / `render` / `inspect` / `kinds` / `schema` / `explain` / `pandoc` / `completions`。 |
+| [`crates/aozora-cli`](./crates/aozora-cli) | `aozora` バイナリ本体: `check` / `lint` / `fmt` / `render` / `inspect` / `kinds` / `schema` / `explain` / `pandoc` / `completions`。 |
+| [`crates/aozora-fmt`](./crates/aozora-fmt) | スタンドアロンの冪等フォーマッタ (`aozora-fmt` バイナリ)。`aozora fmt` のエンジンで、エディタ / CI と共有。 |
+| [`crates/aozora-lsp`](./crates/aozora-lsp) | 言語サーバ (tower-lsp / stdio): 診断・整形・hover・補完・セマンティックトークン。VS Code 拡張に同梱。 |
+| [`crates/tree-sitter-aozora`](./crates/tree-sitter-aozora) | Tree-sitter 文法。`aozora-lsp` が打鍵ごとに問い合わせる構文スケルトン。 |
 | [`crates/aozora-wasm`](./crates/aozora-wasm) | `wasm32-unknown-unknown` ターゲット (`wasm-pack build --target web`)。 |
 | [`crates/aozora-ffi`](./crates/aozora-ffi) | C ABI ドライバ (オペーク・ハンドル + JSON 構造化データ)。 |
+| [`crates/aozora-extism`](./crates/aozora-extism) | Extism (WASM) プラグインドライバ。多言語ホスト SDK 向けの単一 `aozora.wasm` (Go / Java / PHP / Ruby / …)。 |
+| [`crates/aozora-go`](./crates/aozora-go) | Go ホスト SDK。純 Go の wazero 経由で `aozora.wasm` を駆動 (cgo 不要)。cargo クレートではなく Go モジュール (`exclude`)。 |
 | [`crates/aozora-py`](./crates/aozora-py) | PyO3 バインディング、`maturin` で配布。 |
 | [`crates/aozora-bench`](./crates/aozora-bench) | Criterion + コーパス駆動プローブ (PGO トレーニング元)。 |
 | [`crates/aozora-conformance`](./crates/aozora-conformance) | WPT 形式の準拠スイートランナー (HTML / serialize / diagnostics / JSON を 60 fixtures でゴールデン比較)。 |
 | [`crates/aozora-corpus`](./crates/aozora-corpus) | コーパス抽象化 (sweep テスト用、dev 限定。`AOZORA_CORPUS_ROOT` で参照)。 |
 | [`crates/aozora-proptest`](./crates/aozora-proptest) | proptest 用ストラテジ共有 (`aozora_fragment` / `pathological_aozora` / `unicode_adversarial` ほか、 dev 限定)。 |
+| [`crates/aozora-buildstamp`](./crates/aozora-buildstamp) | コンパイル時のチャンネル対応ビルドバージョンスタンプ (バイナリ `aozora` CLI / `aozora-lsp` 用)。 |
 | [`crates/aozora-trace`](./crates/aozora-trace) | samply トレース用 DWARF シンボリケータ。 |
 | [`crates/aozora-xtask`](./crates/aozora-xtask) | リポジトリ自動化 (samply ラッパ、トレース解析、コーパス pack/unpack、 schema dumps)。 |
 

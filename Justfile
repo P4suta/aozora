@@ -1259,6 +1259,50 @@ version-literal-gate:
     fi
     echo "version-literal-gate: clean"
 
+# Every publishable crate (one that is NOT `publish = false`) must ship a
+# README.md — otherwise its crates.io page renders empty (F9). And that README
+# may not carry repo-relative links: crates.io / docs.rs resolve links against
+# nothing, so `](../foo)` / `](./foo)` (and HTML `href`/`src="./…"`) render as
+# dead 404s on the crate page. Absolute https URLs only. The repo-root README.md
+# / README.ja.md are the GitHub landing pages, not crate readmes, so their
+# relative links are fine and they are not scanned. Pure grep/bash, so it runs
+# on the bare host (no dev image) — matching the `readme-gate` CI job.
+readme-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    missing=""
+    relative=""
+    for manifest in crates/*/Cargo.toml; do
+        dir=$(dirname "$manifest")
+        # Skip crates opted out of crates.io publication.
+        if grep -qE '^\s*publish\s*=\s*false' "$manifest"; then
+            continue
+        fi
+        readme="$dir/README.md"
+        if [[ ! -f "$readme" ]]; then
+            missing+="  ${dir#crates/}"$'\n'
+            continue
+        fi
+        hits=$(grep -nE '\]\(\.\.?/|(href|src)="\.\.?/' "$readme" || true)
+        if [[ -n "$hits" ]]; then
+            relative+="  == $readme"$'\n'"$hits"$'\n'
+        fi
+    done
+    fail=0
+    if [[ -n "$missing" ]]; then
+        echo "==> publishable crates missing a README.md (crates.io page would be empty):" >&2
+        printf '%s' "$missing" >&2
+        fail=1
+    fi
+    if [[ -n "$relative" ]]; then
+        echo "==> repo-relative links in a published crate README" >&2
+        echo "    (they 404 on crates.io / docs.rs — use absolute https URLs):" >&2
+        printf '%s' "$relative" >&2
+        fail=1
+    fi
+    [[ $fail -eq 0 ]] || exit 1
+    echo "readme-gate: clean"
+
 # Format check (no-write): Rust (rustfmt) + TOML (taplo, taplo.toml policy)
 fmt-check:
     {{_dev}} cargo fmt --all -- --check
@@ -1852,10 +1896,10 @@ ci-parallel:
     # Background lane — no /cargo/target build-lock contention.
     for g in deny audit smoke-ffi; do want code && launch "$g" just "$g"; done
     want book && launch book-linkcheck just book-linkcheck
-    # fmt-check / typos / strict-code / version-literal-gate are cheap and apply
-    # to any file — always run. ci-fast-selftest guards the change-aware
-    # classifier itself (instant host bash).
-    for g in fmt-check typos strict-code version-literal-gate ci-fast-selftest; do launch "$g" just "$g"; done
+    # fmt-check / typos / strict-code / version-literal-gate / readme-gate are
+    # cheap and apply to any file — always run. ci-fast-selftest guards the
+    # change-aware classifier itself (instant host bash).
+    for g in fmt-check typos strict-code version-literal-gate readme-gate ci-fast-selftest; do launch "$g" just "$g"; done
     # playground-typecheck + playground-test share one `node_modules`
     # volume; launching them as two concurrent gates makes their
     # `_playground-ensure` (`bun install`) hard-link into that volume in
