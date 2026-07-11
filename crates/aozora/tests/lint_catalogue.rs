@@ -232,6 +232,22 @@ fn catalogue_refuses_every_editorial_body() {
 // lossy / judgment reductions migrated out of Tier1 (ADR-0026).
 // ---------------------------------------------------------------------------
 
+/// Source giving a degraded sample / reduction a fair render context: a forward
+/// `「X」…` reduction (e.g. `「X」は縦中横`) only renders non-inert when its
+/// target precedes it, so prepend the first `「X」` inner text; every region /
+/// block form gets a neutral あ lead. The Tier2 analogue of the
+/// `render_context_source` referent-prepend, in the `\n…\n本文\n` block framing
+/// the degraded render tests use.
+fn degraded_context(body: &str) -> String {
+    if let Some(open) = body.find('「') {
+        let rest = &body[open + '「'.len_utf8()..];
+        if let Some(close) = rest.find('」') {
+            return format!("{}\n［＃{body}］\n本文\n", &rest[..close]);
+        }
+    }
+    format!("あ\n［＃{body}］\n本文\n")
+}
+
 /// Every migrated degraded sample reduces to a directly parser-recognised
 /// spelling, stays Unknown as written, and is idempotent. The Tier2 analogue of
 /// `every_variant_is_unknown_and_fires_the_lint`.
@@ -241,17 +257,13 @@ fn every_degraded_sample_reduces() {
         let reduced = degraded_directive(sample)
             .unwrap_or_else(|| panic!("degraded sample {sample:?} did not reduce"));
         // The sample itself stays Unknown (inert) — the parser never recognises it.
-        let sample_html = Document::new(format!("あ\n［＃{sample}］\n本文\n"))
-            .parse()
-            .to_html();
+        let sample_html = Document::new(degraded_context(sample)).parse().to_html();
         assert!(
             sample_html.contains("aozora-directive"),
             "degraded sample {sample:?} is unexpectedly recognised by the parser"
         );
         // Its reduction parses to a recognised (non-Unknown) construct.
-        let reduced_html = Document::new(format!("あ\n［＃{reduced}］\n本文\n"))
-            .parse()
-            .to_html();
+        let reduced_html = Document::new(degraded_context(&reduced)).parse().to_html();
         assert!(
             !reduced_html.contains("aozora-directive"),
             "degraded reduction {reduced:?} for {sample:?} must be recognised; got {reduced_html:?}"
@@ -303,7 +315,7 @@ fn degraded_reductions_are_render_only() {
         directives: DirectiveNormalization::Canonical,
     };
     for &sample in DEGRADED_SAMPLES {
-        let source = format!("あ\n［＃{sample}］\n本文\n");
+        let source = degraded_context(sample);
         // (a) --degraded reinterprets it: no inert directive span.
         let deg_html = Document::new(source.clone()).parse().to_html_with(degraded);
         assert!(

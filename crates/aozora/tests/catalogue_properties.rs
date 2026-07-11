@@ -74,7 +74,8 @@ fn directive_body() -> impl Strategy<Value = String> {
         Just("は枠囲み".to_owned()),
         Just("に傍点（白丸）".to_owned()),
         Just("は縦中横".to_owned()),
-        Just("は「乙」の誤記か".to_owned()), // editorial — must stay None
+        Just("は縦中横、行右小書き".to_owned()), // Tier2 D7 single-target compound
+        Just("は「乙」の誤記か".to_owned()),     // editorial — must stay None
     ];
     let region = prop_oneof![
         Just("字下げ終わり".to_owned()),
