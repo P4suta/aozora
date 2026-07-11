@@ -504,6 +504,37 @@ pub fn build_synthetic_aozora(target_bytes: usize) -> String {
     s
 }
 
+/// Build an annotation-dense Aozora buffer of roughly `target_bytes`,
+/// approximating the corpus's classify-density outlier (doc #5667,
+/// `明治人物月旦`), whose 170 ms parse is ~98% classify.
+///
+/// The repeating unit packs ruby, gaiji, a bouten annotation, and indent
+/// directives tightly so the classify stage — the pair matcher and the
+/// annotation-body dispatcher — does far more work per byte than a plain
+/// prose buffer. Used by the `perf_gate` bench as the pathological input
+/// whose instruction count the perf gate protects against regressing.
+///
+/// Unlike [`build_synthetic_aozora`], the result is deliberately dense
+/// rather than diagnostic-free — the point is to stress the classifier,
+/// not to model clean input.
+#[must_use]
+pub fn build_pathological_aozora(target_bytes: usize) -> String {
+    // One unit: two ruby spans, two gaiji, a bouten annotation, and a
+    // nested indent block — every classify path exercised at once.
+    let unit = "明治の｜人物《じんぶつ》月旦、\
+                ※［＃「木＋世」、第3水準1-85-28］なる\
+                ｜青梅《おうめ》街道を、［＃「人物」に傍点］\
+                ※［＃「にんべん＋弖」、第4水準2-1-52］と\
+                ［＃ここから2字下げ］共に訪ね語らふ。［＃ここで字下げ終わり］\n";
+    let unit_bytes = unit.len();
+    let cycles = target_bytes.div_ceil(unit_bytes);
+    let mut s = String::with_capacity(cycles * unit_bytes);
+    for _ in 0..cycles {
+        s.push_str(unit);
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -517,6 +548,17 @@ mod tests {
     #[test]
     fn build_synthetic_parses_without_panic() {
         let s = build_synthetic_aozora(4096);
+        let doc = Document::new(s);
+        let tree = doc.parse();
+        black_box(tree);
+    }
+
+    #[test]
+    fn build_pathological_returns_at_least_target_bytes_and_parses() {
+        let s = build_pathological_aozora(8192);
+        assert!(s.len() >= 8192, "expected >= 8192 bytes, got {}", s.len());
+        // The pathological buffer must still parse without panicking — it
+        // is a perf stressor, not a fuzz input.
         let doc = Document::new(s);
         let tree = doc.parse();
         black_box(tree);

@@ -638,6 +638,31 @@ throughput:
         -e AOZORA_CORPUS_ROOT=/corpus \
         dev cargo run --release -p aozora-bench --example throughput
 
+# Instruction-count perf gate (G6). Runs the iai-callgrind micro-benchmarks
+# (aozora-bench/benches/perf_gate) under Valgrind's Callgrind, which counts
+# CPU *instructions* — deterministic across runs and machines, unlike
+# wall-clock (too noisy on shared runners to gate on; see `throughput`).
+#
+# The FIRST run records a baseline named `perf_gate` and is always green.
+# Every later run compares against that baseline and exits non-zero on a
+# >10% `Ir` (instructions read) regression on any case (the soft limit is
+# baked into the bench's `main!` config). Corpus-free — the bench embeds a
+# few vendored 青空文庫 works plus a synthetic annotation-dense buffer — so
+# it needs no AOZORA_CORPUS_ROOT. Requires valgrind + iai-callgrind-runner,
+# both baked into the dev image.
+#
+# Runs nightly via .github/workflows/perf.yml (collecting stability data);
+# deliberately NOT in ci-parallel / pre-push yet — a per-PR promotion waits
+# on that stability data (see the workflow header).
+#
+# `--allow-aslr`: iai-callgrind otherwise disables ASLR via `setarch -R`,
+# whose `personality(2)` call the container's default seccomp profile blocks
+# ("Operation not permitted"). Instruction counts are ASLR-independent, so
+# leaving ASLR on is harmless here and keeps the recipe container-native (no
+# --privileged / seccomp=unconfined).
+perf-gate:
+    {{_dev}} cargo bench -p aozora-bench --bench perf_gate -- --save-baseline=perf_gate --allow-aslr=true
+
 # --- fuzzing -----------------------------------------------------------------
 #
 # cargo-fuzz harnesses live under `crates/<crate>/fuzz/` as

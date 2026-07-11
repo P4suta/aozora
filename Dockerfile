@@ -177,6 +177,21 @@ RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
         bacon \
         taplo-cli
 
+# iai-callgrind-runner drives the instruction-count perf gate
+# (`just perf-gate`, aozora-bench/benches/perf_gate). It runs the bench
+# binary under `valgrind` (installed in the toolchain stage above) and
+# parses the callgrind output. The runner binary MUST match the
+# `iai-callgrind` LIBRARY version pinned in the workspace Cargo.toml — a
+# mismatch makes the harness refuse to run. Bump BOTH together. Kept out of
+# the fail-fast batch (no prebuilt is guaranteed) so it can fall through to
+# a source `compile` without turning the whole batch slow.
+ARG IAI_CALLGRIND_VERSION=0.16.1
+RUN --mount=type=cache,target=/root/.cache/binstall,sharing=locked \
+    cargo binstall --no-confirm --no-symlinks --locked \
+        --strategies crate-meta-data,quick-install,compile \
+        --root /usr/local \
+        "iai-callgrind-runner@${IAI_CALLGRIND_VERSION}"
+
 # just (task runner) installed separately; upstream provides an install script
 RUN curl -fsSL https://just.systems/install.sh \
     | bash -s -- --to /usr/local/bin --tag 1.51.0
@@ -195,6 +210,16 @@ FROM toolchain AS dev
 
 COPY --from=cargo-tools /usr/local/cargo/bin/ /usr/local/cargo/bin/
 COPY --from=cargo-tools /usr/local/bin/ /usr/local/bin/
+
+# valgrind drives the instruction-count perf gate (`just perf-gate`): the
+# iai-callgrind-runner copied in above runs the bench binary under
+# Valgrind's Callgrind. It is a dev/runtime profiling tool, so it lives in
+# THIS stage rather than the toolchain base — keeping it here avoids
+# invalidating the base and re-triggering the heavy cargo-tools binstall
+# layer on a valgrind bump.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends valgrind \
+    && rm -rf /var/lib/apt/lists/*
 
 # The stable toolchain is fully provisioned in the `toolchain` stage:
 # because the base image == rust-toolchain.toml's pinned channel (see the
