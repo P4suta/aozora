@@ -6,7 +6,20 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+# Both entries are `unmaintained` advisories (no vulnerability, no fix to
+# apply) on transitive deps that enter the graph ONLY through
+# `iai-callgrind` — a DEV-dependency of `aozora-bench`, which is
+# `publish = false` (the G6 instruction-count perf gate). Neither reaches a
+# published crate or a shipped binary:
+#   - proc-macro-error2: a compile-time proc-macro dep of
+#     iai-callgrind-macros — never present in any runtime artifact.
+#   - bincode: iai-callgrind's benchmark-output serializer (dev tooling only).
+# iai-callgrind 0.16.1 is the latest release; no upgrade drops either crate.
+# Revisit when iai-callgrind migrates off them.
+ignore = [
+  "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained
+  "RUSTSEC-2025-0141", # bincode unmaintained
+]
 
 [licenses]
 version = 2
