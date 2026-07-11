@@ -1,0 +1,77 @@
+# aozora cross-OS behavioral test matrix
+#
+# Runs the workspace test suite NATIVELY on the two non-Linux release
+# runners — macos-latest (aarch64-apple-darwin) and windows-2025
+# (x86_64-pc-windows-msvc), the exact runners `release.yml` builds on — so
+# behaviour on the platforms we SHIP is observed, not merely assumed.
+#
+# Behavioural, not build-only: `release.yml` only `cargo build`s on these
+# runners, so a test that passes on Linux but trips over Windows path
+# separators, `.aozora.toml` walk-up, or CRLF handling would ship
+# undetected. This lane runs the real test binaries there.
+#
+# CI-ONLY BY NATURE (the Docker-only exception): every other CI lane runs
+# inside the Linux dev container (Justfile policy: never invoke cargo on
+# the host). macOS/Windows runner behaviour is intrinsically CI-only — it
+# cannot be reproduced in a Linux Docker image locally — so this matrix is
+# the one documented exception to that policy and invokes cargo on the
+# runner host directly, with no `just` / Docker wrapper.
+#
+# Weekly + manual dispatch (not per-PR): a full native macOS/Windows
+# compile-and-test is slow and the platform-specific surface changes
+# rarely, so this is a scheduled backstop plus an on-demand
+# `workflow_dispatch`. The release checklist (contrib/release.md) requires
+# one green dispatch of this workflow before cutting a release.
+#
+# Corpus gates need no special handling: every `AOZORA_CORPUS_ROOT`-gated
+# test returns a vacuous pass when that variable is unset (it is never set
+# here), so `--workspace` is safe without a corpus mount. `aozora-bench`
+# is excluded — its benches drive the vendored/synthetic corpus harness and
+# add no behavioural coverage the test binaries lack.
+#
+# Action SHAs are pinned to match the other workflows; Dependabot bumps them.
+name: cross-os
+
+on:
+  schedule:
+    - cron: "17 6 * * 3"  # weekly, Wednesday 06:17 UTC (offset from codeql/scorecard/link-audit)
+  workflow_dispatch:
+
+# A newer run supersedes an in-flight one on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      # Observe BOTH platforms every run — one failing must not mask the other.
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, windows-2025]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+        with:
+          key: cross-os-${{ matrix.runner }}
+
+      - uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3  # v2.82.9
+        with:
+          tool: nextest
+
+      # The workspace test suite as real binaries on the shipping platform.
+      # Default per-OS shell (bash on macOS, pwsh on Windows) — this single
+      # cargo line is shell-agnostic, so no `shell:` override is needed.
+      - name: cargo nextest run (workspace)
+        run: cargo nextest run --workspace --exclude aozora-bench --all-targets
